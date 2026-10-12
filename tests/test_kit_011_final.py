@@ -278,3 +278,24 @@ def test_ticket_never_prints_the_token(cmd, profile, tmp_path):
 )
 def test_ordinary_ticket_commands_still_run(cmd, profile, tmp_path):
     assert act(profile, tmp_path, cmd, role="ticket").action == "allow", cmd
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "GH_REPO=other/repo gh api -X PUT 'repos/{owner}/{repo}/pulls/1/merge'",
+        "export GH_REPO=other/repo; gh pr merge 1 --merge",
+        "env GH_REPO=o/r gh pr merge 1",
+        "gh pr merge 1 --merge -R other/repo",
+        "gh pr merge 1 --merge --repo=other/repo",
+        "gh pr view 1 -Rother/repo",
+        "GH_HOST=x gh pr list",
+    ],
+)
+def test_ticket_gh_stays_in_this_repository(cmd, profile, tmp_path):
+    assert act(profile, tmp_path, cmd, role="ticket").action == "deny", cmd
+
+
+def test_ticket_gh_may_name_this_repository(profile, tmp_path):
+    assert act(profile, tmp_path, "gh pr view 3 -R acme/demo", role="ticket").action == "allow"
+    assert act(profile, tmp_path, "gh pr view 3 --repo ACME/demo", role="ticket").action == "allow"

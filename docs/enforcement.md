@@ -66,7 +66,7 @@ It reads each command the way a shell would, well enough to catch a well-meaning
 
 **In ticket sessions, by allow-list:**
 - `git push` may update only the session's own ticket branch: no tags, no other branches, and a bare push only when the upstream has the same name;
-- `gh` may run only the PR, issue, run and read subcommands a ticket needs;
+- `gh` may run only the PR, issue, run and read subcommands a ticket needs, in the profile's repository alone (`-R`/`--repo` naming another, or `GH_REPO`, `GH_HOST` and gh's token variables set, are refused), never with a function's or script's parameters (`"$@"`, `$1`), and never printing the token (`gh auth status --show-token`);
 - `gh api` writes may touch only issues, comments, labels and pull requests of the profile's repo, and never GitHub's GraphQL API (auto-merge, comments and reads go through the GitHub MCP tools or REST: the shell can assemble a GraphQL query in more ways than the guard can follow); merging its own PR (`gh pr merge`, `gh api -X PUT repos/<repo>/pulls/<n>/merge`, the GitHub MCP merge tool) is allowed, since the ruleset still decides what may merge into the base branch;
 - `git config` may not set aliases, push settings, `core.*` hooks, editors, ssh commands, credentials or includes; `GIT_CONFIG*`/`GIT_SSH*`/`GIT_DIR` assignments and `--config-env` are refused.
 
@@ -95,6 +95,6 @@ The marker is looked for in the command's texts as a whole (the command, its her
 
 In attended sessions the hooks report the error and stay out of the way.
 
-**It can't see** a script file the session writes and then runs, network calls made by programs, or deliberately obfuscated commands. It is a seatbelt for honest mistakes, not a wall against an adversary. That is why the ruleset and the credential-free environment come first.
+**It can't see** a script file the session writes and then runs, text piped into a shell, network calls made by programs (an interpreter's `subprocess.run(['git', …])`, `wget`, `fetch`), or deliberately obfuscated commands. It is a seatbelt for honest mistakes, not a wall against an adversary. That is why the ruleset and the credential-free environment come first.
 
 **A lesson from building this kit:** a review agent testing the guard ran its own test cases by accident. Its heredoc's delimiter appeared inside a case, so the shell ran the rest as commands. One of them pushed to the kit repo's `main`, which had no active ruleset at the time. Reviewers and explorers that try dangerous commands work only in throwaway copies, never in the real checkout, and the ruleset is what makes such an accident harmless.

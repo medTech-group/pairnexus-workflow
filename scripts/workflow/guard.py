@@ -1195,6 +1195,8 @@ def _env_problem(seg: Seg, role: str) -> str | None:
         m = _INJECT_ENV.match(a) or re.fullmatch(r"(GIT_CONFIG\w*|GIT_SSH\w*|GIT_EXEC_PATH|GIT_DIR|GIT_WORK_TREE)", a)
         if m:
             return f"setting `{a.split('=', 1)[0]}` can point git at other config, programs or repositories; it's not allowed in {role} sessions"
+        if role == "ticket" and re.match(r"(GH_REPO|GH_HOST|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRISE_TOKEN|GH_TOKEN|GITHUB_TOKEN|GH_CONFIG_DIR)(=|$)", a):
+            return f"setting `{a.split('=', 1)[0]}` points gh at another repository, host or account; ticket sessions work only in this repository"
     return None
 
 
@@ -1684,6 +1686,11 @@ def _gh_problem(toks: list[str], profile: Profile, role: str, cwd: str | None, r
         return "`gh pr merge --admin` bypasses the base branch's required checks; it is never allowed"
     if group == "repo" and sub == "edit" and any(t == "--default-branch" or t.startswith("--default-branch=") for t in toks):
         return "changing the repository's default branch (`gh repo edit --default-branch`) is never allowed"
+    if role == "ticket":
+        for j, t in enumerate(toks):
+            r = toks[j + 1] if t in ("-R", "--repo") and j + 1 < len(toks) else t.split("=", 1)[1] if t.startswith("--repo=") else t[2:] if t.startswith("-R") and len(t) > 2 else None
+            if r is not None and r.strip().removeprefix("https://github.com/").rstrip("/").casefold() != profile.repo.casefold():
+                return f"ticket sessions work only in {profile.repo}; `{t}` names another repository"
     if role == "ticket" and group == "auth" and any(t in ("-t", "--show-token") or t.startswith("--show-token=") or re.fullmatch(r"-[a-zA-Z]*t[a-zA-Z]*", t) for t in toks[2:]):
         return "`gh auth status --show-token` prints the GitHub token; ticket sessions never read it"
     if role == "ticket" and group is not None and not group.startswith("-"):
