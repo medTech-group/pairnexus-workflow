@@ -212,6 +212,7 @@ def _strings(obj) -> list[str]:
     return out
 
 
+_PWD = re.compile(r"^(?:\$PWD\b|\$\{PWD\}|\$\(pwd\)|`pwd`)(?=/|$)")
 _PROC_CWD = re.compile(r"^/proc/(?:self|thread-self|\$\$|\$BASHPID|\d+)/cwd(?=/|$)")
 
 
@@ -235,6 +236,11 @@ def _abspath(path: str, cwd: str | None) -> str | None:
     p = _expand_known(path.strip())
     if not p:
         return None
+    m = _PWD.match(p)
+    if m:
+        if cwd is None:
+            return None
+        p = cwd + p[m.end() :]
     if p.startswith("~"):
         p = os.path.expanduser(p)
         if p.startswith("~"):
@@ -906,7 +912,11 @@ def _nested(seg: Seg, root: Path, depth: int) -> list[Seg]:
                     j += 1
                 sub, assigns, chdir = _strip_prefix(toks[k + 1 : j])
                 if sub:
-                    s2 = Seg(sub, [], seg.cwd, assigns=assigns)
+                    # -execdir runs in each match's own directory, which can't be seen here.
+                    where = None if toks[k] in ("-execdir", "-okdir") else seg.cwd
+                    if where is None:  # its `{}` is the match, which the find's own check covers
+                        sub = [w for w in sub if w != "{}"] or sub
+                    s2 = Seg(sub, [], where, assigns=assigns)
                     out.append(s2)
                     out += _nested(s2, root, depth + 1)
                 k = j
@@ -1408,7 +1418,21 @@ class _ApiCall:
     stdin: bool
 
 
-_STDIN_FILE = re.compile(r"-|/dev/stdin|/dev/fd/0|/proc/(?:self|thread-self|\d+)/fd/0")
+_STDIN_RE = re.compile(r"-|/dev/stdin|/dev/fd/0|/proc/(?:self|thread-self|\d+|\$\$|\$BASHPID)/fd/0")
+
+
+class _StdinFile:
+    """The spellings of stdin as a file name, after normalising the path."""
+
+    @staticmethod
+    def fullmatch(f: str) -> bool:
+        if f == "-":
+            return True
+        n = posixpath.normpath(re.sub(r"/+", "/", f)) if f.startswith("/") else f
+        return bool(_STDIN_RE.fullmatch(n))
+
+
+_STDIN_FILE = _StdinFile
 
 
 def _api(toks: list[str]) -> _ApiCall | None:
@@ -2129,6 +2153,7 @@ def _write_targets(seg: Seg, root: Path) -> _Targets:
     if cmd in _RM_LIKE:
         t.files += operands
         t.trees += operands
+        _fed_by_xargs(seg, root, t, operands, tree=True)
     elif cmd in _TOUCH_LIKE:
         if cmd in {"chmod", "chown", "chgrp", "chattr", "setfacl"} and operands:
             operands = operands[1:]
@@ -2137,6 +2162,7 @@ def _write_targets(seg: Seg, root: Path) -> _Targets:
         t.files += operands
         if any(a in ("-R", "-r", "--recursive") for a in toks[1:]):
             t.trees += operands
+        _fed_by_xargs(seg, root, t, operands, tree=any(a in ("-R", "-r", "--recursive") for a in toks[1:]))
     elif cmd in _DEST_LAST:
         _copy_targets(cmd, toks, seg, root, t)
     elif cmd in ("tee", "sponge"):
@@ -2233,6 +2259,10 @@ def _find_targets(toks: list[str], seg: Seg, root: Path, t: _Targets) -> None:
     if not _find_writes(toks, seg, root):
         return
     names = _find_names(toks)
+    if "-L" in toks[1 : _find_start_index(toks)] or "-follow" in toks:
+        # Following links, a write anywhere may reach the project's protected paths.
+        t.trees.append(os.path.realpath(str(root)))
+        return
     for a in _find_starts(toks) or ["."]:
         p = _abspath(a, seg.cwd)
         if p is not None and names is not None and p == os.path.realpath(str(root)):
@@ -2269,8 +2299,8 @@ def _find_names(toks: list[str]) -> tuple[list[str], bool] | None:
         t = expr[i]
         if t in ("-name", "-iname") and i + 1 < len(expr):
             g = expr[i + 1]
-            if "[" in g or "\\" in g:
-                return None
+            if "[" in g or "\\" in g or (t == "-iname" and not g.isascii()):
+                return None  # find's case folding differs from Python's beyond ASCII
             names.append(g)
             nocase = nocase or t == "-iname"
             i += 2
@@ -2561,6 +2591,23 @@ def _producer_words(word: str) -> list[str] | None:
         if isinstance(item, _Cmd) and item.words:
             return _strip_prefix(item.words)[0]
     return []
+
+
+def _fed_by_xargs(seg: Seg, root: Path, t: _Targets, operands: list[str], tree: bool) -> None:
+    """A writer fed file names on a pipe (`echo x | xargs rm`, `xargs -I{} rm {}`):
+    its targets are what the producer names, or unknown when that can't be read."""
+    if seg.piped is None or (operands and not any("{}" in o for o in operands)):
+        return
+    fed = _Targets()
+    _named_files([], seg, root, fed)
+    t.files += fed.files
+    if tree:
+        t.trees += fed.files
+    t.searched += fed.searched
+    words = seg.piped.words
+    name = Path(words[0]).name if words else ""
+    if not fed.files and not fed.searched and name not in ("echo", "printf", "cat"):
+        t.unknown = t.unknown or "the file names this command is fed on a pipe can't be seen here; name the files"
 
 
 def _named_files(files: list[str], seg: Seg, root: Path, t: _Targets) -> None:

@@ -209,3 +209,47 @@ def test_default_branch_through_dev_stdin_and_escaped_keys(profile, tmp_path):
         "gh api -X PATCH repos/acme/demo --input /proc/thread-self/fd/0 < db.json",
     ):
         assert act(profile, tmp_path, cmd, role="conductor", branch="main") == "deny", cmd
+
+
+# ---------- the fourth pass ----------
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "find . -name '*.pyc' -execdir rm -rf ../.github \\;",
+        "find . -name '*.pyc' -execdir sh -c 'rm -rf ../.github' \\;",
+        "find . -iname 'confİg' -delete",
+        "find $PWD -delete",
+        'find "$PWD" -name \'*.yml\' -delete',
+        "rm -rf $PWD/.github",
+        "rm -rf ${PWD}/.github",
+        "find -L src -name '*.yml' -delete",
+        "find src -follow -name '*.yml' -delete",
+        "echo .github/workflows/ci.yml | xargs rm",
+        "printf '%s\\n' .github/workflows/ci.yml | xargs -I{} rm {}",
+        "jq -r .files list.json | xargs rm",
+    ],
+)
+def test_fourth_pass_bypasses(cmd, profile, tmp_path):
+    _project(tmp_path)
+    assert act(profile, tmp_path, cmd) == "deny", cmd
+
+
+def test_fourth_pass_ordinary_work(profile, tmp_path):
+    _project(tmp_path)
+    for cmd in (
+        "find . -name '*.pyc' -execdir rm -f {} +",
+        "find . -iname '*.PYC' -delete",
+        "rm -rf $PWD/src/a.pyc",
+        "echo src/a.pyc | xargs rm",
+        "find src -name '*.pyc' -print0 | xargs -0 rm -f",
+    ):
+        assert act(profile, tmp_path, cmd) == "allow", cmd
+
+
+def test_stdin_spellings_normalised(profile, tmp_path):
+    (tmp_path / "db.json").write_text('{"default_branch": "dev"}')
+    for f in ("/dev/./stdin", "//dev/stdin", "/proc/self/fd/../fd/0", "/proc/$$/fd/0"):
+        cmd = f"gh api -X PATCH repos/acme/demo --input {f} < db.json"
+        assert act(profile, tmp_path, cmd, role="conductor", branch="main") == "deny", cmd
