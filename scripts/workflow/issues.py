@@ -293,12 +293,19 @@ _REPO_URL = re.compile(
     re.I,
 )
 # "Don't touch `.github/workflows/ci.yml`": the line says not to change it.
-_DONT = re.compile(r"\b(?:don['’]t|do\s+not|never)\b", re.I)
+_DONT = re.compile(r"\b(?:don['’]t|do\s+not|never(?!\s+mind\b))\b", re.I)
+# Where a clause ends: a sentence's end, a semicolon, a colon or a dash. Only
+# the clause a path is in decides whether it is read or left alone.
+_CLAUSE = re.compile(r"[.;:!?](?=\s|$)|\s[—–-]\s")
+# A fenced block whose paths count: the prose just before it asks for a change
+# *to* or *in* what follows ("Add a job to:").
+_INTO = re.compile(r"\b(?:to|in|into)\s*:?\s*$", re.I)
 # "Read the key from .env at startup": the code reads it, and nothing before
 # the path on its line says to change anything.
 _READS = re.compile(r"\b(?:read|reads|reading|load|loads|loading|parse|parses|parsing)\b|\bfrom\s*$", re.I)
 _CHANGES = re.compile(
-    r"\b(?:edit|change|update|add|remove|delete|rotate|write|modify|fix|replace|rename|move|create|set|cache|bump|touch)(?:s|es|d|ed|ing)?\b",
+    r"\b(?:edit|change|update|add|remove|delete|rotate|write|modify|fix|replace|rename|move|create|set|cache|bump|touch"
+    r"|make|tweak|adjust|configure|enable|disable|pin|raise|lower|split|merge|extend|drop)(?:s|es|d|ed|ing)?\b",
     re.I,
 )
 
@@ -334,23 +341,32 @@ def _mentions(body: str | None, repo: str | None = None) -> list[tuple[str, bool
     name: it counts only when it is itself protected (`.env`), not when it
     merely holds a protected path ("the .github directory").
 
-    Left out: fenced code blocks; a mention after "don't", "do not" or "never"
-    on its line; and one its line only reads ("Read the key from .env"), with
-    no word of change before it."""
+    Left out: fenced code blocks, unless the prose just before one asks for a
+    change to what follows ("Add a job to:"); a mention after "don't", "do not"
+    or "never" in its clause; and one its clause only reads ("Read the key from
+    .env"), with no word of change before it. A clause ends at a sentence's
+    end, a semicolon, a colon or a dash, so "Don't break the build: edit
+    `ci.yml`" names it. When in doubt it names it: a note costs a question."""
     if not body:
         return []
     found: list[tuple[str, bool]] = []
     fence: str | None = None
+    fence_counts = False
+    prose = ""
     for line in body.splitlines():
         f = _FENCE.match(line)
         if f:
             if fence is None:
                 fence = f.group(1)[0]
+                last = _CLAUSE.split(prose.rstrip().rstrip(":"))[-1] if prose.strip() else ""
+                fence_counts = bool(_CHANGES.search(last) and _INTO.search(prose.rstrip()))
             elif f.group(1)[0] == fence:
                 fence = None
             continue
-        if fence is not None:
+        if fence is not None and not fence_counts:
             continue
+        if fence is None and line.strip():
+            prose = line
         here: list[tuple[int, str, bool]] = []
         for m in _REPO_URL.finditer(line):
             p = _path_token(m.group(2))
@@ -365,7 +381,7 @@ def _mentions(body: str | None, repo: str | None = None) -> list[tuple[str, bool
             if p and ("/" in p or _DOTFILE.match(p)):
                 here.append((m.start(), p, "/" not in p))
         for pos, p, exact in sorted(here, key=lambda x: x[0]):
-            before = line[:pos]
+            before = "" if fence is not None else _CLAUSE.split(line[:pos])[-1]
             if _DONT.search(before) or (_READS.search(before) and not _CHANGES.search(before)):
                 continue
             found.append((p, exact))

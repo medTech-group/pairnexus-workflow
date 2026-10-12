@@ -23,7 +23,7 @@ PLACEHOLDER = re.compile(r"\{\{\s*([A-Za-z0-9_.]+)\s*\}\}")
 # Filled by the conductor for each ticket. "none" is a valid answer; empty isn't.
 # `wake_trigger` is the id of the routine that wakes the conductor when a ticket ends.
 REQUIRED_SLOTS = ("alongside", "read_first", "owner_decisions", "briefing", "wake_trigger")
-_SEAL = re.compile(r"\s*^[ \t]*Briefing ([0-9a-f]{12})\Z", re.M)
+_SEAL = re.compile(r"[ \t]*Briefing ([0-9a-f]{12})")
 
 
 def _plain(text: str) -> str:
@@ -49,10 +49,11 @@ def seal_of(text: str) -> tuple[str | None, str | None]:
     (None, None) when the text doesn't end with a `Briefing <hash>` line.
     Trailing whitespace and blank lines are ignored."""
     plain = _plain(text)
-    m = _SEAL.search(plain)
+    cut = plain.rfind("\n") + 1  # the last line starts here (0 when it is the only one)
+    m = _SEAL.fullmatch(plain, cut)
     if not m:
         return None, None
-    return m.group(1), briefing_hash(plain[: m.start()])
+    return m.group(1), briefing_hash(plain[:cut])
 
 
 def sealed_intact(text: str) -> bool:

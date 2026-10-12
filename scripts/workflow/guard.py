@@ -1559,8 +1559,16 @@ def _mutation_fields(text: str) -> list[str] | None:
 def _mutation_calls(text: str) -> list[tuple[str, str]] | None:
     """(field, its arguments) for each top-level field of each GraphQL mutation
     in text, string values emptied (`body:""`); None if unreadable. The
-    selection set after the arguments isn't part of them."""
-    t = re.sub(r'"""(?:.|\n)*?"""|"(?:[^"\\]|\\.)*"', '""', text)
+    selection set after the arguments isn't part of them. GraphQL's ignored
+    tokens (comments, commas) are dropped first, and the operation's variable
+    definitions, whose default values can hold a body, join every field's
+    arguments."""
+    # One pass, so a quote in a comment or a # in a string is read as GraphQL reads it.
+    t = re.sub(
+        r'"""(?:.|\n)*?"""|"(?:[^"\\\n]|\\.)*"|#[^\n\r]*|,',
+        lambda m: '""' if m.group(0).startswith('"') else " ",
+        text,
+    )
     out: list[tuple[str, str]] = []
     for m in re.finditer(r"\bmutation\b", t):
         i, n = m.end(), len(t)
@@ -1570,6 +1578,7 @@ def _mutation_calls(text: str) -> list[tuple[str, str]] | None:
             i += 1
         if i >= n:
             return None
+        header = t[m.end() : i]
         i += 1
         depth = 1
         while i < n and depth > 0:
@@ -1609,7 +1618,7 @@ def _mutation_calls(text: str) -> list[tuple[str, str]] | None:
                     if p:
                         return None
                     args, i = t[j + 1 : k - 1], k
-                out.append((ident, args))
+                out.append((ident, f"{args} {header}" if header.strip() else args))
                 continue
             i += 1
     return out

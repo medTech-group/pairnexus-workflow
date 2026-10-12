@@ -70,7 +70,7 @@ def _number(comment: dict) -> int | None:
     cid = comment.get("id")
     if isinstance(cid, int) and not isinstance(cid, bool):
         return cid
-    if isinstance(cid, str) and cid.strip().isdigit():
+    if isinstance(cid, str) and re.fullmatch(r"[0-9]+", cid.strip()):
         return int(cid.strip())
     for key in ("html_url", "url"):
         m = _COMMENT_URL_ID.search(str(comment.get(key) or ""))
@@ -80,7 +80,9 @@ def _number(comment: dict) -> int | None:
 
 
 def _is_comment(d: dict) -> bool:
-    return "body" in d and any(k in d for k in ("id", "url", "html_url"))
+    # An issue or PR (`gh issue view --json body,comments,url`) has a body and a
+    # URL too; its `comments` list says it holds them rather than being one.
+    return "body" in d and any(k in d for k in ("id", "url", "html_url")) and not isinstance(d.get("comments"), list)
 
 
 def comments_from(value) -> list[dict]:
@@ -95,6 +97,8 @@ def comments_from(value) -> list[dict]:
                 walk(x, f"{where}[{k}]")
         elif isinstance(v, dict):
             if _is_comment(v):
+                if not isinstance(v["body"], (str, type(None))):
+                    raise CommentsError(f"{where}.body is a {type(v['body']).__name__}, not text")
                 out.append(v)
             elif isinstance(v.get("comments"), list):
                 walk(v["comments"], f"{where}.comments")
