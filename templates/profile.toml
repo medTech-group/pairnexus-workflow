@@ -1,0 +1,86 @@
+# The project's workflow profile: what the kit's skills, hooks and scripts read
+# instead of anything hard-coded. `setup-workflow` writes it; `workflow profile
+# check` validates it. Lives at .claude/workflow/profile.toml.
+#
+# Prose (safety rules by reference, data classification, secrets, wording)
+# goes in profile.md beside it.
+
+[project]
+name = "my-project"
+repo = "owner/repo"                     # GitHub owner/repo of the issue tracker
+base_branch = "main"
+# Where the project's own rules live. Reviewers read these; nothing is copied.
+rules = ["CLAUDE.md"]                   # e.g. "CLAUDE.md#safety-constraints"
+# Optional project-specific addendum read with the kit's flow.
+flow_addendum = ""                      # e.g. "docs/agents/flow-addendum.md"
+
+[commands]
+setup = ""                              # one-time install for a fresh checkout
+typecheck = ""                          # "" when the project has none
+test_file = ""                          # one test file: "{file}" is replaced
+
+# The full suite, as one or more suites. Each runs in shards so a container
+# restart loses at most one shard (`workflow evidence` resumes by head SHA).
+[[commands.suite]]
+name = "unit"
+run = "python -m pytest {files} -q"     # {files}: the shard's files, space-separated
+files = "tests/test_*.py"               # glob(s), comma-separated; "" runs `run` once
+group = 8                               # files per shard
+passed = '(\d+) passed'                 # regexes for the counts in the output
+failed = '(\d+) failed'
+skipped = '(\d+) skipped'
+errors = '(\d+) errors?'
+
+[ci]
+# Required checks on the base branch, as their names show on a PR.
+required_checks = []
+# What counts as "killed, not failed" when the owner waives a named check.
+killed_markers = ["exit code 143", "The runner has received a shutdown signal", "The operation was canceled"]
+
+[ui]
+# browser: drive the app in Chromium with Playwright; api: exercise the HTTP
+# API; cli: run the command line; none: no explorer.
+explorer = "none"
+start = []                              # commands that start the stack and app(s)
+sizes = ["390x844", "1280x800"]         # phone and desktop
+notes = ""
+
+[guard]
+# Paths a ticket session may not change (and a conductor only by a reviewed PR).
+protected_paths = [".claude/**", ".github/workflows/**", ".github/CODEOWNERS", "CODEOWNERS", "**/.env", "**/.env.*"]
+# Commands only the owner, or the conductor under a release grant, may run.
+deploy_commands = []                    # e.g. ["scripts/deploy.sh", "terraform apply", "kubectl apply"]
+# Test files: where a new skip marker is refused in ticket sessions.
+test_paths = ["**/test_*.py", "**/*_test.py", "**/*.test.*", "**/*.spec.*", "**/*_test.dart", "**/*_test.go"]
+allow_new_skips = false
+
+[sensitive]
+# What must never appear in issues, comments, PR bodies or notifications.
+description = "Secrets and personal data."
+# Regexes checked against every outward GitHub post (issue, comment, PR body).
+patterns = ['(?i)aws_secret_access_key\s*[:=]', '-----BEGIN [A-Z ]*PRIVATE KEY-----', 'ghp_[A-Za-z0-9]{36}', 'sk-[A-Za-z0-9_-]{20,}']
+
+# Areas ("lanes"): tickets carry `Area: <name>`; the conductor runs at most one
+# session per area unless the run state records an override. Globs are hints.
+[areas]
+# messages = ["backend/messages.py", "flutter/lib/features/sharing/**"]
+
+[repair]
+# Re-runnable environment repair: SessionStart, `workflow repair`, and before
+# each evidence shard. Each must be safe to run twice.
+commands = []                           # e.g. ["pgrep dockerd || (nohup dockerd >/tmp/dockerd.log 2>&1 &)"]
+
+[release]
+# Deploys and builds after merges. Each runs only under a release grant in the
+# run charter, and is logged in the outward-changes ledger.
+# [[release.steps]]
+# name = "deploy staging"
+# run = "scripts/deploy.sh staging"
+# smoke = "scripts/smoke.sh staging"
+
+[run]
+ticket_branch = "claude/build-*"        # ticket sessions' branches (role fallback)
+check_in_minutes = 20
+max_parallel = 2
+max_retries = 1
+review_rounds = 3

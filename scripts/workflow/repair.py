@@ -1,0 +1,36 @@
+"""Environment repair: the profile's re-runnable commands.
+
+Run at SessionStart, by `workflow repair`, and before each evidence shard, since
+a container restart mid-session fires no hook. Never fails the caller: it
+reports what each command did.
+"""
+
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+
+TIMEOUT = 120
+
+
+def run(commands: list[str], cwd: Path, timeout: int = TIMEOUT) -> list[tuple[str, int, str]]:
+    results = []
+    for c in commands:
+        try:
+            p = subprocess.run(c, shell=True, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+            tail = (p.stdout + p.stderr).strip().splitlines()[-1:] or [""]
+            results.append((c, p.returncode, tail[0][:200]))
+        except subprocess.TimeoutExpired:
+            results.append((c, 124, f"timed out after {timeout}s"))
+        except OSError as e:
+            results.append((c, 127, str(e)[:200]))
+    return results
+
+
+def summary(results: list[tuple[str, int, str]]) -> str:
+    if not results:
+        return ""
+    lines = ["Environment repair (the profile's [repair] commands):"]
+    for c, code, tail in results:
+        lines.append(f"- {'ok' if code == 0 else f'exit {code}'}: `{c}`" + (f" ({tail})" if code and tail else ""))
+    return "\n".join(lines)

@@ -1,0 +1,106 @@
+"""The hooks end to end through the CLI, as Claude Code runs them."""
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+from workflow import context, gate
+
+KIT = Path(__file__).resolve().parents[1]
+CLI = KIT / "scripts/workflow.py"
+
+
+def run_hook(name, event, cwd, env_extra=None):
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(cwd), **(env_extra or {})}
+    env.pop("WORKFLOW_ROLE", None) if "WORKFLOW_ROLE" not in (env_extra or {}) else None
+    p = subprocess.run([sys.executable, str(CLI), "hook", name], input=json.dumps(event), capture_output=True, text=True, cwd=cwd, env=env)
+    return p.returncode, (json.loads(p.stdout) if p.stdout.strip() else None), p.stderr
+
+
+def test_guard_hook_by_branch_role(repo):
+    from conftest import git
+
+    ev = {"tool_name": "Bash", "tool_input": {"command": "git push origin main"}, "cwd": str(repo)}
+    code, out, _ = run_hook("guard", ev, repo)
+    assert code == 0 and out["hookSpecificOutput"]["permissionDecision"] == "ask"  # on main: attended
+    git(repo, "checkout", "-qb", "claude/build-7")
+    code, out, _ = run_hook("guard", ev, repo)
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "ticket session" in out["hookSpecificOutput"]["permissionDecisionReason"]
+    ok = {"tool_name": "Bash", "tool_input": {"command": "ls"}, "cwd": str(repo)}
+    code, out, _ = run_hook("guard", ok, repo)
+    assert code == 0 and out is None  # never forces "allow"
+
+
+def test_guard_hook_env_role_wins(repo):
+    ev = {"tool_name": "Bash", "tool_input": {"command": "scripts/deploy.sh"}, "cwd": str(repo)}
+    _, out, _ = run_hook("guard", ev, repo, {"WORKFLOW_ROLE": "ticket"})
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    _, out, _ = run_hook("guard", ev, repo, {"WORKFLOW_ROLE": "conductor"})
+    assert out is None
+
+
+def test_hooks_do_nothing_without_a_profile(tmp_path):
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path)
+    ev = {"tool_name": "Bash", "tool_input": {"command": "git push --force"}, "cwd": str(tmp_path)}
+    assert run_hook("guard", ev, tmp_path)[:2] == (0, None)
+    assert run_hook("gate", {"last_assistant_message": "hi"}, tmp_path)[:2] == (0, None)
+
+
+def test_invalid_profile_is_reported_not_silent(repo):
+    (repo / ".claude/workflow/profile.toml").write_text("[project]\nname=1\n")
+    code, out, err = run_hook("guard", {"tool_name": "Bash", "tool_input": {"command": "ls"}}, repo)
+    assert code == 1 and out is None and "profile is invalid" in err
+
+
+def test_gate_hook_only_for_ticket_sessions(repo, tmp_path):
+    ev = {"session_id": "s-gate-1", "last_assistant_message": "All done.", "stop_hook_active": False, "cwd": str(repo)}
+    iso = {"TMPDIR": str(tmp_path)}
+    assert run_hook("gate", ev, repo, iso)[1] is None
+    code, out, _ = run_hook("gate", ev, repo, {"WORKFLOW_ROLE": "ticket", **iso})
+    assert out["decision"] == "block" and "WORKFLOW-STATUS" in out["reason"]
+
+
+def test_gate_rules(tmp_path, monkeypatch):
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    done = "Merged.\n- [x] a\n- [x] b\n- [ ] c because d\nWORKFLOW-STATUS: done"
+    assert gate.decide({"session_id": "a", "last_assistant_message": done}) is None
+    assert gate.decide({"session_id": "a", "last_assistant_message": "CI running.\nWORKFLOW-STATUS: waiting"}) is None
+    assert gate.decide({"session_id": "a", "last_assistant_message": "WORKFLOW-STATUS: done"})  # no checklist
+    assert gate.decide({"session_id": "a", "last_assistant_message": "x", "stop_hook_active": True}) is None
+    # At most two blocks a session, then it lets the turn end.
+    assert gate.decide({"session_id": "b", "last_assistant_message": "x"})
+    assert gate.decide({"session_id": "b", "last_assistant_message": "x"})
+    assert gate.decide({"session_id": "b", "last_assistant_message": "x"}) is None
+
+
+def test_context_trigger_and_once_per_session(tmp_path, monkeypatch):
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    flow = tmp_path / "flow.md"
+    flow.write_text("THE FLOW")
+    assert not context.wants_flow("what's the weather")
+    assert not context.wants_flow("see #12")  # a ref without a flow verb
+    assert context.wants_flow("implement #146")
+    assert context.wants_flow("/next build")
+    assert context.wants_flow("/pairnexus-workflow:next")
+    first = context.context_for("work the map #153", "s1", [flow])
+    assert "THE FLOW" in first
+    again = context.context_for("implement #146", "s1", [flow])
+    assert "THE FLOW" not in again and "read it again" in again
+    assert context.context_for("hello", "s2", [flow]) is None
+
+
+def test_context_hook_reads_vendored_flow(repo, tmp_path, monkeypatch):
+    (repo / ".claude/workflow/flow.md").write_text("VENDORED FLOW")
+    _, out, _ = run_hook("context", {"prompt": "implement #5", "session_id": "ctx-vendored"}, repo, {"TMPDIR": str(tmp_path)})
+    assert "VENDORED FLOW" in out["hookSpecificOutput"]["additionalContext"]
+
+
+def test_repair_hook(repo):
+    p = repo / ".claude/workflow/profile.toml"
+    p.write_text(p.read_text() + '\n[repair]\ncommands = ["true", "false"]\n')
+    _, out, _ = run_hook("repair", {}, repo)
+    ctx = out["hookSpecificOutput"]["additionalContext"]
+    assert "ok: `true`" in ctx and "exit 1: `false`" in ctx and "role of this session: attended" in ctx

@@ -1,0 +1,20 @@
+{
+  "name": "pairnexus",
+  "owner": { "name": "PAIR (medtech-group)" },
+  "plugins": [
+    {
+      "name": "pairnexus-workflow",
+      "source": "./",
+      "description": "Spec, tickets, build, review panel and merge, attended or unattended under a conductor."
+    },
+    {
+      "name": "mattpocock-skills",
+      "source": {
+        "source": "github",
+        "repo": "mattpocock/skills",
+        "sha": "49dd158d1076134a641b33efb035946536778336"
+      },
+      "description": "Matt Pocock's engineering skills (MIT), pinned. Install only this copy: two plugins named mattpocock-skills drop one's hooks."
+    }
+  ]
+}
