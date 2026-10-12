@@ -484,9 +484,17 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
                 e = s.find("\n", k)
                 e = n if e < 0 else e
                 line = s[k:e]
-                if (line.lstrip("\t") if strip_tabs else line) == delim:
+                bare = line.lstrip("\t") if strip_tabs else line
+                if bare == delim:
                     hd.body = s[lines_start:k]
                     k = e + 1 if e < n else n
+                    found = True
+                    break
+                if stop_paren and bare.startswith(delim + ")"):
+                    # Inside `$( )` bash ends the heredoc at a line starting with
+                    # the delimiter and `)`: the `)` and what follows are code.
+                    hd.body = s[lines_start:k]
+                    k += len(line) - len(bare) + len(delim)
                     found = True
                     break
                 if e >= n:
@@ -1178,9 +1186,14 @@ _PUSH_SETTINGS = re.compile(
 )
 _INJECT_KEYS = re.compile(
     rf"(?i)^(alias\.|remote\..*\.(push|pushurl|url)\b|{_MIRROR_KEYS}|push\.|branch\..*\.(merge|remote|pushremote)\b|url\.|"
-    r"core\.(fsmonitor|sshcommand|hookspath|pager|editor|askpass|gitproxy)\b|credential\.|include\.|includeif\.)"
+    r"core\.(fsmonitor|sshcommand|hookspath|pager|editor|askpass|gitproxy)\b|credential\.|include\.|includeif\.|"
+    r"sequence\.editor\b|diff\.external\b|diff\..*\.(command|textconv)\b|merge\..*\.driver\b|filter\.|(diff|merge)tool\.)"
 )
-_INJECT_ENV = re.compile(r"^(GIT_CONFIG\w*|GIT_SSH\w*|GIT_EXEC_PATH|GIT_DIR|GIT_WORK_TREE)\+?=")
+_INJECT_ENV = re.compile(
+    r"^(GIT_CONFIG\w*|GIT_SSH\w*|GIT_EXEC_PATH|GIT_DIR|GIT_WORK_TREE|GIT_EDITOR|GIT_SEQUENCE_EDITOR|GIT_EXTERNAL_DIFF|GIT_ASKPASS|GIT_PAGER)\+?="
+)
+# git subcommands that run a program the guard never sees.
+_GIT_RUNS = {"bisect": {"run"}, "submodule": {"foreach"}, "filter-branch": None, "difftool": None, "mergetool": None}
 _CONFIG_VALUE_OPTS = {"-f", "--file", "--blob", "--type", "--default", "--comment", "--value", "-t"}
 _CONFIG_WRITE_OPTS = {"--unset", "--unset-all", "--add", "--replace-all", "--rename-section", "--remove-section", "--edit", "-e"}
 
@@ -1192,6 +1205,8 @@ def _env_problem(seg: Seg, role: str) -> str | None:
     if seg.words and seg.words[0] in ("export", "declare", "typeset", "local", "readonly"):
         names += [w for w in seg.words[1:] if not w.startswith("-")]
     for a in names:
+        if re.fullmatch(r"(GIT_EDITOR|GIT_SEQUENCE_EDITOR)=(true|:)", a):
+            continue  # an editor that does nothing: the usual non-interactive `rebase --continue`
         m = _INJECT_ENV.match(a) or re.fullmatch(r"(GIT_CONFIG\w*|GIT_SSH\w*|GIT_EXEC_PATH|GIT_DIR|GIT_WORK_TREE)", a)
         if m:
             return f"setting `{a.split('=', 1)[0]}` can point git at other config, programs or repositories; it's not allowed in {role} sessions"
@@ -1386,7 +1401,9 @@ def _upstream_problem(args: list[str], d: str | None, branch: str | None) -> str
 
 def _repo_name(r: str) -> str:
     """OWNER/REPO from the forms gh takes (`[HOST/]OWNER/REPO`, a URL, `.git`), in lower case."""
-    r = re.sub(r"^(?:https?://|ssh://|git@)", "", r.strip(), flags=re.I).rstrip("/")
+    # What gh reads: up to whitespace, a query or a fragment.
+    r = re.split(r"[\s?#]", r.strip(), maxsplit=1)[0]
+    r = re.sub(r"^(?:https?://|ssh://|git@)", "", r, flags=re.I).rstrip("/")
     r = re.sub(r"\.git$", "", r)
     r = re.sub(r"^github\.com[:/]", "", r, flags=re.I)
     return r.casefold()
@@ -1405,11 +1422,15 @@ def _literal_heredoc(word: str) -> bool:
     if not m:
         return False
     lines = word[m.end():].split("\n")
+    delim = m.group(3)
     for k, line in enumerate(lines):
         bare = line.lstrip("\t") if m.group(1) else line
-        if bare in (m.group(3), m.group(3) + ")"):  # the first delimiter line ends the heredoc
-            rest = ("" if bare == m.group(3) else ")") + "\n".join(lines[k + 1:])
-            return rest.strip() == ")"
+        # The first line that is the delimiter, or starts with it and `)`, ends
+        # the heredoc (bash's rule inside `$( )`); only a bare `)` may follow.
+        if bare == delim:
+            return "\n".join(lines[k + 1:]).strip() == ")"
+        if bare.startswith(delim + ")"):
+            return bare == delim + ")" and not "\n".join(lines[k + 1:]).strip()
     return False
 
 # `gh` subcommands a ticket session may run (None: any).
@@ -1713,9 +1734,7 @@ def _gh_problem(toks: list[str], profile: Profile, role: str, cwd: str | None, r
         return "changing the repository's default branch (`gh repo edit --default-branch`) is never allowed"
     if role == "ticket":
         for j, t in enumerate(toks):
-            # A word with spaces or newlines is text (a title, a body), never a
-            # repository gh would use.
-            if re.search(r"\s", t):
+            if _literal_heredoc(t):  # text the shell never expands: a title, a body
                 continue
             r = None
             if t == "--repo" or t.startswith("--repo="):
@@ -1729,6 +1748,8 @@ def _gh_problem(toks: list[str], profile: Profile, role: str, cwd: str | None, r
                 # A pull request or issue URL names its own repository, which gh then uses.
                 u = re.match(r"(?:https?://)?(?:[^/\s]*@)?(?:[\w-]+\.)*github\.com\.?(?::\d*)?/([^/\s]+/[^/\s]+)/(?:pull|issues)/", t, re.I)
                 r = u.group(1) if u else None
+            if r is not None and re.search(r"[$`]", r):
+                return f"ticket sessions name a repository only literally; `{t}` is filled in by the shell"
             if r is not None and _repo_name(r) != profile.repo.casefold():
                 return f"ticket sessions work only in {profile.repo}; `{t}` names another repository"
     if role == "ticket" and group == "auth" and any(t in ("-t", "--show-token") or t.startswith(("--show-token=", "-t=")) or re.fullmatch(r"-[a-zA-Z]*t[a-zA-Z]*", t) for t in toks[2:]):
@@ -2513,11 +2534,23 @@ def _write_targets_raw(seg: Seg, root: Path) -> _Targets:
     cmd = Path(toks[0]).name
     operands = [a for a in toks[1:] if not a.startswith("-")]
     if cmd == "git":
-        # `git diff|log|show --output=<file>`, `git format-patch -o <dir>`.
-        t.files += _opt_values(toks, ("--output",))
-        t.trees += _opt_values(toks, ("--output-directory",))
-        if "format-patch" in toks:
-            t.trees += _opt_values(toks, ("-o",))
+        # `git diff|log|show --output=<file>`, `git format-patch -o <dir>`,
+        # `git archive -o <file>`, `git bundle create <file>`; under `git -C <dir>`.
+        g = _git(toks)
+        sub_args = g[1] if g else []
+        cdir = (g[2] if g else None) or ""
+        files = _opt_values(toks, ("--output",))
+        trees = _opt_values(toks, ("--output-directory",))
+        if sub_args[:1] in (["format-patch"], ["archive"]):
+            for k, a in enumerate(sub_args):
+                m = re.fullmatch(r"-[a-zA-Z]*o(.*)", a, re.S)
+                if m and not a.startswith("--"):
+                    v = m.group(1) or (sub_args[k + 1] if k + 1 < len(sub_args) else "")
+                    (trees if sub_args[0] == "format-patch" else files).append(v)
+        if sub_args[:2] == ["bundle", "create"] and len(sub_args) > 2:
+            files += [a for a in sub_args[2:] if not a.startswith("-")][:1]
+        t.files += [os.path.join(cdir, f) if cdir and not os.path.isabs(f) else f for f in files]
+        t.trees += [os.path.join(cdir, f) if cdir and not os.path.isabs(f) else f for f in trees]
     if cmd in _RM_LIKE:
         t.files += operands
         t.trees += operands
@@ -3369,7 +3402,12 @@ def check_bash(
                 p = _switch_problem(args, profile.ticket_branch, d)
                 if p:
                     return Decision("deny", p)
-            if role == "ticket" and args[:1] == ["rebase"] and any(a in ("-x", "--exec") or a.startswith(("--exec=", "-x")) for a in args[1:]):
+            runs = _GIT_RUNS.get(args[0]) if args else None
+            if role == "ticket" and args and args[0] in _GIT_RUNS and (runs is None or any(a in runs for a in args[1:])):
+                return Decision("deny", f"`git {' '.join(args[:2])}` runs a program the guard can't see; run it yourself")
+            if role == "ticket" and args[:1] == ["rebase"] and any(
+                re.fullmatch(r"--(?:e|ex|exe|exec)(?:=.*)?", a, re.S) or re.match(r"-[a-wyzA-Z]*x", a) for a in args[1:] if not a.startswith("--") or a.startswith("--e")
+            ):
                 return Decision("deny", "`git rebase --exec` runs commands the guard can't see; run them yourself between steps")
             if role == "ticket" and args[:1] == ["branch"]:  # whatever the role's source
                 p = _upstream_problem(args, d, current_branch if same else _branch_of(d))

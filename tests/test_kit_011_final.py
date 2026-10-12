@@ -366,17 +366,6 @@ def test_parameters_and_routes_outside_free_text(cmd, profile, tmp_path):
     assert act(profile, tmp_path, cmd, role="ticket").action == "deny", cmd
 
 
-@pytest.mark.parametrize(
-    "cmd",
-    [
-        "gh pr create --title '-Rate limit' --body 'x <!-- workflow:agent -->'",
-    ],
-)
-def test_free_text_is_left_alone(cmd, profile, tmp_path):
-    d = act(profile, tmp_path, cmd, role="ticket")
-    assert d.action == "allow", (cmd, d.reason)
-
-
 def test_bundled_repo_flag_is_linear():
     from workflow.guard import _gh_problem  # noqa: F401  (the path the regex runs on)
 
@@ -447,3 +436,76 @@ def test_many_words_stay_fast(profile, tmp_path):
     act(profile, tmp_path, "git status " + "a " * 5000, role="ticket")
     act(profile, tmp_path, "gh pr create " + "-t x " * 3000, role="ticket")
     assert time.perf_counter() - start < 3
+
+
+# ---------- the review of the heredoc rule ----------
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "gh pr merge 5 --repo=$(echo other/repo)",
+        "gh pr merge 5 --repo=\"$(echo other/repo)\"",
+        "gh pr merge 5 -R\"$(echo other/repo)\"",
+        "gh pr merge 5 --repo='https://github.com/other/repo?a b'",
+        "gh pr merge 5 -R'https://github.com/other/repo#a b'",
+        "gh pr merge 'https://github.com/other/repo/pull/5?a b'",
+        "gh pr merge 'https://github.com/other/repo/pull/5 '",
+        "git commit -m \"$(cat <<'EOF'\nx\nEOF)$1\nEOF\n)\"",
+        "git commit -m \"$(cat <<'EOF'\nx\nEOF) $1\nEOF\n)\"",
+        "git commit -m \"$(cat <<'EOF'\nx\nEOF)$(git push --force origin main)\nEOF\n)\"",
+        "echo \"$(cat <<'EOF'\nx\nEOF)$(rm .claude/settings.json)\nEOF\n)\"",
+        "git rebase -ix make main",
+        "git rebase -mx make main",
+        "git rebase --exe make main",
+        "git rebase --ex=make main",
+    ],
+)
+def test_heredoc_review_routes_refused(cmd, profile, tmp_path):
+    assert act(profile, tmp_path, cmd, role="ticket").action == "deny", cmd
+
+
+def test_heredoc_review_ordinary_still_allowed(profile, tmp_path):
+    for cmd in (
+        "git rebase -i main",
+        "git rebase -Xours main",
+        "gh pr view 5 -R acme/demo",
+        "gh pr view 'https://github.com/acme/demo/pull/5#issuecomment-1'",
+        "git commit -m \"$(cat <<'EOF'\nFix\n\nEOF is a word $1\nEOF\n)\"",
+    ):
+        d = act(profile, tmp_path, cmd, role="ticket")
+        assert d.action == "allow", (cmd, d.reason)
+
+
+def test_a_title_starting_with_dash_r_goes_in_a_heredoc(profile, tmp_path):
+    # gh would read `-Rate limit` as a repository flag's value; text like it goes in a heredoc.
+    assert act(profile, tmp_path, "gh pr create --title '-Rate limit' --body 'x <!-- workflow:agent -->'", role="ticket").action == "deny"
+    ok = "gh pr create --title \"$(cat <<'EOF'\n-Rate limit\nEOF\n)\" --body 'x <!-- workflow:agent -->'"
+    assert act(profile, tmp_path, ok, role="ticket").action == "allow"
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "git -c sequence.editor=make rebase -i main",
+        "GIT_SEQUENCE_EDITOR=make git rebase -i main",
+        "GIT_EDITOR='make;:' git commit",
+        "git bisect run make",
+        "git submodule foreach make",
+        "git difftool -x make",
+        "git filter-branch --tree-filter make",
+        "git mergetool --tool-cmd=make",
+        "git -C .claude diff --output=settings.json",
+        "git format-patch -ko .claude",
+        "git archive -o .claude/settings.json HEAD",
+        "git bundle create .claude/settings.json HEAD",
+    ],
+)
+def test_git_running_programs_or_writing_protected_paths(cmd, profile, tmp_path):
+    assert act(profile, tmp_path, cmd, role="ticket").action == "deny", cmd
+
+
+def test_ordinary_git_still_runs(profile, tmp_path):
+    for cmd in ("GIT_EDITOR=true git rebase --continue", "GIT_SEQUENCE_EDITOR=: git rebase -i main", "git bisect start", "git submodule update --init", "git archive -o /tmp/x.tar HEAD"):
+        d = act(profile, tmp_path, cmd, role="ticket")
+        assert d.action == "allow", (cmd, d.reason)
