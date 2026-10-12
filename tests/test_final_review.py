@@ -152,19 +152,44 @@ def test_a_symlinked_root_is_walked_as_its_target(tmp_path):
     assert act(prof, link, "find . -name '*.pyc' -delete") == "allow"
 
 
-def test_dependency_directories_are_not_walked_and_a_big_tree_says_so(profile, tmp_path, monkeypatch):
+def test_dependency_directories_are_walked_and_a_big_tree_says_so(profile, tmp_path, monkeypatch):
     from workflow import guard
 
     _project(tmp_path)
-    (tmp_path / "node_modules" / "x").mkdir(parents=True)
-    for k in range(30):
-        (tmp_path / "node_modules" / "x" / f"f{k}.js").write_text("")
-    monkeypatch.setattr(guard, "_WALK_LIMIT", 20)
+    (tmp_path / "node_modules" / "pkg").mkdir(parents=True)
+    (tmp_path / "node_modules" / "pkg" / ".env").write_text("X=1\n")
+    (tmp_path / "build").mkdir()
+    (tmp_path / "build" / ".env").write_text("X=1\n")
+    for cmd in ("find . -name build -exec rm -rf {} +", "find . -name node_modules -exec rm -rf {} +"):
+        assert act(profile, tmp_path, cmd) == "deny", cmd
     assert act(profile, tmp_path, "find . -name '*.pyc' -delete") == "allow"
-    for k in range(30):
-        (tmp_path / "src" / f"g{k}.py").write_text("")
+    monkeypatch.setattr(guard, "_WALK_LIMIT", 5)
     d = decide({"tool_name": "Bash", "tool_input": {"command": "find . -name '*.pyc' -delete"}}, profile, "ticket", tmp_path, "claude/build-1")
     assert d.action == "deny" and "too big" in d.reason
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "find . -name config -exec rm -f {} \\; -prune -o -name zzz -print",
+        "find . -name hooks -exec rm -rf {} + -prune -o -name zzz -print",
+        "find . \\( -name config -prune -o -name zzz \\) -exec rm -f {} +",
+        "find . -delete -name zzz",
+        "find . -exec rm -f {} \\; -name zzz",
+        "find . -true -delete -name zzz",
+        "find . -name '[[:alpha:]]onfig' -delete",
+        "find . -name '*[[:punct:]]sample' -delete",
+        "find -name config -delete",
+        "find -- . -name config -delete",
+        "find . -name lnk -exec cp x {} \\;",
+    ],
+)
+def test_find_expressions_the_guard_cant_read_exactly(cmd, profile, tmp_path):
+    (tmp_path / ".git" / "hooks").mkdir(parents=True)
+    (tmp_path / ".git" / "config").write_text("[core]\n")
+    (tmp_path / ".git" / "hooks" / "pre-commit.sample").write_text("")
+    (tmp_path / "lnk").symlink_to(tmp_path / ".git" / "config")
+    assert act(profile, tmp_path, cmd) == "deny", cmd
 
 
 def test_a_pruned_find_from_the_root(profile, tmp_path):
@@ -181,5 +206,6 @@ def test_default_branch_through_dev_stdin_and_escaped_keys(profile, tmp_path):
         "gh api -X PATCH repos/acme/demo --input /dev/stdin < db.json",
         "gh api -X PATCH repos/acme/demo --input esc.json",
         "gh api -X PATCH repos/acme/demo --input - < esc.json",
+        "gh api -X PATCH repos/acme/demo --input /proc/thread-self/fd/0 < db.json",
     ):
         assert act(profile, tmp_path, cmd, role="conductor", branch="main") == "deny", cmd

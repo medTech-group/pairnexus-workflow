@@ -1408,7 +1408,7 @@ class _ApiCall:
     stdin: bool
 
 
-_STDIN_FILES = ("-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0")
+_STDIN_FILE = re.compile(r"-|/dev/stdin|/dev/fd/0|/proc/(?:self|thread-self|\d+)/fd/0")
 
 
 def _api(toks: list[str]) -> _ApiCall | None:
@@ -1449,7 +1449,7 @@ def _api(toks: list[str]) -> _ApiCall | None:
             fields.append(val)
             if (t.startswith("-F") or t.startswith("--field")) and "=@" in val:
                 f = val.split("=@", 1)[1]
-                if f in _STDIN_FILES:
+                if _STDIN_FILE.fullmatch(f):
                     stdin = True
                 else:
                     files.append(f)
@@ -1457,7 +1457,7 @@ def _api(toks: list[str]) -> _ApiCall | None:
         if t == "--input" or t.startswith("--input="):
             f = t.split("=", 1)[1] if "=" in t else (toks[i + 1] if i + 1 < len(toks) else "")
             i += 1 if "=" in t else 2
-            if f in _STDIN_FILES:
+            if _STDIN_FILE.fullmatch(f):
                 stdin = True
             elif f:
                 files.append(f)
@@ -2183,15 +2183,25 @@ def _write_targets(seg: Seg, root: Path) -> _Targets:
 
 def _find_starts(toks: list[str]) -> list[str]:
     """find's start paths (the trees it searches)."""
-    out: list[str] = []
+    return toks[_find_start_index(toks) : _find_expr_index(toks)]
+
+
+def _find_start_index(toks: list[str]) -> int:
+    """Where find's start paths begin: after its options and a `--`."""
     i = 1
     while i < len(toks) and (toks[i] in ("-H", "-L", "-P") or re.fullmatch(r"-O\d*", toks[i]) or toks[i] == "-D"):
         i += 2 if toks[i] == "-D" else 1
-    for a in toks[i:]:
-        if a.startswith("-") or a in ("(", "!", ")", ","):
-            break
-        out.append(a)
-    return out
+    if i < len(toks) and toks[i] == "--":
+        i += 1
+    return i
+
+
+def _find_expr_index(toks: list[str]) -> int:
+    """Where find's expression begins, after its start paths."""
+    i = _find_start_index(toks)
+    while i < len(toks) and not (toks[i].startswith("-") or toks[i] in ("(", "!", ")", ",")):
+        i += 1
+    return i
 
 
 def _find_writes(toks: list[str], seg: Seg, root: Path) -> bool:
@@ -2223,7 +2233,7 @@ def _find_targets(toks: list[str], seg: Seg, root: Path, t: _Targets) -> None:
     if not _find_writes(toks, seg, root):
         return
     names = _find_names(toks)
-    for a in _find_starts(toks):
+    for a in _find_starts(toks) or ["."]:
         p = _abspath(a, seg.cwd)
         if p is not None and names is not None and p == os.path.realpath(str(root)):
             # From the root, limited by name: what it can match is checked against the files there.
@@ -2232,37 +2242,49 @@ def _find_targets(toks: list[str], seg: Seg, root: Path, t: _Targets) -> None:
         t.trees.append(a)
 
 
-_FIND_WIDENERS = {"-path", "-ipath", "-wholename", "-iwholename", "-regex", "-iregex", "-lname", "-ilname", "-o", "-or", "!", "-not", ","}
+_FIND_TESTS = {"-type", "-maxdepth", "-mindepth"}  # each takes one value
+_FIND_FLAGS = {"-a", "-and", "-depth", "-xdev", "-mount"}
 
 
 def _find_names(toks: list[str]) -> tuple[list[str], bool] | None:
-    """find's -name/-iname globs when they alone say what it matches, else None.
+    """find's -name/-iname globs when the expression is one this guard can read
+    exactly, else None (and the find is a write into its whole tree).
 
-    A leading `… -prune -o` clause only narrows what is searched, so the globs
-    come from what follows it. Any other -path, -regex, -o or negation, or a
-    glob in a dialect Python's fnmatch reads differently (`\\`, `[^`), gives None."""
-    rest = toks
-    for k in range(len(toks) - 1):
-        if toks[k] == "-prune" and toks[k + 1] in ("-o", "-or"):
-            rest = toks[k + 2 :]
-            break
-    if any(t in _FIND_WIDENERS for t in rest):
-        return None
-    names, nocase = [], False
-    for k, t in enumerate(rest[:-1]):
-        if t in ("-name", "-iname"):
-            g = rest[k + 1]
-            if "\\" in g or "[^" in g:
+    Read exactly: an optional leading `-name X -prune -o` or `-path X -prune -o`,
+    then only -name, -iname, -type, -maxdepth, -mindepth and plain flags, then
+    one action at the very end: `-delete`, or `-exec`/`-execdir … ;|+`. Globs
+    with `[` or `\\` (whose dialects differ from Python's fnmatch) aren't read."""
+    expr = toks[_find_expr_index(toks) :]
+    if len(expr) >= 4 and expr[0] in ("-name", "-path") and expr[2] == "-prune" and expr[3] in ("-o", "-or"):
+        expr = expr[4:]
+    if expr[-1:] == ["-delete"]:
+        expr = expr[:-1]
+    else:
+        k = next((j for j, t in enumerate(expr) if t in ("-exec", "-execdir")), None)
+        if k is None or expr[-1:] not in ([";"], ["+"]) or any(t in (";", "+") for t in expr[k + 1 : -1]):
+            return None
+        expr = expr[:k]
+    names, nocase, i = [], False, 0
+    while i < len(expr):
+        t = expr[i]
+        if t in ("-name", "-iname") and i + 1 < len(expr):
+            g = expr[i + 1]
+            if "[" in g or "\\" in g:
                 return None
             names.append(g)
             nocase = nocase or t == "-iname"
+            i += 2
+        elif t in _FIND_TESTS and i + 1 < len(expr):
+            i += 2
+        elif t in _FIND_FLAGS:
+            i += 1
+        else:
+            return None
     return (names, nocase) if names else None
 
 
 _WALK_LIMIT = 200_000
-# Dependency and build directories: not walked unless a protected pattern names them.
-_UNWALKED = {"node_modules", ".venv", "venv", ".tox", "__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".gradle", ".dart_tool", "target", "dist", "build"}
-_TOO_BIG = "the project is too big to check what this find matches by name; search a narrower directory"
+_TOO_BIG = "the project is too big to check what this find matches by name; search a narrower directory (`find src tests -name …`)"
 
 
 def _named_hit(names: list[str], nocase: bool, root: Path, patterns: list[str]) -> tuple[str | None, str | None]:
@@ -2272,13 +2294,11 @@ def _named_hit(names: list[str], nocase: bool, root: Path, patterns: list[str]) 
     if not patterns:
         return None, None
     globs = [n.casefold() for n in names] if nocase else names
-    named_dirs = {d for d in _UNWALKED if any(d in pat for pat in patterns)}
     real = os.path.realpath(str(root))
     protected: list[tuple[str, str]] = []
     matched_dirs: list[str] = []
     seen = 0
     for dirpath, dirnames, filenames in os.walk(real):
-        dirnames[:] = [d for d in dirnames if d not in _UNWALKED or d in named_dirs]
         for n, is_dir in [(d, True) for d in dirnames] + [(f, False) for f in filenames]:
             seen += 1
             if seen > _WALK_LIMIT:
@@ -2292,6 +2312,14 @@ def _named_hit(names: list[str], nocase: bool, root: Path, patterns: list[str]) 
                 continue
             if hit:
                 return hit, None
+            path = os.path.join(dirpath, n)
+            if os.path.islink(path):  # written through: its target
+                target = os.path.realpath(path)
+                trel = _rel(target, root)
+                if not _outside(trel):
+                    hit = contains_protected(trel, patterns) if os.path.isdir(target) else matches(trel, patterns)
+                    if hit:
+                        return hit, None
             if is_dir:
                 hit = contains_protected(rel, patterns)
                 if hit:
