@@ -286,9 +286,6 @@ def test_fifth_pass_bypasses(cmd, profile, tmp_path):
 @pytest.mark.parametrize(
     "cmd",
     [
-        "find . -name '*.pyc' -print0 | xargs -0 rm -f",
-        "find . -name '*.orig' | xargs rm",
-        "find . -type d -name __pycache__ | xargs rm -rf",
         "find src -name '*.orig' | xargs rm",
         "echo src/a.pyc | xargs rm",
         "printf '%s\\n' src/a.pyc | xargs rm",
@@ -300,3 +297,48 @@ def test_fifth_pass_bypasses(cmd, profile, tmp_path):
 def test_fifth_pass_ordinary_work(cmd, profile, tmp_path):
     _project(tmp_path)
     assert act(profile, tmp_path, cmd) == "allow", cmd
+
+
+# ---------- the sixth pass ----------
+
+
+def test_find_piped_to_xargs_from_the_root_points_to_delete(profile, tmp_path):
+    _project(tmp_path)
+    for cmd in ("find . -name '*.pyc' -print0 | xargs -0 rm -f", "find . -type d -name __pycache__ | xargs rm -rf"):
+        d = decide({"tool_name": "Bash", "tool_input": {"command": cmd}}, profile, "ticket", tmp_path, "claude/build-1")
+        assert d.action == "deny" and "-delete" in d.reason, cmd
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "echo .github/workflows/ci.yml | env -S 'xargs rm'",
+        "echo .github/workflows/ci.yml | env --split-string='xargs rm'",
+        "find . -name .github -prune -o -name '*.pyc' | xargs rm -rf",
+        "find -L . -name .gitconfig | xargs rm",
+        "find $PWD -name x | xargs rm -rf",
+        "echo 'x .github/workflows/ci.yml' | xargs rm",
+        "find src -name main.py -execdir env -C ../.github rm -rf {} \\;",
+        "find src -name main.py -execdir cp {} .env \\;",
+    ],
+)
+def test_sixth_pass_bypasses(cmd, profile, tmp_path):
+    _project(tmp_path)
+    assert act(profile, tmp_path, cmd) == "deny", cmd
+
+
+def test_sixth_pass_no_exception_with_deploy_commands(deploy_profile, tmp_path):
+    for cmd in ("find . -name '*.sh' -execdir bash {} \\;", "find . -name x -execdir python3 {} \\;"):
+        assert act(deploy_profile, tmp_path, cmd) in ("allow", "deny"), cmd
+
+
+def test_sixth_pass_ordinary_work(profile, tmp_path):
+    _project(tmp_path)
+    for cmd in ("git ls-files 'src/*.pyc' | xargs rm", "find . -name '*.pyc' -execdir rm -f {} +", "find . -name '*.pyc' -delete"):
+        assert act(profile, tmp_path, cmd) == "allow", cmd
+
+
+def test_a_find_matching_the_roots_own_name(profile, tmp_path):
+    _project(tmp_path)
+    assert act(profile, tmp_path, f"find $PWD -name {tmp_path.name} -exec rm -rf {{}} +", ) == "deny"
+    assert act(profile, tmp_path, "find . -name '*' -delete") == "deny"
