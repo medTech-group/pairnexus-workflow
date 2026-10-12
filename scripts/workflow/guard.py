@@ -212,7 +212,7 @@ def _strings(obj) -> list[str]:
     return out
 
 
-_PWD = re.compile(r"^(?:\$PWD\b|\$\{PWD\}|\$\(pwd\)|`pwd`)(?=/|$)")
+_PWD = re.compile(r"^(?:\$PWD\b|\$\{PWD(?:%/)?\}|\$\(\s*pwd(?:\s+-[LP])?\s*\)|`\s*pwd(?:\s+-[LP])?\s*`)(?=/|$)")
 _PROC_CWD = re.compile(r"^/proc/(?:self|thread-self|\$\$|\$BASHPID|\d+)/cwd(?=/|$)")
 
 
@@ -684,6 +684,8 @@ class Seg:
     heredoc: str | None = None  # a heredoc or here-string on stdin
     piped: "Seg | None" = None  # the command piping into this one
     assigns: list[str] = field(default_factory=list)  # NAME=value prefixes, env's too
+    fed: bool = False  # run by xargs: given file names on its stdin
+    fed_file: bool = False  # xargs reads them from a file (`-a f`, `< f`), not a pipe
 
 
 _KEYWORDS = {"{", "}", "!", "if", "then", "else", "elif", "fi", "do", "done", "while", "until", "esac", "coproc"}
@@ -878,6 +880,10 @@ def _segments_of(toks: list, root: Path, cwd: str | None, depth: int) -> list[Se
         if not toks2 and not item.redirects and not assigns and item.stdin is None and item.heredoc is None:
             continue
         seg = Seg(toks2, item.redirects, seg_cwd, item.stdin, item.heredoc, prev if piped else None, assigns)
+        head = words[: len(words) - len(toks2)]
+        if any(Path(w).name == "xargs" for w in head):
+            seg.fed = True
+            seg.fed_file = bool(item.stdin or item.heredoc) or any(w in ("-a", "--arg-file") or w.startswith("--arg-file=") or re.fullmatch(r"-a.+", w) is not None for w in head)
         segs.append(seg)
         prev = seg
         segs += _nested(seg, root, depth)
@@ -915,7 +921,7 @@ def _nested(seg: Seg, root: Path, depth: int) -> list[Seg]:
                     # -execdir runs in each match's own directory, which can't be seen here.
                     where = None if toks[k] in ("-execdir", "-okdir") else seg.cwd
                     if where is None:  # its `{}` is the match, which the find's own check covers
-                        sub = [w for w in sub if w != "{}"] or sub
+                        sub = [_MATCH if w == "{}" else w for w in sub]
                     s2 = Seg(sub, [], where, assigns=assigns)
                     out.append(s2)
                     out += _nested(s2, root, depth + 1)
@@ -2142,8 +2148,19 @@ def _git_targets(args: list[str], t: _Targets) -> None:
         (t.trees if source else t.files).extend(paths)
 
 
+_MATCH = "\x00find-match"  # -execdir's `{}`: the match itself, checked by the find
+
+
 def _write_targets(seg: Seg, root: Path) -> _Targets:
     """What one command writes, removes, links to, or can't show."""
+    t = _write_targets_raw(seg, root)
+    if any(_MATCH in x for x in t.files + t.trees + t.links):
+        keep = lambda xs: [x for x in xs if not (x == _MATCH or x.startswith(_MATCH + "/"))]  # noqa: E731
+        t.files, t.trees, t.links = keep(t.files), keep(t.trees), keep(t.links)
+    return t
+
+
+def _write_targets_raw(seg: Seg, root: Path) -> _Targets:
     toks = seg.words
     t = _Targets(files=list(seg.redirects))
     if not toks:
@@ -2153,7 +2170,7 @@ def _write_targets(seg: Seg, root: Path) -> _Targets:
     if cmd in _RM_LIKE:
         t.files += operands
         t.trees += operands
-        _fed_by_xargs(seg, root, t, operands, tree=True)
+        _fed_by_xargs(seg, root, t, tree=True)
     elif cmd in _TOUCH_LIKE:
         if cmd in {"chmod", "chown", "chgrp", "chattr", "setfacl"} and operands:
             operands = operands[1:]
@@ -2162,7 +2179,7 @@ def _write_targets(seg: Seg, root: Path) -> _Targets:
         t.files += operands
         if any(a in ("-R", "-r", "--recursive") for a in toks[1:]):
             t.trees += operands
-        _fed_by_xargs(seg, root, t, operands, tree=any(a in ("-R", "-r", "--recursive") for a in toks[1:]))
+        _fed_by_xargs(seg, root, t, tree=any(a in ("-R", "-r", "--recursive") for a in toks[1:]))
     elif cmd in _DEST_LAST:
         _copy_targets(cmd, toks, seg, root, t)
     elif cmd in ("tee", "sponge"):
@@ -2276,7 +2293,7 @@ _FIND_TESTS = {"-type", "-maxdepth", "-mindepth"}  # each takes one value
 _FIND_FLAGS = {"-a", "-and", "-depth", "-xdev", "-mount"}
 
 
-def _find_names(toks: list[str]) -> tuple[list[str], bool] | None:
+def _find_names(toks: list[str], producer: bool = False) -> tuple[list[str], bool] | None:
     """find's -name/-iname globs when the expression is one this guard can read
     exactly, else None (and the find is a write into its whole tree).
 
@@ -2287,7 +2304,10 @@ def _find_names(toks: list[str]) -> tuple[list[str], bool] | None:
     expr = toks[_find_expr_index(toks) :]
     if len(expr) >= 4 and expr[0] in ("-name", "-path") and expr[2] == "-prune" and expr[3] in ("-o", "-or"):
         expr = expr[4:]
-    if expr[-1:] == ["-delete"]:
+    if producer:  # it only prints: what it matches is what is fed on
+        if expr[-1:] in (["-print"], ["-print0"]):
+            expr = expr[:-1]
+    elif expr[-1:] == ["-delete"]:
         expr = expr[:-1]
     else:
         k = next((j for j, t in enumerate(expr) if t in ("-exec", "-execdir")), None)
@@ -2559,7 +2579,8 @@ def _search_roots(words: list[str], cwd: str | None) -> list[str] | None:
             plain = [a for a in rest if not a.startswith("-")]
             explicit = any(a in ("-e", "-f") for a in rest)
             paths = plain[1:] if args[0] == "grep" and not explicit else plain
-        return paths or [cdir or "."]
+        # A pathspec glob (`'*.yml'`) matches anywhere below: the whole tree.
+        return [(cdir or ".") if _GLOB_CHARS.search(p) else p for p in paths] or [cdir or "."]
     if name not in _SEARCHERS:
         return None
     if name == "find":
@@ -2593,21 +2614,49 @@ def _producer_words(word: str) -> list[str] | None:
     return []
 
 
-def _fed_by_xargs(seg: Seg, root: Path, t: _Targets, operands: list[str], tree: bool) -> None:
-    """A writer fed file names on a pipe (`echo x | xargs rm`, `xargs -I{} rm {}`):
-    its targets are what the producer names, or unknown when that can't be read."""
-    if seg.piped is None or (operands and not any("{}" in o for o in operands)):
+_PLAIN_WORD = re.compile(r"""^[^'"\\$`%]+$""")
+
+
+def _fed_by_xargs(seg: Seg, root: Path, t: _Targets, tree: bool) -> None:
+    """A writer run by xargs (`echo x | xargs rm`, `xargs -I% rm %`): its targets
+    are what the producer names, or unknown when that can't be read exactly."""
+    if not seg.fed:
         return
-    fed = _Targets()
-    _named_files([], seg, root, fed)
-    t.files += fed.files
-    if tree:
-        t.trees += fed.files
-    t.searched += fed.searched
-    words = seg.piped.words
+    unknown = "the file names xargs gives this command can't be seen here; name the files"
+    if seg.fed_file or seg.piped is None:
+        t.unknown = t.unknown or unknown
+        return
+    words, cwd = seg.piped.words, seg.piped.cwd
     name = Path(words[0]).name if words else ""
-    if not fed.files and not fed.searched and name not in ("echo", "printf", "cat"):
-        t.unknown = t.unknown or "the file names this command is fed on a pipe can't be seen here; name the files"
+    named: list[str] | None = None
+    if name == "echo" and not any(w.startswith("-") and "e" in w for w in words[1:2]):
+        args = [w for w in words[1:] if not re.fullmatch(r"-[neE]+", w)]
+        named = args if all(_PLAIN_WORD.match(w) for w in args) else None
+    elif name == "printf" and len(words) >= 2 and words[1] in ("%s\\n", "%s\n", "%s\\0", "%s "):
+        named = words[2:] if all(_PLAIN_WORD.match(w) for w in words[2:]) else None
+    elif name == "find":
+        names = _find_names(words, producer=True)
+        starts = _find_starts(words) or ["."]
+        real = os.path.realpath(str(root))
+        if names is not None and all(_abspath(a, cwd) == real for a in starts):
+            t.named_from_root.append(names)
+            return
+        t.searched += [(r, cwd) for r in starts]
+        return
+    else:
+        roots = _search_roots(words, cwd)
+        if roots is not None:
+            t.searched += [(r, cwd) for r in roots]
+            return
+    if named is None:
+        t.unknown = t.unknown or unknown
+        return
+    if cwd != seg.cwd:  # the producer named them from another directory
+        t.unknown = t.unknown or unknown
+        return
+    t.files += named
+    if tree:
+        t.trees += named
 
 
 def _named_files(files: list[str], seg: Seg, root: Path, t: _Targets) -> None:
@@ -2744,7 +2793,7 @@ def _shell_protected(seg: Seg, patterns: list[str], root: Path, t: _Targets | No
         rel = _rel(a, root) if a else ""
         if a is None or _holds_root(a, root) or (not _outside(rel) and contains_protected(rel, patterns)):
             return (
-                f"this edits in place the files a search of `{r}` finds, which can reach protected paths, so the guard "
+                f"this changes the files a search of `{r}` finds, which can reach protected paths, so the guard "
                 "can't see which files change; name the files, or search a narrower directory that holds no protected path"
             )
     unknown_dir = "; the shell's directory can't be followed here (after `cd -`, `cd ~` or `cd $X`), so use a path from the project root"

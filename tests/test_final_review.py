@@ -253,3 +253,50 @@ def test_stdin_spellings_normalised(profile, tmp_path):
     for f in ("/dev/./stdin", "//dev/stdin", "/proc/self/fd/../fd/0", "/proc/$$/fd/0"):
         cmd = f"gh api -X PATCH repos/acme/demo --input {f} < db.json"
         assert act(profile, tmp_path, cmd, role="conductor", branch="main") == "deny", cmd
+
+
+# ---------- the fifth pass ----------
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "find src -name main.py -execdir cp {} .env \\;",
+        "find src -name main.py -execdir mv {} ../.github/x \\;",
+        "find . -name '*.yml' | xargs rm",
+        "echo .github/workflows/ci.yml | xargs -I% rm %",
+        "echo .github/workflows/ci.yml | xargs rm src/a.pyc",
+        "echo '.git\\hub/workflows/ci.yml' | xargs rm",
+        "printf '.git%sub/workflows/ci.yml\\n' h | xargs rm",
+        "cat < evil.txt | xargs rm",
+        "git ls-files '*.yml' | xargs rm",
+        "(cd .github && echo workflows/ci.yml) | xargs rm",
+        "xargs rm < evil.txt",
+        "xargs -a evil.txt rm",
+        "rm -rf $(pwd -P)/.github",
+        "rm -rf $( pwd )/.github",
+        "rm -rf ${PWD%/}/.github",
+    ],
+)
+def test_fifth_pass_bypasses(cmd, profile, tmp_path):
+    _project(tmp_path)
+    assert act(profile, tmp_path, cmd) == "deny", cmd
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "find . -name '*.pyc' -print0 | xargs -0 rm -f",
+        "find . -name '*.orig' | xargs rm",
+        "find . -type d -name __pycache__ | xargs rm -rf",
+        "find src -name '*.orig' | xargs rm",
+        "echo src/a.pyc | xargs rm",
+        "printf '%s\\n' src/a.pyc | xargs rm",
+        "find . -name '*.pyc' -execdir rm -f {} +",
+        "yes | rm -i src/a.pyc",
+        "pytest | tee out.log",
+    ],
+)
+def test_fifth_pass_ordinary_work(cmd, profile, tmp_path):
+    _project(tmp_path)
+    assert act(profile, tmp_path, cmd) == "allow", cmd
