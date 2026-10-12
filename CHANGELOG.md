@@ -41,7 +41,7 @@ First version, from the pair-drop weekend run of 9–12 Oct 2026 and two indepen
   - `state init` runs the profile check; readiness reads `/pull/` blockers and "blocked by" mid-sentence;
   - the gate: an unchecked line's reason must say why, and its cap is counted per day;
   - the conductor and build-ticket skills: PRs waiting on the owner, auto-merge, path-filtered checks, and merging the base in rather than rebasing.
-- **The final Correctness pass** after round 3 changed: a deploy script run with `.`; the default branch sent on stdin from a file or a pipe; a writing `find` from the project root checked against the protected files there by name; a pull request as a blocker, resolved once merged; the gate's reasons read as words; "doesn't" and "won't" read as negations.
+- **The final Correctness pass** after round 3 changed: a deploy script run with `.`; the default branch sent on stdin from a file or a pipe; a writing `find` from the project root checked against the protected files there by name; a pull request as a blocker, resolved once merged; the gate's reasons read as words; "doesn't" and "won't" read as negations. A second pass on those fixes: a matched directory holding protected paths, a symlinked root, dependency directories left unwalked, `-prune -o`, `--input /dev/stdin` and an escaped `default_branch`.
 - **Deviations from the proposal, recorded:**
   - the profile is TOML (stdlib `tomllib`), not YAML;
   - `vendor update` writes `<file>.new` for conflicts and `vendor resolve` records a hand merge, rather than an automatic three-way merge;

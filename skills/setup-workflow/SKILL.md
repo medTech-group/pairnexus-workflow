@@ -127,7 +127,7 @@ List them in the PR body as a checklist, from `enforcement.md`:
 
 - [ ] Project explored; only open questions asked
 - [ ] Profile written; `WF profile check` passes; `profile.md` points to the rules
-- [ ] Kit vendored with its lock (or the plugin enabled), not both; earlier flow retired or made an addendum
+- [ ] Kit vendored with its lock, or the plugin enabled, only one of the two; earlier flow retired or made an addendum
 - [ ] Matt Pocock's per-repo docs written
 - [ ] CODEOWNERS, vendor CI check, `.gitignore`, CLAUDE.md section, labels, issue templates
 - [ ] PR opened with the owner's one-time steps

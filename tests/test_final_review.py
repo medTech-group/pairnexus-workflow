@@ -101,9 +101,9 @@ def test_a_pr_blocker_resolves_once_merged():
 def test_gate_reasons_are_words(tmp_path, monkeypatch):
     monkeypatch.setenv("TMPDIR", str(tmp_path))
     done = "- [x] a\n- [x] b\n- [ ] {}\nWORKFLOW-STATUS: done"
-    for ok in ("Docs — none changed", "Merged: left for the owner", "Docs: none", "Browser check skipped because no UI"):
+    for ok in ("Docs — none changed", "Merged: not yet, because the owner merges", "Docs: none", "Browser check skipped because no UI"):
         assert gate.verdict(done.format(ok)) is None, ok
-    for bare in ("Handle the cannot connect case", "Update the Why section", "Docs—x"):
+    for bare in ("Handle the cannot connect case", "Update the Why section", "Docs—x", "Merged under the merge rule (or left for the owner), notes posted", "PR opened with the owner's one-time steps"):
         v = gate.verdict(done.format(bare))
         assert v and gate.NEEDS_REASON in v, bare
 
@@ -115,3 +115,71 @@ def test_contracted_negations_are_not_blockers():
     for text in ("This doesn't get blocked by #4 any more.", "It won't be blocked by #4.", "We aren't blocked by #4."):
         assert blockers_of(text, "acme/demo") == [], text
     assert blockers_of("This is blocked by #4 for now.", "acme/demo") == [4]
+
+
+# ---------- the pass on the fixes above ----------
+
+
+def _project(root):
+    (root / ".github" / "workflows").mkdir(parents=True)
+    (root / ".github" / "workflows" / "ci.yml").write_text("on: push\n")
+    (root / "src" / "pkg").mkdir(parents=True)
+    (root / "src" / "pkg" / ".env").write_text("X=1\n")
+    (root / "src" / "a.pyc").write_text("")
+
+
+def test_a_matched_directory_holding_protected_paths(profile, tmp_path):
+    _project(tmp_path)
+    for cmd in (
+        "find . -name .github -exec rm -rf {} +",
+        "find . -name '.git*' -exec rm -rf {} +",
+        "find . -name pkg -exec rm -rf {} +",
+        "find . -name '\\.env' -delete",
+        "find . -name '[^x]env' -delete",
+    ):
+        assert act(profile, tmp_path, cmd) == "deny", cmd
+    assert act(profile, tmp_path, "find . -name '*.pyc' -delete") == "allow"
+
+
+def test_a_symlinked_root_is_walked_as_its_target(tmp_path):
+    real = tmp_path / "real"
+    real.mkdir()
+    _project(real)
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    prof = parse(json.loads(json.dumps(BASE_PROFILE)), link)
+    assert act(prof, link, "find . -name ci.yml -delete") == "deny"
+    assert act(prof, link, "find . -name '*.pyc' -delete") == "allow"
+
+
+def test_dependency_directories_are_not_walked_and_a_big_tree_says_so(profile, tmp_path, monkeypatch):
+    from workflow import guard
+
+    _project(tmp_path)
+    (tmp_path / "node_modules" / "x").mkdir(parents=True)
+    for k in range(30):
+        (tmp_path / "node_modules" / "x" / f"f{k}.js").write_text("")
+    monkeypatch.setattr(guard, "_WALK_LIMIT", 20)
+    assert act(profile, tmp_path, "find . -name '*.pyc' -delete") == "allow"
+    for k in range(30):
+        (tmp_path / "src" / f"g{k}.py").write_text("")
+    d = decide({"tool_name": "Bash", "tool_input": {"command": "find . -name '*.pyc' -delete"}}, profile, "ticket", tmp_path, "claude/build-1")
+    assert d.action == "deny" and "too big" in d.reason
+
+
+def test_a_pruned_find_from_the_root(profile, tmp_path):
+    _project(tmp_path)
+    assert act(profile, tmp_path, "find . -name node_modules -prune -o -name '*.pyc' -delete") == "allow"
+    assert act(profile, tmp_path, "find . -name node_modules -prune -o -name '*.yml' -delete") == "deny"
+    assert act(profile, tmp_path, "find . -name node_modules -prune -o -name '*.pyc' -o -name '*.yml' -delete") == "deny"
+
+
+def test_default_branch_through_dev_stdin_and_escaped_keys(profile, tmp_path):
+    (tmp_path / "db.json").write_text('{"default_branch": "dev"}')
+    (tmp_path / "esc.json").write_text('{"default\\u005fbranch": "dev"}')
+    for cmd in (
+        "gh api -X PATCH repos/acme/demo --input /dev/stdin < db.json",
+        "gh api -X PATCH repos/acme/demo --input esc.json",
+        "gh api -X PATCH repos/acme/demo --input - < esc.json",
+    ):
+        assert act(profile, tmp_path, cmd, role="conductor", branch="main") == "deny", cmd

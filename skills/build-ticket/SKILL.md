@@ -96,7 +96,7 @@ End every turn with a status line. The checklist gate checks it in ticket sessio
 WORKFLOW-STATUS: done | waiting | needs-human | stopped
 ```
 
-Use `waiting` when CI is running and a check-in is scheduled. With `done`, include the checklist below, each line marked `[x]`, or left `[ ]` with its reason in words ("because …", "not needed", "n/a", "left for the owner", or after a spaced dash: "- [ ] Docs — none changed"). The gate refuses an unchecked line without one.
+Use `waiting` when CI is running and a check-in is scheduled. With `done`, include the checklist below, each line marked `[x]`, or left `[ ]` with its reason in words ("because …", "not needed", "n/a", "skipped because …", or after a spaced dash: "- [ ] Docs — none changed"). The gate refuses an unchecked line without one.
 
 - [ ] Blockers closed and the spec read
 - [ ] Every acceptance criterion met, each with its test

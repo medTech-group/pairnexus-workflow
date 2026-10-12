@@ -1408,6 +1408,9 @@ class _ApiCall:
     stdin: bool
 
 
+_STDIN_FILES = ("-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0")
+
+
 def _api(toks: list[str]) -> _ApiCall | None:
     """`gh api`'s method, path, fields and files, else None."""
     if len(toks) < 2 or Path(toks[0]).name != "gh":
@@ -1446,7 +1449,7 @@ def _api(toks: list[str]) -> _ApiCall | None:
             fields.append(val)
             if (t.startswith("-F") or t.startswith("--field")) and "=@" in val:
                 f = val.split("=@", 1)[1]
-                if f == "-":
+                if f in _STDIN_FILES:
                     stdin = True
                 else:
                     files.append(f)
@@ -1454,7 +1457,7 @@ def _api(toks: list[str]) -> _ApiCall | None:
         if t == "--input" or t.startswith("--input="):
             f = t.split("=", 1)[1] if "=" in t else (toks[i + 1] if i + 1 < len(toks) else "")
             i += 1 if "=" in t else 2
-            if f == "-":
+            if f in _STDIN_FILES:
                 stdin = True
             elif f:
                 files.append(f)
@@ -1605,7 +1608,7 @@ def _api_problem(toks: list[str], profile: Profile, role: str, cwd: str | None =
         body = call.rest + "".join("\n" + (_read_text(f, cwd) or "") for f in call.files)
         if call.stdin:
             body += "\n" + raw + ("\n" + read() if read is not None else "")
-        if _field(call, "default_branch") is not None or "default_branch" in body:
+        if _field(call, "default_branch") is not None or re.search(r"default(?:_|\\u005f)branch", body, re.I):
             return "changing the repository's default branch through the API is never allowed"
     for key in ("base", "branch"):
         v = _field(call, key)
@@ -2233,42 +2236,71 @@ _FIND_WIDENERS = {"-path", "-ipath", "-wholename", "-iwholename", "-regex", "-ir
 
 
 def _find_names(toks: list[str]) -> tuple[list[str], bool] | None:
-    """find's -name/-iname globs when they alone say what it matches (no -path,
-    -regex, -o or negation), else None."""
-    if any(t in _FIND_WIDENERS for t in toks):
+    """find's -name/-iname globs when they alone say what it matches, else None.
+
+    A leading `… -prune -o` clause only narrows what is searched, so the globs
+    come from what follows it. Any other -path, -regex, -o or negation, or a
+    glob in a dialect Python's fnmatch reads differently (`\\`, `[^`), gives None."""
+    rest = toks
+    for k in range(len(toks) - 1):
+        if toks[k] == "-prune" and toks[k + 1] in ("-o", "-or"):
+            rest = toks[k + 2 :]
+            break
+    if any(t in _FIND_WIDENERS for t in rest):
         return None
     names, nocase = [], False
-    for k, t in enumerate(toks[:-1]):
+    for k, t in enumerate(rest[:-1]):
         if t in ("-name", "-iname"):
-            names.append(toks[k + 1])
+            g = rest[k + 1]
+            if "\\" in g or "[^" in g:
+                return None
+            names.append(g)
             nocase = nocase or t == "-iname"
     return (names, nocase) if names else None
 
 
-_WALK_LIMIT = 100_000
+_WALK_LIMIT = 200_000
+# Dependency and build directories: not walked unless a protected pattern names them.
+_UNWALKED = {"node_modules", ".venv", "venv", ".tox", "__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".gradle", ".dart_tool", "target", "dist", "build"}
+_TOO_BIG = "the project is too big to check what this find matches by name; search a narrower directory"
 
 
-def _named_hit(names: list[str], nocase: bool, root: Path, patterns: list[str]) -> str | None:
-    """A protected path under the root whose name one of `names` matches (a
-    find from the root would reach it), or a pattern when the tree is too big
-    to check."""
+def _named_hit(names: list[str], nocase: bool, root: Path, patterns: list[str]) -> tuple[str | None, str | None]:
+    """(the protected path a find from the root reaches by name, or None; why
+    it couldn't be checked, or None). A matched name reaches a protected path
+    when it is one or is a directory holding one (`-exec rm -rf {} +`)."""
     if not patterns:
-        return None
+        return None, None
     globs = [n.casefold() for n in names] if nocase else names
+    named_dirs = {d for d in _UNWALKED if any(d in pat for pat in patterns)}
+    real = os.path.realpath(str(root))
+    protected: list[tuple[str, str]] = []
+    matched_dirs: list[str] = []
     seen = 0
-    for dirpath, dirnames, filenames in os.walk(str(root)):
-        for n in dirnames + filenames:
+    for dirpath, dirnames, filenames in os.walk(real):
+        dirnames[:] = [d for d in dirnames if d not in _UNWALKED or d in named_dirs]
+        for n, is_dir in [(d, True) for d in dirnames] + [(f, False) for f in filenames]:
             seen += 1
             if seen > _WALK_LIMIT:
-                return patterns[0]
-            name = n.casefold() if nocase else n
-            if not any(fnmatch.fnmatchcase(name, g) for g in globs):
-                continue
+                return None, _TOO_BIG
             rel = _rel(os.path.join(dirpath, n), root)
             hit = matches(rel, patterns)
             if hit:
-                return hit
-    return None
+                protected.append((rel, hit))
+            name = n.casefold() if nocase else n
+            if not any(fnmatch.fnmatchcase(name, g) for g in globs):
+                continue
+            if hit:
+                return hit, None
+            if is_dir:
+                hit = contains_protected(rel, patterns)
+                if hit:
+                    return hit, None
+                matched_dirs.append(rel)
+    for rel, hit in protected:
+        if any(rel.startswith(d + "/") for d in matched_dirs):
+            return hit, None
+    return None, None
 
 
 _VIMS = {"vim", "vi", "nvim", "vimdiff", "view", "ex"}
@@ -2650,7 +2682,9 @@ def _shell_protected(seg: Seg, patterns: list[str], root: Path, t: _Targets | No
         if hit:
             return f"writing into, removing or moving `{tgt}` touches a protected path ({hit})" + (unknown_dir if seg.cwd is None else "")
     for names, nocase in t.named_from_root:
-        hit = _named_hit(names, nocase, root, patterns)
+        hit, unchecked = _named_hit(names, nocase, root, patterns)
+        if unchecked:
+            return unchecked
         if hit:
             return f"this find from the project root matches a protected path ({hit}) by name; search a narrower directory"
     for src in t.links:
