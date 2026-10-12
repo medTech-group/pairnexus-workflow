@@ -2166,6 +2166,8 @@ def _only_the_match(seg: Seg, root: Path) -> bool:
     write into the match (`cp x {}`, `tar -C {}`) is not one."""
     toks = seg.words
     name = Path(toks[0]).name if toks else ""
+    if any("$(" in w or "`" in w or "<(" in w for w in toks):  # names worked out by the shell, in a directory we can't see
+        return False
     if name not in (_RM_LIKE | _TOUCH_LIKE) and not (name in ("sed", "perl", "awk", "gawk") and _inplace_edit(toks) is not None):
         return False
     t = _write_targets(seg, root)
@@ -2593,10 +2595,8 @@ _SEARCHERS = {"grep", "egrep", "fgrep", "rg", "ag", "ack", "fd", "fdfind", "find
 def _glob_dir(pathspec: str, cdir: str | None) -> str:
     """A pathspec's directory: itself, or for a glob (`'src/*.py'`, `'*.yml'`)
     the literal directory before it, which it matches anywhere below."""
-    if pathspec.startswith(":"):  # a magic pathspec
-        m = re.fullmatch(r":(?:/|\((?:top|glob|icase|literal)(?:,(?:top|glob|icase|literal))*\))(.+)", pathspec)
-        # `:(top)src`, `:/src`: that path from the top; an exclusion or anything else: the whole tree
-        return _glob_dir(m.group(1), None) if m and not m.group(1).startswith((":", "!", "^")) else "."
+    if pathspec.startswith(":"):  # a magic pathspec (`:/`, `:(top)`, `:(icase)`, `:!`): the whole tree
+        return "."
     m = _GLOB_CHARS.search(pathspec)
     if not m:
         return pathspec
@@ -2773,7 +2773,7 @@ def _candidates(target: str, cwd: str | None) -> list[str]:
     return out
 
 
-_TREE_WALK_LIMIT = 20_000
+_TREE_WALK_LIMIT = 50_000
 
 
 def _tree_holds(abspath: str, root: Path, patterns: list[str]) -> str | None:

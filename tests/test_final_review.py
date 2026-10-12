@@ -411,6 +411,28 @@ def test_eighth_pass_ordinary_work(profile, tmp_path):
         "find src -name '*.py' -execdir sed -i s/a/b/ {} +",
         "find src -name '*.sh' -execdir chmod +x {} +",
         "find . -name '*.pyc' -execdir rm -f {} +",
-        "git grep -l foo -- ':(top)src' | xargs sed -i s/a/b/",
     ):
         assert act(profile, tmp_path, cmd) == "allow", cmd
+
+
+# ---------- the ninth pass ----------
+
+
+def test_ninth_pass_bypasses(profile, tmp_path):
+    _project(tmp_path)
+    (tmp_path / "x").write_text(str(tmp_path / ".github" / "workflows" / "ci.yml"))
+    for cmd in (
+        "cd src && git ls-files ':/.github' | xargs rm",
+        "cd src && git ls-files -z ':(top).github/workflows' | xargs -0 rm -f",
+        "git ls-files ':(icase)Src' | xargs rm",
+        "git grep -l foo -- ':(top)src' | xargs sed -i s/a/b/",
+        "find src -name a.py -execdir sed -i s/a/b/ {} $(cat x) \\;",
+        "find src -name a.py -execdir sed -i s/a/b/ {} `cat x` \\;",
+    ):
+        assert act(profile, tmp_path, cmd) == "deny", cmd
+
+
+def test_a_tree_between_the_old_and_new_walk_limits(profile, tmp_path, monkeypatch):
+    from workflow import guard
+
+    assert guard._TREE_WALK_LIMIT >= 50_000
