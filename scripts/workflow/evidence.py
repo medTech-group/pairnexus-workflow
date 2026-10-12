@@ -197,7 +197,13 @@ def run_shard(
     cwd = root / suite.cwd if suite.cwd else root
     log_root = log_root or root
     t0 = time.monotonic()
-    p = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True)
+    try:
+        p = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True)
+    except OSError as e:  # the suite's cwd is missing, or the shell can't start
+        why = f"couldn't run the suite in `{suite.cwd or '.'}`: {e.strerror or e}" + (
+            f" (the suite's cwd `{suite.cwd}` doesn't exist here)" if suite.cwd and not cwd.is_dir() else ""
+        )
+        p = subprocess.CompletedProcess(cmd, 127, "", why)
     seconds = round(time.monotonic() - t0, 1)
     out = p.stdout + p.stderr
     log_name = ""
@@ -281,6 +287,10 @@ def collect(
     last_failed = False
     log_root = store.parent.parent if store else root
     for suite in suites:
+        if empty_ok and suite.cwd and not (root / suite.cwd).is_dir():
+            if notes is not None:
+                notes.append(f"suite {suite.name}: its cwd `{suite.cwd}` doesn't exist here, so it counts 0")
+            continue
         parts = shards(suite, root, empty_ok=empty_ok)
         if not parts and notes is not None:
             notes.append(f"suite {suite.name}: no files match {suite.files!r} here, so it counts 0")
@@ -337,8 +347,8 @@ def base_count_from_ref(
 ) -> BaseCount:
     """Run the same suites on a worktree of `ref` under .workflow/base-<sha>/, then
     remove it. The profile's `commands.setup` runs there first; nothing else is
-    copied or linked in. A suite whose files match nothing on the base counts 0,
-    with a note. Never raises for the base run itself: a run that errors or a
+    copied or linked in. A suite whose files match nothing on the base, or whose
+    cwd isn't there, counts 0, with a note. Never raises for the base run itself: a run that errors or a
     shard that fails gives a BaseCount with `problem` and no count."""
     base_sha = sha or resolve_ref(root, ref)
     out = BaseCount(ref=ref, sha=base_sha, count=None)
@@ -369,6 +379,9 @@ def base_count_from_ref(
         )
     except EvidenceError as e:
         out.problem = str(e)
+        return out
+    except OSError as e:
+        out.problem = f"couldn't run the suites in the base worktree ({type(e).__name__}: {e})"
         return out
     finally:
         remove()

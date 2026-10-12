@@ -32,7 +32,7 @@ Skip this if the briefing says the conductor has claimed it. Otherwise, before a
 - **Tests first:** use `tdd` (Matt Pocock's) at the spec's seams. Write a failing test for each acceptance criterion, then the code. The seams the spec names are already agreed with the owner: they count as confirmed, so in a ticket session `tdd`'s "confirm with the user" step is satisfied and you never stop to ask. A seam the spec doesn't name is a decision the ticket leaves open (below).
 - **Commands:** the profile's `commands.typecheck` and `commands.test_file` as you go. Run the full suite once the ticket is built.
 - **Tests that don't fail by chance:** compute dates and times at the point of use, never at import. Never assert that a random id lacks some digit string.
-- **Commit as you go,** with clear messages.
+- **Commit and push as you go,** with clear messages: push your branch after each commit, so the work is never only in this container and the conductor sees progress.
 - **Stay within the flow's never-list** (§5). The guard hook stops most breaches: if it refuses something, the refusal is the answer, not a puzzle to get around.
 - **Checks you can't run here:** for a check that needs a real device, account or service, build against the spec's fakes. Add its by-hand step as a checkbox under this ticket on the run's by-hand issue, or on the ticket in attended work. Never mark it done.
 - **Decisions the ticket leaves open:** follow the briefing. By default, take the choice most consistent with the spec, ADRs and the project's rules, and record it for the PR body.
@@ -63,6 +63,7 @@ Then subscribe to its activity. Schedule a check-in about every `run.check_in_mi
 
 - **A required check is red:** find the cause (use `diagnosing-bugs` when it's unclear) and push a fix. "Flake" isn't a cause: a test that fails by chance gets fixed so it can't.
 - **The base branch moved:** `git fetch origin <base> && git merge origin/<base>`, resolve any conflicts keeping both sides' intent, rerun the tests, and push. Never rebase or force-push.
+- **A required check that never starts** because its workflow is path-filtered (the profile's `ci.path_filtered`): in `session` mode it counts as passed once the evidence is posted; in `auto-merge` mode GitHub waits for it, so comment that the PR needs the owner to merge and end `waiting`.
 - **A check the charter waives:** it counts as passed only when its log shows a killed marker (the profile's `ci.killed_markers`) rather than a test failure, and only with the evidence below.
 - **Still red after three fix attempts:**
   1. label the ticket `needs-human`;
@@ -79,7 +80,7 @@ Then subscribe to its activity. Schedule a check-in about every `run.check_in_mi
 
    | Mode | What you do |
    |---|---|
-   | `auto-merge` | Enable auto-merge with a merge commit (`enable_pr_auto_merge`, or `gh pr merge <n> --auto --merge`). Stay with it: at each check-in, if the PR is behind the base (`mergeable_state` behind), update it (`gh api -X PUT repos/<repo>/pulls/<n>/update-branch`) and end the turn `waiting`, until GitHub has merged it |
+   | `auto-merge` | First post your notes for the next tickets (step 4) on the tracking issue, then enable auto-merge with a merge commit (`enable_pr_auto_merge`, or `gh pr merge <n> --auto --merge`). Stay with it: at each check-in, if the PR is behind the base (`mergeable_state` behind), update it (`gh api -X PUT repos/<repo>/pulls/<n>/update-branch`) and end the turn `waiting`, until GitHub has merged it |
    | `session` | Merge it yourself with a merge commit |
    | `owner`, or attended work | Say it's ready, and leave it |
 

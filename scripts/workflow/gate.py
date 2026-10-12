@@ -5,14 +5,16 @@ A ticket session ends each turn with a status line:
     WORKFLOW-STATUS: done | waiting | needs-human | stopped
 
 `done` also needs the flow's checklist (at least three `- [x]` / `- [ ]` lines),
-and every unchecked line must say why (`because`, `why`, a dash or a colon).
+and every unchecked line must say why: `because`, `why`, ` — `, ` - `, `n/a`
+or `not ` ("not needed"). A bare link or a colon isn't a reason.
 Text inside ``` fences is ignored when looking for both, so a quoted status line
 or checklist doesn't count.
 `waiting` (CI running, a check-in scheduled), `needs-human` and `stopped` end
 the turn as they are. Without a valid status the gate asks the session to add
 one, once per turn: never while a stop hook is already making it continue
 (`stop_hook_active`), so it can't trap a session in a loop. A cap of
-`MAX_BLOCKS` a session is a last safety net.
+`MAX_BLOCKS` a session a day (UTC) is a last safety net, so a long ticket
+session keeps the gate the next day.
 """
 
 from __future__ import annotations
@@ -20,12 +22,13 @@ from __future__ import annotations
 import os
 import re
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 STATUS = re.compile(r"^\s*\**WORKFLOW-STATUS\**\s*:\s*\**\s*(done|waiting|needs-human|stopped)\b", re.I | re.M)
 CHECK_LINE = re.compile(r"^\s*[-*]\s*\[[ xX]\]\s+\S", re.M)
 UNCHECKED = re.compile(r"^\s*[-*]\s*\[ \]\s+(\S.*)$", re.M)
-WHY = re.compile(r"because|why|—| - |:", re.I)
+WHY = re.compile(r"because|why| — | - |n/a|not ", re.I)
 FENCED = re.compile(r"^[ \t]*```.*?^[ \t]*```[^\n]*$", re.M | re.S)
 MAX_BLOCKS = 40
 NEEDS_REASON = "an unchecked checklist line needs its reason"
@@ -36,9 +39,11 @@ def _unfenced(message: str) -> str:
     return FENCED.sub("", message or "")
 
 
-def _counter(session_id: str) -> Path:
+def _counter(session_id: str, now: datetime | None = None) -> Path:
+    """The session's block count for the day (UTC)."""
     safe = re.sub(r"[^A-Za-z0-9_-]", "", session_id or "unknown")[:80]
-    return Path(os.environ.get("TMPDIR") or tempfile.gettempdir()) / f"workflow-gate-{safe}"
+    day = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%d")
+    return Path(os.environ.get("TMPDIR") or tempfile.gettempdir()) / f"workflow-gate-{safe}-{day}"
 
 
 def verdict(message: str) -> str | None:
@@ -95,14 +100,14 @@ def _last_message(event: dict) -> str:
         return ""
 
 
-def decide(event: dict) -> str | None:
+def decide(event: dict, now: datetime | None = None) -> str | None:
     """The reason to block, or None to let the turn end."""
     if event.get("stop_hook_active"):
         return None
     missing = verdict(_last_message(event))
     if missing is None:
         return None
-    c = _counter(event.get("session_id") or "")
+    c = _counter(event.get("session_id") or "", now)
     try:
         n = int(c.read_text()) if c.exists() else 0
     except (OSError, ValueError):

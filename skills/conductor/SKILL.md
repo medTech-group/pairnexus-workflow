@@ -28,7 +28,7 @@ Collect every problem for the kick-off, each with its fix.
 
 **This session**
 - `echo $WORKFLOW_ROLE` prints `conductor`.
-- `get_session` (no id): `session_context.permission_mode` must not prompt for tools.
+- `get_session` (no id): `session_context.permission_mode` must not prompt for tools. If the field isn't there, ask the owner in the kick-off which mode this session runs in.
 - A child session can't have a more permissive mode than yours, so the profile's `run.permission_mode` must be no more permissive than your own.
 
 **The project**
@@ -42,8 +42,11 @@ Collect every problem for the kick-off, each with its fix.
 
 **The work**
 - `WF ready --fetch`: what's ready, blocked and on what, owner tasks, areas.
-- Leftovers: open PRs from `claude/build-*` branches, and tickets labelled `workflow:in-progress`. The owner decides about them in the kick-off: either adopt them into this run as queued, or release them by removing the label.
+- Leftovers: open PRs from branches matching `run.ticket_branch`, and tickets labelled `workflow:in-progress`. The owner decides about them in the kick-off: either adopt them into this run as queued, or release them by removing the label.
 - The base branch's CI is green. Note its duration as `ci_minutes_at_start`.
+
+**Capacity**
+- If the account's usage is near its limit, say so in the kick-off; you see this when a session reports a usage warning.
 
 **The last run**
 - The most recent issue labelled `workflow:run`.
@@ -56,17 +59,17 @@ With `AskUserQuestion`, at most four questions to a round, recommended answers f
 1. **The findings.** Show the pre-flight's problems first. For each safety gap, ask "Fix it first / Go ahead without it"; each gap accepted goes in `accepted_gaps`. Also:
    - confirm the ticket environment holds no credentials;
    - decide about any leftovers.
-2. **The charter's questions.** `WF charter questions` lists them with defaults that fit the profile.
-   - With a previous charter, first run `WF charter reuse old.json > charter.json` (approval, amendments, end time and accepted gaps cleared). Ask "Same as last time?", showing the tickets ready now and `WF charter diff old.json charter.json`. Then ask only what the owner wants changed.
+2. **The charter's questions.** `WF charter questions` lists them; `WF charter defaults > charter.json` starts a first run's charter with defaults that fit the profile, and the answers change it.
+   - With a previous charter, first run `WF charter reuse old.json > charter.json` (approval, amendments, end time, accepted gaps and plan cleared). Ask "Same as last time?", showing the tickets ready now, the old exclusions, and `WF charter diff old.json charter.json`. Then ask only what the owner wants changed.
    - Always ask the end time.
-3. **The plan.** The tickets in the order you'll start them, with their areas. When `follow_unblocked` is false, this list is the whole scope: set `charter.plan` and `scope.tickets` to it.
+3. **The plan.** The ready tickets with their areas. They start infra first, then by number, one per area at a time; say so. Set `charter.plan` to this list. When `follow_unblocked` is false, it is the whole scope: pin `scope.tickets` to it with `WF charter pin-plan charter.json > charter.json.tmp && mv charter.json.tmp charter.json`.
 
 Then:
 
 4. Run `WF charter validate charter.json` and ask again about anything it reports.
 5. Choose the run id (`yyyy-mm-dd-word`).
-6. Create the **by-hand issue** from `TEMPLATES/by-hand-issue.md`.
-7. Create the **tracking issue** from `TEMPLATES/tracking-issue.md`, label `workflow:run`, filling in `RUN_ID`, `BY_HAND_ISSUE` and `CHARTER` (`WF charter markdown charter.json --tickets "<n>:<area>,…"`).
+6. Create the **by-hand issue** from `TEMPLATES/by-hand-issue.md`, filling in `RUN_ID`.
+7. Create the **tracking issue** from `TEMPLATES/tracking-issue.md`, label `workflow:run`, filling in `RUN_ID`, `BY_HAND_ISSUE` and `CHARTER` (`WF charter markdown charter.json --tickets "<n>:<area>,…"`). Then link it from the by-hand issue.
 8. Show the owner the rendered charter and ask "Go / Change something".
 9. Record the go:
    - set `approved` to `{by: <profile project.owner>, at: <now, UTC>, source: "chat <time>: <the owner's words>"}`;
@@ -78,7 +81,7 @@ Then:
     WF state init --charter charter.json --run-id <id> --by-hand <n> --read-through <id of the newest comment on the tracking issue, or 0>
     ```
 
-    Add `ticket_environment`, `kickoff_tickets` (the plan), `ci_minutes_at_start` and `status: "running"`. Write it to the issue.
+    Add `ticket_environment`, `kickoff_tickets` (the plan), `ci_minutes_at_start` and `status: "running"`. Write it to the issue, and replace the issue's charter section with the approved one (`WF charter markdown`). Re-render that section whenever an amendment changes the charter.
 12. **Start now:** run check-in steps 5, 8 and 9 below at once, then arm the first check-in with `send_later` (`limits.check_in_minutes`).
 
 Nothing starts before the charter is approved.
@@ -86,6 +89,10 @@ Nothing starts before the charter is approved.
 ## Each check-in
 
 Every `limits.check_in_minutes`, by `send_later` to this same session. A check-in is done when the state is written, the issue's "Now" line is current, and the next check-in is armed, or the run has stopped.
+
+Keep scratch files (`charter.json`, `body.md`, `state.json`, issue JSON) in `.workflow/run/`, which git ignores.
+
+**0. Stopping already?** If the state's `status` is `stopping`, skip to "Stop the run", step 2, and carry on from where it left off. Never record `stopped_head` again for a session that has one.
 
 **1. Read the state.** It is the whole truth. If your context was summarised or this is a new session ("conductor resume"), rebuild from the state and the tracking issue's comments after `comments_read_through`.
 
@@ -96,7 +103,7 @@ Every `limits.check_in_minutes`, by `send_later` to this same session. A check-i
 - **Wind down** (start nothing new; let running sessions and open PRs finish, then stop) when any holds:
   - `limits.max_sessions` sessions have been started;
   - a `stop_run_on` condition is met.
-- **Done** (stop): nothing in scope is ready or queued, no session is running, and every run PR is merged or set aside.
+- **Done** (stop): nothing in scope is ready or queued, no session is running, and every run PR is merged, set aside, or waiting for the owner (`merge.mode: owner`).
 
 **3. The owner's comments.** For each comment after `comments_read_through` by `project.owner`:
 1. Apply its change to the charter's fields. "Extend to Monday 9am" changes `limits.ends_at`; "also #140" adds to `scope.tickets` and `plan`; "stop releasing" sets `release.when` to never.
@@ -115,17 +122,19 @@ Then act on what you find:
 
 | What GitHub shows | What you do |
 |---|---|
-| **Merged** | Mark the ticket `merged` with `merged_at`, `pr` and `rounds` (from the PR's findings table). Read its notes for the next tickets. Archive the session, then delete its own pending check-ins (`list_triggers`; those whose `persistent_session_id` is the session). |
+| **Merged** | Mark the ticket `merged` with `merged_at`, `pr` and `rounds` (from the PR's findings table). Once the session's "#n merged in #PR" note is on the tracking issue (or one check-in later, if it never comes), read its notes for the next tickets, delete its own pending check-ins (`list_triggers`; those whose `persistent_session_id` is the session), then archive it. |
 | **PR open, behind the base** (`mergeable_state` is `behind`) | Update the branch: `gh api -X PUT repos/<repo>/pulls/<pr>/update-branch`, or `update_pull_request_branch`. Auto-merge never does this itself, so it has to happen at every check-in until it merges. |
+| **PR open, green, merge rule met** (flow §4), `auto-merge` mode, but auto-merge isn't enabled (the session's permissions refused it) | Enable it under the charter's `merge` grant: `enable_pr_auto_merge` (merge commit), or `gh pr merge <n> --auto --merge`. |
+| **PR open, ready, `merge.mode: owner`** | Mark the ticket `in-review`, add "#n ready for you to merge (#PR)" to `for_owner`, delete the session's check-ins and archive it. It counts as settled for "Done". |
+| **A required check never started** and it's in the profile's `ci.path_filtered` | In `session` mode it counts as passed, with the evidence posted. In `auto-merge` mode GitHub will wait for it forever: add the PR to `for_owner` ("needs the owner to merge: path-filtered check") and archive the session. |
 | **PR open, green, merge rule met** (flow §4), but not merged, in `session` mode | Check the rule yourself: reviews clean, the evidence comment is on the current head SHA, the branch is level, and each waived check failed only by a killed marker. Then merge with a merge commit and say so on the tracking issue. Your merge rests on the charter's `merge` grant; a review agent is never a stand-in for permission. |
 | **Labelled `needs-human`** | Mark it `needs-human`, add a line to `for_owner`, and archive the session. |
-| **No movement for 6 check-ins** (no push, no PR comment, no label change) while its PR isn't waiting on running CI, or `status_bucket` is `failed` | It's stuck. Stop it safely and retry (below). |
+| **No movement for 6 check-ins** (no push, no PR comment, no label change, and `status_bucket` not `working`) while its PR isn't waiting on running CI, or `status_bucket` is `failed` | It's stuck. Stop it safely and retry (below). |
 
 **Stopping a stuck session safely:**
 1. `interrupt_session`, then record its branch's head SHA as `stopped_head`.
 2. At the next check-in, compare it with `gh api repos/<repo>/branches/<branch> --jq .commit.sha`. Only if it hasn't moved:
-   - archive the session;
-   - delete its pending check-ins;
+   - delete its pending check-ins, then archive the session;
    - mark the ticket `queued`, with its attempt count.
 3. A ticket that has failed `limits.max_retries` + 1 times is labelled `needs-human` instead: comment why on it and on the tracking issue, and add it to `for_owner`.
 
@@ -146,7 +155,7 @@ For each ticket to start:
 3. `create_session` with:
    - `environment_id`: the ticket environment;
    - `source_url`: the repo;
-   - `outcome_branch`: the ticket branch;
+   - `outcome_branch`: the ticket branch, `run.ticket_branch` with `*` replaced by the ticket's number;
    - `permission_mode`: `run.permission_mode`;
    - `prompt`: the rendered briefing;
    - `tags`: `["workflow:<run id>"]`.
@@ -169,7 +178,7 @@ A failed step stops further releases and is reported; never retry it blindly. Th
   4. merged under the merge rule;
   5. logged in the ledger.
 
-  A fix touching a CODEOWNERS path can't merge without the owner; put it in `for_owner`.
+  A fix touching a CODEOWNERS path can't merge without the owner; put it in `for_owner`. The same goes for an infra ticket that has to change CI config (`.github/workflows/`): a ticket session can't edit protected paths, so it will end `needs-human`; open it as an `owner-task` instead.
 - Never fix a problem by weakening a test or a check.
 
 **8. Write the state**, and update the issue body's "Now" line: running, in review, merged, queued, set aside.
@@ -202,14 +211,15 @@ WF render --template TEMPLATES/ticket-session-prompt.md --ticket ticket.json --c
 
 ## Stop the run
 
-1. **Status.** Set `status: "stopping"`.
-2. **Sessions.** Interrupt each running session and record its `stopped_head`. Keep one check-in armed. At it, once a branch hasn't moved:
-   - archive that session;
-   - delete its pending check-ins;
-   - remove `workflow:in-progress` from its ticket if it didn't merge.
-3. **Release,** if the charter says `release.when: end`.
+Do these in order, across as many check-ins as it takes. The state's `status: "stopping"` brings each later check-in back here (check-in step 0).
+
+1. **Status.** Set `status: "stopping"` and the reason.
+2. **Sessions.** Interrupt each running session that has no `stopped_head` yet, and record its `stopped_head`. Keep a check-in armed. At each later check-in, for each such session:
+   - if its branch hasn't moved since `stopped_head`: delete its pending check-ins, archive it, and remove `workflow:in-progress` from its ticket if it didn't merge;
+   - if it has moved, record the new head and look again next time; after 3 check-ins, archive it anyway and say so in the report.
+3. **Release,** once every session is archived, if the charter says `release.when: end`.
 4. **The report.** Write the final report with the `run-report` skill, and notify the owner as the charter says.
 5. **Wind up.**
    - Set `stopped` (when and why) and `status: "stopped"`.
-   - Unsubscribe from the run's PRs.
+   - The sessions' PR subscriptions end with their archive; the conductor subscribes to nothing itself.
    - Delete your own remaining check-ins, last.

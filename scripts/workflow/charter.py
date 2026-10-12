@@ -128,19 +128,25 @@ def questions(release_steps: list[str] | None = None, profile: Any = None) -> li
 
 def reuse(old: dict) -> dict:
     """A new charter from an earlier run's: the same answers, not approved, no
-    amendments, no accepted gaps (they are asked again), and no end time (the
-    owner gives a new one)."""
+    amendments, no accepted gaps (they are asked again), no plan (the tickets
+    have changed), and no end time (the owner gives a new one). A ticket list in
+    `scope.tickets` that came from the old plan is reset to "all-ready"."""
     c = json.loads(json.dumps(old))
     c["approved"] = None
     c["amendments"] = []
     c["accepted_gaps"] = []
+    old_plan = c.pop("plan", None)
+    scope = c.get("scope")
+    if isinstance(scope, dict) and old_plan is not None and scope.get("tickets") == old_plan:
+        scope["tickets"] = "all-ready"
     if isinstance(c.get("limits"), dict):
         c["limits"]["ends_at"] = None
     return c
 
 
 def pin_plan(c: dict) -> dict:
-    """At approval: with follow_unblocked false, scope.tickets becomes the plan."""
+    """At approval: with follow_unblocked false, scope.tickets becomes the plan
+    (`workflow charter pin-plan F`)."""
     out = json.loads(json.dumps(c))
     plan, scope = out.get("plan"), out.get("scope")
     if plan and isinstance(scope, dict) and scope.get("follow_unblocked") is False:
@@ -174,6 +180,15 @@ def _iso(v) -> bool:
 
 def _strings(v) -> bool:
     return isinstance(v, list) and all(isinstance(x, str) and x.strip() for x in v)
+
+
+def _one_of(v, allowed: set[str]) -> bool:
+    """A string in `allowed`: never raises on a list or an object, which can't be hashed."""
+    return isinstance(v, str) and v in allowed
+
+
+def _login(v: str) -> str:
+    return v.strip().lstrip("@").casefold()
 
 
 APPROVAL_SKEW = timedelta(minutes=10)
@@ -249,7 +264,7 @@ def validate(c: Any, require_approval: bool = False, now: datetime | None = None
     if not isinstance(m, dict):
         p.append("merge must be an object")
     else:
-        if m.get("mode") not in MERGE_MODES:
+        if not _one_of(m.get("mode"), MERGE_MODES):
             p.append(f"merge.mode must be one of {sorted(MERGE_MODES)}")
         w = m.get("waived_checks", [])
         if not (isinstance(w, list) and all(isinstance(x, str) and x for x in w)):
@@ -263,7 +278,7 @@ def validate(c: Any, require_approval: bool = False, now: datetime | None = None
     if not isinstance(r, dict):
         p.append("release must be an object")
     else:
-        if r.get("when") not in RELEASE_WHEN:
+        if not _one_of(r.get("when"), RELEASE_WHEN):
             p.append(f"release.when must be one of {sorted(RELEASE_WHEN)}")
         st = r.get("steps", [])
         if not (isinstance(st, list) and all(isinstance(x, str) and x for x in st)):
@@ -279,19 +294,19 @@ def validate(c: Any, require_approval: bool = False, now: datetime | None = None
         p.append("outward.allowed must be a list of the outside changes allowed, each in words")
     if not isinstance(c.get("conductor_fixes"), bool):
         p.append("conductor_fixes must be true or false")
-    if c.get("open_decisions") not in OPEN_DECISIONS:
+    if not _one_of(c.get("open_decisions"), OPEN_DECISIONS):
         p.append(f"open_decisions must be one of {sorted(OPEN_DECISIONS)}")
     sr = c.get("stop_run_on")
     if not (isinstance(sr, list) and all(isinstance(x, str) and x for x in sr)):
         p.append("stop_run_on must be a list of conditions in words")
     n = c.get("notify")
-    if not isinstance(n, dict) or n.get("failures") not in NOTIFY or n.get("final_report") not in NOTIFY:
+    if not isinstance(n, dict) or not _one_of(n.get("failures"), NOTIFY) or not _one_of(n.get("final_report"), NOTIFY):
         p.append(f"notify.failures and notify.final_report must each be one of {sorted(NOTIFY)}")
     if not _strings(c.get("accepted_gaps", [])):
         p.append("accepted_gaps must be a list of the safety setup the owner chose to go ahead without, each in words")
     a = c.get("approved")
     if a is not None:
-        if not isinstance(a, dict) or not a.get("by") or not _iso(a.get("at")) or not a.get("source"):
+        if not isinstance(a, dict) or not _strings([a.get("by"), a.get("source")]) or not _iso(a.get("at")):
             p.append("approved must have by, at (ISO time) and source (a comment URL or the owner's quoted words)")
         else:
             at = _time(a["at"])
@@ -302,17 +317,7 @@ def validate(c: Any, require_approval: bool = False, now: datetime | None = None
                 p.append(f"limits.ends_at ({lim['ends_at']}) must be after approved.at ({a['at']})")
     elif require_approval:
         p.append("the charter has not been approved: the owner's go is needed, with its source")
-    am = c.get("amendments", [])
-    if not isinstance(am, list):
-        p.append("amendments must be a list")
-    else:
-        for i, x in enumerate(am):
-            if not isinstance(x, dict):
-                p.append(f"amendments[{i}] must be an object with at, by, change and source")
-                continue
-            p += _unknown(x, AMENDMENT_KEYS, f"amendments[{i}]")
-            if not all(isinstance(x.get(k), str) and x[k].strip() for k in ("by", "change", "source")) or not _iso(x.get("at")):
-                p.append(f"amendments[{i}] needs at (ISO time), by (who), change and source")
+    p += validate_amendments(c.get("amendments", []))
     plan = c.get("plan")
     if plan is not None:
         if not (_is_int_list(plan) and plan):
@@ -331,6 +336,28 @@ def validate(c: Any, require_approval: bool = False, now: datetime | None = None
     return p
 
 
+def validate_amendments(am: Any, owner: str = "", structure: bool = True) -> list[str]:
+    """The amendments' problems: each `{at, by, change, source}`; with `owner`
+    (the profile's project.owner), each made by the owner. Without `structure`,
+    only the owner check."""
+    p: list[str] = []
+    if not isinstance(am, list):
+        return ["amendments must be a list"] if structure else []
+    for i, x in enumerate(am):
+        if not isinstance(x, dict):
+            if structure:
+                p.append(f"amendments[{i}] must be an object with at, by, change and source")
+            continue
+        if structure:
+            p += _unknown(x, AMENDMENT_KEYS, f"amendments[{i}]")
+            if not all(isinstance(x.get(k), str) and x[k].strip() for k in ("by", "change", "source")) or not _iso(x.get("at")):
+                p.append(f"amendments[{i}] needs at (ISO time), by (who), change and source")
+        by = x.get("by")
+        if owner and isinstance(by, str) and by.strip() and _login(by) != _login(owner):
+            p.append(f"amendments[{i}].by ({by}) isn't the profile's project.owner ({owner}): only the owner amends a run")
+    return p
+
+
 def check_against_profile(
     c: dict,
     release_step_names: list[str],
@@ -342,12 +369,21 @@ def check_against_profile(
     auto-merge with nothing checked, and (with `owner`, the profile's
     project.owner) who approved it."""
     p: list[str] = []
-    r = c.get("release") or {}
-    for s in r.get("steps") or []:
+    if not isinstance(c, dict):
+        return p
+
+    def obj(k: str) -> dict:
+        v = c.get(k)
+        return v if isinstance(v, dict) else {}
+
+    def strs(v) -> list[str]:
+        return [x for x in v if isinstance(x, str)] if isinstance(v, list) else []
+
+    r, m = obj("release"), obj("merge")
+    for s in strs(r.get("steps")):
         if s not in release_step_names:
             p.append(f"release step {s!r} is not in the profile's [release] steps {release_step_names}")
-    m = c.get("merge") or {}
-    for w in m.get("waived_checks") or []:
+    for w in strs(m.get("waived_checks")):
         if w not in required_checks:
             p.append(f"waived check {w!r} is not one of the profile's ci.required_checks {required_checks}")
     if m.get("mode") == "auto-merge" and (ci_none or not required_checks):
@@ -355,8 +391,9 @@ def check_against_profile(
         p.append(f"merge.mode auto-merge: {why}, so auto-merge would merge at once with nothing checked; use session")
     a = c.get("approved")
     if owner and isinstance(a, dict) and isinstance(a.get("by"), str):
-        if a["by"].strip().lstrip("@").casefold() != owner.lstrip("@").casefold():
+        if _login(a["by"]) != _login(owner):
             p.append(f"approved.by ({a['by']}) isn't the profile's project.owner ({owner}): only the owner approves a run")
+    p += validate_amendments(c.get("amendments", []), owner, structure=False)
     return p
 
 
@@ -426,6 +463,8 @@ def to_markdown(c: dict, plan: list[tuple[int, str | None]] | None = None) -> st
 
 def diff(old: dict, new: dict) -> list[str]:
     """What a new charter changes from an earlier one, key by key."""
+    old = old if isinstance(old, dict) else {}
+    new = new if isinstance(new, dict) else {}
     out = []
     for k in [q["key"] for q in QUESTIONS] + ["plan", "accepted_gaps", "amendments", "approved"]:
         empty = [] if k in ("accepted_gaps", "amendments") else None

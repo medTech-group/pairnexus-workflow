@@ -293,11 +293,12 @@ def test_gate_ignores_fenced_text():
     assert gate.verdict("```\nx\n```\n" + CHECKLIST + "WORKFLOW-STATUS: done") is None
 
 
-def test_gate_unchecked_lines_need_a_reason():
+def test_gate_unchecked_lines_need_a_reason(tmp_path, monkeypatch):
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
     msg = CHECKLIST + "- [ ] by-hand check\nWORKFLOW-STATUS: done"
     v = gate.verdict(msg)
     assert v and gate.NEEDS_REASON in v and "by-hand check" in v
-    for reason in ("because the owner does it", "— the owner's", "- not this ticket", ": out of scope", "why: no UI"):
+    for reason in ("because the owner does it", "— the owner's", "- not this ticket", "n/a for a docs change", "why: no UI"):
         assert gate.verdict(CHECKLIST + f"- [ ] by-hand check {reason}\nWORKFLOW-STATUS: done") is None, reason
     assert gate.verdict("  - [ ] indented\n" + CHECKLIST + "WORKFLOW-STATUS: done")  # its own " - " isn't a reason
     assert gate.verdict(CHECKLIST + "- [ ] x\nWORKFLOW-STATUS: waiting") is None  # only done asks
@@ -421,3 +422,27 @@ def test_template_package_example_parses_when_uncommented():
     text = "\n".join(lines[:start] + block + lines[start + len(block) :])
     prof = parse(tomllib.loads(text), Path("."))
     assert prof.packages and prof.packages[0].name == "web" and prof.packages[0].typecheck
+
+
+def test_reuse_clears_the_plan_and_a_scope_built_from_it():
+    from workflow import charter
+
+    old = charter.defaults()
+    old["plan"] = [3, 4]
+    old["scope"]["tickets"] = [3, 4]
+    old["scope"]["follow_unblocked"] = False
+    new = charter.reuse(old)
+    assert "plan" not in new and new["scope"]["tickets"] == "all-ready"
+    old["scope"]["tickets"] = [7]
+    assert charter.reuse(old)["scope"]["tickets"] == [7]
+
+
+def test_owner_task_blocker_is_named():
+    from workflow.issues import readiness
+
+    issues = [
+        {"number": 5, "state": "open", "labels": [{"name": "owner-task"}], "body": "", "title": "key"},
+        {"number": 6, "state": "open", "labels": [{"name": "ready-for-agent"}], "body": "Blocked by: #5", "title": "t"},
+    ]
+    v = [x for x in readiness(issues, []) if x.number == 6][0]
+    assert v.reasons == ["blocked by owner task #5"]

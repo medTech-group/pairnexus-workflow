@@ -91,7 +91,7 @@ Use `AskUserQuestion`, recommended answers first. Ask only what exploring didn't
 
 **5. `.github/CODEOWNERS`.** It covers `/.claude/`, `/.github/workflows/` and itself, with the owner's handle (`enforcement.md` §3).
 
-**6. A CI job,** in vendored mode: copy `$KIT/templates/github/workflow-kit.yml` to `.github/workflows/workflow-kit.yml`. Its check, `workflow kit`, goes in `ci.required_checks`.
+**6. A CI job,** in vendored mode: copy `$KIT/templates/github/workflow-kit.yml` to `.github/workflows/workflow-kit.yml`, replacing `BASE_BRANCH` with the base branch. Its check, `workflow kit`, goes in `ci.required_checks`.
 
 **7. `.gitignore` gets `.workflow/` and `__pycache__/`.** `vendor install` adds them; check they're there.
 

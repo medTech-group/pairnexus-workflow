@@ -46,7 +46,7 @@ def test_hooks_do_nothing_without_a_profile(tmp_path):
     subprocess.run(["git", "init", "-q"], cwd=tmp_path)
     ev = {"tool_name": "Bash", "tool_input": {"command": "git push --force"}, "cwd": str(tmp_path)}
     assert run_hook("guard", ev, tmp_path)[:2] == (0, None)
-    assert run_hook("gate", {"last_assistant_message": "hi"}, tmp_path)[:2] == (0, None)
+    assert run_hook("gate", {"last_assistant_message": "hi"}, tmp_path, {"TMPDIR": str(tmp_path)})[:2] == (0, None)
 
 
 def test_invalid_profile_is_reported_not_silent(repo):
@@ -152,13 +152,13 @@ def test_unrecognised_role_is_treated_as_ticket(repo):
     assert "ticket session" in reason and "'tikcet' isn't a role" in reason
 
 
-def test_malformed_event_denied_when_the_role_is_firm(repo):
+def test_malformed_event_denied_when_the_role_is_firm(repo, tmp_path):
     for raw in ("not json", "[1, 2]", '"a string"'):
         for role in ("ticket", "conductor"):
             code, out, _ = run_raw("guard", raw, repo, {"WORKFLOW_ROLE": role})
             assert code == 0 and out["hookSpecificOutput"]["permissionDecision"] == "deny", (raw, role)
         assert run_raw("guard", raw, repo)[:2] == (0, None)  # attended: nothing to check, nothing said
-    assert run_raw("gate", "not json", repo)[1] is None
+    assert run_raw("gate", "not json", repo, {"TMPDIR": str(tmp_path)})[1] is None
 
 
 def test_guard_hook_starts_from_the_events_cwd(repo):
@@ -170,10 +170,12 @@ def test_guard_hook_starts_from_the_events_cwd(repo):
     assert run_hook("guard", ev, repo, {"WORKFLOW_ROLE": "ticket"})[1] is None
 
 
-def _run_hook_command(sub, project, event_raw, role=None):
+def _run_hook_command(sub, project, event_raw, role=None, tmpdir=None):
     from workflow import vendor
 
     env = {**os.environ, "CLAUDE_PROJECT_DIR": str(project)}
+    if tmpdir is not None:
+        env["TMPDIR"] = str(tmpdir)
     env.pop("WORKFLOW_ROLE", None)
     if role is not None:
         env["WORKFLOW_ROLE"] = role
@@ -200,7 +202,7 @@ def test_missing_cli_fails_closed_for_firm_roles(tmp_path):
         assert json.loads(_run_hook_command("guard", tmp_path, other, "ticket")[1])["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert json.loads(_run_hook_command("guard", tmp_path, "garbage", "ticket")[1])["hookSpecificOutput"]["permissionDecision"] == "deny"
     for sub in ("gate", "context", "repair"):
-        assert _run_hook_command(sub, tmp_path, ev, "ticket") == (0, ""), sub
+        assert _run_hook_command(sub, tmp_path, ev, "ticket", tmpdir=tmp_path) == (0, ""), sub
 
 
 def test_hook_command_writes_no_pycache(tmp_path):
@@ -211,6 +213,6 @@ def test_hook_command_writes_no_pycache(tmp_path):
     (bin_dir / "helper.py").write_text("X = 1\n")
     (bin_dir / "workflow.py").write_text("import sys\nsys.path.insert(0, __import__('os').path.dirname(__file__))\nimport helper\nprint('ran', sys.argv[1:])\n")
     assert "python3 -B" in vendor.hook_command("guard")
-    code, out = _run_hook_command("gate", tmp_path, "{}", None)
+    code, out = _run_hook_command("gate", tmp_path, "{}", None, tmpdir=tmp_path)
     assert code == 0 and out == "ran ['hook', 'gate']"
     assert not (bin_dir / "__pycache__").exists()

@@ -1,8 +1,8 @@
 """`workflow`: the kit's command line. Python 3.11+, standard library only.
 
     workflow profile check
-    workflow ready [--issues F --prs F | --fetch] [--exclude 1,2] [--running-area A ...] [--slots N] [--json]
-    workflow charter defaults | validate F [--approved] | markdown F [--tickets 13:area,143:-] | diff OLD NEW | reuse OLD | questions
+    workflow ready [--issues F --prs F | --fetch] [--exclude 1,2] [--only 1,2] [--override 3] [--running-area A ...] [--slots N] [--json]
+    workflow charter defaults | validate F [--approved] | markdown F [--tickets 13:area,143:-] | diff OLD NEW | reuse OLD | pin-plan F | questions
     workflow state init --charter F --run-id ID [--by-hand N] [--read-through ID] | get --body F | put --body F --state F | patch --body F --patch F
     workflow render --template F --ticket F --charter F --slots F --tracking N [--by-hand N]
     workflow evidence [--suite NAME ...] [--base-count N | --base-ref BRANCH] [--fresh] [--allow-dirty]
@@ -177,18 +177,24 @@ def cmd_charter(a) -> int:
             return 1
         _out(charter_mod.reuse(old))
         return 0
+    if a.action == "pin-plan":
+        c = _json(a.file)
+        if not isinstance(c, dict):
+            print("workflow: the charter must be a JSON object", file=sys.stderr)
+            return 1
+        plan = c.get("plan")
+        if plan is not None and not (charter_mod._is_int_list(plan) and plan):
+            print("workflow: plan must be a non-empty list of issue numbers", file=sys.stderr)
+            return 1
+        _out(charter_mod.pin_plan(c))
+        return 0
     if a.action == "validate":
         c = _json(a.file)
         problems = charter_mod.validate(c, require_approval=a.approved)
         prof = load(required=False)
-        if prof is not None and isinstance(c, dict):
-            problems += charter_mod.check_against_profile(
-                c,
-                [st["name"] for st in prof.release_steps],
-                prof.required_checks,
-                ci_none=prof.ci_none,
-                owner=prof.owner if a.approved else "",
-            )
+        # Against the profile only once the charter itself is sound.
+        if prof is not None and not problems:
+            problems += _against_profile(c, prof, who=a.approved)
         if problems:
             print("The charter has problems:\n- " + "\n- ".join(problems), file=sys.stderr)
             return 1
@@ -216,10 +222,26 @@ def cmd_charter(a) -> int:
     return 2
 
 
+def _against_profile(c: dict, prof, who: bool = True) -> list[str]:
+    """The charter against the profile: release steps, waived checks and, with
+    `who`, that the profile's project.owner approved and amended it."""
+    return charter_mod.check_against_profile(
+        c,
+        [st["name"] for st in prof.release_steps],
+        prof.required_checks,
+        ci_none=prof.ci_none,
+        owner=prof.owner if who else "",
+    )
+
+
 def cmd_state(a) -> int:
     if a.action == "init":
         c = _json(a.charter)
         problems = charter_mod.validate(c, require_approval=True)
+        if not problems:
+            prof = load(required=False)
+            if prof is not None:
+                problems += _against_profile(c, prof)
         if problems:
             print("The charter isn't ready:\n- " + "\n- ".join(problems), file=sys.stderr)
             return 1
@@ -387,7 +409,8 @@ def _hook_guard(event) -> int:
         return 0
     root = prof.root
     cwd = Path(event.get("cwd") or root)
-    role = roles.role(cwd, prof.ticket_branch)
+    # A cwd with no branch (outside the repository, e.g. /tmp) takes the project root's.
+    role = roles.role(cwd, prof.ticket_branch, fallback=root)
     try:
         d = guard_mod.decide(event, prof, role, root, roles.current_branch(cwd), role_from_env=firm is not None, cwd=event.get("cwd") or None)
     except Exception as e:  # fail closed where a person isn't there to notice
@@ -417,7 +440,7 @@ def _hook_gate(event: dict) -> int:
     if prof is None:
         return 0
     root = prof.root
-    if roles.role(Path(event.get("cwd") or root), prof.ticket_branch) != "ticket":
+    if roles.role(Path(event.get("cwd") or root), prof.ticket_branch, fallback=root) != "ticket":
         return 0
     reason = gate_mod.decide(event)
     if reason:
@@ -491,7 +514,7 @@ def main(argv: list[str] | None = None) -> int:
     s.set_defaults(fn=cmd_ready)
 
     s = sub.add_parser("charter")
-    s.add_argument("action", choices=["defaults", "questions", "validate", "markdown", "diff", "reuse"])
+    s.add_argument("action", choices=["defaults", "questions", "validate", "markdown", "diff", "reuse", "pin-plan"])
     s.add_argument("file", nargs="?")
     s.add_argument("other", nargs="?")
     s.add_argument("--approved", action="store_true", help="also require the owner's approval")
@@ -555,7 +578,7 @@ def main(argv: list[str] | None = None) -> int:
     s.set_defaults(fn=cmd_hook)
 
     a = p.parse_args(argv)
-    if a.cmd == "charter" and a.action in {"validate", "markdown", "diff", "reuse"} and not a.file:
+    if a.cmd == "charter" and a.action in {"validate", "markdown", "diff", "reuse", "pin-plan"} and not a.file:
         p.error("give the charter file")
     if a.cmd == "charter" and a.action == "diff" and not a.other:
         p.error("charter diff needs OLD and NEW")

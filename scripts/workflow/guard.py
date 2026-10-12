@@ -12,9 +12,11 @@ the body kept as data unless a shell reads it, or its delimiter can't be
 read), and `$(…)`, backticks, `<(…)` and `>(…)`, which are parsed as commands
 of their own, quoted or not, before the command they sit in. It follows the
 shell's directory from the hook event's `cwd` through `cd`, `pushd`, `popd`,
-subshells (restored at `)`), `env -C` and `git -C`; after `cd -`, `cd ~`,
-`cd $X` or a bare `cd` the directory is unknown, and a relative write is then
-refused in ticket sessions when it could be a protected path. It looks inside
+subshells (restored at `)`), `env -C`, `git -C` and `cd -` (OLDPWD); after
+`cd ~`, `cd $X`, a bare `cd` or a `cd -` with no previous directory the
+directory is unknown, and a relative write is then refused in ticket sessions
+when it could be a protected path. Paths outside the project root are never its
+protected paths (the global git config is checked on its own). It looks inside
 `sh -c`, `eval`, `script -c`, `find -exec`, heredocs fed to a shell, and
 interpreter one-liners, and in ticket and conductor sessions finds `git`,
 `git-push` or `gh` anywhere among a command's words (behind `setsid`, `doas`,
@@ -23,32 +25,50 @@ interpreter one-liners, and in ticket and conductor sessions finds `git`,
 **Ticket sessions are held to allow-lists** where a deny-list can't keep up:
 - `git push` (and `send-pack`, `http-push`, `git-push`) may only update the
   session's own branch (`run.ticket_branch`), never tags; a bare push only when
-  its upstream has the branch's own name;
+  its upstream has the branch's own name (`$(git branch --show-current)` and
+  the like count as the current branch), and `git branch -u` may only set an
+  upstream of the branch's own name;
 - `gh` may only run the subcommands a ticket needs (pull requests, issues,
-  runs, `api`, reads); `gh api` writes may only touch this repo's issues,
-  comments, labels and pull requests; GraphQL mutations only
-  `enablePullRequestAutoMerge` and `addComment`;
+  runs, workflow reads, `api`, reads); `gh api` writes may only touch this
+  repo's issues, comments, labels and pull requests; GraphQL mutations only
+  `enablePullRequestAutoMerge` and `addComment`, with the query inline (one
+  read from a file, a variable or a substitution counts as a mutation);
 - `git config`, `git -c`, `--config-env` and `GIT_CONFIG*`/`GIT_SSH*`/
   `GIT_DIR`-style variables may not set aliases, push, remote, credential or
   command settings (conductor too);
 - a command word may not be a variable, a glob, a brace list or hold `$IFS`.
 
 **Every role** is held to a deny-list: pushing to the base branch, force-pushes,
-deleting or mirroring branches, `gh pr merge --admin`, and rewriting the base
-branch, its name, the default branch, its protection or rulesets through the
-API. Ticket sessions and the conductor are denied; attended sessions are asked.
+deleting or mirroring branches (also by `remote.*.mirror`, `remote.pushDefault`
+or `remote.*.skipDefaultUpdate` set with `-c` or `git config`, or
+`git remote add --mirror`), `gh pr merge --admin`, and rewriting the base
+branch, its name, the default branch (`gh repo edit --default-branch`, `gh api`
+with its body in a file too), its protection or rulesets through the API; a
+GraphQL mutation that does so is looked for in the whole command and the files
+it reads with `cat`. Ticket sessions and the conductor are denied; attended
+sessions are asked. Ticket sessions and the conductor also may not write the
+global git config (~/.gitconfig, ~/.config/git/, $XDG_CONFIG_HOME/git/, the
+file $GIT_CONFIG_GLOBAL names).
 
 **Ticket sessions also may not:** run the profile's deploy commands (also fed
-to a shell on stdin, through `env -C` or `find -exec`), write protected paths
-(Edit/Write, the shell's writers: redirects, `cp`/`mv`/`install`/`rsync`/`ln`,
-`rm`, `sed -i`, `tee`, `dd`, `tar`/`unzip` extraction, `git apply`/`patch`,
-`git checkout <tree> -- <path>`, through symlinks, `/proc/self/cwd`, globs and
-brace lists; `.git/config` and `.git/hooks` count as protected), add skip or
-focus markers to tests, use the GitHub MCP tools that trigger workflows, make
-repositories or touch secrets, or switch to a branch outside the pattern when
-their role comes only from the branch name. A GitHub post (MCP, `gh`, `curl`)
-matching the profile's sensitive patterns is refused in every role, heredocs
-and body files included.
+to a shell on stdin, run by an interpreter or launcher such as `python3`,
+`node`, `uv run` or `bash -o pipefail`, through `env -C` or `find -exec`; the
+attended are asked), write protected paths (Edit/Write, the shell's writers:
+redirects, `cp`/`mv`/`install`/`rsync`/`ln`, `rm`, `sed -i`, `perl -i`,
+`awk -i inplace`, `ed`, `ex`/`vim` with a script, `tee`, `dd`, `tar`/`unzip`
+extraction, `git apply`/`am`/`patch` (a patch from a heredoc or a `cat` is
+read), `git checkout <tree> -- <path>`, `git clean` of a path holding one,
+`find` with `-delete` or a writing `-exec` over a tree holding one, through
+symlinks, `/proc/self/cwd`, globs and brace lists; an in-place edit of the
+files a search of a tree holding one finds is refused, so the files are named;
+`.git/config` and `.git/hooks` count as protected), add skip or focus markers
+to tests (counted in the writing command's own inserted text, net of what it
+removes), use the GitHub MCP tools that trigger workflows, make repositories or
+touch secrets, or, when their role comes only from the branch name, switch,
+detach or rename away from a branch matching the pattern. A GitHub post (MCP,
+`gh`, `curl`) matching the profile's sensitive patterns is refused in every
+role: heredocs, body files, its stdin, a piped producer's files and any file
+the command reads with `cat` or `<` included.
 
 What it can't see (a script file written then run, a program's own network
 calls, variables' values, obfuscation it doesn't recognise) is why the ruleset
@@ -195,10 +215,24 @@ def _strings(obj) -> list[str]:
 _PROC_CWD = re.compile(r"^/proc/(?:self|thread-self|\$\$|\$BASHPID|\d+)/cwd(?=/|$)")
 
 
+_KNOWN_VARS = re.compile(r"\$(?:\{(HOME|XDG_CONFIG_HOME|GIT_CONFIG_GLOBAL)\}|(HOME|XDG_CONFIG_HOME|GIT_CONFIG_GLOBAL)\b)")
+
+
+def _expand_known(p: str) -> str:
+    """`$HOME`, `$XDG_CONFIG_HOME` and `$GIT_CONFIG_GLOBAL` from the environment,
+    when set; any other variable is left as it is."""
+
+    def sub(m: re.Match) -> str:
+        v = os.environ.get(m.group(1) or m.group(2))
+        return v if v else m.group(0)
+
+    return _KNOWN_VARS.sub(sub, p) if "$" in p else p
+
+
 def _abspath(path: str, cwd: str | None) -> str | None:
     """`path` as an absolute, symlink-resolved path, or None when it depends on
     a directory we can't see."""
-    p = path.strip()
+    p = _expand_known(path.strip())
     if not p:
         return None
     if p.startswith("~"):
@@ -226,6 +260,50 @@ def _rel(abspath: str, root: Path) -> str:
     if rel.startswith(".."):
         return abspath
     return rel.replace(os.sep, "/")
+
+
+def _outside(rel: str) -> bool:
+    """A path `_rel` left absolute: outside the project root, so never one of
+    its protected paths (the global git config is checked on its own)."""
+    return rel.startswith("/")
+
+
+def _holds_root(abspath: str, root: Path) -> bool:
+    """`abspath` is the project root or a directory above it."""
+    r = os.path.realpath(str(root))
+    return r == abspath or r.startswith(abspath.rstrip("/") + "/")
+
+
+def global_git_config() -> list[tuple[str, bool]]:
+    """The global git config's files and directories, as (absolute path, is a
+    directory): ~/.gitconfig, ~/.config/git/, $XDG_CONFIG_HOME/git/ and the file
+    $GIT_CONFIG_GLOBAL names, from the environment."""
+    out: list[tuple[str, bool]] = []
+    home = os.environ.get("HOME") or os.path.expanduser("~")
+    if home and home != "~":
+        out += [(os.path.join(home, ".gitconfig"), False), (os.path.join(home, ".config", "git"), True)]
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    if xdg:
+        out.append((os.path.join(xdg, "git"), True))
+    g = os.environ.get("GIT_CONFIG_GLOBAL")
+    if g:
+        out.append((os.path.expanduser(g), False))
+    return [(os.path.realpath(p), d) for p, d in out]
+
+
+def global_config_hit(abspath: str, tree: bool = False) -> str | None:
+    """`abspath` is (or, written as a tree, holds) the global git config."""
+    a = abspath.rstrip("/") or "/"
+    for p, is_dir in global_git_config():
+        if a == p or (is_dir and a.startswith(p + "/")) or (tree and p.startswith(a.rstrip("/") + "/")):
+            return p
+    return None
+
+
+def _global_config_name(rel: str) -> bool:
+    """A path relative to a directory we can't see that could be the global git config."""
+    r = posixpath.normpath(rel)
+    return posixpath.basename(r) == ".gitconfig" or bool(re.search(r"(^|/)(\.config/git(/.*)?|git/config)$", r)) or r in (".config", ".config/git")
 
 
 def _norm(path: str, root: Path, cwd: str | None = None) -> str:
@@ -743,8 +821,9 @@ def segments(command: str, root: Path, cwd: str | None = "", depth: int = 0) -> 
 
 def _segments_of(toks: list, root: Path, cwd: str | None, depth: int) -> list[Seg]:
     segs: list[Seg] = []
-    saved: list[str | None] = []
+    saved: list[tuple[str | None, str | None]] = []
     dirs: list[str | None] = []
+    oldpwd: str | None = None  # OLDPWD: unknown until a cd here sets it
     prev: Seg | None = None
     piped = False
     case_pattern = False  # between `case … in` / `;;` and the pattern's `)`
@@ -755,10 +834,10 @@ def _segments_of(toks: list, root: Path, cwd: str | None, depth: int) -> list[Se
             elif case_pattern and item == "(":
                 pass
             elif item == "(":
-                saved.append(cwd)
+                saved.append((cwd, oldpwd))
             elif item == ")":
                 if saved:
-                    cwd = saved.pop()
+                    cwd, oldpwd = saved.pop()
             elif item in (";;", ";&", ";;&"):
                 case_pattern = True
             piped = item in ("|", "|&")
@@ -776,11 +855,13 @@ def _segments_of(toks: list, root: Path, cwd: str | None, depth: int) -> list[Se
             continue
         if toks2 and toks2[0] in ("cd", "pushd", "popd", "chdir"):
             if toks2[0] == "popd":
-                cwd = dirs.pop() if dirs else None
+                new = dirs.pop() if dirs else None
             else:
+                args = [a for a in toks2[1:] if a not in ("-P", "-L", "-e", "-@", "--")]
+                new = oldpwd if args[:1] == ["-"] and toks2[0] != "pushd" else _cd_target(toks2[1:], root, cwd)
                 if toks2[0] == "pushd":
                     dirs.append(cwd)
-                cwd = _cd_target(toks2[1:], root, cwd)
+            oldpwd, cwd = cwd, new
             seg = Seg(toks2, item.redirects, cwd, item.stdin, item.heredoc, prev if piped else None, assigns)
             segs.append(seg)
             prev = seg
@@ -788,7 +869,7 @@ def _segments_of(toks: list, root: Path, cwd: str | None, depth: int) -> list[Se
         seg_cwd = cwd
         if chdir is not None:
             seg_cwd = _cd_target([chdir], root, cwd)
-        if not toks2 and not item.redirects and not assigns:
+        if not toks2 and not item.redirects and not assigns and item.stdin is None and item.heredoc is None:
             continue
         seg = Seg(toks2, item.redirects, seg_cwd, item.stdin, item.heredoc, prev if piped else None, assigns)
         segs.append(seg)
@@ -930,6 +1011,9 @@ _PUSH_LONG: dict[str, bool] = {
 _PUSH_LONGS = sorted(set(_PUSH_LONG) | {"no-" + k for k in _PUSH_LONG})
 _PUSH_ALWAYS_DENY = {"all", "branches", "mirror", "prune", "delete", "force", "force-with-lease", "force-if-includes"}
 _UNSAFE_REF = re.compile(r"[$`*?\[{]|@")
+# The current branch's name by substitution, which a refspec may use for HEAD.
+_CURRENT_CMD = r"\s*git\s+(?:branch\s+--show-current|rev-parse\s+--abbrev-ref\s+HEAD|symbolic-ref\s+--short\s+HEAD)\s*"
+_CURRENT_BRANCH = re.compile(rf"\$\({_CURRENT_CMD}\)|`{_CURRENT_CMD}`")
 
 
 def _expand_long(opt: str) -> tuple[str | None, list[str]]:
@@ -1004,7 +1088,7 @@ def _push_problem(args: list[str], base: str, branch: str | None, role: str, tic
         return None
     if role == "ticket" and tags:
         return "ticket sessions don't push tags (`--tags`, `--follow-tags`); push your branch by name"
-    refspecs = pos[1:]
+    refspecs = [_CURRENT_BRANCH.sub("HEAD", r) for r in pos[1:]]
     dsts: list[str] = []
     for r in refspecs:
         if r.startswith("+"):
@@ -1042,9 +1126,15 @@ def _push_problem(args: list[str], base: str, branch: str | None, role: str, tic
     return None
 
 
-_PUSH_SETTINGS = re.compile(r"(?i)^(alias\.|remote\.[^=]*\.(push|pushurl|url)\b|push\.|branch\.[^=]*\.(merge|remote|pushremote)\b|url\.)")
+# Settings that make a push mirror every ref (force-updating and deleting
+# branches), skip a remote, or send a bare push elsewhere: checked in every role.
+_MIRROR_KEYS = r"remote\..*\.(mirror|skipdefaultupdate)\b|remote\.pushdefault\b"
+_MIRROR_SETTINGS = re.compile(rf"(?i)^({_MIRROR_KEYS})")
+_PUSH_SETTINGS = re.compile(
+    rf"(?i)^(alias\.|remote\.[^=]*\.(push|pushurl|url)\b|{_MIRROR_KEYS}|push\.|branch\.[^=]*\.(merge|remote|pushremote)\b|url\.)"
+)
 _INJECT_KEYS = re.compile(
-    r"(?i)^(alias\.|remote\..*\.(push|pushurl|url)\b|push\.|branch\..*\.(merge|remote|pushremote)\b|url\.|"
+    rf"(?i)^(alias\.|remote\..*\.(push|pushurl|url)\b|{_MIRROR_KEYS}|push\.|branch\..*\.(merge|remote|pushremote)\b|url\.|"
     r"core\.(fsmonitor|sshcommand|hookspath|pager|editor|askpass|gitproxy)\b|credential\.|include\.|includeif\.)"
 )
 _INJECT_ENV = re.compile(r"^(GIT_CONFIG\w*|GIT_SSH\w*|GIT_EXEC_PATH|GIT_DIR|GIT_WORK_TREE)\+?=")
@@ -1076,10 +1166,12 @@ def _git_config_problem(glob: list[str], args: list[str], role: str) -> str | No
             return "`git --config-env` sets config from the environment, which isn't allowed here"
         if firm and g.startswith("--exec-path="):
             return "`git --exec-path=…` runs git's programs from elsewhere, which isn't allowed here"
-    if not firm or not args:
+    if not args:
         return None
     if args[0] == "remote" and len(args) > 1 and args[1] == "set-url" and role == "ticket":
         return "ticket sessions don't change where a remote points (`git remote set-url`)"
+    if args[0] == "remote" and len(args) > 1 and args[1] == "add" and any(a == "--mirror" or a.startswith("--mirror=") for a in args[2:]):
+        return "`git remote add --mirror` makes every push to that remote a mirror (force-updating and deleting branches), which is never allowed"
     if args[0] != "config":
         return None
     rest = args[1:]
@@ -1109,26 +1201,139 @@ def _git_config_problem(glob: list[str], args: list[str], role: str) -> str | No
     if not write:
         return None
     if not positional:
-        return "`git config --edit` changes the config by hand, which isn't allowed here"
+        return "`git config --edit` changes the config by hand, which isn't allowed here" if firm else None
     key = positional[0]
-    if _INJECT_KEYS.match(key) or _INJECT_KEYS.match(key + "."):
+    if _MIRROR_SETTINGS.match(key) or _MIRROR_SETTINGS.match(key + "."):
+        return f"`git config {key}` makes pushes mirror every branch (force-updating and deleting them) or go elsewhere, which is never allowed"
+    if firm and (_INJECT_KEYS.match(key) or _INJECT_KEYS.match(key + ".")):
         return f"`git config {key}` can redirect a push or run a program; {role} sessions don't change it"
     return None
 
 
-def _switch_problem(args: list[str], ticket_pat: str) -> str | None:
-    if not args or args[0] not in ("checkout", "switch"):
+_CREATE_OPTS = ("-b", "-B", "-c", "-C", "--orphan")
+
+
+def _previous_branch(d: str | None) -> str | None:
+    full = _git_out(d, "rev-parse", "--symbolic-full-name", "@{-1}")
+    return full.removeprefix("refs/heads/") if full and full.startswith("refs/heads/") else None
+
+
+def _switch_target(x: str, d: str | None, kind: str) -> tuple[str, str | None]:
+    """What `git checkout|switch x` does: ("branch", name), ("detach", None),
+    ("unknown", None) or ("none", None) when it isn't a switch (a path)."""
+    if x in ("-", "@{-1}"):
+        prev = _previous_branch(d)
+        return ("branch", prev) if prev else ("unknown", None)
+    if x in ("HEAD", "@"):
+        return "none", None
+    if d is None:
+        return ("branch", x) if kind == "switch" else ("none", None)
+    if _git_out(d, "rev-parse", "--verify", "-q", f"refs/heads/{x}"):
+        return "branch", x
+    if kind == "checkout" and _git_out(d, "rev-parse", "--verify", "-q", f"{x}^{{commit}}"):
+        return "detach", None
+    for remote in (_git_out(d, "remote") or "").split():
+        if _git_out(d, "rev-parse", "--verify", "-q", f"refs/remotes/{remote}/{x}"):
+            return "branch", x  # git's guess: a new local branch tracking it
+    return ("branch", x) if kind == "switch" else ("none", None)
+
+
+def _switch_problem(args: list[str], ticket_pat: str, d: str | None = None) -> str | None:
+    """A ticket session whose role comes from its branch name stays on a ticket
+    branch: no switching, detaching or renaming away from one."""
+    if not args:
         return None
+    stay = f"this is a ticket session by its branch name; stay on a `{ticket_pat}` branch"
     rest = args[1:]
+    if args[0] == "branch":
+        if any(a in ("-m", "-M", "--move") or re.fullmatch(r"-[a-zA-Z]*[mM][a-zA-Z]*", a) for a in rest):
+            plain = [a for a in rest if not a.startswith("-")]
+            if plain and not fnmatch.fnmatchcase(plain[-1], ticket_pat):
+                return f"{stay} (`git branch -m` renames it to `{plain[-1]}`)"
+        return None
+    if args[0] not in ("checkout", "switch"):
+        return None
+    created = False
     for k, a in enumerate(rest):
-        if a in ("-b", "-B", "-c", "-C", "--orphan") and k + 1 < len(rest):
+        tgt = None
+        if a in _CREATE_OPTS and k + 1 < len(rest):
             tgt = rest[k + 1]
+        elif a.startswith("--orphan="):
+            tgt = a.split("=", 1)[1]
+        elif re.fullmatch(r"-[bBcC].+", a):
+            tgt = a[2:]
+        if tgt is not None:
+            created = True
             if not fnmatch.fnmatchcase(tgt, ticket_pat):
-                return f"this is a ticket session by its branch name; stay on a `{ticket_pat}` branch (not `{tgt}`)"
-    if args[0] == "switch":
+                return f"{stay} (not `{tgt}`)"
+    if any(a == "--detach" or (args[0] == "switch" and a == "-d") for a in rest):
+        return f"{stay}: `--detach` leaves it"
+    if created:
+        return None
+    if any(a in ("-t", "--track") or a.startswith("--track=") for a in rest):
         plain = [a for a in rest if not a.startswith("-")]
-        if plain and not fnmatch.fnmatchcase(plain[0], ticket_pat):
-            return f"this is a ticket session by its branch name; stay on a `{ticket_pat}` branch (not `{plain[0]}`)"
+        if plain:  # a new branch named after the remote one
+            remotes = (_git_out(d, "remote") or "origin").split()
+            first, _, after = _dst(plain[0]).removeprefix("remotes/").partition("/")
+            name = after if after and first in remotes else plain[0]
+            return None if fnmatch.fnmatchcase(name, ticket_pat) else f"{stay} (not `{name}`)"
+    skip = set(_opt_values(["x", *rest], ("--pathspec-from-file", "--conflict")))
+    if "--" in rest:
+        k = rest.index("--")
+        if rest[k + 1 :]:
+            return None  # paths
+        rest = rest[:k]
+    plain = [a for a in rest if (a == "-" or not a.startswith("-")) and a not in skip]
+    if not plain or (args[0] == "checkout" and len(plain) != 1):
+        return None
+    what, name = _switch_target(plain[0], d, args[0])
+    if what == "none":
+        return None
+    if what == "detach":
+        return f"{stay}: `git {args[0]} {plain[0]}` would detach HEAD at a commit (a tag, a remote branch or a revision)"
+    if what == "unknown" or not name:
+        return f"{stay}: can't tell which branch `git {args[0]} {plain[0]}` switches to"
+    if not fnmatch.fnmatchcase(name, ticket_pat):
+        return f"{stay} (not `{name}`)"
+    return None
+
+
+def _upstream_problem(args: list[str], d: str | None, branch: str | None) -> str | None:
+    """`git branch -u`/`--set-upstream-to` in a ticket session: only to a branch of
+    the same name, so a bare push never updates another branch."""
+    if args[:1] != ["branch"]:
+        return None
+    val: str | None = None
+    names: list[str] = []
+    rest = args[1:]
+    i = 0
+    while i < len(rest):
+        a = rest[i]
+        if a in ("-u", "--set-upstream-to"):
+            val = rest[i + 1] if i + 1 < len(rest) else ""
+            i += 2
+            continue
+        if a.startswith("--set-upstream-to="):
+            val = a.split("=", 1)[1]
+        elif re.fullmatch(r"-u.+", a):
+            val = a[2:]
+        elif not a.startswith("-"):
+            names.append(a)
+        i += 1
+    if val is None:
+        return None
+    target = names[0] if names else branch
+    up = val
+    first, _, after = val.partition("/")
+    remotes = (_git_out(d, "remote") or "origin").split()
+    if after and first in remotes:
+        up = after
+    up = _dst(up)
+    if not target or up != target:
+        return (
+            f"a ticket branch's upstream must be the branch of its own name (`{target or '?'}`), not `{val}`: "
+            "a bare push would update that branch"
+        )
     return None
 
 
@@ -1136,9 +1341,11 @@ def _switch_problem(args: list[str], ticket_pat: str) -> str | None:
 
 # `gh` subcommands a ticket session may run (None: any).
 _GH_TICKET: dict[str, set[str] | None] = {
-    "pr": {"create", "new", "edit", "comment", "view", "checks", "list", "ls", "diff", "ready", "merge", "status"},
-    "issue": {"view", "comment", "edit", "list", "ls", "create", "new", "status"},
-    "run": {"view", "list", "ls", "rerun", "watch"},
+    "pr": {"create", "new", "edit", "comment", "view", "checks", "list", "ls", "diff", "ready", "merge", "status", "close"},
+    "issue": {"view", "comment", "edit", "list", "ls", "create", "new", "status", "close", "reopen"},
+    "run": {"view", "list", "ls", "rerun", "watch", "download", "cancel"},
+    "workflow": {"list", "ls", "view"},
+    "status": None,
     "api": None,
     "repo": {"view"},
     "auth": {"status"},
@@ -1272,8 +1479,9 @@ def _field(call: _ApiCall, name: str) -> str | None:
 
 
 def _read_text(path: str, cwd: str | None, limit: int = 1_000_000) -> str | None:
+    """A regular file's text (never a device or pipe, which could block)."""
     a = _abspath(path, cwd)
-    if not a:
+    if not a or not os.path.isfile(a):
         return None
     try:
         with open(a, "rb") as fh:
@@ -1327,20 +1535,32 @@ def _mutation_fields(text: str) -> list[str] | None:
     return out
 
 
-def _gh_problem(toks: list[str], profile: Profile, role: str, cwd: str | None, raw: str) -> str | None:
+def _gh_problem(toks: list[str], profile: Profile, role: str, cwd: str | None, raw: str, read=None) -> str | None:
     """Problems with a `gh` command (toks start at the gh word)."""
     group, sub = _gh_group(toks)
     if group == "pr" and sub == "merge" and any(t == "--admin" or t.startswith("--admin=") for t in toks):
         return "`gh pr merge --admin` bypasses the base branch's required checks; it is never allowed"
+    if group == "repo" and sub == "edit" and any(t == "--default-branch" or t.startswith("--default-branch=") for t in toks):
+        return "changing the repository's default branch (`gh repo edit --default-branch`) is never allowed"
     if role == "ticket" and group is not None and not group.startswith("-"):
         allowed = _GH_TICKET.get(group, set())
         if group not in _GH_TICKET or (allowed is not None and sub not in allowed and sub is not None):
             what = f"gh {group}" + (f" {sub}" if sub else "")
             return f"`{what}` isn't something a ticket session runs; ticket sessions use gh only for pull requests, issues, runs, `gh api` and reads"
-    return _api_problem(toks, profile, role, cwd, raw)
+    return _api_problem(toks, profile, role, cwd, raw, read)
 
 
-def _api_problem(toks: list[str], profile: Profile, role: str, cwd: str | None = None, raw: str = "") -> str | None:
+def _shell_value(v: str) -> bool:
+    """A field value the shell fills in: a substitution, a backtick, or a `$name`
+    that isn't a GraphQL variable the query itself declares (`$id: ID!`)."""
+    if "`" in v or "$(" in v or "${" in v or re.search(r"\$(?![A-Za-z_])", v):
+        return True
+    return any(not re.search(r"\$" + re.escape(m.group(1)) + r"\s*:", v) for m in re.finditer(r"\$([A-Za-z_]\w*)", v))
+
+
+def _api_problem(toks: list[str], profile: Profile, role: str, cwd: str | None = None, raw: str = "", read=None) -> str | None:
+    """`read`, when given, returns the text of the files the whole command reads
+    with `cat` or `<`, which a query or body may come from by a variable."""
     base = profile.base_branch
     name = Path(toks[0]).name if toks else ""
     if name == "curl" and re.search(r"api\.github\.com|/api/v3/|/api/graphql", " ".join(toks)):
@@ -1358,16 +1578,20 @@ def _api_problem(toks: list[str], profile: Profile, role: str, cwd: str | None =
         if role == "ticket":
             if from_file:
                 return "a GraphQL call read from a file (`@file`, `--input`) counts as a mutation, which ticket sessions don't run; pass the query inline"
+            q = _field(call, "query")
+            if q is not None and _shell_value(q):
+                return "a GraphQL query from a variable or a substitution counts as a mutation, which ticket sessions don't run; pass the query inline"
             if re.search(r"\bmutation\b", call.rest):
                 names = _mutation_fields(call.rest)
                 if names is None or not names or any(n not in _TICKET_GQL_MUTATIONS for n in names):
                     return "ticket sessions run only the `enablePullRequestAutoMerge` and `addComment` GraphQL mutations; use the REST API or the GitHub MCP tools"
             return None
-        text = call.rest
+        # The whole command and every file it reads: the query may be in a variable.
+        text = call.rest + "\n" + raw
         for f in call.files:
             text += "\n" + (_read_text(f, cwd) or "")
-        if call.stdin:
-            text += "\n" + raw
+        if read is not None:
+            text += "\n" + read()
         if _DANGEROUS_GQL.search(text):
             return "this GraphQL mutation rewrites refs, branches, protection or rulesets, which is never allowed"
         return None
@@ -1377,8 +1601,10 @@ def _api_problem(toks: list[str], profile: Profile, role: str, cwd: str | None =
         return f"rewriting the base branch `{base}`, its protection or rulesets through the API is never allowed"
     if re.search(rf"(^|/)branches/{re.escape(base)}/rename$", path):
         return f"renaming the base branch `{base}` through the API is never allowed"
-    if re.fullmatch(r"repos/[^/]+/[^/]+", path) and (_field(call, "default_branch") is not None or "default_branch" in call.rest):
-        return "changing the repository's default branch through the API is never allowed"
+    if re.fullmatch(r"repos/[^/]+/[^/]+", path):
+        body = call.rest + "".join("\n" + (_read_text(f, cwd) or "") for f in call.files) + ("\n" + raw if call.stdin else "")
+        if _field(call, "default_branch") is not None or "default_branch" in body:
+            return "changing the repository's default branch through the API is never allowed"
     for key in ("base", "branch"):
         v = _field(call, key)
         if role != "attended" and v is not None and _UNSAFE_REF.search(v):
@@ -1434,7 +1660,83 @@ def _body_files(toks: list[str]) -> list[str]:
     return [f for f in out if f and f != "-"]
 
 
+_READERS = {"cat", "tac", "head", "tail"}
+
+
+def _command_reads(segs: list[Seg]) -> list[str]:
+    """The text of every file a command reads with cat (head, tail, tac) or a
+    `<` redirect, anywhere in it: `B=$(cat body.md); gh pr comment 1 --body "$B"`."""
+    out: list[str] = []
+    for s in segs:
+        files: list[str] = []
+        if s.words and Path(s.words[0]).name in _READERS:
+            skip = set(_opt_values(s.words, ("-n", "-c", "--lines", "--bytes")))
+            files += [w for w in s.words[1:] if not w.startswith("-") and w not in skip]
+        if s.stdin:
+            files.append(s.stdin)
+        for f in files[:50]:
+            txt = _read_text(f, s.cwd)
+            if txt:
+                out.append(txt)
+    return out
+
+
 # ---------- deploys ----------
+
+
+# Programs that run a script named among their arguments, with the options
+# that take a separate value, and the subcommand word that runs ("uv run").
+_SHELL_VALUE_OPTS = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}
+_LAUNCHERS: dict[str, tuple[str | None, set[str]]] = {
+    "python": (None, {"-W", "-X", "--check-hash-based-pycs"}),
+    "node": (None, {"-r", "--require", "--import", "--loader", "--experimental-loader", "--env-file", "--conditions", "-C"}),
+    "ruby": (None, {"-I", "-r", "-C", "-E", "-F"}),
+    "perl": (None, {"-I", "-M", "-m", "-F"}),
+    "shell": (None, _SHELL_VALUE_OPTS),
+    "uv": ("run", {"--with", "--with-requirements", "--python", "-p", "--project", "--directory", "--group", "--extra", "--env-file", "--index", "--from", "--package"}),
+    "npx": (None, {"-p", "--package", "-c", "--call"}),
+    "deno": ("run", {"--config", "-c", "--import-map", "--location", "--env-file", "--cert"}),
+    "bun": ("run?", {"--cwd", "-r", "--preload", "--config", "-c", "--env-file"}),
+}
+
+
+def _launcher(name: str) -> str | None:
+    if re.fullmatch(r"python\d?(\.\d+)?", name):
+        return "python"
+    if name in ("node", "nodejs"):
+        return "node"
+    if name in _SHELLS or name in ("source", "."):
+        return "shell"
+    return name if name in _LAUNCHERS else None
+
+
+def _launched(toks: list[str]) -> list[str] | None:
+    """The words after the interpreters and launchers that run a script
+    (`uv run python scripts/deploy.py --stage poc` -> ["scripts/deploy.py",
+    "--stage", "poc"]), or None when the command isn't one."""
+    words = list(toks)
+    stripped = False
+    for _ in range(4):
+        kind = _launcher(Path(words[0]).name) if words else None
+        if kind is None:
+            break
+        sub, values = _LAUNCHERS[kind]
+        words = words[1:]
+        if sub == "run?":
+            if words[:1] in (["run"], ["x"]):
+                words = words[1:]
+        elif sub:
+            if words[:1] != [sub]:
+                return words if stripped else None  # `uv pip …`, `deno fmt …`: not running a script
+            words = words[1:]
+        while words and words[0].startswith(("-", "+")) and words[0] not in ("-", "--"):
+            w = words.pop(0)
+            if w in values and words:
+                words.pop(0)
+        if words[:1] == ["--"]:
+            words = words[1:]
+        stripped = True
+    return words if stripped else None
 
 
 def _deploy_problem(seg: Seg, deploy: list[str], root: Path) -> str | None:
@@ -1442,10 +1744,7 @@ def _deploy_problem(seg: Seg, deploy: list[str], root: Path) -> str | None:
     if not toks:
         return None
     name = Path(toks[0]).name
-    run_toks = toks
-    if name in _SHELLS | {"source", "."} and len(toks) > 1:
-        run_toks = [t for t in toks[1:] if not t.startswith("-")]
-    paths = [d for d in deploy if d.split() and ("/" in d.split()[0] or re.search(r"\.(sh|py|js|ts|rb)$", d.split()[0]))]
+    paths = [d for d in deploy if d.split() and ("/" in d.split()[0] or re.search(r"\.(sh|py|js|ts|rb|mjs|cjs)$", d.split()[0]))]
     deploy_paths = [_norm(d.split()[0], root) for d in paths]
     if name in _SHELLS and _shell_reads_stdin(toks):
         fed = [seg.stdin] if seg.stdin else (seg.piped.words if seg.piped else [])
@@ -1454,20 +1753,23 @@ def _deploy_problem(seg: Seg, deploy: list[str], root: Path) -> str | None:
             if n in deploy_paths:
                 d = paths[deploy_paths.index(n)]
                 return f"`{d}` is a deploy command (fed to a shell here): only the owner, or the conductor under a release grant, runs it"
-    if not run_toks:
-        return None
+    launched = _launched(toks)
+    # Run directly, the command word is the script; run by an interpreter, any word may be.
+    candidates = [toks[0]] if launched is None else [w for w in launched if not w.startswith("-")]
     for d in deploy:
         dt = d.split()
         if not dt:
             continue
         msg = f"`{d}` is a deploy command: only the owner, or the conductor under a release grant, runs it"
         if d in paths:
-            if _norm(run_toks[0], root, seg.cwd) == _norm(dt[0], root):
+            target = _norm(dt[0], root)
+            if any(_norm(w, root, seg.cwd) == target for w in candidates):
                 return msg
         else:
-            words = [t for t in toks if not t.startswith("-")]
-            if words and Path(words[0]).name == dt[0] and words[1 : len(dt)] == dt[1:]:
-                return msg
+            for ws in (toks, launched or []):
+                words = [t for t in ws if not t.startswith("-")]
+                if words and Path(words[0]).name == dt[0] and words[1 : len(dt)] == dt[1:]:
+                    return msg
     return None
 
 
@@ -1485,6 +1787,8 @@ class _Targets:
     trees: list[str] = field(default_factory=list)  # written into, removed or moved: checked for protected paths inside
     links: list[str] = field(default_factory=list)  # linked to (ln's sources)
     unknown: str | None = None  # what it writes can't be seen (a patch on a pipe)
+    # an in-place edit of the files a search finds (`grep -rl x . | xargs sed -i`): (tree searched, its cwd)
+    searched: list[tuple[str, str | None]] = field(default_factory=list)
 
 
 def _opt_values(toks: list[str], names: tuple[str, ...]) -> list[str]:
@@ -1691,26 +1995,42 @@ def _patch_paths(text: str) -> list[str]:
     return paths
 
 
-def _patch_targets(cmd: str, args: list[str], seg: Seg, root: Path, t: _Targets) -> None:
-    """git apply (args after `apply`) or patch (args after `patch`)."""
-    if cmd == "git":
-        if any(a in ("--check", "--stat", "--numstat", "--summary") for a in args) and "--apply" not in args:
-            return
+def _piped_text(seg: Seg) -> str | None:
+    """What a `cat` (with a heredoc, files or a stdin file) piping into this
+    command sends it; None when it isn't one or a file can't be read."""
+    p = seg.piped
+    if p is None or (p.words and Path(p.words[0]).name != "cat"):
+        return None
+    ops = [w for w in p.words[1:] if w == "-" or not w.startswith("-")]
+    if not ops or ops == ["-"]:
+        if p.heredoc is not None:
+            return p.heredoc
+        return _read_text(p.stdin, p.cwd) if p.stdin else None
+    texts = [_read_text(f, p.cwd) for f in ops]
+    return None if any(x is None for x in texts) else "\n".join(texts)  # type: ignore[arg-type]
+
+
+def _patch_texts(cmd: str, args: list[str], seg: Seg) -> tuple[list[str], str | None, list[str]]:
+    """git apply/am (args after the subcommand) or patch: (the patch texts, why
+    they can't be seen, the file `patch` itself writes). Nothing when it only checks."""
+    patched: list[str] = []
+    if cmd in ("git", "git-am"):
+        if cmd == "git" and any(a in ("--check", "--stat", "--numstat", "--summary") for a in args) and "--apply" not in args:
+            return [], None, []
+        if cmd == "git-am" and any(a in ("--abort", "--quit", "--skip", "--continue", "--resolved", "-r", "--retry") or a.startswith("--show-current-patch") for a in args):
+            return [], None, []
         files = [a for a in args if not a.startswith("-")]
         for v in _opt_values(["x", *args], ("--directory",)):
             files = [f for f in files if f != v]
         texts_from = files
-        base_dir = os.path.realpath(str(root))
     else:
         if any(a == "--dry-run" for a in args):
-            return
+            return [], None, []
         inputs = _opt_values(["x", *args], ("-i", "--input"))
         skip = set(inputs) | set(_opt_values(["x", *args], ("-p", "-d", "--directory", "-o", "--output", "-r", "-B", "-z", "-D")))
         positional = [a for a in args if not a.startswith("-") and a not in skip]
-        if positional:
-            t.files.append(positional[0])  # the file being patched
+        patched = positional[:1]  # the file being patched
         texts_from = inputs or positional[1:2]
-        base_dir = seg.cwd
     texts: list[str] = []
     for f in texts_from:
         if f == "-":
@@ -1718,24 +2038,34 @@ def _patch_targets(cmd: str, args: list[str], seg: Seg, root: Path, t: _Targets)
             break
         txt = _read_text(f, seg.cwd)
         if txt is None:
-            t.unknown = f"can't read the patch `{f}` to see what it changes"
-            return
+            return [], f"can't read the patch `{f}` to see what it changes", patched
         texts.append(txt)
     if not texts_from:
         if seg.stdin:
             txt = _read_text(seg.stdin, seg.cwd)
             if txt is None:
-                t.unknown = f"can't read the patch `{seg.stdin}` to see what it changes"
-                return
+                return [], f"can't read the patch `{seg.stdin}` to see what it changes", patched
             texts.append(txt)
         elif seg.heredoc is not None:
             texts.append(seg.heredoc)
+        elif _piped_text(seg) is not None:
+            texts.append(_piped_text(seg) or "")
         else:
-            t.unknown = "this applies a patch from a pipe, where the guard can't see what it changes; apply it from a file"
-            return
+            return [], "this applies a patch from a pipe, where the guard can't see what it changes; apply it from a file or a heredoc", patched
+    return texts, None, patched
+
+
+def _patch_targets(cmd: str, args: list[str], seg: Seg, root: Path, t: _Targets) -> None:
+    """git apply / git am (args after the subcommand) or patch (args after `patch`)."""
+    texts, unknown, patched = _patch_texts(cmd, args, seg)
+    t.files += patched
+    if unknown:
+        t.unknown = unknown
+        return
+    base_dir = os.path.realpath(str(root))
     for txt in texts:
         for p in _patch_paths(txt):
-            if cmd == "git":  # paths from the top of the repository
+            if cmd in ("git", "git-am"):  # paths from the top of the repository
                 full = os.path.join(base_dir, p)
                 t.files.append(os.path.relpath(full, seg.cwd) if seg.cwd else full)
             else:
@@ -1745,7 +2075,18 @@ def _patch_targets(cmd: str, args: list[str], seg: Seg, root: Path, t: _Targets)
 def _git_targets(args: list[str], t: _Targets) -> None:
     sub = args[0] if args else ""
     rest = args[1:]
-    if sub in ("rm", "mv", "clean"):
+    if sub == "clean":
+        # It removes only untracked files: the protected paths git tracks are
+        # safe, so only a path that is or holds one counts, or -x/-X (ignored
+        # files, such as .env) from a directory that holds one.
+        flags = "".join(a[1:] for a in rest if re.fullmatch(r"-[a-zA-Z]+", a))
+        if "n" in flags or "--dry-run" in rest:
+            return
+        skip = set(_opt_values(["x", *rest], ("-e", "--exclude")))
+        paths = [a for a in rest if not a.startswith("-") and a not in skip]
+        t.trees += paths or (["."] if set(flags) & {"x", "X"} else [])
+        return
+    if sub in ("rm", "mv"):
         paths = [a for a in rest if not a.startswith("-") and a != "--"]
         t.files += paths
         t.trees += paths or ["."]
@@ -1795,10 +2136,17 @@ def _write_targets(seg: Seg, root: Path) -> _Targets:
         t.files += operands
     elif cmd == "dd":
         t.files += [a[3:] for a in toks[1:] if a.startswith("of=")]
-    elif cmd == "sed" and any(a == "-i" or (a.startswith("-i") and not a.startswith("--")) or a.startswith("--in-place") or (re.fullmatch(r"-[a-zA-Z]+", a) and "i" in a) for a in toks[1:]):
-        t.files += operands[1:]
-    elif cmd == "perl" and any(re.match(r"^-\w*i", a) for a in toks[1:]):
-        t.files += operands[1:]
+    elif cmd in ("sed", "perl", "awk", "gawk"):
+        ed = _inplace_edit(toks)
+        if ed is not None:
+            _named_files(ed.files, seg, root, t)
+    elif cmd in ("ed", "red"):
+        skip = set(_opt_values(toks, ("-p",)))
+        t.files += [a for a in operands if a not in skip]
+    elif cmd in _VIMS:
+        ed = _vim_edit(toks)
+        if ed is not None:
+            t.files += ed.files
     elif cmd == "curl":
         t.files += _opt_values(toks, ("-o", "--output"))
         t.trees += _opt_values(toks, ("--output-dir",))
@@ -1812,21 +2160,324 @@ def _write_targets(seg: Seg, root: Path) -> _Targets:
     elif cmd == "patch":
         _patch_targets("patch", toks[1:], seg, root, t)
     elif cmd == "find":
-        if any(a in ("-delete", "-exec", "-execdir", "-ok", "-okdir") for a in toks):
-            for a in toks[1:]:
-                if a.startswith("-") or a in ("(", "!"):
-                    break
-                if a not in (".", "./"):  # under the root: what it matches can't be seen
-                    t.files.append(a)
+        _find_targets(toks, seg, root, t)
     else:
         g = _git(toks)
         if g:
             _, args, _ = g
             if args[:1] == ["apply"]:
                 _patch_targets("git", args[1:], seg, root, t)
+            elif args[:1] == ["am"]:
+                _patch_targets("git-am", args[1:], seg, root, t)
             else:
                 _git_targets(args, t)
     return t
+
+
+def _find_starts(toks: list[str]) -> list[str]:
+    """find's start paths (the trees it searches)."""
+    out: list[str] = []
+    i = 1
+    while i < len(toks) and (toks[i] in ("-H", "-L", "-P") or re.fullmatch(r"-O\d*", toks[i]) or toks[i] == "-D"):
+        i += 2 if toks[i] == "-D" else 1
+    for a in toks[i:]:
+        if a.startswith("-") or a in ("(", "!", ")", ","):
+            break
+        out.append(a)
+    return out
+
+
+def _find_writes(toks: list[str], seg: Seg, root: Path) -> bool:
+    """`-delete`, or an `-exec` of a program that writes (a shell or an
+    interpreter counts: what it runs can't be seen)."""
+    if "-delete" in toks:
+        return True
+    k = 0
+    while k < len(toks):
+        if toks[k] in ("-exec", "-execdir", "-ok", "-okdir"):
+            j = k + 1
+            while j < len(toks) and toks[j] not in (";", "+"):
+                j += 1
+            sub, _, _ = _strip_prefix(toks[k + 1 : j])
+            if sub:
+                name = Path(sub[0]).name
+                if name in _SHELLS or _INTERP.match(name):
+                    return True
+                st = _write_targets(Seg(sub, [], seg.cwd), root)
+                if st.files or st.trees or st.links or st.unknown:
+                    return True
+            k = j
+        k += 1
+    return False
+
+
+def _find_targets(toks: list[str], seg: Seg, root: Path, t: _Targets) -> None:
+    t.files += _opt_values(toks, ("-fprint", "-fprint0", "-fprintf", "-fls"))
+    if not _find_writes(toks, seg, root):
+        return
+    for a in _find_starts(toks):
+        p = _abspath(a, seg.cwd)
+        if p is not None and _holds_root(p, root):
+            continue  # from the root: what it matches can't be seen
+        t.trees.append(a)
+
+
+_VIMS = {"vim", "vi", "nvim", "vimdiff", "view", "ex"}
+
+
+@dataclass
+class _InPlace:
+    """An in-place edit: its script text, its files and where they come from."""
+
+    script: str
+    files: list[str]
+
+
+def _sed_args(args: list[str]) -> tuple[bool, list[str], list[str], list[str]]:
+    """sed's (in place?, scripts, script files, files)."""
+    inplace, scripts, sfiles, files = False, [], [], []
+    i = 0
+    only = False
+    while i < len(args):
+        a = args[i]
+        nxt = args[i + 1] if i + 1 < len(args) else ""
+        if only or a == "-" or not a.startswith("-"):
+            files.append(a)
+        elif a == "--":
+            only = True
+        elif a in ("-e", "--expression"):
+            scripts.append(nxt)
+            i += 1
+        elif a.startswith("--expression="):
+            scripts.append(a.split("=", 1)[1])
+        elif a in ("-f", "--file"):
+            sfiles.append(nxt)
+            i += 1
+        elif a.startswith("--file="):
+            sfiles.append(a.split("=", 1)[1])
+        elif a.startswith("--in-place"):
+            inplace = True
+        elif a in ("-l", "--line-length"):
+            i += 1
+        elif not a.startswith("--"):
+            cluster = a[1:]
+            for k, ch in enumerate(cluster):
+                rest = cluster[k + 1 :]
+                if ch == "i":
+                    inplace = True
+                    if a == "-i" and nxt == "":  # BSD's `-i ''`
+                        i += 1
+                    break
+                if ch in "ef":
+                    v = rest or nxt
+                    if not rest:
+                        i += 1
+                    (scripts if ch == "e" else sfiles).append(v)
+                    break
+                if ch == "l":
+                    if not rest:
+                        i += 1
+                    break
+        i += 1
+    if not scripts and not sfiles and files:
+        scripts.append(files.pop(0))
+    return inplace, scripts, sfiles, files
+
+
+def _perl_args(args: list[str]) -> tuple[bool, list[str], list[str]]:
+    """perl's (in place?, code, files)."""
+    inplace, code, files = False, [], []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        nxt = args[i + 1] if i + 1 < len(args) else ""
+        if a == "--":
+            files += args[i + 1 :]
+            break
+        if a == "-" or not a.startswith("-"):
+            files.append(a)
+        else:
+            cluster = a[1:]
+            for k, ch in enumerate(cluster):
+                rest = cluster[k + 1 :]
+                if ch == "i":
+                    inplace = True
+                    break  # the rest is the backup suffix
+                if ch in "eE":
+                    code.append(rest or nxt)
+                    if not rest:
+                        i += 1
+                    break
+                if ch in "IMmFCdDx0l":
+                    if ch in "IM" and not rest:
+                        i += 1
+                    break
+        i += 1
+    if not code and files:
+        code.append(files.pop(0))  # a script file: its name, not its text
+    return inplace, code, files
+
+
+def _awk_args(args: list[str]) -> tuple[bool, list[str], list[str]]:
+    """awk/gawk's (in place?, program, files)."""
+    inplace, prog, files = False, [], []
+    has_prog_file = False
+    i = 0
+    while i < len(args):
+        a = args[i]
+        nxt = args[i + 1] if i + 1 < len(args) else ""
+        if a == "--":
+            files += args[i + 1 :]
+            break
+        if a in ("-i", "--include"):
+            inplace = inplace or nxt in ("inplace", "inplace.awk")
+            i += 1
+        elif a.startswith(("-i", "--include=")):
+            inplace = inplace or a.split("=", 1)[-1].removeprefix("-i") in ("inplace", "inplace.awk")
+        elif a in ("-f", "--file"):
+            has_prog_file = True
+            i += 1
+        elif a in ("-e", "--source"):
+            prog.append(nxt)
+            i += 1
+        elif a in ("-v", "--assign", "-F", "--field-separator"):
+            i += 1
+        elif a.startswith("-") and a != "-":
+            pass
+        else:
+            files.append(a)
+        i += 1
+    if not prog and not has_prog_file and files:
+        prog.append(files.pop(0))
+    files = [f for f in files if not re.match(r"^[A-Za-z_]\w*=", f)]
+    return inplace, prog, files
+
+
+def _inplace_edit(toks: list[str]) -> _InPlace | None:
+    """sed -i, perl -i and awk -i inplace: their script and files, else None."""
+    cmd = Path(toks[0]).name
+    if cmd == "sed":
+        inplace, scripts, sfiles, files = _sed_args(toks[1:])
+        text = "\n".join(scripts)
+    elif cmd == "perl":
+        inplace, code, files = _perl_args(toks[1:])
+        text = "\n".join(code)
+    else:
+        inplace, prog, files = _awk_args(toks[1:])
+        text = "\n".join(prog)
+    return _InPlace(text, files) if inplace else None
+
+
+def _vim_edit(toks: list[str]) -> _InPlace | None:
+    """vim/vi/nvim run with a script (-c, --cmd, +cmd, -S, -s, ex mode): what it
+    runs and the files it edits; None when it is interactive."""
+    values = {"-c", "--cmd", "-S", "-u", "-U", "-i", "-T", "-W", "-w", "-t", "-q", "-r"}
+    exmode = Path(toks[0]).name == "ex" or any(a in ("-e", "-E", "-es", "-Es") for a in toks[1:])
+    script: list[str] = []
+    files: list[str] = []
+    scripted = exmode
+    i = 1
+    while i < len(toks):
+        a = toks[i]
+        nxt = toks[i + 1] if i + 1 < len(toks) else ""
+        if a in values or (a == "-s" and not exmode):
+            if a in ("-c", "--cmd", "-S", "-s"):
+                scripted = True
+                script.append(nxt)
+            i += 2
+            continue
+        if a.startswith("+"):
+            scripted = True
+            script.append(a[1:])
+        elif a == "--":
+            files += toks[i + 1 :]
+            break
+        elif not a.startswith("-"):
+            files.append(a)
+        i += 1
+    return _InPlace("\n".join(script), files) if scripted else None
+
+
+_SEARCHERS = {"grep", "egrep", "fgrep", "rg", "ag", "ack", "fd", "fdfind", "find"}
+
+
+def _search_roots(words: list[str], cwd: str | None) -> list[str] | None:
+    """The directories a producer of file names searches (`grep -rl x src`,
+    `git ls-files`, `find .`), its cwd when it names none; None when it
+    doesn't search."""
+    if not words:
+        return None
+    name = Path(words[0]).name
+    g = _git(words)
+    if g:
+        _, args, cdir = g
+        if args[:1] not in (["ls-files"], ["grep"]):
+            return None
+        rest = args[1:]
+        if "--" in rest:
+            paths = rest[rest.index("--") + 1 :]
+        else:
+            plain = [a for a in rest if not a.startswith("-")]
+            explicit = any(a in ("-e", "-f") for a in rest)
+            paths = plain[1:] if args[0] == "grep" and not explicit else plain
+        return paths or [cdir or "."]
+    if name not in _SEARCHERS:
+        return None
+    if name == "find":
+        return _find_starts(words) or ["."]
+    args = words[1:]
+    recursive = name not in ("grep", "egrep", "fgrep") or any(
+        a in ("-r", "-R", "--recursive", "--dereference-recursive") or (re.fullmatch(r"-[a-zA-Z]+", a) and set(a[1:]) & {"r", "R"}) for a in args
+    )
+    explicit = any(a in ("-e", "-f", "--regexp", "--file") or a.startswith(("--regexp=", "--file=")) for a in args)
+    skip = set(_opt_values(["x", *args], ("-e", "-f", "--regexp", "--file", "-m", "--max-count", "-A", "-B", "-C", "-g", "--glob", "-t", "--type", "--include", "--exclude")))
+    plain = [a for a in args if not a.startswith("-") and a not in skip]
+    paths = plain if explicit and name not in ("fd", "fdfind") else plain[1:]
+    if not paths:
+        return ["."] if recursive else None
+    return paths
+
+
+def _producer_words(word: str) -> list[str] | None:
+    """The command inside a `$(…)` or backtick word."""
+    k = word.find("$(")
+    if k >= 0:
+        toks, _ = _lex(word, k + 2, stop_paren=True)
+    elif "`" in word:
+        j = word.index("`")
+        toks = _lex(word[j + 1 : _backtick_end(word, j)])[0]
+    else:
+        return None
+    for item in _simple(toks):
+        if isinstance(item, _Cmd) and item.words:
+            return _strip_prefix(item.words)[0]
+    return []
+
+
+def _named_files(files: list[str], seg: Seg, root: Path, t: _Targets) -> None:
+    """The files an in-place edit names, or (fed by xargs or `$(…)`) those its
+    producer names, or why they can't be seen when it searches a tree that holds
+    a protected path."""
+    producers: list[tuple[list[str], str | None]] = []
+    for f in files:
+        if "$(" in f or "`" in f:
+            w = _producer_words(f)
+            producers.append((w or [], seg.cwd))
+        else:
+            t.files.append(f)
+    if not files and seg.piped is not None:
+        producers.append((seg.piped.words, seg.piped.cwd))
+    for words, cwd in producers:
+        name = Path(words[0]).name if words else ""
+        if name in ("echo", "printf"):
+            t.files += [w for w in words[1:] if not w.startswith("-")]
+            continue
+        if name == "cat":  # a list of files, one a line
+            for f in [w for w in words[1:] if not w.startswith("-")]:
+                t.files += (_read_text(f, cwd) or "").split()
+            continue
+        for r in _search_roots(words, cwd) or []:
+            t.searched.append((r, cwd))
 
 
 def _braces(word: str, limit: int = 64) -> list[str]:
@@ -1894,16 +2545,52 @@ def _protected_hit(target: str, seg: Seg, root: Path, patterns: list[str], tree:
                 return hit
             continue
         rel = _rel(a, root)
+        if _outside(rel):  # outside the project: none of its protected paths, unless it holds the project
+            if tree and _holds_root(a, root) and patterns:
+                return patterns[0]
+            continue
         hit = contains_protected(rel, patterns) if tree else matches(rel, patterns)
         if hit:
             return hit
     return None
 
 
-def _shell_protected(seg: Seg, patterns: list[str], root: Path) -> str | None:
-    t = _write_targets(seg, root)
+def _global_config_problem(seg: Seg, t: _Targets) -> str | None:
+    """A write to the global git config (~/.gitconfig, ~/.config/git/, the file
+    $GIT_CONFIG_GLOBAL names), which can hold aliases, hooks and push settings."""
+    named = [(x, False) for x in t.files] + [(x, True) for x in t.trees + t.links]
+    for tgt, tree in named:
+        for c in _candidates(_expand_known(tgt), seg.cwd):
+            if not c.strip():
+                continue
+            a = _abspath(c, seg.cwd)
+            hit = global_config_hit(a, tree) if a else (_global_config_name(c.strip()) and c)
+            if hit:
+                return f"writing `{tgt}` changes the global git config ({hit}), which can hold aliases, hooks and push settings; it isn't changed in these sessions"
+    toks = seg.words
+    if toks and _INTERP.match(Path(toks[0]).name):
+        code = _inline_code(toks)
+        if _WRITE_CALL.search(code):
+            for lit in re.findall(r"""['"]([^'"\n]+)['"]""", code):
+                p = lit.strip().lstrip("+<>").strip()
+                a = _abspath(p, seg.cwd) if p and not re.search(r"\s", p) else None
+                if a and global_config_hit(a):
+                    return f"this one-liner writes the global git config `{p}`; it isn't changed in these sessions"
+    return None
+
+
+def _shell_protected(seg: Seg, patterns: list[str], root: Path, t: _Targets | None = None) -> str | None:
+    t = t if t is not None else _write_targets(seg, root)
     if t.unknown:
         return t.unknown
+    for r, cwd in t.searched:
+        a = _abspath(r, cwd)
+        rel = _rel(a, root) if a else ""
+        if a is None or _holds_root(a, root) or (not _outside(rel) and contains_protected(rel, patterns)):
+            return (
+                f"this edits in place the files a search of `{r}` finds, which can reach protected paths, so the guard "
+                "can't see which files change; name the files, or search a narrower directory that holds no protected path"
+            )
     unknown_dir = "; the shell's directory can't be followed here (after `cd -`, `cd ~` or `cd $X`), so use a path from the project root"
     for tgt in t.files:
         hit = _protected_hit(tgt, seg, root, patterns, tree=False)
@@ -1923,8 +2610,10 @@ def _shell_protected(seg: Seg, patterns: list[str], root: Path) -> str | None:
         if _WRITE_CALL.search(code):
             for lit in re.findall(r"""['"]([^'"\n]+)['"]""", code):
                 p = lit.strip().lstrip("+<>").strip()
-                if p and not re.search(r"\s", p) and matches(_norm(p, root, seg.cwd), patterns):
-                    return f"this one-liner writes the protected path `{p}`"
+                if p and not re.search(r"\s", p):
+                    rel = _norm(p, root, seg.cwd)
+                    if not _outside(rel) and matches(rel, patterns):
+                        return f"this one-liner writes the protected path `{p}`"
     return None
 
 
@@ -1934,11 +2623,84 @@ _WRITE_CALL = re.compile(
 )
 
 
-def _shell_skips(seg: Seg, command: str, profile: Profile, root: Path) -> str | None:
-    t = _write_targets(seg, root)
+# An `s` command (sed, perl, ed, vim): its delimiter, what it finds and what it puts.
+_S_CMD = re.compile(r"(?<![A-Za-z_])s([^\w\s\\])((?:\\.|(?!\1).)*)\1((?:\\.|(?!\1).)*)\1", re.S)
+_ADDRESS = re.compile(r"/(?:\\.|[^/\n])*/")
+
+
+def _markers(text: str) -> int:
+    """Skip markers in text, read with sed's and perl's escapes (`\\n`, `it\\.only\\(`)."""
+    plain = re.sub(r"\\(.)", lambda m: {"n": "\n", "t": "\t"}.get(m.group(1), m.group(1)), text or "", flags=re.S)
+    return len(_SKIP.findall(plain))
+
+
+def _script_net(text: str) -> int:
+    """Skip markers an editing script adds, net of those it removes: an `s`
+    command counts what it puts less what it finds; an address (`/x/d`) only
+    finds; anything else it holds (`i\\`, `a` text) is added."""
+    net = 0
+
+    def sub(m: re.Match) -> str:
+        nonlocal net
+        net += _markers(m.group(3)) - _markers(m.group(2))
+        return " "
+
+    rest = _S_CMD.sub(sub, text or "")
+    return net + _markers(_ADDRESS.sub(" ", rest))
+
+
+def _patch_net(texts: list[str]) -> int:
+    added = removed = 0
+    for txt in texts:
+        for line in txt.splitlines():
+            if line.startswith("+") and not line.startswith("+++"):
+                added += _markers(line[1:])
+            elif line.startswith("-") and not line.startswith("---"):
+                removed += _markers(line[1:])
+    return added - removed
+
+
+_GREPS = {"grep", "egrep", "fgrep", "rg", "ag", "ack"}
+
+
+def _added_markers(seg: Seg, root: Path) -> int:
+    """Skip or focus markers the writing command itself puts in, net of what it
+    removes. Text another command merely searches for (a grep) doesn't count."""
+    toks = seg.words
+    cmd = Path(toks[0]).name if toks else ""
+    if cmd in ("sed", "perl", "awk", "gawk"):
+        ed = _inplace_edit(toks)
+        if ed is not None:
+            text = ed.script
+            if cmd == "sed":
+                for f in _sed_args(toks[1:])[2]:
+                    text += "\n" + (_read_text(f, seg.cwd) or "")
+            return _script_net(text)
+    if cmd in ("ed", "red") or cmd in _VIMS:
+        ed = _vim_edit(toks) if cmd in _VIMS else None
+        parts = [ed.script if ed else "", seg.heredoc or "", (_read_text(seg.stdin, seg.cwd) or "") if seg.stdin else ""]
+        return _script_net("\n".join(parts))
+    if cmd == "patch" or (cmd == "git" and (_git(toks) or ([], [], None))[1][:1] in (["apply"], ["am"])):
+        if cmd == "patch":
+            texts = _patch_texts("patch", toks[1:], seg)[0]
+        else:
+            args = _git(toks)[1]  # type: ignore[index]
+            texts = _patch_texts("git" if args[0] == "apply" else "git-am", args[1:], seg)[0]
+        return _patch_net(texts)
+    if cmd in _GREPS:
+        return 0  # copies lines that are already there
+    text = " ".join(toks[1:]) + "\n" + (seg.heredoc or "")
+    p = seg.piped
+    if p is not None and not (p.words and Path(p.words[0]).name in _GREPS):
+        text += "\n" + " ".join(p.words[1:]) + "\n" + (p.heredoc or "")
+    return _markers(text)
+
+
+def _shell_skips(seg: Seg, profile: Profile, root: Path, t: _Targets | None = None) -> str | None:
+    t = t if t is not None else _write_targets(seg, root)
     for tgt in t.files:
         rel = _norm(tgt, root, seg.cwd)
-        if rel and matches(rel, profile.test_paths) and _SKIP.search(command):
+        if rel and not _outside(rel) and matches(rel, profile.test_paths) and _added_markers(seg, root) > 0:
             return f"this writes a skip or focus marker into the test file `{tgt}`; skipping or disabling a test is never allowed"
     return None
 
@@ -1974,6 +2736,14 @@ def check_bash(
     segs = segments(command, root, start)
     protected = list(profile.protected_paths) + (GIT_INTERNALS if role == "ticket" else [])
     posts: list[Seg] = []
+    cache: dict[str, str] = {}
+
+    def read() -> str:
+        """The text of every file the command reads with cat or `<`."""
+        if "text" not in cache:
+            cache["text"] = "\n".join(_command_reads(segs))
+        return cache["text"]
+
     for seg in segs:
         p = _word_problem(seg.words, role) or _env_problem(seg, role)
         if p:
@@ -1986,45 +2756,61 @@ def check_bash(
             p = _git_config_problem(glob, args, role)
             if p:
                 return _deny(role, p)
+            d = _git_dir_of(root, seg.cwd, cdir)
+            same = cdir is None and seg.cwd == start
             if args and args[0] in ("push", "send-pack", "http-push"):
                 if role != "attended" and any(o == "--git-dir" or o.startswith(("--git-dir=", "--work-tree")) for o in glob):
                     return _deny(role, "push from the repository's own directory, not with `--git-dir`/`--work-tree`")
-                d = _git_dir_of(root, seg.cwd, cdir)
-                same = cdir is None and seg.cwd == start
                 branch = current_branch if same else _branch_of(d)
                 p = _push_problem(args, profile.base_branch, branch, role, profile.ticket_branch, upstream=lambda d=d: _upstream_branch(d))
                 if p:
                     return _deny(role, p)
             if role == "ticket" and not role_from_env:
-                p = _switch_problem(args, profile.ticket_branch)
+                p = _switch_problem(args, profile.ticket_branch, d)
+                if p:
+                    return Decision("deny", p)
+            if role == "ticket" and args[:1] == ["branch"]:  # whatever the role's source
+                p = _upstream_problem(args, d, current_branch if same else _branch_of(d))
                 if p:
                     return Decision("deny", p)
         if toks and Path(toks[0]).name == "gh":
-            p = _gh_problem(toks, profile, role, seg.cwd, command)
+            p = _gh_problem(toks, profile, role, seg.cwd, command, read)
             if p:
                 return _deny(role, p)
-        p = _api_problem(seg.words, profile, role, seg.cwd, command) if seg.words and Path(seg.words[0]).name == "curl" else None
+        p = _api_problem(seg.words, profile, role, seg.cwd, command, read) if seg.words and Path(seg.words[0]).name == "curl" else None
         if p:
             return _deny(role, p)
         if _post_kind(toks):
-            posts.append(seg if k is None else Seg(toks, seg.redirects, seg.cwd))
+            posts.append(seg if k is None else Seg(toks, seg.redirects, seg.cwd, seg.stdin, seg.heredoc, seg.piped, seg.assigns))
         if role in ("ticket", "attended"):
             p = _deploy_problem(seg, profile.deploy_commands, root)
             if p:
                 return _deny(role, p)
-        if role == "ticket":
-            p = _shell_protected(seg, protected, root)
+        if role in ("ticket", "conductor"):
+            t = _write_targets(seg, root)
+            p = _global_config_problem(seg, t)
             if p:
-                return Decision("deny", p + "; ticket sessions don't change protected paths (the owner reviews those)")
-            if not profile.allow_new_skips:
-                p = _shell_skips(seg, command, profile, root)
+                return Decision("deny", p)
+            if role == "ticket":
+                p = _shell_protected(seg, protected, root, t)
                 if p:
-                    return Decision("deny", p)
+                    return Decision("deny", p + "; ticket sessions don't change protected paths (the owner reviews those)")
+                if not profile.allow_new_skips:
+                    p = _shell_skips(seg, profile, root, t)
+                    if p:
+                        return Decision("deny", p)
     if posts and profile.sensitive_patterns:
-        texts = [command]
+        texts = [command, read()]
         for s in posts:
-            for f in _body_files(s.words):
-                txt = _read_text(f, s.cwd)
+            files = [(f, s.cwd) for f in _body_files(s.words)]
+            if s.stdin:
+                files.append((s.stdin, s.cwd))
+            if s.piped is not None:  # what its producer reads: `cat body.md | gh pr comment 1 --body-file -`
+                files += [(w, s.piped.cwd) for w in s.piped.words[1:] if not w.startswith("-")]
+                if s.piped.stdin:
+                    files.append((s.piped.stdin, s.piped.cwd))
+            for f, fcwd in files:
+                txt = _read_text(f, fcwd)
                 if txt:
                     texts.append(txt)
         text = "\n".join(texts)
@@ -2046,6 +2832,12 @@ def check_write(tool: str, inp: dict, profile: Profile, role: str, root: Path, c
     start = _start_cwd(root, cwd)
     a = _abspath(path, start) if path else None
     rel = _rel(a, root) if a else ""
+    if role in ("ticket", "conductor") and a:
+        hit = global_config_hit(a)
+        if hit:
+            return Decision("deny", f"`{path}` is the global git config ({hit}), which can hold aliases, hooks and push settings; it isn't changed in {role} sessions")
+    if _outside(rel):  # outside the project: never one of its protected paths or tests
+        return ALLOW
     if role == "ticket" and rel:
         m = matches(rel, list(profile.protected_paths) + GIT_INTERNALS)
         if m:

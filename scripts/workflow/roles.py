@@ -43,13 +43,15 @@ def unrecognised() -> str | None:
     return raw if raw and raw.lower() not in ROLES else None
 
 
-def role(cwd: Path, ticket_branch: str = "claude/build-*") -> str:
+def role(cwd: Path, ticket_branch: str = "claude/build-*", fallback: Path | None = None) -> str:
     """The session's role. Only `WORKFLOW_ROLE` is a firm signal; the branch
-    fallback is a convenience the session itself can change."""
+    fallback is a convenience the session itself can change. When `cwd` has no
+    branch (outside the repository, e.g. /tmp), `fallback`'s (the project root's)
+    is used."""
     env = env_role()
     if env:
         return env
-    b = current_branch(cwd)
+    b = current_branch(cwd) or (current_branch(fallback) if fallback is not None else None)
     if b and fnmatch.fnmatchcase(b, ticket_branch):
         return "ticket"
     return "attended"

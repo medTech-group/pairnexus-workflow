@@ -8,9 +8,9 @@ case-insensitively.
 
 A blocker is an issue number in this repository, or the text "owner/repo#n"
 for one in another repository, which readiness can't resolve and so blocks.
-Blockers are read as `#n`, `owner/repo#n` or an issue URL
-(`https://github.com/owner/repo/issues/n`), on plain lines or lines quoted
-with `>`.
+Blockers are read as `#n`, `owner/repo#n` or an issue or pull request URL
+(`https://github.com/owner/repo/issues/n`, `…/pull/n`), on plain lines or lines
+quoted with `>`, and after "blocked by" in the middle of a sentence.
 """
 
 from __future__ import annotations
@@ -40,7 +40,11 @@ _BLOCKED_LINE = re.compile(r"^\s*(?:[-*+]\s+)?\**blocked by\**(?:\s*:\**|(?=\s)|
 _BLOCKED_HEADING = re.compile(r"^\s*#{1,6}\s*blocked by\s*:?\s*$", re.I)
 _BULLET = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
 _QUOTE = re.compile(r"^\s*(?:>\s?)+")
-_URL = re.compile(r"https?://(?:www\.)?github\.com/([\w.-]+/[\w.-]+)/issues/(\d+)\b[^\s)\]>]*", re.I)
+_URL = re.compile(r"https?://(?:www\.)?github\.com/([\w.-]+/[\w.-]+)/(?:issues|pull)/(\d+)\b[^\s)\]>]*", re.I)
+# "… is blocked by #8 and #9 …" in the middle of a sentence: the refs right after it.
+_ONE_REF = r"(?:https?://(?:www\.)?github\.com/[\w.-]+/[\w.-]+/(?:issues|pull)/\d+\S*|(?:[\w.-]+/[\w.-]+)?#\d+\b)"
+_MID_BLOCKED = re.compile(rf"\bblocked\s+by\s*:?\s*\**\s*({_ONE_REF}(?:\s*(?:,|\band\b|&|\+)\s*{_ONE_REF})*)", re.I)
+_NEGATED = re.compile(r"\b(?:not|no\s+longer|n't|never|isn't|aren't|wasn't)\s+(?:\w+\s+)?$", re.I)
 
 
 def labels_of(issue: dict) -> set[str]:
@@ -132,6 +136,9 @@ def blockers_of(body: str | None, repo: str | None = None) -> list[Blocker]:
             continue
         m = _BLOCKED_LINE.match(line)
         if not m:
+            for mm in _MID_BLOCKED.finditer(line):
+                if not _NEGATED.search(line[: mm.start()]):
+                    found += _refs(mm.group(1), repo)
             continue
         rest = m.group(1)
         if _is_none(rest):
@@ -183,7 +190,8 @@ def read_area(body: str | None, areas: Iterable[str] | None = None) -> tuple[str
     The value after `Area:` (bold, bulleted or in backticks too), or the first
     non-empty line under an `## Area` heading, lowercased. An area is one word.
     With several words (`Area: the clock module`), the first word is taken only
-    when it is one of the profile's `areas`; otherwise the whole value is
+    when it is one of the profile's `areas` (with a note when other words are
+    areas too, `Area: messages, sharing`); otherwise the whole value is
     slugified (`the-clock-module`), with a note. A one-word area that isn't one
     of the profile's areas is kept as its own area, with a note.
     """
@@ -202,6 +210,9 @@ def read_area(body: str | None, areas: Iterable[str] | None = None) -> tuple[str
             return area, f"area {area} isn't one of the profile's areas ({', '.join(known)}); treated as its own area"
         return area, None
     if words[0] in known:
+        others = [w for w in dict.fromkeys(words[1:]) if w in known and w != words[0]]
+        if others:
+            return words[0], f"Area names several areas ({', '.join([words[0], *others])}); took the first, {words[0]}"
         return words[0], None
     area = _slug(raw)
     return area, f"Area should be one word from {listed}; {raw!r} treated as its own area, {area}"
@@ -343,7 +354,9 @@ def readiness(
             if bi is None:
                 v.reasons.append(f"blocker #{b} unknown (not in the issue list)")
             elif (bi.get("state") or "").lower() != "closed":
-                v.reasons.append(f"blocked by open #{b}")
+                v.reasons.append(
+                    f"blocked by owner task #{b}" if labels_of(bi) & {"owner-task", "ready-for-human"} else f"blocked by open #{b}"
+                )
             elif (bi.get("state_reason") or "completed") != "completed":
                 v.reasons.append(f"blocker #{b} closed as {bi.get('state_reason')}, not completed")
         v.ready = not v.reasons

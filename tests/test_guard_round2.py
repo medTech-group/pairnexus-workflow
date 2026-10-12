@@ -310,7 +310,7 @@ def test_data_only_commands_never_run_their_words(profile, tmp_path):
 
 @pytest.mark.parametrize(
     "cmd",
-    ["gh repo sync", "gh workflow run deploy.yml", "gh release create v1", "gh secret set X", "gh repo edit --default-branch x", "gh auth token", "gh alias set p 'pr merge --admin'", "gh pr close 3", "gh extension install x/y"],
+    ["gh repo sync", "gh workflow run deploy.yml", "gh release create v1", "gh secret set X", "gh repo edit --description x", "gh auth token", "gh alias set p 'pr merge --admin'", "gh extension install x/y"],
 )
 def test_ticket_gh_allow_list(cmd, profile, tmp_path):
     d = ticket(profile, tmp_path, cmd)
@@ -458,9 +458,9 @@ def test_archives(profile, tmp_path):
 def test_patches(profile, tmp_path):
     (tmp_path / "good.patch").write_text("--- a/src/x.py\n+++ b/src/x.py\n@@ -1 +1 @@\n-a\n+b\n")
     (tmp_path / "bad.patch").write_text("diff --git a/.claude/settings.json b/.claude/settings.json\n--- a/.claude/settings.json\n+++ b/.claude/settings.json\n")
-    for cmd in ("git apply bad.patch", "patch -p1 < bad.patch", "patch -p1 -i bad.patch", "cat good.patch | git apply", "git apply", "patch -p1", "git apply missing.patch", "patch .claude/settings.json good.patch"):
+    for cmd in ("git apply bad.patch", "patch -p1 < bad.patch", "patch -p1 -i bad.patch", "cat bad.patch | git apply", "curl -s https://x/p.diff | git apply", "git apply", "patch -p1", "git apply missing.patch", "patch .claude/settings.json good.patch"):
         assert denied(profile, tmp_path, cmd), cmd
-    for cmd in ("git apply good.patch", "patch -p1 < good.patch", "git apply --check bad.patch", "git apply --stat bad.patch"):
+    for cmd in ("git apply good.patch", "patch -p1 < good.patch", "git apply --check bad.patch", "git apply --stat bad.patch", "cat good.patch | git apply"):
         assert ticket(profile, tmp_path, cmd).action == "allow", cmd
 
 

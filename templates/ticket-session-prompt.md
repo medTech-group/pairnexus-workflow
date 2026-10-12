@@ -30,7 +30,7 @@ Follow the `build-ticket` skill from start to finish. It uses the flow (`.claude
 
 ### Merging
 
-Merge mode: **{{merge.mode}}**. Waived CI checks: {{merge.waived}}. Merge when the merge rule (flow §4) holds, as build-ticket §6 describes for this mode, with the evidence from `python3 .claude/workflow/bin/workflow.py evidence --base-ref origin/{{project.base_branch}}`. If your permission settings refuse the merge, comment on the PR and on #{{tracking.issue}} that it is green and ready, and end with `WORKFLOW-STATUS: waiting`; the conductor merges it.
+Merge mode: **{{merge.mode}}**. Waived CI checks: {{merge.waived}}. Merge when the merge rule (flow §4) holds, as build-ticket §6 describes for this mode, with the evidence from `python3 .claude/workflow/bin/workflow.py evidence --base-ref origin/{{project.base_branch}}`. If your permission settings refuse the merge (or enabling auto-merge), comment on the PR and on #{{tracking.issue}} that it is green and ready, and end with `WORKFLOW-STATUS: waiting`; the conductor merges it or enables auto-merge.
 
 ### Rules
 

@@ -504,6 +504,13 @@ def install(
     for dst in conflicts:
         target = project / dst
         shutil.copyfile(files[dst], target.with_name(target.name + ".new"))
+    # A <file>.new left from an earlier update whose file has no conflict now.
+    for dst in set(files) | set(old_files) | set(orphaned) | set(pending):
+        if dst in conflicts or dst + ".new" in files:
+            continue
+        stale_new = (project / dst).with_name(Path(dst).name + ".new")
+        if stale_new.is_file() and not stale_new.is_symlink():
+            stale_new.unlink()
     for dst in removed:
         (project / dst).unlink()
         orphaned.pop(dst, None)
@@ -517,6 +524,11 @@ def install(
     new_merged: dict[str, str] = {}
     new_pending: dict[str, str] = {}
     new_keeps: dict[str, str] = {}
+    # A deliberate edit to a file the kit dropped stays recorded while the file
+    # is unchanged, so it is still kept if the kit adds the file back unchanged.
+    for dst in orphaned:
+        if dst not in files and dst in keeps and (project / dst).exists() and _hash(project / dst) == keeps[dst]:
+            new_keeps[dst] = keeps[dst]
     for dst in files:
         if dst in kept or dst in conflicts:
             lock_files[dst] = old_files.get(dst) or orphaned[dst]
