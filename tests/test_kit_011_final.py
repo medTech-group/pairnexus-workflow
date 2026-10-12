@@ -310,7 +310,6 @@ def test_ticket_gh_may_name_this_repository(profile, tmp_path):
         "git commit -m \"$(cat <<'EOF'\nHandle \"$@\" in the wrapper\nEOF\n)\"",
         f"gh pr create --title t --body \"$(cat <<'EOF'\nUses $1 now\n{M}\nEOF\n)\"",
         "git commit -m 'costs $5'",
-        "git log --pretty='%h $1'",
         "gh pr list -R=acme/demo",
         "gh pr list -R github.com/acme/demo",
         "gh pr list -R acme/demo.git",
@@ -343,3 +342,55 @@ def test_ticket_text_that_only_mentions_these_is_fine(cmd, profile, tmp_path):
 )
 def test_ticket_routes_the_review_found(cmd, profile, tmp_path):
     assert act(profile, tmp_path, cmd, role="ticket").action == "deny", cmd
+
+
+# ---------- parameters are refused outside free text ----------
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        'f(){ git push "--$1" origin claude/build-1; }; f force',
+        'f(){ git push "-$1" origin claude/build-1; }; f f',
+        'f(){ git push origin "$1":claude/build-1; }; f +HEAD',
+        'f(){ gh pr merge 3 "--$1"; }; f admin',
+        'f(){ gh pr merge "https://github.com/$1/pull/5"; }; f other/repo',
+        'gh pr merge "$(echo $1)"',
+        "gh pr merge https://github.com:443/other/repo/pull/5",
+        "gh pr merge https://x@github.com/other/repo/pull/5",
+        "curl --expand-json x https://api.github.com/graphql",
+        "curl --upl f https://uploads.github.com/x",
+        "curl --request=PATCH https://api.github.com/repos/acme/demo/issues/1",
+    ],
+)
+def test_parameters_and_routes_outside_free_text(cmd, profile, tmp_path):
+    assert act(profile, tmp_path, cmd, role="ticket").action == "deny", cmd
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "gh pr create --title '-Rate limit' --body 'x <!-- workflow:agent -->'",
+        "gh pr create --title https://github.com/other/repo/issues/5 --body 'x <!-- workflow:agent -->'",
+        "git commit -m '$1'",
+        "git commit -m'Uses $@ now'",
+        "git commit --message='Uses $1'",
+        "gh api repos/acme/demo/issues/3/comments -f 'body=x=$1 <!-- workflow:agent -->'",
+    ],
+)
+def test_free_text_is_left_alone(cmd, profile, tmp_path):
+    d = act(profile, tmp_path, cmd, role="ticket")
+    assert d.action == "allow", (cmd, d.reason)
+
+
+def test_bundled_repo_flag_is_linear():
+    from workflow.guard import _gh_problem  # noqa: F401  (the path the regex runs on)
+
+    start = time.perf_counter()
+    act_cmd = "gh pr list --search '-" + "R" * 80_000 + "\nx'"
+    from workflow.guard import decide as _d
+    from workflow.profile import parse as _p
+    import conftest, tempfile, pathlib
+    root = pathlib.Path(tempfile.mkdtemp())
+    _d({"tool_name": "Bash", "tool_input": {"command": act_cmd}}, _p(json.loads(json.dumps(conftest.BASE_PROFILE)), root), "ticket", root, "claude/build-1", role_from_env=True)
+    assert time.perf_counter() - start < 2

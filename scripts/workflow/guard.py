@@ -1196,7 +1196,7 @@ def _env_problem(seg: Seg, role: str) -> str | None:
         if m:
             return f"setting `{a.split('=', 1)[0]}` can point git at other config, programs or repositories; it's not allowed in {role} sessions"
         if role == "ticket" and re.match(r"(GH_REPO|GH_HOST|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRISE_TOKEN|GH_TOKEN|GITHUB_TOKEN|GH_CONFIG_DIR)(\+?=|$)", a):
-            return f"setting `{a.split('=', 1)[0]}` points gh at another repository, host or account; ticket sessions work only in this repository"
+            return f"setting `{a.split('=', 1)[0].rstrip('+')}` points gh at another repository, host or account; ticket sessions work only in this repository"
     return None
 
 
@@ -1393,10 +1393,30 @@ def _repo_name(r: str) -> str:
 
 
 # A shell function's or script's parameters, whose values the guard never sees.
-# Only a word that is one (`"$@"`, `$1`, `${1:-x}`), or ends one after `=` or `:`
-# (`--repo=$1`, `HEAD:$1`): text that merely mentions one, as a commit message
-# or a PR body may, is left alone.
-_POSITIONAL = re.compile(r"(?:^|[=:])\$(?:[@*#0-9]|\{[!#]?[@*0-9][^}]*\})$")
+_POSITIONAL = re.compile(r"\$(?:[@*#0-9]|\{[!#]?[@*0-9])")
+
+# Options whose value is free text (a commit message, a PR's title or body):
+# what it says, a `$1`, a `-R` or another repository's URL, runs nothing.
+_FREE_TEXT = {"git": {"-m", "--message"}, "gh": {"-t", "--title", "-b", "--body", "--subject"}}
+
+
+def _free_text(toks: list[str]) -> set[int]:
+    """Indexes of the words in a git or gh command that are free text."""
+    prog = "gh" if Path(toks[0]).name == "gh" else "git"
+    opts = _FREE_TEXT[prog]
+    out: set[int] = set()
+    for j, t in enumerate(toks):
+        if t in opts and j + 1 < len(toks):
+            out.add(j + 1)
+        elif any(t.startswith(o + "=") for o in opts if o.startswith("--")):
+            out.add(j)
+        elif prog == "git" and re.fullmatch(r"-m.+", t, re.S):
+            out.add(j)
+        elif prog == "gh" and t in _FIELD_FLAGS and j + 1 < len(toks) and re.match(r"(?:body|title)=", toks[j + 1]):
+            out.add(j + 1)
+        elif prog == "gh" and re.match(r"(?:--(?:raw-)?field=|-[fF])(?:body|title)=", t):
+            out.add(j)
+    return out
 
 # `gh` subcommands a ticket session may run (None: any).
 _GH_TICKET: dict[str, set[str] | None] = {
@@ -1698,18 +1718,21 @@ def _gh_problem(toks: list[str], profile: Profile, role: str, cwd: str | None, r
     if group == "repo" and sub == "edit" and any(t == "--default-branch" or t.startswith("--default-branch=") for t in toks):
         return "changing the repository's default branch (`gh repo edit --default-branch`) is never allowed"
     if role == "ticket":
+        text = _free_text(toks)
         for j, t in enumerate(toks):
+            if j in text:
+                continue
             r = None
             if t == "--repo" or t.startswith("--repo="):
                 r = t.split("=", 1)[1] if "=" in t else toks[j + 1] if j + 1 < len(toks) else ""
             else:
                 # `-R x`, `-Rx`, `-R=x`, and bundled after boolean shorts (`-mR x`).
-                m = re.fullmatch(r"-[a-zA-Z]*R(.*)", t)
+                m = re.fullmatch(r"-[a-zA-Z]*?R(.*)", t, re.S)
                 if m:
                     r = m.group(1).removeprefix("=") or (toks[j + 1] if j + 1 < len(toks) else "")
             if r is None:
                 # A pull request or issue URL names its own repository, which gh then uses.
-                u = re.fullmatch(r"(?:https?://)?(?:www\.)?github\.com/([^/\s]+/[^/\s]+)/(?:pull|issues)/\d+\S*", t, re.I)
+                u = re.match(r"(?:https?://)?(?:[^@/\s]+@)?(?:www\.)?github\.com(?::\d+)?/([^/\s]+/[^/\s]+)/(?:pull|issues)/", t, re.I)
                 r = u.group(1) if u else None
             if r is not None and _repo_name(r) != profile.repo.casefold():
                 return f"ticket sessions work only in {profile.repo}; `{t}` names another repository"
@@ -1733,8 +1756,8 @@ def _api_problem(toks: list[str], profile: Profile, role: str, cwd: str | None =
         # A short flag may carry its value joined (`-dX`, `-Tq.json`, `-Kcfg`); a
         # config file (`-K`) can hold any of them.
         writes = (
-            re.search(r"\s(-[a-zA-Z]*X|--request)\s*=?\s*(POST|PUT|PATCH|DELETE)\b", joined, re.I)
-            or re.search(r"\s(--data[\w-]*|--expand-data|--form[\w-]*|--upload-file|--json|--config)[\s=]", joined)
+            re.search(r"\s(-[a-zA-Z]*X|--req\w*)[\s=]*(POST|PUT|PATCH|DELETE)\b", joined, re.I)
+            or re.search(r"\s(--data[\w-]*|--expand-[\w-]+|--form[\w-]*|--upl[\w-]*|--jso\w*|--conf\w*)[\s=]", joined)
             or re.search(r"\s-[a-zA-Z]*[dFTK]", joined)
         )
         if writes and role != "attended":
@@ -3324,7 +3347,9 @@ def check_bash(
             return _deny(role, p)
         k = _vcs_index(seg.words, role)
         toks = seg.words[k:] if k is not None else seg.words
-        if role == "ticket" and toks and _is_vcs_word(toks[0]) and any(_POSITIONAL.search(w) for w in toks[1:]):
+        if role == "ticket" and toks and _is_vcs_word(toks[0]) and any(
+            _POSITIONAL.search(w) for j, w in enumerate(toks) if j and j not in _free_text(toks)
+        ):
             return _deny(role, f"`{Path(toks[0]).name}` with a function's or script's parameters (`$@`, `$1` …) can't be read before it runs; write the command out")
         g = _git(toks)
         if g is not None:
