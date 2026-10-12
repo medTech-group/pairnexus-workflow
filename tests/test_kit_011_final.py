@@ -131,8 +131,12 @@ def test_ticket_reads_only_the_query(decoy, profile, tmp_path):
     assert act(profile, tmp_path, cmd, role="ticket").action == "deny", decoy
 
 
-def test_ticket_addcomment_still_allowed(profile, tmp_path):
-    assert act(profile, tmp_path, f"gh api graphql -f query='{M_SAFE}'", role="ticket").action != "deny"
+def test_ticket_sessions_use_no_graphql(profile, tmp_path):
+    for q in (M_SAFE, "query{viewer{login}}", 'mutation{enablePullRequestAutoMerge(input:{pullRequestId:"x"}){clientMutationId}}'):
+        d = act(profile, tmp_path, f"gh api graphql -f query='{q}'", role="ticket")
+        assert d.action == "deny" and "enable_pr_auto_merge" in d.reason, q
+    # The same calls through the MCP tools and REST stay open to them.
+    assert act(profile, tmp_path, "gh api -X PUT repos/acme/demo/pulls/3/merge -f merge_method=merge", role="ticket").action == "allow"
 
 
 CONDUCTOR_HIDDEN = {

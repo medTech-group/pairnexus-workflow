@@ -60,6 +60,11 @@ POSTS = [
 @pytest.mark.parametrize("bare, marked", POSTS)
 @pytest.mark.parametrize("role", ["ticket", "conductor"])
 def test_agent_posts_need_the_marker(bare, marked, role, profile, tmp_path):
+    if role == "ticket" and bare.startswith("gh api graphql"):
+        # Ticket sessions don't use GraphQL at all (the final review of 0.1.1).
+        for cmd in (bare, marked):
+            assert "GraphQL" in act(profile, tmp_path, cmd, role=role, branch="claude/build-1").reason, cmd
+        return
     d = act(profile, tmp_path, bare, role=role, branch="claude/build-1" if role == "ticket" else "main")
     assert d.action == "deny", bare
     assert M in d.reason and "at the end of the body" in d.reason
@@ -117,6 +122,9 @@ NOT_POSTS = [
 def test_labels_state_and_merges_are_not_posts(cmd, role, profile, tmp_path):
     (tmp_path / "state.json").write_text('{"state": "closed"}')
     (tmp_path / "labels.json").write_text('{"labels": ["needs-human"]}')
+    if role == "ticket" and cmd.startswith("gh api graphql"):
+        assert act(profile, tmp_path, cmd, role=role, branch="claude/build-1").action == "deny", cmd
+        return
     assert act(profile, tmp_path, cmd, role=role, branch="claude/build-1" if role == "ticket" else "main").action == "allow", cmd
 
 

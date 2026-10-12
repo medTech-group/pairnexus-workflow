@@ -30,9 +30,9 @@ interpreter one-liners, and in ticket and conductor sessions finds `git`,
   upstream of the branch's own name;
 - `gh` may only run the subcommands a ticket needs (pull requests, issues,
   runs, workflow reads, `api`, reads); `gh api` writes may only touch this
-  repo's issues, comments, labels and pull requests; GraphQL mutations only
-  `enablePullRequestAutoMerge` and `addComment`, with the query inline (one
-  read from a file, a variable or a substitution counts as a mutation);
+  repo's issues, comments, labels and pull requests; never GraphQL (the shell
+  can assemble a query in more ways than this can follow; the MCP tools and
+  REST cover auto-merge, comments and reads);
 - `git config`, `git -c`, `--config-env` and `GIT_CONFIG*`/`GIT_SSH*`/
   `GIT_DIR`-style variables may not set aliases, push, remote, credential or
   command settings (conductor too);
@@ -1418,7 +1418,6 @@ _DANGEROUS_GQL = re.compile(
     r"deleteBranchProtectionRule|createBranchProtectionRule|updateRepositoryRuleset|deleteRepositoryRuleset|createRepositoryRuleset|"
     r"updateRepository|renameRef)\b"
 )
-_TICKET_GQL_MUTATIONS = {"enablePullRequestAutoMerge", "addComment"}
 _FIELD_FLAGS = ("-f", "-F", "--field", "--raw-field")
 
 
@@ -1722,25 +1721,10 @@ def _api_problem(toks: list[str], profile: Profile, role: str, cwd: str | None =
     if path == "graphql":
         from_file = bool(call.files) or call.stdin
         if role == "ticket":
-            if from_file:
-                return "a GraphQL call read from a file (`@file`, `--input`) counts as a mutation, which ticket sessions don't run; pass the query inline"
-            # Only the query is run; other fields are its variables. Each query is
-            # read alone, so text in another field can't change how it lexes.
-            queries = [f.split("=", 1)[1] if "=" in f else "" for f in call.fields if f.split("=", 1)[0] == "query"]
-            if any(_shell_value(q) for q in queries):
-                return "a GraphQL query from a variable or a substitution counts as a mutation, which ticket sessions don't run; pass the query inline"
-            # A backstop for every way of passing a field the parse above doesn't
-            # know: each `mutation` in the command must be in a query it read.
-            said = len(re.findall(r"\bmutation\b", " ".join(toks)))
-            if said > sum(len(re.findall(r"\bmutation\b", q)) for q in queries):
-                return "ticket sessions pass a GraphQL mutation only as an inline `-f query=…`, and run only the `enablePullRequestAutoMerge` and `addComment` mutations"
-            for q in queries:
-                if not re.search(r"\bmutation\b", q):
-                    continue
-                names = _mutation_fields(q)
-                if names is None or not names or any(n not in _TICKET_GQL_MUTATIONS for n in names):
-                    return "ticket sessions run only the `enablePullRequestAutoMerge` and `addComment` GraphQL mutations; use the REST API or the GitHub MCP tools"
-            return None
+            # The shell can assemble a query in more ways than any reading of the
+            # command can follow (expansions, globs, xargs), and ticket sessions
+            # need none: auto-merge, comments and reads have MCP tools and REST.
+            return "ticket sessions don't use GitHub's GraphQL API; use the GitHub MCP tools (`enable_pr_auto_merge`, `add_issue_comment`, the read tools) or REST"
         # The whole command and every file it reads: the query may be in a variable.
         text = call.rest + "\n" + raw
         for f in call.files:

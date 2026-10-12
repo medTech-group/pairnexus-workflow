@@ -89,7 +89,6 @@ ALLOW_TICKET = [
     "gh api repos/acme/demo/pulls -f title=t -f head=claude/build-1 -f base=main -f body='<!-- workflow:agent -->'",
     "gh api -X PUT repos/acme/demo/pulls/3/merge -f merge_method=merge",
     "gh api repos/acme/demo/pulls/3",
-    "gh api graphql -f query='query{viewer{login}}'",
     "gh pr merge 3 --merge",
     "git config user.name ci",
     "rm -rf build && mkdir -p build",

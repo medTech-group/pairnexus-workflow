@@ -387,9 +387,10 @@ def test_graphql_from_a_file(profile, tmp_path):
 @pytest.mark.parametrize(
     "q, ok",
     [
-        ('mutation{enablePullRequestAutoMerge(input:{pullRequestId:"x"}){clientMutationId}}', True),
-        ('mutation($id:ID!){a: addComment(input:{subjectId:$id,body:"x <!-- workflow:agent -->"}){clientMutationId}}', True),
-        ('mutation{addComment(input:{body:"mergeBranch <!-- workflow:agent -->"}){clientMutationId}}', True),
+        # Ticket sessions use no GraphQL at all since 0.1.1: the MCP tools and REST.
+        ('mutation{enablePullRequestAutoMerge(input:{pullRequestId:"x"}){clientMutationId}}', False),
+        ('mutation($id:ID!){a: addComment(input:{subjectId:$id,body:"x <!-- workflow:agent -->"}){clientMutationId}}', False),
+        ('mutation{addComment(input:{body:"mergeBranch <!-- workflow:agent -->"}){clientMutationId}}', False),
         ("mutation{addComment(input:{}){x} mergeBranch(input:{}){x}}", False),
         ("mutation{closePullRequest(input:{}){x}}", False),
         ("mutation{x: updateRef(input:{}){x}}", False),
