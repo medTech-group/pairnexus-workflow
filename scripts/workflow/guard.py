@@ -690,7 +690,7 @@ class Seg:
 
 _KEYWORDS = {"{", "}", "!", "if", "then", "else", "elif", "fi", "do", "done", "while", "until", "esac", "coproc"}
 _WRAPPERS: dict[str, set[str]] = {
-    "sudo": {"-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-U", "-T"},
+    "sudo": {"-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-U", "-T", "--chdir"},
     "doas": {"-u", "-C"},
     "env": {"-u", "-C", "-S", "--unset", "--chdir", "--split-string"},
     "nohup": set(),
@@ -758,10 +758,12 @@ def _strip_prefix(toks: list[str], wrappers: list[str] | None = None) -> tuple[l
                     val = t.split("=", 1)[1]
                 elif name == "env" and re.fullmatch(r"-C.+", t):
                     val, t = t[2:], "-C"
+                elif name == "sudo" and re.fullmatch(r"-D.+", t):
+                    val, t = t[2:], "-D"
                 elif name == "env" and re.fullmatch(r"-S.+", t):
                     val, t = t[2:], "-S"
                 key = t.split("=", 1)[0]
-                if val is not None and ((name == "env" and key in ("-C", "--chdir")) or (name == "sudo" and key == "-D")):
+                if val is not None and ((name == "env" and key in ("-C", "--chdir")) or (name == "sudo" and key in ("-D", "--chdir"))):
                     chdir = val if chdir is None or os.path.isabs(val) else posixpath.join(chdir, val)
                 if val is not None and name == "env" and key in ("-S", "--split-string"):
                     toks = val.split() + toks
@@ -887,8 +889,10 @@ def _segments_of(toks: list, root: Path, cwd: str | None, depth: int) -> list[Se
         if "xargs" in stripped:
             seg.fed = True
             # A list read from a file (`-a f`, `< f`), not the pipe: anywhere in the words, to be safe.
+            # xargs's own options: the words before the command, or all of them when env -S split the line
+            head = words[: len(words) - len(toks2)] if words[len(words) - len(toks2) :] == toks2 else words
             seg.fed_file = bool(item.stdin or item.heredoc) or any(
-                w in ("-a", "--arg-file") or w.startswith("--arg-file=") or re.fullmatch(r"-a.+", w) is not None for w in words
+                w in ("-a", "--arg-file") or w.startswith("--arg-file=") or re.fullmatch(r"-a.+", w) is not None for w in head
             )
         segs.append(seg)
         prev = seg
@@ -926,8 +930,8 @@ def _nested(seg: Seg, root: Path, depth: int) -> list[Seg]:
                 if sub:
                     # -execdir runs in each match's own directory, which can't be seen here.
                     where = None if toks[k] in ("-execdir", "-okdir") else seg.cwd
-                    if where is None and chdir is None and _only_the_match(sub):
-                        sub = [w for w in sub if w != "{}"]  # `rm -f {}`: the match, which the find's own check covers
+                    if where is None and chdir is None:  # its `{}` is the match, which the find's own check covers
+                        sub = [_MATCH if w == "{}" else w for w in sub]
                     s2 = Seg(sub, [], where, assigns=assigns)
                     out.append(s2)
                     out += _nested(s2, root, depth + 1)
@@ -1831,7 +1835,8 @@ class _Targets:
     # an in-place edit of the files a search finds (`grep -rl x . | xargs sed -i`): (tree searched, its cwd)
     searched: list[tuple[str, str | None]] = field(default_factory=list)
     # a writing find from the project root limited by -name/-iname: (its name globs, case-insensitive)
-    named_from_root: list[tuple[list[str], bool]] = field(default_factory=list)
+    # a writing find limited by -name/-iname: (its globs, case-insensitive, its start's own name tested, the start)
+    named_from_root: list[tuple[list[str], bool, bool, str]] = field(default_factory=list)
 
 
 def _opt_values(toks: list[str], names: tuple[str, ...]) -> list[str]:
@@ -2154,16 +2159,19 @@ def _git_targets(args: list[str], t: _Targets) -> None:
         (t.trees if source else t.files).extend(paths)
 
 
-def _only_the_match(sub: list[str]) -> bool:
-    """An -execdir command whose only operand is the match (`rm -f {}`,
-    `touch {}`), from the writers that act on their operands alone."""
-    if not sub or Path(sub[0]).name not in (_RM_LIKE | _TOUCH_LIKE) or Path(sub[0]).name in {"chmod", "chown", "chgrp", "chattr", "setfacl", "truncate"}:
-        return False
-    operands = [w for w in sub[1:] if not w.startswith("-")]
-    return operands == ["{}"]
+_MATCH = "__find_execdir_match__"  # -execdir's `{}`: the match itself, which the find's own check covers
 
 
 def _write_targets(seg: Seg, root: Path) -> _Targets:
+    """What one command writes, removes, links to, or can't show."""
+    t = _write_targets_raw(seg, root)
+    if any(_MATCH in x for x in t.files + t.trees + t.links):
+        keep = lambda xs: [x for x in xs if x != _MATCH and not x.startswith(_MATCH + "/") and not x.endswith("/" + _MATCH)]  # noqa: E731
+        t.files, t.trees, t.links = keep(t.files), keep(t.trees), keep(t.links)
+    return t
+
+
+def _write_targets_raw(seg: Seg, root: Path) -> _Targets:
     toks = seg.words
     t = _Targets(files=list(seg.redirects))
     if not toks:
@@ -2285,9 +2293,10 @@ def _find_targets(toks: list[str], seg: Seg, root: Path, t: _Targets) -> None:
         return
     for a in _find_starts(toks) or ["."]:
         p = _abspath(a, seg.cwd)
-        if p is not None and names is not None and p == os.path.realpath(str(root)):
-            # From the root, limited by name: what it can match is checked against the files there.
-            t.named_from_root.append(names)
+        if p is not None and names is not None and not _outside(_rel(p, root)) and os.path.isdir(p):
+            # A directory in the project, limited by name: what it can match is checked against the files there.
+            # find tests -name against the start as written: `.` never matches, a path by its last part
+            t.named_from_root.append((*names, posixpath.normpath(a) != ".", p))
             continue
         t.trees.append(a)
 
@@ -2337,17 +2346,23 @@ _WALK_LIMIT = 200_000
 _TOO_BIG = "the project is too big to check what this find matches by name; search a narrower directory (`find src tests -name …`)"
 
 
-def _named_hit(names: list[str], nocase: bool, root: Path, patterns: list[str]) -> tuple[str | None, str | None]:
-    """(the protected path a find from the root reaches by name, or None; why
-    it couldn't be checked, or None). A matched name reaches a protected path
-    when it is one or is a directory holding one (`-exec rm -rf {} +`)."""
+def _named_hit(
+    names: list[str], nocase: bool, root: Path, patterns: list[str], own: bool = True, start: str | None = None
+) -> tuple[str | None, str | None]:
+    """(the protected path a find from `start` (the root by default) reaches by
+    name, or None; why it couldn't be checked, or None). A matched name reaches
+    a protected path when it is one, is a directory holding one (`-exec rm -rf
+    {} +`) or is a link to one."""
     if not patterns:
         return None, None
     globs = [n.casefold() for n in names] if nocase else names
-    real = os.path.realpath(str(root))
-    own = os.path.basename(real)
-    if any(fnmatch.fnmatchcase(own.casefold() if nocase else own, g) for g in globs):
-        return patterns[0], None  # the start itself matches: the whole project
+    real = start or os.path.realpath(str(root))
+    name = os.path.basename(real)
+    if own and any(fnmatch.fnmatchcase(name.casefold() if nocase else name, g) for g in globs):
+        rel = _rel(real, root)  # the start itself matches
+        hit = contains_protected(rel, patterns) or _tree_holds(real, root, patterns)
+        if hit:
+            return hit, None
     protected: list[tuple[str, str]] = []
     matched_dirs: list[str] = []
     seen = 0
@@ -2566,6 +2581,8 @@ _SEARCHERS = {"grep", "egrep", "fgrep", "rg", "ag", "ack", "fd", "fdfind", "find
 def _glob_dir(pathspec: str, cdir: str | None) -> str:
     """A pathspec's directory: itself, or for a glob (`'src/*.py'`, `'*.yml'`)
     the literal directory before it, which it matches anywhere below."""
+    if pathspec.startswith(":"):  # a magic pathspec (`:/`, `:(top)`, `:!`): from the top, or anything but
+        return "."
     m = _GLOB_CHARS.search(pathspec)
     if not m:
         return pathspec
@@ -2742,6 +2759,28 @@ def _candidates(target: str, cwd: str | None) -> list[str]:
     return out
 
 
+_TREE_WALK_LIMIT = 50_000
+
+
+def _tree_holds(abspath: str, root: Path, patterns: list[str]) -> str | None:
+    """A protected path on disk inside the directory `abspath` (in the project)
+    that a pattern matching anywhere (`**/.env`) reaches; the patterns' literal
+    directories are `contains_protected`'s. Past the walk's limit, None."""
+    loose = [p for p in patterns if not _literal_dir(p)]
+    if not loose or not os.path.isdir(abspath):
+        return None
+    seen = 0
+    for dirpath, dirnames, filenames in os.walk(abspath):
+        for n in dirnames + filenames:
+            seen += 1
+            if seen > _TREE_WALK_LIMIT:
+                return None
+            hit = matches(_rel(os.path.join(dirpath, n), root), loose)
+            if hit:
+                return hit
+    return None
+
+
 def _protected_hit(target: str, seg: Seg, root: Path, patterns: list[str], tree: bool) -> str | None:
     check = contains_protected if tree else matches
     for c in _candidates(target, seg.cwd):
@@ -2759,7 +2798,7 @@ def _protected_hit(target: str, seg: Seg, root: Path, patterns: list[str], tree:
             if tree and _holds_root(a, root) and patterns:
                 return patterns[0]
             continue
-        hit = contains_protected(rel, patterns) if tree else matches(rel, patterns)
+        hit = (contains_protected(rel, patterns) or _tree_holds(a, root, patterns)) if tree else matches(rel, patterns)
         if hit:
             return hit
     return None
@@ -2796,7 +2835,7 @@ def _shell_protected(seg: Seg, patterns: list[str], root: Path, t: _Targets | No
     for r, cwd in t.searched:
         a = _abspath(r, cwd)
         rel = _rel(a, root) if a else ""
-        if a is None or _holds_root(a, root) or (not _outside(rel) and contains_protected(rel, patterns)):
+        if a is None or _holds_root(a, root) or (not _outside(rel) and (contains_protected(rel, patterns) or _tree_holds(a, root, patterns))):
             return (
                 f"this changes the files a search of `{r}` finds, which can reach protected paths, so the guard "
                 "can't see which files change; name the files, or search a narrower directory that holds no protected path "
@@ -2811,8 +2850,8 @@ def _shell_protected(seg: Seg, patterns: list[str], root: Path, t: _Targets | No
         hit = _protected_hit(tgt, seg, root, patterns, tree=True)
         if hit:
             return f"writing into, removing or moving `{tgt}` touches a protected path ({hit})" + (unknown_dir if seg.cwd is None else "")
-    for names, nocase in t.named_from_root:
-        hit, unchecked = _named_hit(names, nocase, root, patterns)
+    for names, nocase, own, start in t.named_from_root:
+        hit, unchecked = _named_hit(names, nocase, root, patterns, own, start)
         if unchecked:
             return unchecked
         if hit:

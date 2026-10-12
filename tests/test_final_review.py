@@ -243,7 +243,6 @@ def test_fourth_pass_ordinary_work(profile, tmp_path):
         "find . -iname '*.PYC' -delete",
         "rm -rf $PWD/src/a.pyc",
         "echo src/a.pyc | xargs rm",
-        "find src -name '*.pyc' -print0 | xargs -0 rm -f",
     ):
         assert act(profile, tmp_path, cmd) == "allow", cmd
 
@@ -286,7 +285,6 @@ def test_fifth_pass_bypasses(cmd, profile, tmp_path):
 @pytest.mark.parametrize(
     "cmd",
     [
-        "find src -name '*.orig' | xargs rm",
         "echo src/a.pyc | xargs rm",
         "printf '%s\\n' src/a.pyc | xargs rm",
         "find . -name '*.pyc' -execdir rm -f {} +",
@@ -334,7 +332,7 @@ def test_sixth_pass_no_exception_with_deploy_commands(deploy_profile, tmp_path):
 
 def test_sixth_pass_ordinary_work(profile, tmp_path):
     _project(tmp_path)
-    for cmd in ("git ls-files 'src/*.pyc' | xargs rm", "find . -name '*.pyc' -execdir rm -f {} +", "find . -name '*.pyc' -delete"):
+    for cmd in ("find . -name '*.pyc' -execdir rm -f {} +", "find . -name '*.pyc' -delete", "find src -name '*.orig' -delete"):
         assert act(profile, tmp_path, cmd) == "allow", cmd
 
 
@@ -342,3 +340,40 @@ def test_a_find_matching_the_roots_own_name(profile, tmp_path):
     _project(tmp_path)
     assert act(profile, tmp_path, f"find $PWD -name {tmp_path.name} -exec rm -rf {{}} +", ) == "deny"
     assert act(profile, tmp_path, "find . -name '*' -delete") == "deny"
+
+
+# ---------- the seventh pass ----------
+
+
+def test_a_searched_tree_holding_a_protected_file_anywhere(profile, tmp_path):
+    _project(tmp_path)  # src/pkg/.env, which `**/.env` reaches
+    for cmd in (
+        "rm -rf src",
+        "git ls-files 'src/*' | xargs rm",
+        "find src -name '*.orig' | xargs rm",
+        "git ls-files ':/.github/workflows/*' | xargs rm",
+        "git ls-files ':!src/*' | xargs rm",
+        "git ls-files ':(top).github/*' | xargs rm",
+        "find src -name pkg -exec rm -rf {} +",
+    ):
+        assert act(profile, tmp_path, cmd) == "deny", cmd
+
+
+def test_searches_of_trees_without_protected_files(profile, tmp_path):
+    (tmp_path / ".github").mkdir()
+    (tmp_path / ".github" / "ci.yml").write_text("on: push\n")
+    (tmp_path / "src" / "pkg").mkdir(parents=True)
+    (tmp_path / "src" / "pkg" / "a.pyc").write_text("")
+    for cmd in (
+        "rm -rf src/pkg",
+        "git ls-files 'src/*.pyc' | xargs rm",
+        "find src -name '*.pyc' -print0 | xargs -0 rm -f",
+        "find src -name '*.py' -execdir sed -i s/a/b/ {} +",
+        "find src -name '*.sh' -execdir chmod +x {} +",
+        "find . -name 'src*' -delete",
+        "echo src/pkg/a.pyc | xargs touch -a",
+    ):
+        assert act(profile, tmp_path, cmd) == "allow", cmd
+    assert act(profile, tmp_path, f"find . -name '{tmp_path.name[:4]}*' -delete") == "allow"  # `.` isn't tested by name
+    assert act(profile, tmp_path, "find src -name a.pyc -execdir sudo --chdir=../.github rm -rf {} +") == "deny"
+    assert act(profile, tmp_path, "find src -name a.pyc -execdir sudo -D../.github rm -rf {} +") == "deny"
