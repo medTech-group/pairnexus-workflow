@@ -1,4 +1,4 @@
-# By-hand checks: run <run id>
+# By-hand checks: run RUN_ID
 
 What the run built against fakes and needs a person to check: a real device, account, payment, message or service. Each ticket session adds its own as a checkbox under its ticket; nothing here is done until the owner (or someone they ask) ticks it.
 

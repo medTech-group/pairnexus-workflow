@@ -1,39 +1,62 @@
 ---
 name: review-panel
-description: Review a diff or pull request with independent agents in parallel - Standards, Spec, Correctness (with a security review where it applies) and, for UI changes, an explorer that runs the app and uses every input. Use on any branch or PR, inside build-ticket or alone.
+description: Review a diff or pull request with independent agents in parallel - Standards, Spec, Correctness (with a security review where it applies) and, for UI, API or CLI changes, an explorer that uses the change from outside. Use on any branch or PR, inside build-ticket or alone.
 ---
 
 # The review panel
 
-Independent reviewers, each reading the diff and the ticket fresh in its own context, in parallel. Reviewers change no code: they report. You verify and fix.
+Independent reviewers read the change fresh, each in its own context and in parallel. They report; they change no code. You verify each finding and fix the real ones.
 
-## Inputs
+## 1. Gather the inputs, outside the repo
 
-- **The diff:** `git diff <base>...HEAD` (the profile's `project.base_branch`), and the changed files in full where needed.
-- **The ticket and its spec** (the issue, its parent, what it links).
-- **The project's rules:** what `profile.md` points to (safety rules, data classification, wording), and `CLAUDE.md`.
+Make a scratch directory outside the repo, for example `/tmp/review-<ticket>-r<round>/`. Write into it:
 
-## The reviewers (one message, all at once)
+- `diff.patch`: `git diff <base>...HEAD`. The base is the profile's `project.base_branch`, as `origin/<base>` after a `git fetch`.
+- `ticket.md`: the ticket's body and comments, its spec (the issue under "Parent") and the issues they link.
+- `rules.md`: the project's rules, copied from each document in the profile's `project.rules` (safety rules, wording), plus `profile.md`'s sensitive-data and secrets sections.
+- `previous.md`, from round 2: the earlier findings and what was done about each.
 
-1. **Standards** and **Spec**: the two sub-agents of the `code-review` skill (Matt Pocock's). Standards checks the repo's documented coding rules; Spec checks the diff against what the ticket and spec asked, criterion by criterion.
-2. **Correctness**: the `correctness-reviewer` agent, with the diff, the ticket and the rules' locations. It hunts wrong behaviour, unhandled edge cases, missing or weak tests, race conditions, and every safety rule in the project's rules. For an auth, upload, payment or API change, also run the `security-review` skill on the branch.
-3. **UI explorer**, when the change adds or changes a screen (the profile's `ui.explorer` is `browser`), or exercises an API or CLI the change adds (`api`, `cli`): the `ui-explorer` agent, with the start commands, sizes and notes from the profile's `[ui]` and the screens or endpoints the ticket touches.
+The reviewers read these files. The Correctness reviewer can't run git or reach GitHub.
 
-Give each the round number and, from round 2, the previous findings and what was done about them, so it checks the fixes and doesn't repeat itself.
+## 2. Start the reviewers (one message, all at once)
 
-## After each round
+**Standards and Spec.** Load Matt Pocock's `code-review` skill with the Skill tool (`code-review`, or `mattpocock-skills:code-review` as a plugin). Build its two sub-agent prompts as its own steps say, with the base above as the fixed point and `ticket.md` as the spec, so it never needs to ask. Start both with the Agent tool.
 
-- Check each finding against the code. A reviewer can be wrong.
-- Fix every real one, with a test for each bug.
-- Record each that isn't a problem, with the reason.
-- `git status` must be clean of anything a reviewer wrote (they shouldn't write; if one did, discard it and say so).
-- Rerun the typecheck and the affected tests.
+**Correctness.** The `correctness-reviewer` agent (`pairnexus-workflow:correctness-reviewer` as a plugin). Give it:
+- the scratch directory's path;
+- the list of changed files, to read in full in the repo;
+- the round number.
 
-Repeat on the new diff until a round finds nothing to fix, at most the profile's `run.review_rounds`. Anything still open after the last round goes to the owner in the PR body, not silently. Any commit after the last round gets a Correctness pass on just those commits before merging.
+For an auth, upload, payment or API change, also run the `security-review` skill on the branch.
 
-## The findings table (for the PR body)
+**Explorer.** The `ui-explorer` agent, when the profile's `ui.explorer` isn't `none` and the change touches a screen, an endpoint or a command. Give it:
+- the profile's `[ui]` settings;
+- `ticket.md`;
+- the screens, endpoints or commands the change touches;
+- the scratch directory for its own files.
+
+Tell the Correctness reviewer and the explorer to try risky commands (pushes, `gh` writes, guard experiments) only in a throwaway copy whose `origin` is a local bare repository, and to write test inputs with file tools rather than shell heredocs.
+
+Give each reviewer the round number. From round 2, give each `previous.md`, so it checks the fixes and doesn't repeat itself.
+
+## 3. After each round
+
+1. Check each finding against the code. A reviewer can be wrong.
+2. Fix every real one, with a test for each bug.
+3. Record each that isn't a problem, with the reason.
+4. Run `git status`: it must show nothing a reviewer made. Discard anything stray and say so.
+5. Rerun the typecheck and the affected tests.
+
+## 4. When to stop
+
+Repeat on the new diff until a round finds nothing to fix, at most the profile's `run.review_rounds`.
+
+- Anything still open after the last round goes to the owner in the PR body, never silently.
+- Any commit after the last round gets a Correctness pass on just those commits before merging.
+
+## 5. The findings table (for the PR body)
 
 | # | Round | Reviewer | Finding | Outcome |
 |---|---|---|---|---|
-| 1 | 1 | Correctness | `ready` treats a not-planned blocker as done | Fixed in abc1234, test `test_blockers_not_planned` |
-| 2 | 1 | Spec | No `Area:` on the new tickets | Not a problem: the spec says areas are optional for one-off tickets |
+| 1 | 1 | Correctness | A not-planned blocker reads as done | Fixed in abc1234, test `test_blockers_not_planned` |
+| 2 | 1 | Spec | No `Area:` on the new tickets | Not a problem: the spec makes areas optional for one-off tickets |

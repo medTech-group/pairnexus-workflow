@@ -9,19 +9,22 @@ Two modes. Pick one per project: `setup-workflow` refuses both at once (the skil
 | Updates | `workflow vendor update` (or the `update-workflow` skill), reviewed in a PR | `/plugin update` |
 | Skill names | `/next`, `/tdd` | `/pairnexus-workflow:next`, `/mattpocock-skills:tdd` |
 
-Use **vendored** for any project that runs unattended. Use the plugin for attended work on projects that don't.
+Use **vendored** for any project that runs unattended. Use the plugin for attended work on projects that don't. The one-mode check reads the project's `settings.json` and `settings.local.json`; if the plugin is enabled in your user settings or org-wide, don't also vendor it.
 
 ## Vendored
 
-From a checkout of this repo and of `mattpocock/skills` at the commit this kit pins (`.claude-plugin/marketplace.json`):
+Run the `setup-workflow` skill from a checkout of this repo: open Claude Code in the project and ask it to follow `<kit checkout>/skills/setup-workflow/SKILL.md`. It writes the profile and vendors the kit in the same pull request. Underneath, the vendoring is:
 
 ```bash
 git clone https://github.com/mattpocock/skills /tmp/mattpocock-skills
-git -C /tmp/mattpocock-skills checkout <pinned sha>
-python3 scripts/workflow.py vendor install --project /path/to/project --mattpocock /tmp/mattpocock-skills
+git -C /tmp/mattpocock-skills checkout <the sha pinned in .claude-plugin/marketplace.json>
+python3 <kit>/scripts/workflow.py vendor install --project /path/to/project --mattpocock /tmp/mattpocock-skills
 ```
 
-Then commit `.claude/` on a branch and open a PR. `workflow vendor verify` (also run in the project's CI if you like) checks the copy against `.claude/workflow/lock.json`. `vendor update` replaces the files the project hasn't changed and writes `<file>.new` beside any it has, listed as conflicts. `--adopt` replaces earlier hand-vendored copies of the same files.
+- `vendor verify` checks the copy against `.claude/workflow/lock.json`; setup adds it to the project's CI as a required check (`--strict`).
+- `vendor update` replaces the files the project hasn't changed and writes `<file>.new` beside any it has, listed as conflicts; `vendor resolve <file>` records a hand-merged one.
+- `--adopt` replaces files that already exist and aren't the kit's (an earlier hand-vendored copy); it lists every one. Rename the project's own skills of the same name first.
+- Install checks every file before writing any, so a refused install changes nothing.
 
 The hooks run `python3 .claude/workflow/bin/workflow.py`: the project needs Python 3.11+ wherever Claude Code runs. Repo hooks load in cloud sessions only when the session has a single repository.
 
@@ -41,12 +44,21 @@ Then in Claude Code:
 /plugin install pairnexus-workflow@pairnexus
 ```
 
+To suggest it to everyone working on a project, put this in the project's `.claude/settings.json` (each person still installs it once; cloud sessions don't):
+
+```json
+{
+  "extraKnownMarketplaces": {"pairnexus": {"source": {"source": "github", "repo": "medtech-group/pairnexus-workflow"}}},
+  "enabledPlugins": {"pairnexus-workflow@pairnexus": true}
+}
+```
+
 Installing it installs its dependency, `mattpocock-skills`, from the same marketplace, pinned. Don't also add Matt Pocock's own marketplace: two plugins named `mattpocock-skills` drop one's hooks.
 
 ## Every project, whichever mode
 
-1. Run the `setup-workflow` skill: the profile, labels, issue templates, CODEOWNERS.
-2. The owner does the one-time steps in `docs/enforcement.md`: the ruleset, the ticket sessions' environment.
+1. Run the `setup-workflow` skill: the profile, the kit, Matt Pocock's per-repo docs, labels, issue templates, CODEOWNERS.
+2. The owner does the one-time steps in `docs/enforcement.md`: the ruleset (active), the two environments.
 
 ## Org-wide (optional)
 

@@ -14,14 +14,15 @@ from pathlib import Path
 
 _NEXT = re.compile(r"(^|\s)/(?:[\w-]+:)?next\b")
 _VERB = re.compile(
-    r"\b(implement\w*|build\w*|work(?:ing)?|spec\w*|tickets?|maps?|wayfinder|grill\w*|to-spec|to-tickets|frontier|conductor|unattended)\b",
+    r"\b(implement\w*|build\w*|work(?:ing)?|fix\w*|spec\w*|tickets?|maps?|wayfinder|grill\w*|to-spec|to-tickets|frontier|conductor|unattended)\b",
     re.I,
 )
+_MAP = re.compile(r"\bwork(?:ing)?\s+(?:on\s+)?the\s+[\w -]{1,40}\bmap\b|\b(?:start|run|resume|stop)\s+(?:an?\s+|the\s+)?(?:unattended\s+)?run\b|\bconductor\b", re.I)
 _REF = re.compile(r"(?<![\w/])#\d+\b|/issues/\d+")
 
 
 def wants_flow(prompt: str) -> bool:
-    if _NEXT.search(prompt or ""):
+    if _NEXT.search(prompt or "") or _MAP.search(prompt or ""):
         return True
     return bool(_VERB.search(prompt or "") and _REF.search(prompt or ""))
 
