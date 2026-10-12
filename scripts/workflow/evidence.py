@@ -23,6 +23,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from . import repair
+from .posts import AGENT_MARKER
 from .profile import Profile, Suite
 
 EVIDENCE_DIR = Path(".workflow/evidence")
@@ -487,4 +488,6 @@ def report(
     if dirty:
         head += ", on a dirty tree: NOT A PROOF OF THE COMMIT"
     lines[0] = f"**Local full suite on `{sha}`**: {head}"
+    # The session posts this report on its PR: an agent's post, so it carries the marker.
+    lines += ["", AGENT_MARKER]
     return ok, "\n".join(lines)

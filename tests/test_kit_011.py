@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from workflow import charter, cli, render, state
+from workflow import charter, cli, posts, render, state
 from workflow.guard import decide
 from workflow.issues import named_paths, protected_named, readiness
 from workflow.posts import AGENT_MARKER, is_agent, owner_words
@@ -184,7 +184,10 @@ def test_owner_words_are_the_owners_comments_without_the_marker():
     assert out[0] == {"id": 101, "created_at": "2026-10-12T01:00:00Z", "url": COMMENTS[0]["html_url"], "body": "also #140"}
     assert [c["id"] for c in owner_words(COMMENTS, "@owner-login", since_id=101)] == [104]
     assert owner_words(list(reversed(COMMENTS)), "owner-login")[0]["id"] == 101
-    assert owner_words([{"id": "x", "user": {"login": "owner-login"}, "body": "?"}, "junk"], "owner-login") == []
+    # A comment without a number, or something that isn't a comment, is an error, never dropped silently.
+    for bad in ([{"id": "x", "user": {"login": "owner-login"}, "body": "?"}], ["junk"]):
+        with pytest.raises(posts.CommentsError):
+            owner_words(bad, "owner-login")
     assert is_agent(COMMENTS[1]["body"]) and not is_agent(None)
     with pytest.raises(ValueError):
         owner_words(COMMENTS, "")
@@ -240,17 +243,18 @@ def test_protected_named_matches_as_the_guard_does():
     assert protected_named("Edit `.github/workflows/ci.yml`", None) == []
 
 
-def test_readiness_sets_aside_tickets_naming_protected_paths():
+def test_readiness_notes_tickets_naming_protected_paths():
     issues = [
         _issue(1, "Area: ci\n\nCache pip in `.github/workflows/ci.yml`."),
         _issue(2, "Area: readings\n\nAdd src/readings/chart.py."),
         _issue(3, "Rotate the key in .env"),
     ]
     v = {x.number: x for x in readiness(issues, [], protected=DEFAULT_PROTECTED)}
-    assert v[1].reasons == ["names protected path .github/workflows/ci.yml (.github/workflows/**): an owner task"]
-    assert v[2].ready
-    assert v[3].reasons == ["names protected path .env (**/.env): an owner task"]
-    assert all(x.ready for x in readiness(issues, []))  # without the patterns, as before
+    assert all(x.ready and not x.reasons for x in v.values())  # a note, never a block
+    assert v[1].notes == ["names protected path .github/workflows/ci.yml (.github/workflows/**): check it isn't an owner task"]
+    assert v[2].notes == []
+    assert v[3].notes == ["names protected path .env (**/.env): check it isn't an owner task"]
+    assert all(x.ready and not x.notes for x in readiness(issues, []))  # without the patterns, nothing noted
 
 
 def test_ready_cli_passes_the_profiles_protected_paths(tmp_path, monkeypatch, capsys):
@@ -261,8 +265,8 @@ def test_ready_cli_passes_the_profiles_protected_paths(tmp_path, monkeypatch, ca
     (tmp_path / "prs.json").write_text("[]")
     assert cli.main(["ready", "--issues", str(tmp_path / "issues.json"), "--prs", str(tmp_path / "prs.json"), "--json"]) == 0
     out = json.loads(capsys.readouterr().out)
-    assert out["start_now"] == [2]
-    assert out["not_ready"][0]["reasons"] == ["names protected path infra/app.yaml (infra/**): an owner task"]
+    assert out["start_now"] == [1, 2] and out["not_ready"] == []
+    assert out["ready"][0]["notes"] == ["names protected path infra/app.yaml (infra/**): check it isn't an owner task"]
 
 
 # ---------- 9. briefings copied exactly ----------

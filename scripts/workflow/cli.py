@@ -7,6 +7,7 @@
     workflow state init --charter F --run-id ID [--by-hand N] [--read-through ID] | get --body F | put --body F --state F | patch --body F --patch F
     workflow render --template F --ticket F --charter F --slots F --tracking N [--by-hand N] [--out F] [--print]
     workflow comments --file F [--owner LOGIN] [--since-id N]
+    workflow briefing verify --file F
     workflow evidence [--suite NAME ...] [--base-count N | --base-ref BRANCH] [--fresh] [--allow-dirty]
     workflow repair
     workflow vendor install|update --kit DIR [--mattpocock DIR | --no-mattpocock] [--project DIR] [--adopt] [--strict-pin]
@@ -71,17 +72,10 @@ def _fetch(repo: str, what: str) -> list[dict]:
         p = subprocess.run(["gh", "api", "--paginate", path], capture_output=True, text=True)
         if p.returncode:
             raise failed(p)
-        dec, text, i = json.JSONDecoder(), p.stdout, 0
-        while True:
-            while i < len(text) and text[i].isspace():
-                i += 1
-            if i >= len(text):
-                break
-            try:
-                value, i = dec.raw_decode(text, i)
-            except json.JSONDecodeError as e:
-                raise SystemExit(f"gh api {path}: couldn't read its output ({e})")
-            values.append(value)
+        try:
+            values = posts_mod.decode_values(p.stdout)
+        except posts_mod.CommentsError as e:
+            raise SystemExit(f"gh api {path}: couldn't read its output ({e})")
     else:
         raise failed(p)
     items: list[dict] = []
@@ -317,11 +311,28 @@ def cmd_comments(a) -> int:
     if not owner:
         print("workflow comments: give --owner (no project.owner in the profile)", file=sys.stderr)
         return 2
-    comments = _json(a.file)
-    if not isinstance(comments, list):
-        print("workflow comments: the file must hold a JSON list of comments, as the GitHub API returns them", file=sys.stderr)
+    try:
+        _out(posts_mod.owner_words(posts_mod.load_comments(_read(a.file)), owner, since_id=a.since_id))
+    except posts_mod.CommentsError as e:
+        print(
+            f"workflow comments: {e}. Give the issue's comments as GitHub returns them: "
+            "`gh api --paginate --slurp repos/<repo>/issues/<n>/comments`, or every page of the MCP tool's comments",
+            file=sys.stderr,
+        )
         return 1
-    _out(posts_mod.owner_words(comments, owner, since_id=a.since_id))
+    return 0
+
+
+def cmd_briefing(a) -> int:
+    """`briefing verify`: the session's copy of its briefing against its last line."""
+    stated, got = render_mod.seal_of(_read(a.file))
+    if stated is None:
+        print("no Briefing line")
+        return 1
+    if stated != got:
+        print(f"Briefing changed: expected {stated}, got {got}")
+        return 1
+    print(f"Briefing {stated} intact")
     return 0
 
 
@@ -589,6 +600,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--owner", help="the owner's GitHub login (default: the profile's project.owner)")
     s.add_argument("--since-id", type=int, help="only comments with a greater id (the state's comments_read_through)")
     s.set_defaults(fn=cmd_comments)
+
+    s = sub.add_parser("briefing", help="check a ticket session's copy of its briefing against its `Briefing <hash>` line")
+    s.add_argument("action", choices=["verify"])
+    s.add_argument("--file", required=True, help="the briefing as the session received it (or -)")
+    s.set_defaults(fn=cmd_briefing)
 
     s = sub.add_parser("evidence")
     s.add_argument("--suite", action="append")

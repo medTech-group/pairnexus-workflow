@@ -3,7 +3,7 @@ You are one ticket session of an **unattended build run** that the owner ({{proj
 **Your ticket:** {{project.repo}} issue **#{{ticket.number}}** ({{ticket.title}}). The conductor has claimed it already (label `workflow:in-progress`, assigned to the owner); skip the claim step.
 **Branch:** work on `{{ticket.branch}}`, created from `{{project.base_branch}}` if it doesn't exist.
 **Tracking issue:** #{{tracking.issue}}. **By-hand checklist:** {{by_hand.issue}}.
-**Wake routine:** `{{wake_trigger}}`. When your ticket ends (merged, `needs-human`, or stopped), call `fire_trigger` with that trigger id and a one-line text ("#{{ticket.number}} merged in #<PR>" or "#{{ticket.number}} needs-human"), so the conductor wakes at once. If it says `none`, skip this.
+**Wake routine:** `{{wake_trigger}}`. When your ticket ends (merged, `needs-human`, or stopped), call `fire_trigger` with that trigger id and exactly one of these lines: "#{{ticket.number}} merged in #<PR>", "#{{ticket.number}} needs-human" or "#{{ticket.number}} stopped", so the conductor wakes at once. If it says `none`, skip this. `fire_trigger` is a deferred tool, `mcp__Claude_Code_Remote__fire_trigger`: load it with ToolSearch (`select:mcp__Claude_Code_Remote__fire_trigger`) first. If it isn't available or the call errors, say so in the ticket's final note and carry on: try it once, never retry it in a loop, and never let it hold up the ticket or your `WORKFLOW-STATUS` line.
 
 **Running alongside you, and what to stay out of:**
 {{alongside}}
@@ -19,7 +19,7 @@ You are one ticket session of an **unattended build run** that the owner ({{proj
 
 ## How to work
 
-Follow the `build-ticket` skill from start to finish. Your first comment on #{{ticket.number}} says you've started and quotes this briefing's last line (`Briefing …`) exactly, so the conductor sees it arrived intact. It uses the flow (`.claude/workflow/flow.md`, sections 3 to 5), the project's profile (`.claude/workflow/profile.toml` and `profile.md`), and the project's rules:
+Follow the `build-ticket` skill from start to finish. First, with the Write tool, write this briefing (this whole first message, verbatim, down to its last line `Briefing …`) to `.workflow/briefing.md`, and run `python3 .claude/workflow/bin/workflow.py briefing verify --file .workflow/briefing.md`. Your first comment on #{{ticket.number}} says you've started and quotes the line it printed (`Briefing … intact`, or what it said instead) exactly, so the conductor sees whether the briefing arrived intact; carry on either way. The skill uses the flow (`.claude/workflow/flow.md`, sections 3 to 5), the project's profile (`.claude/workflow/profile.toml` and `profile.md`), and the project's rules:
 {{project.rules}}
 
 **Commands.** Typecheck: {{commands.typecheck}}. One test file: {{commands.test_file}}. The full suite:
@@ -49,7 +49,7 @@ Merge mode: **{{merge.mode}}**. Waived CI checks: {{merge.waived}}. Merge when t
   2. comment exactly why on #{{ticket.number}} and #{{tracking.issue}};
   3. fire the wake routine;
   4. end with `WORKFLOW-STATUS: needs-human`.
-- **When the ticket ends** any other way (merged, or stopped), remove `workflow:in-progress` if it is still there, then fire the wake routine.
+- **When the ticket ends** any other way (merged, or stopped), always remove `workflow:in-progress`, then fire the wake routine. The conductor removes any label left over.
 
 ### Every turn
 

@@ -27,7 +27,9 @@ In a ticket session the guard refuses a post without it. Labels, assignees, stat
   - the wake routine's trigger id;
   - on its last line, `Briefing <hash>`.
 
-  **Your first write** is a comment on the ticket saying you've started, quoting that last line exactly ("Started. Briefing 3f2a9c01b7de"), so the conductor sees the briefing arrived intact.
+  **Check your copy first.** With the Write tool, write the briefing (your first message, verbatim, from its first line to its `Briefing <hash>` line) to `.workflow/briefing.md`, which git ignores. Then run `WF briefing verify --file .workflow/briefing.md`. It prints one line: `Briefing <hash> intact`, `Briefing changed: expected <a>, got <b>`, or `no Briefing line`.
+
+  **Your first write** is a comment on the ticket saying you've started, quoting that output line exactly ("Started. Briefing 3f2a9c01b7de intact"), so the conductor sees whether the briefing arrived intact. Carry on either way: if it didn't, the conductor stops this session and starts another.
 - **The ticket,** its spec (the issue under "Parent") and every issue they link. Use `gh api` or the GitHub MCP tools.
 - **The profile** (`.claude/workflow/profile.toml`, `profile.md`) and the rules it points to.
 - **Its blockers.** If any isn't closed as completed, say so and stop: it isn't ready.
@@ -80,7 +82,7 @@ Then subscribe to its activity. Schedule a check-in about every `run.check_in_mi
 - **Still red after three fix attempts:**
   1. label the ticket `needs-human`, and remove `workflow:in-progress` and `ready-for-agent` (keep its other labels);
   2. comment on it and on the tracking issue with exactly what fails and why;
-  3. wake the conductor (step 6.6) with "#<n> needs-human";
+  3. wake the conductor (step 6.6);
   4. end with `WORKFLOW-STATUS: needs-human`.
 
 ## 6. Post the evidence and merge
@@ -99,8 +101,10 @@ Then subscribe to its activity. Schedule a check-in about every `run.check_in_mi
 
    If your permission settings refuse the merge, don't work around it. Comment that it's green and ready, and end with `WORKFLOW-STATUS: waiting`.
 4. **Once it has merged,** tell the tracking issue: "#<n> merged in #<PR>", then notes for the next tickets. Tag each note with its area and the tickets it's for ("For #201, area readings: …"): what you added that later tickets build on, decisions to know, and pitfalls.
-5. **Tidy up:** remove the `workflow:in-progress` label if the merge didn't close the ticket. Whenever your ticket ends without merging (`needs-human`, or stopped), remove it too; on `needs-human` also remove `ready-for-agent`. The conductor removes them at its next check-in as a backup, but don't leave it to.
-6. **Wake the conductor.** When the ticket ends (merged, `needs-human`, or stopped), call `fire_trigger` with the briefing's wake routine id and one line: "#<n> merged in #<PR>", "#<n> needs-human" or "#<n> stopped". The conductor then checks in at once instead of at its next scheduled time. Skip this when the briefing's wake routine says `none`, or in attended work.
+5. **The claim label.** Whenever your ticket ends (merged, `needs-human`, or stopped), always remove `workflow:in-progress`; on `needs-human` also remove `ready-for-agent`. Keep the ticket's other labels. The conductor removes leftovers at its next check-in, but don't leave it to.
+6. **Wake the conductor.** When the ticket ends, call `fire_trigger` with the briefing's wake routine id and exactly one of these lines: "#<n> merged in #<PR>", "#<n> needs-human" or "#<n> stopped". The conductor then checks in at once instead of at its next scheduled time. Skip this when the briefing's wake routine says `none`, or in attended work.
+   - `fire_trigger` is a deferred tool, `mcp__Claude_Code_Remote__fire_trigger`: load it first with ToolSearch (`select:mcp__Claude_Code_Remote__fire_trigger`).
+   - If it isn't available, or the call errors, say so in the ticket's final note ("Couldn't wake the conductor: <why>") and carry on: try it once, never retry it in a loop. The conductor sees the ending at its next check-in anyway, so the wake never holds up the ticket or your `WORKFLOW-STATUS` line.
 
 ## 7. End each turn
 

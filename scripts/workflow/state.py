@@ -70,6 +70,8 @@ TICKET_FIELDS = {
     "area": (lambda v: isinstance(v, str) and bool(v.strip()), "an area name"),
     "started_at": (_iso, "an ISO time with its zone"),
     "merged_at": (_iso, "an ISO time with its zone"),
+    # When the conductor asked the owner a question on this needs-human ticket in this run.
+    "asked_at": (_iso, "an ISO time with its zone"),
     # The hash on the last line of the briefing it was sent (`Briefing <hash>`).
     "briefing": (lambda v: isinstance(v, str) and bool(re.fullmatch(r"[0-9a-f]{12}", v)), "the briefing's 12-character hash"),
 }

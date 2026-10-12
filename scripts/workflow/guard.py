@@ -72,11 +72,16 @@ the command reads with `cat` or `<` included.
 
 **Agents' posts carry the marker.** In ticket and conductor sessions, a post
 that creates text on GitHub (an issue, pull request, comment or review, or an
-edit of one's body: `gh issue|pr create|comment`, an edit or close with a body
-or comment, `gh api` to those endpoints with a `body` field or `--input`, the
-text-posting GraphQL mutations, and the GitHub MCP tools that post them) is
-refused unless the texts it is checked for sensitive data in hold
-`<!-- workflow:agent -->`. Labels, state changes and merges aren't posts.
+edit of one's body: `gh issue|pr create|comment`, an edit, close or reopen with
+a body or comment, `gh api` to those endpoints and commit comments with a
+`body` field, or with `--input` JSON that carries a `body` or `comment` (or
+can't be read), the text-posting GraphQL mutations, and the GitHub MCP tools
+that post them) is refused unless the texts it is checked for sensitive data in
+hold `<!-- workflow:agent -->`. A GraphQL query from `--input` (a file or
+stdin) is read from its JSON's `query`; a mutation that may carry a body counts
+only when its arguments (or, through a `$variable`, its variables) name one.
+Labels, state changes, `--delete-last` and merges aren't posts. The marker is
+looked for in the command's texts as a whole: a seatbelt, not proof per post.
 Attended sessions are not asked.
 
 What it can't see (a script file written then run, a program's own network
@@ -88,6 +93,7 @@ from __future__ import annotations
 
 import fnmatch
 import glob as _glob
+import json
 import os
 import posixpath
 import re
@@ -1546,8 +1552,16 @@ def _read_text(path: str, cwd: str | None, limit: int = 1_000_000) -> str | None
 
 def _mutation_fields(text: str) -> list[str] | None:
     """The top-level fields of each GraphQL mutation in text; None if unreadable."""
+    calls = _mutation_calls(text)
+    return None if calls is None else [name for name, _ in calls]
+
+
+def _mutation_calls(text: str) -> list[tuple[str, str]] | None:
+    """(field, its arguments) for each top-level field of each GraphQL mutation
+    in text, string values emptied (`body:""`); None if unreadable. The
+    selection set after the arguments isn't part of them."""
     t = re.sub(r'"""(?:.|\n)*?"""|"(?:[^"\\]|\\.)*"', '""', text)
-    out: list[str] = []
+    out: list[tuple[str, str]] = []
     for m in re.finditer(r"\bmutation\b", t):
         i, n = m.end(), len(t)
         paren = 0
@@ -1583,7 +1597,19 @@ def _mutation_fields(text: str) -> list[str] | None:
                         return None
                     ident = mm.group(1)
                     i += mm.end()
-                out.append(ident)
+                j = i
+                while j < n and t[j].isspace():
+                    j += 1
+                args = ""
+                if j < n and t[j] == "(":
+                    p, k = 1, j + 1
+                    while k < n and p:
+                        p += {"(": 1, ")": -1}.get(t[k], 0)
+                        k += 1
+                    if p:
+                        return None
+                    args, i = t[j + 1 : k - 1], k
+                out.append((ident, args))
                 continue
             i += 1
     return out
@@ -1725,12 +1751,23 @@ _GH_TEXT_WITH = {
     ("pr", "review"): ("-b", "--body", "-F", "--body-file"),
     ("issue", "close"): ("-c", "--comment"),
     ("pr", "close"): ("-c", "--comment"),
+    ("issue", "reopen"): ("-c", "--comment"),
+    ("pr", "reopen"): ("-c", "--comment"),
 }
+_GH_COMMENT_BODY = ("-b", "--body", "-F", "--body-file")
 # REST endpoints (after repos/<owner>/<repo>/) that always post text, and those that do with a body.
-_API_TEXT_ALWAYS = [r"issues", r"pulls", r"issues/\d+/comments", r"pulls/\d+/comments", r"pulls/(?:\d+/)?comments/\d+/replies"]
+_API_TEXT_ALWAYS = [
+    r"issues",
+    r"pulls",
+    r"issues/\d+/comments",
+    r"pulls/\d+/comments",
+    r"pulls/(?:\d+/)?comments/\d+/replies",
+    r"commits/[0-9a-f]+/comments",
+]
 _API_TEXT_WITH_BODY = [
     r"issues/\d+",
     r"issues/comments/\d+",
+    r"comments/\d+",
     r"pulls/\d+",
     r"pulls/comments/\d+",
     r"pulls/\d+/reviews",
@@ -1769,11 +1806,77 @@ def _has_opt(toks: list[str], opts: tuple[str, ...]) -> bool:
     return any(t in opts or t.startswith(longs) or (t.startswith(shorts) and len(t) > 2 and not t.startswith("--")) for t in toks)
 
 
-def _creates_text(toks: list[str], cwd: str | None) -> bool:
-    """This gh command posts text (an issue, PR, comment or review, or a body) to GitHub."""
+_TEXT_KEYS = ("body", "comment")
+
+
+def _carries_text(txt: str | None) -> bool:
+    """A JSON body (an `--input` file or stdin) that carries text: a `body` or
+    `comment` field anywhere in it. One that can't be read counts."""
+    if txt is None:
+        return True
+    try:
+        value = json.loads(txt)
+    except ValueError:
+        return bool(re.search(r'"(?:body|comment)"\s*:', txt))
+
+    def walk(v) -> bool:
+        if isinstance(v, dict):
+            return any((k in _TEXT_KEYS and isinstance(x, str)) or walk(x) for k, x in v.items())
+        if isinstance(v, list):
+            return any(walk(x) for x in v)
+        return False
+
+    return walk(value)
+
+
+def _stdin_text(seg: Seg) -> str | None:
+    """What the command reads on stdin, when the guard can see it: a heredoc or
+    here-string, a `<` file, or a `cat` piping into it. None otherwise."""
+    if seg.heredoc is not None:
+        return seg.heredoc
+    if seg.stdin:
+        return _read_text(seg.stdin, seg.cwd)
+    return _piped_text(seg)
+
+
+def _graphql_texts(call: _ApiCall, cwd: str | None, stdin_text: str | None) -> tuple[str, str] | None:
+    """(the queries, the variables) a `gh api graphql` call sends: `query`
+    fields, the `query` and `variables` of `--input` JSON (a file or stdin), a
+    query file (`-F query=@q.graphql`), and the other fields. None when an
+    input can't be read."""
+    queries: list[str] = []
+    variables: list[str] = []
+    for f in call.fields:
+        name, _, val = f.partition("=")
+        if name == "query":
+            if not val.startswith("@"):
+                queries.append(val)
+        else:
+            variables.append(f)
+    sources = [_read_text(f, cwd) for f in call.files] + ([stdin_text] if call.stdin else [])
+    for txt in sources:
+        if txt is None:
+            return None
+        try:
+            value = json.loads(txt)
+        except ValueError:
+            value = None
+        if isinstance(value, dict) and isinstance(value.get("query"), str):
+            queries.append(value["query"])
+            variables.append(json.dumps(value.get("variables") or {}))
+        else:
+            queries.append(txt)
+    return "\n".join(queries), "\n".join(variables)
+
+
+def _creates_text(toks: list[str], cwd: str | None, stdin_text: str | None = None) -> bool:
+    """This gh command posts text (an issue, PR, comment or review, or a body) to
+    GitHub. `stdin_text` is what it reads on stdin, when that can be seen."""
     if len(toks) < 2 or Path(toks[0]).name != "gh":
         return False
     group, sub = _gh_group(toks)
+    if sub == "comment" and group in ("issue", "pr") and _has_opt(toks, ("--delete-last",)) and not _has_opt(toks, _GH_COMMENT_BODY):
+        return False
     if (group, sub) in _GH_TEXT_ALWAYS:
         return True
     if (group, sub) in _GH_TEXT_WITH:
@@ -1784,9 +1887,20 @@ def _creates_text(toks: list[str], cwd: str | None) -> bool:
     if call is None:
         return False
     if call.path == "graphql":
-        text = call.rest + "".join("\n" + (_read_text(f, cwd) or "") for f in call.files)
-        names = set(_mutation_fields(text) or [])
-        return bool(names & _GQL_TEXT_ALWAYS) or bool(names & _GQL_TEXT_WITH_BODY and re.search(r"\bbody\b", text))
+        texts = _graphql_texts(call, cwd, stdin_text)
+        if texts is None:
+            return True  # what it sends can't be seen; it counts
+        query, variables = texts
+        calls = _mutation_calls(query)
+        if calls is None:
+            return True  # a mutation the guard can't read counts
+        for name, args in calls:
+            if name in _GQL_TEXT_ALWAYS:
+                return True
+            # A body in the arguments, or in the variables they take; never in the selection set.
+            if name in _GQL_TEXT_WITH_BODY and (re.search(r"\bbody\b", args) or ("$" in args and re.search(r"\bbody\b", variables))):
+                return True
+        return False
     if call.method not in ("POST", "PATCH", "PUT"):
         return False
     prefix = r"repos/[^/]+/[^/]+/"
@@ -1796,13 +1910,9 @@ def _creates_text(toks: list[str], cwd: str | None) -> bool:
         return False
     if _field(call, "body") is not None:
         return True
-    if call.stdin:
-        return True  # what it sends can't be told apart from the command; it counts
-    for f in call.files:
-        txt = _read_text(f, cwd)
-        if txt is None or re.search(r'"body"\s*:', txt):
-            return True
-    return False
+    if call.stdin and _carries_text(stdin_text):
+        return True  # what it sends can't be seen, or carries text
+    return any(_carries_text(_read_text(f, cwd)) for f in call.files)
 
 
 def _mcp_creates_text(name: str, inp: dict) -> bool:
@@ -3208,7 +3318,8 @@ def check_bash(
                 return _deny(role, f"this would post text matching the sensitive-data pattern {pat!r}; refer to things by id")
     if role in ("ticket", "conductor"):
         for s in posts:
-            if _creates_text(s.words, s.cwd) and AGENT_MARKER not in "\n".join([command, read(), *post_texts(s)]):
+            # In the command's texts as a whole: a seatbelt, not proof that each post carries it.
+            if _creates_text(s.words, s.cwd, _stdin_text(s)) and AGENT_MARKER not in "\n".join([command, read(), *post_texts(s)]):
                 return Decision("deny", _NO_MARKER)
     return ALLOW
 
