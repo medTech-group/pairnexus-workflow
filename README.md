@@ -46,4 +46,4 @@ Releases are semver: `VERSION`, `.claude-plugin/plugin.json`, a `CHANGELOG.md` e
 
 ## Licence
 
-Private to medtech-group: see `LICENSE`. The Matt Pocock skills keep their MIT licence: `THIRD_PARTY-mattpocock-skills.txt`.
+MIT (MedTech LLC): see `LICENSE`. The repository itself is private. The Matt Pocock skills keep their own MIT licence and notice: `THIRD_PARTY-mattpocock-skills.txt`.

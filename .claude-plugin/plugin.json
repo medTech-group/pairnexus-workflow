@@ -2,7 +2,11 @@
   "name": "pairnexus-workflow",
   "version": "0.1.0",
   "description": "Spec, tickets, build, review panel and merge, attended or as an unattended run under a conductor with a run charter.",
-  "author": { "name": "PAIR (medtech-group)" },
-  "license": "UNLICENSED",
-  "dependencies": ["mattpocock-skills"]
+  "author": {
+    "name": "MedTech LLC"
+  },
+  "license": "MIT",
+  "dependencies": [
+    "mattpocock-skills"
+  ]
 }
