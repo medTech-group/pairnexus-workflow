@@ -436,3 +436,16 @@ def test_a_tree_between_the_old_and_new_walk_limits(profile, tmp_path, monkeypat
     from workflow import guard
 
     assert guard._TREE_WALK_LIMIT >= 50_000
+
+
+def test_magic_pathspecs_from_a_subdirectory(profile, tmp_path):
+    (tmp_path / ".github").mkdir()
+    (tmp_path / ".github" / "ci.yml").write_text("on: push\n")
+    (tmp_path / "src").mkdir()
+    for cmd in (
+        "cd src && git ls-files ':/.github' | xargs rm",
+        "cd src && git ls-files ':(top).github' | xargs rm -f",
+        "cd src && git grep -l on -- ':/' | xargs sed -i s/a/b/",
+        "cd src && git ls-files ':(top,glob)**/*.yml' | xargs rm",
+    ):
+        assert act(profile, tmp_path, cmd) == "deny", cmd

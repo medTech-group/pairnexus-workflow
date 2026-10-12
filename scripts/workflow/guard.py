@@ -2595,8 +2595,10 @@ _SEARCHERS = {"grep", "egrep", "fgrep", "rg", "ag", "ack", "fd", "fdfind", "find
 def _glob_dir(pathspec: str, cdir: str | None) -> str:
     """A pathspec's directory: itself, or for a glob (`'src/*.py'`, `'*.yml'`)
     the literal directory before it, which it matches anywhere below."""
-    if pathspec.startswith(":"):  # a magic pathspec (`:/`, `:(top)`, `:(icase)`, `:!`): the whole tree
-        return "."
+    if pathspec.startswith(":"):
+        # A magic pathspec (`:/`, `:(top)`, `:(icase)`, `:!`) can reach anything from the repo's top, whatever
+        # the cwd: `/`, which holds every project, so what it feeds is never taken as seen.
+        return "/"
     m = _GLOB_CHARS.search(pathspec)
     if not m:
         return pathspec
