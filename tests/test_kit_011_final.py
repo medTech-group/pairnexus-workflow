@@ -110,3 +110,70 @@ def test_seal_still_reads_as_before():
     assert render.sealed_intact(sealed.replace("\n", "\r\n") + "\n\n  \n")
     assert not render.sealed_intact(sealed.replace("two", "2"))
     assert render.seal_of("Briefing 0123456789ab")[0] == "0123456789ab"
+
+
+# ---------- the second pass on the final fixes ----------
+
+M_SAFE = f'mutation{{addComment(input:{{subjectId:"x",body:"y {M}"}}){{clientMutationId}}}}'
+DELETE = 'mutation{deleteIssue(input:{issueId:"z"}){clientMutationId}}'
+
+
+@pytest.mark.parametrize(
+    "decoy",
+    [
+        f"-f a='{M_SAFE} #'",
+        f"-H 'X-A: {M_SAFE} #'",
+        f"-f a='{M_SAFE} \"'",
+    ],
+)
+def test_ticket_reads_only_the_query(decoy, profile, tmp_path):
+    cmd = f"gh api graphql {decoy} -f query='{DELETE}' -f b='\"'"
+    assert act(profile, tmp_path, cmd, role="ticket").action == "deny", decoy
+
+
+def test_ticket_addcomment_still_allowed(profile, tmp_path):
+    assert act(profile, tmp_path, f"gh api graphql -f query='{M_SAFE}'", role="ticket").action != "deny"
+
+
+CONDUCTOR_HIDDEN = {
+    "an escaped quote in a block string": 'mutation{a:updateIssue(input:{id:"x",title:"""t \\""" """}){issue{id}} addComment(input:{subjectId:"x",body:"hi",clientMutationId:"""z"""}){clientMutationId}}',
+    "an inline fragment on Mutation": 'mutation{... on Mutation{addComment(input:{subjectId:"x",body:"hi"}){clientMutationId}}}',
+    "a named fragment on Mutation": 'mutation{...F} fragment F on Mutation{updateIssue(input:{id:"x",body:"hi"}){issue{id}}}',
+    "an unterminated string": 'mutation{updateIssue(input:{id:"x",body:"hi}){issue{id}}}',
+}
+
+
+@pytest.mark.parametrize("case", sorted(CONDUCTOR_HIDDEN))
+def test_conductor_reads_what_graphql_reads(case, profile, tmp_path):
+    (tmp_path / "q.json").write_text(json.dumps({"query": CONDUCTOR_HIDDEN[case]}))
+    d = act(profile, tmp_path, "gh api graphql --input q.json")
+    assert d.action == "deny" and M in d.reason, case
+
+
+def test_gql_lexing_is_linear():
+    from workflow.guard import _gql_plain
+
+    start = time.perf_counter()
+    assert _gql_plain('"' + '\\"' * 200_000) is None
+    assert _gql_plain('"""' + '\\"""' * 100_000) is None
+    assert time.perf_counter() - start < 1
+
+
+def test_into_is_linear():
+    start = time.perf_counter()
+    protected_named("Add it to" + " " * 200_000 + "x\n```\n.env\n```\n", DEFAULT_PROTECTED)
+    assert time.perf_counter() - start < 1
+
+
+def test_more_clauses_and_fences():
+    assert [p for p, _ in protected_named("Don't break anything, just edit `.github/workflows/ci.yml`.", DEFAULT_PROTECTED)] == [".github/workflows/ci.yml"]
+    assert [p for p, _ in protected_named("Append this to:\n```\n.github/workflows/ci.yml\n```\n", DEFAULT_PROTECTED)] == [".github/workflows/ci.yml"]
+    # A second fence later doesn't count on the first one's "to:".
+    body = "Add a job to:\n```\njobs: {}\n```\n```\ncp .env.example .env\n```\n"
+    assert protected_named(body, DEFAULT_PROTECTED) == []
+
+
+def test_a_rest_issue_object_isnt_a_comment():
+    issue = {"id": 99999, "number": 3, "body": "x", "url": "https://api.github.com/repos/a/b/issues/3", "user": {"login": "owner"}, "comments": 3}
+    with pytest.raises(posts.CommentsError):
+        posts.owner_words([issue], "owner")

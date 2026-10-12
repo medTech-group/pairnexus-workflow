@@ -1556,6 +1556,51 @@ def _mutation_fields(text: str) -> list[str] | None:
     return None if calls is None else [name for name, _ in calls]
 
 
+def _gql_plain(text: str) -> str | None:
+    """GraphQL text with every string emptied (`""`) and its ignored tokens
+    (comments, commas) made spaces, read in one linear pass as GraphQL's lexer
+    reads it: a quote in a comment, a `#` in a string, and a backslash before
+    three quotes in a block string (an escaped quote) stay where they are.
+    None for an unterminated string."""
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if text.startswith('"""', i):
+            j = i + 3
+            while True:
+                k = text.find('"""', j)
+                if k < 0:
+                    return None
+                if text[k - 1] == "\\" and k - 1 >= j:  # \""" is an escaped quote
+                    j = k + 3
+                    continue
+                break
+            out.append('""')
+            i = k + 3
+        elif c == '"':
+            j = i + 1
+            while j < n and text[j] not in '"\n\r':
+                j += 2 if text[j] == "\\" else 1
+            if j >= n or text[j] != '"':
+                return None
+            out.append('""')
+            i = j + 1
+        elif c == "#":
+            j = i
+            while j < n and text[j] not in "\n\r":
+                j += 1
+            out.append(" ")
+            i = j
+        elif c == ",":
+            out.append(" ")
+            i += 1
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
 def _mutation_calls(text: str) -> list[tuple[str, str]] | None:
     """(field, its arguments) for each top-level field of each GraphQL mutation
     in text, string values emptied (`body:""`); None if unreadable. The
@@ -1563,12 +1608,9 @@ def _mutation_calls(text: str) -> list[tuple[str, str]] | None:
     tokens (comments, commas) are dropped first, and the operation's variable
     definitions, whose default values can hold a body, join every field's
     arguments."""
-    # One pass, so a quote in a comment or a # in a string is read as GraphQL reads it.
-    t = re.sub(
-        r'"""(?:.|\n)*?"""|"(?:[^"\\\n]|\\.)*"|#[^\n\r]*|,',
-        lambda m: '""' if m.group(0).startswith('"') else " ",
-        text,
-    )
+    t = _gql_plain(text)
+    if t is None:
+        return None
     out: list[tuple[str, str]] = []
     for m in re.finditer(r"\bmutation\b", t):
         i, n = m.end(), len(t)
@@ -1594,6 +1636,8 @@ def _mutation_calls(text: str) -> list[tuple[str, str]] | None:
                     p += {"(": 1, ")": -1}.get(t[i], 0)
                     i += 1
                 continue
+            elif depth == 1 and t.startswith("...", i):
+                return None  # a fragment on Mutation: its fields can't be read here
             elif depth == 1 and (c.isalpha() or c == "_"):
                 mm = re.match(r"[A-Za-z_]\w*", t[i:])
                 ident = mm.group(0)
@@ -1667,11 +1711,15 @@ def _api_problem(toks: list[str], profile: Profile, role: str, cwd: str | None =
         if role == "ticket":
             if from_file:
                 return "a GraphQL call read from a file (`@file`, `--input`) counts as a mutation, which ticket sessions don't run; pass the query inline"
-            q = _field(call, "query")
-            if q is not None and _shell_value(q):
+            # Only the query is run; other fields are its variables. Each query is
+            # read alone, so text in another field can't change how it lexes.
+            queries = [f.split("=", 1)[1] if "=" in f else "" for f in call.fields if f.split("=", 1)[0] == "query"]
+            if any(_shell_value(q) for q in queries):
                 return "a GraphQL query from a variable or a substitution counts as a mutation, which ticket sessions don't run; pass the query inline"
-            if re.search(r"\bmutation\b", call.rest):
-                names = _mutation_fields(call.rest)
+            for q in queries:
+                if not re.search(r"\bmutation\b", q):
+                    continue
+                names = _mutation_fields(q)
                 if names is None or not names or any(n not in _TICKET_GQL_MUTATIONS for n in names):
                     return "ticket sessions run only the `enablePullRequestAutoMerge` and `addComment` GraphQL mutations; use the REST API or the GitHub MCP tools"
             return None

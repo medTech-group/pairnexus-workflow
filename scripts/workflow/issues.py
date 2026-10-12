@@ -296,16 +296,17 @@ _REPO_URL = re.compile(
 _DONT = re.compile(r"\b(?:don['’]t|do\s+not|never(?!\s+mind\b))\b", re.I)
 # Where a clause ends: a sentence's end, a semicolon, a colon or a dash. Only
 # the clause a path is in decides whether it is read or left alone.
-_CLAUSE = re.compile(r"[.;:!?](?=\s|$)|\s[—–-]\s")
+_CLAUSE = re.compile(r"[.;:!?](?=\s|$)|\s[—–-]\s|,\s*(?=(?:just|but|then|instead|so|and)\b)", re.I)
 # A fenced block whose paths count: the prose just before it asks for a change
 # *to* or *in* what follows ("Add a job to:").
-_INTO = re.compile(r"\b(?:to|in|into)\s*:?\s*$", re.I)
+# Matched against the line with its trailing colon and spaces taken off, so it stays linear.
+_INTO = re.compile(r"\b(?:to|in|into)$", re.I)
 # "Read the key from .env at startup": the code reads it, and nothing before
 # the path on its line says to change anything.
 _READS = re.compile(r"\b(?:read|reads|reading|load|loads|loading|parse|parses|parsing)\b|\bfrom\s*$", re.I)
 _CHANGES = re.compile(
     r"\b(?:edit|change|update|add|remove|delete|rotate|write|modify|fix|replace|rename|move|create|set|cache|bump|touch"
-    r"|make|tweak|adjust|configure|enable|disable|pin|raise|lower|split|merge|extend|drop)(?:s|es|d|ed|ing)?\b",
+    r"|make|tweak|adjust|configure|enable|disable|pin|raise|lower|split|merge|extend|drop|append|insert|include)(?:s|es|d|ed|ing)?\b",
     re.I,
 )
 
@@ -359,9 +360,10 @@ def _mentions(body: str | None, repo: str | None = None) -> list[tuple[str, bool
             if fence is None:
                 fence = f.group(1)[0]
                 last = _CLAUSE.split(prose.rstrip().rstrip(":"))[-1] if prose.strip() else ""
-                fence_counts = bool(_CHANGES.search(last) and _INTO.search(prose.rstrip()))
+                fence_counts = bool(_CHANGES.search(last) and _INTO.search(prose.rstrip().rstrip(":").rstrip()))
             elif f.group(1)[0] == fence:
                 fence = None
+                prose = ""
             continue
         if fence is not None and not fence_counts:
             continue

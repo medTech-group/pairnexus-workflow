@@ -81,8 +81,8 @@ def _number(comment: dict) -> int | None:
 
 def _is_comment(d: dict) -> bool:
     # An issue or PR (`gh issue view --json body,comments,url`) has a body and a
-    # URL too; its `comments` list says it holds them rather than being one.
-    return "body" in d and any(k in d for k in ("id", "url", "html_url")) and not isinstance(d.get("comments"), list)
+    # URL too; its `comments` list, or its `number`, says it isn't a comment.
+    return "body" in d and any(k in d for k in ("id", "url", "html_url")) and not isinstance(d.get("comments"), list) and "number" not in d
 
 
 def comments_from(value) -> list[dict]:
