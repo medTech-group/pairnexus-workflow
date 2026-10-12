@@ -1393,30 +1393,24 @@ def _repo_name(r: str) -> str:
 
 
 # A shell function's or script's parameters, whose values the guard never sees.
+_HEREDOC_HINT = "(`-m \"$(cat <<'EOF'` … `EOF` `)\"`)"
 _POSITIONAL = re.compile(r"\$(?:[@*#0-9]|\{[!#]?[@*0-9])")
 
-# Options whose value is free text (a commit message, a PR's title or body):
-# what it says, a `$1`, a `-R` or another repository's URL, runs nothing.
-_FREE_TEXT = {"git": {"-m", "--message"}, "gh": {"-t", "--title", "-b", "--body", "--subject"}}
-
-
-def _free_text(toks: list[str]) -> set[int]:
-    """Indexes of the words in a git or gh command that are free text."""
-    prog = "gh" if Path(toks[0]).name == "gh" else "git"
-    opts = _FREE_TEXT[prog]
-    out: set[int] = set()
-    for j, t in enumerate(toks):
-        if t in opts and j + 1 < len(toks):
-            out.add(j + 1)
-        elif any(t.startswith(o + "=") for o in opts if o.startswith("--")):
-            out.add(j)
-        elif prog == "git" and re.fullmatch(r"-m.+", t, re.S):
-            out.add(j)
-        elif prog == "gh" and t in _FIELD_FLAGS and j + 1 < len(toks) and re.match(r"(?:body|title)=", toks[j + 1]):
-            out.add(j + 1)
-        elif prog == "gh" and re.match(r"(?:--(?:raw-)?field=|-[fF])(?:body|title)=", t):
-            out.add(j)
-    return out
+def _literal_heredoc(word: str) -> bool:
+    """The word is exactly `$(cat <<'EOF' … EOF)` with a quoted delimiter: the
+    shell substitutes the heredoc's text as written, expanding nothing, so a
+    `$1` or `-R` in it is only text (the usual way to pass a commit message or
+    a PR body)."""
+    m = re.match(r"\$\(\s*cat\s+<<(-?)\s*(['\"])([A-Za-z_][\w.-]*)\2[ \t]*\n", word)
+    if not m:
+        return False
+    lines = word[m.end():].split("\n")
+    for k, line in enumerate(lines):
+        bare = line.lstrip("\t") if m.group(1) else line
+        if bare in (m.group(3), m.group(3) + ")"):  # the first delimiter line ends the heredoc
+            rest = ("" if bare == m.group(3) else ")") + "\n".join(lines[k + 1:])
+            return rest.strip() == ")"
+    return False
 
 # `gh` subcommands a ticket session may run (None: any).
 _GH_TICKET: dict[str, set[str] | None] = {
@@ -1718,9 +1712,10 @@ def _gh_problem(toks: list[str], profile: Profile, role: str, cwd: str | None, r
     if group == "repo" and sub == "edit" and any(t == "--default-branch" or t.startswith("--default-branch=") for t in toks):
         return "changing the repository's default branch (`gh repo edit --default-branch`) is never allowed"
     if role == "ticket":
-        text = _free_text(toks)
         for j, t in enumerate(toks):
-            if j in text:
+            # A word with spaces or newlines is text (a title, a body), never a
+            # repository gh would use.
+            if re.search(r"\s", t):
                 continue
             r = None
             if t == "--repo" or t.startswith("--repo="):
@@ -1732,7 +1727,7 @@ def _gh_problem(toks: list[str], profile: Profile, role: str, cwd: str | None, r
                     r = m.group(1).removeprefix("=") or (toks[j + 1] if j + 1 < len(toks) else "")
             if r is None:
                 # A pull request or issue URL names its own repository, which gh then uses.
-                u = re.match(r"(?:https?://)?(?:[^@/\s]+@)?(?:www\.)?github\.com(?::\d+)?/([^/\s]+/[^/\s]+)/(?:pull|issues)/", t, re.I)
+                u = re.match(r"(?:https?://)?(?:[^/\s]*@)?(?:[\w-]+\.)*github\.com\.?(?::\d*)?/([^/\s]+/[^/\s]+)/(?:pull|issues)/", t, re.I)
                 r = u.group(1) if u else None
             if r is not None and _repo_name(r) != profile.repo.casefold():
                 return f"ticket sessions work only in {profile.repo}; `{t}` names another repository"
@@ -2517,6 +2512,12 @@ def _write_targets_raw(seg: Seg, root: Path) -> _Targets:
         return t
     cmd = Path(toks[0]).name
     operands = [a for a in toks[1:] if not a.startswith("-")]
+    if cmd == "git":
+        # `git diff|log|show --output=<file>`, `git format-patch -o <dir>`.
+        t.files += _opt_values(toks, ("--output",))
+        t.trees += _opt_values(toks, ("--output-directory",))
+        if "format-patch" in toks:
+            t.trees += _opt_values(toks, ("-o",))
     if cmd in _RM_LIKE:
         t.files += operands
         t.trees += operands
@@ -3347,10 +3348,8 @@ def check_bash(
             return _deny(role, p)
         k = _vcs_index(seg.words, role)
         toks = seg.words[k:] if k is not None else seg.words
-        if role == "ticket" and toks and _is_vcs_word(toks[0]) and any(
-            _POSITIONAL.search(w) for j, w in enumerate(toks) if j and j not in _free_text(toks)
-        ):
-            return _deny(role, f"`{Path(toks[0]).name}` with a function's or script's parameters (`$@`, `$1` …) can't be read before it runs; write the command out")
+        if role == "ticket" and toks and _is_vcs_word(toks[0]) and any(_POSITIONAL.search(w) and not _literal_heredoc(w) for w in toks[1:]):
+            return _deny(role, f"`{Path(toks[0]).name}` with a function's or script's parameters (`$@`, `$1` …) can't be read before it runs; write the command out, and pass text that mentions one in a quoted heredoc " + _HEREDOC_HINT)
         g = _git(toks)
         if g is not None:
             glob, args, cdir = g
@@ -3370,6 +3369,8 @@ def check_bash(
                 p = _switch_problem(args, profile.ticket_branch, d)
                 if p:
                     return Decision("deny", p)
+            if role == "ticket" and args[:1] == ["rebase"] and any(a in ("-x", "--exec") or a.startswith(("--exec=", "-x")) for a in args[1:]):
+                return Decision("deny", "`git rebase --exec` runs commands the guard can't see; run them yourself between steps")
             if role == "ticket" and args[:1] == ["branch"]:  # whatever the role's source
                 p = _upstream_problem(args, d, current_branch if same else _branch_of(d))
                 if p:

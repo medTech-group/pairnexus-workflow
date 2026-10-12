@@ -66,8 +66,9 @@ It reads each command the way a shell would, well enough to catch a well-meaning
 
 **In ticket sessions, by allow-list:**
 - `git push` may update only the session's own ticket branch: no tags, no other branches, and a bare push only when the upstream has the same name;
-- `gh` may run only the PR, issue, run and read subcommands a ticket needs, in the profile's repository alone (`-R`/`--repo` or a pull request or issue URL naming another, or `GH_REPO`, `GH_HOST` and gh's token variables set, are refused), never with a function's or script's parameters (`"$@"`, `$1`), and never printing the token (`gh auth status --show-token`);
+- `gh` may run only the PR, issue, run and read subcommands a ticket needs, in the profile's repository alone (`-R`/`--repo` or a pull request or issue URL naming another, or `GH_REPO`, `GH_HOST` and gh's token variables set, are refused), never with a function's or script's parameters (`"$@"`, `$1`; text that mentions one goes in a quoted heredoc, `-m "$(cat <<'EOF' … EOF)"`, or a file with `-F`/`--body-file`), and never printing the token (`gh auth status --show-token`);
 - `gh api` writes may touch only issues, comments, labels and pull requests of the profile's repo, and never GitHub's GraphQL API (auto-merge, comments and reads go through the GitHub MCP tools or REST: the shell can assemble a GraphQL query in more ways than the guard can follow); merging its own PR (`gh pr merge`, `gh api -X PUT repos/<repo>/pulls/<n>/merge`, the GitHub MCP merge tool) is allowed, since the ruleset still decides what may merge into the base branch;
+- `git rebase --exec` is refused, and `git diff|log --output` and `format-patch -o` count as writes;
 - `git config` may not set aliases, push settings, `core.*` hooks, editors, ssh commands, credentials or includes; `GIT_CONFIG*`/`GIT_SSH*`/`GIT_DIR` assignments and `--config-env` are refused.
 
 **In every role** it denies (asks, in attended sessions):

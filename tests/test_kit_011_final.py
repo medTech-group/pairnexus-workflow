@@ -309,7 +309,6 @@ def test_ticket_gh_may_name_this_repository(profile, tmp_path):
     [
         "git commit -m \"$(cat <<'EOF'\nHandle \"$@\" in the wrapper\nEOF\n)\"",
         f"gh pr create --title t --body \"$(cat <<'EOF'\nUses $1 now\n{M}\nEOF\n)\"",
-        "git commit -m 'costs $5'",
         "gh pr list -R=acme/demo",
         "gh pr list -R github.com/acme/demo",
         "gh pr list -R acme/demo.git",
@@ -371,11 +370,6 @@ def test_parameters_and_routes_outside_free_text(cmd, profile, tmp_path):
     "cmd",
     [
         "gh pr create --title '-Rate limit' --body 'x <!-- workflow:agent -->'",
-        "gh pr create --title https://github.com/other/repo/issues/5 --body 'x <!-- workflow:agent -->'",
-        "git commit -m '$1'",
-        "git commit -m'Uses $@ now'",
-        "git commit --message='Uses $1'",
-        "gh api repos/acme/demo/issues/3/comments -f 'body=x=$1 <!-- workflow:agent -->'",
     ],
 )
 def test_free_text_is_left_alone(cmd, profile, tmp_path):
@@ -394,3 +388,62 @@ def test_bundled_repo_flag_is_linear():
     root = pathlib.Path(tempfile.mkdtemp())
     _d({"tool_name": "Bash", "tool_input": {"command": act_cmd}}, _p(json.loads(json.dumps(conftest.BASE_PROFILE)), root), "ticket", root, "claude/build-1", role_from_env=True)
     assert time.perf_counter() - start < 2
+
+
+# ---------- what the guard can't tell from text: the heredoc is the way ----------
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "git commit -m 'costs $5'",
+        "git commit -m'Uses $@ now'",
+        "git checkout -m \"$1\"",
+        "git push -o -m \"$1\"",
+        "gh pr merge 5 -A -t \"$1\"",
+        "gh api repos/acme/demo/issues/3/comments -F body=@\"$1\"",
+    ],
+)
+def test_a_parameter_outside_a_quoted_heredoc_is_refused(cmd, profile, tmp_path):
+    d = act(profile, tmp_path, cmd, role="ticket")
+    assert d.action == "deny" and "heredoc" in d.reason, cmd
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "git commit -am \"$(cat <<'EOF'\nUses $1 and \"$@\"\nEOF\n)\"",
+        "git commit -m \"$(cat <<\"EOF\"\nUses $1\nEOF\n)\"",
+        "git commit -m \"$(cat <<-'EOF'\n\tUses $1\n\tEOF\n)\"",
+        "git commit -m \"$(cat <<'EOF'\nUses $1\nEOF)\"",
+        f"gh pr create -t \"$(cat <<'EOF'\nTitle $1\nEOF\n)\" -b \"$(cat <<'EOF'\n-R other/repo $@\n{M}\nEOF\n)\"",
+    ],
+)
+def test_a_quoted_heredoc_is_text(cmd, profile, tmp_path):
+    d = act(profile, tmp_path, cmd, role="ticket")
+    assert d.action == "allow", (cmd, d.reason)
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "git commit -m \"$(cat <<EOF\nUses $1\nEOF\n)\"",  # unquoted: the shell expands it
+        "git push origin \"$(cat <<'EOF'\nx\nEOF\n)$1\"",
+        "git commit -m \"$(cat <<'EOF'\nx\nEOF\n)\" \"$1\"",
+        "git diff --output=.git/config",
+        "git log --output=.claude/settings.json",
+        "git rebase -x 'git push --force' main",
+        "gh pr merge https://github.com:/other/repo/pull/5",
+        "gh pr merge https://@github.com/other/repo/pull/5",
+        "gh pr merge api.github.com/other/repo/pull/5",
+    ],
+)
+def test_more_routes_refused(cmd, profile, tmp_path):
+    assert act(profile, tmp_path, cmd, role="ticket").action == "deny", cmd
+
+
+def test_many_words_stay_fast(profile, tmp_path):
+    start = time.perf_counter()
+    act(profile, tmp_path, "git status " + "a " * 5000, role="ticket")
+    act(profile, tmp_path, "gh pr create " + "-t x " * 3000, role="ticket")
+    assert time.perf_counter() - start < 3
