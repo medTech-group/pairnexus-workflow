@@ -177,3 +177,48 @@ def test_a_rest_issue_object_isnt_a_comment():
     issue = {"id": 99999, "number": 3, "body": "x", "url": "https://api.github.com/repos/a/b/issues/3", "user": {"login": "owner"}, "comments": 3}
     with pytest.raises(posts.CommentsError):
         posts.owner_words([issue], "owner")
+
+
+# ---------- the third pass: fields the parse doesn't know ----------
+
+
+@pytest.mark.parametrize(
+    "form",
+    [
+        "-f=query='{q}'",
+        "-F=query='{q}'",
+        "-if query='{q}'",
+        "-ifquery='{q}'",
+        "-iFquery='{q}'",
+        "-if=query='{q}'",
+        "-f \"$Q=\"'{q}'",
+        "-f \"${{Q}}=\"'{q}'",
+        "-f \"$(echo query)=\"'{q}'",
+        "{{-f,query='{q}'}}",
+    ],
+)
+def test_ticket_backstop_catches_unparsed_fields(form, profile, tmp_path):
+    cmd = "gh api graphql " + form.format(q=DELETE)
+    assert act(profile, tmp_path, cmd, role="ticket").action == "deny", form
+
+
+@pytest.mark.parametrize("form", ["-f=query='{q}'", "-if query='{q}'"])
+def test_conductor_reads_short_flag_forms(form, profile, tmp_path):
+    q = 'mutation{addComment(input:{subjectId:"x",body:"b"}){clientMutationId}}'
+    d = act(profile, tmp_path, "gh api graphql " + form.format(q=q))
+    assert d.action == "deny" and M in d.reason, form
+
+
+def test_a_name_graphql_doesnt_allow_fails_closed(profile, tmp_path):
+    from workflow.guard import _mutation_calls
+
+    assert _mutation_calls('mutation{ñ deleteIssue(input:{issueId:"x"}){clientMutationId}}') is None
+
+
+def test_many_mutation_words_are_read_in_linear_time():
+    from workflow.guard import _mutation_calls
+
+    start = time.perf_counter()
+    _mutation_calls("mutation " * 20_000 + "{a}")
+    _mutation_calls("mutation{" + "a " * 50_000 + "}")
+    assert time.perf_counter() - start < 1

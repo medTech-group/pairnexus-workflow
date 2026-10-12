@@ -1483,6 +1483,11 @@ def _api(toks: list[str]) -> _ApiCall | None:
     i = start
     while i < len(toks):
         t = toks[i]
+        # gh reads `-i` (--include, a boolean) and the short flag after it as one
+        # word (`-ifquery=…`, `-iX POST`), and a short flag's value after `=` (`-f=v`).
+        bundled = re.fullmatch(r"-i+([fFXHqtp].*)", t)
+        if bundled:
+            t = "-" + bundled.group(1)
         m = re.fullmatch(r"(?:-X|--method)(?:=?(.+))?", t)
         if m:
             if m.group(1):
@@ -1500,7 +1505,7 @@ def _api(toks: list[str]) -> _ApiCall | None:
             val = t.split("=", 1)[1]
             i += 1
         elif re.fullmatch(r"-[fF].+", t):
-            val = t[2:]
+            val = t[3:] if t[2] == "=" else t[2:]
             i += 1
         if val is not None:
             fields.append(val)
@@ -1601,6 +1606,10 @@ def _gql_plain(text: str) -> str | None:
     return "".join(out)
 
 
+_GQL_NAME = re.compile(r"[A-Za-z_]\w*")
+_GQL_ALIAS = re.compile(r"\s*:\s*([A-Za-z_]\w*)?")
+
+
 def _mutation_calls(text: str) -> list[tuple[str, str]] | None:
     """(field, its arguments) for each top-level field of each GraphQL mutation
     in text, string values emptied (`body:""`); None if unreadable. The
@@ -1612,7 +1621,10 @@ def _mutation_calls(text: str) -> list[tuple[str, str]] | None:
     if t is None:
         return None
     out: list[tuple[str, str]] = []
+    done = 0  # where the last operation read ended: a `mutation` before it was read with it
     for m in re.finditer(r"\bmutation\b", t):
+        if m.start() < done:
+            continue
         i, n = m.end(), len(t)
         paren = 0
         while i < n and not (t[i] == "{" and paren == 0):
@@ -1639,17 +1651,17 @@ def _mutation_calls(text: str) -> list[tuple[str, str]] | None:
             elif depth == 1 and t.startswith("...", i):
                 return None  # a fragment on Mutation: its fields can't be read here
             elif depth == 1 and (c.isalpha() or c == "_"):
-                mm = re.match(r"[A-Za-z_]\w*", t[i:])
+                mm = _GQL_NAME.match(t, i)
+                if not mm:
+                    return None  # a name GraphQL doesn't allow
                 ident = mm.group(0)
-                i += len(ident)
-                rest = t[i:].lstrip()
-                if rest.startswith(":"):
-                    i = n - len(rest) + 1
-                    mm = re.match(r"\s*([A-Za-z_]\w*)", t[i:])
-                    if not mm:
+                i = mm.end()
+                colon = _GQL_ALIAS.match(t, i)
+                if colon:
+                    if not colon.group(1):
                         return None
-                    ident = mm.group(1)
-                    i += mm.end()
+                    ident = colon.group(1)
+                    i = colon.end()
                 j = i
                 while j < n and t[j].isspace():
                     j += 1
@@ -1665,6 +1677,7 @@ def _mutation_calls(text: str) -> list[tuple[str, str]] | None:
                 out.append((ident, f"{args} {header}" if header.strip() else args))
                 continue
             i += 1
+        done = i
     return out
 
 
@@ -1716,6 +1729,11 @@ def _api_problem(toks: list[str], profile: Profile, role: str, cwd: str | None =
             queries = [f.split("=", 1)[1] if "=" in f else "" for f in call.fields if f.split("=", 1)[0] == "query"]
             if any(_shell_value(q) for q in queries):
                 return "a GraphQL query from a variable or a substitution counts as a mutation, which ticket sessions don't run; pass the query inline"
+            # A backstop for every way of passing a field the parse above doesn't
+            # know: each `mutation` in the command must be in a query it read.
+            said = len(re.findall(r"\bmutation\b", " ".join(toks)))
+            if said > sum(len(re.findall(r"\bmutation\b", q)) for q in queries):
+                return "ticket sessions pass a GraphQL mutation only as an inline `-f query=…`, and run only the `enablePullRequestAutoMerge` and `addComment` mutations"
             for q in queries:
                 if not re.search(r"\bmutation\b", q):
                     continue
