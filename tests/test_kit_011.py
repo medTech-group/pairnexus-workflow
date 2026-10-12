@@ -63,7 +63,8 @@ def test_agent_posts_need_the_marker(bare, marked, role, profile, tmp_path):
     if role == "ticket" and bare.startswith("gh api graphql"):
         # Ticket sessions don't use GraphQL at all (the final review of 0.1.1).
         for cmd in (bare, marked):
-            assert "GraphQL" in act(profile, tmp_path, cmd, role=role, branch="claude/build-1").reason, cmd
+            d = act(profile, tmp_path, cmd, role=role, branch="claude/build-1")
+            assert d.action == "deny" and "GraphQL" in d.reason, cmd
         return
     d = act(profile, tmp_path, bare, role=role, branch="claude/build-1" if role == "ticket" else "main")
     assert d.action == "deny", bare

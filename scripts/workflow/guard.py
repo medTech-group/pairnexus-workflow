@@ -1382,6 +1382,9 @@ def _upstream_problem(args: list[str], d: str | None, branch: str | None) -> str
 
 # ---------- GitHub CLI and API ----------
 
+# A shell function's or script's parameters, whose values the guard never sees.
+_POSITIONAL = re.compile(r"\$(?:[@*#0-9]|\{[!#]?[@*0-9])")
+
 # `gh` subcommands a ticket session may run (None: any).
 _GH_TICKET: dict[str, set[str] | None] = {
     "pr": {"create", "new", "edit", "comment", "view", "checks", "list", "ls", "diff", "ready", "merge", "status", "close"},
@@ -1554,12 +1557,6 @@ def _read_text(path: str, cwd: str | None, limit: int = 1_000_000) -> str | None
         return None
 
 
-def _mutation_fields(text: str) -> list[str] | None:
-    """The top-level fields of each GraphQL mutation in text; None if unreadable."""
-    calls = _mutation_calls(text)
-    return None if calls is None else [name for name, _ in calls]
-
-
 def _gql_plain(text: str) -> str | None:
     """GraphQL text with every string emptied (`""`) and its ignored tokens
     (comments, commas) made spaces, read in one linear pass as GraphQL's lexer
@@ -1687,6 +1684,8 @@ def _gh_problem(toks: list[str], profile: Profile, role: str, cwd: str | None, r
         return "`gh pr merge --admin` bypasses the base branch's required checks; it is never allowed"
     if group == "repo" and sub == "edit" and any(t == "--default-branch" or t.startswith("--default-branch=") for t in toks):
         return "changing the repository's default branch (`gh repo edit --default-branch`) is never allowed"
+    if role == "ticket" and group == "auth" and any(t in ("-t", "--show-token") or t.startswith("--show-token=") or re.fullmatch(r"-[a-zA-Z]*t[a-zA-Z]*", t) for t in toks[2:]):
+        return "`gh auth status --show-token` prints the GitHub token; ticket sessions never read it"
     if role == "ticket" and group is not None and not group.startswith("-"):
         allowed = _GH_TICKET.get(group, set())
         if group not in _GH_TICKET or (allowed is not None and sub not in allowed and sub is not None):
@@ -1695,22 +1694,20 @@ def _gh_problem(toks: list[str], profile: Profile, role: str, cwd: str | None, r
     return _api_problem(toks, profile, role, cwd, raw, read)
 
 
-def _shell_value(v: str) -> bool:
-    """A field value the shell fills in: a substitution, a backtick, or a `$name`
-    that isn't a GraphQL variable the query itself declares (`$id: ID!`)."""
-    if "`" in v or "$(" in v or "${" in v or re.search(r"\$(?![A-Za-z_])", v):
-        return True
-    return any(not re.search(r"\$" + re.escape(m.group(1)) + r"\s*:", v) for m in re.finditer(r"\$([A-Za-z_]\w*)", v))
-
-
 def _api_problem(toks: list[str], profile: Profile, role: str, cwd: str | None = None, raw: str = "", read=None) -> str | None:
     """`read`, when given, returns the text of the files the whole command reads
     with `cat` or `<`, which a query or body may come from by a variable."""
     base = profile.base_branch
     name = Path(toks[0]).name if toks else ""
-    if name == "curl" and re.search(r"api\.github\.com|/api/v3/|/api/graphql", " ".join(toks)):
+    if name == "curl" and re.search(r"api\.github\.com|/api/v3/|/api/graphql|github", " ".join(toks), re.I):
         joined = f" {' '.join(toks)} "
-        writes = re.search(r"\s(-X|--request)\s*=?\s*(POST|PUT|PATCH|DELETE)\b", joined, re.I) or re.search(r"\s(-d|--data[\w-]*|-F|--form|-T|--upload-file|--json)[\s=]", joined)
+        # A short flag may carry its value joined (`-dX`, `-Tq.json`, `-Kcfg`); a
+        # config file (`-K`) can hold any of them.
+        writes = (
+            re.search(r"\s(-X|--request)\s*=?\s*(POST|PUT|PATCH|DELETE)\b", joined, re.I)
+            or re.search(r"\s(--data[\w-]*|--form[\w-]*|--upload-file|--json|--config)[\s=]", joined)
+            or re.search(r"\s-[a-zA-Z]*[dFTK]", joined)
+        )
         if writes and role != "attended":
             return "GitHub writes go through `gh api` or the GitHub MCP tools, not curl"
         return None
@@ -1719,7 +1716,6 @@ def _api_problem(toks: list[str], profile: Profile, role: str, cwd: str | None =
         return None
     path = call.path
     if path == "graphql":
-        from_file = bool(call.files) or call.stdin
         if role == "ticket":
             # The shell can assemble a query in more ways than any reading of the
             # command can follow (expansions, globs, xargs), and ticket sessions
@@ -3299,6 +3295,8 @@ def check_bash(
             return _deny(role, p)
         k = _vcs_index(seg.words, role)
         toks = seg.words[k:] if k is not None else seg.words
+        if role == "ticket" and toks and Path(toks[0]).name in ("gh", "git") and any(_POSITIONAL.search(w) for w in toks[1:]):
+            return _deny(role, f"`{Path(toks[0]).name}` with a function's or script's parameters (`$@`, `$1` …) can't be read before it runs; write the command out")
         g = _git(toks)
         if g is not None:
             glob, args, cdir = g

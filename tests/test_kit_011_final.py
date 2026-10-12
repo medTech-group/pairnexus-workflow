@@ -226,3 +226,55 @@ def test_many_mutation_words_are_read_in_linear_time():
     _mutation_calls("mutation " * 20_000 + "{a}")
     _mutation_calls("mutation{" + "a " * 50_000 + "}")
     assert time.perf_counter() - start < 1
+
+
+# ---------- the last pass: older routes it found ----------
+
+MERGE = "mutation{mergeBranch(input:{}){clientMutationId}}"
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        f"f() {{ gh api \"$@\"; }}; f graphql -f query='{MERGE}'",
+        f"f() {{\n  gh api \"$@\"\n}}\nf graphql -f query='{MERGE}'",
+        "f() { git push \"$@\"; }; f origin main",
+        "g() { git push origin \"$1\"; }; g main",
+        "g() { gh pr merge \"${1}\" --admin; }; g 3",
+    ],
+)
+def test_ticket_gh_and_git_take_no_parameters(cmd, profile, tmp_path):
+    assert act(profile, tmp_path, cmd, role="ticket").action == "deny", cmd
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "curl -d'{\"query\":\"mutation{x}\"}' https://api.github.com/graphql",
+        "curl -d@q.json https://api.github.com/graphql",
+        "curl -Tq.json https://api.github.com/repos/acme/demo/issues",
+        "curl -Fquery=x https://api.github.com/graphql",
+        "curl -K cfg https://api.github.com/graphql",
+        "curl -sd x https://API.GITHUB.COM/graphql",
+    ],
+)
+def test_curl_writes_to_github_with_joined_flags(cmd, profile, tmp_path):
+    assert act(profile, tmp_path, cmd, role="ticket").action == "deny", cmd
+
+
+@pytest.mark.parametrize("cmd", ["gh auth status --show-token", "gh auth status -t", "gh auth status -ht github.com"])
+def test_ticket_never_prints_the_token(cmd, profile, tmp_path):
+    assert act(profile, tmp_path, cmd, role="ticket").action == "deny", cmd
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "gh auth status",
+        "curl -fsSL https://api.github.com/repos/acme/demo/issues/3",
+        "for n in 3 4; do gh pr view $n; done",
+        "git log -1 --format=%H",
+    ],
+)
+def test_ordinary_ticket_commands_still_run(cmd, profile, tmp_path):
+    assert act(profile, tmp_path, cmd, role="ticket").action == "allow", cmd
