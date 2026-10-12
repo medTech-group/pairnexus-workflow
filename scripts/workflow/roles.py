@@ -27,9 +27,16 @@ def current_branch(cwd: Path) -> str | None:
     return b if out.returncode == 0 and b and b != "HEAD" else None
 
 
-def role(cwd: Path, ticket_branch: str = "claude/build-*") -> str:
+def env_role() -> str | None:
     env = (os.environ.get("WORKFLOW_ROLE") or "").strip().lower()
-    if env in ROLES:
+    return env if env in ROLES else None
+
+
+def role(cwd: Path, ticket_branch: str = "claude/build-*") -> str:
+    """The session's role. Only `WORKFLOW_ROLE` is a firm signal; the branch
+    fallback is a convenience the session itself can change."""
+    env = env_role()
+    if env:
         return env
     b = current_branch(cwd)
     if b and fnmatch.fnmatchcase(b, ticket_branch):

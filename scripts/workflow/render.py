@@ -1,9 +1,11 @@
 """Render a ticket session's briefing from a template.
 
 Placeholders are `{{name}}` or `{{group.name}}`. Values come from the ticket,
-the profile, the charter and the conductor's slots. Rendering refuses when any
-placeholder is left unfilled or a required slot is empty, so a session can never
-be sent a briefing with a hole in it.
+the profile, the charter and the conductor's slots. Rendering refuses when the
+template has a placeholder with no value or a malformed one, a required slot is
+empty, or a slot still says SEE_BELOW/TODO_FILL, so a session can never be sent
+a briefing with a hole in it. Values are inserted as they are: a value holding
+braces ("Fix {{x}} binding") renders.
 """
 
 from __future__ import annotations
@@ -17,8 +19,27 @@ PLACEHOLDER = re.compile(r"\{\{\s*([A-Za-z0-9_.]+)\s*\}\}")
 REQUIRED_SLOTS = ("alongside", "read_first", "owner_decisions", "briefing")
 
 
+MARKER = re.compile(r"\b(SEE_BELOW|TODO_FILL)\b|<fill[^>]*>")
+LEFTOVER = re.compile(r"\{\{.*?\}\}|\{\{|\}\}")
+
+
 class RenderError(ValueError):
     pass
+
+
+def _code(cmd: str) -> str:
+    return f"`{cmd}`" if cmd else "none"
+
+
+def _suite_line(s) -> str:
+    where = f", run in `{s.cwd}`" if s.cwd else ""
+    if "{files}" in s.run and s.files:
+        files = f", where {{files}} is the test files to run, space-separated (from `{s.files}`{', relative to that directory' if s.cwd else ''}); give it all of them for the whole suite"
+    elif "{files}" in s.run:
+        files = ", with {files} left empty"
+    else:
+        files = ""
+    return f"{s.name}: `{s.run}`{where}{files}"
 
 
 def _bullets(items: list[str]) -> str:
@@ -35,9 +56,10 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
         "project.name": profile.name,
         "project.repo": profile.repo,
         "project.base_branch": profile.base_branch,
+        "project.owner": f"@{profile.owner}" if profile.owner else "not named in the profile",
         "project.rules": _bullets(profile.rules),
         "tracking.issue": str(tracking),
-        "by_hand.issue": str(by_hand) if by_hand else "none yet: add by-hand checks to the tracking issue",
+        "by_hand.issue": f"#{by_hand}" if by_hand else "none yet: add by-hand checks to the tracking issue",
         "merge.mode": merge.get("mode", "auto-merge"),
         "merge.waived": ", ".join(waived) if waived else "none: every required check must be green",
         "run.review_rounds": str(profile.review_rounds),
@@ -45,9 +67,11 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
         "open_decisions": "take the choice most consistent with the spec, ADRs and the project's rules, and record it in the PR body"
         if charter.get("open_decisions", "decide-and-record") == "decide-and-record"
         else "label the ticket needs-human, say exactly what needs deciding, and stop",
-        "commands.typecheck": profile.typecheck or "none",
-        "commands.test_file": profile.test_file or "none",
-        "commands.suites": _bullets([f"{s.name}: `{s.run}`" for s in profile.suites]),
+        "commands.typecheck": _code(profile.typecheck),
+        "commands.test_file": f"`{profile.test_file}` (replace {{file}} with the test file's path)"
+        if "{file}" in profile.test_file
+        else _code(profile.test_file),
+        "commands.suites": _bullets([_suite_line(s) for s in profile.suites]),
         "ui.explorer": profile.explorer,
     }
     for k in REQUIRED_SLOTS:
@@ -58,16 +82,25 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
 
 
 def render(template: str, vals: dict) -> str:
-    missing_slots = [k for k in REQUIRED_SLOTS if f"{{{{{k}}}}}" in template.replace(" ", "") and not str(vals.get(k, "")).strip()]
+    used = [m.group(1) for m in PLACEHOLDER.finditer(template)]
+    missing_slots = [k for k in REQUIRED_SLOTS if k in used and not str(vals.get(k, "")).strip()]
     if missing_slots:
         raise RenderError(
             "required slots are empty: " + ", ".join(missing_slots) + ' (write "none" when there is nothing to say)'
         )
-    unknown = sorted({m.group(1) for m in PLACEHOLDER.finditer(template) if m.group(1) not in vals})
+    unknown = sorted({k for k in used if k not in vals})
     if unknown:
         raise RenderError("no value for: " + ", ".join(unknown))
-    out = PLACEHOLDER.sub(lambda m: str(vals[m.group(1)]), template)
-    left = PLACEHOLDER.findall(out)
-    if left or re.search(r"\b(SEE_BELOW|TODO_FILL|<fill[^>]*>)\b", out):
-        raise RenderError("the rendered briefing still has a placeholder: " + ", ".join(left or ["SEE_BELOW/TODO"]))
-    return out
+    # The template, its known placeholders removed: anything brace-like or a
+    # marker left is a hole in the template itself.
+    bare = PLACEHOLDER.sub("", template)
+    left = sorted(set(LEFTOVER.findall(bare)) | {m.group(0) for m in MARKER.finditer(bare)})
+    if left:
+        raise RenderError("the template has a malformed or unfilled placeholder: " + ", ".join(left))
+    # A slot (or other value) still holding a marker is a hole the conductor left.
+    holes = sorted({k for k in used if MARKER.search(str(vals[k]))})
+    if holes:
+        raise RenderError(
+            "these still say SEE_BELOW/TODO_FILL/<fill …>: " + ", ".join(holes) + "; write what the session needs, or \"none\""
+        )
+    return PLACEHOLDER.sub(lambda m: str(vals[m.group(1)]), template)

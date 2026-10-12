@@ -4,7 +4,9 @@ The conductor is its only writer. Narrative goes in comments; the block holds
 only what the conductor needs to resume: the charter, each ticket's status,
 the outward-changes ledger and the owner's lists. `get` reads it out of a body;
 `put` writes it back into the body (adding it when absent) after validating
-it, and refuses a body over GitHub's limit.
+it, and refuses a body over GitHub's limit. In the block, `<` and the backtick
+are written as JSON \\u escapes, so no string can close the fence or comment; a
+body with two blocks, or half of one, is refused rather than guessed at.
 """
 
 from __future__ import annotations
@@ -71,24 +73,56 @@ def validate(s: Any) -> list[str]:
     return p
 
 
+RECOVER = (
+    "edit the issue body so it has exactly one block between the markers, "
+    "or delete both to start again from `state init`"
+)
+_BEGIN_MARK = "<!-- workflow-state:begin"
+_END_MARK = "<!-- workflow-state:end -->"
+
+
+def _find(body: str) -> re.Match | None:
+    """The one state block, None when the body has none, a StateError when it's ambiguous."""
+    body = body or ""
+    begins, ends = body.count(_BEGIN_MARK), body.count(_END_MARK)
+    if begins == 0 and ends == 0:
+        return None
+    if begins > 1 or ends > 1:
+        raise StateError(f"the body has {max(begins, ends)} state blocks, so which one is current is unclear: {RECOVER}")
+    if begins != ends:
+        which = "a begin marker without an end" if begins else "an end marker without a begin"
+        raise StateError(f"the body has {which}: {RECOVER}")
+    m = _BLOCK.search(body)
+    if not m:
+        raise StateError(f"the body has state markers but no ```json block between them: {RECOVER}")
+    return m
+
+
+def _dump(state: dict) -> str:
+    """JSON that can't close the code fence or the HTML comment around it: `<` and
+    the backtick are written as \\u escapes (json.loads reads both forms)."""
+    return json.dumps(state, indent=1, sort_keys=True).replace("<", "\\u003c").replace("`", "\\u0060")
+
+
 def get(body: str) -> dict | None:
-    m = _BLOCK.search(body or "")
+    m = _find(body)
     if not m:
         return None
     try:
         return json.loads(m.group(1))
     except json.JSONDecodeError as e:
-        raise StateError(f"the state block is not valid JSON: {e}") from e
+        raise StateError(f"the state block is not valid JSON: {e}; {RECOVER}") from e
 
 
 def put(body: str, state: dict) -> str:
     problems = validate(state)
     if problems:
         raise StateError("refusing to write an invalid state:\n- " + "\n- ".join(problems))
-    block = f"{BEGIN}\n```json\n{json.dumps(state, indent=1, sort_keys=True)}\n```\n{END}"
+    block = f"{BEGIN}\n```json\n{_dump(state)}\n```\n{END}"
     body = body or ""
-    if _BLOCK.search(body):
-        new = _BLOCK.sub(lambda _m: block, body, count=1)
+    m = _find(body)
+    if m:
+        new = body[: m.start()] + block + body[m.end() :]
     else:
         new = (body.rstrip() + "\n\n" + block + "\n").lstrip()
     if len(new) > BODY_LIMIT - 1024:

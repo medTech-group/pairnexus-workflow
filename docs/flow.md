@@ -22,12 +22,13 @@ A large effort can start as a **map**: an issue labelled `wayfinder:map` whose c
 ## 2. A spec and its build tickets: one spec per session
 
 1. Follow `to-spec`: agree the test seams with the owner, then publish the spec (`ready-for-agent`), citing the decision behind each choice.
-2. Follow `to-tickets`: agree the breakdown, then publish build tickets. Each build ticket has:
+   Label the spec `spec` as well, so readiness never mistakes it for a build ticket.
+2. Follow `to-tickets`: agree the breakdown, then publish build tickets (`ready-for-agent`). Each build ticket has:
    - `## Blocked by` (issue refs, or "None");
    - an `Area: <name>` line from the profile's `[areas]`, so the conductor never runs two sessions on one area;
    - acceptance criteria naming their seams;
    - the by-hand checks it will need (a real device, account or service), if any.
-3. Anything only the owner can do (create an account, a key, a domain) is its own issue labelled `owner-task`, and blocks what needs it.
+3. Anything only the owner can do (create an account, a key, a domain) is its own issue labelled `owner-task` (or `ready-for-human`), and blocks what needs it.
 
 **Checklist:** every input decision used or ruled out with a reason; seams agreed; spec published; tickets agreed, published, wired, each with an area; owner tasks filed.
 
@@ -47,8 +48,8 @@ Follow the `build-ticket` skill. In short:
 
 A pull request merges only when all of these hold on its current head:
 
-1. **Every required check is green** (`ci.required_checks`). A check the run's charter waives counts only if it was **killed, not failed** (the profile's `ci.killed_markers`: exit 143, runner shutdown, cancelled, never started). A real test failure always blocks.
-2. **The full suite passed locally on that exact commit**, posted on the PR by `workflow evidence`: the command, SHA, counts, duration, and no fewer tests than the base branch. Required when a check is waived; recommended always.
+1. **Every required check is green** (`ci.required_checks`). A check the run's charter waives counts only if its log shows it was **killed, not failed** (the profile's `ci.killed_markers`: exit 143, runner shutdown, cancelled, never started). A real test failure always blocks. Waivers need `merge.mode: session`, since GitHub's auto-merge can't tell killed from failed.
+2. **The full suite passed locally on that exact commit**, posted on the PR by `workflow evidence --base-ref origin/<base>`: the command, SHA, counts, duration, and no fewer tests than the base branch. Required when a check is waived or the profile says `ci.none`; recommended always.
 3. **The branch is level with the base branch.** Whoever merges second merges the base in and runs everything again.
 4. **The reviews are clean**, and any commit after the last round had its Correctness pass.
 
@@ -58,8 +59,15 @@ Merging is the owner's in attended work. In an unattended run it follows the cha
 
 Follow the `conductor` skill. The conductor never builds tickets itself: it asks the owner the kick-off questions once (the **run charter**, `docs/charter.md`), then hands each ready ticket to its own session, checks in, merges what passes, and reports. What it may do outside the repo is exactly what the charter grants, logged in the run's ledger.
 
+**The never-list.** A ticket session changes only its ticket's code, tests and docs, on its own branch. The owner keeps these to themselves, and the guard hook and the GitHub ruleset back it up:
+- deploys and releases;
+- cloud settings, secrets, accounts, DNS and payments;
+- the base branch (only pull requests reach it), and history (no force-pushes);
+- protected paths: the kit, CI config, CODEOWNERS, secrets files;
+- the test suite's reach: no test is skipped, disabled or focused away.
+
 **Each ticket session** follows "Building" with these differences:
-- it never deploys, changes cloud settings, secrets, accounts, DNS or payments, pushes to the base branch, force-pushes, or skips or disables a test (the guard hook and the GitHub ruleset back this up);
+- it stays within the never-list above;
 - a check that needs a real device, account or service is built against the spec's fakes and added to the run's by-hand issue as a checkbox, never faked as done;
 - a decision the ticket leaves open is taken as the charter says (`open_decisions`) and recorded in the PR;
 - if CI is still red after three fix attempts, or the ticket can't be built as written, it labels the ticket `needs-human`, says exactly why on the ticket and the tracking issue, and stops;

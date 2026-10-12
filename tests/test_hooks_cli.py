@@ -70,10 +70,22 @@ def test_gate_rules(tmp_path, monkeypatch):
     assert gate.decide({"session_id": "a", "last_assistant_message": "CI running.\nWORKFLOW-STATUS: waiting"}) is None
     assert gate.decide({"session_id": "a", "last_assistant_message": "WORKFLOW-STATUS: done"})  # no checklist
     assert gate.decide({"session_id": "a", "last_assistant_message": "x", "stop_hook_active": True}) is None
-    # At most two blocks a session, then it lets the turn end.
-    assert gate.decide({"session_id": "b", "last_assistant_message": "x"})
-    assert gate.decide({"session_id": "b", "last_assistant_message": "x"})
+    # One nudge per turn (stop_hook_active), every turn, up to a generous safety cap.
+    for _ in range(gate.MAX_BLOCKS):
+        assert gate.decide({"session_id": "b", "last_assistant_message": "x"})
     assert gate.decide({"session_id": "b", "last_assistant_message": "x"}) is None
+
+
+def test_gate_reads_the_transcript_when_no_last_message(tmp_path, monkeypatch):
+    import json as _j
+
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    t = tmp_path / "t.jsonl"
+    t.write_text(
+        _j.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "x"}]}}) + "\n"
+        + _j.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "CI running.\nWORKFLOW-STATUS: waiting"}]}}) + "\n"
+    )
+    assert gate.decide({"session_id": "c", "transcript_path": str(t)}) is None
 
 
 def test_context_trigger_and_once_per_session(tmp_path, monkeypatch):
@@ -85,6 +97,9 @@ def test_context_trigger_and_once_per_session(tmp_path, monkeypatch):
     assert context.wants_flow("implement #146")
     assert context.wants_flow("/next build")
     assert context.wants_flow("/pairnexus-workflow:next")
+    assert context.wants_flow("work the doctor map")
+    assert context.wants_flow("fix #262")
+    assert context.wants_flow("start an unattended run")
     first = context.context_for("work the map #153", "s1", [flow])
     assert "THE FLOW" in first
     again = context.context_for("implement #146", "s1", [flow])

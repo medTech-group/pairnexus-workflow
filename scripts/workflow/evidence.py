@@ -1,26 +1,37 @@
 """Local full-suite evidence for the merge rule.
 
 Runs each suite of the profile in shards against a clean checkout of one
-commit, keeping each shard's result on disk under .workflow/evidence/<sha>/,
-so a container restart re-runs only the unfinished shards. The report names the
-command, head SHA, counts, duration and the failing output's tail, and compares
-the count with the base branch's when given, which also catches skipped tests.
+commit, keeping each shard's result and full output on disk under
+.workflow/evidence/<sha>/, so a container restart re-runs only the unfinished
+shards. The report names the command, head SHA, counts, duration and each
+suite's output tail, the likely cause of a failure, and compares the count
+with the base branch's (given, or run on a worktree of the base), which also
+catches skipped tests.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import glob
 import json
+import os
 import re
+import shutil
 import subprocess
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from . import repair
 from .profile import Profile, Suite
 
 EVIDENCE_DIR = Path(".workflow/evidence")
+SUMMARY_LINES = 5
+TAIL_LINES = 15
+SHORT_TAIL = 5
+CAUSE_LINES = 15
+CAUSE = re.compile(r"Error|error:|Exception|Traceback|failed to|Cannot|refused|[Dd]ocker")
+NO_COUNTS = "no test counts found in the output; check the suite's regexes"
 
 
 class EvidenceError(RuntimeError):
@@ -39,6 +50,31 @@ class ShardResult:
     errors: int
     seconds: float
     tail: str
+    run: str = ""
+    cwd: str = ""
+    log: str = ""
+    causes: list[str] = field(default_factory=list)
+    previous_failures: list[dict] = field(default_factory=list)
+
+    @property
+    def counted(self) -> int:
+        return self.passed + self.failed + self.errors
+
+    @property
+    def ok(self) -> bool:
+        """Exit 0, nothing failed or errored, and the regexes found something: a
+        suite that runs nothing fails."""
+        return self.exit == 0 and self.failed == 0 and self.errors == 0 and self.counted > 0
+
+    @property
+    def problem(self) -> str:
+        return NO_COUNTS if self.exit == 0 and self.counted == 0 else ""
+
+    @classmethod
+    def load(cls, f: Path) -> "ShardResult":
+        data = json.loads(f.read_text())
+        known = {x.name for x in dataclasses.fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in known})
 
 
 def head_sha(root: Path) -> str:
@@ -48,17 +84,28 @@ def head_sha(root: Path) -> str:
     return out.stdout.strip()
 
 
+def dirty_paths(root: Path) -> list[str]:
+    """Uncommitted changes, and untracked files that aren't ignored, outside .workflow/."""
+    out = subprocess.run(["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True)
+    if out.returncode:
+        raise EvidenceError("not a git checkout")
+    return [l[3:] for l in out.stdout.splitlines() if l[3:] and not l[3:].startswith(".workflow/")]
+
+
 def require_clean(root: Path) -> None:
-    out = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=root, capture_output=True, text=True)
-    dirty = [l for l in out.stdout.splitlines() if not l[3:].startswith(".workflow/")]
+    dirty = dirty_paths(root)
     if dirty:
         raise EvidenceError(
-            "the working tree has uncommitted changes, so a run wouldn't prove the commit: "
-            + ", ".join(l[3:] for l in dirty[:5])
+            "the working tree has uncommitted changes or untracked files, so a run wouldn't prove the commit "
+            "(untracked tests change the result): "
+            + ", ".join(dirty[:5])
+            + (f" and {len(dirty) - 5} more" if len(dirty) > 5 else "")
+            + ". Commit, stash or ignore them, or pass --allow-dirty to try a profile."
         )
 
 
 def shards(suite: Suite, root: Path) -> list[list[str]]:
+    """Each shard's files, relative to the suite's cwd (the root when it has none)."""
     if not suite.files:
         return [[]]
     files: list[str] = []
@@ -67,93 +114,240 @@ def shards(suite: Suite, root: Path) -> list[list[str]]:
     files = sorted(dict.fromkeys(files))
     if not files:
         raise EvidenceError(f"suite {suite.name}: no files match {suite.files!r}")
+    if suite.cwd:
+        files = [os.path.relpath(root / f, root / suite.cwd) for f in files]
     return [files[i : i + suite.group] for i in range(0, len(files), suite.group)]
 
 
 def _count(pattern: str, text: str) -> int:
-    return sum(int(x) for x in re.findall(pattern, text))
-
-
-def run_shard(suite: Suite, index: int, files: list[str], root: Path) -> ShardResult:
-    cmd = suite.run.replace("{files}", " ".join(_q(f) for f in files))
-    t0 = time.monotonic()
-    p = subprocess.run(cmd, shell=True, cwd=root, capture_output=True, text=True)
-    out = p.stdout + p.stderr
-    tail = "\n".join(out.strip().splitlines()[-15:])
-    return ShardResult(
-        suite=suite.name,
-        index=index,
-        files=files,
-        exit=p.returncode,
-        passed=_count(suite.passed, _summary(out)),
-        failed=_count(suite.failed, _summary(out)),
-        skipped=_count(suite.skipped, _summary(out)),
-        errors=_count(suite.errors, _summary(out)),
-        seconds=round(time.monotonic() - t0, 1),
-        tail=tail,
-    )
+    return sum(int(x) for x in re.findall(pattern, text) if str(x).isdigit())
 
 
 def _summary(out: str) -> str:
     """The last lines, where test runners print their totals."""
-    return "\n".join(out.strip().splitlines()[-5:])
+    return "\n".join(out.strip().splitlines()[-SUMMARY_LINES:])
+
+
+def counts(suite: Suite, stdout: str, stderr: str) -> dict[str, int]:
+    """The counts from stdout's last lines, else from stderr's (jest prints its totals there)."""
+    keys = ("passed", "failed", "skipped", "errors")
+    for out in (stdout, stderr):
+        text = _summary(out)
+        c = {k: _count(getattr(suite, k), text) for k in keys}
+        if any(c.values()):
+            return c
+    return dict.fromkeys(keys, 0)
+
+
+def causes(out: str) -> list[str]:
+    """The first lines that look like the cause of a failure."""
+    found = []
+    for line in out.splitlines():
+        if CAUSE.search(line):
+            found.append(line.rstrip()[:300])
+            if len(found) == CAUSE_LINES:
+                break
+    return found
+
+
+def run_shard(suite: Suite, index: int, files: list[str], root: Path, log: Path | None = None) -> ShardResult:
+    cmd = suite.run.replace("{files}", " ".join(_q(f) for f in files))
+    cwd = root / suite.cwd if suite.cwd else root
+    t0 = time.monotonic()
+    p = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True)
+    seconds = round(time.monotonic() - t0, 1)
+    out = p.stdout + p.stderr
+    log_name = ""
+    if log is not None:
+        log.write_text(
+            f"$ {cmd}\n# cwd: {cwd}\n# exit: {p.returncode}\n\n--- stdout ---\n{p.stdout}\n--- stderr ---\n{p.stderr}",
+            encoding="utf-8",
+        )
+        log_name = str(log.relative_to(root)) if log.is_relative_to(root) else str(log)
+    r = ShardResult(
+        suite=suite.name,
+        index=index,
+        files=files,
+        exit=p.returncode,
+        seconds=seconds,
+        tail="\n".join(out.strip().splitlines()[-TAIL_LINES:]),
+        run=suite.run,
+        cwd=suite.cwd,
+        log=log_name,
+        **counts(suite, p.stdout, p.stderr),
+    )
+    if not r.ok:
+        r.causes = causes(out)
+    return r
 
 
 def _q(s: str) -> str:
     return "'" + s.replace("'", "'\\''") + "'" if re.search(r"[^\w./-]", s) else s
 
 
-def collect(profile: Profile, root: Path, only: list[str] | None = None, fresh: bool = False, repair_first: bool = True) -> tuple[str, list[ShardResult]]:
-    require_clean(root)
+def collect(
+    profile: Profile,
+    root: Path,
+    only: list[str] | None = None,
+    fresh: bool = False,
+    repair_first: bool = True,
+    allow_dirty: bool = False,
+    store: Path | None = None,
+) -> tuple[str, list[ShardResult]]:
+    """Run (or resume) every shard of the suites on HEAD.
+
+    With allow_dirty a dirty tree runs anyway, kept apart from the commit's
+    evidence (<sha>-dirty) and never reused. The profile's repair commands run
+    once, and again before a shard only when the shard before it failed.
+    """
+    if allow_dirty:
+        dirty = dirty_paths(root)
+    else:
+        require_clean(root)
+        dirty = []
     sha = head_sha(root)
-    base = root / EVIDENCE_DIR / sha
+    base = (store or root / EVIDENCE_DIR) / (sha + ("-dirty" if dirty else ""))
+    if dirty:
+        shutil.rmtree(base, ignore_errors=True)
+        fresh = True
     base.mkdir(parents=True, exist_ok=True)
     results: list[ShardResult] = []
     suites = [s for s in profile.suites if not only or s.name in only]
     if not suites:
         raise EvidenceError("the profile has no [[commands.suite]] to run" + (f" named {only}" if only else ""))
+    repaired = False
+    last_failed = False
     for suite in suites:
         for i, files in enumerate(shards(suite, root)):
             f = base / f"{suite.name}-{i:03d}.json"
-            if f.exists() and not fresh:
-                r = ShardResult(**json.loads(f.read_text()))
-                if r.files == files and r.exit == 0:
-                    results.append(r)
+            earlier: list[dict] = []
+            if f.exists():
+                old = ShardResult.load(f)
+                same = old.files == files and old.run == suite.run and old.cwd == suite.cwd
+                if same and old.ok and not fresh:
+                    results.append(old)
                     continue
-            if repair_first and profile.repair:
+                if same:
+                    earlier = list(old.previous_failures)
+                    if not old.ok:
+                        earlier.append(
+                            {"exit": old.exit, "passed": old.passed, "failed": old.failed, "errors": old.errors, "log": old.log}
+                        )
+            if repair_first and profile.repair and (not repaired or last_failed):
                 repair.run(profile.repair, root)
-            r = run_shard(suite, i, files, root)
+                repaired = True
+            r = run_shard(suite, i, files, root, log=base / f"{suite.name}-{i:03d}.log")
+            r.previous_failures = earlier
             f.write_text(json.dumps(asdict(r)))
             results.append(r)
+            last_failed = not r.ok
             if head_sha(root) != sha:
                 raise EvidenceError("HEAD moved while the suite ran; start again on the new commit")
     return sha, results
 
 
-def report(sha: str, profile: Profile, results: list[ShardResult], base_count: int | None = None) -> tuple[bool, str]:
+def base_count_from_ref(
+    profile: Profile, root: Path, ref: str, only: list[str] | None = None, fresh: bool = False
+) -> tuple[int, str, bool]:
+    """Run the same suites on a worktree of `ref` under .workflow/base-<sha>/, then
+    remove it: (tests passed, its SHA, whether every shard passed)."""
+    p = subprocess.run(["git", "rev-parse", "--verify", f"{ref}^{{commit}}"], cwd=root, capture_output=True, text=True)
+    if p.returncode:
+        raise EvidenceError(f"--base-ref {ref}: not a commit here ({p.stderr.strip()[:200]})")
+    base_sha = p.stdout.strip()
+    wt = root / ".workflow" / f"base-{base_sha}"
+
+    def remove() -> None:
+        subprocess.run(["git", "worktree", "remove", "--force", str(wt)], cwd=root, capture_output=True)
+        shutil.rmtree(wt, ignore_errors=True)
+        subprocess.run(["git", "worktree", "prune"], cwd=root, capture_output=True)
+
+    if wt.exists():
+        remove()
+    wt.parent.mkdir(parents=True, exist_ok=True)
+    add = subprocess.run(["git", "worktree", "add", "--detach", str(wt), base_sha], cwd=root, capture_output=True, text=True)
+    if add.returncode:
+        raise EvidenceError(f"couldn't add a worktree of {ref}: {add.stderr.strip()[:300]}")
+    try:
+        prof = dataclasses.replace(profile, root=wt)
+        _, results = collect(prof, wt, only=only, fresh=fresh, store=root / EVIDENCE_DIR)
+    finally:
+        remove()
+    return sum(r.passed for r in results), base_sha, all(r.ok for r in results)
+
+
+def _short_tail(text: str) -> str:
+    return "\n".join(text.strip().splitlines()[-SHORT_TAIL:])
+
+
+def report(
+    sha: str,
+    profile: Profile,
+    results: list[ShardResult],
+    base_count: int | None = None,
+    dirty: list[str] | None = None,
+    base_label: str = "",
+) -> tuple[bool, str]:
     by_suite: dict[str, list[ShardResult]] = {}
     for r in results:
         by_suite.setdefault(r.suite, []).append(r)
-    ok = all(r.exit == 0 and r.failed == 0 and r.errors == 0 for r in results)
+    ok = all(r.ok for r in results)
     total = sum(r.passed for r in results)
-    lines = [f"**Local full suite on `{sha}`**: {'passed' if ok else 'FAILED'}", ""]
+    errors = sum(r.errors for r in results)
+    lines = ["", ""]  # the headline goes in last, once the base comparison is known
+    if dirty:
+        lines += [
+            f"> **Not a proof of the commit.** Run with --allow-dirty on a working tree with {len(dirty)} "
+            f"uncommitted or untracked path{'s' if len(dirty) != 1 else ''} ({', '.join(dirty[:5])}"
+            f"{', …' if len(dirty) > 5 else ''}). Use it to try a profile, never for the merge rule.",
+            "",
+        ]
     for s in profile.suites:
         rs = by_suite.get(s.name)
         if not rs:
             continue
-        lines.append(
-            f"- **{s.name}** (`{s.run}`, {len(rs)} shard{'s' if len(rs) != 1 else ''}): "
+        line = (
+            f"- **{s.name}** (`{s.run}`{f' in `{s.cwd}`' if s.cwd else ''}, {len(rs)} shard{'s' if len(rs) != 1 else ''}): "
             f"{sum(r.passed for r in rs)} passed, {sum(r.failed for r in rs)} failed, "
             f"{sum(r.errors for r in rs)} errors, {sum(r.skipped for r in rs)} skipped, "
             f"{round(sum(r.seconds for r in rs) / 60, 1)} min"
         )
+        for r in rs:
+            if r.ok and r.previous_failures:
+                n = len(r.previous_failures)
+                line += f"; shard {r.index} passed on retry after {n} failure{'s' if n != 1 else ''}"
+            if r.problem:
+                line += f"; shard {r.index}: {r.problem}"
+        lines.append(line)
+        tail = _short_tail(rs[-1].tail)
+        if tail:
+            lines += ["  ```", *("  " + x for x in tail.splitlines()), "  ```"]
     if base_count is not None:
+        where = f" ({base_label})" if base_label else ""
         if total < base_count:
             ok = False
-            lines.append(f"- **Fewer tests than the base branch:** {total} passed here, {base_count} on base. A test was removed or skipped.")
+            why = (
+                "Fewer tests passed than on the base branch, and some errored: the environment may be failing (see the errors above)."
+                if errors
+                else "A test was removed or skipped."
+            )
+            lines.append(f"- **Fewer tests than the base branch{where}:** {total} passed here, {base_count} on base. {why}")
         else:
-            lines.append(f"- Base branch: {base_count} passed; this commit: {total}.")
-    bad = [r for r in results if r.exit or r.failed or r.errors]
-    for r in bad[:3]:
-        lines += ["", f"<details><summary>{r.suite} shard {r.index} (exit {r.exit})</summary>", "", "```", r.tail, "```", "</details>"]
+            lines.append(f"- Base branch{where}: {base_count} passed; this commit: {total}.")
+    else:
+        lines.append("- No base-branch count given: this doesn't show whether tests were removed.")
+    for r in [r for r in results if not r.ok][:3]:
+        lines += ["", f"<details><summary>{r.suite} shard {r.index} (exit {r.exit})</summary>", ""]
+        if r.problem:
+            lines += [r.problem, ""]
+        if r.causes:
+            lines += ["Likely cause:", "", "```", *r.causes, "```", ""]
+        lines += ["Tail:", "", "```", r.tail, "```"]
+        if r.log:
+            lines += ["", f"Full output: `{r.log}`"]
+        lines.append("</details>")
+    head = "passed" if ok else "FAILED"
+    if dirty:
+        head += ", on a dirty tree: NOT A PROOF OF THE COMMIT"
+    lines[0] = f"**Local full suite on `{sha}`**: {head}"
     return ok, "\n".join(lines)

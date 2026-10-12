@@ -22,4 +22,17 @@ First version, from the pair-drop weekend run of 9–12 Oct 2026 and two indepen
   - the checklist gate (`WORKFLOW-STATUS`, at most two blocks, never while already continuing);
   - flow context;
   - environment repair.
+- **Review round 1** (three independent reviewers, about 100 findings) changed:
+  - the guard to allow-lists for ticket sessions (pushes only to ticket branches, GitHub API writes only to issues, comments, labels and PRs), closing every bypass the review found;
+  - the guard to fail closed in ticket and conductor sessions;
+  - readiness to leave specs and parents out, read more blocker and closing forms, honour native dependencies, and parse areas;
+  - vendoring to check everything before writing, keep local edits through `resolve` and orphans, and never drop Matt Pocock's skills;
+  - evidence to prove the commit (untracked files, the base branch's count from a worktree, causes in the report);
+  - the charter to check limits, waivers and the profile, with `accepted_gaps` and `reuse`;
+  - the conductor's own environment (`WORKFLOW_ROLE=conductor`) and an explicit permission mode for ticket sessions.
+- **Deviations from the proposal, recorded:**
+  - the profile is TOML (stdlib `tomllib`), not YAML;
+  - `vendor update` writes `<file>.new` for conflicts and `vendor resolve` records a hand merge, rather than an automatic three-way merge;
+  - the UI explorer drives Playwright through Bash rather than an MCP server;
+  - the run's state lives in the tracking issue's body (refusing corrupt bodies, re-read before each write) rather than on a state branch.
 - **Enforcement** (`docs/enforcement.md`): the ruleset, the credential-free ticket environment and CODEOWNERS come first; the hooks are defence in depth.

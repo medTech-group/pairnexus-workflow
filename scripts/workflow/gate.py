@@ -7,8 +7,9 @@ A ticket session ends each turn with a status line:
 `done` also needs the flow's checklist (at least three `- [x]` / `- [ ]` lines).
 `waiting` (CI running, a check-in scheduled), `needs-human` and `stopped` end
 the turn as they are. Without a valid status the gate asks the session to add
-one, at most twice a session, and never while a stop hook is already making it
-continue, so it can't trap a session in a loop.
+one, once per turn: never while a stop hook is already making it continue
+(`stop_hook_active`), so it can't trap a session in a loop. A cap of
+`MAX_BLOCKS` a session is a last safety net.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from pathlib import Path
 
 STATUS = re.compile(r"^\s*\**WORKFLOW-STATUS\**\s*:\s*\**\s*(done|waiting|needs-human|stopped)\b", re.I | re.M)
 CHECK_LINE = re.compile(r"^\s*[-*]\s*\[[ xX]\]\s+\S", re.M)
-MAX_BLOCKS = 2
+MAX_BLOCKS = 40
 
 
 def _counter(session_id: str) -> Path:
@@ -42,11 +43,42 @@ def verdict(message: str) -> str | None:
     return None
 
 
+def _last_message(event: dict) -> str:
+    msg = event.get("last_assistant_message")
+    if isinstance(msg, str):
+        return msg
+    path = event.get("transcript_path")
+    if not path:
+        return ""
+    try:
+        import json
+
+        last = ""
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    continue
+                m = e.get("message") or {}
+                if e.get("type") == "assistant" and isinstance(m, dict):
+                    parts = m.get("content")
+                    if isinstance(parts, list):
+                        text = "".join(p.get("text", "") for p in parts if isinstance(p, dict) and p.get("type") == "text")
+                        if text:
+                            last = text
+                    elif isinstance(parts, str):
+                        last = parts
+        return last
+    except OSError:
+        return ""
+
+
 def decide(event: dict) -> str | None:
     """The reason to block, or None to let the turn end."""
     if event.get("stop_hook_active"):
         return None
-    missing = verdict(event.get("last_assistant_message") or "")
+    missing = verdict(_last_message(event))
     if missing is None:
         return None
     c = _counter(event.get("session_id") or "")

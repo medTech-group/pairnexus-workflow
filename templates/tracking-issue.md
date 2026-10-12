@@ -1,15 +1,13 @@
-# Run: <run id>
+# Run: RUN_ID
 
-An unattended build run under the `conductor` skill. The owner approved the charter below; the conductor acts on nothing else.
+An unattended build run under the `conductor` skill. The owner approved the charter below. The conductor acts on that charter and on the owner's own comments here, nothing else.
 
 - **Change course:** comment here as the owner ("also #140", "stop releasing", "extend to Monday 9am"). The conductor reads it at its next check-in, confirms, and records it as an amendment.
 - **Stop the run:** add the `workflow:stop` label.
-- **By-hand checks:** #<by-hand issue>.
+- **By-hand checks:** BY_HAND_ISSUE.
 
 ## Now
 
-<the conductor keeps this line current: running, in review, merged, set aside>
+Not started.
 
-<the rendered charter: `workflow charter markdown`>
-
-<the state block: written only by `workflow state put`>
+CHARTER
