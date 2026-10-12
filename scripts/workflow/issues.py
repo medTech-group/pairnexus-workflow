@@ -281,6 +281,58 @@ def is_build_ticket(issue: dict) -> bool:
     return True
 
 
+_BACKTICKED = re.compile(r"`([^`\n]+)`")
+_URLISH = re.compile(r"^[a-z][a-z0-9+.-]*://", re.I)
+_DOTFILE = re.compile(r"^\.[A-Za-z_][\w.-]*$")
+_SPLIT = re.compile(r"[\s()\[\]<>\"',;|]+")
+
+
+def _path_token(tok: str) -> str | None:
+    """`tok` cleaned as a path (`./`, a leading `/` and trailing punctuation
+    gone), or None when it isn't one: a URL, a ref, empty."""
+    t = tok.strip().strip("*_:!?")
+    while t.endswith(".") and t not in (".", ".."):
+        t = t[:-1]
+    if not t or _URLISH.match(t) or "#" in t or "@" in t:
+        return None
+    while t.startswith("./"):
+        t = t[2:]
+    t = t.lstrip("/")
+    return t or None
+
+
+def named_paths(body: str | None) -> list[str]:
+    """Path-like tokens a ticket's body names, in order and once each: every
+    word of a `backticked` span, and bare words holding a `/` or a dot-file
+    name (`.env`, `.gitignore`). URLs and issue refs are left out."""
+    if not body:
+        return []
+    found: list[str] = []
+    for m in _BACKTICKED.finditer(body):
+        found += [p for p in map(_path_token, _SPLIT.split(m.group(1))) if p]
+    for w in _SPLIT.split(_BACKTICKED.sub(" ", body)):
+        p = _path_token(w)
+        if p and ("/" in p or _DOTFILE.match(p)):
+            found.append(p)
+    return list(dict.fromkeys(found))
+
+
+def protected_named(body: str | None, patterns: Iterable[str] | None) -> list[tuple[str, str]]:
+    """(path, pattern) for each path the body names that is, or holds, one of
+    the protected `patterns`, matched as the guard matches them."""
+    pats = [p for p in patterns or [] if p]
+    if not pats:
+        return []
+    from .guard import contains_protected
+
+    out: list[tuple[str, str]] = []
+    for p in named_paths(body):
+        hit = contains_protected(p.rstrip("/"), pats)
+        if hit:
+            out.append((p, hit))
+    return out
+
+
 @dataclass
 class Verdict:
     number: int
@@ -300,6 +352,7 @@ def readiness(
     claimed_ok: set[int] | frozenset = frozenset(),
     repo: str | None = None,
     areas: Iterable[str] | None = None,
+    protected: Iterable[str] | None = None,
 ) -> list[Verdict]:
     """Every open `ready-for-agent` build ticket with whether it is ready and why not.
 
@@ -307,12 +360,15 @@ def readiness(
     spec or a parent of sub-issues); not needs-human, owner-task or
     ready-for-human; not claimed (the claim label) unless in `claimed_ok`; no
     open PR closes it; not excluded; no open GitHub issue dependency blocks it;
-    and every blocker closed *as completed*. A blocker closed as not planned,
-    one missing from `issues`, or one in another repository still blocks.
+    every blocker closed *as completed*; and, given `protected` (the profile's
+    protected paths), its body names none of them: a ticket session can't
+    change one, so that is an owner task. A blocker closed as not planned, one
+    missing from `issues`, or one in another repository still blocks.
 
     `repo` is the profile's owner/repo. `areas` are the profile's areas: when
     given, a ticket whose area isn't one of them gets a note, never a block.
     """
+    protected = list(protected or [])
     by_num = {i["number"]: i for i in issues if "pull_request" not in i}
     # Pull requests as the issues API lists them (`pull_request.merged_at`), for PR blockers.
     pr_items = {i["number"]: i for i in issues if "pull_request" in i}
@@ -368,6 +424,8 @@ def readiness(
                 )
             elif (bi.get("state_reason") or "completed") != "completed":
                 v.reasons.append(f"blocker #{b} closed as {bi.get('state_reason')}, not completed")
+        for path, pat in protected_named(issue.get("body"), protected):
+            v.reasons.append(f"names protected path {path} ({pat}): an owner task")
         v.ready = not v.reasons
         out.append(v)
     return out

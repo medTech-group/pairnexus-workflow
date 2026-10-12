@@ -84,9 +84,9 @@ ALLOW_TICKET = [
     "echo hi > .claude/../out.txt",
     "echo \"> .claude\"",
     "grep -r 'git push' .",
-    "gh pr create --title t --body-file - <<'EOF'\nThis stops `git push --force` and `rm -rf .github`.\nEOF",
-    "gh api repos/acme/demo/issues/3/comments -f body='Record 77fc6d9d failed'",
-    "gh api repos/acme/demo/pulls -f title=t -f head=claude/build-1 -f base=main",
+    "gh pr create --title t --body-file - <<'EOF'\nThis stops `git push --force` and `rm -rf .github`.\n<!-- workflow:agent -->\nEOF",
+    "gh api repos/acme/demo/issues/3/comments -f body='Record 77fc6d9d failed <!-- workflow:agent -->'",
+    "gh api repos/acme/demo/pulls -f title=t -f head=claude/build-1 -f base=main -f body='<!-- workflow:agent -->'",
     "gh api -X PUT repos/acme/demo/pulls/3/merge -f merge_method=merge",
     "gh api repos/acme/demo/pulls/3",
     "gh api graphql -f query='query{viewer{login}}'",
@@ -129,7 +129,7 @@ def test_conductor_may_merge_and_post_but_not_admin_or_rewrite(profile, tmp_path
     assert decide(bash("gh pr merge 3 --merge"), profile, "conductor", tmp_path, "main").action == "allow"
     assert decide(bash("gh pr merge 3 --admin"), profile, "conductor", tmp_path, "main").action == "deny"
     assert decide(bash("gh api graphql -f query='mutation{mergeBranch(input:{}){clientMutationId}}'"), profile, "conductor", tmp_path, "x").action == "deny"
-    assert decide(bash("gh api graphql -f query='mutation{addComment(input:{}){clientMutationId}}'"), profile, "conductor", tmp_path, "x").action == "allow"
+    assert decide(bash("gh api graphql -f query='mutation{addComment(input:{body:\"<!-- workflow:agent -->\"}){clientMutationId}}'"), profile, "conductor", tmp_path, "x").action == "allow"
 
 
 def test_mcp_sensitive_any_write_tool_and_branch_case(profile, tmp_path):

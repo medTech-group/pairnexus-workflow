@@ -166,7 +166,7 @@ def test_sensitive_posts(profile, tmp_path):
     assert decide(post, profile, "attended", tmp_path, "b").action == "ask"
     nested = {"tool_name": "mcp__plugin_x_github__issue_write", "tool_input": {"method": "create", "title": "t", "body": "ok", "labels": ["MRN-654321"]}}
     assert decide(nested, profile, "conductor", tmp_path, "b").action == "deny"
-    fine = {"tool_name": "mcp__github__add_issue_comment", "tool_input": {"body": "Record 77fc6d9d failed"}}
+    fine = {"tool_name": "mcp__github__add_issue_comment", "tool_input": {"body": "Record 77fc6d9d failed <!-- workflow:agent -->"}}
     assert decide(fine, profile, "ticket", tmp_path, "b").action == "allow"
     other = {"tool_name": "mcp__slack__post", "tool_input": {"body": "MRN-123456"}}
     assert decide(other, profile, "ticket", tmp_path, "b").action == "allow"

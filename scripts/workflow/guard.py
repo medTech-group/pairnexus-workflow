@@ -70,6 +70,15 @@ detach or rename away from a branch matching the pattern. A GitHub post (MCP,
 role: heredocs, body files, its stdin, a piped producer's files and any file
 the command reads with `cat` or `<` included.
 
+**Agents' posts carry the marker.** In ticket and conductor sessions, a post
+that creates text on GitHub (an issue, pull request, comment or review, or an
+edit of one's body: `gh issue|pr create|comment`, an edit or close with a body
+or comment, `gh api` to those endpoints with a `body` field or `--input`, the
+text-posting GraphQL mutations, and the GitHub MCP tools that post them) is
+refused unless the texts it is checked for sensitive data in hold
+`<!-- workflow:agent -->`. Labels, state changes and merges aren't posts.
+Attended sessions are not asked.
+
 What it can't see (a script file written then run, a program's own network
 calls, variables' values, obfuscation it doesn't recognise) is why the ruleset
 and the environment come first.
@@ -88,6 +97,7 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .posts import AGENT_MARKER
 from .profile import Profile
 
 SKIP_MARKERS = [
@@ -1706,6 +1716,104 @@ def _body_files(toks: list[str]) -> list[str]:
     return [f for f in out if f and f != "-"]
 
 
+# Posts that create text on GitHub, which an agent marks with AGENT_MARKER.
+# `gh` subcommands that always post text, and those that do when given a body or comment.
+_GH_TEXT_ALWAYS = {("issue", "create"), ("issue", "new"), ("issue", "comment"), ("pr", "create"), ("pr", "new"), ("pr", "comment")}
+_GH_TEXT_WITH = {
+    ("issue", "edit"): ("-b", "--body", "-F", "--body-file"),
+    ("pr", "edit"): ("-b", "--body", "-F", "--body-file"),
+    ("pr", "review"): ("-b", "--body", "-F", "--body-file"),
+    ("issue", "close"): ("-c", "--comment"),
+    ("pr", "close"): ("-c", "--comment"),
+}
+# REST endpoints (after repos/<owner>/<repo>/) that always post text, and those that do with a body.
+_API_TEXT_ALWAYS = [r"issues", r"pulls", r"issues/\d+/comments", r"pulls/\d+/comments", r"pulls/(?:\d+/)?comments/\d+/replies"]
+_API_TEXT_WITH_BODY = [
+    r"issues/\d+",
+    r"issues/comments/\d+",
+    r"pulls/\d+",
+    r"pulls/comments/\d+",
+    r"pulls/\d+/reviews",
+    r"pulls/\d+/reviews/\d+(?:/events)?",
+]
+_GQL_TEXT_ALWAYS = {"addComment", "createIssue", "createPullRequest", "addPullRequestReviewComment", "addPullRequestReviewThreadReply"}
+_GQL_TEXT_WITH_BODY = {"updateIssue", "updateIssueComment", "updatePullRequest", "addPullRequestReview", "submitPullRequestReview", "updatePullRequestReview"}
+# GitHub MCP tools that always post text, and those that do when given a body.
+_MCP_TEXT_ALWAYS = {
+    "add_issue_comment",
+    "create_issue",
+    "create_pull_request",
+    "add_comment_to_pending_review",
+    "add_reply_to_pull_request_comment",
+    "add_pull_request_review_comment",
+    "update_issue_comment",
+}
+_MCP_TEXT_WITH_BODY = {
+    "issue_write",
+    "update_issue",
+    "update_pull_request",
+    "pull_request_review_write",
+    "create_pull_request_review",
+    "create_and_submit_pull_request_review",
+    "submit_pending_pull_request_review",
+}
+_NO_MARKER = (
+    f"agents' posts on GitHub go out under the owner's account, so each carries the marker `{AGENT_MARKER}` "
+    f"that tells them from the owner's own words; add `{AGENT_MARKER}` at the end of the body"
+)
+
+
+def _has_opt(toks: list[str], opts: tuple[str, ...]) -> bool:
+    longs = tuple(o + "=" for o in opts if o.startswith("--"))
+    shorts = tuple(o for o in opts if not o.startswith("--"))
+    return any(t in opts or t.startswith(longs) or (t.startswith(shorts) and len(t) > 2 and not t.startswith("--")) for t in toks)
+
+
+def _creates_text(toks: list[str], cwd: str | None) -> bool:
+    """This gh command posts text (an issue, PR, comment or review, or a body) to GitHub."""
+    if len(toks) < 2 or Path(toks[0]).name != "gh":
+        return False
+    group, sub = _gh_group(toks)
+    if (group, sub) in _GH_TEXT_ALWAYS:
+        return True
+    if (group, sub) in _GH_TEXT_WITH:
+        return _has_opt(toks, _GH_TEXT_WITH[(group, sub)])
+    if group != "api":
+        return False
+    call = _api(toks)
+    if call is None:
+        return False
+    if call.path == "graphql":
+        text = call.rest + "".join("\n" + (_read_text(f, cwd) or "") for f in call.files)
+        names = set(_mutation_fields(text) or [])
+        return bool(names & _GQL_TEXT_ALWAYS) or bool(names & _GQL_TEXT_WITH_BODY and re.search(r"\bbody\b", text))
+    if call.method not in ("POST", "PATCH", "PUT"):
+        return False
+    prefix = r"repos/[^/]+/[^/]+/"
+    if any(re.fullmatch(prefix + p, call.path, re.I) for p in _API_TEXT_ALWAYS):
+        return True
+    if not any(re.fullmatch(prefix + p, call.path, re.I) for p in _API_TEXT_WITH_BODY):
+        return False
+    if _field(call, "body") is not None:
+        return True
+    if call.stdin:
+        return True  # what it sends can't be told apart from the command; it counts
+    for f in call.files:
+        txt = _read_text(f, cwd)
+        if txt is None or re.search(r'"body"\s*:', txt):
+            return True
+    return False
+
+
+def _mcp_creates_text(name: str, inp: dict) -> bool:
+    if name in _MCP_TEXT_ALWAYS:
+        return True
+    if name == "issue_write" and str(inp.get("method") or "").casefold() == "create":
+        return True
+    body = inp.get("body")
+    return name in _MCP_TEXT_WITH_BODY and isinstance(body, str) and bool(body.strip())
+
+
 _READERS = {"cat", "tac", "head", "tail"}
 
 
@@ -3071,24 +3179,37 @@ def check_bash(
                     p = _shell_skips(seg, profile, root, t)
                     if p:
                         return Decision("deny", p)
-    if posts and profile.sensitive_patterns:
+    if not posts:
+        return ALLOW
+
+    def post_texts(s: Seg) -> list[str]:
+        """The texts a post may send: its body files, its stdin, a piped producer's files."""
+        out: list[str] = []
+        files = [(f, s.cwd) for f in _body_files(s.words)]
+        if s.stdin:
+            files.append((s.stdin, s.cwd))
+        if s.piped is not None:  # what its producer reads: `cat body.md | gh pr comment 1 --body-file -`
+            files += [(w, s.piped.cwd) for w in s.piped.words[1:] if not w.startswith("-")]
+            if s.piped.stdin:
+                files.append((s.piped.stdin, s.piped.cwd))
+        for f, fcwd in files:
+            txt = _read_text(f, fcwd)
+            if txt:
+                out.append(txt)
+        return out
+
+    if profile.sensitive_patterns:
         texts = [command, read()]
         for s in posts:
-            files = [(f, s.cwd) for f in _body_files(s.words)]
-            if s.stdin:
-                files.append((s.stdin, s.cwd))
-            if s.piped is not None:  # what its producer reads: `cat body.md | gh pr comment 1 --body-file -`
-                files += [(w, s.piped.cwd) for w in s.piped.words[1:] if not w.startswith("-")]
-                if s.piped.stdin:
-                    files.append((s.piped.stdin, s.piped.cwd))
-            for f, fcwd in files:
-                txt = _read_text(f, fcwd)
-                if txt:
-                    texts.append(txt)
+            texts += post_texts(s)
         text = "\n".join(texts)
         for pat in profile.sensitive_patterns:
             if re.search(pat, text):
                 return _deny(role, f"this would post text matching the sensitive-data pattern {pat!r}; refer to things by id")
+    if role in ("ticket", "conductor"):
+        for s in posts:
+            if _creates_text(s.words, s.cwd) and AGENT_MARKER not in "\n".join([command, read(), *post_texts(s)]):
+                return Decision("deny", _NO_MARKER)
     return ALLOW
 
 
@@ -3170,6 +3291,10 @@ def check_mcp(tool: str, inp: dict, profile: Profile, role: str, root: Path) -> 
                     f"this {name} would post text matching the project's sensitive-data pattern {pat!r} "
                     f"({profile.sensitive_description or 'see profile.md'}); remove it and refer to things by id",
                 )
+    if role in ("ticket", "conductor") and _mcp_creates_text(name, inp):
+        body = inp.get("body")
+        if not (isinstance(body, str) and AGENT_MARKER in body):
+            return Decision("deny", f"this {name} posts text: " + _NO_MARKER)
     return ALLOW
 
 

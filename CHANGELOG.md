@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.1.1
+
+From the practice run on the sandbox repo (run 2026-10-12-words).
+
+- **Agents' posts carry a marker.** Every comment, issue and PR body an agent posts goes out under the owner's account, so "the owner's comments are amendments" couldn't tell them apart. Every agent post now ends with `<!-- workflow:agent -->` (`scripts/workflow/posts.py`):
+  - the guard refuses, in ticket and conductor sessions, a post that creates text without it (`gh issue|pr create|comment`, an edit or close with a body or comment, `gh api` to the issue, comment, PR and review endpoints with a `body` field or `--input`, the text-posting GraphQL mutations, and the GitHub MCP tools that post). It looks in the same texts as the sensitive-data check. Labels, assignees, state changes and merges aren't posts; attended sessions aren't asked;
+  - `workflow comments --owner <login> --file comments.json [--since-id N]` lists the owner's own words: their comments without the marker;
+  - the tracking and by-hand issue templates, the run report and the ticket briefing end posts with it.
+- **The owner's answers in the conductor's chat** are recorded on the issue they concern, quoting the owner with `source: "chat <UTC time>"`; such an answer may close the owner task it completes, and a charter change is an amendment with the same source.
+- **Readiness** sets aside a ticket whose body names one of the profile's protected paths ("names protected path … : an owner task"), matched as the guard matches them (`issues.readiness(protected=…)`). The flow says such a change is an `owner-task`, and a ticket fixing a failing or flaky required check is `workflow:infra`.
+- **A run waiting only on the owner isn't done.** The conductor posts one "waiting on you" note per owner task, checks in every 60 minutes, and stops only at the end time or when nothing remains.
+- **Pre-flight** also checks "Require branches to be up to date" (`strict_required_status_checks_policy`), raised as a safety gap when off. `enforcement.md` and `setup-workflow` now advise leaving "Require review from Code Owners" off while sessions act under the owner's account (an author can't approve their own PR), and on when agents have their own GitHub identity.
+- **Sessions started are checked:** `get_session` confirms each new session's `permission_mode` (else it is archived and reported), and a claim is read back after the label is added (retried once, else the ticket is skipped that check-in).
+- **Briefings copied exactly.** `workflow render` ends the briefing with `Briefing <sha256[:12]>`, prints it with `--print` (the default) and keeps a copy with `--out`; the conductor passes it verbatim and records the hash as the ticket's `briefing`, and the session quotes the line in its first comment.
+- **The tracking issue's charter section** sits between `<!-- workflow-charter:begin -->` and `<!-- workflow-charter:end -->`; `workflow charter splice --body body.md --charter charter.json --out body.md [--tickets …]` replaces just that section, and refuses a body without the markers.
+- **Merging when auto-merge can't be armed:** in `auto-merge` mode, when GitHub refuses because the PR is already clean, the session re-checks the merge rule and merges with a merge commit. The guard already allowed a ticket session's own merge (`gh pr merge`, `gh api -X PUT …/pulls/<n>/merge`, the MCP merge tool); tests now pin it.
+- **The claim label** is removed by the session when its ticket ends (with `ready-for-agent` on `needs-human`), and by the conductor as a backup.
+- **Waking the conductor.** At kick-off the conductor creates a poke-only routine bound to its own session (`wake_trigger` in the state, a required `wake_trigger` slot in the briefing); a ticket session fires it when its ticket ends, the conductor treats the wake as a check-in, and deletes the routine when the run stops.
+- **Spike:** rows 8, 9 and 11 verified, row 4 partly, by the sandbox run.
+
 ## 0.1.0 (unreleased)
 
 First version, from the pair-drop weekend run of 9–12 Oct 2026 and two independent reviews of its proposal.

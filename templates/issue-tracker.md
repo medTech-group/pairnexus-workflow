@@ -19,6 +19,10 @@ Claude Code cloud sessions have **no `gh` issue or pr subcommands to rely on**; 
 
 Never put the project's sensitive data (see `.claude/workflow/profile.md`) in an issue, comment or PR. Refer to records by id.
 
+## Agents' posts
+
+An agent's issues, comments and PR bodies go out under the owner's GitHub account. In a ticket or conductor session, end every body with `<!-- workflow:agent -->`, so the owner's own words can be told apart; the workflow guard refuses a post without it there. A ticket whose change is to a protected path (the profile's `guard.protected_paths`) is an `owner-task`, never a build ticket.
+
 ## Pull requests as a triage surface
 
 **PRs as a request surface: no.**

@@ -6,17 +6,23 @@ Prompts and hooks are not a security boundary. A session can phrase a command a 
 |---|---|---|
 | **GitHub ruleset on the base branch** | No direct push, no force-push, no deletion; required status checks before merge | The owner, once per repo |
 | **Cloud environments per role** | Ticket sessions: no cloud, account, deploy or payment credentials, `WORKFLOW_ROLE=ticket`. The conductor: `WORKFLOW_ROLE=conductor` and only the release credentials the owner chooses | The owner, once per account |
-| **CODEOWNERS on protected paths** | The kit, hooks, CI config and secrets files need the owner's review | `setup-workflow` writes it; the ruleset requires code-owner review on those paths |
-| **The guard hook** | The never-list, protected paths, skip markers, sensitive posts | The kit |
+| **CODEOWNERS on protected paths** | Changes to the kit, hooks, CI config and secrets files ask for the owner's review | `setup-workflow` writes it; the ruleset can require that review only when agents have their own GitHub identity (§1) |
+| **The guard hook** | The never-list, protected paths, skip markers, sensitive posts, the agents' marker on posts | The kit |
 | **Instructions** | Everything else | The kit |
 
 ## 1. The ruleset (GitHub → the repo → Settings → Rules → Rulesets → New branch ruleset)
 
 - **Target:** the default branch.
-- **Rules:** Restrict deletions; Block force pushes; Require a pull request before merging (required approvals **0**, so unattended runs can merge; tick "Require review from Code Owners" so changes to CODEOWNERS paths need the owner); Require status checks to pass (add the profile's `ci.required_checks`, and "Require branches to be up to date").
+- **Rules:** Restrict deletions; Block force pushes; Require a pull request before merging (required approvals **0**, so unattended runs can merge; "Require review from Code Owners": see below); Require status checks to pass (add the profile's `ci.required_checks`, and tick "Require branches to be up to date", which the API calls `strict_required_status_checks_policy`).
 - **Bypass list:** empty, or the owner alone.
 - **Enforcement status: Active.** A ruleset left "Disabled" or "Evaluate" enforces nothing.
 - **Allow auto-merge:** Settings → General → Pull Requests → "Allow auto-merge", for `merge.mode: auto-merge`.
+
+**"Require review from Code Owners": leave it off while sessions act under the owner's GitHub account** (the usual setup: the GitHub connector and `gh` both use the owner's token). Every PR a session opens is then the owner's own, and GitHub never lets an author approve their own PR, so a PR touching a CODEOWNERS path could never merge. With it off, CODEOWNERS still requests the owner's review on those PRs, and the protected paths stay protected by the guard, by the ticket environment having no credentials, and by such PRs going to the owner (a ticket that changes one is an owner task, never a build ticket).
+
+Turn it on when agents use their own GitHub identity (a bot account or a GitHub App): then the owner is a different person from the PR's author, and their approval is what merges a change to a protected path.
+
+"Require branches to be up to date" matters more than it looks: without it, two PRs that are each green against an older base can both merge and break the base together. If the owner leaves it off, the conductor's pre-flight raises it as a safety gap, and the conductor (or session) checks the branch is level with the base before each merge (flow §4.3).
 
 Rulesets and branch protection on **private** repositories need a paid GitHub plan for the organisation (Team or above). Without one, the guard hook and instructions are the only line, and the charter's pre-flight says so.
 
@@ -61,7 +67,7 @@ It reads each command the way a shell would, well enough to catch a well-meaning
 **In ticket sessions, by allow-list:**
 - `git push` may update only the session's own ticket branch: no tags, no other branches, and a bare push only when the upstream has the same name;
 - `gh` may run only the PR, issue, run and read subcommands a ticket needs;
-- `gh api` writes may touch only issues, comments, labels and pull requests of the profile's repo, and GraphQL only `enablePullRequestAutoMerge` and `addComment`;
+- `gh api` writes may touch only issues, comments, labels and pull requests of the profile's repo, and GraphQL only `enablePullRequestAutoMerge` and `addComment`; merging its own PR (`gh pr merge`, `gh api -X PUT repos/<repo>/pulls/<n>/merge`, the GitHub MCP merge tool) is allowed, since the ruleset still decides what may merge into the base branch;
 - `git config` may not set aliases, push settings, `core.*` hooks, editors, ssh commands, credentials or includes; `GIT_CONFIG*`/`GIT_SSH*`/`GIT_DIR` assignments and `--config-env` are refused.
 
 **In every role** it denies (asks, in attended sessions):
@@ -76,6 +82,8 @@ It reads each command the way a shell would, well enough to catch a well-meaning
 - switching to a branch outside the pattern when the role comes only from the branch name.
 
 A GitHub post (MCP or `gh`, including heredoc bodies and `--body-file`/`--input` files) matching the profile's sensitive patterns is refused in every role.
+
+In ticket and conductor sessions, a post that creates text (an issue, PR, comment or review, or a new body for one, through `gh issue|pr create|comment|edit|close`, `gh api` with a `body` field or `--input`, the GraphQL mutations that post, or the GitHub MCP tools that do) is refused unless it carries `<!-- workflow:agent -->`: the marker that tells agents' posts from the owner's own words (`charter.md` §4). It is looked for in the same texts as sensitive data, so a body file or heredoc holding it counts. Labels, assignees, state changes and merges aren't posts. Attended sessions aren't asked.
 
 **When something is wrong it fails closed** in ticket and conductor sessions (`WORKFLOW_ROLE` set, or set to a value it doesn't recognise, which counts as ticket):
 - an invalid or missing profile;

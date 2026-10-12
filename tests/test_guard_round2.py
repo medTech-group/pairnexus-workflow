@@ -119,9 +119,9 @@ def test_heredoc_delimiters_and_bodies(profile, tmp_path):
 
 def test_sensitive_check_reads_heredocs_and_body_files(profile, tmp_path):
     assert denied(profile, tmp_path, "gh pr create --title t --body-file - <<'EOF'\nPatient MRN-123456\nEOF", role="conductor")
-    assert ticket(profile, tmp_path, "gh pr create --title t --body-file - <<'EOF'\nRecord 77fc6d9d\nEOF").action == "allow"
+    assert ticket(profile, tmp_path, "gh pr create --title t --body-file - <<'EOF'\nRecord 77fc6d9d <!-- workflow:agent -->\nEOF").action == "allow"
     (tmp_path / "body.md").write_text("Patient MRN-123456 failed")
-    (tmp_path / "ok.md").write_text("Record 77fc6d9d failed")
+    (tmp_path / "ok.md").write_text("Record 77fc6d9d failed <!-- workflow:agent -->")
     for cmd in (
         "gh pr create --title t --body-file body.md",
         "gh issue comment 3 -F body.md",
@@ -320,9 +320,9 @@ def test_ticket_gh_allow_list(cmd, profile, tmp_path):
 @pytest.mark.parametrize(
     "cmd",
     [
-        "gh pr create --title t --body x",
+        "gh pr create --title t --body 'x <!-- workflow:agent -->'",
         "gh pr edit 3 --add-label x",
-        "gh pr comment 3 --body x",
+        "gh pr comment 3 --body 'x <!-- workflow:agent -->'",
         "gh pr view 3 --json state",
         "gh pr checks 3",
         "gh pr list",
@@ -331,10 +331,10 @@ def test_ticket_gh_allow_list(cmd, profile, tmp_path):
         "gh pr merge 3 --auto --squash",
         "gh pr merge 3 --merge",
         "gh issue view 3",
-        "gh issue comment 3 --body x",
+        "gh issue comment 3 --body 'x <!-- workflow:agent -->'",
         "gh issue edit 3 --add-label x",
         "gh issue list",
-        "gh issue create --title t --body x",
+        "gh issue create --title t --body 'x <!-- workflow:agent -->'",
         "gh run view 9 --log-failed",
         "gh run list",
         "gh run rerun 9 --failed",
@@ -372,12 +372,12 @@ def test_ticket_mcp_tools_never_needed(profile, tmp_path):
 def test_api_field_parsing(profile, tmp_path):
     assert denied(profile, tmp_path, "gh api -fref=refs/heads/x -fsha=abc repos/acme/demo/git/refs")
     assert denied(profile, tmp_path, "gh api -Fref=refs/heads/x repos/acme/demo/git/refs")
-    assert ticket(profile, tmp_path, "gh api -X POST repos/acme/demo/issues/3/comments/ -f body=x").action == "allow"
+    assert ticket(profile, tmp_path, "gh api -X POST repos/acme/demo/issues/3/comments/ -f body='x <!-- workflow:agent -->'").action == "allow"
 
 
 def test_graphql_from_a_file(profile, tmp_path):
     (tmp_path / "q.graphql").write_text("mutation{mergeBranch(input:{}){clientMutationId}}")
-    (tmp_path / "ok.graphql").write_text("mutation{addComment(input:{}){clientMutationId}}")
+    (tmp_path / "ok.graphql").write_text('mutation{addComment(input:{body:"<!-- workflow:agent -->"}){clientMutationId}}')
     assert denied(profile, tmp_path, "gh api graphql -F query=@ok.graphql")
     assert denied(profile, tmp_path, "gh api graphql --input ok.graphql")
     assert denied(profile, tmp_path, "gh api graphql -F query=@q.graphql", role="conductor")
@@ -388,8 +388,8 @@ def test_graphql_from_a_file(profile, tmp_path):
     "q, ok",
     [
         ('mutation{enablePullRequestAutoMerge(input:{pullRequestId:"x"}){clientMutationId}}', True),
-        ('mutation($id:ID!){a: addComment(input:{subjectId:$id,body:"x"}){clientMutationId}}', True),
-        ('mutation{addComment(input:{body:"mergeBranch"}){clientMutationId}}', True),
+        ('mutation($id:ID!){a: addComment(input:{subjectId:$id,body:"x <!-- workflow:agent -->"}){clientMutationId}}', True),
+        ('mutation{addComment(input:{body:"mergeBranch <!-- workflow:agent -->"}){clientMutationId}}', True),
         ("mutation{addComment(input:{}){x} mergeBranch(input:{}){x}}", False),
         ("mutation{closePullRequest(input:{}){x}}", False),
         ("mutation{x: updateRef(input:{}){x}}", False),
@@ -407,8 +407,8 @@ def test_api_base_rename_default_branch_and_other_repos(profile, tmp_path):
         assert denied(profile, tmp_path, "gh api -X PATCH repos/acme/demo/ -f default_branch=x", role=role)
     assert decide(bash("gh api -X PATCH repos/acme/demo -f description=x"), profile, "conductor", tmp_path, "x").action == "allow"
     assert denied(profile, tmp_path, "gh api -X POST repos/evil/other/issues/3/comments -f body=x")
-    assert ticket(profile, tmp_path, "gh api -X POST repos/ACME/Demo/issues/3/comments -f body=x").action == "allow"
-    assert ticket(profile, tmp_path, "gh api repos/{owner}/{repo}/issues/3/comments -f body=x").action == "allow"
+    assert ticket(profile, tmp_path, "gh api -X POST repos/ACME/Demo/issues/3/comments -f body='x <!-- workflow:agent -->'").action == "allow"
+    assert ticket(profile, tmp_path, "gh api repos/{owner}/{repo}/issues/3/comments -f body='x <!-- workflow:agent -->'").action == "allow"
 
 
 # ---------- 13. writers of protected paths ----------

@@ -7,6 +7,9 @@ the outward-changes ledger and the owner's lists. `get` reads it out of a body;
 it, and refuses a body over GitHub's limit. In the block, `<` and the backtick
 are written as JSON \\u escapes, so no string can close the fence or comment; a
 body with two blocks, or half of one, is refused rather than guessed at.
+
+Optional: `wake_trigger`, the id of the poke-only routine that wakes the
+conductor when a ticket session ends (`trig_…`), deleted when the run stops.
 """
 
 from __future__ import annotations
@@ -67,6 +70,8 @@ TICKET_FIELDS = {
     "area": (lambda v: isinstance(v, str) and bool(v.strip()), "an area name"),
     "started_at": (_iso, "an ISO time with its zone"),
     "merged_at": (_iso, "an ISO time with its zone"),
+    # The hash on the last line of the briefing it was sent (`Briefing <hash>`).
+    "briefing": (lambda v: isinstance(v, str) and bool(re.fullmatch(r"[0-9a-f]{12}", v)), "the briefing's 12-character hash"),
 }
 
 
@@ -103,6 +108,9 @@ def validate(s: Any) -> list[str]:
     ci = s.get("ci_minutes_at_start")
     if ci is not None and (isinstance(ci, bool) or not isinstance(ci, (int, float)) or ci < 0):
         p.append("ci_minutes_at_start must be a number of minutes or null")
+    wt = s.get("wake_trigger")
+    if wt is not None and not (isinstance(wt, str) and re.fullmatch(r"trig_\w+", wt.strip())):
+        p.append("wake_trigger must be the wake routine's trigger id (trig_…) or null")
     if "status" in s and s["status"] not in RUN_STATUSES:
         p.append(f"status must be one of {sorted(RUN_STATUSES)}")
     for i, e in enumerate(s.get("ledger") or []):
