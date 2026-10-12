@@ -1602,7 +1602,9 @@ def _api_problem(toks: list[str], profile: Profile, role: str, cwd: str | None =
     if re.search(rf"(^|/)branches/{re.escape(base)}/rename$", path):
         return f"renaming the base branch `{base}` through the API is never allowed"
     if re.fullmatch(r"repos/[^/]+/[^/]+", path):
-        body = call.rest + "".join("\n" + (_read_text(f, cwd) or "") for f in call.files) + ("\n" + raw if call.stdin else "")
+        body = call.rest + "".join("\n" + (_read_text(f, cwd) or "") for f in call.files)
+        if call.stdin:
+            body += "\n" + raw + ("\n" + read() if read is not None else "")
         if _field(call, "default_branch") is not None or "default_branch" in body:
             return "changing the repository's default branch through the API is never allowed"
     for key in ("base", "branch"):
@@ -1717,7 +1719,7 @@ def _launched(toks: list[str]) -> list[str] | None:
     words = list(toks)
     stripped = False
     for _ in range(4):
-        kind = _launcher(Path(words[0]).name) if words else None
+        kind = (_launcher(words[0] if words[0] in (".", "source") else Path(words[0]).name)) if words else None
         if kind is None:
             break
         sub, values = _LAUNCHERS[kind]
@@ -1789,6 +1791,8 @@ class _Targets:
     unknown: str | None = None  # what it writes can't be seen (a patch on a pipe)
     # an in-place edit of the files a search finds (`grep -rl x . | xargs sed -i`): (tree searched, its cwd)
     searched: list[tuple[str, str | None]] = field(default_factory=list)
+    # a writing find from the project root limited by -name/-iname: (its name globs, case-insensitive)
+    named_from_root: list[tuple[list[str], bool]] = field(default_factory=list)
 
 
 def _opt_values(toks: list[str], names: tuple[str, ...]) -> list[str]:
@@ -2215,11 +2219,56 @@ def _find_targets(toks: list[str], seg: Seg, root: Path, t: _Targets) -> None:
     t.files += _opt_values(toks, ("-fprint", "-fprint0", "-fprintf", "-fls"))
     if not _find_writes(toks, seg, root):
         return
+    names = _find_names(toks)
     for a in _find_starts(toks):
         p = _abspath(a, seg.cwd)
-        if p is not None and _holds_root(p, root):
-            continue  # from the root: what it matches can't be seen
+        if p is not None and names is not None and p == os.path.realpath(str(root)):
+            # From the root, limited by name: what it can match is checked against the files there.
+            t.named_from_root.append(names)
+            continue
         t.trees.append(a)
+
+
+_FIND_WIDENERS = {"-path", "-ipath", "-wholename", "-iwholename", "-regex", "-iregex", "-lname", "-ilname", "-o", "-or", "!", "-not", ","}
+
+
+def _find_names(toks: list[str]) -> tuple[list[str], bool] | None:
+    """find's -name/-iname globs when they alone say what it matches (no -path,
+    -regex, -o or negation), else None."""
+    if any(t in _FIND_WIDENERS for t in toks):
+        return None
+    names, nocase = [], False
+    for k, t in enumerate(toks[:-1]):
+        if t in ("-name", "-iname"):
+            names.append(toks[k + 1])
+            nocase = nocase or t == "-iname"
+    return (names, nocase) if names else None
+
+
+_WALK_LIMIT = 100_000
+
+
+def _named_hit(names: list[str], nocase: bool, root: Path, patterns: list[str]) -> str | None:
+    """A protected path under the root whose name one of `names` matches (a
+    find from the root would reach it), or a pattern when the tree is too big
+    to check."""
+    if not patterns:
+        return None
+    globs = [n.casefold() for n in names] if nocase else names
+    seen = 0
+    for dirpath, dirnames, filenames in os.walk(str(root)):
+        for n in dirnames + filenames:
+            seen += 1
+            if seen > _WALK_LIMIT:
+                return patterns[0]
+            name = n.casefold() if nocase else n
+            if not any(fnmatch.fnmatchcase(name, g) for g in globs):
+                continue
+            rel = _rel(os.path.join(dirpath, n), root)
+            hit = matches(rel, patterns)
+            if hit:
+                return hit
+    return None
 
 
 _VIMS = {"vim", "vi", "nvim", "vimdiff", "view", "ex"}
@@ -2600,6 +2649,10 @@ def _shell_protected(seg: Seg, patterns: list[str], root: Path, t: _Targets | No
         hit = _protected_hit(tgt, seg, root, patterns, tree=True)
         if hit:
             return f"writing into, removing or moving `{tgt}` touches a protected path ({hit})" + (unknown_dir if seg.cwd is None else "")
+    for names, nocase in t.named_from_root:
+        hit = _named_hit(names, nocase, root, patterns)
+        if hit:
+            return f"this find from the project root matches a protected path ({hit}) by name; search a narrower directory"
     for src in t.links:
         hit = _protected_hit(src, seg, root, patterns, tree=True)
         if hit:

@@ -71,7 +71,7 @@ It reads each command the way a shell would, well enough to catch a well-meaning
 
 **In ticket sessions it also denies:**
 - the profile's deploy commands, however they're run (directly, through a shell, piped, `env -C`, `find -exec`);
-- writes to protected paths, `.git/config` and `.git/hooks/**`, by Edit/Write, by the shell's writers (redirects, `cp`/`mv`/`install`/`rsync`/`ln` destinations, `rm`, `sed -i`, `perl -pi`, `dd`, `tee`, `mkdir`, `curl -o`, `wget -O`, `find -delete`, `git rm`/`mv`/`checkout`/`restore`, archives and patches that touch them, deleting a parent directory, globs and brace lists that expand to them, symlinks resolved), or through GitHub's file tools;
+- writes to protected paths, `.git/config` and `.git/hooks/**`, by Edit/Write, by the shell's writers (redirects, `cp`/`mv`/`install`/`rsync`/`ln` destinations, `rm`, `sed -i`, `perl -pi`, `dd`, `tee`, `mkdir`, `curl -o`, `wget -O`, `find -delete` and `find -exec` over a tree holding one (from the project root, only when `-name`/`-iname` alone limit it and none of the protected files there match), `git rm`/`mv`/`checkout`/`restore`, archives and patches that touch them, deleting a parent directory, globs and brace lists that expand to them, symlinks resolved), or through GitHub's file tools;
 - a new skip or focus marker in a test file (`conftest.py` included);
 - switching to a branch outside the pattern when the role comes only from the branch name.
 

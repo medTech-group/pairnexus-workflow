@@ -52,8 +52,8 @@ def _fetch(repo: str, what: str) -> list[dict]:
     """Through `gh api` (the GitHub CLI, or Claude Code's built-in client).
 
     `--paginate --slurp` gives a list of pages; a client without `--slurp`
-    prints the pages one after another, which are decoded one by one. Pull
-    requests are dropped from the issues list.
+    prints the pages one after another, which are decoded one by one. The
+    issues list keeps its pull requests: readiness resolves a PR blocker by them.
     """
     path = f"repos/{repo}/issues?state=all&per_page=100" if what == "issues" else f"repos/{repo}/pulls?state=open&per_page=100"
 
@@ -91,8 +91,6 @@ def _fetch(repo: str, what: str) -> list[dict]:
             items.append(v)
 
     add(values)
-    if what == "issues":
-        items = [i for i in items if "pull_request" not in i]
     return items
 
 

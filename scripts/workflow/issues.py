@@ -44,7 +44,7 @@ _URL = re.compile(r"https?://(?:www\.)?github\.com/([\w.-]+/[\w.-]+)/(?:issues|p
 # "… is blocked by #8 and #9 …" in the middle of a sentence: the refs right after it.
 _ONE_REF = r"(?:https?://(?:www\.)?github\.com/[\w.-]+/[\w.-]+/(?:issues|pull)/\d+\S*|(?:[\w.-]+/[\w.-]+)?#\d+\b)"
 _MID_BLOCKED = re.compile(rf"\bblocked\s+by\s*:?\s*\**\s*({_ONE_REF}(?:\s*(?:,|\band\b|&|\+)\s*{_ONE_REF})*)", re.I)
-_NEGATED = re.compile(r"\b(?:not|no\s+longer|n't|never|isn't|aren't|wasn't)\s+(?:\w+\s+)?$", re.I)
+_NEGATED = re.compile(r"(?:\bnot|\bno\s+longer|n['’]t|\bnever)\s+(?:\w+\s+)?$", re.I)
 
 
 def labels_of(issue: dict) -> set[str]:
@@ -314,6 +314,8 @@ def readiness(
     given, a ticket whose area isn't one of them gets a note, never a block.
     """
     by_num = {i["number"]: i for i in issues if "pull_request" not in i}
+    # Pull requests as the issues API lists them (`pull_request.merged_at`), for PR blockers.
+    pr_items = {i["number"]: i for i in issues if "pull_request" in i}
     pr_for = closed_by_open_prs(prs, repo)
     known_areas = sorted({a.casefold() for a in areas}) if areas else []
     out: list[Verdict] = []
@@ -351,8 +353,15 @@ def readiness(
                 v.reasons.append(f"blocker {b} is in another repository")
                 continue
             bi = by_num.get(b)
+            if bi is None and b in pr_items:
+                pi = pr_items[b]
+                if (pi.get("state") or "").lower() != "closed":
+                    v.reasons.append(f"blocked by open PR #{b}")
+                elif not (pi.get("pull_request") or {}).get("merged_at"):
+                    v.reasons.append(f"blocker PR #{b} closed without merging")
+                continue
             if bi is None:
-                v.reasons.append(f"blocker #{b} unknown (not in the issue list)")
+                v.reasons.append(f"blocker #{b} unknown (not in the issue list; for a PR, list it with the issues API's pull requests)")
             elif (bi.get("state") or "").lower() != "closed":
                 v.reasons.append(
                     f"blocked by owner task #{b}" if labels_of(bi) & {"owner-task", "ready-for-human"} else f"blocked by open #{b}"

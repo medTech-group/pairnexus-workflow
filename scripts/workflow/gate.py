@@ -28,7 +28,11 @@ from pathlib import Path
 STATUS = re.compile(r"^\s*\**WORKFLOW-STATUS\**\s*:\s*\**\s*(done|waiting|needs-human|stopped)\b", re.I | re.M)
 CHECK_LINE = re.compile(r"^\s*[-*]\s*\[[ xX]\]\s+\S", re.M)
 UNCHECKED = re.compile(r"^\s*[-*]\s*\[ \]\s+(\S.*)$", re.M)
-WHY = re.compile(r"because|why| — | - |n/a|not ", re.I)
+# A reason, in words: "because …", "not needed", "n/a", "left for the owner", "why: …", or after a spaced dash.
+WHY = re.compile(
+    r"\b(?:because|since|not|n/a|none|left\s+for|skipped|deferred|out\s+of\s+scope|owner)\b|\bwhy\s*:|\s[—–-]\s",
+    re.I,
+)
 FENCED = re.compile(r"^[ \t]*```.*?^[ \t]*```[^\n]*$", re.M | re.S)
 MAX_BLOCKS = 40
 NEEDS_REASON = "an unchecked checklist line needs its reason"

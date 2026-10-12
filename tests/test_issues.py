@@ -301,7 +301,7 @@ class _Done:
         self.returncode, self.stdout, self.stderr = code, out, err
 
 
-def test_fetch_slurps_pages_and_drops_prs(monkeypatch):
+def test_fetch_slurps_pages_and_keeps_prs(monkeypatch):
     calls = []
 
     def run(cmd, **kw):
@@ -310,7 +310,7 @@ def test_fetch_slurps_pages_and_drops_prs(monkeypatch):
         return _Done(0, json.dumps(pages))
 
     monkeypatch.setattr(cli.subprocess, "run", run)
-    assert [i["number"] for i in cli._fetch("acme/demo", "issues")] == [1, 3]
+    assert [i["number"] for i in cli._fetch("acme/demo", "issues")] == [1, 2, 3]  # PRs kept, for PR blockers
     assert "--slurp" in calls[0]
     assert cli._fetch("acme/demo", "issues")[0]["body"] == "a ][ b"
 
@@ -325,7 +325,7 @@ def test_fetch_falls_back_without_slurp(monkeypatch):
         return _Done(0, json.dumps([{"number": 1, "body": "x][y"}]) + "\n" + json.dumps([{"number": 2}, {"number": 5, "pull_request": {}}]) + "\n")
 
     monkeypatch.setattr(cli.subprocess, "run", run)
-    assert [i["number"] for i in cli._fetch("acme/demo", "issues")] == [1, 2]
+    assert [i["number"] for i in cli._fetch("acme/demo", "issues")] == [1, 2, 5]
     assert len(calls) == 2
     calls.clear()
     assert [i["number"] for i in cli._fetch("acme/demo", "pulls")] == [1, 2, 5]

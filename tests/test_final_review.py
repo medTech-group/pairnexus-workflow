@@ -1,0 +1,117 @@
+"""The final correctness pass after review round 3, each finding pinned.
+
+Every command here is data passed to `decide`; none is run.
+"""
+
+import json
+
+import pytest
+from conftest import BASE_PROFILE
+
+from workflow import gate
+from workflow.guard import decide
+from workflow.issues import blockers_of, readiness
+from workflow.profile import parse
+
+
+def act(profile, root, cmd, role="ticket", branch="claude/build-1"):
+    ev = {"tool_name": "Bash", "tool_input": {"command": cmd}}
+    return decide(ev, profile, role, root, branch, role_from_env=True).action
+
+
+@pytest.fixture
+def deploy_profile(tmp_path):
+    data = json.loads(json.dumps(BASE_PROFILE))
+    data["guard"]["deploy_commands"] = ["scripts/deploy.sh"]
+    return parse(data, tmp_path)
+
+
+# ---------- 1. a deploy script run with `.` ----------
+
+
+@pytest.mark.parametrize("cmd", [". scripts/deploy.sh poc", "cd scripts && . ./deploy.sh", "source scripts/deploy.sh"])
+def test_dot_runs_a_deploy_script(cmd, deploy_profile, tmp_path):
+    (tmp_path / "scripts").mkdir()
+    assert act(deploy_profile, tmp_path, cmd) == "deny", cmd
+    assert act(deploy_profile, tmp_path, cmd, role="attended", branch="main") == "ask", cmd
+
+
+def test_dot_running_another_script_is_fine(deploy_profile, tmp_path):
+    assert act(deploy_profile, tmp_path, ". .venv/bin/activate") == "allow"
+
+
+# ---------- 2. the default branch through `--input -` from a file or a pipe ----------
+
+
+def test_default_branch_on_stdin_from_a_file_or_pipe(profile, tmp_path):
+    (tmp_path / "db.json").write_text('{"default_branch": "dev"}')
+    (tmp_path / "desc.json").write_text('{"description": "x"}')
+    for cmd in ("gh api -X PATCH repos/acme/demo --input - < db.json", "cat db.json | gh api -X PATCH repos/acme/demo --input -"):
+        assert act(profile, tmp_path, cmd, role="conductor", branch="main") == "deny", cmd
+        assert act(profile, tmp_path, cmd, role="attended", branch="main") == "ask", cmd
+    assert act(profile, tmp_path, "gh api -X PATCH repos/acme/demo --input - < desc.json", role="conductor", branch="main") == "allow"
+
+
+# ---------- 3. a writing find from the root or above ----------
+
+
+def test_find_from_the_root_is_checked_against_the_files_there(profile, tmp_path):
+    (tmp_path / ".github" / "workflows").mkdir(parents=True)
+    (tmp_path / ".github" / "workflows" / "ci.yml").write_text("on: push\n")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.pyc").write_text("")
+    for cmd in (
+        "find . -delete",
+        "find . -name '*.yml' -delete",
+        "find . -iname '*.YML' -delete",
+        "find . -name '*.yml' -exec sed -i s/a/b/ {} +",
+        "find . -path './.github/*' -delete",
+        "find . -name '*.pyc' -o -name '*.yml' -delete",
+        "find .. -name '*.pyc' -delete",
+        "find / -name ci.yml -delete",
+    ):
+        assert act(profile, tmp_path, cmd) == "deny", cmd
+    for cmd in ("find . -name '*.pyc' -delete", "find . -type d -name __pycache__ -exec rm -rf {} +", "find src -delete"):
+        assert act(profile, tmp_path, cmd) == "allow", cmd
+
+
+# ---------- 4. a pull request as a blocker ----------
+
+
+def _issue(n, state="open", labels=("ready-for-agent",), body="", reason=None, **extra):
+    return {"number": n, "state": state, "state_reason": reason, "labels": [{"name": l} for l in labels], "body": body, "title": f"t{n}", **extra}
+
+
+def test_a_pr_blocker_resolves_once_merged():
+    body = "Blocked by: https://github.com/acme/demo/pull/8"
+    assert blockers_of(body, "acme/demo") == [8]
+    merged = _issue(8, state="closed", labels=(), pull_request={"merged_at": "2026-10-12T00:00:00Z"})
+    unmerged = _issue(8, state="closed", labels=(), pull_request={"merged_at": None})
+    still_open = _issue(8, labels=(), pull_request={"merged_at": None})
+    for pr, reasons in ((merged, []), (unmerged, ["blocker PR #8 closed without merging"]), (still_open, ["blocked by open PR #8"])):
+        (v,) = readiness([_issue(10, body=body), pr], [], repo="acme/demo")
+        assert v.reasons == reasons
+    (v,) = readiness([_issue(10, body=body)], [], repo="acme/demo")
+    assert not v.ready and "unknown" in v.reasons[0]
+
+
+# ---------- 10. the gate's reasons ----------
+
+
+def test_gate_reasons_are_words(tmp_path, monkeypatch):
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    done = "- [x] a\n- [x] b\n- [ ] {}\nWORKFLOW-STATUS: done"
+    for ok in ("Docs — none changed", "Merged: left for the owner", "Docs: none", "Browser check skipped because no UI"):
+        assert gate.verdict(done.format(ok)) is None, ok
+    for bare in ("Handle the cannot connect case", "Update the Why section", "Docs—x"):
+        v = gate.verdict(done.format(bare))
+        assert v and gate.NEEDS_REASON in v, bare
+
+
+# ---------- 11. contractions as negations ----------
+
+
+def test_contracted_negations_are_not_blockers():
+    for text in ("This doesn't get blocked by #4 any more.", "It won't be blocked by #4.", "We aren't blocked by #4."):
+        assert blockers_of(text, "acme/demo") == [], text
+    assert blockers_of("This is blocked by #4 for now.", "acme/demo") == [4]
