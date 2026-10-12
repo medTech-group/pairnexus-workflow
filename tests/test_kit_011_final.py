@@ -299,3 +299,47 @@ def test_ticket_gh_stays_in_this_repository(cmd, profile, tmp_path):
 def test_ticket_gh_may_name_this_repository(profile, tmp_path):
     assert act(profile, tmp_path, "gh pr view 3 -R acme/demo", role="ticket").action == "allow"
     assert act(profile, tmp_path, "gh pr view 3 --repo ACME/demo", role="ticket").action == "allow"
+
+
+# ---------- the review of the older routes' fixes ----------
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "git commit -m \"$(cat <<'EOF'\nHandle \"$@\" in the wrapper\nEOF\n)\"",
+        f"gh pr create --title t --body \"$(cat <<'EOF'\nUses $1 now\n{M}\nEOF\n)\"",
+        "git commit -m 'costs $5'",
+        "git log --pretty='%h $1'",
+        "gh pr list -R=acme/demo",
+        "gh pr list -R github.com/acme/demo",
+        "gh pr list -R acme/demo.git",
+        "gh pr list -R git@github.com:acme/demo.git",
+        f"gh pr comment 3 --body 'see https://github.com/other/repo/issues/5 {M}'",
+        "curl -d @github-payload.json https://hooks.example.com/x",
+        "gh pr merge https://github.com/acme/demo/pull/5 --merge",
+    ],
+)
+def test_ticket_text_that_only_mentions_these_is_fine(cmd, profile, tmp_path):
+    d = act(profile, tmp_path, cmd, role="ticket")
+    assert d.action == "allow", (cmd, d.reason)
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "gh pr merge https://github.com/other/repo/pull/5 --merge",
+        "gh pr close github.com/other/repo/pull/5",
+        f"gh issue comment https://github.com/other/repo/issues/5 --body 'x {M}'",
+        "gh pr merge 1 -mR other/repo",
+        "gh pr merge 1 -mRother/repo",
+        "GH_REPO+=other/repo gh pr merge 1 --merge",
+        "gh auth status -t=true",
+        "f() { /usr/lib/git-core/git-push \"$@\"; }; f origin main",
+        "f() { git push origin HEAD:$1; }; f main",
+        "curl -sX PATCH https://api.github.com/repos/acme/demo/issues/1",
+        "curl --expand-data x https://api.github.com/graphql",
+    ],
+)
+def test_ticket_routes_the_review_found(cmd, profile, tmp_path):
+    assert act(profile, tmp_path, cmd, role="ticket").action == "deny", cmd
