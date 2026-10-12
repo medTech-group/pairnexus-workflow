@@ -307,7 +307,9 @@ def test_gitignore_gets_workflow_dir_once(mattpocock, kit, proj):
     (proj / ".gitignore").write_text("node_modules/")
     vendor.install(kit, proj, mattpocock)
     vendor.install(kit, proj, mattpocock, update=True)
-    assert (proj / ".gitignore").read_text() == "node_modules/\n.workflow/\n"
+    assert (proj / ".gitignore").read_text() == "node_modules/\n.workflow/\n__pycache__/\n"
+    (proj / ".gitignore").write_text("/.workflow\n*.pyc\n")
+    assert vendor._ensure_ignored(proj) == []
 
 
 # ---------- evidence ----------
@@ -347,7 +349,7 @@ def test_evidence_shards_resume_and_report(tmp_path):
     prof = _suite_repo(tmp_path, ["pass", "pass", "pass"])
     sha, res = evidence.collect(prof, tmp_path)
     assert len(res) == 2 and sum(r.passed for r in res) == 3
-    assert (tmp_path / f".workflow/evidence/{sha}/unit-000.log").read_text().startswith("$ python3 run_tests.py")
+    assert (tmp_path / f".workflow/evidence/{sha}/unit-000.1.log").read_text().startswith("$ python3 run_tests.py")
     ok, md = evidence.report(sha, prof, res, base_count=3)
     assert ok and sha in md and "3 passed" in md
     assert "  1 passed" in md  # the suite's short tail, even on success
@@ -475,8 +477,9 @@ def test_base_ref_runs_the_base_in_a_worktree(tmp_path):
     git(tmp_path, "checkout", "-qb", "feature")
     (tmp_path / "tests/test_1.txt").unlink()
     git(tmp_path, "commit", "-qam", "drop a test")
-    count, base_sha, base_ok = evidence.base_count_from_ref(prof, tmp_path, "base")
-    assert count == 2 and base_ok and base_sha == git(tmp_path, "rev-parse", "base").strip()
+    b = evidence.base_count_from_ref(prof, tmp_path, "base")
+    count, base_sha = b.count, b.sha
+    assert count == 2 and not b.problem and base_sha == git(tmp_path, "rev-parse", "base").strip()
     assert not (tmp_path / f".workflow/base-{base_sha}").exists()
     assert len(git(tmp_path, "worktree", "list").splitlines()) == 1
     sha, res = evidence.collect(prof, tmp_path)

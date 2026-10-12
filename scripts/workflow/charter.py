@@ -7,6 +7,16 @@ new charter changes from the last run's, so a later run asks only that; `reuse`
 starts a new charter from an old one, unapproved and without an end time.
 
 `limits.ends_at` has no default: the owner always gives the end time.
+
+`plan` (optional) is the list of ticket numbers the owner approved, in order:
+the one page shows it. At approval the conductor sets `scope.tickets` to that
+list when `scope.follow_unblocked` is false (`pin_plan`), so the run builds
+exactly what was approved; with follow_unblocked true the scope stays as
+given and tickets unblocked during the run join it. A plan's tickets must be in
+the scope and not excluded.
+
+Every amendment is `{at, by, change, source}`: when, who (the owner's login),
+what changed, and the comment URL or quoted words it came from.
 """
 
 from __future__ import annotations
@@ -29,7 +39,9 @@ QUESTIONS: list[dict[str, Any]] = [
     },
     {
         "key": "limits",
-        "ask": "When does the run end (required: there is no default end time)? How many sessions at once, and retries per ticket?",
+        "ask": "When does the run end (ends_at; required: there is no default end time)? How many sessions at once "
+        "(max_parallel), how many in all (max_sessions), how many retries per ticket (max_retries), and how often "
+        "to check in (check_in_minutes)?",
         "note": "limits.ends_at must be given by the owner: an ISO time with its zone, e.g. 2026-10-13T03:30:00Z",
         "default": {"ends_at": None, "max_parallel": 2, "max_sessions": 40, "max_retries": 1, "check_in_minutes": 20},
     },
@@ -71,9 +83,15 @@ QUESTIONS: list[dict[str, Any]] = [
 ]
 
 
-def defaults(release_steps: list[str] | None = None) -> dict:
-    """The recommended answers. Releases default to "never" without release steps,
-    else to "end" with the first. limits.ends_at stays null: the owner gives it."""
+def defaults(release_steps: list[str] | None = None, profile: Any = None) -> dict:
+    """The recommended answers, fitted to the profile when given. Releases default
+    to "never" without release steps, else to "end" with the first. The limits'
+    max_parallel, max_retries and check_in_minutes come from the profile's [run].
+    Merging defaults to "session" when the profile has no CI (ci.none) or no
+    required checks, since auto-merge would merge with nothing checked.
+    limits.ends_at stays null: the owner gives it."""
+    if release_steps is None and profile is not None:
+        release_steps = [st["name"] for st in getattr(profile, "release_steps", []) or []]
     out: dict[str, Any] = {"version": 1}
     for q in QUESTIONS:
         out[q["key"]] = json.loads(json.dumps(q["default"]))
@@ -83,22 +101,51 @@ def defaults(release_steps: list[str] | None = None) -> dict:
     else:
         out["release"]["when"] = "never"
         out["release"]["steps"] = []
+    if profile is not None:
+        lim = out["limits"]
+        for k in ("max_parallel", "max_retries", "check_in_minutes"):
+            v = getattr(profile, k, None)
+            if isinstance(v, int) and not isinstance(v, bool):
+                lim[k] = v
+        lim["check_in_minutes"] = min(max(lim["check_in_minutes"], 5), 240)
+        lim["max_sessions"] = max(lim["max_sessions"], lim["max_parallel"])
+        if getattr(profile, "ci_none", False) or not getattr(profile, "required_checks", None):
+            out["merge"]["mode"] = "session"
     out["accepted_gaps"] = []
     out["approved"] = None
     out["amendments"] = []
     return out
 
 
+def questions(release_steps: list[str] | None = None, profile: Any = None) -> list[dict]:
+    """The kick-off questions with defaults fitted to the profile, as `defaults` gives them."""
+    d = defaults(release_steps, profile)
+    out = json.loads(json.dumps(QUESTIONS))
+    for q in out:
+        q["default"] = d[q["key"]]
+    return out
+
+
 def reuse(old: dict) -> dict:
     """A new charter from an earlier run's: the same answers, not approved, no
-    amendments, and no end time (the owner gives a new one)."""
+    amendments, no accepted gaps (they are asked again), and no end time (the
+    owner gives a new one)."""
     c = json.loads(json.dumps(old))
     c["approved"] = None
     c["amendments"] = []
+    c["accepted_gaps"] = []
     if isinstance(c.get("limits"), dict):
         c["limits"]["ends_at"] = None
-    c.setdefault("accepted_gaps", [])
     return c
+
+
+def pin_plan(c: dict) -> dict:
+    """At approval: with follow_unblocked false, scope.tickets becomes the plan."""
+    out = json.loads(json.dumps(c))
+    plan, scope = out.get("plan"), out.get("scope")
+    if plan and isinstance(scope, dict) and scope.get("follow_unblocked") is False:
+        scope["tickets"] = list(plan)
+    return out
 
 
 def _is_int_list(v) -> bool:
@@ -112,8 +159,10 @@ def _pos_int(v, lo=1, hi=1000) -> bool:
 def _time(v) -> datetime | None:
     if not isinstance(v, str):
         return None
+    if v[-1:] in ("Z", "z"):
+        v = v[:-1] + "+00:00"
     try:
-        dt = datetime.fromisoformat(v.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(v)
     except ValueError:
         return None
     return dt if dt.tzinfo is not None else None
@@ -129,14 +178,43 @@ def _strings(v) -> bool:
 
 APPROVAL_SKEW = timedelta(minutes=10)
 
+# Every key a charter may hold, so a typo ("max_paralel") is refused rather than ignored.
+KEYS = {
+    "version", "scope", "limits", "merge", "release", "outward", "conductor_fixes", "open_decisions",
+    "stop_run_on", "notify", "accepted_gaps", "approved", "amendments", "plan",
+}
+SUBKEYS = {
+    "scope": {"tickets", "exclude", "follow_unblocked"},
+    "limits": {"ends_at", "max_parallel", "max_sessions", "max_retries", "check_in_minutes"},
+    "merge": {"mode", "waived_checks"},
+    "release": {"when", "steps", "smoke_test"},
+    "outward": {"allowed"},
+    "notify": {"failures", "final_report"},
+    "approved": {"by", "at", "source"},
+}
+AMENDMENT_KEYS = {"at", "by", "change", "source"}
+
+
+def _unknown(keys, allowed: set[str], where: str) -> list[str]:
+    bad = sorted(str(k) for k in keys if k not in allowed)
+    if not bad:
+        return []
+    return [f"{where}: unknown key{'s' if len(bad) > 1 else ''} {', '.join(repr(k) for k in bad)}; allowed: {', '.join(sorted(allowed))}"]
+
 
 def validate(c: Any, require_approval: bool = False, now: datetime | None = None) -> list[str]:
     """The charter's problems, empty when valid. With require_approval it must be
     approved and its end time still ahead (as at `now`, default the clock)."""
     now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
     p: list[str] = []
     if not isinstance(c, dict):
         return ["the charter must be a JSON object"]
+    p += _unknown(c, KEYS, "the charter")
+    for k, allowed in SUBKEYS.items():
+        if isinstance(c.get(k), dict):
+            p += _unknown(c[k], allowed, k)
     if c.get("version") != 1:
         p.append("version must be 1")
     s = c.get("scope")
@@ -229,20 +307,56 @@ def validate(c: Any, require_approval: bool = False, now: datetime | None = None
         p.append("amendments must be a list")
     else:
         for i, x in enumerate(am):
-            if not isinstance(x, dict) or not x.get("change") or not x.get("source") or not _iso(x.get("at")):
-                p.append(f"amendments[{i}] needs change, source and at")
+            if not isinstance(x, dict):
+                p.append(f"amendments[{i}] must be an object with at, by, change and source")
+                continue
+            p += _unknown(x, AMENDMENT_KEYS, f"amendments[{i}]")
+            if not all(isinstance(x.get(k), str) and x[k].strip() for k in ("by", "change", "source")) or not _iso(x.get("at")):
+                p.append(f"amendments[{i}] needs at (ISO time), by (who), change and source")
+    plan = c.get("plan")
+    if plan is not None:
+        if not (_is_int_list(plan) and plan):
+            p.append("plan must be a non-empty list of issue numbers (the tickets the owner approved), or absent")
+        elif isinstance(s, dict):
+            t = s.get("tickets")
+            if _is_int_list(t):
+                out = [n for n in plan if n not in t]
+                if out:
+                    p.append(f"plan tickets {', '.join(f'#{n}' for n in out)} aren't in scope.tickets")
+            ex = s.get("exclude") or []
+            if _is_int_list(ex):
+                both = [n for n in plan if n in ex]
+                if both:
+                    p.append(f"plan tickets {', '.join(f'#{n}' for n in both)} are in scope.exclude")
     return p
 
 
-def check_against_profile(c: dict, release_step_names: list[str], required_checks: list[str]) -> list[str]:
+def check_against_profile(
+    c: dict,
+    release_step_names: list[str],
+    required_checks: list[str],
+    ci_none: bool = False,
+    owner: str = "",
+) -> list[str]:
+    """The charter against the profile: release steps and waived checks it names,
+    auto-merge with nothing checked, and (with `owner`, the profile's
+    project.owner) who approved it."""
     p: list[str] = []
     r = c.get("release") or {}
     for s in r.get("steps") or []:
         if s not in release_step_names:
             p.append(f"release step {s!r} is not in the profile's [release] steps {release_step_names}")
-    for w in (c.get("merge") or {}).get("waived_checks") or []:
+    m = c.get("merge") or {}
+    for w in m.get("waived_checks") or []:
         if w not in required_checks:
             p.append(f"waived check {w!r} is not one of the profile's ci.required_checks {required_checks}")
+    if m.get("mode") == "auto-merge" and (ci_none or not required_checks):
+        why = "ci.none is true" if ci_none else "the profile has no ci.required_checks"
+        p.append(f"merge.mode auto-merge: {why}, so auto-merge would merge at once with nothing checked; use session")
+    a = c.get("approved")
+    if owner and isinstance(a, dict) and isinstance(a.get("by"), str):
+        if a["by"].strip().lstrip("@").casefold() != owner.lstrip("@").casefold():
+            p.append(f"approved.by ({a['by']}) isn't the profile's project.owner ({owner}): only the owner approves a run")
     return p
 
 
@@ -289,22 +403,32 @@ def to_markdown(c: dict, plan: list[tuple[int, str | None]] | None = None) -> st
         + ".",
         "- **Kill switch:** the `workflow:stop` label on this issue stops the run at the next check-in.",
     ]
+    if plan is None and c.get("plan"):
+        plan = [(n, None) for n in c["plan"]]
+        areas_known = False
+    else:
+        areas_known = True
     if plan:
         lines += ["", "### Plan", ""]
-        lines += [f"{i}. #{n} ({area or 'no area'})" for i, (n, area) in enumerate(plan, 1)]
+        lines += [
+            f"{i}. #{n} ({area or ('no area' if areas_known else 'area not given')})" for i, (n, area) in enumerate(plan, 1)
+        ]
+    else:
+        lines += ["", "Plan: not given (pass --tickets)"]
     a = c.get("approved")
     lines.append("")
     lines.append(f"**Approved** by {a['by']} at {a['at']}: {a['source']}" if a else "**Not yet approved.** Reply \"go\" to approve.")
     for x in c.get("amendments") or []:
-        lines.append(f"- Amended {x['at']}: {x['change']} ({x['source']})")
+        by = f" by {x['by']}" if x.get("by") else ""
+        lines.append(f"- Amended {x['at']}{by}: {x['change']} ({x['source']})")
     return "\n".join(lines)
 
 
 def diff(old: dict, new: dict) -> list[str]:
     """What a new charter changes from an earlier one, key by key."""
     out = []
-    for k in [q["key"] for q in QUESTIONS] + ["accepted_gaps", "approved"]:
-        empty = [] if k == "accepted_gaps" else None
+    for k in [q["key"] for q in QUESTIONS] + ["plan", "accepted_gaps", "amendments", "approved"]:
+        empty = [] if k in ("accepted_gaps", "amendments") else None
         if old.get(k, empty) != new.get(k, empty):
             out.append(f"{k}: {json.dumps(old.get(k))} -> {json.dumps(new.get(k))}")
     return out

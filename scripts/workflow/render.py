@@ -34,12 +34,34 @@ def _code(cmd: str) -> str:
 def _suite_line(s) -> str:
     where = f", run in `{s.cwd}`" if s.cwd else ""
     if "{files}" in s.run and s.files:
-        files = f", where {{files}} is the test files to run, space-separated (from `{s.files}`{', relative to that directory' if s.cwd else ''}); give it all of them for the whole suite"
+        given = f", each given relative to `{s.cwd}`" if s.cwd else ""
+        files = (
+            f", where {{files}} is the test files to run, space-separated (those matching `{s.files}`, "
+            f"relative to the project root{given}); give it all of them for the whole suite"
+        )
     elif "{files}" in s.run:
         files = ", with {files} left empty"
     else:
         files = ""
     return f"{s.name}: `{s.run}`{where}{files}"
+
+
+def _test_file(cmd: str) -> str:
+    return f"`{cmd}` (replace {{file}} with the test file's path)" if "{file}" in cmd else _code(cmd)
+
+
+def _per_package(profile: Profile, attr: str, show) -> str:
+    """The top-level command, then each package's with the files it covers:
+    "`mypy .`; for `web/**` (package web, run in `web`): `npx tsc`"."""
+    parts = []
+    top = getattr(profile, attr)
+    packages = [pk for pk in profile.packages if getattr(pk, attr)]
+    if top:
+        parts.append(show(top) + (" for everything else" if packages else ""))
+    for pk in packages:
+        where = f", run in `{pk.cwd}`" if pk.cwd else ""
+        parts.append(f"for `{pk.path}` (package {pk.name}{where}): {show(getattr(pk, attr))}")
+    return "; ".join(parts) if parts else "none"
 
 
 def _bullets(items: list[str]) -> str:
@@ -67,10 +89,8 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
         "open_decisions": "take the choice most consistent with the spec, ADRs and the project's rules, and record it in the PR body"
         if charter.get("open_decisions", "decide-and-record") == "decide-and-record"
         else "label the ticket needs-human, say exactly what needs deciding, and stop",
-        "commands.typecheck": _code(profile.typecheck),
-        "commands.test_file": f"`{profile.test_file}` (replace {{file}} with the test file's path)"
-        if "{file}" in profile.test_file
-        else _code(profile.test_file),
+        "commands.typecheck": _per_package(profile, "typecheck", _code),
+        "commands.test_file": _per_package(profile, "test_file", _test_file),
         "commands.suites": _bullets([_suite_line(s) for s in profile.suites]),
         "ui.explorer": profile.explorer,
     }

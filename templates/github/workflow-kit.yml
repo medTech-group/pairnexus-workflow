@@ -1,0 +1,20 @@
+# The workflow kit's own check: the vendored copy matches its lock, the profile
+# is valid. Add its job name ("workflow kit") to the ruleset's required checks
+# and to ci.required_checks in .claude/workflow/profile.toml.
+name: workflow kit
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  workflow-kit:
+    name: workflow kit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 -B .claude/workflow/bin/workflow.py profile check
+      - run: python3 -B .claude/workflow/bin/workflow.py vendor verify --strict

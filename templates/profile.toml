@@ -20,19 +20,35 @@ setup = ""                              # one-time install for a fresh checkout
 typecheck = ""                          # "" when the project has none
 test_file = ""                          # one test file: "{file}" is replaced
 
+# Optional: parts of the project with their own typecheck or one-file test
+# command. Sessions get every package's command with the files it covers, plus
+# the top-level one above (for everything else).
+# [[commands.package]]
+# name = "web"
+# path = "web/**"                       # a glob relative to the project root: the files it covers
+# typecheck = "npx tsc --noEmit"
+# test_file = "npx jest {file}"
+# cwd = "web"                           # optional: run there (relative to the project root)
+
 # The full suite, as one or more suites. Each runs in shards so a container
 # restart loses at most one shard (`workflow evidence` resumes by head SHA).
 [[commands.suite]]
 name = "unit"
 run = "python -m pytest {files} -q"     # {files}: the shard's files, space-separated (required when files is set)
-files = "tests/test_*.py"               # glob(s) relative to the root, comma-separated; "" runs `run` once
+files = "tests/test_*.py"               # glob(s) relative to the project root (even when cwd is set),
+                                        # comma-separated; "" runs `run` once
 group = 8                               # files per shard
-cwd = ""                                # optional: run in this directory (relative to the root);
+cwd = ""                                # optional: run in this directory (relative to the project root);
                                         # {files} are then given relative to it
-# Regexes for the counts, matched in the last 5 lines of stdout (else of
-# stderr), each match summed. A shard that exits 0 with no passed, failed or
-# errors counted is a failure: the regexes didn't match. The defaults fit
-# pytest. For other runners:
+# Regexes for the counts, matched in the runner's summary: for pytest its
+# summary line ("=== 1 failed, 2 passed in 0.5s ===", or a final "3 passed in
+# 0.1s"); otherwise the last 5 non-empty lines of stdout (else of stderr),
+# ANSI colours and report hints ("To open last HTML report") left out. Each
+# match is summed. A shard that exits 0 with nothing counted is a failure: the
+# regexes didn't match (one whose tests were all skipped counts zero tests).
+# Optional `total`: a regex for a total that includes skips and failures; when
+# set, passed = total - skipped - failed - errors. The defaults fit pytest.
+# For other runners:
 #   jest (prints its summary to stderr; "Tests: 1 failed, 2 skipped, 10 passed, 13 total"):
 #     passed = 'Tests:.*?(\d+) passed'   failed = 'Tests:.*?(\d+) failed'
 #     skipped = 'Tests:.*?(\d+) skipped'  errors = 'Test Suites:.*?(\d+) failed'
@@ -43,9 +59,10 @@ cwd = ""                                # optional: run in this directory (relat
 #     skipped = '~(\d+)[^:]*: (?:All tests passed|Some tests failed)'
 #     errors: keep the default (flutter prints no error count; a file that fails to load exits nonzero)
 #   go (plain `go test` prints no counts; run it through gotestsum, whose last line is
-#   "DONE 42 tests, 1 skipped, 2 failures in 3.2s"; the 42 includes the failures and skips):
+#   "DONE 42 tests, 1 skipped, 2 failures in 3.2s"; the 42 includes the failures and skips,
+#   so give it as `total` and passed is worked out):
 #     run = "gotestsum --format pkgname -- {files}"
-#     passed = 'DONE (\d+) tests'   failed = '(\d+) failures?'   skipped = '(\d+) skipped'   errors = '(\d+) errors?'
+#     total = 'DONE (\d+) tests'   failed = '(\d+) failures?'   skipped = '(\d+) skipped'   errors = '(\d+) errors?'
 #   Playwright (list, line or dot reporter: "  1 failed", "  2 skipped", "  10 passed (30s)"):
 #     passed = '(\d+) passed'   failed = '(\d+) failed'   skipped = '(\d+) skipped'
 #     errors = '(\d+) errors? was not a part of any test'
@@ -78,18 +95,23 @@ notes = ""
 
 [guard]
 # Paths a ticket session may not change (and a conductor only by a reviewed PR).
+# Ticket sessions also never change .git/config or .git/hooks. Never protected,
+# whatever is listed: .env.example, .env.sample, .env.template, .claude/worktrees/.
 protected_paths = [".claude/**", ".github/workflows/**", ".github/CODEOWNERS", "CODEOWNERS", "**/.env", "**/.env.*"]
 # Commands only the owner, or the conductor under a release grant, may run.
+# A script (a path) is matched however it is run; others by their first words.
 deploy_commands = []                    # e.g. ["scripts/deploy.sh", "terraform apply", "kubectl apply"]
 # Test files: where a new skip marker is refused in ticket sessions.
-test_paths = ["**/test_*.py", "**/*_test.py", "**/*.test.*", "**/*.spec.*", "**/*_test.dart", "**/*_test.go"]
+test_paths = ["**/test_*.py", "**/*_test.py", "**/*.test.*", "**/*.spec.*", "**/*_test.dart", "**/*_test.go", "**/conftest.py"]
 allow_new_skips = false
 
 [sensitive]
 # What must never appear in issues, comments, PR bodies or notifications.
 description = "Secrets and personal data."
-# Regexes checked against every outward GitHub post (issue, comment, PR body).
-patterns = ['(?i)aws_secret_access_key\s*[:=]', '-----BEGIN [A-Z ]*PRIVATE KEY-----', 'ghp_[A-Za-z0-9]{36}', 'sk-[A-Za-z0-9_-]{20,}']
+# Regexes checked against every outward GitHub post (issue, comment, PR body),
+# heredocs and body files included. Anchor them so ordinary words don't match
+# (the sk- pattern must not fire on "disk-usage-reporting-in-dashboards").
+patterns = ['(?i)aws_secret_access_key\s*[:=]', '-----BEGIN [A-Z ]*PRIVATE KEY-----', 'ghp_[A-Za-z0-9]{36}', '(?<![A-Za-z0-9])sk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}']
 
 # Areas ("lanes"): tickets carry `Area: <name>`; the conductor runs at most one
 # session per area unless the run state records an override. Globs are hints.

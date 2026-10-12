@@ -29,7 +29,7 @@ Skip this if the briefing says the conductor has claimed it. Otherwise, before a
 ## 2. Build it
 
 - **Branch:** work on the session's branch. A ticket session's is the profile's `run.ticket_branch` with the ticket's number.
-- **Tests first:** use `tdd` (Matt Pocock's) at the spec's seams. Write a failing test for each acceptance criterion, then the code.
+- **Tests first:** use `tdd` (Matt Pocock's) at the spec's seams. Write a failing test for each acceptance criterion, then the code. The seams the spec names are already agreed with the owner: they count as confirmed, so in a ticket session `tdd`'s "confirm with the user" step is satisfied and you never stop to ask. A seam the spec doesn't name is a decision the ticket leaves open (below).
 - **Commands:** the profile's `commands.typecheck` and `commands.test_file` as you go. Run the full suite once the ticket is built.
 - **Tests that don't fail by chance:** compute dates and times at the point of use, never at import. Never assert that a random id lacks some digit string.
 - **Commit as you go,** with clear messages.
@@ -55,12 +55,14 @@ To the base branch. Its body:
 - the decisions taken, under "Decisions for the owner";
 - the by-hand checks added.
 
+Lasting knowledge for later work (how a new module is meant to be used, a pitfall) goes in the repo's own docs, in this PR, before it merges.
+
 Then subscribe to its activity. Schedule a check-in about every `run.check_in_minutes` (`send_later` in cloud sessions; `/loop` or a cron task locally), and end the turn with `WORKFLOW-STATUS: waiting`.
 
 ## 5. Get it green
 
 - **A required check is red:** find the cause (use `diagnosing-bugs` when it's unclear) and push a fix. "Flake" isn't a cause: a test that fails by chance gets fixed so it can't.
-- **The base branch moved:** merge it in (`resolving-merge-conflicts`). Never rebase or force-push.
+- **The base branch moved:** `git fetch origin <base> && git merge origin/<base>`, resolve any conflicts keeping both sides' intent, rerun the tests, and push. Never rebase or force-push.
 - **A check the charter waives:** it counts as passed only when its log shows a killed marker (the profile's `ci.killed_markers`) rather than a test failure, and only with the evidence below.
 - **Still red after three fix attempts:**
   1. label the ticket `needs-human`;
@@ -77,12 +79,12 @@ Then subscribe to its activity. Schedule a check-in about every `run.check_in_mi
 
    | Mode | What you do |
    |---|---|
-   | `auto-merge` | Enable auto-merge with a merge commit (`enable_pr_auto_merge`); GitHub merges when the ruleset's checks pass |
+   | `auto-merge` | Enable auto-merge with a merge commit (`enable_pr_auto_merge`, or `gh pr merge <n> --auto --merge`). Stay with it: at each check-in, if the PR is behind the base (`mergeable_state` behind), update it (`gh api -X PUT repos/<repo>/pulls/<n>/update-branch`) and end the turn `waiting`, until GitHub has merged it |
    | `session` | Merge it yourself with a merge commit |
    | `owner`, or attended work | Say it's ready, and leave it |
 
    If your permission settings refuse the merge, don't work around it. Comment that it's green and ready, and end with `WORKFLOW-STATUS: waiting`.
-4. **Tell the tracking issue:** comment "#<n> merged in #<PR>", then notes for the next tickets. Tag each note with its area and the tickets it's for ("For #201, area readings: …"): what you added that later tickets build on, decisions to know, and pitfalls. Lasting knowledge goes in the repo's own docs, in this PR.
+4. **Once it has merged,** tell the tracking issue: "#<n> merged in #<PR>", then notes for the next tickets. Tag each note with its area and the tickets it's for ("For #201, area readings: …"): what you added that later tickets build on, decisions to know, and pitfalls.
 5. **Tidy up:** remove the `workflow:in-progress` label if the merge didn't close the ticket.
 
 ## 7. End each turn

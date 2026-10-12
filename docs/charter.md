@@ -53,8 +53,9 @@ When a previous charter exists, start from `workflow charter reuse old.json` (ap
   "version": 1,
   "scope":   {"tickets": "all-ready", "exclude": [143], "follow_unblocked": true},
   "limits":  {"ends_at": "2026-10-13T03:30:00Z", "max_parallel": 2, "max_sessions": 40, "max_retries": 1, "check_in_minutes": 20},
-  "merge":   {"mode": "auto-merge", "waived_checks": ["Backend tests (seam 1)"]},
+  "merge":   {"mode": "session", "waived_checks": ["Backend tests (seam 1)"]},
   "release": {"when": "end", "steps": ["deploy poc"], "smoke_test": true},
+  "plan":    [146, 147, 148],
   "outward": {"allowed": ["set Parameter Store timer-secret on poc"]},
   "conductor_fixes": true,
   "open_decisions": "decide-and-record",
@@ -62,7 +63,7 @@ When a previous charter exists, start from `workflow charter reuse old.json` (ap
   "notify":  {"failures": "issue", "final_report": "push"},
   "accepted_gaps": ["no ruleset on main yet"],
   "approved": {"by": "owner-login", "at": "2026-10-11T10:00:00Z", "source": "https://github.com/…/issues/232#issuecomment-…"},
-  "amendments": [{"at": "…", "change": "also build #140 and #146", "source": "…"}]
+  "amendments": [{"at": "…", "by": "owner-login", "change": "also build #140 and #146", "source": "…"}]
 }
 ```
 

@@ -8,6 +8,9 @@ case-insensitively.
 
 A blocker is an issue number in this repository, or the text "owner/repo#n"
 for one in another repository, which readiness can't resolve and so blocks.
+Blockers are read as `#n`, `owner/repo#n` or an issue URL
+(`https://github.com/owner/repo/issues/n`), on plain lines or lines quoted
+with `>`.
 """
 
 from __future__ import annotations
@@ -36,6 +39,8 @@ _HEADING = re.compile(r"^\s*#{1,6}\s")
 _BLOCKED_LINE = re.compile(r"^\s*(?:[-*+]\s+)?\**blocked by\**(?:\s*:\**|(?=\s)|$)(.*)$", re.I)
 _BLOCKED_HEADING = re.compile(r"^\s*#{1,6}\s*blocked by\s*:?\s*$", re.I)
 _BULLET = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
+_QUOTE = re.compile(r"^\s*(?:>\s?)+")
+_URL = re.compile(r"https?://(?:www\.)?github\.com/([\w.-]+/[\w.-]+)/issues/(\d+)\b[^\s)\]>]*", re.I)
 
 
 def labels_of(issue: dict) -> set[str]:
@@ -73,14 +78,18 @@ def _same_repo(ref_repo: str, repo: str | None) -> bool:
 
 
 def _refs(text: str, repo: str | None) -> list[Blocker]:
-    out: list[Blocker] = []
-    for m in _REF.finditer(text):
-        ref_repo, n = m.group(1), int(m.group(2))
-        if not ref_repo or _same_repo(ref_repo, repo):
-            out.append(n)
-        else:
-            out.append(f"{ref_repo}#{n}")
-    return out
+    """The refs in a line, in order: `#n`, `owner/repo#n` and issue URLs."""
+    found: list[tuple[int, Blocker]] = []
+
+    def add(pos: int, ref_repo: str, n: int) -> None:
+        found.append((pos, n if not ref_repo or _same_repo(ref_repo, repo) else f"{ref_repo}#{n}"))
+
+    for m in _URL.finditer(text):
+        add(m.start(), m.group(1), int(m.group(2)))
+    rest = _URL.sub(lambda m: " " * len(m.group(0)), text)
+    for m in _REF.finditer(rest):
+        add(m.start(), m.group(1), int(m.group(2)))
+    return [b for _, b in sorted(found, key=lambda x: x[0])]
 
 
 def _is_none(line: str) -> bool:
@@ -102,7 +111,7 @@ def blockers_of(body: str | None, repo: str | None = None) -> list[Blocker]:
     if not body:
         return []
     found: list[Blocker] = []
-    lines = body.splitlines()
+    lines = [_QUOTE.sub("", l) for l in body.splitlines()]
     i = 0
     while i < len(lines):
         line = lines[i]
@@ -153,21 +162,52 @@ def blockers_of(body: str | None, repo: str | None = None) -> list[Blocker]:
 
 _AREA_LINE = re.compile(r"^\s*(?:[-*+]\s+)?\**area\**\s*:\s*(.*)$", re.I)
 _AREA_HEADING = re.compile(r"^\s*#{1,6}\s*area\s*(?::\s*(.*))?$", re.I)
-_AREA_WORD = re.compile(r"^[\s*`'\"]*([\w.-]+)")
+_AREA_WORD = re.compile(r"[\w.-]+")
 
 
-def _area_word(text: str) -> str | None:
-    m = _AREA_WORD.match(_BULLET.sub("", text))
-    if not m:
-        return None
-    word = m.group(1).strip(".-_")
-    return word.casefold() or None
+def _slug(text: str) -> str:
+    return re.sub(r"[^\w]+", "-", text.casefold()).strip("-_")
 
 
-def area_of(body: str | None) -> str | None:
-    """The ticket's area: the first word after `Area:` (bold, bulleted or in
-    backticks too), or of the first non-empty line under an `## Area`
-    heading; lowercased."""
+def _area_value(text: str) -> str:
+    """The value as written, without a bullet, emphasis, backticks, quotes or a
+    trailing (parenthetical)."""
+    v = _BULLET.sub("", text).strip()
+    v = re.sub(r"\([^)]*\)", " ", v)
+    return v.replace("`", " ").replace("*", " ").replace('"', " ").replace("'", " ").strip()
+
+
+def read_area(body: str | None, areas: Iterable[str] | None = None) -> tuple[str | None, str | None]:
+    """The ticket's area and a note about it, if any.
+
+    The value after `Area:` (bold, bulleted or in backticks too), or the first
+    non-empty line under an `## Area` heading, lowercased. An area is one word.
+    With several words (`Area: the clock module`), the first word is taken only
+    when it is one of the profile's `areas`; otherwise the whole value is
+    slugified (`the-clock-module`), with a note. A one-word area that isn't one
+    of the profile's areas is kept as its own area, with a note.
+    """
+    raw = _raw_area(body)
+    if raw is None:
+        return None, None
+    known = sorted({a.casefold() for a in areas}) if areas else []
+    words = [w.strip(".-_").casefold() for w in _AREA_WORD.findall(raw)]
+    words = [w for w in words if w]
+    if not words:
+        return None, None
+    listed = f"[{', '.join(known)}]" if known else "the profile's [areas]"
+    if len(words) == 1:
+        area = words[0]
+        if known and area not in known:
+            return area, f"area {area} isn't one of the profile's areas ({', '.join(known)}); treated as its own area"
+        return area, None
+    if words[0] in known:
+        return words[0], None
+    area = _slug(raw)
+    return area, f"Area should be one word from {listed}; {raw!r} treated as its own area, {area}"
+
+
+def _raw_area(body: str | None) -> str | None:
     if not body:
         return None
     lines = body.splitlines()
@@ -175,23 +215,28 @@ def area_of(body: str | None) -> str | None:
         h = _AREA_HEADING.match(line)
         if h:
             if (h.group(1) or "").strip():
-                word = _area_word(h.group(1))
-                if word:
-                    return word
+                v = _area_value(h.group(1))
+                if v:
+                    return v
                 continue
             for nxt in lines[i + 1 :]:
                 if not nxt.strip():
                     continue
                 if _HEADING.match(nxt):
                     break
-                return _area_word(nxt)
+                return _area_value(nxt) or None
             continue
         m = _AREA_LINE.match(line)
         if m:
-            word = _area_word(m.group(1))
-            if word:
-                return word
+            v = _area_value(m.group(1))
+            if v:
+                return v
     return None
+
+
+def area_of(body: str | None, areas: Iterable[str] | None = None) -> str | None:
+    """The ticket's area (see `read_area`)."""
+    return read_area(body, areas)[0]
 
 
 def closed_by_open_prs(prs: list[dict], repo: str | None = None) -> dict[int, int]:
@@ -259,7 +304,7 @@ def readiness(
     """
     by_num = {i["number"]: i for i in issues if "pull_request" not in i}
     pr_for = closed_by_open_prs(prs, repo)
-    known_areas = {a.casefold() for a in areas} if areas else set()
+    known_areas = sorted({a.casefold() for a in areas}) if areas else []
     out: list[Verdict] = []
     for num in sorted(by_num):
         issue = by_num[num]
@@ -268,16 +313,17 @@ def readiness(
         labels = labels_of(issue)
         if READY_LABEL not in labels or not is_build_ticket(issue):
             continue
+        area, note = read_area(issue.get("body"), known_areas)
         v = Verdict(
             number=num,
             title=issue.get("title") or "",
             ready=True,
-            area=area_of(issue.get("body")),
+            area=area,
             labels=sorted(labels),
         )
         v.blockers = blockers_of(issue.get("body"), repo)
-        if v.area and known_areas and v.area not in known_areas:
-            v.notes.append(f"area {v.area} isn't one of the profile's areas ({', '.join(sorted(known_areas))})")
+        if note:
+            v.notes.append(note)
         if num in exclude:
             v.reasons.append("excluded")
         for lab in sorted(labels & HUMAN_LABELS):

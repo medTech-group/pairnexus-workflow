@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import glob
 import os
 import re
 import tomllib
@@ -12,6 +13,8 @@ PROFILE_PATH = Path(".claude/workflow/profile.toml")
 
 EXPLORERS = {"browser", "api", "cli", "none"}
 
+# Never protected whatever the patterns say (guard.matches): `.env.example`,
+# `.env.sample`, `.env.template`, and Claude Code's own `.claude/worktrees/`.
 DEFAULT_PROTECTED = [
     ".claude/**",
     ".github/workflows/**",
@@ -27,6 +30,7 @@ DEFAULT_TEST_PATHS = [
     "**/*.spec.*",
     "**/*_test.dart",
     "**/*_test.go",
+    "**/conftest.py",
 ]
 
 
@@ -38,7 +42,7 @@ class ProfileError(ValueError):
 # instead of being quietly ignored. None: any key (area names).
 ALLOWED: dict[str, set[str] | None] = {
     "project": {"name", "repo", "base_branch", "rules", "flow_addendum", "owner"},
-    "commands": {"setup", "typecheck", "test_file", "suite"},
+    "commands": {"setup", "typecheck", "test_file", "suite", "package"},
     "ci": {"required_checks", "killed_markers", "none", "path_filtered"},
     "ui": {"explorer", "start", "sizes", "notes"},
     "guard": {"protected_paths", "deploy_commands", "test_paths", "allow_new_skips"},
@@ -58,7 +62,8 @@ ALLOWED: dict[str, set[str] | None] = {
     },
 }
 PERMISSION_MODES = {"auto", "acceptEdits", "bypassPermissions", "dontAsk"}
-SUITE_KEYS = {"name", "run", "files", "group", "passed", "failed", "skipped", "errors", "cwd"}
+SUITE_KEYS = {"name", "run", "files", "group", "passed", "failed", "skipped", "errors", "total", "cwd"}
+PACKAGE_KEYS = {"name", "path", "typecheck", "test_file", "cwd"}
 RELEASE_STEP_KEYS = {"name", "run", "smoke"}
 OWNER = re.compile(r"^[A-Za-z0-9-]+$")
 
@@ -76,13 +81,29 @@ def _unknown(keys, allowed: set[str], where: str) -> None:
 class Suite:
     name: str
     run: str
-    files: str = ""
+    files: str = ""  # glob(s) relative to the project root, even when cwd is set
     group: int = 8
     cwd: str = ""  # relative to the root; the shard runs there, given its files relative to it
     passed: str = r"(\d+) passed"
     failed: str = r"(\d+) failed"
     skipped: str = r"(\d+) skipped"
     errors: str = r"(\d+) errors?"
+    # Optional: a regex for the runner's total, when its total includes skips and
+    # failures (gotestsum's "DONE 42 tests"); then passed = total - skipped - failed - errors.
+    total: str = ""
+
+
+@dataclass
+class Package:
+    """A part of the project with its own typecheck or one-file test command
+    (a backend and a web app, say). `path` is a glob, relative to the project
+    root, for the files it covers; the commands run in `cwd` when set."""
+
+    name: str
+    path: str
+    typecheck: str = ""
+    test_file: str = ""
+    cwd: str = ""
 
 
 @dataclass
@@ -98,6 +119,7 @@ class Profile:
     typecheck: str = ""
     test_file: str = ""
     suites: list[Suite] = field(default_factory=list)
+    packages: list[Package] = field(default_factory=list)
     required_checks: list[str] = field(default_factory=list)
     killed_markers: list[str] = field(default_factory=list)
     ci_none: bool = False
@@ -155,6 +177,46 @@ def _int(v, where: str, default: int, lo: int = 0, hi: int = 10_000) -> int:
     return v
 
 
+def _cwd(v, where: str) -> str:
+    cwd = str(v or "")
+    if cwd and (Path(cwd).is_absolute() or ".." in Path(cwd).parts):
+        raise ProfileError(f"{where}.cwd must be a directory relative to the project root, inside it")
+    return cwd
+
+
+def _packages(raw) -> list[Package]:
+    if not isinstance(raw, list):
+        raise ProfileError("commands.package must be an array of tables ([[commands.package]])")
+    out: list[Package] = []
+    for i, pk in enumerate(raw):
+        where = f"commands.package[{i}]"
+        if not isinstance(pk, dict):
+            raise ProfileError(f"{where} must be a table")
+        _unknown(pk, PACKAGE_KEYS, where)
+        for k in PACKAGE_KEYS:
+            if k in pk and not isinstance(pk[k], str):
+                raise ProfileError(f"{where}.{k} must be a string")
+        if not pk.get("name") or not pk.get("path"):
+            raise ProfileError(f"{where} needs name and path (a glob, relative to the project root, for the files it covers)")
+        if not pk.get("typecheck") and not pk.get("test_file"):
+            raise ProfileError(f"{where} ({pk['name']}): give typecheck, test_file or both")
+        if Path(pk["path"]).is_absolute() or ".." in Path(pk["path"]).parts:
+            raise ProfileError(f"{where}.path must be a glob relative to the project root, inside it")
+        out.append(
+            Package(
+                name=pk["name"],
+                path=pk["path"],
+                typecheck=pk.get("typecheck", ""),
+                test_file=pk.get("test_file", ""),
+                cwd=_cwd(pk.get("cwd"), where),
+            )
+        )
+    names = [p.name for p in out]
+    if len(names) != len(set(names)):
+        raise ProfileError("commands.package names must be unique")
+    return out
+
+
 def parse(data: dict, root: Path) -> Profile:
     if not isinstance(data, dict):
         raise ProfileError("the profile must be a TOML document of tables")
@@ -190,10 +252,8 @@ def parse(data: dict, root: Path) -> Profile:
                 f"commands.suite[{i}] ({s['name']}): files is set but run has no {{files}}, so every shard "
                 "would run the whole suite; put {files} where the test files go, or leave files empty"
             )
-        cwd = str(s.get("cwd") or "")
-        if cwd and (Path(cwd).is_absolute() or ".." in Path(cwd).parts):
-            raise ProfileError(f"commands.suite[{i}].cwd must be a directory relative to the project root, inside it")
-        for k in ("passed", "failed", "skipped", "errors"):
+        cwd = _cwd(s.get("cwd"), f"commands.suite[{i}]")
+        for k in ("passed", "failed", "skipped", "errors", "total"):
             if k in s:
                 try:
                     re.compile(str(s[k]))
@@ -210,6 +270,7 @@ def parse(data: dict, root: Path) -> Profile:
                 failed=str(s.get("failed", Suite.failed)),
                 skipped=str(s.get("skipped", Suite.skipped)),
                 errors=str(s.get("errors", Suite.errors)),
+                total=str(s.get("total") or ""),
             )
         )
     names = [s.name for s in suites]
@@ -260,6 +321,7 @@ def parse(data: dict, root: Path) -> Profile:
         typecheck=str(cmds.get("typecheck") or ""),
         test_file=str(cmds.get("test_file") or ""),
         suites=suites,
+        packages=_packages(cmds.get("package") or []),
         required_checks=_strs(ci.get("required_checks"), "ci.required_checks"),
         killed_markers=_strs(ci.get("killed_markers"), "ci.killed_markers"),
         ci_none=ci_none,
@@ -306,18 +368,78 @@ def load(root: Path | None = None, required: bool = True) -> Profile | None:
     return parse(data, root)
 
 
+def slug(text: str) -> str:
+    """A heading as its #anchor: lowercase, spaces to `-`, punctuation dropped."""
+    return re.sub(r"[^\w\- ]", "", text.strip().lower()).replace(" ", "-")
+
+
+_FENCE = re.compile(r"^\s*(```|~~~)")
+_MD_HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$")
+
+
+def headings(text: str) -> set[str]:
+    """The anchors of a Markdown file's headings (outside code fences)."""
+    out: set[str] = set()
+    fenced = False
+    for line in text.splitlines():
+        if _FENCE.match(line):
+            fenced = not fenced
+            continue
+        m = None if fenced else _MD_HEADING.match(line)
+        if m:
+            out.add(slug(m.group(1)))
+    return out
+
+
+def globs(spec: str) -> list[str]:
+    """A comma-separated glob list, as suites write `files`."""
+    return [p.strip() for p in (spec or "").split(",") if p.strip()]
+
+
+def matches(root: Path, pattern: str) -> bool:
+    return any(True for _ in glob.iglob(str(root / pattern), recursive=True))
+
+
 def check(profile: Profile) -> list[str]:
-    """Warnings that don't make the profile invalid: references to files that aren't there."""
+    """Warnings that don't make the profile invalid: references to files that
+    aren't there, globs that match nothing, and settings an unattended run needs."""
     w: list[str] = []
+    root = profile.root
+    if not profile.owner:
+        w.append("project.owner is empty: approvals and the owner's comments can't be checked against a login")
     for r in profile.rules:
-        part = r.split("#", 1)[0].strip()
-        if part and not (profile.root / part).exists():
+        part, _, anchor = r.partition("#")
+        part, anchor = part.strip(), anchor.strip()
+        if part and not (root / part).exists():
             w.append(f"project.rules: {part} doesn't exist (from {r!r})")
-    if profile.flow_addendum and not (profile.root / profile.flow_addendum).exists():
+        elif part and anchor and (root / part).is_file():
+            try:
+                text = (root / part).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if slug(anchor) not in headings(text):
+                w.append(f"project.rules: {part} has no heading matching #{anchor} (from {r!r})")
+    if profile.flow_addendum and not (root / profile.flow_addendum).exists():
         w.append(f"project.flow_addendum: {profile.flow_addendum} doesn't exist")
     for s in profile.suites:
-        if s.cwd and not (profile.root / s.cwd).is_dir():
+        if s.cwd and not (root / s.cwd).is_dir():
             w.append(f"commands.suite {s.name}: cwd {s.cwd} isn't a directory")
+        for pat in globs(s.files):
+            if not matches(root, pat):
+                w.append(f"commands.suite {s.name}: files glob {pat!r} matches no file (globs are relative to the project root)")
+    for pk in profile.packages:
+        if pk.cwd and not (root / pk.cwd).is_dir():
+            w.append(f"commands.package {pk.name}: cwd {pk.cwd} isn't a directory")
+        if not matches(root, pk.path):
+            w.append(f"commands.package {pk.name}: path {pk.path!r} matches no file (relative to the project root)")
+    for area, pats in profile.areas.items():
+        for pat in pats:
+            if not matches(root, pat):
+                w.append(f"areas.{area}: glob {pat!r} matches no file")
+    if not profile.ticket_environment:
+        w.append("run.ticket_environment is empty: name the claude.ai environment ticket sessions run in")
+    if not profile.conductor_environment:
+        w.append("run.conductor_environment is empty: name the claude.ai environment the conductor runs in")
     return w
 
 
@@ -334,6 +456,10 @@ def summary(profile: Profile) -> dict:
         "suites": [
             {"name": s.name, "run": s.run, "files": s.files or None, "cwd": s.cwd or None, "group": s.group}
             for s in profile.suites
+        ],
+        "packages": [
+            {"name": p.name, "path": p.path, "typecheck": p.typecheck or None, "test_file": p.test_file or None, "cwd": p.cwd or None}
+            for p in profile.packages
         ],
         "required_checks": profile.required_checks,
         "killed_markers": profile.killed_markers,

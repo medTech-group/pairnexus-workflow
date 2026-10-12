@@ -3,23 +3,23 @@
     "PreToolUse": [
       {
         "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*[Gg]it[Hh]ub.*",
-        "hooks": [{ "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/workflow.py\" hook guard", "timeout": 15 }]
+        "hooks": [{ "type": "command", "command": "python3 -B \"${CLAUDE_PLUGIN_ROOT}/scripts/workflow.py\" hook guard", "timeout": 15 }]
       }
     ],
     "Stop": [
       {
-        "hooks": [{ "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/workflow.py\" hook gate", "timeout": 15 }]
+        "hooks": [{ "type": "command", "command": "python3 -B \"${CLAUDE_PLUGIN_ROOT}/scripts/workflow.py\" hook gate", "timeout": 15 }]
       }
     ],
     "UserPromptSubmit": [
       {
-        "hooks": [{ "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/workflow.py\" hook context", "timeout": 10 }]
+        "hooks": [{ "type": "command", "command": "python3 -B \"${CLAUDE_PLUGIN_ROOT}/scripts/workflow.py\" hook context", "timeout": 10 }]
       }
     ],
     "SessionStart": [
       {
         "matcher": "startup|resume",
-        "hooks": [{ "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/workflow.py\" hook repair", "timeout": 300 }]
+        "hooks": [{ "type": "command", "command": "python3 -B \"${CLAUDE_PLUGIN_ROOT}/scripts/workflow.py\" hook repair", "timeout": 300 }]
       }
     ]
   }

@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Set up the workflow in a project
 
-This runs from a checkout of the kit (`medtech-group/pairnexus-workflow`), whether or not the project has the kit yet: read this file there and follow it. `KIT` is that checkout. `WF` is `python3 $KIT/scripts/workflow.py`.
+This runs from a checkout of the kit (`medtech-group/pairnexus-workflow`), whether or not the project has the kit yet, and in either mode: read this file there and follow it. `KIT` is that checkout (clone it with `git clone https://github.com/medTech-group/pairnexus-workflow`; it's private, so the session needs access). `WF` is `python3 -B $KIT/scripts/workflow.py`. Matt Pocock's skills: `git clone https://github.com/mattpocock/skills` and check out the SHA in `$KIT/.claude-plugin/marketplace.json`.
 
 Explore first, ask only what you can't find, show what you'll write, and write it on a branch with a pull request. The base branch is the owner's; this is a PR like any other.
 
@@ -65,16 +65,25 @@ Use `AskUserQuestion`, recommended answers first. Ask only what exploring didn't
   WF vendor install --project . --mattpocock <checkout of mattpocock/skills at the SHA in $KIT/.claude-plugin/marketplace.json>
   ```
 
-  - If it reports files that aren't the kit's (an earlier hand-vendored copy), show the owner the list. Pass `--adopt` only for the ones that are copies of the kit's or Matt Pocock's skills.
-  - The project's own skills of the same name get renamed first: move `.claude/skills/next` to `.claude/skills/next-<project>`.
+  - If it reports files that aren't the kit's (an earlier hand-vendored copy), show the owner the list.
+  - The project's own skills of the same name get renamed first: move `.claude/skills/next` to `.claude/skills/next-<project>` and change its frontmatter `name:` to match, then update anything that sends people to the old name (CLAUDE.md, docs).
+  - Then `--adopt` replaces the rest (copies of the kit's or Matt Pocock's skills). It lists each file it replaced, and the `stale` files the old copy had that the kit doesn't ship: delete those the owner agrees are obsolete.
+  - A vendored file the project deliberately changes afterwards (for example Matt Pocock's skills saying `GLOSSARY.md` where the project uses `CONTEXT.md`): edit it, then `WF vendor resolve --keep <path>`, so `verify --strict` stays green.
   - If the kit is vendored already, use `WF vendor update` instead.
-- Plugin mode: add the marketplace and plugin to `.claude/settings.json` (see `install.md`) and nothing else.
+- Plugin mode: add to the project's `.claude/settings.json`, and nothing else:
 
-**3. The Matt Pocock skills' per-repo docs.** Read the vendored `.claude/skills/setup-matt-pocock-skills/SKILL.md` and follow its steps. It writes:
-- `docs/agents/issue-tracker.md`, the triage labels and the domain-doc layout;
-- the "Agent skills" block in `CLAUDE.md`.
+  ```json
+  {
+    "extraKnownMarketplaces": {"pairnexus": {"source": {"source": "github", "repo": "medtech-group/pairnexus-workflow"}}},
+    "enabledPlugins": {"pairnexus-workflow@pairnexus": true}
+  }
+  ```
 
-`code-review`, `to-spec`, `to-tickets` and `wayfinder` need these. Without them they stop to ask, which stalls an unattended session. The domain docs keep the name the project uses: `CONTEXT.md` or `GLOSSARY.md`.
+  Each person then installs it once (`docs/install.md`). Plugin mode is for attended work only: cloud sessions don't install it.
+
+**3. The Matt Pocock skills' per-repo docs.** Read Matt Pocock's `setup-matt-pocock-skills/SKILL.md` (vendored, or in his checkout) and follow its steps, with one change: write `docs/agents/issue-tracker.md` from `$KIT/templates/issue-tracker.md` (OWNER/REPO filled in), not from his GitHub template, which uses `gh issue …` subcommands that cloud sessions don't have. It also writes the triage labels doc, the domain-doc layout and the "Agent skills" block in `CLAUDE.md`.
+
+`code-review`, `to-spec`, `to-tickets` and `wayfinder` need these. Without them they stop to ask, which stalls an unattended session. The domain docs keep the name the project uses (`CONTEXT.md` or `GLOSSARY.md`): where his skills name the other one, edit them and `vendor resolve --keep`.
 
 **4. The earlier flow.**
 - Retire the old flow hook from `.claude/settings.json`, and the old flow doc.
@@ -82,9 +91,9 @@ Use `AskUserQuestion`, recommended answers first. Ask only what exploring didn't
 
 **5. `.github/CODEOWNERS`.** It covers `/.claude/`, `/.github/workflows/` and itself, with the owner's handle (`enforcement.md` §3).
 
-**6. A CI job** that runs `python3 .claude/workflow/bin/workflow.py vendor verify --strict` (vendored mode). Its name goes in `ci.required_checks`.
+**6. A CI job,** in vendored mode: copy `$KIT/templates/github/workflow-kit.yml` to `.github/workflows/workflow-kit.yml`. Its check, `workflow kit`, goes in `ci.required_checks`.
 
-**7. `.gitignore` gets `.workflow/`.** `vendor install` adds it; check it's there.
+**7. `.gitignore` gets `.workflow/` and `__pycache__/`.** `vendor install` adds them; check they're there.
 
 **8. A "Workflow" section in `CLAUDE.md`.** It points at `.claude/workflow/flow.md` and the profile, and replaces any older flow description. The project's own rules stay where they are.
 
@@ -95,9 +104,7 @@ Use `AskUserQuestion`, recommended answers first. Ask only what exploring didn't
 
 `ready-for-human` and `owner-task` both mean "a person does this". Readiness treats both as human blockers.
 
-**10. Issue templates** in `.github/ISSUE_TEMPLATE/`:
-- `build-ticket.md`: Parent, What to build, Acceptance criteria, `Area:`, `## Blocked by`, by-hand checks;
-- `owner-task.md`: what the owner does, and what it unblocks.
+**10. Issue templates:** copy `$KIT/templates/github/ISSUE_TEMPLATE/build-ticket.md` and `owner-task.md` to `.github/ISSUE_TEMPLATE/`, keeping any the project has.
 
 Then commit, push the branch, and open the pull request. It touches protected paths, so it's the owner's to review and merge.
 

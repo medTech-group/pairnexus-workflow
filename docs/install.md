@@ -44,6 +44,15 @@ Then in Claude Code:
 /plugin install pairnexus-workflow@pairnexus
 ```
 
+To suggest it to everyone working on a project, put this in the project's `.claude/settings.json` (each person still installs it once; cloud sessions don't):
+
+```json
+{
+  "extraKnownMarketplaces": {"pairnexus": {"source": {"source": "github", "repo": "medtech-group/pairnexus-workflow"}}},
+  "enabledPlugins": {"pairnexus-workflow@pairnexus": true}
+}
+```
+
 Installing it installs its dependency, `mattpocock-skills`, from the same marketplace, pinned. Don't also add Matt Pocock's own marketplace: two plugins named `mattpocock-skills` drop one's hooks.
 
 ## Every project, whichever mode

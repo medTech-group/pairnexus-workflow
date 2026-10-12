@@ -24,26 +24,13 @@ Follow the `build-ticket` skill from start to finish. It uses the flow (`.claude
 **Commands.** Typecheck: {{commands.typecheck}}. One test file: {{commands.test_file}}. The full suite:
 {{commands.suites}}
 
+- **Tests first** at the spec's seams. They are already agreed, so never stop to ask about them.
 - **Review:** the `review-panel` skill, in rounds until clean, at most {{run.review_rounds}}.
 - **Check-ins:** while CI runs, subscribe to the PR's activity and schedule a check-in with `send_later` about every {{run.check_in_minutes}} minutes. End that turn with `WORKFLOW-STATUS: waiting`.
 
 ### Merging
 
-Merge mode: **{{merge.mode}}**.
-
-| Mode | What you do |
-|---|---|
-| auto-merge | Enable auto-merge on the PR (merge commit); GitHub merges once the ruleset's checks pass |
-| session | Merge it yourself with a merge commit, once the merge rule holds |
-| owner | Leave it ready for the owner |
-
-The merge rule (flow §4):
-1. Every required check is green on the head. Waived checks: {{merge.waived}}.
-2. The local evidence is posted on the PR, run on that exact head: `WF evidence --base-ref origin/{{project.base_branch}}`, where `WF` is `python3 .claude/workflow/bin/workflow.py`.
-3. The branch is level with `{{project.base_branch}}`. If it isn't, merge the base in and run everything again.
-4. The reviews are clean.
-
-If your permission settings refuse the merge, don't work around it. Comment on the PR and on #{{tracking.issue}} that it is green and ready, and end with `WORKFLOW-STATUS: waiting`. The conductor merges it.
+Merge mode: **{{merge.mode}}**. Waived CI checks: {{merge.waived}}. Merge when the merge rule (flow §4) holds, as build-ticket §6 describes for this mode, with the evidence from `python3 .claude/workflow/bin/workflow.py evidence --base-ref origin/{{project.base_branch}}`. If your permission settings refuse the merge, comment on the PR and on #{{tracking.issue}} that it is green and ready, and end with `WORKFLOW-STATUS: waiting`; the conductor merges it.
 
 ### Rules
 

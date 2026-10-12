@@ -4,9 +4,7 @@ What every session and reviewer reads beside `profile.toml`. Point to the projec
 
 ## The project's rules
 
-- Safety rules: `CLAUDE.md#safety-constraints` <!-- the anchors reviewers check every diff against -->
-- Wording rules: <!-- e.g. a style guide, banned terms -->
-- Architecture decisions: `docs/adr/`
+The list of rule documents is `project.rules` in `profile.toml` (one source; reviewers and briefings read it). Say here only what isn't obvious from them, e.g. which rule matters most where.
 
 ## Sensitive data
 

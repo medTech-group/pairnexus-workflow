@@ -32,6 +32,15 @@ SHORT_TAIL = 5
 CAUSE_LINES = 15
 CAUSE = re.compile(r"Error|error:|Exception|Traceback|failed to|Cannot|refused|[Dd]ocker")
 NO_COUNTS = "no test counts found in the output; check the suite's regexes"
+ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07")
+# Lines runners print after their totals that aren't totals (Playwright's report hints).
+HINT = re.compile(r"To open last HTML report|Serving HTML report|show-report|Press Ctrl\+C to quit", re.I)
+# pytest's summary: "==== 1 failed, 2 passed in 0.50s ====" (-v), or "3 passed in 0.12s" (-q).
+PYTEST_BANNER = re.compile(r"^=+ .* in [\d.]+s")
+PYTEST_QUIET = re.compile(
+    r"^\s*\d+ (?:passed|failed|skipped|errors?|deselected|xfailed|xpassed|warnings?)\b.*\bin [\d.]+s\b"
+)
+PYTEST = re.compile(r"(?<![\w-])pytest\b")
 
 
 class EvidenceError(RuntimeError):
@@ -63,12 +72,13 @@ class ShardResult:
     @property
     def ok(self) -> bool:
         """Exit 0, nothing failed or errored, and the regexes found something: a
-        suite that runs nothing fails."""
-        return self.exit == 0 and self.failed == 0 and self.errors == 0 and self.counted > 0
+        suite that runs nothing fails. A shard whose tests were all skipped counts
+        zero tests and passes (the base comparison catches the skips)."""
+        return self.exit == 0 and self.failed == 0 and self.errors == 0 and (self.counted > 0 or self.skipped > 0)
 
     @property
     def problem(self) -> str:
-        return NO_COUNTS if self.exit == 0 and self.counted == 0 else ""
+        return NO_COUNTS if self.exit == 0 and self.counted == 0 and self.skipped == 0 else ""
 
     @classmethod
     def load(cls, f: Path) -> "ShardResult":
@@ -104,8 +114,11 @@ def require_clean(root: Path) -> None:
         )
 
 
-def shards(suite: Suite, root: Path) -> list[list[str]]:
-    """Each shard's files, relative to the suite's cwd (the root when it has none)."""
+def shards(suite: Suite, root: Path, empty_ok: bool = False) -> list[list[str]]:
+    """Each shard's files, relative to the suite's cwd (the root when it has none).
+    The `files` globs are relative to the project root, even when cwd is set. With
+    empty_ok, a suite whose globs match nothing has no shards (for the base
+    branch, which may not have the suite's files yet)."""
     if not suite.files:
         return [[]]
     files: list[str] = []
@@ -113,6 +126,8 @@ def shards(suite: Suite, root: Path) -> list[list[str]]:
         files += sorted(str(Path(f).relative_to(root)) for f in glob.glob(str(root / pat), recursive=True))
     files = sorted(dict.fromkeys(files))
     if not files:
+        if empty_ok:
+            return []
         raise EvidenceError(f"suite {suite.name}: no files match {suite.files!r}")
     if suite.cwd:
         files = [os.path.relpath(root / f, root / suite.cwd) for f in files]
@@ -123,17 +138,42 @@ def _count(pattern: str, text: str) -> int:
     return sum(int(x) for x in re.findall(pattern, text) if str(x).isdigit())
 
 
+def _lines(out: str) -> list[str]:
+    """The output's lines without ANSI codes, blank lines and report hints."""
+    lines = [ANSI.sub("", l).rstrip() for l in (out or "").splitlines()]
+    return [l for l in lines if l.strip() and not HINT.search(l)]
+
+
 def _summary(out: str) -> str:
     """The last lines, where test runners print their totals."""
-    return "\n".join(out.strip().splitlines()[-SUMMARY_LINES:])
+    return "\n".join(_lines(out)[-SUMMARY_LINES:])
+
+
+def _pytest_summary(out: str) -> str | None:
+    """pytest's own summary line: the last `=== … in 0.5s ===` banner, or a final
+    quiet `3 passed in 0.12s`; None when there is neither."""
+    lines = _lines(out)
+    banners = [l for l in lines if PYTEST_BANNER.match(l.strip())]
+    if banners:
+        return banners[-1]
+    if lines and PYTEST_QUIET.match(lines[-1]):
+        return lines[-1]
+    return None
 
 
 def counts(suite: Suite, stdout: str, stderr: str) -> dict[str, int]:
-    """The counts from stdout's last lines, else from stderr's (jest prints its totals there)."""
+    """The counts from the runner's summary: for pytest its summary line only, so a
+    failure message holding "3 passed" isn't added; otherwise the last lines of
+    stdout, else of stderr (jest prints its totals there). With the suite's
+    `total` regex, passed is the total less the skipped, failed and errors."""
     keys = ("passed", "failed", "skipped", "errors")
+    pytest = bool(PYTEST.search(suite.run))
     for out in (stdout, stderr):
-        text = _summary(out)
+        text = (_pytest_summary(out) if pytest else None) or _summary(out)
         c = {k: _count(getattr(suite, k), text) for k in keys}
+        if suite.total:
+            total = _count(suite.total, text)
+            c["passed"] = max(0, total - c["skipped"] - c["failed"] - c["errors"])
         if any(c.values()):
             return c
     return dict.fromkeys(keys, 0)
@@ -150,9 +190,12 @@ def causes(out: str) -> list[str]:
     return found
 
 
-def run_shard(suite: Suite, index: int, files: list[str], root: Path, log: Path | None = None) -> ShardResult:
+def run_shard(
+    suite: Suite, index: int, files: list[str], root: Path, log: Path | None = None, log_root: Path | None = None
+) -> ShardResult:
     cmd = suite.run.replace("{files}", " ".join(_q(f) for f in files))
     cwd = root / suite.cwd if suite.cwd else root
+    log_root = log_root or root
     t0 = time.monotonic()
     p = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True)
     seconds = round(time.monotonic() - t0, 1)
@@ -163,7 +206,7 @@ def run_shard(suite: Suite, index: int, files: list[str], root: Path, log: Path 
             f"$ {cmd}\n# cwd: {cwd}\n# exit: {p.returncode}\n\n--- stdout ---\n{p.stdout}\n--- stderr ---\n{p.stderr}",
             encoding="utf-8",
         )
-        log_name = str(log.relative_to(root)) if log.is_relative_to(root) else str(log)
+        log_name = str(log.relative_to(log_root)) if log.is_relative_to(log_root) else str(log)
     r = ShardResult(
         suite=suite.name,
         index=index,
@@ -185,6 +228,17 @@ def _q(s: str) -> str:
     return "'" + s.replace("'", "'\\''") + "'" if re.search(r"[^\w./-]", s) else s
 
 
+def _next_log(base: Path, stem: str) -> Path:
+    """`<stem>.<attempt>.log`, the attempt one more than any kept, so each
+    attempt's output stays where previous_failures points."""
+    seen = [0]
+    for f in base.glob(f"{glob.escape(stem)}.*.log"):
+        n = f.name[len(stem) + 1 : -len(".log")]
+        if n.isdigit():
+            seen.append(int(n))
+    return base / f"{stem}.{max(seen) + 1}.log"
+
+
 def collect(
     profile: Profile,
     root: Path,
@@ -193,17 +247,25 @@ def collect(
     repair_first: bool = True,
     allow_dirty: bool = False,
     store: Path | None = None,
+    empty_ok: bool = False,
+    notes: list[str] | None = None,
+    clean_check: bool = True,
 ) -> tuple[str, list[ShardResult]]:
     """Run (or resume) every shard of the suites on HEAD.
 
     With allow_dirty a dirty tree runs anyway, kept apart from the commit's
     evidence (<sha>-dirty) and never reused. The profile's repair commands run
-    once, and again before a shard only when the shard before it failed.
+    once, and again before a shard only when the shard before it failed. Each
+    attempt's output is kept as `<suite>-NNN.<attempt>.log`. With empty_ok a
+    suite whose files match nothing counts 0, with a line added to `notes`.
+    Without clean_check (the base worktree, fresh from git, where only
+    commands.setup has written) the tree isn't checked.
     """
     if allow_dirty:
         dirty = dirty_paths(root)
     else:
-        require_clean(root)
+        if clean_check:
+            require_clean(root)
         dirty = []
     sha = head_sha(root)
     base = (store or root / EVIDENCE_DIR) / (sha + ("-dirty" if dirty else ""))
@@ -217,8 +279,12 @@ def collect(
         raise EvidenceError("the profile has no [[commands.suite]] to run" + (f" named {only}" if only else ""))
     repaired = False
     last_failed = False
+    log_root = store.parent.parent if store else root
     for suite in suites:
-        for i, files in enumerate(shards(suite, root)):
+        parts = shards(suite, root, empty_ok=empty_ok)
+        if not parts and notes is not None:
+            notes.append(f"suite {suite.name}: no files match {suite.files!r} here, so it counts 0")
+        for i, files in enumerate(parts):
             f = base / f"{suite.name}-{i:03d}.json"
             earlier: list[dict] = []
             if f.exists():
@@ -236,7 +302,7 @@ def collect(
             if repair_first and profile.repair and (not repaired or last_failed):
                 repair.run(profile.repair, root)
                 repaired = True
-            r = run_shard(suite, i, files, root, log=base / f"{suite.name}-{i:03d}.log")
+            r = run_shard(suite, i, files, root, log=_next_log(base, f"{suite.name}-{i:03d}"), log_root=log_root)
             r.previous_failures = earlier
             f.write_text(json.dumps(asdict(r)))
             results.append(r)
@@ -246,15 +312,36 @@ def collect(
     return sha, results
 
 
+def resolve_ref(root: Path, ref: str) -> str:
+    """The commit `ref` names here, or an EvidenceError at once."""
+    p = subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"], cwd=root, capture_output=True, text=True)
+    if p.returncode or not p.stdout.strip():
+        raise EvidenceError(f"--base-ref {ref}: not a commit here ({(p.stderr.strip() or 'unknown revision')[:200]})")
+    return p.stdout.strip()
+
+
+@dataclass
+class BaseCount:
+    """The base branch's count. `problem` is set when there is no usable count:
+    the base run errored or a shard failed, so nothing can be compared."""
+
+    ref: str
+    sha: str
+    count: int | None
+    notes: list[str] = field(default_factory=list)
+    problem: str = ""
+
+
 def base_count_from_ref(
-    profile: Profile, root: Path, ref: str, only: list[str] | None = None, fresh: bool = False
-) -> tuple[int, str, bool]:
+    profile: Profile, root: Path, ref: str, only: list[str] | None = None, fresh: bool = False, sha: str | None = None
+) -> BaseCount:
     """Run the same suites on a worktree of `ref` under .workflow/base-<sha>/, then
-    remove it: (tests passed, its SHA, whether every shard passed)."""
-    p = subprocess.run(["git", "rev-parse", "--verify", f"{ref}^{{commit}}"], cwd=root, capture_output=True, text=True)
-    if p.returncode:
-        raise EvidenceError(f"--base-ref {ref}: not a commit here ({p.stderr.strip()[:200]})")
-    base_sha = p.stdout.strip()
+    remove it. The profile's `commands.setup` runs there first; nothing else is
+    copied or linked in. A suite whose files match nothing on the base counts 0,
+    with a note. Never raises for the base run itself: a run that errors or a
+    shard that fails gives a BaseCount with `problem` and no count."""
+    base_sha = sha or resolve_ref(root, ref)
+    out = BaseCount(ref=ref, sha=base_sha, count=None)
     wt = root / ".workflow" / f"base-{base_sha}"
 
     def remove() -> None:
@@ -267,13 +354,34 @@ def base_count_from_ref(
     wt.parent.mkdir(parents=True, exist_ok=True)
     add = subprocess.run(["git", "worktree", "add", "--detach", str(wt), base_sha], cwd=root, capture_output=True, text=True)
     if add.returncode:
-        raise EvidenceError(f"couldn't add a worktree of {ref}: {add.stderr.strip()[:300]}")
+        out.problem = f"couldn't add a worktree ({add.stderr.strip()[:300]})"
+        return out
     try:
+        if profile.setup:
+            p = subprocess.run(profile.setup, shell=True, cwd=wt, capture_output=True, text=True)
+            if p.returncode:
+                tail = "\n".join((p.stdout + p.stderr).strip().splitlines()[-3:])
+                out.problem = f"commands.setup (`{profile.setup}`) exited {p.returncode} in the base worktree: {tail[:300]}"
+                return out
         prof = dataclasses.replace(profile, root=wt)
-        _, results = collect(prof, wt, only=only, fresh=fresh, store=root / EVIDENCE_DIR)
+        _, results = collect(
+            prof, wt, only=only, fresh=fresh, store=root / EVIDENCE_DIR, empty_ok=True, notes=out.notes, clean_check=False
+        )
+    except EvidenceError as e:
+        out.problem = str(e)
+        return out
     finally:
         remove()
-    return sum(r.passed for r in results), base_sha, all(r.ok for r in results)
+    bad = [r for r in results if not r.ok]
+    if bad:
+        r = bad[0]
+        why = r.problem or f"exit {r.exit}, {r.failed} failed, {r.errors} errors"
+        out.problem = f"{r.suite} shard {r.index} didn't pass there ({why})" + (
+            f" and {len(bad) - 1} more" if len(bad) > 1 else ""
+        )
+        return out
+    out.count = sum(r.passed for r in results)
+    return out
 
 
 def _short_tail(text: str) -> str:
@@ -287,7 +395,14 @@ def report(
     base_count: int | None = None,
     dirty: list[str] | None = None,
     base_label: str = "",
+    base_problem: str = "",
+    base_notes: list[str] | None = None,
 ) -> tuple[bool, str]:
+    """The evidence as Markdown, and whether it passes. `base_problem` (no usable
+    base count, e.g. "no usable base count from main: …") doesn't fail it: the
+    commit's own result stands, and the report says plainly that the count
+    wasn't compared, so a base branch with its own failure doesn't block every
+    PR (the conductor opens an infra ticket for it instead)."""
     by_suite: dict[str, list[ShardResult]] = {}
     for r in results:
         by_suite.setdefault(r.suite, []).append(r)
@@ -318,11 +433,18 @@ def report(
                 line += f"; shard {r.index} passed on retry after {n} failure{'s' if n != 1 else ''}"
             if r.problem:
                 line += f"; shard {r.index}: {r.problem}"
+            elif r.ok and r.counted == 0:
+                line += f"; shard {r.index}: every test was skipped"
         lines.append(line)
         tail = _short_tail(rs[-1].tail)
         if tail:
             lines += ["  ```", *("  " + x for x in tail.splitlines()), "  ```"]
-    if base_count is not None:
+    if base_problem:
+        lines.append(
+            f"- **Not compared with the base branch:** {base_problem}. This shows the commit's own tests pass, "
+            "not that none were removed or skipped; fix the base branch's suite (an infra ticket)."
+        )
+    elif base_count is not None:
         where = f" ({base_label})" if base_label else ""
         if total < base_count:
             ok = False
@@ -336,6 +458,8 @@ def report(
             lines.append(f"- Base branch{where}: {base_count} passed; this commit: {total}.")
     else:
         lines.append("- No base-branch count given: this doesn't show whether tests were removed.")
+    for n in base_notes or []:
+        lines.append(f"- Base branch: {n}.")
     for r in [r for r in results if not r.ok][:3]:
         lines += ["", f"<details><summary>{r.suite} shard {r.index} (exit {r.exit})</summary>", ""]
         if r.problem:

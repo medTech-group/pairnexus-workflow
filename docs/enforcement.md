@@ -51,15 +51,40 @@ The guard also recognises ticket sessions by their branch (`run.ticket_branch`) 
 
 ## 4. What the guard does and doesn't catch
 
-In ticket sessions it works by **allow-list** where a deny-list can't keep up:
-- `git push` may only update branches matching `run.ticket_branch` (any form it can parse: refspecs, `HEAD`, `@`, `-C`, `cd`, inside `sh -c`, `eval`, `$(…)`, backticks, shell keywords, wrappers, line continuations);
-- GitHub API writes may only touch issues, comments, labels and pull requests; GraphQL mutations aren't allowed; `curl` writes to GitHub aren't allowed;
-- `git config` may not set aliases or push settings.
+It reads each command the way a shell would, well enough to catch a well-meaning session's mistakes and the obvious tricks:
+- operators and subshells wherever they sit (`;(`, `&&(`, `$(…)`, backticks, `<(…)`, function bodies);
+- heredocs (scanned when they feed a shell, or when their delimiter can't be read);
+- the shell's working directory, from the hook event and through `cd`/`pushd`;
+- wrappers (`sudo`, `env`, `timeout`, `xargs`, `script -c` …), and a `git` or `gh` anywhere in a command's words;
+- file-descriptor redirects (`2>&1` is a redirect, not an argument).
 
-In every role it denies (asks, in attended sessions): pushes to the base branch, force-pushes, deletes, `--mirror`, `--all`, `gh pr merge --admin`, and rewriting the base branch's ref, protection or rulesets (REST or GraphQL), merging into it through the merges API, or writing it through the contents API.
+**In ticket sessions, by allow-list:**
+- `git push` may update only the session's own ticket branch: no tags, no other branches, and a bare push only when the upstream has the same name;
+- `gh` may run only the PR, issue, run and read subcommands a ticket needs;
+- `gh api` writes may touch only issues, comments, labels and pull requests of the profile's repo, and GraphQL only `enablePullRequestAutoMerge` and `addComment`;
+- `git config` may not set aliases, push settings, `core.*` hooks, editors, ssh commands, credentials or includes; `GIT_CONFIG*`/`GIT_SSH*`/`GIT_DIR` assignments and `--config-env` are refused.
 
-In ticket sessions it also denies: the profile's deploy commands (by the command run, not by mentions); writes to protected paths by Edit/Write, by the shell's common writers (redirects, `cp`/`mv`/`install`/`rsync` destinations, `rm`, `sed -i`, `perl -pi`, `dd of=`, `tee`, `mkdir`, `git rm`/`mv`/`checkout`, deleting a parent directory, after a `cd`) or through GitHub's file tools; a new skip or focus marker in a test file; and switching to a branch outside the pattern when the role comes only from the branch name. A GitHub post (MCP or `gh`) matching the profile's sensitive patterns is refused in every role.
+**In every role** it denies (asks, in attended sessions):
+- pushes to the base branch in any form it can parse (refspecs, `HEAD`, `@`, abbreviated options, `send-pack`, `git-push`), force-pushes, deletes, `--mirror`, `--all`;
+- `gh pr merge --admin`;
+- rewriting, renaming or merging into the base branch, its protection, its rulesets or the default branch through the API.
 
-If the guard itself fails, or the profile is invalid, it refuses in ticket and conductor sessions (`WORKFLOW_ROLE` set) and reports the error in attended ones. If the kit's CLI is missing from the checkout, the hooks do nothing rather than block every tool.
+**In ticket sessions it also denies:**
+- the profile's deploy commands, however they're run (directly, through a shell, piped, `env -C`, `find -exec`);
+- writes to protected paths, `.git/config` and `.git/hooks/**`, by Edit/Write, by the shell's writers (redirects, `cp`/`mv`/`install`/`rsync`/`ln` destinations, `rm`, `sed -i`, `perl -pi`, `dd`, `tee`, `mkdir`, `curl -o`, `wget -O`, `find -delete`, `git rm`/`mv`/`checkout`/`restore`, archives and patches that touch them, deleting a parent directory, globs and brace lists that expand to them, symlinks resolved), or through GitHub's file tools;
+- a new skip or focus marker in a test file (`conftest.py` included);
+- switching to a branch outside the pattern when the role comes only from the branch name.
 
-It can't see: a script file the session writes and then runs, network calls made by programs, obfuscated commands, or anything outside Claude Code's tools. That is why the ruleset and the credential-free environment come first.
+A GitHub post (MCP or `gh`, including heredoc bodies and `--body-file`/`--input` files) matching the profile's sensitive patterns is refused in every role.
+
+**When something is wrong it fails closed** in ticket and conductor sessions (`WORKFLOW_ROLE` set, or set to a value it doesn't recognise, which counts as ticket):
+- an invalid or missing profile;
+- a malformed hook event;
+- an error in the guard itself;
+- the kit's CLI missing from the checkout. Then everything is refused except `git checkout -- .claude/workflow` or `git restore .claude/workflow`, which restore it.
+
+In attended sessions the hooks report the error and stay out of the way.
+
+**It can't see** a script file the session writes and then runs, network calls made by programs, or deliberately obfuscated commands. It is a seatbelt for honest mistakes, not a wall against an adversary. That is why the ruleset and the credential-free environment come first.
+
+**A lesson from building this kit:** a review agent testing the guard ran its own test cases by accident. Its heredoc's delimiter appeared inside a case, so the shell ran the rest as commands. One of them pushed to the kit repo's `main`, which had no active ruleset at the time. Reviewers and explorers that try dangerous commands work only in throwaway copies, never in the real checkout, and the ruleset is what makes such an accident harmless.

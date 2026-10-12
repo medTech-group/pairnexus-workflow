@@ -335,3 +335,50 @@ def test_fetch_other_failure_is_a_clean_exit(monkeypatch):
     monkeypatch.setattr(cli.subprocess, "run", lambda cmd, **kw: _Done(1, err="HTTP 404"))
     with pytest.raises(SystemExit, match="HTTP 404"):
         cli._fetch("acme/demo", "issues")
+
+
+# ---------- review: URLs and quotes in blockers, --only "", one-word areas ----------
+
+
+def test_blockers_read_issue_urls_and_quoted_lines():
+    from workflow.issues import read_area  # noqa: F401
+
+    body = (
+        "> Blocked by: https://github.com/acme/demo/issues/12, #13\n\n"
+        "## Blocked by\n"
+        "- https://github.com/Acme/Demo/issues/14#issuecomment-5\n"
+        "- https://github.com/other/lib/issues/3\n"
+        "> - #15\n"
+    )
+    assert blockers_of(body, "acme/demo") == [12, 13, 14, "other/lib#3", 15]
+    assert blockers_of("> > **Blocked by:**\n> > - #7\n> > - https://github.com/acme/demo/issues/8\n", "acme/demo") == [7, 8]
+    assert blockers_of("> Blocked by: None (see https://github.com/acme/demo/issues/9)", "acme/demo") == []
+    issues = [issue(12, state="closed", reason="completed", labels=()), issue(20, body="Blocked by https://github.com/acme/demo/issues/12")]
+    v = {x.number: x for x in readiness(issues, [], repo="acme/demo")}
+    assert v[20].ready and v[20].blockers == [12]
+
+
+def test_ready_cli_only_empty_is_a_clean_error(ready_files, capsys):
+    assert cli.main([*ready_files, "--only", ""]) == 2
+    err = capsys.readouterr().err
+    assert "--only was given no ticket numbers" in err and "Traceback" not in err
+    assert cli.main([*ready_files, "--only", " , "]) == 2
+
+
+def test_an_area_is_one_word():
+    from workflow.issues import read_area
+
+    areas = ["messages", "clock"]
+    assert read_area("Area: messages and sharing", areas) == ("messages", None)
+    area, note = read_area("Area: the clock module", areas)
+    assert area == "the-clock-module" and note.startswith("Area should be one word from [clock, messages]")
+    area, note = read_area("Area: Clock Module", None)
+    assert area == "clock-module" and "Area should be one word" in note
+    area, note = read_area("Area: mesages", areas)
+    assert area == "mesages" and "isn't one of the profile's areas" in note and "treated as its own area" in note
+    assert read_area("Area: Messages (backend)", areas) == ("messages", None)
+    assert read_area("no area", areas) == (None, None)
+    issues = [issue(90, body="Area: the clock module"), issue(91, body="Area: mesages")]
+    v = {x.number: x for x in readiness(issues, [], areas=areas)}
+    assert v[90].area == "the-clock-module" and "one word" in v[90].notes[0] and v[90].ready
+    assert "treated as its own area" in v[91].notes[0]

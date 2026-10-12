@@ -19,7 +19,7 @@ First version, from the pair-drop weekend run of 9–12 Oct 2026 and two indepen
   - vendoring with a lockfile (local edits kept, one mode per project).
 - **The hooks:**
   - the guard: base-branch pushes, force-pushes, deploys, protected paths, new skip markers and sensitive posts, across Bash, Edit/Write and GitHub's MCP tools;
-  - the checklist gate (`WORKFLOW-STATUS`, at most two blocks, never while already continuing);
+  - the checklist gate (`WORKFLOW-STATUS`, one nudge per turn, never while already continuing, a safety cap per session);
   - flow context;
   - environment repair.
 - **Review round 1** (three independent reviewers, about 100 findings) changed:

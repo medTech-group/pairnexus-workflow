@@ -23,6 +23,7 @@ _BLOCK = re.compile(r"<!-- workflow-state:begin[^>]*-->\s*```json\s*(.*?)\s*```\
 
 BODY_LIMIT = 65_536
 TICKET_STATUSES = {"queued", "running", "in-review", "merged", "needs-human", "set-aside", "skipped"}
+RUN_STATUSES = {"running", "stopping", "stopped"}
 
 
 class StateError(ValueError):
@@ -40,7 +41,33 @@ def empty(charter: dict | None = None) -> dict:
         "for_owner": [],
         "by_hand_issue": None,
         "stopped": None,
+        # The newest tracking-issue comment the conductor has read (its id), or
+        # None before the first check-in: the owner's comments after it are new.
+        "comments_read_through": None,
+        "kickoff_tickets": [],
+        "ci_minutes_at_start": None,
+        "status": "running",
     }
+
+
+def _int(v) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def _iso(v) -> bool:
+    return charter_mod._time(v) is not None
+
+
+# Optional ticket fields and their checks.
+TICKET_FIELDS = {
+    "pr": (lambda v: _int(v) and v > 0, "an issue number"),
+    "rounds": (lambda v: _int(v) and v >= 0, "a whole number"),
+    "attempts": (lambda v: _int(v) and v >= 0, "a whole number"),
+    "stopped_head": (lambda v: isinstance(v, str) and bool(v.strip()), "a commit SHA"),
+    "area": (lambda v: isinstance(v, str) and bool(v.strip()), "an area name"),
+    "started_at": (_iso, "an ISO time with its zone"),
+    "merged_at": (_iso, "an ISO time with its zone"),
+}
 
 
 def validate(s: Any) -> list[str]:
@@ -61,12 +88,23 @@ def validate(s: Any) -> list[str]:
             if not isinstance(v, dict) or v.get("status") not in TICKET_STATUSES:
                 p.append(f"tickets[{k}].status must be one of {sorted(TICKET_STATUSES)}")
                 continue
-            att = v.get("attempts", 0)
-            if not isinstance(att, int) or att < 0:
-                p.append(f"tickets[{k}].attempts must be a whole number")
-    for key in ("overrides", "ledger", "for_owner"):
+            for f, (ok, what) in TICKET_FIELDS.items():
+                if f in v and v[f] is not None and not ok(v[f]):
+                    p.append(f"tickets[{k}].{f} must be {what}")
+    for key in ("overrides", "ledger", "for_owner", "kickoff_tickets"):
         if not isinstance(s.get(key, []), list):
             p.append(f"{key} must be a list")
+    kt = s.get("kickoff_tickets") or []
+    if isinstance(kt, list) and not all(_int(x) and x > 0 for x in kt):
+        p.append("kickoff_tickets must be a list of issue numbers")
+    crt = s.get("comments_read_through")
+    if crt is not None and not (_int(crt) and crt >= 0):
+        p.append("comments_read_through must be a comment id (a whole number) or null")
+    ci = s.get("ci_minutes_at_start")
+    if ci is not None and (isinstance(ci, bool) or not isinstance(ci, (int, float)) or ci < 0):
+        p.append("ci_minutes_at_start must be a number of minutes or null")
+    if "status" in s and s["status"] not in RUN_STATUSES:
+        p.append(f"status must be one of {sorted(RUN_STATUSES)}")
     for i, e in enumerate(s.get("ledger") or []):
         if not isinstance(e, dict) or not e.get("what") or not e.get("at") or not e.get("grant"):
             p.append(f"ledger[{i}] needs what, at and grant (the charter line or owner message allowing it)")
@@ -130,6 +168,28 @@ def put(body: str, state: dict) -> str:
             f"the body would be {len(new)} characters, too close to GitHub's {BODY_LIMIT}; "
             "move narrative to comments and finished tickets to the run report"
         )
+    return new
+
+
+def _approved(state: Any) -> bool:
+    c = state.get("charter") if isinstance(state, dict) else None
+    return isinstance(c, dict) and c.get("approved") is not None
+
+
+def patch(current: dict, change: Any) -> dict:
+    """The state with a merge patch applied, its charter validated again. A
+    charter that was approved must still be approved after the patch: a patch
+    can't unapprove a running run (amendments change it instead)."""
+    new = merge_patch(current, change)
+    if _approved(current):
+        if not _approved(new):
+            raise StateError(
+                "the patch would leave the run's charter unapproved; a running run's charter changes only by "
+                "amendments, and stopping it is `status`"
+            )
+        problems = charter_mod.validate(new["charter"])
+        if problems:
+            raise StateError("the patched charter has problems:\n- " + "\n- ".join(problems))
     return new
 
 

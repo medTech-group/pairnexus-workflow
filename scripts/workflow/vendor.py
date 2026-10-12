@@ -17,14 +17,21 @@ there that isn't the kit's stops the install (unless --adopt), with every such
 file listed. `verify` compares the files with the lock. `update` replaces files
 the project hasn't changed, keeps the project's edit where the kit didn't change
 the file, and writes `<file>.new` beside any both changed, listing them as
-conflicts to merge by hand; `resolve <path>` records the hand merge. A file the
-kit drops that the project edited is kept, and recorded as orphaned in the lock.
+conflicts to merge by hand; `resolve <path>` records the hand merge, and
+`resolve --keep <path>` a deliberate local edit with no conflict (still a
+conflict when the kit later changes that file). A file the kit drops that the
+project edited is kept, and recorded as orphaned in the lock. `verify` fails on
+missing files, missing hooks and unresolved conflicts (and, with --strict, on
+changed files and Matt Pocock's skills left out without --no-mattpocock).
 
 The lock (`files`: the hash of each file as written or resolved; `merged`: for a
 resolved file, the kit version merged in; `conflicts`: the kit version each
 unresolved conflict offers; `orphaned`: the kit version each kept orphan came
-from) gives update a three-way view: the project's file, the kit version it came
-from, and the kit's new version.
+from; `kept`: the hash of each deliberate local edit) gives update a three-way
+view: the project's file, the kit version it came from (`merged`, else
+`files`), and the kit's new version. A file is edited when it differs from the
+kit version it came from, so a conflict resolved by taking the kit's version
+unchanged updates cleanly next time.
 """
 
 from __future__ import annotations
@@ -46,6 +53,16 @@ MP_NOTICE = Path(".claude/skills/LICENSE-mattpocock-skills")
 GUARD_MATCHER = "Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*[Gg]it[Hh]ub.*"
 SKIP_DOCS = {"flow.md", "proposal.md", "spike.md"}
 IGNORE_LINE = ".workflow/"
+IGNORE_LINES = {
+    ".workflow/": {".workflow", ".workflow/", "/.workflow", "/.workflow/"},
+    "__pycache__/": {"__pycache__", "__pycache__/", "/__pycache__/", "**/__pycache__", "**/__pycache__/", "*.pyc", "*.py[cod]"},
+}
+MP_MISSING = (
+    "the Matt Pocock skills (tdd, code-review, to-spec, …) aren't vendored; build-ticket and review-panel need them. "
+    "Pass --mattpocock <a checkout of mattpocock/skills>, or --no-mattpocock to go without them deliberately"
+)
+# Directories the kit owns as a whole: files there it doesn't ship are left from an earlier copy.
+OWNED_DIRS = (".claude/workflow/bin/workflow", ".claude/workflow/docs", ".claude/workflow/templates")
 
 
 class VendorError(RuntimeError):
@@ -69,10 +86,47 @@ def _settings(project: Path, rel: Path = SETTINGS) -> dict:
     return data
 
 
+MISSING_KIT_REASON = (
+    f"the workflow kit is missing from this checkout ({HOOK_TAG}); restore it with: git checkout -- .claude/workflow"
+)
+# What the guard still allows with the kit missing: exactly these Bash commands.
+RESTORE_COMMANDS = ("git checkout -- .claude/workflow", "git restore .claude/workflow")
+
+
 def hook_command(sub: str) -> str:
-    """The kit's hook command. It exits 0 when the CLI is missing: python3 on a
-    missing file exits 2, which on PreToolUse would block every tool."""
-    return f'F="$CLAUDE_PROJECT_DIR/{HOOK_TAG}"; [ -f "$F" ] || exit 0; python3 "$F" hook {sub}'
+    """The kit's hook command, run by Claude Code with sh.
+
+    With the CLI there: `python3 -B` runs it (-B: no __pycache__ in the checkout).
+    With the CLI missing (a session deleted it, a bad checkout):
+    - the guard fails closed when WORKFLOW_ROLE is set to anything but
+      `attended` (ticket, conductor, or an unrecognised value, which the CLI
+      treats as ticket): it prints a deny decision, except for exactly
+      `git checkout -- .claude/workflow` or `git restore .claude/workflow`, so
+      the session can put the kit back. The event comes on stdin (hook commands
+      get no $CLAUDE_TOOL_INPUT), so python3 reads it; without python3, every
+      tool is denied and the owner restores the kit by hand;
+    - with WORKFLOW_ROLE unset or `attended`, and for every other hook, it
+      exits 0 silently (python3 on a missing file exits 2, which on PreToolUse
+      would block every tool, unexplained)."""
+    run = f'F="$CLAUDE_PROJECT_DIR/{HOOK_TAG}"; if [ -f "$F" ]; then exec python3 -B "$F" hook {sub}; fi; '
+    if sub != "guard":
+        return run + "exit 0"
+    deny = json.dumps(
+        {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": MISSING_KIT_REASON}},
+        separators=(",", ":"),
+    )
+    restore = (
+        "import json,sys;e=json.load(sys.stdin);i=e.get('tool_input') or {};"
+        "c=i.get('command') if e.get('tool_name')=='Bash' and isinstance(i,dict) else None;"
+        f"sys.exit(0 if isinstance(c,str) and ' '.join(c.split()) in {RESTORE_COMMANDS!r} else 1)"
+    ).replace("'", '"')
+    return (
+        run
+        + """R=$(printf '%s' "${WORKFLOW_ROLE:-}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]'); """
+        + 'if [ -z "$R" ] || [ "$R" = attended ]; then exit 0; fi; '
+        + f"if command -v python3 >/dev/null 2>&1 && python3 -c '{restore}' 2>/dev/null; then exit 0; fi; "
+        + f"printf '%s\\n' '{deny}'"
+    )
 
 
 def _hook(sub: str, matcher: str | None = None, timeout: int = 30) -> dict:
@@ -239,16 +293,53 @@ def _write_lock(project: Path, lock: dict) -> None:
     (project / LOCK).write_text(json.dumps(lock, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def _ensure_ignored(project: Path) -> bool:
-    """Add `.workflow/` (the evidence and run scratch) to .gitignore; True when added."""
+def _ensure_ignored(project: Path) -> list[str]:
+    """Add `.workflow/` (the evidence and run scratch) and `__pycache__/` (the hooks
+    run `python3 -B`, but other scripts may not) to .gitignore; the lines added."""
     f = project / ".gitignore"
     text = f.read_text(encoding="utf-8") if f.exists() else ""
-    if any(l.strip() in {".workflow", ".workflow/", "/.workflow", "/.workflow/"} for l in text.splitlines()):
-        return False
+    have = {l.strip() for l in text.splitlines()}
+    add = [line for line, forms in IGNORE_LINES.items() if not have & forms]
+    if not add:
+        return []
     if text and not text.endswith("\n"):
         text += "\n"
-    f.write_text(text + IGNORE_LINE + "\n", encoding="utf-8")
-    return True
+    f.write_text(text + "".join(l + "\n" for l in add), encoding="utf-8")
+    return add
+
+
+def _other_prompt_hooks(project: Path) -> list[str]:
+    """The commands of UserPromptSubmit hooks that aren't the kit's."""
+    out = []
+    for rel in (SETTINGS, SETTINGS_LOCAL):
+        hooks = _settings(project, rel).get("hooks")
+        entries = hooks.get("UserPromptSubmit") if isinstance(hooks, dict) else None
+        for e in entries if isinstance(entries, list) else []:
+            for h in (e.get("hooks") if isinstance(e, dict) else None) or []:
+                if isinstance(h, dict) and not _is_kit_hook(h):
+                    out.append(f"{h.get('command') or h.get('type') or '?'} (in {rel})")
+    return out
+
+
+def _stale(project: Path, files: dict[str, Path], known: set[str]) -> list[str]:
+    """Files in directories the kit owns (each of its skills, and the CLI, docs and
+    templates) that it doesn't ship and the lock doesn't know: left from an
+    earlier copy. Reported, never deleted."""
+    dirs = set(OWNED_DIRS)
+    for dst in files:
+        parts = dst.split("/")
+        if len(parts) > 3 and parts[:2] == [".claude", "skills"]:
+            dirs.add("/".join(parts[:3]))
+    out = []
+    for d in sorted(dirs):
+        root = project / d
+        if not root.is_dir():
+            continue
+        for f in _walk(root, None):
+            rel = f.relative_to(project).as_posix()
+            if rel not in files and rel not in known and not rel.endswith(".new"):
+                out.append(rel)
+    return sorted(out)
 
 
 def _clash_message(clashes: list[str]) -> list[str]:
@@ -278,6 +369,7 @@ def install(
     update: bool = False,
     adopt: bool = False,
     strict_pin: bool = False,
+    no_mattpocock: bool = False,
 ) -> dict:
     for rel in (SETTINGS, SETTINGS_LOCAL):
         if (_settings(project, rel).get("enabledPlugins") or {}).get(PLUGIN_KEY):
@@ -292,7 +384,9 @@ def install(
     if update and not lock:
         raise VendorError("nothing to update: the kit isn't vendored here yet")
     lock = lock or {}
-    if update and lock.get("mattpocock_sha") and mattpocock is None:
+    if mattpocock is not None and no_mattpocock:
+        raise VendorError("give --mattpocock or --no-mattpocock, not both")
+    if update and lock.get("mattpocock_sha") and mattpocock is None and not no_mattpocock:
         raise VendorError(
             f"the lock records Matt Pocock's skills (at {lock['mattpocock_sha']}); "
             "pass --mattpocock <checkout at SHA> so the update keeps them instead of removing them"
@@ -300,6 +394,18 @@ def install(
     if not looks_like_kit(kit):
         raise VendorError(f"{kit} doesn't look like the kit (no skills/ and scripts/workflow.py); pass --kit <the kit's checkout>")
     warnings: list[str] = []
+    if mattpocock:
+        mp_state = "vendored"
+    elif no_mattpocock or (update and lock.get("mattpocock_skills") == "declined"):
+        mp_state = "declined"
+    else:
+        mp_state = "not_vendored"
+        warnings.append(MP_MISSING)
+    for cmd in _other_prompt_hooks(project):
+        warnings.append(
+            f"the project's settings already have a UserPromptSubmit hook, {cmd}: if it also puts the flow in "
+            "context, sessions get it twice; remove it once the kit's context hook replaces it"
+        )
     mp_sha = None
     if mattpocock:
         mp_sha = _git_sha(mattpocock)
@@ -320,6 +426,7 @@ def install(
     merged: dict[str, str] = dict(lock.get("merged", {}))
     pending: dict[str, str] = dict(lock.get("conflicts", {}))
     orphaned: dict[str, str] = dict(lock.get("orphaned", {}))
+    keeps: dict[str, str] = dict(lock.get("kept", {}))
     missing = [f"{dst} (from {src})" for dst, src in files.items() if not src.is_file()]
     if missing:
         raise VendorError("the kit is missing files it should ship: " + "; ".join(missing))
@@ -342,8 +449,9 @@ def install(
             unchanged.append(dst)
             continue
         if dst in old_files:
+            # The kit version the file came from: what a resolve merged in, else as written.
             kit_base = merged.get(dst, old_files[dst])
-            edited = cur != old_files[dst] or dst in merged
+            edited = cur != kit_base
         elif dst in orphaned:
             kit_base, edited = orphaned[dst], cur != orphaned[dst]
         else:
@@ -373,7 +481,7 @@ def install(
         t = project / dst
         if not t.exists():
             continue
-        if _hash(t) == h and dst not in merged:
+        if _hash(t) == merged.get(dst, h):
             removed.append(dst)
         else:
             orphans.append(dst)
@@ -385,6 +493,8 @@ def install(
             del orphaned[dst]
         elif _hash(t) == h:
             removed.append(dst)
+
+    stale = _stale(project, files, set(old_files) | set(orphaned)) if adopt else []
 
     # ---- write ----
     for dst in writes:
@@ -406,6 +516,7 @@ def install(
     lock_files: dict[str, str] = {}
     new_merged: dict[str, str] = {}
     new_pending: dict[str, str] = {}
+    new_keeps: dict[str, str] = {}
     for dst in files:
         if dst in kept or dst in conflicts:
             lock_files[dst] = old_files.get(dst) or orphaned[dst]
@@ -413,6 +524,8 @@ def install(
                 new_merged[dst] = merged[dst]
             if dst in conflicts:
                 new_pending[dst] = new_hash[dst]
+            elif dst in keeps and _hash(project / dst) == keeps[dst]:
+                new_keeps[dst] = keeps[dst]  # still the deliberate edit, and the kit didn't change it
         else:
             lock_files[dst] = _hash(project / dst)
         orphaned.pop(dst, None)
@@ -421,10 +534,12 @@ def install(
         "kit_version": version,
         "kit_sha": _git_sha(kit),
         "mattpocock_sha": mp_sha if mattpocock else None,
+        "mattpocock_skills": mp_state,
         "files": lock_files,
         "merged": new_merged,
         "conflicts": new_pending,
         "orphaned": orphaned,
+        "kept": new_keeps,
     }
     _write_lock(project, new_lock)
     return {
@@ -436,15 +551,20 @@ def install(
         "conflicts": conflicts,
         "removed": removed,
         "orphaned": orphans,
+        "stale": stale,
         "symlinks_skipped": symlinks,
         "gitignore_added": ignored,
         "warnings": warnings,
     }
 
 
-def resolve(project: Path, path: str) -> dict:
+def resolve(project: Path, path: str, keep: bool = False) -> dict:
     """A hand-merged conflict: record the file as the project's, with the kit
-    version merged in, and delete <path>.new, so update stops reporting it."""
+    version merged in, and delete <path>.new, so update stops reporting it.
+
+    With keep: a deliberate local edit to a vendored file with no conflict,
+    recorded as `kept` so `verify --strict` passes for it. Update leaves it while
+    the kit doesn't change the file, and reports a conflict when it does."""
     lock = read_lock(project)
     if not lock:
         raise VendorError("the kit isn't vendored here (no .claude/workflow/lock.json)")
@@ -462,11 +582,24 @@ def resolve(project: Path, path: str) -> dict:
         raise VendorError(f"{dst} isn't one of the kit's files in the lock")
     if not target.exists():
         raise VendorError(f"{dst} doesn't exist; restore it, or run `vendor update` again")
+    if keep:
+        if dst in pending or new.exists():
+            raise VendorError(f"{dst} has a conflict: merge {dst}.new into it and run `vendor resolve {dst}`")
+        cur = _hash(target)
+        if cur == lock["files"][dst]:
+            raise VendorError(f"{dst} is as the lock records it: there is no local edit to keep")
+        lock.setdefault("kept", {})[dst] = cur
+        _write_lock(project, lock)
+        return {"kept": dst}
     kit_version = pending.pop(dst, None) or (_hash(new) if new.exists() else None)
     if kit_version is None:
-        raise VendorError(f"{dst} has no conflict to resolve (no {dst}.new and none in the lock)")
+        raise VendorError(
+            f"{dst} has no conflict to resolve (no {dst}.new and none in the lock); "
+            f"to keep a local edit, `vendor resolve --keep {dst}`"
+        )
     lock["files"][dst] = _hash(target)
     lock.setdefault("merged", {})[dst] = kit_version
+    (lock.get("kept") or {}).pop(dst, None)
     _write_lock(project, lock)
     if new.exists():
         new.unlink()
@@ -477,12 +610,19 @@ def verify(project: Path) -> dict:
     lock = read_lock(project)
     if not lock:
         raise VendorError("the kit isn't vendored here (no .claude/workflow/lock.json)")
-    missing, changed = [], []
+    missing, changed, kept = [], [], []
+    keeps = lock.get("kept") or {}
     for dst, h in lock["files"].items():
         t = project / dst
         if not t.exists():
             missing.append(dst)
-        elif _hash(t) != h:
+            continue
+        cur = _hash(t)
+        if cur == h:
+            continue
+        if keeps.get(dst) == cur:
+            kept.append(dst)
+        else:
             changed.append(dst)
     settings = _settings(project)
     hooks = settings.get("hooks") if isinstance(settings.get("hooks"), dict) else {}
@@ -499,10 +639,13 @@ def verify(project: Path) -> dict:
     plugin_too = any(
         (_settings(project, rel).get("enabledPlugins") or {}).get(PLUGIN_KEY) for rel in (SETTINGS, SETTINGS_LOCAL)
     )
+    mp = lock.get("mattpocock_skills") or ("vendored" if lock.get("mattpocock_sha") else "not_vendored")
     return {
         "version": lock.get("kit_version"),
         "missing": missing,
         "changed": changed,
+        "kept": kept,
+        "mattpocock": mp,
         "conflicts": sorted(lock.get("conflicts") or {}),
         "orphaned": sorted(lock.get("orphaned") or {}),
         "hooks_ok": hooks_ok,

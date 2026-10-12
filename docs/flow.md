@@ -2,7 +2,7 @@
 
 Every session that plans, writes a spec or builds a ticket follows this file. Each kind of session ends by reporting its checklist, every line marked done or saying why not, so a skipped step shows.
 
-The project's specifics live in its profile: `.claude/workflow/profile.toml` (commands, required checks, protected paths, areas, release steps) and `profile.md` (the safety rules by reference, sensitive data, secrets, wording). Read both before acting. Where this file says "the project's rules", it means what `profile.md` points to.
+The project's specifics live in its profile: `.claude/workflow/profile.toml` (commands, required checks, protected paths, areas, release steps, and `project.rules`, the list of the project's rule documents) and `profile.md` (sensitive data, secrets, environment notes). Read both before acting. Where this file says "the project's rules", it means the documents in `project.rules`.
 
 **Skills.** Skills named here are in `.claude/skills/<name>/` (vendored) or under the plugins (`pairnexus-workflow:<name>`, `mattpocock-skills:<name>`). A skill marked user-only can't be loaded with the Skill tool: read its `SKILL.md` and follow it as written.
 
@@ -24,7 +24,7 @@ A large effort can start as a **map**: an issue labelled `wayfinder:map` whose c
 1. Follow `to-spec`: agree the test seams with the owner, then publish the spec (`ready-for-agent`), citing the decision behind each choice.
    Label the spec `spec` as well, so readiness never mistakes it for a build ticket.
 2. Follow `to-tickets`: agree the breakdown, then publish build tickets (`ready-for-agent`). Each build ticket has:
-   - `## Blocked by` (issue refs, or "None");
+   - `## Blocked by` (issue refs, or "None"), written out even when the tickets are also linked with GitHub's own dependencies, so a blocker closed as not planned is seen;
    - an `Area: <name>` line from the profile's `[areas]`, so the conductor never runs two sessions on one area;
    - acceptance criteria naming their seams;
    - the by-hand checks it will need (a real device, account or service), if any.
@@ -49,15 +49,17 @@ Follow the `build-ticket` skill. In short:
 A pull request merges only when all of these hold on its current head:
 
 1. **Every required check is green** (`ci.required_checks`). A check the run's charter waives counts only if its log shows it was **killed, not failed** (the profile's `ci.killed_markers`: exit 143, runner shutdown, cancelled, never started). A real test failure always blocks. Waivers need `merge.mode: session`, since GitHub's auto-merge can't tell killed from failed.
-2. **The full suite passed locally on that exact commit**, posted on the PR by `workflow evidence --base-ref origin/<base>`: the command, SHA, counts, duration, and no fewer tests than the base branch. Required when a check is waived or the profile says `ci.none`; recommended always.
+2. **The full suite passed locally on that exact commit**, posted on the PR by `workflow evidence --base-ref origin/<base>`: the command, SHA, counts, duration, and no fewer tests than the base branch. Required when a check is waived or the profile says `ci.none`; recommended always. When the base branch's own suite doesn't pass, the report says the count wasn't compared; the PR may still merge, and the conductor opens an infra ticket for the base.
 3. **The branch is level with the base branch.** Whoever merges second merges the base in and runs everything again.
 4. **The reviews are clean**, and any commit after the last round had its Correctness pass.
 
-Merging is the owner's in attended work. In an unattended run it follows the charter's `merge.mode`: GitHub auto-merge behind the ruleset (preferred), or the session merges with a merge commit.
+This section is the merge rule's one source; skills and briefings point here rather than restate it.
+
+Merging is the owner's in attended work. In an unattended run it follows the charter's `merge.mode`: GitHub auto-merge behind the ruleset (the session or the conductor keeps the branch up to date until it merges), or the session merges with a merge commit.
 
 ## 5. Unattended runs
 
-Follow the `conductor` skill. The conductor never builds tickets itself: it asks the owner the kick-off questions once (the **run charter**, `docs/charter.md`), then hands each ready ticket to its own session, checks in, merges what passes, and reports. What it may do outside the repo is exactly what the charter grants, logged in the run's ledger.
+Follow the `conductor` skill. The conductor never builds tickets itself: it asks the owner the kick-off questions once (the **run charter**, `charter.md` in the kit's docs), then hands each ready ticket to its own session, checks in, keeps PRs moving to merge, and reports. What it may do outside the repo is exactly what the charter grants, logged in the run's ledger.
 
 **The never-list.** A ticket session changes only its ticket's code, tests and docs, on its own branch. The owner keeps these to themselves, and the guard hook and the GitHub ruleset back it up:
 - deploys and releases;

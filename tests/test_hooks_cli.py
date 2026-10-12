@@ -119,3 +119,98 @@ def test_repair_hook(repo):
     _, out, _ = run_hook("repair", {}, repo)
     ctx = out["hookSpecificOutput"]["additionalContext"]
     assert "ok: `true`" in ctx and "exit 1: `false`" in ctx and "role of this session: attended" in ctx
+
+
+# ---------- failing closed when the role is firm (review round 2, finding 18) ----------
+
+
+def run_raw(name, raw, cwd, env_extra=None):
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(cwd), **(env_extra or {})}
+    if "WORKFLOW_ROLE" not in (env_extra or {}):
+        env.pop("WORKFLOW_ROLE", None)
+    p = subprocess.run([sys.executable, str(CLI), "hook", name], input=raw, capture_output=True, text=True, cwd=cwd, env=env)
+    return p.returncode, (json.loads(p.stdout) if p.stdout.strip() else None), p.stderr
+
+
+def test_firm_role_without_a_profile_denies(tmp_path):
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path)
+    ev = {"tool_name": "Bash", "tool_input": {"command": "ls"}, "cwd": str(tmp_path)}
+    for role in ("ticket", "conductor"):
+        code, out, _ = run_hook("guard", ev, tmp_path, {"WORKFLOW_ROLE": role})
+        assert code == 0 and out["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert "the workflow profile is missing" in out["hookSpecificOutput"]["permissionDecisionReason"]
+    restore = {"tool_name": "Bash", "tool_input": {"command": "git checkout -- .claude/workflow"}}
+    assert run_hook("guard", restore, tmp_path, {"WORKFLOW_ROLE": "ticket"})[:2] == (0, None)
+    assert run_hook("guard", ev, tmp_path, {"WORKFLOW_ROLE": "attended"})[:2] == (0, None)
+
+
+def test_unrecognised_role_is_treated_as_ticket(repo):
+    ev = {"tool_name": "Bash", "tool_input": {"command": "scripts/deploy.sh"}, "cwd": str(repo)}
+    _, out, _ = run_hook("guard", ev, repo, {"WORKFLOW_ROLE": "tikcet"})
+    reason = out["hookSpecificOutput"]["permissionDecisionReason"]
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "ticket session" in reason and "'tikcet' isn't a role" in reason
+
+
+def test_malformed_event_denied_when_the_role_is_firm(repo):
+    for raw in ("not json", "[1, 2]", '"a string"'):
+        for role in ("ticket", "conductor"):
+            code, out, _ = run_raw("guard", raw, repo, {"WORKFLOW_ROLE": role})
+            assert code == 0 and out["hookSpecificOutput"]["permissionDecision"] == "deny", (raw, role)
+        assert run_raw("guard", raw, repo)[:2] == (0, None)  # attended: nothing to check, nothing said
+    assert run_raw("gate", "not json", repo)[1] is None
+
+
+def test_guard_hook_starts_from_the_events_cwd(repo):
+    (repo / ".claude/x").mkdir()
+    ev = {"tool_name": "Bash", "tool_input": {"command": "echo {} > settings.json"}, "cwd": str(repo / ".claude")}
+    _, out, _ = run_hook("guard", ev, repo, {"WORKFLOW_ROLE": "ticket"})
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    ev["cwd"] = str(repo)
+    assert run_hook("guard", ev, repo, {"WORKFLOW_ROLE": "ticket"})[1] is None
+
+
+def _run_hook_command(sub, project, event_raw, role=None):
+    from workflow import vendor
+
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(project)}
+    env.pop("WORKFLOW_ROLE", None)
+    if role is not None:
+        env["WORKFLOW_ROLE"] = role
+    p = subprocess.run(["sh", "-c", vendor.hook_command(sub)], input=event_raw, capture_output=True, text=True, env=env)
+    return p.returncode, p.stdout.strip()
+
+
+def test_missing_cli_fails_closed_for_firm_roles(tmp_path):
+    from workflow import vendor
+
+    ev = json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"}})
+    for role in ("ticket", "conductor", " Ticket ", "tikcet"):
+        code, out = _run_hook_command("guard", tmp_path, ev, role)
+        assert code == 0, role
+        decision = json.loads(out)["hookSpecificOutput"]
+        assert decision["permissionDecision"] == "deny" and decision["permissionDecisionReason"] == vendor.MISSING_KIT_REASON
+    for role in (None, "", "attended", "ATTENDED"):
+        assert _run_hook_command("guard", tmp_path, ev, role) == (0, ""), role
+    for cmd in vendor.RESTORE_COMMANDS + ("git  checkout --  .claude/workflow",):
+        restore = json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}})
+        assert _run_hook_command("guard", tmp_path, restore, "ticket") == (0, ""), cmd
+    for cmd in ("git checkout -- .claude/workflow; git push origin main", "git checkout -- .claude"):
+        other = json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}})
+        assert json.loads(_run_hook_command("guard", tmp_path, other, "ticket")[1])["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert json.loads(_run_hook_command("guard", tmp_path, "garbage", "ticket")[1])["hookSpecificOutput"]["permissionDecision"] == "deny"
+    for sub in ("gate", "context", "repair"):
+        assert _run_hook_command(sub, tmp_path, ev, "ticket") == (0, ""), sub
+
+
+def test_hook_command_writes_no_pycache(tmp_path):
+    from workflow import vendor
+
+    bin_dir = tmp_path / Path(vendor.HOOK_TAG).parent
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "helper.py").write_text("X = 1\n")
+    (bin_dir / "workflow.py").write_text("import sys\nsys.path.insert(0, __import__('os').path.dirname(__file__))\nimport helper\nprint('ran', sys.argv[1:])\n")
+    assert "python3 -B" in vendor.hook_command("guard")
+    code, out = _run_hook_command("gate", tmp_path, "{}", None)
+    assert code == 0 and out == "ran ['hook', 'gate']"
+    assert not (bin_dir / "__pycache__").exists()

@@ -374,7 +374,7 @@ def test_profile_check_warns_and_summarises(tmp_path):
     p = _cli("profile", "check", env={"CLAUDE_PROJECT_DIR": str(tmp_path)})
     assert p.returncode == 0
     out = json.loads(p.stdout)
-    assert out["warnings"] == ["project.rules: docs/missing.md doesn't exist (from 'docs/missing.md')"]
+    assert "project.rules: docs/missing.md doesn't exist (from 'docs/missing.md')" in out["warnings"]
     assert "docs/missing.md" in p.stderr
     assert out["required_checks"] == ["Backend tests"] and out["areas"] == {"messages": ["src/messages/**"]}
     assert out["deploy_commands"] == ["scripts/deploy.sh"] and out["release_steps"] == ["deploy staging"]

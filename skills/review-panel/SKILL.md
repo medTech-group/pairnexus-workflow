@@ -13,7 +13,7 @@ Make a scratch directory outside the repo, for example `/tmp/review-<ticket>-r<r
 
 - `diff.patch`: `git diff <base>...HEAD`. The base is the profile's `project.base_branch`, as `origin/<base>` after a `git fetch`.
 - `ticket.md`: the ticket's body and comments, its spec (the issue under "Parent") and the issues they link.
-- `rules.md`: the project's rules, copied from where `profile.md` points (safety rules, data classification, wording) and from `CLAUDE.md`.
+- `rules.md`: the project's rules, copied from each document in the profile's `project.rules` (safety rules, wording), plus `profile.md`'s sensitive-data and secrets sections.
 - `previous.md`, from round 2: the earlier findings and what was done about each.
 
 The reviewers read these files. The Correctness reviewer can't run git or reach GitHub.
@@ -34,6 +34,8 @@ For an auth, upload, payment or API change, also run the `security-review` skill
 - `ticket.md`;
 - the screens, endpoints or commands the change touches;
 - the scratch directory for its own files.
+
+Tell the Correctness reviewer and the explorer to try risky commands (pushes, `gh` writes, guard experiments) only in a throwaway copy whose `origin` is a local bare repository, and to write test inputs with file tools rather than shell heredocs.
 
 Give each reviewer the round number. From round 2, give each `previous.md`, so it checks the fixes and doesn't repeat itself.
 

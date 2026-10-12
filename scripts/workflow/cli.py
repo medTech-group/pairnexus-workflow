@@ -3,11 +3,12 @@
     workflow profile check
     workflow ready [--issues F --prs F | --fetch] [--exclude 1,2] [--running-area A ...] [--slots N] [--json]
     workflow charter defaults | validate F [--approved] | markdown F [--tickets 13:area,143:-] | diff OLD NEW | reuse OLD | questions
-    workflow state init --charter F --run-id ID [--by-hand N] | get --body F | put --body F --state F | patch --body F --patch F
+    workflow state init --charter F --run-id ID [--by-hand N] [--read-through ID] | get --body F | put --body F --state F | patch --body F --patch F
     workflow render --template F --ticket F --charter F --slots F --tracking N [--by-hand N]
     workflow evidence [--suite NAME ...] [--base-count N | --base-ref BRANCH] [--fresh] [--allow-dirty]
     workflow repair
-    workflow vendor install|update --kit DIR [--mattpocock DIR] [--project DIR] [--adopt] [--strict-pin] | verify [--project DIR] [--strict] | resolve PATH
+    workflow vendor install|update --kit DIR [--mattpocock DIR | --no-mattpocock] [--project DIR] [--adopt] [--strict-pin]
+    workflow vendor verify [--project DIR] [--strict] | resolve [--keep] PATH [--project DIR]
     workflow hook guard|gate|context|repair      (reads the hook's JSON on stdin)
 """
 
@@ -115,6 +116,8 @@ def cmd_ready(a) -> int:
         exclude = issues_mod.parse_numbers(a.exclude)
         only = issues_mod.parse_numbers(a.only) if a.only is not None else None
         overrides = issues_mod.parse_numbers(a.override)
+        if only is not None and not only:
+            raise ValueError("--only was given no ticket numbers")
     except ValueError as e:
         print(f"workflow ready: {e} (give numbers separated by commas, e.g. 13,#143)", file=sys.stderr)
         return 2
@@ -162,11 +165,10 @@ def cmd_ready(a) -> int:
 
 def cmd_charter(a) -> int:
     if a.action == "defaults":
-        prof = load(required=False)
-        _out(charter_mod.defaults([st["name"] for st in prof.release_steps] if prof else None))
+        _out(charter_mod.defaults(profile=load(required=False)))
         return 0
     if a.action == "questions":
-        _out(charter_mod.QUESTIONS)
+        _out(charter_mod.questions(profile=load(required=False)))
         return 0
     if a.action == "reuse":
         old = _json(a.file)
@@ -180,7 +182,13 @@ def cmd_charter(a) -> int:
         problems = charter_mod.validate(c, require_approval=a.approved)
         prof = load(required=False)
         if prof is not None and isinstance(c, dict):
-            problems += charter_mod.check_against_profile(c, [st["name"] for st in prof.release_steps], prof.required_checks)
+            problems += charter_mod.check_against_profile(
+                c,
+                [st["name"] for st in prof.release_steps],
+                prof.required_checks,
+                ci_none=prof.ci_none,
+                owner=prof.owner if a.approved else "",
+            )
         if problems:
             print("The charter has problems:\n- " + "\n- ".join(problems), file=sys.stderr)
             return 1
@@ -218,6 +226,13 @@ def cmd_state(a) -> int:
         s = state_mod.empty(c)
         s["run_id"] = a.run_id
         s["by_hand_issue"] = a.by_hand
+        s["comments_read_through"] = a.read_through
+        if a.read_through is None:
+            print(
+                "warning: no --read-through given, so the first check-in will read every comment on the tracking issue "
+                "as if new; pass the id of its newest comment (or 0 when it has none)",
+                file=sys.stderr,
+            )
         _out(s)
         return 0
     body = _read(a.body)
@@ -234,7 +249,7 @@ def cmd_state(a) -> int:
         cur = state_mod.get(body)
         if cur is None:
             raise SystemExit("no state block to patch; use `state put` first")
-        new = state_mod.put(body, state_mod.merge_patch(cur, _json(a.patch)))
+        new = state_mod.put(body, state_mod.patch(cur, _json(a.patch)))
     if a.out:
         Path(a.out).write_text(new, encoding="utf-8")
     else:
@@ -255,13 +270,20 @@ def cmd_evidence(a) -> int:
     if a.base_count is not None and a.base_ref:
         print("workflow: give --base-count or --base-ref, not both", file=sys.stderr)
         return 2
+    # A bad ref fails before anything runs.
+    base_sha = evidence_mod.resolve_ref(root, a.base_ref) if a.base_ref else None
     dirty = evidence_mod.dirty_paths(root) if a.allow_dirty else []
     sha, results = evidence_mod.collect(prof, root, only=a.suite, fresh=a.fresh, allow_dirty=a.allow_dirty)
-    base_count, label = a.base_count, ""
+    base_count, label, problem, notes = a.base_count, "", "", []
     if a.base_ref:
-        base_count, base_sha, base_ok = evidence_mod.base_count_from_ref(prof, root, a.base_ref, only=a.suite, fresh=a.fresh)
-        label = f"`{a.base_ref}` at `{base_sha[:12]}`" + ("" if base_ok else ", where the suite didn't pass either")
-    ok, md = evidence_mod.report(sha, prof, results, base_count, dirty=dirty, base_label=label)
+        b = evidence_mod.base_count_from_ref(prof, root, a.base_ref, only=a.suite, fresh=a.fresh, sha=base_sha)
+        base_count, notes = b.count, b.notes
+        label = f"`{a.base_ref}` at `{b.sha[:12]}`"
+        if b.problem:
+            problem = f"no usable base count from {a.base_ref}: {b.problem}"
+    ok, md = evidence_mod.report(
+        sha, prof, results, base_count, dirty=dirty, base_label=label, base_problem=problem, base_notes=notes
+    )
     print(md)
     return 0 if ok else 1
 
@@ -278,14 +300,40 @@ def cmd_vendor(a) -> int:
     if a.action == "verify":
         r = vendor_mod.verify(project)
         _out(r)
-        bad = r["missing"] or not r["hooks_ok"] or r["plugin_also_enabled"] or (a.strict and r["changed"])
-        return 1 if bad else 0
+        problems = []
+        if r["missing"]:
+            problems.append("missing: " + ", ".join(r["missing"]))
+        if not r["hooks_ok"]:
+            problems.append("the kit's hooks aren't all in .claude/settings.json; run `vendor update`")
+        if r["plugin_also_enabled"]:
+            problems.append(f"the {vendor_mod.PLUGIN_KEY} plugin is enabled too: pick one mode")
+        if r["conflicts"]:
+            problems.append(
+                "unresolved conflicts (merge each <file>.new by hand, then `vendor resolve <file>`): " + ", ".join(r["conflicts"])
+            )
+        if a.strict and r["changed"]:
+            problems.append(
+                "changed since vendored (`vendor resolve --keep <file>` records a deliberate edit): " + ", ".join(r["changed"])
+            )
+        if a.strict and r["mattpocock"] == "not_vendored":
+            problems.append(vendor_mod.MP_MISSING)
+        for x in problems:
+            print(f"workflow vendor verify: {x}", file=sys.stderr)
+        return 1 if problems else 0
     if a.action == "resolve":
-        _out(vendor_mod.resolve(project, a.path))
+        _out(vendor_mod.resolve(project, a.path, keep=a.keep))
         return 0
     kit = Path(a.kit).resolve() if a.kit else KIT_ROOT
     mp = Path(a.mattpocock).resolve() if a.mattpocock else None
-    r = vendor_mod.install(kit, project, mp, update=a.action == "update", adopt=a.adopt, strict_pin=a.strict_pin)
+    r = vendor_mod.install(
+        kit,
+        project,
+        mp,
+        update=a.action == "update",
+        adopt=a.adopt,
+        strict_pin=a.strict_pin,
+        no_mattpocock=a.no_mattpocock,
+    )
     for w in r["warnings"]:
         print(f"warning: {w}", file=sys.stderr)
     # Counts for the routine lists; every path that needs a look in full.
@@ -300,30 +348,56 @@ def _deny_json(reason: str) -> None:
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}))
 
 
-def _hook_guard(event: dict) -> int:
+def _is_restore(event) -> bool:
+    """With the profile missing or invalid, a firm session may still run exactly
+    the commands that put the kit back (the vendored hook command allows the
+    same when the CLI itself is missing)."""
+    if not isinstance(event, dict) or event.get("tool_name") != "Bash":
+        return False
+    inp = event.get("tool_input")
+    cmd = inp.get("command") if isinstance(inp, dict) else None
+    return isinstance(cmd, str) and " ".join(cmd.split()) in vendor_mod.RESTORE_COMMANDS
+
+
+def _role_label(role: str) -> str:
+    odd = roles.unrecognised()
+    return f"{role} session (WORKFLOW_ROLE={odd!r} isn't a role, so treated as ticket)" if odd else f"{role} session"
+
+
+def _hook_guard(event) -> int:
     firm = roles.env_role()
+    if not isinstance(event, dict):  # malformed: nothing can be checked
+        if firm in ("ticket", "conductor"):
+            _deny_json(f"[workflow guard, {_role_label(firm)}] the hook's event wasn't a JSON object, so nothing could be checked and this was refused")
+        return 0
     try:
         prof = load(required=False)
     except ProfileError as e:
         if firm in ("ticket", "conductor"):
-            _deny_json(f"[workflow guard] the profile is invalid, so nothing can be checked: {e}. Fix .claude/workflow/profile.toml in a PR from an attended session.")
+            if not _is_restore(event):
+                _deny_json(f"[workflow guard, {_role_label(firm)}] the profile is invalid, so nothing can be checked: {e}. Fix .claude/workflow/profile.toml in a PR from an attended session, or restore it: git checkout -- .claude/workflow")
             return 0
         raise
     if prof is None:
+        if firm in ("ticket", "conductor") and not _is_restore(event):
+            _deny_json(
+                f"[workflow guard, {_role_label(firm)}] the workflow profile is missing; nothing can be checked, so this was refused. "
+                "Restore it with: git checkout -- .claude/workflow"
+            )
         return 0
     root = prof.root
     cwd = Path(event.get("cwd") or root)
     role = roles.role(cwd, prof.ticket_branch)
     try:
-        d = guard_mod.decide(event, prof, role, root, roles.current_branch(cwd), role_from_env=firm is not None)
+        d = guard_mod.decide(event, prof, role, root, roles.current_branch(cwd), role_from_env=firm is not None, cwd=event.get("cwd") or None)
     except Exception as e:  # fail closed where a person isn't there to notice
         if role in ("ticket", "conductor"):
-            _deny_json(f"[workflow guard, {role} session] the guard failed ({type(e).__name__}: {e}), so this was refused; rephrase the command more simply")
+            _deny_json(f"[workflow guard, {_role_label(role)}] the guard failed ({type(e).__name__}: {e}), so this was refused; rephrase the command more simply")
             return 0
         raise
     if d.action == "allow":
         return 0  # never force "allow": the normal permission rules still apply
-    reason = f"[workflow guard, {role} session] {d.reason}"
+    reason = f"[workflow guard, {_role_label(role)}] {d.reason}"
     print(
         json.dumps(
             {
@@ -379,14 +453,19 @@ HOOKS = {"guard": _hook_guard, "gate": _hook_gate, "context": _hook_context, "re
 def cmd_hook(a) -> int:
     try:
         event = json.loads(sys.stdin.read() or "{}")
-    except json.JSONDecodeError:
-        event = {}
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        event = None
+    if a.name != "guard" and not isinstance(event, dict):
+        event = {}  # the guard decides what a malformed event means
     try:
         return HOOKS[a.name](event)
     except ProfileError as e:
         print(f"workflow {a.name} hook: the profile is invalid, so the hook did nothing: {e}", file=sys.stderr)
         return 1
     except Exception as e:  # a bug in a hook must not stop the session; say so
+        if a.name == "guard" and roles.env_role() in ("ticket", "conductor"):
+            _deny_json(f"[workflow guard] the guard failed ({type(e).__name__}: {e}), so this was refused")
+            return 0
         print(f"workflow {a.name} hook failed ({type(e).__name__}: {e}); it did nothing this time", file=sys.stderr)
         return 1
 
@@ -425,6 +504,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--charter")
     s.add_argument("--run-id")
     s.add_argument("--by-hand", type=int)
+    s.add_argument("--read-through", type=int, help="init: the id of the tracking issue's newest comment (0 for none)")
     s.add_argument("--state")
     s.add_argument("--patch")
     s.add_argument("--out")
@@ -448,16 +528,27 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("repair")
     s.set_defaults(fn=cmd_repair)
 
+    # Each vendor action is its own parser, so options go before or after a path.
     s = sub.add_parser("vendor")
-    s.add_argument("action", choices=["install", "update", "verify", "resolve"])
-    s.add_argument("path", nargs="?", help="resolve: the hand-merged file")
-    s.add_argument("--kit")
-    s.add_argument("--mattpocock")
-    s.add_argument("--project")
-    s.add_argument("--adopt", action="store_true")
-    s.add_argument("--strict", action="store_true")
-    s.add_argument("--strict-pin", action="store_true", help="refuse a mattpocock checkout not at the kit's pinned SHA")
-    s.set_defaults(fn=cmd_vendor)
+    vsub = s.add_subparsers(dest="action", required=True)
+    for name in ("install", "update"):
+        v = vsub.add_parser(name)
+        v.add_argument("--kit")
+        v.add_argument("--mattpocock", help="a checkout of mattpocock/skills, at the kit's pinned SHA")
+        v.add_argument("--no-mattpocock", action="store_true", help="go without Matt Pocock's skills, deliberately")
+        v.add_argument("--project")
+        v.add_argument("--adopt", action="store_true")
+        v.add_argument("--strict-pin", action="store_true", help="refuse a mattpocock checkout not at the kit's pinned SHA")
+        v.set_defaults(fn=cmd_vendor)
+    v = vsub.add_parser("verify")
+    v.add_argument("--project")
+    v.add_argument("--strict", action="store_true")
+    v.set_defaults(fn=cmd_vendor)
+    v = vsub.add_parser("resolve")
+    v.add_argument("path", help="the hand-merged file (or, with --keep, the file with a deliberate local edit)")
+    v.add_argument("--project")
+    v.add_argument("--keep", action="store_true", help="record a deliberate local edit that has no conflict")
+    v.set_defaults(fn=cmd_vendor)
 
     s = sub.add_parser("hook")
     s.add_argument("name", choices=sorted(HOOKS))
@@ -468,8 +559,6 @@ def main(argv: list[str] | None = None) -> int:
         p.error("give the charter file")
     if a.cmd == "charter" and a.action == "diff" and not a.other:
         p.error("charter diff needs OLD and NEW")
-    if a.cmd == "vendor" and a.action == "resolve" and not a.path:
-        p.error("vendor resolve needs the file's path")
     if a.cmd == "state" and a.action == "init" and not (a.charter and a.run_id):
         p.error("state init needs --charter and --run-id")
     if a.cmd == "state" and a.action != "init" and not a.body:
