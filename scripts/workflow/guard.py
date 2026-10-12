@@ -686,6 +686,7 @@ class Seg:
     assigns: list[str] = field(default_factory=list)  # NAME=value prefixes, env's too
     fed: bool = False  # run by xargs: given file names on its stdin
     fed_file: bool = False  # xargs reads them from a file (`-a f`, `< f`), not a pipe
+    match_only: bool = False  # run by find -execdir on the match alone (`rm -f {}`), which the find's own check covers
 
 
 _KEYWORDS = {"{", "}", "!", "if", "then", "else", "elif", "fi", "do", "done", "while", "until", "esac", "coproc"}
@@ -930,9 +931,9 @@ def _nested(seg: Seg, root: Path, depth: int) -> list[Seg]:
                 if sub:
                     # -execdir runs in each match's own directory, which can't be seen here.
                     where = None if toks[k] in ("-execdir", "-okdir") else seg.cwd
-                    if where is None and chdir is None:  # its `{}` is the match, which the find's own check covers
-                        sub = [_MATCH if w == "{}" else w for w in sub]
                     s2 = Seg(sub, [], where, assigns=assigns)
+                    if where is None and chdir is None and _only_the_match(s2, root):
+                        s2.match_only = True
                     out.append(s2)
                     out += _nested(s2, root, depth + 1)
                 k = j
@@ -2159,15 +2160,26 @@ def _git_targets(args: list[str], t: _Targets) -> None:
         (t.trees if source else t.files).extend(paths)
 
 
-_MATCH = "__find_execdir_match__"  # -execdir's `{}`: the match itself, which the find's own check covers
+def _only_the_match(seg: Seg, root: Path) -> bool:
+    """An -execdir command that acts on the match alone: an rm-like or
+    touch-like writer, or an in-place editor, whose only target is `{}`. A
+    write into the match (`cp x {}`, `tar -C {}`) is not one."""
+    toks = seg.words
+    name = Path(toks[0]).name if toks else ""
+    if name not in (_RM_LIKE | _TOUCH_LIKE) and not (name in ("sed", "perl", "awk", "gawk") and _inplace_edit(toks) is not None):
+        return False
+    t = _write_targets(seg, root)
+    named = t.files + t.trees + t.links
+    return bool(named) and set(named) == {"{}"} and not (t.unknown or t.searched or t.named_from_root)
 
 
 def _write_targets(seg: Seg, root: Path) -> _Targets:
     """What one command writes, removes, links to, or can't show."""
     t = _write_targets_raw(seg, root)
-    if any(_MATCH in x for x in t.files + t.trees + t.links):
-        keep = lambda xs: [x for x in xs if x != _MATCH and not x.startswith(_MATCH + "/") and not x.endswith("/" + _MATCH)]  # noqa: E731
-        t.files, t.trees, t.links = keep(t.files), keep(t.trees), keep(t.links)
+    if seg.match_only:  # its `{}` is find -execdir's match, which the find's own check covers
+        t.files = [x for x in t.files if x != "{}"]
+        t.trees = [x for x in t.trees if x != "{}"]
+        t.links = [x for x in t.links if x != "{}"]
     return t
 
 
@@ -2581,8 +2593,10 @@ _SEARCHERS = {"grep", "egrep", "fgrep", "rg", "ag", "ack", "fd", "fdfind", "find
 def _glob_dir(pathspec: str, cdir: str | None) -> str:
     """A pathspec's directory: itself, or for a glob (`'src/*.py'`, `'*.yml'`)
     the literal directory before it, which it matches anywhere below."""
-    if pathspec.startswith(":"):  # a magic pathspec (`:/`, `:(top)`, `:!`): from the top, or anything but
-        return "."
+    if pathspec.startswith(":"):  # a magic pathspec
+        m = re.fullmatch(r":(?:/|\((?:top|glob|icase|literal)(?:,(?:top|glob|icase|literal))*\))(.+)", pathspec)
+        # `:(top)src`, `:/src`: that path from the top; an exclusion or anything else: the whole tree
+        return _glob_dir(m.group(1), None) if m and not m.group(1).startswith((":", "!", "^")) else "."
     m = _GLOB_CHARS.search(pathspec)
     if not m:
         return pathspec
@@ -2759,7 +2773,7 @@ def _candidates(target: str, cwd: str | None) -> list[str]:
     return out
 
 
-_TREE_WALK_LIMIT = 50_000
+_TREE_WALK_LIMIT = 20_000
 
 
 def _tree_holds(abspath: str, root: Path, patterns: list[str]) -> str | None:

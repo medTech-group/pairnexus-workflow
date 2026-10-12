@@ -377,3 +377,40 @@ def test_searches_of_trees_without_protected_files(profile, tmp_path):
     assert act(profile, tmp_path, f"find . -name '{tmp_path.name[:4]}*' -delete") == "allow"  # `.` isn't tested by name
     assert act(profile, tmp_path, "find src -name a.pyc -execdir sudo --chdir=../.github rm -rf {} +") == "deny"
     assert act(profile, tmp_path, "find src -name a.pyc -execdir sudo -D../.github rm -rf {} +") == "deny"
+
+
+# ---------- the eighth pass ----------
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "find . -type d -name lib -execdir cp /tmp/payload/.env {} \\;",
+        "find . -type d -name lib -execdir tar -xf p.tar -C {} \\;",
+        "find . -type d -name lib -execdir rsync -a /tmp/payload/ {} \\;",
+        "find . -name a.py -execdir cp {} ROOT/.github/workflows/ \\;",
+        "find . -name a.py -execdir ln -s {} ROOT/.claude/ \\;",
+        "echo hi > .github/workflows/__find_execdir_match__",
+        "cp evil.yml .github/workflows/{}",
+        "mkdir -p x && rm -rf x/../.github",
+        "git ls-files ':/.github/workflows/*' | xargs rm",
+        "git ls-files ':(exclude)src' | xargs rm",
+    ],
+)
+def test_eighth_pass_bypasses(cmd, profile, tmp_path):
+    _project(tmp_path)
+    (tmp_path / "lib").mkdir()
+    assert act(profile, tmp_path, cmd.replace("ROOT", str(tmp_path))) == "deny", cmd
+
+
+def test_eighth_pass_ordinary_work(profile, tmp_path):
+    (tmp_path / ".github").mkdir()
+    (tmp_path / ".github" / "ci.yml").write_text("on: push\n")
+    (tmp_path / "src").mkdir()
+    for cmd in (
+        "find src -name '*.py' -execdir sed -i s/a/b/ {} +",
+        "find src -name '*.sh' -execdir chmod +x {} +",
+        "find . -name '*.pyc' -execdir rm -f {} +",
+        "git grep -l foo -- ':(top)src' | xargs sed -i s/a/b/",
+    ):
+        assert act(profile, tmp_path, cmd) == "allow", cmd
