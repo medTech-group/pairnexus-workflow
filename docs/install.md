@@ -57,8 +57,10 @@ Installing it installs its dependency, `mattpocock-skills`, from the same market
 
 ## Every project, whichever mode
 
+The kit's README ("Getting started") walks through it step by step, with every click. In short:
+
 1. Run the `setup-workflow` skill: the profile, the kit, Matt Pocock's per-repo docs, labels, issue templates, CODEOWNERS.
-2. The owner does the one-time steps in `docs/enforcement.md`: the ruleset (active), the two environments.
+2. The owner merges its pull request, then does the one-time steps (`docs/enforcement.md`): the ruleset (active), "Allow auto-merge", and the two environments, named as in the profile.
 
 ## Org-wide (optional)
 

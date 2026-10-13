@@ -15,7 +15,7 @@ A large effort can start as a **map**: an issue labelled `wayfinder:map` whose c
 1. **Claim** the ticket (the `workflow:in-progress` label and an assignee) before any other write.
 2. Resolve it with the owner. A human-in-the-loop decision is the owner's answer, asked in rounds; never answer for them.
 3. Record it: a resolution comment, close it, the map's "Decisions so far", unblocked tickets updated, new tickets created and wired.
-4. Commit `CONTEXT.md`, ADRs and research to a branch and offer a pull request.
+4. Commit the domain glossary (`GLOSSARY.md`, or the name the project uses), ADRs and research to a branch and offer a pull request.
 
 **Checklist:** claimed first; every decision the owner's; recorded and closed; map updated; dependents updated; changes committed with a PR offered; next ticket named.
 
