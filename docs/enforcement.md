@@ -6,17 +6,23 @@ Prompts and hooks are not a security boundary. A session can phrase a command a 
 |---|---|---|
 | **GitHub ruleset on the base branch** | No direct push, no force-push, no deletion; required status checks before merge | The owner, once per repo |
 | **Cloud environments per role** | Ticket sessions: no cloud, account, deploy or payment credentials, `WORKFLOW_ROLE=ticket`. The conductor: `WORKFLOW_ROLE=conductor` and only the release credentials the owner chooses | The owner, once per account |
-| **CODEOWNERS on protected paths** | The kit, hooks, CI config and secrets files need the owner's review | `setup-workflow` writes it; the ruleset requires code-owner review on those paths |
-| **The guard hook** | The never-list, protected paths, skip markers, sensitive posts | The kit |
+| **CODEOWNERS on protected paths** | Changes to the kit, hooks, CI config and secrets files ask for the owner's review | `setup-workflow` writes it; the ruleset can require that review only when agents have their own GitHub identity (§1) |
+| **The guard hook** | The never-list, protected paths, skip markers, sensitive posts, the agents' marker on posts | The kit |
 | **Instructions** | Everything else | The kit |
 
 ## 1. The ruleset (GitHub → the repo → Settings → Rules → Rulesets → New branch ruleset)
 
 - **Target:** the default branch.
-- **Rules:** Restrict deletions; Block force pushes; Require a pull request before merging (required approvals **0**, so unattended runs can merge; tick "Require review from Code Owners" so changes to CODEOWNERS paths need the owner); Require status checks to pass (add the profile's `ci.required_checks`, and "Require branches to be up to date").
+- **Rules:** Restrict deletions; Block force pushes; Require a pull request before merging (required approvals **0**, so unattended runs can merge; "Require review from Code Owners": see below); Require status checks to pass (add the profile's `ci.required_checks`, and tick "Require branches to be up to date", which the API calls `strict_required_status_checks_policy`).
 - **Bypass list:** empty, or the owner alone.
 - **Enforcement status: Active.** A ruleset left "Disabled" or "Evaluate" enforces nothing.
 - **Allow auto-merge:** Settings → General → Pull Requests → "Allow auto-merge", for `merge.mode: auto-merge`.
+
+**"Require review from Code Owners": leave it off while sessions act under the owner's GitHub account** (the usual setup: the GitHub connector and `gh` both use the owner's token). Every PR a session opens is then the owner's own, and GitHub never lets an author approve their own PR, so a PR touching a CODEOWNERS path could never merge. With it off, CODEOWNERS still requests the owner's review on those PRs, and the protected paths stay protected by the guard, by the ticket environment having no credentials, and by such PRs going to the owner (a ticket that changes one is an owner task, never a build ticket).
+
+Turn it on when agents use their own GitHub identity (a bot account or a GitHub App): then the owner is a different person from the PR's author, and their approval is what merges a change to a protected path.
+
+"Require branches to be up to date" matters more than it looks: without it, two PRs that are each green against an older base can both merge and break the base together. If the owner leaves it off, the conductor's pre-flight raises it as a safety gap, and the conductor (or session) checks the branch is level with the base before each merge (flow §4.3).
 
 Rulesets and branch protection on **private** repositories need a paid GitHub plan for the organisation (Team or above). Without one, the guard hook and instructions are the only line, and the charter's pre-flight says so.
 
@@ -60,8 +66,9 @@ It reads each command the way a shell would, well enough to catch a well-meaning
 
 **In ticket sessions, by allow-list:**
 - `git push` may update only the session's own ticket branch: no tags, no other branches, and a bare push only when the upstream has the same name;
-- `gh` may run only the PR, issue, run and read subcommands a ticket needs;
-- `gh api` writes may touch only issues, comments, labels and pull requests of the profile's repo, and GraphQL only `enablePullRequestAutoMerge` and `addComment`;
+- `gh` may run only the PR, issue, run and read subcommands a ticket needs, in the profile's repository alone (`-R`/`--repo` or a pull request or issue URL naming another, or `GH_REPO`, `GH_HOST` and gh's token variables set, are refused), never with a function's or script's parameters (`"$@"`, `$1`; text that mentions one goes in a quoted heredoc, `-m "$(cat <<'EOF' … EOF)"`, or a file with `-F`/`--body-file`), and never printing the token (`gh auth status --show-token`);
+- `gh api` writes may touch only issues, comments, labels and pull requests of the profile's repo, and never GitHub's GraphQL API (auto-merge, comments and reads go through the GitHub MCP tools or REST: the shell can assemble a GraphQL query in more ways than the guard can follow); merging its own PR (`gh pr merge`, `gh api -X PUT repos/<repo>/pulls/<n>/merge`, the GitHub MCP merge tool) is allowed, since the ruleset still decides what may merge into the base branch;
+- git that runs a program the guard can't see is refused (`rebase --exec`, `bisect run`, `submodule foreach`, `filter-branch`, `difftool`, `mergetool`, editor and diff-driver settings or variables other than a no-op `GIT_EDITOR=true`), and `git diff|log --output`, `format-patch -o`, `archive -o` and `bundle create` count as writes (under `git -C` too);
 - `git config` may not set aliases, push settings, `core.*` hooks, editors, ssh commands, credentials or includes; `GIT_CONFIG*`/`GIT_SSH*`/`GIT_DIR` assignments and `--config-env` are refused.
 
 **In every role** it denies (asks, in attended sessions):
@@ -77,6 +84,10 @@ It reads each command the way a shell would, well enough to catch a well-meaning
 
 A GitHub post (MCP or `gh`, including heredoc bodies and `--body-file`/`--input` files) matching the profile's sensitive patterns is refused in every role.
 
+In ticket and conductor sessions, a post that creates text (an issue, PR, comment or review, or a new body for one, through `gh issue|pr create|comment|edit|close|reopen`, `gh api` to issues, pull requests, reviews and commit comments with a `body` field, or with `--input` JSON that carries a `body` or `comment` or can't be read, the conductor's GraphQL mutations that post, or the GitHub MCP tools that do) is refused unless it carries `<!-- workflow:agent -->`: the marker that tells agents' posts from the owner's own words (`charter.md` §4). A GraphQL query sent with `--input` (a file or stdin) is read from its JSON's `query`, and a mutation that may carry a body (`updateIssue`, `updatePullRequest` …) counts only when its arguments, or the variables they take, hold one; a `body` in what it asks back doesn't count. Labels, assignees, state changes (`--input` JSON such as `{"state": "closed"}` that can be read), `gh issue|pr comment --delete-last` and merges aren't posts. Attended sessions aren't asked.
+
+The marker is looked for in the command's texts as a whole (the command, its heredocs, its body and `--input` files, what it reads with `cat` or `<`), not in each post separately: a command that posts twice passes when either text carries it. It is a seatbelt against forgetting the marker, not proof that each post is an agent's. A conductor's GraphQL post assembled by the shell (a field name from a variable, brace expansion, `xargs`) can get past it; the conductor is trusted not to hide its posts, and ticket sessions use no GraphQL at all.
+
 **When something is wrong it fails closed** in ticket and conductor sessions (`WORKFLOW_ROLE` set, or set to a value it doesn't recognise, which counts as ticket):
 - an invalid or missing profile;
 - a malformed hook event;
@@ -85,6 +96,6 @@ A GitHub post (MCP or `gh`, including heredoc bodies and `--body-file`/`--input`
 
 In attended sessions the hooks report the error and stay out of the way.
 
-**It can't see** a script file the session writes and then runs, network calls made by programs, or deliberately obfuscated commands. It is a seatbelt for honest mistakes, not a wall against an adversary. That is why the ruleset and the credential-free environment come first.
+**It can't see** a script file the session writes and then runs, text piped into a shell, network calls made by programs (an interpreter's `subprocess.run(['git', …])`, `wget`, `fetch`), or deliberately obfuscated commands. It is a seatbelt for honest mistakes, not a wall against an adversary. That is why the ruleset and the credential-free environment come first.
 
 **A lesson from building this kit:** a review agent testing the guard ran its own test cases by accident. Its heredoc's delimiter appeared inside a case, so the shell ran the rest as commands. One of them pushed to the kit repo's `main`, which had no active ruleset at the time. Reviewers and explorers that try dangerous commands work only in throwaway copies, never in the real checkout, and the ruleset is what makes such an accident harmless.

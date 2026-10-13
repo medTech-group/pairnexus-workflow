@@ -130,11 +130,12 @@ def test_real_ticket_template_renders(profile):
     from pathlib import Path
 
     tpl = (Path(__file__).resolve().parents[1] / "templates/ticket-session-prompt.md").read_text()
-    slots = {"alongside": "none", "read_first": "none", "owner_decisions": "none", "briefing": "none"}
+    slots = {"alongside": "none", "read_first": "none", "owner_decisions": "none", "briefing": "none", "wake_trigger": "trig_01abc"}
     c = good_charter()
     c["merge"]["waived_checks"] = ["Backend tests"]
     out = render(tpl, values(profile, {"number": 7, "title": "Readings tab"}, c, slots, 232, 233))
     assert "issue **#7** (Readings tab)" in out and "`claude/build-7`" in out and "Backend tests" in out
+    assert "`trig_01abc`" in out and "fire_trigger" in out and "<!-- workflow:agent -->" in out
     assert "{{" not in out
 
 

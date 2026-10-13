@@ -281,6 +281,138 @@ def is_build_ticket(issue: dict) -> bool:
     return True
 
 
+_BACKTICKED = re.compile(r"`([^`\n]+)`")
+_URLISH = re.compile(r"^[a-z][a-z0-9+.-]*://", re.I)
+_DOTFILE = re.compile(r"^\.[A-Za-z_][\w.-]*$")
+_SPLIT = re.compile(r"[\s()\[\]<>\"',;|]+")
+_WORD = re.compile(r"[^\s()\[\]<>\"',;|]+")
+_FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})")
+# A GitHub blob or tree URL: the repository, then the path after the branch.
+_REPO_URL = re.compile(
+    r"https?://(?:www\.)?github\.com/([\w.-]+/[\w.-]+)/(?:blob|tree|edit|raw)/[^/\s?#]+/([^\s?#)\]>\"'`]+)[^\s)\]>\"'`]*",
+    re.I,
+)
+# "Don't touch `.github/workflows/ci.yml`": the line says not to change it.
+_DONT = re.compile(r"\b(?:don['’]t|do\s+not|never(?!\s+mind\b))\b", re.I)
+# Where a clause ends: a sentence's end, a semicolon, a colon or a dash. Only
+# the clause a path is in decides whether it is read or left alone.
+_CLAUSE = re.compile(r"[.;:!?](?=\s|$)|\s[—–-]\s|,\s*(?=(?:just|but|then|instead|so|and)\b)", re.I)
+# A fenced block whose paths count: the prose just before it asks for a change
+# *to* or *in* what follows ("Add a job to:").
+# Matched against the line with its trailing colon and spaces taken off, so it stays linear.
+_INTO = re.compile(r"\b(?:to|in|into)$", re.I)
+# "Read the key from .env at startup": the code reads it, and nothing before
+# the path on its line says to change anything.
+_READS = re.compile(r"\b(?:read|reads|reading|load|loads|loading|parse|parses|parsing)\b|\bfrom\s*$", re.I)
+_CHANGES = re.compile(
+    r"\b(?:edit|change|update|add|remove|delete|rotate|write|modify|fix|replace|rename|move|create|set|cache|bump|touch"
+    r"|make|tweak|adjust|configure|enable|disable|pin|raise|lower|split|merge|extend|drop|append|insert|include)(?:s|es|d|ed|ing)?\b",
+    re.I,
+)
+
+
+def _path_token(tok: str) -> str | None:
+    """`tok` cleaned as a path (`./`, a leading `/`, a `#L20` anchor and
+    trailing punctuation gone), or None when it isn't one: a URL, an issue ref
+    (`acme/demo#3`), an @mention, empty."""
+    t = tok.strip().strip("*_:!?")
+    if "#" in t:
+        t, anchor = t.split("#", 1)
+        if not t or anchor.isdigit():
+            return None
+    while t.endswith(".") and t not in (".", ".."):
+        t = t[:-1]
+    if not t or _URLISH.match(t) or "@" in t:
+        return None
+    while t.startswith("./"):
+        t = t[2:]
+    t = t.lstrip("/")
+    return t or None
+
+
+def _blank(m: re.Match) -> str:
+    return " " * len(m.group(0))
+
+
+def _mentions(body: str | None, repo: str | None = None) -> list[tuple[str, bool]]:
+    """(path, exact) for each path a ticket's body names, in order: every word
+    of a `backticked` span, bare words holding a `/` or a dot-file name
+    (`.env`), and the path of a GitHub blob or tree URL into `repo` (into any
+    repository when `repo` isn't given). `exact` is True for a bare dot-file
+    name: it counts only when it is itself protected (`.env`), not when it
+    merely holds a protected path ("the .github directory").
+
+    Left out: fenced code blocks, unless the prose just before one asks for a
+    change to what follows ("Add a job to:"); a mention after "don't", "do not"
+    or "never" in its clause; and one its clause only reads ("Read the key from
+    .env"), with no word of change before it. A clause ends at a sentence's
+    end, a semicolon, a colon or a dash, so "Don't break the build: edit
+    `ci.yml`" names it. When in doubt it names it: a note costs a question."""
+    if not body:
+        return []
+    found: list[tuple[str, bool]] = []
+    fence: str | None = None
+    fence_counts = False
+    prose = ""
+    for line in body.splitlines():
+        f = _FENCE.match(line)
+        if f:
+            if fence is None:
+                fence = f.group(1)[0]
+                last = _CLAUSE.split(prose.rstrip().rstrip(":"))[-1] if prose.strip() else ""
+                fence_counts = bool(_CHANGES.search(last) and _INTO.search(prose.rstrip().rstrip(":").rstrip()))
+            elif f.group(1)[0] == fence:
+                fence = None
+                prose = ""
+            continue
+        if fence is not None and not fence_counts:
+            continue
+        if fence is None and line.strip():
+            prose = line
+        here: list[tuple[int, str, bool]] = []
+        for m in _REPO_URL.finditer(line):
+            p = _path_token(m.group(2))
+            if p and (repo is None or m.group(1).casefold() == repo.casefold()):
+                here.append((m.start(), p, False))
+        rest = _REPO_URL.sub(_blank, line)
+        for m in _BACKTICKED.finditer(rest):
+            here += [(m.start(), p, False) for p in map(_path_token, _SPLIT.split(m.group(1))) if p]
+        rest = _BACKTICKED.sub(_blank, rest)
+        for m in _WORD.finditer(rest):
+            p = _path_token(m.group(0))
+            if p and ("/" in p or _DOTFILE.match(p)):
+                here.append((m.start(), p, "/" not in p))
+        for pos, p, exact in sorted(here, key=lambda x: x[0]):
+            before = "" if fence is not None else _CLAUSE.split(line[:pos])[-1]
+            if _DONT.search(before) or (_READS.search(before) and not _CHANGES.search(before)):
+                continue
+            found.append((p, exact))
+    return found
+
+
+def named_paths(body: str | None, repo: str | None = None) -> list[str]:
+    """Path-like tokens a ticket's body names, in order and once each (see
+    `_mentions`). Other URLs and issue refs are left out."""
+    return list(dict.fromkeys(p for p, _ in _mentions(body, repo)))
+
+
+def protected_named(body: str | None, patterns: Iterable[str] | None, repo: str | None = None) -> list[tuple[str, str]]:
+    """(path, pattern) for each path the body names that is, or holds, one of
+    the protected `patterns`, matched as the guard matches them (a bare
+    dot-file name only when it is one)."""
+    pats = [p for p in patterns or [] if p]
+    if not pats:
+        return []
+    from .guard import contains_protected, matches
+
+    out: dict[str, str] = {}
+    for p, exact in _mentions(body, repo):
+        hit = (matches if exact else contains_protected)(p.rstrip("/"), pats)
+        if hit and p not in out:
+            out[p] = hit
+    return list(out.items())
+
+
 @dataclass
 class Verdict:
     number: int
@@ -300,6 +432,7 @@ def readiness(
     claimed_ok: set[int] | frozenset = frozenset(),
     repo: str | None = None,
     areas: Iterable[str] | None = None,
+    protected: Iterable[str] | None = None,
 ) -> list[Verdict]:
     """Every open `ready-for-agent` build ticket with whether it is ready and why not.
 
@@ -307,12 +440,17 @@ def readiness(
     spec or a parent of sub-issues); not needs-human, owner-task or
     ready-for-human; not claimed (the claim label) unless in `claimed_ok`; no
     open PR closes it; not excluded; no open GitHub issue dependency blocks it;
-    and every blocker closed *as completed*. A blocker closed as not planned,
-    one missing from `issues`, or one in another repository still blocks.
+    every blocker closed *as completed*. A blocker closed as not planned, one
+    missing from `issues`, or one in another repository still blocks.
 
     `repo` is the profile's owner/repo. `areas` are the profile's areas: when
     given, a ticket whose area isn't one of them gets a note, never a block.
+    `protected` are the profile's protected paths: a ticket whose body names
+    one (`protected_named`) gets a note, never a block, since a ticket session
+    can't change one and the words alone can't tell a change from a mention;
+    the conductor lists such tickets at kick-off for the owner to keep or exclude.
     """
+    protected = list(protected or [])
     by_num = {i["number"]: i for i in issues if "pull_request" not in i}
     # Pull requests as the issues API lists them (`pull_request.merged_at`), for PR blockers.
     pr_items = {i["number"]: i for i in issues if "pull_request" in i}
@@ -368,6 +506,8 @@ def readiness(
                 )
             elif (bi.get("state_reason") or "completed") != "completed":
                 v.reasons.append(f"blocker #{b} closed as {bi.get('state_reason')}, not completed")
+        for path, pat in protected_named(issue.get("body"), protected, repo):
+            v.notes.append(f"names protected path {path} ({pat}): check it isn't an owner task")
         v.ready = not v.reasons
         out.append(v)
     return out

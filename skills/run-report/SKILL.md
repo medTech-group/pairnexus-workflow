@@ -38,6 +38,12 @@ One comment on the tracking issue, written for the owner to act on. Build it onl
 
 Keep it scannable: tables and short lines, issue and PR references, no transcripts.
 
+End the report with the agents' marker as its last line, as every agent post does (the guard refuses a conductor's post without it):
+
+```
+<!-- workflow:agent -->
+```
+
 ## Afterwards
 
 1. Post the report as a comment on the tracking issue.

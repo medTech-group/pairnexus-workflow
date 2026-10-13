@@ -92,7 +92,7 @@ def test_find_start_paths_are_trees(profile, tmp_path):
 
 def test_sensitive_data_read_by_indirection(profile, tmp_path):
     (tmp_path / "body.md").write_text("Patient MRN-123456 failed")
-    (tmp_path / "ok.md").write_text("Record 77fc6d9d failed")
+    (tmp_path / "ok.md").write_text("Record 77fc6d9d failed <!-- workflow:agent -->")
     for cmd in (
         "cat body.md | gh pr comment 12 --body-file -",
         "gh pr comment 12 --body-file - < body.md",
@@ -120,12 +120,12 @@ def test_ticket_graphql_query_from_a_variable_counts_as_a_file(profile, tmp_path
         'gh api graphql -F query="${Q}"',
     ):
         d = decide(bash(cmd), profile, "ticket", tmp_path, "claude/build-1")
-        assert d.action == "deny" and "inline" in d.reason, cmd
+        assert d.action == "deny" and "GraphQL" in d.reason, cmd
     for cmd in (
         "gh api graphql -f query='query { viewer { login } }'",
-        "gh api graphql -f query='mutation($id: ID!) { addComment(input: {subjectId: $id, body: \"x\"}) { clientMutationId } }' -f id=I_1",
+        "gh api graphql -f query='mutation($id: ID!) { addComment(input: {subjectId: $id, body: \"x <!-- workflow:agent -->\"}) { clientMutationId } }' -f id=I_1",
     ):
-        assert act(profile, tmp_path, cmd) == "allow", cmd
+        assert act(profile, tmp_path, cmd) == "deny", cmd  # no GraphQL in ticket sessions (0.1.1)
 
 
 def test_dangerous_mutation_found_in_the_whole_command_and_files_it_reads(profile, tmp_path):

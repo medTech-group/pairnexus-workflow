@@ -6,17 +6,60 @@ template has a placeholder with no value or a malformed one, a required slot is
 empty, or a slot still says SEE_BELOW/TODO_FILL, so a session can never be sent
 a briefing with a hole in it. Values are inserted as they are: a value holding
 braces ("Fix {{x}} binding") renders.
+
+`seal` ends a rendered briefing with `Briefing <hash>`, the first 12 hex
+characters of the SHA-256 of the text above it. The session echoes that line in
+its first comment, so the conductor sees the briefing arrived intact.
 """
 
 from __future__ import annotations
 
+import hashlib
 import re
 
 from .profile import Profile
 
 PLACEHOLDER = re.compile(r"\{\{\s*([A-Za-z0-9_.]+)\s*\}\}")
 # Filled by the conductor for each ticket. "none" is a valid answer; empty isn't.
-REQUIRED_SLOTS = ("alongside", "read_first", "owner_decisions", "briefing")
+# `wake_trigger` is the id of the routine that wakes the conductor when a ticket ends.
+REQUIRED_SLOTS = ("alongside", "read_first", "owner_decisions", "briefing", "wake_trigger")
+_SEAL = re.compile(r"[ \t]*Briefing ([0-9a-f]{12})")
+
+
+def _plain(text: str) -> str:
+    """The text as the hash reads it: Windows line endings made plain, and the
+    whitespace at the end of each line and of the whole left out, so a copy
+    that differs only there still matches."""
+    lines = (text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    return "\n".join(l.rstrip() for l in lines).rstrip()
+
+
+def briefing_hash(text: str) -> str:
+    return hashlib.sha256(_plain(text).encode("utf-8")).hexdigest()[:12]
+
+
+def seal(text: str) -> str:
+    """The briefing with its last line `Briefing <hash>`."""
+    body = text.rstrip("\n")
+    return f"{body}\n\nBriefing {briefing_hash(body)}\n"
+
+
+def seal_of(text: str) -> tuple[str | None, str | None]:
+    """(the hash the last line states, the hash of the text above it), or
+    (None, None) when the text doesn't end with a `Briefing <hash>` line.
+    Trailing whitespace and blank lines are ignored."""
+    plain = _plain(text)
+    cut = plain.rfind("\n") + 1  # the last line starts here (0 when it is the only one)
+    m = _SEAL.fullmatch(plain, cut)
+    if not m:
+        return None, None
+    return m.group(1), briefing_hash(plain[:cut])
+
+
+def sealed_intact(text: str) -> bool:
+    """The text ends with a `Briefing <hash>` line that matches what is above it."""
+    stated, got = seal_of(text)
+    return stated is not None and stated == got
 
 
 MARKER = re.compile(r"\b(SEE_BELOW|TODO_FILL)\b|<fill[^>]*>")

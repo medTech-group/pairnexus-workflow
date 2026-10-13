@@ -3,8 +3,11 @@
     workflow profile check
     workflow ready [--issues F --prs F | --fetch] [--exclude 1,2] [--only 1,2] [--override 3] [--running-area A ...] [--slots N] [--json]
     workflow charter defaults | validate F [--approved] | markdown F [--tickets 13:area,143:-] | diff OLD NEW | reuse OLD | pin-plan F | questions
+    workflow charter splice --body F --charter F [--out F] [--tickets 13:area,143:-]
     workflow state init --charter F --run-id ID [--by-hand N] [--read-through ID] | get --body F | put --body F --state F | patch --body F --patch F
-    workflow render --template F --ticket F --charter F --slots F --tracking N [--by-hand N]
+    workflow render --template F --ticket F --charter F --slots F --tracking N [--by-hand N] [--out F] [--print]
+    workflow comments --file F [--owner LOGIN] [--since-id N]
+    workflow briefing verify --file F
     workflow evidence [--suite NAME ...] [--base-count N | --base-ref BRANCH] [--fresh] [--allow-dirty]
     workflow repair
     workflow vendor install|update --kit DIR [--mattpocock DIR | --no-mattpocock] [--project DIR] [--adopt] [--strict-pin]
@@ -26,6 +29,7 @@ from . import evidence as evidence_mod
 from . import gate as gate_mod
 from . import guard as guard_mod
 from . import issues as issues_mod
+from . import posts as posts_mod
 from . import render as render_mod
 from . import repair as repair_mod
 from . import roles
@@ -68,17 +72,10 @@ def _fetch(repo: str, what: str) -> list[dict]:
         p = subprocess.run(["gh", "api", "--paginate", path], capture_output=True, text=True)
         if p.returncode:
             raise failed(p)
-        dec, text, i = json.JSONDecoder(), p.stdout, 0
-        while True:
-            while i < len(text) and text[i].isspace():
-                i += 1
-            if i >= len(text):
-                break
-            try:
-                value, i = dec.raw_decode(text, i)
-            except json.JSONDecodeError as e:
-                raise SystemExit(f"gh api {path}: couldn't read its output ({e})")
-            values.append(value)
+        try:
+            values = posts_mod.decode_values(p.stdout)
+        except posts_mod.CommentsError as e:
+            raise SystemExit(f"gh api {path}: couldn't read its output ({e})")
     else:
         raise failed(p)
     items: list[dict] = []
@@ -133,6 +130,7 @@ def cmd_ready(a) -> int:
         exclude=exclude,
         repo=prof.repo if prof else None,
         areas=list(prof.areas) if prof else None,
+        protected=list(prof.protected_paths) if prof else None,
     )
     if only is not None:
         missing = sorted(only - {v.number for v in verdicts})
@@ -213,6 +211,23 @@ def cmd_charter(a) -> int:
             return 2
         print(charter_mod.to_markdown(c, plan))
         return 0
+    if a.action == "splice":
+        c = _json(a.charter)
+        problems = charter_mod.validate(c)
+        if problems:
+            print("The charter has problems:\n- " + "\n- ".join(problems), file=sys.stderr)
+            return 1
+        try:
+            plan = charter_mod.parse_tickets(a.tickets) if a.tickets else None
+            new = charter_mod.splice(_read(a.body), charter_mod.to_markdown(c, plan))
+        except ValueError as e:
+            print(f"workflow charter splice: {e}", file=sys.stderr)
+            return 1
+        if a.out:
+            Path(a.out).write_text(new, encoding="utf-8")
+        else:
+            print(new)
+        return 0
     if a.action == "diff":
         for line in charter_mod.diff(_json(a.file), _json(a.other)):
             print(line)
@@ -280,7 +295,44 @@ def cmd_state(a) -> int:
 def cmd_render(a) -> int:
     prof = load()
     vals = render_mod.values(prof, _json(a.ticket), _json(a.charter), _json(a.slots), a.tracking, a.by_hand)
-    print(render_mod.render(_read(a.template), vals))
+    text = render_mod.seal(render_mod.render(_read(a.template), vals))
+    if a.out:
+        Path(a.out).write_text(text, encoding="utf-8")
+    if a.print or not a.out:
+        sys.stdout.write(text)
+    return 0
+
+
+def cmd_comments(a) -> int:
+    owner = a.owner
+    if not owner:
+        prof = load(required=False)
+        owner = prof.owner if prof else ""
+    if not owner:
+        print("workflow comments: give --owner (no project.owner in the profile)", file=sys.stderr)
+        return 2
+    try:
+        _out(posts_mod.owner_words(posts_mod.load_comments(_read(a.file)), owner, since_id=a.since_id))
+    except posts_mod.CommentsError as e:
+        print(
+            f"workflow comments: {e}. Give the issue's comments as GitHub returns them: "
+            "`gh api --paginate --slurp repos/<repo>/issues/<n>/comments`, or every page of the MCP tool's comments",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+def cmd_briefing(a) -> int:
+    """`briefing verify`: the session's copy of its briefing against its last line."""
+    stated, got = render_mod.seal_of(_read(a.file))
+    if stated is None:
+        print("no Briefing line")
+        return 1
+    if stated != got:
+        print(f"Briefing changed: expected {stated}, got {got}")
+        return 1
+    print(f"Briefing {stated} intact")
     return 0
 
 
@@ -512,11 +564,14 @@ def main(argv: list[str] | None = None) -> int:
     s.set_defaults(fn=cmd_ready)
 
     s = sub.add_parser("charter")
-    s.add_argument("action", choices=["defaults", "questions", "validate", "markdown", "diff", "reuse", "pin-plan"])
+    s.add_argument("action", choices=["defaults", "questions", "validate", "markdown", "diff", "reuse", "pin-plan", "splice"])
     s.add_argument("file", nargs="?")
     s.add_argument("other", nargs="?")
     s.add_argument("--approved", action="store_true", help="also require the owner's approval")
-    s.add_argument("--tickets", help='markdown: the planned tickets in order with their areas, e.g. "13:messages,143:-"')
+    s.add_argument("--tickets", help='markdown, splice: the planned tickets in order with their areas, e.g. "13:messages,143:-"')
+    s.add_argument("--body", help="splice: the tracking issue's body (a file, or -)")
+    s.add_argument("--charter", help="splice: the charter")
+    s.add_argument("--out", help="splice: write the new body here (else print it)")
     s.set_defaults(fn=cmd_charter)
 
     s = sub.add_parser("state")
@@ -536,7 +591,20 @@ def main(argv: list[str] | None = None) -> int:
         s.add_argument(f, required=True)
     s.add_argument("--tracking", type=int, required=True)
     s.add_argument("--by-hand", type=int)
+    s.add_argument("--out", help="write the briefing to this file")
+    s.add_argument("--print", action="store_true", help="print the briefing (the default without --out), to pass to create_session as it is")
     s.set_defaults(fn=cmd_render)
+
+    s = sub.add_parser("comments", help="the owner's own words: their comments without the agents' marker")
+    s.add_argument("--file", required=True, help="the issue's comments, as JSON from the GitHub API (or -)")
+    s.add_argument("--owner", help="the owner's GitHub login (default: the profile's project.owner)")
+    s.add_argument("--since-id", type=int, help="only comments with a greater id (the state's comments_read_through)")
+    s.set_defaults(fn=cmd_comments)
+
+    s = sub.add_parser("briefing", help="check a ticket session's copy of its briefing against its `Briefing <hash>` line")
+    s.add_argument("action", choices=["verify"])
+    s.add_argument("--file", required=True, help="the briefing as the session received it (or -)")
+    s.set_defaults(fn=cmd_briefing)
 
     s = sub.add_parser("evidence")
     s.add_argument("--suite", action="append")
@@ -580,6 +648,8 @@ def main(argv: list[str] | None = None) -> int:
         p.error("give the charter file")
     if a.cmd == "charter" and a.action == "diff" and not a.other:
         p.error("charter diff needs OLD and NEW")
+    if a.cmd == "charter" and a.action == "splice" and not (a.body and a.charter):
+        p.error("charter splice needs --body and --charter")
     if a.cmd == "state" and a.action == "init" and not (a.charter and a.run_id):
         p.error("state init needs --charter and --run-id")
     if a.cmd == "state" and a.action != "init" and not a.body:

@@ -20,7 +20,7 @@ It packages what worked over the pair-drop weekend run of 9–12 Oct 2026 (about
 | `skills/run-report` | The end-of-run report for the owner |
 | `skills/update-workflow` | Update a project's vendored copy |
 | `agents/` | The read-only Correctness reviewer and the UI explorer |
-| `scripts/workflow.py` | The CLI the skills and hooks run: `profile`, `ready`, `charter`, `state`, `render`, `evidence`, `repair`, `vendor`, `hook` |
+| `scripts/workflow.py` | The CLI the skills and hooks run: `profile`, `ready`, `charter`, `state`, `render`, `comments`, `evidence`, `repair`, `vendor`, `hook` |
 | `hooks/` | Guard (the never-list), checklist gate, flow context, environment repair |
 | `docs/` | `flow.md`, `charter.md`, `enforcement.md`, `install.md`, `spike.md` (what's verified), `proposal.md` (the design) |
 | `templates/` | Profile, ticket-session briefing, tracking and by-hand issues |

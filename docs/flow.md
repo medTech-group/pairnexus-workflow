@@ -29,8 +29,10 @@ A large effort can start as a **map**: an issue labelled `wayfinder:map` whose c
    - acceptance criteria naming their seams;
    - the by-hand checks it will need (a real device, account or service), if any.
 3. Anything only the owner can do (create an account, a key, a domain) is its own issue labelled `owner-task` (or `ready-for-human`), and blocks what needs it.
+4. **A change to a protected path** (the profile's `guard.protected_paths`: the kit, CI config, CODEOWNERS, secrets files) is an owner task too, labelled `owner-task`, never a build ticket: a ticket session can't change those paths. `workflow ready` notes a ticket whose body names one ("names protected path … : check it isn't an owner task"), leaving it ready; the conductor lists such tickets at kick-off for the owner to keep or exclude. Paths in fenced code (unless the prose before it asks for a change "to" or "in" it), or after "don't", "do not" or "never" in their clause, aren't noted; when in doubt, a path is noted.
+5. **A ticket that fixes a failing or flaky required check** is infra: label it `workflow:infra` as well, so it starts before other tickets. (If its fix is to CI config itself, it is an owner task, as above.)
 
-**Checklist:** every input decision used or ruled out with a reason; seams agreed; spec published; tickets agreed, published, wired, each with an area; owner tasks filed.
+**Checklist:** every input decision used or ruled out with a reason; seams agreed; spec published; tickets agreed, published, wired, each with an area; owner tasks filed (protected-path changes among them); check fixes labelled `workflow:infra`.
 
 ## 3. Building: one ticket per session
 
@@ -55,7 +57,7 @@ A pull request merges only when all of these hold on its current head:
 
 This section is the merge rule's one source; skills and briefings point here rather than restate it.
 
-Merging is the owner's in attended work. In an unattended run it follows the charter's `merge.mode`: GitHub auto-merge behind the ruleset (the session or the conductor keeps the branch up to date until it merges), or the session merges with a merge commit.
+Merging is the owner's in attended work. In an unattended run it follows the charter's `merge.mode`: GitHub auto-merge behind the ruleset (the session or the conductor keeps the branch up to date until it merges), or the session merges with a merge commit. In `auto-merge` mode, when GitHub refuses to enable auto-merge because the PR is already mergeable (clean), whoever tried (the session, or the conductor) checks this rule again at that moment and, if it holds, merges with a merge commit. The conductor never merges a change to a protected path itself: it goes to the owner.
 
 ## 5. Unattended runs
 
@@ -68,11 +70,16 @@ Follow the `conductor` skill. The conductor never builds tickets itself: it asks
 - protected paths: the kit, CI config, CODEOWNERS, secrets files;
 - the test suite's reach: no test is skipped, disabled or focused away.
 
+**Posts.** Every comment, issue and PR body an agent posts (the conductor's and every ticket session's) goes out under the owner's GitHub account. Each ends with `<!-- workflow:agent -->`, so the owner's own words can be told apart from agents' (`charter.md` §4); the guard refuses a post without it in ticket and conductor sessions.
+
 **Each ticket session** follows "Building" with these differences:
 - it stays within the never-list above;
+- it first writes its briefing to `.workflow/briefing.md` and checks it with `workflow briefing verify --file .workflow/briefing.md`; its first comment on the ticket quotes the line that prints (`Briefing <hash> intact`), so the conductor sees the briefing arrived intact;
 - a check that needs a real device, account or service is built against the spec's fakes and added to the run's by-hand issue as a checkbox, never faked as done;
 - a decision the ticket leaves open is taken as the charter says (`open_decisions`) and recorded in the PR;
 - if CI is still red after three fix attempts, or the ticket can't be built as written, it labels the ticket `needs-human`, says exactly why on the ticket and the tracking issue, and stops;
+- **the claim label:** when its ticket ends (merged, `needs-human` or stopped) the session always removes `workflow:in-progress`, and on `needs-human` also `ready-for-agent`; the conductor removes leftovers at its next check-in;
+- when its ticket ends it fires the conductor's wake routine named in its briefing, with "#<n> merged in #<PR>", "#<n> needs-human" or "#<n> stopped"; if that fails, it says so in its final note and carries on;
 - it ends every turn with `WORKFLOW-STATUS: done | waiting | needs-human | stopped` (`waiting` while CI runs with a check-in scheduled); `done` includes the checklist.
 
 ## Anything else

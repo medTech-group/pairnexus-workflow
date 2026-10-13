@@ -89,7 +89,7 @@ Use `AskUserQuestion`, recommended answers first. Ask only what exploring didn't
 - Retire the old flow hook from `.claude/settings.json`, and the old flow doc.
 - Or point `project.flow_addendum` at the doc, trimmed to what the kit's flow doesn't cover.
 
-**5. `.github/CODEOWNERS`.** It covers `/.claude/`, `/.github/workflows/` and itself, with the owner's handle (`enforcement.md` §3).
+**5. `.github/CODEOWNERS`.** It covers `/.claude/`, `/.github/workflows/` and itself, with the owner's handle (`enforcement.md` §3). It requests the owner's review on those paths; whether the ruleset also requires it depends on whose GitHub account the sessions use (§4 below).
 
 **6. A CI job,** in vendored mode: copy `$KIT/templates/github/workflow-kit.yml` to `.github/workflows/workflow-kit.yml`, replacing `BASE_BRANCH` with the base branch. Its check, `workflow kit`, goes in `ci.required_checks`.
 
@@ -114,8 +114,8 @@ List them in the PR body as a checklist, from `enforcement.md`:
 
 - [ ] **The base branch's ruleset,** set to **Active**:
   - no direct push, no force-push, no deletion;
-  - required checks, including the vendor check, and "up to date" required;
-  - code-owner review on the CODEOWNERS paths;
+  - required checks, including the vendor check, and "Require branches to be up to date" ticked;
+  - "Require review from Code Owners" **off** while sessions act under the owner's GitHub account (the usual setup): GitHub never lets an author approve their own PR, so a PR touching a CODEOWNERS path would never merge. CODEOWNERS still requests the owner's review, and the protected paths stay protected by the guard, the credential-free ticket environment, and those changes going to the owner as owner tasks. Turn it **on** only when agents use their own GitHub identity (a bot account or a GitHub App);
   - 0 required approvals for unattended merges.
 - [ ] **"Allow auto-merge"** on, for `merge.mode: auto-merge`.
 - [ ] **Two claude.ai environments,** named as in the profile:

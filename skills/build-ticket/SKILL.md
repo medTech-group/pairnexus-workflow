@@ -9,13 +9,27 @@ One ticket, start to finish. The flow's sections 3 to 5 are the rules; this skil
 
 `WF` is the kit's CLI: `python3 .claude/workflow/bin/workflow.py` (vendored), or `python3 <this skill's directory>/../../scripts/workflow.py` (plugin).
 
+**Every post carries the marker.** Everything you post on GitHub (comments, issues, the PR's body, reviews, edits of a body) goes out under the owner's account. End each body with this line, so the owner's own words can be told apart from agents':
+
+```
+<!-- workflow:agent -->
+```
+
+In a ticket session the guard refuses a post without it. Labels, assignees, state changes and merges need none.
+
 ## 0. Read first
 
 - **The briefing,** if this is a ticket session. It says:
   - what runs alongside you, and what to stay out of;
   - which notes to read;
   - the owner's decisions since the run began;
-  - the merge mode, and any waived check.
+  - the merge mode, and any waived check;
+  - the wake routine's trigger id;
+  - on its last line, `Briefing <hash>`.
+
+  **Check your copy first.** With the Write tool, write the briefing (your first message, verbatim, from its first line to its `Briefing <hash>` line) to `.workflow/briefing.md`, which git ignores. Then run `WF briefing verify --file .workflow/briefing.md`. It prints one line: `Briefing <hash> intact`, `Briefing changed: expected <a>, got <b>`, or `no Briefing line`.
+
+  **Your first write** is a comment on the ticket saying you've started, quoting that output line exactly ("Started. Briefing 3f2a9c01b7de intact"), so the conductor sees whether the briefing arrived intact. Carry on either way: if it didn't, the conductor stops this session and starts another.
 - **The ticket,** its spec (the issue under "Parent") and every issue they link. Use `gh api` or the GitHub MCP tools.
 - **The profile** (`.claude/workflow/profile.toml`, `profile.md`) and the rules it points to.
 - **Its blockers.** If any isn't closed as completed, say so and stop: it isn't ready.
@@ -66,9 +80,10 @@ Then subscribe to its activity. Schedule a check-in about every `run.check_in_mi
 - **A required check that never starts** because its workflow is path-filtered (the profile's `ci.path_filtered`): in `session` mode it counts as passed once the evidence is posted; in `auto-merge` mode GitHub waits for it, so comment that the PR needs the owner to merge and end `waiting`.
 - **A check the charter waives:** it counts as passed only when its log shows a killed marker (the profile's `ci.killed_markers`) rather than a test failure, and only with the evidence below.
 - **Still red after three fix attempts:**
-  1. label the ticket `needs-human`;
+  1. label the ticket `needs-human`, and remove `workflow:in-progress` and `ready-for-agent` (keep its other labels);
   2. comment on it and on the tracking issue with exactly what fails and why;
-  3. end with `WORKFLOW-STATUS: needs-human`.
+  3. wake the conductor (step 6.6);
+  4. end with `WORKFLOW-STATUS: needs-human`.
 
 ## 6. Post the evidence and merge
 
@@ -80,13 +95,16 @@ Then subscribe to its activity. Schedule a check-in about every `run.check_in_mi
 
    | Mode | What you do |
    |---|---|
-   | `auto-merge` | First post your notes for the next tickets (step 4) on the tracking issue, then enable auto-merge with a merge commit (`enable_pr_auto_merge`, or `gh pr merge <n> --auto --merge`). Stay with it: at each check-in, if the PR is behind the base (`mergeable_state` behind), update it (`gh api -X PUT repos/<repo>/pulls/<n>/update-branch`) and end the turn `waiting`, until GitHub has merged it |
+   | `auto-merge` | First post your notes for the next tickets (step 4) on the tracking issue, then enable auto-merge with a merge commit (`enable_pr_auto_merge`, or `gh pr merge <n> --auto --merge`). Stay with it: at each check-in, if the PR is behind the base (`mergeable_state` behind), update it (`gh api -X PUT repos/<repo>/pulls/<n>/update-branch`) and end the turn `waiting`, until GitHub has merged it. **If GitHub refuses to enable auto-merge because the PR is already mergeable** (clean: "Pull request is in clean status"), check the merge rule (flow §4) again at that moment, on the current head; if it holds, merge it yourself with a merge commit (`merge_pull_request` with `merge_method: merge`, or `gh api -X PUT repos/<repo>/pulls/<n>/merge -f merge_method=merge`) |
    | `session` | Merge it yourself with a merge commit |
    | `owner`, or attended work | Say it's ready, and leave it |
 
    If your permission settings refuse the merge, don't work around it. Comment that it's green and ready, and end with `WORKFLOW-STATUS: waiting`.
 4. **Once it has merged,** tell the tracking issue: "#<n> merged in #<PR>", then notes for the next tickets. Tag each note with its area and the tickets it's for ("For #201, area readings: …"): what you added that later tickets build on, decisions to know, and pitfalls.
-5. **Tidy up:** remove the `workflow:in-progress` label if the merge didn't close the ticket.
+5. **The claim label.** Whenever your ticket ends (merged, `needs-human`, or stopped), always remove `workflow:in-progress`; on `needs-human` also remove `ready-for-agent`. Keep the ticket's other labels. The conductor removes leftovers at its next check-in, but don't leave it to.
+6. **Wake the conductor.** When the ticket ends, call `fire_trigger` with the briefing's wake routine id and exactly one of these lines: "#<n> merged in #<PR>", "#<n> needs-human" or "#<n> stopped". The conductor then checks in at once instead of at its next scheduled time. Skip this when the briefing's wake routine says `none`, or in attended work.
+   - `fire_trigger` is a deferred tool, `mcp__Claude_Code_Remote__fire_trigger`: load it first with ToolSearch (`select:mcp__Claude_Code_Remote__fire_trigger`).
+   - If it isn't available, or the call errors, say so in the ticket's final note ("Couldn't wake the conductor: <why>") and carry on: try it once, never retry it in a loop. The conductor sees the ending at its next check-in anyway, so the wake never holds up the ticket or your `WORKFLOW-STATUS` line.
 
 ## 7. End each turn
 
@@ -104,4 +122,4 @@ Use `waiting` when CI is running and a check-in is scheduled. With `done`, inclu
 - [ ] Review panel run in rounds until clean (or the limit, the rest raised); late commits had a Correctness pass
 - [ ] Every finding fixed or answered with its reason
 - [ ] PR opened with the findings table and decisions; by-hand checks filed
-- [ ] Merged under the merge rule (or left for the owner), notes for the next tickets posted
+- [ ] Merged under the merge rule (or left for the owner), notes for the next tickets posted; the claim label removed and the conductor woken (in a run)

@@ -30,9 +30,9 @@ interpreter one-liners, and in ticket and conductor sessions finds `git`,
   upstream of the branch's own name;
 - `gh` may only run the subcommands a ticket needs (pull requests, issues,
   runs, workflow reads, `api`, reads); `gh api` writes may only touch this
-  repo's issues, comments, labels and pull requests; GraphQL mutations only
-  `enablePullRequestAutoMerge` and `addComment`, with the query inline (one
-  read from a file, a variable or a substitution counts as a mutation);
+  repo's issues, comments, labels and pull requests; never GraphQL (the shell
+  can assemble a query in more ways than this can follow; the MCP tools and
+  REST cover auto-merge, comments and reads);
 - `git config`, `git -c`, `--config-env` and `GIT_CONFIG*`/`GIT_SSH*`/
   `GIT_DIR`-style variables may not set aliases, push, remote, credential or
   command settings (conductor too);
@@ -70,6 +70,20 @@ detach or rename away from a branch matching the pattern. A GitHub post (MCP,
 role: heredocs, body files, its stdin, a piped producer's files and any file
 the command reads with `cat` or `<` included.
 
+**Agents' posts carry the marker.** In ticket and conductor sessions, a post
+that creates text on GitHub (an issue, pull request, comment or review, or an
+edit of one's body: `gh issue|pr create|comment`, an edit, close or reopen with
+a body or comment, `gh api` to those endpoints and commit comments with a
+`body` field, or with `--input` JSON that carries a `body` or `comment` (or
+can't be read), the text-posting GraphQL mutations, and the GitHub MCP tools
+that post them) is refused unless the texts it is checked for sensitive data in
+hold `<!-- workflow:agent -->`. A GraphQL query from `--input` (a file or
+stdin) is read from its JSON's `query`; a mutation that may carry a body counts
+only when its arguments (or, through a `$variable`, its variables) name one.
+Labels, state changes, `--delete-last` and merges aren't posts. The marker is
+looked for in the command's texts as a whole: a seatbelt, not proof per post.
+Attended sessions are not asked.
+
 What it can't see (a script file written then run, a program's own network
 calls, variables' values, obfuscation it doesn't recognise) is why the ruleset
 and the environment come first.
@@ -79,6 +93,7 @@ from __future__ import annotations
 
 import fnmatch
 import glob as _glob
+import json
 import os
 import posixpath
 import re
@@ -88,6 +103,7 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .posts import AGENT_MARKER
 from .profile import Profile
 
 SKIP_MARKERS = [
@@ -468,9 +484,21 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
                 e = s.find("\n", k)
                 e = n if e < 0 else e
                 line = s[k:e]
-                if (line.lstrip("\t") if strip_tabs else line) == delim:
+                bare = line.lstrip("\t") if strip_tabs else line
+                if bare == delim:
                     hd.body = s[lines_start:k]
                     k = e + 1 if e < n else n
+                    found = True
+                    break
+                if stop_paren and bare.startswith(delim) and ")" in bare[len(delim):]:
+                    # Inside `$( )` bash ends the heredoc at a line starting with
+                    # the delimiter and holding a `)` after it: the rest of the
+                    # line is code. Any heredoc still pending is read as code too.
+                    hd.body = s[lines_start:k]
+                    if pending[-1][2] is not hd:
+                        pending.clear()
+                        return pos + 1
+                    k += len(line) - len(bare) + len(delim)
                     found = True
                     break
                 if e >= n:
@@ -1162,9 +1190,14 @@ _PUSH_SETTINGS = re.compile(
 )
 _INJECT_KEYS = re.compile(
     rf"(?i)^(alias\.|remote\..*\.(push|pushurl|url)\b|{_MIRROR_KEYS}|push\.|branch\..*\.(merge|remote|pushremote)\b|url\.|"
-    r"core\.(fsmonitor|sshcommand|hookspath|pager|editor|askpass|gitproxy)\b|credential\.|include\.|includeif\.)"
+    r"core\.(fsmonitor|sshcommand|hookspath|pager|editor|askpass|gitproxy)\b|credential\.|include\.|includeif\.|"
+    r"sequence\.editor\b|diff\.external\b|diff\..*\.(command|textconv)\b|merge\..*\.driver\b|filter\.|(diff|merge)tool\..*\.(cmd|path)\b|gpg\.(.*\.)?program\b|gpg\.ssh\.defaultkeycommand\b)"
 )
-_INJECT_ENV = re.compile(r"^(GIT_CONFIG\w*|GIT_SSH\w*|GIT_EXEC_PATH|GIT_DIR|GIT_WORK_TREE)\+?=")
+_INJECT_ENV = re.compile(
+    r"^(GIT_CONFIG\w*|GIT_SSH\w*|GIT_EXEC_PATH|GIT_DIR|GIT_WORK_TREE|GIT_EDITOR|GIT_SEQUENCE_EDITOR|GIT_EXTERNAL_DIFF|GIT_ASKPASS|GIT_PAGER|EDITOR|VISUAL)\+?="
+)
+# git subcommands that run a program the guard never sees.
+_GIT_RUNS = {"bisect": {"run"}, "submodule": {"foreach"}, "filter-branch": None, "difftool": None, "mergetool": None}
 _CONFIG_VALUE_OPTS = {"-f", "--file", "--blob", "--type", "--default", "--comment", "--value", "-t"}
 _CONFIG_WRITE_OPTS = {"--unset", "--unset-all", "--add", "--replace-all", "--rename-section", "--remove-section", "--edit", "-e"}
 
@@ -1176,9 +1209,15 @@ def _env_problem(seg: Seg, role: str) -> str | None:
     if seg.words and seg.words[0] in ("export", "declare", "typeset", "local", "readonly"):
         names += [w for w in seg.words[1:] if not w.startswith("-")]
     for a in names:
+        if re.fullmatch(r"(GIT_EDITOR|GIT_SEQUENCE_EDITOR|EDITOR|VISUAL)=(true|:|cat|)|GIT_PAGER=(cat|less|more|)|GIT_ASKPASS=(true|)", a):
+            continue  # a program that does nothing here: `GIT_EDITOR=true git rebase --continue`, `GIT_PAGER=cat`
         m = _INJECT_ENV.match(a) or re.fullmatch(r"(GIT_CONFIG\w*|GIT_SSH\w*|GIT_EXEC_PATH|GIT_DIR|GIT_WORK_TREE)", a)
         if m:
-            return f"setting `{a.split('=', 1)[0]}` can point git at other config, programs or repositories; it's not allowed in {role} sessions"
+            name = a.split("=", 1)[0].rstrip("+")
+            what = "names a program to run" if name in ("EDITOR", "VISUAL") else "can point git at other config, programs or repositories"
+            return f"setting `{name}` {what}; it's not allowed in {role} sessions (a no-op value such as `true` or `cat` is fine)"
+        if role == "ticket" and re.match(r"(GH_REPO|GH_HOST|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRISE_TOKEN|GH_TOKEN|GITHUB_TOKEN|GH_CONFIG_DIR)(\+?=|$)", a):
+            return f"setting `{a.split('=', 1)[0].rstrip('+')}` points gh at another repository, host or account; ticket sessions work only in this repository"
     return None
 
 
@@ -1366,6 +1405,40 @@ def _upstream_problem(args: list[str], d: str | None, branch: str | None) -> str
 
 # ---------- GitHub CLI and API ----------
 
+def _repo_name(r: str) -> str:
+    """OWNER/REPO from the forms gh takes (`[HOST/]OWNER/REPO`, a URL, `.git`), in lower case."""
+    # What gh reads: up to whitespace, a query or a fragment.
+    r = re.split(r"[\s?#]", r.strip(), maxsplit=1)[0]
+    r = re.sub(r"^(?:https?://|ssh://|git@)", "", r, flags=re.I).rstrip("/")
+    r = re.sub(r"\.git$", "", r)
+    r = re.sub(r"^github\.com[:/]", "", r, flags=re.I)
+    return r.casefold()
+
+
+# A shell function's or script's parameters, whose values the guard never sees.
+_HEREDOC_HINT = "(`-m \"$(cat <<'EOF'` … `EOF` `)\"`)"
+_POSITIONAL = re.compile(r"\$(?:[@*#0-9]|\{[!#]?[@*0-9])")
+
+def _literal_heredoc(word: str) -> bool:
+    """The word is exactly `$(cat <<'EOF' … EOF)` with a quoted delimiter: the
+    shell substitutes the heredoc's text as written, expanding nothing, so a
+    `$1` or `-R` in it is only text (the usual way to pass a commit message or
+    a PR body)."""
+    m = re.match(r"\$\(\s*cat\s+<<(-?)\s*(['\"])([A-Za-z_][\w.-]*)\2[ \t]*\n", word)
+    if not m:
+        return False
+    lines = word[m.end():].split("\n")
+    delim = m.group(3)
+    for k, line in enumerate(lines):
+        bare = line.lstrip("\t") if m.group(1) else line
+        # The first line that is the delimiter, or starts with it and `)`, ends
+        # the heredoc (bash's rule inside `$( )`); only a bare `)` may follow.
+        if bare == delim:
+            return "\n".join(lines[k + 1:]).strip() == ")"
+        if bare.startswith(delim) and ")" in bare[len(delim):]:
+            return bare == delim + ")" and not "\n".join(lines[k + 1:]).strip()
+    return False
+
 # `gh` subcommands a ticket session may run (None: any).
 _GH_TICKET: dict[str, set[str] | None] = {
     "pr": {"create", "new", "edit", "comment", "view", "checks", "list", "ls", "diff", "ready", "merge", "status", "close"},
@@ -1402,7 +1475,6 @@ _DANGEROUS_GQL = re.compile(
     r"deleteBranchProtectionRule|createBranchProtectionRule|updateRepositoryRuleset|deleteRepositoryRuleset|createRepositoryRuleset|"
     r"updateRepository|renameRef)\b"
 )
-_TICKET_GQL_MUTATIONS = {"enablePullRequestAutoMerge", "addComment"}
 _FIELD_FLAGS = ("-f", "-F", "--field", "--raw-field")
 
 
@@ -1467,6 +1539,11 @@ def _api(toks: list[str]) -> _ApiCall | None:
     i = start
     while i < len(toks):
         t = toks[i]
+        # gh reads `-i` (--include, a boolean) and the short flag after it as one
+        # word (`-ifquery=…`, `-iX POST`), and a short flag's value after `=` (`-f=v`).
+        bundled = re.fullmatch(r"-i+([fFXHqtp].*)", t)
+        if bundled:
+            t = "-" + bundled.group(1)
         m = re.fullmatch(r"(?:-X|--method)(?:=?(.+))?", t)
         if m:
             if m.group(1):
@@ -1484,7 +1561,7 @@ def _api(toks: list[str]) -> _ApiCall | None:
             val = t.split("=", 1)[1]
             i += 1
         elif re.fullmatch(r"-[fF].+", t):
-            val = t[2:]
+            val = t[3:] if t[2] == "=" else t[2:]
             i += 1
         if val is not None:
             fields.append(val)
@@ -1534,11 +1611,70 @@ def _read_text(path: str, cwd: str | None, limit: int = 1_000_000) -> str | None
         return None
 
 
-def _mutation_fields(text: str) -> list[str] | None:
-    """The top-level fields of each GraphQL mutation in text; None if unreadable."""
-    t = re.sub(r'"""(?:.|\n)*?"""|"(?:[^"\\]|\\.)*"', '""', text)
+def _gql_plain(text: str) -> str | None:
+    """GraphQL text with every string emptied (`""`) and its ignored tokens
+    (comments, commas) made spaces, read in one linear pass as GraphQL's lexer
+    reads it: a quote in a comment, a `#` in a string, and a backslash before
+    three quotes in a block string (an escaped quote) stay where they are.
+    None for an unterminated string."""
     out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if text.startswith('"""', i):
+            j = i + 3
+            while True:
+                k = text.find('"""', j)
+                if k < 0:
+                    return None
+                if text[k - 1] == "\\" and k - 1 >= j:  # \""" is an escaped quote
+                    j = k + 3
+                    continue
+                break
+            out.append('""')
+            i = k + 3
+        elif c == '"':
+            j = i + 1
+            while j < n and text[j] not in '"\n\r':
+                j += 2 if text[j] == "\\" else 1
+            if j >= n or text[j] != '"':
+                return None
+            out.append('""')
+            i = j + 1
+        elif c == "#":
+            j = i
+            while j < n and text[j] not in "\n\r":
+                j += 1
+            out.append(" ")
+            i = j
+        elif c == ",":
+            out.append(" ")
+            i += 1
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+_GQL_NAME = re.compile(r"[A-Za-z_]\w*")
+_GQL_ALIAS = re.compile(r"\s*:\s*([A-Za-z_]\w*)?")
+
+
+def _mutation_calls(text: str) -> list[tuple[str, str]] | None:
+    """(field, its arguments) for each top-level field of each GraphQL mutation
+    in text, string values emptied (`body:""`); None if unreadable. The
+    selection set after the arguments isn't part of them. GraphQL's ignored
+    tokens (comments, commas) are dropped first, and the operation's variable
+    definitions, whose default values can hold a body, join every field's
+    arguments."""
+    t = _gql_plain(text)
+    if t is None:
+        return None
+    out: list[tuple[str, str]] = []
+    done = 0  # where the last operation read ended: a `mutation` before it was read with it
     for m in re.finditer(r"\bmutation\b", t):
+        if m.start() < done:
+            continue
         i, n = m.end(), len(t)
         paren = 0
         while i < n and not (t[i] == "{" and paren == 0):
@@ -1546,6 +1682,7 @@ def _mutation_fields(text: str) -> list[str] | None:
             i += 1
         if i >= n:
             return None
+        header = t[m.end() : i]
         i += 1
         depth = 1
         while i < n and depth > 0:
@@ -1561,21 +1698,36 @@ def _mutation_fields(text: str) -> list[str] | None:
                     p += {"(": 1, ")": -1}.get(t[i], 0)
                     i += 1
                 continue
+            elif depth == 1 and t.startswith("...", i):
+                return None  # a fragment on Mutation: its fields can't be read here
             elif depth == 1 and (c.isalpha() or c == "_"):
-                mm = re.match(r"[A-Za-z_]\w*", t[i:])
+                mm = _GQL_NAME.match(t, i)
+                if not mm:
+                    return None  # a name GraphQL doesn't allow
                 ident = mm.group(0)
-                i += len(ident)
-                rest = t[i:].lstrip()
-                if rest.startswith(":"):
-                    i = n - len(rest) + 1
-                    mm = re.match(r"\s*([A-Za-z_]\w*)", t[i:])
-                    if not mm:
+                i = mm.end()
+                colon = _GQL_ALIAS.match(t, i)
+                if colon:
+                    if not colon.group(1):
                         return None
-                    ident = mm.group(1)
-                    i += mm.end()
-                out.append(ident)
+                    ident = colon.group(1)
+                    i = colon.end()
+                j = i
+                while j < n and t[j].isspace():
+                    j += 1
+                args = ""
+                if j < n and t[j] == "(":
+                    p, k = 1, j + 1
+                    while k < n and p:
+                        p += {"(": 1, ")": -1}.get(t[k], 0)
+                        k += 1
+                    if p:
+                        return None
+                    args, i = t[j + 1 : k - 1], k
+                out.append((ident, f"{args} {header}" if header.strip() else args))
                 continue
             i += 1
+        done = i
     return out
 
 
@@ -1586,6 +1738,28 @@ def _gh_problem(toks: list[str], profile: Profile, role: str, cwd: str | None, r
         return "`gh pr merge --admin` bypasses the base branch's required checks; it is never allowed"
     if group == "repo" and sub == "edit" and any(t == "--default-branch" or t.startswith("--default-branch=") for t in toks):
         return "changing the repository's default branch (`gh repo edit --default-branch`) is never allowed"
+    if role == "ticket":
+        for j, t in enumerate(toks):
+            if _literal_heredoc(t):  # text the shell never expands: a title, a body
+                continue
+            r = None
+            if t == "--repo" or t.startswith("--repo="):
+                r = t.split("=", 1)[1] if "=" in t else toks[j + 1] if j + 1 < len(toks) else ""
+            else:
+                # `-R x`, `-Rx`, `-R=x`, and bundled after boolean shorts (`-mR x`).
+                m = re.fullmatch(r"-[a-zA-Z]*?R(.*)", t, re.S)
+                if m:
+                    r = m.group(1).removeprefix("=") or (toks[j + 1] if j + 1 < len(toks) else "")
+            if r is None:
+                # A pull request or issue URL names its own repository, which gh then uses.
+                u = re.match(r"(?:https?://)?(?:[^/\s]*@)?(?:[\w-]+\.)*github\.com\.?(?::\d*)?/([^/\s]+/[^/\s]+)/(?:pull|issues)/", t, re.I)
+                r = u.group(1) if u else None
+            if r is not None and re.search(r"[$`]", r):
+                return f"ticket sessions name a repository only literally; `{t}` is filled in by the shell"
+            if r is not None and _repo_name(r) != profile.repo.casefold():
+                return f"ticket sessions work only in {profile.repo}; `{t}` names another repository (text that starts with one, as a title or body may, goes in a quoted heredoc)"
+    if role == "ticket" and group == "auth" and any(t in ("-t", "--show-token") or t.startswith(("--show-token=", "-t=")) or re.fullmatch(r"-[a-zA-Z]*t[a-zA-Z]*", t) for t in toks[2:]):
+        return "`gh auth status --show-token` prints the GitHub token; ticket sessions never read it"
     if role == "ticket" and group is not None and not group.startswith("-"):
         allowed = _GH_TICKET.get(group, set())
         if group not in _GH_TICKET or (allowed is not None and sub not in allowed and sub is not None):
@@ -1594,22 +1768,20 @@ def _gh_problem(toks: list[str], profile: Profile, role: str, cwd: str | None, r
     return _api_problem(toks, profile, role, cwd, raw, read)
 
 
-def _shell_value(v: str) -> bool:
-    """A field value the shell fills in: a substitution, a backtick, or a `$name`
-    that isn't a GraphQL variable the query itself declares (`$id: ID!`)."""
-    if "`" in v or "$(" in v or "${" in v or re.search(r"\$(?![A-Za-z_])", v):
-        return True
-    return any(not re.search(r"\$" + re.escape(m.group(1)) + r"\s*:", v) for m in re.finditer(r"\$([A-Za-z_]\w*)", v))
-
-
 def _api_problem(toks: list[str], profile: Profile, role: str, cwd: str | None = None, raw: str = "", read=None) -> str | None:
     """`read`, when given, returns the text of the files the whole command reads
     with `cat` or `<`, which a query or body may come from by a variable."""
     base = profile.base_branch
     name = Path(toks[0]).name if toks else ""
-    if name == "curl" and re.search(r"api\.github\.com|/api/v3/|/api/graphql", " ".join(toks)):
+    if name == "curl" and re.search(r"(?:api|uploads)\.github\.com|/api/v3/|/api/graphql", " ".join(toks), re.I):
         joined = f" {' '.join(toks)} "
-        writes = re.search(r"\s(-X|--request)\s*=?\s*(POST|PUT|PATCH|DELETE)\b", joined, re.I) or re.search(r"\s(-d|--data[\w-]*|-F|--form|-T|--upload-file|--json)[\s=]", joined)
+        # A short flag may carry its value joined (`-dX`, `-Tq.json`, `-Kcfg`); a
+        # config file (`-K`) can hold any of them.
+        writes = (
+            re.search(r"\s(-[a-zA-Z]*X|--req\w*)[\s=]*(POST|PUT|PATCH|DELETE)\b", joined, re.I)
+            or re.search(r"\s(--data[\w-]*|--expand-[\w-]+|--form[\w-]*|--upl[\w-]*|--jso\w*|--conf\w*)[\s=]", joined)
+            or re.search(r"\s-[a-zA-Z]*[dFTK]", joined)
+        )
         if writes and role != "attended":
             return "GitHub writes go through `gh api` or the GitHub MCP tools, not curl"
         return None
@@ -1618,18 +1790,11 @@ def _api_problem(toks: list[str], profile: Profile, role: str, cwd: str | None =
         return None
     path = call.path
     if path == "graphql":
-        from_file = bool(call.files) or call.stdin
         if role == "ticket":
-            if from_file:
-                return "a GraphQL call read from a file (`@file`, `--input`) counts as a mutation, which ticket sessions don't run; pass the query inline"
-            q = _field(call, "query")
-            if q is not None and _shell_value(q):
-                return "a GraphQL query from a variable or a substitution counts as a mutation, which ticket sessions don't run; pass the query inline"
-            if re.search(r"\bmutation\b", call.rest):
-                names = _mutation_fields(call.rest)
-                if names is None or not names or any(n not in _TICKET_GQL_MUTATIONS for n in names):
-                    return "ticket sessions run only the `enablePullRequestAutoMerge` and `addComment` GraphQL mutations; use the REST API or the GitHub MCP tools"
-            return None
+            # The shell can assemble a query in more ways than any reading of the
+            # command can follow (expansions, globs, xargs), and ticket sessions
+            # need none: auto-merge, comments and reads have MCP tools and REST.
+            return "ticket sessions don't use GitHub's GraphQL API; use the GitHub MCP tools (`enable_pr_auto_merge`, `add_issue_comment`, the read tools) or REST"
         # The whole command and every file it reads: the query may be in a variable.
         text = call.rest + "\n" + raw
         for f in call.files:
@@ -1704,6 +1869,188 @@ def _body_files(toks: list[str]) -> list[str]:
         elif re.fullmatch(r"-F.+=@.+", t):
             out.append(t.split("=@", 1)[1])
     return [f for f in out if f and f != "-"]
+
+
+# Posts that create text on GitHub, which an agent marks with AGENT_MARKER.
+# `gh` subcommands that always post text, and those that do when given a body or comment.
+_GH_TEXT_ALWAYS = {("issue", "create"), ("issue", "new"), ("issue", "comment"), ("pr", "create"), ("pr", "new"), ("pr", "comment")}
+_GH_TEXT_WITH = {
+    ("issue", "edit"): ("-b", "--body", "-F", "--body-file"),
+    ("pr", "edit"): ("-b", "--body", "-F", "--body-file"),
+    ("pr", "review"): ("-b", "--body", "-F", "--body-file"),
+    ("issue", "close"): ("-c", "--comment"),
+    ("pr", "close"): ("-c", "--comment"),
+    ("issue", "reopen"): ("-c", "--comment"),
+    ("pr", "reopen"): ("-c", "--comment"),
+}
+_GH_COMMENT_BODY = ("-b", "--body", "-F", "--body-file")
+# REST endpoints (after repos/<owner>/<repo>/) that always post text, and those that do with a body.
+_API_TEXT_ALWAYS = [
+    r"issues",
+    r"pulls",
+    r"issues/\d+/comments",
+    r"pulls/\d+/comments",
+    r"pulls/(?:\d+/)?comments/\d+/replies",
+    r"commits/[0-9a-f]+/comments",
+]
+_API_TEXT_WITH_BODY = [
+    r"issues/\d+",
+    r"issues/comments/\d+",
+    r"comments/\d+",
+    r"pulls/\d+",
+    r"pulls/comments/\d+",
+    r"pulls/\d+/reviews",
+    r"pulls/\d+/reviews/\d+(?:/events)?",
+]
+_GQL_TEXT_ALWAYS = {"addComment", "createIssue", "createPullRequest", "addPullRequestReviewComment", "addPullRequestReviewThreadReply"}
+_GQL_TEXT_WITH_BODY = {"updateIssue", "updateIssueComment", "updatePullRequest", "addPullRequestReview", "submitPullRequestReview", "updatePullRequestReview"}
+# GitHub MCP tools that always post text, and those that do when given a body.
+_MCP_TEXT_ALWAYS = {
+    "add_issue_comment",
+    "create_issue",
+    "create_pull_request",
+    "add_comment_to_pending_review",
+    "add_reply_to_pull_request_comment",
+    "add_pull_request_review_comment",
+    "update_issue_comment",
+}
+_MCP_TEXT_WITH_BODY = {
+    "issue_write",
+    "update_issue",
+    "update_pull_request",
+    "pull_request_review_write",
+    "create_pull_request_review",
+    "create_and_submit_pull_request_review",
+    "submit_pending_pull_request_review",
+}
+_NO_MARKER = (
+    f"agents' posts on GitHub go out under the owner's account, so each carries the marker `{AGENT_MARKER}` "
+    f"that tells them from the owner's own words; add `{AGENT_MARKER}` at the end of the body"
+)
+
+
+def _has_opt(toks: list[str], opts: tuple[str, ...]) -> bool:
+    longs = tuple(o + "=" for o in opts if o.startswith("--"))
+    shorts = tuple(o for o in opts if not o.startswith("--"))
+    return any(t in opts or t.startswith(longs) or (t.startswith(shorts) and len(t) > 2 and not t.startswith("--")) for t in toks)
+
+
+_TEXT_KEYS = ("body", "comment")
+
+
+def _carries_text(txt: str | None) -> bool:
+    """A JSON body (an `--input` file or stdin) that carries text: a `body` or
+    `comment` field anywhere in it. One that can't be read counts."""
+    if txt is None:
+        return True
+    try:
+        value = json.loads(txt)
+    except ValueError:
+        return bool(re.search(r'"(?:body|comment)"\s*:', txt))
+
+    def walk(v) -> bool:
+        if isinstance(v, dict):
+            return any((k in _TEXT_KEYS and isinstance(x, str)) or walk(x) for k, x in v.items())
+        if isinstance(v, list):
+            return any(walk(x) for x in v)
+        return False
+
+    return walk(value)
+
+
+def _stdin_text(seg: Seg) -> str | None:
+    """What the command reads on stdin, when the guard can see it: a heredoc or
+    here-string, a `<` file, or a `cat` piping into it. None otherwise."""
+    if seg.heredoc is not None:
+        return seg.heredoc
+    if seg.stdin:
+        return _read_text(seg.stdin, seg.cwd)
+    return _piped_text(seg)
+
+
+def _graphql_texts(call: _ApiCall, cwd: str | None, stdin_text: str | None) -> tuple[str, str] | None:
+    """(the queries, the variables) a `gh api graphql` call sends: `query`
+    fields, the `query` and `variables` of `--input` JSON (a file or stdin), a
+    query file (`-F query=@q.graphql`), and the other fields. None when an
+    input can't be read."""
+    queries: list[str] = []
+    variables: list[str] = []
+    for f in call.fields:
+        name, _, val = f.partition("=")
+        if name == "query":
+            if not val.startswith("@"):
+                queries.append(val)
+        else:
+            variables.append(f)
+    sources = [_read_text(f, cwd) for f in call.files] + ([stdin_text] if call.stdin else [])
+    for txt in sources:
+        if txt is None:
+            return None
+        try:
+            value = json.loads(txt)
+        except ValueError:
+            value = None
+        if isinstance(value, dict) and isinstance(value.get("query"), str):
+            queries.append(value["query"])
+            variables.append(json.dumps(value.get("variables") or {}))
+        else:
+            queries.append(txt)
+    return "\n".join(queries), "\n".join(variables)
+
+
+def _creates_text(toks: list[str], cwd: str | None, stdin_text: str | None = None) -> bool:
+    """This gh command posts text (an issue, PR, comment or review, or a body) to
+    GitHub. `stdin_text` is what it reads on stdin, when that can be seen."""
+    if len(toks) < 2 or Path(toks[0]).name != "gh":
+        return False
+    group, sub = _gh_group(toks)
+    if sub == "comment" and group in ("issue", "pr") and _has_opt(toks, ("--delete-last",)) and not _has_opt(toks, _GH_COMMENT_BODY):
+        return False
+    if (group, sub) in _GH_TEXT_ALWAYS:
+        return True
+    if (group, sub) in _GH_TEXT_WITH:
+        return _has_opt(toks, _GH_TEXT_WITH[(group, sub)])
+    if group != "api":
+        return False
+    call = _api(toks)
+    if call is None:
+        return False
+    if call.path == "graphql":
+        texts = _graphql_texts(call, cwd, stdin_text)
+        if texts is None:
+            return True  # what it sends can't be seen; it counts
+        query, variables = texts
+        calls = _mutation_calls(query)
+        if calls is None:
+            return True  # a mutation the guard can't read counts
+        for name, args in calls:
+            if name in _GQL_TEXT_ALWAYS:
+                return True
+            # A body in the arguments, or in the variables they take; never in the selection set.
+            if name in _GQL_TEXT_WITH_BODY and (re.search(r"\bbody\b", args) or ("$" in args and re.search(r"\bbody\b", variables))):
+                return True
+        return False
+    if call.method not in ("POST", "PATCH", "PUT"):
+        return False
+    prefix = r"repos/[^/]+/[^/]+/"
+    if any(re.fullmatch(prefix + p, call.path, re.I) for p in _API_TEXT_ALWAYS):
+        return True
+    if not any(re.fullmatch(prefix + p, call.path, re.I) for p in _API_TEXT_WITH_BODY):
+        return False
+    if _field(call, "body") is not None:
+        return True
+    if call.stdin and _carries_text(stdin_text):
+        return True  # what it sends can't be seen, or carries text
+    return any(_carries_text(_read_text(f, cwd)) for f in call.files)
+
+
+def _mcp_creates_text(name: str, inp: dict) -> bool:
+    if name in _MCP_TEXT_ALWAYS:
+        return True
+    if name == "issue_write" and str(inp.get("method") or "").casefold() == "create":
+        return True
+    body = inp.get("body")
+    return name in _MCP_TEXT_WITH_BODY and isinstance(body, str) and bool(body.strip())
 
 
 _READERS = {"cat", "tac", "head", "tail"}
@@ -2192,6 +2539,24 @@ def _write_targets_raw(seg: Seg, root: Path) -> _Targets:
         return t
     cmd = Path(toks[0]).name
     operands = [a for a in toks[1:] if not a.startswith("-")]
+    if cmd == "git":
+        # `git diff|log|show --output=<file>`, `git format-patch -o <dir>`,
+        # `git archive -o <file>`, `git bundle create <file>`; under `git -C <dir>`.
+        g = _git(toks)
+        sub_args = g[1] if g else []
+        cdir = (g[2] if g else None) or ""
+        files = _opt_values(toks, ("--output",))
+        trees = _opt_values(toks, ("--output-directory",))
+        if sub_args[:1] in (["format-patch"], ["archive"]):
+            for k, a in enumerate(sub_args):
+                m = re.fullmatch(r"-[a-zA-Z]*o(.*)", a, re.S)
+                if m and not a.startswith("--"):
+                    v = m.group(1) or (sub_args[k + 1] if k + 1 < len(sub_args) else "")
+                    (trees if sub_args[0] == "format-patch" else files).append(v)
+        if sub_args[:2] == ["bundle", "create"] and len(sub_args) > 2:
+            files += [a for a in sub_args[2:] if not a.startswith("-")][:1]
+        t.files += [os.path.join(cdir, f) if cdir and not os.path.isabs(f) else f for f in files]
+        t.trees += [os.path.join(cdir, f) if cdir and not os.path.isabs(f) else f for f in trees]
     if cmd in _RM_LIKE:
         t.files += operands
         t.trees += operands
@@ -3022,6 +3387,8 @@ def check_bash(
             return _deny(role, p)
         k = _vcs_index(seg.words, role)
         toks = seg.words[k:] if k is not None else seg.words
+        if role == "ticket" and toks and _is_vcs_word(toks[0]) and any(_POSITIONAL.search(w) and not _literal_heredoc(w) for w in toks[1:]):
+            return _deny(role, f"`{Path(toks[0]).name}` with a function's or script's parameters (`$@`, `$1` …) can't be read before it runs; write the command out, and pass text that mentions one in a quoted heredoc " + _HEREDOC_HINT)
         g = _git(toks)
         if g is not None:
             glob, args, cdir = g
@@ -3041,6 +3408,13 @@ def check_bash(
                 p = _switch_problem(args, profile.ticket_branch, d)
                 if p:
                     return Decision("deny", p)
+            runs = _GIT_RUNS.get(args[0]) if args else None
+            if role == "ticket" and args and args[0] in _GIT_RUNS and (runs is None or any(a in runs for a in args[1:])):
+                return Decision("deny", f"`git {' '.join(args[:2])}` runs a program the guard can't see; run it yourself")
+            if role == "ticket" and args[:1] == ["rebase"] and any(
+                re.fullmatch(r"--(?:e|ex|exe|exec)(?:=.*)?", a, re.S) or re.match(r"-[a-wyzA-Z]*x", a) for a in args[1:] if not a.startswith("--") or a.startswith("--e")
+            ):
+                return Decision("deny", "`git rebase --exec` runs commands the guard can't see; run them yourself between steps")
             if role == "ticket" and args[:1] == ["branch"]:  # whatever the role's source
                 p = _upstream_problem(args, d, current_branch if same else _branch_of(d))
                 if p:
@@ -3071,24 +3445,38 @@ def check_bash(
                     p = _shell_skips(seg, profile, root, t)
                     if p:
                         return Decision("deny", p)
-    if posts and profile.sensitive_patterns:
+    if not posts:
+        return ALLOW
+
+    def post_texts(s: Seg) -> list[str]:
+        """The texts a post may send: its body files, its stdin, a piped producer's files."""
+        out: list[str] = []
+        files = [(f, s.cwd) for f in _body_files(s.words)]
+        if s.stdin:
+            files.append((s.stdin, s.cwd))
+        if s.piped is not None:  # what its producer reads: `cat body.md | gh pr comment 1 --body-file -`
+            files += [(w, s.piped.cwd) for w in s.piped.words[1:] if not w.startswith("-")]
+            if s.piped.stdin:
+                files.append((s.piped.stdin, s.piped.cwd))
+        for f, fcwd in files:
+            txt = _read_text(f, fcwd)
+            if txt:
+                out.append(txt)
+        return out
+
+    if profile.sensitive_patterns:
         texts = [command, read()]
         for s in posts:
-            files = [(f, s.cwd) for f in _body_files(s.words)]
-            if s.stdin:
-                files.append((s.stdin, s.cwd))
-            if s.piped is not None:  # what its producer reads: `cat body.md | gh pr comment 1 --body-file -`
-                files += [(w, s.piped.cwd) for w in s.piped.words[1:] if not w.startswith("-")]
-                if s.piped.stdin:
-                    files.append((s.piped.stdin, s.piped.cwd))
-            for f, fcwd in files:
-                txt = _read_text(f, fcwd)
-                if txt:
-                    texts.append(txt)
+            texts += post_texts(s)
         text = "\n".join(texts)
         for pat in profile.sensitive_patterns:
             if re.search(pat, text):
                 return _deny(role, f"this would post text matching the sensitive-data pattern {pat!r}; refer to things by id")
+    if role in ("ticket", "conductor"):
+        for s in posts:
+            # In the command's texts as a whole: a seatbelt, not proof that each post carries it.
+            if _creates_text(s.words, s.cwd, _stdin_text(s)) and AGENT_MARKER not in "\n".join([command, read(), *post_texts(s)]):
+                return Decision("deny", _NO_MARKER)
     return ALLOW
 
 
@@ -3170,6 +3558,10 @@ def check_mcp(tool: str, inp: dict, profile: Profile, role: str, root: Path) -> 
                     f"this {name} would post text matching the project's sensitive-data pattern {pat!r} "
                     f"({profile.sensitive_description or 'see profile.md'}); remove it and refer to things by id",
                 )
+    if role in ("ticket", "conductor") and _mcp_creates_text(name, inp):
+        body = inp.get("body")
+        if not (isinstance(body, str) and AGENT_MARKER in body):
+            return Decision("deny", f"this {name} posts text: " + _NO_MARKER)
     return ALLOW
 
 

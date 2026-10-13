@@ -461,6 +461,30 @@ def to_markdown(c: dict, plan: list[tuple[int, str | None]] | None = None) -> st
     return "\n".join(lines)
 
 
+SECTION_BEGIN = "<!-- workflow-charter:begin -->"
+SECTION_END = "<!-- workflow-charter:end -->"
+
+
+class SpliceError(ValueError):
+    pass
+
+
+def splice(body: str, markdown: str) -> str:
+    """The tracking issue's body with its charter section (between the two
+    markers) replaced by `markdown`; the rest of the body as it was."""
+    body = body or ""
+    begins, ends = body.count(SECTION_BEGIN), body.count(SECTION_END)
+    if begins != 1 or ends != 1:
+        raise SpliceError(
+            f"the body needs exactly one {SECTION_BEGIN} and one {SECTION_END} around its charter section "
+            f"(it has {begins} and {ends}); add them around the charter, as templates/tracking-issue.md has them"
+        )
+    start, end = body.index(SECTION_BEGIN) + len(SECTION_BEGIN), body.index(SECTION_END)
+    if end < start:
+        raise SpliceError(f"{SECTION_END} comes before {SECTION_BEGIN}; put the charter section between them")
+    return body[:start] + "\n" + markdown.strip("\n") + "\n" + body[end:]
+
+
 def diff(old: dict, new: dict) -> list[str]:
     """What a new charter changes from an earlier one, key by key."""
     old = old if isinstance(old, dict) else {}
