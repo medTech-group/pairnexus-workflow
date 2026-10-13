@@ -5,7 +5,7 @@ Prompts and hooks are not a security boundary. A session can phrase a command a 
 | Layer | Enforces | Set up by |
 |---|---|---|
 | **GitHub ruleset on the base branch** | No direct push, no force-push, no deletion; required status checks before merge | The owner, once per repo |
-| **Cloud environments per role** | Ticket sessions: no cloud, account, deploy or payment credentials, `WORKFLOW_ROLE=ticket`. The conductor: `WORKFLOW_ROLE=conductor` and only the release credentials the owner chooses | The owner, per repo: each holds the project's setup script (§2) |
+| **Cloud environments per role** | Ticket sessions: no cloud, account, deploy or payment credentials, `WORKFLOW_ROLE=ticket`. The conductor: `WORKFLOW_ROLE=conductor` and only the release credentials the owner chooses | The owner; shared by repos whose environment setup scripts match, often blank (§2) |
 | **CODEOWNERS on protected paths** | Changes to the kit, hooks, CI config and secrets files ask for the owner's review | `setup-workflow` writes it; the ruleset can require that review only when agents have their own GitHub identity (§1) |
 | **The guard hook** | The never-list, protected paths, skip markers, sensitive posts, the agents' marker on posts | The kit |
 | **Instructions** | Everything else | The kit |
@@ -35,17 +35,17 @@ Two environments, named in the profile (`run.ticket_environment`, `run.conductor
 
 **The names must match exactly.** An environment's id belongs to the owner's Claude account, so the repo records names instead. The conductor lists the account's environments, takes the one named `run.ticket_environment`, and starts every ticket session in it. With no environment of that name it stops in pre-flight and starts nothing. A ticket session in the wrong environment would have whatever credentials that environment holds, and no `WORKFLOW_ROLE`.
 
-**Per repo.** Both hold the project's setup script (`commands.setup`): ticket sessions build and test; the conductor runs the project's tests for its own fixes (`conductor_fixes`, on by default) and runs its release steps. Repos can share a conductor environment only if every run turns both off.
+**Setup script: machine tools only.** An environment's setup script runs before the repository is there and is cached for later sessions, so it holds only machine-level tools the cloud image lacks (the profile's `run.environment_setup`; usually nothing). A script that reads the repository's files fails, and then no session in that environment starts. The project's own dependencies are `commands.setup`, which the kit's SessionStart hook runs in each cloud session, from the fresh clone, whenever `commands.setup_check` fails, and reports in the session's context ("Project setup … FAILED" when it does). So an environment holds nothing of one project, and repos whose setup scripts match can share a pair; a conductor that releases holds that project's release secrets, and gets its own.
 
 **Ticket sessions**
 - **No secrets**: no AWS keys, no Auth0, Firebase or payment credentials, no deploy tokens.
 - **Environment variable:** `WORKFLOW_ROLE=ticket`.
 - **Network:** what the builds and tests need (package registries, container images).
-- **Setup script:** the project's `commands.setup`, and Playwright's Chromium when the profile's explorer is `browser`.
+- **Setup script:** the profile's `run.environment_setup`, usually blank.
 
 **The conductor**
 - **Environment variable:** `WORKFLOW_ROLE=conductor`, so the guard denies (rather than asks a person) and allows the release steps.
-- **Setup script:** the same as the ticket sessions'.
+- **Setup script:** the same as the ticket sessions'. The conductor's own fixes run the project's tests, and the kit installs the project's dependencies at session start as for a ticket session.
 - **Secrets:** only what the charter's release steps need, if the owner wants releases unattended.
 
 The conductor checks its own `WORKFLOW_ROLE` in pre-flight, and passes the ticket environment's id and the profile's `run.permission_mode` (`auto` recommended; a mode that prompts would stall an unattended session) to `create_session`.

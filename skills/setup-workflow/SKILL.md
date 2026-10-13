@@ -57,6 +57,9 @@ Use `AskUserQuestion`, recommended answers first. Ask only what exploring didn't
 - Write `.claude/workflow/profile.toml` from `$KIT/templates/profile.toml`, filled in.
 - Write `.claude/workflow/profile.md` from `$KIT/templates/profile.md`. It points to the rules by reference (anchors in `CLAUDE.md`), and covers sensitive data, secrets and environment quirks.
 - Run `WF profile check` with `CLAUDE_PROJECT_DIR` set to the project, and fix what it reports.
+- **Setup, in two parts** (`templates/profile.toml` explains both):
+  - `commands.setup` installs the project's own dependencies from its files (`npm ci`, a virtualenv from `requirements.txt`), and `commands.setup_check` exits 0 once that has run (`test -d node_modules`, `test -x .venv/bin/python`). The kit runs setup at each session start when the check fails, since a cloud session starts from a fresh clone. Both empty when there is nothing to install.
+  - `run.environment_setup` is the environments' setup script: only machine tools the cloud image lacks (it has Python, Node.js, Java, Go, Rust, Ruby, PHP, Docker, PostgreSQL and Redis), never reading the repository's files, exiting 0, under about five minutes. Empty for most projects; e.g. downloading Flutter for a Flutter app.
 
 **2. The kit.**
 - Vendored mode:
@@ -110,7 +113,7 @@ Then commit, push the branch, and open the pull request. It touches protected pa
 
 ## 4. The owner's one-time steps
 
-List them in the PR body as a checklist, with the clicks of `$KIT/README.md` ("Getting started", steps 2 to 6) filled in with this project's values: the required check names one per line, both environment names, and the environments' setup script exactly as it is pasted (the profile's `commands.setup`, plus Playwright's browser install when the explorer is `browser`). The owner should be able to do every step from the PR body alone. The checklist, from `enforcement.md`:
+List them in the PR body as a checklist, with the clicks of `$KIT/README.md` ("Getting started", steps 2 to 6) filled in with this project's values: the required check names one per line, both environment names, and the environments' setup script exactly as it is pasted: the profile's `run.environment_setup`, or "leave Setup script blank" when it is empty, as it is for most projects. The owner should be able to do every step from the PR body alone. The checklist, from `enforcement.md`:
 
 - [ ] **The organisation's GitHub plan,** if rulesets on private repos aren't available: first, since the ruleset needs it.
 - [ ] **The base branch's ruleset,** set to **Active**:
@@ -121,8 +124,8 @@ List them in the PR body as a checklist, with the clicks of `$KIT/README.md` ("G
   - an empty bypass list (sessions act through the owner's account), and "Require linear history" off.
 - [ ] **"Allow auto-merge"** on, for `merge.mode: auto-merge`, and **"Allow merge commits"** on: sessions merge with a merge commit.
 - [ ] **Two claude.ai environments,** named exactly as in the profile (the conductor finds the ticket environment by name):
-  - ticket sessions: no credentials, `WORKFLOW_ROLE=ticket`, and the setup script;
-  - the conductor: `WORKFLOW_ROLE=conductor`, the same setup script (its own fixes run the project's tests, and its releases the project's steps), and only the release credentials the owner chooses.
+  - ticket sessions: no credentials, `WORKFLOW_ROLE=ticket`, and the setup script (usually blank);
+  - the conductor: `WORKFLOW_ROLE=conductor`, the same setup script, and only the release credentials the owner chooses.
 - [ ] **Check it:** ask a cloud session to check the ruleset, the merge settings and the two environments (the kit's README, step 6).
 
 ## Checklist

@@ -59,7 +59,7 @@ Then Claude:
   - a `workflow kit` CI check;
   - CODEOWNERS, issue templates, `docs/agents/` (how agents use the issue tracker and labels), `.gitignore` entries, and a short section in `CLAUDE.md`.
 
-The PR body lists your one-time steps, filled in with this repository's check names, environment names and setup scripts. The steps below are the same ones, with every click.
+The PR body lists your one-time steps, filled in with this repository's check names, environment names and the environments' setup script (blank for most projects). The steps below are the same ones, with every click.
 
 ### Step 2. Merge the pull request
 
@@ -111,12 +111,24 @@ Either way it's the same environment, so create each one once.
 - **Environment variables:** only `WORKFLOW_ROLE=ticket`.
 - **Secrets:** **none.** Leave **Network secrets** empty, and put no key or token in an environment variable: no cloud keys, no Auth0, Firebase or payment credentials, no deploy tokens. Tests use fakes, and a session can't misuse a key it doesn't have.
 - **Network access:** the default is usually enough for package managers and container images. If a session later reports a blocked host, set Network access to **Limited** and add the host under **Allowed domains**, with **Allow package managers** left ticked.
-- **Setup script:** paste the ticket environment's setup script from the PR body. It installs the project's dependencies, and Playwright's browser when the explorer is `browser`.
+- **Setup script:** only what the PR body gives as the environments' setup script (the profile's `run.environment_setup`). **For most projects it is empty: leave the field blank.** See "What goes in the setup script" below.
 
 **The conductor environment**, named exactly as in the profile's `run.conductor_environment` (for example `myproject-conductor`):
 - **Environment variables:** `WORKFLOW_ROLE=conductor`.
 - **Secrets:** none, unless you want runs to release. Then add only what the release steps need.
-- **Setup script:** the same as the ticket environment's. The conductor may fix a broken test or CI itself, and runs the project's tests before it opens that PR; it needs the project's dependencies for that, and for any release.
+- **Setup script:** the same as the ticket environment's (often blank).
+
+**What goes in the setup script.** Two different things get installed, at two different times:
+
+| What | Example | Where it goes | When it runs |
+|---|---|---|---|
+| **Machine tools** the cloud image doesn't have | Flutter, the .NET SDK | The environment's **setup script** (the profile's `run.environment_setup`) | Once per environment, before Claude starts; the result is cached for later sessions |
+| **The project's own dependencies** | `npm ci`, a Python virtualenv from `requirements.txt` | Nowhere you type: the profile's `commands.setup`, which the kit runs at the start of each cloud session when `commands.setup_check` says it's missing | Each new session, from the fresh clone |
+
+The setup script runs before the repository is there, so it must never read the repository's files: one that does fails, and no session in that environment can start. The cloud image already has Python, Node.js, Java, Go, Rust, Ruby, PHP, Docker, PostgreSQL and Redis, so most projects need no setup script at all, whatever their stack:
+- a Python API, or a Node.js app with or without a frontend: **blank**; the kit installs its packages;
+- a project with no dependencies: **blank**, and `commands.setup` is empty too;
+- a Flutter app: a script that downloads Flutter (pair-drop's is in its `docs/operations/workflow-setup.md`).
 
 **Why the names must match.** The repository can't hold an environment's id, because ids belong to your Claude account. So the profile holds the names instead. At the start of a run, the conductor lists your environments, takes the one named `run.ticket_environment`, and starts every ticket session in it. If no environment has that name, the run stops before starting anything and says so. The name matters because of what that environment holds:
 - **no credentials**;
@@ -126,8 +138,8 @@ Either way it's the same environment, so create each one once.
 
 | | One per repository? | Why |
 |---|---|---|
-| Ticket environment | **Yes** | Its setup script installs that project's dependencies. |
-| Conductor environment | **Usually yes** | It needs the project's dependencies (and its release secrets, if runs release). Only if you turn off the conductor's own fixes and releases in every run can repositories share one. |
+| Ticket environment | **No**, if the setup scripts match | It holds no project files: only `WORKFLOW_ROLE=ticket` and the machine tools. Repositories whose setup script is the same (most often blank) can share one; name it in each profile. |
+| Conductor environment | **No**, likewise | Unless runs release: then it holds that project's release secrets, and gets its own. |
 | Ruleset | Yes | Each repository has its own check names. |
 | Merge settings | Yes | Per-repository settings. |
 | The kit | No | Built once, here. Each repository holds a pinned copy. |

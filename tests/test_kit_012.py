@@ -43,7 +43,7 @@ def test_readme_starts_with_the_step_by_step_set_up():
 def test_environments_are_per_repo_and_named_exactly():
     text = (KIT / "docs/enforcement.md").read_text()
     assert "once per account |" not in text
-    assert "The owner, per repo" in text
+    assert "machine tools only" in text and "commands.setup_check" in text
     assert "The names must match exactly" in text
     assert "- **Bypass list:** empty." in text and "Require linear history" in text
 

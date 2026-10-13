@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import time
 import subprocess
 import sys
 from pathlib import Path
@@ -362,9 +364,11 @@ def cmd_evidence(a) -> int:
 
 def cmd_repair(a) -> int:
     prof = load()
+    set_up = repair_mod.setup(prof.setup, prof.setup_check, prof.root, repair_mod.HOOK_BUDGET)
     res = repair_mod.run(prof.repair, prof.root)
-    print(repair_mod.summary(res) or "no [repair] commands in the profile")
-    return 0
+    text = "\n".join(x for x in (repair_mod.setup_summary(set_up), repair_mod.summary(res)) if x)
+    print(text or "no [repair] commands in the profile, and the project's setup is in place")
+    return 1 if set_up and set_up[1] else 0
 
 
 def cmd_vendor(a) -> int:
@@ -512,7 +516,14 @@ def _hook_repair(event: dict) -> int:
     prof = load(required=False)
     if prof is None:
         return 0
-    text = repair_mod.summary(repair_mod.run(prof.repair, prof.root)) if prof.repair else ""
+    start = time.monotonic()
+    # Only in cloud sessions: a laptop's checkout is its owner's to set up.
+    cloud = os.environ.get("CLAUDE_CODE_REMOTE") == "true"
+    set_up = repair_mod.setup(prof.setup, prof.setup_check, prof.root, repair_mod.HOOK_BUDGET - 60) if cloud else None
+    left = int(repair_mod.HOOK_BUDGET - (time.monotonic() - start))
+    deadline = max(0, min(repair_mod.DEADLINE, left))
+    text = repair_mod.summary(repair_mod.run(prof.repair, prof.root, deadline=deadline)) if prof.repair else ""
+    text = "\n".join(x for x in (repair_mod.setup_summary(set_up), text) if x)
     role = roles.role(prof.root, prof.ticket_branch)
     firm = "set by WORKFLOW_ROLE" if roles.env_role() else "from the branch name"
     text = (text + "\n" if text else "") + f"Workflow role of this session: {role} ({firm})."

@@ -140,7 +140,7 @@ KIT_HOOKS = {
     "PreToolUse": [_hook("guard", GUARD_MATCHER, 15)],
     "Stop": [_hook("gate", None, 15)],
     "UserPromptSubmit": [_hook("context", None, 10)],
-    "SessionStart": [_hook("repair", "startup|resume", 300)],
+    "SessionStart": [_hook("repair", "startup|resume", 600)],
 }
 
 

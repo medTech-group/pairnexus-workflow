@@ -19,7 +19,7 @@
     "SessionStart": [
       {
         "matcher": "startup|resume",
-        "hooks": [{ "type": "command", "command": "python3 -B \"${CLAUDE_PLUGIN_ROOT}/scripts/workflow.py\" hook repair", "timeout": 300 }]
+        "hooks": [{ "type": "command", "command": "python3 -B \"${CLAUDE_PLUGIN_ROOT}/scripts/workflow.py\" hook repair", "timeout": 600 }]
       }
     ]
   }
