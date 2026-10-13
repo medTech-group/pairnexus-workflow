@@ -44,6 +44,7 @@ Collect every problem for the kick-off, each with its fix.
 - The base branch's ruleset: `gh api repos/<repo>/rulesets`, then each one by id. It must be `enforcement: active`, cover the default branch, and block force pushes and deletion. The required checks must equal the profile's `ci.required_checks`.
 - The required-checks rule also requires branches to be up to date (`strict_required_status_checks_policy: true`). If it's off, raise it as a safety gap: "Fix it first / Go ahead, and the conductor checks the branch is level before each merge". Accepted, it goes in `accepted_gaps`, and before every merge (yours, or a PR whose auto-merge you enable) you check the branch is level with the base and update it first if not.
 - "Require review from Code Owners" is off while sessions post as the owner (`DOCS/enforcement.md` §1): on, a PR touching a CODEOWNERS path could never merge. Say so if it's on.
+- **Required approvals.** The ruleset's pull-request rule: `required_approving_review_count`. Above 0, no PR a session opens can merge without a person's approval (sessions post as the owner, and an author can't approve their own PR). Say so in the kick-off, and make **owner** the recommended answer to the merge question (`merge.mode: owner`: runs stop at "ready for review"). If the owner picks another mode anyway, every PR waits on an approval until the end time.
 - CODEOWNERS covers `.claude/` and `.github/workflows/`.
 - `WF version --fresh`: when a newer kit release is out, the kick-off asks **Update first** (end here; an attended session makes the update pull request for the owner to merge, then a new run starts) or **Run on <this version>**. A run never updates mid-run, and its ticket sessions stay on the version it started with.
 
@@ -57,7 +58,7 @@ Collect every problem for the kick-off, each with its fix.
 - The base branch's CI is green. Note its duration as `ci_minutes_at_start`.
 
 **Capacity**
-- If the account's usage is near its limit, say so in the kick-off; you see this when a session reports a usage warning.
+- You can't read the account's usage directly. If this session, or a session you started, has reported a usage warning, say so in the kick-off. Each ticket session runs the review panel for up to `run.review_rounds` rounds, so a run's usage grows with `max_sessions`.
 
 **The last run**
 - The most recent issue labelled `workflow:run`.
@@ -84,6 +85,7 @@ Then:
 6. Create the **by-hand issue** from `TEMPLATES/by-hand-issue.md`, filling in `RUN_ID`. Both templates already end with the marker.
 7. Create the **tracking issue** from `TEMPLATES/tracking-issue.md`, label `workflow:run`, filling in `RUN_ID` and `BY_HAND_ISSUE`, and its charter section with `WF charter splice --body body.md --charter charter.json --tickets "<n>:<area>,…" --out body.md`. Then link it from the by-hand issue.
 8. Show the owner the rendered charter and ask "Go / Change something".
+   - **If the kick-off is abandoned** (the owner says stop, or never answers before this session ends), close the tracking and by-hand issues as not planned, with a comment saying the run never started. An open `workflow:run` issue counts as a run in progress for `workflow status` and the guided start.
 9. Record the go:
    - set `approved` to `{by: <profile project.owner>, at: <now, UTC>, source: "chat <time>: <the owner's words>"}`;
    - or, if the owner answered with a comment on the tracking issue, use that comment's URL as `source`.
@@ -122,6 +124,7 @@ Keep scratch files (`charter.json`, `body.md`, `state.json`, issue JSON) in `.wo
 **0. Stopping already?** If the state's `status` is `stopping`, skip to "Stop the run", step 2, and carry on from where it left off. Never record `stopped_head` again for a session that has one.
 
 **1. Read the state.** It is the whole truth. If your context was summarised or this is a new session ("conductor resume"), rebuild from the state and the tracking issue's comments after `comments_read_through`.
+- **A new session** ("conductor resume #<tracking issue>", the old conductor session having ended): the routines in the state belong to the old session. Create a new wake routine bound to this session (kick-off step 12), `delete_trigger` the old `wake_trigger`, and record the new id in the state; ticket sessions already running carry the old id, so their wake fails and they note it, and you see their endings at your next check-in. Then `list_triggers` and delete any routine still bound to the old session (its `persistent_session_id`), so it never wakes alongside you. Say on the tracking issue that the run resumed in a new session.
 
 **2. Stop or wind down?**
 - **Stop now** (see "Stop the run") when either holds:
@@ -212,7 +215,7 @@ For each ticket to start:
 5. **Check its permission mode:** `get_session` on the new session. If its `permission_mode` (in `session_context`, or at the top level) can be read and isn't `run.permission_mode`, archive it at once and report it on the tracking issue: a session in another mode may stall on a prompt, or run looser than the charter allows. Put the ticket back as `queued`; it counts as an attempt, so a mode that keeps coming back wrong ends at `needs-human` rather than looping. If `get_session` shows no `permission_mode` field at all, you can't check it: note that once on the tracking issue (once per run, not per session) and carry on. Archive only on a mode you can read that differs.
 6. Record it in the state: the session id, `attempts`, `started_at`, the area, `briefing` (the hash on the briefing's last line) and `status: running`.
 
-**6. Release**, when `release.when` is `each-merge` and something merged since the last release, or `end` and the run is stopping.
+**6. Release**, when `release.when` is `each-merge` and something merged since the last release, or `end` and the run is stopping for any reason but the owner's stop ("Stop the run", step 3).
 1. `git fetch origin <base>`, then check out `origin/<base>` in a clean worktree.
 2. Run the profile's `[release]` steps the charter names, each with its smoke test, from that commit.
 3. Log each in the ledger: `what`, `at`, `grant` (the charter line), the commit SHA and the result.
@@ -269,11 +272,11 @@ WF render --template TEMPLATES/ticket-session-prompt.md --ticket ticket.json --c
 
 Do these in order, across as many check-ins as it takes. The state's `status: "stopping"` brings each later check-in back here (check-in step 0).
 
-1. **Status.** Set `status: "stopping"` and the reason.
+1. **Status.** Set `status: "stopping"` and the reason: `owner` (the `workflow:stop` label, or "stop the run" here), `ends_at`, `wind-down` or `done`. Step 3 reads it.
 2. **Sessions.** Interrupt each running session that has no `stopped_head` yet, and record its `stopped_head`. Keep a check-in armed. At each later check-in, for each such session:
    - if its branch hasn't moved since `stopped_head`: delete its pending check-ins, archive it, and remove `workflow:in-progress` from its ticket if it didn't merge (and from any ticket still `queued`, which this run no longer holds);
    - if it has moved, record the new head and look again next time; after 3 check-ins, archive it anyway and say so in the report.
-3. **Release,** once every session is archived, if the charter says `release.when: end`.
+3. **Release,** once every session is archived, if the charter says `release.when: end`, **unless the reason is `owner`**. A stop means something may be wrong: skip the release, log "release skipped: stopped by the owner" in the ledger, and say in the report that the owner can release by hand. The end time, a wind-down and a finished run release as the charter says.
 4. **The report.** Write the final report with the `run-report` skill, and notify the owner as the charter says.
 5. **Wind up.**
    - Set `stopped` (when and why) and `status: "stopped"`.

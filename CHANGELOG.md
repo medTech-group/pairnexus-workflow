@@ -1,5 +1,76 @@
 # Changelog
 
+## 0.1.6
+
+A full audit of the README and docs against what the kit does, with the fixes it called for.
+
+- **Stopping a run releases nothing.** The `workflow:stop` label (or "stop the run" in the conductor's chat) no longer runs an `end` release: a stop means something may be wrong. The ledger and the report say the release was skipped, and the owner can release by hand. The end time, a wind-down and a finished run still release as the charter says. The stop reason is recorded (`owner`, `ends_at`, `wind-down`, `done`).
+- **Required approvals.** The conductor's pre-flight reads the ruleset's `required_approving_review_count`. Above 0, no PR a session opens can merge (sessions post as the owner, who can't approve their own PR), so the kick-off says so and recommends the merge mode `owner`.
+- **The conductor:**
+  - **Resuming in a new session** ("conductor resume #<n>") creates a new wake routine, deletes the old one, and deletes any routine still bound to the old session;
+  - **an abandoned kick-off** closes its tracking and by-hand issues as not planned, so `workflow status` doesn't see a run in progress;
+  - pre-flight no longer claims to read the account's usage, which it can't.
+- **The wake routine's tool.** Ticket sessions find `fire_trigger` with a ToolSearch for the word, not an exact name: in cloud sessions it is `mcp__claude-code-remote__fire_trigger`, not `mcp__Claude_Code_Remote__fire_trigger`.
+- **Set-up uses the latest release,** cloned at its tag, never `main` between releases.
+- **`update-workflow`:**
+  - lists the project's own edits it kept (`vendor update` now prints `kept` in full, not as a count);
+  - brings over changes to the files set-up copied once: `workflow-kit.yml`, `workflow-kit-update.yml`, `docs/agents/issue-tracker.md` and the issue templates.
+- **`workflow profile check` warns:**
+  - when `commands.setup` is set without `commands.setup_check` (the session start never runs it then);
+  - when `guard.protected_paths` leaves out `.claude/**` or `.github/workflows/**` (a list there replaces the defaults).
+- **The kit's LICENSE** goes into a vendored copy, as `.claude/workflow/LICENSE`.
+- **The guided start:**
+  - says what "do it" means for a single small change (a branch and a pull request);
+  - tells the ticket environment's rules from the conductor's.
+- **Docs:**
+  - **`docs/profile.md` (new):** every profile setting, its default and what reads it, and the environment variables (`WORKFLOW_ROLE`, `WORKFLOW_UPDATE_CHECK`, `TMPDIR`).
+  - **`docs/enforcement.md` §5 (new):** checking the set-up, item by item (README Step 6 follows it).
+  - **`docs/charter.md`:**
+    - the stop and the end time;
+    - required approvals;
+    - waivers and the ruleset;
+    - what reuse clears;
+    - every validation rule;
+    - a mention from the owner's own account may not notify (spike.md row 17).
+  - **`docs/install.md`:**
+    - what refuses both modes;
+    - `vendor update`'s three cases;
+    - what plugin mode has and hasn't.
+  - **`docs/flow.md`:**
+    - the `owner` merge mode;
+    - when the explorer and the security review run;
+    - the handovers;
+    - "Anything else" points to `start`, not `ask-matt`.
+  - **`docs/proposal.md`** is marked historical.
+  - **The profile template:**
+    - a `protected_paths` or `test_paths` list replaces the defaults;
+    - `setup` needs `setup_check`;
+    - `acceptEdits` still asks before shell commands.
+- **README:**
+  - **Navigation:** a table of contents, and "When something goes wrong" (new).
+  - **Set-up:**
+    - Python 3.11+ for everyone;
+    - the full contents of the set-up PR;
+    - plugin-mode differences;
+    - the base branch;
+    - one repository per session;
+    - the browser explorer's Playwright;
+    - `WORKFLOW_ROLE` values.
+  - **Daily work:**
+    - what "ready" means;
+    - the accepted blocker forms and areas;
+    - building with you there (evidence, check-ins, status lines);
+    - the guided start's full choices;
+    - which issues count as unsorted.
+  - **Runs:** the real kick-off order, watching, stopping, the end time, resuming, usage, and what isn't yet proven.
+  - **Updating:** the weekly issue's contents and skipping a version; `/update-workflow` only from 0.1.5 on.
+  - **Reference:** a complete "What's in it"; what counts as shipped.
+  - **Fixes:** `/resolving-merge-conflicts` was removed from the table (the pinned Matt Pocock skills don't have it), and attended sessions aren't guarded on protected paths.
+- **For projects updating to 0.1.6:**
+  - From 0.1.4 or earlier, update by saying "Update the workflow kit: clone it at the latest release's tag and follow its `skills/update-workflow/SKILL.md`" rather than `/update-workflow`: older copies of that skill don't clone a release tag.
+  - If the profile sets `commands.setup` without `commands.setup_check` (projects set up before 0.1.3), add a check, e.g. `test -d node_modules`: without it, cloud sessions never install the project's dependencies.
+  - `profile check` may now warn about `guard.protected_paths`: put the six defaults back in the list.
+
 ## 0.1.5
 
 - **Releases.** Each version is a GitHub release with its tag (`v0.1.5`), its notes this changelog's entry. The kit's own `release` workflow publishes it on every push to main, and only from main (`.github/scripts/release.py`):

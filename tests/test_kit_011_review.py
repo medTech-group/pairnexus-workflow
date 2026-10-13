@@ -348,7 +348,7 @@ def test_conductor_skill_carries_the_review_fixes():
 @pytest.mark.parametrize("rel", ["skills/build-ticket/SKILL.md", "templates/ticket-session-prompt.md"])
 def test_ticket_instructions_carry_the_review_fixes(rel):
     t = _text(rel)
-    for phrase in (".workflow/briefing.md", "briefing verify", "mcp__Claude_Code_Remote__fire_trigger", "ToolSearch", "never retry it in a loop"):
+    for phrase in (".workflow/briefing.md", "briefing verify", "mcp__claude-code-remote__fire_trigger", "searching for `fire_trigger`", "ToolSearch", "never retry it in a loop"):
         assert phrase in t, (rel, phrase)
 
 

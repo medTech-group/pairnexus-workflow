@@ -7,7 +7,7 @@ unattended runs carries a copy:
     .claude/skills/<kit and mattpocock skills>/
     .claude/agents/<reviewer agents>.md
     .claude/workflow/bin/            the `workflow` CLI the hooks call
-    .claude/workflow/{flow.md, docs/, templates/}
+    .claude/workflow/{flow.md, docs/, templates/, LICENSE}
     .claude/workflow/lock.json       versions and a hash of every file written
     .claude/settings.json            the kit's hooks, merged with the project's own
 
@@ -237,6 +237,8 @@ def plan(kit: Path, mattpocock: Path | None, symlinks: list[str] | None = None) 
         if d.name not in SKIP_DOCS:
             files[f".claude/workflow/docs/{d.name}"] = d
     add_tree(kit / "templates", ".claude/workflow/templates")
+    if (kit / "LICENSE").is_file():
+        files[".claude/workflow/LICENSE"] = kit / "LICENSE"  # MIT: the notice travels with the copy
     if mattpocock:
         root = mattpocock.resolve()
         mf = mattpocock / ".claude-plugin/plugin.json"

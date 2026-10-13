@@ -33,8 +33,11 @@ Then follow **this release's** copy of this skill, `$KIT/skills/update-workflow/
 
    For each file:
    - **unchanged in the project:** replaced with the kit's new version;
-   - **changed in the project:** kept, with the kit's version written beside it as `<file>.new` and listed under `conflicts`;
+   - **changed in the project, unchanged in the kit:** the project's edit is kept, and listed under `kept`;
+   - **changed in both:** the project's version is kept, the kit's is written beside it as `<file>.new`, and it is listed under `conflicts`;
    - **dropped by the kit but changed in the project:** kept, and recorded as orphaned.
+
+   List the `kept` files in the PR body, so the owner sees which of the project's own edits carry on.
 5. **Each conflict:**
    1. merge the two versions by hand, keeping the project's intent;
    2. run `WF vendor resolve <file>`, which records the merged file in the lock and deletes the `.new` file;
@@ -43,4 +46,9 @@ Then follow **this release's** copy of this skill, `$KIT/skills/update-workflow/
    - Run `WF profile check` and `WF vendor verify --strict`.
    - Make the changelog's profile changes, and its "For projects updating" steps.
    - **The weekly update check:** if `.github/workflows/workflow-kit-update.yml` is missing, copy it from `$KIT/templates/github/workflow-kit-update.yml`. It opens an issue when a newer release is out.
+   - **The files set-up copied once,** which `vendor update` doesn't track: compare each with the new release's template and bring over what changed, keeping the project's own edits (the base branch name in `workflow-kit.yml`, for instance). Show each change in the PR body.
+     - `.github/workflows/workflow-kit.yml` with `$KIT/templates/github/workflow-kit.yml`;
+     - `.github/workflows/workflow-kit-update.yml` with `$KIT/templates/github/workflow-kit-update.yml`;
+     - `docs/agents/issue-tracker.md` with `$KIT/templates/issue-tracker.md`;
+     - `.github/ISSUE_TEMPLATE/build-ticket.md` and `owner-task.md` with `$KIT/templates/github/ISSUE_TEMPLATE/`.
 7. **The PR,** titled "Update the workflow kit to <version>" (so the guided start sees it's open and doesn't offer a second). It gives the version change, the changelog's highlights and the conflicts resolved, and closes the open "Workflow kit update:" issue, if any (`Closes #<n>`). It touches protected paths, so it's the owner's to review and merge.

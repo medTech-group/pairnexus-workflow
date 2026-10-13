@@ -22,8 +22,9 @@ guided_start = true
 [commands]
 # The project's own dependencies, from the repository's files: e.g.
 # "npm ci", "python3 -m venv .venv && .venv/bin/pip install -r requirements.txt",
-# or "" when there's nothing to install. Run at session start (the kit's hook)
-# when setup_check fails, since a cloud session starts from a fresh clone.
+# or "" when there's nothing to install. Run at a cloud session's start (the
+# kit's hook) when setup_check fails, since a cloud session starts from a fresh
+# clone. It never runs without setup_check, and must finish in about 8 minutes.
 setup = ""
 setup_check = ""                        # exits 0 when setup has run, e.g. "test -d node_modules"
 typecheck = ""                          # "" when the project has none
@@ -106,6 +107,7 @@ notes = ""
 # Paths a ticket session may not change (and a conductor only by a reviewed PR).
 # Ticket sessions also never change .git/config or .git/hooks. Never protected,
 # whatever is listed: .env.example, .env.sample, .env.template, .claude/worktrees/.
+# A list here replaces the defaults: keep these six and add yours.
 protected_paths = [".claude/**", ".github/workflows/**", ".github/CODEOWNERS", "CODEOWNERS", "**/.env", "**/.env.*"]
 # Commands only the owner, or the conductor under a release grant, may run.
 # A script (a path) is matched however it is run; others by their first words.
@@ -154,6 +156,8 @@ conductor_environment = ""              # WORKFLOW_ROLE=conductor; release crede
 # Redis). It runs before Claude starts, and must not read the repository's
 # files: a script that does fails, and no session can start. Usually "".
 environment_setup = ""
-# Ticket sessions' permission mode: one that never prompts (auto, acceptEdits,
-# bypassPermissions in a sandbox, dontAsk with allow rules).
+# Ticket sessions' permission mode: one that never prompts (auto;
+# bypassPermissions in a sandbox; dontAsk or acceptEdits only with allow rules
+# for the commands sessions run, since acceptEdits still asks before a shell
+# command). No more permissive than the conductor session's own mode.
 permission_mode = "auto"

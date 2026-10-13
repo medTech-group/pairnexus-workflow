@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Set up the workflow in a project
 
-This runs from a checkout of the kit (`medtech-group/pairnexus-workflow`), whether or not the project has the kit yet, and in either mode: read this file there and follow it. `KIT` is that checkout (clone it with `git clone https://github.com/medTech-group/pairnexus-workflow`). `WF` is `python3 -B $KIT/scripts/workflow.py`. Matt Pocock's skills: `git clone https://github.com/mattpocock/skills` and check out the SHA in `$KIT/.claude-plugin/marketplace.json`.
+This runs from a checkout of the kit (`medtech-group/pairnexus-workflow`), whether or not the project has the kit yet, and in either mode: read this file there and follow it. `KIT` is that checkout, **at the latest release's tag, never `main` between releases**: the version is `git ls-remote --tags --refs https://github.com/medTech-group/pairnexus-workflow 'v*' | sed 's#.*/v##' | sort -V | tail -1`, then `git clone --depth 1 --branch v<version> https://github.com/medTech-group/pairnexus-workflow`, outside the project. If you were given a checkout of `main` (`git -C $KIT describe --tags --exact-match` fails), clone the release that way and follow its copy of this file instead. `WF` is `python3 -B $KIT/scripts/workflow.py`. Matt Pocock's skills: `git clone https://github.com/mattpocock/skills` and check out the SHA in `$KIT/.claude-plugin/marketplace.json`.
 
 Explore first, ask only what you can't find, show what you'll write, and write it on a branch with a pull request. The base branch is the owner's; this is a PR like any other.
 
@@ -40,7 +40,7 @@ Use `AskUserQuestion`, recommended answers first. Ask only what exploring didn't
 |---|---|
 | Mode | Vendored (works in cloud sessions; recommended for unattended runs) or the plugin (attended only). One mode per project; if the plugin is enabled org-wide, vendoring would duplicate it, so say so. |
 | Owner | The GitHub login of the person whose words are approval in runs. |
-| Merging | Can a PR merge with no human approval? Unattended runs need that. If the team's rules require an approval, runs end at "ready for review" (`merge.mode: owner`). |
+| Merging | Can a PR merge with no human approval? Unattended runs need that. If the team's rules require an approval, say that each run's conductor sees it in the ruleset and recommends the merge mode **owner**, so runs end at "ready for review". The merge mode is chosen per run in the charter, not in the profile: there is no `[merge]` table. |
 | No CI | Then the local full suite is the gate (`ci.none = true`), and every run report says "add CI". |
 | Monorepo | Commands per package, and which required checks are path-filtered, so they may never run on a PR (`ci.path_filtered`). |
 | Explorer | Browser, API, CLI or none. |
@@ -122,7 +122,7 @@ List them in the PR body as a checklist, with the clicks of `$KIT/README.md` ("G
   - "Require review from Code Owners" **off** while sessions act under the owner's GitHub account (the usual setup): GitHub never lets an author approve their own PR, so a PR touching a CODEOWNERS path would never merge. CODEOWNERS still requests the owner's review, and the protected paths stay protected by the guard, the credential-free ticket environment, and those changes going to the owner as owner tasks. Turn it **on** only when agents use their own GitHub identity (a bot account or a GitHub App);
   - 0 required approvals for unattended merges;
   - an empty bypass list (sessions act through the owner's account), and "Require linear history" off.
-- [ ] **"Allow auto-merge"** on, for `merge.mode: auto-merge`, and **"Allow merge commits"** on: sessions merge with a merge commit.
+- [ ] **"Allow auto-merge"** on, for runs whose charter says `merge.mode: auto-merge`, and **"Allow merge commits"** on: sessions merge with a merge commit.
 - [ ] **Two claude.ai environments,** named exactly as in the profile (the conductor finds the ticket environment by name):
   - ticket sessions: no credentials, `WORKFLOW_ROLE=ticket`, and the setup script (usually blank);
   - the conductor: `WORKFLOW_ROLE=conductor`, the same setup script, and only the release credentials the owner chooses.

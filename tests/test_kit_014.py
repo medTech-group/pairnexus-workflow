@@ -29,13 +29,14 @@ def test_other_commands_and_plain_talk_do_not():
         assert not context.wants_flow(prompt), prompt
 
 
-# Every Matt Pocock skill the pinned version copies into a project (the
-# vendored set pair-drop has at kit 0.1.3). A new pin that adds or drops one
-# fails here until the README's table follows.
+# Every Matt Pocock skill the pinned version copies into a project: the
+# `skills` list of its .claude-plugin/plugin.json at the pinned SHA (27; the
+# pin had already dropped resolving-merge-conflicts). A new pin that adds or
+# drops one fails here until the README's table follows.
 MATT_POCOCK_SKILLS = {
     "ask-matt", "code-review", "codebase-design", "diagnosing-bugs", "domain-modeling", "grill-me",
     "grill-with-docs", "grilling", "handoff", "implement", "implement-spec", "improve-codebase-architecture",
-    "pr", "prototype", "research", "resolving-merge-conflicts", "retro", "setup-matt-pocock-skills", "tdd",
+    "pr", "prototype", "research", "retro", "setup-matt-pocock-skills", "tdd",
     "teach", "to-questionnaire", "to-spec", "to-tickets", "triage", "wait-what", "wayfinder", "wizard",
     "writing-for-agents",
 }

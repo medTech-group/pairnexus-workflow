@@ -446,6 +446,11 @@ def check(profile: Profile) -> list[str]:
         for pat in pats:
             if not matches(root, pat):
                 w.append(f"areas.{area}: glob {pat!r} matches no file")
+    if profile.setup and not profile.setup_check:
+        w.append("commands.setup is set but commands.setup_check is empty: the session start never runs setup without a check")
+    for must in (".claude/**", ".github/workflows/**"):
+        if must not in profile.protected_paths:
+            w.append(f"guard.protected_paths leaves out {must!r}: a list there replaces the defaults, so ticket sessions could change it")
     if not profile.ticket_environment:
         w.append("run.ticket_environment is empty: name the claude.ai environment ticket sessions run in")
     if not profile.conductor_environment:

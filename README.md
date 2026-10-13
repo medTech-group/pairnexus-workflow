@@ -6,9 +6,18 @@ A Claude Code kit for building software from a spec, attended or unattended:
 
 You don't need to remember its commands: start a session and say what you're working on, and Claude asks what to do next with choices to click ([Using it](#using-it)).
 
-For unattended runs, a **conductor** asks the owner a few questions once (the **run charter**). It then builds every ready ticket in parallel sessions, merges what passes, releases if allowed, and reports, without waiting on anyone mid-run.
+For unattended runs, a **conductor** asks the owner a few questions once (the **run charter**). It then builds every ready ticket in parallel sessions, merges what passes, releases if allowed, and reports. Mid-run it waits on you only for your own tasks and for questions it asked you.
 
 It packages what worked over the pair-drop weekend run of 9–12 Oct 2026 (about 50 tickets), with fixes for what didn't. pair-drop itself is set up with it (medTech-group/pair-drop#292).
+
+**Contents**
+- [Getting started](#getting-started): what you need, then six steps to set a repository up
+- [Using it](#using-it): the guided start, [`/next`](#one-piece-at-a-time-next), [unattended runs](#unattended)
+- [Planning new work](#planning-new-work-what-happens-underneath): the interview, specs, tickets, maps, and [every Matt Pocock skill](#every-matt-pocock-skill-in-a-project)
+- [Keeping it up to date](#keeping-it-up-to-date) and [as a plugin](#as-a-plugin-on-your-own-computer)
+- [When something goes wrong](#when-something-goes-wrong) and [Good to know](#good-to-know)
+- [What's in it](#whats-in-it), [Development](#development)
+- Reference: [the flow](docs/flow.md), [the run charter](docs/charter.md), [the profile](docs/profile.md), [enforcement](docs/enforcement.md), [install modes](docs/install.md), [what's verified](docs/spike.md)
 
 ## Getting started
 
@@ -25,6 +34,7 @@ You need:
    - Your claude.ai account is connected to GitHub.
    - If a session can't reach a repository, it tells you which of these is missing.
 4. **A paid GitHub plan** (Team or above) if the repository is private. Rulesets on private repositories need one. Without a ruleset, nothing outside the session stops a push straight to the base branch.
+5. **Python 3.11 or later** as `python3`, wherever anyone opens the project in Claude Code (the cloud image has it). The kit's hooks run on it: with an older one every hook fails, and the guard is off.
 
 ### Step 1. Ask Claude to set the repository up
 
@@ -33,17 +43,17 @@ You need:
    - **Browser:** at claude.ai/code, pick the repository and the Default environment.
 2. Send this message:
 
-   > Set this repository up with the pairnexus workflow: clone https://github.com/medTech-group/pairnexus-workflow and follow `skills/setup-workflow/SKILL.md`.
+   > Set this repository up with the pairnexus workflow: clone https://github.com/medTech-group/pairnexus-workflow at its latest release's tag and follow `skills/setup-workflow/SKILL.md`.
 
-   If Claude asks to add the kit's repository to the session, allow it. That is how a cloud session gets to read it.
+   If Claude asks to add the kit's repository, or Matt Pocock's `mattpocock/skills`, to the session, allow it. That is how a cloud session gets to read them. Projects take released versions only, so set-up uses the latest release, not whatever is on the kit's `main`.
 
 Claude first explores the repository: its tests, CI and check names, deploy scripts, and any existing `.claude/` files. Then it asks only what it couldn't find out, with a recommended answer first. The questions you are most likely to get:
 
 | Question | What it means, and the usual answer |
 |---|---|
-| Vendored or plugin? | **Vendored.** The kit is copied into the repository, so cloud sessions and unattended runs get it. |
+| Vendored or plugin? | **Vendored.** The kit is copied into the repository, so cloud sessions and unattended runs get it. The plugin is for attended work on your own computer only ([As a plugin](#as-a-plugin-on-your-own-computer)). |
 | Your GitHub login | The person whose words count as approval in runs: you. |
-| Can a PR merge with no human approval? | **Yes**, so unattended runs can merge. If your team requires an approval, runs stop at "ready for review". |
+| Can a PR merge with no human approval? | **Yes**, so unattended runs can merge. If your team requires an approval, keep it in the ruleset: each run's conductor sees it and recommends stopping at "ready for review" (the charter's merge mode **owner**), since a PR a session opens is yours and you can't approve your own. |
 | Areas | The parts of the project two sessions shouldn't change at once, such as "backend", "phone app" or "infra". |
 | Explorer | How reviewers try a change from outside: **browser** (a web app; Playwright), **api**, **cli**, or **none**. |
 | Sensitive data | What must never appear in an issue, comment or PR, such as patients' names or phone numbers. |
@@ -57,9 +67,11 @@ Then Claude:
 - **creates the workflow's labels** on the repository straight away (`ready-for-agent`, `workflow:run`, `workflow:stop` and others);
 - **opens one pull request** containing:
   - the repository's settings: `.claude/workflow/profile.toml` and `profile.md`;
-  - the kit's copy in `.claude/`, with its hooks;
-  - a `workflow kit` CI check;
+  - the kit's copy: its skills and Matt Pocock's in `.claude/skills/`, the reviewer agents in `.claude/agents/`, the CLI, docs and templates in `.claude/workflow/`, its hooks merged into `.claude/settings.json`, and `.claude/workflow/lock.json` recording the version and every file;
+  - a `workflow kit` CI check (`.github/workflows/workflow-kit.yml`) and the weekly update check (`.github/workflows/workflow-kit-update.yml`);
   - CODEOWNERS, issue templates, `docs/agents/` (how agents use the issue tracker and labels), `.gitignore` entries, and a short section in `CLAUDE.md`.
+
+In plugin mode there is no copy and no CI jobs: the PR holds the profile, the plugin in `.claude/settings.json`, and the rest of the list.
 
 The PR body lists your one-time steps, filled in with this repository's check names, environment names and the environments' setup script (blank for most projects). The steps below are the same ones, with every click.
 
@@ -80,16 +92,16 @@ On GitHub, open the repository's **Settings → Rules → Rulesets → New rules
 - **Ruleset name:** anything, for example `main`.
 - **Enforcement status:** **Active**. "Disabled" and "Evaluate" enforce nothing.
 - **Bypass list:** **leave it empty.** Sessions act through your GitHub account, so anything you can bypass, a session could bypass too.
-- **Target branches:** **Add target → Include default branch**.
+- **Target branches:** **Add target → Include default branch** (if the profile's `project.base_branch` isn't the default branch, add that branch by name instead).
 - **Rules**, tick:
   - **Restrict deletions**.
   - **Block force pushes**.
   - **Require a pull request before merging**:
-    - **Required approvals: 0**, so unattended runs can merge.
+    - **Required approvals: 0**, so unattended runs can merge. If your team needs approvals, set them here; runs then stop at "ready for review" (see Step 1).
     - **Require review from Code Owners: leave it unticked.** Sessions post under your GitHub account, and GitHub never lets an author approve their own PR, so with it ticked those PRs could never merge.
   - **Require status checks to pass**:
     - Tick **Require branches to be up to date before merging**. Without it, two PRs that each passed against an older base can both merge and break it together.
-    - **Add checks:** every name in the PR body's list, `workflow kit` included. This is the profile's `ci.required_checks`. Type each name exactly; GitHub suggests names from recent runs.
+    - **Add checks:** every name in the PR body's list, `workflow kit` included in vendored mode. This is the profile's `ci.required_checks`. Type each name exactly; GitHub suggests names from recent runs.
 - **Don't tick "Require linear history".** Sessions merge with a merge commit, which it forbids.
 - Click **Create**.
 
@@ -101,7 +113,7 @@ Open the repository's **Settings → General** and scroll to **Pull Requests**:
 
 ### Step 5. Create the two Claude environments
 
-An environment is the cloud machine a session runs on: its network access, environment variables, secrets and setup script. You pick one each time you start a session.
+An environment is the cloud machine a session runs on: its network access, environment variables, secrets and setup script. You pick one each time you start a session. **Skip this step in plugin mode**, and until you want unattended runs.
 
 > [!IMPORTANT]
 > **These two environments are for unattended runs only.** You start the conductor's sessions; the conductor starts the ticket sessions. **For planning, and for building a ticket with you there, use the Default environment** (or any environment without `WORKFLOW_ROLE`). See [Plan in one session, build in another](#plan-in-one-session-build-in-another).
@@ -113,9 +125,9 @@ To create one:
 Either way it's the same environment, so create each one once.
 
 **The ticket environment**, named exactly as in the profile's `run.ticket_environment` (for example `myproject-ticket`):
-- **Environment variables:** only `WORKFLOW_ROLE=ticket`.
+- **Environment variables:** only `WORKFLOW_ROLE=ticket`. Type it exactly: a value the kit doesn't know counts as `ticket` too, the strictest.
 - **Secrets:** **none.** Leave **Network secrets** empty, and put no key or token in an environment variable: no cloud keys, no Auth0, Firebase or payment credentials, no deploy tokens. Tests use fakes, and a session can't misuse a key it doesn't have.
-- **Network access:** the default is usually enough for package managers and container images. If a session later reports a blocked host, set Network access to **Limited** and add the host under **Allowed domains**, with **Allow package managers** left ticked.
+- **Network access:** the default is usually enough for package managers and container images. If a session later reports a blocked host, set Network access to **Limited** and add the host under **Allowed domains**, with **Allow package managers** left ticked. With the browser explorer, Playwright downloads Chromium: allow its host if the network is limited.
 - **Setup script:** only what the PR body gives as the environments' setup script (the profile's `run.environment_setup`). **For most projects it is empty: leave the field blank.** See "What goes in the setup script" below.
 
 **The conductor environment**, named exactly as in the profile's `run.conductor_environment` (for example `myproject-conductor`):
@@ -128,7 +140,7 @@ Either way it's the same environment, so create each one once.
 | What | Example | Where it goes | When it runs |
 |---|---|---|---|
 | **Machine tools** the cloud image doesn't have | Flutter, the .NET SDK | The environment's **setup script** (the profile's `run.environment_setup`) | Once per environment, before Claude starts; the result is cached for later sessions |
-| **The project's own dependencies** | `npm ci`, a Python virtualenv from `requirements.txt` | Nowhere you type: the profile's `commands.setup`, which the kit runs at the start of each cloud session when `commands.setup_check` says it's missing | Each new session, from the fresh clone |
+| **The project's own dependencies** | `npm ci`, a Python virtualenv from `requirements.txt`, Playwright for the browser explorer | Nowhere you type: the profile's `commands.setup`, which the kit runs at the start of each cloud session when `commands.setup_check` says it's missing. It never runs without `setup_check` (`profile check` warns), and has about 8 minutes | Each new session, from the fresh clone |
 
 The setup script runs before the repository is there, so it must never read the repository's files: one that does fails, and no session in that environment can start. The cloud image already has Python, Node.js, Java, Go, Rust, Ruby, PHP, Docker, PostgreSQL and Redis, so most projects need no setup script at all, whatever their stack:
 - a Python API, or a Node.js app with or without a frontend: **blank**; the kit installs its packages;
@@ -138,6 +150,8 @@ The setup script runs before the repository is there, so it must never read the 
 **Why the names must match.** The repository can't hold an environment's id, because ids belong to your Claude account. So the profile holds the names instead. At the start of a run, the conductor lists your environments, takes the one named `run.ticket_environment`, and starts every ticket session in it. If no environment has that name, the run stops before starting anything and says so. The name matters because of what that environment holds:
 - **no credentials**;
 - **`WORKFLOW_ROLE=ticket`**, which puts the guard in its strictest mode. A session can't change an environment variable from inside. Without it, the guard can only guess the role from the branch name, which a session can change.
+
+**One repository per session.** The kit's hooks load from the repository's `.claude/settings.json` only when a cloud session has a single repository. Never add a second repository to a conductor or ticket session: it would run without the guard.
 
 **What's per repository:**
 
@@ -155,10 +169,12 @@ In a **cloud** session on the repository (only cloud sessions can list your envi
 
 > Check the workflow set-up: the ruleset, the merge settings and the two environments.
 
-Claude checks:
-- the ruleset, through GitHub's API: active, on the default branch, no bypass, deletions and force pushes blocked, every required check present, "up to date" ticked, Code Owners off, linear history off;
+Claude follows the kit's checklist (`.claude/workflow/docs/enforcement.md`, section 5) and checks:
+- the ruleset, through GitHub's API: active, on the base branch, no bypass, deletions and force pushes blocked, required approvals, every required check present, "up to date" ticked, Code Owners off, linear history off;
 - that auto-merge and merge commits are allowed;
-- that both environments exist, by name.
+- CODEOWNERS;
+- that both environments exist, by name;
+- `profile check` and `vendor verify`.
 
 It can't see what an environment holds, so it asks you to confirm the ticket environment has no secrets.
 
@@ -189,17 +205,15 @@ You don't need to remember any command. Start a session on the repository and sa
 - a local session;
 - or a cloud session in the **Default environment** (any environment without `WORKFLOW_ROLE`), on a branch not named `claude/build-…`.
 
-Not the ticket or conductor environment, and not a `claude/build-…` branch. There the session counts as part of an unattended run:
-- the guard holds it to a ticket session's rules;
-- pushes go only to `claude/build-…` branches;
-- every turn has to end with a `WORKFLOW-STATUS` line;
-- and there is no menu.
+Not the ticket or conductor environment, and not a `claude/build-…` branch. There the session counts as part of an unattended run, and there is no menu:
+- **in the ticket environment, or on a `claude/build-…` branch:** the guard holds it to a ticket session's rules, pushes go only to `claude/build-…` branches, and every turn has to end with a `WORKFLOW-STATUS` line;
+- **in the conductor environment:** the conductor's rules. The guard denies what it would ask you about elsewhere, and allows the release steps the charter grants.
 
 **What happens with your first message:**
 
 | You type | Claude |
 |---|---|
-| Something clear: a question, "build #262", "rename the Save button to Done" | Does it. No menu. |
+| Something clear: a question, "build #262", "rename the Save button to Done" | Does it. No menu. A code change goes on its own branch with a pull request for you to merge; if it turns out bigger than it looked, Claude offers a quick ticket instead. |
 | Work to plan, one thing or several: "add refill reminders, and the reminders screen needs changing because testers found it confusing" | Splits it into items and proposes a path for each (below) |
 | Anything vaguer: "hi", "let's work on pair-drop", or `/start` | Looks at the project and asks "What are we working on?" |
 | A command, such as `/next` or `/grill-me` | Runs that command, with no menu |
@@ -211,16 +225,19 @@ Not the ticket or conductor environment, and not a `claude/build-…` branch. Th
 - an unattended run in progress;
 - items left from your last session;
 - tickets ready to build;
-- new issues nobody has sorted;
+- issues waiting on a person (owner tasks, `needs-human`, `needs-info`);
+- new issues to sort: open issues labelled `needs-triage` or with no label at all (an issue opened with only GitHub's `bug` or `enhancement` label isn't counted: add `needs-triage` to it, or type `/triage`);
+- a newer release of the kit;
 - whether the project is brand new.
 
 Then it asks **What are we working on?**, with up to four of these:
-- **Carry on:** the most pressing item: a planned item, a map decision, a ready ticket or your PR;
+- **Update the workflow kit to 0.1.x (Recommended)**, first, when a newer release is out and no run is in progress ([Keeping it up to date](#keeping-it-up-to-date));
+- **Carry on:** the most pressing item: your PR, work an earlier session claimed but didn't finish (carry on from its branch, or **Release it**), a planned item, a spec with no tickets yet, a map decision, or a ready ticket;
 - **Something new, or a change to what's there**;
 - **Fix something that's broken**;
 - **Sort the new issues**;
 - **A brand-new project or a large effort** (recommended when the project has no code yet);
-- **Run the ready tickets unattended**.
+- **Run the ready tickets unattended**: a run can't start from this session, so Claude tells you how to start one ([Unattended](#unattended)).
 
 "Other" is always there, for your own words.
 
@@ -267,6 +284,8 @@ Then *"Go with this plan? 1. Reminders screen (quick ticket) 2. Refill reminders
 | The tickets | **Build them in a fresh session**, **Run them unattended**, **Next item of the plan** (when it's light), **Stop here** |
 | Charting a map | **Stop here: the first decision in a fresh session**, **Next item of the plan** (when it's light) |
 | A light item (a quick ticket published, an edit to an issue) | **Next: <the next item>**, **Start it in a fresh session**, **Stop here** |
+| Finding a bug's cause | **File the fix as a ticket and build it**, **It needs decisions: make it a spec**, **Stop here** (what was found goes on the issue) |
+| A map decision, or a build | A recommendation to go on in a fresh session |
 
 "Stop here" leaves everything on GitHub, so the next session picks it up.
 
@@ -295,7 +314,24 @@ How long each takes, roughly:
 - `/next map` or `/next spec`;
 - `/next 123` for a particular issue.
 
-Building a ticket follows the kit's flow: claim, tests first, the review panel in rounds, a pull request with its findings, CI. You merge the pull request.
+Building a ticket follows the kit's flow, the same as in a run except the merge:
+1. it claims the ticket (`workflow:in-progress`);
+2. builds it test-first at the spec's seams;
+3. runs the review panel in rounds until one is clean (at most the profile's `run.review_rounds`);
+4. runs the full suite locally and posts the counts on the pull request (`workflow evidence`, which also counts the base branch's tests);
+5. opens the pull request with its findings table, and watches CI, checking in every `run.check_in_minutes` while it waits;
+6. ends each turn with a `WORKFLOW-STATUS` line and the flow's checklist.
+
+You merge the pull request.
+
+**What "ready" means.** `/next` and runs take a ticket only when all of these hold:
+- it's open and labelled `ready-for-agent`;
+- it isn't a spec: not labelled `spec`, its title doesn't start with "Spec:", and it has no sub-issues;
+- it isn't labelled `needs-human`, `owner-task` or `ready-for-human`, and nobody has claimed it (`workflow:in-progress`);
+- no open pull request closes it;
+- every ticket it's blocked by is closed as completed (one closed as not planned still blocks, and so does one in another repository).
+
+Infra tickets (`workflow:infra`) come first, then by number.
 
 #### Unattended
 
@@ -304,19 +340,33 @@ Building a ticket follows the kit's flow: claim, tests first, the review panel i
 
    > Run the backlog unattended.
 
-3. The conductor checks the set-up, then asks you the charter's questions in one sitting: which tickets, until when, how many at once (2 by default), what it may merge, and the like.
-4. It shows you the plan and waits for your one "go".
-5. It opens a **tracking issue** for the run (label `workflow:run`), with an issue for any by-hand checks linked from it.
-6. From then on it runs without you; you can close the browser:
+3. The conductor checks the set-up (the ruleset, CODEOWNERS, the ticket environment, the kit's version), then asks you the charter's questions in one sitting: which tickets, until when, how many at once (2 by default), what it may merge and release, and the like ([docs/charter.md](docs/charter.md)).
+4. It opens a **tracking issue** for the run (label `workflow:run`), with an issue for any by-hand checks linked from it, shows you the charter there, and waits for your one "go" (in the chat, or as a comment on the issue). If you don't go ahead, it closes both issues.
+5. From then on it runs without you; you can close the browser:
    - it starts a ticket session for each ready ticket in the ticket environment, as many at once as you allowed and at most one per area;
    - it checks in every 20 minutes by default, and merges what passes;
-   - at the end it writes a report on the tracking issue.
+   - at the end it writes a report on the tracking issue, and closes it.
 
-While it runs:
-- **To change the run,** comment on the tracking issue, for example "also #140" or "extend to Monday 9am". Only your own comments count (the GitHub login you gave in step 1). It reads them at the next check-in and replies to confirm.
-- **To stop it,** add the label `workflow:stop` to the tracking issue: at its next check-in it stops the ticket sessions and writes the report. Or say "stop the run" in the conductor's session.
+**Watching it.** The tracking issue is the run's record:
+- its **Now** line says what is running and what's next;
+- the conductor comments as tickets merge, fail or need you;
+- the ticket sessions show in your sessions list at claude.ai/code, tagged with the run.
 
-A run only builds tickets that are ready: planning is a conversation with you, so it never happens in a run. While a map still has Destination items without a spec, the conductor's kick-off lists that map's ready tickets and recommends leaving them out (see [the gate](#a-large-or-brand-new-effort-wayfinder)).
+Subscribe to the tracking issue to hear about it. The conductor's @mentions of you go out under your own account, so GitHub may not notify you of them.
+
+**Changing it.** Comment on the tracking issue, for example "also #140", "stop releasing" or "extend to Monday 9am". Only your own comments count (the GitHub login you gave in step 1). It reads them at the next check-in and replies to confirm.
+
+**Stopping it.** Add the label `workflow:stop` to the tracking issue, or say "stop the run" in the conductor's session. From its next check-in it interrupts the ticket sessions and waits for their branches to settle, which can take a few check-ins, then writes the report. **A stopped run releases nothing**, whatever the charter says; release by hand if you still want to.
+
+**The end time** is a hard stop, not "start nothing new": the conductor stops the running sessions the same way, then releases if the charter says so.
+
+**If the conductor's session ends** (closed, archived, or out of usage): start a new session in the conductor environment, in **Auto**, and say **"conductor resume #<tracking issue>"**. It rebuilds from the tracking issue, which holds the run's whole state.
+
+**Usage.** Each ticket session runs the review panel for up to three rounds, and the conductor checks in until the end time, so a run's usage grows with its tickets. Cap it with the charter's sessions in all (40 by default), sessions at once, and the end time.
+
+**Not yet proven in a real run** ([docs/spike.md](docs/spike.md)): a guard denial in a cloud session (row 4), a private repository's ruleset refusing a push (row 5), the conductor clearing a finished session's check-ins (row 11), a ticket session waking the conductor at once when it finishes (row 13; otherwise the next check-in sees it), and the final report's notification (row 17).
+
+A run only builds tickets that are ready ([what that means](#one-piece-at-a-time-next)): planning is a conversation with you, so it never happens in a run. While a map still has Destination items without a spec, the conductor's kick-off lists that map's ready tickets and recommends leaving them out (see [the gate](#a-large-or-brand-new-effort-wayfinder)).
 
 ### Planning new work: what happens underneath
 
@@ -381,8 +431,8 @@ Claude interviews you in **rounds**:
 - It shows you the list (each ticket's title, what blocks it, and what it delivers) and asks whether the size is right, whether the blocking is right, and whether any should be merged or split. It changes the list until you approve it.
 - It publishes them in order, blockers first, each linked to what blocks it.
 - **The kit's flow adds to each build ticket:**
-  - a written `## Blocked by` section, as well as GitHub's own links, so a blocker closed as "not planned" is still seen;
-  - an `Area:` line from the profile, so an unattended run never runs two sessions on the same area at once;
+  - a written `## Blocked by` section, as well as GitHub's own links, so a blocker closed as "not planned" is still seen. The readiness check also reads a `Blocked by: #12, #14` line, "blocked by #8" in a sentence (so don't write it in passing), issue and PR links (an open PR blocks until it merges), `owner/repo#n`, and "None";
+  - an `Area:` line with one word from the profile's `[areas]`, so an unattended run never runs two sessions on the same area at once. A ticket with no area can run beside anything;
   - acceptance criteria that name where each is tested;
   - the checks only a person can do (a real phone, a real account), if any.
 - **Things only you can do** (create an account, a key, a domain) become their own issues labelled `owner-task`, blocking the tickets that need them. So does any change to a protected path (the kit, CI config, CODEOWNERS): a ticket session can't make those.
@@ -458,7 +508,7 @@ Several decisions that don't block each other can be worked in parallel sessions
    - add a CI workflow in `.github/workflows/` that runs them;
    - set `ci.none = false`, and add the new check names to `ci.required_checks`.
 
-   Both are protected paths: Claude asks you before each change, and the pull request is yours to merge. A build ticket can't make them, so this is never a ticket.
+   Both are protected paths: Claude shows you each change, and the pull request is yours to merge. (The guard stops only ticket sessions from changing them; in your own session, you are the check.) A build ticket can't make them, so this is never a ticket.
 6. **Add the new check names to the ruleset** ([Step 3](#step-3-protect-the-base-branch-with-a-ruleset)).
 7. **Only then run tickets unattended.**
 
@@ -502,7 +552,6 @@ Several decisions that don't block each other can be worked in parallel sessions
 | `/implement` | You type | Builds one ticket, committing to the current branch | Not recommended: use `/next build` |
 | `/implement-spec` | You type | Builds a whole spec on one branch with parallel agents | Not recommended: use an unattended run |
 | `/pr` | Claude, when needed | Writes a pull request's description | |
-| `/resolving-merge-conflicts` | Claude, when needed | Works through a merge or rebase conflict | |
 | `/codebase-design` | Claude, when needed | The words for designing a module: depth, interface, seam | |
 | `/improve-codebase-architecture` | You type | Finds places the code could be simpler for agents to work in, then interviews you about the one you pick | Its HTML report goes to the machine's temporary directory and opens in a browser, so run it in a local session; its outcome is a new item to plan |
 | `/retro` | You type | Looks back at a session and suggests changes to the setup, not the code | |
@@ -523,21 +572,23 @@ Several decisions that don't block each other can be worked in parallel sessions
 |---|---|---|
 | **A session you start** (the guided start) | **"Update the workflow kit to 0.1.5 (Recommended)"** as the first choice, or **"Carry on: the kit update PR #n"** once one is open | Click it. Claude opens the update pull request; you merge it |
 | **An unattended run's kick-off** | **Update first** or **Run on 0.1.4** | Update first: the run ends, you update in a session of your own, then start the run again. A run never changes version midway, and its ticket sessions never update |
-| **The weekly check** (a GitHub Action set-up adds) | An issue, **"Workflow kit update: 0.1.4 → 0.1.5"**, with the release's notes; closed once you've updated | Start a session and choose the update, or say "Update the workflow kit" |
+| **The weekly check** (a GitHub Action set-up adds, Mondays 04:17 UTC; vendored mode) | An issue, **"Workflow kit update: 0.1.4 → 0.1.5"**, labelled `owner-task`, linking every release since and the full difference; closed once you've updated | Start a session and choose the update, or say "Update the workflow kit". To skip that version, close the issue as not planned: it comes back for the next release |
 
 **Nothing updates by itself.** The kit is what guards your sessions, so a new version always arrives as a pull request you read and merge, never swapped in by a session: a ticket session that could rewrite its own guard would defeat it, and the `workflow kit` CI check refuses a copy that wasn't recorded through an update. The weekly check opens an issue rather than the pull request, because a pull request opened by a GitHub Action's own token never runs your CI.
 
-**To update by hand,** in a session on the repository (the Default environment), type `/update-workflow`, or say:
+**To update by hand,** in a session on the repository (the Default environment), type `/update-workflow` (from kit 0.1.5 on), or say this, which works from any version:
 
 > Update the workflow kit: clone it at the latest release's tag and follow its `skills/update-workflow/SKILL.md`.
 
 Claude clones the kit at the latest release's tag into a temporary directory and follows that release's `skills/update-workflow/SKILL.md`. It opens a pull request that replaces the kit's copy, keeping any edits the project made on purpose, and does what that release's changelog asks of projects. Merge it like the set-up PR. The `workflow kit` CI check fails if anyone changes the copy without recording it, so the copy always matches a released version plus the project's recorded edits.
 
-To check by hand: `python3 -B .claude/workflow/bin/workflow.py version --fresh`.
+The update pull request lists each file the project had edited: kept as edited where the kit didn't change it, and merged by hand where both did. It also brings over changes to the files set-up copied once (the CI jobs, `docs/agents/issue-tracker.md`, the issue templates).
+
+To check by hand: `python3 -B .claude/workflow/bin/workflow.py version --fresh`. Each session start looks up the latest release (with `gh`, else GitHub's public API) at most every six hours; `WORKFLOW_UPDATE_CHECK=off` in an environment turns the lookup off.
 
 ### As a plugin, on your own computer
 
-Everything above is the **vendored** mode, which every project that runs unattended needs. The kit also installs as a Claude Code plugin, for attended work on a laptop, in the desktop app or a terminal. Cloud sessions and unattended runs don't install it, so pick one mode per project: never both.
+Everything above is the **vendored** mode, which every project that runs unattended needs. The kit also installs as a Claude Code plugin, for attended work on a laptop, in the desktop app or a terminal. Cloud sessions and unattended runs don't install it (unless an organisation Owner turns it on for every member: [docs/install.md](docs/install.md)), so pick one mode per project: never both. Your computer needs Python 3.11 or later as `python3`.
 
 **Install it once on your computer.** The kit's repository is its own plugin marketplace, `pairnexus`. In Claude Code, type:
 
@@ -556,7 +607,7 @@ Everything above is the **vendored** mode, which every project that runs unatten
 
 | Type | What it does |
 |---|---|
-| `/pairnexus-workflow:start` | The guided start. It also comes up by itself at your first message |
+| `/pairnexus-workflow:start` | The guided start. It also comes up by itself at your first message, once the project has a profile |
 | `/pairnexus-workflow:next` | The next ready piece of work: `map`, `spec`, `build` or an issue number after it |
 | `/pairnexus-workflow:build-ticket` | Builds one ready ticket, from claim to merge |
 | `/pairnexus-workflow:review-panel` | The review panel on a diff or pull request |
@@ -570,15 +621,31 @@ Matt Pocock's take `mattpocock-skills:`, such as `/mattpocock-skills:to-spec`, `
 
 [docs/install.md](docs/install.md) has the details, and how an organisation Owner can turn the plugin on for every member.
 
+### When something goes wrong
+
+| What you see | What it means, and what to do |
+|---|---|
+| **"[workflow guard, …] … is never allowed"** or an approval prompt for a push | The guard stopped something on its never-list (a push to the base branch, a force-push, a deploy command). In your own session, approve only if you meant it; a ticket session never gets past it, and ends `needs-human` if its ticket needs it |
+| **"the profile is invalid"** on every command | A ticket or conductor session fails closed. Fix `.claude/workflow/profile.toml` in a pull request from an attended session (`workflow.py profile check` says what's wrong), or restore it: `git checkout -- .claude/workflow` |
+| **A hook error on every tool call** | Usually `python3` older than 3.11, or the kit's copy missing. Check `python3 --version`; restore the copy with `git checkout -- .claude/workflow` |
+| **"Project setup … FAILED"** at a cloud session's start | `commands.setup` failed or ran out of time (about 8 minutes). The session carries on without the dependencies: fix the command in the profile |
+| **The `workflow kit` check fails** | The kit's copy doesn't match `.claude/workflow/lock.json`: someone changed it without an update. Undo the change, or update the kit properly (`/update-workflow`) |
+| **A required check never reports**, so the PR can't merge | See "PRs that CI skips" below |
+| **A run stalls** with PRs open | Is auto-merge allowed (Step 4)? Does the ruleset require an approval? Is the conductor's session still there? (If not: "conductor resume #<tracking issue>") |
+| **`/next` says nothing is ready** | Check the ticket against [what ready means](#one-piece-at-a-time-next): most often a missing `ready-for-agent`, a blocker not closed as completed, or a claim left by an earlier session |
+
 ### Good to know
 
 - **PRs that CI skips.** If the CI workflow skips some paths (`paths-ignore`, for docs-only changes say), a PR touching only those never gets its required checks, and with an empty bypass list it can't merge. Fix it in CI rather than in the ruleset: let each required job run on every PR and skip its own steps when nothing relevant changed, so the check still reports. Set-up notes such checks in the profile (`ci.path_filtered`), and a run hands those PRs to you.
-- **Protected paths** (`.claude/`, `.github/workflows/`, CODEOWNERS, secrets files): ticket sessions can't change them. Any PR that does is yours to review and merge, and a ticket that needs one is filed as an owner task.
+- **Protected paths** (`.claude/`, `.github/workflows/`, CODEOWNERS, `.env` files): ticket sessions can't change them. Any PR that does is yours to review and merge, and a ticket that needs one is filed as an owner task. Adding your own in the profile's `guard.protected_paths` replaces the defaults, so keep them in the list.
+- **The profile** (`.claude/workflow/profile.toml`) holds every setting: [docs/profile.md](docs/profile.md) explains each one. Change it in a pull request you merge.
 - **Read more:**
   - [docs/flow.md](docs/flow.md): the flow sessions follow;
   - [docs/charter.md](docs/charter.md): the run charter;
   - [docs/enforcement.md](docs/enforcement.md): what stops a session, and why;
-  - [docs/install.md](docs/install.md): vendored and plugin modes.
+  - [docs/install.md](docs/install.md): vendored and plugin modes;
+  - [docs/profile.md](docs/profile.md): the profile's settings and the environment variables;
+  - [docs/spike.md](docs/spike.md): what has been tried for real, and what hasn't.
 
 ## What's in it
 
@@ -588,15 +655,19 @@ Matt Pocock's take `mattpocock-skills:`, such as `/mattpocock-skills:to-spec`, `
 | `skills/start` | The guided start: "What are we working on?" with choices, a path per item, the plan filed as issues, a choice at each handover |
 | `skills/next` | Find the next ready piece of work and do it under the flow |
 | `skills/build-ticket` | One ticket from claim to merge |
-| `skills/review-panel` | Standards, Spec, Correctness (with security) and a UI explorer, in parallel rounds until clean |
+| `skills/review-panel` | Standards, Spec, Correctness (with a security review for auth, upload, payment or API changes) and, when the profile has an explorer and the change touches a screen, endpoint or command, the explorer, in parallel rounds until clean |
 | `skills/conductor` | The unattended run: charter, sessions, check-ins, merges, release, stop |
 | `skills/run-report` | The end-of-run report for the owner |
 | `skills/update-workflow` | Update a project's vendored copy |
 | `agents/` | The read-only Correctness reviewer and the UI explorer |
-| `scripts/workflow.py` | The CLI the skills and hooks run: `profile`, `status`, `version`, `ready`, `charter`, `state`, `render`, `comments`, `evidence`, `repair`, `vendor`, `hook` |
-| `hooks/` | Guard (the never-list), checklist gate, flow context and the guided start's first-message nudge, environment repair and project setup |
-| `docs/` | `flow.md`, `charter.md`, `enforcement.md`, `install.md`, `spike.md` (what's verified), `proposal.md` (the design) |
-| `templates/` | Profile, ticket-session briefing, tracking and by-hand issues, the `workflow kit` CI job and the weekly update check |
+| `scripts/workflow.py`, `scripts/workflow/` | The CLI the skills and hooks run (Python 3.11+, standard library only): `profile`, `status`, `version`, `ready`, `charter`, `state`, `render`, `comments`, `briefing`, `evidence`, `repair`, `vendor`, `hook`. `python3 -B scripts/workflow.py --help` lists every flag |
+| `hooks/hooks.json` | The plugin's hooks (a vendored project gets the same hooks in its `.claude/settings.json`): the guard (the never-list), the status gate, the flow context and the guided start's first-message nudge, and at session start the environment repair, project setup and update notice |
+| `docs/` | `flow.md`, `charter.md`, `enforcement.md`, `install.md`, `profile.md`, `spike.md` (what's verified), `proposal.md` (the original design, historical) |
+| `templates/` | The profile (`profile.toml`, `profile.md`), the ticket-session briefing, tracking and by-hand issues, `issue-tracker.md` (for `docs/agents/`), the issue templates, the `workflow kit` CI job and the weekly update check |
+| `.claude-plugin/` | The plugin manifest and the `pairnexus` marketplace, which pins Matt Pocock's skills |
+| `.github/` | The kit's own CI (the tests on Python 3.11 to 3.13, and a check that the versions agree) and the `release` workflow |
+| `tests/` | The tests |
+| `VERSION`, `CHANGELOG.md` | The version, and what changed in each, with the steps for projects updating |
 
 Standards and Spec reviews, TDD, the planning interview, specs, tickets and maps come from [Matt Pocock's skills](https://github.com/mattpocock/skills) (MIT), pinned in `.claude-plugin/marketplace.json` and copied into each project alongside the kit's own (they aren't in this repository). [Planning new work](#planning-new-work-what-happens-underneath) lists every one and how it fits.
 
@@ -608,8 +679,10 @@ python3 -m pytest tests -q          # Python 3.11+, pytest
 
 Every hook and script is tested with JSON fixtures, including attempts to get past the guard.
 
-Releases are semver: every change to shipped files bumps `VERSION`, `.claude-plugin/plugin.json` and adds a `CHANGELOG.md` entry; a change merged without a bump reaches no project until the next one. **Don't tag by hand:** the `release` workflow tags and publishes each version when its bump lands on `main` (`.github/scripts/release.py`). Projects pin a release, and update with `update-workflow`.
+Releases are semver: every change to shipped files bumps `VERSION`, `.claude-plugin/plugin.json` and adds a `CHANGELOG.md` entry, with a "For projects updating" list when a project must do something. **Shipped** means what `vendor.plan` copies into a project: `skills/`, `agents/`, `scripts/`, `templates/`, `docs/` (except `proposal.md` and `spike.md`; `flow.md` goes to `.claude/workflow/flow.md`), `LICENSE`, and the hook set in `vendor.py`. README, CHANGELOG, `tests/` and `.github/` aren't. A shipped change merged without a bump reaches no vendored project until the next one, but plugin users get it at once: the plugin follows `main`.
+
+CI checks that `VERSION`, `plugin.json` and the CHANGELOG agree; nothing checks that a change came with its bump. **Don't tag by hand:** the `release` workflow tags and publishes each version when its bump lands on `main` (`.github/scripts/release.py`). Projects pin a release, and update with `update-workflow`.
 
 ## Licence
 
-MIT (MedTech LLC): see `LICENSE`. The repository is public. The Matt Pocock skills keep their own MIT licence and notice: `THIRD_PARTY-mattpocock-skills.txt`.
+MIT (MedTech LLC): see `LICENSE`, which a vendored copy carries as `.claude/workflow/LICENSE`. The repository is public. The Matt Pocock skills keep their own MIT licence and notice: `THIRD_PARTY-mattpocock-skills.txt` here, `.claude/skills/LICENSE-mattpocock-skills` in a project.

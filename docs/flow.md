@@ -8,7 +8,7 @@ The project's specifics live in its profile: `.claude/workflow/profile.toml` (co
 
 **Starting.** In an attended session, the `start` skill begins at the first message (or `/start`): it asks what we're working on, with choices, splits a request into items, proposes a path for each, and files them as issues. Or name the work ("implement #146", "work the doctor map"), or use `next`: it finds what is ready and does one piece under this file.
 
-**Handovers.** In an attended session, end each step by offering what comes next as choices (the `AskUserQuestion` tool), your recommendation first: after an interview, a spec, a breakdown, a decision and a build. The `start` skill lists them for each step.
+**Handovers.** In an attended session, end each step by offering what comes next as choices (the `AskUserQuestion` tool), your recommendation first: after an interview, a spec, a breakdown, a charted map, a light item and finding a bug's cause. The `start` skill lists them for each step. After a map decision or a build, recommend going on in a fresh session.
 
 ## 1. Planning (optional): a map, one decision per session
 
@@ -47,7 +47,7 @@ Follow the `build-ticket` skill, one ticket at a time. When the person typed `im
 
 1. **Claim** it; read the ticket, its spec, the project's rules and the notes the briefing points to.
 2. **Build** it: `tdd` at the spec's seams; the typecheck and single test files as you go; the full suite at the end.
-3. **Review** with the `review-panel` skill: Standards, Spec, Correctness (with a security review for auth, upload or API changes) and, for a UI change, the explorer, in parallel. Verify each finding, fix the real ones with a test, answer the rest with a reason. Repeat until a round is clean, at most the profile's `run.review_rounds`; a short Correctness pass then covers any commit made after the last round.
+3. **Review** with the `review-panel` skill: Standards, Spec, Correctness (with a security review for an auth, upload, payment or API change) and, when the profile's `ui.explorer` isn't `none` and the change touches a screen, an endpoint or a command, the explorer, in parallel. Verify each finding, fix the real ones with a test, answer the rest with a reason. Repeat until a round is clean, at most the profile's `run.review_rounds`; a short Correctness pass then covers any commit made after the last round.
 4. **Pull request** to the base branch: `Closes #<n>`, what was built, how it was tested, the findings table, the decisions taken.
 5. **Green and merge** under the merge rule (below), or leave it for the owner in attended work.
 
@@ -64,7 +64,7 @@ A pull request merges only when all of these hold on its current head:
 
 This section is the merge rule's one source; skills and briefings point here rather than restate it.
 
-Merging is the owner's in attended work. In an unattended run it follows the charter's `merge.mode`: GitHub auto-merge behind the ruleset (the session or the conductor keeps the branch up to date until it merges), or the session merges with a merge commit. In `auto-merge` mode, when GitHub refuses to enable auto-merge because the PR is already mergeable (clean), whoever tried (the session, or the conductor) checks this rule again at that moment and, if it holds, merges with a merge commit. The conductor never merges a change to a protected path itself: it goes to the owner.
+Merging is the owner's in attended work. In an unattended run it follows the charter's `merge.mode`: GitHub auto-merge behind the ruleset (the session or the conductor keeps the branch up to date until it merges), the session merges with a merge commit (`session`), or nothing merges unattended and the PR waits for the owner (`owner`). In `auto-merge` mode, when GitHub refuses to enable auto-merge because the PR is already mergeable (clean), whoever tried (the session, or the conductor) checks this rule again at that moment and, if it holds, merges with a merge commit. The conductor never merges a change to a protected path itself: it goes to the owner.
 
 ## 5. Unattended runs
 
@@ -91,4 +91,4 @@ Follow the `conductor` skill. The conductor never builds tickets itself: it asks
 
 ## Anything else
 
-Use `ask-matt`, the router over the engineering skills.
+Use the `start` skill: it asks what we're working on and proposes a path. (Matt Pocock's `ask-matt` routes to `implement` and `implement-spec`, which this flow replaces with `build-ticket`.)
