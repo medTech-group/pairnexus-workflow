@@ -2,9 +2,31 @@
 
 ## 0.1.4
 
-- **README: "Planning new work"**, before "Using it": how an idea becomes build tickets with Matt Pocock's skills, which are slash commands you type (`/grill-with-docs`, `/to-spec`, `/to-tickets`, `/wayfinder`), where to run them, what the kit's flow adds to what they publish, a large or brand-new effort with `/wayfinder` and `/next map`/`/next spec`, the side trips (`/prototype`, `/research`, `/to-questionnaire`), and a table of every Matt Pocock skill in a project: who starts it and how it fits with the kit.
-- **The flow comes into context for the planning commands on their own:** `/to-spec`, `/to-tickets`, `/wayfinder`, `/grill-with-docs`, `/triage`, `/implement` and `/implement-spec`, with or without an issue number, so the kit's rules (the `spec` label, `Area:` lines, a written `Blocked by`, owner tasks, building with `build-ticket`) apply to what they publish.
-- `flow.md`: a spec starts from `grill-with-docs` (or a map's decisions) in the same session; `implement` and `implement-spec` build the `build-ticket` way.
+- **The guided start** (`skills/start`): you don't need to remember a command.
+  - At the first message of an attended session, Claude asks "What are we working on?", with choices to click (`AskUserQuestion`).
+  - The choices come from where the project stands: carry on a planned item, a map decision, a ready ticket or a PR waiting; something new or a change; a fix; sorting new issues; a brand-new project or large effort; an unattended run.
+  - It splits a request into items, and proposes a path for each, always offering a spec as well: a quick ticket, finding the cause first, a spec, a map, or adding to an existing issue.
+  - It proposes an order, and files each item as an issue (`<!-- workflow:item path=… -->`), so a plan outlives the session.
+  - It offers each next step as a choice: after the interview, the spec, the tickets and each item.
+  - A clear first request (a question, "build #262", a command) skips the menu. `/start` brings it back any time. `project.guided_start = false` turns the first-message menu off.
+- **`workflow status`**: where the project stands, for the guided start:
+  - whether the kit is set up, and whether the project is brand new;
+  - an unattended run, claimed work and open PRs;
+  - planned items, maps, specs and ready tickets;
+  - what waits on a person, and new issues to sort.
+- **The flow comes into context for the planning commands on their own:** `/to-spec`, `/to-tickets`, `/wayfinder`, `/grill-with-docs`, `/triage`, `/implement` and `/implement-spec`.
+- **`flow.md`:**
+  - starting with the guided start, and handovers offered as choices;
+  - a spec starts from `grill-with-docs` (or a map's decisions) in the same session;
+  - the glossary, ADRs and research notes are committed with a pull request (§2's new step and checklist line);
+  - an issue triaged to `ready-for-agent` gets a build ticket's `Blocked by`, `Area:` and acceptance criteria;
+  - `implement` and `implement-spec` build with `build-ticket`;
+  - the map gate is stated in §1, with who applies it.
+- **The conductor's kick-off** lists ready tickets of a map whose Destination isn't fully specified, and recommends leaving them out: `workflow ready` doesn't know about maps.
+- **README:**
+  - "Using it" opens with the guided start: where to run it, what the first message does, the paths, an example, the handovers, changing course and long sessions;
+  - "Planning new work: what happens underneath" covers every step's command, `/wayfinder`, the side trips, and a table of every Matt Pocock skill in a project (who starts it, how it fits, where its files go, the plugin's prefix);
+  - a brand-new project, step by step, with its first ticket built attended and its CI as an owner pull request.
 
 ## 0.1.3
 

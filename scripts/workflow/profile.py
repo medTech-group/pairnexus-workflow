@@ -41,7 +41,7 @@ class ProfileError(ValueError):
 # Every key the profile may hold, so a typo ("required_check", "[area]") fails
 # instead of being quietly ignored. None: any key (area names).
 ALLOWED: dict[str, set[str] | None] = {
-    "project": {"name", "repo", "base_branch", "rules", "flow_addendum", "owner"},
+    "project": {"name", "repo", "base_branch", "rules", "flow_addendum", "owner", "guided_start"},
     "commands": {"setup", "setup_check", "typecheck", "test_file", "suite", "package"},
     "ci": {"required_checks", "killed_markers", "none", "path_filtered"},
     "ui": {"explorer", "start", "sizes", "notes"},
@@ -116,6 +116,7 @@ class Profile:
     owner: str = ""
     rules: list[str] = field(default_factory=list)
     flow_addendum: str = ""
+    guided_start: bool = True
     setup: str = ""
     setup_check: str = ""
     typecheck: str = ""
@@ -309,6 +310,9 @@ def parse(data: dict, root: Path) -> Profile:
     pmode = str(run.get("permission_mode") or "auto")
     if pmode not in PERMISSION_MODES:
         raise ProfileError(f"run.permission_mode must be one of {sorted(PERMISSION_MODES)} (a mode that prompts would stall an unattended session)")
+    guided = proj.get("guided_start", True)
+    if not isinstance(guided, bool):
+        raise ProfileError("project.guided_start must be true or false")
     allow = guard.get("allow_new_skips", False)
     if not isinstance(allow, bool):
         raise ProfileError("guard.allow_new_skips must be true or false")
@@ -320,6 +324,7 @@ def parse(data: dict, root: Path) -> Profile:
         owner=owner,
         rules=_strs(proj.get("rules"), "project.rules"),
         flow_addendum=str(proj.get("flow_addendum") or ""),
+        guided_start=guided,
         setup=str(cmds.get("setup") or ""),
         setup_check=str(cmds.get("setup_check") or ""),
         typecheck=str(cmds.get("typecheck") or ""),

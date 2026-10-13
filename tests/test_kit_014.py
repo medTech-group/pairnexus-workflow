@@ -57,11 +57,12 @@ def test_readme_lists_every_matt_pocock_skill_with_who_starts_it():
             assert "| You type |" in line or "| Claude, when needed |" in line, line
 
 
-def test_readme_planning_section_comes_before_building_and_covers_the_path():
+def test_readme_using_it_opens_with_the_guided_start_and_planning_covers_the_path():
     readme = _readme()
-    assert readme.index("### Planning new work") < readme.index("### Using it")
-    section = readme.split("### Planning new work", 1)[1].split("### Using it", 1)[0]
+    using = readme.index("### Using it")
+    assert using < readme.index("#### Start a session and say what you're working on") < readme.index("### Planning new work")
+    section = readme.split("### Planning new work", 1)[1].split("### Keeping it up to date", 1)[0]
     for must in ["/grill-with-docs", "/to-spec", "/to-tickets", "/wayfinder", "/next map", "/next spec",
                  "one session", "`spec`", "`Area:`", "owner-task", "workflow:infra", "Don't run it",
-                 "A brand-new project", "wayfinder:map"]:
+                 "A brand-new project", "wayfinder:map", "The gate"]:
         assert must in section, must

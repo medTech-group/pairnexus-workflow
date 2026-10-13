@@ -1,6 +1,7 @@
 """`workflow`: the kit's command line. Python 3.11+, standard library only.
 
     workflow profile check
+    workflow status [--issues F --prs F | --fetch] [--json]
     workflow ready [--issues F --prs F | --fetch] [--exclude 1,2] [--only 1,2] [--override 3] [--running-area A ...] [--slots N] [--json]
     workflow charter defaults | validate F [--approved] | markdown F [--tickets 13:area,143:-] | diff OLD NEW | reuse OLD | pin-plan F | questions
     workflow charter splice --body F --charter F [--out F] [--tickets 13:area,143:-]
@@ -36,6 +37,7 @@ from . import render as render_mod
 from . import repair as repair_mod
 from . import roles
 from . import state as state_mod
+from . import status as status_mod
 from . import vendor as vendor_mod
 from .profile import ProfileError, load, project_root
 
@@ -158,6 +160,36 @@ def cmd_ready(a) -> int:
             for note in v.notes:
                 print(f"      note: {note}")
         print("start now: " + (", ".join(f"#{v.number}" for v in start) or "nothing"))
+    return 0
+
+
+def cmd_status(a) -> int:
+    """Where the project stands, for the guided start (`skills/start`)."""
+    prof = load(required=False)
+    root = prof.root if prof else project_root()
+    issues = prs = None
+    if a.fetch:
+        if not prof:
+            print("workflow status: the kit isn't set up here, so issues weren't read (--fetch needs the profile's project.repo)", file=sys.stderr)
+        else:
+            issues, prs = _fetch(prof.repo, "issues"), _fetch(prof.repo, "pulls")
+    elif a.issues or a.prs:
+        if not a.issues or not a.prs:
+            raise SystemExit("give both --issues and --prs (JSON files, as the GitHub API returns them), or --fetch")
+        issues, prs = _json(a.issues), _json(a.prs)
+    st = status_mod.snapshot(
+        root,
+        prof is not None,
+        issues,
+        prs,
+        repo=prof.repo if prof else None,
+        areas=list(prof.areas) if prof else None,
+        protected=list(prof.protected_paths) if prof else None,
+    )
+    if a.json:
+        _out(st.as_dict())
+    else:
+        print(status_mod.text(st))
     return 0
 
 
@@ -506,7 +538,12 @@ def _hook_context(event: dict) -> int:
     prof = load(required=False)
     root = prof.root if prof else project_root()
     files = context_mod.flow_files(root, KIT_ROOT, prof.flow_addendum if prof else "")
-    ctx = context_mod.context_for(event.get("prompt") or "", event.get("session_id") or "", files)
+    prompt, session = event.get("prompt") or "", event.get("session_id") or ""
+    ctx = context_mod.context_for(prompt, session, files)
+    # The guided start: attended sessions only, since ticket and conductor
+    # sessions start from a briefing or a charter, never from a menu.
+    if not ctx and prof is not None and prof.guided_start and roles.role(root, prof.ticket_branch) == "attended":
+        ctx = context_mod.start_for(prompt, session)
     if ctx:
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": ctx}}))
     return 0
@@ -573,6 +610,13 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--slots", type=int)
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_ready)
+
+    s = sub.add_parser("status", help="where the project stands: what the guided start offers")
+    s.add_argument("--issues")
+    s.add_argument("--prs")
+    s.add_argument("--fetch", action="store_true")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_status)
 
     s = sub.add_parser("charter")
     s.add_argument("action", choices=["defaults", "questions", "validate", "markdown", "diff", "reuse", "pin-plan", "splice"])

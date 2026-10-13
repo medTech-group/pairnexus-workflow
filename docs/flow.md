@@ -6,7 +6,9 @@ The project's specifics live in its profile: `.claude/workflow/profile.toml` (co
 
 **Skills.** Skills named here are in `.claude/skills/<name>/` (vendored) or under the plugins (`pairnexus-workflow:<name>`, `mattpocock-skills:<name>`). A skill marked user-only can't be loaded with the Skill tool: read its `SKILL.md` and follow it as written.
 
-**Starting.** Name the work ("implement #146", "work the doctor map"), or use `next`: it finds what is ready and does one piece under this file.
+**Starting.** In an attended session, the `start` skill begins at the first message (or `/start`): it asks what we're working on, with choices, splits a request into items, proposes a path for each, and files them as issues. Or name the work ("implement #146", "work the doctor map"), or use `next`: it finds what is ready and does one piece under this file.
+
+**Handovers.** In an attended session, end each step by offering what comes next as choices (the `AskUserQuestion` tool), your recommendation first: after an interview, a spec, a breakdown, a decision and a build. The `start` skill lists them for each step.
 
 ## 1. Planning (optional): a map, one decision per session
 
@@ -16,6 +18,8 @@ A large effort can start as a **map**: an issue labelled `wayfinder:map` whose c
 2. Resolve it with the owner. A human-in-the-loop decision is the owner's answer, asked in rounds; never answer for them.
 3. Record it: a resolution comment, close it, the map's "Decisions so far", unblocked tickets updated, new tickets created and wired.
 4. Commit the domain glossary (`GLOSSARY.md`, or the name the project uses), ADRs and research to a branch and offer a pull request.
+
+**The gate.** A map's build tickets wait until every Destination item of that map has its spec and its tickets, so building never starts on half a plan. `workflow ready` doesn't apply it; `next`, `start` and the conductor's kick-off do.
 
 **Checklist:** claimed first; every decision the owner's; recorded and closed; map updated; dependents updated; changes committed with a PR offered; next ticket named.
 
@@ -31,12 +35,14 @@ A large effort can start as a **map**: an issue labelled `wayfinder:map` whose c
 3. Anything only the owner can do (create an account, a key, a domain) is its own issue labelled `owner-task` (or `ready-for-human`), and blocks what needs it.
 4. **A change to a protected path** (the profile's `guard.protected_paths`: the kit, CI config, CODEOWNERS, secrets files) is an owner task too, labelled `owner-task`, never a build ticket: a ticket session can't change those paths. `workflow ready` notes a ticket whose body names one ("names protected path … : check it isn't an owner task"), leaving it ready; the conductor lists such tickets at kick-off for the owner to keep or exclude. Paths in fenced code (unless the prose before it asks for a change "to" or "in" it), or after "don't", "do not" or "never" in their clause, aren't noted; when in doubt, a path is noted.
 5. **A ticket that fixes a failing or flaky required check** is infra: label it `workflow:infra` as well, so it starts before other tickets. (If its fix is to CI config itself, it is an owner task, as above.)
+6. **An issue triaged to `ready-for-agent`** (by `triage`, or the `start` skill's sorting) is a build ticket too: it gets the same `## Blocked by`, `Area:` and acceptance criteria before it gets the label.
+7. **Commit what the session wrote:** the domain glossary, ADRs and research notes, on a branch, with a pull request for the owner to merge. They are files in the working tree, and a cloud session's are gone when it ends.
 
-**Checklist:** every input decision used or ruled out with a reason; seams agreed; spec published; tickets agreed, published, wired, each with an area; owner tasks filed (protected-path changes among them); check fixes labelled `workflow:infra`.
+**Checklist:** every input decision used or ruled out with a reason; seams agreed; spec published; tickets agreed, published, wired, each with an area; owner tasks filed (protected-path changes among them); check fixes labelled `workflow:infra`; glossary, ADRs and notes committed with a PR offered.
 
 ## 3. Building: one ticket per session
 
-Follow the `build-ticket` skill, one ticket at a time; `implement` and `implement-spec` build this way too in a project with the kit. In short:
+Follow the `build-ticket` skill, one ticket at a time. When the person typed `implement` or `implement-spec`, build with `build-ticket` all the same, ticket by ticket, instead of those skills' own steps (no commits straight to the current branch, no parallel builders on one branch). In short:
 
 1. **Claim** it; read the ticket, its spec, the project's rules and the notes the briefing points to.
 2. **Build** it: `tdd` at the spec's seams; the typecheck and single test files as you go; the full suite at the end.
