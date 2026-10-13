@@ -509,3 +509,38 @@ def test_ordinary_git_still_runs(profile, tmp_path):
     for cmd in ("GIT_EDITOR=true git rebase --continue", "GIT_SEQUENCE_EDITOR=: git rebase -i main", "git bisect start", "git submodule update --init", "git archive -o /tmp/x.tar HEAD"):
         d = act(profile, tmp_path, cmd, role="ticket")
         assert d.action == "allow", (cmd, d.reason)
+
+
+# ---------- bash's full rule for a heredoc inside $( ) ----------
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "git commit -m \"$(cat <<'A' <<'B'\na\nA)$(git push --force origin main)\nB\n)\"",
+        "git commit -m \"$(cat <<'A'; cat <<'B'\na\nA)$(git push --force origin main)\nB\n)\"",
+        "git commit -m \"$(cat <<'EOF'\nx\nEOF )$(git push --force origin main)\nEOF\n)\"",
+        "git commit -m \"$(cat <<'EOF'\nx\nEOF\t)$(git push --force origin main)\nEOF\n)\"",
+        "git commit -m \"$(cat <<'EOF'\nx\nEOF ) $1\nEOF\n)\"",
+        "EDITOR=make git commit",
+        "VISUAL=make git rebase -i main",
+        "git -c gpg.program=make commit -S",
+    ],
+)
+def test_full_heredoc_rule_and_editors(cmd, profile, tmp_path):
+    assert act(profile, tmp_path, cmd, role="ticket").action == "deny", cmd
+
+
+def test_no_op_programs_and_harmless_settings_allowed(profile, tmp_path):
+    for cmd in (
+        "GIT_PAGER=cat git log --oneline -5",
+        "GIT_PAGER= git log",
+        "GIT_EDITOR=cat git commit --amend",
+        "GIT_ASKPASS= git fetch",
+        "git config mergetool.keepBackup false",
+        "git config difftool.prompt false",
+        "git commit -F - <<'EOF'\nTitle\nEOF)\nEOF\n",
+    ):
+        for role in ("ticket", "conductor"):
+            d = act(profile, tmp_path, cmd, role=role)
+            assert d.action == "allow", (role, cmd, d.reason)

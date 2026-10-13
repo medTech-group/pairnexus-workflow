@@ -490,10 +490,14 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
                     k = e + 1 if e < n else n
                     found = True
                     break
-                if stop_paren and bare.startswith(delim + ")"):
+                if stop_paren and bare.startswith(delim) and ")" in bare[len(delim):]:
                     # Inside `$( )` bash ends the heredoc at a line starting with
-                    # the delimiter and `)`: the `)` and what follows are code.
+                    # the delimiter and holding a `)` after it: the rest of the
+                    # line is code. Any heredoc still pending is read as code too.
                     hd.body = s[lines_start:k]
+                    if pending[-1][2] is not hd:
+                        pending.clear()
+                        return pos + 1
                     k += len(line) - len(bare) + len(delim)
                     found = True
                     break
@@ -1187,10 +1191,10 @@ _PUSH_SETTINGS = re.compile(
 _INJECT_KEYS = re.compile(
     rf"(?i)^(alias\.|remote\..*\.(push|pushurl|url)\b|{_MIRROR_KEYS}|push\.|branch\..*\.(merge|remote|pushremote)\b|url\.|"
     r"core\.(fsmonitor|sshcommand|hookspath|pager|editor|askpass|gitproxy)\b|credential\.|include\.|includeif\.|"
-    r"sequence\.editor\b|diff\.external\b|diff\..*\.(command|textconv)\b|merge\..*\.driver\b|filter\.|(diff|merge)tool\.)"
+    r"sequence\.editor\b|diff\.external\b|diff\..*\.(command|textconv)\b|merge\..*\.driver\b|filter\.|(diff|merge)tool\..*\.(cmd|path)\b|gpg\.(.*\.)?program\b)"
 )
 _INJECT_ENV = re.compile(
-    r"^(GIT_CONFIG\w*|GIT_SSH\w*|GIT_EXEC_PATH|GIT_DIR|GIT_WORK_TREE|GIT_EDITOR|GIT_SEQUENCE_EDITOR|GIT_EXTERNAL_DIFF|GIT_ASKPASS|GIT_PAGER)\+?="
+    r"^(GIT_CONFIG\w*|GIT_SSH\w*|GIT_EXEC_PATH|GIT_DIR|GIT_WORK_TREE|GIT_EDITOR|GIT_SEQUENCE_EDITOR|GIT_EXTERNAL_DIFF|GIT_ASKPASS|GIT_PAGER|EDITOR|VISUAL)\+?="
 )
 # git subcommands that run a program the guard never sees.
 _GIT_RUNS = {"bisect": {"run"}, "submodule": {"foreach"}, "filter-branch": None, "difftool": None, "mergetool": None}
@@ -1205,8 +1209,8 @@ def _env_problem(seg: Seg, role: str) -> str | None:
     if seg.words and seg.words[0] in ("export", "declare", "typeset", "local", "readonly"):
         names += [w for w in seg.words[1:] if not w.startswith("-")]
     for a in names:
-        if re.fullmatch(r"(GIT_EDITOR|GIT_SEQUENCE_EDITOR)=(true|:)", a):
-            continue  # an editor that does nothing: the usual non-interactive `rebase --continue`
+        if re.fullmatch(r"(GIT_EDITOR|GIT_SEQUENCE_EDITOR|EDITOR|VISUAL)=(true|:|cat|)|GIT_PAGER=(cat|less|more|)|GIT_ASKPASS=(true|)", a):
+            continue  # a program that does nothing here: `GIT_EDITOR=true git rebase --continue`, `GIT_PAGER=cat`
         m = _INJECT_ENV.match(a) or re.fullmatch(r"(GIT_CONFIG\w*|GIT_SSH\w*|GIT_EXEC_PATH|GIT_DIR|GIT_WORK_TREE)", a)
         if m:
             return f"setting `{a.split('=', 1)[0]}` can point git at other config, programs or repositories; it's not allowed in {role} sessions"
@@ -1429,7 +1433,7 @@ def _literal_heredoc(word: str) -> bool:
         # the heredoc (bash's rule inside `$( )`); only a bare `)` may follow.
         if bare == delim:
             return "\n".join(lines[k + 1:]).strip() == ")"
-        if bare.startswith(delim + ")"):
+        if bare.startswith(delim) and ")" in bare[len(delim):]:
             return bare == delim + ")" and not "\n".join(lines[k + 1:]).strip()
     return False
 
@@ -1751,7 +1755,7 @@ def _gh_problem(toks: list[str], profile: Profile, role: str, cwd: str | None, r
             if r is not None and re.search(r"[$`]", r):
                 return f"ticket sessions name a repository only literally; `{t}` is filled in by the shell"
             if r is not None and _repo_name(r) != profile.repo.casefold():
-                return f"ticket sessions work only in {profile.repo}; `{t}` names another repository"
+                return f"ticket sessions work only in {profile.repo}; `{t}` names another repository (text that starts with one, as a title or body may, goes in a quoted heredoc)"
     if role == "ticket" and group == "auth" and any(t in ("-t", "--show-token") or t.startswith(("--show-token=", "-t=")) or re.fullmatch(r"-[a-zA-Z]*t[a-zA-Z]*", t) for t in toks[2:]):
         return "`gh auth status --show-token` prints the GitHub token; ticket sessions never read it"
     if role == "ticket" and group is not None and not group.startswith("-"):
