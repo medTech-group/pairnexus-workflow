@@ -535,6 +535,41 @@ Claude clones the kit at the latest release's tag into a temporary directory and
 
 To check by hand: `python3 -B .claude/workflow/bin/workflow.py version --fresh`.
 
+### As a plugin, on your own computer
+
+Everything above is the **vendored** mode, which every project that runs unattended needs. The kit also installs as a Claude Code plugin, for attended work on a laptop, in the desktop app or a terminal. Cloud sessions and unattended runs don't install it, so pick one mode per project: never both.
+
+**Install it once on your computer.** The kit's repository is its own plugin marketplace, `pairnexus`. In Claude Code, type:
+
+```
+/plugin marketplace add medtech-group/pairnexus-workflow
+/plugin install pairnexus-workflow@pairnexus
+```
+
+- This also installs Matt Pocock's skills (`mattpocock-skills@pairnexus`, pinned) and the kit's hooks: the guard, the status gate, the flow context and the session start.
+- Don't also add Matt Pocock's own marketplace: two plugins named `mattpocock-skills` drop one's hooks.
+- If Claude Code can't clone the repository, run `gh auth login && gh auth setup-git`, and set `CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1` if you have no SSH key for GitHub.
+
+**Set the project up** as in [Step 1](#step-1-ask-claude-to-set-the-repository-up), answering **plugin** to "Vendored or plugin?". It writes the profile and adds the plugin to the project's `.claude/settings.json`, so Claude Code suggests it to everyone who opens the project; each person still installs it once. There's no copy in `.claude/`, no `workflow kit` CI check and no weekly update check.
+
+**The commands carry the plugin's name.** The kit's own:
+
+| Type | What it does |
+|---|---|
+| `/pairnexus-workflow:start` | The guided start. It also comes up by itself at your first message |
+| `/pairnexus-workflow:next` | The next ready piece of work: `map`, `spec`, `build` or an issue number after it |
+| `/pairnexus-workflow:build-ticket` | Builds one ready ticket, from claim to merge |
+| `/pairnexus-workflow:review-panel` | The review panel on a diff or pull request |
+| `/pairnexus-workflow:run-report` | A run's report |
+| `/pairnexus-workflow:setup-workflow` | Sets a project up; Claude never starts it on its own |
+| `/pairnexus-workflow:conductor` | An unattended run. It runs cloud sessions, which need the vendored mode |
+
+Matt Pocock's take `mattpocock-skills:`, such as `/mattpocock-skills:to-spec`, `/mattpocock-skills:to-tickets`, `/mattpocock-skills:wayfinder` and `/mattpocock-skills:grill-with-docs`. [Every Matt Pocock skill in a project](#every-matt-pocock-skill-in-a-project) lists them all; add the prefix to each. Wherever this README says `/next` or `/to-spec`, type the prefixed name.
+
+**Updating.** The session start says when a newer release is out. Type `/plugin update pairnexus-workflow@pairnexus` (not `/update-workflow`, which updates a vendored copy). The plugin follows `main`, not only releases.
+
+[docs/install.md](docs/install.md) has the details, and how an organisation Owner can turn the plugin on for every member.
+
 ### Good to know
 
 - **PRs that CI skips.** If the CI workflow skips some paths (`paths-ignore`, for docs-only changes say), a PR touching only those never gets its required checks, and with an empty bypass list it can't merge. Fix it in CI rather than in the ruleset: let each required job run on every PR and skip its own steps when nothing relevant changed, so the check still reports. Set-up notes such checks in the profile (`ci.path_filtered`), and a run hands those PRs to you.
