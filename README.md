@@ -515,23 +515,23 @@ Several decisions that don't block each other can be worked in parallel sessions
 
 ### Keeping it up to date
 
-**Versions.** The kit is released as numbered versions (`0.1.5`): each is a tag (`v0.1.5`) and a GitHub release on [the Releases page](https://github.com/medTech-group/pairnexus-workflow/releases), with what changed. The kit's `release` workflow tags and publishes each version when it lands on `main`. A project holds a pinned copy of one release, recorded in its `.claude/workflow/lock.json`, and moves to a newer one only through a pull request you merge.
+**Versions.** The kit is released as numbered versions (`0.1.5`): each is a tag (`v0.1.5`) and a GitHub release on [the Releases page](https://github.com/medTech-group/pairnexus-workflow/releases), with what changed. The kit's `release` workflow tags and publishes each version when it lands on `main`. A vendored project holds a pinned copy of one release, recorded in its `.claude/workflow/lock.json`, and moves to a newer one only through a pull request you merge. (In plugin mode, the session start says when a newer release is out, and `/plugin update pairnexus-workflow@pairnexus` updates it; the plugin follows `main`, not only releases.)
 
 **You're told when a newer release is out, three ways:**
 
 | Where | What you see | What to do |
 |---|---|---|
-| **A session you start** (the guided start) | **"Update the workflow kit to 0.1.5 (Recommended)"** as the first choice | Click it. Claude opens the update pull request; you merge it |
+| **A session you start** (the guided start) | **"Update the workflow kit to 0.1.5 (Recommended)"** as the first choice, or **"Carry on: the kit update PR #n"** once one is open | Click it. Claude opens the update pull request; you merge it |
 | **An unattended run's kick-off** | **Update first** or **Run on 0.1.4** | Update first: the run ends, you update in a session of your own, then start the run again. A run never changes version midway, and its ticket sessions never update |
 | **The weekly check** (a GitHub Action set-up adds) | An issue, **"Workflow kit update: 0.1.4 → 0.1.5"**, with the release's notes; closed once you've updated | Start a session and choose the update, or say "Update the workflow kit" |
 
 **Nothing updates by itself.** The kit is what guards your sessions, so a new version always arrives as a pull request you read and merge, never swapped in by a session: a ticket session that could rewrite its own guard would defeat it, and the `workflow kit` CI check refuses a copy that wasn't recorded through an update. The weekly check opens an issue rather than the pull request, because a pull request opened by a GitHub Action's own token never runs your CI.
 
-**To update by hand,** in a session on the repository (the Default environment):
+**To update by hand,** in a session on the repository (the Default environment), type `/update-workflow`, or say:
 
-> Update the workflow kit.
+> Update the workflow kit: clone it at the latest release's tag and follow its `skills/update-workflow/SKILL.md`.
 
-Claude clones the kit at the latest release's tag and follows `skills/update-workflow/SKILL.md`. It opens a pull request that replaces the kit's copy, keeping any edits the project made on purpose, and does what that release's changelog asks of projects. Merge it like the set-up PR. The `workflow kit` CI check fails if anyone changes the copy without recording it, so the copy always matches a released version plus the project's recorded edits.
+Claude clones the kit at the latest release's tag into a temporary directory and follows that release's `skills/update-workflow/SKILL.md`. It opens a pull request that replaces the kit's copy, keeping any edits the project made on purpose, and does what that release's changelog asks of projects. Merge it like the set-up PR. The `workflow kit` CI check fails if anyone changes the copy without recording it, so the copy always matches a released version plus the project's recorded edits.
 
 To check by hand: `python3 -B .claude/workflow/bin/workflow.py version --fresh`.
 
@@ -573,7 +573,7 @@ python3 -m pytest tests -q          # Python 3.11+, pytest
 
 Every hook and script is tested with JSON fixtures, including attempts to get past the guard.
 
-Releases are semver: `VERSION`, `.claude-plugin/plugin.json`, a `CHANGELOG.md` entry and a `v<version>` tag. Projects pin a release, and update with `update-workflow`.
+Releases are semver: every change to shipped files bumps `VERSION`, `.claude-plugin/plugin.json` and adds a `CHANGELOG.md` entry; a change merged without a bump reaches no project until the next one. **Don't tag by hand:** the `release` workflow tags and publishes each version when its bump lands on `main` (`.github/scripts/release.py`). Projects pin a release, and update with `update-workflow`.
 
 ## Licence
 

@@ -1,5 +1,5 @@
 # The workflow kit's weekly update check: when a newer kit release is out, it
-# opens one issue saying so, with the release's notes; when the project has
+# opens one issue saying so, with links to what changed; when the project has
 # caught up, it closes that issue. It never changes code: a session makes the
 # update pull request (the guided start offers it), because a pull request
 # opened by this job's token would never run the project's CI.
@@ -26,10 +26,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
+          KIT: medTech-group/pairnexus-workflow
         run: |
           set -euo pipefail
-          have=$(python3 -c 'import json; print(json.load(open(".claude/workflow/lock.json"))["kit_version"])')
-          latest=$(curl -fsS https://api.github.com/repos/medTech-group/pairnexus-workflow/releases/latest \
+          have=$(python3 -c 'import json,re; v=json.load(open(".claude/workflow/lock.json")).get("kit_version"); print(v if isinstance(v,str) and re.fullmatch(r"\d+\.\d+\.\d+",v) else "")' 2>/dev/null || true)
+          if [ -z "$have" ]; then
+            echo "::warning::.claude/workflow/lock.json has no kit_version: update the kit with update-workflow."
+            exit 0
+          fi
+          latest=$(curl -fsS "https://api.github.com/repos/$KIT/releases/latest" \
             | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"].lstrip("v"))') || {
             echo "Couldn't read the kit's latest release; trying again next week."; exit 0; }
           title_prefix="Workflow kit update:"
@@ -41,18 +46,24 @@ jobs:
             if [ -n "$open" ]; then gh issue close "$open" --repo "$REPO" --comment "The project is on kit $have, the latest release."; fi
             exit 0
           fi
-          curl -fsS "https://api.github.com/repos/medTech-group/pairnexus-workflow/releases/tags/v$latest" \
-            | python3 -c 'import json,sys; print(json.load(sys.stdin).get("body") or "")' > notes.md
+          title="$title_prefix $have → $latest"
+          # Closed as not planned: the owner chose to skip this version.
+          skipped=$(gh issue list --repo "$REPO" --state closed --search "\"$title_prefix\" in:title" --json title,stateReason \
+            --jq "[.[] | select(.title == \"$title\" and .stateReason == \"NOT_PLANNED\")] | length")
+          if [ "${skipped:-0}" != 0 ]; then
+            echo "$have → $latest was closed as not planned; not asking again until a newer release."
+            exit 0
+          fi
           {
             echo "The workflow kit **$latest** is out; this project has **$have**."
             echo
-            echo "**To update:** start a session on this repository (Default environment) and choose \"Update the workflow kit\" when Claude offers it, or say \"Update the workflow kit\". Claude opens a pull request for you to merge."
+            echo "**To update:** start a session on this repository (Default environment) and choose \"Update the workflow kit\" when Claude offers it, or type \`/update-workflow\`. Claude opens a pull request for you to merge."
             echo
-            echo "## What's in $latest"
+            echo "**What changed:** every release from $have to $latest, each with any \"For projects updating\" steps: https://github.com/$KIT/releases. The full difference: https://github.com/$KIT/compare/v$have...v$latest"
             echo
-            cat notes.md
+            echo "To skip this version, close this issue as not planned; it comes back for the next release."
           } > body.md
-          title="$title_prefix $have → $latest"
+          gh label create owner-task --repo "$REPO" --color 5319e7 --description "A person does this" 2>/dev/null || true
           if [ -n "$open" ]; then
             gh issue edit "$open" --repo "$REPO" --title "$title" --body-file body.md
           else

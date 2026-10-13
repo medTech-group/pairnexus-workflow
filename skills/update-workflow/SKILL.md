@@ -8,11 +8,13 @@ disable-model-invocation: true
 
 This runs from a checkout of the new kit release (`KIT`), with `WF` as `python3 $KIT/scripts/workflow.py`.
 
-**The release, never `main` between releases.** The latest is what `python3 .claude/workflow/bin/workflow.py version --fresh` names (or the kit's Releases page). Clone the kit and check out its tag:
+**The release, never `main` between releases.** The latest is what `python3 .claude/workflow/bin/workflow.py version --fresh` names. A project on a kit older than 0.1.5 has no `version` command: there, `git ls-remote --tags --refs https://github.com/medTech-group/pairnexus-workflow 'v*' | sed 's#.*/v##' | sort -V | tail -1`. Clone that release outside the project, so nothing of it is committed by mistake:
 
 ```bash
-git clone https://github.com/medTech-group/pairnexus-workflow "$KIT" && git -C "$KIT" checkout v<version>
+KIT=$(mktemp -d)/pairnexus-workflow && git clone --depth 1 --branch v<version> https://github.com/medTech-group/pairnexus-workflow "$KIT"
 ```
+
+Then follow **this release's** copy of this skill, `$KIT/skills/update-workflow/SKILL.md`, not the project's older one.
 
 1. **Where it stands.** In the project, run `python3 .claude/workflow/bin/workflow.py vendor verify`. It reports:
    - the kit's version;
@@ -41,4 +43,4 @@ git clone https://github.com/medTech-group/pairnexus-workflow "$KIT" && git -C "
    - Run `WF profile check` and `WF vendor verify --strict`.
    - Make the changelog's profile changes, and its "For projects updating" steps.
    - **The weekly update check:** if `.github/workflows/workflow-kit-update.yml` is missing, copy it from `$KIT/templates/github/workflow-kit-update.yml`. It opens an issue when a newer release is out.
-7. **The PR.** It gives the version change, the changelog's highlights and the conflicts resolved, and closes the open "Workflow kit update:" issue, if any (`Closes #<n>`). It touches protected paths, so it's the owner's to review and merge.
+7. **The PR,** titled "Update the workflow kit to <version>" (so the guided start sees it's open and doesn't offer a second). It gives the version change, the changelog's highlights and the conflicts resolved, and closes the open "Workflow kit update:" issue, if any (`Closes #<n>`). It touches protected paths, so it's the owner's to review and merge.

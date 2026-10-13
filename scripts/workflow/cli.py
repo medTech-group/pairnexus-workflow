@@ -198,12 +198,22 @@ def cmd_status(a) -> int:
 
 
 def _kit_line(kit: dict) -> str:
-    have = kit.get("installed") or "unknown"
+    have = kit.get("installed")
+    if not have:
+        here = "unknown (no readable kit_version in .claude/workflow/lock.json, or VERSION)"
+        return f"Kit version: {here}" + (f"; the latest release is {kit['latest']}" if kit.get("latest") else "")
+    if "latest" not in kit:
+        return f"Kit version: {have}"
+    if not kit.get("checked", True):
+        return f"Kit version: {have} (the update check is off: WORKFLOW_UPDATE_CHECK)"
     if kit.get("update_available"):
-        return f"Kit version: {have}; {kit['latest']} is out (offer the update first)"
+        how = "type /plugin update" if kit.get("mode") == "plugin" else "offer the update first"
+        return f"Kit version: {have}; {kit['latest']} is out ({how})"
+    if kit.get("ahead"):
+        return f"Kit version: {have}, ahead of the latest release ({kit['latest']})"
     if kit.get("latest"):
         return f"Kit version: {have} (the latest)"
-    return f"Kit version: {have}" + (" (couldn't read the latest release)" if "latest" in kit else "")
+    return f"Kit version: {have} (couldn't read the latest release)"
 
 
 def cmd_version(a) -> int:
@@ -581,6 +591,11 @@ def _hook_repair(event: dict) -> int:
     prof = load(required=False)
     if prof is None:
         return 0
+    role = roles.role(prof.root, prof.ticket_branch)
+    # A newer kit: offered in attended and conductor sessions, never in a
+    # ticket session, which stays on the version its run started with. Asked
+    # first, in a few seconds at most, so setup keeps the hook's budget.
+    note = updates_mod.notice(updates_mod.check_within(prof.root, KIT_ROOT), role) if role != "ticket" else None
     start = time.monotonic()
     # Only in cloud sessions: a laptop's checkout is its owner's to set up.
     cloud = os.environ.get("CLAUDE_CODE_REMOTE") == "true"
@@ -589,15 +604,10 @@ def _hook_repair(event: dict) -> int:
     deadline = max(0, min(repair_mod.DEADLINE, left))
     text = repair_mod.summary(repair_mod.run(prof.repair, prof.root, deadline=deadline)) if prof.repair else ""
     text = "\n".join(x for x in (repair_mod.setup_summary(set_up), text) if x)
-    role = roles.role(prof.root, prof.ticket_branch)
     firm = "set by WORKFLOW_ROLE" if roles.env_role() else "from the branch name"
     text = (text + "\n" if text else "") + f"Workflow role of this session: {role} ({firm})."
-    # A newer kit: offered in attended and conductor sessions, never in a
-    # ticket session, which stays on the version its run started with.
-    if role != "ticket":
-        note = updates_mod.notice(updates_mod.check(prof.root, KIT_ROOT))
-        if note:
-            text += "\n" + note
+    if note:
+        text += "\n" + note
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}))
     return 0
 
