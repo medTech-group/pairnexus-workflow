@@ -42,7 +42,7 @@ class ProfileError(ValueError):
 # instead of being quietly ignored. None: any key (area names).
 ALLOWED: dict[str, set[str] | None] = {
     "project": {"name", "repo", "base_branch", "rules", "flow_addendum", "owner"},
-    "commands": {"setup", "typecheck", "test_file", "suite", "package"},
+    "commands": {"setup", "setup_check", "typecheck", "test_file", "suite", "package"},
     "ci": {"required_checks", "killed_markers", "none", "path_filtered"},
     "ui": {"explorer", "start", "sizes", "notes"},
     "guard": {"protected_paths", "deploy_commands", "test_paths", "allow_new_skips"},
@@ -58,6 +58,7 @@ ALLOWED: dict[str, set[str] | None] = {
         "review_rounds",
         "ticket_environment",
         "conductor_environment",
+        "environment_setup",
         "permission_mode",
     },
 }
@@ -116,6 +117,7 @@ class Profile:
     rules: list[str] = field(default_factory=list)
     flow_addendum: str = ""
     setup: str = ""
+    setup_check: str = ""
     typecheck: str = ""
     test_file: str = ""
     suites: list[Suite] = field(default_factory=list)
@@ -144,6 +146,7 @@ class Profile:
     review_rounds: int = 3
     ticket_environment: str = ""
     conductor_environment: str = ""
+    environment_setup: str = ""
     permission_mode: str = "auto"
 
 
@@ -318,6 +321,7 @@ def parse(data: dict, root: Path) -> Profile:
         rules=_strs(proj.get("rules"), "project.rules"),
         flow_addendum=str(proj.get("flow_addendum") or ""),
         setup=str(cmds.get("setup") or ""),
+        setup_check=str(cmds.get("setup_check") or ""),
         typecheck=str(cmds.get("typecheck") or ""),
         test_file=str(cmds.get("test_file") or ""),
         suites=suites,
@@ -350,6 +354,7 @@ def parse(data: dict, root: Path) -> Profile:
         review_rounds=_int(run.get("review_rounds"), "run.review_rounds", 3, 1, 10),
         ticket_environment=str(run.get("ticket_environment") or ""),
         conductor_environment=str(run.get("conductor_environment") or ""),
+        environment_setup=str(run.get("environment_setup") or ""),
         permission_mode=pmode,
     )
 
