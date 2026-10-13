@@ -1,0 +1,28 @@
+# Tags and publishes each kit version that has none yet, from VERSION and its
+# CHANGELOG entry, on every push to main (.github/scripts/release.py). Projects
+# take releases only: `update-workflow` checks out a release tag, and each
+# session's update check compares the project's version with the latest release.
+name: release
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: python3 .github/scripts/release.py
+        env:
+          GH_TOKEN: ${{ github.token }}

@@ -2,6 +2,7 @@
 
     workflow profile check
     workflow status [--issues F --prs F | --fetch] [--json]
+    workflow version [--fresh] [--json]
     workflow ready [--issues F --prs F | --fetch] [--exclude 1,2] [--only 1,2] [--override 3] [--running-area A ...] [--slots N] [--json]
     workflow charter defaults | validate F [--approved] | markdown F [--tickets 13:area,143:-] | diff OLD NEW | reuse OLD | pin-plan F | questions
     workflow charter splice --body F --charter F [--out F] [--tickets 13:area,143:-]
@@ -38,6 +39,7 @@ from . import repair as repair_mod
 from . import roles
 from . import state as state_mod
 from . import status as status_mod
+from . import updates as updates_mod
 from . import vendor as vendor_mod
 from .profile import ProfileError, load, project_root
 
@@ -186,10 +188,33 @@ def cmd_status(a) -> int:
         areas=list(prof.areas) if prof else None,
         protected=list(prof.protected_paths) if prof else None,
     )
+    kit = updates_mod.check(root, KIT_ROOT) if a.fetch else {"installed": updates_mod.installed(root, KIT_ROOT)}
     if a.json:
-        _out(st.as_dict())
+        _out({**st.as_dict(), "kit": kit})
     else:
         print(status_mod.text(st))
+        print(_kit_line(kit))
+    return 0
+
+
+def _kit_line(kit: dict) -> str:
+    have = kit.get("installed") or "unknown"
+    if kit.get("update_available"):
+        return f"Kit version: {have}; {kit['latest']} is out (offer the update first)"
+    if kit.get("latest"):
+        return f"Kit version: {have} (the latest)"
+    return f"Kit version: {have}" + (" (couldn't read the latest release)" if "latest" in kit else "")
+
+
+def cmd_version(a) -> int:
+    """The kit's version here, and whether a newer release is out."""
+    prof = load(required=False)
+    root = prof.root if prof else project_root()
+    kit = updates_mod.check(root, KIT_ROOT, fresh=a.fresh)
+    if a.json:
+        _out(kit)
+    else:
+        print(_kit_line(kit))
     return 0
 
 
@@ -567,6 +592,12 @@ def _hook_repair(event: dict) -> int:
     role = roles.role(prof.root, prof.ticket_branch)
     firm = "set by WORKFLOW_ROLE" if roles.env_role() else "from the branch name"
     text = (text + "\n" if text else "") + f"Workflow role of this session: {role} ({firm})."
+    # A newer kit: offered in attended and conductor sessions, never in a
+    # ticket session, which stays on the version its run started with.
+    if role != "ticket":
+        note = updates_mod.notice(updates_mod.check(prof.root, KIT_ROOT))
+        if note:
+            text += "\n" + note
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}))
     return 0
 
@@ -620,6 +651,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--fetch", action="store_true")
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_status)
+
+    s = sub.add_parser("version", help="the kit's version here, and whether a newer release is out")
+    s.add_argument("--fresh", action="store_true", help="ask GitHub again rather than the last six hours' answer")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_version)
 
     s = sub.add_parser("charter")
     s.add_argument("action", choices=["defaults", "questions", "validate", "markdown", "diff", "reuse", "pin-plan", "splice"])

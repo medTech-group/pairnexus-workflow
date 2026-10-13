@@ -1,9 +1,14 @@
+import os
 import json
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+# The kit's tests never ask GitHub for the latest release; tests that need an
+# answer pass their own (tests/test_kit_015.py).
+os.environ["WORKFLOW_UPDATE_CHECK"] = "off"
 
 KIT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(KIT / "scripts"))

@@ -45,6 +45,7 @@ Collect every problem for the kick-off, each with its fix.
 - The required-checks rule also requires branches to be up to date (`strict_required_status_checks_policy: true`). If it's off, raise it as a safety gap: "Fix it first / Go ahead, and the conductor checks the branch is level before each merge". Accepted, it goes in `accepted_gaps`, and before every merge (yours, or a PR whose auto-merge you enable) you check the branch is level with the base and update it first if not.
 - "Require review from Code Owners" is off while sessions post as the owner (`DOCS/enforcement.md` §1): on, a PR touching a CODEOWNERS path could never merge. Say so if it's on.
 - CODEOWNERS covers `.claude/` and `.github/workflows/`.
+- `WF version --fresh`: when a newer kit release is out, the kick-off asks **Update first** (end here; an attended session makes the update pull request for the owner to merge, then a new run starts) or **Run on <this version>**. A run never updates mid-run, and its ticket sessions stay on the version it started with.
 
 **The ticket sessions' environment**
 - `list_environments`: find the one named `run.ticket_environment` and keep its id. None of that name is a blocking problem: the run can't start until the owner creates it (`DOCS/enforcement.md` §2; the clicks: https://github.com/medTech-group/pairnexus-workflow#step-5-create-the-two-claude-environments) or the profile names the right one. Never start ticket sessions in another environment.

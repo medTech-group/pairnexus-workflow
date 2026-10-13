@@ -420,8 +420,8 @@ def test_skills_and_docs_carry_the_new_rules():
     assert M in (KIT / "docs/charter.md").read_text() and "chat" in (KIT / "docs/charter.md").read_text()
 
 
-def test_version_is_0_1_4():
+def test_version_is_0_1_5():
     v = (KIT / "VERSION").read_text().strip()
-    assert v == "0.1.4"
+    assert v == "0.1.5"
     assert json.loads((KIT / ".claude-plugin/plugin.json").read_text())["version"] == v
     assert f"## {v}" in (KIT / "CHANGELOG.md").read_text()

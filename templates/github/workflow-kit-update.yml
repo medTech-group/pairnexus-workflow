@@ -1,0 +1,60 @@
+# The workflow kit's weekly update check: when a newer kit release is out, it
+# opens one issue saying so, with the release's notes; when the project has
+# caught up, it closes that issue. It never changes code: a session makes the
+# update pull request (the guided start offers it), because a pull request
+# opened by this job's token would never run the project's CI.
+name: workflow kit update check
+on:
+  schedule:
+    - cron: "17 4 * * 1"   # Mondays 04:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    name: workflow kit update check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Compare with the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          have=$(python3 -c 'import json; print(json.load(open(".claude/workflow/lock.json"))["kit_version"])')
+          latest=$(curl -fsS https://api.github.com/repos/medTech-group/pairnexus-workflow/releases/latest \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"].lstrip("v"))') || {
+            echo "Couldn't read the kit's latest release; trying again next week."; exit 0; }
+          title_prefix="Workflow kit update:"
+          open=$(gh issue list --repo "$REPO" --state open --search "\"$title_prefix\" in:title" --json number,title \
+            --jq "[.[] | select(.title | startswith(\"$title_prefix\"))] | .[0].number // empty")
+          newer=$(python3 -c 'import sys; a,b=(tuple(map(int,v.split("."))) for v in sys.argv[1:]); print("yes" if a>b else "no")' "$latest" "$have")
+          if [ "$newer" = no ]; then
+            echo "Kit $have is the latest."
+            if [ -n "$open" ]; then gh issue close "$open" --repo "$REPO" --comment "The project is on kit $have, the latest release."; fi
+            exit 0
+          fi
+          curl -fsS "https://api.github.com/repos/medTech-group/pairnexus-workflow/releases/tags/v$latest" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin).get("body") or "")' > notes.md
+          {
+            echo "The workflow kit **$latest** is out; this project has **$have**."
+            echo
+            echo "**To update:** start a session on this repository (Default environment) and choose \"Update the workflow kit\" when Claude offers it, or say \"Update the workflow kit\". Claude opens a pull request for you to merge."
+            echo
+            echo "## What's in $latest"
+            echo
+            cat notes.md
+          } > body.md
+          title="$title_prefix $have → $latest"
+          if [ -n "$open" ]; then
+            gh issue edit "$open" --repo "$REPO" --title "$title" --body-file body.md
+          else
+            gh issue create --repo "$REPO" --title "$title" --body-file body.md --label owner-task
+          fi

@@ -8,6 +8,12 @@ disable-model-invocation: true
 
 This runs from a checkout of the new kit release (`KIT`), with `WF` as `python3 $KIT/scripts/workflow.py`.
 
+**The release, never `main` between releases.** The latest is what `python3 .claude/workflow/bin/workflow.py version --fresh` names (or the kit's Releases page). Clone the kit and check out its tag:
+
+```bash
+git clone https://github.com/medTech-group/pairnexus-workflow "$KIT" && git -C "$KIT" checkout v<version>
+```
+
 1. **Where it stands.** In the project, run `python3 .claude/workflow/bin/workflow.py vendor verify`. It reports:
    - the kit's version;
    - files missing or changed since they were vendored;
@@ -34,4 +40,5 @@ This runs from a checkout of the new kit release (`KIT`), with `WF` as `python3 
 6. **Check it.**
    - Run `WF profile check` and `WF vendor verify --strict`.
    - Make the changelog's profile changes, and its "For projects updating" steps.
-7. **The PR.** It gives the version change, the changelog's highlights and the conflicts resolved. It touches protected paths, so it's the owner's to review and merge.
+   - **The weekly update check:** if `.github/workflows/workflow-kit-update.yml` is missing, copy it from `$KIT/templates/github/workflow-kit-update.yml`. It opens an issue when a newer release is out.
+7. **The PR.** It gives the version change, the changelog's highlights and the conflicts resolved, and closes the open "Workflow kit update:" issue, if any (`Closes #<n>`). It touches protected paths, so it's the owner's to review and merge.

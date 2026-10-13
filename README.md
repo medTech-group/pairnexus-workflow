@@ -497,11 +497,25 @@ Several decisions that don't block each other can be worked in parallel sessions
 
 ### Keeping it up to date
 
-When the kit releases a new version, ask Claude in a session on the repository:
+**Versions.** The kit is released as numbered versions (`0.1.5`): each is a tag (`v0.1.5`) and a GitHub release on [the Releases page](https://github.com/medTech-group/pairnexus-workflow/releases), with what changed. The kit's `release` workflow tags and publishes each version when it lands on `main`. A project holds a pinned copy of one release, recorded in its `.claude/workflow/lock.json`, and moves to a newer one only through a pull request you merge.
 
-> Update the workflow kit: clone https://github.com/medTech-group/pairnexus-workflow and follow `skills/update-workflow/SKILL.md`.
+**You're told when a newer release is out, three ways:**
 
-It opens a pull request that replaces the kit's copy, keeping any edits the project made on purpose. Merge it like the set-up PR. The `workflow kit` CI check fails if anyone changes the copy without recording it, so the copy always matches a released version plus the project's recorded edits.
+| Where | What you see | What to do |
+|---|---|---|
+| **A session you start** (the guided start) | **"Update the workflow kit to 0.1.5 (Recommended)"** as the first choice | Click it. Claude opens the update pull request; you merge it |
+| **An unattended run's kick-off** | **Update first** or **Run on 0.1.4** | Update first: the run ends, you update in a session of your own, then start the run again. A run never changes version midway, and its ticket sessions never update |
+| **The weekly check** (a GitHub Action set-up adds) | An issue, **"Workflow kit update: 0.1.4 → 0.1.5"**, with the release's notes; closed once you've updated | Start a session and choose the update, or say "Update the workflow kit" |
+
+**Nothing updates by itself.** The kit is what guards your sessions, so a new version always arrives as a pull request you read and merge, never swapped in by a session: a ticket session that could rewrite its own guard would defeat it, and the `workflow kit` CI check refuses a copy that wasn't recorded through an update. The weekly check opens an issue rather than the pull request, because a pull request opened by a GitHub Action's own token never runs your CI.
+
+**To update by hand,** in a session on the repository (the Default environment):
+
+> Update the workflow kit.
+
+Claude clones the kit at the latest release's tag and follows `skills/update-workflow/SKILL.md`. It opens a pull request that replaces the kit's copy, keeping any edits the project made on purpose, and does what that release's changelog asks of projects. Merge it like the set-up PR. The `workflow kit` CI check fails if anyone changes the copy without recording it, so the copy always matches a released version plus the project's recorded edits.
+
+To check by hand: `python3 -B .claude/workflow/bin/workflow.py version --fresh`.
 
 ### Good to know
 
@@ -526,10 +540,10 @@ It opens a pull request that replaces the kit's copy, keeping any edits the proj
 | `skills/run-report` | The end-of-run report for the owner |
 | `skills/update-workflow` | Update a project's vendored copy |
 | `agents/` | The read-only Correctness reviewer and the UI explorer |
-| `scripts/workflow.py` | The CLI the skills and hooks run: `profile`, `status`, `ready`, `charter`, `state`, `render`, `comments`, `evidence`, `repair`, `vendor`, `hook` |
+| `scripts/workflow.py` | The CLI the skills and hooks run: `profile`, `status`, `version`, `ready`, `charter`, `state`, `render`, `comments`, `evidence`, `repair`, `vendor`, `hook` |
 | `hooks/` | Guard (the never-list), checklist gate, flow context and the guided start's first-message nudge, environment repair and project setup |
 | `docs/` | `flow.md`, `charter.md`, `enforcement.md`, `install.md`, `spike.md` (what's verified), `proposal.md` (the design) |
-| `templates/` | Profile, ticket-session briefing, tracking and by-hand issues, the `workflow kit` CI job |
+| `templates/` | Profile, ticket-session briefing, tracking and by-hand issues, the `workflow kit` CI job and the weekly update check |
 
 Standards and Spec reviews, TDD, the planning interview, specs, tickets and maps come from [Matt Pocock's skills](https://github.com/mattpocock/skills) (MIT), pinned in `.claude-plugin/marketplace.json` and copied into each project alongside the kit's own (they aren't in this repository). [Planning new work](#planning-new-work-what-happens-underneath) lists every one and how it fits.
 

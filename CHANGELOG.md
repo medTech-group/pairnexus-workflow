@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.5
+
+- **Releases.** Each version is tagged (`v0.1.5`) and published as a GitHub release, its notes this changelog's entry, by the kit's own `release` workflow on every push to main (`.github/scripts/release.py`). It also tags the earlier versions, 0.1.0 to 0.1.4, at the last commit of each. Projects take releases only: `update-workflow` checks out a release tag, never `main` between releases.
+- **The update check.**
+  - `workflow version` gives the kit's version here and the latest release. It reads the latest with `gh api`, else GitHub's public API, and remembers it for six hours (a failed lookup for an hour). It never updates anything itself.
+  - The session start says when a newer release is out, in attended and conductor sessions; never in a ticket session, which stays on its run's version.
+  - `workflow status` shows the kit's version. The guided start offers **"Update the workflow kit to <version>"** first when a newer one is out (not during a run), and follows `update-workflow` from the release's tag.
+  - The conductor's kick-off asks **Update first** or **Run on <this version>**. A run never updates mid-run.
+  - **The weekly update check** (`templates/github/workflow-kit-update.yml`, a project's `.github/workflows/workflow-kit-update.yml`): an issue, "Workflow kit update: 0.1.4 → 0.1.5", with the release's notes, labelled `owner-task`; closed once the project catches up. An issue, not a pull request: a pull request opened by a workflow's token runs no CI, so a session makes the update pull request instead.
+  - `WORKFLOW_UPDATE_CHECK=off` turns the lookup off.
+- **For projects updating to 0.1.5:** `update-workflow` adds `.github/workflows/workflow-kit-update.yml` (a protected path, so it's in the owner's update pull request).
+- **README:** "Keeping it up to date" covers releases, the check and the weekly issue.
+
 ## 0.1.4
 
 - **The guided start** (`skills/start`): you don't need to remember a command.
@@ -84,7 +97,7 @@ From the practice run on the sandbox repo (run 2026-10-12-words).
   - The evidence report ends with the marker.
   - The conductor: "a check-in is pending" defined (an enabled one-shot routine bound to it; the wake routine never counts), "A check-in is complete" kept apart from "Done"; the path back from a `needs-human` ticket once the owner answers, and how attempts count; `--only` takes every open `workflow:infra` ticket.
 
-## 0.1.0 (unreleased)
+## 0.1.0
 
 First version, from the pair-drop weekend run of 9–12 Oct 2026 and two independent reviews of its proposal.
 
