@@ -103,6 +103,9 @@ Open the repository's **Settings → General** and scroll to **Pull Requests**:
 
 An environment is the cloud machine a session runs on: its network access, environment variables, secrets and setup script. You pick one each time you start a session.
 
+> [!IMPORTANT]
+> **These two environments are for unattended runs only.** You start the conductor's sessions; the conductor starts the ticket sessions. **For planning, and for building a ticket with you there, use the Default environment** (or any environment without `WORKFLOW_ROLE`). See [Plan in one session, build in another](#plan-in-one-session-build-in-another).
+
 To create one:
 - **Desktop app:** in a new Code session, open the environment dropdown in the prompt box and select **Cloud**, then **Add cloud environment**. To change one later, hover over it in the same list and click its gear icon.
 - **Browser:** at claude.ai/code, open the cloud environment menu (where you pick an environment when starting a session, or in a running session's title bar) and choose **Add environment**. To change one later, choose it there and click **Edit**.
@@ -162,6 +165,21 @@ It can't see what an environment holds, so it asks you to confirm the ticket env
 The conductor checks the ruleset, CODEOWNERS and the ticket environment again at the start of every run. A missing ticket environment stops it. Any other gap it shows you, to fix first or to accept for that run.
 
 ### Using it
+
+> [!IMPORTANT]
+> #### Plan in one session, build in another
+>
+> **Which environment you start a session in decides what it does.** Pick the right one every time:
+>
+> | You want to | Start a session in | Then |
+> |---|---|---|
+> | **Plan:** tell Claude what you found, settle decisions, write specs and tickets | **the Default environment** (any environment **without `WORKFLOW_ROLE`**), or a local session | Say what you have in mind. Claude asks with choices and publishes the specs and tickets on GitHub |
+> | **Build the tickets unattended** | **the conductor environment** (for example `myproject-conductor`), permission mode **Auto** | Say **"Run the backlog unattended"**. It asks its questions once, then starts every ticket session itself |
+> | **Build one ticket with you there** | the Default environment, as for planning | Type **`/next build`**. You merge its pull request |
+>
+> - **Never start a session in the ticket environment yourself.** The conductor starts those, one per ticket.
+> - **Never plan in the ticket or conductor environment.** Their `WORKFLOW_ROLE` tells the kit the session is part of an unattended run: it asks you nothing, follows a ticket session's or the conductor's rules, and the guided start never shows.
+> - Planning and building can be days apart: everything waits on GitHub in between.
 
 #### Start a session and say what you're working on
 
