@@ -21,7 +21,7 @@ A large effort can start as a **map**: an issue labelled `wayfinder:map` whose c
 
 ## 2. A spec and its build tickets: one spec per session
 
-1. Follow `to-spec`: agree the test seams with the owner, then publish the spec (`ready-for-agent`), citing the decision behind each choice.
+1. Settle the idea with the owner first, in the same session: `grill-with-docs` (or a map's decisions). Then follow `to-spec`: agree the test seams with the owner, then publish the spec (`ready-for-agent`), citing the decision behind each choice.
    Label the spec `spec` as well, so readiness never mistakes it for a build ticket.
 2. Follow `to-tickets`: agree the breakdown, then publish build tickets (`ready-for-agent`). Each build ticket has:
    - `## Blocked by` (issue refs, or "None"), written out even when the tickets are also linked with GitHub's own dependencies, so a blocker closed as not planned is seen;
@@ -36,7 +36,7 @@ A large effort can start as a **map**: an issue labelled `wayfinder:map` whose c
 
 ## 3. Building: one ticket per session
 
-Follow the `build-ticket` skill. In short:
+Follow the `build-ticket` skill, one ticket at a time; `implement` and `implement-spec` build this way too in a project with the kit. In short:
 
 1. **Claim** it; read the ticket, its spec, the project's rules and the notes the briefing points to.
 2. **Build** it: `tdd` at the spec's seams; the typecheck and single test files as you go; the full suite at the end.

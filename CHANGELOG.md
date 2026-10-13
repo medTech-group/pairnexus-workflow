@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.4
+
+- **README: "Planning new work"**, before "Using it": how an idea becomes build tickets with Matt Pocock's skills, which are slash commands you type (`/grill-with-docs`, `/to-spec`, `/to-tickets`, `/wayfinder`), where to run them, what the kit's flow adds to what they publish, a large or brand-new effort with `/wayfinder` and `/next map`/`/next spec`, the side trips (`/prototype`, `/research`, `/to-questionnaire`), and a table of every Matt Pocock skill in a project: who starts it and how it fits with the kit.
+- **The flow comes into context for the planning commands on their own:** `/to-spec`, `/to-tickets`, `/wayfinder`, `/grill-with-docs`, `/triage`, `/implement` and `/implement-spec`, with or without an issue number, so the kit's rules (the `spec` label, `Area:` lines, a written `Blocked by`, owner tasks, building with `build-ticket`) apply to what they publish.
+- `flow.md`: a spec starts from `grill-with-docs` (or a map's decisions) in the same session; `implement` and `implement-spec` build the `build-ticket` way.
+
 ## 0.1.3
 
 From probing pair-drop's two cloud environments: both failed to start, because their setup script installed the project's dependencies from the repository's files, and an environment's setup script runs before the repository is there.

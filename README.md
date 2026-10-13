@@ -159,11 +159,174 @@ It can't see what an environment holds, so it asks you to confirm the ticket env
 
 The conductor checks the ruleset, CODEOWNERS and the ticket environment again at the start of every run. A missing ticket environment stops it. Any other gap it shows you, to fix first or to accept for that run.
 
+### Planning new work: from an idea to build tickets
+
+The kit builds tickets. Turning an idea into those tickets (interviewing you, writing the spec, splitting it up) is done with [Matt Pocock's skills](https://github.com/mattpocock/skills), which set-up copies into every project's `.claude/skills/` beside the kit's own.
+
+**Most of them are commands you type.** `/grill-with-docs`, `/to-spec`, `/to-tickets`, `/wayfinder` and the others marked "you type" below are set so Claude never starts them by itself. That's why they don't show up among the things Claude offers to do. Type the command at the start of your message.
+
+**Where to run them:** in a session on the project's repository, with you there. That can be a local session, or a cloud session in your everyday environment. Not the ticket or conductor environment: their `WORKFLOW_ROLE` tells the guard the session is part of an unattended run. Planning is a conversation with you, so it never happens in an unattended run: the conductor only builds tickets that are already ready.
+
+**The project's own rules apply.** The project's `CLAUDE.md` tells Claude to follow the kit's flow, and typing `/to-spec`, `/to-tickets`, `/wayfinder`, `/grill-with-docs`, `/triage`, `/implement` or `/implement-spec` also brings the flow into the conversation. That adds the kit's rules to what these commands publish (below).
+
+#### Which way in
+
+| Your situation | Start with |
+|---|---|
+| A feature or change you can describe in one sitting | `/grill-with-docs`, then `/to-spec`, then `/to-tickets` ([the main path](#the-main-path-step-by-step)) |
+| A brand-new project, or a feature too big or too foggy for one session | `/wayfinder` ([a large effort](#a-large-or-brand-new-effort-wayfinder)) |
+| A question only running code can answer: does this state model hold up, what should this screen look like | `/prototype`, as a side trip during the interview |
+| Facts that live in documentation or a third party's API | `/research` |
+| The answer is in someone else's head | `/to-questionnaire` |
+| Bug reports and requests that arrive raw, from other people | `/triage` |
+| Something is broken and you don't know why | `/diagnosing-bugs` |
+| Not sure which | `/ask-matt` |
+
+#### The main path, step by step
+
+Keep steps 1 to 3 in **one session**, without `/clear` or `/compact` in between, so the spec and the tickets are written from everything said in the interview. If the conversation gets very long before the tickets are out, finish the step you're on and ask Claude how best to carry on.
+
+**1. `/grill-with-docs`: the interview.** Type the command and the idea in a sentence or two:
+
+> /grill-with-docs Patients should be able to export all their records as one PDF to give a new doctor.
+
+Claude interviews you in **rounds**:
+- Each round asks every question that can be answered now: the ones that don't wait on another open answer. They're numbered, and each comes with Claude's recommended answer, worded so that "yes" accepts it.
+- Answer the whole round in one message. For example:
+
+  > Q1 yes. Q2 no: only Documents, not Readings. Q3 yes, but in Hindi too. Q4 I don't know, what do you suggest?
+
+- Your answers open the next round. It goes on until no decision is left unasked; then Claude checks you agree it has understood, and does nothing more until you say so.
+- **Facts are Claude's job, decisions are yours.** Anything it can find out (how the code works now, what a library allows) it looks up itself, often in the background, rather than asking you.
+- **It keeps the project's language straight.** When a word you use clashes with the project's glossary (`GLOSSARY.md`, or whatever name the project uses) it asks which you mean. It adds terms to the glossary as they're settled, and records a decision that would be hard to reverse as a short ADR in `docs/adr/`. Those files are written in the session; commit them with the spec's pull request, or ask Claude to.
+
+`/grill-me` is the same interview, but it writes nothing down. Use it to think something through away from a repository (a plan, a pitch); in a project, use `/grill-with-docs`.
+
+**2. `/to-spec`: the spec.** Type `/to-spec` in the same session. It asks you nothing new: it writes up what the interview settled.
+- It reads the code, then proposes **where the tests will plug in** (the "seams": as few as possible, as high up as possible, existing ones first) and **asks you to confirm them**. Ticket sessions later build test-first at exactly those seams.
+- It publishes the spec as a GitHub issue, with these sections:
+  - Problem Statement;
+  - Solution;
+  - User Stories (a long, numbered list);
+  - Implementation Decisions;
+  - Testing Decisions;
+  - Out of Scope;
+  - Further Notes.
+- Under the kit's flow, it labels the spec `ready-for-agent` and `spec`, so the readiness check never takes the spec itself for a build ticket, and it cites the decision behind each choice.
+
+**3. `/to-tickets`: the build tickets.** Type `/to-tickets`, or `/to-tickets #<spec number>` in a new session.
+- It splits the spec into **thin end-to-end slices**: each works through every layer it touches (data, API, screen, tests) and can be checked on its own, rather than one layer at a time. Any tidying the code needs first comes first.
+- It shows you the list (each ticket's title, what blocks it, and what it delivers) and asks whether the size is right, whether the blocking is right, and whether any should be merged or split. It changes the list until you approve it.
+- It publishes them in order, blockers first, each linked to what blocks it.
+- **The kit's flow adds to each build ticket:**
+  - a written `## Blocked by` section, as well as GitHub's own links, so a blocker closed as "not planned" is still seen;
+  - an `Area:` line from the profile, so an unattended run never runs two sessions on the same area at once;
+  - acceptance criteria that name where each is tested;
+  - the checks only a person can do (a real phone, a real account), if any.
+- **Things only you can do** (create an account, a key, a domain) become their own issues labelled `owner-task`, blocking the tickets that need them. So does any change to a protected path (the kit, CI config, CODEOWNERS): a ticket session can't make those.
+- A ticket that fixes a failing or flaky required check is also labelled `workflow:infra`, so it's built first.
+
+**4. Build.** The tickets are now `ready-for-agent`:
+- `/next` builds the next one with you there, or `/next 123` a particular one;
+- or start an unattended run, which builds them all ([Using it](#using-it)).
+
+Before building, you can edit any spec or ticket on GitHub like any issue.
+
+Matt Pocock's own builders, `/implement` (one ticket) and `/implement-spec` (a whole spec on one branch), are in the project too. Under the kit's flow, typing either builds the kit's way, one ticket at a time with `build-ticket`: the review panel, the pull request with its findings, CI and the merge rule. So `/next` is the simpler way to start.
+
+#### A large or brand-new effort: `/wayfinder`
+
+When the work is too big for one session, or too unclear to spec yet, chart it first as a **map**: one GitHub issue (label `wayfinder:map`) whose child issues are the **decisions** to make on the way. Nothing is built while the map is open.
+
+**Chart the map** (one session):
+
+> /wayfinder A clinic queue app: patients join from their phone, staff call them in.
+
+1. Claude interviews you about the **destination**: what reaching the end looks like (usually a spec ready to build).
+2. A second, wider round finds the open questions across the whole effort and the first steps that can be taken now.
+3. It creates the map issue with these sections:
+   - **Destination**;
+   - **Notes**;
+   - **Decisions so far** (empty to start);
+   - **Not yet specified**: what's visible but not yet sharp enough to ask;
+   - **Out of scope**.
+4. It creates a child issue for each question it can already state, wired with what blocks what. Each is labelled with its kind:
+   - `wayfinder:grilling`: a conversation with you; the default;
+   - `wayfinder:research`: reading documentation or an API, done by Claude alone;
+   - `wayfinder:prototype`: a rough, throwaway thing to react to;
+   - `wayfinder:task`: something that has to be done before a decision can be made, like signing up for a service to try its API.
+5. It starts the research questions straight away in the background, and stops: charting resolves nothing itself.
+
+**Work through it**, **one decision per session** (research questions excepted):
+
+> /next map
+
+or `/wayfinder <map link>`. Claude:
+1. takes the first decision whose blockers are settled, and assigns it to you so no other session takes it;
+2. settles it as its kind says: an interview with you, a prototype you react to, research, or a task;
+3. writes the answer as a comment, closes the issue, and adds one line to the map's "Decisions so far";
+4. opens new decision issues as answers make them clear, moving each from "Not yet specified" as it does.
+
+Several decisions that don't block each other can be worked in parallel sessions.
+
+**From map to tickets.** When the map has no open decisions and nothing left under "Not yet specified", it's clear:
+- `/next spec` picks its first Destination item without a spec, and writes that spec from the map's decisions, then its tickets (steps 2 and 3 above, with the same seam check and ticket review with you).
+- **The kit's gate:** none of a map's build tickets is built until every Destination item of that map has its spec and its tickets, so building never starts on half a plan.
+
+**A brand-new project.** Create the GitHub repository (a README is enough) and set it up with the kit first ([Step 1](#step-1-ask-claude-to-set-the-repository-up)), so the skills, labels and issue templates are there. With no code yet, set-up records no test commands and no CI. The first build tickets create them; then ask Claude to add them to `.claude/workflow/profile.toml` (a protected path, so that pull request is yours to merge). Then start with `/wayfinder`, or `/grill-with-docs` if the first piece is small.
+
+#### Side trips while planning
+
+- **`/prototype`**: throwaway code that answers one question.
+  - A **logic** prototype: a single HTML file that pushes a state model through hard cases you can click through.
+  - A **UI** prototype: several very different versions of one screen, switchable in the browser.
+
+  When it has answered the question, the answer goes into the decisions, and the prototype is kept on a branch for reference. To run one apart from the interview, the usual way is: `/handoff` to write the context to a file, prototype in a fresh session, then `/handoff` back what you learned.
+- **`/research <question>`**: a background agent reads the primary sources (official docs, source code, specs) and leaves a Markdown file in the repository, citing each claim. You keep talking meanwhile; its findings feed the interview.
+- **`/to-questionnaire`**: when someone else holds the answer (a clinician, a vendor, legal). It asks you only who it's for and what you need back, then writes them a questionnaire to fill in, most important question first.
+- **`/wait-what`**: Claude's last message didn't make sense. It says it again, plainly, with the context you were missing.
+- **`/handoff`**: writes the conversation so far to a file a fresh session (or a colleague) can pick up.
+
+#### Every Matt Pocock skill in a project
+
+"You type" means a slash command Claude never starts on its own. "Claude, when needed" means Claude also uses it by itself when the work calls for it, and you can still type it.
+
+| Skill | Who starts it | What it's for | With the kit |
+|---|---|---|---|
+| `/ask-matt` | You type | Which skill fits your situation | |
+| `/grill-with-docs` | You type | The interview, writing the glossary and ADRs as it goes | Step 1 of planning |
+| `/grill-me` | You type | The same interview, writing nothing | Away from a repository |
+| `/grilling` | Claude, when needed | The interview itself, which the two above and `/wayfinder` and `/triage` run | |
+| `/domain-modeling` | Claude, when needed | Keeps the glossary and ADRs; challenges fuzzy or clashing words | Runs inside `/grill-with-docs` |
+| `/to-spec` | You type | The interview written up as a spec issue | Labelled `spec` and `ready-for-agent` |
+| `/to-tickets` | You type | A plan or spec split into build tickets | With the kit's Area, Blocked by and owner tasks |
+| `/wayfinder` | You type | A map of decisions for a large or foggy effort | `/next map` and `/next spec` work it |
+| `/to-questionnaire` | You type | Questions for someone else to answer | |
+| `/prototype` | Claude, when needed | Throwaway code that answers a design question | |
+| `/research` | Claude, when needed | A background agent reads primary sources, writes a cited note | |
+| `/triage` | You type | Sorts raw bug reports and requests into `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human` or `wontfix`, with a brief for the agent | Not for tickets `/to-tickets` made: they're ready already |
+| `/diagnosing-bugs` | Claude, when needed | Hard bugs: gets a command that fails on this bug before theorising, then fixes it with a test | |
+| `/tdd` | Claude, when needed | Builds test-first, one red-to-green step at a time | Every ticket session uses it |
+| `/code-review` | Claude, when needed | Standards and Spec reviews of a change | Part of the review panel |
+| `/implement` | You type | Builds one ticket | Built the kit's way (`build-ticket`); `/next` is simpler |
+| `/implement-spec` | You type | Builds a whole spec on one branch with parallel agents | Built the kit's way, one ticket at a time; or use an unattended run |
+| `/pr` | Claude, when needed | Writes a pull request's description | |
+| `/resolving-merge-conflicts` | Claude, when needed | Works through a merge or rebase conflict | |
+| `/codebase-design` | Claude, when needed | The words for designing a module: depth, interface, seam | |
+| `/improve-codebase-architecture` | You type | Finds places the code could be simpler for agents to work in, as an HTML report, then interviews you about the one you pick | Its outcome is a new idea for step 1 |
+| `/retro` | You type | Looks back at a session and suggests changes to the setup, not the code | |
+| `/handoff` | You type | The conversation written to a file for another session | |
+| `/wait-what` | You type | Re-explains a message that didn't land | |
+| `/teach` | You type | Learn a concept over several sessions, in a folder | |
+| `/wizard` | Claude, when needed | A script that walks a person through steps only they can do (a dashboard, credentials) | Handy for owner tasks |
+| `/writing-for-agents` | Claude, when needed | How to write skills and `CLAUDE.md` | |
+| `/setup-matt-pocock-skills` | You type | Configures the issue tracker, labels and glossary location | **Don't run it**: the kit's set-up already did this |
+
 ### Using it
 
 **Tickets.** Work lives in GitHub issues.
 - A build ticket is an issue labelled `ready-for-agent`, written from the **Build ticket** template that set-up added. It has an `Area:`, what to build, acceptance criteria with where each is tested, and what blocks it.
-- For larger work, ask Claude to write a spec with you ("write a spec for <feature>"). It publishes the spec, then splits it into build tickets. A very large effort can start as a map of decisions instead; `/next map` and `/next spec` then work through it.
+- For new work, plan it with Claude first: `/grill-with-docs`, `/to-spec`, `/to-tickets`, or `/wayfinder` for a large effort. See [Planning new work](#planning-new-work-from-an-idea-to-build-tickets).
 
 **One piece at a time, with you there.**
 1. In a session on the repository, type `/next`.
@@ -225,7 +388,7 @@ It opens a pull request that replaces the kit's copy, keeping any edits the proj
 | `docs/` | `flow.md`, `charter.md`, `enforcement.md`, `install.md`, `spike.md` (what's verified), `proposal.md` (the design) |
 | `templates/` | Profile, ticket-session briefing, tracking and by-hand issues, the `workflow kit` CI job |
 
-Standards and Spec reviews, TDD, specs, tickets and maps come from [Matt Pocock's skills](https://github.com/mattpocock/skills) (MIT), pinned in `.claude-plugin/marketplace.json` and installed alongside.
+Standards and Spec reviews, TDD, the planning interview, specs, tickets and maps come from [Matt Pocock's skills](https://github.com/mattpocock/skills) (MIT), pinned in `.claude-plugin/marketplace.json` and copied into each project alongside the kit's own (they aren't in this repository). [Planning new work](#planning-new-work-from-an-idea-to-build-tickets) lists every one and how it fits.
 
 ## Development
 

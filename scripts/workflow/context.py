@@ -13,6 +13,11 @@ import tempfile
 from pathlib import Path
 
 _NEXT = re.compile(r"(^|\s)/(?:[\w-]+:)?next\b")
+# The commands that plan or build under the flow bring it in on their own:
+# the kit adds rules to what they publish (flow.md sections 2 and 3).
+_COMMAND = re.compile(
+    r"(^|\s)/(?:[\w-]+:)?(?:to-spec|to-tickets|wayfinder|grill-with-docs|triage|implement(?:-spec)?)(?![\w-])"
+)
 _VERB = re.compile(
     r"\b(implement\w*|build\w*|work(?:ing)?|fix\w*|spec\w*|tickets?|maps?|wayfinder|grill\w*|to-spec|to-tickets|frontier|conductor|unattended)\b",
     re.I,
@@ -22,7 +27,7 @@ _REF = re.compile(r"(?<![\w/])#\d+\b|/issues/\d+")
 
 
 def wants_flow(prompt: str) -> bool:
-    if _NEXT.search(prompt or "") or _MAP.search(prompt or ""):
+    if _NEXT.search(prompt or "") or _COMMAND.search(prompt or "") or _MAP.search(prompt or ""):
         return True
     return bool(_VERB.search(prompt or "") and _REF.search(prompt or ""))
 
