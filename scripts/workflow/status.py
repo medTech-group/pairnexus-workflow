@@ -23,8 +23,8 @@ _WAITING = issues_mod.HUMAN_LABELS | {"needs-info"}
 # the usual first commit. A checkout with nothing else is brand new.
 _BOILERPLATE_DIRS = (".claude/", ".github/", "docs/agents/", "docs/adr/", ".devcontainer/", ".vscode/")
 _BOILERPLATE = re.compile(
-    r"^(readme|license|licence|changelog|contributing|code_of_conduct|security|claude|agents|glossary|context|codeowners)"
-    r"(\.[\w.]+)?$|^\.(gitignore|gitattributes|editorconfig|env\.example)$",
+    r"^(readme|license|licence|copying|changelog|contributing|code_of_conduct|security|claude|agents|glossary|context|codeowners)"
+    r"(\.(md|markdown|txt|rst|adoc))?$|^\.(gitignore|gitattributes|editorconfig|env\.example)$",
     re.I,
 )
 
@@ -82,11 +82,14 @@ def _open(i: dict) -> bool:
     return (i.get("state") or "open").lower() == "open"
 
 
-def _open_children(i: dict) -> int | None:
+def _children(i: dict) -> tuple[int, int] | None:
+    """(sub-issues, open ones), or None when the issue doesn't say (a fetch
+    without `sub_issues_summary`)."""
     subs = i.get("sub_issues_summary")
-    if not isinstance(subs, dict) or not subs.get("total"):
+    if not isinstance(subs, dict):
         return None
-    return max(0, (subs.get("total") or 0) - (subs.get("completed") or 0))
+    total = subs.get("total") or 0
+    return total, max(0, total - (subs.get("completed") or 0))
 
 
 def snapshot(
@@ -106,17 +109,25 @@ def snapshot(
     lab = issues_mod.labels_of
     for i in sorted((i for i in issues if "pull_request" not in i and _open(i)), key=lambda i: i["number"]):
         n, title, labels, body = i["number"], i.get("title") or "", lab(i), i.get("body") or ""
-        children = _open_children(i)
+        kids = _children(i)
         if "workflow:run" in labels:
             st.run.append(Item(n, title))
             continue
         if issues_mod.CLAIM_LABEL in labels:
             st.in_progress.append(Item(n, title, ", ".join(sorted(labels & {"spec", "wayfinder:map", "ready-for-agent"}))))
         if "wayfinder:map" in labels:
-            st.maps.append(Item(n, title, f"{children} open" if children else "no open decisions"))
+            detail = "open decisions unknown (no sub_issues_summary)" if kids is None else f"{kids[1]} open decisions"
+            st.maps.append(Item(n, title, detail))
             continue
-        if "spec" in labels or title.strip().casefold().startswith("spec:"):
-            st.specs.append(Item(n, title, f"{children} open tickets" if children is not None else "no tickets yet"))
+        if "spec" in labels or title.strip().casefold().startswith("spec:") or (kids and kids[0]):
+            kind = "" if "spec" in labels or title.strip().casefold().startswith("spec:") else "parent issue, "
+            if kids is None:
+                detail = "tickets unknown (no sub_issues_summary)"
+            elif not kids[0]:
+                detail = "no tickets yet"
+            else:
+                detail = f"{kids[1]} of {kids[0]} tickets open"
+            st.specs.append(Item(n, title, kind + detail))
             continue
         path = item_path(body)
         if path is not None:
@@ -125,6 +136,8 @@ def snapshot(
         if labels & _WAITING:
             st.waiting.append(Item(n, title, ", ".join(sorted(labels & _WAITING))))
             continue
+        if issues_mod.READY_LABEL in labels:
+            continue  # a build ticket: readiness below
         if "needs-triage" in labels or not labels:
             st.to_triage.append(Item(n, title))
     for pr in sorted((p for p in prs if _open(p)), key=lambda p: p["number"]):
@@ -142,7 +155,7 @@ _SECTIONS = [
     ("prs", "Open pull requests"),
     ("planned", "Planned at an earlier start, not yet begun"),
     ("maps", "Maps"),
-    ("specs", "Open specs"),
+    ("specs", "Open specs (and parent issues)"),
     ("ready", "Ready build tickets"),
     ("waiting", "Waiting on a person (owner tasks, needs-human, needs-info)"),
     ("to_triage", "New issues to sort"),

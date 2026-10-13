@@ -21,7 +21,7 @@ def _issue(n, title, labels=(), body="", state="open", **extra):
 ISSUES = [
     _issue(1, "Run 2026-10-13", ["workflow:run"]),
     _issue(2, "Doctor map", ["wayfinder:map"], sub_issues_summary={"total": 3, "completed": 1}),
-    _issue(3, "Spec: export as PDF", ["spec", "ready-for-agent"]),
+    _issue(3, "Spec: export as PDF", ["spec", "ready-for-agent"], sub_issues_summary={"total": 0, "completed": 0}),
     _issue(4, "Export the PDF", ["ready-for-agent"], body="Area: messages\n\n## Blocked by\n\nNone"),
     _issue(5, "Claimed one", ["ready-for-agent", "workflow:in-progress"], body="Area: messages"),
     _issue(6, "Make an Auth0 tenant", ["owner-task"]),
@@ -43,7 +43,7 @@ def test_status_sorts_the_open_issues(repo):
     st = status.snapshot(repo, True, ISSUES, PRS, repo="acme/demo", areas=["messages"])
     assert st.issues_read and st.set_up
     assert _nums(st.run) == [1]
-    assert _nums(st.maps) == [2] and st.maps[0].detail == "2 open"
+    assert _nums(st.maps) == [2] and st.maps[0].detail == "2 open decisions"
     assert _nums(st.specs) == [3] and st.specs[0].detail == "no tickets yet"
     assert _nums(st.ready) == [4]
     assert _nums(st.in_progress) == [5]
@@ -100,6 +100,46 @@ def test_status_cli_reads_files(repo, tmp_path):
     assert out["set_up"] and [i["number"] for i in out["ready"]] == [4]
 
 
+def test_status_says_unknown_when_github_gave_no_sub_issue_counts(repo):
+    issues = [
+        _issue(1, "A map", ["wayfinder:map"]),
+        _issue(2, "Spec: one", ["spec"]),
+        _issue(3, "Spec: two", ["spec"], sub_issues_summary={"total": 3, "completed": 3}),
+    ]
+    st = status.snapshot(repo, True, issues, [])
+    assert "unknown" in st.maps[0].detail
+    assert "unknown" in st.specs[0].detail
+    assert st.specs[1].detail == "0 of 3 tickets open"
+
+
+def test_a_parent_issue_is_listed_with_the_specs_not_to_sort(repo):
+    issues = [_issue(1, "Epic", sub_issues_summary={"total": 2, "completed": 0}), _issue(2, "Epic two", ["enhancement"], sub_issues_summary={"total": 1, "completed": 0})]
+    st = status.snapshot(repo, True, issues, [])
+    assert _nums(st.specs) == [1, 2] and st.specs[0].detail.startswith("parent issue")
+    assert st.to_triage == []
+
+
+def test_a_ready_ticket_still_labelled_needs_triage_is_not_to_sort(repo):
+    issues = [_issue(1, "Fix it", ["needs-triage", "ready-for-agent"], body="## Blocked by\n\nNone")]
+    st = status.snapshot(repo, True, issues, [])
+    assert _nums(st.ready) == [1] and st.to_triage == []
+
+
+@pytest.mark.parametrize("name", ["agents.py", "context.ts", "security.js", "src/README.md"])
+def test_code_named_like_boilerplate_is_the_project_s_own(repo, name):
+    f = repo / name
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("x")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "code")
+    assert status.snapshot(repo, True).own_files == 1
+
+
+def test_status_text_outside_a_git_checkout(tmp_path):
+    st = status.snapshot(tmp_path, False)
+    assert st.own_files == -1 and not st.brand_new and "unknown" in status.text(st)
+
+
 # The first-message hook ---------------------------------------------------
 
 
@@ -113,6 +153,20 @@ def test_first_message_of_an_attended_session_brings_the_guided_start(repo):
     session = uuid.uuid4().hex
     assert "guided start" in _first(repo, "hi", session)
     assert _first(repo, "let's add an export", session) == ""  # only the first message
+
+
+def test_a_flow_request_as_first_message_still_counts_as_the_first(repo):
+    (repo / ".claude/workflow/flow.md").write_text("# The flow\n")
+    session = uuid.uuid4().hex
+    assert "The flow" in _first(repo, "build #12", session)
+    assert "guided start" not in _first(repo, "thanks, what next?", session)
+    session = uuid.uuid4().hex
+    _first(repo, "/next", session)
+    assert "guided start" not in _first(repo, "hello", session)
+
+
+def test_a_path_is_not_a_command(repo):
+    assert "guided start" in _first(repo, "/home/user/app.py crashes on start")
 
 
 @pytest.mark.parametrize("prompt", ["/grill-me my pitch", "/start", "/compact"])

@@ -165,7 +165,7 @@ The conductor checks the ruleset, CODEOWNERS and the ticket environment again at
 
 #### Start a session and say what you're working on
 
-You don't need to remember any command. Start a session on the repository and type whatever you have in mind. Claude asks what you're working on, with choices to click, and offers each next step the same way until the work is done. This is the kit's **guided start** (the `start` skill).
+You don't need to remember any command. Start a session on the repository and say what you have in mind, or just "hi": Claude works out what to do, asks with choices to click when there's something to choose, and offers each next step the same way until the work is done. This is the kit's **guided start** (the `start` skill).
 
 **Where:** a session on the repository, with you there:
 - a local session;
@@ -182,11 +182,11 @@ Not the ticket or conductor environment, and not a `claude/build-…` branch. Th
 | You type | Claude |
 |---|---|
 | Something clear: a question, "build #262", "rename the Save button to Done" | Does it. No menu. |
-| Work to plan, one thing or several: "add an export to PDF, and the reminders screen needs changing because testers found it confusing" | Splits it into items and proposes a path for each (below) |
+| Work to plan, one thing or several: "add refill reminders, and the reminders screen needs changing because testers found it confusing" | Splits it into items and proposes a path for each (below) |
 | Anything vaguer: "hi", "let's work on pair-drop", or `/start` | Looks at the project and asks "What are we working on?" |
 | A command, such as `/next` or `/grill-me` | Runs that command, with no menu |
 
-`/start` brings the menu back at any time. To turn the first-message menu off for a project, set `guided_start = false` in the profile's `[project]`; `/start` still works.
+`/start` brings the menu back at any time (in plugin mode, `/pairnexus-workflow:start`). To turn the first-message menu off for a project, set `guided_start = false` in the profile's `[project]`; `/start` still works.
 
 **Looking around.** First, Claude runs `workflow status`, which reads the project's issues and pull requests. Then it tells you, in a few lines, what matters:
 - a pull request waiting for your merge;
@@ -227,18 +227,18 @@ When you say go, each item is filed as a GitHub issue in your words, ending with
 
 **An example.** You type:
 
-> I tested the app. Patients should be able to export their records as one PDF for a new doctor. And the reminders screen confuses people: they don't see which medicines are due.
+> I tested the app. Patients should get a reminder to refill a medicine before it runs out. And the reminders screen confuses people: they don't see which medicines are due.
 
 Claude replies with two items and asks about each:
 
-- *"Export records as one PDF: which way?"*
-  - **Spec (Recommended):** "which records, for whom, in what language: decisions to make";
+- *"Refill reminders: which way?"*
+  - **Spec (Recommended):** "how many days ahead, worked out from what, and for which medicines: decisions to make";
   - **Map**.
 - *"Reminders screen doesn't show what's due: which way?"*
   - **Quick ticket (Recommended):** "the screen has the medicines already; it's how they're shown";
   - **Spec**.
 
-Then *"Go with this plan? 1. Reminders screen (quick ticket) 2. Export as PDF (spec)"*. You click **Go**. It files #301 and #302, writes the reminders ticket, shows it to you, publishes it on your click, and asks **Build it now**, **Leave it ready for later** or **Next item**.
+Then *"Go with this plan? 1. Reminders screen (quick ticket) 2. Refill reminders (spec)"*. You click **Go**. It files #301 and #302, writes the reminders ticket, shows it to you, publishes it on your click, and asks **Build it now**, **Leave it ready for later** or **Next item**.
 
 **At every handover, a choice:**
 
@@ -246,8 +246,9 @@ Then *"Go with this plan? 1. Reminders screen (quick ticket) 2. Export as PDF (s
 |---|---|
 | The interview | **Write the spec**, **There's more to discuss**, **Stop here** |
 | The spec | **Split it into tickets**, **Edit the spec first**, **Stop here** |
-| The tickets | **Build the first ticket now**, **Run them unattended**, **Next item of the plan**, **Stop here** |
-| Each item | **Next: <the next item>**, **Start it in a fresh session**, **Stop here** |
+| The tickets | **Build them in a fresh session**, **Run them unattended**, **Next item of the plan** (when it's light), **Stop here** |
+| Charting a map | **Stop here: the first decision in a fresh session**, **Next item of the plan** (when it's light) |
+| A light item (a quick ticket published, an edit to an issue) | **Next: <the next item>**, **Start it in a fresh session**, **Stop here** |
 
 "Stop here" leaves everything on GitHub, so the next session picks it up.
 
@@ -330,18 +331,18 @@ Keep steps 1 to 3 in **one session** where you can, so the spec and the tickets 
 
 **1. `/grill-with-docs`: the interview.** Type the command and the idea in a sentence or two:
 
-> /grill-with-docs Patients should be able to export all their records as one PDF to give a new doctor.
+> /grill-with-docs Patients should get a reminder to refill a medicine before it runs out.
 
 Claude interviews you in **rounds**:
 - Each round asks every question that can be answered now: the ones that don't wait on another open answer. Each comes with Claude's recommended answer. Typed as a command, the questions are numbered and worded so that "yes" accepts the recommendation; the guided start asks them as choices to click, recommendation first.
 - Answer the whole round in one message. For example:
 
-  > Q1 yes. Q2 no: only Documents, not Readings. Q3 yes, but in Hindi too. Q4 I don't know, what do you suggest?
+  > Q1 yes. Q2 no: only medicines they take every day. Q3 yes, but 5 days ahead, not 3. Q4 I don't know, what do you suggest?
 
 - Your answers open the next round. It goes on until no decision is left unasked; then Claude checks you agree it has understood, and does nothing more until you say so.
 - **Facts are Claude's job, decisions are yours.** Anything it can find out (how the code works now, what a library allows) it looks up itself, often in the background, rather than asking you.
 - **It keeps the project's language straight.** When a word you use clashes with the project's glossary (`GLOSSARY.md`, or whatever name the project uses), it asks which you mean, and adds terms to the glossary as they're settled. When a decision is hard to reverse, surprising, and a real trade-off, it offers to record it as a short ADR in `docs/adr/`.
-- **Those files are only in the session's working tree.** Before the session ends, Claude commits them to a branch and opens a pull request for you to merge; the flow's checklist has the step. A cloud session's files are gone when it ends.
+- **Those files are only in the session's working tree.** Before the session ends, or you stop, Claude commits them to a branch of their own and opens a pull request for you to merge; the flow's checklist has the step. A cloud session's files are gone when it ends.
 
 `/grill-me` is the same interview, but it writes nothing down. Use it to think something through away from a repository (a plan, a pitch); in a project, use `/grill-with-docs`.
 
@@ -411,7 +412,7 @@ When the work is too big for one session, or too unclear to spec yet, chart it f
 2. settles it as its kind says: an interview with you, a prototype you react to, research, or a task;
 3. writes the answer as a comment, closes the issue, and adds one line to the map's "Decisions so far";
 4. opens new decision issues as answers make them clear, moving each from "Not yet specified" as it does;
-5. commits any glossary, ADR or research note to a branch and offers you a pull request.
+5. commits any glossary or ADR change to a branch and offers you a pull request; research notes stay on their own `research/…` branch, linked from the decision, never merged.
 
 Several decisions that don't block each other can be worked in parallel sessions.
 
@@ -432,6 +433,8 @@ Several decisions that don't block each other can be worked in parallel sessions
 4. **Build the first ticket with you there:** the project's skeleton, its test runner and a first test. Use `/next build`, and merge it yourself. It can't be unattended:
    - with `ci.none`, the merge rule needs the full suite's result posted from the session (`workflow evidence`);
    - until the profile names a suite, there is none to run.
+
+   So expect this one ticket's session to say it found no suite or typecheck in the profile and couldn't post the suite's evidence. It runs the new tests directly instead, and you merge on what it shows you.
 5. **One owner pull request** for the test set-up. In an attended session, ask Claude to:
    - add the suite, typecheck and setup commands to `.claude/workflow/profile.toml`;
    - add a CI workflow in `.github/workflows/` that runs them;
@@ -448,8 +451,8 @@ Several decisions that don't block each other can be worked in parallel sessions
   - A **UI** prototype: several very different versions of one screen, switchable in the browser.
 
   When it has answered the question, the answer goes into the decisions, and the prototype is kept on a branch for reference.
-- **`/research <question>`**: a background agent reads the primary sources (official docs, source code, specs) and leaves a Markdown file in the repository, citing each claim. You keep talking meanwhile; its findings feed the interview. Commit it with the session's other files.
-- **`/to-questionnaire`**: when someone else holds the answer (a clinician, a vendor, legal). It asks you only who it's for and what you need back, then writes them a questionnaire to fill in, most important question first. It writes `to-questionnaire-<slug>.md` in the repository's root; you send it yourself.
+- **`/research <question>`**: a background agent reads the primary sources (official docs, source code, specs) and leaves a Markdown file in the repository, citing each claim. You keep talking meanwhile; its findings feed the interview. It is kept on a `research/…` branch, linked from the issue it answers, and never merged.
+- **`/to-questionnaire`**: when someone else holds the answer (a clinician, a vendor, legal). It asks you only who it's for and what you need back, then writes them a questionnaire to fill in, most important question first. It writes `to-questionnaire-<slug>.md` in the repository's root; you send it yourself. In a cloud session, ask Claude to print it before the session ends: the file is gone with the machine.
 - **`/wait-what`**: Claude's last message didn't make sense. It says it again, plainly, with the context you were missing.
 - **`/handoff`**: writes the conversation so far to a file another session can pick up.
   - It saves to the machine's temporary directory, not the repository.

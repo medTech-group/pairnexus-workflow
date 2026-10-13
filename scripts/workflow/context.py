@@ -37,12 +37,14 @@ def wants_flow(prompt: str) -> bool:
 
 
 # A prompt that starts with a slash command: the person chose what to run.
-_SLASH = re.compile(r"^\s*/[\w:-]+")
+# Only a command name: "/home/user/app.py crashes" is a path, not a command.
+_SLASH = re.compile(r"^\s*/[\w:-]+(?=\s|$)")
 
 START = (
     "This is the first message of the session. Follow the kit's guided start, the `start` skill "
     "(`.claude/skills/start/SKILL.md`, or `pairnexus-workflow:start` as a plugin): if this message already asks for "
-    "something clear, just do it; if it describes work to plan, split it into items with a path for each; otherwise "
+    "one clear thing, just do it; if it describes work to plan, or more than one thing, don't start on any of it: "
+    "split it into items with a path for each and agree the plan first; otherwise "
     "ask \"What are we working on?\" with choices. If the conversation was already under way before this message "
     "(a resumed session), ignore this."
 )
@@ -53,16 +55,24 @@ def _marker(kind: str, session_id: str) -> Path:
     return Path(os.environ.get("TMPDIR") or tempfile.gettempdir()) / f"workflow-{kind}-{safe}"
 
 
-def start_for(prompt: str, session_id: str) -> str | None:
-    """The guided start's nudge, at the session's first prompt only, unless the
-    prompt is a command or already about the flow."""
+def first_prompt(session_id: str) -> bool:
+    """Whether this is the session's first prompt, marking it seen either way,
+    so a first message that was a command or a flow request still counts."""
     marker = _marker("start", session_id)
     if marker.exists():
-        return None
+        return False
     try:
         marker.touch()
     except OSError:
         pass
+    return True
+
+
+def start_for(prompt: str, session_id: str) -> str | None:
+    """The guided start's nudge, at the session's first prompt only, unless the
+    prompt is a command or already about the flow."""
+    if not first_prompt(session_id):
+        return None
     if _SLASH.match(prompt or "") or wants_flow(prompt):
         return None
     return START

@@ -540,10 +540,13 @@ def _hook_context(event: dict) -> int:
     files = context_mod.flow_files(root, KIT_ROOT, prof.flow_addendum if prof else "")
     prompt, session = event.get("prompt") or "", event.get("session_id") or ""
     ctx = context_mod.context_for(prompt, session, files)
-    # The guided start: attended sessions only, since ticket and conductor
-    # sessions start from a briefing or a charter, never from a menu.
-    if not ctx and prof is not None and prof.guided_start and roles.role(root, prof.ticket_branch) == "attended":
-        ctx = context_mod.start_for(prompt, session)
+    # The guided start, at the first prompt only (marked whatever it was):
+    # attended sessions only, since ticket and conductor sessions start from a
+    # briefing or a charter, never from a menu.
+    if prof is not None and prof.guided_start:
+        nudge = context_mod.start_for(prompt, session)
+        if nudge and not ctx and roles.role(root, prof.ticket_branch) == "attended":
+            ctx = nudge
     if ctx:
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": ctx}}))
     return 0

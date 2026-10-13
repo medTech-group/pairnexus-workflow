@@ -17,16 +17,17 @@ A large effort can start as a **map**: an issue labelled `wayfinder:map` whose c
 1. **Claim** the ticket (the `workflow:in-progress` label and an assignee) before any other write.
 2. Resolve it with the owner. A human-in-the-loop decision is the owner's answer, asked in rounds; never answer for them.
 3. Record it: a resolution comment, close it, the map's "Decisions so far", unblocked tickets updated, new tickets created and wired.
-4. Commit the domain glossary (`GLOSSARY.md`, or the name the project uses), ADRs and research to a branch and offer a pull request.
+4. Commit the domain glossary (`GLOSSARY.md`, or the name the project uses) and ADRs to a branch and offer a pull request. Research notes stay on their own `research/<name>` branch, pushed and linked from the ticket they answer, never merged (as `wayfinder` does).
+5. When every Destination item has its spec and its tickets, close the map as completed.
 
 **The gate.** A map's build tickets wait until every Destination item of that map has its spec and its tickets, so building never starts on half a plan. `workflow ready` doesn't apply it; `next`, `start` and the conductor's kick-off do.
 
-**Checklist:** claimed first; every decision the owner's; recorded and closed; map updated; dependents updated; changes committed with a PR offered; next ticket named.
+**Checklist:** claimed first; every decision the owner's; recorded and closed; map updated; dependents updated; glossary and ADRs committed with a PR offered, research on its branch; next ticket named.
 
 ## 2. A spec and its build tickets: one spec per session
 
 1. Settle the idea with the owner first, in the same session: `grill-with-docs` (or a map's decisions). Then follow `to-spec`: agree the test seams with the owner, then publish the spec (`ready-for-agent`), citing the decision behind each choice.
-   Label the spec `spec` as well, so readiness never mistakes it for a build ticket.
+   Label the spec `spec` as well, so readiness never mistakes it for a build ticket. A spec for a map's Destination item is linked from that item in the map's body (and its tickets are the spec's sub-issues), so `next` and the conductor can tell which Destination items are specified.
 2. Follow `to-tickets`: agree the breakdown, then publish build tickets (`ready-for-agent`). Each build ticket has:
    - `## Blocked by` (issue refs, or "None"), written out even when the tickets are also linked with GitHub's own dependencies, so a blocker closed as not planned is seen;
    - an `Area: <name>` line from the profile's `[areas]`, so the conductor never runs two sessions on one area;
@@ -36,9 +37,9 @@ A large effort can start as a **map**: an issue labelled `wayfinder:map` whose c
 4. **A change to a protected path** (the profile's `guard.protected_paths`: the kit, CI config, CODEOWNERS, secrets files) is an owner task too, labelled `owner-task`, never a build ticket: a ticket session can't change those paths. `workflow ready` notes a ticket whose body names one ("names protected path … : check it isn't an owner task"), leaving it ready; the conductor lists such tickets at kick-off for the owner to keep or exclude. Paths in fenced code (unless the prose before it asks for a change "to" or "in" it), or after "don't", "do not" or "never" in their clause, aren't noted; when in doubt, a path is noted.
 5. **A ticket that fixes a failing or flaky required check** is infra: label it `workflow:infra` as well, so it starts before other tickets. (If its fix is to CI config itself, it is an owner task, as above.)
 6. **An issue triaged to `ready-for-agent`** (by `triage`, or the `start` skill's sorting) is a build ticket too: it gets the same `## Blocked by`, `Area:` and acceptance criteria before it gets the label.
-7. **Commit what the session wrote:** the domain glossary, ADRs and research notes, on a branch, with a pull request for the owner to merge. They are files in the working tree, and a cloud session's are gone when it ends.
+7. **Commit what the session wrote:** the domain glossary and ADRs, on their own branch, with a pull request for the owner to merge; research notes on a `research/<name>` branch, linked from the spec, never merged. They are files in the working tree, and a cloud session's are gone when it ends.
 
-**Checklist:** every input decision used or ruled out with a reason; seams agreed; spec published; tickets agreed, published, wired, each with an area; owner tasks filed (protected-path changes among them); check fixes labelled `workflow:infra`; glossary, ADRs and notes committed with a PR offered.
+**Checklist:** every input decision used or ruled out with a reason; seams agreed; spec published; tickets agreed, published, wired, each with an area; owner tasks filed (protected-path changes among them); check fixes labelled `workflow:infra`; glossary and ADRs committed with a PR offered, research on its branch.
 
 ## 3. Building: one ticket per session
 
