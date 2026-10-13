@@ -17,7 +17,7 @@ Setting up a repository takes one Claude session and about ten minutes of your o
 You need:
 
 1. **Admin rights on the repository.** Rulesets and the merge settings are under the repository's Settings, which only admins see.
-2. **Claude Code on the web** (claude.ai/code). Unattended runs and the set-up check run in cloud sessions. A laptop session can do the set-up itself, if it has Python 3.11 or later and `gh` signed in to GitHub.
+2. **Claude Code cloud sessions**, from the Claude desktop app (choose **Cloud** rather than **Local** when starting a session) or from claude.ai/code in a browser. Both start the same kind of session, on the same environments: an environment you create in one shows up in the other, and a session started in one can be followed in the other. Unattended runs and the set-up check need a cloud session. A local session can do the set-up itself, if the computer has Python 3.11 or later and `gh` signed in to GitHub.
 3. **GitHub access for Claude.**
    - The Claude GitHub App is installed on the organisation, with access to the project's repository and to this one (`medTech-group/pairnexus-workflow`, which is private).
    - Your claude.ai account is connected to GitHub.
@@ -26,7 +26,9 @@ You need:
 
 ### Step 1. Ask Claude to set the repository up
 
-1. Start a Claude Code session on the project's repository. A cloud session at claude.ai/code in the Default environment is fine.
+1. Start a cloud session on the project's repository, in the Default environment:
+   - **Desktop app:** start a new Code session, choose **Cloud**, pick the Default environment and the repository.
+   - **Browser:** at claude.ai/code, pick the repository and the Default environment.
 2. Send this message:
 
    > Set this repository up with the pairnexus workflow: clone https://github.com/medTech-group/pairnexus-workflow and follow `skills/setup-workflow/SKILL.md`.
@@ -100,9 +102,10 @@ Open the repository's **Settings → General** and scroll to **Pull Requests**:
 An environment is the cloud machine a session runs on: its network access, environment variables, secrets and setup script. You pick one each time you start a session.
 
 To create one:
-1. Open claude.ai/code.
-2. Open the cloud environment menu: where you pick an environment when starting a session, or in a running session's title bar.
-3. Choose **Add environment**. To change one later, choose it in the same menu and click **Edit**.
+- **Desktop app:** in a new Code session, open the environment dropdown in the prompt box and select **Cloud**, then **Add cloud environment**. To change one later, hover over it in the same list and click its gear icon.
+- **Browser:** at claude.ai/code, open the cloud environment menu (where you pick an environment when starting a session, or in a running session's title bar) and choose **Add environment**. To change one later, choose it there and click **Edit**.
+
+Either way it's the same environment, so create each one once.
 
 **The ticket environment**, named exactly as in the profile's `run.ticket_environment` (for example `myproject-ticket`):
 - **Environment variables:** only `WORKFLOW_ROLE=ticket`.
@@ -158,7 +161,7 @@ The conductor checks the ruleset, CODEOWNERS and the ticket environment again at
 To pick the work yourself, use `/next build`, or `/next 123` for a particular issue.
 
 **Unattended.**
-1. At claude.ai/code, start a session on the repository. Choose the **conductor environment**, and in the permission mode menu choose **Auto**. A mode that asks before using tools would stall the run, and ticket sessions can't run in a more permissive mode than the conductor's.
+1. Start a cloud session on the repository (desktop app: **Cloud**; or claude.ai/code). Choose the **conductor environment**, and in the permission mode selector (beside the send button in the desktop app) choose **Auto**. A mode that asks before using tools would stall the run, and ticket sessions can't run in a more permissive mode than the conductor's.
 2. Say:
 
    > Run the backlog unattended.
