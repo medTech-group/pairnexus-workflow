@@ -57,6 +57,7 @@ Where `gh api` isn't available, fetch the issues (`state=all`, with labels, bodi
 
 It reports:
 - whether the kit is set up, and whether the project is brand new (no code of its own);
+- the kit's version here, and whether a newer release is out (`Kit version:`; the session's start says so too);
 - an unattended run (`workflow:run`), claimed work (`workflow:in-progress`) and open PRs;
 - items planned at an earlier start and not begun;
 - maps, open specs (and parent issues) and ready build tickets;
@@ -73,6 +74,7 @@ Tell the person what matters in two to four lines, for example: "PR #297 is wait
 
 | Option | Offer it when | Its description |
 |---|---|---|
+| **Update the workflow kit to <version> (Recommended)** | A newer kit release is out, no run is in progress, and no update pull request is open (status's `kit_update_pr`; else offer "Carry on: the kit update PR #n"). It comes first, before a brand-new project's map | "A pull request for you to merge, with what's new; then we carry on." |
 | **Carry on: <the thing>** | Something is under way (the table below): name the most pressing one | What it is and what happens next |
 | **Something new, or a change to what's there** | Always | "Tell me in your own words; several things at once is fine." |
 | **Fix something that's broken** | Unless four better options fill the list | "Describe what goes wrong; I'll find the cause." |
@@ -91,6 +93,7 @@ Tell the person what matters in two to four lines, for example: "PR #297 is wait
 | A map decision, a clear map's next spec, or a ready ticket | Load `next` with the Skill tool, with that issue |
 
 **What the other options lead to:**
+- **Update the workflow kit:** in plugin mode (no `.claude/workflow/lock.json`), tell them to type `/plugin update pairnexus-workflow@pairnexus`. Vendored: clone the new release outside the project (`KIT=$(mktemp -d)/pairnexus-workflow && git clone --depth 1 --branch v<version> https://github.com/medTech-group/pairnexus-workflow "$KIT"`), then read **that release's** `$KIT/skills/update-workflow/SKILL.md` (user-only, so read it) and follow it. It ends with a pull request for them to merge. Then ask "What are we working on?" again, without this option. With a run in progress, don't offer it: a run stays on the version it started with.
 - **New, a change, or a fix:** ask in plain text, "Tell me what you have in mind: as much or as little as you like." Then step 2.
 - **Sort the new issues:** step 5.
 - **A brand-new project or a large effort:** step 2, with the path already chosen: a map.

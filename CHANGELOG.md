@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.1.5
+
+- **Releases.** Each version is a GitHub release with its tag (`v0.1.5`), its notes this changelog's entry. The kit's own `release` workflow publishes it on every push to main, and only from main (`.github/scripts/release.py`):
+  - a version is done once it has a release, not merely a tag, and a tag without one gets its release;
+  - every version is tried, and a failure fails the run at the end;
+  - its first run publishes 0.1.0 to 0.1.4 at the last commit of each;
+  - every change to shipped files bumps VERSION, and no one tags by hand.
+
+  Vendored projects take releases only: `update-workflow` clones a release's tag outside the project and follows that release's copy of itself, never `main` between releases.
+- **The update check.**
+  - `workflow version` gives the kit's version here and the latest release. It reads the latest with `gh api`, else GitHub's public API, and remembers it for six hours (a failed lookup for an hour). A cache or lock it can't read means "don't know". It never updates anything itself.
+  - **The session start says when a newer release is out.** It asks first, in at most 8 seconds, so setup keeps the hook's time.
+    - Attended sessions are offered the update: `update-workflow` vendored, `/plugin update pairnexus-workflow@pairnexus` as a plugin.
+    - Conductor sessions are told to raise it only at a run's kick-off.
+    - Ticket sessions are told nothing: they stay on their run's version.
+  - **The guided start** offers **"Update the workflow kit to <version>"** first, before anything else, when a newer release is out (not during a run). When an update pull request is already open, it offers **"Carry on: the kit update PR #n"** instead (`workflow status` finds it by its title, "Update the workflow kit to …").
+  - **The conductor's kick-off** asks **Update first** or **Run on <this version>**. A run never updates mid-run.
+  - **The weekly update check** (`templates/github/workflow-kit-update.yml`, a project's `.github/workflows/workflow-kit-update.yml`):
+    - an issue, "Workflow kit update: 0.1.4 → 0.1.5", labelled `owner-task` (created if missing), linking every release since and the full difference;
+    - closed once the project catches up;
+    - not asked again for a version whose issue was closed as not planned;
+    - a warning, not a failure, when the lock has no version.
+
+    It opens an issue, not a pull request: a pull request opened by a workflow's token runs no CI, so a session makes the update pull request instead.
+  - `WORKFLOW_UPDATE_CHECK=off` turns the lookup off.
+- **For projects updating to 0.1.5:**
+  - `update-workflow` adds `.github/workflows/workflow-kit-update.yml` (a protected path, so it's in the owner's update pull request);
+  - from 0.1.4, which has no `version` command, find the latest release with `git ls-remote --tags` (the skill says how).
+- **README:**
+  - "Keeping it up to date" covers releases, the check and the weekly issue;
+  - the kit's repository is public.
+
 ## 0.1.4
 
 - **The guided start** (`skills/start`): you don't need to remember a command.
@@ -84,7 +116,7 @@ From the practice run on the sandbox repo (run 2026-10-12-words).
   - The evidence report ends with the marker.
   - The conductor: "a check-in is pending" defined (an enabled one-shot routine bound to it; the wake routine never counts), "A check-in is complete" kept apart from "Done"; the path back from a `needs-human` ticket once the owner answers, and how attempts count; `--only` takes every open `workflow:infra` ticket.
 
-## 0.1.0 (unreleased)
+## 0.1.0
 
 First version, from the pair-drop weekend run of 9–12 Oct 2026 and two independent reviews of its proposal.
 

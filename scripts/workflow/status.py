@@ -17,6 +17,8 @@ from . import issues as issues_mod
 # one session is still there in the next: `<!-- workflow:item path=spec -->`.
 ITEM = re.compile(r"<!--\s*workflow:item(?:\s+path=([\w-]+))?\s*-->")
 PATHS = ("ticket", "diagnose", "spec", "map")
+# The title update-workflow gives its pull request.
+KIT_UPDATE_TITLE = "Update the workflow kit"
 _WAITING = issues_mod.HUMAN_LABELS | {"needs-info"}
 
 # Files a repository has before any of its own code: what set-up writes, and
@@ -51,6 +53,7 @@ class Status:
     ready: list[Item] = field(default_factory=list)
     waiting: list[Item] = field(default_factory=list)
     to_triage: list[Item] = field(default_factory=list)
+    kit_update_pr: int | None = None
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -143,6 +146,8 @@ def snapshot(
     for pr in sorted((p for p in prs if _open(p)), key=lambda p: p["number"]):
         draft = " (draft)" if pr.get("draft") else ""
         st.prs.append(Item(pr["number"], pr.get("title") or "", ((pr.get("head") or {}).get("ref") or "") + draft))
+        if (pr.get("title") or "").casefold().startswith(KIT_UPDATE_TITLE.casefold()) and st.kit_update_pr is None:
+            st.kit_update_pr = pr["number"]
     for v in issues_mod.readiness(issues, prs, repo=repo, areas=areas, protected=protected):
         if v.ready:
             st.ready.append(Item(v.number, v.title, v.area or ""))
@@ -180,6 +185,8 @@ def text(st: Status) -> str:
             lines.append(f"- #{it.number} {it.title}" + (f" [{it.detail}]" if it.detail else ""))
         if len(items) > 8:
             lines.append(f"- … and {len(items) - 8} more")
+    if st.kit_update_pr:
+        lines.append(f"Kit update pull request open: #{st.kit_update_pr} (offer it, not another update)")
     if not any(getattr(st, k) for k, _ in _SECTIONS):
         lines.append("Issues: nothing open")
     return "\n".join(lines)

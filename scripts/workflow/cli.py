@@ -2,6 +2,7 @@
 
     workflow profile check
     workflow status [--issues F --prs F | --fetch] [--json]
+    workflow version [--fresh] [--json]
     workflow ready [--issues F --prs F | --fetch] [--exclude 1,2] [--only 1,2] [--override 3] [--running-area A ...] [--slots N] [--json]
     workflow charter defaults | validate F [--approved] | markdown F [--tickets 13:area,143:-] | diff OLD NEW | reuse OLD | pin-plan F | questions
     workflow charter splice --body F --charter F [--out F] [--tickets 13:area,143:-]
@@ -38,6 +39,7 @@ from . import repair as repair_mod
 from . import roles
 from . import state as state_mod
 from . import status as status_mod
+from . import updates as updates_mod
 from . import vendor as vendor_mod
 from .profile import ProfileError, load, project_root
 
@@ -186,10 +188,43 @@ def cmd_status(a) -> int:
         areas=list(prof.areas) if prof else None,
         protected=list(prof.protected_paths) if prof else None,
     )
+    kit = updates_mod.check(root, KIT_ROOT) if a.fetch else {"installed": updates_mod.installed(root, KIT_ROOT)}
     if a.json:
-        _out(st.as_dict())
+        _out({**st.as_dict(), "kit": kit})
     else:
         print(status_mod.text(st))
+        print(_kit_line(kit))
+    return 0
+
+
+def _kit_line(kit: dict) -> str:
+    have = kit.get("installed")
+    if not have:
+        here = "unknown (no readable kit_version in .claude/workflow/lock.json, or VERSION)"
+        return f"Kit version: {here}" + (f"; the latest release is {kit['latest']}" if kit.get("latest") else "")
+    if "latest" not in kit:
+        return f"Kit version: {have}"
+    if not kit.get("checked", True):
+        return f"Kit version: {have} (the update check is off: WORKFLOW_UPDATE_CHECK)"
+    if kit.get("update_available"):
+        how = "type /plugin update" if kit.get("mode") == "plugin" else "offer the update first"
+        return f"Kit version: {have}; {kit['latest']} is out ({how})"
+    if kit.get("ahead"):
+        return f"Kit version: {have}, ahead of the latest release ({kit['latest']})"
+    if kit.get("latest"):
+        return f"Kit version: {have} (the latest)"
+    return f"Kit version: {have} (couldn't read the latest release)"
+
+
+def cmd_version(a) -> int:
+    """The kit's version here, and whether a newer release is out."""
+    prof = load(required=False)
+    root = prof.root if prof else project_root()
+    kit = updates_mod.check(root, KIT_ROOT, fresh=a.fresh)
+    if a.json:
+        _out(kit)
+    else:
+        print(_kit_line(kit))
     return 0
 
 
@@ -556,6 +591,11 @@ def _hook_repair(event: dict) -> int:
     prof = load(required=False)
     if prof is None:
         return 0
+    role = roles.role(prof.root, prof.ticket_branch)
+    # A newer kit: offered in attended and conductor sessions, never in a
+    # ticket session, which stays on the version its run started with. Asked
+    # first, in a few seconds at most, so setup keeps the hook's budget.
+    note = updates_mod.notice(updates_mod.check_within(prof.root, KIT_ROOT), role) if role != "ticket" else None
     start = time.monotonic()
     # Only in cloud sessions: a laptop's checkout is its owner's to set up.
     cloud = os.environ.get("CLAUDE_CODE_REMOTE") == "true"
@@ -564,9 +604,10 @@ def _hook_repair(event: dict) -> int:
     deadline = max(0, min(repair_mod.DEADLINE, left))
     text = repair_mod.summary(repair_mod.run(prof.repair, prof.root, deadline=deadline)) if prof.repair else ""
     text = "\n".join(x for x in (repair_mod.setup_summary(set_up), text) if x)
-    role = roles.role(prof.root, prof.ticket_branch)
     firm = "set by WORKFLOW_ROLE" if roles.env_role() else "from the branch name"
     text = (text + "\n" if text else "") + f"Workflow role of this session: {role} ({firm})."
+    if note:
+        text += "\n" + note
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}))
     return 0
 
@@ -620,6 +661,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--fetch", action="store_true")
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_status)
+
+    s = sub.add_parser("version", help="the kit's version here, and whether a newer release is out")
+    s.add_argument("--fresh", action="store_true", help="ask GitHub again rather than the last six hours' answer")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_version)
 
     s = sub.add_parser("charter")
     s.add_argument("action", choices=["defaults", "questions", "validate", "markdown", "diff", "reuse", "pin-plan", "splice"])

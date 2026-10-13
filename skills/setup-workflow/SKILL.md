@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Set up the workflow in a project
 
-This runs from a checkout of the kit (`medtech-group/pairnexus-workflow`), whether or not the project has the kit yet, and in either mode: read this file there and follow it. `KIT` is that checkout (clone it with `git clone https://github.com/medTech-group/pairnexus-workflow`; it's private, so the session needs access). `WF` is `python3 -B $KIT/scripts/workflow.py`. Matt Pocock's skills: `git clone https://github.com/mattpocock/skills` and check out the SHA in `$KIT/.claude-plugin/marketplace.json`.
+This runs from a checkout of the kit (`medtech-group/pairnexus-workflow`), whether or not the project has the kit yet, and in either mode: read this file there and follow it. `KIT` is that checkout (clone it with `git clone https://github.com/medTech-group/pairnexus-workflow`). `WF` is `python3 -B $KIT/scripts/workflow.py`. Matt Pocock's skills: `git clone https://github.com/mattpocock/skills` and check out the SHA in `$KIT/.claude-plugin/marketplace.json`.
 
 Explore first, ask only what you can't find, show what you'll write, and write it on a branch with a pull request. The base branch is the owner's; this is a PR like any other.
 
@@ -94,7 +94,7 @@ Use `AskUserQuestion`, recommended answers first. Ask only what exploring didn't
 
 **5. `.github/CODEOWNERS`.** It covers `/.claude/`, `/.github/workflows/` and itself, with the owner's handle (`enforcement.md` §3). It requests the owner's review on those paths; whether the ruleset also requires it depends on whose GitHub account the sessions use (§4 below).
 
-**6. A CI job,** in vendored mode: copy `$KIT/templates/github/workflow-kit.yml` to `.github/workflows/workflow-kit.yml`, replacing `BASE_BRANCH` with the base branch. Its check, `workflow kit`, goes in `ci.required_checks`.
+**6. A CI job,** in vendored mode: copy `$KIT/templates/github/workflow-kit.yml` to `.github/workflows/workflow-kit.yml`, replacing `BASE_BRANCH` with the base branch. Its check, `workflow kit`, goes in `ci.required_checks`. Also copy `$KIT/templates/github/workflow-kit-update.yml` to `.github/workflows/workflow-kit-update.yml`: the weekly check that opens an issue when a newer kit release is out (not a required check).
 
 **7. `.gitignore` gets `.workflow/` and `__pycache__/`.** `vendor install` adds them; check they're there.
 
