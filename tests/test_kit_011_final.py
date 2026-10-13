@@ -544,3 +544,8 @@ def test_no_op_programs_and_harmless_settings_allowed(profile, tmp_path):
         for role in ("ticket", "conductor"):
             d = act(profile, tmp_path, cmd, role=role)
             assert d.action == "allow", (role, cmd, d.reason)
+
+
+def test_ssh_signing_key_command_is_a_program(profile, tmp_path):
+    cmd = "git -c gpg.format=ssh -c gpg.ssh.defaultKeyCommand=make commit -S -m x"
+    assert act(profile, tmp_path, cmd, role="ticket").action == "deny"

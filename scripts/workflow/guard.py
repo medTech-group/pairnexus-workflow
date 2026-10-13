@@ -1191,7 +1191,7 @@ _PUSH_SETTINGS = re.compile(
 _INJECT_KEYS = re.compile(
     rf"(?i)^(alias\.|remote\..*\.(push|pushurl|url)\b|{_MIRROR_KEYS}|push\.|branch\..*\.(merge|remote|pushremote)\b|url\.|"
     r"core\.(fsmonitor|sshcommand|hookspath|pager|editor|askpass|gitproxy)\b|credential\.|include\.|includeif\.|"
-    r"sequence\.editor\b|diff\.external\b|diff\..*\.(command|textconv)\b|merge\..*\.driver\b|filter\.|(diff|merge)tool\..*\.(cmd|path)\b|gpg\.(.*\.)?program\b)"
+    r"sequence\.editor\b|diff\.external\b|diff\..*\.(command|textconv)\b|merge\..*\.driver\b|filter\.|(diff|merge)tool\..*\.(cmd|path)\b|gpg\.(.*\.)?program\b|gpg\.ssh\.defaultkeycommand\b)"
 )
 _INJECT_ENV = re.compile(
     r"^(GIT_CONFIG\w*|GIT_SSH\w*|GIT_EXEC_PATH|GIT_DIR|GIT_WORK_TREE|GIT_EDITOR|GIT_SEQUENCE_EDITOR|GIT_EXTERNAL_DIFF|GIT_ASKPASS|GIT_PAGER|EDITOR|VISUAL)\+?="
@@ -1213,7 +1213,9 @@ def _env_problem(seg: Seg, role: str) -> str | None:
             continue  # a program that does nothing here: `GIT_EDITOR=true git rebase --continue`, `GIT_PAGER=cat`
         m = _INJECT_ENV.match(a) or re.fullmatch(r"(GIT_CONFIG\w*|GIT_SSH\w*|GIT_EXEC_PATH|GIT_DIR|GIT_WORK_TREE)", a)
         if m:
-            return f"setting `{a.split('=', 1)[0]}` can point git at other config, programs or repositories; it's not allowed in {role} sessions"
+            name = a.split("=", 1)[0].rstrip("+")
+            what = "names a program to run" if name in ("EDITOR", "VISUAL") else "can point git at other config, programs or repositories"
+            return f"setting `{name}` {what}; it's not allowed in {role} sessions (a no-op value such as `true` or `cat` is fine)"
         if role == "ticket" and re.match(r"(GH_REPO|GH_HOST|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRISE_TOKEN|GH_TOKEN|GITHUB_TOKEN|GH_CONFIG_DIR)(\+?=|$)", a):
             return f"setting `{a.split('=', 1)[0].rstrip('+')}` points gh at another repository, host or account; ticket sessions work only in this repository"
     return None
