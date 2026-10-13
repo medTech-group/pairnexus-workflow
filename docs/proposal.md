@@ -1,5 +1,8 @@
 # Proposal (v2): pairnexus-workflow
 
+> [!NOTE]
+> **Historical design record, kept as written.** The kit has moved on since (the profile is `profile.toml`, the run's state lives in the tracking issue's body, the conductor runs only in the cloud, and more). Where this differs from `flow.md`, `charter.md`, `enforcement.md`, `profile.md` or the skills, they win.
+
 A reusable kit for the plan → spec → tickets → build → review → merge workflow, attended or unattended, in any repo.
 
 **Owner decisions so far:**

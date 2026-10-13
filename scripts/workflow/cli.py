@@ -6,13 +6,14 @@
     workflow ready [--issues F --prs F | --fetch] [--exclude 1,2] [--only 1,2] [--override 3] [--running-area A ...] [--slots N] [--json]
     workflow charter defaults | validate F [--approved] | markdown F [--tickets 13:area,143:-] | diff OLD NEW | reuse OLD | pin-plan F | questions
     workflow charter splice --body F --charter F [--out F] [--tickets 13:area,143:-]
-    workflow state init --charter F --run-id ID [--by-hand N] [--read-through ID] | get --body F | put --body F --state F | patch --body F --patch F
+    workflow state init --charter F --run-id ID [--by-hand N] [--read-through ID] | get --body F | put --body F --state F [--out F] | patch --body F --patch F [--out F]
     workflow render --template F --ticket F --charter F --slots F --tracking N [--by-hand N] [--out F] [--print]
     workflow comments --file F [--owner LOGIN] [--since-id N]
     workflow briefing verify --file F
     workflow evidence [--suite NAME ...] [--base-count N | --base-ref BRANCH] [--fresh] [--allow-dirty]
     workflow repair
-    workflow vendor install|update --kit DIR [--mattpocock DIR | --no-mattpocock] [--project DIR] [--adopt] [--strict-pin]
+    workflow vendor install|update [--kit DIR] [--mattpocock DIR | --no-mattpocock] [--project DIR] [--adopt] [--strict-pin]
+        (--kit defaults to the checkout this CLI runs from: give it when running a project's vendored copy)
     workflow vendor verify [--project DIR] [--strict] | resolve [--keep] PATH [--project DIR]
     workflow hook guard|gate|context|repair      (reads the hook's JSON on stdin)
 """
@@ -479,8 +480,9 @@ def cmd_vendor(a) -> int:
     )
     for w in r["warnings"]:
         print(f"warning: {w}", file=sys.stderr)
-    # Counts for the routine lists; every path that needs a look in full.
-    _out({k: (len(v) if k in ("written", "unchanged", "kept") else v) for k, v in r.items()})
+    # Counts for the routine lists; every path that needs a look in full, the
+    # project's own edits kept over the kit's included.
+    _out({k: (len(v) if k in ("written", "unchanged") else v) for k, v in r.items()})
     return 0
 
 

@@ -23,7 +23,7 @@ One comment on the tracking issue, written for the owner to act on. Build it onl
    - why the run ended: done, the end time, a limit, or the stop label.
 2. **Merged.** A table of ticket, title, PR, review rounds, wall time (from `started_at` to `merged_at`) and attempts.
 3. **Set aside.** Each `needs-human` or set-aside ticket, with exactly what it needs and from whom.
-4. **What's live.** Each release step in the ledger: what ran, from which commit, and the smoke test's result.
+4. **What's live.** Each release step in the ledger: what ran, from which commit, and the smoke test's result. A release skipped because the owner stopped the run says so, and that the owner can release by hand.
 5. **Changes outside the repo.** The ledger, as a list for the owner to **confirm or undo**. Each line gives the change, when it happened, and the charter line or owner comment that allowed it.
 6. **For you:**
    - the decisions sessions took that the owner should confirm, each with its PR;

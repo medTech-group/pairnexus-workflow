@@ -39,7 +39,7 @@ The kit's hook brings this skill at a session's first message. Read that message
 
 | The message | What to do |
 |---|---|
-| One clear request: a question, a named issue ("build #262"), one small change with an obvious place ("rename the Save button to Done") | Do it. No menu. |
+| One clear request: a question, a named issue ("build #262"), one small change with an obvious place ("rename the Save button to Done") | Do it. No menu. A change to the code goes on a branch of its own with a pull request for them to merge (only pull requests reach the base branch); if it turns out bigger than it looked, offer a quick ticket instead. |
 | **More than one thing**, even if one of them is small ("add XYZ, and the greeting is wrong") | Step 1's look around, without the question, then step 2 with their words. Never start on one of them before the plan is agreed. |
 | One piece of work to plan: a feature, a change to how something works, something broken with no known cause | The same: step 1's look around, then step 2 |
 | Anything vaguer ("hi", "let's work on pair-drop"), or `/start` | Step 1 |
@@ -286,7 +286,6 @@ They can change course at any point. Take it as said, and confirm in one line:
 
 - **Decisions are theirs, facts are yours.** Never answer a decision for them; never ask them what you can look up.
 - **Merging is theirs** in attended work (flow §4).
-- **Where this runs:** a local session, or a cloud session in the Default environment, on a branch not named like `run.ticket_branch`. In the ticket or conductor environment, or on a `claude/build-*` branch:
-  - the guard treats the session as part of a run;
-  - every turn must end with a status line;
-  - pushes are limited to ticket branches.
+- **Where this runs:** a local session, or a cloud session in the Default environment, on a branch not named like `run.ticket_branch`. Elsewhere the session is part of a run, and the guided start never shows:
+  - in the ticket environment (`WORKFLOW_ROLE=ticket`), or on a `claude/build-*` branch: the guard holds it to a ticket session's rules, pushes go only to ticket branches, and every turn must end with a status line;
+  - in the conductor environment (`WORKFLOW_ROLE=conductor`): the conductor's rules, with no status line.

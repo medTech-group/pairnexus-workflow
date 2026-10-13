@@ -103,7 +103,7 @@ Then subscribe to its activity. Schedule a check-in about every `run.check_in_mi
 4. **Once it has merged,** tell the tracking issue: "#<n> merged in #<PR>", then notes for the next tickets. Tag each note with its area and the tickets it's for ("For #201, area readings: …"): what you added that later tickets build on, decisions to know, and pitfalls.
 5. **The claim label.** Whenever your ticket ends (merged, `needs-human`, or stopped), always remove `workflow:in-progress`; on `needs-human` also remove `ready-for-agent`. Keep the ticket's other labels. The conductor removes leftovers at its next check-in, but don't leave it to.
 6. **Wake the conductor.** When the ticket ends, call `fire_trigger` with the briefing's wake routine id and exactly one of these lines: "#<n> merged in #<PR>", "#<n> needs-human" or "#<n> stopped". The conductor then checks in at once instead of at its next scheduled time. Skip this when the briefing's wake routine says `none`, or in attended work.
-   - `fire_trigger` is a deferred tool, `mcp__Claude_Code_Remote__fire_trigger`: load it first with ToolSearch (`select:mcp__Claude_Code_Remote__fire_trigger`).
+   - `fire_trigger` is a deferred tool (in a cloud session, `mcp__claude-code-remote__fire_trigger`; the server's part of the name can differ): load it first with ToolSearch, searching for `fire_trigger` rather than selecting an exact name.
    - If it isn't available, or the call errors, say so in the ticket's final note ("Couldn't wake the conductor: <why>") and carry on: try it once, never retry it in a loop. The conductor sees the ending at its next check-in anyway, so the wake never holds up the ticket or your `WORKFLOW-STATUS` line.
 
 ## 7. End each turn
