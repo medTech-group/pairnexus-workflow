@@ -30,7 +30,7 @@ The hooks run `python3 .claude/workflow/bin/workflow.py`: the project needs Pyth
 
 ## Plugin
 
-The repo is private, so Claude Code clones it with your git credentials:
+The repo is public; if Claude Code can't clone it, give git your credentials:
 
 ```bash
 gh auth login && gh auth setup-git        # HTTPS through gh's credential helper

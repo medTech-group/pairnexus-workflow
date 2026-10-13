@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Set up the workflow in a project
 
-This runs from a checkout of the kit (`medtech-group/pairnexus-workflow`), whether or not the project has the kit yet, and in either mode: read this file there and follow it. `KIT` is that checkout (clone it with `git clone https://github.com/medTech-group/pairnexus-workflow`; it's private, so the session needs access). `WF` is `python3 -B $KIT/scripts/workflow.py`. Matt Pocock's skills: `git clone https://github.com/mattpocock/skills` and check out the SHA in `$KIT/.claude-plugin/marketplace.json`.
+This runs from a checkout of the kit (`medtech-group/pairnexus-workflow`), whether or not the project has the kit yet, and in either mode: read this file there and follow it. `KIT` is that checkout (clone it with `git clone https://github.com/medTech-group/pairnexus-workflow`). `WF` is `python3 -B $KIT/scripts/workflow.py`. Matt Pocock's skills: `git clone https://github.com/mattpocock/skills` and check out the SHA in `$KIT/.claude-plugin/marketplace.json`.
 
 Explore first, ask only what you can't find, show what you'll write, and write it on a branch with a pull request. The base branch is the owner's; this is a PR like any other.
 

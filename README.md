@@ -21,7 +21,7 @@ You need:
 1. **Admin rights on the repository.** Rulesets and the merge settings are under the repository's Settings, which only admins see.
 2. **Claude Code cloud sessions**, from the Claude desktop app (choose **Cloud** rather than **Local** when starting a session) or from claude.ai/code in a browser. Both start the same kind of session, on the same environments: an environment you create in one shows up in the other, and a session started in one can be followed in the other. Unattended runs and the set-up check need a cloud session. A local session can do the set-up itself, if the computer has Python 3.11 or later and `gh` signed in to GitHub.
 3. **GitHub access for Claude.**
-   - The Claude GitHub App is installed on the organisation, with access to the project's repository and to this one (`medTech-group/pairnexus-workflow`, which is private).
+   - The Claude GitHub App is installed on the organisation, with access to the project's repository. This one (`medTech-group/pairnexus-workflow`) is public, so any session can clone it.
    - Your claude.ai account is connected to GitHub.
    - If a session can't reach a repository, it tells you which of these is missing.
 4. **A paid GitHub plan** (Team or above) if the repository is private. Rulesets on private repositories need one. Without a ruleset, nothing outside the session stops a push straight to the base branch.
@@ -577,4 +577,4 @@ Releases are semver: `VERSION`, `.claude-plugin/plugin.json`, a `CHANGELOG.md` e
 
 ## Licence
 
-MIT (MedTech LLC): see `LICENSE`. The repository itself is private. The Matt Pocock skills keep their own MIT licence and notice: `THIRD_PARTY-mattpocock-skills.txt`.
+MIT (MedTech LLC): see `LICENSE`. The repository is public. The Matt Pocock skills keep their own MIT licence and notice: `THIRD_PARTY-mattpocock-skills.txt`.
