@@ -98,7 +98,7 @@ Use `AskUserQuestion`, recommended answers first. Ask only what exploring didn't
 
 **7. `.gitignore` gets `.workflow/` and `__pycache__/`.** `vendor install` adds them; check they're there.
 
-**8. A "Workflow" section in `CLAUDE.md`.** It points at `.claude/workflow/flow.md` and the profile, and replaces any older flow description. The project's own rules stay where they are.
+**8. A "Workflow" section in `CLAUDE.md`.** It points at `.claude/workflow/flow.md` and the profile, says a session starts with the guided start (the `start` skill: "What are we working on?", or `/start`), and replaces any older flow description. The project's own rules stay where they are.
 
 **9. Labels,** created through the API (`gh api repos/<repo>/labels -f name=… -f color=…`) unless they already exist:
 - `ready-for-agent`, `ready-for-human`, `needs-human`, `owner-task`, `needs-triage`, `needs-info`, `wontfix`, `spec`;

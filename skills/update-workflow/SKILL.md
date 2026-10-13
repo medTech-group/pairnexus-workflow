@@ -13,7 +13,7 @@ This runs from a checkout of the new kit release (`KIT`), with `WF` as `python3 
    - files missing or changed since they were vendored;
    - whether the hooks are in place;
    - whether the plugin is also enabled.
-2. **The new release.** Read `$KIT/CHANGELOG.md` from the current version up. Note anything that needs a profile change.
+2. **The new release.** Read `$KIT/CHANGELOG.md` from the current version up. Note anything that needs a profile change, and any "For projects updating" step (a change to the project's `CLAUDE.md`, say).
 3. **Matt Pocock's skills.** Check them out at the SHA the new release pins, in `$KIT/.claude-plugin/marketplace.json`.
 4. **The update.** On a branch in the project:
 
@@ -33,5 +33,5 @@ This runs from a checkout of the new kit release (`KIT`), with `WF` as `python3 
    3. explain the merge in the PR body.
 6. **Check it.**
    - Run `WF profile check` and `WF vendor verify --strict`.
-   - Make the changelog's profile changes.
+   - Make the changelog's profile changes, and its "For projects updating" steps.
 7. **The PR.** It gives the version change, the changelog's highlights and the conflicts resolved. It touches protected paths, so it's the owner's to review and merge.

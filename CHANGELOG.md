@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.1.4
+
+- **The guided start** (`skills/start`): you don't need to remember a command.
+  - At the first message of an attended session, Claude asks "What are we working on?", with choices to click (`AskUserQuestion`).
+  - The choices come from where the project stands: carry on a planned item, a map decision, a ready ticket or a PR waiting; something new or a change; a fix; sorting new issues; a brand-new project or large effort; an unattended run.
+  - It splits a request into items, and proposes a path for each, always offering a spec as well: a quick ticket, finding the cause first, a spec, a map, or adding to an existing issue.
+  - It proposes an order, and files each item as an issue (`<!-- workflow:item path=… -->`), so a plan outlives the session. What an item waits for becomes its tickets' `Blocked by`.
+  - It offers each next step as a choice: after the interview, the spec, the tickets and each item. It recommends a fresh session after a spec, a build or a map, and commits the session's files before any stop.
+  - "Carry on" picks up a PR waiting for you, work an earlier session claimed, a planned item (with its interview's decisions), a spec without tickets, a map decision or a ready ticket.
+  - Sorting new issues follows `triage`, with flow §2's rule for a ticket made ready.
+  - A clear first request (a question, "build #262", a command) skips the menu. `/start` brings it back any time. `project.guided_start = false` turns the first-message menu off.
+- **`workflow status`**: where the project stands, for the guided start:
+  - whether the kit is set up, and whether the project is brand new;
+  - an unattended run, claimed work and open PRs;
+  - planned items, maps, specs and ready tickets;
+  - what waits on a person, and new issues to sort.
+- **The flow comes into context for the planning commands on their own:** `/to-spec`, `/to-tickets`, `/wayfinder`, `/grill-with-docs`, `/triage`, `/implement` and `/implement-spec`.
+- **`flow.md`:**
+  - starting with the guided start, and handovers offered as choices;
+  - a spec starts from `grill-with-docs` (or a map's decisions) in the same session;
+  - the glossary and ADRs are committed with a pull request, and research notes stay on a `research/` branch (§2's new step and checklist line, §1 step 4);
+  - a map's spec is linked from its Destination item, and the map is closed once every item has its spec and tickets;
+  - an issue triaged to `ready-for-agent` gets a build ticket's `Blocked by`, `Area:` and acceptance criteria;
+  - `implement` and `implement-spec` build with `build-ticket`;
+  - the map gate is stated in §1, with who applies it.
+- **The conductor's kick-off** lists ready tickets of a map whose Destination isn't fully specified, and recommends leaving them out: `workflow ready` doesn't know about maps.
+- **`build-ticket`:** in an attended session that builds more than one thing, each ticket gets its own fresh branch, not named like `run.ticket_branch`.
+- **For projects updating to 0.1.4:**
+  - `update-workflow` also updates the "Workflow" section of the project's `CLAUDE.md`: a session starts with the guided start (the `start` skill: "What are we working on?", or `/start`);
+  - nothing changes in the profile unless you want `guided_start = false`.
+- **README:**
+  - "Using it" opens with the guided start: where to run it, what the first message does, the paths, an example, the handovers, changing course and long sessions;
+  - "Planning new work: what happens underneath" covers every step's command, `/wayfinder`, the side trips, and a table of every Matt Pocock skill in a project (who starts it, how it fits, where its files go, the plugin's prefix);
+  - a brand-new project, step by step, with its first ticket built attended and its CI as an owner pull request.
+
 ## 0.1.3
 
 From probing pair-drop's two cloud environments: both failed to start, because their setup script installed the project's dependencies from the repository's files, and an environment's setup script runs before the repository is there.
