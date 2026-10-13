@@ -47,7 +47,7 @@ Collect every problem for the kick-off, each with its fix.
 - CODEOWNERS covers `.claude/` and `.github/workflows/`.
 
 **The ticket sessions' environment**
-- `list_environments`: find the one named `run.ticket_environment` and keep its id.
+- `list_environments`: find the one named `run.ticket_environment` and keep its id. None of that name is a blocking problem: the run can't start until the owner creates it (`DOCS/enforcement.md` §2; the clicks: https://github.com/medTech-group/pairnexus-workflow#step-5-create-the-two-claude-environments) or the profile names the right one. Never start ticket sessions in another environment.
 - Whether it really holds no credentials, the owner confirms in the kick-off.
 
 **The work**

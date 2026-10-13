@@ -110,18 +110,20 @@ Then commit, push the branch, and open the pull request. It touches protected pa
 
 ## 4. The owner's one-time steps
 
-List them in the PR body as a checklist, from `enforcement.md`:
+List them in the PR body as a checklist, with the clicks of `$KIT/README.md` ("Getting started", steps 2 to 6) filled in with this project's values: the required check names one per line, both environment names, and the environments' setup script exactly as it is pasted (the profile's `commands.setup`, plus Playwright's browser install when the explorer is `browser`). The owner should be able to do every step from the PR body alone. The checklist, from `enforcement.md`:
 
+- [ ] **The organisation's GitHub plan,** if rulesets on private repos aren't available: first, since the ruleset needs it.
 - [ ] **The base branch's ruleset,** set to **Active**:
   - no direct push, no force-push, no deletion;
   - required checks, including the vendor check, and "Require branches to be up to date" ticked;
   - "Require review from Code Owners" **off** while sessions act under the owner's GitHub account (the usual setup): GitHub never lets an author approve their own PR, so a PR touching a CODEOWNERS path would never merge. CODEOWNERS still requests the owner's review, and the protected paths stay protected by the guard, the credential-free ticket environment, and those changes going to the owner as owner tasks. Turn it **on** only when agents use their own GitHub identity (a bot account or a GitHub App);
-  - 0 required approvals for unattended merges.
-- [ ] **"Allow auto-merge"** on, for `merge.mode: auto-merge`.
-- [ ] **Two claude.ai environments,** named as in the profile:
-  - ticket sessions: no credentials, `WORKFLOW_ROLE=ticket`, and the project's setup, including Playwright's browser when the explorer is `browser`;
-  - the conductor: `WORKFLOW_ROLE=conductor`, and only the release credentials the owner chooses.
-- [ ] **The organisation's GitHub plan,** if rulesets on private repos aren't available.
+  - 0 required approvals for unattended merges;
+  - an empty bypass list (sessions act through the owner's account), and "Require linear history" off.
+- [ ] **"Allow auto-merge"** on, for `merge.mode: auto-merge`, and **"Allow merge commits"** on: sessions merge with a merge commit.
+- [ ] **Two claude.ai environments,** named exactly as in the profile (the conductor finds the ticket environment by name):
+  - ticket sessions: no credentials, `WORKFLOW_ROLE=ticket`, and the setup script;
+  - the conductor: `WORKFLOW_ROLE=conductor`, the same setup script (its own fixes run the project's tests, and its releases the project's steps), and only the release credentials the owner chooses.
+- [ ] **Check it:** ask a cloud session to check the ruleset, the merge settings and the two environments (the kit's README, step 6).
 
 ## Checklist
 

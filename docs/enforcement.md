@@ -5,7 +5,7 @@ Prompts and hooks are not a security boundary. A session can phrase a command a 
 | Layer | Enforces | Set up by |
 |---|---|---|
 | **GitHub ruleset on the base branch** | No direct push, no force-push, no deletion; required status checks before merge | The owner, once per repo |
-| **Cloud environments per role** | Ticket sessions: no cloud, account, deploy or payment credentials, `WORKFLOW_ROLE=ticket`. The conductor: `WORKFLOW_ROLE=conductor` and only the release credentials the owner chooses | The owner, once per account |
+| **Cloud environments per role** | Ticket sessions: no cloud, account, deploy or payment credentials, `WORKFLOW_ROLE=ticket`. The conductor: `WORKFLOW_ROLE=conductor` and only the release credentials the owner chooses | The owner, per repo: each holds the project's setup script (§2) |
 | **CODEOWNERS on protected paths** | Changes to the kit, hooks, CI config and secrets files ask for the owner's review | `setup-workflow` writes it; the ruleset can require that review only when agents have their own GitHub identity (§1) |
 | **The guard hook** | The never-list, protected paths, skip markers, sensitive posts, the agents' marker on posts | The kit |
 | **Instructions** | Everything else | The kit |
@@ -14,7 +14,8 @@ Prompts and hooks are not a security boundary. A session can phrase a command a 
 
 - **Target:** the default branch.
 - **Rules:** Restrict deletions; Block force pushes; Require a pull request before merging (required approvals **0**, so unattended runs can merge; "Require review from Code Owners": see below); Require status checks to pass (add the profile's `ci.required_checks`, and tick "Require branches to be up to date", which the API calls `strict_required_status_checks_policy`).
-- **Bypass list:** empty, or the owner alone.
+- **Bypass list:** empty. Sessions act through the owner's GitHub account, so whatever the owner may bypass, a session may too.
+- **Merge settings:** keep "Allow merge commits" on and "Require linear history" off: sessions and the conductor merge with a merge commit.
 - **Enforcement status: Active.** A ruleset left "Disabled" or "Evaluate" enforces nothing.
 - **Allow auto-merge:** Settings → General → Pull Requests → "Allow auto-merge", for `merge.mode: auto-merge`.
 
@@ -28,9 +29,13 @@ Rulesets and branch protection on **private** repositories need a paid GitHub pl
 
 A charter waiver for a killed check can't override a ruleset's required check. Where a check is known to be killed by its runners, either fix the job first, or leave it out of the ruleset's required checks for the run and use `merge.mode: session`, where the session reads that check's log for a killed marker and posts the local evidence before merging. Never combine a waiver with GitHub auto-merge: it can't tell killed from failed.
 
-## 2. The environments (claude.ai → Claude Code → Environments)
+## 2. The environments (claude.ai/code → the environment menu → add, or Edit)
 
-Two environments, named in the profile (`run.ticket_environment`, `run.conductor_environment`):
+Two environments, named in the profile (`run.ticket_environment`, `run.conductor_environment`). The kit's README has the clicks: https://github.com/medTech-group/pairnexus-workflow#step-5-create-the-two-claude-environments (the kit's repository is private, so the reader needs access to it).
+
+**The names must match exactly.** An environment's id belongs to the owner's Claude account, so the repo records names instead. The conductor lists the account's environments, takes the one named `run.ticket_environment`, and starts every ticket session in it. With no environment of that name it stops in pre-flight and starts nothing. A ticket session in the wrong environment would have whatever credentials that environment holds, and no `WORKFLOW_ROLE`.
+
+**Per repo.** Both hold the project's setup script (`commands.setup`): ticket sessions build and test; the conductor runs the project's tests for its own fixes (`conductor_fixes`, on by default) and runs its release steps. Repos can share a conductor environment only if every run turns both off.
 
 **Ticket sessions**
 - **No secrets**: no AWS keys, no Auth0, Firebase or payment credentials, no deploy tokens.
@@ -40,6 +45,7 @@ Two environments, named in the profile (`run.ticket_environment`, `run.conductor
 
 **The conductor**
 - **Environment variable:** `WORKFLOW_ROLE=conductor`, so the guard denies (rather than asks a person) and allows the release steps.
+- **Setup script:** the same as the ticket sessions'.
 - **Secrets:** only what the charter's release steps need, if the owner wants releases unattended.
 
 The conductor checks its own `WORKFLOW_ROLE` in pre-flight, and passes the ticket environment's id and the profile's `run.permission_mode` (`auto` recommended; a mode that prompts would stall an unattended session) to `create_session`.

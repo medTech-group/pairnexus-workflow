@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.2
+
+Documentation for owners, from setting up pair-drop with 0.1.1.
+
+- **"Getting started" opens the README,** step by step with every click: GitHub access and plan (once); asking Claude to run `setup-workflow`, and what it asks; merging its PR; the ruleset; "Allow auto-merge"; the two Claude environments; checking it all; then using it (`/next`, an unattended run, changing and stopping one) and keeping it up to date.
+- **Why the environment names must match,** and **both environments are per repo**, each with the project's setup script: the conductor runs the project's tests for its own fixes (`conductor_fixes`, on by default) and its release steps. `enforcement.md` no longer says they are "once per account".
+- **The ruleset's bypass list is empty** (sessions act through the owner's account, so what the owner may bypass, they may too), **"Allow merge commits" stays on** and **"Require linear history" off** (sessions merge with a merge commit). A CI that skips paths is fixed in CI, by letting each required job report on every PR.
+- **The conductor** treats a missing ticket environment as a blocking pre-flight problem, and never starts ticket sessions in another.
+- **`setup-workflow`** writes the one-time steps into its PR body with this project's values (check names, environment names, setup script), so the owner can do them from the PR alone, and ends them with a check.
+- **The `workflow kit` CI template** runs read-only (`permissions: contents: read`, `persist-credentials: false`).
+- `flow.md` names the project's glossary (`GLOSSARY.md`, or its own name), not `CONTEXT.md`.
+
 ## 0.1.1
 
 From the practice run on the sandbox repo (run 2026-10-12-words).
