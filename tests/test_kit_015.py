@@ -148,7 +148,7 @@ def test_the_weekly_check_s_script_is_valid_shell():
 
 def test_the_skills_offer_and_take_releases():
     start = (KIT / "skills/start/SKILL.md").read_text()
-    assert "Update the workflow kit to <version> (Recommended)" in start and "update-workflow/SKILL.md" in start
+    assert "Update the workflow kit to <version> (Recommended)" in start and ".claude/skills/update-workflow/SKILL.md" in start
     assert "/plugin update pairnexus-workflow@pairnexus" in start and "kit_update_pr" in start
     upd = (KIT / "skills/update-workflow/SKILL.md").read_text()
     assert "never `main` between releases" in upd and "workflow-kit-update.yml" in upd

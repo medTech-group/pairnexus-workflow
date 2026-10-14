@@ -670,8 +670,9 @@ def main(argv: list[str] | None = None) -> int:
 
     s = sub.add_parser("version", help="the kit's version here, and whether a newer release is out")
     s.add_argument("--fresh", action="store_true", help="ask GitHub again rather than the last six hours' answer")
-    s.add_argument("--json", action="store_true")
-    s.add_argument("--repo", action="store_true", help="print only the kit's home on GitHub (owner/repo); no network")
+    alone = s.add_mutually_exclusive_group()
+    alone.add_argument("--json", action="store_true")
+    alone.add_argument("--repo", action="store_true", help="print only the kit's home on GitHub (owner/repo); no network, so --fresh doesn't apply")
     s.set_defaults(fn=cmd_version)
 
     s = sub.add_parser("charter")

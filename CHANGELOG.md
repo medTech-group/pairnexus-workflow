@@ -19,10 +19,10 @@ Getting the kit ready for outside users and forks.
   - `CONTRIBUTING.md`;
   - `CODE_OF_CONDUCT.md`: the Contributor Covenant 2.1;
   - issue templates for this repository.
-  - The README starts with a status note: beta, what it needs, best-effort support.
+  - The README has a status note near the top: beta, what it needs, best-effort support.
 - An example in the start skill no longer names PAIR's project.
 - **For projects updating to 0.1.7:**
-  - The update brings the weekly check's new `workflow-kit-update.yml`, since the files set-up copied once are compared with the release's templates. Take it as it is: it no longer holds the kit's repository.
+  - The update brings the weekly check's new `workflow-kit-update.yml`, since the files set-up copied once are compared with the release's templates. Bring over its change, keeping your own edits (to the schedule, say): the two `KIT` lines in its script replace the fixed `KIT:` value.
   - Nothing else to do.
 
 ## 0.1.6

@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 This runs from a checkout of the new kit release (`KIT`), with `WF` as `python3 $KIT/scripts/workflow.py`.
 
-**The kit's home** (`<kit repo>` below) is what `python3 .claude/workflow/bin/workflow.py version --repo` prints: the repository the project's copy came from, a fork's own. A copy older than 0.1.7 can't say: there it is the upstream, `medTech-group/pairnexus-workflow` (or your fork, if the project was set up from one).
+**The kit's home** (`<kit repo>` below) is what `python3 .claude/workflow/bin/workflow.py version --repo` prints: the repository the project's copy came from, a fork's own. A copy older than 0.1.7 can't say: there it is the upstream, `medTech-group/pairnexus-workflow` (or your fork, if the project was set up from one). **Moving a project to a fork:** `<kit repo>` is the fork, whatever the project's copy prints; the update brings the fork's `KIT_REPO`, which the project follows from then on.
 
 **The release, never `main` between releases.** The latest is what `python3 .claude/workflow/bin/workflow.py version --fresh` names. A project on a kit older than 0.1.5 has no `version` command: there, `git ls-remote --tags --refs https://github.com/<kit repo> 'v*' | sed 's#.*/v##' | sort -V | tail -1`. Clone that release outside the project, so nothing of it is committed by mistake:
 

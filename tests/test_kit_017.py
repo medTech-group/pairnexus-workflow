@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from workflow import updates, vendor
 
 KIT = Path(__file__).resolve().parents[1]
@@ -16,7 +18,8 @@ HOME = re.compile(r"medtech-group/pairnexus-workflow", re.I)
 # the bootstrap lines that run before any copy exists, links to the README, and
 # the plugin install commands. Anything else reads `workflow version --repo`.
 ALLOWED = {
-    "scripts/workflow/updates.py": 1,
+    # The constant itself: 0 once a fork points KIT_REPO at its own repository.
+    "scripts/workflow/updates.py": int(updates.KIT_REPO.lower() == "medtech-group/pairnexus-workflow"),
     "templates/github/workflow-kit-update.yml": 1,
     "skills/setup-workflow/SKILL.md": 1,
     "skills/update-workflow/SKILL.md": 1,
@@ -36,7 +39,7 @@ def test_shipped_files_name_the_kits_home_only_where_allowed():
         n = len(HOME.findall(text))
         if n:
             found[src.relative_to(KIT).as_posix()] = n
-    assert found == ALLOWED, (
+    assert found == {k: n for k, n in ALLOWED.items() if n}, (
         "A shipped file names medTech-group/pairnexus-workflow outright. Read the kit's home from "
         "`workflow version --repo` (updates.KIT_REPO) instead, or, for a bootstrap line or README link, "
         f"update ALLOWED: {found}"
@@ -68,3 +71,33 @@ def test_weekly_check_reads_the_home_from_the_copy_with_a_fallback():
     assert "workflow.py version --repo" in t
     assert "KIT: medTech-group" not in t  # no longer a fixed env value
     assert "|| KIT=medTech-group/pairnexus-workflow" in t
+
+
+def _kit_lines() -> str:
+    """The weekly check's two lines that work out the kit's home."""
+    t = (KIT / "templates/github/workflow-kit-update.yml").read_text()
+    lines = [l.strip() for l in t.splitlines() if l.strip().startswith(("KIT=$(", '[[ "$KIT"'))]
+    assert len(lines) == 2, lines
+    return "\n".join(lines)
+
+
+
+@pytest.mark.parametrize(
+    "cli, expected",
+    [
+        (None, "medTech-group/pairnexus-workflow"),  # no copy
+        ("import sys; sys.exit(2)", "medTech-group/pairnexus-workflow"),  # a 0.1.6 copy: argparse refuses --repo
+        ("print('acme/my-kit')", "acme/my-kit"),  # a fork's copy
+        ("print('warning: x'); print('acme/my-kit')", "medTech-group/pairnexus-workflow"),  # more than the repo
+        ("print('acme/..')", "medTech-group/pairnexus-workflow"),  # not a repository name
+        ("print('acme/my-kit'); raise SystemExit(1)", "acme/my-kit"),  # printed, then failed
+    ],
+)
+def test_weekly_check_works_out_the_kits_home(tmp_path, cli, expected):
+    if cli is not None:
+        (tmp_path / ".claude/workflow/bin").mkdir(parents=True)
+        (tmp_path / ".claude/workflow/bin/workflow.py").write_text(cli)
+    script = f"set -euo pipefail\n{_kit_lines()}\necho \"$KIT\"\n"
+    p = subprocess.run(["bash", "-c", script], cwd=tmp_path, capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr
+    assert p.stdout.strip() == expected

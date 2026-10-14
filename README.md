@@ -695,14 +695,20 @@ CI checks that `VERSION`, `plugin.json` and the CHANGELOG agree; nothing checks 
 
 A fork can run its own releases, with its own projects following it rather than this repository. Change, in the fork:
 - **The kit's home,** `KIT_REPO` in `scripts/workflow/updates.py`. That is the one place code reads it. The skills and the weekly update check read it through `workflow version --repo`, and projects set up from the fork follow it for updates.
-- **The marketplace and plugin names,** if you rename them: `.claude-plugin/marketplace.json` (`name`, `owner`) and `.claude-plugin/plugin.json` (`name`, `author`). The `pairnexus-workflow@pairnexus` key also appears in the docs, `PLUGIN_UPDATE` in `updates.py` and `PLUGIN_KEY` in `vendor.py`.
+- **The marketplace and plugin names,** if you rename them:
+  - `.claude-plugin/marketplace.json` (`name`, `owner`) and `.claude-plugin/plugin.json` (`name`, `author`);
+  - the `pairnexus-workflow@pairnexus` key and the `pairnexus-workflow:` command prefix: `PLUGIN_UPDATE` in `updates.py`, `PLUGIN_KEY` in `vendor.py`, `scripts/workflow/context.py`, the skills `start`, `setup-workflow` and `review-panel`, `docs/flow.md`, `docs/install.md` and this README. `grep -rn "pairnexus-workflow[@:]"` finds them.
+- **The install commands** in `docs/install.md` and this README (the marketplace's `owner/repo`).
+- **This repository's own pages:** the security advisory link in `.github/ISSUE_TEMPLATE/config.yml`, and the contacts in `SECURITY.md`, `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md`.
 - **The rest:**
   - the `User-Agent` in `updates.py`;
   - the release title in `.github/scripts/release.py`;
-  - the README's links and its install commands;
+  - the README's links;
   - the copyright line you add to `LICENSE`, keeping the original notice as MIT requires.
 
-Bump the version and let the `release` workflow publish the fork's first release. A project already vendored from this repository keeps following it until it's updated from the fork: clone the fork's release and follow its `update-workflow` skill once.
+A test (`tests/test_kit_017.py`) counts where shipped files still name the upstream; it follows `KIT_REPO`, so it passes once the constant points at the fork.
+
+Turn on GitHub Actions in the fork, bump the version and let the `release` workflow publish. Its first run also publishes a release for each version the fork inherited (at the upstream's tags); the newest, yours, is marked latest. A project already vendored from this repository keeps following it until it's updated from the fork: clone the fork's release and follow its `update-workflow` skill once.
 
 ## Licence
 

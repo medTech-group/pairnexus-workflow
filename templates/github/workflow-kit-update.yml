@@ -31,7 +31,7 @@ jobs:
           # The kit's home, as the project's own copy names it (a fork's own); the
           # upstream when the copy is older than 0.1.7 or can't say.
           KIT=$(python3 -B .claude/workflow/bin/workflow.py version --repo 2>/dev/null || true)
-          [[ "$KIT" =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$ ]] || KIT=medTech-group/pairnexus-workflow
+          [[ "$KIT" =~ ^[A-Za-z0-9-]+/[A-Za-z0-9_-][A-Za-z0-9._-]*$ ]] || KIT=medTech-group/pairnexus-workflow
           have=$(python3 -c 'import json,re; v=json.load(open(".claude/workflow/lock.json")).get("kit_version"); print(v if isinstance(v,str) and re.fullmatch(r"\d+\.\d+\.\d+",v) else "")' 2>/dev/null || true)
           if [ -z "$have" ]; then
             echo "::warning::.claude/workflow/lock.json has no kit_version: update the kit with update-workflow."

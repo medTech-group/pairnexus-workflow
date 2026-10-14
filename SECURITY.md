@@ -9,7 +9,7 @@ The kit decides what Claude Code sessions may run, push, merge and post in the p
 1. **GitHub:** this repository's **Security** tab → **Report a vulnerability** (private vulnerability reporting).
 2. **Email**, if you can't use GitHub: info@med-technologies.com, with "pairnexus-workflow security" in the subject.
 
-Say what you found, how to reproduce it (a hook event's JSON, a command, a profile), and what it lets a session do. We aim to acknowledge a report within 5 working days and to agree a fix and a disclosure date with you. This is a small team's project maintained on a best-effort basis, so there is no bounty and no guaranteed response time.
+Say what you found, how to reproduce it (a hook event's JSON, a command, a profile), and what it lets a session do. We aim to acknowledge a report within 5 working days, best effort, and to agree a fix and a disclosure date with you. This is a small team's project, so there is no bounty.
 
 ## What's in scope
 
@@ -27,4 +27,4 @@ Say what you found, how to reproduce it (a hook event's JSON, a command, a profi
 ## How releases reach projects
 
 - **Vendored projects** take a release only through a pull request their owner reviews and merges.
-- **Plugin users** follow this repository's `main` as it is. So only the maintainers merge here, every change is reviewed, and a security fix goes out as a new release with a CHANGELOG entry saying what projects should do.
+- **Plugin users** follow this repository's `main` as it is. So only the maintainers merge here, every change goes through a pull request with CI, and a security fix goes out as a new release with a CHANGELOG entry saying what projects should do.
