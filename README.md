@@ -697,7 +697,7 @@ A fork can run its own releases, with its own projects following it rather than 
 - **The kit's home,** `KIT_REPO` in `scripts/workflow/updates.py`. That is the one place code reads it. The skills and the weekly update check read it through `workflow version --repo`, and projects set up from the fork follow it for updates.
 - **The marketplace and plugin names,** if you rename them:
   - `.claude-plugin/marketplace.json` (`name`, `owner`) and `.claude-plugin/plugin.json` (`name`, `author`);
-  - the `pairnexus-workflow@pairnexus` key and the `pairnexus-workflow:` command prefix: `PLUGIN_UPDATE` in `updates.py`, `PLUGIN_KEY` in `vendor.py`, `scripts/workflow/context.py`, the skills `start`, `setup-workflow` and `review-panel`, `docs/flow.md`, `docs/install.md` and this README. `grep -rn "pairnexus-workflow[@:]"` finds them.
+  - the `pairnexus-workflow@pairnexus` key and the `pairnexus-workflow:` command prefix: `PLUGIN_UPDATE` in `updates.py`, `PLUGIN_KEY` in `vendor.py`, `scripts/workflow/context.py`, the skills `start`, `setup-workflow` and `review-panel`, `docs/flow.md`, `docs/install.md` and this README. `grep -rn "pairnexus-workflow[@:]" .` finds them.
 - **The install commands** in `docs/install.md` and this README (the marketplace's `owner/repo`).
 - **This repository's own pages:** the security advisory link in `.github/ISSUE_TEMPLATE/config.yml`, and the contacts in `SECURITY.md`, `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md`.
 - **The rest:**

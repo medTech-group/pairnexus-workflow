@@ -81,7 +81,6 @@ def _kit_lines() -> str:
     return "\n".join(lines)
 
 
-
 @pytest.mark.parametrize(
     "cli, expected",
     [
