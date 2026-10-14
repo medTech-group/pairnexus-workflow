@@ -2,7 +2,7 @@
 
     workflow profile check
     workflow status [--issues F --prs F | --fetch] [--json]
-    workflow version [--fresh] [--json]
+    workflow version [--fresh] [--json] | --repo
     workflow ready [--issues F --prs F | --fetch] [--exclude 1,2] [--only 1,2] [--override 3] [--running-area A ...] [--slots N] [--json]
     workflow charter defaults | validate F [--approved] | markdown F [--tickets 13:area,143:-] | diff OLD NEW | reuse OLD | pin-plan F | questions
     workflow charter splice --body F --charter F [--out F] [--tickets 13:area,143:-]
@@ -218,7 +218,11 @@ def _kit_line(kit: dict) -> str:
 
 
 def cmd_version(a) -> int:
-    """The kit's version here, and whether a newer release is out."""
+    """The kit's version here, and whether a newer release is out; or, with
+    --repo, only the kit's home on GitHub, asking nothing over the network."""
+    if a.repo:
+        print(updates_mod.KIT_REPO)
+        return 0
     prof = load(required=False)
     root = prof.root if prof else project_root()
     kit = updates_mod.check(root, KIT_ROOT, fresh=a.fresh)
@@ -667,6 +671,7 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("version", help="the kit's version here, and whether a newer release is out")
     s.add_argument("--fresh", action="store_true", help="ask GitHub again rather than the last six hours' answer")
     s.add_argument("--json", action="store_true")
+    s.add_argument("--repo", action="store_true", help="print only the kit's home on GitHub (owner/repo); no network")
     s.set_defaults(fn=cmd_version)
 
     s = sub.add_parser("charter")

@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.1.7
+
+Getting the kit ready for outside users and forks.
+
+- **The kit's home in one place.**
+  - `KIT_REPO` in `scripts/workflow/updates.py` is the one place code names the kit's GitHub repository.
+  - `workflow version --repo` prints it without asking the network, and `workflow version --json` gives it as `kit_repo`.
+  - The skills read it from there:
+    - `update-workflow` clones the release from the project's own kit home, and falls back to the upstream for copies older than 0.1.7;
+    - `setup-workflow` fills the plugin settings snippet with it;
+    - `start` hands updating to `update-workflow`, so the clone command lives in one place.
+  - The weekly update check (`templates/github/workflow-kit-update.yml`) reads it at run time from the project's copy, and falls back to the upstream, instead of a fixed value.
+  - So a fork's projects hear about, and update to, the fork's releases. The README's new "Forking the kit" lists what a fork changes.
+  - A test keeps new hard-coded copies of the name out of the files projects receive.
+- **Taking part:**
+  - `SECURITY.md`: private vulnerability reporting, and what is in scope;
+  - `CONTRIBUTING.md`;
+  - `CODE_OF_CONDUCT.md`: the Contributor Covenant 2.1;
+  - issue templates for this repository.
+  - The README starts with a status note: beta, what it needs, best-effort support.
+- An example in the start skill no longer names PAIR's project.
+- **For projects updating to 0.1.7:**
+  - The update brings the weekly check's new `workflow-kit-update.yml`, since the files set-up copied once are compared with the release's templates. Take it as it is: it no longer holds the kit's repository.
+  - Nothing else to do.
+
 ## 0.1.6
 
 A full audit of the README and docs against what the kit does, with the fixes it called for.
