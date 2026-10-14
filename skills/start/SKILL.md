@@ -42,7 +42,7 @@ The kit's hook brings this skill at a session's first message. Read that message
 | One clear request: a question, a named issue ("build #262"), one small change with an obvious place ("rename the Save button to Done") | Do it. No menu. A change to the code goes on a branch of its own with a pull request for them to merge (only pull requests reach the base branch); if it turns out bigger than it looked, offer a quick ticket instead. |
 | **More than one thing**, even if one of them is small ("add XYZ, and the greeting is wrong") | Step 1's look around, without the question, then step 2 with their words. Never start on one of them before the plan is agreed. |
 | One piece of work to plan: a feature, a change to how something works, something broken with no known cause | The same: step 1's look around, then step 2 |
-| Anything vaguer ("hi", "let's work on pair-drop"), or `/start` | Step 1 |
+| Anything vaguer ("hi", "let's work on the app"), or `/start` | Step 1 |
 | The conversation was already under way (a resumed session) | Ignore the hook and carry on |
 
 ## 1. Look around, then ask
@@ -93,7 +93,7 @@ Tell the person what matters in two to four lines, for example: "PR #297 is wait
 | A map decision, a clear map's next spec, or a ready ticket | Load `next` with the Skill tool, with that issue |
 
 **What the other options lead to:**
-- **Update the workflow kit:** in plugin mode (no `.claude/workflow/lock.json`), tell them to type `/plugin update pairnexus-workflow@pairnexus`. Vendored: clone the new release outside the project (`KIT=$(mktemp -d)/pairnexus-workflow && git clone --depth 1 --branch v<version> https://github.com/medTech-group/pairnexus-workflow "$KIT"`), then read **that release's** `$KIT/skills/update-workflow/SKILL.md` (user-only, so read it) and follow it. It ends with a pull request for them to merge. Then ask "What are we working on?" again, without this option. With a run in progress, don't offer it: a run stays on the version it started with.
+- **Update the workflow kit:** in plugin mode (no `.claude/workflow/lock.json`), tell them to type `/plugin update pairnexus-workflow@pairnexus`. Vendored: read the project's `.claude/skills/update-workflow/SKILL.md` (user-only, so read it) for where the kit lives and how to clone the new release outside the project, then read **that release's** `$KIT/skills/update-workflow/SKILL.md` and follow it. It ends with a pull request for them to merge. Then ask "What are we working on?" again, without this option. With a run in progress, don't offer it: a run stays on the version it started with.
 - **New, a change, or a fix:** ask in plain text, "Tell me what you have in mind: as much or as little as you like." Then step 2.
 - **Sort the new issues:** step 5.
 - **A brand-new project or a large effort:** step 2, with the path already chosen: a map.

@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Set up the workflow in a project
 
-This runs from a checkout of the kit (`medtech-group/pairnexus-workflow`), whether or not the project has the kit yet, and in either mode: read this file there and follow it. `KIT` is that checkout, **at the latest release's tag, never `main` between releases**: the version is `git ls-remote --tags --refs https://github.com/medTech-group/pairnexus-workflow 'v*' | sed 's#.*/v##' | sort -V | tail -1`, then `git clone --depth 1 --branch v<version> https://github.com/medTech-group/pairnexus-workflow`, outside the project. If you were given a checkout of `main` (`git -C $KIT describe --tags --exact-match` fails), clone the release that way and follow its copy of this file instead. `WF` is `python3 -B $KIT/scripts/workflow.py`. Matt Pocock's skills: `git clone https://github.com/mattpocock/skills` and check out the SHA in `$KIT/.claude-plugin/marketplace.json`.
+This runs from a checkout of the kit, whether or not the project has the kit yet, and in either mode: read this file there and follow it. The kit's home (`<kit repo>`) is the repository you were pointed at: the upstream, `medTech-group/pairnexus-workflow`, or your fork. `KIT` is that checkout, **at the latest release's tag, never `main` between releases**: the version is `git ls-remote --tags --refs https://github.com/<kit repo> 'v*' | sed 's#.*/v##' | sort -V | tail -1`, then `git clone --depth 1 --branch v<version> https://github.com/<kit repo>`, outside the project. Once it is cloned, `WF version --repo` prints the home that release names; projects set up from it follow that home for updates. If you were given a checkout of `main` (`git -C $KIT describe --tags --exact-match` fails), clone the release that way and follow its copy of this file instead. `WF` is `python3 -B $KIT/scripts/workflow.py`. Matt Pocock's skills: `git clone https://github.com/mattpocock/skills` and check out the SHA in `$KIT/.claude-plugin/marketplace.json`.
 
 Explore first, ask only what you can't find, show what you'll write, and write it on a branch with a pull request. The base branch is the owner's; this is a PR like any other.
 
@@ -73,11 +73,11 @@ Use `AskUserQuestion`, recommended answers first. Ask only what exploring didn't
   - Then `--adopt` replaces the rest (copies of the kit's or Matt Pocock's skills). It lists each file it replaced, and the `stale` files the old copy had that the kit doesn't ship: delete those the owner agrees are obsolete.
   - A vendored file the project deliberately changes afterwards (for example Matt Pocock's skills saying `GLOSSARY.md` where the project uses `CONTEXT.md`): edit it, then `WF vendor resolve --keep <path>`, so `verify --strict` stays green.
   - If the kit is vendored already, use `WF vendor update` instead.
-- Plugin mode: add to the project's `.claude/settings.json`, and nothing else:
+- Plugin mode: add to the project's `.claude/settings.json`, and nothing else (`<kit repo>` is `WF version --repo`; a fork that renamed its marketplace or plugin uses its own names, from `$KIT/.claude-plugin/`):
 
   ```json
   {
-    "extraKnownMarketplaces": {"pairnexus": {"source": {"source": "github", "repo": "medtech-group/pairnexus-workflow"}}},
+    "extraKnownMarketplaces": {"pairnexus": {"source": {"source": "github", "repo": "<kit repo>"}}},
     "enabledPlugins": {"pairnexus-workflow@pairnexus": true}
   }
   ```

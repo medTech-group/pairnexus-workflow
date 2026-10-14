@@ -8,7 +8,14 @@ You don't need to remember its commands: start a session and say what you're wor
 
 For unattended runs, a **conductor** asks the owner a few questions once (the **run charter**). It then builds every ready ticket in parallel sessions, merges what passes, releases if allowed, and reports. Mid-run it waits on you only for your own tasks and for questions it asked you.
 
-It packages what worked over the pair-drop weekend run of 9–12 Oct 2026 (about 50 tickets), with fixes for what didn't. pair-drop itself is set up with it (medTech-group/pair-drop#292).
+It packages what worked over the pair-drop weekend run of 9–12 Oct 2026 (about 50 tickets), with fixes for what didn't. pair-drop, PAIR's own project, is set up with it.
+
+> [!NOTE]
+> **Status: beta.** One project has used it so far.
+> - **Not yet tried for real:** some mechanisms of unattended runs ([docs/spike.md](docs/spike.md) lists what has and hasn't been).
+> - **What it needs:** Claude Code (unattended runs need its cloud sessions), GitHub, and Python 3.11+.
+> - **Support:** maintained by PAIR (MedTech LLC) for its own work and shared as it is, on a best-effort basis, with no guaranteed response time.
+> - **Taking part:** questions, bugs and ideas go in [issues](https://github.com/medTech-group/pairnexus-workflow/issues), and contributions are welcome ([CONTRIBUTING.md](CONTRIBUTING.md)). Report security problems privately ([SECURITY.md](SECURITY.md)).
 
 **Contents**
 - [Getting started](#getting-started): what you need, then six steps to set a repository up
@@ -16,7 +23,7 @@ It packages what worked over the pair-drop weekend run of 9–12 Oct 2026 (about
 - [Planning new work](#planning-new-work-what-happens-underneath): the interview, specs, tickets, maps, and [every Matt Pocock skill](#every-matt-pocock-skill-in-a-project)
 - [Keeping it up to date](#keeping-it-up-to-date) and [as a plugin](#as-a-plugin-on-your-own-computer)
 - [When something goes wrong](#when-something-goes-wrong) and [Good to know](#good-to-know)
-- [What's in it](#whats-in-it), [Development](#development)
+- [What's in it](#whats-in-it), [Development](#development), [Forking the kit](#forking-the-kit)
 - Reference: [the flow](docs/flow.md), [the run charter](docs/charter.md), [the profile](docs/profile.md), [enforcement](docs/enforcement.md), [install modes](docs/install.md), [what's verified](docs/spike.md)
 
 ## Getting started
@@ -215,7 +222,7 @@ Not the ticket or conductor environment, and not a `claude/build-…` branch. Th
 |---|---|
 | Something clear: a question, "build #262", "rename the Save button to Done" | Does it. No menu. A code change goes on its own branch with a pull request for you to merge; if it turns out bigger than it looked, Claude offers a quick ticket instead. |
 | Work to plan, one thing or several: "add refill reminders, and the reminders screen needs changing because testers found it confusing" | Splits it into items and proposes a path for each (below) |
-| Anything vaguer: "hi", "let's work on pair-drop", or `/start` | Looks at the project and asks "What are we working on?" |
+| Anything vaguer: "hi", "let's work on the app", or `/start` | Looks at the project and asks "What are we working on?" |
 | A command, such as `/next` or `/grill-me` | Runs that command, with no menu |
 
 `/start` brings the menu back at any time (in plugin mode, `/pairnexus-workflow:start`). To turn the first-message menu off for a project, set `guided_start = false` in the profile's `[project]`; `/start` still works.
@@ -665,7 +672,8 @@ Matt Pocock's take `mattpocock-skills:`, such as `/mattpocock-skills:to-spec`, `
 | `docs/` | `flow.md`, `charter.md`, `enforcement.md`, `install.md`, `profile.md`, `spike.md` (what's verified), `proposal.md` (the original design, historical) |
 | `templates/` | The profile (`profile.toml`, `profile.md`), the ticket-session briefing, tracking and by-hand issues, `issue-tracker.md` (for `docs/agents/`), the issue templates, the `workflow kit` CI job and the weekly update check |
 | `.claude-plugin/` | The plugin manifest and the `pairnexus` marketplace, which pins Matt Pocock's skills |
-| `.github/` | The kit's own CI (the tests on Python 3.11 to 3.13, and a check that the versions agree) and the `release` workflow |
+| `.github/` | The kit's own CI (the tests on Python 3.11 to 3.13, and a check that the versions agree), the `release` workflow, and this repository's issue templates |
+| `SECURITY.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md` | How to report a vulnerability, how to contribute, and the code of conduct |
 | `tests/` | The tests |
 | `VERSION`, `CHANGELOG.md` | The version, and what changed in each, with the steps for projects updating |
 
@@ -683,6 +691,25 @@ Releases are semver: every change to shipped files bumps `VERSION`, `.claude-plu
 
 CI checks that `VERSION`, `plugin.json` and the CHANGELOG agree; nothing checks that a change came with its bump. **Don't tag by hand:** the `release` workflow tags and publishes each version when its bump lands on `main` (`.github/scripts/release.py`). Projects pin a release, and update with `update-workflow`.
 
+### Forking the kit
+
+A fork can run its own releases, with its own projects following it rather than this repository. Change, in the fork:
+- **The kit's home,** `KIT_REPO` in `scripts/workflow/updates.py`. That is the one place code reads it. The skills and the weekly update check read it through `workflow version --repo`, and projects set up from the fork follow it for updates.
+- **The marketplace and plugin names,** if you rename them:
+  - `.claude-plugin/marketplace.json` (`name`, `owner`) and `.claude-plugin/plugin.json` (`name`, `author`);
+  - the `pairnexus-workflow@pairnexus` key and the `pairnexus-workflow:` command prefix: `PLUGIN_UPDATE` in `updates.py`, `PLUGIN_KEY` in `vendor.py`, `scripts/workflow/context.py`, the skills `start`, `setup-workflow` and `review-panel`, `docs/flow.md`, `docs/install.md` and this README. `grep -rn "pairnexus-workflow[@:]" .` finds them.
+- **The install commands** in `docs/install.md` and this README (the marketplace's `owner/repo`).
+- **This repository's own pages:** the security advisory link in `.github/ISSUE_TEMPLATE/config.yml`, and the contacts in `SECURITY.md`, `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md`.
+- **The rest:**
+  - the `User-Agent` in `updates.py`;
+  - the release title in `.github/scripts/release.py`;
+  - the README's links;
+  - the copyright line you add to `LICENSE`, keeping the original notice as MIT requires.
+
+A test (`tests/test_kit_017.py`) counts where shipped files still name the upstream; it follows `KIT_REPO`, so it passes once the constant points at the fork.
+
+Turn on GitHub Actions in the fork, bump the version and let the `release` workflow publish. Its first run also publishes a release for each version the fork inherited (at the upstream's tags); the newest, yours, is marked latest. A project already vendored from this repository keeps following it until it's updated from the fork: clone the fork's release and follow its `update-workflow` skill once.
+
 ## Licence
 
-MIT (MedTech LLC): see `LICENSE`, which a vendored copy carries as `.claude/workflow/LICENSE`. The repository is public. The Matt Pocock skills keep their own MIT licence and notice: `THIRD_PARTY-mattpocock-skills.txt` here, `.claude/skills/LICENSE-mattpocock-skills` in a project.
+MIT (MedTech LLC): see `LICENSE`, which a vendored copy carries as `.claude/workflow/LICENSE`. The repository is public. Contributions come in under the same licence ([CONTRIBUTING.md](CONTRIBUTING.md)); everyone taking part follows the [code of conduct](CODE_OF_CONDUCT.md). The Matt Pocock skills keep their own MIT licence and notice: `THIRD_PARTY-mattpocock-skills.txt` here, `.claude/skills/LICENSE-mattpocock-skills` in a project.

@@ -39,7 +39,7 @@ gh auth login && gh auth setup-git        # HTTPS through gh's credential helper
 export CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1  # if you have no SSH key for GitHub
 ```
 
-Then in Claude Code:
+Then in Claude Code (from a fork, the fork's `owner/repo` in place of the one below):
 
 ```
 /plugin marketplace add medtech-group/pairnexus-workflow

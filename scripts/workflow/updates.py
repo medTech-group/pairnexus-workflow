@@ -21,6 +21,9 @@ import time
 import urllib.request
 from pathlib import Path
 
+# The kit's home on GitHub, and the one place code names it: the update check,
+# `workflow version --repo` (which the skills and the weekly check read) and
+# the update all follow it. A fork changes it here (README, "Forking the kit").
 KIT_REPO = "medTech-group/pairnexus-workflow"
 CACHE_FOR = 6 * 3600
 MISS_FOR = 3600  # a lookup that failed isn't tried again for an hour
@@ -149,6 +152,7 @@ def check(root: Path, kit_root: Path, fresh: bool = False, fetch=None) -> dict:
         "ahead": newer(have, out),
         "checked": not turned_off(),
         "mode": mode(root),
+        "kit_repo": KIT_REPO,
     }
 
 
