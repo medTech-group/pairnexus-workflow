@@ -1,0 +1,53 @@
+---
+name: run-report
+description: Write the final report of an unattended run (or a progress report mid-run) - what merged, what was set aside and why, what's live, the outward changes to confirm or undo, the decisions for the owner, the by-hand checks and the follow-ups. Used by the conductor at the end of a run, or alone.
+---
+
+# The run report
+
+One comment on the tracking issue, written for the owner to act on. Build it only from the record, never from memory.
+
+`WF` is the kit's CLI: `python3 .claude/workflow/bin/workflow.py` (vendored), or `python3 <this skill's directory>/../../scripts/workflow.py` (plugin).
+
+## Gather the record
+
+- **The state:** save the tracking issue's body to `body.md`, then run `WF state get --body body.md`. Each ticket has its status, attempts, `started_at`, `merged_at` and PR. The state also holds the ledger and `for_owner`.
+- **Each merged PR's body:** its "Decisions for the owner", any findings left open, and the number of review rounds.
+- **The by-hand issue:** its open checkboxes.
+- **The tracking issue's comments:** each ticket session's notes and failures.
+
+## Its sections
+
+1. **Summary.** One line:
+   - how many tickets merged, how many were set aside, how many weren't started;
+   - why the run ended: done, the end time, a limit, or the stop label.
+2. **Merged.** A table of ticket, title, PR, review rounds, wall time (from `started_at` to `merged_at`) and attempts.
+3. **Set aside.** Each `needs-human` or set-aside ticket, with exactly what it needs and from whom.
+4. **What's live.** Each release step in the ledger: what ran, from which commit, and the smoke test's result. A release skipped because the owner stopped the run says so, and that the owner can release by hand.
+5. **Changes outside the repo.** The ledger, as a list for the owner to **confirm or undo**. Each line gives the change, when it happened, and the charter line or owner comment that allowed it.
+6. **For you:**
+   - the decisions sessions took that the owner should confirm, each with its PR;
+   - `for_owner`;
+   - the owner tasks still open;
+   - the by-hand issue's open checkboxes, counted, with a link.
+7. **Follow-ups.** What the reviews found that wasn't this run's to fix, each with a suggested ticket.
+8. **The project's health:**
+   - CI duration on the base branch, now and at the start;
+   - flaky tests seen;
+   - "add CI" when the profile says `ci.none`.
+
+Keep it scannable: tables and short lines, issue and PR references, no transcripts.
+
+End the report with the agents' marker as its last line, as every agent post does (the guard refuses a conductor's post without it):
+
+```
+<!-- workflow:agent -->
+```
+
+## Afterwards
+
+1. Post the report as a comment on the tracking issue.
+2. When the charter's `notify.final_report` is `push`:
+   - @mention the owner (`profile.project.owner`) in the comment;
+   - also send a short notification with the issue's link, if the session has a notification tool (`PushNotification`).
+3. Close the tracking issue as completed, unless a set-aside ticket still points to it.

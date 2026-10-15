@@ -213,9 +213,11 @@ def test_comments_read_through(tmp_path):
     assert state.validate(s) == []
     f = tmp_path / "c.json"
     f.write_text(json.dumps(approved()))
-    p = _cli("state", "init", "--charter", str(f), "--run-id", "r1", "--read-through", "987")
+    # An empty project, so no profile is read (this repository has its own).
+    empty = {"cwd": tmp_path, "env": {"CLAUDE_PROJECT_DIR": str(tmp_path)}}
+    p = _cli("state", "init", "--charter", str(f), "--run-id", "r1", "--read-through", "987", **empty)
     assert p.returncode == 0 and json.loads(p.stdout)["comments_read_through"] == 987 and "warning" not in p.stderr
-    p = _cli("state", "init", "--charter", str(f), "--run-id", "r1")
+    p = _cli("state", "init", "--charter", str(f), "--run-id", "r1", **empty)
     assert p.returncode == 0 and json.loads(p.stdout)["comments_read_through"] is None
     assert "the first check-in will read every comment" in p.stderr
 
