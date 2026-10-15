@@ -28,7 +28,7 @@ python3 <kit>/scripts/workflow.py vendor install --project /path/to/project --ma
 - `--adopt` replaces files that already exist and aren't the kit's (an earlier hand-vendored copy); it lists every one. Rename the project's own skills of the same name first.
 - Install checks every file before writing any, so a refused install changes nothing.
 
-The hooks run `python3 .claude/workflow/bin/workflow.py`: the project needs Python 3.11+ wherever Claude Code runs (an older `python3` makes every hook fail, so the guard is off). Repo hooks load in cloud sessions only when the session has a single repository: don't add a second repository to a conductor or ticket session.
+The hooks run `python3 .claude/workflow/bin/workflow.py`: the project needs Python 3.11+ wherever Claude Code runs (with an older `python3`, or none, the kit can't check anything, so ticket and conductor sessions are refused every tool and an attended session is told at its start). Repo hooks load in cloud sessions only when the session has a single repository: don't add a second repository to a conductor or ticket session.
 
 ## Plugin
 

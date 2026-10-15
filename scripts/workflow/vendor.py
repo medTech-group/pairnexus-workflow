@@ -93,10 +93,20 @@ MISSING_KIT_REASON = (
 RESTORE_COMMANDS = ("git checkout -- .claude/workflow", "git restore .claude/workflow")
 
 
+NO_PYTHON_REASON = (
+    "there is no python3 on the PATH, so the workflow kit cannot check anything; "
+    "install Python 3.11 or newer and start a new session"
+)
+# Both go into single-quoted sh strings.
+assert "'" not in NO_PYTHON_REASON + MISSING_KIT_REASON
+
+
 def hook_command(sub: str) -> str:
     """The kit's hook command, run by Claude Code with sh.
 
-    With the CLI there: `python3 -B` runs it (-B: no __pycache__ in the checkout).
+    With the CLI there and `python3` on the PATH: `python3 -B` runs it (-B: no
+    __pycache__ in the checkout); on a Python older than 3.11 the entry point
+    hands the hook to `_old_python`, which fails closed too (#22).
     With the CLI missing (a session deleted it, a bad checkout):
     - the guard fails closed when WORKFLOW_ROLE is set to anything but
       `attended` (ticket, conductor, or an unrecognised value, which the CLI
@@ -107,14 +117,26 @@ def hook_command(sub: str) -> str:
       tool is denied and the owner restores the kit by hand;
     - with WORKFLOW_ROLE unset or `attended`, and for every other hook, it
       exits 0 silently (python3 on a missing file exits 2, which on PreToolUse
-      would block every tool, unexplained)."""
-    run = f'F="$CLAUDE_PROJECT_DIR/{HOOK_TAG}"; if [ -f "$F" ]; then exec python3 -B "$F" hook {sub}; fi; '
+      would block every tool, unexplained).
+    With the CLI there but no `python3` (sh would exit 127, a non-blocking
+    error, so every tool would run): the guard denies every tool to those same
+    roles and SessionStart says so to everyone (#22)."""
+    run = (
+        f'F="$CLAUDE_PROJECT_DIR/{HOOK_TAG}"; '
+        f'if [ -f "$F" ] && command -v python3 >/dev/null 2>&1; then exec python3 -B "$F" hook {sub}; fi; '
+    )
+    if sub == "repair":
+        told = json.dumps({"systemMessage": f"Workflow kit: {NO_PYTHON_REASON}."}, separators=(",", ":"))
+        return run + f"if [ -f \"$F\" ]; then printf '%s\\n' '{told}'; fi; exit 0"
     if sub != "guard":
         return run + "exit 0"
-    deny = json.dumps(
-        {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": MISSING_KIT_REASON}},
-        separators=(",", ":"),
-    )
+
+    def deny(reason: str) -> str:
+        return json.dumps(
+            {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}},
+            separators=(",", ":"),
+        )
+
     restore = (
         "import json,sys;e=json.load(sys.stdin);i=e.get('tool_input') or {};"
         "c=i.get('command') if e.get('tool_name')=='Bash' and isinstance(i,dict) else None;"
@@ -124,8 +146,9 @@ def hook_command(sub: str) -> str:
         run
         + """R=$(printf '%s' "${WORKFLOW_ROLE:-}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]'); """
         + 'if [ -z "$R" ] || [ "$R" = attended ]; then exit 0; fi; '
+        + f"if [ -f \"$F\" ]; then printf '%s\\n' '{deny('Refused: ' + NO_PYTHON_REASON + '.')}'; exit 0; fi; "
         + f"if command -v python3 >/dev/null 2>&1 && python3 -c '{restore}' 2>/dev/null; then exit 0; fi; "
-        + f"printf '%s\\n' '{deny}'"
+        + f"printf '%s\\n' '{deny(MISSING_KIT_REASON)}'"
     )
 
 

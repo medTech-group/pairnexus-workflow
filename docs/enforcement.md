@@ -100,9 +100,10 @@ The marker is looked for in the command's texts as a whole (the command, its her
 - an invalid or missing profile;
 - a malformed hook event;
 - an error in the guard itself;
-- the kit's CLI missing from the checkout. Then everything is refused except `git checkout -- .claude/workflow` or `git restore .claude/workflow`, which restore it.
+- the kit's CLI missing from the checkout. Then everything is refused except `git checkout -- .claude/workflow` or `git restore .claude/workflow`, which restore it;
+- `python3` older than 3.11, or none on the PATH (since 0.1.8). Every tool is refused until the session runs on Python 3.11 or later.
 
-In attended sessions the hooks report the error and stay out of the way.
+In attended sessions the hooks report the error and stay out of the way. With an old `python3` the guard still asks before a `git push` or `gh pr merge`, and the session start says what is wrong; with no `python3` at all, only the session start says so.
 
 **It can't see** a script file the session writes and then runs, text piped into a shell, network calls made by programs (an interpreter's `subprocess.run(['git', …])`, `wget`, `fetch`), or deliberately obfuscated commands. It is a seatbelt for honest mistakes, not a wall against an adversary. That is why the ruleset and the credential-free environment come first.
 

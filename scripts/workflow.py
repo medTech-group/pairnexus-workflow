@@ -4,10 +4,13 @@
 import sys
 from pathlib import Path
 
-if sys.version_info < (3, 11):
-    sys.exit("workflow needs Python 3.11 or newer (for tomllib)")
-
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+if sys.version_info < (3, 11):
+    # The kit needs tomllib. An old Python's hooks still fail closed (#22).
+    from workflow import _old_python
+
+    sys.exit(_old_python.main(sys.argv[1:]))
 
 from workflow.cli import main  # noqa: E402
 

@@ -41,7 +41,7 @@ You need:
    - Your claude.ai account is connected to GitHub.
    - If a session can't reach a repository, it tells you which of these is missing.
 4. **A paid GitHub plan** (Team or above) if the repository is private. Rulesets on private repositories need one. Without a ruleset, nothing outside the session stops a push straight to the base branch.
-5. **Python 3.11 or later** as `python3`, wherever anyone opens the project in Claude Code (the cloud image has it). The kit's hooks run on it: with an older one every hook fails, and the guard is off.
+5. **Python 3.11 or later** as `python3`, wherever anyone opens the project in Claude Code (the cloud image has it). The kit's hooks run on it. With an older one, or none, the kit can't check anything: ticket and conductor sessions are refused every tool, and an attended session is told when it starts (and asked before a push or merge, with an older one).
 
 ### Step 1. Ask Claude to set the repository up
 
@@ -634,7 +634,8 @@ Matt Pocock's take `mattpocock-skills:`, such as `/mattpocock-skills:to-spec`, `
 |---|---|
 | **"[workflow guard, …] … is never allowed"** or an approval prompt for a push | The guard stopped something on its never-list (a push to the base branch, a force-push, a deploy command). In your own session, approve only if you meant it; a ticket session never gets past it, and ends `needs-human` if its ticket needs it |
 | **"the profile is invalid"** on every command | A ticket or conductor session fails closed. Fix `.claude/workflow/profile.toml` in a pull request from an attended session (`workflow.py profile check` says what's wrong), or restore it: `git checkout -- .claude/workflow` |
-| **A hook error on every tool call** | Usually `python3` older than 3.11, or the kit's copy missing. Check `python3 --version`; restore the copy with `git checkout -- .claude/workflow` |
+| **"the workflow kit needs Python 3.11"** at the start, or every tool refused | `python3` is older than 3.11, or missing. Check `python3 --version`, install 3.11 or later so `python3` runs it, and start a new session |
+| **A hook error on every tool call** | Usually the kit's copy missing. Restore it with `git checkout -- .claude/workflow` |
 | **"Project setup … FAILED"** at a cloud session's start | `commands.setup` failed or ran out of time (about 8 minutes). The session carries on without the dependencies: fix the command in the profile |
 | **The `workflow kit` check fails** | The kit's copy doesn't match `.claude/workflow/lock.json`: someone changed it without an update. Undo the change, or update the kit properly (`/update-workflow`) |
 | **A required check never reports**, so the PR can't merge | See "PRs that CI skips" below |
