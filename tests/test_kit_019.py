@@ -77,8 +77,9 @@ def test_a_regex_class_is_not_an_s_command(profile, tmp_path):
     # What a command writes is read as sed and perl write it: `\s` there is a plain `s`.
     assert act(profile, tmp_path, "sed -i 's/it(/it.\\skip(/' src/app.spec.ts") == "deny"
     assert act(profile, tmp_path, "perl -pi -e 's/it\\(/it.\\skip(/' tests/a.spec.js") == "deny"
-    # A `*` after `\s` isn't a delimiter, so the commands after it are read as they are.
-    assert act(profile, tmp_path, "sed -i '/\\s*a/d; s/b*/c/; s/d*/it.only(/' src/app.spec.ts") == "deny"
+    # A `*` after `\s` isn't a delimiter, so the commands after it are read as they
+    # are: 0.1.8 took `s*…*…*` for one command and netted the marker away.
+    assert act(profile, tmp_path, "sed -i '/\\s*a/d; s/x/it.only(/; s/b*/c/; s/d*/e/' src/app.spec.ts") == "deny"
     # And a stray `\s` can't make an added marker look like a removal.
     cmd = ("perl -pi -e 's{\\r$}{}; s{^(\\s*)def test_slow}{$1\\@pytest.mark.skip\\n$1def test_slow}; "
            "s{\\s*$}{}; s{\\t*$}{}' tests/test_x.py")
