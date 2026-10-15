@@ -101,7 +101,7 @@ The marker is looked for in the command's texts as a whole (the command, its her
 - a malformed hook event;
 - an error in the guard itself;
 - the kit's CLI missing from the checkout. Then everything is refused except `git checkout -- .claude/workflow` or `git restore .claude/workflow`, which restore it;
-- `python3` older than 3.11, missing, or failing to run the kit (since 0.1.8). Every tool is refused until the session runs on Python 3.11 or later. Here the CLI can't run to read the role, so the fallback reads it more simply: `WORKFLOW_ROLE`, or with it unset and the kit set up, a branch matching the profile's `run.ticket_branch` line (a plain `ticket_branch = "…"` line; written another way, the default `claude/build-*` is used).
+- `python3` older than 3.11, missing, or failing to run the kit (since 0.1.8). Every tool is refused until the session runs on Python 3.11 or later. Here the CLI can't run to read the role, so the fallback reads it more simply: `WORKFLOW_ROLE`, or with it unset and the kit set up, a branch matching the profile's `run.ticket_branch` line (its first plain `ticket_branch = "…"` line; written another way, the default `claude/build-*` is used). With no working `python3` it can't read the hook's event either, so it reads the project directory's branch, not a worktree's.
 
 In attended sessions the hooks report the error and stay out of the way. With an old `python3` the guard still asks before a push or a merge (`git push`, `gh pr merge`, the GitHub MCP tools that push or merge), and the session start says what is wrong; with `python3` missing or failing, only the session start says so.
 

@@ -157,7 +157,7 @@ def _no_python_path(tmp_path):
     """A PATH with sh, git, tr, printf and the like, but no python3."""
     bindir = tmp_path / "bin"
     bindir.mkdir()
-    for tool in ("sh", "tr", "sed", "printf", "cat", "env", "git"):
+    for tool in ("sh", "tr", "sed", "head", "printf", "cat", "env", "git"):
         found = shutil.which(tool)
         if found:
             (bindir / tool).symlink_to(found)
@@ -229,11 +229,31 @@ def test_without_python3_a_ticket_branch_is_refused_every_tool(tmp_path, ticket_
     assert p.returncode == 0 and _decision(p.stdout) == "deny"
 
 
+def test_without_python3_the_first_ticket_branch_line_counts(tmp_path):
+    proj = _vendored(_repo(tmp_path / "proj", "agents/t-3", "agents/*"))
+    with open(proj / ".claude/workflow/profile.toml", "a") as f:
+        f.write('[other]\nticket_branch = "x/*"\n')
+    p = _guard_sh({"PATH": _no_python_path(tmp_path), "CLAUDE_PROJECT_DIR": str(proj)})
+    assert _decision(p.stdout) == "deny"
+
+
+@pytest.mark.parametrize("sub", ["gate", "context"])
+def test_without_python3_the_other_hooks_stay_quiet(tmp_path, sub):
+    proj = _vendored(tmp_path / "proj")
+    for d in ("a", "b"):
+        (tmp_path / d).mkdir()
+    for path in (_no_python_path(tmp_path / "a"), _failing_python(tmp_path / "b", 0)):
+        p = subprocess.run([shutil.which("sh"), "-c", vendor.hook_command(sub)], input="{}", capture_output=True,
+                           text=True, env={"PATH": path, "CLAUDE_PROJECT_DIR": str(proj)})
+        assert (p.returncode, p.stdout) == (0, ""), sub
+
+
 def test_without_python3_another_branch_or_no_profile_is_left_alone(tmp_path):
     path = _no_python_path(tmp_path)
     for proj in (_repo(tmp_path / "a", "main"), _repo(tmp_path / "b", "claude/build-1", ticket_branch=False)):
         _vendored(proj)
-        assert (_guard_sh({"PATH": path, "CLAUDE_PROJECT_DIR": str(proj)}).returncode, "") == (0, "")
+        p = _guard_sh({"PATH": path, "CLAUDE_PROJECT_DIR": str(proj)})
+        assert (p.returncode, p.stdout) == (0, ""), proj
 
 
 def _failing_python(tmp_path, code):

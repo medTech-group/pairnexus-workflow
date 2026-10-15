@@ -94,8 +94,9 @@ RESTORE_COMMANDS = ("git checkout -- .claude/workflow", "git restore .claude/wor
 
 
 NO_PYTHON_REASON = (
-    "python3 could not run the workflow kit (it is missing, or it failed), so nothing can be checked; "
-    "check python3 --version (3.11 or newer is needed) and start a new session"
+    "python3 could not run the workflow kit (it is missing or failing, or the kit failed: an invalid profile, "
+    "a broken checkout), so nothing can be checked; check python3 --version (3.11 or newer is needed) and "
+    "python3 .claude/workflow/bin/workflow.py profile check, then start a new session"
 )
 # Both go into single-quoted sh strings.
 assert "'" not in NO_PYTHON_REASON + MISSING_KIT_REASON
@@ -105,13 +106,15 @@ _ROLE = (
     """R=$(printf '%s' "${WORKFLOW_ROLE:-}" | tr '[:upper:]' '[:lower:]' """
     """| sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'); """
 )
-# With WORKFLOW_ROLE unset and the kit set up: a branch matching the profile's
-# run.ticket_branch (read roughly, as _old_python does) means a ticket session.
+# With WORKFLOW_ROLE unset and the kit set up: the project directory's branch
+# matching the profile's run.ticket_branch (its first `ticket_branch = "…"`
+# line, as _old_python reads it) means a ticket session. Without Python the
+# event's cwd can't be read, so a worktree's own branch isn't seen.
 _BRANCH = (
     'P="$CLAUDE_PROJECT_DIR/.claude/workflow/profile.toml"; '
     'if [ -z "$R" ] && [ -f "$P" ]; then '
     'B=$(git -C "$CLAUDE_PROJECT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null); '
-    """T=$(sed -n 's/^[[:space:]]*ticket_branch[[:space:]]*=[[:space:]]*["'"'"']\\([^"'"'"']*\\)["'"'"'].*/\\1/p' "$P"); """
+    """T=$(sed -n 's/^[[:space:]]*ticket_branch[[:space:]]*=[[:space:]]*["'"'"']\\([^"'"'"']*\\)["'"'"'].*/\\1/p' "$P" | head -n 1); """
     'case "$B" in HEAD|"") ;; ${T:-claude/build-*}) R=ticket;; esac; fi; '
 )
 
@@ -141,7 +144,10 @@ def hook_command(sub: str) -> str:
     attended one; SessionStart says so to everyone (#22). The CLI itself exits
     0 whenever it has decided, so a non-zero exit means it couldn't."""
     if sub not in ("guard", "repair"):
-        return f'F="$CLAUDE_PROJECT_DIR/{HOOK_TAG}"; if [ -f "$F" ]; then exec python3 -B "$F" hook {sub}; fi; exit 0'
+        return (
+            f'F="$CLAUDE_PROJECT_DIR/{HOOK_TAG}"; '
+            f'if [ -f "$F" ] && command -v python3 >/dev/null 2>&1; then exec python3 -B "$F" hook {sub}; fi; exit 0'
+        )
     run = (
         f'F="$CLAUDE_PROJECT_DIR/{HOOK_TAG}"; rc=0; '
         f'if [ -f "$F" ] && command -v python3 >/dev/null 2>&1; then python3 -B "$F" hook {sub}; rc=$?; '
