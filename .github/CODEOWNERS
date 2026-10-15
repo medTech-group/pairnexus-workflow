@@ -1,0 +1,7 @@
+# The kit and its hooks, CI config, this file, and the release files: the owner reviews them.
+/.claude/ @raj-attur-pair
+/.github/workflows/ @raj-attur-pair
+/.github/scripts/ @raj-attur-pair
+/.github/CODEOWNERS @raj-attur-pair
+/VERSION @raj-attur-pair
+/.claude-plugin/ @raj-attur-pair

@@ -140,18 +140,20 @@ def test_real_ticket_template_renders(profile):
 
 
 def test_state_init_cli(tmp_path):
-    import subprocess, sys
+    import os, subprocess, sys
     from pathlib import Path
 
     cli = Path(__file__).resolve().parents[1] / "scripts/workflow.py"
+    # An empty project, so no profile is read (this repository has its own).
+    run = {"capture_output": True, "text": True, "cwd": tmp_path, "env": {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)}}
     c = good_charter()
     f = tmp_path / "c.json"
     f.write_text(json.dumps(c))
-    p = subprocess.run([sys.executable, str(cli), "state", "init", "--charter", str(f), "--run-id", "r1"], capture_output=True, text=True)
+    p = subprocess.run([sys.executable, str(cli), "state", "init", "--charter", str(f), "--run-id", "r1"], **run)
     assert p.returncode == 1 and "not been approved" in p.stderr
     c["approved"] = {"by": "o", "at": "2026-10-11T10:00:00Z", "source": "chat 10:00"}
     f.write_text(json.dumps(c))
-    p = subprocess.run([sys.executable, str(cli), "state", "init", "--charter", str(f), "--run-id", "r1", "--by-hand", "9"], capture_output=True, text=True)
+    p = subprocess.run([sys.executable, str(cli), "state", "init", "--charter", str(f), "--run-id", "r1", "--by-hand", "9"], **run)
     s = json.loads(p.stdout)
     assert s["run_id"] == "r1" and s["by_hand_issue"] == 9 and state.validate(s) == []
 
