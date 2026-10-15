@@ -6,15 +6,17 @@ Claude Code reads as a hook error and then runs the tool anyway: every hook
 failed open. `scripts/workflow.py` hands an old Python to this module instead,
 which fails closed where the kit would:
 - `hook guard`: a ticket or conductor session (WORKFLOW_ROLE set to anything
-  but `attended`, or with it unset a branch matching the profile's
-  `run.ticket_branch`) is refused every tool; an attended session is asked
-  before a push or a merge, and otherwise left alone;
+  but `attended`, or with it unset and the kit set up, a branch matching the
+  profile's `run.ticket_branch`, read roughly) is refused every tool; an
+  attended session is asked before a push or a merge (git, `gh pr merge`, the
+  GitHub MCP tools that push or merge), and otherwise left alone;
 - `hook repair` (SessionStart): says what is wrong and how to fix it;
 - `hook gate` and `hook context`: nothing (nothing to check without the kit);
 - anything else: says what it needs and exits 1.
 
-Keep it to the standard library and to syntax Python 3.6 reads: it runs on
-exactly the interpreters the rest of the kit can't.
+Keep it to the standard library and to syntax Python 3.7 reads (a test
+checks): it runs on exactly the interpreters the rest of the kit can't. It
+never raises: an error refuses the tool when WORKFLOW_ROLE is firm.
 """
 
 import fnmatch
@@ -29,6 +31,7 @@ DEFAULT_TICKET_BRANCH = "claude/build-*"
 _PUSH = re.compile(r"\bgit\b[^;&|\n]*\bpush\b")
 _MERGE = re.compile(r"\bgh\b[^;&|\n]*\bpr\b[^;&|\n]*\bmerge\b")
 _TICKET_BRANCH = re.compile(r"""^\s*ticket_branch\s*=\s*["']([^"']+)["']""", re.M)
+_MCP_PUSH = ("merge_pull_request", "push_files", "create_or_update_file", "delete_file")
 
 
 def _branch(where):
@@ -36,32 +39,41 @@ def _branch(where):
         return None
     try:
         out = subprocess.run(
-            ["git", "symbolic-ref", "--short", "-q", "HEAD"], cwd=where,
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=where,
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, universal_newlines=True, timeout=5,
         )
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
     b = out.stdout.strip()
-    return b if out.returncode == 0 and b else None
+    return b if out.returncode == 0 and b and b != "HEAD" else None
 
 
 def _ticket_branch(root):
+    """The profile's run.ticket_branch, or None when the kit isn't set up (the
+    CLI never takes a role from the branch without a profile)."""
     try:
-        with open(os.path.join(root, ".claude", "workflow", "profile.toml"), encoding="utf-8") as f:
+        with open(os.path.join(root, ".claude", "workflow", "profile.toml"), encoding="utf-8", errors="replace") as f:
             m = _TICKET_BRANCH.search(f.read())
     except (OSError, ValueError):
-        return DEFAULT_TICKET_BRANCH
+        return None
     return m.group(1) if m else DEFAULT_TICKET_BRANCH
+
+
+def _env_firm(env):
+    """True or False when WORKFLOW_ROLE decides, else None."""
+    role = (env.get("WORKFLOW_ROLE") or "").strip().lower()
+    return (role != "attended") if role else None
 
 
 def _firm(env, cwd):
     """True for a ticket or conductor session, as roles.role decides it."""
-    role = (env.get("WORKFLOW_ROLE") or "").strip().lower()
-    if role:
-        return role != "attended"
+    firm = _env_firm(env)
+    if firm is not None:
+        return firm
     root = env.get("CLAUDE_PROJECT_DIR") or cwd
-    b = _branch(cwd) or _branch(root)
-    return bool(b) and fnmatch.fnmatchcase(b, _ticket_branch(root))
+    pattern = _ticket_branch(root)
+    b = (_branch(cwd) or _branch(root)) if pattern else None
+    return bool(b) and fnmatch.fnmatchcase(b, pattern)
 
 
 def _problem(version):
@@ -79,11 +91,13 @@ def _decision(decision, reason):
 def _guard(event, firm, version):
     if firm:
         return _decision("deny", "Refused: " + _problem(version) + ".")
-    if not isinstance(event, dict) or event.get("tool_name") != "Bash":
+    if not isinstance(event, dict):
         return None
+    tool = event.get("tool_name")
     i = event.get("tool_input")
-    cmd = i.get("command") if isinstance(i, dict) else None
-    if isinstance(cmd, str) and (_PUSH.search(cmd) or _MERGE.search(cmd)):
+    cmd = i.get("command") if tool == "Bash" and isinstance(i, dict) else None
+    mcp = isinstance(tool, str) and tool.startswith("mcp__") and "github" in tool.lower() and tool.endswith(_MCP_PUSH)
+    if mcp or (isinstance(cmd, str) and (_PUSH.search(cmd) or _MERGE.search(cmd))):
         return _decision("ask", "The workflow's guard isn't running: " + _problem(version) + ". Allow this push or merge only if you mean to.")
     return None
 
@@ -111,14 +125,25 @@ def main(argv, stdin_text=None, env=None, version=None, cwd=None):
     sub = argv[1]
     if sub not in ("guard", "repair"):
         return 0
-    text = sys.stdin.read() if stdin_text is None else stdin_text
     try:
-        event = json.loads(text) if text.strip() else {}
-    except ValueError:
-        event = None
-    here = event.get("cwd") if isinstance(event, dict) and isinstance(event.get("cwd"), str) else None
-    firm = _firm(env, here or (str(cwd) if cwd else os.getcwd()))
-    out = _guard(event, firm, version) if sub == "guard" else _repair(firm, version)
+        out = _hook(sub, stdin_text, env, version, cwd)
+    except Exception:  # never exit non-zero: Claude Code would run the tool
+        out = None
+        if sub == "guard" and _env_firm(env):
+            out = _decision("deny", "Refused: " + _problem(version) + ".")
     if out is not None:
         print(json.dumps(out))
     return 0
+
+
+def _hook(sub, stdin_text, env, version, cwd):
+    if sub == "guard" and _env_firm(env):  # nothing to read: every tool is refused
+        return _guard(None, True, version)
+    text = sys.stdin.buffer.read().decode("utf-8", "replace") if stdin_text is None else stdin_text
+    try:
+        event = json.loads(text) if text.strip() else {}
+    except (ValueError, RecursionError):
+        event = None
+    here = event.get("cwd") if isinstance(event, dict) and isinstance(event.get("cwd"), str) else None
+    firm = _firm(env, here or (str(cwd) if cwd else os.getcwd()))
+    return _guard(event, firm, version) if sub == "guard" else _repair(firm, version)

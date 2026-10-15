@@ -4,12 +4,14 @@
 
 **The hooks fail closed without Python 3.11** (#22). The kit needs Python 3.11 or later as `python3`. With an older one, the entry point exited 1, which Claude Code treats as a hook error and then runs the tool anyway, so every hook failed open, the guard included. With no `python3` at all, the hook command exited 127, which fails open the same way. Cloud sessions have Python 3.11+, so unattended runs weren't affected; a local session on macOS's own `python3` (3.9) was.
 
-- **An older `python3`:** the entry point hands hooks to `scripts/workflow/_old_python.py`, which needs nothing newer than Python 3.6:
-  - a ticket or conductor session (`WORKFLOW_ROLE` set to anything but `attended`, or a branch matching `run.ticket_branch`) is refused every tool, saying which Python it found and what it needs;
-  - an attended session is asked before a `git push` or `gh pr merge`, and otherwise left alone;
+- **An older `python3`:** the entry point hands hooks to `scripts/workflow/_old_python.py`, which needs nothing newer than Python 3.7 and never exits non-zero:
+  - a ticket or conductor session is refused every tool, saying which Python it found and what it needs. The role comes from `WORKFLOW_ROLE` (anything but `attended`), or with it unset and the kit set up, from a branch matching the profile's `run.ticket_branch` (read from a plain `ticket_branch = "…"` line);
+  - an attended session is asked before a push or a merge (`git push`, `gh pr merge`, the GitHub MCP tools that push or merge), and otherwise left alone;
   - the session start says what is wrong and how to fix it.
-- **No `python3` on the PATH** (vendored projects): the hook command refuses every tool to a ticket or conductor session, and the session start says so. Plugin mode, which is attended only, still needs `python3` to run its hooks at all.
-- The kit's CI also installs Python 3.9 and runs the entry point and the vendored hook command on it.
+- **`python3` missing or failing** (vendored projects; a macOS stub without the developer tools, a pyenv shim with no version): the hook command no longer passes on a failed run. It refuses every tool to a ticket or conductor session, read the same way, and the session start says so. An attended session's guard passes the error on as before. Plugin mode, which is attended only, still needs a working `python3` to run its hooks at all.
+- `WORKFLOW_ROLE` with a space inside (`atten ded`) is no longer read as `attended` by the hook command when the kit can't run: it counts as ticket, as the CLI reads it.
+- A hook event nested too deeply to parse now counts as malformed (the guard refuses it in a ticket or conductor session) instead of failing the hook.
+- The kit's CI also installs Python 3.9 and runs the entry point and the vendored hook command on it, and checks the fallback parses as Python 3.7.
 - **Docs:** `docs/enforcement.md` §4 lists the old or missing Python among what fails closed. The README's set-up step and "When something goes wrong", and `docs/install.md`, say what happens.
 - **For projects updating to 0.1.8:**
   - The update rewrites the kit's hook commands in `.claude/settings.json` (they now check for `python3`), alongside the copy. Review that part of its pull request too.

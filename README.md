@@ -634,7 +634,7 @@ Matt Pocock's take `mattpocock-skills:`, such as `/mattpocock-skills:to-spec`, `
 |---|---|
 | **"[workflow guard, …] … is never allowed"** or an approval prompt for a push | The guard stopped something on its never-list (a push to the base branch, a force-push, a deploy command). In your own session, approve only if you meant it; a ticket session never gets past it, and ends `needs-human` if its ticket needs it |
 | **"the profile is invalid"** on every command | A ticket or conductor session fails closed. Fix `.claude/workflow/profile.toml` in a pull request from an attended session (`workflow.py profile check` says what's wrong), or restore it: `git checkout -- .claude/workflow` |
-| **"the workflow kit needs Python 3.11"** at the start, or every tool refused | `python3` is older than 3.11, or missing. Check `python3 --version`, install 3.11 or later so `python3` runs it, and start a new session |
+| **"Workflow kit: … Python 3.11"** at the start (it "needs Python 3.11", or "python3 could not run the workflow kit"), or every tool refused | `python3` is older than 3.11, missing, or failing. Check `python3 --version`, install 3.11 or later so `python3` runs it, and start a new session |
 | **A hook error on every tool call** | Usually the kit's copy missing. Restore it with `git checkout -- .claude/workflow` |
 | **"Project setup … FAILED"** at a cloud session's start | `commands.setup` failed or ran out of time (about 8 minutes). The session carries on without the dependencies: fix the command in the profile |
 | **The `workflow kit` check fails** | The kit's copy doesn't match `.claude/workflow/lock.json`: someone changed it without an update. Undo the change, or update the kit properly (`/update-workflow`) |
@@ -673,7 +673,7 @@ Matt Pocock's take `mattpocock-skills:`, such as `/mattpocock-skills:to-spec`, `
 | `docs/` | `flow.md`, `charter.md`, `enforcement.md`, `install.md`, `profile.md`, `spike.md` (what's verified), `proposal.md` (the original design, historical) |
 | `templates/` | The profile (`profile.toml`, `profile.md`), the ticket-session briefing, tracking and by-hand issues, `issue-tracker.md` (for `docs/agents/`), the issue templates, the `workflow kit` CI job and the weekly update check |
 | `.claude-plugin/` | The plugin manifest and the `pairnexus` marketplace, which pins Matt Pocock's skills |
-| `.github/` | The kit's own CI (the tests on Python 3.11 to 3.13, and a check that the versions agree), the `release` workflow, and this repository's issue templates |
+| `.github/` | The kit's own CI (the tests on Python 3.11 to 3.13, the hooks on a Python 3.9, and a check that the versions agree), the `release` workflow, and this repository's issue templates |
 | `SECURITY.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md` | How to report a vulnerability, how to contribute, and the code of conduct |
 | `tests/` | The tests |
 | `VERSION`, `CHANGELOG.md` | The version, and what changed in each, with the steps for projects updating |

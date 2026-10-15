@@ -7,7 +7,8 @@ on:
 
 jobs:
   tests:
-    runs-on: ubuntu-latest
+    # Pinned: setup-python's Python 3.9 (past its end of life) may not be built for newer images.
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     strategy:
       matrix:

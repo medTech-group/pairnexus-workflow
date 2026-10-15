@@ -1,5 +1,6 @@
 """Kit 0.1.8: the hooks fail closed when python3 can't run the kit (#22)."""
 
+import ast
 import json
 import os
 import shutil
@@ -27,6 +28,19 @@ def _decision(out):
     return json.loads(out)["hookSpecificOutput"]["permissionDecision"]
 
 
+def _repo(path, branch, ticket_branch=None):
+    """A git repository on `branch` (with a commit, as roles.py needs) and,
+    unless ticket_branch is False, the kit's profile."""
+    git = ["git", "-C", str(path), "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    subprocess.run(["git", "init", "-q", "-b", branch, str(path)], check=True)
+    subprocess.run(git + ["commit", "-q", "--allow-empty", "-m", "x"], check=True)
+    if ticket_branch is not False:
+        (path / ".claude/workflow").mkdir(parents=True, exist_ok=True)
+        body = f'[run]\nticket_branch = "{ticket_branch}"\n' if ticket_branch else "[run]\n"
+        (path / ".claude/workflow/profile.toml").write_text(body)
+    return path
+
+
 @pytest.mark.parametrize("role", ["ticket", "conductor", "Ticket ", "tikcet"])
 def test_old_python_guard_denies_every_tool_in_a_run(capsys, tmp_path, role):
     for event in (BASH_LS, EDIT, BASH_PUSH, "not json"):
@@ -37,17 +51,43 @@ def test_old_python_guard_denies_every_tool_in_a_run(capsys, tmp_path, role):
 
 
 def test_old_python_guard_on_a_ticket_branch_denies_without_a_role(capsys, tmp_path):
-    subprocess.run(["git", "init", "-q", "-b", "claude/build-12-x", str(tmp_path)], check=True)
+    _repo(tmp_path, "claude/build-12-x")
     code, out = _run(capsys, ["hook", "guard"], BASH_LS, {}, tmp_path)
     assert _decision(out) == "deny"
 
 
 def test_old_python_guard_reads_the_profiles_ticket_branch(capsys, tmp_path):
-    subprocess.run(["git", "init", "-q", "-b", "agents/t-1", str(tmp_path)], check=True)
-    (tmp_path / ".claude/workflow").mkdir(parents=True)
-    (tmp_path / ".claude/workflow/profile.toml").write_text('[run]\nticket_branch = "agents/*"\n')
+    _repo(tmp_path, "agents/t-1", "agents/*")
     code, out = _run(capsys, ["hook", "guard"], BASH_LS, {"CLAUDE_PROJECT_DIR": str(tmp_path)}, tmp_path)
     assert _decision(out) == "deny"
+    _repo(tmp_path / "other", "claude/build-1", "agents/*")
+    assert _run(capsys, ["hook", "guard"], BASH_LS, {}, tmp_path / "other") == (0, "")
+
+
+def test_old_python_guard_takes_no_role_from_the_branch_without_a_profile(capsys, tmp_path):
+    """As the CLI: no profile (plugin mode, a project without the kit), no branch role."""
+    _repo(tmp_path, "claude/build-12-x", ticket_branch=False)
+    assert _run(capsys, ["hook", "guard"], BASH_LS, {}, tmp_path) == (0, "")
+
+
+def test_old_python_never_raises(capsys, tmp_path, monkeypatch):
+    deep = "[" * 100000  # json raises RecursionError, not ValueError
+    assert _run(capsys, ["hook", "guard"], deep, {}, tmp_path) == (0, "")
+    code, out = _run(capsys, ["hook", "repair"], deep, {}, tmp_path)
+    assert code == 0 and "systemMessage" in json.loads(out)
+
+    def boom(*a, **k):
+        raise RuntimeError("x")
+
+    monkeypatch.setattr(_old_python, "_hook", boom)
+    code, out = _run(capsys, ["hook", "guard"], BASH_LS, {"WORKFLOW_ROLE": "ticket"}, tmp_path)
+    assert code == 0 and _decision(out) == "deny"
+    assert _run(capsys, ["hook", "guard"], BASH_LS, {}, tmp_path) == (0, "")
+
+
+def test_old_python_parses_as_python_3_7():
+    for f in (KIT / "scripts/workflow.py", KIT / "scripts/workflow/_old_python.py", KIT / "scripts/workflow/__init__.py"):
+        ast.parse(f.read_text(), feature_version=(3, 7))
 
 
 @pytest.mark.parametrize("env", [{}, {"WORKFLOW_ROLE": "attended"}])
@@ -55,6 +95,10 @@ def test_old_python_guard_in_an_attended_session_asks_before_a_push(capsys, tmp_
     for cmd in ("git push origin main", "cd x && git -C . push --force", "gh pr merge 3 --admin"):
         code, out = _run(capsys, ["hook", "guard"], {"tool_name": "Bash", "tool_input": {"command": cmd}}, env, tmp_path)
         assert code == 0 and _decision(out) == "ask", cmd
+    for tool in ("mcp__github__merge_pull_request", "mcp__GitHub__push_files", "mcp__github__create_or_update_file"):
+        code, out = _run(capsys, ["hook", "guard"], {"tool_name": tool, "tool_input": {}}, env, tmp_path)
+        assert code == 0 and _decision(out) == "ask", tool
+    assert _run(capsys, ["hook", "guard"], {"tool_name": "mcp__github__issue_read", "tool_input": {}}, env, tmp_path) == (0, "")
     for event in (BASH_LS, EDIT, "not json"):
         assert _run(capsys, ["hook", "guard"], event, env, tmp_path) == (0, ""), event
 
@@ -113,7 +157,7 @@ def _no_python_path(tmp_path):
     """A PATH with sh, git, tr, printf and the like, but no python3."""
     bindir = tmp_path / "bin"
     bindir.mkdir()
-    for tool in ("sh", "tr", "printf", "cat", "env", "git"):
+    for tool in ("sh", "tr", "sed", "printf", "cat", "env", "git"):
         found = shutil.which(tool)
         if found:
             (bindir / tool).symlink_to(found)
@@ -127,7 +171,7 @@ def _vendored(tmp_path):
     return tmp_path
 
 
-@pytest.mark.parametrize("role", ["ticket", "conductor", "bogus"])
+@pytest.mark.parametrize("role", ["ticket", "conductor", "bogus", "atten ded"])
 def test_without_python3_a_run_is_refused_every_tool(tmp_path, role):
     proj = _vendored(tmp_path)
     env = {"PATH": _no_python_path(tmp_path), "CLAUDE_PROJECT_DIR": str(proj), "WORKFLOW_ROLE": role}
@@ -171,3 +215,45 @@ def test_the_vendored_hook_on_a_real_python_3_9(tmp_path):
                        capture_output=True, text=True, env=env, cwd=proj)
     assert p.returncode == 0 and "3.11" in json.loads(p.stdout)["systemMessage"], p.stderr
     assert not list(proj.rglob("__pycache__"))
+
+
+def _guard_sh(env, event=BASH_LS, cwd=None):
+    return subprocess.run([shutil.which("sh"), "-c", vendor.hook_command("guard")], input=json.dumps(event),
+                          capture_output=True, text=True, env=env, cwd=cwd)
+
+
+@pytest.mark.parametrize("ticket_branch,branch", [(None, "claude/build-7-x"), ("agents/*", "agents/t-2")])
+def test_without_python3_a_ticket_branch_is_refused_every_tool(tmp_path, ticket_branch, branch):
+    proj = _vendored(_repo(tmp_path / "proj", branch, ticket_branch))
+    p = _guard_sh({"PATH": _no_python_path(tmp_path), "CLAUDE_PROJECT_DIR": str(proj)})
+    assert p.returncode == 0 and _decision(p.stdout) == "deny"
+
+
+def test_without_python3_another_branch_or_no_profile_is_left_alone(tmp_path):
+    path = _no_python_path(tmp_path)
+    for proj in (_repo(tmp_path / "a", "main"), _repo(tmp_path / "b", "claude/build-1", ticket_branch=False)):
+        _vendored(proj)
+        assert (_guard_sh({"PATH": path, "CLAUDE_PROJECT_DIR": str(proj)}).returncode, "") == (0, "")
+
+
+def _failing_python(tmp_path, code):
+    """A python3 that exits non-zero, as macOS's stub without the developer
+    tools or a pyenv shim with no version does."""
+    path = _no_python_path(tmp_path)
+    fake = Path(path) / "python3"
+    fake.write_text(f"#!/bin/sh\nexit {code}\n")
+    fake.chmod(0o755)
+    return path
+
+
+@pytest.mark.parametrize("code", [1, 127])
+def test_a_python3_that_fails_refuses_a_run_and_says_so(tmp_path, code):
+    proj = _vendored(tmp_path / "proj")
+    path = _failing_python(tmp_path, code)
+    p = _guard_sh({"PATH": path, "CLAUDE_PROJECT_DIR": str(proj), "WORKFLOW_ROLE": "ticket"})
+    assert p.returncode == 0 and _decision(p.stdout) == "deny"
+    attended = _guard_sh({"PATH": path, "CLAUDE_PROJECT_DIR": str(proj)})
+    assert (attended.returncode, attended.stdout) == (code, "")  # passed on, as the CLI's own errors are
+    start = subprocess.run([shutil.which("sh"), "-c", vendor.hook_command("repair")], input="{}", capture_output=True,
+                           text=True, env={"PATH": path, "CLAUDE_PROJECT_DIR": str(proj)})
+    assert start.returncode == 0 and "python3" in json.loads(start.stdout)["systemMessage"]
