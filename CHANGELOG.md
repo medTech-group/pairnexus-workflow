@@ -10,15 +10,13 @@ Either could run past the guard hook's timeout, and in 0.1.8 a hook that runs pa
 
 - **An editing script is read as `sed` reads it.** A backslash always starts an escape, so `\/` never ends an `s` command or an address, and each pattern runs in linear time. The slow inputs now return in milliseconds.
 - **A command's flags** (`g`, perl's `s`) start no new command, though they're still read for markers.
-- **A regex class like `\s*`** is no longer taken for an `s` command, and `\s` is read as whitespace when markers are counted. So `/^\s*$/d; s/it\.only(/it(/` is read as cleanup plus a removal.
+- **A regex class like `\s*`** is no longer taken for an `s` command (an `s` straight after a backslash starts none). So `/^\s*$/d; s/it\.only(/it(/` is read as cleanup plus a removal.
 - **An `s` command the guard can't read,** one that never closes, ends the netting. From there on, every skip marker in the script counts as added, and no address is dropped. perl's bracketed `s{…}{…}` is read as an `s` command delimited by `{`, so a pair of them nets as before, while a single one before a removal ends the netting.
 - **The xfail marker** stops at the next `xfail(`, so it stays linear with no length limit. It counts each `xfail(… run=False` on its own, where 0.1.8 could count two as one.
 - **Decisions:**
-  - well-formed `sed` and `perl` scripts are read as before, with two exceptions:
-    - a single perl `s{…}{…}` before a removal is now refused;
-    - a marker followed by `\s` in what a command finds (`s/@pytest\.mark\.skip\s*//`) now counts as removed;
-  - a script that inserts a marker after a stray `\s` can no longer pass it off as a removal, as it could in 0.1.8;
-  - on malformed scripts the guard follows `sed`'s reading. Fuzzed against 0.1.8 over 900,000 random scripts (regex classes like `\s*` included), that refused about 30,000 that 0.1.8 allowed, and allowed 152 that it refused. The ones examined were scripts where 0.1.8 found a marker only by misreading the script (joining `xfail(` to a `run=False` past a `)` the script writes, or reading a marker across a mismatched address), not text the file would hold.
+  - well-formed `sed` and `perl` scripts are read as before, except that a single perl `s{…}{…}` before a removal is now refused;
+  - two misreadings of 0.1.8 are gone, both of them refused now: a `\s*` followed by `s` commands with `*` in them (`/\s*a/d; s/b*/c/; s/d*/it.only(/`), and a script that inserts a marker after a stray `\s`, which 0.1.8 netted as a removal;
+  - on malformed scripts the guard follows `sed`'s reading. Fuzzed against 0.1.8 over 900,000 random scripts (regex classes like `\s*` included), that refused about 25,600 that 0.1.8 allowed, and allowed 249 that it refused. The ones examined were scripts where 0.1.8 found a marker only by misreading the script, not text the file would hold: a marker run into a following `\s` (which `sed` writes as `skips`), `xfail(` joined to a `run=False` past a `)` the script writes, or a marker read across a mismatched address.
 - CodeQL flagged the 0.1.8 patterns. Tests cover the slow inputs, an escaped delimiter, flags, regex classes, long xfail arguments, and scripts that never close.
 - **For projects updating to 0.1.9:** nothing to do beyond the update.
 
