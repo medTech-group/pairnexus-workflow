@@ -112,7 +112,7 @@ SKIP_MARKERS = [
     r"\bunittest\.skip",
     r"\bskipTest\(",
     r"\bSkipTest\b",
-    r"pytest\.mark\.xfail\([^)]*run\s*=\s*False",
+    r"pytest\.mark\.xfail\([^)]{0,1000}run\s*=\s*False",  # bounded, so many `xfail(` can't make it quadratic
     r"\b(?:it|test|describe|context|suite)\.(?:skip|only|todo)\(",
     r"\bx(?:it|test|describe|context)\(",
     r"\bf(?:it|describe)\(",
@@ -3262,9 +3262,12 @@ _WRITE_CALL = re.compile(
 
 # An `s` command (sed, perl, ed, vim): its delimiter, what it finds and what it puts.
 # A backslash always starts an escape (`\/` doesn't end it, as in sed), so each
-# character has one reading and the match takes linear time.
-_S_CMD = re.compile(r"(?<![A-Za-z_])s([^\w\s\\])((?:\\.|(?!\1)[^\\])*)\1((?:\\.|(?!\1)[^\\])*)\1", re.S)
-_ADDRESS = re.compile(r"/(?:\\.|[^/\n\\])*/")
+# character has one reading and a match never backtracks.
+_S_START = re.compile(r"(?<![A-Za-z_])s[^\w\s\\]")
+_S_CMD = re.compile(r"s([^\w\s\\])((?:\\.|(?!\1)[^\\])*)\1((?:\\.|(?!\1)[^\\])*)\1", re.S)
+# An address (`/x/d`), read the same way. The closing `/` is optional so that a
+# run that never closes is consumed once and kept, not tried again from inside.
+_ADDRESS = re.compile(r"/(?:\\.|[^/\n\\])*(/)?")
 
 
 def _markers(text: str) -> int:
@@ -3276,16 +3279,23 @@ def _markers(text: str) -> int:
 def _script_net(text: str) -> int:
     """Skip markers an editing script adds, net of those it removes: an `s`
     command counts what it puts less what it finds; an address (`/x/d`) only
-    finds; anything else it holds (`i\\`, `a` text) is added."""
-    net = 0
-
-    def sub(m: re.Match) -> str:
-        nonlocal net
+    finds; anything else it holds (`i\\`, `a` text) is added. From an `s`
+    command that sed can't read (it never closes), nothing is netted or
+    dropped: the rest of the script counts as added, as written."""
+    text = text or ""
+    net, kept, pos = 0, [], 0
+    while (start := _S_START.search(text, pos)) is not None:
+        m = _S_CMD.match(text, start.start())
+        if m is None:
+            return net + _markers(_drop_addresses("".join(kept) + text[pos:start.start()]) + text[start.start():])
         net += _markers(m.group(3)) - _markers(m.group(2))
-        return " "
+        kept.append(text[pos:start.start()] + " ")
+        pos = m.end()
+    return net + _markers(_drop_addresses("".join(kept) + text[pos:]))
 
-    rest = _S_CMD.sub(sub, text or "")
-    return net + _markers(_ADDRESS.sub(" ", rest))
+
+def _drop_addresses(text: str) -> str:
+    return _ADDRESS.sub(lambda m: " " if m.group(1) else m.group(0), text)
 
 
 def _patch_net(texts: list[str]) -> int:

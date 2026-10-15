@@ -2,13 +2,19 @@
 
 ## 0.1.9
 
-**The guard reads editing scripts in linear time.** Two patterns the guard uses to count the skip markers a `sed` or `perl` script adds (an `s` command, and an address like `/x/d`) could read a backslash two ways. On a script with many backslash escapes and no closing delimiter, they backtracked exponentially: about 3 seconds at 24 escapes, and four times longer with every 2 more, enough to run past the guard hook's timeout. In 0.1.8 a hook that runs past its timeout doesn't block the command.
+**The guard can't be slowed down by what it reads.** In a ticket session the guard counts the test-skip markers an editing script (`sed`, `perl`) or an edit adds, and refuses new ones. Two of its patterns could take far longer than the text they read:
+- the patterns for an `s` command and an address (`/x/d`) could read a backslash two ways, and backtracked exponentially on a script with many escapes and no closing delimiter: about 3 seconds at 24 escapes, four times longer with every 2 more;
+- the `pytest.mark.xfail(… run=False` marker was quadratic on text holding many `xfail(`.
 
-- A backslash in an `s` command or an address now always starts an escape, so `\/` never ends it, as in `sed`. Each character has one reading, and the same inputs return at once.
+Either could run past the guard hook's timeout, and in 0.1.8 a hook that runs past its timeout doesn't block the command.
+
+- **An editing script is read as `sed` reads it.** A backslash always starts an escape, so `\/` never ends an `s` command or an address, and each pattern runs in linear time. The slow inputs now return in milliseconds.
+- **An `s` command `sed` can't read** (one that never closes) ends the netting. From there on, every skip marker in the script counts as added, and no address is dropped.
+- **The xfail marker** looks at most 1,000 characters past `xfail(` for `run=False`.
 - **Decisions:**
   - ordinary scripts are read as before;
-  - a script that never closes (which `sed` itself refuses) now has the skip markers in it counted as added, where it could net them against each other before. So the guard only refuses more, never less.
-- CodeQL had flagged both patterns. Tests cover the slow inputs and the decisions around an escaped delimiter.
+  - on malformed ones the guard now follows `sed`'s reading. Fuzzed against 0.1.8 over 900,000 random scripts, that refused about 24,000 that 0.1.8 allowed, and allowed 46 that it refused. The ones examined were scripts where 0.1.8 found a marker only by misreading the script (joining `xfail(` to a `run=False` past a `)` the script writes, or splitting an escape), not text the file would hold.
+- CodeQL flagged the 0.1.8 patterns. Tests cover the slow inputs, an escaped delimiter, and scripts that never close.
 - **For projects updating to 0.1.9:** nothing to do beyond the update.
 
 ## 0.1.8
