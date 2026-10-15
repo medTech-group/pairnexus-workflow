@@ -61,10 +61,23 @@ def test_an_escaped_delimiter_is_read_as_sed_reads_it(profile, tmp_path):
     assert act(profile, tmp_path, "sed -i 's/it\\/a(/it.only(/' src/app.spec.ts") == "deny"
 
 
-def test_a_commands_flags_are_not_a_new_command(profile, tmp_path):
+def test_a_commands_flags_are_not_a_new_command_but_still_count(profile, tmp_path):
     # perl's `s` flag right after the closing delimiter, then a removal.
     assert act(profile, tmp_path, "perl -0777 -pi -e 's/\\n\\n+/\\n/s; s/xit\\(/it(/g' tests/a.spec.js") == "allow"
     assert act(profile, tmp_path, "sed -i 's/a/b/g;s/it.only(/it(/' src/app.spec.ts") == "allow"
+    # Letters after a command are still read: these add a marker.
+    assert act(profile, tmp_path, "perl -pi -e 's/x/y/SkipTest' tests/test_x.py") == "deny"
+
+
+def test_a_regex_class_is_not_an_s_command(profile, tmp_path):
+    # `\s*` is whitespace in a regex, so these clean up and remove a marker.
+    assert act(profile, tmp_path, "sed -i '/^\\s*$/d; s/it\\.only(/it(/' src/app.spec.ts") == "allow"
+    assert act(profile, tmp_path, "perl -pi -e 'next if /^\\s*#/; s/xit\\(/it(/g' tests/a.spec.js") == "allow"
+    assert act(profile, tmp_path, "sed -i 's/@pytest\\.mark\\.skip\\s*//' tests/test_x.py") == "allow"
+    # And a stray `\s` can't make an added marker look like a removal.
+    cmd = ("perl -pi -e 's{\\r$}{}; s{^(\\s*)def test_slow}{$1\\@pytest.mark.skip\\n$1def test_slow}; "
+           "s{\\s*$}{}; s{\\t*$}{}' tests/test_x.py")
+    assert act(profile, tmp_path, cmd) == "deny"
 
 
 def test_a_script_sed_cant_read_counts_its_markers_as_added(profile, tmp_path):
@@ -79,8 +92,8 @@ def test_a_script_sed_cant_read_counts_its_markers_as_added(profile, tmp_path):
         # Valid sed: inserts a line holding the marker.
         "sed -i '1i s/\\/pytest.mark.skip/' tests/test_x.py",
         "sed -i '1i s/\\/ s|pytest.skip(|x| /' tests/test_x.py",
-        # perl's bracketed form isn't read as an `s` command, so a removal
-        # after it counts as added: refused, the safe way.
+        # perl's bracketed form is read as an `s` command delimited by `{`: on
+        # its own it never closes, so a removal after it counts as added.
         "perl -pi -e 's{foo}{bar}g; s/xit\\(/it(/g' tests/a.spec.js",
     ):
         assert act(profile, tmp_path, cmd) == "deny", cmd

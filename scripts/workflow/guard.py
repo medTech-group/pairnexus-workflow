@@ -3263,7 +3263,7 @@ _WRITE_CALL = re.compile(
 # An `s` command (sed, perl, ed, vim): its delimiter, what it finds and what it puts.
 # A backslash always starts an escape (`\/` doesn't end it, as in sed), so each
 # character has one reading and a match never backtracks.
-_S_START = re.compile(r"(?<![A-Za-z_])s[^\w\s\\]")
+_S_START = re.compile(r"(?<![A-Za-z_\\])s[^\w\s\\]")  # `\s` is a regex class, never an `s` command
 _S_CMD = re.compile(r"s([^\w\s\\])((?:\\.|(?!\1)[^\\])*)\1((?:\\.|(?!\1)[^\\])*)\1", re.S)
 _S_FLAGS = re.compile(r"[A-Za-z]*")
 # An address (`/x/d`), read the same way. The closing `/` is optional so that a
@@ -3273,7 +3273,8 @@ _ADDRESS = re.compile(r"/(?:\\.|[^/\n\\])*(/)?")
 
 def _markers(text: str) -> int:
     """Skip markers in text, read with sed's and perl's escapes (`\\n`, `it\\.only\\(`)."""
-    plain = re.sub(r"\\(.)", lambda m: {"n": "\n", "t": "\t"}.get(m.group(1), m.group(1)), text or "", flags=re.S)
+    # `\s` is whitespace in a regex: read as a space, it can't join a marker to the next word.
+    plain = re.sub(r"\\(.)", lambda m: {"n": "\n", "t": "\t", "s": " "}.get(m.group(1), m.group(1)), text or "", flags=re.S)
     return len(_SKIP.findall(plain))
 
 
