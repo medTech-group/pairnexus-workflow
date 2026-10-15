@@ -112,7 +112,7 @@ SKIP_MARKERS = [
     r"\bunittest\.skip",
     r"\bskipTest\(",
     r"\bSkipTest\b",
-    r"pytest\.mark\.xfail\([^)]{0,1000}run\s*=\s*False",  # bounded, so many `xfail(` can't make it quadratic
+    r"pytest\.mark\.xfail\((?:(?!pytest\.mark\.xfail\()[^)])*run\s*=\s*False",  # stops at the next `xfail(`, so it stays linear
     r"\b(?:it|test|describe|context|suite)\.(?:skip|only|todo)\(",
     r"\bx(?:it|test|describe|context)\(",
     r"\bf(?:it|describe)\(",
@@ -3265,6 +3265,7 @@ _WRITE_CALL = re.compile(
 # character has one reading and a match never backtracks.
 _S_START = re.compile(r"(?<![A-Za-z_])s[^\w\s\\]")
 _S_CMD = re.compile(r"s([^\w\s\\])((?:\\.|(?!\1)[^\\])*)\1((?:\\.|(?!\1)[^\\])*)\1", re.S)
+_S_FLAGS = re.compile(r"[A-Za-z]*")
 # An address (`/x/d`), read the same way. The closing `/` is optional so that a
 # run that never closes is consumed once and kept, not tried again from inside.
 _ADDRESS = re.compile(r"/(?:\\.|[^/\n\\])*(/)?")
@@ -3283,14 +3284,15 @@ def _script_net(text: str) -> int:
     command that sed can't read (it never closes), nothing is netted or
     dropped: the rest of the script counts as added, as written."""
     text = text or ""
-    net, kept, pos = 0, [], 0
-    while (start := _S_START.search(text, pos)) is not None:
+    net, kept, pos, look = 0, [], 0, 0
+    while (start := _S_START.search(text, look)) is not None:
         m = _S_CMD.match(text, start.start())
         if m is None:
             return net + _markers(_drop_addresses("".join(kept) + text[pos:start.start()]) + text[start.start():])
         net += _markers(m.group(3)) - _markers(m.group(2))
         kept.append(text[pos:start.start()] + " ")
         pos = m.end()
+        look = _S_FLAGS.match(text, pos).end()  # its flags (`g`, perl's `s`) start no command, but stay counted
     return net + _markers(_drop_addresses("".join(kept) + text[pos:]))
 
 
