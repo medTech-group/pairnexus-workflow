@@ -93,10 +93,38 @@ MISSING_KIT_REASON = (
 RESTORE_COMMANDS = ("git checkout -- .claude/workflow", "git restore .claude/workflow")
 
 
+NO_PYTHON_REASON = (
+    "python3 could not run the workflow kit (it is missing or failing, or the kit failed: an invalid profile, "
+    "a broken checkout), so nothing can be checked; check python3 --version (3.11 or newer is needed) and "
+    "python3 .claude/workflow/bin/workflow.py profile check, then start a new session"
+)
+# Both go into single-quoted sh strings.
+assert "'" not in NO_PYTHON_REASON + MISSING_KIT_REASON
+
+# WORKFLOW_ROLE, trimmed and lower-cased as roles.env_role reads it.
+_ROLE = (
+    """R=$(printf '%s' "${WORKFLOW_ROLE:-}" | tr '[:upper:]' '[:lower:]' """
+    """| sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'); """
+)
+# With WORKFLOW_ROLE unset and the kit set up: the project directory's branch
+# matching the profile's run.ticket_branch (its first `ticket_branch = "…"`
+# line, as _old_python reads it) means a ticket session. Without Python the
+# event's cwd can't be read, so a worktree's own branch isn't seen.
+_BRANCH = (
+    'P="$CLAUDE_PROJECT_DIR/.claude/workflow/profile.toml"; '
+    'if [ -z "$R" ] && [ -f "$P" ]; then '
+    'B=$(git -C "$CLAUDE_PROJECT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null); '
+    """T=$(sed -n 's/^[[:space:]]*ticket_branch[[:space:]]*=[[:space:]]*["'"'"']\\([^"'"'"']*\\)["'"'"'].*/\\1/p' "$P" | head -n 1); """
+    'case "$B" in HEAD|"") ;; ${T:-claude/build-*}) R=ticket;; esac; fi; '
+)
+
+
 def hook_command(sub: str) -> str:
     """The kit's hook command, run by Claude Code with sh.
 
-    With the CLI there: `python3 -B` runs it (-B: no __pycache__ in the checkout).
+    With the CLI there and `python3` on the PATH: `python3 -B` runs it (-B: no
+    __pycache__ in the checkout); on a Python older than 3.11 the entry point
+    hands the hook to `_old_python`, which fails closed too (#22).
     With the CLI missing (a session deleted it, a bad checkout):
     - the guard fails closed when WORKFLOW_ROLE is set to anything but
       `attended` (ticket, conductor, or an unrecognised value, which the CLI
@@ -107,14 +135,34 @@ def hook_command(sub: str) -> str:
       tool is denied and the owner restores the kit by hand;
     - with WORKFLOW_ROLE unset or `attended`, and for every other hook, it
       exits 0 silently (python3 on a missing file exits 2, which on PreToolUse
-      would block every tool, unexplained)."""
-    run = f'F="$CLAUDE_PROJECT_DIR/{HOOK_TAG}"; if [ -f "$F" ]; then exec python3 -B "$F" hook {sub}; fi; '
-    if sub != "guard":
-        return run + "exit 0"
-    deny = json.dumps(
-        {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": MISSING_KIT_REASON}},
-        separators=(",", ":"),
+      would block every tool, unexplained).
+    With the CLI there but `python3` missing or failing (a stub, a shim with no
+    version, a broken checkout: a non-zero exit, which Claude Code reads as a
+    non-blocking error, so the tool would run), the guard denies every tool to
+    a ticket or conductor session (WORKFLOW_ROLE, or with it unset a branch
+    matching the profile's run.ticket_branch) and passes the error on in an
+    attended one; SessionStart says so to everyone (#22). The CLI itself exits
+    0 whenever it has decided, so a non-zero exit means it couldn't."""
+    if sub not in ("guard", "repair"):
+        return (
+            f'F="$CLAUDE_PROJECT_DIR/{HOOK_TAG}"; '
+            f'if [ -f "$F" ] && command -v python3 >/dev/null 2>&1; then exec python3 -B "$F" hook {sub}; fi; exit 0'
+        )
+    run = (
+        f'F="$CLAUDE_PROJECT_DIR/{HOOK_TAG}"; rc=0; '
+        f'if [ -f "$F" ] && command -v python3 >/dev/null 2>&1; then python3 -B "$F" hook {sub}; rc=$?; '
+        'if [ "$rc" -eq 0 ]; then exit 0; fi; fi; '
     )
+    if sub == "repair":
+        told = json.dumps({"systemMessage": f"Workflow kit: {NO_PYTHON_REASON}."}, separators=(",", ":"))
+        return run + f"if [ -f \"$F\" ]; then printf '%s\\n' '{told}'; fi; exit 0"
+
+    def deny(reason: str) -> str:
+        return json.dumps(
+            {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}},
+            separators=(",", ":"),
+        )
+
     restore = (
         "import json,sys;e=json.load(sys.stdin);i=e.get('tool_input') or {};"
         "c=i.get('command') if e.get('tool_name')=='Bash' and isinstance(i,dict) else None;"
@@ -122,10 +170,12 @@ def hook_command(sub: str) -> str:
     ).replace("'", '"')
     return (
         run
-        + """R=$(printf '%s' "${WORKFLOW_ROLE:-}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]'); """
-        + 'if [ -z "$R" ] || [ "$R" = attended ]; then exit 0; fi; '
+        + _ROLE
+        + 'if [ -f "$F" ]; then ' + _BRANCH + 'fi; '
+        + 'if [ -z "$R" ] || [ "$R" = attended ]; then exit "$rc"; fi; '
+        + f"if [ -f \"$F\" ]; then printf '%s\\n' '{deny('Refused: ' + NO_PYTHON_REASON + '.')}'; exit 0; fi; "
         + f"if command -v python3 >/dev/null 2>&1 && python3 -c '{restore}' 2>/dev/null; then exit 0; fi; "
-        + f"printf '%s\\n' '{deny}'"
+        + f"printf '%s\\n' '{deny(MISSING_KIT_REASON)}'"
     )
 
 

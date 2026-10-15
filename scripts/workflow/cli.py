@@ -624,7 +624,7 @@ HOOKS = {"guard": _hook_guard, "gate": _hook_gate, "context": _hook_context, "re
 def cmd_hook(a) -> int:
     try:
         event = json.loads(sys.stdin.read() or "{}")
-    except (json.JSONDecodeError, UnicodeDecodeError):
+    except (json.JSONDecodeError, UnicodeDecodeError, RecursionError):
         event = None
     if a.name != "guard" and not isinstance(event, dict):
         event = {}  # the guard decides what a malformed event means

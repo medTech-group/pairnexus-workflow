@@ -7,19 +7,27 @@ on:
 
 jobs:
   tests:
-    runs-on: ubuntu-latest
+    # Pinned: setup-python's Python 3.9 (past its end of life) may not be built for newer images.
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     strategy:
       matrix:
         python: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
+      # An old python3 for tests/test_kit_018.py: the hooks must fail closed on it (#22).
+      - uses: actions/setup-python@v5
+        id: old
+        with:
+          python-version: "3.9"
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
       - run: pip install pytest
       - run: git config --global user.email ci@example.com && git config --global user.name ci
       - run: python -m pytest tests -q
+        env:
+          OLD_PYTHON: ${{ steps.old.outputs.python-path }}
       - name: Versions agree
         run: |
           v=$(cat VERSION)
