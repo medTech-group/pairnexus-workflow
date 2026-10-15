@@ -3261,8 +3261,10 @@ _WRITE_CALL = re.compile(
 
 
 # An `s` command (sed, perl, ed, vim): its delimiter, what it finds and what it puts.
-_S_CMD = re.compile(r"(?<![A-Za-z_])s([^\w\s\\])((?:\\.|(?!\1).)*)\1((?:\\.|(?!\1).)*)\1", re.S)
-_ADDRESS = re.compile(r"/(?:\\.|[^/\n])*/")
+# A backslash always starts an escape (`\/` doesn't end it, as in sed), so each
+# character has one reading and the match takes linear time.
+_S_CMD = re.compile(r"(?<![A-Za-z_])s([^\w\s\\])((?:\\.|(?!\1)[^\\])*)\1((?:\\.|(?!\1)[^\\])*)\1", re.S)
+_ADDRESS = re.compile(r"/(?:\\.|[^/\n\\])*/")
 
 
 def _markers(text: str) -> int:

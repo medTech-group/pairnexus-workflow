@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.9
+
+**The guard reads editing scripts in linear time.** Two patterns the guard uses to count the skip markers a `sed` or `perl` script adds (an `s` command, and an address like `/x/d`) could read a backslash two ways. On a script with many backslash escapes and no closing delimiter, they backtracked exponentially: about 3 seconds at 24 escapes, and four times longer with every 2 more, enough to run past the guard hook's timeout. In 0.1.8 a hook that runs past its timeout doesn't block the command.
+
+- A backslash in an `s` command or an address now always starts an escape, so `\/` never ends it, as in `sed`. Each character has one reading, and the same inputs return at once.
+- **Decisions:**
+  - ordinary scripts are read as before;
+  - a script that never closes (which `sed` itself refuses) now has the skip markers in it counted as added, where it could net them against each other before. So the guard only refuses more, never less.
+- CodeQL had flagged both patterns. Tests cover the slow inputs and the decisions around an escaped delimiter.
+- **For projects updating to 0.1.9:** nothing to do beyond the update.
+
 ## 0.1.8
 
 **The hooks fail closed without Python 3.11** (#22). The kit needs Python 3.11 or later as `python3`. With an older one, the entry point exited 1, which Claude Code treats as a hook error and then runs the tool anyway, so every hook failed open, the guard included. With no `python3` at all, the hook command exited 127, which fails open the same way. Cloud sessions have Python 3.11+, so unattended runs weren't affected; a local session on macOS's own `python3` (3.9) was.
