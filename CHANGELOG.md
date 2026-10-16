@@ -10,6 +10,25 @@
 - Docs: `docs/flow.md` §4.1 and §4.2 say the command applies them. Tests: `tests/test_merge_check_evidence.py`, with a fake `gh` on the PATH in `tests/fake_gh.py` for other commands' tests to reuse (doctor's, #59).
 - **For projects updating:** nothing to do.
 
+**"Make this project yours": `workflow adopt` rewrites a copy of the starter's names** (#106, part of one starter template, #40).
+
+- **`workflow adopt --owner LOGIN --repo OWNER/NAME --name NAME [--project DIR]`,** run in a checkout, rewrites only these: the profile's `project.owner`, `project.name` and `project.repo` (an `owner` line the profile left out goes in under `repo`); in CODEOWNERS (`.github/`, the root or `docs/`, the first GitHub would read) the profile's old owner becomes the new one on every line, a whole login in any case, never `@old/team` or a longer login; `wrangler.toml`'s top-level `name` and `package.json`'s top-level `name`, both the name in lower case with dashes (accents dropped and letters like `ß` spelled out, other letters outside ASCII left out, at most 63 characters, a Worker's limit); and the README's title, its first `# ` line outside a code fence. It prints each file it changed and what; a second run changes nothing and says "Already yours: nothing to change."
+- **Line by line, never re-serialized:** comments, order, formatting and line endings stay as they are, and each rewritten file is read back (TOML, JSON, the profile's own rules) before anything is written. A missing file is skipped with a note, never created.
+- **Refused in words, with nothing written** (exit 1): a `--repo` that isn't `owner/name` (or ends in `.git`), an `--owner` that isn't a login (a leading `@` is dropped), a name that makes an empty Worker name or holds control characters or line breaks, an empty `--project`, no profile, a file that is, or is under, a symbolic link, or a line it can't rewrite in place (a multi-line string, say). A write that fails is reported in words; the profile is written last, so running it again finishes the job.
+- **The starter's home in one place:** `STARTER_REPO = "medTech-group/pairnexus-starter-web"` beside `KIT_REPO` in `scripts/workflow/updates.py`, and `workflow version --starter` prints it with no network call, so a fork can point at its own starter.
+- Docs: the README's command list and "Forking the kit"; `docs/install.md`'s new "A copy of the starter". Tests: `tests/test_adopt.py`, on a temporary checkout shaped like the starter.
+- **For projects updating:** nothing to do.
+
+**One support promise, and an issue template for a Claude Code update that breaks the guard or a hook** (#97, part of open-source readiness, #37).
+
+- **The promise,** in the same words in the README's new "Support" section, its status note, `SECURITY.md` and `CONTRIBUTING.md`:
+  - best effort, with no guaranteed response time for issues or pull requests;
+  - security reports acknowledged within 5 working days;
+  - a fix release when a Claude Code update breaks the guard or the hooks.
+- **A new issue template, "The guard or a hook stopped working after a Claude Code update"** (`.github/ISSUE_TEMPLATE/claude-code-break.md`). It asks for `claude --version`, `workflow version`, vendored or plugin, what was run and what happened instead, and applies the `claude-code-break` label once the owner creates it. A break that lets a session past the guard is reported privately instead, with **Report a vulnerability** (`SECURITY.md`).
+- Docs: the README's "Support", `SECURITY.md` and `CONTRIBUTING.md`. Tests check that the promise reads the same in each file, and what the template asks for (`tests/test_support_promise.py`).
+- **For projects updating:** nothing to do. None of these files ship.
+
 **`workflow merge-check`: whether a pull request may merge, as one command** (#80, part of judging a PR without reading code, #39).
 
 - **It reads JSON files and nothing else:** `--pr`, `--files`, `--commits`, `--checks` (the head commit's check runs and statuses, one after another in one file), `--rulesets`, `--threads`, `--reviews`, `--comments`, `--permissions`, `--compare`, an optional `--preview` (`state` built/building/failed/none, `url`, `commit`), and `--asker`. It answers `ready`, `not_yet` or `owner_review`, with every reason that applies. Each reason has an id, wording for *new to building* and for *developer* (unknown counts as new), a fix and an optional action (`review`, `update_branch`, `resolve_conflict`, `fix_checks`). Notes never change the answer. Output is text, or `--json` with each check's name and state. It changes nothing, posts nothing, and always exits 0. Anything it can't read, or wasn't given, is a "couldn't read …" reason, never `ready`.

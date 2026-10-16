@@ -6,7 +6,7 @@
     workflow protection --protect --repo F [--base BRANCH] [--check NAME ...] [--json]
     workflow protection --require-checks F --check NAME [--check NAME ...] [--json]
     workflow protection --checks-ran F [--statuses F] --rulesets F --repo F [--base BRANCH] [--json]
-    workflow version [--fresh] [--json] | --repo
+    workflow version [--fresh] [--json] | --repo | --starter
     workflow ready [--issues F --prs F | --fetch] [--exclude 1,2] [--only 1,2] [--override 3] [--running-area A ...] [--slots N] [--json]
     workflow charter defaults [--unprotected] | validate F [--approved] [--unprotected] | markdown F [--tickets 13:area,143:-] | diff OLD NEW | reuse OLD | pin-plan F | questions [--unprotected]
     workflow charter splice --body F --charter F [--out F] [--tickets 13:area,143:-]
@@ -17,6 +17,7 @@
     workflow merge-check --fetch N [any of the files above] [--charter F --check-logs DIR] [--asker LOGIN] [--json]
     workflow briefing verify --file F
     workflow pr-template [--existing FILE]      (prints the file to write; exits 3 for a folder of templates)
+    workflow adopt --owner LOGIN --repo OWNER/NAME --name NAME [--project DIR]      (a copy of the starter made yours)
     workflow evidence [--suite NAME ...] [--base-count N | --base-ref BRANCH] [--fresh] [--allow-dirty]
     workflow repair
     workflow vendor install|update [--kit DIR] [--mattpocock DIR | --no-mattpocock] [--project DIR] [--adopt] [--strict-pin]
@@ -40,6 +41,7 @@ from pathlib import Path
 
 _STARTED = time.monotonic()  # the guard's time budget counts from here, before the kit's modules load
 
+from . import adopt as adopt_mod
 from . import charter as charter_mod
 from . import context as context_mod
 from . import evidence as evidence_mod
@@ -346,9 +348,13 @@ def _kit_line(kit: dict) -> str:
 
 def cmd_version(a) -> int:
     """The kit's version here, and whether a newer release is out; or, with
-    --repo, only the kit's home on GitHub, asking nothing over the network."""
+    --repo, only the kit's home on GitHub (with --starter, the starter's), asking
+    nothing over the network."""
     if a.repo:
         print(updates_mod.KIT_REPO)
+        return 0
+    if a.starter:
+        print(updates_mod.STARTER_REPO)
         return 0
     prof = load(required=False)
     root = prof.root if prof else project_root()
@@ -634,6 +640,22 @@ def cmd_pr_template(a) -> int:
     sys.stdout.flush()
     sys.stdout.buffer.write(r.text)
     sys.stdout.buffer.flush()
+    return 0
+
+
+def cmd_adopt(a) -> int:
+    """`adopt`: rewrite a copy of the starter's names to the person's own, and
+    say what changed. Refused in words (exit 1) with nothing written."""
+    if a.project == "":
+        print("workflow adopt: --project is empty: give the checkout, or leave the flag out", file=sys.stderr)
+        return 1
+    root = Path(a.project).resolve() if a.project is not None else project_root()
+    try:
+        r = adopt_mod.adopt(root, a.owner, a.repo, a.name)
+    except adopt_mod.AdoptError as e:
+        print(f"workflow adopt: {e}", file=sys.stderr)
+        return 1
+    print(r.text())
     return 0
 
 
@@ -1046,6 +1068,7 @@ def main(argv: list[str] | None = None) -> int:
     alone = s.add_mutually_exclusive_group()
     alone.add_argument("--json", action="store_true")
     alone.add_argument("--repo", action="store_true", help="print only the kit's home on GitHub (owner/repo); no network, so --fresh doesn't apply")
+    alone.add_argument("--starter", action="store_true", help="print only the starter template's home on GitHub (owner/repo); no network, so --fresh doesn't apply")
     s.set_defaults(fn=cmd_version)
 
     s = sub.add_parser("charter")
@@ -1118,6 +1141,13 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("pr-template", help="print the pull request template to write, with \"In plain words\" at the top; changes nothing")
     s.add_argument("--existing", metavar="FILE", help="the project's template: the headings go above its content (or its .github/PULL_REQUEST_TEMPLATE/ folder)")
     s.set_defaults(fn=cmd_pr_template)
+
+    s = sub.add_parser("adopt", help="make a copy of the starter yours: the profile's owner, name and repo, CODEOWNERS, the Worker's, package's and README's names")
+    s.add_argument("--owner", required=True, metavar="LOGIN", help="your GitHub login, without the @")
+    s.add_argument("--repo", required=True, metavar="OWNER/NAME", help="the copy's repository on GitHub")
+    s.add_argument("--name", required=True, help="the project's name; the Worker and the package get it in lower case with dashes")
+    s.add_argument("--project", metavar="DIR", help="the checkout (default: this one)")
+    s.set_defaults(fn=cmd_adopt)
 
     s = sub.add_parser(
         "review-record", allow_abbrev=False, help="the record a review round or a later Correctness pass posts on the pull request"
