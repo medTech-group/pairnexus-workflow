@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+**"Protect `main`" is automatic on your own computer, with `gh`** (#67, part of the automated GitHub set-up, #38).
+
+- **The `upgrade-setup` skill makes the ruleset and the merge settings itself** when the session is local, `gh` is signed in, and the repository reads you as its admin: after one confirmation, worded by experience, it sends `workflow protection --protect`'s ruleset `POST` and merge-settings `PATCH` with `gh api`, reads them back with `workflow protection`, and opens the pull request that leaves solo mode. Claude Code asks you to approve the ruleset command, and the skill says so up front.
+- **The checks that already ran** on the base branch's latest commit (`workflow protection --checks-ran`) are offered on the same screen, passing ones and those the profile lists ticked by default. Ticked names go in the ruleset and, in the same pull request, into `ci.required_checks` (never removing one), with the marker `<!-- workflow:required-checks -->` in its body.
+- **Everyone else gets the guided clicks:** cloud sessions always, `gh` missing or signed out (with how to sign in), and a ruleset already on the base branch, which is read back first and never edited. Not an admin: the ready message for the owner, before anything is tried.
+- **Refusals and failures:** a refusal naming a permission mode where nobody is asked is answered with "switch the permission mode and try again", never a retry. A failed step says what was done and what's left, reads back, and gives the clicks for the rest; the ruleset's request is never sent twice.
+- The guard is unchanged: its existing decisions on the exact commands the skill runs are tested in `tests/test_protect_main_gh.py` (the `POST` asked when someone is asked, refused in `bypassPermissions`, `dontAsk` and ticket and conductor sessions; the `PATCH` and the reads allowed, in solo mode and out). Docs: the README's "Protect `main`", `docs/enforcement.md` §1.
+- **For projects updating:** nothing to do.
+
 **When the guard can't decide: pushes and merges wait for the person** (#53, part of guard robustness, #33).
 
 - **The can't-decide fallback.** In an attended session, when the guard raises or runs out of time, the profile is invalid, the hook's event can't be read, or `python3` is older than 3.11, a push or a merge is asked, and refused in solo mode (`ruleset = false`) or in a permission mode where nobody is asked; everything else is left alone. Before, the CLI's errors exited 1 and let every tool through.

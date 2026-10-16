@@ -89,9 +89,14 @@ It changes `.claude/` and `.github/`, so merging it is always yours, never an ag
 
 ### Protect `main`
 
-Ask Claude to **protect `main`**, or pick **Protect `main`** where the kit offers it. The `upgrade-setup` skill guides you click by click to the ruleset and the merge settings, reads them back to confirm, and opens the pull request that leaves solo mode (`ruleset = true`). Solo mode is how a project starts with no ruleset: the kit's guard is then all that keeps changes off `main`, so it refuses them. Until you merge that pull request, the guard stays in solo mode. If you're not the repository's admin, it gives you a ready message for the owner instead.
+Ask Claude to protect `main`, or pick **Protect `main`** where the kit offers it. The `upgrade-setup` skill does it for you:
 
-[Step 3](#step-3-protect-the-base-branch-with-a-ruleset) and [Step 4](#step-4-check-the-merge-settings) below are the same clicks by hand: they are its fallback.
+- **On your own computer, with `gh` signed in as the repository's admin:** after one confirmation, the kit makes the ruleset and the merge settings itself with `gh`. Claude Code asks you to approve the command that makes the ruleset; that is expected. You can tick the checks that already ran on `main`, to require them too.
+- **In a cloud session, or without `gh`:** guided clicks, one screen at a time.
+
+Either way it reads them back to confirm, and opens the pull request that leaves solo mode (`ruleset = true`, plus any checks you ticked). Solo mode is how a project starts with no ruleset: the kit's guard is then all that keeps changes off `main`, so it refuses them. Until you merge that pull request, the guard stays in solo mode. If you're not the repository's admin, it gives you a ready message for the owner instead.
+
+[Step 3](#step-3-protect-the-base-branch-with-a-ruleset) and [Step 4](#step-4-check-the-merge-settings) below are the same clicks by hand: they are its fallback, and what it guides you through when something can't be done for you.
 
 ### Set up unattended runs
 
