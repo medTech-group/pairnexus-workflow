@@ -35,7 +35,7 @@ END {
     }
     if (what == "") exit 0
 
-    head = "The workflow'"'"'s guard isn'"'"'t working, so it couldn'"'"'t check this " what ": python3 couldn'"'"'t run the workflow kit (it is missing, or it failed). To fix it: check that `python3 --version` runs and says 3.11 or newer, then start a new session."
+    head = "The workflow'"'"'s guard isn'"'"'t working, so it couldn'"'"'t check this " what ": python3 couldn'"'"'t run the workflow kit (it is missing or failing). To fix it: check that `python3 --version` runs and says 3.11 or newer, then start a new session."
     if (tool == "Bash") by_hand = "Or run it yourself in your own terminal (the command isn'"'"'t repeated here, since nothing could check it)."
     else by_hand = "Or do it yourself on GitHub."
     mode = permission_mode()

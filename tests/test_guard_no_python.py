@@ -184,7 +184,7 @@ def test_the_restore_commands_still_pass_with_the_kit_missing(tmp_path):
 @pytest.mark.parametrize("kind", KINDS)
 def test_the_plugin_never_refuses_every_tool(tmp_path, kind):
     # Without a python3 that runs, whatever WORKFLOW_ROLE says. An old python3
-    # still runs the kit's own old-Python hand-off, which reads the role as the
+    # still runs the old-Python fallback, which reads the role as the
     # CLI does.
     s = Setup(tmp_path, "plugin", kind)
     for role in ("attended", "") if kind == "old" else ("attended", "ticket", "conductor", ""):
@@ -271,7 +271,7 @@ def test_the_shell_reads_the_solo_line_as_fallback_py_does(tmp_path):
     profile.parent.mkdir(parents=True)
     texts = [
         "ruleset = false\n",
-        "﻿ruleset = false\n",
+        "\ufeffruleset = false\n",
         "[repo]\n  ruleset=false # solo\n",
         "ruleset = true\nruleset = false\n",
         'ruleset = "false"\nruleset = false\n',

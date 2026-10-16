@@ -59,7 +59,7 @@ Installing it installs its dependency, `mattpocock-skills`, from the same market
 
 The plugin's commands carry its name: `/pairnexus-workflow:start`, `/pairnexus-workflow:next`, `/mattpocock-skills:to-spec`. The guided start comes up by itself at the first message only in a project with a profile; before set-up, type `/pairnexus-workflow:start` or `/pairnexus-workflow:setup-workflow`. The plugin follows the kit's `main`, not only its releases.
 
-Plugin mode fails the same way as vendored: its hooks run the same commands as a vendored project's, from the plugin's directory. With an older `python3`, or none, or one that fails, pushes and merges are still asked (refused in solo mode or in a permission mode where nobody is asked), not only a notice at the session's start, which says what is wrong. The plugin is for attended work, so it never refuses every tool.
+Plugin mode fails the same way as vendored: its hooks run the same commands as a vendored project's, from the plugin's directory. With an older `python3`, or none, or one that fails, pushes and merges are still asked (refused in solo mode or in a permission mode where nobody is asked), not only told at the session's start. The session's start also says what is wrong. The plugin is for attended work, so it never refuses every tool.
 
 ## Every project, whichever mode
 

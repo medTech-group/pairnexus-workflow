@@ -122,8 +122,8 @@ _BRANCH = (
 PLUGIN_CLI = "${CLAUDE_PLUGIN_ROOT}/scripts/workflow.py"
 # The plugin has no profile check to point to: it says only what python3 needs.
 PLUGIN_NO_PYTHON_REASON = (
-    "python3 could not run the workflow kit (it is missing or failing), so nothing can be checked and pushes "
-    "and merges ask first; check python3 --version (3.11 or newer is needed), then start a new session"
+    "python3 could not run the workflow kit (it is missing or failing), so nothing can be checked and a push "
+    "or a merge is asked first; check python3 --version (3.11 or newer is needed), then start a new session"
 )
 assert "'" not in PLUGIN_NO_PYTHON_REASON
 
