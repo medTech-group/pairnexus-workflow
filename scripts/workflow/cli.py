@@ -757,10 +757,20 @@ def _hook_context(event: dict) -> int:
     # The guided start, at the first prompt only (marked whatever it was):
     # attended sessions only, since ticket and conductor sessions start from a
     # briefing or a charter, never from a menu.
+    whole_flow = bool(ctx and ctx.startswith(context_mod.FLOW_HEAD))
+    attended = lambda: roles.role(root, prof.ticket_branch) == "attended"  # noqa: E731 - only read at a first prompt
     if prof is not None and prof.guided_start:
         nudge = context_mod.start_for(prompt, session)
-        if nudge and not ctx and roles.role(root, prof.ticket_branch) == "attended":
+        if nudge and not ctx and attended():
             ctx = nudge
+    # The glossary, beside whatever came above, at the first prompt of an
+    # attended session for someone new to building (unknown counts as new).
+    # Its own marker, set at the first prompt whatever it brings.
+    if prof is not None and context_mod.first_glossary_prompt(session):
+        if attended() and resolve_experience(root, prof.experience).wording_level == "new":
+            words = context_mod.glossary_for(context_mod.glossary_file(root, KIT_ROOT), ctx or "", whole_flow)
+            if words:
+                ctx = f"{ctx}\n\n{words}" if ctx else words
     if ctx:
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": ctx}}))
     return 0

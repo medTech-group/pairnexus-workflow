@@ -7,6 +7,9 @@ a session, a one-line reminder after that.
 The first prompt of an attended session that isn't about the flow already, and
 isn't a command, brings the guided start instead (`skills/start`): Claude asks
 what we're working on, with choices. Anything else passes untouched.
+
+Beside either, the first prompt of an attended session for someone new to
+building brings the kit's glossary and the rule to explain its words once.
 """
 
 from __future__ import annotations
@@ -90,6 +93,9 @@ def flow_files(project: Path, kit_root: Path, addendum: str = "") -> list[Path]:
     return out
 
 
+FLOW_HEAD = "This request is part of the project's workflow. Follow the flow below step by step: skip nothing, and end with its checklist."
+
+
 def context_for(prompt: str, session_id: str, files: list[Path]) -> str | None:
     if not files or not wants_flow(prompt):
         return None
@@ -102,4 +108,56 @@ def context_for(prompt: str, session_id: str, files: list[Path]) -> str | None:
     except OSError:
         pass
     body = "\n\n".join(f.read_text(encoding="utf-8") for f in files)
-    return f"This request is part of the project's workflow. Follow the flow below step by step: skip nothing, and end with its checklist.\n\n{body}"
+    return f"{FLOW_HEAD}\n\n{body}"
+
+
+# The glossary, for someone new to building (#74): at the first prompt of an
+# attended session, beside whatever else the prompt brings.
+
+LIMIT = 10_000  # Claude Code saves a hook's longer string to a file, showing 2,000 characters of it
+GLOSSARY_RULE = (
+    "Treat the person in this session as new to building: the words in the kit's glossary ({where}) are new to them: "
+    "explain each one in the glossary's wording, in one or two sentences, the first time you use it in this session, "
+    "and never again in this session. Never explain them in what you write on GitHub (pull request descriptions, "
+    "comments, reports)."
+)
+
+
+def glossary_file(project: Path, kit_root: Path) -> Path | None:
+    """The vendored glossary, else the kit's own (plugin mode), as the flow is found."""
+    for cand in (project / ".claude/workflow/docs/glossary.md", kit_root / "docs/glossary.md"):
+        if cand.is_file():
+            return cand
+    return None
+
+
+def first_glossary_prompt(session_id: str) -> bool:
+    """Whether the glossary hasn't been considered yet this session, marking it
+    either way: its own marker, so the guided start's doesn't decide it."""
+    marker = _marker("glossary", session_id)
+    if marker.exists():
+        return False
+    try:
+        marker.touch()
+    except OSError:
+        pass
+    return True
+
+
+def glossary_for(path: Path | None, beside: str = "", whole_flow: bool = False) -> str | None:
+    """The glossary and its rule, to add beside `beside`. With the whole flow,
+    or when the text wouldn't fit under Claude Code's limit, only the rule and
+    the glossary's path with "read it now"."""
+    if path is None:
+        return None
+    rule = GLOSSARY_RULE.format(where=path)
+    by_path = f"{rule} It isn't included here: read it now."
+    if whole_flow:
+        return by_path
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        return by_path
+    whole = f"{rule}\n\n{text}"
+    used = len(beside) + 2 if beside else 0
+    return whole if used + len(whole) < LIMIT else by_path

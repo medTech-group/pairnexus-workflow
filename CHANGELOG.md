@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+**The context hook explains the glossary's words to someone new to building** (#74, part of the quickstart and the glossary, #35).
+
+- **At the first prompt of an attended session** whose experience is `new` or unknown (from `WORKFLOW_EXPERIENCE`, `.workflow/experience` or `project.experience`, through `resolve_experience`), `workflow hook context` adds the glossary and the rule: explain each of its words in the glossary's wording, in one or two sentences, the first time it's used in the session, never again, and never in what is written on GitHub.
+- **Beside, never instead:** after the guided start's nudge, or after the flow when the first prompt is a flow request. Its own `glossary` marker keeps it to once a session, whether or not the guided start is on or the first prompt was a command.
+- **Under Claude Code's 10,000-character limit:** the glossary goes in whole on its own or beside the nudge. Beside the whole flow (or for a glossary too long to fit) it adds only the rule and the glossary's path, to read at once.
+- **Where:** `.claude/workflow/docs/glossary.md` when vendored, the plugin's `docs/glossary.md` otherwise. A vendored copy without the glossary adds nothing until its next kit update.
+- **Never** for a developer, in a ticket or conductor session, after the first prompt, or in a project with no profile. The level changes only what is said, never what is checked, refused or merged.
+- Docs: `docs/profile.md` ("Experience"). Tests: `tests/test_glossary_context.py`; the guided start's hook tests now run as a developer, and `run_hook` clears `WORKFLOW_EXPERIENCE` as it does `WORKFLOW_ROLE`.
+- **For projects updating:** nothing to do.
+
 **The glossary: `docs/glossary.md`** (#73, part of the quickstart and the glossary, #35).
 
 - **One page of plain words** for someone new to building, read by people and by Claude alike, in two parts: "Building words" (repository, branch, `main`, commit, pull request, checks, merge, revert, preview link, cloud session) and "The kit's words" (guided start, experience level, ticket, spec, map, review panel, solo mode, "Protect `main`", unattended run, conductor, profile, "Check the set-up"). Each entry is one or two sentences, then "Why it matters to you:", and links any other glossary word it uses.
