@@ -4361,6 +4361,7 @@ class _CurlCall:
     data: list[str | None]  # the data texts, None for one the kit can't read
     unsure: bool  # a config file, `--variable` or `--expand-*`: the URL may be anywhere
     globs: bool  # curl expands `{…}` and `[…]` in the URLs
+    hinted: bool = False  # a config file that names GitHub, or can't be read
 
 
 def _curl_long(name: str) -> str:
@@ -4379,11 +4380,11 @@ def _curl_call(toks: list[str], cwd: str | None) -> _CurlCall:
     method = None
     urls: list[str] = []
     data: list[str | None] = []
-    upload = get = head = unsure = nxt_seen = False
+    upload = get = head = unsure = nxt_seen = hinted = False
     globoff = False
 
     def _option(flag: str, value: str) -> None:
-        nonlocal method, upload, unsure
+        nonlocal method, upload, unsure, hinted
         if flag in ("X", "request"):
             method = value
         elif flag in ("d", "F", "json", "form", "form-string") or flag.startswith("data"):
@@ -4403,6 +4404,8 @@ def _curl_call(toks: list[str], cwd: str | None) -> _CurlCall:
                 text = None if _STDIN_FILE.fullmatch(value) else _read_text(value, cwd)
                 if text is not None and not _GITHUB_HINT.search(text) and not re.search(r"(?im)^\s*-?-?(?:url|request|x)\b", text):
                     unsure = False  # a config the kit has read, with nothing for GitHub in it
+                elif text is None or _GITHUB_HINT.search(text):
+                    hinted = True
         elif flag == "url":
             urls.append(value)
 
@@ -4462,7 +4465,7 @@ def _curl_call(toks: list[str], cwd: str | None) -> _CurlCall:
     body = _Body([])
     for d in data:
         body.add_text(d)
-    return _CurlCall(verb, urls, body, data, unsure, not globoff and any(re.search(r"[{\[]", u) for u in urls))
+    return _CurlCall(verb, urls, body, data, unsure, not globoff and any(re.search(r"[{\[]", u) for u in urls), hinted)
 
 
 def _solo_curl(toks: list[str], seg: Seg, base: str, repo: str, raw: str, read) -> SoloRefusal | None:
@@ -4470,7 +4473,7 @@ def _solo_curl(toks: list[str], seg: Seg, base: str, repo: str, raw: str, read) 
     if c.method in ("GET", "HEAD"):
         return None
     hint = _GITHUB_HINT.search(" ".join(c.urls))
-    if (c.unsure or seg.fed) and (hint or _GITHUB_HINT.search(raw)):
+    if (c.unsure or seg.fed) and (hint or c.hinted or _GITHUB_HINT.search(raw)):
         return SoloRefusal("a curl call whose URL or method comes from a config file, a curl variable or xargs, and may be GitHub's", "unknown", _SOLO_API_HINT)
     if c.globs and hint:
         return SoloRefusal("a curl URL with `{…}` or `[…]`, which curl expands into other URLs", "unknown", _SOLO_API_HINT)

@@ -306,6 +306,128 @@ def test_mcp_on_another_repository_is_not_refused(solo, tmp_path):
     assert act(solo, mcp("update_ref", {"owner": "ACME", "repo": "demo", "ref": "heads/main", "sha": "abc"})).action == "deny"
 
 
+# ---------- review round 1: what gh and curl really send ----------
+
+SENT = [
+    # every URL curl is given
+    f"curl -X DELETE https://api.github.com/zen {API}/rulesets/42",
+    f"curl https://api.github.com/zen --next -X DELETE {API}/rulesets/42",
+    f"curl -X DELETE --url https://api.github.com/zen --url {API}/rulesets/42",
+    # repeated fields: any value counts
+    "gh api -X PUT repos/acme/demo/contents/a.md -f message=m -f content=eA== -f branch=feature -f branch=main",
+    f"curl -X PUT {API}/contents/a.md -d '{{\"message\":\"m\",\"content\":\"eA==\",\"branch\":\"feature\",\"branch\":\"main\"}}'",
+    # dot segments, globs, encodings
+    f"curl -X DELETE {API}/x/../rulesets/42",
+    f'curl -X DELETE "{API}/{{rulesets/42,zen}}"',
+    f'curl -X PUT "{API}/branches/main/protectio[n-n]" -d @p.json',
+    f"curl -X DELETE {API}/%72ulesets/42",
+    "gh api -X DELETE repos/acme/demo/x/../rulesets/42",
+    # abbreviations, curl variables, config files
+    f"curl --req DELETE {API}/rulesets/42",
+    f"curl --reque=DELETE {API}/rulesets/42",
+    f"curl --variable U={API}/rulesets/42 -X DELETE --expand-url '{{{{U}}}}'",
+    "curl -K missing.cfg https://api.github.com/zen",
+    # paths the shell fills in, and xargs
+    'P=repos/acme/demo/rulesets/42; gh api -X DELETE "$P"',
+    'gh api -X DELETE "repos/acme/demo/branches/main/$W"',
+    f'curl -X DELETE "$U/rulesets/42"',
+    "echo repos/acme/demo/rulesets/42 | xargs gh api -X DELETE",
+    f"echo {API}/rulesets/42 | xargs curl -X DELETE",
+    # bodies the kit can't read
+    "printf x > b.json; gh api -X PATCH repos/acme/demo --input b.json",
+    'gh api -X PATCH repos/acme/demo -f "default_$X=trunk"',
+    # gh aliases
+    "gh alias set m 'pr merge --admin' && gh m 12",
+    "gh alias set d 'api -X DELETE repos/acme/demo/rulesets/42'",
+    # merge-upstream, GHE GraphQL
+    "gh api repos/acme/demo/merge-upstream -f branch=main",
+    f"curl -X POST {API}/merge-upstream -d '{{\"branch\":\"main\"}}'",
+    "gh api https://ghe.example.com/api/graphql -f query='mutation { deleteRepositoryRuleset(input: {id: X}) { clientMutationId } }'",
+]
+
+
+@pytest.mark.parametrize("cmd", SENT)
+def test_what_is_really_sent_is_read(cmd, solo):
+    assert act(solo, bash(cmd, solo.root)).action == "deny", cmd
+
+
+def test_bodies_and_files_as_gh_and_curl_send_them(solo):
+    root = solo.root
+    (root / "c.json").write_text(json.dumps({"message": "m", "content": "eA==", "branch": "main"}))
+    (root / "b.txt").write_text("main\n")
+    (root / "q.json").write_text('{"query":"mutation{delete\\u0052epositoryRuleset(input:{id:\\"X\\"}){clientMutationId}}"}')
+    (root / "d.json").write_text('{"default\\u005fbranch":"trunk"}')
+    (root / "gh.cfg").write_text(f"url = {API}/rulesets/42\nrequest = DELETE\n")
+    (root / "plain.cfg").write_text("silent\n")
+    for cmd in (
+        "gh api -X PUT repos/acme/demo/contents/a.md -f branch=feature --input c.json",
+        "gh api repos/acme/demo/merges -f head=feature -F base=@b.txt",
+        "gh api -X PUT repos/acme/demo/contents/a.md -f message=m -f content=eA== -F branch=@b.txt",
+        """echo '{"branch":"feature"}'; curl -X PUT """ + API + "/contents/a.md -d @c.json",
+        "gh api graphql --input q.json",
+        "curl -X POST https://api.github.com/graphql -d @q.json",
+        f"curl -X PATCH {API} -d @d.json",
+        "curl -K gh.cfg https://api.github.com/zen",
+        "curl -K gh.cfg",
+    ):
+        assert act(solo, bash(cmd, root)).action == "deny", cmd
+    assert act(solo, bash("curl -K plain.cfg https://example.com/x -d a=b", root)).action == "allow"
+
+
+def test_gh_alias_from_its_config(solo, monkeypatch, tmp_path):
+    d = tmp_path / "ghcfg"
+    d.mkdir()
+    (d / "config.yml").write_text("aliases:\n    m: pr merge --admin\n    s: '!gh pr merge --admin'\n    v: pr view\ngit_protocol: https\n")
+    monkeypatch.setenv("GH_CONFIG_DIR", str(d))
+    assert act(solo, "gh m 12").action == "deny"
+    assert act(solo, "gh s 12").action == "deny"
+    assert act(solo, "gh v 12").action == "allow"
+    assert act(solo, "gh some-extension run").action == "allow"
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "cat docs/notes.md; gh api graphql -f query='{ viewer { login } }'",
+        "gh api graphql -f query='query { repository(owner: \"acme\", name: \"demo\") { name } }' # mergeBranch",
+        "gh alias set v 'pr view'",
+        f"curl -X POST https://example.com/hook -d @r.json",
+        'curl -X POST "$WEBHOOK" -d @r.json',
+        "gh api -X PUT repos/acme/demo/branches/release/main/protection --input p.json",
+    ],
+)
+def test_round_1_not_refused(cmd, solo):
+    (solo.root / "docs").mkdir(exist_ok=True)
+    (solo.root / "docs/notes.md").write_text("updateRef and deleteRef are refused\n")
+    assert act(solo, bash(cmd, solo.root)).action != "deny", cmd
+
+
+def test_a_base_branch_with_a_slash(tmp_path):
+    (tmp_path / ".claude/workflow").mkdir(parents=True)
+    (tmp_path / ".claude/workflow/profile.toml").write_text(_toml(False).replace('"main"', '"release/main"'))
+    prof = load(tmp_path)
+    for cmd in (
+        "gh api -X PUT repos/acme/demo/branches/release/main/protection --input p.json",
+        "gh api -X DELETE repos/acme/demo/git/refs/heads/release/main",
+        "gh api -X POST repos/acme/demo/branches/release%2Fmain/rename -f new_name=x",
+    ):
+        assert act(prof, cmd).action == "deny", cmd
+    assert act(prof, "gh api -X PUT repos/acme/demo/branches/main/protection --input p.json").action == "ask"
+
+
+@pytest.mark.parametrize(
+    "name,inp",
+    [
+        ("delete_branch", {"owner": "acme", "repo": "demo", "name": "main"}),
+        ("delete_branch", {"owner": "acme", "repo": "demo"}),
+        ("update_ref", {"owner": "acme", "repo": "demo", "sha": "abc"}),
+        ("push_files", {"owner": "acme", "repo": "demo", "branch": ["main"], "files": [], "message": "m"}),
+    ],
+)
+def test_mcp_without_a_readable_ref(name, inp, solo):
+    assert act(solo, mcp(name, inp)).action == "deny", (name, inp)
+
+
 def test_an_earlier_ask_never_hides_a_later_refusal(solo):
     cmd = "gh api -X PUT repos/acme/demo/branches/feature/protection --input p.json; gh api -X DELETE repos/acme/demo/rulesets/42"
     assert act(solo, cmd).action == "deny"
