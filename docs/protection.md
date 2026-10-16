@@ -89,7 +89,7 @@ Checks not required yet: no active ruleset on main requires status checks.
 
 ## Building the requests
 
-Three more forms of the same command print requests for a session to send, or the checks it can offer. They send nothing: the session sends each request itself (`gh api -X <method> <path> --input <body file>`, or the GitHub MCP tools), where the guard asks or refuses as it does for any ruleset change (#17, #33). Each takes `--json`, which gives the same for skills and `workflow doctor`; the text form is for a developer to read. Wrong input exits 2 with a plain message and prints nothing, as the read-back does: a request is never built from half the data.
+Three more forms of the same command print requests for a session to send, or the checks it can offer. They send nothing: the session sends each request itself (`gh api -X <method> <path> --input <body file>`, or the GitHub MCP tools), where the guard asks or refuses as it does for any ruleset change (#17, #33). Each takes `--json`, which gives the same for skills and `workflow doctor`; the text form is for a developer to read. Wrong input exits 2 with a plain message and prints nothing, as the read-back does: a request is never built from half the data. That includes JSON's `NaN` and `Infinity`, which no request may carry, and check names that are empty, have spaces at either end, or hold a line break or a control character. Text from the input is printed with line breaks and bytes that aren't text escaped, as the read-back prints it.
 
 ### Protect
 
@@ -120,12 +120,12 @@ From one ruleset in full (`GET repos/<repo>/rulesets/<id>`) and the names, `PUT 
 - "up to date" is turned on;
 - every other rule, the conditions, the bypass list, the name and the enforcement are sent as they are. Only the fields GitHub accepts on an update are sent (`name`, `target`, `enforcement`, `bypass_actors`, `conditions`, `rules`): no `id`, `source`, `node_id`, `_links` or times. A ruleset read without admin access has no `bypass_actors`, and the request then leaves it out, which keeps it as it is.
 
-The repository is the ruleset's own `source`. An organisation's ruleset is refused: the kit adds checks only to the repository's.
+The repository is the ruleset's own `source`. An organisation's ruleset is refused: the kit adds checks only to the repository's. So is a ruleset that isn't a branch ruleset, or one whose required checks lack a `context`.
 
 ### The checks that ran
 
 ```bash
-workflow protection --checks-ran check-runs.json [--statuses statuses.json] --rulesets rulesets.json [--repo repo.json] [--base main] [--json]
+workflow protection --checks-ran check-runs.json [--statuses statuses.json] --rulesets rulesets.json --repo repo.json [--base main] [--json]
 ```
 
 From the base branch's latest commit's check runs (`GET repos/<repo>/commits/<sha>/check-runs`, or its pages from `--paginate --slurp`) and statuses (`GET repos/<repo>/commits/<sha>/statuses`, its pages, or the combined `.../status`), each check's name with its result:
@@ -133,13 +133,15 @@ From the base branch's latest commit's check runs (`GET repos/<repo>/commits/<sh
 - **failing:** any other conclusion, or a `failure` or `error` status;
 - **pending:** a check run not completed yet, or a `pending` status.
 
-A name reported more than once (a re-run, or a check run and a status of the same name) appears once, with its latest result (by when it started, or was updated). Those the rulesets already require are left out: `--rulesets` (and `--repo`, `--base`) are read as the read-back reads them, and their required checks come back under `required`. A commit with no checks gives an empty list, not an error.
+A name reported more than once (a re-run, or a check run and a status of the same name) appears once, with its latest result: the check run that finished last (one still running counts from when it started), or the status updated last. A report with no time counts as the oldest; at the same time, the higher id wins. Those the rulesets already require are left out: `--rulesets`, `--repo` and `--base` are read as the read-back reads them, and their required checks come back under `required`. `--repo` is needed here, so that a ruleset on `~DEFAULT_BRANCH` counts and its checks aren't offered again. A commit with no checks gives an empty list, not an error.
+
+Every page is needed: a file holding fewer check runs (or combined statuses) than its `total_count` is an error, since a list built from one page would leave checks out. Fetch with `gh api --paginate --slurp`, or `per_page=100`. The checks are listed by name.
 
 **Never offered:** check runs from the `cloudflare-workers-and-pages` app (`Workers Builds: <worker>`, the try-it link's build, #41). The kit never makes the try-it link a required check (#18). A check of a similar name from another app is listed.
 
 `--json` gives:
 
 ```json
-{"checks": [{"name": "tests (3.11)", "result": "passing"}, {"name": "lint", "result": "failing"}], "required": ["build"]}
+{"checks": [{"name": "lint", "result": "failing"}, {"name": "tests (3.11)", "result": "passing"}], "required": ["build"]}
 ```
 

@@ -442,8 +442,14 @@ def test_malformed_statuses_are_an_error(repo, inp, statuses):
 
 
 def test_checks_ran_needs_the_rulesets(repo, inp):
-    p = cli(repo, "--checks-ran", put(inp, "runs.json", {"check_runs": []}))
+    p = cli(repo, "--checks-ran", put(inp, "runs.json", {"check_runs": []}), "--repo", put(inp, "repo.json", SETTINGS))
     bad(p, "--rulesets")
+
+
+def test_checks_ran_needs_the_settings(repo, inp):
+    """Without them a ruleset on ~DEFAULT_BRANCH can't be counted, and its checks would be offered again."""
+    p = cli(repo, "--checks-ran", put(inp, "runs.json", {"check_runs": [run_("tests")]}), "--rulesets", put(inp, "rs.json", [_required("tests")]), "--base", "main")
+    bad(p, "--repo")
 
 
 def test_checks_ran_refuses_a_ruleset_that_isnt_whole(repo, inp):
@@ -486,3 +492,104 @@ def test_it_writes_nothing(repo, inp):
     ok(ran(repo, inp, [run_("tests")], [status_("ci")], (), "--json"))
     assert git(repo, "status", "--porcelain", "--ignored") == before
     assert sorted(p.name for p in inp.iterdir()) == sorted(["repo.json", "rulesets.json", "ruleset.json", "runs.json", "statuses.json"])
+
+
+# ---------- review round 1 ----------
+
+
+def test_a_status_state_that_isnt_text_is_an_error(repo, inp):
+    bad(ran(repo, inp, [], [{"context": "ci", "state": []}], ()), "statuses")
+
+
+def test_require_checks_refuses_a_required_check_without_a_context(repo, inp):
+    for entry in ({"context": ["x"]}, {"context": 5}, {"integration_id": 1}):
+        rs = recorded_ruleset()
+        rs["rules"][2]["parameters"]["required_status_checks"] = [entry]
+        bad(require(repo, inp, rs, "tests"), "context")
+
+
+@pytest.mark.parametrize(
+    "change,words",
+    [
+        (lambda rs: rs.update(name=5), "name"),
+        (lambda rs: rs.update(target="push"), "branch ruleset"),
+    ],
+)
+def test_require_checks_refuses_other_odd_rulesets(repo, inp, change, words):
+    rs = recorded_ruleset()
+    change(rs)
+    bad(require(repo, inp, rs, "tests"), words)
+
+
+def test_odd_characters_in_a_recorded_ruleset_are_escaped_in_the_text(repo, inp):
+    rs = recorded_ruleset()
+    rs["name"] = "bad\ud800 name\u2028line\x85"
+    p = cli(repo, "--require-checks", put(inp, "ruleset.json", json.dumps(rs)), "--check", "tests")
+    assert p.returncode == 0, p.stderr
+    assert "\\ud800" in p.stdout and "\\u2028" in p.stdout and "\\u0085" in p.stdout
+    assert "\u2028" not in p.stdout and "\x85" not in p.stdout
+
+
+@pytest.mark.parametrize("raw", ['{"a": NaN}', '{"a": Infinity}', '{"a": -Infinity}'])
+def test_nan_and_infinity_are_not_json(repo, inp, raw):
+    rs = json.dumps(recorded_ruleset())[:-1] + ', "x": ' + raw[6:-1] + "}"
+    bad(require(repo, inp, None, "tests", raw=rs), "isn't JSON")
+
+
+def test_check_names_say_what_is_wrong_once(repo, inp):
+    p = protect(repo, inp, "--check", "a\nb")
+    bad(p, 'the check name "a\\nb" isn')
+    bad(protect(repo, inp, "--check", " lint "), "spaces at either end")
+
+
+def test_a_check_name_with_an_emoji_sequence_is_a_check_name(repo, inp):
+    name = "\U0001F468\u200d\U0001F469 build"
+    body = ok(protect(repo, inp, "--check", name, "--json"))["requests"][0]["body"]
+    assert body["rules"][-1]["parameters"]["required_status_checks"] == [{"context": name}]
+
+
+def test_a_check_name_that_isnt_text_is_refused(repo, inp):
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(repo)}
+    p = subprocess.run([sys.executable.encode(), str(CLI).encode(), b"protection", b"--protect", b"--repo", put(inp, "repo.json", SETTINGS).encode(), b"--check", b"ab\xff"], cwd=repo, env=env, capture_output=True, text=True)
+    bad(p, "check name")
+
+
+@pytest.mark.parametrize("full_name", ["../..", "acme/..", "./demo"])
+def test_a_repository_name_that_climbs_out_is_refused(repo, inp, full_name):
+    bad(protect(repo, inp, settings={**SETTINGS, "full_name": full_name}), "full_name")
+    rs = recorded_ruleset()
+    rs["source"] = full_name
+    bad(require(repo, inp, rs, "tests"), "source")
+
+
+@pytest.mark.parametrize(
+    "settings,words",
+    [
+        ({**SETTINGS, "allow_merge_commit": "yes"}, "allow_merge_commit"),
+        ({**SETTINGS, "default_branch": "ma in"}, "default_branch"),
+        ({**SETTINGS, "default_branch": 5}, "default_branch"),
+    ],
+)
+def test_protect_refuses_odd_settings(repo, inp, settings, words):
+    bad(protect(repo, inp, settings=settings), words)
+
+
+def test_one_page_of_many_is_not_the_whole_list(repo, inp):
+    page = {"total_count": 45, "check_runs": [run_(f"c{i}", id=i) for i in range(30)]}
+    bad(ran(repo, inp, json.dumps(page), None, ()), "30 of the commit's 45")
+    rest = {"total_count": 45, "check_runs": [run_(f"c{i}", id=i) for i in range(30, 45)]}
+    assert len(ok(ran(repo, inp, json.dumps([page, rest]), None, (), "--json"))["checks"]) == 45
+    combined = {"state": "pending", "total_count": 3, "statuses": [status_("a")]}
+    bad(ran(repo, inp, [], combined, ()), "1 of the commit's 3")
+
+
+def test_a_report_with_no_time_counts_as_the_oldest(repo, inp):
+    runs = [run_("tests", "failure", started=None, id=9), run_("tests", "success", id=1)]
+    assert ok(ran(repo, inp, runs, None, (), "--json"))["checks"] == [{"name": "tests", "result": "passing"}]
+
+
+def test_a_check_run_counts_from_when_it_finished(repo, inp):
+    run = run_("tests", "failure", started="2026-10-01T10:00:00Z")
+    run["completed_at"] = "2026-10-01T10:30:00Z"
+    statuses = [status_("tests", "success", at="2026-10-01T10:15:00Z")]
+    assert ok(ran(repo, inp, [run], statuses, (), "--json"))["checks"] == [{"name": "tests", "result": "failing"}]

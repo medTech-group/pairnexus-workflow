@@ -5,7 +5,7 @@
     workflow protection --rulesets F [--repo F] [--base BRANCH] [--json]
     workflow protection --protect --repo F [--base BRANCH] [--check NAME ...] [--json]
     workflow protection --require-checks F --check NAME [--check NAME ...] [--json]
-    workflow protection --checks-ran F [--statuses F] --rulesets F [--repo F] [--base BRANCH] [--json]
+    workflow protection --checks-ran F [--statuses F] --rulesets F --repo F [--base BRANCH] [--json]
     workflow version [--fresh] [--json] | --repo
     workflow ready [--issues F --prs F | --fetch] [--exclude 1,2] [--only 1,2] [--override 3] [--running-area A ...] [--slots N] [--json]
     workflow charter defaults [--unprotected] | validate F [--approved] [--unprotected] | markdown F [--tickets 13:area,143:-] | diff OLD NEW | reuse OLD | pin-plan F | questions [--unprotected]
@@ -210,85 +210,98 @@ def cmd_status(a) -> int:
     return 0
 
 
+def _no_constant(name: str):
+    raise ValueError(f"{name} isn't JSON")
+
+
 def cmd_protection(a) -> int:
-    """The base branch's protection, from GitHub's JSON: the read-back, or the
-    requests to protect it and require checks, or the checks that ran. Builds
-    and prints; sends nothing and writes nothing."""
-    P = protection_mod
+    """The base branch's protection, from GitHub's JSON: the read-back, the
+    requests to protect it or require checks, or the checks that ran. Builds and
+    prints; sends nothing and writes nothing."""
 
     def given(path: str, what: str):
         if not path:
-            raise P.ProtectionError(f"the {what} file was given no path")
+            raise protection_mod.ProtectionError(f"the {what} file was given no path")
         if path == "-" and sys.stdin is None:
-            raise P.ProtectionError(f"the {what} file is standard input (-), and standard input is closed")
+            raise protection_mod.ProtectionError(f"the {what} file is standard input (-), and standard input is closed")
         try:
-            return json.loads(_read(path).removeprefix("\ufeff"))
+            return json.loads(_read(path).removeprefix("\ufeff"), parse_constant=_no_constant)
         except OSError as e:
-            raise P.ProtectionError(f"can't read the {what} file {path}: {e.strerror or e}") from e
-        except (ValueError, RecursionError) as e:  # ValueError: bad JSON, bad UTF-8, a number too long
+            raise protection_mod.ProtectionError(f"can't read the {what} file {path}: {e.strerror or e}") from e
+        except (ValueError, RecursionError) as e:  # ValueError: bad JSON, NaN, bad UTF-8, a number too long
             why = "nested too deeply" if isinstance(e, RecursionError) else str(e)
-            raise P.ProtectionError(f"the {what} file {path} isn't JSON ({why})") from e
+            raise protection_mod.ProtectionError(f"the {what} file {path} isn't JSON ({why})") from e
 
     def base_branch() -> str:
         if a.base is not None:
             if not a.base.strip():
-                raise P.ProtectionError("--base was given no branch")
+                raise protection_mod.ProtectionError("--base was given no branch")
             return a.base
         try:
             prof = load(required=False)
         except ProfileError as e:
-            raise P.ProtectionError(f"{e}; give the base branch with --base") from e
+            raise protection_mod.ProtectionError(f"{e}; give the base branch with --base") from e
         if not prof:
-            raise P.ProtectionError("the kit isn't set up here, so give the base branch with --base")
+            raise protection_mod.ProtectionError("the kit isn't set up here, so give the base branch with --base")
         return prof.base_branch
 
     def settings_file():
         settings = given(a.repo, "repository's settings")
         if not isinstance(settings, dict):
-            raise P.ProtectionError("the repository's settings must be a JSON object, as GET repos/<repo> returns it")
+            raise protection_mod.ProtectionError("the repository's settings must be a JSON object, as GET repos/<repo> returns it")
         return settings
 
-    mode = "protect" if a.protect else "require" if a.require_checks is not None else "ran" if a.checks_ran is not None else "read"
+    def read_back():
+        if a.rulesets is None:
+            raise protection_mod.ProtectionError("give the repository's rulesets with --rulesets (a JSON list; [] when there are none)")
+        base = base_branch()
+        rulesets = given(a.rulesets, "rulesets")
+        return protection_mod.check(rulesets, base, settings_file() if a.repo is not None else None)
+
+    def protect():
+        if a.rulesets is not None:
+            raise protection_mod.ProtectionError("--rulesets doesn't go with --protect")
+        if a.repo is None:
+            raise protection_mod.ProtectionError("--protect needs the repository's settings with --repo (GET repos/<repo>): its name and default branch")
+        reqs = protection_mod.protect(base_branch(), settings_file(), a.check)
+        return {"requests": [r.as_dict() for r in reqs]} if a.json else protection_mod.requests_text(reqs)
+
+    def require():
+        if a.rulesets is not None or a.repo is not None or a.base is not None:
+            raise protection_mod.ProtectionError("--require-checks takes the ruleset alone, without --rulesets, --repo or --base: it names its repository, and targets what it targets")
+        req = protection_mod.require_checks(given(a.require_checks, "ruleset"), a.check)
+        return {"requests": [req.as_dict()]} if a.json else protection_mod.requests_text([req])
+
+    def checks_ran():
+        if a.repo is None:
+            raise protection_mod.ProtectionError("--checks-ran needs the repository's settings with --repo, so a ruleset on ~DEFAULT_BRANCH counts as requiring its checks")
+        runs = given(a.checks_ran, "check runs")
+        statuses = given(a.statuses, "statuses") if a.statuses is not None else None
+        rep = read_back()
+        ran = protection_mod.checks_ran(runs, statuses, rep.required_checks)
+        return {"checks": ran, "required": rep.required_checks} if a.json else protection_mod.ran_text(ran, rep.required_checks)
+
     try:
         files = [f for f in (a.rulesets, a.repo, a.require_checks, a.checks_ran, a.statuses) if f is not None]
         if files.count("-") > 1:
-            raise P.ProtectionError("only one of the files can be read from standard input (-)")
-        if a.check and mode not in ("protect", "require"):
-            raise P.ProtectionError("--check goes with --protect or --require-checks")
-        if a.statuses is not None and mode != "ran":
-            raise P.ProtectionError("--statuses goes with --checks-ran")
-        if mode in ("protect", "require") and a.rulesets is not None:
-            raise P.ProtectionError(f"--rulesets doesn't go with --{'protect' if mode == 'protect' else 'require-checks'}")
-        if mode == "require" and (a.repo is not None or a.base is not None):
-            raise P.ProtectionError("--require-checks takes the ruleset alone: it names its repository, and targets what it targets")
-        if mode in ("read", "ran") and a.rulesets is None:
-            raise P.ProtectionError("give the repository's rulesets with --rulesets (a JSON list; [] when there are none)")
-        if mode == "protect":
-            if a.repo is None:
-                raise P.ProtectionError("--protect needs the repository's settings with --repo (GET repos/<repo>): its name and default branch")
-            reqs = P.protect(base_branch(), settings_file(), a.check)
-            _out({"requests": [r.as_dict() for r in reqs]} if a.json else P.requests_text(reqs))
-            return 0
-        if mode == "require":
-            req = P.require_checks(given(a.require_checks, "ruleset"), a.check)
-            _out({"requests": [req.as_dict()]} if a.json else P.requests_text([req]))
-            return 0
-        base = base_branch()
-        if mode == "ran":
-            runs = given(a.checks_ran, "check runs")
-            statuses = given(a.statuses, "statuses") if a.statuses is not None else None
-        rulesets = given(a.rulesets, "rulesets")
-        settings = settings_file() if a.repo is not None else None
-        rep = P.check(rulesets, base, settings)
-        if mode == "ran":
-            ran = P.checks_ran(runs, statuses, rep.required_checks)
-    except P.ProtectionError as e:
+            raise protection_mod.ProtectionError("only one of the files can be read from standard input (-)")
+        if a.check and not (a.protect or a.require_checks is not None):
+            raise protection_mod.ProtectionError("--check goes with --protect or --require-checks")
+        if a.statuses is not None and a.checks_ran is None:
+            raise protection_mod.ProtectionError("--statuses goes with --checks-ran")
+        if a.protect:
+            out = protect()
+        elif a.require_checks is not None:
+            out = require()
+        elif a.checks_ran is not None:
+            out = checks_ran()
+        else:
+            rep = read_back()
+            out = rep.as_dict() if a.json else protection_mod.text(rep)
+    except protection_mod.ProtectionError as e:
         print(f"workflow protection: {e}", file=sys.stderr)
         return 2
-    if mode == "ran":
-        _out({"checks": ran, "required": rep.required_checks} if a.json else P.ran_text(ran, rep.required_checks))
-        return 0
-    _out(rep.as_dict() if a.json else P.text(rep))
+    _out(out)
     return 0
 
 
