@@ -48,12 +48,15 @@ def test_developer_and_explain_less_stop_the_explanations_for_the_session():
 
 def test_explain_more_reads_the_glossary_again_in_both_install_modes():
     para = _level_change()
-    # words used while explaining nothing are explained at their next use
-    assert "A word you used while explaining nothing hasn't been explained yet." in para
     assert 'After "explain more", read the glossary again' in para
     assert "`.claude/workflow/docs/glossary.md` vendored" in para
     assert "`docs/glossary.md` beside `skills/` in the plugin" in para
     assert "from then on" in para
+
+
+def test_words_used_at_developer_are_still_unexplained_after_explain_more():
+    para = _level_change()
+    assert "never again in this session. A word you used while at *developer* hasn't been explained yet." in para
 
 
 # Set-up: before the kit is in the project
@@ -64,6 +67,10 @@ def test_setup_follows_the_rule_from_the_glossary_in_its_clone_after_new_to_buil
     assert "*new to building*" in para
     assert "`$KIT/docs/glossary.md`" in para and "clone of the kit" in para
     assert "for the rest of set-up" in para
+
+
+def test_setups_words_used_before_the_answer_are_still_unexplained():
+    assert "A word you used before the answer (while exploring, say) hasn't been explained yet." in _setup_explaining()
 
 
 def test_setup_explains_nothing_after_a_developer_answer():
