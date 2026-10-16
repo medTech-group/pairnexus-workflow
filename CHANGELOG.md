@@ -10,6 +10,14 @@
 - Docs: `docs/enforcement.md`'s solo-mode section. Tests: `tests/test_guard_solo_github.py`.
 - **For projects updating:** nothing to do. With `ruleset = true` or no setting, and in ticket and conductor sessions, nothing changes.
 
+**The glossary: `docs/glossary.md`** (#73, part of the quickstart and the glossary, #35).
+
+- **One page of plain words** for someone new to building, read by people and by Claude alike, in two parts: "Building words" (repository, branch, `main`, commit, pull request, checks, merge, revert, preview link, cloud session) and "The kit's words" (guided start, experience level, ticket, spec, map, review panel, solo mode, "Protect `main`", unattended run, conductor, profile, "Check the set-up"). Each entry is one or two sentences, then "Why it matters to you:", and links any other glossary word it uses.
+- **Its headings are stable anchors** for the quickstart to link to, and the file stays under 6,000 characters, so #35's context hook can add it whole to a session.
+- **Vendored** into `.claude/workflow/docs/glossary.md` with the kit's other docs. The guided start's "explain more" now names where to read it.
+- `CONTRIBUTING.md` says a new kit term goes into the glossary in the same pull request, and that `domain-modeling` treats it as the kit's glossary. Tests: `tests/test_glossary.py`.
+- **For projects updating:** nothing to do. A project's own `GLOSSARY.md` stays its own.
+
 **`workflow protection` builds the requests: protect, require checks, the checks that ran** (#66, part of automated GitHub set-up, #38).
 
 - **`--protect --repo F`** prints the two requests that protect the base branch: the ruleset to create ("Protect <base> (pairnexus-workflow)", active, an empty bypass list, on `~DEFAULT_BRANCH` when the base branch is the default or `refs/heads/<base>`; `deletion`, `non_fast_forward`, `pull_request` with 0 approvals; `required_status_checks` with "up to date" on only when `--check` names are given), and the merge settings (`allow_merge_commit`, `allow_auto_merge`).
