@@ -112,6 +112,7 @@ import zipfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+from . import modes
 from .posts import AGENT_MARKER
 from .profile import Profile, resolve_experience
 
@@ -150,15 +151,16 @@ GIT_INTERNALS = [".git/config", ".git/hooks/**"]
 class Decision:
     action: str  # "allow", "deny" or "ask"
     reason: str = ""
+    sensitive: bool = False  # it stops sensitive data: never repeat the input, nor say to post it by hand
 
 
 ALLOW = Decision("allow")
 
 
-def _deny(role: str, reason: str) -> Decision:
+def _deny(role: str, reason: str, sensitive: bool = False) -> Decision:
     if role == "attended":
-        return Decision("ask", reason.replace("is never allowed", "is outside the workflow's rules; allow it only if you mean to"))
-    return Decision("deny", reason)
+        return Decision("ask", reason.replace("is never allowed", "is outside the workflow's rules; allow it only if you mean to"), sensitive)
+    return Decision("deny", reason, sensitive)
 
 
 # ---------- solo mode ----------
@@ -4970,6 +4972,36 @@ def _solo_scan(segs: list[Seg], profile: Profile, start: str, current_branch: st
     return None
 
 
+def _post_texts(s: Seg) -> list[str]:
+    """The texts a post may send: its body files, its stdin, a piped producer's files."""
+    out: list[str] = []
+    files = [(f, s.cwd) for f in _body_files(s.words)]
+    files += [(f, s.cwd) for f in (s.inputs or ([s.stdin] if s.stdin else []))]
+    if s.piped is not None:  # what its producer reads: `cat body.md | gh pr comment 1 --body-file -`
+        files += [(w, s.piped.cwd) for w in s.piped.words[1:] if not w.startswith("-")]
+        if s.piped.stdin:
+            files.append((s.piped.stdin, s.piped.cwd))
+    for f, fcwd in files:
+        txt = _read_text(f, fcwd)
+        if txt:
+            out.append(txt)
+    return out
+
+
+def _bash_holds_sensitive(command: str, profile: Profile, root: Path, cwd: str | os.PathLike | None) -> bool:
+    """True when a command, the files it reads, or what any part of it may post
+    matches a sensitive pattern: read whole, since an earlier ask stops
+    check_bash before it reads the posts."""
+    if not profile.sensitive_patterns:
+        return False
+    segs = segments(command, root, _start_cwd(root, cwd))
+    texts = [command, *_command_reads(segs)]
+    for seg in segs:
+        texts += _post_texts(seg)
+    text = "\n".join(texts)
+    return any(re.search(pat, text) for pat in profile.sensitive_patterns)
+
+
 def check_bash(
     command: str,
     profile: Profile,
@@ -5070,20 +5102,7 @@ def check_bash(
     if not posts:
         return ALLOW
 
-    def post_texts(s: Seg) -> list[str]:
-        """The texts a post may send: its body files, its stdin, a piped producer's files."""
-        out: list[str] = []
-        files = [(f, s.cwd) for f in _body_files(s.words)]
-        files += [(f, s.cwd) for f in (s.inputs or ([s.stdin] if s.stdin else []))]
-        if s.piped is not None:  # what its producer reads: `cat body.md | gh pr comment 1 --body-file -`
-            files += [(w, s.piped.cwd) for w in s.piped.words[1:] if not w.startswith("-")]
-            if s.piped.stdin:
-                files.append((s.piped.stdin, s.piped.cwd))
-        for f, fcwd in files:
-            txt = _read_text(f, fcwd)
-            if txt:
-                out.append(txt)
-        return out
+    post_texts = _post_texts
 
     if profile.sensitive_patterns:
         texts = [command, read()]
@@ -5092,7 +5111,7 @@ def check_bash(
         text = "\n".join(texts)
         for pat in profile.sensitive_patterns:
             if re.search(pat, text):
-                return _deny(role, f"this would post text matching the sensitive-data pattern {pat!r}; refer to things by id")
+                return _deny(role, f"this would post text matching the sensitive-data pattern {pat!r}; refer to things by id", sensitive=True)
     if role in ("ticket", "conductor"):
         for s in posts:
             # In the command's texts as a whole: a seatbelt, not proof that each post carries it.
@@ -5187,6 +5206,7 @@ def check_mcp(tool: str, inp: dict, profile: Profile, role: str, root: Path) -> 
                     role,
                     f"this {name} would post text matching the project's sensitive-data pattern {pat!r} "
                     f"({profile.sensitive_description or 'see profile.md'}); remove it and refer to things by id",
+                    sensitive=True,
                 )
     if role in ("ticket", "conductor") and _mcp_creates_text(name, inp):
         body = inp.get("body")
@@ -5205,7 +5225,73 @@ def decide(
     cwd: str | os.PathLike | None = None,
 ) -> Decision:
     """The guard's decision on one PreToolUse event. `cwd` is the shell's
-    directory (the event's `cwd`, which is used when it isn't given)."""
+    directory (the event's `cwd`, which is used when it isn't given). In an
+    attended session, an `ask` becomes a `deny` where nobody is asked (the
+    event's `permission_mode`, see `modes`)."""
+    d = _decide(event, profile, role, root, current_branch, role_from_env, cwd)
+    mode = event.get("permission_mode")
+    if d.action == "ask" and role == "attended" and modes.never_asks(mode):
+        return Decision("deny", d.reason + "\n" + _nobody_asked(event, mode, d.sensitive, profile, root, cwd), d.sensitive)
+    return d
+
+
+def _nobody_asked(event: dict, mode, sensitive: bool, profile: Profile, root: Path, cwd: str | os.PathLike | None) -> str:
+    """What a refusal adds to the ask's reason in a mode that never asks: the
+    kit would have asked, the mode, how to be asked, and how to do it by hand.
+    `sensitive`: the ask is about sensitive data. Input matching a sensitive
+    pattern is never repeated, whichever check asked (an earlier ask in the
+    command can stop the guard before it reads the post)."""
+    plain = isinstance(mode, str) and mode and mode == mode.strip() and mode.isprintable()
+    shown = mode if plain else json.dumps(mode, default=str)  # quoted: empty, blank or multi-line
+    name = _code_span(shown if len(shown) <= 80 else shown[:80] + "…")
+    if modes.known(mode):
+        lines = [f"The kit would have asked you about this, but nobody is asked in the {name} permission mode, so it was refused."]
+    else:
+        lines = [
+            f"The kit would have asked you about this, but the permission mode is {name}, which the kit doesn't know, "
+            "so it counts as one where nobody is asked and this was refused. Tell the kit's maintainers about this mode."
+        ]
+    lines.append("To be asked, switch the permission mode (Shift+Tab, or the mode selector).")
+    tool = event.get("tool_name") or ""
+    inp = event.get("tool_input") if isinstance(event.get("tool_input"), dict) else {}
+    command = inp.get("command") if tool == "Bash" else None
+    if sensitive:
+        # Never repeat sensitive data, nor suggest posting it by hand.
+        lines.append("Or remove the text that matches the project's sensitive-data pattern, and try again.")
+    else:
+        github = isinstance(tool, str) and tool.startswith("mcp__") and "github" in tool.lower()
+        bash = isinstance(command, str) and command.strip()
+        if bash:
+            holds = _bash_holds_sensitive(command, profile, root, cwd if cwd is not None else event.get("cwd") or None)
+        else:
+            text = "\n".join(_strings(inp))
+            holds = any(re.search(pat, text) for pat in profile.sensitive_patterns)
+        if holds:
+            without = "without the text that matches the project's sensitive-data pattern"
+            if bash:
+                lines.append(f"Or run it yourself in your own terminal, {without} (the command isn't repeated here, since it or what it posts holds that text).")
+            elif github:
+                lines.append(f"Or do it yourself on GitHub, {without}.")
+            else:
+                lines.append(f"Or make the change yourself, by hand, {without}.")
+        elif bash:
+            lines.append(f"Or run it yourself in your own terminal:{_hand_command(command)}")
+        elif github:
+            lines.append("Or do it yourself on GitHub.")
+        else:
+            lines.append("Or make the change yourself, by hand.")
+    return "\n".join(lines)
+
+
+def _decide(
+    event: dict,
+    profile: Profile,
+    role: str,
+    root: Path,
+    current_branch: str | None,
+    role_from_env: bool = True,
+    cwd: str | os.PathLike | None = None,
+) -> Decision:
     tool = event.get("tool_name") or ""
     inp = event.get("tool_input") or {}
     if not isinstance(inp, dict):
