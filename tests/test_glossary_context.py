@@ -12,10 +12,11 @@ import pytest
 
 from conftest import KIT, git
 from test_hooks_cli import run_hook
+from workflow.context import CONTEXT_LIMIT as LIMIT
 
 GLOSSARY = (KIT / "docs/glossary.md").read_text(encoding="utf-8")
 RULE = "the first time you use it in this session"
-LIMIT = 10_000  # Claude Code's cap on a hook's added context, per string
+SHOWN = 2_000  # what Claude sees of a string over the limit
 
 
 @pytest.fixture(autouse=True)
@@ -27,7 +28,8 @@ def _no_level(monkeypatch):
 
 def _ctx(repo, prompt, session=None, env=None):
     ev = {"prompt": prompt, "session_id": session or uuid.uuid4().hex}
-    _, out, _ = run_hook("context", ev, repo, {"TMPDIR": str(repo.parent), **(env or {})})
+    code, out, err = run_hook("context", ev, repo, {"TMPDIR": str(repo.parent), **(env or {})})
+    assert code == 0 and not err, err  # a "none" that is really a crash fails here
     return (out or {}).get("hookSpecificOutput", {}).get("additionalContext", "")
 
 
@@ -39,6 +41,17 @@ def _set_profile_level(repo, level):
 def _set_file_level(repo, level):
     (repo / ".workflow").mkdir(exist_ok=True)
     (repo / ".workflow/experience").write_text(level + "\n")
+
+
+def _level_env(repo, source, level):
+    """Set `level` through `source`; the environment it needs, if any."""
+    if source == "environment":
+        return {"WORKFLOW_EXPERIENCE": level}
+    if source == "local file":
+        _set_file_level(repo, level)
+    else:
+        _set_profile_level(repo, level)
+    return {}
 
 
 def _whole(ctx):
@@ -60,26 +73,12 @@ def test_unknown_level_counts_as_new(repo):
 
 @pytest.mark.parametrize("source", ["environment", "local file", "profile"])
 def test_new_from_each_source(repo, source):
-    env = {}
-    if source == "environment":
-        env = {"WORKFLOW_EXPERIENCE": "new"}
-    elif source == "local file":
-        _set_file_level(repo, "new")
-    else:
-        _set_profile_level(repo, "new")
-    assert _whole(_ctx(repo, "hi", env=env))
+    assert _whole(_ctx(repo, "hi", env=_level_env(repo, source, "new")))
 
 
 @pytest.mark.parametrize("source", ["environment", "local file", "profile"])
 def test_never_for_a_developer(repo, source):
-    env = {}
-    if source == "environment":
-        env = {"WORKFLOW_EXPERIENCE": "developer"}
-    elif source == "local file":
-        _set_file_level(repo, "developer")
-    else:
-        _set_profile_level(repo, "developer")
-    ctx = _ctx(repo, "hi", env=env)
+    ctx = _ctx(repo, "hi", env=_level_env(repo, source, "developer"))
     assert _none(ctx) and "guided start" in ctx  # the nudge still comes
 
 
@@ -144,7 +143,9 @@ def test_beside_the_whole_flow_as_the_rule_and_its_path(repo):
     (repo / ".claude/workflow/flow.md").write_text(flow.read_text(encoding="utf-8"))
     ctx = _ctx(repo, "implement #5")
     assert "Follow the flow below" in ctx and "# The flow" in ctx
-    assert RULE in ctx and "read it now" in ctx and str(KIT / "docs/glossary.md") in ctx
+    assert len(ctx) > LIMIT  # so Claude sees only the start of it
+    shown = ctx[:SHOWN]
+    assert RULE in shown and "read it now" in shown and str(KIT / "docs/glossary.md") in shown
     assert "### Pull request" not in ctx
     # what the glossary adds is short: the flow is what passes the limit (#76)
     assert len(ctx) - len(flow.read_text(encoding="utf-8")) < 1_000
@@ -195,6 +196,22 @@ def test_a_glossary_too_long_to_add_whole_goes_by_its_path(repo):
     vendored.write_text("# Glossary\n\n" + "A long entry.\n" * 1_000)
     ctx = _ctx(repo, "hi")
     assert len(ctx) < LIMIT and RULE in ctx and "read it now" in ctx and str(vendored) in ctx
+    assert "guided start" in ctx and "A long entry." not in ctx
+
+
+def test_an_empty_glossary_adds_nothing(repo):
+    vendored = repo / ".claude/workflow/docs/glossary.md"
+    vendored.parent.mkdir(parents=True)
+    vendored.write_text("  \n")
+    ctx = _ctx(repo, "hi")
+    assert "guided start" in ctx and RULE not in ctx
+
+
+def test_an_odd_session_id_never_costs_the_hook(repo):
+    p = repo / ".claude/workflow/profile.toml"
+    p.write_text(p.read_text().replace('repo = "acme/demo"', 'repo = "acme/demo"\nguided_start = false'))
+    code, _, err = run_hook("context", {"prompt": "hi", "session_id": 123}, repo, {"TMPDIR": str(repo.parent)})
+    assert code == 0 and not err
 
 
 def test_a_missing_glossary_adds_nothing_and_never_fails(repo, tmp_path):

@@ -59,10 +59,9 @@ def _marker(kind: str, session_id: str) -> Path:
     return Path(os.environ.get("TMPDIR") or tempfile.gettempdir()) / f"workflow-{kind}-{safe}"
 
 
-def first_prompt(session_id: str) -> bool:
-    """Whether this is the session's first prompt, marking it seen either way,
-    so a first message that was a command or a flow request still counts."""
-    marker = _marker("start", session_id)
+def _first_time(kind: str, session_id: str) -> bool:
+    """Whether `kind`'s marker is unset for this session, setting it either way."""
+    marker = _marker(kind, session_id)
     if marker.exists():
         return False
     try:
@@ -70,6 +69,12 @@ def first_prompt(session_id: str) -> bool:
     except OSError:
         pass
     return True
+
+
+def first_prompt(session_id: str) -> bool:
+    """Whether this is the session's first prompt, marking it seen either way,
+    so a first message that was a command or a flow request still counts."""
+    return _first_time("start", session_id)
 
 
 def start_for(prompt: str, session_id: str) -> str | None:
@@ -111,20 +116,26 @@ def context_for(prompt: str, session_id: str, files: list[Path]) -> str | None:
     return f"{FLOW_HEAD}\n\n{body}"
 
 
+def is_whole_flow(ctx: str | None) -> bool:
+    """Whether `context_for` gave the whole flow, not the one-line reminder."""
+    return bool(ctx and ctx.startswith(FLOW_HEAD))
+
+
 # The glossary, for someone new to building (#74): at the first prompt of an
 # attended session, beside whatever else the prompt brings.
 
-LIMIT = 10_000  # Claude Code saves a hook's longer string to a file, showing 2,000 characters of it
+CONTEXT_LIMIT = 10_000  # Claude Code's cap on a hook's added context, per string: a longer one is saved to a file, 2,000 characters shown
 GLOSSARY_RULE = (
-    "Treat the person in this session as new to building: the words in the kit's glossary ({where}) are new to them: "
-    "explain each one in the glossary's wording, in one or two sentences, the first time you use it in this session, "
-    "and never again in this session. Never explain them in what you write on GitHub (pull request descriptions, "
-    "comments, reports)."
+    "Treat the person in this session as new to building, unless they tell you they are a developer. "
+    "The words in the kit's glossary ({where}) are new to them. Explain each one in the glossary's wording, "
+    "in one or two sentences, the first time you use it in this session, and never again in this session. "
+    "Never explain them in what you write on GitHub (pull request descriptions, comments, reports). "
+    "If the conversation was already under way before this message (a resumed session), only the rule applies from here."
 )
 
 
 def glossary_file(project: Path, kit_root: Path) -> Path | None:
-    """The vendored glossary, else the kit's own (plugin mode), as the flow is found."""
+    """The vendored glossary, else the kit's own (plugin mode), in the order the flow is found."""
     for cand in (project / ".claude/workflow/docs/glossary.md", kit_root / "docs/glossary.md"):
         if cand.is_file():
             return cand
@@ -134,30 +145,27 @@ def glossary_file(project: Path, kit_root: Path) -> Path | None:
 def first_glossary_prompt(session_id: str) -> bool:
     """Whether the glossary hasn't been considered yet this session, marking it
     either way: its own marker, so the guided start's doesn't decide it."""
-    marker = _marker("glossary", session_id)
-    if marker.exists():
-        return False
-    try:
-        marker.touch()
-    except OSError:
-        pass
-    return True
+    return _first_time("glossary", session_id)
 
 
-def glossary_for(path: Path | None, beside: str = "", whole_flow: bool = False) -> str | None:
-    """The glossary and its rule, to add beside `beside`. With the whole flow,
-    or when the text wouldn't fit under Claude Code's limit, only the rule and
-    the glossary's path with "read it now"."""
+def with_glossary(ctx: str | None, path: Path | None) -> str | None:
+    """`ctx` with the glossary and its rule beside it. The glossary goes in
+    whole when it all stays under Claude Code's limit; beside the whole flow,
+    or when it wouldn't fit, only the rule and its path with "read it now",
+    put first so it stays within the 2,000 characters Claude sees of a longer
+    string. An empty glossary adds nothing."""
     if path is None:
-        return None
-    rule = GLOSSARY_RULE.format(where=path)
-    by_path = f"{rule} It isn't included here: read it now."
-    if whole_flow:
-        return by_path
+        return ctx
     try:
         text = path.read_text(encoding="utf-8").strip()
     except (OSError, UnicodeDecodeError):
-        return by_path
-    whole = f"{rule}\n\n{text}"
-    used = len(beside) + 2 if beside else 0
-    return whole if used + len(whole) < LIMIT else by_path
+        text = None
+    if text == "":
+        return ctx
+    rule = GLOSSARY_RULE.format(where=path)
+    if text and not is_whole_flow(ctx):
+        whole = f"{ctx}\n\n{rule}\n\n{text}" if ctx else f"{rule}\n\n{text}"
+        if len(whole) < CONTEXT_LIMIT:
+            return whole
+    by_path = f"{rule} It isn't included here: read it now."
+    return f"{by_path}\n\n{ctx}" if ctx else by_path
