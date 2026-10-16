@@ -4,10 +4,9 @@
 
 **"In plain words" at the top of every pull request `build-ticket` opens** (#82, part of judging a PR without reading code, #39).
 
-- **`build-ticket`'s PR body** (step 4) now opens with `## In plain words`, then `**What changes for you**` (one to three sentences about what a user notices), `**How to try it**` (the try-it link and things to click; else where the link will appear, when the project has previews; else what to check another way, or "Nothing to try: this change is behind the scenes") and `**What could go wrong**` (easy or hard to undo, and what it could affect). Each heading is on its own line, its text below it. The section is the same for everyone, never worded by experience. Below it the body is unchanged: `Closes #<n>`, what was built, how it was tested, the findings table, "Decisions for the owner" and the by-hand checks.
-- Matt Pocock's `pr` skill stays as vendored.
-- Docs: `docs/flow.md` §3's pull-request step names "In plain words" first; `docs/glossary.md`'s "pull request" entry says each one the kit opens starts with it (two other entries trimmed to keep the file under 6,000 characters). Tests: `tests/test_in_plain_words.py`.
-- **For projects updating:** nothing to do; pull requests opened after the next kit update start with the section.
+- **`build-ticket`'s PR body** (step 4) now opens with `## In plain words`, then `**What changes for you**` (one to three sentences about what a user notices), `**How to try it**` (the try-it link and things to click; else where the link will appear, when the project has previews; else what to check another way, or "Nothing to try: this change is behind the scenes") and `**What could go wrong**` (easy or hard to undo, and what it could affect). Each heading is on its own line, its text below it. The section is the same for everyone, never worded by experience, and when the `pr` skill is loaded too its sections go below. Below it the body is unchanged: `Closes #<n>`, what was built, how it was tested, the findings table, "Decisions for the owner" and the by-hand checks.
+- Docs: `docs/flow.md` §3's pull-request step names "In plain words" first; `docs/glossary.md`'s "pull request" entry says each one the kit opens starts with it (a few words trimmed elsewhere to keep the file under 6,000 characters; no entry lost). Tests: `tests/test_in_plain_words.py`.
+- **For projects updating:** nothing to do; pull requests `build-ticket` opens after the next kit update start with the section.
 
 **"Require these checks": failing tests stop merges once CI has run** (#68, part of the automated GitHub set-up, #38).
 
