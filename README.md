@@ -730,7 +730,7 @@ CI checks that `VERSION`, `plugin.json` and the CHANGELOG agree; nothing checks 
 
 A fork can run its own releases, with its own projects following it rather than this repository. Change, in the fork:
 - **The kit's home,** `KIT_REPO` in `scripts/workflow/updates.py`. That is the one place code reads it. The skills and the weekly update check read it through `workflow version --repo`, and projects set up from the fork follow it for updates.
-- **The starter's home,** `STARTER_REPO` beside it, if the fork has its own starter template. `workflow version --starter` prints it, and the guided start reads it from there.
+- **The starter's home,** `STARTER_REPO` beside it, if the fork has its own starter template. `workflow version --starter` prints it, and the guided start's offer of the starter is to read it from there.
 - **The marketplace and plugin names,** if you rename them:
   - `.claude-plugin/marketplace.json` (`name`, `owner`) and `.claude-plugin/plugin.json` (`name`, `author`);
   - the `pairnexus-workflow@pairnexus` key and the `pairnexus-workflow:` command prefix: `PLUGIN_UPDATE` in `updates.py`, `PLUGIN_KEY` in `vendor.py`, `scripts/workflow/context.py`, the skills `start`, `setup-workflow` and `review-panel`, `docs/flow.md`, `docs/install.md` and this README. `grep -rn "pairnexus-workflow[@:]" .` finds them.

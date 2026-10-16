@@ -26,7 +26,7 @@ from pathlib import Path
 # the update all follow it. A fork changes it here (README, "Forking the kit").
 KIT_REPO = "medTech-group/pairnexus-workflow"
 # The starter template's home, beside it for the same reason: `workflow version
-# --starter` prints it, and the guided start reads it from there.
+# --starter` prints it, and the guided start is to read it from there.
 STARTER_REPO = "medTech-group/pairnexus-starter-web"
 CACHE_FOR = 6 * 3600
 MISS_FOR = 3600  # a lookup that failed isn't tried again for an hour

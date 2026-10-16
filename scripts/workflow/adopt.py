@@ -29,7 +29,7 @@ WRANGLER = "wrangler.toml"
 PACKAGE = "package.json"
 README = "README.md"
 PROFILE = PROFILE_PATH.as_posix()
-WORKER_NAME_MAX = 63  # a Worker's name is a DNS label
+WORKER_NAME_MAX = 63  # a Worker's name is a DNS label; the package's is cut the same, so the two match
 
 REPO = re.compile(r"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$")
 _TABLE = re.compile(r"^\s*\[")
@@ -48,6 +48,11 @@ class Result:
     changed: list[tuple[str, str]] = field(default_factory=list)  # (path, what changed)
     notes: list[str] = field(default_factory=list)
     writes: dict[str, bytes] = field(default_factory=dict)
+
+    def record(self, rel: str, old: str, new: str, what: str) -> None:
+        if new != old:
+            self.changed.append((rel, what))
+            self.writes[rel] = new.encode("utf-8")
 
     def text(self) -> str:
         lines = [f"Changed {path}: {what}" for path, what in self.changed]
@@ -102,8 +107,8 @@ def _read(root: Path, rel: str) -> str | None:
         return None
     try:
         return path.read_bytes().decode("utf-8")
-    except UnicodeDecodeError:
-        raise AdoptError(f"{rel} isn't UTF-8 text")
+    except UnicodeDecodeError as e:
+        raise AdoptError(f"{rel} isn't UTF-8 text") from e
 
 
 def _profile(text: str, owner: str, repo: str, name: str) -> str:
@@ -128,13 +133,13 @@ def _codeowners(text: str, old: str, new: str) -> str:
     return pat.sub(f"@{new}", text)
 
 
-def _wrangler(text: str, worker: str) -> str | None:
+def _wrangler(text: str, dashed_name: str) -> str | None:
     lines = _lines(text)
     stop = next((i for i, (body, _) in enumerate(lines) if _TABLE.match(body)), len(lines))
-    return _join(lines) if _set_key(lines, 0, stop, "name", worker) else None
+    return _join(lines) if _set_key(lines, 0, stop, "name", dashed_name) else None
 
 
-def _package(text: str, package: str) -> str | None:
+def _package(text: str, dashed_name: str) -> str | None:
     """The top-level `"name"`'s string replaced in place, found by walking the
     JSON's text; the rest of the text is untouched."""
     depth, i, n = 0, 0, len(text)
@@ -144,11 +149,12 @@ def _package(text: str, package: str) -> str | None:
             j = i + 1
             while j < n and text[j] != '"':
                 j += 2 if text[j] == "\\" else 1
-            if depth == 1 and text[i:j + 1] == '"name"':
+            # A key is a string followed by `:`; `"description": "name"` isn't one.
+            if depth == 1 and text[i:j + 1] == '"name"' and re.compile(r"\s*:").match(text, j + 1):
                 m = re.compile(r'\s*:\s*("(?:[^"\\]|\\.)*")').match(text, j + 1)
                 if not m:
                     raise AdoptError(f"{PACKAGE}'s name isn't a string")
-                return text[:m.start(1)] + json.dumps(package) + text[m.end(1):]
+                return text[:m.start(1)] + json.dumps(dashed_name) + text[m.end(1):]
             i = j + 1
             continue
         if c in "{[":
@@ -180,8 +186,8 @@ def plan(root: Path, owner: str, repo: str, name: str) -> Result:
         raise AdoptError(f"--owner must be a GitHub login (letters, digits and hyphens), without the @: got {owner!r}")
     if not name or any(ord(c) < 32 or ord(c) == 127 for c in name):
         raise AdoptError("--name must be one line of text")
-    slug = dashed(name)
-    if not slug:
+    dashed_name = dashed(name)
+    if not dashed_name:
         raise AdoptError(f"--name {name!r} has no letters or digits, so it makes an empty Worker name")
 
     res = Result()
@@ -200,7 +206,7 @@ def plan(root: Path, owner: str, repo: str, name: str) -> Result:
     if (prof.name, prof.repo, prof.owner) != (name, repo, owner):
         raise AdoptError(f"{PROFILE}: the rewritten profile doesn't read back the new names")
     keys = [f"project.{k}" for k, v in (("owner", owner), ("name", name), ("repo", repo)) if old.get(k) != v]
-    _record(res, PROFILE, text, new_text, ", ".join(keys))
+    res.record(PROFILE, text, new_text, ", ".join(keys))
 
     old_owner = old.get("owner") or ""
     found = next((p for p in CODEOWNERS_PATHS if (root / p).is_file()), None)
@@ -210,23 +216,23 @@ def plan(root: Path, owner: str, repo: str, name: str) -> Result:
         res.notes.append(f"Skipped {found}: the profile named no owner to replace")
     elif old_owner != owner:
         text = _read(root, found)
-        _record(res, found, text, _codeowners(text, old_owner, owner), f"@{old_owner} → @{owner}")
+        res.record(found, text, _codeowners(text, old_owner, owner), f"@{old_owner} → @{owner}")
 
     text = _read(root, WRANGLER)
     if text is None:
         res.notes.append(f"Skipped {WRANGLER}: not there")
     else:
-        new_text = _wrangler(text, slug)
+        new_text = _wrangler(text, dashed_name)
         if new_text is None:
             res.notes.append(f"Skipped {WRANGLER}: no top-level name")
         else:
             try:
-                ok = tomllib.loads(new_text).get("name") == slug
+                ok = tomllib.loads(new_text).get("name") == dashed_name
             except tomllib.TOMLDecodeError as e:
                 raise AdoptError(f"{WRANGLER}: {e}") from e
             if not ok:
                 raise AdoptError(f"{WRANGLER}: the rewritten file doesn't read back the new name")
-            _record(res, WRANGLER, text, new_text, f"name = {slug}")
+            res.record(WRANGLER, text, new_text, f"name = {dashed_name}")
 
     text = _read(root, PACKAGE)
     if text is None:
@@ -236,13 +242,13 @@ def plan(root: Path, owner: str, repo: str, name: str) -> Result:
             json.loads(text)
         except ValueError as e:
             raise AdoptError(f"{PACKAGE} isn't valid JSON: {e}") from e
-        new_text = _package(text, slug)
+        new_text = _package(text, dashed_name)
         if new_text is None:
             res.notes.append(f"Skipped {PACKAGE}: no name")
         else:
-            if json.loads(new_text).get("name") != slug:
+            if json.loads(new_text).get("name") != dashed_name:
                 raise AdoptError(f"{PACKAGE}: the rewritten file doesn't read back the new name")
-            _record(res, PACKAGE, text, new_text, f"name = {slug}")
+            res.record(PACKAGE, text, new_text, f"name = {dashed_name}")
 
     text = _read(root, README)
     if text is None:
@@ -252,14 +258,8 @@ def plan(root: Path, owner: str, repo: str, name: str) -> Result:
         if new_text is None:
             res.notes.append(f"Skipped {README}: no `# ` title")
         else:
-            _record(res, README, text, new_text, f"title = {name}")
+            res.record(README, text, new_text, f"title = {name}")
     return res
-
-
-def _record(res: Result, rel: str, old: str, new: str, what: str) -> None:
-    if new != old:
-        res.changed.append((rel, what))
-        res.writes[rel] = new.encode("utf-8")
 
 
 def adopt(root: Path, owner: str, repo: str, name: str) -> Result:

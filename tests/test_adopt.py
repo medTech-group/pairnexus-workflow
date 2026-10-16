@@ -24,7 +24,7 @@ PROFILE = """\
 name = "pairnexus-starter-web"
 repo = "medTech-group/pairnexus-starter-web" # GitHub owner/repo of the issue tracker
 base_branch = "main"
-owner = "raj-attur-pair"                # optional: the owner's GitHub login, without the @
+owner = "old-owner"                # optional: the owner's GitHub login, without the @
 rules = ["CLAUDE.md"]
 ruleset = false
 experience = "new"
@@ -47,10 +47,10 @@ explorer = "browser"
 
 CODEOWNERS = """\
 # The owner reviews the kit's files and the workflows.
-* @raj-attur-pair
-/.claude/ @raj-attur-pair
-/.github/workflows/ @Raj-Attur-Pair @medTech-group/maintainers
-/docs/ @raj-attur-pair-bot
+* @old-owner
+/.claude/ @old-owner
+/.github/workflows/ @Old-Owner @medTech-group/maintainers
+/docs/ @old-owner-bot
 """
 
 WRANGLER = """\
@@ -101,7 +101,7 @@ OTHER = {
     "CLAUDE.md": "# pairnexus-starter-web\n\nRules for medTech-group/pairnexus-starter-web.\n",
     "src/worker/index.ts": 'export default { name: "pairnexus-starter-web" };\n',
     "migrations/0001_notes.sql": "CREATE TABLE notes (id INTEGER PRIMARY KEY, text TEXT);\n",
-    ".claude/workflow/profile.md": "# raj-attur-pair's notes\n",
+    ".claude/workflow/profile.md": "# old-owner's notes\n",
     ".github/workflows/ci.yml": "name: ci\n",
 }
 
@@ -129,10 +129,13 @@ def _snapshot(root: Path) -> dict[str, bytes]:
     return {p.relative_to(root).as_posix(): p.read_bytes() for p in files if p.relative_to(root).parts[0] != ".git"}
 
 
-def _run(root: Path, *args, owner="ada", repo="ada/my-notes", name="My Notes!"):
-    flags = ["--owner", owner, "--repo", repo, "--name", name] if owner is not None else []
+def _cli(root: Path, *args):
     env = {**os.environ, "CLAUDE_PROJECT_DIR": str(root)}
-    return subprocess.run([sys.executable, "-B", str(CLI), "adopt", *flags, *args], capture_output=True, text=True, cwd=root, env=env)
+    return subprocess.run([sys.executable, "-B", str(CLI), *args], capture_output=True, text=True, cwd=root, env=env)
+
+
+def _run(root: Path, owner="ada", repo="ada/my-notes", name="My Notes!"):
+    return _cli(root, "adopt", "--owner", owner, "--repo", repo, "--name", name)
 
 
 @pytest.fixture
@@ -165,7 +168,7 @@ def test_adopt_rewrites_the_names_and_nothing_else(copy):
     assert after["README.md"].decode().splitlines()[1] == "# My Notes!"
 
     for line in ("Changed .claude/workflow/profile.toml: project.owner, project.name, project.repo",
-                 "Changed .github/CODEOWNERS: @raj-attur-pair → @ada",
+                 "Changed .github/CODEOWNERS: @old-owner → @ada",
                  "Changed wrangler.toml: name = my-notes",
                  "Changed package.json: name = my-notes",
                  "Changed README.md: title = My Notes!"):
@@ -178,13 +181,13 @@ def test_comments_order_and_formatting_are_kept(copy):
     assert prof == (PROFILE
                     .replace('name = "pairnexus-starter-web"', 'name = "My Notes!"')
                     .replace('repo = "medTech-group/pairnexus-starter-web"', 'repo = "ada/my-notes"')
-                    .replace('owner = "raj-attur-pair"', 'owner = "ada"'))
+                    .replace('owner = "old-owner"', 'owner = "ada"'))
     assert (copy / ".github/CODEOWNERS").read_text() == """\
 # The owner reviews the kit's files and the workflows.
 * @ada
 /.claude/ @ada
 /.github/workflows/ @ada @medTech-group/maintainers
-/docs/ @raj-attur-pair-bot
+/docs/ @old-owner-bot
 """
     # Only the top-level name: [previews] keeps its own.
     assert (copy / "wrangler.toml").read_text() == WRANGLER.replace(
@@ -213,8 +216,7 @@ def test_a_second_run_changes_nothing_and_says_so(copy):
 
 def test_the_rewritten_profile_passes_profile_check(copy):
     assert _run(copy).returncode == 0
-    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(copy)}
-    p = subprocess.run([sys.executable, "-B", str(CLI), "profile", "check"], capture_output=True, text=True, cwd=copy, env=env)
+    p = _cli(copy, "profile", "check")
     assert p.returncode == 0, p.stderr
     out = json.loads(p.stdout)
     assert out["ok"] and out["repo"] == "ada/my-notes"
@@ -223,7 +225,7 @@ def test_the_rewritten_profile_passes_profile_check(copy):
 def test_an_owner_the_profile_left_out_is_added_under_repo(tmp_path):
     copy = _starter(tmp_path / "copy")
     path = copy / ".claude/workflow/profile.toml"
-    path.write_text(PROFILE.replace('owner = "raj-attur-pair"                # optional: the owner\'s GitHub login, without the @\n', ""))
+    path.write_text(PROFILE.replace('owner = "old-owner"                # optional: the owner\'s GitHub login, without the @\n', ""))
     p = _run(copy)
     assert p.returncode == 0, p.stderr
     lines = path.read_text().splitlines()
@@ -246,6 +248,12 @@ def test_a_missing_file_is_skipped_with_a_note_never_created(copy):
     assert "Skipped wrangler.toml: not there" in p.stdout
     assert "Skipped CODEOWNERS: not there" in p.stdout
     assert json.loads((copy / "package.json").read_text())["name"] == "my-notes"
+
+
+def test_a_top_level_value_that_reads_name_isnt_taken_for_the_key(copy):
+    (copy / "package.json").write_text('{\n  "description": "name",\n  "keywords": ["name"],\n  "name": "pairnexus-starter-web"\n}\n')
+    assert _run(copy).returncode == 0
+    assert (copy / "package.json").read_text() == '{\n  "description": "name",\n  "keywords": ["name"],\n  "name": "my-notes"\n}\n'
 
 
 def test_codeowners_at_the_root_is_found(copy):
