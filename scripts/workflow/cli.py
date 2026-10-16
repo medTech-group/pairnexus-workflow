@@ -678,7 +678,7 @@ def _budget(seconds: float):
             signal.signal(signal.SIGALRM, previous)
 
 
-def _cant_decide(event, why: str, solo: bool | None = None) -> int:
+def _cant_decide(event, why: str, solo: bool | None = None, fixes: str = fallback.FIXES) -> int:
     """The can't-decide fallback (`fallback`, #53) in an attended session: a push
     or a merge is asked, or refused in solo mode or where nobody is asked;
     anything else is left alone. A missing profile (the kit isn't set up) is
@@ -690,7 +690,7 @@ def _cant_decide(event, why: str, solo: bool | None = None) -> int:
             if not (root / PROFILE_PATH).exists():
                 return 0
             solo = fallback.solo(root)
-        d = fallback.decide(event, solo, why)
+        d = fallback.decide(event, solo, why, fixes)
         if d:
             out = fallback.output(d[0], f"[workflow guard, {_role_label('attended')}] {d[1]}")
             print(json.dumps(out))
@@ -747,7 +747,12 @@ def _hook_guard(event, raw: str = "") -> int:
         if role in ("ticket", "conductor") or (role == "attended" and prof.ruleset is False):
             _deny_json(f"[workflow guard, {_role_label(role)}] the guard ran out of time ({GUARD_BUDGET:g} seconds) checking this, so it was refused; split the command, or give it smaller files")
             return 0
-        return _cant_decide(event, f"it ran out of time ({GUARD_BUDGET:g} seconds) checking this; split the command, or give it smaller files", prof.ruleset is False)
+        return _cant_decide(
+            event,
+            f"it ran out of time ({GUARD_BUDGET:g} seconds) checking this",
+            prof.ruleset is False,
+            "To have it checked, split the command, or give it smaller files.",
+        )
     except Exception as e:  # fail closed where a person isn't there to notice
         if role in ("ticket", "conductor") or (role is None and firm in ("ticket", "conductor")):
             _deny_json(f"[workflow guard, {_role_label(role or firm)}] the guard failed ({type(e).__name__}: {e}), so this was refused; rephrase the command more simply")
@@ -852,7 +857,7 @@ def cmd_hook(a) -> int:
         data = sys.stdin.buffer.read()
         raw = data.decode("utf-8", "replace")
         event = json.loads(data.decode("utf-8") or "{}")  # the event itself is read strictly
-    except (json.JSONDecodeError, UnicodeDecodeError, RecursionError, OSError):
+    except (ValueError, RecursionError, OSError, AttributeError):  # AttributeError: no stdin
         event = None
     if a.name != "guard" and not isinstance(event, dict):
         event = {}  # the guard decides what a malformed event means

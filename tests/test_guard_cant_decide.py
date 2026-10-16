@@ -330,3 +330,50 @@ def test_an_invalid_profile_on_a_ticket_branch_is_refused_without_a_role(tmp_pat
     subprocess.run(git + ["checkout", "-qb", "feature"], check=True)
     monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(OTHERS[0]).encode()), encoding="utf-8"))
     assert cli.main(["hook", "guard"]) == 0 and capsys.readouterr().out == ""
+
+
+def _bash(cmd):
+    return {"tool_name": "Bash", "tool_input": {"command": cmd}}
+
+
+def test_a_push_or_merge_is_matched_within_one_part_of_the_command():
+    for cmd, want in [
+        ("git push origin main", "push"), ("cd x && git -C . push --force", "push"), ("gh pr merge 3 --admin", "merge"),
+        ("git \\\npush origin main", "push"),  # a line continuation joins its lines
+        ("gh pr view 3; git status", None), ("git status; echo push", None), ("gh api x | grep pr; merge", None),
+        ("gitpush", None), ("echo git-push-notes", "push"),
+    ]:
+        assert fallback.push_or_merge(_bash(cmd)) == want, cmd
+
+
+def test_matching_stays_fast_on_a_large_command():
+    for cmd in ("gh pr " * 20000, "git " * 200000 + "\ngit push origin main", ("git " * 5000 + ";") * 40):
+        t = time.monotonic()
+        fallback.push_or_merge(_bash(cmd))
+        assert time.monotonic() - t < 1, cmd[:20]
+
+
+def test_a_long_error_is_cut_short_in_the_reason():
+    action, reason = fallback.decide(PUSH, False, "x" * 5000)
+    assert action == "ask" and "x" * 200 + "…" in reason and "x" * 201 not in reason
+
+
+def test_a_timeout_says_how_to_have_it_checked_not_how_to_fix_the_kit(tmp_path, monkeypatch, capsys):
+    root = _project(tmp_path, VALID)
+    monkeypatch.setattr(cli, "GUARD_BUDGET", 0.2)
+    monkeypatch.setattr(cli, "_STARTED", time.monotonic())
+    monkeypatch.setattr(cli.guard_mod, "decide", lambda *a, **k: time.sleep(5))
+    monkeypatch.setenv("WORKFLOW_ROLE", "attended")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    monkeypatch.chdir(root)
+    assert cli._hook_guard(PUSH) == 0
+    reason = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "split the command" in reason and "profile check" not in reason
+
+
+def test_old_python_without_a_profile_keeps_asking_as_since_0_1_8(tmp_path, capsys):
+    """Unlike the CLI, which leaves a project without the kit alone: on an old
+    Python the plugin's hooks run with no profile, and 0.1.8 asked there."""
+    env = {"WORKFLOW_ROLE": "attended", "CLAUDE_PROJECT_DIR": str(tmp_path)}
+    assert _old(capsys, PUSH, env, tmp_path)[1]["permissionDecision"] == "ask"
+    assert _old(capsys, _with_mode(PUSH, "dontAsk"), env, tmp_path)[1]["permissionDecision"] == "deny"

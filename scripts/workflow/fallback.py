@@ -26,9 +26,14 @@ import re
 
 from . import modes
 
-# Linear patterns only: each stops at the first separator.
-_PUSH = re.compile(r"\bgit\b[^;&|\n]*\bpush\b")
-_MERGE = re.compile(r"\bgh\b[^;&|\n]*\bpr\b[^;&|\n]*\bmerge\b")
+# A push is `git` then `push`, a merge `gh` then `pr` then `merge`, each within
+# one part of the command (split at ; & | and newlines). Matched word by word,
+# so it stays linear on any input: a pattern like `git[^;]*push` backtracks.
+_SEPARATORS = re.compile(r"[;&|\n]")
+_PUSH = ("git", "push")
+_MERGE = ("gh", "pr", "merge")
+_WORDS = {w: re.compile(r"\b" + w + r"\b") for w in _PUSH + _MERGE}
+_WHY_LIMIT = 200
 MCP_PUSH = ("merge_pull_request", "push_files", "create_or_update_file", "delete_file")
 _RULESET = re.compile(r"^[ \t]*ruleset[ \t]*=[ \t]*(\w+)", re.M)
 PROFILE = os.path.join(".claude", "workflow", "profile.toml")
@@ -60,9 +65,20 @@ def push_or_merge(event):
     cmd = inp.get("command") if tool == "Bash" and isinstance(inp, dict) else None
     if not isinstance(cmd, str):
         return None
-    if _PUSH.search(cmd):
+    parts = _SEPARATORS.split(cmd.replace("\\\n", " "))  # a line continuation joins its lines
+    if any(_in_order(p, _PUSH) for p in parts):
         return "push"
-    return "merge" if _MERGE.search(cmd) else None
+    return "merge" if any(_in_order(p, _MERGE) for p in parts) else None
+
+
+def _in_order(text, words):
+    pos = 0
+    for w in words:
+        m = _WORDS[w].search(text, pos)
+        if not m:
+            return False
+        pos = m.end()
+    return True
 
 
 def read_event(text):
@@ -143,14 +159,17 @@ def _by_hand(event):
     return "Or do it yourself on GitHub."
 
 
-def decide(event, solo_mode, why):
+def decide(event, solo_mode, why, fixes=FIXES):
     """The fallback's (decision, reason) for `event` in an attended session, or
     None to leave it alone. `solo_mode`: the profile says `ruleset = false`.
-    `why`: what went wrong, for the reason."""
+    `why`: what went wrong, for the reason (cut short when long, since an
+    error's text can quote the input); `fixes`: how to put it right."""
     what = push_or_merge(event)
     if not what:
         return None
-    head = "The workflow's guard isn't working, so it couldn't check this {}: {}. {}".format(what, why, FIXES)
+    if len(why) > _WHY_LIMIT:
+        why = why[:_WHY_LIMIT] + "…"
+    head = "The workflow's guard isn't working, so it couldn't check this {}: {}. {}".format(what, why, fixes)
     mode = event.get("permission_mode")
     if solo_mode:
         lines = [head, "In solo mode (`ruleset = false` in the profile) a push or a merge the guard can't check is refused.", _by_hand(event)]
