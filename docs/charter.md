@@ -8,6 +8,7 @@ The conductor first works out what it can by itself, so it only asks about real 
 
 - **Readiness:** `workflow ready --fetch` (or with `--issues`/`--prs` from the GitHub MCP tools): ready tickets, blocked ones and why, owner tasks in the way, and a suggested order with areas.
 - **Safety:** the conductor runs with `WORKFLOW_ROLE=conductor` and a permission mode that doesn't prompt (where `get_session` doesn't show the mode, it asks the owner); the ticket sessions' environment exists, by name, and the owner confirms it holds no cloud, account or deploy credentials (nothing can read an environment's contents); the base branch's ruleset is active, blocks force pushes and deletion, requires the checks and requires branches to be up to date; CODEOWNERS covers the protected paths (`docs/enforcement.md`). Anything missing is shown first, with its fix. The owner may still go ahead; the charter records each gap they accept in `accepted_gaps`.
+- **Solo mode:** the profile says `ruleset = false`, or `ruleset = true` while `workflow protection` (`docs/protection.md`) reads the base branch back as unprotected (removed protection). Either way it is a safety gap, stated plainly: nothing on GitHub stops a mistake reaching `main`, and the kit's "never merge while CI is red" check is the only one. The kick-off offers "Protect `main`" (or, for removed protection, restoring it), through the `upgrade-setup` skill, or "Go ahead". Accepted, it goes in `accepted_gaps`, and the run report repeats it. The ticket sessions' environment is still required. With `ruleset` left out, nothing changes.
 - **Required approvals:** when the ruleset requires approving reviews, no PR a session opens can merge without a person (sessions post as the owner, and GitHub never lets an author approve their own PR), so the merge question recommends `owner`.
 - **Leftovers:** open PRs and claimed tickets from an earlier run; the base branch's CI is green.
 - **Capacity:** any usage warning a session has reported (the conductor can't read the account's usage directly). Usage grows with `max_sessions`: each ticket session runs the review panel for up to the profile's `run.review_rounds` rounds.
@@ -15,13 +16,23 @@ The conductor first works out what it can by itself, so it only asks about real 
 
 ## 2. The questions
 
-Asked in rounds of up to four with `AskUserQuestion` (three rounds for a first run), each with its recommended default first. `workflow charter questions` prints them; `workflow charter defaults` gives defaults that fit the project's profile: the limits from its `[run]`, release "never" when it has no release steps, and merge `session` when it has no CI or no required checks.
+Asked in rounds of up to four with `AskUserQuestion` (three rounds for a first run), each with its recommended default first. `workflow charter questions` prints them; `workflow charter defaults` gives defaults that fit the project's profile: the limits from its `[run]`, release "never" when it has no release steps, and merge `session` when it has no CI or no required checks, or in solo mode.
+
+**Solo mode never uses GitHub auto-merge.** Nothing on GitHub reliably requires checks there, so auto-merge could merge a PR at once, without waiting for checks. In solo mode `charter defaults` picks `session`, `charter questions` leaves `auto-merge` out of the merge question's `options` and says why in its `note` (as it does with no CI or no required checks), and `charter validate` and `state init` refuse a charter with `auto-merge`.
+
+For removed protection the profile still says `ruleset = true`, so the conductor passes `--unprotected` (the read-back's verdict) to `defaults`, `questions` and `validate`. Once the owner accepts the gap, its `accepted_gaps` line starts `removed protection: `, and the charter carries the verdict itself: every later check refuses `auto-merge`, amendments included. The rule is one function, `charter.solo_reason`.
+
+The accepted gap's line is fixed, so the run report can find it (`charter.SOLO_GAP`, with the base branch's name):
+
+```
+solo mode: nothing on GitHub stops a mistake reaching main; the kit's "never merge while CI is red" check is the only one
+```
 
 | Key | Question | Recommended default |
 |---|---|---|
 | `scope` | Which tickets? Any to exclude? Also tickets unblocked during the run? | Every ready ticket; yes |
 | `limits` | When does the run end? Sessions at once, in all, retries per ticket, check-in cadence? | The owner's end time; 2; 40; 1, then `needs-human`; 20 minutes |
-| `merge` | Merge automatically when a ticket passes the merge rule? Which checks may be waived when killed (not failed)? | GitHub auto-merge (`session` with no CI; `owner` when the ruleset requires approvals); none waived. A waiver needs mode `session`, and the check taken out of the ruleset's required checks for the run, which pre-flight then shows as a gap to accept |
+| `merge` | Merge automatically when a ticket passes the merge rule? Which checks may be waived when killed (not failed)? | GitHub auto-merge (`session` with no CI, no required checks or in solo mode; `owner` when the ruleset requires approvals); none waived. A waiver needs mode `session`, and the check taken out of the ruleset's required checks for the run, which pre-flight then shows as a gap to accept |
 | `release` | Deploy and build after merges? Never, each merge, or once at the end? Which of the profile's release steps? | Once at the end, the first release step, with its smoke test; never when the profile has none |
 | `outward` | Any change outside the repo (cloud, secrets, accounts, DNS, payments)? Which, exactly? | None: listed as owner tasks |
 | `conductor_fixes` | May the conductor open its own PRs for test, CI or deploy-script problems? | Yes, each reviewed and logged |
@@ -79,6 +90,6 @@ When a previous charter exists, start from `workflow charter reuse old.json` (ap
 - `ends_at` in the future and after the approval;
 - `max_parallel` 1–16, `max_sessions` 1–500 and no fewer than `max_parallel`, `max_retries` 0–5, `check_in_minutes` 5–240;
 - no keys it doesn't know;
-- waived checks among the profile's required checks, and no `auto-merge` when the profile has no CI;
+- waived checks among the profile's required checks, and no `auto-merge` when the profile has no CI or no required checks, or in solo mode (`--unprotected`, or a `removed protection: ` gap, for removed protection);
 - release steps among the profile's;
 - `approved.by` and each amendment's `by` to be the profile's `project.owner`.
