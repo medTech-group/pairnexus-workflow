@@ -232,6 +232,9 @@ def test_a_powershell_hand_command_with_sensitive_text_is_not_repeated(tmp_path,
     "$env:GH_TOKEN='ghp_abc123'; git push origin main",
     "$env:API_KEY = ghp_abc123; git push origin main",
     "$env:GH_TOKEN= 'ghp_abc123'; git push origin main",
+    "$Env:GITHUB_TOKEN= 'ghp_abc123'; git push origin main",
+    "$GH_TOKEN= 'ghp_abc123'; git push origin main",
+    "$global:API_KEY= 'ghp_abc123'; git push origin main",
 ])
 def test_a_powershell_token_is_masked_in_the_hand_command(prof, cmd):
     d = act(prof, tool("PowerShell", "bypassPermissions", command=cmd), "attended")
@@ -352,8 +355,7 @@ def test_enforcement_md_records_the_release_gate_step_for_item_10():
 # ---------- masks and sensitive text in the refusals ----------
 
 
-@pytest.mark.parametrize("cmd", ["GITHUB_TOKEN= gh pr merge 5 --admin", "GH_TOKEN= git push origin main",
-                                 "GH_TOKEN= 'gh' pr merge 5 --admin"])
+@pytest.mark.parametrize("cmd", ["GITHUB_TOKEN= gh pr merge 5 --admin", "GH_TOKEN= git push origin main"])
 def test_an_emptied_token_keeps_the_command_after_it(prof, cmd):
     # `VAR= cmd` unsets a token for one command: the mask stops at the `=`.
     d = act(prof, tool("Bash", "bypassPermissions", command=cmd), "attended")

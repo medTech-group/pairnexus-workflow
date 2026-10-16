@@ -181,16 +181,6 @@ class SoloRefusal:
 # Credentials a command may carry: a URL's user:password@, a token variable's value.
 _URL_CREDENTIALS = re.compile(r"(?<=://)[^/\s@'\"]+@")
 _SECRET_VARS = re.compile(r"(?i)\b(\w*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|CREDENTIALS?)\w*)([ \t]+=[ \t]*|=(?:[ \t]+(?=['\"]))?)(?:'[^']*'|\"[^\"]*\"|\S+)")
-
-
-def _mask_var(m: re.Match) -> str:
-    # `= '…'` with a space after `=` only assigns in PowerShell (`$env:X= '…'`);
-    # in a shell, `X= 'cmd'` empties X and runs cmd, which stays.
-    if m.group(2)[0] == "=" and len(m.group(2)) > 1 and not m.string.endswith("$env:", 0, m.start(1)):
-        return m.group(0)
-    return m.group(1) + m.group(2) + "…"
-
-
 _SECRET_HEADERS = re.compile(r"(?i)(authorization:\s*(?:\w+\s+)?|bearer\s+|extraheader=)[^\s\"']+")
 _WITHOUT_SENSITIVE = "without the text that matches the project's sensitive-data pattern"
 _HAND_MAX = 400  # longer than this, the hand command isn't repeated
@@ -199,7 +189,7 @@ _HAND_MAX = 400  # longer than this, the hand command isn't repeated
 def _hand_command(command: str) -> str:
     """The command to run by hand, as code, with credentials masked; or a
     pointer back to it when it's too long to repeat."""
-    text = _SECRET_HEADERS.sub(r"\1…", _SECRET_VARS.sub(_mask_var, _URL_CREDENTIALS.sub("…@", command.strip())))
+    text = _SECRET_HEADERS.sub(r"\1…", _SECRET_VARS.sub(r"\1\2…", _URL_CREDENTIALS.sub("…@", command.strip())))
     if len(text) > _HAND_MAX:
         return " the command as you gave it (too long to repeat here)."
     code = _code_span(text)
