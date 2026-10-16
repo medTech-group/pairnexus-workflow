@@ -5219,7 +5219,8 @@ def decide(
 def _nobody_asked(event: dict, mode) -> str:
     """What a refusal adds to the ask's reason in a mode that never asks: the
     kit would have asked, the mode, how to be asked, and how to do it by hand."""
-    name = _code_span(str(mode)[:80])
+    plain = isinstance(mode, str) and mode and mode == mode.strip() and mode.isprintable()
+    name = _code_span(mode[:80] if plain else json.dumps(mode, default=str)[:80])  # quoted: empty, blank or multi-line
     if modes.known(mode):
         lines = [f"The kit would have asked you about this, but nobody is asked in the {name} permission mode, so it was refused."]
     else:

@@ -107,10 +107,9 @@ def test_modes_module_parses_as_python_3_7():
     ast.parse((KIT / "scripts/workflow/modes.py").read_text(), feature_version=(3, 7))
 
 
-def test_old_python_fallback_can_load_the_mode_list():
-    from workflow import _old_python
-
-    assert _old_python.modes is modes
+def test_modes_module_imports_nothing():
+    tree = ast.parse((KIT / "scripts/workflow/modes.py").read_text())
+    assert not [n for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))]
 
 
 # ---------- attended asks ----------
@@ -163,12 +162,15 @@ def test_known_never_ask_mode_isnt_called_unknown(prof):
     assert "doesn't know" not in act(prof, bash("scripts/deploy.sh"), "bypassPermissions").reason
 
 
-def test_other_tools_are_pointed_to_doing_it_by_hand():
-    # No other tool is asked today; the wording is ready for one that is.
-    from workflow.guard import _nobody_asked
-
-    extra = _nobody_asked({"tool_name": "Write", "tool_input": {"file_path": "x"}}, "dontAsk")
-    assert "by hand" in extra and "terminal" not in extra and "GitHub" not in extra
+@pytest.mark.parametrize(
+    "mode, shown",
+    [("", '`""`'), ("  ", '`"  "`'), ("a\nb", '`"a\\nb"`'), (" default", '`" default"`'), (["x"], '`["x"]`'), ({"k": 1}, '`{"k": 1}`')],
+)
+def test_odd_modes_are_named_readably(prof, mode, shown):
+    d = act(prof, bash("scripts/deploy.sh"), mode)
+    assert d.action == "deny"
+    first = d.reason.split("\n")[1]
+    assert shown in first and "doesn't know" in first
 
 
 # ---------- unchanged: ticket and conductor, denies, allows ----------
@@ -231,6 +233,7 @@ def test_a_subagents_event_gets_the_sessions_decision(prof, mode, what):
 SOLO_ASKS = {
     "feature force-push": bash("git push --force origin feature"),
     "ruleset create": bash("gh api -X POST repos/acme/demo/rulesets --input ruleset.json"),
+    "MCP ruleset create": {"tool_name": "mcp__github__create_repository_ruleset", "tool_input": {"owner": "acme", "repo": "demo"}},
 }
 
 
@@ -273,8 +276,16 @@ def test_hook_guard_still_asks_in_default_mode(repo):
 
 def test_enforcement_doc_has_the_mode_table():
     doc = (KIT / "docs/enforcement.md").read_text()
-    for mode in ("default", "acceptEdits", "auto", "plan", "bypassPermissions", "dontAsk"):
-        assert f"| `{mode}`" in doc, mode
+    rows = {line.split("|")[1].strip(): line for line in doc.splitlines() if line.startswith("| ") and line.count("|") == 4}
+    for mode in ("`default`", "`acceptEdits`", "`auto`", "`plan`", "none sent (an older Claude Code)"):
+        assert rows[mode].split("|")[2].strip() == "prompts", mode
+    for mode in ("`bypassPermissions`", "`dontAsk`", "any other value"):
+        assert rows[mode].split("|")[2].strip().startswith("refused, with the guard's reason"), mode
+    assert "names the value" in rows["any other value"]
+    assert "refused by Claude Code" in rows["headless `claude -p` runs"]
+    for line in rows.values():
+        if "prompts" in line or "refused" in line:
+            assert line.split("|")[3].strip() == "refused", line
     assert "no safeguard where nobody is asked" in doc
     assert "claude -p" in doc
     assert "the ruleset is what protects" in doc
@@ -284,7 +295,7 @@ def test_readme_row_covers_the_refusal_in_a_mode_that_never_asks():
     readme = (KIT / "README.md").read_text()
     row = next(line for line in readme.splitlines() if line.startswith("| **\"[workflow guard, …]"))
     assert "modes that ask" in row
-    assert "nobody is asked" in row
+    assert "nobody is asked" in row and "doesn't know" in row
 
 
 def test_changelog_notes_the_change_under_unreleased():

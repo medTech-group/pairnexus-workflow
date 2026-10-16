@@ -4,9 +4,9 @@
 
 **Modes that never ask: the guard refuses what it would have asked** (#52, part of guard robustness, #33).
 
-- **The guard reads `permission_mode`** from each tool call. In an attended session, in `bypassPermissions`, `dontAsk` or a mode the kit doesn't know, every ask becomes a refusal, solo mode's remaining asks included; in `default`, `acceptEdits`, `auto`, `plan` or with no mode sent, asks stay asks.
+- **The guard reads `permission_mode`** from each tool call. In an attended session, in `bypassPermissions`, `dontAsk` or a mode the kit doesn't know, every ask the guard makes becomes a refusal, solo mode's remaining asks included; in `default`, `acceptEdits`, `auto`, `plan` or with no mode sent, asks stay asks.
 - **The refusal** keeps the ask's reason and adds the mode, how to switch it (Shift+Tab, or the mode selector) to be asked, and how to do it by hand (the command for your own terminal, or on GitHub for a GitHub MCP tool). An unknown mode is named.
-- **The modes are listed once,** in `scripts/workflow/modes.py` (Python 3.7 syntax), which the old-Python fallback shares.
+- **The guard's modes are listed** in `scripts/workflow/modes.py`, in Python 3.7 syntax with no imports, ready for the old-Python fallback, which doesn't read the mode yet (a later ticket).
 - Denies, allows, and ticket and conductor sessions are unchanged in every mode. Docs: `docs/enforcement.md`'s mode table, the README's "When something goes wrong" row. Tests: `tests/test_guard_modes.py`.
 - **For projects updating:** nothing to do. A person who works in `bypassPermissions` now sees the guard's asks refused, with the command to run by hand.
 

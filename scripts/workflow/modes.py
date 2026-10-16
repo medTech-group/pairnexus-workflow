@@ -5,8 +5,11 @@ In some modes a hook's `ask` reaches a person; in others nobody is asked, so
 the guard turns its asks into denies there. Any value not listed counts as a
 mode that never asks; an absent one (an older Claude Code) as a mode that asks.
 
-Keep it to the standard library and to syntax Python 3.7 reads (a test
-checks): the old-Python fallback (`_old_python.py`) shares this list.
+Keep it free of imports and to syntax Python 3.7 reads (a test checks), so
+the old-Python fallback (`_old_python.py`) can classify modes from the same
+list when it reads them (the next tickets). Not to be confused with the
+profile's `run.permission_mode` choices (`profile.PERMISSION_MODES`): the
+modes an unattended run's sessions may start in.
 """
 
 # Modes where a hook's `ask` prompts the person.
