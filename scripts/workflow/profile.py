@@ -125,7 +125,7 @@ class Profile:
     guided_start: bool = True
     # False is solo mode; None (absent) is as before solo mode existed.
     ruleset: bool | None = None
-    # The project's default: "new" or "developer"; "" (absent) means ask.
+    # The project's default: "new" or "developer"; "" (absent): no default.
     experience: str = ""
     setup: str = ""
     setup_check: str = ""
@@ -329,7 +329,7 @@ def parse(data: dict, root: Path) -> Profile:
     experience = proj.get("experience")
     if experience is not None and experience not in EXPERIENCE_LEVELS:
         levels = " or ".join(f'"{x}"' for x in EXPERIENCE_LEVELS)
-        raise ProfileError(f"project.experience must be {levels}, not {repr(experience)[:40]}; leave it out to ask each person")
+        raise ProfileError(f"project.experience must be {levels}, not {repr(experience)[:40]}; leave it out for no project default")
     allow = guard.get("allow_new_skips", False)
     if not isinstance(allow, bool):
         raise ProfileError("guard.allow_new_skips must be true or false")
