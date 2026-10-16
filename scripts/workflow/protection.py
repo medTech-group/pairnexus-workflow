@@ -1,4 +1,5 @@
-"""Whether the base branch is protected, read back from GitHub's JSON.
+"""Whether the base branch is protected, read back from GitHub's JSON, and
+the requests that protect it.
 
 `workflow protection` takes the repository's rulesets, each in full (as
 `GET repos/<repo>/rulesets/<id>` returns it), and optionally the repository's
@@ -12,15 +13,22 @@ and none of them has a bypass list. Anything it can't tell counts as missing,
 so an unknown never reads as protected. `check` is the one place this rule
 lives: the "Protect `main`" upgrade, set-up, the conductor's pre-flight and
 `workflow doctor` will call it rather than repeat it.
+
+Beside it, the request builder (#66): the requests that create the ruleset and
+set the merge settings (`protect`), that add checks to a ruleset
+(`require_checks`), and the checks that ran on a commit (`checks_ran`). It
+prints them for a session to send, and sends nothing.
 """
 
 from __future__ import annotations
 
+import copy
 import fnmatch
 import json
 import re
 import unicodedata
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 # The rules that make a branch protected, with what their absence means.
 NEEDED = {
@@ -51,8 +59,13 @@ def quote(s: str) -> str:
 
     json.dumps escapes the control characters; these line breaks it leaves.
     """
-    out = json.dumps(s, ensure_ascii=False)
-    out = out.replace("\x85", "\\u0085").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
+    return printable(json.dumps(s, ensure_ascii=False))
+
+
+def printable(dumped: str) -> str:
+    """JSON text with the characters that could start a line, or can't be
+    printed, escaped as JSON escapes them."""
+    out = dumped.replace("\x85", "\\u0085").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
     # A lone surrogate can't be printed; escape it as JSON does.
     return re.sub("[\ud800-\udfff]", lambda m: f"\\u{ord(m.group()):04x}", out)
 
@@ -296,4 +309,288 @@ def text(rep: Report) -> str:
         state = {True: "allowed", False: "not allowed", None: "unknown"}
         lines.append("Merge settings: " + ", ".join(f"{words} {state[rep.merge[name]]}" for _, name, words in MERGE) + ".")
         lines += [f"- {m}" for m in rep.merge["missing"]]
+    return "\n".join(lines)
+
+
+# ---------- the requests: protect, require checks, the checks that ran (#66) ----------
+#
+# Built from JSON a session hands over, and printed for it to send. Nothing here
+# sends a request: the session does, with `gh api` or the GitHub MCP tools, under
+# the guard (#17, #33).
+
+KIT = "pairnexus-workflow"
+REPO_PART = re.compile(r"[A-Za-z0-9_.-]+")
+# What GitHub accepts on an update (PUT repos/<repo>/rulesets/<id>); the rest of
+# a ruleset as GET returns it (id, source, node_id, _links, ...) is read-only.
+UPDATE_FIELDS = ("name", "target", "enforcement", "bypass_actors", "conditions", "rules")
+PULL_REQUEST = {
+    "required_approving_review_count": 0,
+    "dismiss_stale_reviews_on_push": False,
+    "require_code_owner_review": False,
+    "require_last_push_approval": False,
+    "required_review_thread_resolution": False,
+}
+# The try-it link's check (#41): never offered for requiring (#18).
+NEVER_OFFERED_APPS = ("cloudflare-workers-and-pages",)
+# Check-run conclusions GitHub counts as passing a required check.
+PASSING = ("success", "neutral", "skipped")
+STATUS_RESULT = {"success": "passing", "pending": "pending", "failure": "failing", "error": "failing"}
+# What a check name can't hold: line breaks, control characters, lone surrogates.
+NOT_IN_A_CHECK = ("Cc", "Cs", "Zl", "Zp")
+
+
+@dataclass
+class Request:
+    what: str
+    method: str
+    path: str
+    body: dict
+
+    def as_dict(self) -> dict:
+        return {"what": self.what, "method": self.method, "path": self.path, "body": self.body}
+
+
+@dataclass
+class Ran:
+    """A check run or a status on the commit."""
+
+    name: str
+    result: str
+    when: datetime | None
+    id: int
+
+
+def _a_check_name(n) -> bool:
+    return isinstance(n, str) and bool(n.strip()) and n == n.strip() and not any(unicodedata.category(c) in NOT_IN_A_CHECK for c in n)
+
+
+def check_names(names) -> list[str]:
+    """The check names as given, each once; raises on one that can't be a check name."""
+    out: list[str] = []
+    for n in names or []:
+        if not _a_check_name(n):
+            shown = quote(n) if isinstance(n, str) else repr(n)
+            raise ProtectionError(
+                f"the check name {shown} isn't a check name: it is empty, has spaces at either end, "
+                "or holds a line break, a control character or a byte that isn't text"
+            )
+        if n not in out:
+            out.append(n)
+    return out
+
+
+def _repo_name(v) -> str | None:
+    """`owner/repo` when v is one, else None."""
+    if not isinstance(v, str) or v.count("/") != 1:
+        return None
+    parts = v.split("/")
+    return v if all(REPO_PART.fullmatch(p) and p not in (".", "..") for p in parts) else None
+
+
+def _checks_rule(names: list[str]) -> dict:
+    return {
+        "type": "required_status_checks",
+        "parameters": {"strict_required_status_checks_policy": True, "required_status_checks": [{"context": n} for n in names]},
+    }
+
+
+def _repo_of(settings) -> tuple[str, str]:
+    """(owner/repo, default branch) from the repository's settings."""
+    _, default = _settings(settings)  # checks the settings as the read-back does; the merge report isn't needed here
+    full = _repo_name(settings.get("full_name"))
+    if full is None:
+        raise ProtectionError("the repository's settings: full_name isn't owner/repo, so the requests can't name the repository")
+    if not default:
+        raise ProtectionError("the repository's settings have no default_branch, so it can't tell whether the base branch is the default")
+    try:
+        return full, branch(default)
+    except ProtectionError as e:
+        raise ProtectionError(f"the repository's settings: default_branch {quote(default)} isn't a branch name") from e
+
+
+def protect(base: str, settings, names=()) -> list[Request]:
+    """The ruleset to create on the base branch, and the merge settings to change."""
+    base = branch(base)
+    names = check_names(names)
+    repo, default = _repo_of(settings)
+    rules = [{"type": "deletion"}, {"type": "non_fast_forward"}, {"type": "pull_request", "parameters": dict(PULL_REQUEST)}]
+    if names:
+        rules.append(_checks_rule(names))
+    ruleset = {
+        "name": f"Protect {base} ({KIT})",
+        "target": "branch",
+        "enforcement": "active",
+        "bypass_actors": [],
+        "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH" if base == default else f"refs/heads/{base}"], "exclude": []}},
+        "rules": rules,
+    }
+    return [
+        Request("create the ruleset", "POST", f"repos/{repo}/rulesets", ruleset),
+        Request("allow merge commits and auto-merge", "PATCH", f"repos/{repo}", {key: True for key, _, _ in MERGE}),
+    ]
+
+
+def require_checks(ruleset, names) -> Request:
+    """The ruleset with the names added to its required checks and "up to date" on.
+
+    Nothing else changes and nothing is removed; only the fields GitHub accepts
+    on an update are sent.
+    """
+    names = check_names(names)
+    if not names:
+        raise ProtectionError("give the checks to require with --check NAME (one for each)")
+    if not isinstance(ruleset, dict):
+        raise ProtectionError("the ruleset file must be one ruleset (a JSON object), as GET repos/<repo>/rulesets/<id> returns it")
+    where = _checked_name(ruleset, 0)
+    if not isinstance(ruleset.get("name"), str):
+        raise ProtectionError(f"{where} has no name")
+    if ruleset["target"] != "branch":
+        raise ProtectionError(f"{where} is a {quote(ruleset['target'])} ruleset: only a branch ruleset can require checks")
+    rid = ruleset.get("id")
+    if not isinstance(rid, int) or isinstance(rid, bool) or rid <= 0:
+        raise ProtectionError(f"{where} has no id, so the request can't name it")
+    if ruleset.get("source_type") == "Organization":
+        raise ProtectionError(f"{where} is an organisation's ruleset: the kit adds checks only to the repository's own, so change it in the organisation's settings")
+    source = _repo_name(ruleset.get("source"))
+    if ruleset.get("source_type") != "Repository" or source is None:
+        raise ProtectionError(f"{where} has no source repository (source_type Repository, source owner/repo), so the request can't name it")
+    body = {k: copy.deepcopy(ruleset[k]) for k in UPDATE_FIELDS if k in ruleset}
+    rule = next((r for r in body["rules"] if r["type"] == "required_status_checks"), None)
+    if rule is None:
+        body["rules"].append(_checks_rule(names))
+    else:
+        if rule.get("parameters") is None:
+            rule["parameters"] = {}
+        params = rule["parameters"]
+        have = params.get("required_status_checks")
+        if have is None:
+            have = params["required_status_checks"] = []
+        if not isinstance(have, list) or not all(isinstance(c, dict) and isinstance(c.get("context"), str) for c in have):
+            raise ProtectionError(f"{where}: required_status_checks must be a list of objects, each with a context")
+        known = {c["context"] for c in have}
+        have += [{"context": n} for n in names if n not in known]
+        params["strict_required_status_checks_policy"] = True
+    return Request("add the checks to the ruleset", "PUT", f"repos/{source}/rulesets/{rid}", body)
+
+
+def _when(v, what: str) -> datetime | None:
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        raise ProtectionError(f"the {what} file: a time must be a string, as GitHub gives it")
+    try:
+        t = datetime.fromisoformat(v.replace("Z", "+00:00"))
+    except ValueError as e:
+        raise ProtectionError(f"the {what} file: {quote(v)} isn't a time") from e
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
+def _whole(pages: list, key: str, what: str) -> None:
+    """Raises when the pages hold fewer items than GitHub's total_count says there are."""
+    for p in pages:
+        t = p.get("total_count")
+        if t is not None and (not isinstance(t, int) or isinstance(t, bool) or t < 0):
+            raise ProtectionError(f"the {what} file: total_count must be a number, as GitHub gives it")
+    total = max((p["total_count"] for p in pages if p.get("total_count") is not None), default=None)
+    have = sum(len(p[key]) for p in pages)
+    if total is not None and have < total:
+        raise ProtectionError(
+            f"the {what} file holds {have} of the commit's {total}: fetch every page "
+            "(gh api --paginate --slurp, or per_page=100)"
+        )
+
+
+def _check_runs(data) -> list[Ran]:
+    """The check runs: one response of GET .../check-runs, or its pages from `--paginate --slurp`."""
+    what = "check runs"
+    pages = data if isinstance(data, list) else [data]
+    if not all(isinstance(p, dict) and isinstance(p.get("check_runs"), list) for p in pages):
+        raise ProtectionError(f"the {what} file must hold check_runs, as GET repos/<repo>/commits/<ref>/check-runs returns them")
+    _whole(pages, "check_runs", what)
+    out: list[Ran] = []
+    for r in (r for p in pages for r in p["check_runs"]):
+        if not isinstance(r, dict) or not isinstance(r.get("name"), str) or not isinstance(r.get("status"), str):
+            raise ProtectionError(f"the {what} file: each check run must be an object with a name and a status")
+        app = r.get("app")
+        if not isinstance(app, dict) or not isinstance(app.get("slug"), str):
+            # Without it, the try-it link's check can't be told apart, and would be offered.
+            raise ProtectionError(f"the {what} file: each check run must have its app, with a slug, as GitHub gives it")
+        started, completed = _when(r.get("started_at"), what), _when(r.get("completed_at"), what)
+        if app["slug"].casefold() in NEVER_OFFERED_APPS:
+            continue
+        if r["status"] != "completed":
+            result = "pending"
+        elif not isinstance(r.get("conclusion"), str):
+            raise ProtectionError(f"the {what} file: the completed check run {quote(r['name'])} has no conclusion")
+        else:
+            result = "passing" if r["conclusion"] in PASSING else "failing"
+        out.append(Ran(r["name"], result, completed or started, _id(r)))
+    return out
+
+
+def _statuses(data) -> list[Ran]:
+    """The statuses: GET .../statuses (or its pages), or the combined GET .../status."""
+    what = "statuses"
+    combined = data if isinstance(data, list) and data and all(isinstance(p, dict) and "statuses" in p for p in data) else None
+    if isinstance(data, dict):
+        combined = [data]
+    if combined is not None:  # the combined status, or its pages
+        if not all(isinstance(p.get("statuses"), list) for p in combined):
+            raise ProtectionError(f"the {what} file must be a list of statuses, or the combined status with its statuses")
+        _whole(combined, "statuses", what)
+        items = [s for p in combined for s in p["statuses"]]
+    elif isinstance(data, list):
+        items = [s for p in data for s in p] if data and all(isinstance(p, list) for p in data) else data
+    else:
+        raise ProtectionError(f"the {what} file must be a list of statuses, as GET repos/<repo>/commits/<ref>/statuses returns them")
+    out: list[Ran] = []
+    for s in items:
+        if not isinstance(s, dict) or not isinstance(s.get("context"), str) or not isinstance(s.get("state"), str) or s["state"] not in STATUS_RESULT:
+            raise ProtectionError(f"the {what} file: each status must be an object with a context and a state (success, pending, failure or error)")
+        updated, created = _when(s.get("updated_at"), what), _when(s.get("created_at"), what)
+        out.append(Ran(s["context"], STATUS_RESULT[s["state"]], updated or created, _id(s)))
+    return out
+
+
+def _id(item: dict) -> int:
+    return item["id"] if isinstance(item.get("id"), int) and not isinstance(item.get("id"), bool) else 0
+
+
+def checks_ran(check_runs, statuses=None, required=()) -> list[dict]:
+    """Each check that ran on the commit, with its latest result, less those required.
+
+    Results are passing, failing or pending. Check runs from the try-it link's
+    app are never offered. A name reported more than once (a re-run, or a check
+    run and a status of the same name) appears once, with its latest result:
+    the one that finished (or, not finished, started; a status: was updated)
+    last. A check run or status with no time counts as the oldest; at the
+    same time, the higher id wins. A name `--check` would refuse (empty,
+    spaces at either end, a control character) is never offered.
+    """
+    oldest = datetime.min.replace(tzinfo=timezone.utc)
+    latest: dict[str, Ran] = {}
+    for r in _check_runs(check_runs) + _statuses(statuses if statuses is not None else []):
+        have = latest.get(r.name)
+        if have is None or (r.when or oldest, r.id) >= (have.when or oldest, have.id):
+            latest[r.name] = r
+    skip = set(required)
+    out = [{"name": n, "result": r.result} for n, r in latest.items() if n not in skip and _a_check_name(n)]
+    return sorted(out, key=lambda c: (c["name"].casefold(), c["name"]))
+
+
+def requests_text(reqs: list[Request]) -> str:
+    lines = ["The requests (not sent: send each with `gh api -X <method> <path> --input <body>` or the GitHub MCP tools):"]
+    for i, r in enumerate(reqs, 1):
+        lines.append(f"{i}. To {r.what}: {r.method} {r.path}")
+        lines.append(printable(json.dumps(r.body, indent=2, ensure_ascii=False)))
+    return "\n".join(lines)
+
+
+def ran_text(checks: list[dict], required: list[str]) -> str:
+    if checks:
+        lines = ["Checks that ran and aren't required yet:"] + [f"- {quote(c['name'])}: {c['result']}" for c in checks]
+    else:
+        lines = ["No checks that ran are left to require."]
+    if required:
+        lines.append("Already required: " + ", ".join(quote(n) for n in required))
     return "\n".join(lines)
