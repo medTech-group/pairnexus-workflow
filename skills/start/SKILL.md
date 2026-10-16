@@ -33,6 +33,30 @@ Ask in plain text only when the answer can't be a choice ("Tell me what you have
 
 **Only in attended sessions.** In a ticket or conductor session (`WORKFLOW_ROLE`) there is no menu: those sessions work from a briefing or a charter.
 
+## Before anything: how much they know
+
+The kit words things and paces itself for each person's experience: *new to building* or *developer*. It changes nothing else.
+
+**Is it known?** At a session's first message (not a resumed one), run `WF status --json` before reading the message. Ask only when its `experience.source` is `"unknown"`: no `WORKFLOW_EXPERIENCE`, no local file and no project default. Otherwise word things for its `experience.wording_level` and go on to step 0.
+
+**Never in a ticket or conductor session** (`WORKFLOW_ROLE` set): they never ask, whatever status says, and word things for its `wording_level`.
+
+**Ask it** as the very first question of the session, before step 0's work or any other question, with `AskUserQuestion`: "How much do you know about building software?" (header "Experience"). It describes the person, so no option is recommended:
+- *New to building*: "Explain the words and go one step at a time."
+- *Developer*: "Keep it short: I know git, pull requests and CI."
+
+Then go on to step 0, with their first message.
+
+**Skipping counts as new.** If they skip it, dismiss it or answer with something else (their request, say), record `new`, and take what they wrote as their first message.
+
+**Record the answer:**
+- Write it to `.workflow/experience` in the project: one line, `new` or `developer`. That is the file `workflow status` reads as the local file. `.workflow/` is git-ignored: never stage or commit it.
+- **A cloud session** (`CLAUDE_CODE_REMOTE` is `true`) starts from a fresh clone, so the file lasts for this session only. **Say once**, in one line, how to keep it: "To be asked only once, add `WORKFLOW_EXPERIENCE=<level>` to this cloud environment's variables on claude.ai."
+
+**"Explain less" or "explain more",** at any point in the session, changes the level: "explain less" to `developer`, "explain more" to `new`. It is recorded the same way, and confirmed in one line ("Got it: I'll keep it short."). When `experience.source` is `"environment"`, the file can't override it: keep the new level for this session, and say once that `WORKFLOW_EXPERIENCE` (on the cloud environment, or in their shell) changes it for good.
+
+**Tell yourself the new level** whenever you record one, answer or change alike, in one line: "From now on: <level>." With *developer*, stop explaining the building words (the glossary's) for the rest of the session. With *new to building*, read the glossary again, if this session has it, and explain each of its words the first time you use one.
+
 ## 0. Read the first message
 
 The kit's hook brings this skill at a session's first message. Read that message before showing anything:
@@ -65,6 +89,8 @@ It reports:
 - new issues to sort (`needs-triage`, or no label).
 
 Tell the person what matters in two to four lines, for example: "PR #297 is waiting for your merge. Two items from last time aren't started: #301 refill reminders (spec), #302 the Save button (quick ticket). One ticket is ready: #262." Leave out what doesn't matter.
+
+**In solo mode** (status says `Solo mode: yes`), one of those lines says so, with what it means for them: "This project is in solo mode: nothing on GitHub protects `main` yet, so the kit refuses any change straight to it, and all work goes through pull requests. Say "Protect `main`" whenever you want GitHub to guard it." That offer leads to the `upgrade-setup` skill, which Claude may load itself.
 
 **If the kit isn't set up here** (only possible with the plugin, since otherwise this skill isn't there), ask "This project isn't set up for the workflow kit yet". The options:
 - **Set it up (Recommended):** follow the kit's `setup-workflow` skill. It is user-only, so read its `SKILL.md`.
@@ -286,6 +312,7 @@ They can change course at any point. Take it as said, and confirm in one line:
 
 - **Decisions are theirs, facts are yours.** Never answer a decision for them; never ask them what you can look up.
 - **Merging is theirs** in attended work (flow §4).
+- **The level changes wording and pacing in this conversation only,** never what the kit allows. What you write on GitHub (issues, comments, PR descriptions, run reports) is the same for every level, plain summary first.
 - **Where this runs:** a local session, or a cloud session in the Default environment, on a branch not named like `run.ticket_branch`. Elsewhere the session is part of a run, and the guided start never shows:
   - in the ticket environment (`WORKFLOW_ROLE=ticket`), or on a `claude/build-*` branch: the guard holds it to a ticket session's rules, pushes go only to ticket branches, and every turn must end with a status line;
   - in the conductor environment (`WORKFLOW_ROLE=conductor`): the conductor's rules, with no status line.
