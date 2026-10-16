@@ -72,14 +72,14 @@ Before guiding any click, fetch the rulesets and read them back with `WF protect
 - **Already protected** (`protected` is `true`): no clicks for the ruleset. If the merge settings are missing, guide only those first (step 3's screen 3), since they are part of this upgrade too. Then, for `protect_main`, go straight to the pull request that leaves solo mode (step 5); for `restore_protection`, say it is protected again and stop.
 - **Not protected, with rulesets there:** show what is missing. This skill never edits an existing ruleset, and never guides a change to one: changing a ruleset that was there before is left to a later release. It guides a new ruleset beside them. Note which rulesets were there before this run: step 4 needs to know.
   - When an existing one stops the verdict whatever is added (its bypass list, say), say which ruleset and what in it, and that it is its admin's to change. Don't guide a new ruleset that can't help.
-  - A bypass list that "can't be read" needs someone with admin access to that ruleset to read it back, not a change: say so, and hand over the message for the owner (step 1), so they run it.
-  - An organisation's ruleset (`source_type` `Organization`) is the organisation owner's, even for a repository admin: say which one and what in it, and that the organisation owner changes it and reads it back.
+  - An organisation's ruleset (`source_type` `Organization`) is the organisation owner's, even for a repository admin: say which one and what in it (its bypass list, or that its bypass list can't be read from here), and that the organisation owner changes it or reads it back. Don't send the message of step 1 for it: running this skill again as a repository admin gives the same answer.
+  - A repository's own ruleset whose bypass list "can't be read" means the person isn't its admin after all (they chose "I'm an admin: go on"): go back to step 1's not-an-admin path and hand over the message for the owner.
 - **No rulesets:** go on to step 3.
 - **Can't read the rulesets** (no access from here): say so. Guide the clicks anyway, but without a read-back there is no pull request that leaves solo mode: an unknown counts as unprotected.
 
 ## 3. The guided clicks
 
-One screen at a time, each with a link to the exact settings page, in every kind of session. After each screen, wait for "Done" (or "Something's different", then help with what they see).
+One screen at a time, each with a link to the exact settings page, in every kind of session. Before showing screen 1, decide whether screen 2 applies (its test is below), so screen 1 knows whether it ends with **Create**. After each screen, wait for "Done" (or "Something's different", then help with what they see).
 
 **Screen 1: the ruleset.** Open `https://github.com/<repo>/settings/rules/new?target=branch` (**Settings → Rules → Rulesets → New ruleset → New branch ruleset**) and fill it in:
 - **Ruleset name:** anything, for example `main`.

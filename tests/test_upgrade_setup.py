@@ -83,12 +83,14 @@ def test_a_ruleset_that_was_there_before_or_an_organisations_is_not_reoffered():
     back = _section("Read it back")
     assert "the ruleset this run created" in back
     assert "don't offer the click again" in back
-    assert "can't be read\" needs someone with admin access" in first
+    assert "Don't send the message of step 1 for it" in first
+    assert "go back to step 1's not-an-admin path" in first
 
 
 def test_screen_one_ends_with_create_when_screen_two_is_skipped():
     clicks = _section("The guided clicks")
     assert "When screen 2 is skipped (below), end this screen with: click **Create**." in clicks
+    assert clicks.index("decide whether screen 2 applies") < clicks.index("**Screen 1")
 
 
 # Admin first, and the message for the owner.
