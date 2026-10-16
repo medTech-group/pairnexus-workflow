@@ -129,6 +129,13 @@ def test_a_refusal_quotes_a_value_cut_short_with_control_characters_escaped(caps
     assert err.count("\n") == 1 and "rou\\nnd" in err
 
 
+def test_a_refusal_quotes_a_reviewer_as_typed_and_escapes_a_backtick(capsys):
+    code, out, err = run(capsys, "--kind", "round", "--round", "1", "--commit", SHA, "--reviewers", "Spec,LINTER", "--clean")
+    assert "unknown reviewer `LINTER`" in err
+    code, out, err = run(capsys, "--kind", "round", "--round", "1", "--commit", "ab`c", "--reviewers", "spec", "--clean")
+    assert "not `ab\\`c`" in err
+
+
 def test_the_python_writer_refuses_reviewers_that_arent_names():
     with pytest.raises(reviews.RecordError, match="give --reviewers"):
         reviews.record(kind="round", round=1, commit=SHA, reviewers=5, clean=True)
@@ -197,7 +204,8 @@ def test_a_record_line_quoted_inside_other_text_is_not_a_record(capsys):
     line = written(capsys, "--kind", "round", "--round", "3", "--reviewers", "spec", "--clean").splitlines()[1]
     assert reviews.records_in(f"The record `{line}` was wrong.") == []
     assert reviews.records_in(f"Before: {line}") == []
-    assert len(reviews.records_in(f"   {line}  \r\n")) == 1
+    assert len(reviews.records_in(f"{line}  \r\n")) == 1
+    assert reviews.records_in(f"   {line}") == []
     # In a code block, fenced or indented, it is quoted, not posted.
     assert reviews.records_in(f"Round 2's record was:\n```\n{line}\n```\n") == []
     assert reviews.records_in(f"~~~~text\n{line}\n~~~\n{line}\n~~~~\n") == []
@@ -207,6 +215,69 @@ def test_a_record_line_quoted_inside_other_text_is_not_a_record(capsys):
     assert len(reviews.records_in(f"```\n{line}\n```\n{line}\n")) == 1
     # An unclosed fence runs to the end, as Markdown renders it.
     assert reviews.records_in(f"```\n{line}") == []
+
+
+def test_a_record_line_in_a_list_or_a_quote_or_its_code_block_is_not_a_record(capsys):
+    line = written(capsys, "--kind", "round", "--round", "2", "--reviewers", "spec", "--clean").splitlines()[1]
+    for quoted in (
+        f"Here is what a round posts:\n\n- ```\n  {line}\n  ```\n",
+        f"1. ```\n   {line}\n   ```\n",
+        f"* ~~~\n  {line}\n  ~~~\n",
+        f"> ```\n> {line}\n> ```\n",
+        f"- {line}\n",
+        f"> {line}\n",
+        # A fence at the start of the line ends the list's code block and opens another.
+        f"- a\n  ```\n  x\n```\n{line}\n```\n",
+    ):
+        assert reviews.records_in(quoted) == [], quoted
+
+
+def test_a_closed_list_or_quote_fence_lets_a_later_record_count(capsys):
+    line = written(capsys, "--kind", "round", "--round", "2", "--reviewers", "spec", "--clean").splitlines()[1]
+    for before in ("1. ```\n   x\n   ```\n", "- ```\n  x\n  ```\n", "> ```\n> x\n> ```\n"):
+        assert len(reviews.records_in(before + line)) == 1, before
+
+
+def test_a_fence_closes_only_on_its_own_character_at_least_as_long_and_alone(capsys):
+    line = written(capsys, "--kind", "round", "--round", "2", "--reviewers", "spec", "--clean").splitlines()[1]
+    assert reviews.records_in(f"~~~\n```\n{line}\n") == []
+    assert reviews.records_in(f"````\n```\n{line}\n") == []
+    assert reviews.records_in(f"```\n```js\n{line}\n") == []
+    assert reviews.records_in(f"```\n    ```\n{line}\n") == []
+    assert len(reviews.records_in(f"```\n   ```\n{line}\n")) == 1
+
+
+def test_a_backtick_fence_with_a_backtick_after_it_is_code_in_a_line_not_a_fence(capsys):
+    line = written(capsys, "--kind", "round", "--round", "2", "--reviewers", "spec", "--clean").splitlines()[1]
+    assert len(reviews.records_in(f"```make test``` passes on the shop branch\n{line}\n")) == 1
+    assert reviews.records_in(f"~~~ a`b\n{line}\n") == []
+
+
+def test_a_fence_indented_four_spaces_is_code_not_a_fence(capsys):
+    line = written(capsys, "--kind", "round", "--round", "2", "--reviewers", "spec", "--clean").splitlines()[1]
+    assert len(reviews.records_in(f"    ```\n{line}\n")) == 1
+
+
+def test_lines_end_at_cr_lf_or_a_lone_cr_and_nothing_else(capsys):
+    line = written(capsys, "--kind", "round", "--round", "2", "--reviewers", "spec", "--clean").splitlines()[1]
+    assert len(reviews.records_in(f"Review round 2.\r{line}\r<!-- workflow:agent -->")) == 1
+    assert reviews.records_in(f"Review round 2.\u2028{line}") == []
+    assert reviews.records_in(f"```\r{line}\r```") == []
+
+
+def test_a_comment_id_of_20_digits_is_a_number_and_21_is_not(capsys):
+    a = written(capsys, "--kind", "round", "--round", "1", "--reviewers", "spec", "--clean")
+    (r,) = reviews.read([{"id": "9" * 20, "body": a}])
+    assert r.comment_id == int("9" * 20)
+    (r,) = reviews.read([{"id": "9" * 21, "url": "https://x/pull/5#issuecomment-" + "9" * 21, "body": a}])
+    assert r.comment_id is None
+
+
+def test_a_comments_file_with_a_number_past_pythons_limit_is_refused_in_words():
+    from workflow import posts
+
+    with pytest.raises(posts.CommentsError, match="too long"):
+        posts.load_comments('[{"id": ' + "1" * 5000 + ', "body": "x", "url": "u"}]')
 
 
 def test_read_skips_a_comment_id_too_long_to_be_a_number(capsys):

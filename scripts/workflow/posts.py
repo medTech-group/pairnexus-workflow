@@ -51,6 +51,9 @@ def decode_values(text: str) -> list:
             value, i = dec.raw_decode(text, i)
         except json.JSONDecodeError as e:
             raise CommentsError(f"not JSON at line {e.lineno}, column {e.colno}: {e.msg}") from None
+        except ValueError:
+            # A number past Python's digit limit (int() refuses it).
+            raise CommentsError("a number in the JSON is too long to read") from None
         out.append(value)
 
 

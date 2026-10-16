@@ -34,11 +34,15 @@ REVIEWERS = ("standards", "spec", "correctness", "security", "explorer")
 RESULTS = ("clean", "not-clean")
 
 _FIELDS = ("kind", "round", "commit", "reviewers", "result")
-# A record line is a line of its own (at most three spaces in, as Markdown
-# allows outside a code block), so one quoted in a sentence, in backticks or in
-# a code block isn't read as a record.
-_LINE = re.compile(r" {0,3}<!-- workflow:review (\S[^\n]*?\S) -->[ \t]*\r?")
-_FENCE = re.compile(r" {0,3}(`{3,}|~{3,})")
+# A record line is a line of its own, at the start of the line as the writer
+# writes it, outside any code block: one quoted in a sentence, in backticks, in
+# a list or quote, or in a code block isn't read as a record. When in doubt the
+# reader leaves a line out: a record missed is asked for again, a quoted one
+# counted could pass a review that never happened.
+_LINE = re.compile(r"<!-- workflow:review (\S[^\n]*?\S) -->[ \t]*")
+# A fence, after any indentation and any list or quote markers before it.
+_FENCE = re.compile(r"((?:[ \t]|>|[-+*](?=[ \t])|[0-9]{1,9}[.)](?=[ \t]))*)(`{3,}|~{3,})(.*)")
+_LINE_END = re.compile(r"\r\n|\r|\n")
 _SHA = re.compile(r"[0-9a-f]{40}")
 # A round's number, at most six digits (int() refuses past Python's digit limit).
 _ROUND = re.compile(r"[1-9][0-9]{0,5}")
@@ -74,9 +78,9 @@ class Record:
 
 def _shown(value, n: int) -> str:
     """A value as the refusal quotes it: cut to `n` characters, control
-    characters escaped."""
+    characters and backticks escaped."""
     text = str(value)
-    cut = "".join(c if c.isprintable() else repr(c)[1:-1] for c in text[:n])
+    cut = "".join("\\`" if c == "`" else c if c.isprintable() else repr(c)[1:-1] for c in text[:n])
     return cut + ("…" if len(text) > n else "")
 
 
@@ -102,14 +106,15 @@ def _checked(kind, round, commit, reviewers, result) -> Record:
     if reviewers is not None and not isinstance(reviewers, (str, list, tuple)):
         raise RecordError("give --reviewers as names, comma-separated")
     parts = [reviewers] if isinstance(reviewers, str) else list(reviewers or [])
-    names = [n.strip().lower() for part in parts for n in str(part).split(",")]
+    typed = [n.strip() for part in parts for n in str(part).split(",")]
+    names = [n.lower() for n in typed]
     if not any(names):
         raise RecordError("give --reviewers: those that ran, from " + ", ".join(REVIEWERS))
     if "" in names:
         raise RecordError("--reviewers has an empty name: give them comma-separated, with nothing between two commas")
-    for n in names:
+    for n, t in zip(names, typed):
         if n not in REVIEWERS:
-            raise RecordError(f"unknown reviewer `{_shown(n, 30)}`: the reviewers are " + ", ".join(REVIEWERS))
+            raise RecordError(f"unknown reviewer `{_shown(t, 30)}`: the reviewers are " + ", ".join(REVIEWERS))
     who = tuple(r for r in REVIEWERS if r in names)
     if kind == "pass" and who != ("correctness",):
         raise RecordError("a pass is reviewed by correctness alone: give --reviewers correctness")
@@ -155,16 +160,29 @@ def records_in(text) -> list[Record]:
     never raises."""
     if not isinstance(text, str):
         return []
-    out, fence = [], ""
-    for line in text.split("\n"):
-        f = _FENCE.match(line)
+    out = []
+    fence, nested = "", False  # the open fence, and whether it opened inside a list or quote
+    for line in _LINE_END.split(text):
+        f = _FENCE.fullmatch(line)
+        # A backtick fence's info string can't hold a backtick (it's code in a line then).
+        if f and f.group(2)[0] == "`" and "`" in f.group(3):
+            f = None
         if fence:
-            # A fence closes on a line of the same character, at least as long.
-            if f and f.group(1)[0] == fence[0] and len(f.group(1)) >= len(fence) and not line[f.end():].strip():
-                fence = ""
+            if f and not f.group(1) and nested:
+                # A fence at the start of the line ends the list or quote, so its
+                # code block too, and opens a new one.
+                fence, nested = f.group(2), False
+            elif f and f.group(2)[0] == fence[0] and len(f.group(2)) >= len(fence) and not f.group(3).strip():
+                # Closed by a line of the same character, at least as long.
+                if nested or len(f.group(1)) <= 3 and not f.group(1).strip():
+                    fence = ""
             continue
         if f:
-            fence = f.group(1)
+            prefix = f.group(1)
+            # Indented, it may sit in a list item: treated as nested, the safe side.
+            fence, nested = f.group(2), bool(prefix)
+            if len(prefix) > 3 and not prefix.strip():
+                fence = ""  # indented four or more: code already, not a fence
             continue
         m = _LINE.fullmatch(line)
         r = _parse(m.group(1)) if m else None
