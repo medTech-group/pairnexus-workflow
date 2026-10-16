@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+**"Protect `main`" is automatic on your own computer, with `gh`** (#67, part of the automated GitHub set-up, #38).
+
+- **The `upgrade-setup` skill makes the ruleset and the merge settings itself** when the session is local, `gh` is signed in, and the repository reads you as its admin: after one confirmation, worded by experience, it sends `workflow protection --protect`'s ruleset `POST` and merge-settings `PATCH` with `gh api`, reads them back with `workflow protection`, and opens the pull request that leaves solo mode. Claude Code asks you to approve the ruleset command, and the skill says so up front.
+- **The checks that already ran** on the base branch's latest commit (`workflow protection --checks-ran`) are offered on the same screen, passing ones and those the profile lists ticked by default. Ticked names go in the ruleset and, in the same pull request, into `ci.required_checks` (never removing one), with the marker `<!-- workflow:required-checks -->` in its body.
+- **Everyone else gets the guided clicks:** cloud sessions always, `gh` missing or signed out (with how to sign in), and a ruleset already on the base branch that doesn't protect it, which is read back first and never edited. Not an admin: the ready message for the owner, before anything is tried.
+- **Refusals and failures:** a refusal naming a permission mode where nobody is asked is answered with "switch the permission mode and try again", never a retry. A failed step says what was done and what's left, reads back, and gives the clicks for the rest; the ruleset's request is never sent twice.
+- **The guard is unchanged.** Its existing decisions on the exact commands the skill runs: the `POST` asked when someone is asked, refused in `bypassPermissions`, `dontAsk` and ticket and conductor sessions; the `PATCH` and the reads allowed, in solo mode and out.
+- Docs: the README's "Protect `main`", `docs/enforcement.md` §1. Tests: `tests/test_protect_main_gh.py` (the guard), `tests/test_upgrade_setup.py` (the wording).
+- **For projects updating:** nothing to do.
+
 **No `python3`, and the plugin: the hook commands get the same fallback** (#56, part of guard robustness, #33).
 
 - **Without a working `python3`** (missing, a stub, a shim with no version, a non-zero exit), an attended session's guard hook command still applies #53's rule: a push or a merge is asked, and refused in solo mode or in a permission mode where nobody is asked; everything else is left alone. It reads the event's raw text in the new `scripts/workflow/fallback.sh` (POSIX `sh` and `awk`, matched word by word): only a Bash command or a GitHub MCP tool's name, never a file's content. The reason says the guard isn't working and to check `python3 --version` (3.11 or newer).
