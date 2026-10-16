@@ -724,3 +724,31 @@ def test_explorer_round_2_still_refused(cmd, solo):
 def test_cant_tell_wording_for_an_api_call(solo):
     r = act(solo, 'gh api -X DELETE "repos/acme/demo/$X"').reason
     assert "spell out the call's path, method and body" in r and "name the branch and run" not in r
+
+
+# ---------- review round 3 ----------
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        'curl -X POST -H "Authorization: bearer $GITHUB_TOKEN" "$GITHUB_API_URL/graphql" -d \'{"query":"mutation { mergeBranch(input:{repositoryId:\\"R\\",base:\\"main\\",head:\\"f\\"}){ clientMutationId } }"}\'',
+        'API=https://api.github.com; curl -X PATCH "$API/repos/acme/demo" -d \'{"default_branch":"dev"}\'',
+        'gh api -X PUT "https://$GH_HOST/api/v3/repos/acme/demo/branches/main/protection" --input p.json',
+        'gh api -X PATCH "https://$GH_HOST/api/v3/repos/acme/demo" -f default_branch=dev',
+        "gh api \"https://$GH_HOST/api/graphql\" -f query='mutation { deleteRef(input:{refId:\"X\"}){ clientMutationId } }'",
+        'X=..; curl -X DELETE -H "Authorization: Bearer $T" "https://api.github.com/repos/acme/demo/issues/$X/rulesets/42"',
+        "gh pr merge 12 -d $EXTRA",
+        "echo -e '{\"default\\x5fbranch\":\"dev\"}' | gh api -X PATCH repos/acme/demo --input -",
+        "curl -X DELETE https://github.corp.local/api/v3/repos/acme/demo/rulesets/42",
+        "cat > q.graphql <<'EOF'\nmutation { deleteRef(input:{refId:\"X\"}){clientMutationId} }\nEOF\ngh api graphql -f query=\"$(cat q.graphql)\"",
+    ],
+)
+def test_round_3_refused(cmd, solo):
+    (solo.root / "q.graphql").write_text("query { viewer { login } }\n")
+    assert act(solo, bash(cmd, solo.root)).action == "deny", cmd
+
+
+@pytest.mark.parametrize("cmd", ['gh repo edit -d "$DESC"', 'curl -X POST "$API_URL/graphql" -d \'{"query":"{ me { id } }"}\''])
+def test_round_3_not_refused(cmd, solo):
+    assert act(solo, bash(cmd, solo.root)).action != "deny", cmd

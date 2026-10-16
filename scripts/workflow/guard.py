@@ -4277,7 +4277,7 @@ class _Body:
 def _api_path(path: str) -> str:
     """A request path as GitHub reads it: decoded, dot segments removed, with
     no host, `api/v3/` prefix or slashes around it."""
-    p = re.sub(r"(?i)^(?:https?://)?[^/\s]+\.[^/\s]+/(?=.)", "", path) if "://" in path else path
+    p = re.sub(r"(?i)^[a-z][\w+.-]*://[^/]*", "", path) if "://" in path else path  # any host, one the shell fills in too
     p = urllib.parse.unquote(p.split("?", 1)[0].split("#", 1)[0])
     p = posixpath.normpath("/" + p.lstrip("/")).strip("/")
     p = re.sub(r"(?i)^api/v3/", "", p)
@@ -4294,6 +4294,8 @@ def _plain_resource(path: str) -> bool:
     """Whether a path with parts the shell fills in is plainly not one this
     check is about: under a repository's literal issues, pull requests and the
     like, or outside `repos/`, `orgs/` and `repositories/` altogether."""
+    if re.search(r"(?:^|/)(?:rulesets|protection|branches|git|refs|merges|merge-upstream|contents)(?:/|$)", path):
+        return False  # a refused part after what the shell fills in: `issues/$X/../rulesets/1`
     if re.match(rf"(?:repos/[^/]+/[^/]+|repos/[^/]*[$`][^/]*|repositories/[^/]+)/(?:{_PLAIN_RESOURCES})(?:/|$)", path):
         return True
     first = path.split("/", 1)[0]
@@ -4394,12 +4396,15 @@ def _gql_literal(q: str) -> bool:
     return all(n in declared for n in re.findall(r"\$(\w+)", q))
 
 
-def _gql_queries(queries: list[str | None], cwd: str | None) -> list[str | None]:
-    """The queries, a `$(cat FILE)` one read from its file."""
+def _gql_queries(queries: list[str | None], cwd: str | None, raw: str = "") -> list[str | None]:
+    """The queries, a `$(cat FILE)` one read from its file (unread when the
+    command also writes the file)."""
     out: list[str | None] = []
     for q in queries:
         m = re.fullmatch(r"\s*\$\(\s*cat\s+([^\s$`;&|<>()]+)\s*\)\s*", q or "")
-        out.append(_read_text(m.group(1).strip("'\""), cwd) if m else q)
+        f = m.group(1).strip("'\"") if m else ""
+        written = bool(f) and re.search(rf"(?:>|\btee\s+(?:-a\s+)?)\s*['\"]?{re.escape(f)}\b", raw)
+        out.append(None if written else _read_text(f, cwd) if m else q)
     return out
 
 
@@ -4416,7 +4421,7 @@ def _solo_gql(queries: list[str | None], fallback, base: str, cwd: str | None = 
     """Solo mode: a GraphQL request's refusal, from its queries (`fallback()`
     when they hold expansions); with `strict`, a query the kit can't read at
     all counts as a mutation that changes the base branch."""
-    queries = _gql_queries(queries, cwd)
+    queries = _gql_queries(queries, cwd, fallback())
     text, literal = _gql_text(queries, fallback)
     r = _solo_graphql(text, base, literal)
     if not r and strict and _gql_unread(queries):
@@ -4552,8 +4557,10 @@ def _curl_github_path(url: str) -> str | None:
         return path
     local = host in ("localhost", "0.0.0.0", "[::1]") or host.startswith("127.") or host.endswith((".local", ".localhost", ".test"))
     rest = urllib.parse.unquote(m.group(2).lstrip("/"))
-    if not local and (re.match(r"(?i)api/v3/", rest) or re.match(r"(?i)api/graphql/?(?:[?#]|$)", rest)):
+    if re.match(r"(?i)api/v3/", rest) or not local and re.match(r"(?i)api/graphql/?(?:[?#]|$)", rest):
         return path  # a GitHub Enterprise server
+    if _EXPANDS.search(host) and (path == "graphql" or re.match(r"(?:repos|orgs|repositories)/", path)):
+        return path  # a host the shell fills in (`$GITHUB_API_URL`), with GitHub's API paths
     return None
 
 
@@ -4609,7 +4616,7 @@ def _gh_aliases() -> dict[str, str] | None:
 # `gh pr merge` and `gh repo edit` options whose value is text, never an option.
 _GH_TEXT_OPTS = {
     "-b", "--body", "-F", "--body-file", "-t", "--subject", "-A", "--author-email", "--match-head-commit",
-    "-d", "--description", "-h", "--homepage", "--add-topic", "--remove-topic", "--visibility", "--template",
+    "--description", "-h", "--homepage", "--add-topic", "--remove-topic", "--visibility", "--template",
 }  # fmt: skip
 
 
@@ -4621,7 +4628,9 @@ def _unread_words(toks: list[str]) -> bool:
     positional_seen = False
     for j in range(sub_at + 1, len(toks)):
         t, prev = toks[j], toks[j - 1]
-        if not _EXPANDS.search(t) or _literal_heredoc(t) or prev in _GH_TEXT_OPTS or re.match(r"--[\w-]+=", t) and t.split("=", 1)[0] in _GH_TEXT_OPTS:
+        if toks[1:3] == ["repo", "edit"] and prev == "-d":
+            continue  # `gh repo edit -d` is the description (`gh pr merge -d` deletes the branch)
+        if not _EXPANDS.search(t) or prev in _GH_TEXT_OPTS or re.match(r"--[\w-]+=", t) and t.split("=", 1)[0] in _GH_TEXT_OPTS:
             positional_seen = positional_seen or not t.startswith("-") and prev not in _GH_TEXT_OPTS
             continue
         if not positional_seen and prev not in ("-R", "--repo"):
@@ -4715,6 +4724,8 @@ def _echoed(seg: Seg) -> str | None:
     """The text a plain `echo` or one-argument `printf` pipes into the command,
     when the shell fills nothing in."""
     w = seg.piped.words if seg.piped is not None else []
+    if seg.stdins or seg.stdin_unseen or seg.stdin or any("\\" in x for x in w[1:]):
+        return None  # the command's own stdin, or escapes `echo -e` would turn into other text
     if not w or Path(w[0]).name not in ("echo", "printf") or any(_EXPANDS.search(x) for x in w[1:]):
         return None
     args = [x for x in w[1:] if not (Path(w[0]).name == "echo" and re.fullmatch(r"-[neE]+", x))]
