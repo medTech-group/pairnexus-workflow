@@ -73,7 +73,7 @@ Then Claude:
   - the repository's settings: `.claude/workflow/profile.toml` and `profile.md`, with `ruleset = false` (solo mode), or `ruleset = true` when it read back a ruleset that already protects the base branch;
   - the kit's copy: its skills and Matt Pocock's in `.claude/skills/`, the reviewer agents in `.claude/agents/`, the CLI, docs and templates in `.claude/workflow/`, its hooks merged into `.claude/settings.json`, and `.claude/workflow/lock.json` recording the version and every file;
   - a `workflow kit` CI check (`.github/workflows/workflow-kit.yml`) and the weekly update check (`.github/workflows/workflow-kit-update.yml`);
-  - CODEOWNERS, issue templates, `docs/agents/` (how agents use the issue tracker and labels), `.gitignore` entries, and a short section in `CLAUDE.md`.
+  - CODEOWNERS, issue templates, the pull request template ("In plain words" at the top), `docs/agents/` (how agents use the issue tracker and labels), `.gitignore` entries, and a short section in `CLAUDE.md`.
 
 In plugin mode there is no copy and no CI jobs: the PR holds the profile, the plugin in `.claude/settings.json`, and the rest of the list.
 
@@ -607,7 +607,7 @@ Several decisions that don't block each other can be worked in parallel sessions
 
 Claude clones the kit at the latest release's tag into a temporary directory and follows that release's `skills/update-workflow/SKILL.md`. It opens a pull request that replaces the kit's copy, keeping any edits the project made on purpose, and does what that release's changelog asks of projects. Merge it like the set-up PR. The `workflow kit` CI check fails if anyone changes the copy without recording it, so the copy always matches a released version plus the project's recorded edits.
 
-The update pull request lists each file the project had edited: kept as edited where the kit didn't change it, and merged by hand where both did. It also brings over changes to the files set-up copied once (the CI jobs, `docs/agents/issue-tracker.md`, the issue templates).
+The update pull request lists each file the project had edited: kept as edited where the kit didn't change it, and merged by hand where both did. It also brings over changes to the files set-up copied once (the CI jobs, `docs/agents/issue-tracker.md`, the issue templates), and adds the pull request template once to a project set up before it.
 
 To check by hand: `python3 -B .claude/workflow/bin/workflow.py version --fresh`. Each session start looks up the latest release (with `gh`, else GitHub's public API) at most every six hours; `WORKFLOW_UPDATE_CHECK=off` in an environment turns the lookup off.
 
@@ -693,7 +693,7 @@ Matt Pocock's take `mattpocock-skills:`, such as `/mattpocock-skills:to-spec`, `
 | `scripts/workflow.py`, `scripts/workflow/` | The CLI the skills and hooks run (Python 3.11+, standard library only): `profile`, `status`, `protection`, `version`, `ready`, `charter`, `state`, `render`, `comments`, `briefing`, `evidence`, `repair`, `vendor`, `hook`. `python3 -B scripts/workflow.py --help` lists every flag |
 | `hooks/hooks.json` | The plugin's hooks (a vendored project gets the same hooks in its `.claude/settings.json`): the guard (the never-list), the status gate, the flow context and the guided start's first-message nudge, and at session start the environment repair, project setup and update notice |
 | `docs/` | `flow.md`, `charter.md`, `enforcement.md`, `install.md`, `profile.md`, `protection.md`, `spike.md` (what's verified), `proposal.md` (the original design, historical) |
-| `templates/` | The profile (`profile.toml`, `profile.md`), the ticket-session briefing, tracking and by-hand issues, `issue-tracker.md` (for `docs/agents/`), the issue templates, the `workflow kit` CI job and the weekly update check |
+| `templates/` | The profile (`profile.toml`, `profile.md`), the ticket-session briefing, tracking and by-hand issues, `issue-tracker.md` (for `docs/agents/`), the issue templates, the pull request template, the `workflow kit` CI job and the weekly update check |
 | `.claude-plugin/` | The plugin manifest and the `pairnexus` marketplace, which pins Matt Pocock's skills |
 | `.github/` | The kit's own CI (the tests on Python 3.11 to 3.13, the hooks on a Python 3.9, and a check that the versions agree), the `release` workflow, and this repository's issue templates |
 | `SECURITY.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md` | How to report a vulnerability, how to contribute, and the code of conduct |

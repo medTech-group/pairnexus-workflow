@@ -65,7 +65,7 @@ Plugin mode fails the same way as vendored: its hooks run the same commands as a
 
 The kit's README ("Getting started", https://github.com/medTech-group/pairnexus-workflow#getting-started) walks through it step by step, with every click. In short:
 
-1. Run the `setup-workflow` skill, the solo set-up: it asks only what attended work needs, and writes the profile (with `ruleset = false`, solo mode, unless it reads back a ruleset that already protects the base branch), Matt Pocock's per-repo docs, labels, issue templates, CODEOWNERS; in vendored mode also the kit's copy, the `workflow kit` CI job and the weekly update check.
+1. Run the `setup-workflow` skill, the solo set-up: it asks only what attended work needs, and writes the profile (with `ruleset = false`, solo mode, unless it reads back a ruleset that already protects the base branch), Matt Pocock's per-repo docs, labels, issue templates, the pull request template ("In plain words" at the top, from `workflow pr-template`), CODEOWNERS; in vendored mode also the kit's copy, the `workflow kit` CI job and the weekly update check.
 2. The owner merges its pull request and starts working. In solo mode the kit's guard refuses changes straight to the base branch.
 3. When wanted, two optional upgrades, each one request to Claude (the `upgrade-setup` skill): "Protect `main`" (the ruleset and "Allow auto-merge", read back, then a small pull request that leaves solo mode) and "Set up unattended runs" (vendored mode only: the questions only runs need, the two environments named as in the profile, and one profile pull request). The README's Steps 3 to 5 are their clicks by hand.
 4. Check it (`docs/enforcement.md` §5).
