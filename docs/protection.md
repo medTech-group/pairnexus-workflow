@@ -1,6 +1,6 @@
-# Reading back the base branch's protection
+# Reading back the base branch's protection, and the requests to protect it
 
-`workflow protection` says whether the base branch is protected, from JSON that a session fetched from GitHub. It asks GitHub nothing and changes nothing: it reads the files it is given and prints a report.
+`workflow protection` says whether the base branch is protected, from JSON that a session fetched from GitHub. It also builds the requests that protect the base branch and require its checks, and lists the checks that ran (#66; see [Building the requests](#building-the-requests)). It asks GitHub nothing, sends nothing and changes nothing: it reads the files it is given and prints a report or the requests.
 
 The rule for "protected" lives here, and these call it rather than repeat it (solo mode, #32). The first does already; the others come with their tickets:
 - the "Protect `main`" upgrade (`skills/upgrade-setup`), to read back the clicks;
@@ -86,3 +86,60 @@ Checks not required yet: no active ruleset on main requires status checks.
 ```
 
 `checks.note` is `null` when checks are required, and `merge` is `null` without `--repo`. A merge setting not in the file is `null`.
+
+## Building the requests
+
+Three more forms of the same command print requests for a session to send, or the checks it can offer. They send nothing: the session sends each request itself (`gh api -X <method> <path> --input <body file>`, or the GitHub MCP tools), where the guard asks or refuses as it does for any ruleset change (#17, #33). Each takes `--json`, which gives the same for skills and `workflow doctor`; the text form is for a developer to read. Wrong input exits 2 with a plain message and prints nothing, as the read-back does: a request is never built from half the data.
+
+### Protect
+
+```bash
+workflow protection --protect --repo repo.json [--base main] [--check NAME ...] [--json]
+```
+
+From the repository's settings (`GET repos/<repo>`: its `full_name` and `default_branch`, both needed) and the base branch (`--base`, else the profile's), two requests:
+
+1. `POST repos/<repo>/rulesets`, the ruleset:
+   - named "Protect <base> (pairnexus-workflow)", enforcement `active`, an empty bypass list;
+   - on the base branch: `~DEFAULT_BRANCH` when it is the repository's default branch, else `refs/heads/<base>`;
+   - rules `deletion`, `non_fast_forward` and `pull_request` (0 approvals, Code Owners review off, the other review settings off);
+   - with `--check` names (each ticked check, once), a `required_status_checks` rule requiring them with "up to date" (`strict_required_status_checks_policy`) on; without names, no such rule;
+   - no linear-history rule.
+2. `PATCH repos/<repo>` with `allow_merge_commit` and `allow_auto_merge` true.
+
+This is the set `docs/enforcement.md` §1 and the guided clicks describe, and it reads back as protected (with "checks not required yet" when no names were given).
+
+### Require checks
+
+```bash
+workflow protection --require-checks ruleset.json --check NAME [--check NAME ...] [--json]
+```
+
+From one ruleset in full (`GET repos/<repo>/rulesets/<id>`) and the names, `PUT repos/<repo>/rulesets/<id>`:
+- its first `required_status_checks` rule gains each name it doesn't already require, after the ones it has; none is removed or reordered, and the rule's other parameters stay. A ruleset with no such rule gains one;
+- "up to date" is turned on;
+- every other rule, the conditions, the bypass list, the name and the enforcement are sent as they are. Only the fields GitHub accepts on an update are sent (`name`, `target`, `enforcement`, `bypass_actors`, `conditions`, `rules`): no `id`, `source`, `node_id`, `_links` or times. A ruleset read without admin access has no `bypass_actors`, and the request then leaves it out, which keeps it as it is.
+
+The repository is the ruleset's own `source`. An organisation's ruleset is refused: the kit adds checks only to the repository's.
+
+### The checks that ran
+
+```bash
+workflow protection --checks-ran check-runs.json [--statuses statuses.json] --rulesets rulesets.json [--repo repo.json] [--base main] [--json]
+```
+
+From the base branch's latest commit's check runs (`GET repos/<repo>/commits/<sha>/check-runs`, or its pages from `--paginate --slurp`) and statuses (`GET repos/<repo>/commits/<sha>/statuses`, its pages, or the combined `.../status`), each check's name with its result:
+- **passing:** a completed check run whose conclusion is `success`, `neutral` or `skipped`, or a `success` status;
+- **failing:** any other conclusion, or a `failure` or `error` status;
+- **pending:** a check run not completed yet, or a `pending` status.
+
+A name reported more than once (a re-run, or a check run and a status of the same name) appears once, with its latest result (by when it started, or was updated). Those the rulesets already require are left out: `--rulesets` (and `--repo`, `--base`) are read as the read-back reads them, and their required checks come back under `required`. A commit with no checks gives an empty list, not an error.
+
+**Never offered:** check runs from the `cloudflare-workers-and-pages` app (`Workers Builds: <worker>`, the try-it link's build, #41). The kit never makes the try-it link a required check (#18). A check of a similar name from another app is listed.
+
+`--json` gives:
+
+```json
+{"checks": [{"name": "tests (3.11)", "result": "passing"}, {"name": "lint", "result": "failing"}], "required": ["build"]}
+```
+
