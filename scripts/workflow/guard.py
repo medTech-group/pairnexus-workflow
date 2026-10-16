@@ -651,6 +651,7 @@ class _Cmd:
     redirects: list[str] = field(default_factory=list)
     stdin: str | None = None
     heredoc: str | None = None
+    stdins: int = 0  # heredocs, here-strings and `<` files given: bash reads only the last
 
 
 _REDIR = re.compile(r"(\d*)(>>|>\||&>>|&>|>&|<&|<>|<<<|<<|<|>)")
@@ -672,6 +673,7 @@ def _simple(toks: list) -> list:
         t = toks[i]
         if isinstance(t, Heredoc):
             cur.heredoc = (cur.heredoc or "") + t.body
+            cur.stdins += 1
             i += 1
             continue
         if isinstance(t, Op):
@@ -688,8 +690,10 @@ def _simple(toks: list) -> list:
                     pass
                 elif op == "<":
                     cur.stdin = nxt
+                    cur.stdins += 1
                 elif op == "<<<":
                     cur.heredoc = (cur.heredoc or "") + nxt
+                    cur.stdins += 1
                 else:
                     cur.redirects.append(nxt)
                 i += 2
@@ -716,6 +720,7 @@ class Seg:
     fed: bool = False  # run by xargs: given file names on its stdin
     fed_file: bool = False  # xargs reads them from a file (`-a f`, `< f`), not a pipe
     match_only: bool = False  # run by find -execdir on the match alone (`rm -f {}`), which the find's own check covers
+    stdins: int = 0  # how many inputs it was given on stdin (heredocs, here-strings, `<` files)
 
 
 _KEYWORDS = {"{", "}", "!", "if", "then", "else", "elif", "fi", "do", "done", "while", "until", "esac", "coproc"}
@@ -906,7 +911,7 @@ def _segments_of(toks: list, root: Path, cwd: str | None, depth: int) -> list[Se
                 if toks2[0] == "pushd":
                     dirs.append(cwd)
             oldpwd, cwd = cwd, new
-            seg = Seg(toks2, item.redirects, cwd, item.stdin, item.heredoc, prev if piped else None, assigns)
+            seg = Seg(toks2, item.redirects, cwd, item.stdin, item.heredoc, prev if piped else None, assigns, stdins=item.stdins)
             segs.append(seg)
             prev = seg
             continue
@@ -915,7 +920,7 @@ def _segments_of(toks: list, root: Path, cwd: str | None, depth: int) -> list[Se
             seg_cwd = _cd_target([chdir], root, cwd)
         if not toks2 and not item.redirects and not assigns and item.stdin is None and item.heredoc is None:
             continue
-        seg = Seg(toks2, item.redirects, seg_cwd, item.stdin, item.heredoc, prev if piped else None, assigns)
+        seg = Seg(toks2, item.redirects, seg_cwd, item.stdin, item.heredoc, prev if piped else None, assigns, stdins=item.stdins)
         if "xargs" in stripped:
             seg.fed = True
             # A list read from a file (`-a f`, `< f`), not the pipe: anywhere in the words, to be safe.
@@ -1613,6 +1618,8 @@ def _read_capped(path: str, cwd: str | None, cap: int) -> tuple[str | None, bool
 
 def _read_sized(path: str, cwd: str | None, cap: int) -> tuple[str | None, int, bool]:
     """A regular file's text (at most `cap` bytes), the bytes read, and whether it holds more."""
+    if path == os.devnull:  # as written: `/dev/fd/0` can resolve to it here and be something else when it runs
+        return "", 0, False
     a = _abspath(path, cwd)
     if not a or not os.path.isfile(a):
         return None, 0, False
@@ -2407,16 +2414,28 @@ def _patch_paths(text: str) -> list[str]:
 def _piped_text(seg: Seg) -> str | None:
     """What a `cat` (with a heredoc, files or a stdin file) piping into this
     command sends it; None when it isn't one or a file can't be read."""
+    return _piped_sized(seg, 1_000_000)[0]
+
+
+def _piped_sized(seg: Seg, cap: int) -> tuple[str | None, int, bool]:
+    """`_piped_text` read up to `cap` bytes in all: (its text, the bytes, whether there is more)."""
     p = seg.piped
     if p is None or (p.words and Path(p.words[0]).name != "cat"):
-        return None
+        return None, 0, False
     ops = [w for w in p.words[1:] if w == "-" or not w.startswith("-")]
     if not ops or ops == ["-"]:
         if p.heredoc is not None:
-            return p.heredoc
-        return _read_text(p.stdin, p.cwd) if p.stdin else None
-    texts = [_read_text(f, p.cwd) for f in ops]
-    return None if any(x is None for x in texts) else "\n".join(texts)  # type: ignore[arg-type]
+            size = _size(p.heredoc)
+            return p.heredoc, size, size > cap
+        return _read_sized(p.stdin, p.cwd, cap) if p.stdin else (None, 0, False)
+    texts, left = [], cap
+    for f in ops:
+        txt, size, over = _read_sized(f, p.cwd, max(left, 0))
+        if txt is None or over:
+            return None, 0, over
+        texts.append(txt)
+        left -= size
+    return "\n".join(texts), cap - left, False
 
 
 def _patch_texts(cmd: str, args: list[str], seg: Seg) -> tuple[list[str], str | None, list[str]]:
@@ -2463,6 +2482,9 @@ def _patch_texts(cmd: str, args: list[str], seg: Seg) -> tuple[list[str], str | 
             return [], why, patched
         texts.append(txt)
     if not texts_from:
+        if seg.stdins > 1:
+            return [], "this gives the patch more than one input on stdin (heredocs, here-strings or `<` files), and only the last is read; give it one", patched
+        piped, size, over = _piped_sized(seg, left)
         if seg.stdin:
             txt, why = read(seg.stdin)
             if txt is None:
@@ -2470,8 +2492,10 @@ def _patch_texts(cmd: str, args: list[str], seg: Seg) -> tuple[list[str], str | 
             texts.append(txt)
         elif seg.heredoc is not None:
             texts.append(seg.heredoc)
-        elif _piped_text(seg) is not None:
-            texts.append(_piped_text(seg) or "")
+        elif over:
+            return [], f"the patches are over {_PATCH_CAP:,} bytes, more than the guard reads; apply them in smaller parts", patched
+        elif piped is not None:
+            texts.append(piped)
         else:
             return [], "this applies a patch from a pipe, where the guard can't see what it changes; apply it from a file or a heredoc", patched
     return texts, None, patched
@@ -3348,7 +3372,7 @@ def _script_net(text: str, dialect: str) -> int:
         return _sed_net(text)
     if dialect == "ex":
         return _ex_net(text)
-    return _code_net(text)
+    return _code_net(text, perl=dialect != "awk")
 
 
 # sed: commands start after a newline, `;`, `{` or `}`, each with up to two
@@ -3520,9 +3544,10 @@ _CODE_EXPECT_TERM = {
     "push", "unshift", "join", "when", "eq", "ne", "lt", "gt", "le", "ge", "cmp", "x", "defined", "in",
 }
 _CODE_REGEX_FLAGS = re.compile(r"[A-Za-z]*")
+_QUOTE_LIKE = {"s", "m", "qr", "q", "qq", "qw", "tr", "y"}
 
 
-def _code_net(text: str) -> int:
+def _code_net(text: str, perl: bool = True) -> int:
     net, kept, last, pos, term, n = 0, [], 0, 0, False, len(text)
 
     def rest() -> int:  # from where the script can't be read, everything left counts
@@ -3550,11 +3575,19 @@ def _code_net(text: str) -> int:
             continue
         m = _CODE_TOKEN.match(text, pos)
         word = m.group(0)
-        d = text[m.end() : m.end() + 1]
-        # A quote-like operator, unless what follows makes it a word (`s =>`, a hash's `{s}`).
-        quote_like = word in ("s", "m", "qr", "q", "qq", "qw", "tr", "y") and d != "" and not (d.isspace() or d.isalnum() or d in "_}=,;)]>")
-        if quote_like and word == "s":
-            sub = _perl_s(text, m.end())
+        at = None  # where a quote-like operator's delimiter is
+        if perl and word in _QUOTE_LIKE and not (pos and text[pos - 1] in "$@%&*>-"):  # not `->s`, `-s $f`
+            # perl allows space before the delimiter (`s /a/b/`) and takes any other
+            # character as one (`s,a,b,`); only `=>` makes it a word. What can't be
+            # told apart (a hash's `{s}`, a comment before the delimiter) counts as added.
+            q = _CODE_SPACE.match(text, m.end()).end()
+            d = text[q : q + 1]
+            if d == "}" or (q > m.end() and (d == "#" or d.isalnum() or d == "_")):
+                return rest()
+            if d != "" and not text.startswith("=>", q):
+                at = q
+        if at is not None and word == "s":
+            sub = _perl_s(text, at)
             if sub is None:
                 return rest()
             found, put, end = sub
@@ -3563,8 +3596,8 @@ def _code_net(text: str) -> int:
             pos = last = end
             pos, term = _CODE_REGEX_FLAGS.match(text, pos).end(), True
             continue
-        if quote_like:
-            p = m.end() + 1
+        if at is not None:
+            p, d = at + 1, text[at]
             end = _close_pair(text, p, d) if d in _PAIRS else _close(text, p, d)
             if end is not None and word in ("tr", "y"):  # what it writes is its second part
                 end = None if d in _PAIRS else _close(text, end + 1, d)
@@ -3631,13 +3664,15 @@ def _size(text: str) -> int:
     return len(text.encode("utf-8", "replace"))
 
 
-def _stdin_script(seg: Seg) -> str | None:
-    """What a command reads on standard input: its heredoc, its `<` file or a `cat` piped in."""
+def _stdin_script(seg: Seg, cap: int) -> tuple[str | None, int, bool]:
+    """What a command reads on standard input, up to `cap` bytes: its heredoc,
+    its `<` file or a `cat` piped in, as (text, bytes, whether there is more)."""
     if seg.heredoc is not None:
-        return seg.heredoc
+        size = _size(seg.heredoc)
+        return seg.heredoc, size, size > cap
     if seg.stdin:
-        return _read_text(seg.stdin, seg.cwd, _SCRIPT_CAP + 1)
-    return _piped_text(seg)
+        return _read_sized(seg.stdin, seg.cwd, cap)
+    return _piped_sized(seg, cap)
 
 
 def _added_markers(seg: Seg, root: Path) -> int | str:
@@ -3647,6 +3682,8 @@ def _added_markers(seg: Seg, root: Path) -> int | str:
     toks = seg.words
     cmd = Path(toks[0]).name if toks else ""
     too_big = f"a script of over {_SCRIPT_CAP:,} bytes, more than the guard reads; split it into smaller scripts"
+    if seg.stdins > 1 and (cmd in ("sed", "ed", "red") or cmd in _VIMS):
+        return "more than one input on stdin (heredocs, here-strings or `<` files), of which only the last is read; give it one"
     if cmd in ("sed", "perl", "awk", "gawk"):
         ed = _inplace_edit(toks)
         if ed is not None:
@@ -3655,28 +3692,33 @@ def _added_markers(seg: Seg, root: Path) -> int | str:
             if cmd == "sed":
                 for f in _sed_args(toks[1:])[2]:
                     if f in ("-", "/dev/stdin"):  # sed reads the script from standard input
-                        txt = _stdin_script(seg)
-                        if txt is None:
+                        txt, size, over = _stdin_script(seg, max(left, 0))
+                        if txt is None and not over:
                             return "a script from standard input, which the guard can't see; give it with -e or as a file"
-                        size, over = _size(txt), False
                     else:
                         txt, size, over = _read_sized(f, seg.cwd, max(left, 0))
-                        if txt is None:
-                            return f"the script `{f}`, which the guard can't read (it isn't a file yet, or isn't a plain file)"
+                        if txt is None and not over:
+                            if _abspath(f, seg.cwd) is None:
+                                return f"the script `{f}` in a directory the guard can't tell; run it from a known directory"
+                            return f"the script `{f}`, which the guard can't read: write it in an earlier command, as a plain file, or give it with -e"
                     if over:
                         return too_big
                     left -= size
-                    text += "\n" + txt
+                    text += "\n" + (txt or "")
             if left < 0:
                 return too_big
             return _script_net(text, "sed" if cmd == "sed" else "code")
     if cmd in ("ed", "red") or cmd in _VIMS:
         ed = _vim_edit(toks) if cmd in _VIMS else None
-        stdin, over = _read_capped(seg.stdin, seg.cwd, _SCRIPT_CAP) if seg.stdin else ("", False)
+        stdin, size, over = _stdin_script(seg, _SCRIPT_CAP) if seg.stdin or seg.heredoc is not None or seg.piped else ("", 0, False)
+        if over:
+            return too_big
         if stdin is None:
-            return f"commands from `{seg.stdin}`, which the guard can't read"
-        text = "\n".join([ed.script if ed else "", seg.heredoc or "", stdin])
-        if over or _size(text) > _SCRIPT_CAP:
+            if seg.stdin:
+                return f"commands from `{seg.stdin}`, which the guard can't read"
+            stdin = ""  # a pipe from another command: ed and vim take it as text to edit or keys (`-s -`) the guard can't see
+        text = "\n".join([ed.script if ed else "", stdin])
+        if size + _size(ed.script if ed else "") > _SCRIPT_CAP:
             return too_big
         return _script_net(text, "ex")
     if cmd == "patch" or (cmd == "git" and (_git(toks) or ([], [], None))[1][:1] in (["apply"], ["am"])):

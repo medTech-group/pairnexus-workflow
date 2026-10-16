@@ -152,6 +152,28 @@ def test_perl_reads_a_bracketed_s_with_its_own_replacement_delimiters(profile, t
     assert act(profile, tmp_path, "perl -pi -e 's{xit\\(} # x\n{it(}' tests/a.spec.js") == "deny"
 
 
+def test_perl_quote_like_operators_take_any_delimiter_after_space(profile, tmp_path):
+    for cmd in (
+        "perl -pi -e 's /^/it.only(/' tests/a.spec.js",
+        "perl -pi -e 's,^,/ it.only( /,' tests/a.spec.js",
+        "perl -pi -e '$_ = qq,/ it.only( /, . $_' tests/a.spec.js",
+        "perl -pi -e '$_ = q ;/ it.only( /; . $_' tests/a.spec.js",
+        # A comment between the operator and its delimiter can't be read: it counts as added.
+        "perl -pi -e 's #c\n/^/it.only(/' tests/a.spec.js",
+        "perl -pi -e '$h{s} = 1; s/xit\\(/it(/' tests/a.spec.js",
+    ):
+        assert act(profile, tmp_path, cmd) == "deny", cmd
+    for cmd in (
+        "perl -pi -e 's,xit\\(,it(,g' tests/a.spec.js",
+        "perl -pi -e 's {xit\\(} {it(}g' tests/a.spec.js",
+        "perl -pi -e 'my %h = (s => 1); s/xit\\(/it(/' tests/a.spec.js",
+        "perl -pi -e 'next if -s $f; s/xit\\(/it(/' tests/a.spec.js",
+        # awk has no quote-like operators: `s` there is a name.
+        "awk -i inplace '{ printf \"%s\", s, \"it(\" } 1' tests/a.spec.js",
+    ):
+        assert act(profile, tmp_path, cmd) == "allow", cmd
+
+
 # A sed script from standard input, or a `-f` file that can't be read, is never taken as empty.
 
 
@@ -163,10 +185,39 @@ def test_a_sed_script_on_standard_input_is_read(profile, tmp_path):
     assert act(profile, tmp_path, "sed -i -f - tests/test_x.py < s.sed") == "deny"
     assert act(profile, tmp_path, "cat s.sed | sed -i -f - tests/test_x.py") == "deny"
     assert act(profile, tmp_path, "some-tool | sed -i -f - tests/test_x.py") == "deny"
+    # Read, not refused: a removal given the same ways is allowed.
+    (tmp_path / "rm.sed").write_text("/@pytest.mark.skip/d\n")
+    assert act(profile, tmp_path, "sed -i -f - tests/test_x.py < rm.sed") == "allow"
+    assert act(profile, tmp_path, "cat rm.sed | sed -i -f - tests/test_x.py") == "allow"
+    assert act(profile, tmp_path, "sed -i -f /dev/null tests/test_x.py") == "allow"
+    # Through a `cat` too, a script past the cap is refused, not cut off.
+    (tmp_path / "c.sed").write_text("s/a/b/\n" * 150_000 + "1i @pytest.mark.skip\n")
+    ev = {"tool_name": "Bash", "tool_input": {"command": "cat c.sed | sed -i -f - tests/test_x.py"}}
+    d = decide(ev, profile, "ticket", tmp_path, "claude/build-1", role_from_env=True)
+    assert d.action == "deny" and "a script of over 1,000,000 bytes" in d.reason
+    # Bytes given on stdin are counted once each, UTF-8 or not.
+    (tmp_path / "latin.sed").write_bytes(b"1i caf\xe9\n" * 60_000)  # 600 kB
+    assert act(profile, tmp_path, "sed -i -f - tests/test_x.py < latin.sed") == "allow"
+
+
+def test_more_than_one_input_on_stdin_is_refused(profile, tmp_path):
+    # bash gives the command only the last of them, which the guard can't pick out.
+    (tmp_path / "add.sed").write_text("1i it.only(\n")
+    for cmd in (
+        "sed -i -f - src/app.spec.ts <<<'s/a/b/' < add.sed",
+        "sed -i -f - src/app.spec.ts <<<'s/it\\.only(/x/' <<<'1i it.only('",
+        "ed -s src/app.spec.ts <<<'1d' < add.sed",
+    ):
+        ev = {"tool_name": "Bash", "tool_input": {"command": cmd}}
+        d = decide(ev, profile, "ticket", tmp_path, "claude/build-1", role_from_env=True)
+        assert d.action == "deny" and "more than one input on stdin" in d.reason, cmd
+    assert act(profile, tmp_path, "vim -es -c '%s/xit(/it(/' -c wq tests/a.spec.js < /dev/null") == "allow"
 
 
 def test_a_sed_script_file_the_guard_cant_read_is_refused(profile, tmp_path):
-    assert act(profile, tmp_path, "sed -i -f missing.sed tests/test_x.py") == "deny"
+    ev = {"tool_name": "Bash", "tool_input": {"command": "sed -i -f missing.sed tests/test_x.py"}}
+    d = decide(ev, profile, "ticket", tmp_path, "claude/build-1", role_from_env=True)
+    assert d.action == "deny" and "write it in an earlier command" in d.reason
     assert act(profile, tmp_path, "sed -i -f /dev/fd/0 tests/test_x.py") == "deny"
     (tmp_path / "dir.sed").mkdir()
     assert act(profile, tmp_path, "sed -i -f dir.sed tests/test_x.py") == "deny"
@@ -207,6 +258,15 @@ def test_sed_scripts_over_the_cap_are_refused(profile, tmp_path):
     (tmp_path / "c.sed").write_text("s/a/b/\n" * 150_000 + "1i @pytest.mark.skip\n")
     assert act(profile, tmp_path, "sed -i -f c.sed tests/test_x.py") == "deny"
     assert act(profile, tmp_path, "sed -i -f a.sed tests/test_x.py") == "allow"
+
+
+def test_a_piped_patch_is_read_past_a_megabyte(tmp_path):
+    lines = "".join(f"+x = {i:07d}\n" for i in range(150_000))  # 1.95 MB
+    head = "--- a/tests/a.spec.js\n+++ b/tests/a.spec.js\n@@ -0,0 +1,150001 @@\n"
+    (tmp_path / "mid.patch").write_text(head + lines + "+it.only('a', f)\n")
+    assert act_in(tmp_path, "cat mid.patch | git apply").action == "deny"
+    (tmp_path / "ok.patch").write_text(head + lines)
+    assert act_in(tmp_path, "cat ok.patch | git apply").action == "allow"
 
 
 def test_a_patch_over_the_cap_is_refused(tmp_path):
@@ -302,6 +362,16 @@ def test_the_budget_counts_from_the_hooks_start(repo, monkeypatch, capsys):
     assert cli._hook_guard(_event(repo)) == 0
     out = json.loads(capsys.readouterr().out)["hookSpecificOutput"]
     assert out["permissionDecision"] == "deny" and "ran out of time" in out["permissionDecisionReason"]
+
+
+def test_a_branch_name_that_isnt_utf8_still_reads_as_a_ticket_branch(repo):
+    import subprocess
+
+    from workflow import roles
+
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "x"], cwd=repo, check=True)
+    subprocess.run([b"git", b"checkout", b"-qb", b"claude/build-1\xff"], cwd=repo, check=True)
+    assert roles.role(repo, "claude/build-*") == "ticket"
 
 
 def test_a_role_that_fails_to_read_is_not_taken_for_ticket(repo, monkeypatch, capsys):
