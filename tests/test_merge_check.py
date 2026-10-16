@@ -1276,3 +1276,24 @@ def test_the_pull_request_and_comparison_as_slurped_pages_are_read(project, caps
     data["pr"], data["compare"] = [data["pr"]], [data["compare"]]
     got, _ = check(project, capsys, data)
     assert got["decision"] == "ready", got["reasons"]
+
+
+# ---------- the Correctness pass after round 3 ----------
+
+
+def test_a_comparison_whose_url_names_the_head_is_read_whatever_order_its_commits_are_in(project, capsys):
+    data = inputs()
+    data["compare"]["commits"] = [{"sha": HEAD}, {"sha": EARLIER}]
+    got, _ = check(project, capsys, data)
+    assert got["decision"] == "ready", got["reasons"]
+
+
+def test_a_forks_comparison_and_an_encoded_base_are_read(project, capsys):
+    data = inputs()
+    data["compare"] = {"ahead_by": 300, "behind_by": 0, "commits": [], "url": f"https://api.github.com/repos/acme/demo/compare/main...someone:{HEAD}"}
+    got, _ = check(project, capsys, data)
+    assert got["decision"] == "ready", got["reasons"]
+    data["pr"]["base"]["ref"] = "release/2.0"
+    data["compare"]["url"] = f"https://api.github.com/repos/acme/demo/compare/release%2F2.0...{HEAD}"
+    got, _ = check(project, capsys, data)
+    assert "couldnt_read" not in ids(got) or "compare" not in [r.get("input") for r in got["reasons"]]

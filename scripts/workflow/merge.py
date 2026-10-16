@@ -26,6 +26,7 @@ the pull request's own counts, GraphQL's `totalCount` and `pageInfo` say so.
 from __future__ import annotations
 
 import re
+from urllib.parse import unquote
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -664,10 +665,13 @@ class Context:
             # The list stops at 250 commits: its last is the head only when it holds them all.
             whole = isinstance(commits, list) and commits and len(commits) == _int(v.get("ahead_by")) and isinstance(commits[-1], dict)
             last = _sha(commits[-1].get("sha")) if whole else None
-            named = re.search(r"\.\.\.([0-9a-fA-F]{40})\b", str(v.get("url") or v.get("html_url") or ""))
-            told = [s for s in (last, named.group(1).lower() if named else None) if s]
-            base_side = re.search(r"/compare/(.+?)\.\.\.", str(v.get("url") or v.get("html_url") or ""))
-            if base_side and self.head() is not None and base_side.group(1) not in (self.pr().base, f"refs/heads/{self.pr().base}"):
+            url = str(v.get("url") or v.get("html_url") or "")
+            # A fork's head is `owner:<sha>`. The url names the head exactly; the
+            # list's last commit is by date, so it is used only when the url names none.
+            named = re.search(r"\.\.\.(?:[^/.:]+:)?([0-9a-fA-F]{40})\b", url)
+            told = [named.group(1).lower()] if named else [last] if last else []
+            base_side = re.search(r"/compare/(.+?)\.\.\.", url)
+            if base_side and self.head() is not None and unquote(base_side.group(1)) not in (self.pr().base, f"refs/heads/{self.pr().base}"):
                 raise Unreadable("compare", "it compares the head with something other than the base branch: compare <base branch>...<head SHA>")
             if head is not None and (not told or any(s != head for s in told)):
                 raise Unreadable("compare", "it doesn't compare the pull request's head: compare <base>...<head SHA>")
