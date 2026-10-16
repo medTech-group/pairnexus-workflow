@@ -166,8 +166,8 @@ The second path (offer `set_up_unattended_runs`). It takes a project that works 
 
 Read `WF status --json` and look at `solo_mode`.
 
-- **`true`** (solo mode, `ruleset = false`): if the person already said **Not now** to "Protect `main`" in this session, don't ask again: show the warning below and go on to step 2. Otherwise offer "Protect `main`" first, as a choice with **Protect `main` first** (recommended) and **Not now**.
-  - **Protect `main` first:** follow the first part of this file (`protect_main`) from its step 1, skipping its opening choice (the person has just chosen), then come back here, whatever its end: a message for the owner or a "no retry" end stops that path, not this one. Its pull request and this path's are separate. If `main` still isn't protected when you come back, show the warning below, as for **Not now**, and go on.
+- **`true`** (solo mode, `ruleset = false`): if the person already went through "Protect `main`" in this session, whatever their answer or its end (**Not now**, the message for the owner, a pull request not yet merged), don't ask again: point at that pull request if there is one, show the warning below, and go on to step 2. Otherwise offer "Protect `main`" first, as a choice with **Protect `main` first** (recommended) and **Not now**.
+  - **Protect `main` first:** follow the first part of this file (`protect_main`) from "The screens", reading the level as it says, but skipping its opening choice (the person has just chosen), then come back here, whatever its end: a message for the owner or a "no retry" end stops that path, not this one. Its pull request and this path's are separate. If `main` still isn't protected when you come back, show the warning below, as for **Not now**, and go on.
   - **Not now:** show the warning, in plain words, and go on to step 2:
 
     > Without a ruleset on `main`, GitHub won't hold a merge for failing checks: the kit's own "never merge while CI is red" check is the only one. A run in solo mode never uses GitHub's auto-merge, and the conductor's pre-flight shows this gap before each run, to fix or to accept.
