@@ -16,8 +16,9 @@ which fails closed where the kit would:
 - anything else: says what it needs and exits 1.
 
 Keep it to the standard library (and the kit's `fallback` and `modes`, which
-keep to it too) and to syntax Python 3.7 reads (a test checks): it runs on exactly the interpreters the rest of the kit can't. It
-never raises: an error refuses the tool when WORKFLOW_ROLE is firm.
+keep to it too) and to syntax Python 3.7 reads (a test checks): it runs on
+exactly the interpreters the rest of the kit can't. It never raises: an error
+refuses the tool when WORKFLOW_ROLE is firm.
 """
 
 import fnmatch
@@ -84,8 +85,7 @@ def _problem(version):
     ).format(NEEDS, version, NEEDS)
 
 
-def _decision(decision, reason):
-    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision, "permissionDecisionReason": reason}}
+_decision = fallback.output
 
 
 def _guard(event, firm, version, root=None):

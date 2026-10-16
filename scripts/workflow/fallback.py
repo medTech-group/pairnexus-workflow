@@ -47,17 +47,22 @@ _LOOSE = {name: _string_field(name) for name in ("tool_name", "command", "permis
 
 
 def push_or_merge(event):
-    """True when `event` (a PreToolUse event, as a dict) is a push or a merge."""
+    """"push" or "merge" when `event` (a PreToolUse event, as a dict) is one
+    (a file write through GitHub counts as a push), else None."""
     if not isinstance(event, dict):
-        return False
+        return None
     tool = event.get("tool_name")
     if not isinstance(tool, str):
-        return False
+        return None
     if tool.startswith("mcp__") and "github" in tool.lower() and tool.endswith(MCP_PUSH):
-        return True
+        return "merge" if tool.endswith("merge_pull_request") else "push"
     inp = event.get("tool_input")
     cmd = inp.get("command") if tool == "Bash" and isinstance(inp, dict) else None
-    return isinstance(cmd, str) and bool(_PUSH.search(cmd) or _MERGE.search(cmd))
+    if not isinstance(cmd, str):
+        return None
+    if _PUSH.search(cmd):
+        return "push"
+    return "merge" if _MERGE.search(cmd) else None
 
 
 def read_event(text):
@@ -142,9 +147,9 @@ def decide(event, solo_mode, why):
     """The fallback's (decision, reason) for `event` in an attended session, or
     None to leave it alone. `solo_mode`: the profile says `ruleset = false`.
     `why`: what went wrong, for the reason."""
-    if not push_or_merge(event):
+    what = push_or_merge(event)
+    if not what:
         return None
-    what = "merge" if _is_merge(event) else "push"
     head = "The workflow's guard isn't working, so it couldn't check this {}: {}. {}".format(what, why, FIXES)
     mode = event.get("permission_mode")
     if solo_mode:
@@ -153,14 +158,6 @@ def decide(event, solo_mode, why):
     if modes.never_asks(mode):
         return "deny", "\n".join([head] + mode_lines(mode) + [_by_hand(event)])
     return "ask", head + " Allow it only if you mean to."
-
-
-def _is_merge(event):
-    tool = event.get("tool_name")
-    if tool != "Bash":
-        return tool.endswith("merge_pull_request")
-    cmd = event["tool_input"]["command"]
-    return bool(_MERGE.search(cmd)) and not _PUSH.search(cmd)
 
 
 def output(decision, reason):

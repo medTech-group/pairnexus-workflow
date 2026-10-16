@@ -40,8 +40,8 @@ _STARTED = time.monotonic()  # the guard's time budget counts from here, before 
 from . import charter as charter_mod
 from . import context as context_mod
 from . import evidence as evidence_mod
+from . import _old_python, fallback
 from . import gate as gate_mod
-from . import fallback
 from . import guard as guard_mod
 from . import issues as issues_mod
 from . import posts as posts_mod
@@ -699,6 +699,15 @@ def _cant_decide(event, why: str, solo: bool | None = None) -> int:
     return 0
 
 
+def _ticket_branch_without_the_kit(event: dict) -> bool:
+    """With the profile unreadable, whether the branch matches its
+    `run.ticket_branch`, read as the old-Python fallback reads it."""
+    try:
+        return _old_python._firm(os.environ, event.get("cwd") or str(project_root()))
+    except Exception:
+        return False
+
+
 def _hook_guard(event, raw: str = "") -> int:
     firm = roles.env_role()
     if not isinstance(event, dict):  # malformed: nothing can be checked
@@ -709,6 +718,8 @@ def _hook_guard(event, raw: str = "") -> int:
     try:
         prof = load(required=False)
     except ProfileError as e:
+        if firm is None and _ticket_branch_without_the_kit(event):
+            firm = "ticket"
         if firm in ("ticket", "conductor"):
             if not _is_restore(event):
                 _deny_json(f"[workflow guard, {_role_label(firm)}] the profile is invalid, so nothing can be checked: {e}. Fix .claude/workflow/profile.toml in a PR from an attended session, or restore it: git checkout -- .claude/workflow")

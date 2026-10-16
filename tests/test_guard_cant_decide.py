@@ -22,7 +22,7 @@ KIT = Path(__file__).resolve().parents[1]
 
 PUSH = {"tool_name": "Bash", "tool_input": {"command": "git push origin feature"}}
 MERGE = {"tool_name": "Bash", "tool_input": {"command": "gh pr merge 12 --merge"}}
-MCP = [{"tool_name": f"mcp__github__{t}", "tool_input": {"owner": "acme", "repo": "demo"}} for t in ("push_files", "create_or_update_file", "merge_pull_request")]
+MCP = [{"tool_name": f"mcp__github__{t}", "tool_input": {"owner": "acme", "repo": "demo"}} for t in ("push_files", "create_or_update_file", "merge_pull_request", "delete_file")]
 OTHERS = [
     {"tool_name": "Bash", "tool_input": {"command": "ls -la"}},
     {"tool_name": "Edit", "tool_input": {"file_path": "a.py", "old_string": "a", "new_string": "b"}},
@@ -306,3 +306,27 @@ def test_security_md_covers_a_hook_failing_open_in_any_role():
     text = (KIT / "SECURITY.md").read_text()
     assert "failing open where `docs/enforcement.md` says it asks or refuses" in text
     assert "attended sessions included" in text
+
+
+def test_the_fallback_reads_the_profile_where_the_kit_does():
+    from workflow.profile import PROFILE_PATH
+
+    assert Path(fallback.PROFILE) == PROFILE_PATH
+
+
+def test_an_invalid_profile_on_a_ticket_branch_is_refused_without_a_role(tmp_path, monkeypatch, capsys):
+    root = _project(tmp_path, '[project]\nname = 1\n[run]\nticket_branch = "agents/*"\n')
+    git = ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    subprocess.run(git + ["commit", "-q", "--allow-empty", "-m", "x"], check=True)
+    subprocess.run(git + ["checkout", "-qb", "agents/t-1"], check=True)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    monkeypatch.delenv("WORKFLOW_ROLE", raising=False)
+    monkeypatch.chdir(root)
+    for event in (PUSH, OTHERS[0]):
+        monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(event).encode()), encoding="utf-8"))
+        assert cli.main(["hook", "guard"]) == 0
+        out = json.loads(capsys.readouterr().out)["hookSpecificOutput"]
+        assert out["permissionDecision"] == "deny" and "ticket session" in out["permissionDecisionReason"]
+    subprocess.run(git + ["checkout", "-qb", "feature"], check=True)
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(OTHERS[0]).encode()), encoding="utf-8"))
+    assert cli.main(["hook", "guard"]) == 0 and capsys.readouterr().out == ""
