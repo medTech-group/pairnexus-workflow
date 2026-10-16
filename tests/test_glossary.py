@@ -4,10 +4,10 @@ import re
 from pathlib import Path
 
 import pytest
+from conftest import KIT
 
 from workflow import vendor
 
-KIT = Path(__file__).resolve().parents[1]
 GLOSSARY = KIT / "docs/glossary.md"
 
 # The two parts and their words, each with the anchor the quickstart links to.
@@ -178,11 +178,7 @@ def test_a_vendored_copy_carries_the_glossary():
 
 
 def test_vendoring_writes_the_glossary_into_a_project(tmp_path):
-    for dst, src in vendor.plan(KIT, None).items():
-        if dst.startswith(".claude/workflow/docs/"):
-            out = tmp_path / dst
-            out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_bytes(src.read_bytes())
+    vendor.install(KIT, tmp_path, None, no_mattpocock=True)
     assert (tmp_path / ".claude/workflow/docs/glossary.md").read_text(encoding="utf-8") == _text()
 
 

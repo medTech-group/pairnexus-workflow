@@ -24,7 +24,7 @@ The [branch](#branch) that holds the finished version of your project. Some proj
 
 ### Commit
 
-One saved step of a change on a [branch](#branch), with a short note of what it does.
+One saved step of a change on a [branch](#branch), with a note of what it does.
 
 **Why it matters to you:** each step can be looked at, or undone, on its own.
 
@@ -32,7 +32,7 @@ One saved step of a change on a [branch](#branch), with a short note of what it 
 
 A request to bring a [branch](#branch)'s changes into [`main`](#main), laid out to read.
 
-**Why it matters to you:** it is where you see what Claude did and decide whether it goes in.
+**Why it matters to you:** it is where you see what Claude did and decide if it goes in.
 
 ### Checks (CI)
 
@@ -42,7 +42,7 @@ Tests that run by themselves on each [pull request](#pull-request-pr), green whe
 
 ### Merge
 
-Bringing a [pull request](#pull-request-pr)'s changes into [`main`](#main), with GitHub's green button.
+Bringing a [pull request](#pull-request-pr)'s changes into [`main`](#main) with GitHub's green button.
 
 **Why it matters to you:** once merged, the change is part of your project.
 
@@ -60,7 +60,7 @@ A link on a [pull request](#pull-request-pr) that opens a working copy of the ch
 
 ### Cloud session
 
-Claude Code running on Anthropic's computers, from the Claude app or claude.ai/code. Its environment is what it starts with: the [repository](#repository), the websites it may reach, and any settings or secrets.
+Claude Code running on Anthropic's computers, from the Claude app or claude.ai/code. Its environment sets what it starts with: the [repository](#repository), the websites it may reach, any secrets.
 
 **Why it matters to you:** there is nothing to install on your computer.
 
@@ -104,13 +104,13 @@ Claude reviewers who each read a change from one side (does it work, does it fol
 
 ### Solo mode
 
-How a project starts while GitHub doesn't protect [`main`](#main) yet: the [profile](#profile) says `ruleset = false`, and the kit refuses any change that would reach `main` without a [pull request](#pull-request-pr), such as a push to it.
+How a project starts while GitHub doesn't protect [`main`](#main) yet: the [profile](#profile) says `ruleset = false`, and the kit refuses a push to `main`, or a change to it on GitHub, so changes go through a [pull request](#pull-request-pr).
 
 **Why it matters to you:** you can start on GitHub's free plan, and `main` still changes only when you [merge](#merge).
 
 ### Protect `main`
 
-Leaving [solo mode](#solo-mode): a ruleset (GitHub's rules for a [branch](#branch)) sends every change to [`main`](#main) through a [pull request](#pull-request-pr), and "Require these checks", once CI has run, stops a [merge](#merge) while [checks](#checks-ci) fail. On your own computer with `gh` Claude does it; in a [cloud session](#cloud-session) it guides your clicks.
+GitHub's own protection, ending [solo mode](#solo-mode): a ruleset (GitHub's rules for a [branch](#branch)) sends every change to [`main`](#main) through a [pull request](#pull-request-pr), and "Require these checks", once CI has run, stops a [merge](#merge) while [checks](#checks-ci) fail. On your own computer, with `gh` and admin rights, Claude does it; in a [cloud session](#cloud-session) it guides your clicks.
 
 **Why it matters to you:** GitHub itself then stops a mistake reaching `main`.
 
@@ -130,10 +130,10 @@ The Claude session that runs an [unattended run](#unattended-run): it hands out 
 
 The kit's settings for your project, in `.claude/workflow/profile.toml`: which is [`main`](#main), how to run the tests, [solo mode](#solo-mode) (`ruleset`) and the default [experience level](#experience-level) (`experience`).
 
-**Why it matters to you:** Claude reads it instead of guessing how your project works.
+**Why it matters to you:** Claude reads it instead of guessing.
 
 ### Check the set-up
 
-Ask Claude to "check the set-up": the `check-setup` skill runs `workflow doctor`, lists what's missing, and offers each fix, such as [Protect `main`](#protect-main), with "Not now". It changes nothing itself; in [solo mode](#solo-mode) the [guided start](#guided-start) offers it once.
+Ask Claude to "check the set-up": the `check-setup` skill runs `workflow doctor`, lists what's missing, and offers each fix, such as [Protect `main`](#protect-main), with "Not now". It changes nothing itself; in [solo mode](#solo-mode) the [guided start](#guided-start) offers it once a session.
 
 **Why it matters to you:** you see in one place what is set up and what's left.
