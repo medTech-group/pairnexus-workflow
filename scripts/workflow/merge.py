@@ -787,6 +787,10 @@ def _checks(ctx: Context, add) -> None:
 
 
 _EXIT_CODE = re.compile(r"\bexit code (\d+)")
+# A test that failed, as runners report it while they run, before any count:
+# pytest's `path::test FAILED` and `FAILED path::test`, go's `--- FAIL:`, jest's `✕`.
+# A line of `gh run view --log-failed` starts with its job and step, tab-separated.
+_TEST_FAILED = re.compile(r"::\S+ (?:FAILED|ERROR)\b|(?:^|\t)\s*(?:FAILED|ERROR) \S+::|(?:^|\t)\s*--- FAIL:|(?:^|\t)\s*✕ ", re.M)
 
 
 def log_names(run_id: int) -> list[str]:
@@ -803,7 +807,7 @@ def _not_killed(run_id: int, logs: dict, prof) -> str | None:
     when it does. Only the first of `log_names` given is read. It must hold one
     of the profile's `ci.killed_markers`, and no sign of a real failure: a
     count the profile's suites read as failed or errored, or an exit code no
-    marker names."""
+    marker names, or a test reported failed as the runner went."""
     markers = [m for m in (prof.killed_markers if prof else []) if m]
     if not markers:
         return "the profile lists no `ci.killed_markers`"
@@ -820,6 +824,8 @@ def _not_killed(run_id: int, logs: dict, prof) -> str | None:
                     return "its log also shows tests that failed"
             except re.error:
                 return "its log can't be read with the profile's suite counts"
+    if _TEST_FAILED.search(text):
+        return "its log also shows a test that failed"
     named = {code for m in markers for code in _EXIT_CODE.findall(m)}
     if set(_EXIT_CODE.findall(text)) - named:
         return "its log also shows an exit code no killed marker names"

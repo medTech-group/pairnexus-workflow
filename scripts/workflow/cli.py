@@ -581,9 +581,11 @@ def cmd_merge_check(a) -> int:
             inputs.update(fetch_mod.merge_inputs(prof.repo, a.fetch, inputs, wanted))
         pr = inputs.get("pr", (None, None))[0]
         pr = pr[0] if isinstance(pr, list) and len(pr) == 1 else pr
-        if isinstance(pr, dict) and pr.get("number") not in (None, a.fetch):
-            # The other inputs are #<fetch>'s: a --pr file of another pull request can't go with them.
-            inputs["pr"] = (None, f"it is #{merge_mod._clean(pr.get('number'))}, not #{a.fetch} (--fetch)")
+        if isinstance(pr, dict) and pr.get("number") != a.fetch:
+            # The other inputs are #<fetch>'s: a --pr file of another pull request, or one that
+            # doesn't say which it is, can't go with them.
+            said = f"it is #{merge_mod._clean(pr['number'])}" if pr.get("number") is not None else "it doesn't say its number"
+            inputs["pr"] = (None, f"{said}, not #{a.fetch} (--fetch)")
     logs: dict = {}
     if a.check_logs:
         try:
@@ -1103,7 +1105,7 @@ def main(argv: list[str] | None = None) -> int:
         s.add_argument(f"--{name}", metavar="F", help=f"{what} ({source}); a file, or - for standard input")
     s.add_argument("--fetch", metavar="N", type=_pr_number, help="fetch every input not given as a file for pull request N, through `gh api` (the profile's project.repo); a file given wins")
     s.add_argument("--charter", metavar="F", help="the run's approved charter, as JSON, or the tracking issue's body (its run state holds it): the checks it waives (flow §4.1); ignored in an attended session")
-    s.add_argument("--check-logs", metavar="DIR", help="a waived check's log, one file per check, named by its run's id on the head (<id>, <id>.log or <id>.txt: the check run's id, which is its job's), as `gh run view --log-failed --job <id>` gives its tail")
+    s.add_argument("--check-logs", metavar="DIR", help="a waived check's log, one file per check, named by its check run's id on the head (<id>, <id>.log or <id>.txt; the id is its job's), as `gh run view --log-failed --job <id>` gives its tail")
     s.add_argument("--asker", metavar="LOGIN", help="the GitHub login of whoever asks (the owner gets \"Ready once you've read\" for kit and CI files)")
     s.add_argument("--json", action="store_true", help="the decision, its reasons and notes, and each check's name and state, as JSON")
     s.set_defaults(fn=cmd_merge_check)

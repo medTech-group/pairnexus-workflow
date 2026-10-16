@@ -200,6 +200,9 @@ def test_a_log_not_named_by_the_heads_run_isnt_read(project, capsys, monkeypatch
     "FAILED tests/test_a.py::test_x - AssertionError\n1 failed, 3 passed in 0.2s\nError: Process completed with exit code 143.",
     "Error: Process completed with exit code 1.\nError: Process completed with exit code 143.",
     "Error: Process completed with exit code 143.\n2 errors in 0.1s",
+    "tests/test_a.py::test_x FAILED\nError: Process completed with exit code 143.",
+    "FAILED tests/test_a.py::test_x - AssertionError\nError: Process completed with exit code 143.",
+    "--- FAIL: TestX (0.00s)\nError: Process completed with exit code 143.",
 ])
 def test_a_killed_marker_beside_a_real_failure_blocks(project, capsys, monkeypatch, log):
     data, logs = waiver_case(project, monkeypatch, log=log)
@@ -358,6 +361,8 @@ def test_fetch_reads_every_input_through_gh(project, capsys, tmp_path, monkeypat
     asked = [p.split("?")[0] for p in gh.paths()]
     for route in routes():
         assert route in asked, route
+    [threads] = [c for c in gh.calls() if "graphql" in c]
+    assert {"owner=acme", "name=demo"} <= set(threads) and threads[threads.index("number=12") - 1] == "-F"
     # Every list is fetched whole: each call that can page does.
     for args in gh.calls():
         path = next(a for a in args[1:] if not a.startswith("-"))
@@ -410,6 +415,10 @@ def test_a_pr_file_of_another_pull_request_is_couldnt_read(project, capsys, tmp_
     assert code == 0 and got["decision"] == "not_yet"
     [x] = [x for x in got["reasons"] if x["id"] == "couldnt_read"]
     assert x["input"] == "pr" and "it is #13, not #12 (--fetch)" in x["wording"]["developer"]["message"]
+    del pr["number"]
+    got, _ = run(project, capsys, {"pr": pr}, "--fetch", "12")
+    [x] = [x for x in got["reasons"] if x["id"] == "couldnt_read"]
+    assert x["input"] == "pr" and "it doesn't say its number, not #12 (--fetch)" in x["wording"]["developer"]["message"]
 
 
 def test_output_from_gh_that_isnt_json_is_couldnt_read(project, capsys, tmp_path, monkeypatch):
@@ -434,7 +443,7 @@ def test_a_listed_ruleset_without_an_id_is_couldnt_read(project, capsys, tmp_pat
 def test_fetch_needs_a_pull_requests_number(project, capsys, bad):
     with pytest.raises(SystemExit):
         cli.main(["merge-check", "--fetch", bad])
-    assert "isn't a pull request's number" in capsys.readouterr().err or bad == "-3"
+    assert "isn't a pull request's number" in capsys.readouterr().err
 
 
 def test_an_author_github_doesnt_know_has_no_permission(project, capsys, tmp_path, monkeypatch):
