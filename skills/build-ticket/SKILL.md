@@ -69,7 +69,7 @@ To the base branch. Its body:
 - the decisions taken, under "Decisions for the owner";
 - the by-hand checks added.
 
-Then post the review records of the rounds so far: each round's `record.md`, kept in its scratch directory (`review-panel`, "Review records"), oldest first. Later rounds and Correctness passes post theirs as they run. The records sit alongside the findings table; they don't replace it.
+Then post the review records so far: each round's and each Correctness pass's `record.md`, kept in its scratch directory (`review-panel`, "Post the review record"), oldest first. Later rounds and Correctness passes post theirs as they run. The records sit alongside the findings table; they don't replace it.
 
 Lasting knowledge for later work (how a new module is meant to be used, a pitfall) goes in the repo's own docs, in this PR, before it merges.
 

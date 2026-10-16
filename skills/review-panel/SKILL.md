@@ -49,9 +49,9 @@ Give each reviewer the round number. From round 2, give each `previous.md`, so i
 3. Record each that isn't a problem, with the reason.
 4. Run `git status`: it must show nothing a reviewer made. Discard anything stray and say so.
 5. Rerun the typecheck and the affected tests.
-6. Post the round's review record (below).
+6. Post the round's review record (section 4).
 
-## Review records
+## 4. Post the review record
 
 Post a record on the pull request after every round, whatever it found, and after each later Correctness pass, in attended and unattended sessions alike. A record says which commit was reviewed, by whom, and whether anything was left to fix, so a merge never has to guess.
 
@@ -60,24 +60,26 @@ Post a record on the pull request after every round, whatever it found, and afte
   ```
   WF review-record --kind round --round <n> --commit <sha> --reviewers standards,spec,correctness --clean > /tmp/review-<ticket>-r<n>/record.md
   ```
-- **A later Correctness pass:** the round it follows, the commit it covered, and only `correctness`:
+- **A later Correctness pass:** first `mkdir -p /tmp/review-<ticket>-pass<k>` (its scratch directory, `k` counting the passes from 1), then the round it follows, the commit it covered (`git rev-parse HEAD` when the pass starts), only `correctness`, and `--clean`, or `--not-clean` when it found something to fix:
 
   ```
   WF review-record --kind pass --round <last round> --commit <sha> --reviewers correctness --clean > /tmp/review-<ticket>-pass<k>/record.md
   ```
 
-Post `record.md` as it is, as a comment on the pull request (`gh api repos/<repo>/issues/<pr>/comments -F body=@record.md`, or the GitHub MCP tools with its text). It already ends with the agents' marker; add nothing. If the command refuses, fix what it names: never write a record by hand.
+Keep `record.md` only when the command exited 0. If it refuses, delete the empty `record.md`, fix what it names and run it again: never write a record by hand.
+
+Post `record.md` as it is, as a comment on the pull request: `gh api repos/<repo>/issues/<pr>/comments -F body=@/tmp/review-<ticket>-r<n>/record.md` (the pass's path for a pass), or the GitHub MCP tools with its text. It already ends with the agents' marker; add nothing.
 
 No pull request yet (the first rounds of `build-ticket` run before it opens)? Keep each `record.md` in its scratch directory and post them, oldest first, as soon as the pull request is open.
 
-## 4. When to stop
+## 5. When to stop
 
 Repeat on the new diff until a round finds nothing to fix, at most the profile's `run.review_rounds`.
 
 - Anything still open after the last round goes to the owner in the PR body, never silently.
 - Any commit after the last round gets a Correctness pass on just those commits before merging.
 
-## 5. The findings table (for the PR body)
+## 6. The findings table (for the PR body)
 
 | # | Round | Reviewer | Finding | Outcome |
 |---|---|---|---|---|

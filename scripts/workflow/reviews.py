@@ -16,15 +16,16 @@ machine-readable line and the agents' marker:
 - `reviewers`: those that ran, in `REVIEWERS`' order; a `pass` is `correctness`;
 - `result`: `clean` (nothing left to fix) or `not-clean`.
 
-The reader never raises on a comment: a malformed record line is skipped. It
-doesn't judge who posted a record; `read` keeps the author for the caller
-(merge-check counts only records from accounts with write access).
+Both apply the same rules (`_checked`). The reader never raises on a comment:
+a malformed record line is skipped, and only a line of its own counts. It
+doesn't judge who posted a record; `read` keeps each record's author, so a
+caller can count only records from accounts with write access.
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .posts import AGENT_MARKER, _login, _number, comments_from
 
@@ -33,9 +34,12 @@ REVIEWERS = ("standards", "spec", "correctness", "security", "explorer")
 RESULTS = ("clean", "not-clean")
 
 _FIELDS = ("kind", "round", "commit", "reviewers", "result")
-_LINE = re.compile(r"<!-- workflow:review ([^\n]*?) -->")
+# A record line is a line of its own, so one quoted inside a sentence or in
+# backticks isn't read as a record.
+_LINE = re.compile(r"^[ \t]*<!-- workflow:review ([^\n]*?) -->[ \t]*\r?$", re.M)
 _SHA = re.compile(r"[0-9a-f]{40}")
-_ROUND = re.compile(r"[1-9][0-9]*")
+# A round's number, at most six digits (int() refuses past Python's digit limit).
+_ROUND = re.compile(r"[1-9][0-9]{0,5}")
 
 
 class RecordError(ValueError):
@@ -58,82 +62,82 @@ class Record:
     def clean(self) -> bool:
         return self.result == "clean"
 
+    def line(self) -> str:
+        """The machine-readable line."""
+        return (
+            f"<!-- workflow:review kind={self.kind} round={self.round} commit={self.commit} "
+            f"reviewers={','.join(self.reviewers)} result={self.result} -->"
+        )
 
-def _reviewers(given) -> tuple[str, ...]:
-    """The reviewers in the panel's order, any case; raises RecordError."""
-    names = [given] if isinstance(given, str) else list(given or [])
-    names = [n.strip().lower() for part in names for n in str(part).split(",")]
+
+def _checked(kind, round, commit, reviewers, result) -> Record:
+    """The one set of rules the writer and the reader share: a Record, or
+    RecordError saying which flag to fix. Names are read in any case;
+    `reviewers` is a comma-separated string or a list, put in the panel's order."""
+    kind = str(kind or "").strip().lower()
+    if not kind:
+        raise RecordError("give --kind: `round` for a review round, `pass` for a later Correctness pass")
+    if kind not in KINDS:
+        raise RecordError(f"--kind is `round` or `pass`, not `{kind}`")
+    rnd = "" if round is None else str(round).strip()
+    if not rnd:
+        raise RecordError("give --round: the round's number (for a pass, the round it follows)")
+    if not _ROUND.fullmatch(rnd):
+        raise RecordError(f"--round is a whole number from 1 to 999999, not `{rnd[:20]}`")
+    if commit is None:
+        raise RecordError("give --commit: the full SHA the round covered (`git rev-parse HEAD`)")
+    sha = str(commit).strip().lower()
+    if not _SHA.fullmatch(sha):
+        raise RecordError(f"--commit is the full 40-character SHA (`git rev-parse HEAD`), not `{str(commit)[:50]}`")
+    parts = [reviewers] if isinstance(reviewers, str) else list(reviewers or [])
+    names = [n.strip().lower() for part in parts for n in str(part).split(",")]
     if not any(names):
         raise RecordError("give --reviewers: those that ran, from " + ", ".join(REVIEWERS))
+    if "" in names:
+        raise RecordError("--reviewers has an empty name: give them comma-separated, with nothing between two commas")
     for n in names:
         if n not in REVIEWERS:
-            raise RecordError(f"unknown reviewer `{n}`: the reviewers are " + ", ".join(REVIEWERS))
-    return tuple(r for r in REVIEWERS if r in names)
+            raise RecordError(f"unknown reviewer `{n[:30]}`: the reviewers are " + ", ".join(REVIEWERS))
+    who = tuple(r for r in REVIEWERS if r in names)
+    if kind == "pass" and who != ("correctness",):
+        raise RecordError("a pass is reviewed by correctness alone: give --reviewers correctness")
+    if result not in RESULTS:
+        raise RecordError("give --clean or --not-clean: whether the round left anything to fix")
+    return Record(kind=kind, round=int(rnd), commit=sha, reviewers=who, result=result)
 
 
 def record(*, kind, round, commit, reviewers, clean) -> str:
     """The comment's body for one round or pass, ending with a newline.
 
     `round` is a number (or its digits), `reviewers` a list of names or one
-    comma-separated string, `clean` True or False. Raises RecordError, saying
-    which flag to fix, for a missing or malformed field."""
-    if not kind:
-        raise RecordError("give --kind: `round` for a review round, `pass` for a later Correctness pass")
-    if kind not in KINDS:
-        raise RecordError(f"--kind is `round` or `pass`, not `{kind}`")
-    if round is None or str(round).strip() == "":
-        raise RecordError("give --round: the round's number (for a pass, the round it follows)")
-    if not _ROUND.fullmatch(str(round).strip()):
-        raise RecordError(f"--round is a whole number from 1, not `{round}`")
-    n = int(str(round).strip())
-    if commit is None:
-        raise RecordError("give --commit: the full SHA the round covered (`git rev-parse HEAD`)")
-    sha = str(commit).strip().lower()
-    if not _SHA.fullmatch(sha):
-        raise RecordError(f"--commit is the full 40-character SHA (`git rev-parse HEAD`), not `{commit}`")
-    who = _reviewers(reviewers)
-    if kind == "pass" and who != ("correctness",):
-        raise RecordError("a pass is reviewed by correctness alone: give --reviewers correctness")
-    if clean is None:
-        raise RecordError("give --clean or --not-clean: whether the round left anything to fix")
-    result = "clean" if clean else "not-clean"
-    what = f"Review round {n}" if kind == "round" else f"Correctness pass after round {n}"
-    names = ", ".join(r.capitalize() for r in who)
-    return (
-        f"{what} on `{sha[:7]}`: {result.replace('-', ' ')}. Reviewers: {names}.\n"
-        f"<!-- workflow:review kind={kind} round={n} commit={sha} reviewers={','.join(who)} result={result} -->\n"
-        f"{AGENT_MARKER}\n"
-    )
+    comma-separated string, `clean` True or False (None: not given). Raises
+    RecordError, saying which flag to fix, for a missing or malformed field."""
+    result = {True: "clean", False: "not-clean"}.get(clean) if isinstance(clean, bool) else None
+    r = _checked(kind, round, commit, reviewers, result)
+    what = f"Review round {r.round}" if r.kind == "round" else f"Correctness pass after round {r.round}"
+    names = ", ".join(n.capitalize() for n in r.reviewers)
+    return f"{what} on `{r.commit[:7]}`: {r.result.replace('-', ' ')}. Reviewers: {names}.\n{r.line()}\n{AGENT_MARKER}\n"
 
 
 def _parse(fields: str) -> Record | None:
     pairs = [p.partition("=") for p in fields.split()]
-    if any(not eq for _, eq, _ in pairs):
-        return None
-    got = {k: v for k, _, v in pairs}
+    got = {k: v for k, eq, v in pairs if eq}
     if len(got) != len(pairs) or set(got) != set(_FIELDS):
         return None
-    kind, rnd, sha, who, result = (got[k] for k in _FIELDS)
-    if kind not in KINDS or result not in RESULTS or not _ROUND.fullmatch(rnd) or not _SHA.fullmatch(sha):
+    try:
+        r = _checked(*(got[k] for k in _FIELDS))
+    except RecordError:
         return None
-    names = who.split(",")
-    if not who or any(n not in REVIEWERS for n in names):
-        return None
-    reviewers = tuple(r for r in REVIEWERS if r in names)
-    if kind == "pass" and reviewers != ("correctness",):
-        return None
-    return Record(kind=kind, round=int(rnd), commit=sha, reviewers=reviewers, result=result)
+    # Only exactly what the writer writes: lowercase, the panel's order, no repeats.
+    return r if r.line() == f"<!-- workflow:review {' '.join(f'{k}={got[k]}' for k in _FIELDS)} -->" else None
 
 
-def records_in(text: str | None) -> list[Record]:
+def records_in(text) -> list[Record]:
     """Every well-formed record line in one comment's text, in order. A
-    malformed one is skipped; never raises."""
-    out = []
-    for m in _LINE.finditer(text or ""):
-        r = _parse(m.group(1))
-        if r is not None:
-            out.append(r)
-    return out
+    malformed one, or text that isn't a string, yields nothing; never raises."""
+    if not isinstance(text, str):
+        return []
+    return [r for r in (_parse(m.group(1)) for m in _LINE.finditer(text)) if r is not None]
 
 
 def read(comments) -> list[Record]:
@@ -144,12 +148,5 @@ def read(comments) -> list[Record]:
     out = []
     for c in comments_from(comments):
         for r in records_in(c.get("body")):
-            out.append(
-                Record(
-                    **{k: getattr(r, k) for k in _FIELDS},
-                    author=_login(c) or None,
-                    comment_id=_number(c),
-                    created_at=c.get("created_at") or c.get("createdAt"),
-                )
-            )
+            out.append(replace(r, author=_login(c) or None, comment_id=_number(c), created_at=c.get("created_at") or c.get("createdAt")))
     return out

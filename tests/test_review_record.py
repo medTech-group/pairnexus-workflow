@@ -64,8 +64,11 @@ def test_reviewers_are_read_in_any_case_and_order_and_written_in_the_panels_orde
         (["--commit", ""], "full 40-character"),
         (["--reviewers", "standards,linter"], "unknown reviewer `linter`"),
         (["--reviewers", ""], "give --reviewers"),
-        (["--reviewers", "standards,,spec"], "unknown reviewer ``"),
+        (["--reviewers", "standards,,spec"], "--reviewers has an empty name"),
+        (["--reviewers", "standards,spec,"], "--reviewers has an empty name"),
         (["--round", "0"], "a whole number from 1"),
+        (["--round", "9" * 5000], "a whole number from 1"),
+        (["--round", "1234567"], "a whole number from 1"),
         (["--round", "two"], "a whole number from 1"),
         (["--kind", "light"], "--kind is `round` or `pass`"),
     ],
@@ -142,6 +145,24 @@ def test_a_comment_without_a_record_yields_none():
     assert reviews.records_in("Looks good to me.") == []
     assert reviews.records_in("") == []
     assert reviews.records_in(None) == []
+    assert reviews.records_in(123) == []
+
+
+def test_the_command_reads_names_in_any_case_and_a_padded_sha(capsys):
+    out = body(capsys, "--kind", " ROUND ", "--round", " 1 ", "--commit", f"  {SHA}\n", "--reviewers", "Spec", "--clean")
+    assert f"kind=round round=1 commit={SHA} reviewers=spec result=clean" in out
+
+
+def test_the_python_writer_takes_only_true_or_false_as_the_result():
+    with pytest.raises(reviews.RecordError, match="give --clean or --not-clean"):
+        reviews.record(kind="round", round=1, commit=SHA, reviewers="spec", clean="false")
+
+
+def test_a_record_line_quoted_inside_other_text_is_not_a_record(capsys):
+    line = written(capsys, "--kind", "round", "--round", "3", "--reviewers", "spec", "--clean").splitlines()[1]
+    assert reviews.records_in(f"The record `{line}` was wrong.") == []
+    assert reviews.records_in(f"Before: {line}") == []
+    assert len(reviews.records_in(f"  {line}  \r\n")) == 1
 
 
 @pytest.mark.parametrize(
@@ -153,6 +174,13 @@ def test_a_comment_without_a_record_yields_none():
         f"<!-- workflow:review kind=round round=2 commit={SHA} reviewers=spec -->",
         f"<!-- workflow:review kind=round round=x commit={SHA} reviewers=spec result=clean -->",
         f"<!-- workflow:review kind=round round=0 commit={SHA} reviewers=spec result=clean -->",
+        f"<!-- workflow:review kind=round round={'9' * 5000} commit={SHA} reviewers=spec result=clean -->",
+        f"<!-- workflow:review kind=round round=01 commit={SHA} reviewers=spec result=clean -->",
+        f"<!-- workflow:review kind=round round=1 commit={SHA.upper()} reviewers=spec result=clean -->",
+        f"<!-- workflow:review kind=ROUND round=1 commit={SHA} reviewers=spec result=clean -->",
+        f"<!-- workflow:review kind=round round=1 commit={SHA} reviewers=spec,standards result=clean -->",
+        f"<!-- workflow:review kind=round round=1 commit={SHA} reviewers=spec,spec result=clean -->",
+        f"<!-- workflow:review kind=round round=1 commit={SHA} reviewers=spec, result=clean -->",
         f"<!-- workflow:review kind=light round=1 commit={SHA} reviewers=spec result=clean -->",
         f"<!-- workflow:review kind=pass round=1 commit={SHA} reviewers=spec result=clean -->",
         f"<!-- workflow:review kind=round round=1 round=2 commit={SHA} reviewers=spec result=clean -->",
@@ -219,6 +247,10 @@ def test_the_review_panel_posts_a_record_after_every_round_with_the_command_comm
     assert "git rev-parse HEAD" in text
     assert "after every round, whatever it found" in text
     assert "after each later Correctness pass" in text
+    assert "`--clean`, or `--not-clean` when it found something to fix" in text
+    assert "mkdir -p /tmp/review-<ticket>-pass<k>" in text
+    assert "-F body=@/tmp/review-<ticket>-r<n>/record.md" in text
+    assert "only when the command exited 0" in text
     assert "attended and unattended sessions alike" in text
     assert "record.md" in text
 
@@ -233,6 +265,7 @@ def test_build_ticket_posts_the_records_kept_before_the_pull_request_and_keeps_i
     text = _text("skills/build-ticket/SKILL.md")
     assert "the findings table" in text
     assert "review records" in text and "record.md" in text
+    assert "each round's and each Correctness pass's `record.md`" in text
 
 
 def test_the_flow_says_each_round_and_pass_posts_its_record():

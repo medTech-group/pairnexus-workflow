@@ -98,7 +98,7 @@ A plan for work too big or too unclear for one [spec](#spec), decided one questi
 
 ### Review panel
 
-Claude reviewers who each read a change from one side (does it work, does it follow the rules) before its [pull request](#pull-request-pr) opens.
+Claude reviewers who each read a change from one side (does it work, does it follow the rules) before its [pull request](#pull-request-pr) opens. Each round leaves a record on it.
 
 **Why it matters to you:** mistakes are caught before you see the change.
 
