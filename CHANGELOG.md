@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.10
+
+**The guard reads editing scripts as their tools do, and fails closed when it runs out of time.** In a ticket session the guard refuses a new test-skip or focus marker that an editing script (`sed`, `perl`, `awk`, `vim`, `ed`) or a patch adds. The correctness reviews of 0.1.9 found older ways, all in 0.1.8 already, that a script could add one unseen, and ways to make the guard slow enough to outlast the hook's timeout, which in 0.1.8 doesn't block. Reported and fixed privately, under `SECURITY.md`.
+
+- **sed scripts are read by sed's grammar:** an address (`/re/`, `\%re%`) is read only where a command starts, so text that `a`, `i` and `c` write always counts as added, slashes and `s` commands in it included; an `s` inside an address starts no command; and a command followed by more than sed accepts ends the reading, so the rest counts as added.
+- **vim's and ed's `s` ends at the end of its line,** as they read it (the closing delimiter can be left out). The lines `a`, `i` and `c` add count as added, and the keys of `normal` and `execute` are read for markers they run into (`normal Oit.only(`).
+- **perl and awk:** a string (`"…"`, `q(…)`, a heredoc) is text the code writes, and a regex (`/re/` where a value is expected, `m{…}`, `qr`) only finds. So an `s` command or a regex inside a string is no longer read as one.
+- **What a command finds is read as a regex:** a backslash and a letter (`\s`, `\b`) is a class or an anchor, never that letter. What it puts is read as before.
+- **A patch's lines are read as the file's text,** without unescaping, so a removed line holding `it\.only\(` doesn't net away an added `it.only(`.
+- **Limits on what the guard reads.** Past these, a ticket session's command is refused rather than read in part:
+  - an in-place edit's scripts, `-f` files included, are read once per command, however many files it edits, up to 1 MB together;
+  - patches up to 4 MB together, where a patch past 1 MB was cut off before;
+  - a test file a Write replaces, up to 4 MB.
+- **A time budget:** the guard's hook stops after 12 seconds, under its 15-second timeout, and refuses the tool in ticket and conductor sessions. In an attended session it reports the error, as for any guard error. It needs `SIGALRM`, so it doesn't apply on Windows.
+- **Decisions:**
+  - fuzzed against GNU sed 4.9 and perl, running random scripts on a test file: none that sed or perl accepted added a marker the guard missed (copies of lines already in the file aside, which the guard has never counted). Against 0.1.9, the new reading refuses scripts that 0.1.9 allowed, and allows some it refused: those were valid scripts 0.1.9 misread, such as `it.only(` at the start of a sed command, which is sed's `i` inserting `t.only(`, or a vim `s` that leaves out its closing delimiter;
+  - a sed `#` comment isn't read for markers, and a sed address with its own delimiter (`\%re%d`) is now read as one;
+  - perl's bracketed `s{…}{…}` is read as 0.1.9 read it.
+- Tests cover each way in, a big `-f` script across 30 test files, the caps and the time budget (`tests/test_kit_0110.py`).
+- **For projects updating to 0.1.10:** nothing to do beyond the update.
+
 ## 0.1.9
 
 **The guard's script and skip-marker patterns run in linear time.** In a ticket session the guard counts the test-skip markers an editing script (`sed`, `perl`) or an edit adds, and refuses new ones. Two of its patterns could take far longer than the text they read:

@@ -87,7 +87,7 @@ In attended sessions the guard doesn't stop changes to protected paths: the pers
 **In ticket sessions it also denies:**
 - the profile's deploy commands, however they're run (directly, through a shell, piped, `env -C`, `find -exec`);
 - writes to protected paths, `.git/config` and `.git/hooks/**`, by Edit/Write, by the shell's writers (redirects, `cp`/`mv`/`install`/`rsync`/`ln` destinations, `rm`, `sed -i`, `perl -pi`, `dd`, `tee`, `mkdir`, `curl -o`, `wget -O`, `find -delete` and `find -exec` over a tree holding one (a plain `find DIR -name GLOB … -delete` or `-exec … {} +` that the guard can read exactly is checked by name against the files there, directories holding protected paths and links to them included; anything else is a write into the whole tree), commands run by `xargs` (their targets are what the producer names exactly, else they can't be seen), a tree checked on disk for a protected path a pattern matches anywhere (`**/.env`, up to 50,000 entries), `git rm`/`mv`/`checkout`/`restore`, archives and patches that touch them, deleting a parent directory, globs and brace lists that expand to them, symlinks resolved), or through GitHub's file tools;
-- a new skip or focus marker in a test file (`conftest.py` included);
+- a new skip or focus marker in a test file (`conftest.py` included). An editing script is read by its tool's grammar: the text sed's `a`, `i` and `c` write counts as added, an address or a regex only finds, vim's and ed's `s` ends at the end of its line, perl's and awk's strings are text they write, and a patch's lines are read as they stand. A script the guard can't read counts every marker in it as added. Scripts over 1 MB together, patches over 4 MB together, and a Write over a test file of more than 4 MB are refused rather than read in part;
 - switching to a branch outside the pattern when the role comes only from the branch name.
 
 A GitHub post (MCP or `gh`, including heredoc bodies and `--body-file`/`--input` files) matching the profile's sensitive patterns is refused in every role.
@@ -100,6 +100,7 @@ The marker is looked for in the command's texts as a whole (the command, its her
 - an invalid or missing profile;
 - a malformed hook event;
 - an error in the guard itself;
+- the guard running out of time: past 12 seconds, under the hook's 15-second timeout, its check is refused (since 0.1.10; where Python has `SIGALRM`, which Windows lacks);
 - the kit's CLI missing from the checkout. Then everything is refused except `git checkout -- .claude/workflow` or `git restore .claude/workflow`, which restore it;
 - `python3` older than 3.11, missing, or failing to run the kit (since 0.1.8). Every tool is refused until the session runs on Python 3.11 or later. Here the CLI can't run to read the role, so the fallback reads it more simply: `WORKFLOW_ROLE`, or with it unset and the kit set up, a branch matching the profile's `run.ticket_branch` line (its first plain `ticket_branch = "…"` line; written another way, the default `claude/build-*` is used). With no working `python3` it can't read the hook's event either, so it reads the project directory's branch, not a worktree's.
 

@@ -22,10 +22,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import contextlib
 import os
+import signal
 import time
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 from . import charter as charter_mod
@@ -513,6 +516,37 @@ def _role_label(role: str) -> str:
     return f"{role} session (WORKFLOW_ROLE={odd!r} isn't a role, so treated as ticket)" if odd else f"{role} session"
 
 
+# The guard's time budget, under the hook's 15-second timeout: a guard still
+# deciding when it runs out is refused in ticket and conductor sessions, since a
+# hook that outlasts its timeout doesn't block.
+GUARD_BUDGET = 12.0
+
+
+class _OverBudget(BaseException):
+    """Raised when the guard runs out of time. A BaseException, so no
+    `except Exception` inside the guard can swallow it."""
+
+
+@contextlib.contextmanager
+def _budget(seconds: float):
+    """Raise _OverBudget in the main thread after `seconds` (where the platform has
+    SIGALRM; a regex match is interrupted too, since `re` checks for signals)."""
+    if not hasattr(signal, "setitimer") or threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def over(signum, frame):
+        raise _OverBudget()
+
+    previous = signal.signal(signal.SIGALRM, over)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
 def _hook_guard(event) -> int:
     firm = roles.env_role()
     if not isinstance(event, dict):  # malformed: nothing can be checked
@@ -539,7 +573,13 @@ def _hook_guard(event) -> int:
     # A cwd with no branch (outside the repository, e.g. /tmp) takes the project root's.
     role = roles.role(cwd, prof.ticket_branch, fallback=root)
     try:
-        d = guard_mod.decide(event, prof, role, root, roles.current_branch(cwd), role_from_env=firm is not None, cwd=event.get("cwd") or None)
+        with _budget(GUARD_BUDGET):
+            d = guard_mod.decide(event, prof, role, root, roles.current_branch(cwd), role_from_env=firm is not None, cwd=event.get("cwd") or None)
+    except _OverBudget:
+        if role in ("ticket", "conductor"):
+            _deny_json(f"[workflow guard, {_role_label(role)}] the guard ran out of time ({GUARD_BUDGET:g} seconds) checking this, so it was refused; split the command, or give it smaller files")
+            return 0
+        raise RuntimeError(f"the guard ran out of time ({GUARD_BUDGET:g} seconds)") from None
     except Exception as e:  # fail closed where a person isn't there to notice
         if role in ("ticket", "conductor"):
             _deny_json(f"[workflow guard, {_role_label(role)}] the guard failed ({type(e).__name__}: {e}), so this was refused; rephrase the command more simply")

@@ -92,6 +92,7 @@ and the environment come first.
 from __future__ import annotations
 
 import fnmatch
+import functools
 import glob as _glob
 import json
 import os
@@ -1601,14 +1602,20 @@ def _field(call: _ApiCall, name: str) -> str | None:
 
 def _read_text(path: str, cwd: str | None, limit: int = 1_000_000) -> str | None:
     """A regular file's text (never a device or pipe, which could block)."""
+    return _read_capped(path, cwd, limit)[0]
+
+
+def _read_capped(path: str, cwd: str | None, cap: int) -> tuple[str | None, bool]:
+    """A regular file's text, at most `cap` bytes of it, and whether it holds more."""
     a = _abspath(path, cwd)
     if not a or not os.path.isfile(a):
-        return None
+        return None, False
     try:
         with open(a, "rb") as fh:
-            return fh.read(limit).decode("utf-8", "replace")
+            data = fh.read(max(cap, 0) + 1)
     except OSError:
-        return None
+        return None, False
+    return data[:cap].decode("utf-8", "replace"), len(data) > cap
 
 
 def _gql_plain(text: str) -> str | None:
@@ -2428,19 +2435,32 @@ def _patch_texts(cmd: str, args: list[str], seg: Seg) -> tuple[list[str], str | 
         patched = positional[:1]  # the file being patched
         texts_from = inputs or positional[1:2]
     texts: list[str] = []
+    left = _PATCH_CAP  # for all the patches together
+
+    def read(f: str) -> tuple[str | None, str | None]:
+        """A patch's text, or why it can't be read."""
+        nonlocal left
+        txt, over = _read_capped(f, seg.cwd, left)
+        if over:
+            return None, f"the patches are over {_PATCH_CAP:,} bytes, more than the guard reads; apply them in smaller parts"
+        if txt is None:
+            return None, f"can't read the patch `{f}` to see what it changes"
+        left -= len(txt.encode("utf-8", "replace"))
+        return txt, None
+
     for f in texts_from:
         if f == "-":
             texts_from = []
             break
-        txt = _read_text(f, seg.cwd)
+        txt, why = read(f)
         if txt is None:
-            return [], f"can't read the patch `{f}` to see what it changes", patched
+            return [], why, patched
         texts.append(txt)
     if not texts_from:
         if seg.stdin:
-            txt = _read_text(seg.stdin, seg.cwd)
+            txt, why = read(seg.stdin)
             if txt is None:
-                return [], f"can't read the patch `{seg.stdin}` to see what it changes", patched
+                return [], why, patched
             texts.append(txt)
         elif seg.heredoc is not None:
             texts.append(seg.heredoc)
@@ -3260,63 +3280,329 @@ _WRITE_CALL = re.compile(
 )
 
 
-# An `s` command (sed, perl, ed, vim): its delimiter, what it finds and what it puts.
-# A backslash always starts an escape (`\/` doesn't end it, as in sed), so each
-# character has one reading and a match never backtracks.
-_S_START = re.compile(r"(?<![A-Za-z_\\])s[^\w\s\\]")  # `\s` is a regex class, never an `s` command
-_S_CMD = re.compile(r"s([^\w\s\\])((?:\\.|(?!\1)[^\\])*)\1((?:\\.|(?!\1)[^\\])*)\1", re.S)
-_S_FLAGS = re.compile(r"[A-Za-z]*")
-# An address (`/x/d`), read the same way. The closing `/` is optional so that a
-# run that never closes is consumed once and kept, not tried again from inside.
-_ADDRESS = re.compile(r"/(?:\\.|[^/\n\\])*(/)?")
+# Skip markers in editing scripts. Each tool's script is read by its own
+# grammar, so text it writes (sed's `a`/`i`/`c`, a perl string) is never taken
+# for an address, and an `s` inside an address is never taken for a command.
+# A backslash always starts an escape (`\/` doesn't end a body, as in sed), so
+# each character has one reading and nothing backtracks. Where a script can't
+# be read, the rest of it counts as added, as written.
+
+_PUT_ESCAPES = {"n": "\n", "t": "\t", "r": "\r"}
 
 
 def _markers(text: str) -> int:
-    """Skip markers in text, read with sed's and perl's escapes (`\\n`, `it\\.only\\(`)."""
-    plain = re.sub(r"\\(.)", lambda m: {"n": "\n", "t": "\t"}.get(m.group(1), m.group(1)), text or "", flags=re.S)
+    """Skip markers in text a command writes, read with sed's and perl's escapes
+    (`\\n`, `it\\.only\\(`; `\\s` is a plain `s`)."""
+    plain = re.sub(r"\\(.)", lambda m: _PUT_ESCAPES.get(m.group(1), m.group(1)), text or "", flags=re.S)
     return len(_SKIP.findall(plain))
 
 
-def _script_net(text: str) -> int:
+def _found(text: str) -> int:
+    """Skip markers a regex finds. A backslash and a letter or digit (`\\s`,
+    `\\b`, `\\1`) is a class, an anchor or a backreference, never that letter."""
+    plain = re.sub(r"\\(.)", lambda m: "\0" if m.group(1).isascii() and m.group(1).isalnum() else m.group(1), text or "", flags=re.S)
+    return len(_SKIP.findall(plain))
+
+
+@functools.lru_cache(maxsize=256)
+def _body(delims: str, newline: bool) -> re.Pattern:
+    """A body up to one of `delims`, escapes included; within one line unless `newline`."""
+    stop = re.escape(delims) + ("" if newline else "\n")
+    return re.compile(r"(?:\\.|[^\\" + stop + "])*", re.S if newline else 0)
+
+
+def _close(text: str, start: int, d: str, newline: bool = True) -> int | None:
+    """Where the body starting at `start` ends at delimiter `d`, else None."""
+    end = _body(d, newline).match(text, start).end()
+    return end if end < len(text) and text[end] == d else None
+
+
+_PAIRS = {"{": "}", "(": ")", "[": "]", "<": ">"}
+
+
+def _close_pair(text: str, start: int, o: str) -> int | None:
+    """Where a bracketed body (perl's `m{…}`, `q(…)`) ends, nesting counted."""
+    c, depth, pos = _PAIRS[o], 1, start
+    while True:
+        pos = _body(o + c, True).match(text, pos).end()
+        if pos >= len(text) or text[pos] not in (o, c):  # the end, or a lone backslash before it
+            return None
+        depth += 1 if text[pos] == o else -1
+        if depth == 0:
+            return pos
+        pos += 1
+
+
+def _script_net(text: str, dialect: str) -> int:
     """Skip markers an editing script adds, net of those it removes: an `s`
-    command counts what it puts less what it finds; an address (`/x/d`) only
-    finds; anything else it holds (`i\\`, `a` text) is added. From an `s`
-    command that sed can't read (it never closes), nothing is netted or
-    dropped: the rest of the script counts as added, as written."""
+    command counts what it puts less what it finds; an address or a regex only
+    finds; text it writes is added."""
     text = text or ""
-    net, kept, pos, look = 0, [], 0, 0
-    while (start := _S_START.search(text, look)) is not None:
-        m = _S_CMD.match(text, start.start())
-        if m is None:
-            return net + _markers(_drop_addresses("".join(kept) + text[pos:start.start()]) + text[start.start():])
-        net += _markers(m.group(3)) - _markers(m.group(2))
-        kept.append(text[pos:start.start()] + " ")
+    if dialect == "sed":
+        return _sed_net(text)
+    if dialect == "ex":
+        return _ex_net(text)
+    return _code_net(text)
+
+
+# sed: commands start after a newline, `;`, `{` or `}`, each with up to two
+# addresses (`/re/`, `\%re%`, a line number, `$`, `first~step`, `+N`).
+_SED_GAP = re.compile(r"[\s;{}]*")
+_SED_LINE_ADDR = re.compile(r"\d+(?:~\d+)?|\$|[+~]\d+")
+_SED_SPACES = re.compile(r"[ \t]*")
+_SED_TEXT = re.compile(r"(?:\\.|[^\\\n])*\\?", re.S)  # `a`/`i`/`c` text: one line, continued past an escaped newline
+_SED_REST = re.compile(r"[^\n]*")
+_SED_LABEL = re.compile(r"[^;\n]*")
+_SED_FLAGS = re.compile(r"[gpiImMe0-9]*")
+_SED_ADDR_FLAGS = re.compile(r"[IM]*")
+_SED_END = re.compile(r"[ \t]*(?:[;\n}#]|$)")
+_SED_ARG = re.compile(r"[ \t]*[\d.]*")  # `q`'s exit code, `l`'s line length, `v`'s version
+_SED_SIMPLE = "dDgGhHlLnNpPqQxzF=v"
+
+
+def _sed_net(text: str) -> int:
+    net, pos, n = 0, 0, len(text)
+    while True:
+        pos = at = _SED_GAP.match(text, pos).end()  # `at`: where this command starts
+        if pos >= n:
+            return net
+        for second in (False, True):
+            m = _SED_LINE_ADDR.match(text, pos)
+            if m:
+                pos = m.end()
+            elif text[pos : pos + 1] in ("/", "\\"):
+                d = "/" if text[pos] == "/" else text[pos + 1 : pos + 2]
+                start = pos + (1 if text[pos] == "/" else 2)
+                end = _close(text, start, d, newline=False) if d and d not in "\n\\" else None
+                if end is None:
+                    return net + _markers(text[at:])
+                pos = end + 1
+                pos = _SED_ADDR_FLAGS.match(text, pos).end()
+            elif second:
+                return net + _markers(text[at:])  # a `,` with no address after it
+            else:
+                break
+            pos = _SED_SPACES.match(text, pos).end()
+            if second or text[pos : pos + 1] != ",":
+                break
+            pos = _SED_SPACES.match(text, pos + 1).end()
+        while text[pos : pos + 1] in ("!", " ", "\t"):
+            pos += 1
+        c = text[pos : pos + 1]
+        if c in ("", "\n", ";", "{", "}"):
+            continue
+        if c == "#":  # a comment: sed writes nothing of it
+            pos = _SED_REST.match(text, pos).end()
+        elif c in "aic":
+            p = _SED_SPACES.match(text, pos + 1).end()
+            if text[p : p + 2] == "\\\n":  # the classic form: the text starts on the next line
+                p += 2
+            m = _SED_TEXT.match(text, p)
+            net += _markers(m.group(0))
+            pos = m.end()
+        elif c in "sy":
+            d = text[pos + 1 : pos + 2]
+            e1 = _close(text, pos + 2, d, newline=False) if d and d not in "\n\\" else None
+            e2 = _close(text, e1 + 1, d, newline=False) if e1 is not None else None
+            if e2 is None:
+                return net + _markers(text[at:])
+            found, put = text[pos + 2 : e1], text[e1 + 1 : e2]
+            net += _markers(put) - (_found(found) if c == "s" else 0)
+            pos = _SED_FLAGS.match(text, e2 + 1).end() if c == "s" else e2 + 1
+            if c == "s" and text[pos : pos + 1] == "w":  # `w file`: the file name runs to the line's end
+                m = _SED_REST.match(text, pos)
+                net += _markers(m.group(0))
+                pos = m.end()
+        elif c in ":btT":
+            m = _SED_REST.match(text, pos) if c == ":" else _SED_LABEL.match(text, pos)
+            net += _markers(m.group(0))
+            pos = m.end()
+        elif c in "rRwWe":  # a file name or a command, to the line's end
+            m = _SED_REST.match(text, pos)
+            net += _markers(m.group(0))
+            pos = m.end()
+        elif c in _SED_SIMPLE:
+            pos = _SED_ARG.match(text, pos + 1).end() if c in "qQlLv" else pos + 1
+        else:
+            return net + _markers(text[at:])
+        if not _SED_END.match(text, pos):  # sed refuses more after a command; so is it read
+            return net + _markers(text[at:])
+
+
+# ed and vim: one command per line (vim's `|` joins more after an `s`), with a
+# range of addresses before it. An `s` ends at the end of its line, and its
+# closing delimiter may be left out.
+_EX_LEAD = re.compile(r"[\s:]*")
+_EX_LINE_ADDR = re.compile(r"[.$%]|\d+|'.|\\[/?&]|[+-]\d*")
+_EX_OFFSET = re.compile(r"(?:[ \t]*[+-]\d*)*")
+_EX_GLOBAL = re.compile(r"(?:g(?:l(?:o(?:b(?:al?)?)?)?)?!?|v(?:g(?:l(?:o(?:b(?:al?)?)?)?)?)?)(?=[^\w\s\"|\\])")
+_EX_SUBST = re.compile(r"s(?:u(?:b(?:s(?:t(?:i(?:t(?:u(?:te?)?)?)?)?)?)?)?)?(?=[^\w\s\"|\\])")
+_EX_FLAGS = re.compile(r"[&cegiInp#lr]*[ \t]*\d*[ \t]*")
+_EX_APPEND = re.compile(r"(?:a(?:ppend)?|i(?:nsert)?|c(?:hange)?)!?\s*$")
+# `normal` keys run into the text they insert (`normal Oit.only(`), so there a
+# marker is matched without the word boundary before it.
+_EX_KEYS = re.compile(r"\b(?:norm(?:al?)?|exe(?:c(?:u(?:te?)?)?)?)\b")
+_SKIP_IN_KEYS = re.compile("|".join(p.removeprefix(r"\b") for p in SKIP_MARKERS))
+
+
+def _ex_net(text: str) -> int:
+    net, lines, i = 0, text.split("\n"), 0
+    while i < len(lines):
+        n, appending = _ex_line(lines[i])
+        net += n
+        i += 1
+        if appending:  # `a`, `i`, `c`: the lines up to a lone `.` are written as they are
+            while i < len(lines) and lines[i] != ".":
+                net += len(_SKIP.findall(lines[i]))
+                i += 1
+            i += 1
+    return net
+
+
+def _ex_line(line: str) -> tuple[int, bool]:
+    """One line of ed or vim commands: (its net markers, whether it starts appending)."""
+    net, pos = 0, 0
+    while True:
+        pos = _EX_LEAD.match(line, pos).end()
+        while True:  # the range: addresses, with or without `,` or `;` between them
+            m = _EX_LINE_ADDR.match(line, pos)
+            if m:
+                pos = m.end()
+            elif line[pos : pos + 1] in ("/", "?"):
+                end = _close(line, pos + 1, line[pos], newline=False)
+                if end is None:
+                    return net, False  # a pattern that runs to the line's end only finds
+                pos = end + 1
+            elif line[pos : pos + 1] not in (",", ";"):
+                break
+            pos = _EX_OFFSET.match(line, pos).end()
+            if line[pos : pos + 1] in (",", ";"):
+                pos += 1
+        pos = _SED_SPACES.match(line, pos).end()
+        m = _EX_GLOBAL.match(line, pos)
+        if m:  # `g/re/cmd`: the pattern only finds, the rest is a command
+            end = _close(line, m.end() + 1, line[m.end()], newline=False)
+            if end is None:
+                return net, False
+            pos = end + 1
+            continue
+        m = _EX_SUBST.match(line, pos)
+        if m:
+            d, p = line[m.end()], m.end() + 1
+            e1 = _close(line, p, d, newline=False)
+            e2 = _close(line, e1 + 1, d, newline=False) if e1 is not None else None
+            found = line[p : len(line) if e1 is None else e1]
+            put = "" if e1 is None else line[e1 + 1 : len(line) if e2 is None else e2]
+            net += _markers(put) - _found(found)
+            pos = len(line) if e1 is None or e2 is None else _EX_FLAGS.match(line, e2 + 1).end()
+            if line[pos : pos + 1] == "|":
+                pos += 1
+                continue
+            return net + _markers(line[pos:]), False
+        if _EX_APPEND.match(line, pos):
+            return net, True
+        if _EX_KEYS.search(line, pos):  # `normal` or `execute`, after `silent!`, `bufdo` or not
+            return net + len(_SKIP_IN_KEYS.findall(line, pos)), False
+        return net + _markers(line[pos:]), False  # anything else: what it holds counts
+
+
+# perl and awk: a string, a comment or other code is kept and counted; a regex
+# (`/re/` where a term is expected, `m…`, `qr…`) only finds; `s///` nets.
+_CODE_TOKEN = re.compile(r"""\s+|\\.|[$@%&][\w:#]*|[A-Za-z_]\w*|\d[\w.]*|.""", re.S)
+_CODE_EXPECT_TERM = {
+    "if", "unless", "while", "until", "and", "or", "not", "xor", "return", "split", "grep", "map", "print",
+    "push", "unshift", "join", "when", "eq", "ne", "lt", "gt", "le", "ge", "cmp", "x", "defined", "in",
+}
+_CODE_REGEX_FLAGS = re.compile(r"[A-Za-z]*")
+
+
+def _code_net(text: str) -> int:
+    net, kept, last, pos, term, n = 0, [], 0, 0, False, len(text)
+
+    def rest() -> int:  # from where the script can't be read, everything left counts
+        return net + _markers(" ".join(kept) + " " + text[last:])
+
+    while pos < n:
+        c = text[pos]
+        if c in "'\"`":  # a string: kept, and nothing in it is read as code
+            end = _close(text, pos + 1, c)
+            if end is None:
+                return rest()
+            pos, term = end + 1, True
+            continue
+        if c == "#":  # a comment: kept
+            end = text.find("\n", pos)
+            pos = n if end < 0 else end
+            continue
+        if c == "/" and not term:  # a regex: it only finds
+            end = _close(text, pos + 1, "/")
+            if end is None:
+                return rest()
+            kept.append(text[last:pos] + " ")
+            pos = last = end + 1
+            pos, term = _CODE_REGEX_FLAGS.match(text, pos).end(), True  # its flags stay kept
+            continue
+        m = _CODE_TOKEN.match(text, pos)
+        word = m.group(0)
+        d = text[m.end() : m.end() + 1]
+        # A quote-like operator, unless what follows makes it a word (`s =>`, a hash's `{s}`).
+        quote_like = word in ("s", "m", "qr", "q", "qq", "qw", "tr", "y") and d != "" and not (d.isspace() or d.isalnum() or d in "_}=,;)]>")
+        if quote_like and word == "s":  # perl's `s{…}{…}` is read with `{` as its one delimiter
+            s = _S_CMD.match(text, pos)
+            if s is None:
+                return rest()
+            net += _markers(s.group(3)) - _found(s.group(2))
+            kept.append(text[last:pos] + " ")
+            pos = last = s.end()
+            pos, term = _CODE_REGEX_FLAGS.match(text, pos).end(), True
+            continue
+        if quote_like:
+            p = m.end() + 1
+            end = _close_pair(text, p, d) if d in _PAIRS else _close(text, p, d)
+            if end is not None and word in ("tr", "y"):  # what it writes is its second part
+                end = None if d in _PAIRS else _close(text, end + 1, d)
+            if end is None:
+                return rest()
+            if word in ("m", "qr"):
+                kept.append(text[last:pos] + " ")
+                last = end + 1
+            pos, term = _CODE_REGEX_FLAGS.match(text, end + 1).end(), True
+            continue
         pos = m.end()
-        look = _S_FLAGS.match(text, pos).end()  # its flags (`g`, perl's `s`) start no command, but stay counted
-    return net + _markers(_drop_addresses("".join(kept) + text[pos:]))
+        if not word.isspace():  # after a term a `/` divides; elsewhere it starts a regex
+            term = (word[0].isalnum() or word[0] in "_$@%&)]}\\") and word not in _CODE_EXPECT_TERM
+    return rest()
 
 
-def _drop_addresses(text: str) -> str:
-    return _ADDRESS.sub(lambda m: " " if m.group(1) else m.group(0), text)
+_S_CMD = re.compile(r"s([^\w\s\\])((?:\\.|(?!\1)[^\\])*)\1((?:\\.|(?!\1)[^\\])*)\1", re.S)
 
 
 def _patch_net(texts: list[str]) -> int:
+    """A patch's added lines less its removed ones, read as the file's own text."""
     added = removed = 0
     for txt in texts:
         for line in txt.splitlines():
             if line.startswith("+") and not line.startswith("+++"):
-                added += _markers(line[1:])
+                added += len(_SKIP.findall(line[1:]))
             elif line.startswith("-") and not line.startswith("---"):
-                removed += _markers(line[1:])
+                removed += len(_SKIP.findall(line[1:]))
     return added - removed
 
 
 _GREPS = {"grep", "egrep", "fgrep", "rg", "ag", "ack"}
 
 
-def _added_markers(seg: Seg, root: Path) -> int:
+# The most script text the guard reads for one command (an in-place edit's
+# scripts and `-f` files together), and the most patch text. Over it, a ticket
+# session's command is refused rather than read in part.
+_SCRIPT_CAP = 1_000_000
+_PATCH_CAP = 4_000_000
+
+
+def _added_markers(seg: Seg, root: Path) -> int | None:
     """Skip or focus markers the writing command itself puts in, net of what it
-    removes. Text another command merely searches for (a grep) doesn't count."""
+    removes; None when its script is too large to read. Text another command
+    merely searches for (a grep) doesn't count."""
     toks = seg.words
     cmd = Path(toks[0]).name if toks else ""
     if cmd in ("sed", "perl", "awk", "gawk"):
@@ -3325,12 +3611,20 @@ def _added_markers(seg: Seg, root: Path) -> int:
             text = ed.script
             if cmd == "sed":
                 for f in _sed_args(toks[1:])[2]:
-                    text += "\n" + (_read_text(f, seg.cwd) or "")
-            return _script_net(text)
+                    txt, over = _read_capped(f, seg.cwd, _SCRIPT_CAP - len(text))
+                    if over:
+                        return None
+                    text += "\n" + (txt or "")
+            if len(text) > _SCRIPT_CAP:
+                return None
+            return _script_net(text, "sed" if cmd == "sed" else "code")
     if cmd in ("ed", "red") or cmd in _VIMS:
         ed = _vim_edit(toks) if cmd in _VIMS else None
-        parts = [ed.script if ed else "", seg.heredoc or "", (_read_text(seg.stdin, seg.cwd) or "") if seg.stdin else ""]
-        return _script_net("\n".join(parts))
+        stdin, over = _read_capped(seg.stdin, seg.cwd, _SCRIPT_CAP) if seg.stdin else (None, False)
+        text = "\n".join([ed.script if ed else "", seg.heredoc or "", stdin or ""])
+        if over or len(text) > _SCRIPT_CAP:
+            return None
+        return _script_net(text, "ex")
     if cmd == "patch" or (cmd == "git" and (_git(toks) or ([], [], None))[1][:1] in (["apply"], ["am"])):
         if cmd == "patch":
             texts = _patch_texts("patch", toks[1:], seg)[0]
@@ -3349,10 +3643,14 @@ def _added_markers(seg: Seg, root: Path) -> int:
 
 def _shell_skips(seg: Seg, profile: Profile, root: Path, t: _Targets | None = None) -> str | None:
     t = t if t is not None else _write_targets(seg, root)
-    for tgt in t.files:
-        rel = _norm(tgt, root, seg.cwd)
-        if rel and not _outside(rel) and matches(rel, profile.test_paths) and _added_markers(seg, root) > 0:
-            return f"this writes a skip or focus marker into the test file `{tgt}`; skipping or disabling a test is never allowed"
+    tests = [tgt for tgt in t.files if (rel := _norm(tgt, root, seg.cwd)) and not _outside(rel) and matches(rel, profile.test_paths)]
+    if not tests:
+        return None
+    added = _added_markers(seg, root)  # once for the command, however many files it edits
+    if added is None:
+        return f"this edits the test file `{tests[0]}` with a script of over {_SCRIPT_CAP:,} bytes, more than the guard reads; split it into smaller scripts"
+    if added > 0:
+        return f"this writes a skip or focus marker into the test file `{tests[0]}`; skipping or disabling a test is never allowed"
     return None
 
 
@@ -3497,6 +3795,10 @@ def check_bash(
 # ---------- file tools ----------
 
 
+# The most of a test file a Write reads to see which markers it already holds.
+_WRITE_READ_CAP = 4_000_000
+
+
 def _added_skips(old: str, new: str) -> int:
     return len(_SKIP.findall(new or "")) - len(_SKIP.findall(old or ""))
 
@@ -3523,11 +3825,10 @@ def check_write(tool: str, inp: dict, profile: Profile, role: str, root: Path, c
     elif tool == "MultiEdit":
         added = sum(_added_skips(e.get("old_string", ""), e.get("new_string", "")) for e in inp.get("edits") or [])
     elif tool == "Write":
-        try:
-            old = Path(a).read_text(encoding="utf-8") if a else ""
-        except OSError:
-            old = ""
-        added = _added_skips(old, inp.get("content", ""))
+        old, over = _read_capped(str(a), None, _WRITE_READ_CAP) if a else (None, False)
+        if over:
+            return Decision("deny", f"the test file `{rel}` is too large for the guard to read (over {_WRITE_READ_CAP:,} bytes), so it can't check what this replaces; change it with Edit")
+        added = _added_skips(old or "", inp.get("content", ""))
     else:
         added = 0
     if added > 0:
