@@ -402,7 +402,7 @@ def test_a_value_already_right_in_other_quotes_is_left(copy):
 
 
 def test_a_bom_is_kept_and_the_title_after_it_found(copy):
-    (copy / "README.md").write_bytes(b"\xef\xbb\xbf# old\n\n# second\n")
+    (copy / "README.md").write_bytes(b"\xef\xbb\xbf# old\n\n# second\n")  # the profile's is refused: test below
     (copy / "package.json").write_bytes(b'\xef\xbb\xbf{"name": "old"}\n')
     assert _run(copy).returncode == 0
     assert (copy / "README.md").read_bytes() == b"\xef\xbb\xbf# My Notes!\n\n# second\n"
@@ -486,3 +486,35 @@ def test_a_triple_quoted_name_is_refused_in_words(copy):
     (copy / "wrangler.toml").write_text('name = """old"""\n')
     p = _run(copy)
     assert p.returncode == 1 and "can't rewrite line by line" in p.stderr
+
+
+# Review round 2.
+
+
+def test_an_owner_goes_in_under_a_last_line_and_keeps_the_final_newline(copy):
+    path = copy / ".claude/workflow/profile.toml"
+    path.write_text('[project]\nname = "x"\nrepo = "a/b"\n')
+    assert _run(copy).returncode == 0
+    assert path.read_text() == '[project]\nname = "My Notes!"\nrepo = "ada/my-notes"\nowner = "ada"\n'
+
+
+@pytest.mark.parametrize("sep", ["\u2028", "\u2029", "\x85"])
+def test_a_name_with_a_line_separator_is_refused(copy, sep):
+    before = _snapshot(copy)
+    assert _run(copy, name=f"Notes{sep}App").returncode == 1
+    assert _snapshot(copy) == before
+
+
+def test_a_line_separator_in_a_file_isnt_a_line_break(copy):
+    (copy / "README.md").write_text("# old \u2028 title\nbody\n")
+    assert _run(copy).returncode == 0
+    assert (copy / "README.md").read_text() == "# My Notes!\nbody\n"
+
+
+def test_a_profile_with_a_bom_is_refused(copy):
+    path = copy / ".claude/workflow/profile.toml"
+    path.write_bytes(b"\xef\xbb\xbf" + PROFILE.encode())
+    before = _snapshot(copy)
+    p = _run(copy)
+    assert p.returncode == 1 and "byte order mark" in p.stderr
+    assert _snapshot(copy) == before

@@ -102,7 +102,8 @@ def _toml_string(value: str) -> str:
 def _lines(text: str) -> list[tuple[str, str]]:
     """(the line, its ending), so an edit keeps the file's own line endings."""
     out = []
-    for line in text.splitlines(keepends=True):
+    # On "\n" only: `splitlines` would also break a line at U+2028 and the like.
+    for line in re.findall(r"[^\n]*\n|[^\n]+$", text):
         body = line.rstrip("\r\n")
         out.append((body, line[len(body):]))
     return out
@@ -143,9 +144,10 @@ def _profile(text: str, owner: str, repo: str, name: str) -> str:
         # An owner the profile left out goes in under repo, as the template has it.
         at = next(i for i in range(start, stop) if re.match(r"^\s*repo\s*=", lines[i][0]))
         ending = next((end for _, end in lines if end), "\n")
-        if not lines[at][1]:
+        unterminated = not lines[at][1]  # repo is the last line, with no newline after it
+        if unterminated:
             lines[at] = (lines[at][0], ending)
-        lines.insert(at + 1, (f"owner = {_toml_string(owner)}", ending if at + 1 < len(lines) else ""))
+        lines.insert(at + 1, (f"owner = {_toml_string(owner)}", "" if unterminated else ending))
     return _join(lines)
 
 
@@ -216,7 +218,7 @@ def plan(root: Path, owner: str, repo: str, name: str) -> Result:
         raise AdoptError(f"--owner must be a GitHub login (letters, digits and hyphens), without the @: got {owner!r}")
     if not name:
         raise AdoptError("--name is empty")
-    if any(ord(c) < 32 or ord(c) == 127 for c in name):
+    if not name.isprintable():
         raise AdoptError("--name must be one line of plain text, with no tabs or control characters")
     dashed_name = dashed(name)
     if not dashed_name:
@@ -226,6 +228,8 @@ def plan(root: Path, owner: str, repo: str, name: str) -> Result:
     text = res.read(root, PROFILE)
     if text is None:
         raise AdoptError(f"no profile at {PROFILE}: run this in a copy of the starter")
+    if PROFILE in res.boms:
+        raise AdoptError(f"{PROFILE} starts with a byte order mark, which the kit can't read: remove it, then run this again")
     try:
         old = tomllib.loads(text).get("project") or {}
     except tomllib.TOMLDecodeError as e:
