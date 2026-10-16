@@ -72,6 +72,16 @@ The kit's README ("Getting started", https://github.com/medTech-group/pairnexus-
 
 The profile's settings: `docs/profile.md`.
 
+## A copy of the starter
+
+A project made from the starter template (`workflow version --starter` names it) arrives with the kit set up, so it needs no set-up pull request. Its first session opens one small "Make this project yours" pull request instead, made with:
+
+```bash
+python3 -B .claude/workflow/bin/workflow.py adopt --owner LOGIN --repo OWNER/NAME --name "My notes"
+```
+
+It rewrites only the template's names, line by line, keeping comments and formatting: the profile's `project.owner`, `project.name` and `project.repo`; the old owner in CODEOWNERS, on every line; `wrangler.toml`'s top-level `name` and `package.json`'s `name` (the name in lower case with dashes, `my-notes`); and the README's title. It prints what it changed. A file that isn't there is skipped with a note, never created. A second run changes nothing and says the project is already yours. A `--repo` that isn't `owner/name`, or a name with no letters or digits, is refused with nothing written.
+
 ## Org-wide (optional)
 
 A claude.ai organisation Owner can enable the plugin for every member in server-managed settings (Organization settings → Claude Code → managed settings: `extraKnownMarketplaces` and `enabledPlugins`). Cloud sessions fetch these before installing plugins, so the plugin then works in cloud sessions too. It applies to every member's sessions, not one project.

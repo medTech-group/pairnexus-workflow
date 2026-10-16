@@ -702,7 +702,7 @@ How to report each:
 | `skills/upgrade-setup` | The upgrades from solo mode: "Protect `main`", guided click by click, read back, then the pull request that leaves solo mode |
 | `skills/update-workflow` | Update a project's vendored copy |
 | `agents/` | The read-only Correctness reviewer and the UI explorer |
-| `scripts/workflow.py`, `scripts/workflow/` | The CLI the skills and hooks run (Python 3.11+, standard library only): `profile`, `status`, `protection`, `version`, `ready`, `charter`, `state`, `render`, `comments`, `briefing`, `evidence`, `repair`, `vendor`, `hook`. `python3 -B scripts/workflow.py --help` lists every flag |
+| `scripts/workflow.py`, `scripts/workflow/` | The CLI the skills and hooks run (Python 3.11+, standard library only): `profile`, `status`, `protection`, `version`, `adopt`, `ready`, `charter`, `state`, `render`, `comments`, `briefing`, `evidence`, `repair`, `vendor`, `hook`. `python3 -B scripts/workflow.py --help` lists every flag |
 | `hooks/hooks.json` | The plugin's hooks (a vendored project gets the same hooks in its `.claude/settings.json`): the guard (the never-list), the status gate, the flow context and the guided start's first-message nudge, and at session start the environment repair, project setup and update notice |
 | `docs/` | `flow.md`, `charter.md`, `enforcement.md`, `install.md`, `profile.md`, `protection.md`, `spike.md` (what's verified), `proposal.md` (the original design, historical) |
 | `templates/` | The profile (`profile.toml`, `profile.md`), the ticket-session briefing, tracking and by-hand issues, `issue-tracker.md` (for `docs/agents/`), the issue templates, the pull request template, the `workflow kit` CI job and the weekly update check |
@@ -730,6 +730,7 @@ CI checks that `VERSION`, `plugin.json` and the CHANGELOG agree; nothing checks 
 
 A fork can run its own releases, with its own projects following it rather than this repository. Change, in the fork:
 - **The kit's home,** `KIT_REPO` in `scripts/workflow/updates.py`. That is the one place code reads it. The skills and the weekly update check read it through `workflow version --repo`, and projects set up from the fork follow it for updates.
+- **The starter's home,** `STARTER_REPO` beside it, if the fork has its own starter template. `workflow version --starter` prints it, and the guided start reads it from there.
 - **The marketplace and plugin names,** if you rename them:
   - `.claude-plugin/marketplace.json` (`name`, `owner`) and `.claude-plugin/plugin.json` (`name`, `author`);
   - the `pairnexus-workflow@pairnexus` key and the `pairnexus-workflow:` command prefix: `PLUGIN_UPDATE` in `updates.py`, `PLUGIN_KEY` in `vendor.py`, `scripts/workflow/context.py`, the skills `start`, `setup-workflow` and `review-panel`, `docs/flow.md`, `docs/install.md` and this README. `grep -rn "pairnexus-workflow[@:]" .` finds them.
