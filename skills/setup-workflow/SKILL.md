@@ -27,7 +27,7 @@ Explore first, ask only what you can't find, show what you'll write, and write i
 - Deploy scripts, infrastructure tools, secrets files. Deploy commands are asked about only when there are some.
 
 **Whether the base branch is protected already**
-- Read the rulesets back as the `upgrade-setup` skill's "Read it back" does (`$KIT/skills/upgrade-setup/SKILL.md`): the repository (`GET repos/<repo>`) in `.workflow/repo.json`, and each ruleset in full, by its id, in one JSON list in `.workflow/rulesets.json`. Ask nothing; step 3 writes `ruleset` from it. Never commit these files: `.workflow/` is git-ignored once step 3 has run.
+- Read the rulesets back as the `upgrade-setup` skill's "Read it back" does (`$KIT/skills/upgrade-setup/SKILL.md`): the repository (`GET repos/<repo>`) in `.workflow/repo.json`, and each ruleset in full, by its id, in one JSON list in `.workflow/rulesets.json`. Ask nothing; the profile (step 3, item 1) writes `ruleset` from it. Never commit these files: `.workflow/` is git-ignored once step 3's `.gitignore` entry (item 7) is there.
 
 **What's there already**
 - `.claude/skills`, including an earlier hand-vendored copy of these skills or of Matt Pocock's.
@@ -62,7 +62,7 @@ Everything else takes the template's default, or what exploring found: the comma
 - **`experience`,** from the answer, in place of the template's `# experience = "new"`: `experience = "new"` (*new to building*, also when the question was skipped) or `experience = "developer"`.
 - The run-only settings (`[areas]`, `[release]`, `run.ticket_environment`, `run.conductor_environment`, `run.permission_mode`, `run.environment_setup`) keep the template's defaults until "Set up unattended runs".
 - Run `WF profile check` with `CLAUDE_PROJECT_DIR` set to the project, and fix what it reports.
-- **Setup:** `commands.setup` installs the project's own dependencies from its files (`npm ci`, a virtualenv from `requirements.txt`), and `commands.setup_check` exits 0 once that has run (`test -d node_modules`, `test -x .venv/bin/python`). The kit runs setup at each session start when the check fails, since a cloud session starts from a fresh clone. Both empty when there is nothing to install. The environments' setup script (`run.environment_setup`) is the unattended upgrade's.
+- **Setup:** `commands.setup` installs the project's own dependencies from its files (`npm ci`, a virtualenv from `requirements.txt`), and `commands.setup_check` exits 0 once that has run (`test -d node_modules`, `test -x .venv/bin/python`). The kit runs setup at each session start when the check fails, since a cloud session starts from a fresh clone. Both empty when there is nothing to install. The environments' setup script (`run.environment_setup`) is left to "Set up unattended runs".
 
 **2. The kit.**
 - Vendored mode:

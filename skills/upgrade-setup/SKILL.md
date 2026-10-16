@@ -24,7 +24,7 @@ Below, `main` stands for the profile's `project.base_branch`: use its real name 
 
 **GitHub.** Read with `gh api` where it is signed in, or the GitHub MCP tools in a cloud session. Neither path writes a ruleset or a setting here: the person clicks, and this skill reads back. An automatic path with `gh` comes in a later release (below).
 
-The read-back needs GitHub's own JSON: the repository (`GET repos/<repo>`, with `permissions`, `default_branch` and the merge settings) and each ruleset by its id. Use a tool that returns those responses as they are, `gh api` where it is signed in. When no tool here gives them, treat the rulesets as unreadable (step 2).
+The read-back needs GitHub's own JSON: the repository (`GET repos/<repo>`, with `permissions`, `default_branch` and the merge settings) and each ruleset by its id. Use a tool that returns those responses as they are, `gh api` where it is signed in. When no tool here gives them, treat the rulesets as unreadable ("Protect `main`", step 2).
 
 **Choices** use the `AskUserQuestion` tool, the recommended option first; without it (a headless session), the same choices as a numbered list.
 
@@ -156,7 +156,7 @@ Say where it stands in one line, adding the checks line from "The screens" when 
 
 # Set up unattended runs
 
-The second path (offer `set_up_unattended_runs`). It takes a project that works attended to one where the conductor can build ready tickets in cloud sessions while nobody is watching: it asks the questions only runs need, which set-up no longer asks, guides the two cloud environments, and writes the answers to the profile in one pull request.
+The second path (offer `set_up_unattended_runs`). It takes a project that works attended to one where the conductor can build ready tickets in cloud sessions while nobody is watching: it asks the questions only runs need, which set-up leaves out, guides the two cloud environments, and writes the answers to the profile in one pull request.
 
 **The vendored kit only.** Cloud sessions don't install the plugin from a project's settings, so unattended runs need the vendored kit. In plugin mode (no `.claude/workflow/lock.json`), say so plainly, and that moving to vendored mode is the kit's `setup-workflow` skill run again in vendored mode; then stop.
 

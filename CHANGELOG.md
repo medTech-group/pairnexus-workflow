@@ -35,7 +35,7 @@
 - Docs: the README's new "Protect `main`" section, with Steps 3 and 4 as its fallback. Tests: `tests/test_upgrade_setup.py`.
 - **For projects updating:** nothing to do.
 
-**The solo set-up, and "Set up unattended runs"** (#48, part of solo mode, #32). `setup-workflow` becomes the short set-up for every new project, and the questions only runs need move to the `upgrade-setup` skill's second path in the same change, so none is asked nowhere.
+**The solo set-up, and "Set up unattended runs"** (#48, part of solo mode, #32). `setup-workflow` becomes the short set-up for every new project, and the questions only runs need move to the `upgrade-setup` skill's second path in the same change, so every question still has a place.
 
 - **Set-up asks only what attended work needs:** the project's experience default, sensitive data, the explorer, the mode, the owner and an earlier flow, and deploy commands only when it found deploy scripts. Everything else takes the template's default or what exploring found. It asks nothing about areas, environment names, permission modes, merge approvals or releases.
 - **It writes `ruleset`** as a plain line: `true` only when the rulesets can be read and `workflow protection` says the base branch is protected, otherwise `false` (solo mode): an unknown counts as unprotected. It writes `experience` from the answer.

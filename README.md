@@ -97,6 +97,8 @@ Ask Claude to **protect `main`**, or pick **Protect `main`** where the kit offer
 
 When you want Claude to build tickets while you're away, ask Claude to **set up unattended runs**. The same `upgrade-setup` skill offers "Protect `main`" first if the project is still in solo mode (skipping it leaves GitHub not holding a merge for failing checks), asks the questions only runs need (areas, environment names, ticket sessions' permission mode, merge approvals and releases), shows you one screen for creating the two environments with their names, `WORKFLOW_ROLE` values and setup script filled in, and writes your answers to the profile in one pull request. Vendored mode only.
 
+On merge approvals: unattended runs merge only if a pull request can merge with no human approval. If your team requires one, keep it in the ruleset: each run's conductor sees it and recommends stopping at "ready for review" (the charter's merge mode **owner**), since a PR a session opens is yours and you can't approve your own.
+
 [Step 5](#step-5-create-the-two-claude-environments) below is the same clicks by hand: it is its fallback. The questions it asks are the ones Step 5 needs answers to.
 
 ### Step 3. Protect the base branch with a ruleset
