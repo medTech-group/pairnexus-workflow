@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **`workflow protection` reads back whether the base branch is protected** (#44), from the rulesets (each in full) and, optionally, the repository's settings, as JSON files a session hands it. It says protected or not, lists each missing protection in plain words (no rulesets, not active, evaluate only, not targeting the base branch, a bypass list, deletions or force pushes allowed, pull requests not required), says "checks not required yet" when no status checks are required, and reports the merge settings. `--json` gives the same for skills. It asks GitHub nothing and writes nothing; a wrong input is an error, never "protected". The "Protect `main`" upgrade, set-up, the conductor's pre-flight and `workflow doctor` are to use it ([docs/protection.md](docs/protection.md)).
+
 ## 0.1.10
 
 **The guard reads editing scripts as their tools do, and fails closed when it runs out of time.** In a ticket session the guard refuses a new test-skip or focus marker that an editing script (`sed`, `perl`, `awk`, `vim`, `ed`) or a patch adds. The correctness reviews of 0.1.9 found older ways, all in 0.1.8 already, that a script could add one unseen, and ways to make the guard slow enough to outlast the hook's timeout, which in 0.1.8 doesn't block. Reported and fixed privately, under `SECURITY.md`.

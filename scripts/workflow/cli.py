@@ -2,6 +2,7 @@
 
     workflow profile check
     workflow status [--issues F --prs F | --fetch] [--json]
+    workflow protection --rulesets F [--repo F] [--base BRANCH] [--json]
     workflow version [--fresh] [--json] | --repo
     workflow ready [--issues F --prs F | --fetch] [--exclude 1,2] [--only 1,2] [--override 3] [--running-area A ...] [--slots N] [--json]
     workflow charter defaults | validate F [--approved] | markdown F [--tickets 13:area,143:-] | diff OLD NEW | reuse OLD | pin-plan F | questions
@@ -40,6 +41,7 @@ from . import gate as gate_mod
 from . import guard as guard_mod
 from . import issues as issues_mod
 from . import posts as posts_mod
+from . import protection as protection_mod
 from . import render as render_mod
 from . import repair as repair_mod
 from . import roles
@@ -200,6 +202,34 @@ def cmd_status(a) -> int:
     else:
         print(status_mod.text(st))
         print(_kit_line(kit))
+    return 0
+
+
+def cmd_protection(a) -> int:
+    """Whether the base branch is protected, from the rulesets (and settings) JSON. Writes nothing."""
+
+    def given(path: str, what: str):
+        try:
+            return _json(path)
+        except OSError as e:
+            raise protection_mod.ProtectionError(f"can't read the {what} file {path}: {e.strerror or e}") from e
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            raise protection_mod.ProtectionError(f"the {what} file {path} isn't JSON ({e})") from e
+
+    try:
+        base = a.base
+        if not base:
+            prof = load(required=False)
+            if not prof:
+                raise protection_mod.ProtectionError("the kit isn't set up here, so give the base branch with --base")
+            base = prof.base_branch
+        rulesets = given(a.rulesets, "rulesets")
+        settings = given(a.repo, "repository settings") if a.repo else None
+        rep = protection_mod.check(rulesets, base, settings)
+    except protection_mod.ProtectionError as e:
+        print(f"workflow protection: {e}", file=sys.stderr)
+        return 2
+    _out(rep.as_dict() if a.json else protection_mod.text(rep))
     return 0
 
 
@@ -716,6 +746,13 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--fetch", action="store_true")
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_status)
+
+    s = sub.add_parser("protection", help="whether the base branch is protected, read back from GitHub's JSON; changes nothing")
+    s.add_argument("--rulesets", required=True, help="the repository's rulesets, each in full (GET repos/<repo>/rulesets/<id>), as a JSON list (or -)")
+    s.add_argument("--repo", help="the repository's settings (GET repos/<repo>), for the merge settings")
+    s.add_argument("--base", help="the base branch (default: the profile's project.base_branch)")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_protection)
 
     s = sub.add_parser("version", help="the kit's version here, and whether a newer release is out")
     s.add_argument("--fresh", action="store_true", help="ask GitHub again rather than the last six hours' answer")
