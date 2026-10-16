@@ -53,24 +53,33 @@ def solo_reason(ruleset: bool | None, protected: bool | None = None) -> str | No
 
 
 def removed_protection_accepted(c: Any) -> bool:
-    """The charter records removed protection: an `accepted_gaps` line the
-    kick-off wrote after REMOVED_PROTECTION. It carries the read-back's verdict
-    to every later check of the charter."""
+    """The charter records removed protection: an `accepted_gaps` line that
+    starts with REMOVED_PROTECTION, whatever its case and spacing (a line typed
+    again in an amendment still counts). It carries the read-back's verdict to
+    every later check of the charter."""
     gaps = c.get("accepted_gaps") if isinstance(c, dict) else None
-    return isinstance(gaps, list) and any(isinstance(g, str) and g.startswith(REMOVED_PROTECTION) for g in gaps)
+    head = REMOVED_PROTECTION.strip().casefold()
+    return isinstance(gaps, list) and any(isinstance(g, str) and g.strip().casefold().startswith(head) for g in gaps)
 
 
-def _nothing_checked(profile: Any, protected: bool | None) -> str | None:
-    """Why auto-merge would merge with nothing checked, or None."""
+def _auto_merge_risk(why: str, solo: bool) -> str:
+    """What auto-merge would do, for `why` (a solo_reason when `solo`)."""
+    if solo:
+        return f"{why}, so nothing on GitHub reliably requires checks and auto-merge could merge at once"
+    return f"{why}, so auto-merge would merge at once with nothing checked"
+
+
+def _no_auto_merge_reason(profile: Any, protected: bool | None) -> str | None:
+    """Why auto-merge isn't safe for this profile, in words (`_auto_merge_risk`), or None."""
     if profile is None:
         return None
     solo = solo_reason(getattr(profile, "ruleset", None), protected)
     if solo:
-        return solo
+        return _auto_merge_risk(solo, True)
     if getattr(profile, "ci_none", False):
-        return "ci.none is true"
+        return _auto_merge_risk("ci.none is true", False)
     if not getattr(profile, "required_checks", None):
-        return "the profile has no ci.required_checks"
+        return _auto_merge_risk("the profile has no ci.required_checks", False)
     return None
 
 
@@ -155,7 +164,7 @@ def defaults(release_steps: list[str] | None = None, profile: Any = None, protec
                 lim[k] = v
         lim["check_in_minutes"] = min(max(lim["check_in_minutes"], 5), 240)
         lim["max_sessions"] = max(lim["max_sessions"], lim["max_parallel"])
-        if _nothing_checked(profile, protected):
+        if _no_auto_merge_reason(profile, protected):
             out["merge"]["mode"] = "session"
     out["accepted_gaps"] = []
     out["approved"] = None
@@ -170,15 +179,14 @@ def questions(release_steps: list[str] | None = None, profile: Any = None, prote
     note says why."""
     d = defaults(release_steps, profile, protected)
     out = json.loads(json.dumps(QUESTIONS))
-    why = _nothing_checked(profile, protected)
+    why = _no_auto_merge_reason(profile, protected)
     for q in out:
         q["default"] = d[q["key"]]
         if q["key"] == "merge" and why:
             q["options"] = [o for o in q["options"] if o != "auto-merge"]
             q["note"] = (
-                f"Not offering auto-merge: {why}. Nothing on GitHub reliably requires checks, so auto-merge could "
-                "merge at once, before CI finishes. Use session (the session merges under the merge rule) or owner (you "
-                "merge each PR yourself)."
+                f"Not offering auto-merge: {why}. Use session (the session merges under the merge rule) or owner "
+                "(you merge each PR yourself)."
             )
     return out
 
@@ -451,13 +459,10 @@ def check_against_profile(
         protected = False
     solo = solo_reason(ruleset, protected)
     if m.get("mode") == "auto-merge" and solo:
-        p.append(
-            f"merge.mode auto-merge: {solo}, so nothing on GitHub reliably requires checks and auto-merge could merge "
-            "at once, before CI finishes; use session"
-        )
+        p.append(f"merge.mode auto-merge: {_auto_merge_risk(solo, True)}; use session")
     elif m.get("mode") == "auto-merge" and (ci_none or not required_checks):
         why = "ci.none is true" if ci_none else "the profile has no ci.required_checks"
-        p.append(f"merge.mode auto-merge: {why}, so auto-merge would merge at once with nothing checked; use session")
+        p.append(f"merge.mode auto-merge: {_auto_merge_risk(why, False)}; use session")
     a = c.get("approved")
     if owner and isinstance(a, dict) and isinstance(a.get("by"), str):
         if _login(a["by"]) != _login(owner):

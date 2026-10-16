@@ -22,13 +22,13 @@ One comment on the tracking issue, written for the owner to act on. Build it onl
    - how many tickets merged, how many were set aside, how many weren't started;
    - why the run ended: done, the end time, a limit, or the stop label.
 
-   **A solo-mode run** repeats its gap right under the summary. It is one whose charter's `accepted_gaps` has a line starting `solo mode:` or `removed protection: solo mode:`. Use these words, with the base branch's name in place of `main` where it isn't `main`:
+   **A solo-mode run** repeats its gap right under the summary. It is one whose charter's `accepted_gaps` has a line starting `solo mode:` or `removed protection: solo mode:` (whatever its case or leading spaces). Use these words, with the base branch's name in place of `main` where it isn't `main`:
 
    > This run was in solo mode: nothing on GitHub stops a mistake reaching `main`, and the kit's "never merge while CI is red" check is the only one.
 
    Then one line on closing it before the next run, in an attended session with the `upgrade-setup` skill:
    - `solo mode:`: "Protect `main`";
-   - `removed protection:`: first say the profile says `main` is protected but GitHub didn't protect it, then "Restore protection".
+   - `removed protection:`: first say the profile says `main` is protected but the conductor's read-back didn't find it protected (the protection was removed, or couldn't be confirmed without admin access), then "Restore protection".
 2. **Merged.** A table of ticket, title, PR, review rounds, wall time (from `started_at` to `merged_at`) and attempts.
 3. **Set aside.** Each `needs-human` or set-aside ticket, with exactly what it needs and from whom.
 4. **What's live.** Each release step in the ledger: what ran, from which commit, and the smoke test's result. A release skipped because the owner stopped the run says so, and that the owner can release by hand.

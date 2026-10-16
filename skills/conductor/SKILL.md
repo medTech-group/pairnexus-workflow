@@ -44,11 +44,11 @@ Collect every problem for the kick-off, each with its fix.
 - The base branch's ruleset: `gh api repos/<repo>/rulesets`, then each one by id. It must be `enforcement: active`, cover the default branch, and block force pushes and deletion. The required checks must equal the profile's `ci.required_checks`.
 - **Solo mode.** Read `project.ruleset` from `WF status --json` (`solo_mode`: `true` when it says `false`, `null` when it's left out). The run is in solo mode when either:
   - the profile says `ruleset = false`; or
-  - the profile says `ruleset = true` while the read-back says `"protected": false` (removed protection). For the read-back, also fetch the repository (`gh api repos/<repo>`) and run `WF protection --rulesets rulesets.json --repo repo.json --json`. Always give `--repo`. Exit code 2 means the input was wrong: say what failed rather than parse it.
+  - the profile says `ruleset = true` while the read-back says `"protected": false` (removed protection). For the read-back, save the full rulesets (each fetched by its id, not the list's summaries) as one JSON list in `rulesets.json`, the repository (`gh api repos/<repo>`) in `repo.json`, and run `WF protection --rulesets rulesets.json --repo repo.json --json`. Always give `--repo`. Exit code 2 means the input was wrong: fix it and run it again, rather than parse it or count it as unprotected.
 
   A read-back you can't complete counts as unprotected. When its only problems are that a bypass list or a setting "can't be read" (it needs admin access), say the protection can't be confirmed from this session, not that it was removed; it still counts as unprotected.
 
-  With `ruleset` left out, nothing here changes: the ruleset checks above raise their gaps as before, with no read-back. In solo mode, the checks on the ruleset itself give way to one safety gap, the solo-mode gap (kick-off step 1). The run then never uses GitHub auto-merge: nothing on GitHub reliably requires checks, so auto-merge could merge at once, before CI finishes.
+  With `ruleset` left out, nothing here changes: the ruleset checks above raise their gaps as before, with no read-back. In solo mode, the checks on the ruleset itself give way to one safety gap, the solo-mode gap (kick-off step 1). The run then never uses GitHub auto-merge: nothing on GitHub reliably requires checks, so auto-merge could merge at once, without waiting for checks.
 - The required-checks rule also requires branches to be up to date (`strict_required_status_checks_policy: true`). If it's off, raise it as a safety gap: "Fix it first / Go ahead, and the conductor checks the branch is level before each merge". Accepted, it goes in `accepted_gaps`, and before every merge (yours, or a PR whose auto-merge you enable) you check the branch is level with the base and update it first if not.
 - "Require review from Code Owners" is off while sessions post as the owner (`DOCS/enforcement.md` §1): on, a PR touching a CODEOWNERS path could never merge. Say so if it's on.
 - **Required approvals.** The ruleset's pull-request rule: `required_approving_review_count`. Above 0, no PR a session opens can merge without a person's approval (sessions post as the owner, and an author can't approve their own PR). Say so in the kick-off, and make **owner** the recommended answer to the merge question (`merge.mode: owner`: runs stop at "ready for review"). If the owner picks another mode anyway, every PR waits on an approval until the end time.
@@ -57,7 +57,7 @@ Collect every problem for the kick-off, each with its fix.
 
 **The ticket sessions' environment**
 - `list_environments`: find the one named `run.ticket_environment` and keep its id. None of that name is a blocking problem: the run can't start until the owner creates it or the profile names the right one. It is still required in solo mode.
-  - When the profile names no environment (`run.ticket_environment` empty), offer "Set up unattended runs": the `upgrade-setup` skill, offer `set_up_unattended_runs`.
+  - When the profile names no environment (`run.ticket_environment` empty), offer "Set up unattended runs": the `upgrade-setup` skill with the offer `set_up_unattended_runs`.
   - Either way, give the clicks by hand too: `DOCS/enforcement.md` §2 and https://github.com/medTech-group/pairnexus-workflow#step-5-create-the-two-claude-environments.
   - Never start ticket sessions in another environment.
 - Whether it really holds no credentials, the owner confirms in the kick-off.
@@ -84,7 +84,7 @@ With `AskUserQuestion`, at most four questions to a round, recommended answers f
      > This run is in solo mode: nothing on GitHub stops a mistake reaching `main`, and the kit's "never merge while CI is red" check is the only one.
 
      For removed protection, say first that the profile says `main` is protected but GitHub doesn't protect it, with what the read-back found missing (or that it can't be confirmed from here). Then ask:
-     - **Protect `main`** (recommended; for removed protection, **Restore protection**): follow the `upgrade-setup` skill with the offer `protect_main` (or `restore_protection`), then run this pre-flight's solo-mode check again. A protected read-back closes the gap. If it still isn't protected (Not now, a message for an admin, a click missed), ask again: **Go ahead** or **Don't start the run** (end here; nothing has been created yet).
+     - **Protect `main`** (recommended; for removed protection, **Restore protection**): follow the `upgrade-setup` skill with the offer `protect_main` (or `restore_protection`), then look at the read-back that path ends with. `"protected": true` closes the gap, whatever the profile says. If it still isn't protected (Not now, a message for an admin, a click missed), ask again: **Go ahead** or **Don't start the run** (end here; nothing has been created yet).
      - **Go ahead**: add exactly this line to `accepted_gaps`, with the base branch's name in place of `main`:
 
        ```
@@ -92,12 +92,12 @@ With `AskUserQuestion`, at most four questions to a round, recommended answers f
        ```
 
        For removed protection, the same line with `removed protection: ` in front. The charter then carries that verdict: every later `WF charter validate` and `WF state init` refuse `auto-merge` for it, amendments included.
-   - Either way, the ticket environment is still required, and the merge question never offers `auto-merge` (step 2). While the profile still says `ruleset = false` (the pull request that leaves solo mode not yet merged), the run stays in solo mode for the charter, even with `main` now protected.
+   - Either way, the ticket environment is still required. Unless the gap was closed, the merge question never offers `auto-merge` (step 2). While the profile still says `ruleset = false` (the pull request that leaves solo mode not yet merged), the run stays in solo mode for the charter, even with `main` now protected.
 
    Also:
    - confirm the ticket environment holds no credentials;
    - decide about any leftovers.
-2. **The charter's questions.** `WF charter questions` lists them; `WF charter defaults > charter.json` starts a first run's charter with defaults that fit the profile, and the answers change it. Offer only the merge question's `options`. In solo mode (and with no CI or no required checks) they leave out `auto-merge`, and its `note` says why: say that to the owner. For removed protection, add `--unprotected` to both commands, and to `WF charter validate` until the gap is in `accepted_gaps`.
+2. **The charter's questions.** `WF charter questions` lists them; `WF charter defaults > charter.json` starts a first run's charter with defaults that fit the profile, and the answers change it. Offer only the merge question's `options`. In solo mode (and with no CI or no required checks) they leave out `auto-merge`, and its `note` says why: say that to the owner. For removed protection, add `--unprotected` to both commands, and to `WF charter validate` until the gap is in `accepted_gaps`. Right after `defaults` (or `reuse`, below), add each gap accepted in step 1 to the charter's `accepted_gaps`: both start it empty, and `WF state init` reads the removed-protection verdict only from there.
    - With a previous charter, first run `WF charter reuse old.json > charter.json` (approval, amendments, end time, accepted gaps and plan cleared). Ask "Same as last time?", showing the tickets ready now, the old exclusions, and `WF charter diff old.json charter.json`. Then ask only what the owner wants changed. If the old charter used `auto-merge` and the merge question no longer offers it (solo mode now), set `merge.mode` to the new default and tell the owner why, from its `note`.
    - Always ask the end time.
 3. **The plan.** The ready tickets with their areas. They start infra first, then by number, one per area at a time; say so. Set `charter.plan` to this list. When `follow_unblocked` is false, it is the whole scope: pin `scope.tickets` to it with `WF charter pin-plan charter.json > charter.json.tmp && mv charter.json.tmp charter.json`.

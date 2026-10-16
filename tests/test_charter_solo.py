@@ -171,6 +171,32 @@ def test_an_accepted_removed_protection_gap_carries_the_verdict(tmp_path):
     assert p.returncode == 0, p.stderr
 
 
+@pytest.mark.parametrize(
+    "gap",
+    ["  removed protection: solo mode: x", "Removed protection: x", "REMOVED PROTECTION: x", "removed protection:solo mode: x"],
+)
+def test_a_retyped_removed_protection_line_still_counts(gap):
+    c = charter.defaults(["ship"])
+    c["merge"]["mode"] = "auto-merge"
+    c["accepted_gaps"] = [gap]
+    p = charter.check_against_profile(c, ["ship"], ["CI"], ruleset=True)
+    assert len(p) == 1 and "removed protection" in p[0]
+
+
+def test_each_reason_says_what_auto_merge_would_do(tmp_path):
+    class Prof:
+        ruleset, ci_none, required_checks = None, True, ["CI"]
+
+    q = next(q for q in charter.questions(profile=Prof()) if q["key"] == "merge")
+    assert "ci.none is true, so auto-merge would merge at once with nothing checked" in q["note"]
+    assert "CI finishes" not in q["note"]
+    # The note and the check say the same.
+    c = charter.defaults(["ship"])
+    c["merge"]["mode"] = "auto-merge"
+    p = charter.check_against_profile(c, ["ship"], ["CI"], ci_none=True)
+    assert "ci.none is true, so auto-merge would merge at once with nothing checked" in p[0]
+
+
 def _approved_file(tmp_path, mode, gaps=()):
     f = _charter_file(tmp_path, mode)
     c = json.loads(f.read_text())

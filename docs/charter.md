@@ -18,7 +18,7 @@ The conductor first works out what it can by itself, so it only asks about real 
 
 Asked in rounds of up to four with `AskUserQuestion` (three rounds for a first run), each with its recommended default first. `workflow charter questions` prints them; `workflow charter defaults` gives defaults that fit the project's profile: the limits from its `[run]`, release "never" when it has no release steps, and merge `session` when it has no CI or no required checks, or in solo mode.
 
-**Solo mode never uses GitHub auto-merge.** Nothing on GitHub reliably requires checks there, so auto-merge could merge a PR at once, before CI finishes. In solo mode `charter defaults` picks `session`, `charter questions` leaves `auto-merge` out of the merge question's `options` and says why in its `note` (as it does with no CI or no required checks), and `charter validate` and `state init` refuse a charter with `auto-merge`.
+**Solo mode never uses GitHub auto-merge.** Nothing on GitHub reliably requires checks there, so auto-merge could merge a PR at once, without waiting for checks. In solo mode `charter defaults` picks `session`, `charter questions` leaves `auto-merge` out of the merge question's `options` and says why in its `note` (as it does with no CI or no required checks), and `charter validate` and `state init` refuse a charter with `auto-merge`.
 
 For removed protection the profile still says `ruleset = true`, so the conductor passes `--unprotected` (the read-back's verdict) to `defaults`, `questions` and `validate`. Once the owner accepts the gap, its `accepted_gaps` line starts `removed protection: `, and the charter carries the verdict itself: every later check refuses `auto-merge`, amendments included. The rule is one function, `charter.solo_reason`.
 
