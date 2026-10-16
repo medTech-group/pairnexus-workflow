@@ -15,6 +15,23 @@ It sits in `.claude/`, a protected path: ticket sessions can't change it, and a 
 | `rules` | Files (with an optional `#heading`) holding the project's own rules; reviewers read them | `[]` (the template has `["CLAUDE.md"]`) |
 | `flow_addendum` | A project file read with the kit's flow | empty |
 | `guided_start` | The first-message menu in attended sessions; `/start` works either way | `true` |
+| `ruleset` | `true` or `false`. `false` is **solo mode**: no GitHub ruleset protects the base branch yet, so the kit's own guard is all that stops a change to it. `true` says a ruleset protects it. Write it as a plain `ruleset = true` or `ruleset = false` line, with nothing after it: a shell script reads it without a TOML parser. The template leaves it out; set-up writes it | absent: not set (as before) |
+| `experience` | How much the people working here know, as the project's default: `"new"` (new to building) or `"developer"`. It names no person, and changes only wording and pacing, never what the guard refuses (see "Experience" below) | absent: the person is asked (set-up asks for the project's default; the guided start asks each person whose level is unknown, and a kit update asks for the project's default); until then, unknown |
+
+Any other value of `ruleset` or `experience` is a `workflow profile check` error, so a typo never silently turns solo mode off. `workflow status` reports both: `Solo mode: yes`, `no` or `not set (as before)`, and `Experience:` with where it came from.
+
+### Experience
+
+Each person's experience is worked out by one function, `resolve_experience` in `scripts/workflow/profile.py`. `workflow status` reports what it finds. The guard's solo-mode tickets will call the same function, and skills will read the level from `status`. The first of these that holds a value wins:
+
+1. `WORKFLOW_EXPERIENCE` in the environment: `new` or `developer`. Set it on a claude.ai environment to keep a cloud session's answer.
+2. `.workflow/experience` in the project: one line, `new` or `developer`, written by the guided start (in a cloud session it lasts for that session only). `.workflow/` is untracked, so a person's level never lands in the repository's history.
+3. The profile's `project.experience`.
+4. Unknown. Wording then treats the person as new to building, since skipping the question counts as new.
+
+In the environment and the file, case and spaces around the value don't matter (the profile takes only `"new"` or `"developer"`, exactly). An unrecognised value there is skipped, with a warning in `workflow status` that doesn't repeat the value; it never makes a hook fail.
+
+**The glossary.** At the first prompt of an attended session whose level is `new` or unknown, the context hook (`workflow hook context`) adds the kit's glossary (`.claude/workflow/docs/glossary.md` when vendored, the plugin's `docs/glossary.md` otherwise) with the rule: explain each of its words in the glossary's wording, once a session, and never in what is written on GitHub. It comes beside the guided start's nudge or the flow, whatever the first prompt brings, under its own once-a-session marker. Beside the whole flow, or when the text wouldn't stay under Claude Code's 10,000-character limit for a hook's added context, it adds only the rule and the glossary's path, to read at once, ahead of the flow so it is within the 2,000 characters Claude sees of a longer string. An empty or unreadable glossary adds nothing, and a failure here never costs the flow or the nudge. Never for a developer, in a ticket or conductor session, after the first prompt, or without a profile.
 
 ## `[commands]`
 
@@ -96,5 +113,6 @@ The run's limits default from here; each run's charter can change them (`charter
 | Variable | Read by | What it does |
 |---|---|---|
 | `WORKFLOW_ROLE` | The hooks | `ticket`, `conductor` or `attended` (any case). Set it in the claude.ai environment, never in the profile. Any other value counts as `ticket`, the strictest |
+| `WORKFLOW_EXPERIENCE` | `workflow status` | `new` or `developer`: this person's experience, ahead of `.workflow/experience` and `project.experience` (see "Experience" above). Any other value is skipped with a warning |
 | `WORKFLOW_UPDATE_CHECK` | The session start | `off` (or `0`, `false`, `no`) stops the lookup of the latest kit release |
 | `TMPDIR` | The hooks | Where the hooks keep their per-session markers and the latest-release cache (six hours) |

@@ -28,7 +28,7 @@ python3 <kit>/scripts/workflow.py vendor install --project /path/to/project --ma
 - `--adopt` replaces files that already exist and aren't the kit's (an earlier hand-vendored copy); it lists every one. Rename the project's own skills of the same name first.
 - Install checks every file before writing any, so a refused install changes nothing.
 
-The hooks run `python3 .claude/workflow/bin/workflow.py`: the project needs Python 3.11+ wherever Claude Code runs (with an older `python3`, or none, the kit can't check anything, so ticket and conductor sessions are refused every tool and an attended session is told at its start). Repo hooks load in cloud sessions only when the session has a single repository: don't add a second repository to a conductor or ticket session.
+The hooks run `python3 .claude/workflow/bin/workflow.py`: the project needs Python 3.11+ wherever Claude Code runs (with an older `python3`, or none, or one that fails, the kit can't check anything: ticket and conductor sessions are refused every tool; in an attended session pushes and merges are still asked, and refused in solo mode or in a permission mode where nobody is asked, and the session is told at its start). Repo hooks load in cloud sessions only when the session has a single repository: don't add a second repository to a conductor or ticket session.
 
 ## Plugin
 
@@ -59,13 +59,16 @@ Installing it installs its dependency, `mattpocock-skills`, from the same market
 
 The plugin's commands carry its name: `/pairnexus-workflow:start`, `/pairnexus-workflow:next`, `/mattpocock-skills:to-spec`. The guided start comes up by itself at the first message only in a project with a profile; before set-up, type `/pairnexus-workflow:start` or `/pairnexus-workflow:setup-workflow`. The plugin follows the kit's `main`, not only its releases.
 
+Plugin mode fails the same way as vendored: its hooks run the same commands as a vendored project's, from the plugin's directory. With an older `python3`, or none, or one that fails, pushes and merges are still asked (refused in solo mode or in a permission mode where nobody is asked), not only told at the session's start. The session's start also says what is wrong. The plugin is for attended work, so without a `python3` that runs, it never refuses every tool. An older `python3` still reads the session's role as the kit does everywhere: a ticket or conductor session (`WORKFLOW_ROLE`, or a branch matching the profile's `run.ticket_branch`) is refused every tool. Use vendored mode for those. Installed for a user, the plugin's hooks run in every project; without a `python3` that runs, a push or a merge is asked there too, profile or not (refused in solo mode or where nobody is asked), as an old `python3` has done since 0.1.8.
+
 ## Every project, whichever mode
 
 The kit's README ("Getting started", https://github.com/medTech-group/pairnexus-workflow#getting-started) walks through it step by step, with every click. In short:
 
-1. Run the `setup-workflow` skill: the profile, Matt Pocock's per-repo docs, labels, issue templates, CODEOWNERS; in vendored mode also the kit's copy, the `workflow kit` CI job and the weekly update check.
-2. The owner merges its pull request, then does the one-time steps (`docs/enforcement.md`): the ruleset (active), "Allow auto-merge", and, for unattended runs (vendored mode only), the two environments, named as in the profile.
-3. Check it (`docs/enforcement.md` §5).
+1. Run the `setup-workflow` skill, the solo set-up: it asks only what attended work needs, and writes the profile (with `ruleset = false`, solo mode, unless it reads back a ruleset that already protects the base branch), Matt Pocock's per-repo docs, labels, issue templates, the pull request template ("In plain words" at the top, from `workflow pr-template`), CODEOWNERS; in vendored mode also the kit's copy, the `workflow kit` CI job and the weekly update check.
+2. The owner merges its pull request and starts working. In solo mode the kit's guard refuses changes straight to the base branch.
+3. When wanted, two optional upgrades, each one request to Claude (the `upgrade-setup` skill): "Protect `main`" (the ruleset and "Allow auto-merge", read back, then a small pull request that leaves solo mode) and "Set up unattended runs" (vendored mode only: the questions only runs need, the two environments named as in the profile, and one profile pull request). The README's Steps 3 to 5 are their clicks by hand.
+4. Check it (`docs/enforcement.md` §5).
 
 The profile's settings: `docs/profile.md`.
 

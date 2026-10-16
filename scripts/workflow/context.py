@@ -7,6 +7,9 @@ a session, a one-line reminder after that.
 The first prompt of an attended session that isn't about the flow already, and
 isn't a command, brings the guided start instead (`skills/start`): Claude asks
 what we're working on, with choices. Anything else passes untouched.
+
+Beside either, the first prompt of an attended session for someone new to
+building brings the kit's glossary and the rule to explain its words once.
 """
 
 from __future__ import annotations
@@ -42,7 +45,8 @@ _SLASH = re.compile(r"^\s*/[\w:-]+(?=\s|$)")
 
 START = (
     "This is the first message of the session. Follow the kit's guided start, the `start` skill "
-    "(`.claude/skills/start/SKILL.md`, or `pairnexus-workflow:start` as a plugin): if this message already asks for "
+    "(`.claude/skills/start/SKILL.md`, or `pairnexus-workflow:start` as a plugin): first, when `workflow status` finds "
+    "no experience level, ask it as the skill says; then, if this message already asks for "
     "one clear thing, just do it; if it describes work to plan, or more than one thing, don't start on any of it: "
     "split it into items with a path for each and agree the plan first; otherwise "
     "ask \"What are we working on?\" with choices. If the conversation was already under way before this message "
@@ -55,10 +59,9 @@ def _marker(kind: str, session_id: str) -> Path:
     return Path(os.environ.get("TMPDIR") or tempfile.gettempdir()) / f"workflow-{kind}-{safe}"
 
 
-def first_prompt(session_id: str) -> bool:
-    """Whether this is the session's first prompt, marking it seen either way,
-    so a first message that was a command or a flow request still counts."""
-    marker = _marker("start", session_id)
+def _first_time(kind: str, session_id: str) -> bool:
+    """Whether `kind`'s marker is unset for this session, setting it either way."""
+    marker = _marker(kind, session_id)
     if marker.exists():
         return False
     try:
@@ -66,6 +69,12 @@ def first_prompt(session_id: str) -> bool:
     except OSError:
         pass
     return True
+
+
+def first_prompt(session_id: str) -> bool:
+    """Whether this is the session's first prompt, marking it seen either way,
+    so a first message that was a command or a flow request still counts."""
+    return _first_time("start", session_id)
 
 
 def start_for(prompt: str, session_id: str) -> str | None:
@@ -89,6 +98,9 @@ def flow_files(project: Path, kit_root: Path, addendum: str = "") -> list[Path]:
     return out
 
 
+FLOW_HEAD = "This request is part of the project's workflow. Follow the flow below step by step: skip nothing, and end with its checklist."
+
+
 def context_for(prompt: str, session_id: str, files: list[Path]) -> str | None:
     if not files or not wants_flow(prompt):
         return None
@@ -101,4 +113,59 @@ def context_for(prompt: str, session_id: str, files: list[Path]) -> str | None:
     except OSError:
         pass
     body = "\n\n".join(f.read_text(encoding="utf-8") for f in files)
-    return f"This request is part of the project's workflow. Follow the flow below step by step: skip nothing, and end with its checklist.\n\n{body}"
+    return f"{FLOW_HEAD}\n\n{body}"
+
+
+def is_whole_flow(ctx: str | None) -> bool:
+    """Whether `context_for` gave the whole flow, not the one-line reminder."""
+    return bool(ctx and ctx.startswith(FLOW_HEAD))
+
+
+# The glossary, for someone new to building (#74): at the first prompt of an
+# attended session, beside whatever else the prompt brings.
+
+CONTEXT_LIMIT = 10_000  # Claude Code's cap on a hook's added context, per string: a longer one is saved to a file, 2,000 characters shown
+GLOSSARY_RULE = (
+    "Treat the person in this session as new to building, unless they tell you they are a developer. "
+    "The words in the kit's glossary ({where}) are new to them. Explain each one in the glossary's wording, "
+    "in one or two sentences, the first time you use it in this session, and never again in this session. "
+    "Never explain them in what you write on GitHub (pull request descriptions, comments, reports). "
+    "If the conversation was already under way before this message (a resumed session), only the rule applies from here."
+)
+
+
+def glossary_file(project: Path, kit_root: Path) -> Path | None:
+    """The vendored glossary, else the kit's own (plugin mode), in the order the flow is found."""
+    for cand in (project / ".claude/workflow/docs/glossary.md", kit_root / "docs/glossary.md"):
+        if cand.is_file():
+            return cand
+    return None
+
+
+def first_glossary_prompt(session_id: str) -> bool:
+    """Whether the glossary hasn't been considered yet this session, marking it
+    either way: its own marker, so the guided start's doesn't decide it."""
+    return _first_time("glossary", session_id)
+
+
+def with_glossary(ctx: str | None, path: Path | None) -> str | None:
+    """`ctx` with the glossary and its rule beside it. The glossary goes in
+    whole when it all stays under Claude Code's limit; beside the whole flow,
+    or when it wouldn't fit, only the rule and its path with "read it now",
+    put first so it stays within the 2,000 characters Claude sees of a longer
+    string. An empty or unreadable glossary adds nothing."""
+    if path is None:
+        return ctx
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        return ctx  # Claude couldn't read it either
+    if not text:
+        return ctx
+    rule = GLOSSARY_RULE.format(where=path)
+    if not is_whole_flow(ctx):
+        whole = f"{ctx}\n\n{rule}\n\n{text}" if ctx else f"{rule}\n\n{text}"
+        if len(whole) < CONTEXT_LIMIT:
+            return whole
+    by_path = f"{rule} It isn't included here: read it now."
+    return f"{by_path}\n\n{ctx}" if ctx else by_path

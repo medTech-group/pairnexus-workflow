@@ -15,6 +15,7 @@ CLI = KIT / "scripts/workflow.py"
 def run_hook(name, event, cwd, env_extra=None):
     env = {**os.environ, "CLAUDE_PROJECT_DIR": str(cwd), **(env_extra or {})}
     env.pop("WORKFLOW_ROLE", None) if "WORKFLOW_ROLE" not in (env_extra or {}) else None
+    env.pop("WORKFLOW_EXPERIENCE", None) if "WORKFLOW_EXPERIENCE" not in (env_extra or {}) else None
     p = subprocess.run([sys.executable, str(CLI), "hook", name], input=json.dumps(event), capture_output=True, text=True, cwd=cwd, env=env)
     return p.returncode, (json.loads(p.stdout) if p.stdout.strip() else None), p.stderr
 
@@ -52,7 +53,8 @@ def test_hooks_do_nothing_without_a_profile(tmp_path):
 def test_invalid_profile_is_reported_not_silent(repo):
     (repo / ".claude/workflow/profile.toml").write_text("[project]\nname=1\n")
     code, out, err = run_hook("guard", {"tool_name": "Bash", "tool_input": {"command": "ls"}}, repo)
-    assert code == 1 and out is None and "profile is invalid" in err
+    # Reported, and the hook exits 0 in an attended session (#53): nothing to decide for an `ls`.
+    assert code == 0 and out is None and "profile is invalid" in err
 
 
 def test_gate_hook_only_for_ticket_sessions(repo, tmp_path):

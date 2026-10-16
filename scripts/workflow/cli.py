@@ -2,14 +2,19 @@
 
     workflow profile check
     workflow status [--issues F --prs F | --fetch] [--json]
+    workflow protection --rulesets F [--repo F] [--base BRANCH] [--json]
+    workflow protection --protect --repo F [--base BRANCH] [--check NAME ...] [--json]
+    workflow protection --require-checks F --check NAME [--check NAME ...] [--json]
+    workflow protection --checks-ran F [--statuses F] --rulesets F --repo F [--base BRANCH] [--json]
     workflow version [--fresh] [--json] | --repo
     workflow ready [--issues F --prs F | --fetch] [--exclude 1,2] [--only 1,2] [--override 3] [--running-area A ...] [--slots N] [--json]
-    workflow charter defaults | validate F [--approved] | markdown F [--tickets 13:area,143:-] | diff OLD NEW | reuse OLD | pin-plan F | questions
+    workflow charter defaults [--unprotected] | validate F [--approved] [--unprotected] | markdown F [--tickets 13:area,143:-] | diff OLD NEW | reuse OLD | pin-plan F | questions [--unprotected]
     workflow charter splice --body F --charter F [--out F] [--tickets 13:area,143:-]
     workflow state init --charter F --run-id ID [--by-hand N] [--read-through ID] | get --body F | put --body F --state F [--out F] | patch --body F --patch F [--out F]
     workflow render --template F --ticket F --charter F --slots F --tracking N [--by-hand N] [--out F] [--print]
     workflow comments --file F [--owner LOGIN] [--since-id N]
     workflow briefing verify --file F
+    workflow pr-template [--existing FILE]      (prints the file to write; exits 3 for a folder of templates)
     workflow evidence [--suite NAME ...] [--base-count N | --base-ref BRANCH] [--fresh] [--allow-dirty]
     workflow repair
     workflow vendor install|update [--kit DIR] [--mattpocock DIR | --no-mattpocock] [--project DIR] [--adopt] [--strict-pin]
@@ -36,18 +41,22 @@ _STARTED = time.monotonic()  # the guard's time budget counts from here, before 
 from . import charter as charter_mod
 from . import context as context_mod
 from . import evidence as evidence_mod
+from . import _old_python, fallback
 from . import gate as gate_mod
 from . import guard as guard_mod
 from . import issues as issues_mod
 from . import posts as posts_mod
+from . import pr_template as pr_template_mod
+from . import protection as protection_mod
 from . import render as render_mod
 from . import repair as repair_mod
+from . import reviews as reviews_mod
 from . import roles
 from . import state as state_mod
 from . import status as status_mod
 from . import updates as updates_mod
 from . import vendor as vendor_mod
-from .profile import ProfileError, load, project_root
+from .profile import PROFILE_PATH, ProfileError, load, project_root, resolve_experience
 
 KIT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -193,6 +202,8 @@ def cmd_status(a) -> int:
         repo=prof.repo if prof else None,
         areas=list(prof.areas) if prof else None,
         protected=list(prof.protected_paths) if prof else None,
+        ruleset=prof.ruleset if prof else None,
+        experience=resolve_experience(root, prof.experience if prof else None),
     )
     kit = updates_mod.check(root, KIT_ROOT) if a.fetch else {"installed": updates_mod.installed(root, KIT_ROOT)}
     if a.json:
@@ -200,6 +211,113 @@ def cmd_status(a) -> int:
     else:
         print(status_mod.text(st))
         print(_kit_line(kit))
+    return 0
+
+
+def _no_constant(name: str):
+    raise ValueError(f"{name} isn't JSON")
+
+
+def _finite(text: str) -> float:
+    """A JSON number as a float; one too large for a float (1e400) isn't taken as Infinity."""
+    v = float(text)
+    if v in (float("inf"), float("-inf")):
+        raise ValueError(f"the number {text[:20]} is too large")
+    return v
+
+
+def cmd_protection(a) -> int:
+    """The base branch's protection, from GitHub's JSON: the read-back, the
+    requests to protect it or require checks, or the checks that ran. Builds and
+    prints; sends nothing and writes nothing."""
+
+    def given(path: str, what: str):
+        if not path:
+            raise protection_mod.ProtectionError(f"the {what} file was given no path")
+        if path == "-" and sys.stdin is None:
+            raise protection_mod.ProtectionError(f"the {what} file is standard input (-), and standard input is closed")
+        try:
+            return json.loads(_read(path).removeprefix("\ufeff"), parse_constant=_no_constant, parse_float=_finite)
+        except OSError as e:
+            raise protection_mod.ProtectionError(f"can't read the {what} file {path}: {e.strerror or e}") from e
+        except (ValueError, RecursionError) as e:  # ValueError: bad JSON, NaN, bad UTF-8, a number too long
+            why = "nested too deeply" if isinstance(e, RecursionError) else str(e)
+            raise protection_mod.ProtectionError(f"the {what} file {path} isn't JSON ({why})") from e
+
+    def base_branch() -> str:
+        if a.base is not None:
+            if not a.base.strip():
+                raise protection_mod.ProtectionError("--base was given no branch")
+            return a.base
+        try:
+            prof = load(required=False)
+        except ProfileError as e:
+            raise protection_mod.ProtectionError(f"{e}; give the base branch with --base") from e
+        if not prof:
+            raise protection_mod.ProtectionError("the kit isn't set up here, so give the base branch with --base")
+        return prof.base_branch
+
+    def settings_file():
+        settings = given(a.repo, "repository's settings")
+        if not isinstance(settings, dict):
+            raise protection_mod.ProtectionError("the repository's settings must be a JSON object, as GET repos/<repo> returns it")
+        return settings
+
+    def read_back():
+        if a.rulesets is None:
+            raise protection_mod.ProtectionError("give the repository's rulesets with --rulesets (a JSON list; [] when there are none)")
+        base = base_branch()
+        rulesets = given(a.rulesets, "rulesets")
+        return protection_mod.check(rulesets, base, settings_file() if a.repo is not None else None)
+
+    def protect():
+        if a.rulesets is not None:
+            raise protection_mod.ProtectionError("--rulesets doesn't go with --protect")
+        if a.repo is None:
+            raise protection_mod.ProtectionError("--protect needs the repository's settings with --repo (GET repos/<repo>): its name and default branch")
+        reqs = protection_mod.protect(base_branch(), settings_file(), a.check)
+        return {"requests": [r.as_dict() for r in reqs]} if a.json else protection_mod.requests_text(reqs)
+
+    def require():
+        if a.rulesets is not None or a.repo is not None or a.base is not None:
+            raise protection_mod.ProtectionError("--require-checks takes the ruleset alone, without --rulesets, --repo or --base: it names its repository, and targets what it targets")
+        req = protection_mod.require_checks(given(a.require_checks, "ruleset"), a.check)
+        return {"requests": [req.as_dict()]} if a.json else protection_mod.requests_text([req])
+
+    def checks_ran():
+        if a.repo is None:
+            raise protection_mod.ProtectionError("--checks-ran needs the repository's settings with --repo, so a ruleset on ~DEFAULT_BRANCH counts as requiring its checks")
+        runs = given(a.checks_ran, "check runs")
+        statuses = given(a.statuses, "statuses") if a.statuses is not None else None
+        rep = read_back()
+        ran = protection_mod.checks_ran(runs, statuses, rep.required_checks)
+        return {"checks": ran, "required": rep.required_checks} if a.json else protection_mod.ran_text(ran, rep.required_checks)
+
+    try:
+        files = [f for f in (a.rulesets, a.repo, a.require_checks, a.checks_ran, a.statuses) if f is not None]
+        if files.count("-") > 1:
+            raise protection_mod.ProtectionError("only one of the files can be read from standard input (-)")
+        if a.check and not (a.protect or a.require_checks is not None):
+            raise protection_mod.ProtectionError("--check goes with --protect or --require-checks")
+        if a.statuses is not None and a.checks_ran is None:
+            raise protection_mod.ProtectionError("--statuses goes with --checks-ran")
+        if a.protect:
+            out = protect()
+        elif a.require_checks is not None:
+            out = require()
+        elif a.checks_ran is not None:
+            out = checks_ran()
+        else:
+            rep = read_back()
+            out = rep.as_dict() if a.json else protection_mod.text(rep)
+        out = out if isinstance(out, str) else json.dumps(out, indent=2)
+    except RecursionError:  # input JSON can parse yet be too deep to copy or print
+        print("workflow protection: an input file is nested too deeply to be what GitHub returns", file=sys.stderr)
+        return 2
+    except protection_mod.ProtectionError as e:
+        print(f"workflow protection: {e}", file=sys.stderr)
+        return 2
+    print(out)
     return 0
 
 
@@ -240,10 +358,10 @@ def cmd_version(a) -> int:
 
 def cmd_charter(a) -> int:
     if a.action == "defaults":
-        _out(charter_mod.defaults(profile=load(required=False)))
+        _out(charter_mod.defaults(profile=load(required=False), protected=_protected(a)))
         return 0
     if a.action == "questions":
-        _out(charter_mod.questions(profile=load(required=False)))
+        _out(charter_mod.questions(profile=load(required=False), protected=_protected(a)))
         return 0
     if a.action == "reuse":
         old = _json(a.file)
@@ -269,12 +387,12 @@ def cmd_charter(a) -> int:
         prof = load(required=False)
         # Against the profile only once the charter itself is sound.
         if prof is not None and not problems:
-            problems += _against_profile(c, prof, who=a.approved)
+            problems += _against_profile(c, prof, who=a.approved, protected=_protected(a))
         if problems:
             print("The charter has problems:\n- " + "\n- ".join(problems), file=sys.stderr)
             return 1
         if prof is None:
-            print("note: no profile found: release steps and waived checks weren't checked", file=sys.stderr)
+            print("note: no profile found: release steps and waived checks weren't checked, nor the merge mode or the owner", file=sys.stderr)
         print("ok")
         return 0
     if a.action == "markdown":
@@ -314,15 +432,24 @@ def cmd_charter(a) -> int:
     return 2
 
 
-def _against_profile(c: dict, prof, who: bool = True) -> list[str]:
-    """The charter against the profile: release steps, waived checks and, with
-    `who`, that the profile's project.owner approved and amended it."""
+def _protected(a) -> bool | None:
+    """`--unprotected`: the conductor's read-back (`workflow protection`) found
+    the base branch unprotected. Without it, the verdict isn't known here."""
+    return False if getattr(a, "unprotected", False) else None
+
+
+def _against_profile(c: dict, prof, who: bool = True, protected: bool | None = None) -> list[str]:
+    """The charter against the profile: release steps, waived checks, auto-merge
+    in solo mode and, with `who`, that the profile's project.owner approved and
+    amended it."""
     return charter_mod.check_against_profile(
         c,
         [st["name"] for st in prof.release_steps],
         prof.required_checks,
         ci_none=prof.ci_none,
         owner=prof.owner if who else "",
+        ruleset=prof.ruleset,
+        protected=protected,
     )
 
 
@@ -412,6 +539,50 @@ def cmd_briefing(a) -> int:
         print(f"Briefing changed: expected {stated}, got {got}")
         return 1
     print(f"Briefing {stated} intact")
+    return 0
+
+
+def cmd_pr_template(a) -> int:
+    """`pr-template`: the pull request template to write, on stdout, and a note on
+    stderr. Changes nothing. Exits 3 for a folder of templates (nothing to write)."""
+    if a.existing == "":
+        print("workflow pr-template: --existing is empty: give the project's template, or leave the flag out", file=sys.stderr)
+        return 1
+    try:
+        r = pr_template_mod.build(KIT_ROOT, Path(a.existing) if a.existing is not None else None)
+    except OSError as e:
+        print(f"workflow pr-template: can't read {e.filename}: {e.strerror or e}", file=sys.stderr)
+        return 1
+    except pr_template_mod.TemplateError as e:
+        print(f"workflow pr-template: {e}", file=sys.stderr)
+        return 1
+    if r.note:
+        print(r.note, file=sys.stderr)
+    if r.text is None:
+        return 3
+    # Bytes, so the project's own line endings and encoding come through as they are.
+    sys.stdout.flush()
+    sys.stdout.buffer.write(r.text)
+    sys.stdout.buffer.flush()
+    return 0
+
+
+def cmd_review_record(a) -> int:
+    """`review-record`: the comment a review round or a later Correctness pass posts."""
+    # Each flag is a list (`append`), so a repeated one is refused rather than
+    # the last silently winning; repeated --reviewers add up.
+    for flag in ("kind", "round", "commit"):
+        if len(getattr(a, flag) or []) > 1:
+            print(f"workflow review-record: give --{flag} once", file=sys.stderr)
+            return 2
+    one = {flag: (getattr(a, flag) or [None])[0] for flag in ("kind", "round", "commit")}
+    reviewers = ",".join(a.reviewers) if a.reviewers else None
+    try:
+        text = reviews_mod.record(**one, reviewers=reviewers, clean=a.clean)
+    except reviews_mod.RecordError as e:
+        print(f"workflow review-record: {e}", file=sys.stderr)
+        return 2
+    sys.stdout.write(text)
     return 0
 
 
@@ -554,20 +725,57 @@ def _budget(seconds: float):
             signal.signal(signal.SIGALRM, previous)
 
 
-def _hook_guard(event) -> int:
+def _cant_decide(event, why: str, solo: bool | None = None, fixes: str = fallback.FIXES) -> int:
+    """The can't-decide fallback (`fallback`, #53) in an attended session: a push
+    or a merge is asked, or refused in solo mode or where nobody is asked;
+    anything else is left alone. A missing profile (the kit isn't set up) is
+    left alone too. Always 0, and never raises: a hook that exits non-zero
+    would let the tool run, or, once the hook blocks on failure, block them all."""
+    try:
+        if solo is None:
+            root = project_root()
+            if not (root / PROFILE_PATH).exists():
+                return 0
+            solo = fallback.solo(root)
+        d = fallback.decide(event, solo, why, fixes)
+        if d:
+            out = fallback.output(d[0], f"[workflow guard, {_role_label('attended')}] {d[1]}")
+            print(json.dumps(out))
+    except Exception:
+        pass
+    return 0
+
+
+def _ticket_branch_without_the_kit(event: dict) -> bool:
+    """With the profile unreadable, whether the branch matches its
+    `run.ticket_branch`, read as the old-Python fallback reads it."""
+    try:
+        cwd = event.get("cwd")
+        return _old_python._firm(os.environ, cwd if isinstance(cwd, str) and cwd else str(project_root()))
+    except Exception:
+        return False
+
+
+def _hook_guard(event, raw: str = "") -> int:
     firm = roles.env_role()
     if not isinstance(event, dict):  # malformed: nothing can be checked
+        if firm is None and _ticket_branch_without_the_kit({}):
+            firm = "ticket"
         if firm in ("ticket", "conductor"):
             _deny_json(f"[workflow guard, {_role_label(firm)}] the hook's event wasn't a JSON object, so nothing could be checked and this was refused")
-        return 0
+            return 0
+        return _cant_decide(fallback.read_event(raw), "the hook's event couldn't be read as a JSON object")
     try:
         prof = load(required=False)
     except ProfileError as e:
+        if firm is None and _ticket_branch_without_the_kit(event):
+            firm = "ticket"
         if firm in ("ticket", "conductor"):
             if not _is_restore(event):
                 _deny_json(f"[workflow guard, {_role_label(firm)}] the profile is invalid, so nothing can be checked: {e}. Fix .claude/workflow/profile.toml in a PR from an attended session, or restore it: git checkout -- .claude/workflow")
             return 0
-        raise
+        print(f"workflow guard hook: the profile is invalid, so the guard can't check anything: {e}", file=sys.stderr)
+        return _cant_decide(event, f"the profile is invalid ({e})")
     if prof is None:
         if firm in ("ticket", "conductor") and not _is_restore(event):
             _deny_json(
@@ -585,15 +793,21 @@ def _hook_guard(event) -> int:
             d = guard_mod.decide(event, prof, role, root, roles.current_branch(cwd), role_from_env=firm is not None, cwd=event.get("cwd") or None)
     except _OverBudget:
         role = role or firm or "ticket"  # a role not read in time: the strictest
-        if role in ("ticket", "conductor"):
+        # Solo mode refuses what touches the base branch, so a check not finished in time is refused too.
+        if role in ("ticket", "conductor") or (role == "attended" and prof.ruleset is False):
             _deny_json(f"[workflow guard, {_role_label(role)}] the guard ran out of time ({GUARD_BUDGET:g} seconds) checking this, so it was refused; split the command, or give it smaller files")
             return 0
-        raise RuntimeError(f"the guard ran out of time ({GUARD_BUDGET:g} seconds)") from None
+        return _cant_decide(
+            event,
+            f"it ran out of time ({GUARD_BUDGET:g} seconds) checking this",
+            prof.ruleset is False,
+            "To have it checked, split the command, or give it smaller files.",
+        )
     except Exception as e:  # fail closed where a person isn't there to notice
-        if role in ("ticket", "conductor"):
-            _deny_json(f"[workflow guard, {_role_label(role)}] the guard failed ({type(e).__name__}: {e}), so this was refused; rephrase the command more simply")
+        if role in ("ticket", "conductor") or (role is None and firm in ("ticket", "conductor")):
+            _deny_json(f"[workflow guard, {_role_label(role or firm)}] the guard failed ({type(e).__name__}: {e}), so this was refused; rephrase the command more simply")
             return 0
-        raise
+        return _cant_decide(event, f"it failed ({type(e).__name__}: {e})", prof.ruleset is False)
     if d.action == "allow":
         return 0  # never force "allow": the normal permission rules still apply
     reason = f"[workflow guard, {_role_label(role)}] {d.reason}"
@@ -630,13 +844,30 @@ def _hook_context(event: dict) -> int:
     files = context_mod.flow_files(root, KIT_ROOT, prof.flow_addendum if prof else "")
     prompt, session = event.get("prompt") or "", event.get("session_id") or ""
     ctx = context_mod.context_for(prompt, session, files)
+    role: list[str] = []  # read once, and only at a first prompt
+
+    def attended() -> bool:
+        if not role:
+            role.append(roles.role(root, prof.ticket_branch))
+        return role[0] == "attended"
+
     # The guided start, at the first prompt only (marked whatever it was):
     # attended sessions only, since ticket and conductor sessions start from a
     # briefing or a charter, never from a menu.
     if prof is not None and prof.guided_start:
         nudge = context_mod.start_for(prompt, session)
-        if nudge and not ctx and roles.role(root, prof.ticket_branch) == "attended":
+        if nudge and not ctx and attended():
             ctx = nudge
+    # The glossary, beside whatever came above, at the first prompt of an
+    # attended session for someone new to building (unknown counts as new).
+    # Its own marker, set at the first prompt whatever it brings. A failure
+    # here never costs the flow or the nudge.
+    if prof is not None:
+        try:
+            if context_mod.first_glossary_prompt(session) and attended() and resolve_experience(root, prof.experience).wording_level == "new":
+                ctx = context_mod.with_glossary(ctx, context_mod.glossary_file(root, KIT_ROOT))
+        except Exception:
+            pass
     if ctx:
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": ctx}}))
     return 0
@@ -671,21 +902,31 @@ HOOKS = {"guard": _hook_guard, "gate": _hook_gate, "context": _hook_context, "re
 
 
 def cmd_hook(a) -> int:
+    raw = ""  # the input with undecodable bytes replaced, for the can't-decide fallback
     try:
-        event = json.loads(sys.stdin.read() or "{}")
-    except (json.JSONDecodeError, UnicodeDecodeError, RecursionError):
+        data = sys.stdin.buffer.read()
+        raw = data.decode("utf-8", "replace")
+        event = json.loads(data.decode("utf-8") or "{}")  # the event itself is read strictly
+    except (ValueError, RecursionError, OSError, AttributeError):  # AttributeError: no stdin
         event = None
     if a.name != "guard" and not isinstance(event, dict):
         event = {}  # the guard decides what a malformed event means
     try:
-        return HOOKS[a.name](event)
-    except ProfileError as e:
-        print(f"workflow {a.name} hook: the profile is invalid, so the hook did nothing: {e}", file=sys.stderr)
-        return 1
+        return _hook_guard(event, raw) if a.name == "guard" else HOOKS[a.name](event)
     except Exception as e:  # a bug in a hook must not stop the session; say so
-        if a.name == "guard" and roles.env_role() in ("ticket", "conductor"):
-            _deny_json(f"[workflow guard] the guard failed ({type(e).__name__}: {e}), so this was refused")
-            return 0
+        if a.name == "guard":
+            firm = roles.env_role()
+            if firm is None and _ticket_branch_without_the_kit(event if isinstance(event, dict) else {}):
+                firm = "ticket"
+            if firm in ("ticket", "conductor"):
+                _deny_json(f"[workflow guard] the guard failed ({type(e).__name__}: {e}), so this was refused")
+                return 0
+            print(f"workflow guard hook failed ({type(e).__name__}: {e})", file=sys.stderr)
+            why = f"the profile is invalid ({e})" if isinstance(e, ProfileError) else f"it failed ({type(e).__name__}: {e})"
+            return _cant_decide(event if isinstance(event, dict) else fallback.read_event(raw), why)
+        if isinstance(e, ProfileError):
+            print(f"workflow {a.name} hook: the profile is invalid, so the hook did nothing: {e}", file=sys.stderr)
+            return 1
         print(f"workflow {a.name} hook failed ({type(e).__name__}: {e}); it did nothing this time", file=sys.stderr)
         return 1
 
@@ -717,6 +958,19 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_status)
 
+    s = sub.add_parser("protection", help="whether the base branch is protected, read back from GitHub's JSON, or the requests to protect it; changes nothing, sends nothing")
+    mode = s.add_mutually_exclusive_group()
+    mode.add_argument("--protect", action="store_true", help="print the requests that protect the base branch: the ruleset to create, and the merge settings (needs --repo)")
+    mode.add_argument("--require-checks", metavar="F", help="print the request that adds --check names to this ruleset (GET repos/<repo>/rulesets/<id>, in full)")
+    mode.add_argument("--checks-ran", metavar="F", help="the checks that ran on a commit (GET repos/<repo>/commits/<ref>/check-runs), less those --rulesets require")
+    s.add_argument("--statuses", metavar="F", help="with --checks-ran: the commit's statuses (GET repos/<repo>/commits/<ref>/statuses)")
+    s.add_argument("--check", action="append", default=[], metavar="NAME", help="a check to require (repeat for each)")
+    s.add_argument("--rulesets", help="the repository's rulesets, each in full (GET repos/<repo>/rulesets/<id>), as a JSON list (or -)")
+    s.add_argument("--repo", help="the repository's settings (GET repos/<repo>): the merge settings, and the default branch that ~DEFAULT_BRANCH means")
+    s.add_argument("--base", help="the base branch (default: the profile's project.base_branch)")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_protection)
+
     s = sub.add_parser("version", help="the kit's version here, and whether a newer release is out")
     s.add_argument("--fresh", action="store_true", help="ask GitHub again rather than the last six hours' answer")
     alone = s.add_mutually_exclusive_group()
@@ -729,6 +983,12 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("file", nargs="?")
     s.add_argument("other", nargs="?")
     s.add_argument("--approved", action="store_true", help="also require the owner's approval")
+    s.add_argument(
+        "--unprotected",
+        action="store_true",
+        help="defaults, questions, validate: the read-back found the base branch unprotected; with project.ruleset true, "
+        "that counts as solo mode (removed protection), so auto-merge isn't offered",
+    )
     s.add_argument("--tickets", help='markdown, splice: the planned tickets in order with their areas, e.g. "13:messages,143:-"')
     s.add_argument("--body", help="splice: the tracking issue's body (a file, or -)")
     s.add_argument("--charter", help="splice: the charter")
@@ -766,6 +1026,22 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("action", choices=["verify"])
     s.add_argument("--file", required=True, help="the briefing as the session received it (or -)")
     s.set_defaults(fn=cmd_briefing)
+
+    s = sub.add_parser("pr-template", help="print the pull request template to write, with \"In plain words\" at the top; changes nothing")
+    s.add_argument("--existing", metavar="FILE", help="the project's template: the headings go above its content (or its .github/PULL_REQUEST_TEMPLATE/ folder)")
+    s.set_defaults(fn=cmd_pr_template)
+
+    s = sub.add_parser(
+        "review-record", allow_abbrev=False, help="the record a review round or a later Correctness pass posts on the pull request"
+    )
+    s.add_argument("--kind", action="append", help="`round`, or `pass` for a Correctness pass after the last round")
+    s.add_argument("--round", action="append", help="the round's number; for a pass, the round it follows")
+    s.add_argument("--commit", action="append", help="the full SHA the round covered (`git rev-parse HEAD`)")
+    s.add_argument("--reviewers", action="append", help="those that ran, comma-separated: " + ",".join(reviews_mod.REVIEWERS))
+    result = s.add_mutually_exclusive_group()
+    result.add_argument("--clean", dest="clean", action="store_true", default=None, help="nothing left to fix")
+    result.add_argument("--not-clean", dest="clean", action="store_false", help="the round found something to fix")
+    s.set_defaults(fn=cmd_review_record)
 
     s = sub.add_parser("evidence")
     s.add_argument("--suite", action="append")

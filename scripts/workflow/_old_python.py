@@ -8,15 +8,17 @@ which fails closed where the kit would:
 - `hook guard`: a ticket or conductor session (WORKFLOW_ROLE set to anything
   but `attended`, or with it unset and the kit set up, a branch matching the
   profile's `run.ticket_branch`, read roughly) is refused every tool; an
-  attended session is asked before a push or a merge (git, `gh pr merge`, the
-  GitHub MCP tools that push or merge), and otherwise left alone;
+  attended session gets the can't-decide fallback (`fallback`, #53): a push or
+  a merge is asked, or refused in solo mode and in a mode where nobody is
+  asked, and everything else is left alone;
 - `hook repair` (SessionStart): says what is wrong and how to fix it;
 - `hook gate` and `hook context`: nothing (nothing to check without the kit);
 - anything else: says what it needs and exits 1.
 
-Keep it to the standard library and to syntax Python 3.7 reads (a test
-checks): it runs on exactly the interpreters the rest of the kit can't. It
-never raises: an error refuses the tool when WORKFLOW_ROLE is firm.
+Keep it to the standard library (and the kit's `fallback` and `modes`, which
+keep to it too) and to syntax Python 3.7 reads (a test checks): it runs on
+exactly the interpreters the rest of the kit can't. It never raises: an error
+refuses the tool when WORKFLOW_ROLE is firm.
 """
 
 import fnmatch
@@ -28,10 +30,7 @@ import sys
 
 NEEDS = "3.11"
 DEFAULT_TICKET_BRANCH = "claude/build-*"
-_PUSH = re.compile(r"\bgit\b[^;&|\n]*\bpush\b")
-_MERGE = re.compile(r"\bgh\b[^;&|\n]*\bpr\b[^;&|\n]*\bmerge\b")
 _TICKET_BRANCH = re.compile(r"""^\s*ticket_branch\s*=\s*["']([^"']+)["']""", re.M)
-_MCP_PUSH = ("merge_pull_request", "push_files", "create_or_update_file", "delete_file")
 
 
 def _branch(where):
@@ -88,18 +87,15 @@ def _decision(decision, reason):
     return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision, "permissionDecisionReason": reason}}
 
 
-def _guard(event, firm, version):
+def _guard(event, firm, version, root=None):
     if firm:
         return _decision("deny", "Refused: " + _problem(version) + ".")
-    if not isinstance(event, dict):
-        return None
-    tool = event.get("tool_name")
-    i = event.get("tool_input")
-    cmd = i.get("command") if tool == "Bash" and isinstance(i, dict) else None
-    mcp = isinstance(tool, str) and tool.startswith("mcp__") and "github" in tool.lower() and tool.endswith(_MCP_PUSH)
-    if mcp or (isinstance(cmd, str) and (_PUSH.search(cmd) or _MERGE.search(cmd))):
-        return _decision("ask", "The workflow's guard isn't running: " + _problem(version) + ". Allow this push or merge only if you mean to.")
-    return None
+    from . import fallback  # here, inside main's try: a ticket session's refusal never depends on it
+
+    why = "`python3` here is {} and the kit needs Python {} or newer".format(version, NEEDS)
+    fixes = "To fix it: install Python {}+ (python.org, Homebrew or your package manager) so that `python3` runs it, then start a new session.".format(NEEDS)
+    d = fallback.decide(event, fallback.solo(root) if root else False, why, fixes)
+    return _decision(*d) if d else None
 
 
 def _repair(firm, version):
@@ -139,11 +135,13 @@ def main(argv, stdin_text=None, env=None, version=None, cwd=None):
 def _hook(sub, stdin_text, env, version, cwd):
     if sub == "guard" and _env_firm(env):  # nothing to read: every tool is refused
         return _guard(None, True, version)
+    from . import fallback  # here, inside main's try, as in _guard
+
     text = sys.stdin.buffer.read().decode("utf-8", "replace") if stdin_text is None else stdin_text
-    try:
-        event = json.loads(text) if text.strip() else {}
-    except (ValueError, RecursionError):
-        event = None
+    event = fallback.read_event(text) if text.strip() else {}
     here = event.get("cwd") if isinstance(event, dict) and isinstance(event.get("cwd"), str) else None
-    firm = _firm(env, here or (str(cwd) if cwd else os.getcwd()))
-    return _guard(event, firm, version) if sub == "guard" else _repair(firm, version)
+    where = here or (str(cwd) if cwd else os.getcwd())
+    firm = _firm(env, where)
+    if sub != "guard":
+        return _repair(firm, version)
+    return _guard(event, firm, version, env.get("CLAUDE_PROJECT_DIR") or where)

@@ -18,7 +18,7 @@ It packages what worked over the pair-drop weekend run of 9–12 Oct 2026 (about
 > - **Taking part:** questions, bugs and ideas go in [issues](https://github.com/medTech-group/pairnexus-workflow/issues), and contributions are welcome ([CONTRIBUTING.md](CONTRIBUTING.md)). Report security problems privately ([SECURITY.md](SECURITY.md)).
 
 **Contents**
-- [Getting started](#getting-started): what you need, then six steps to set a repository up
+- [Getting started](#getting-started): what you need, one request and one pull request to start, then two optional upgrades
 - [Using it](#using-it): the guided start, [`/next`](#one-piece-at-a-time-next), [unattended runs](#unattended)
 - [Planning new work](#planning-new-work-what-happens-underneath): the interview, specs, tickets, maps, and [every Matt Pocock skill](#every-matt-pocock-skill-in-a-project)
 - [Keeping it up to date](#keeping-it-up-to-date) and [as a plugin](#as-a-plugin-on-your-own-computer)
@@ -28,20 +28,20 @@ It packages what worked over the pair-drop weekend run of 9–12 Oct 2026 (about
 
 ## Getting started
 
-Setting up a repository takes one Claude session and about ten minutes of your own clicks on GitHub and claude.ai. You do it once per repository. Moving to a later version of the kit is one request to Claude and a small pull request (see "Keeping it up to date").
+Setting up a repository takes one request to Claude and one pull request to merge. You do it once per repository, and attended work starts as soon as it merges. A new project starts in **solo mode**: with no ruleset on GitHub yet, the kit's guard refuses changes straight to `main`. Two upgrades take it the rest of the way when you want them, each one request to Claude that guides you click by click: ["Protect `main`"](#protect-main) and ["Set up unattended runs"](#set-up-unattended-runs). Steps 3 to 5 below are the same clicks by hand, as their fallback. Moving to a later version of the kit is one request to Claude and a small pull request (see "Keeping it up to date").
 
 ### Before your first repository (once)
 
 You need:
 
-1. **Admin rights on the repository.** Rulesets and the merge settings are under the repository's Settings, which only admins see.
+1. **Admin rights on the repository,** for "Protect `main`". Rulesets and the merge settings are under the repository's Settings, which only admins see. Without them, the upgrade hands you a ready message for the owner.
 2. **Claude Code cloud sessions**, from the Claude desktop app (choose **Cloud** rather than **Local** when starting a session) or from claude.ai/code in a browser. Both start the same kind of session, on the same environments: an environment you create in one shows up in the other, and a session started in one can be followed in the other. Unattended runs and the set-up check need a cloud session. A local session can do the set-up itself, if the computer has Python 3.11 or later and `gh` signed in to GitHub.
 3. **GitHub access for Claude.**
    - The Claude GitHub App is installed on the organisation, with access to the project's repository. This one (`medTech-group/pairnexus-workflow`) is public, so any session can clone it.
    - Your claude.ai account is connected to GitHub.
    - If a session can't reach a repository, it tells you which of these is missing.
 4. **A paid GitHub plan** (Team or above) if the repository is private. Rulesets on private repositories need one. Without a ruleset, nothing outside the session stops a push straight to the base branch.
-5. **Python 3.11 or later** as `python3`, wherever anyone opens the project in Claude Code (the cloud image has it). The kit's hooks run on it. With an older one, or none, the kit can't check anything: ticket and conductor sessions are refused every tool, and an attended session is told when it starts (and asked before a push or merge, with an older one).
+5. **Python 3.11 or later** as `python3`, wherever anyone opens the project in Claude Code (the cloud image has it). The kit's hooks run on it. With an older one, or none, the kit can't check anything: ticket and conductor sessions are refused every tool, and an attended session is told when it starts, and asked before a push or merge.
 
 ### Step 1. Ask Claude to set the repository up
 
@@ -54,33 +54,30 @@ You need:
 
    If Claude asks to add the kit's repository, or Matt Pocock's `mattpocock/skills`, to the session, allow it. That is how a cloud session gets to read them. Projects take released versions only, so set-up uses the latest release, not whatever is on the kit's `main`.
 
-Claude first explores the repository: its tests, CI and check names, deploy scripts, and any existing `.claude/` files. Then it asks only what it couldn't find out, with a recommended answer first. The questions you are most likely to get:
+Claude first explores the repository: its tests, CI and check names, deploy scripts, any existing `.claude/` files, and whether a ruleset already protects the base branch. Then it asks only what attended work needs and it couldn't find out, with a recommended answer first:
 
 | Question | What it means, and the usual answer |
 |---|---|
-| Vendored or plugin? | **Vendored.** The kit is copied into the repository, so cloud sessions and unattended runs get it. The plugin is for attended work on your own computer only ([As a plugin](#as-a-plugin-on-your-own-computer)). |
-| Your GitHub login | The person whose words count as approval in runs: you. |
-| Can a PR merge with no human approval? | **Yes**, so unattended runs can merge. If your team requires an approval, keep it in the ruleset: each run's conductor sees it and recommends stopping at "ready for review" (the charter's merge mode **owner**), since a PR a session opens is yours and you can't approve your own. |
-| Areas | The parts of the project two sessions shouldn't change at once, such as "backend", "phone app" or "infra". |
-| Explorer | How reviewers try a change from outside: **browser** (a web app; Playwright), **api**, **cli**, or **none**. |
+| New to building, or a developer? | How much the people working here know, as the project's default. It changes only how the kit words things, never what it allows. Each person can still say their own. |
+| Vendored or plugin? | **Vendored.** The kit is copied into the repository, so cloud sessions and, later, unattended runs get it. The plugin is for attended work on your own computer only ([As a plugin](#as-a-plugin-on-your-own-computer)). |
+| Your GitHub login | The person whose words count as approval: you. |
 | Sensitive data | What must never appear in an issue, comment or PR, such as patients' names or phone numbers. |
-| Deploys and releases | Which commands deploy. Ticket sessions are refused them, an attended session asks you first, and a run deploys only if you allow it when it starts. |
-| Environment names | Two names, for example `myproject-ticket` and `myproject-conductor`. In step 5 you create environments with exactly these names. |
-| Permission mode | How ticket sessions run: **auto**, so an unattended session never stops to ask. |
+| Explorer | How reviewers try a change from outside: **browser** (a web app; Playwright), **api**, **cli**, or **none**. |
+| Deploy commands | Asked only when it found deploy scripts: which commands deploy. Sessions are refused them, or an attended session asks you first. |
 
-It may also ask about a project without CI, a monorepo, what a fresh container needs started (Docker, a database), and an older flow of the project's own.
+It may also ask about an older flow of the project's own. It asks nothing about areas, environment names, permission modes, merge approvals or releases: those wait for "Set up unattended runs".
 
 Then Claude:
 - **creates the workflow's labels** on the repository straight away (`ready-for-agent`, `workflow:run`, `workflow:stop` and others);
 - **opens one pull request** containing:
-  - the repository's settings: `.claude/workflow/profile.toml` and `profile.md`;
+  - the repository's settings: `.claude/workflow/profile.toml` and `profile.md`, with `ruleset = false` (solo mode), or `ruleset = true` when it read back a ruleset that already protects the base branch;
   - the kit's copy: its skills and Matt Pocock's in `.claude/skills/`, the reviewer agents in `.claude/agents/`, the CLI, docs and templates in `.claude/workflow/`, its hooks merged into `.claude/settings.json`, and `.claude/workflow/lock.json` recording the version and every file;
   - a `workflow kit` CI check (`.github/workflows/workflow-kit.yml`) and the weekly update check (`.github/workflows/workflow-kit-update.yml`);
-  - CODEOWNERS, issue templates, `docs/agents/` (how agents use the issue tracker and labels), `.gitignore` entries, and a short section in `CLAUDE.md`.
+  - CODEOWNERS, issue templates, the pull request template ("In plain words" at the top), `docs/agents/` (how agents use the issue tracker and labels), `.gitignore` entries, and a short section in `CLAUDE.md`.
 
 In plugin mode there is no copy and no CI jobs: the PR holds the profile, the plugin in `.claude/settings.json`, and the rest of the list.
 
-The PR body lists your one-time steps, filled in with this repository's check names, environment names and the environments' setup script (blank for most projects). The steps below are the same ones, with every click.
+The PR body says **Merge this and start working**, and names "Protect `main`" and "Set up unattended runs" as optional next steps. There is no checklist of clicks to do first.
 
 ### Step 2. Merge the pull request
 
@@ -88,7 +85,26 @@ The PR body lists your one-time steps, filled in with this repository's check na
 2. Read it.
 3. Click **Merge pull request** (a merge commit), then **Confirm merge**.
 
-It changes `.claude/` and `.github/`, so merging it is always yours, never an agent's.
+It changes `.claude/` and `.github/`, so merging it is always yours, never an agent's. Once it has merged, start working: a session begins with the guided start. Claude offers "Protect `main`" once, with "Not now".
+
+### Protect `main`
+
+Ask Claude to protect `main`, or pick **Protect `main`** where the kit offers it. The `upgrade-setup` skill does it for you:
+
+- **On your own computer, with `gh` signed in as the repository's admin:** after one confirmation, the kit makes the ruleset and the merge settings itself with `gh`. Claude Code asks you to approve the command that makes the ruleset; that is expected. You can tick the checks that already ran on `main`, to require them too.
+- **In a cloud session, or without `gh`:** guided clicks, one screen at a time.
+
+Either way it reads them back to confirm, and opens the pull request that leaves solo mode (`ruleset = true`, plus any checks you ticked). Checks are required once CI has run on `main`: tick them in the confirmation if they already ran, or later ask Claude to **require the checks** (or pick it in `check-setup`), which adds the ones you tick to the ruleset with "Require branches to be up to date" and lists them in the profile's `ci.required_checks` in a small pull request. Solo mode is how a project starts with no ruleset: the kit's guard is then all that keeps changes off `main`, so it refuses them. Until you merge that pull request, the guard stays in solo mode. If you're not the repository's admin, it gives you a ready message for the owner instead.
+
+[Step 3](#step-3-protect-the-base-branch-with-a-ruleset) and [Step 4](#step-4-check-the-merge-settings) below are the same clicks by hand: they are its fallback, and what it guides you through when something can't be done for you.
+
+### Set up unattended runs
+
+When you want Claude to build tickets while you're away, ask Claude to **set up unattended runs**. Vendored mode only. The same `upgrade-setup` skill first offers "Protect `main`" if the project is still in solo mode; if you skip it, GitHub won't hold a merge for failing checks. Then it asks the questions only runs need: areas, environment names, ticket sessions' permission mode, merge approvals and releases. It shows you one screen for creating the two environments, with their names, `WORKFLOW_ROLE` values and setup script filled in. Last, it writes your answers to the profile in one pull request.
+
+On merge approvals: unattended runs merge only if a pull request can merge with no human approval. If your team requires one, keep it in the ruleset: each run's conductor sees it and recommends stopping at "ready for review" (the charter's merge mode **owner**), since a PR a session opens is yours and you can't approve your own.
+
+[Step 5](#step-5-create-the-two-claude-environments) below is the same clicks by hand: it is its fallback. The questions it asks are the ones Step 5 needs answers to.
 
 ### Step 3. Protect the base branch with a ruleset
 
@@ -104,11 +120,11 @@ On GitHub, open the repository's **Settings → Rules → Rulesets → New rules
   - **Restrict deletions**.
   - **Block force pushes**.
   - **Require a pull request before merging**:
-    - **Required approvals: 0**, so unattended runs can merge. If your team needs approvals, set them here; runs then stop at "ready for review" (see Step 1).
+    - **Required approvals: 0**, so unattended runs can merge. If your team needs approvals, set them here; runs then stop at "ready for review" (see [Set up unattended runs](#set-up-unattended-runs)).
     - **Require review from Code Owners: leave it unticked.** Sessions post under your GitHub account, and GitHub never lets an author approve their own PR, so with it ticked those PRs could never merge.
   - **Require status checks to pass**:
     - Tick **Require branches to be up to date before merging**. Without it, two PRs that each passed against an older base can both merge and break it together.
-    - **Add checks:** every name in the PR body's list, `workflow kit` included in vendored mode. This is the profile's `ci.required_checks`. Type each name exactly; GitHub suggests names from recent runs.
+    - **Add checks:** every name in the profile's `ci.required_checks`, `workflow kit` included in vendored mode. Type each name exactly; GitHub suggests names from recent runs.
 - **Don't tick "Require linear history".** Sessions merge with a merge commit, which it forbids.
 - Click **Create**.
 
@@ -131,11 +147,13 @@ To create one:
 
 Either way it's the same environment, so create each one once.
 
+The names come from the profile's `run.ticket_environment` and `run.conductor_environment`, which set-up leaves empty. If you do this by hand, choose the two names first and put them in the profile by a pull request; "Set up unattended runs" does that for you.
+
 **The ticket environment**, named exactly as in the profile's `run.ticket_environment` (for example `myproject-ticket`):
 - **Environment variables:** only `WORKFLOW_ROLE=ticket`. Type it exactly: a value the kit doesn't know counts as `ticket` too, the strictest.
 - **Secrets:** **none.** Leave **Network secrets** empty, and put no key or token in an environment variable: no cloud keys, no Auth0, Firebase or payment credentials, no deploy tokens. Tests use fakes, and a session can't misuse a key it doesn't have.
 - **Network access:** the default is usually enough for package managers and container images. If a session later reports a blocked host, set Network access to **Limited** and add the host under **Allowed domains**, with **Allow package managers** left ticked. With the browser explorer, Playwright downloads Chromium: allow its host if the network is limited.
-- **Setup script:** only what the PR body gives as the environments' setup script (the profile's `run.environment_setup`). **For most projects it is empty: leave the field blank.** See "What goes in the setup script" below.
+- **Setup script:** only the environments' setup script, the profile's `run.environment_setup` ("Set up unattended runs" works it out and shows it). **For most projects it is empty: leave the field blank.** See "What goes in the setup script" below.
 
 **The conductor environment**, named exactly as in the profile's `run.conductor_environment` (for example `myproject-conductor`):
 - **Environment variables:** `WORKFLOW_ROLE=conductor`.
@@ -589,7 +607,7 @@ Several decisions that don't block each other can be worked in parallel sessions
 
 Claude clones the kit at the latest release's tag into a temporary directory and follows that release's `skills/update-workflow/SKILL.md`. It opens a pull request that replaces the kit's copy, keeping any edits the project made on purpose, and does what that release's changelog asks of projects. Merge it like the set-up PR. The `workflow kit` CI check fails if anyone changes the copy without recording it, so the copy always matches a released version plus the project's recorded edits.
 
-The update pull request lists each file the project had edited: kept as edited where the kit didn't change it, and merged by hand where both did. It also brings over changes to the files set-up copied once (the CI jobs, `docs/agents/issue-tracker.md`, the issue templates).
+The update pull request lists each file the project had edited: kept as edited where the kit didn't change it, and merged by hand where both did. It also brings over changes to the files set-up copied once (the CI jobs, `docs/agents/issue-tracker.md`, the issue templates), and adds the pull request template once to a project set up before it.
 
 To check by hand: `python3 -B .claude/workflow/bin/workflow.py version --fresh`. Each session start looks up the latest release (with `gh`, else GitHub's public API) at most every six hours; `WORKFLOW_UPDATE_CHECK=off` in an environment turns the lookup off.
 
@@ -619,6 +637,7 @@ Everything above is the **vendored** mode, which every project that runs unatten
 | `/pairnexus-workflow:build-ticket` | Builds one ready ticket, from claim to merge |
 | `/pairnexus-workflow:review-panel` | The review panel on a diff or pull request |
 | `/pairnexus-workflow:run-report` | A run's report |
+| `/pairnexus-workflow:upgrade-setup` | "Protect `main`": the ruleset and merge settings, read back, then the pull request that leaves solo mode |
 | `/pairnexus-workflow:setup-workflow` | Sets a project up; Claude never starts it on its own |
 | `/pairnexus-workflow:conductor` | An unattended run. It runs cloud sessions, which need the vendored mode |
 
@@ -632,8 +651,9 @@ Matt Pocock's take `mattpocock-skills:`, such as `/mattpocock-skills:to-spec`, `
 
 | What you see | What it means, and what to do |
 |---|---|
-| **"[workflow guard, …] … is never allowed"** or an approval prompt for a push | The guard stopped something on its never-list (a push to the base branch, a force-push, a deploy command). In your own session, approve only if you meant it; a ticket session never gets past it, and ends `needs-human` if its ticket needs it |
+| **"[workflow guard, …] … is never allowed"** or an approval prompt for a push | The guard stopped something on its never-list (a push to the base branch, a force-push, a deploy command). In your own session, the prompt only comes in modes that ask (`default`, `acceptEdits`, `auto`, `plan`): approve only if you meant it. In a mode where nobody is asked (`bypassPermissions`, `dontAsk`, or one the kit doesn't know), it is refused instead and says "The kit would have asked you about this": switch the permission mode (Shift+Tab) to be asked, or run the command it gives in your own terminal. A ticket session never gets past it, and ends `needs-human` if its ticket needs it |
 | **"the profile is invalid"** on every command | A ticket or conductor session fails closed. Fix `.claude/workflow/profile.toml` in a pull request from an attended session (`workflow.py profile check` says what's wrong), or restore it: `git checkout -- .claude/workflow` |
+| **"The workflow's guard isn't working"** on a push or a merge | The guard couldn't decide (an error, an invalid profile, an unreadable event, or a `python3` that is old, missing or failing), so in your own session a push or a merge is asked, and refused in solo mode or where nobody is asked; everything else goes through unchecked. Run `python3 .claude/workflow/bin/workflow.py profile check`, check `python3 --version` (3.11 or newer), and report the error if neither shows it |
 | **"Workflow kit: … Python 3.11"** at the start (it "needs Python 3.11", or "python3 could not run the workflow kit"), or every tool refused | `python3` is older than 3.11, missing, or failing. Check `python3 --version`, install 3.11 or later so `python3` runs it, and start a new session |
 | **A hook error on every tool call** | Usually the kit's copy missing. Restore it with `git checkout -- .claude/workflow` |
 | **"Project setup … FAILED"** at a cloud session's start | `commands.setup` failed or ran out of time (about 8 minutes). The session carries on without the dependencies: fix the command in the profile |
@@ -653,6 +673,7 @@ Matt Pocock's take `mattpocock-skills:`, such as `/mattpocock-skills:to-spec`, `
   - [docs/enforcement.md](docs/enforcement.md): what stops a session, and why;
   - [docs/install.md](docs/install.md): vendored and plugin modes;
   - [docs/profile.md](docs/profile.md): the profile's settings and the environment variables;
+  - [docs/protection.md](docs/protection.md): reading back whether the base branch is protected;
   - [docs/spike.md](docs/spike.md): what has been tried for real, and what hasn't.
 
 ### Support
@@ -671,19 +692,20 @@ How to report each:
 
 | Part | What it does |
 |---|---|
-| `skills/setup-workflow` | Once per project: the interview, the profile, labels, CODEOWNERS, vendoring, the owner's one-time steps |
+| `skills/setup-workflow` | Once per project: the solo set-up: the attended questions, the profile, labels, CODEOWNERS, vendoring, one pull request to merge and start working |
 | `skills/start` | The guided start: "What are we working on?" with choices, a path per item, the plan filed as issues, a choice at each handover |
 | `skills/next` | Find the next ready piece of work and do it under the flow |
 | `skills/build-ticket` | One ticket from claim to merge |
 | `skills/review-panel` | Standards, Spec, Correctness (with a security review for auth, upload, payment or API changes) and, when the profile has an explorer and the change touches a screen, endpoint or command, the explorer, in parallel rounds until clean |
 | `skills/conductor` | The unattended run: charter, sessions, check-ins, merges, release, stop |
 | `skills/run-report` | The end-of-run report for the owner |
+| `skills/upgrade-setup` | The upgrades from solo mode: "Protect `main`", guided click by click, read back, then the pull request that leaves solo mode |
 | `skills/update-workflow` | Update a project's vendored copy |
 | `agents/` | The read-only Correctness reviewer and the UI explorer |
-| `scripts/workflow.py`, `scripts/workflow/` | The CLI the skills and hooks run (Python 3.11+, standard library only): `profile`, `status`, `version`, `ready`, `charter`, `state`, `render`, `comments`, `briefing`, `evidence`, `repair`, `vendor`, `hook`. `python3 -B scripts/workflow.py --help` lists every flag |
+| `scripts/workflow.py`, `scripts/workflow/` | The CLI the skills and hooks run (Python 3.11+, standard library only): `profile`, `status`, `protection`, `version`, `ready`, `charter`, `state`, `render`, `comments`, `briefing`, `evidence`, `repair`, `vendor`, `hook`. `python3 -B scripts/workflow.py --help` lists every flag |
 | `hooks/hooks.json` | The plugin's hooks (a vendored project gets the same hooks in its `.claude/settings.json`): the guard (the never-list), the status gate, the flow context and the guided start's first-message nudge, and at session start the environment repair, project setup and update notice |
-| `docs/` | `flow.md`, `charter.md`, `enforcement.md`, `install.md`, `profile.md`, `spike.md` (what's verified), `proposal.md` (the original design, historical) |
-| `templates/` | The profile (`profile.toml`, `profile.md`), the ticket-session briefing, tracking and by-hand issues, `issue-tracker.md` (for `docs/agents/`), the issue templates, the `workflow kit` CI job and the weekly update check |
+| `docs/` | `flow.md`, `charter.md`, `enforcement.md`, `install.md`, `profile.md`, `protection.md`, `spike.md` (what's verified), `proposal.md` (the original design, historical) |
+| `templates/` | The profile (`profile.toml`, `profile.md`), the ticket-session briefing, tracking and by-hand issues, `issue-tracker.md` (for `docs/agents/`), the issue templates, the pull request template, the `workflow kit` CI job and the weekly update check |
 | `.claude-plugin/` | The plugin manifest and the `pairnexus` marketplace, which pins Matt Pocock's skills |
 | `.github/` | The kit's own CI (the tests on Python 3.11 to 3.13, the hooks on a Python 3.9, and a check that the versions agree), the `release` workflow, and this repository's issue templates |
 | `SECURITY.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md` | How to report a vulnerability, how to contribute, and the code of conduct |

@@ -22,6 +22,7 @@ what changed, and the comment URL or quoted words it came from.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -29,6 +30,60 @@ MERGE_MODES = {"auto-merge", "session", "owner"}
 RELEASE_WHEN = {"never", "end", "each-merge"}
 OPEN_DECISIONS = {"decide-and-record", "set-aside"}
 NOTIFY = {"issue", "push"}
+
+# The solo-mode gap the owner accepts at the kick-off, word for word, as it goes
+# in `accepted_gaps`. Removed protection records it after REMOVED_PROTECTION.
+# The run report finds a solo-mode run by these two prefixes.
+SOLO_GAP = (
+    "solo mode: nothing on GitHub stops a mistake reaching {base}; "
+    'the kit\'s "never merge while CI is red" check is the only one'
+)
+REMOVED_PROTECTION = "removed protection: "
+# A line that starts with it, whatever its case and spacing, on any line of the entry.
+_REMOVED_PROTECTION_LINE = re.compile(r"^\s*removed\s+protection\s*:", re.I | re.M)
+
+
+def solo_reason(ruleset: bool | None, protected: bool | None = None) -> str | None:
+    """Why the run counts as solo mode, in words, or None when it doesn't.
+    Solo mode is the profile's `project.ruleset = false`, or `true` while the
+    read-back (`workflow protection`) found the base branch unprotected (removed
+    protection: `protected` false). With `ruleset` left out, nothing changes."""
+    if ruleset is False:
+        return "solo mode (project.ruleset is false)"
+    if ruleset is True and protected is False:
+        return "removed protection (project.ruleset is true, but the read-back didn't find the base branch protected)"
+    return None
+
+
+def removed_protection_accepted(c: Any) -> bool:
+    """The charter records removed protection: an `accepted_gaps` line that
+    starts with `removed protection:`, whatever its case and spacing (a line
+    typed again in an amendment still counts). It carries the read-back's
+    verdict to every later check of the charter."""
+    gaps = c.get("accepted_gaps") if isinstance(c, dict) else None
+    return isinstance(gaps, list) and any(isinstance(g, str) and _REMOVED_PROTECTION_LINE.search(g) for g in gaps)
+
+
+def _auto_merge_risk(why: str, solo: bool) -> str:
+    """What auto-merge would do, for `why` (a solo_reason when `solo`)."""
+    if solo:
+        return f"{why}, so nothing on GitHub reliably requires checks and auto-merge could merge at once"
+    return f"{why}, so auto-merge would merge at once with nothing checked"
+
+
+def _no_auto_merge_reason(profile: Any, protected: bool | None) -> str | None:
+    """Why auto-merge isn't safe for this profile, in words (`_auto_merge_risk`), or None."""
+    if profile is None:
+        return None
+    solo = solo_reason(getattr(profile, "ruleset", None), protected)
+    if solo:
+        return _auto_merge_risk(solo, True)
+    if getattr(profile, "ci_none", False):
+        return _auto_merge_risk("ci.none is true", False)
+    if not getattr(profile, "required_checks", None):
+        return _auto_merge_risk("the profile has no ci.required_checks", False)
+    return None
+
 
 # The kick-off questions, in the order asked, with their recommended defaults.
 QUESTIONS: list[dict[str, Any]] = [
@@ -48,6 +103,7 @@ QUESTIONS: list[dict[str, Any]] = [
     {
         "key": "merge",
         "ask": "Merge automatically when a ticket passes the merge rule? Which CI checks, if any, may be waived when killed (not failed)?",
+        "options": ["auto-merge", "session", "owner"],
         "default": {"mode": "auto-merge", "waived_checks": []},
     },
     {
@@ -83,13 +139,14 @@ QUESTIONS: list[dict[str, Any]] = [
 ]
 
 
-def defaults(release_steps: list[str] | None = None, profile: Any = None) -> dict:
+def defaults(release_steps: list[str] | None = None, profile: Any = None, protected: bool | None = None) -> dict:
     """The recommended answers, fitted to the profile when given. Releases default
     to "never" without release steps, else to "end" with the first. The limits'
     max_parallel, max_retries and check_in_minutes come from the profile's [run].
     Merging defaults to "session" when the profile has no CI (ci.none) or no
-    required checks, since auto-merge would merge with nothing checked.
-    limits.ends_at stays null: the owner gives it."""
+    required checks, or in solo mode (`solo_reason`, with `protected` the
+    read-back's verdict when known), since auto-merge would merge with nothing
+    checked. limits.ends_at stays null: the owner gives it."""
     if release_steps is None and profile is not None:
         release_steps = [st["name"] for st in getattr(profile, "release_steps", []) or []]
     out: dict[str, Any] = {"version": 1}
@@ -109,7 +166,7 @@ def defaults(release_steps: list[str] | None = None, profile: Any = None) -> dic
                 lim[k] = v
         lim["check_in_minutes"] = min(max(lim["check_in_minutes"], 5), 240)
         lim["max_sessions"] = max(lim["max_sessions"], lim["max_parallel"])
-        if getattr(profile, "ci_none", False) or not getattr(profile, "required_checks", None):
+        if _no_auto_merge_reason(profile, protected):
             out["merge"]["mode"] = "session"
     out["accepted_gaps"] = []
     out["approved"] = None
@@ -117,12 +174,22 @@ def defaults(release_steps: list[str] | None = None, profile: Any = None) -> dic
     return out
 
 
-def questions(release_steps: list[str] | None = None, profile: Any = None) -> list[dict]:
-    """The kick-off questions with defaults fitted to the profile, as `defaults` gives them."""
-    d = defaults(release_steps, profile)
+def questions(release_steps: list[str] | None = None, profile: Any = None, protected: bool | None = None) -> list[dict]:
+    """The kick-off questions with defaults fitted to the profile, as `defaults`
+    gives them. Where auto-merge would merge with nothing checked (solo mode,
+    no CI, no required checks), the merge question doesn't offer it, and its
+    note says why."""
+    d = defaults(release_steps, profile, protected)
     out = json.loads(json.dumps(QUESTIONS))
+    why = _no_auto_merge_reason(profile, protected)
     for q in out:
         q["default"] = d[q["key"]]
+        if q["key"] == "merge" and why:
+            q["options"] = [o for o in q["options"] if o != "auto-merge"]
+            q["note"] = (
+                f"Not offering auto-merge: {why}. Use session (the session merges under the merge rule) or owner "
+                "(you merge each PR yourself)."
+            )
     return out
 
 
@@ -364,10 +431,14 @@ def check_against_profile(
     required_checks: list[str],
     ci_none: bool = False,
     owner: str = "",
+    ruleset: bool | None = None,
+    protected: bool | None = None,
 ) -> list[str]:
     """The charter against the profile: release steps and waived checks it names,
-    auto-merge with nothing checked, and (with `owner`, the profile's
-    project.owner) who approved it."""
+    auto-merge with nothing checked or in solo mode (`ruleset`, the profile's
+    project.ruleset, and `protected`, the read-back's verdict when known, else
+    the charter's own record of removed protection), and (with `owner`, the
+    profile's project.owner) who approved it."""
     p: list[str] = []
     if not isinstance(c, dict):
         return p
@@ -386,9 +457,14 @@ def check_against_profile(
     for w in strs(m.get("waived_checks")):
         if w not in required_checks:
             p.append(f"waived check {w!r} is not one of the profile's ci.required_checks {required_checks}")
-    if m.get("mode") == "auto-merge" and (ci_none or not required_checks):
+    if protected is None and removed_protection_accepted(c):
+        protected = False
+    solo = solo_reason(ruleset, protected)
+    if m.get("mode") == "auto-merge" and solo:
+        p.append(f"merge.mode auto-merge: {_auto_merge_risk(solo, True)}; use session")
+    elif m.get("mode") == "auto-merge" and (ci_none or not required_checks):
         why = "ci.none is true" if ci_none else "the profile has no ci.required_checks"
-        p.append(f"merge.mode auto-merge: {why}, so auto-merge would merge at once with nothing checked; use session")
+        p.append(f"merge.mode auto-merge: {_auto_merge_risk(why, False)}; use session")
     a = c.get("approved")
     if owner and isinstance(a, dict) and isinstance(a.get("by"), str):
         if _login(a["by"]) != _login(owner):
