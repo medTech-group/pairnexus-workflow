@@ -1,14 +1,16 @@
 ---
 name: upgrade-setup
-description: Move a project from solo mode to the full set-up, one upgrade at a time. Its first path, "Protect `main`", guides the person click by click to a ruleset and the merge settings on the base branch, reads them back with `workflow protection`, and opens the pull request that leaves solo mode. Use when the person asks to protect main, or picks "Protect `main`" where the kit offers it.
+description: Move a project from solo mode to the full set-up, one upgrade at a time. "Protect `main`" guides the person click by click to a ruleset and the merge settings on the base branch, reads them back with `workflow protection`, and opens the pull request that leaves solo mode. "Set up unattended runs" asks the questions only runs need, guides the two cloud environments, and writes the answers to the profile in one pull request. Use when the person asks to protect main or to set up unattended runs, or picks either where the kit offers it.
 ---
 
 # Upgrade the set-up
 
 A project set up in solo mode (`project.ruleset = false`) works attended from the start, with the kit's guard refusing what touches the base branch. This skill takes it the rest of the way, one upgrade at a time, each one offered and never pushed:
 
-- **"Protect `main`"**: a ruleset on the base branch and the merge settings, then a pull request that sets `ruleset = true`. This file is that path.
-- **"Set up unattended runs"** (offer `set_up_unattended_runs`): the two cloud environments and the questions only runs need. It comes in a later release; until then, say it isn't here yet and point at the README's Step 5.
+- **"Protect `main`"**: a ruleset on the base branch and the merge settings, then a pull request that sets `ruleset = true`. The first part of this file.
+- **"Set up unattended runs"**: the questions only runs need, the two cloud environments, and a pull request that writes the answers to the profile. The second part, after it.
+
+"Where things are" and "When it's offered" are shared by both.
 
 Below, `main` stands for the profile's `project.base_branch`: use its real name in everything you show.
 
@@ -31,7 +33,8 @@ The read-back needs GitHub's own JSON: the repository (`GET repos/<repo>`, with 
 ## When it's offered
 
 Offered, never as a nag, at these moments only. Each comes with "Not now", and "Not now" ends it for that moment:
-- when the person asks ("protect main", "set up the ruleset");
+- when the person asks ("protect main", "set up the ruleset", "set up unattended runs");
+- right after the set-up pull request merges, "Protect `main`" once (set-up's own offer), and both in its body as optional next steps;
 - in the guard's solo-mode refusal, once it offers "Protect `main`";
 - before an unattended run in solo mode, once the conductor's pre-flight offers it;
 - by `workflow doctor`, once it exists, when it finds the base branch unprotected.
@@ -39,6 +42,9 @@ Offered, never as a nag, at these moments only. Each comes with "Not now", and "
 The offers have names, which `workflow doctor` and the other skills use:
 - **`protect_main`**: the project is in solo mode (`ruleset = false`), or set up before solo mode existed (`ruleset` left out, `solo_mode` `null`). The path ends with the pull request that leaves solo mode.
 - **`restore_protection`**: the profile says `ruleset = true` but the read-back says the base branch isn't protected (the protection was removed or weakened). The same path, without the pull request that leaves solo mode: the profile is already right.
+- **`set_up_unattended_runs`**: the person wants Claude to work while nobody is watching, and the profile names no environments yet (`run.ticket_environment` empty). The second path, "Set up unattended runs".
+
+# Protect `main`
 
 ## The screens
 
@@ -147,3 +153,73 @@ Say where it stands in one line, adding the checks line from "The screens" when 
 - "`main` isn't protected yet: <ruleset> is <the organisation owner's, or its admin's> to change." with no retry, when the blocker is a ruleset this run didn't make;
 - "`main` isn't protected yet: this session can't read <ruleset>'s bypass list. Read it back with `gh` signed in as you." with no retry, when the access here lacks admin rights;
 - or, not an admin, "The message for the owner is above."
+
+# Set up unattended runs
+
+The second path (offer `set_up_unattended_runs`). It takes a project that works attended to one where the conductor can build ready tickets in cloud sessions while nobody is watching: it asks the questions only runs need, which set-up no longer asks, guides the two cloud environments, and writes the answers to the profile in one pull request.
+
+**The vendored kit only.** Cloud sessions don't install the plugin from a project's settings, so unattended runs need the vendored kit. In plugin mode (no `.claude/workflow/lock.json`), say so plainly, and that moving to vendored mode is the kit's `setup-workflow` skill run again in vendored mode; then stop.
+
+**By experience.** *New to building* first gets one plain screen, as a choice: "Set up unattended runs: Claude can then build ready tickets in its own cloud sessions while you're away, and merge what passes." with **Do it now** (recommended) and **Not now**; each later step is one short screen in the same plain words. A developer gets the list of what it writes (step 4) instead. Both get the same steps.
+
+## 1. Protect `main` first
+
+Read `WF status --json` and look at `solo_mode`.
+
+- **`true`** (solo mode, `ruleset = false`): offer "Protect `main`" first, as a choice with **Protect `main` first** (recommended) and **Not now**.
+  - **Protect `main` first:** follow the first part of this file (`protect_main`), then come back here. Its pull request and this path's are separate.
+  - **Not now:** show the warning, in plain words, and go on to step 2:
+
+    > Without a ruleset on `main`, GitHub won't hold a merge for failing checks: the kit's own "never merge while CI is red" check is the only one. A run in solo mode never uses GitHub's auto-merge, and the conductor's pre-flight shows this gap before each run, to fix or to accept.
+- **`false`** (protected) **or `null`** (set up before solo mode existed): go on to step 2.
+
+## 2. The questions only runs need
+
+Use `AskUserQuestion`, the recommended answer first. Read the profile first: where it already has a value, offer it as the default. Ask only what exploring the repository and the profile doesn't settle:
+
+| Topic | What to ask | Where it goes |
+|---|---|---|
+| Areas | The parts of the project two sessions shouldn't touch at once: features, layers or packages, each with the globs of its files. The conductor runs at most one session per area. | `[areas]` |
+| Environment names | The names of the two claude.ai environments, one for ticket sessions and one for the conductor, such as `<project>-ticket` and `<project>-conductor`. Repositories whose setup scripts match can share them. | `run.ticket_environment`, `run.conductor_environment` |
+| Permission mode | The mode ticket sessions run in: `auto` (recommended), so an unattended session never stops to ask; `bypassPermissions` only in a sandbox; `dontAsk` or `acceptEdits` only with allow rules for the commands sessions run. No more permissive than the conductor session's own. | `run.permission_mode` |
+| Merge approvals | Can a pull request merge with no human approval? Unattended runs need that to merge. It isn't a profile setting: it is the ruleset's **Required approvals**. If the team requires an approval, keep it; each run's conductor sees it and recommends the merge mode **owner**, so runs end at "ready for review". The merge mode is chosen per run in the charter, not in the profile. | nowhere (the ruleset) |
+| Releases | Which commands deploy, and what runs after merges, each step with its smoke test. A run deploys only under a release grant in its charter. | `guard.deploy_commands`, `[[release.steps]]` |
+| Repair | Only when exploring found services the tests need (Docker, a database): what a fresh or restarted container needs started. Each command must be safe to run twice. | `[repair]` `commands` |
+
+Then work out the environments' setup script from the repository, without asking: only machine tools the cloud image lacks (it has Python, Node.js, Java, Go, Rust, Ruby, PHP, Docker, PostgreSQL and Redis), never reading the repository's files, exiting 0, in about five minutes. It is empty for most projects; downloading Flutter for a Flutter app is the usual exception. It goes in `run.environment_setup`. The project's own dependencies are `commands.setup`, which set-up wrote already.
+
+## 3. The two environments
+
+One guided screen, filled in with this project's values. No API creates them: the person makes both on claude.ai, and this session can't see what they hold.
+
+- **Where:** in the desktop app, a new Code session's environment dropdown → **Cloud** → **Add cloud environment**; in a browser, claude.ai/code's cloud environment menu → **Add environment**. Either way it is the same environment, so make each one once.
+- **The ticket environment,** named exactly `<run.ticket_environment>`:
+  - **Environment variables:** only `WORKFLOW_ROLE=ticket`;
+  - **Secrets:** no secrets. Leave **Network secrets** empty, and put no key or token in a variable: tests use fakes, and a session can't misuse a key it doesn't have;
+  - **Network access:** the default, unless a session later reports a blocked host;
+  - **Setup script:** `run.environment_setup` exactly as it is to be pasted, or "leave Setup script blank" when it is empty.
+- **The conductor environment,** named exactly `<run.conductor_environment>`:
+  - **Environment variables:** `WORKFLOW_ROLE=conductor`;
+  - **Secrets:** no secrets, unless runs release: then only what the release steps need;
+  - **Setup script:** the same as the ticket environment's.
+- **Why the names must match:** the conductor finds the ticket environment by its name and starts every ticket session in it; with no environment of that name, a run stops before starting anything.
+
+Wait for "Done" (or "Something's different", then help with what they see). Then ask the person to confirm the ticket environment has no secrets.
+
+## 4. One pull request
+
+All the answers go in one pull request. First look for one already open (from `workflow/unattended-runs`, or any open pull request changing these settings): if there is one, point at it rather than opening another.
+
+1. A branch from the base branch, such as `workflow/unattended-runs`.
+2. In `.claude/workflow/profile.toml`, the answers: `[areas]`, `run.ticket_environment`, `run.conductor_environment`, `run.permission_mode`, `run.environment_setup`, `guard.deploy_commands`, `[[release.steps]]` and `[repair]`. Change nothing else; `ruleset` is the first path's.
+3. `WF profile check` passes.
+4. Push the branch and open the pull request. Its body: the answers, the two environments as the person made them, and that the conductor's pre-flight confirms the environments by name at the start of every run.
+
+It changes `.claude/`, so merging it is the owner's: never merge it, or enable auto-merge on it, yourself.
+
+## 5. Where it ends
+
+Say where it stands in one line:
+- "Unattended runs are set up once #<n> merges: then start a session in the conductor environment and ask it to run the backlog unattended.";
+- with "Not now" to "Protect `main`", add: "`main` isn't protected: GitHub won't hold a merge for failing checks.";
+- in plugin mode, "Unattended runs need the vendored kit."
