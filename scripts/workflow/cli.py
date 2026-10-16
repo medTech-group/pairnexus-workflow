@@ -13,6 +13,7 @@
     workflow state init --charter F --run-id ID [--by-hand N] [--read-through ID] | get --body F | put --body F --state F [--out F] | patch --body F --patch F [--out F]
     workflow render --template F --ticket F --charter F --slots F --tracking N [--by-hand N] [--out F] [--print]
     workflow comments --file F [--owner LOGIN] [--since-id N]
+    workflow merge-check --pr F --files F --commits F --checks F --rulesets F --threads F --reviews F --comments F --permissions F --compare F [--preview F] [--asker LOGIN] [--json]
     workflow briefing verify --file F
     workflow pr-template [--existing FILE]      (prints the file to write; exits 3 for a folder of templates)
     workflow evidence [--suite NAME ...] [--base-count N | --base-ref BRANCH] [--fresh] [--allow-dirty]
@@ -45,6 +46,7 @@ from . import _old_python, fallback
 from . import gate as gate_mod
 from . import guard as guard_mod
 from . import issues as issues_mod
+from . import merge as merge_mod
 from . import posts as posts_mod
 from . import pr_template as pr_template_mod
 from . import protection as protection_mod
@@ -526,6 +528,48 @@ def cmd_comments(a) -> int:
             file=sys.stderr,
         )
         return 1
+    return 0
+
+
+def cmd_merge_check(a) -> int:
+    """Whether the pull request may merge (flow §4), from the files given.
+    Changes nothing, posts nothing, and exits 0 whatever it finds: anything it
+    can't read is a reason of its own, never "ready"."""
+    inputs: dict = {}
+    stdin_for = None
+    for name in merge_mod.INPUTS:
+        path = getattr(a, name, None)
+        if path is None:
+            continue
+        if path == "-":
+            if stdin_for is not None:
+                inputs[name] = (None, f"standard input (-) is already --{stdin_for}'s: only one file can be read from it")
+                continue
+            stdin_for = name
+        try:
+            if path == "-" and sys.stdin is None:
+                raise ValueError("standard input (-) is closed")
+            values = posts_mod.decode_values(_read(path).removeprefix("\ufeff"))
+            inputs[name] = (values[0], None) if len(values) == 1 else (values, None) if values else (None, f"{path} is empty")
+        except OSError as e:
+            inputs[name] = (None, f"can't open {path}: {e.strerror or e}")
+        except posts_mod.CommentsError as e:
+            inputs[name] = (None, f"{path} isn't JSON ({e})")
+        except UnicodeDecodeError:
+            inputs[name] = (None, f"{path} isn't UTF-8 text")
+        except ValueError as e:  # a closed standard input
+            inputs[name] = (None, str(e) if path == "-" else f"can't read {path}")
+    prof, profile_error = None, None
+    try:
+        prof = load()  # its protected paths and required checks are rules: none found is a reason
+    except ProfileError as e:
+        profile_error = str(e)
+    except (OSError, UnicodeDecodeError) as e:
+        profile_error = f"can't read {PROFILE_PATH}: {getattr(e, 'strerror', None) or e}"
+    root = prof.root if prof else project_root()
+    level = resolve_experience(root, prof.experience if prof else None).wording_level
+    res = merge_mod.evaluate(inputs, prof, profile_error, asker=a.asker, level=level)
+    _out(res.as_dict() if a.json else merge_mod.text(res))
     return 0
 
 
@@ -1021,6 +1065,21 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--owner", help="the owner's GitHub login (default: the profile's project.owner)")
     s.add_argument("--since-id", type=int, help="only comments with a greater id (the state's comments_read_through)")
     s.set_defaults(fn=cmd_comments)
+
+    s = sub.add_parser(
+        "merge-check", allow_abbrev=False, help="whether a pull request may merge under the merge rule (flow §4), from JSON files; changes nothing, posts nothing, exits 0"
+    )
+    for name, what in merge_mod.INPUTS.items():
+        source = {
+            "preview": "#41's preview reader: state built, building, failed or none; url; commit",
+            "pr": "as JSON from the GitHub API",
+            "compare": "as JSON from the GitHub API",
+            "threads": "GraphQL's reviewThreads, with totalCount and pageInfo, every page",
+        }.get(name, "as JSON from the GitHub API, every page")
+        s.add_argument(f"--{name}", metavar="F", help=f"{what} ({source}); a file, or - for standard input")
+    s.add_argument("--asker", metavar="LOGIN", help="the GitHub login of whoever asks (the owner gets \"Ready once you've read\" for kit and CI files)")
+    s.add_argument("--json", action="store_true", help="the decision, its reasons and notes, and each check's name and state, as JSON")
+    s.set_defaults(fn=cmd_merge_check)
 
     s = sub.add_parser("briefing", help="check a ticket session's copy of its briefing against its `Briefing <hash>` line")
     s.add_argument("action", choices=["verify"])

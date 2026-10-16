@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+**`workflow merge-check`: whether a pull request may merge, as one command** (#80, part of judging a PR without reading code, #39).
+
+- **It reads JSON files and nothing else:** `--pr`, `--files`, `--commits`, `--checks` (the head commit's check runs and statuses, one after another in one file), `--rulesets`, `--threads`, `--reviews`, `--comments`, `--permissions`, `--compare`, an optional `--preview` (`state` built/building/failed/none, `url`, `commit`), and `--asker`. It answers `ready`, `not_yet` or `owner_review`, with every reason that applies. Each reason has an id, wording for *new to building* and for *developer* (unknown counts as new), a fix and an optional action (`review`, `update_branch`, `resolve_conflict`, `fix_checks`). Notes never change the answer. Output is text, or `--json` with each check's name and state. It changes nothing, posts nothing, and always exits 0. Anything it can't read, or wasn't given, is a "couldn't read …" reason, never `ready`.
+- **The rules,** each naming the flow §4 item or #30 condition it implements, in `scripts/workflow/merge.py`:
+  - required checks: the rulesets' and `ci.required_checks` together, with a note when the two lists differ. A check missing from the head commit counts as pending. A check reported twice counts by its latest result. With neither list naming any, every check that ran counts except the try-it link's. None ran, without `ci.none`: "no checks have run on this commit";
+  - GitHub can merge it: open, not a draft, no conflict ("GitHub is still checking" while it's unknown); not behind the base;
+  - no unresolved review thread, and no "changes requested" left standing (one followed by that reviewer's approval, or a new review request, doesn't block);
+  - a clean review round on the head, or on an earlier commit of the PR with a later clean Correctness pass on the head; a later not-clean pass on the head blocks;
+  - under `ci.none`, "the tests' results haven't been posted" until #81 reads the evidence;
+  - a preview that failed or is still building blocks; no previews is a note.
+  
+  Records and reviews are read oldest first by their times. A list shorter than GitHub says (the PR's `changed_files`, `comments` and `commits`, or GraphQL's `totalCount` and `pageInfo`) is "couldn't read …: fetch every page". So is a check, status or base comparison that doesn't name the head commit (a comparison must also start from the base branch). GitHub lists at most 250 commits, which is allowed for; a change of more than 3,000 files can't be read. Every input it can't read is named in the same run.
+
+  A change to protected paths, with everything else holding, is `owner_review`: "Ready once you've read the changes to these files" for `project.owner` (or an admin when the profile names no owner), and "Needs the owner's review" for anyone else. Review records and "changes requested" count only from accounts with `write`, `maintain` or `admin`.
+- **Reused, not repeated:** `reviews.read` for the records, the guard's `matches` for protected paths, and `protection.check` for the rulesets' checks. `protection.Report` gains `unsure`: active rulesets it can't tell target the base. Merge-check answers "Not yet" for those. `protection.latest` is the checks-that-ran reader `checks_ran` now shares, with the try-it link's check marked rather than dropped.
+- Docs: `docs/flow.md` §4 names the command as the rule's one implementation; a test keeps §4's items and the command's rules in step. Tests: `tests/test_merge_check.py`.
+- **For projects updating:** nothing to do.
+
 **The pull request template set-up installs: "In plain words" for every pull request** (#83, part of judging a PR without reading code, #39).
 
 - **The template,** `templates/github/pull_request_template.md`, has `build-ticket`'s headings (#82): `## In plain words`, then `**What changes for you**`, `**How to try it**` and `**What could go wrong**`, each with a one-line prompt under it in an HTML comment, so an unedited pull request shows only the headings. A test reads the headings from both files, so the two can't drift.
