@@ -31,6 +31,8 @@ import sys
 import threading
 from pathlib import Path
 
+_STARTED = time.monotonic()  # the guard's time budget counts from here, before the kit's modules load
+
 from . import charter as charter_mod
 from . import context as context_mod
 from . import evidence as evidence_mod
@@ -520,7 +522,6 @@ def _role_label(role: str) -> str:
 # deciding when it runs out is refused in ticket and conductor sessions, since a
 # hook that outlasts its timeout doesn't block.
 GUARD_BUDGET = 12.0
-_STARTED = time.monotonic()  # the budget counts from here, as the hook's process starts
 
 
 class _OverBudget(BaseException):
@@ -541,9 +542,10 @@ def _budget(seconds: float):
     def over(signum, frame):
         raise _OverBudget()
 
-    previous = signal.signal(signal.SIGALRM, over)
-    signal.setitimer(signal.ITIMER_REAL, seconds)
+    previous = signal.getsignal(signal.SIGALRM)
     try:
+        signal.signal(signal.SIGALRM, over)
+        signal.setitimer(signal.ITIMER_REAL, seconds)
         yield
     finally:
         try:
@@ -575,13 +577,14 @@ def _hook_guard(event) -> int:
         return 0
     root = prof.root
     cwd = Path(event.get("cwd") or root)
-    role = firm or "ticket"  # the strictest, until the branch has been read
+    role: str | None = None
     try:
         with _budget(GUARD_BUDGET - (time.monotonic() - _STARTED)):
             # A cwd with no branch (outside the repository, e.g. /tmp) takes the project root's.
             role = roles.role(cwd, prof.ticket_branch, fallback=root)
             d = guard_mod.decide(event, prof, role, root, roles.current_branch(cwd), role_from_env=firm is not None, cwd=event.get("cwd") or None)
     except _OverBudget:
+        role = role or firm or "ticket"  # a role not read in time: the strictest
         if role in ("ticket", "conductor"):
             _deny_json(f"[workflow guard, {_role_label(role)}] the guard ran out of time ({GUARD_BUDGET:g} seconds) checking this, so it was refused; split the command, or give it smaller files")
             return 0

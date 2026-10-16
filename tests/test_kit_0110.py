@@ -138,6 +138,42 @@ def test_perl_strings_are_text_and_regexes_only_find(profile, tmp_path):
     assert act(profile, tmp_path, "awk -i inplace '{ gsub(/it\\(/, \"it.only(\") } 1' src/app.spec.ts") == "deny"
 
 
+def test_perl_reads_a_bracketed_s_with_its_own_replacement_delimiters(profile, tmp_path):
+    # A bracketed pattern takes the replacement's own delimiters: `s{a}/b/`, `s(a)(b)`.
+    assert act(profile, tmp_path, "perl -pi -e 's{^}/it.only(/; s{a}{b}' tests/a.spec.js") == "deny"
+    assert act(profile, tmp_path, "perl -pi -e 's(^)/it.only(/; s(a)(b)' tests/a.spec.js") == "deny"
+    assert act(profile, tmp_path, "perl -pi -e 's{^}/\\@pytest.mark.skip\\n/; s{a}{b}' tests/test_x.py") == "deny"
+    assert act(profile, tmp_path, "perl -pi -e 's{^} [it.only(]' tests/a.spec.js") == "deny"
+    # Read as perl reads them, these only remove a marker (0.1.9 refused the first).
+    assert act(profile, tmp_path, "perl -pi -e 's{foo}{bar}g; s/xit\\(/it(/g' tests/a.spec.js") == "allow"
+    assert act(profile, tmp_path, "perl -pi -e 's{xit\\(}{it(}g' tests/a.spec.js") == "allow"
+    assert act(profile, tmp_path, "perl -pi -e 's{it\\.only\\(} {it(}g' tests/a.spec.js") == "allow"
+    # One that can't be read counts as added.
+    assert act(profile, tmp_path, "perl -pi -e 's{xit\\(} # x\n{it(}' tests/a.spec.js") == "deny"
+
+
+# A sed script from standard input, or a `-f` file that can't be read, is never taken as empty.
+
+
+def test_a_sed_script_on_standard_input_is_read(profile, tmp_path):
+    assert act(profile, tmp_path, "sed -i -f - tests/test_x.py <<'EOF'\n1i @pytest.mark.skip\nEOF") == "deny"
+    assert act(profile, tmp_path, "sed -i -f /dev/stdin tests/test_x.py <<'EOF'\n1i @pytest.mark.skip\nEOF") == "deny"
+    assert act(profile, tmp_path, "sed -i -f - tests/test_x.py <<'EOF'\n/@pytest.mark.skip/d\nEOF") == "allow"
+    (tmp_path / "s.sed").write_text("1i @pytest.mark.skip\n")
+    assert act(profile, tmp_path, "sed -i -f - tests/test_x.py < s.sed") == "deny"
+    assert act(profile, tmp_path, "cat s.sed | sed -i -f - tests/test_x.py") == "deny"
+    assert act(profile, tmp_path, "some-tool | sed -i -f - tests/test_x.py") == "deny"
+
+
+def test_a_sed_script_file_the_guard_cant_read_is_refused(profile, tmp_path):
+    assert act(profile, tmp_path, "sed -i -f missing.sed tests/test_x.py") == "deny"
+    assert act(profile, tmp_path, "sed -i -f /dev/fd/0 tests/test_x.py") == "deny"
+    (tmp_path / "dir.sed").mkdir()
+    assert act(profile, tmp_path, "sed -i -f dir.sed tests/test_x.py") == "deny"
+    (tmp_path / "ok.sed").write_text("/xit(/d\n")
+    assert act(profile, tmp_path, "sed -i -f ok.sed tests/test_x.py") == "allow"
+
+
 # 6. A big `-f` script is read once per command, and over the cap it is refused.
 
 
@@ -157,11 +193,16 @@ def test_sed_scripts_over_the_cap_are_refused(profile, tmp_path):
     (tmp_path / "b.sed").write_text("s/a/b/\n" * 100_000)
     ev = {"tool_name": "Bash", "tool_input": {"command": "sed -i -f a.sed -f b.sed tests/test_x.py"}}
     d = decide(ev, profile, "ticket", tmp_path, "claude/build-1", role_from_env=True)
-    assert d.action == "deny" and "more than the guard reads" in d.reason
-    # The cap is in bytes: 400,000 three-byte characters are over it.
-    (tmp_path / "wide.sed").write_text("s/a/\u00e9\u00e9/\n" * 100_000)
-    assert act(profile, tmp_path, "sed -i -f wide.sed -f wide.sed tests/test_x.py") == "deny"
+    assert d.action == "deny" and "a script of over 1,000,000 bytes" in d.reason
+    # The cap is in bytes: 300,000 three-byte characters and 500 kB more are over
+    # it (1.4 MB), though they are 800,000 characters.
+    (tmp_path / "wide.sed").write_text("1i " + "\u20ac" * 300_000 + "\n", encoding="utf-8")
+    (tmp_path / "half.sed").write_text("s/a/b/\n" * 71_429)
+    assert act(profile, tmp_path, "sed -i -f wide.sed -f half.sed tests/test_x.py") == "deny"
     assert act(profile, tmp_path, "sed -i -f wide.sed tests/test_x.py") == "allow"
+    # Bytes that aren't UTF-8 count once each, not as the three of a replacement character.
+    (tmp_path / "latin.sed").write_bytes(b"1i caf\xe9\n" * 60_000)  # 600 kB
+    assert act(profile, tmp_path, "sed -i -f latin.sed tests/test_x.py") == "allow"
     # A marker past the first megabyte of one script is seen, not cut off.
     (tmp_path / "c.sed").write_text("s/a/b/\n" * 150_000 + "1i @pytest.mark.skip\n")
     assert act(profile, tmp_path, "sed -i -f c.sed tests/test_x.py") == "deny"
@@ -169,16 +210,16 @@ def test_sed_scripts_over_the_cap_are_refused(profile, tmp_path):
 
 
 def test_a_patch_over_the_cap_is_refused(tmp_path):
-    lines = "".join(f"+x = {i:07d}\n" for i in range(400_000))  # 5.2 MB, no marker in it
+    lines = "".join(f"+x = {i:07d}\n" for i in range(400_000))  # 5.2 MB of 13-byte lines, no marker in it
     head = "--- a/tests/a.spec.js\n+++ b/tests/a.spec.js\n@@ -0,0 +1,400000 @@\n"
     (tmp_path / "big.patch").write_text(head + lines)
     d = act_in(tmp_path, "git apply big.patch")
-    assert d.action == "deny" and "more than the guard reads" in d.reason
+    assert d.action == "deny" and "the patches are over 4,000,000 bytes" in d.reason
     # Under the cap, the same patch is read, past where 0.1.9 cut a patch off (1 MB).
-    (tmp_path / "mid.patch").write_text(head + lines[: 2_000_000] + "+it.only('a', f)\n")
+    (tmp_path / "mid.patch").write_text(head + lines[: 13 * 150_000] + "+it.only('a', f)\n")
     d = act_in(tmp_path, "git apply mid.patch")
     assert d.action == "deny" and "skip or focus marker" in d.reason
-    (tmp_path / "ok.patch").write_text(head + lines[: 2_000_000])
+    (tmp_path / "ok.patch").write_text(head + lines[: 13 * 150_000])
     assert act_in(tmp_path, "git apply ok.patch").action == "allow"
 
 
@@ -259,7 +300,22 @@ def test_the_budget_counts_from_the_hooks_start(repo, monkeypatch, capsys):
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
     monkeypatch.chdir(repo)
     assert cli._hook_guard(_event(repo)) == 0
-    assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecision"] == "deny"
+    out = json.loads(capsys.readouterr().out)["hookSpecificOutput"]
+    assert out["permissionDecision"] == "deny" and "ran out of time" in out["permissionDecisionReason"]
+
+
+def test_a_role_that_fails_to_read_is_not_taken_for_ticket(repo, monkeypatch, capsys):
+    # Only running out of time makes an unread role a ticket session's.
+    def broken(*a, **k):
+        raise ValueError("bad cwd")
+
+    monkeypatch.setattr(cli.roles, "role", broken)
+    monkeypatch.delenv("WORKFLOW_ROLE", raising=False)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+    monkeypatch.chdir(repo)
+    with pytest.raises(ValueError):
+        cli._hook_guard(_event(repo))
+    assert capsys.readouterr().out == ""
 
 
 def test_a_quick_guard_is_untouched_by_the_budget(repo, monkeypatch, capsys):

@@ -1602,20 +1602,26 @@ def _field(call: _ApiCall, name: str) -> str | None:
 
 def _read_text(path: str, cwd: str | None, limit: int = 1_000_000) -> str | None:
     """A regular file's text (never a device or pipe, which could block)."""
-    return _read_capped(path, cwd, limit)[0]
+    return _read_sized(path, cwd, limit)[0]
 
 
 def _read_capped(path: str, cwd: str | None, cap: int) -> tuple[str | None, bool]:
     """A regular file's text, at most `cap` bytes of it, and whether it holds more."""
+    text, _, over = _read_sized(path, cwd, cap)
+    return text, over
+
+
+def _read_sized(path: str, cwd: str | None, cap: int) -> tuple[str | None, int, bool]:
+    """A regular file's text (at most `cap` bytes), the bytes read, and whether it holds more."""
     a = _abspath(path, cwd)
     if not a or not os.path.isfile(a):
-        return None, False
+        return None, 0, False
     try:
         with open(a, "rb") as fh:
             data = fh.read(max(cap, 0) + 1)
     except OSError:
-        return None, False
-    return data[:cap].decode("utf-8", "replace"), len(data) > cap
+        return None, 0, False
+    return data[:cap].decode("utf-8", "replace"), min(len(data), max(cap, 0)), len(data) > cap
 
 
 def _gql_plain(text: str) -> str | None:
@@ -2440,12 +2446,12 @@ def _patch_texts(cmd: str, args: list[str], seg: Seg) -> tuple[list[str], str | 
     def read(f: str) -> tuple[str | None, str | None]:
         """A patch's text, or why it can't be read."""
         nonlocal left
-        txt, over = _read_capped(f, seg.cwd, left)
+        txt, size, over = _read_sized(f, seg.cwd, left)
         if over:
             return None, f"the patches are over {_PATCH_CAP:,} bytes, more than the guard reads; apply them in smaller parts"
         if txt is None:
             return None, f"can't read the patch `{f}` to see what it changes"
-        left -= _size(txt)
+        left -= size
         return txt, None
 
     for f in texts_from:
@@ -3547,13 +3553,14 @@ def _code_net(text: str) -> int:
         d = text[m.end() : m.end() + 1]
         # A quote-like operator, unless what follows makes it a word (`s =>`, a hash's `{s}`).
         quote_like = word in ("s", "m", "qr", "q", "qq", "qw", "tr", "y") and d != "" and not (d.isspace() or d.isalnum() or d in "_}=,;)]>")
-        if quote_like and word == "s":  # perl's `s{…}{…}` is read with `{` as its one delimiter
-            s = _S_CMD.match(text, pos)
-            if s is None:
+        if quote_like and word == "s":
+            sub = _perl_s(text, m.end())
+            if sub is None:
                 return rest()
-            net += _markers(s.group(3)) - _found(s.group(2))
+            found, put, end = sub
+            net += _markers(put) - _found(found)
             kept.append(text[last:pos] + " ")
-            pos = last = s.end()
+            pos = last = end
             pos, term = _CODE_REGEX_FLAGS.match(text, pos).end(), True
             continue
         if quote_like:
@@ -3574,7 +3581,28 @@ def _code_net(text: str) -> int:
     return rest()
 
 
-_S_CMD = re.compile(r"s([^\w\s\\])((?:\\.|(?!\1)[^\\])*)\1((?:\\.|(?!\1)[^\\])*)\1", re.S)
+_CODE_SPACE = re.compile(r"\s*")
+
+
+def _perl_s(text: str, p: int) -> tuple[str, str, int] | None:
+    """perl's `s` from its first delimiter at `p`: (what it finds, what it puts,
+    where it ends), or None when it can't be read. A bracketed pattern
+    (`s{…}`, `s(…)`) is followed by the replacement's own delimiters, as perl
+    reads it: `s{a}{b}`, `s{a}/b/`, `s(a) [b]`."""
+    d = text[p]
+    if d not in _PAIRS:
+        e1 = _close(text, p + 1, d)
+        e2 = _close(text, e1 + 1, d) if e1 is not None else None
+        return None if e2 is None else (text[p + 1 : e1], text[e1 + 1 : e2], e2 + 1)  # type: ignore[index]
+    e1 = _close_pair(text, p + 1, d)
+    if e1 is None:
+        return None
+    q = _CODE_SPACE.match(text, e1 + 1).end()
+    d2 = text[q : q + 1]
+    if d2 == "" or d2.isalnum() or d2 in "_#\\":  # `#` after a space starts a comment: not read
+        return None
+    e2 = _close_pair(text, q + 1, d2) if d2 in _PAIRS else _close(text, q + 1, d2)
+    return None if e2 is None else (text[p + 1 : e1], text[q + 1 : e2], e2 + 1)
 
 
 def _patch_net(texts: list[str]) -> int:
@@ -3603,12 +3631,22 @@ def _size(text: str) -> int:
     return len(text.encode("utf-8", "replace"))
 
 
-def _added_markers(seg: Seg, root: Path) -> int | None:
+def _stdin_script(seg: Seg) -> str | None:
+    """What a command reads on standard input: its heredoc, its `<` file or a `cat` piped in."""
+    if seg.heredoc is not None:
+        return seg.heredoc
+    if seg.stdin:
+        return _read_text(seg.stdin, seg.cwd, _SCRIPT_CAP + 1)
+    return _piped_text(seg)
+
+
+def _added_markers(seg: Seg, root: Path) -> int | str:
     """Skip or focus markers the writing command itself puts in, net of what it
-    removes; None when its script is too large to read. Text another command
+    removes; or why its script can't be read in full. Text another command
     merely searches for (a grep) doesn't count."""
     toks = seg.words
     cmd = Path(toks[0]).name if toks else ""
+    too_big = f"a script of over {_SCRIPT_CAP:,} bytes, more than the guard reads; split it into smaller scripts"
     if cmd in ("sed", "perl", "awk", "gawk"):
         ed = _inplace_edit(toks)
         if ed is not None:
@@ -3616,20 +3654,30 @@ def _added_markers(seg: Seg, root: Path) -> int | None:
             left = _SCRIPT_CAP - _size(text)  # bytes, for the scripts and `-f` files together
             if cmd == "sed":
                 for f in _sed_args(toks[1:])[2]:
-                    txt, over = _read_capped(f, seg.cwd, max(left, 0))
+                    if f in ("-", "/dev/stdin"):  # sed reads the script from standard input
+                        txt = _stdin_script(seg)
+                        if txt is None:
+                            return "a script from standard input, which the guard can't see; give it with -e or as a file"
+                        size, over = _size(txt), False
+                    else:
+                        txt, size, over = _read_sized(f, seg.cwd, max(left, 0))
+                        if txt is None:
+                            return f"the script `{f}`, which the guard can't read (it isn't a file yet, or isn't a plain file)"
                     if over:
-                        return None
-                    left -= _size(txt or "")
-                    text += "\n" + (txt or "")
+                        return too_big
+                    left -= size
+                    text += "\n" + txt
             if left < 0:
-                return None
+                return too_big
             return _script_net(text, "sed" if cmd == "sed" else "code")
     if cmd in ("ed", "red") or cmd in _VIMS:
         ed = _vim_edit(toks) if cmd in _VIMS else None
-        stdin, over = _read_capped(seg.stdin, seg.cwd, _SCRIPT_CAP) if seg.stdin else (None, False)
-        text = "\n".join([ed.script if ed else "", seg.heredoc or "", stdin or ""])
+        stdin, over = _read_capped(seg.stdin, seg.cwd, _SCRIPT_CAP) if seg.stdin else ("", False)
+        if stdin is None:
+            return f"commands from `{seg.stdin}`, which the guard can't read"
+        text = "\n".join([ed.script if ed else "", seg.heredoc or "", stdin])
         if over or _size(text) > _SCRIPT_CAP:
-            return None
+            return too_big
         return _script_net(text, "ex")
     if cmd == "patch" or (cmd == "git" and (_git(toks) or ([], [], None))[1][:1] in (["apply"], ["am"])):
         if cmd == "patch":
@@ -3653,8 +3701,8 @@ def _shell_skips(seg: Seg, profile: Profile, root: Path, t: _Targets | None = No
     if not tests:
         return None
     added = _added_markers(seg, root)  # once for the command, however many files it edits
-    if added is None:
-        return f"this edits the test file `{tests[0]}` with a script of over {_SCRIPT_CAP:,} bytes, more than the guard reads; split it into smaller scripts"
+    if isinstance(added, str):
+        return f"this edits the test file `{tests[0]}` with {added}"
     if added > 0:
         return f"this writes a skip or focus marker into the test file `{tests[0]}`; skipping or disabling a test is never allowed"
     return None
