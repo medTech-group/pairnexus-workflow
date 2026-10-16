@@ -56,7 +56,7 @@ def test_explain_more_reads_the_glossary_again_in_both_install_modes():
 
 def test_words_used_at_developer_are_still_unexplained_after_explain_more():
     para = _level_change()
-    assert "never again in this session. A word you used while at *developer* hasn't been explained yet." in para
+    assert "never again in this session. A word you used without explaining it (while at *developer*) still counts as unexplained." in para
 
 
 # Set-up: before the kit is in the project
@@ -70,11 +70,11 @@ def test_setup_follows_the_rule_from_the_glossary_in_its_clone_after_new_to_buil
 
 
 def test_setups_words_used_before_the_answer_are_still_unexplained():
-    assert "A word you used before the answer (while exploring, say) hasn't been explained yet." in _setup_explaining()
+    assert "A word you used without explaining it (before the answer, while exploring) still counts as unexplained." in _setup_explaining()
 
 
 def test_setup_explains_nothing_after_a_developer_answer():
-    assert "A *developer* answer gets none" in _setup_explaining()
+    assert "a *developer* answer gets none" in _setup_explaining()
 
 
 def test_setup_treats_a_skipped_question_as_new_to_building():
