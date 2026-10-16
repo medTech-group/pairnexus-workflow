@@ -56,7 +56,7 @@ Then go on to step 0, with their first message. With the profile's `guided_start
 
 **"Explain less" or "explain more",** at any point in the session, changes the level: "explain less" to `developer`, "explain more" to `new`. It is recorded the same way, and confirmed in one line ("Got it: I'll keep it short."). When `experience.source` is `"environment"`, the file can't override it: keep the new level for this session, and say once that `WORKFLOW_EXPERIENCE` (on the cloud environment, or in their shell) changes it for good. Then carry on where you were: don't restart the guided start.
 
-**Tell yourself the new level** whenever you record one, answer or change alike, in one line: "From now on: <level>." With *developer*, stop explaining the building words (the glossary's) for the rest of the session. After "explain more", read the glossary again (`.claude/workflow/docs/glossary.md` vendored, or `docs/glossary.md` at the plugin's root), if it is there, and explain each of its words the first time you use one.
+**Tell yourself the new level** whenever you record one, answer or change alike, in one line: "From now on: <level>." With *developer*, stop explaining the building words (the glossary's) for the rest of the session. After "explain more", read the glossary again (`.claude/workflow/docs/glossary.md` vendored, or `docs/glossary.md` beside `skills/` in the plugin), if it is there, and explain each of its words the first time you use one.
 
 ## 0. Read the first message
 

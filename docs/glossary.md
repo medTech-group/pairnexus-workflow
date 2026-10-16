@@ -82,7 +82,7 @@ Your answer to "How much do you know about building software?": *New to building
 
 One small piece of work, as a GitHub issue: what to build, and how to tell it's done.
 
-**Why it matters to you:** Claude builds one ticket at a time, each in its own [pull request](#pull-request-pr).
+**Why it matters to you:** each ticket is built in its own session and [pull request](#pull-request-pr).
 
 ### Spec
 
@@ -104,9 +104,9 @@ Claude reviewers who each read a change from one side (does it work, does it fol
 
 ### Solo mode
 
-How a project starts while GitHub doesn't protect [`main`](#main) yet: the [profile](#profile) says `ruleset = false`, and the kit refuses a push to `main`, or a change to it on GitHub, so changes go through a [pull request](#pull-request-pr).
+How a project starts while GitHub doesn't protect [`main`](#main) yet: the [profile](#profile) says `ruleset = false`, and the kit refuses Claude's pushes to `main`, and its changes to `main` on GitHub, so Claude's changes go through a [pull request](#pull-request-pr).
 
-**Why it matters to you:** you can start on GitHub's free plan, and `main` still changes only when you [merge](#merge).
+**Why it matters to you:** you can start on GitHub's free plan, and Claude's changes still reach `main` only when you [merge](#merge).
 
 ### Protect `main`
 

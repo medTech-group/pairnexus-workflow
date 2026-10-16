@@ -46,10 +46,10 @@ PARTS = {
 MENTIONS = {
     "repository": r"\brepositor(?:y|ies)\b",
     "branch": r"\bbranch(?:es)?\b",
-    "main": r"(?<!Protect )`main`",
+    "main": r"(?<!Protect `)(?<![-#])\bmain\b",
     "commit": r"\bcommits?\b",
     "pull-request-pr": r"\bpull requests?\b|\bPRs?\b",
-    "checks-ci": r"\bchecks\b|\bCI\b",
+    "checks-ci": r"\bchecks?\b(?! the set-up|-setup)|\bCI\b",
     "merge": r"\bmerg(?:e|es|ed|ing)\b",
     "revert": r"\brevert",
     "preview-link": r"\bpreview links?\b",
@@ -103,7 +103,7 @@ def _entries() -> dict[str, str]:
 
 
 def _sentences(text: str) -> list[str]:
-    return [s for s in re.split(r"(?<=[.!?])\s+", " ".join(text.split())) if s]
+    return [s for s in re.split(r"(?<=[.!?])[\"')*_`]*\s+(?=[A-Z*\"`(\[])", " ".join(text.split())) if s]
 
 
 def test_the_glossary_has_the_two_parts_with_each_word_under_its_part():
@@ -118,6 +118,13 @@ def test_each_heading_has_its_stable_anchor():
     for words in PARTS.values():
         for heading, anchor in words.items():
             assert _slug(heading) == anchor
+    # GitHub's own anchors for the headings with punctuation, as it renders them.
+    assert _slug("Pull request (PR)") == "pull-request-pr"
+    assert _slug("Protect `main`") == "protect-main"
+    assert _slug("Check the set-up") == "check-the-set-up"
+    # GitHub numbers a repeated heading's anchor, so every heading must be distinct.
+    headings = re.findall(r"^#{1,6} (.+)$", _text(), re.M)
+    assert len({_slug(h) for h in headings}) == len(headings)
 
 
 @pytest.mark.parametrize("heading", [h for w in PARTS.values() for h in w])
@@ -147,6 +154,8 @@ def test_every_link_resolves_to_a_heading_or_file_that_exists():
     headings = {_slug(m) for m in re.findall(r"^#{1,6} (.+)$", text, re.M)}
     links = re.findall(r"\]\(([^)\s]+)\)", text)
     assert links
+    # A link this check can't read (a title, a reference) would go unchecked.
+    assert text.count("](") == len(links) and "][" not in text
     for link in links:
         if link.startswith(("http://", "https://")):
             continue
@@ -196,3 +205,8 @@ def test_the_glossary_names_no_project_of_ours():
     low = _text().lower()
     assert "patient" not in low
     assert "pair-drop" not in low
+
+
+def test_the_guided_start_names_where_to_read_the_glossary():
+    text = (KIT / "skills/start/SKILL.md").read_text(encoding="utf-8")
+    assert "`.claude/workflow/docs/glossary.md` vendored, or `docs/glossary.md` beside `skills/` in the plugin" in text
