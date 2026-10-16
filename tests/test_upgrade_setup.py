@@ -49,7 +49,7 @@ def test_it_names_protect_main_and_its_offers():
     for place in ("asks", "refusal", "unattended run", "workflow doctor"):
         assert place in offers, place
     assert "never as a nag" in offers.lower()
-    # The second path is the next ticket's; its offer name is reserved.
+    # The other paths' offer names.
     assert "`set_up_unattended_runs`" in text
 
 
@@ -382,7 +382,8 @@ def test_the_third_path_is_named_with_its_offer():
     assert "Require these checks" in _head()
     assert '**"Require these checks"**' in text
     assert "# Require these checks" in text
-    assert text.index("# Protect `main`") < text.index("# Require these checks") < text.index("# Set up unattended runs")
+    assert text.index("# Protect `main`") < text.index("# Set up unattended runs") < text.index("# Require these checks")
+    assert "The third path (offer `require_checks`)." in text
     offers = _section("When it's offered")
     assert "**`require_checks`**" in offers
     # Only through doctor's offer, or when asked; never anywhere else.
@@ -408,7 +409,12 @@ def test_the_ruleset_is_the_kits_own_else_the_one_protecting_the_base_branch():
     assert "the one ruleset" in which and "protecting the base branch" in which
     assert "several" in which and "none is the kit's" in which and "the clicks naming them" in which
     # Not protected: this path adds nothing; Protect `main` comes first.
-    assert "`restore_protection`" in which
+    # Not protected: the offer that fits the profile.
+    assert "`restore_protection` when the profile says `ruleset = true`, `protect_main` when `solo_mode` is `null`" in which
+    # Only what the read-back counts: a pattern target never reads back.
+    assert "exactly as `workflow protection` reads a target" in which
+    assert "isn't counted by the read-back, so checks added to it would never read back: leave it out" in which
+    assert "https://github.com/organizations/<org>/settings/rules/<id>" in which
     # An organisation's ruleset is never the kit's to change.
     assert "organisation" in which
 
@@ -427,6 +433,8 @@ def test_the_screen_shows_results_ticks_passing_and_says_why_not_the_others():
     # The choices, and "Not now".
     assert "**Require the ticked ones** (recommended" in screen
     assert "**Choose which**" in screen and "**Not now**" in screen
+    # A single failing check is never the recommended answer.
+    assert "**Require it** (recommended only when it is passing)" in screen
     assert "**Not now** leaves everything as it is" in screen and "`workflow doctor` still says what's left" in screen
     # Already-required ones are left out; nothing left to add says so.
     assert "already required" in screen
@@ -460,6 +468,9 @@ def test_the_clicks_name_each_check_and_up_to_date_and_the_owner_gets_a_message(
     assert "**Add checks**" in clicks and "exactly" in clicks
     assert "**Save changes**" in clicks
     assert "message for the owner" in clicks
+    # Nothing was read for a non-admin: no ids or names guessed.
+    assert "but no ruleset id or check names" in clicks
+    assert "https://github.com/organizations/<org>/settings/rules/<id>" in clicks
 
 
 def test_it_reads_back_either_way_and_reoffers_the_click():
@@ -478,7 +489,12 @@ def test_the_profile_pull_request_with_its_marker_and_none_when_already_listed()
     assert "<!-- workflow:required-checks -->" in pr
     assert "never removing" in pr
     assert "already lists every one of them, no pull request is opened, and say so" in pr
-    assert "Merging it is the owner's" in pr
+    # Every required name, so a check required by hand before reaches the profile too.
+    assert "The names are the read-back's whole `checks.required`, not only the ones ticked now" in pr
+    # An open one lacking names gets them, or says which are left.
+    assert "if it lists every required name, point at it" in pr
+    assert "add them to that branch in a new commit" in pr and "say which names it still lacks" in pr
+    assert "merging it is the owner's" in pr
     assert "WF profile check" in pr
 
 
