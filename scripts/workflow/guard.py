@@ -4362,6 +4362,16 @@ def _gql_text(queries: list[str | None], fallback) -> str:
     return "\n".join(q for q in queries if q) + "\n" + fallback()
 
 
+def _solo_gql(queries: list[str | None], fallback, base: str) -> SoloRefusal | None:
+    """Solo mode: a GraphQL request's refusal, from its queries (`fallback()`
+    when they hold expansions); a query the kit can't read at all counts as
+    a mutation that changes the base branch."""
+    r = _solo_graphql(_gql_text(queries, fallback), base)
+    if not r and _gql_unread(queries):
+        r = SoloRefusal("a GraphQL request whose query the kit can't read, which may be a mutation that changes a branch or a ruleset", "unknown", _SOLO_API_HINT)
+    return r
+
+
 @dataclass
 class _CurlCall:
     method: str  # "?" when a config file, `--next` or `--expand-*` may set it
@@ -4512,9 +4522,7 @@ def _solo_curl(toks: list[str], seg: Seg, base: str, repo: str, raw: str, read) 
                 pairs = _json_pairs(d) if d is not None else None
                 qs = [v for k, v in pairs or [] if k == "query"]
                 texts += [v if isinstance(v, str) else None for v in qs] if pairs is not None else [d]
-            r = _solo_graphql(_gql_text(texts, lambda: raw + "\n" + read()), base)
-            if not r and _gql_unread(texts):
-                r = SoloRefusal("a GraphQL request whose query the kit can't read, which may be a mutation that changes a branch or a ruleset", "unknown", _SOLO_API_HINT)
+            r = _solo_gql(texts, lambda: raw + "\n" + read(), base)
         else:
             r = _solo_rest(c.method, path, base, c.body, repo)
         if r:
@@ -4539,6 +4547,19 @@ def _gh_aliases() -> dict[str, str] | None:
     return out
 
 
+def _aliases_set_in(raw: str) -> dict[str, str]:
+    """The gh aliases a command sets (`gh alias set NAME EXPANSION`), which a
+    later part of it may use."""
+    out: dict[str, str] = {}
+    for m in re.finditer(r"\bgh\s+alias\s+set\s+((?:'[^']*'|\"[^\"]*\"|[^\s;&|])+)\s+('[^']*'|\"[^\"]*\"|[^\s;&|]+)", raw):
+        try:
+            name, exp = shlex.split(m.group(1))[0], shlex.split(m.group(2))[0]
+        except (ValueError, IndexError):
+            continue
+        out[name] = exp
+    return out
+
+
 _GH_ALIAS_RISK = re.compile(r"--admin\b|--default-branch\b|\bapi\b|\bcurl\b")
 
 
@@ -4549,11 +4570,11 @@ def _solo_gh(toks: list[str], seg: Seg, profile: Profile, raw: str, read, depth:
         words = [t for t in toks[toks.index(sub) + 1 :] if not t.startswith("-")]
         text = " ".join(words[1:]) if sub == "set" else (_read_text(words[0], seg.cwd) if words and words[0] != "-" else None)
         if text is None or _GH_ALIAS_RISK.search(text):
-            return SoloRefusal("a gh alias that may merge with `--admin`, change the default branch or call the API", "setting")
+            return SoloRefusal("a gh alias that may merge with `--admin`, change the default branch or call the API", "unknown", "spell the gh command out instead of an alias")
         return None
     if group and group not in _GH_GROUPS and not group.startswith("-"):
-        aliases = _gh_aliases()
-        exp = (aliases or {}).get(group)
+        aliases = {**(_gh_aliases() or {}), **_aliases_set_in(raw)}
+        exp = aliases.get(group)
         if exp is None:
             return None  # an extension, or a typo: gh says so
         if exp.startswith("!") or depth > 4:
@@ -4597,10 +4618,7 @@ def _solo_gh(toks: list[str], seg: Seg, profile: Profile, raw: str, read, depth:
         pairs = _json_pairs(text) if text is not None else None
         queries += [v if isinstance(v, str) else None for k, v in pairs or [] if k == "query"] if text is not None and pairs is not None else [None]
     if path == "graphql":
-        r = _solo_graphql(_gql_text(queries, lambda: call.rest + "\n" + raw + "\n" + read()), base)
-        if not r and _gql_unread(queries):
-            r = SoloRefusal("a GraphQL request whose query the kit can't read, which may be a mutation that changes a branch or a ruleset", "unknown", _SOLO_API_HINT)
-        return r
+        return _solo_gql(queries, lambda: call.rest + "\n" + raw + "\n" + read(), base)
     return _solo_rest(call.method, path, base, body, profile.repo)
 
 

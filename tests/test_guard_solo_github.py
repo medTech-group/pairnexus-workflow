@@ -339,6 +339,8 @@ SENT = [
     # gh aliases
     "gh alias set m 'pr merge --admin' && gh m 12",
     "gh alias set d 'api -X DELETE repos/acme/demo/rulesets/42'",
+    "gh alias set m 'pr merge' && gh m 5 --admin",
+    "gh alias set 'm' \"pr merge\"; gh m 5 --admin",
     # merge-upstream, GHE GraphQL
     "gh api repos/acme/demo/merge-upstream -f branch=main",
     f"curl -X POST {API}/merge-upstream -d '{{\"branch\":\"main\"}}'",
@@ -372,6 +374,11 @@ def test_bodies_and_files_as_gh_and_curl_send_them(solo):
     ):
         assert act(solo, bash(cmd, root)).action == "deny", cmd
     assert act(solo, bash("curl -K plain.cfg https://example.com/x -d a=b", root)).action == "allow"
+
+
+def test_a_risky_gh_alias_is_worded_as_an_alias(solo):
+    r = act(solo, "gh alias set m 'pr merge --admin'").reason
+    assert "spell the gh command out instead of an alias" in r and "push" not in r.split("\n")[0].replace("git push origin <branch>", "")
 
 
 def test_gh_alias_from_its_config(solo, monkeypatch, tmp_path):
