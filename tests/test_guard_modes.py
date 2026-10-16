@@ -302,3 +302,36 @@ def test_changelog_notes_the_change_under_unreleased():
     text = (KIT / "CHANGELOG.md").read_text()
     unreleased = text.split("## Unreleased", 1)[1].split("\n## ", 1)[0]
     assert "#52" in unreleased
+
+
+# ---------- sensitive data ----------
+
+
+def _sensitive(root: Path):
+    (root / ".claude/workflow").mkdir(parents=True, exist_ok=True)
+    (root / ".claude/workflow/profile.toml").write_text(_toml(None) + "[sensitive]\npatterns = ['\\bMRN-\\d{6}\\b']\n")
+    return load(root)
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        bash('gh issue comment 5 --body "about MRN-123456"'),
+        {"tool_name": "mcp__github__add_issue_comment", "tool_input": {"owner": "acme", "repo": "demo", "issue_number": 5, "body": "about MRN-123456"}},
+    ],
+)
+def test_a_sensitive_data_refusal_never_repeats_the_text_or_suggests_posting_it(tmp_path, event):
+    p = _sensitive(tmp_path)
+    asked = act(p, event, None)
+    assert asked.action == "ask"
+    d = act(p, event, "dontAsk")
+    assert d.action == "deny" and d.reason.startswith(asked.reason)
+    extra = d.reason[len(asked.reason):]
+    assert "MRN-123456" not in extra
+    assert "terminal" not in extra and "on GitHub" not in extra
+    assert "sensitive-data pattern" in extra
+
+
+def test_a_long_unknown_mode_is_shown_cut(prof):
+    d = act(prof, bash("scripts/deploy.sh"), "x" * 200)
+    assert "x" * 80 + "…" in d.reason and "x" * 81 not in d.reason

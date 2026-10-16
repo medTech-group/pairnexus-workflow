@@ -5212,15 +5212,16 @@ def decide(
     d = _decide(event, profile, role, root, current_branch, role_from_env, cwd)
     mode = event.get("permission_mode")
     if d.action == "ask" and role == "attended" and modes.never_asks(mode):
-        return Decision("deny", d.reason + "\n" + _nobody_asked(event, mode))
+        return Decision("deny", d.reason + "\n" + _nobody_asked(event, mode, profile))
     return d
 
 
-def _nobody_asked(event: dict, mode) -> str:
+def _nobody_asked(event: dict, mode, profile: Profile) -> str:
     """What a refusal adds to the ask's reason in a mode that never asks: the
     kit would have asked, the mode, how to be asked, and how to do it by hand."""
     plain = isinstance(mode, str) and mode and mode == mode.strip() and mode.isprintable()
-    name = _code_span(mode[:80] if plain else json.dumps(mode, default=str)[:80])  # quoted: empty, blank or multi-line
+    shown = mode if plain else json.dumps(mode, default=str)  # quoted: empty, blank or multi-line
+    name = _code_span(shown if len(shown) <= 80 else shown[:80] + "…")
     if modes.known(mode):
         lines = [f"The kit would have asked you about this, but nobody is asked in the {name} permission mode, so it was refused."]
     else:
@@ -5232,7 +5233,11 @@ def _nobody_asked(event: dict, mode) -> str:
     tool = event.get("tool_name") or ""
     inp = event.get("tool_input") if isinstance(event.get("tool_input"), dict) else {}
     command = inp.get("command") if tool == "Bash" else None
-    if isinstance(command, str) and command.strip():
+    text = "\n".join(_strings(inp))
+    if any(re.search(pat, text) for pat in profile.sensitive_patterns):
+        # Never repeat sensitive data, nor suggest posting it by hand.
+        lines.append("Or remove the text that matches the project's sensitive-data pattern, and try again.")
+    elif isinstance(command, str) and command.strip():
         lines.append(f"Or run it yourself in your own terminal:{_hand_command(command)}")
     elif isinstance(tool, str) and tool.startswith("mcp__") and "github" in tool.lower():
         lines.append("Or do it yourself on GitHub.")
