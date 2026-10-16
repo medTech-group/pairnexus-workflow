@@ -1,0 +1,168 @@
+"""The can't-decide fallback (#53): what the guard's hook decides when the guard can't.
+
+When the guard raises or runs out of time, the profile is invalid, the hook's
+event can't be read, or `python3` is older than 3.11 (`_old_python`), an
+attended session gets this one rule:
+- a push or a merge is asked;
+- it is refused in solo mode (the profile's `ruleset = false`) or in a mode
+  where nobody is asked (see `modes`);
+- everything else is left alone: no decision.
+Ticket and conductor sessions are refused every tool instead, by the callers.
+
+"A push or a merge" is one definition, used by the CLI's error paths and by
+the old-Python fallback alike: `git … push`, `gh … pr … merge`, and the GitHub
+MCP tools that push, write files or merge.
+
+Keep it to the standard library and `modes`, and to syntax Python 3.7 reads (a
+test checks): the old-Python fallback runs it on exactly the interpreters the
+rest of the kit can't, and the CLI runs it when the kit's own code has failed,
+so it reads nothing through the kit (the profile's `ruleset` from its first
+plain line, as `_old_python` reads `ticket_branch`).
+"""
+
+import json
+import os
+import re
+
+from . import modes
+
+# Linear patterns only: each stops at the first separator.
+_PUSH = re.compile(r"\bgit\b[^;&|\n]*\bpush\b")
+_MERGE = re.compile(r"\bgh\b[^;&|\n]*\bpr\b[^;&|\n]*\bmerge\b")
+MCP_PUSH = ("merge_pull_request", "push_files", "create_or_update_file", "delete_file")
+_RULESET = re.compile(r"^[ \t]*ruleset[ \t]*=[ \t]*(\w+)", re.M)
+PROFILE = os.path.join(".claude", "workflow", "profile.toml")
+FIXES = (
+    "To fix it: run `python3 .claude/workflow/bin/workflow.py profile check`, check that `python3 --version` "
+    "is 3.11 or newer, and if neither shows the problem, report the error to the kit's maintainers."
+)
+
+
+def _string_field(name):
+    # A JSON string value: characters other than a quote or a backslash, or an escape.
+    return re.compile(r'"' + name + r'"\s*:\s*"((?:[^"\\]|\\.)*)"')
+
+
+_LOOSE = {name: _string_field(name) for name in ("tool_name", "command", "permission_mode")}
+
+
+def push_or_merge(event):
+    """True when `event` (a PreToolUse event, as a dict) is a push or a merge."""
+    if not isinstance(event, dict):
+        return False
+    tool = event.get("tool_name")
+    if not isinstance(tool, str):
+        return False
+    if tool.startswith("mcp__") and "github" in tool.lower() and tool.endswith(MCP_PUSH):
+        return True
+    inp = event.get("tool_input")
+    cmd = inp.get("command") if tool == "Bash" and isinstance(inp, dict) else None
+    return isinstance(cmd, str) and bool(_PUSH.search(cmd) or _MERGE.search(cmd))
+
+
+def read_event(text):
+    """The hook's event from its text: the JSON object, or, when the text isn't
+    one, what can still be read of it (the tool, a Bash command and the
+    permission mode, as JSON strings); None when nothing can."""
+    try:
+        event = json.loads(text)
+    except (ValueError, RecursionError, TypeError):
+        event = None
+    if isinstance(event, dict):
+        return event
+    if not isinstance(text, str):
+        return None
+    found = {}
+    for name, pattern in _LOOSE.items():
+        m = pattern.search(text)
+        if m:
+            try:
+                found[name] = json.loads('"' + m.group(1) + '"')
+            except ValueError:
+                found[name] = m.group(1)
+    if "tool_name" not in found:
+        return None
+    event = {"tool_name": found["tool_name"], "tool_input": {}}
+    if "command" in found:
+        event["tool_input"]["command"] = found["command"]
+    if "permission_mode" in found:
+        event["permission_mode"] = found["permission_mode"]
+    return event
+
+
+def solo_from_text(text):
+    """True when the profile's first plain `ruleset = …` line says false (solo
+    mode), whatever else the profile holds."""
+    m = _RULESET.search(text or "")
+    return bool(m) and m.group(1) == "false"
+
+
+def solo(root):
+    """Solo mode, read from the profile under `root` without the kit; False
+    when it can't be read."""
+    try:
+        with open(os.path.join(str(root), PROFILE), encoding="utf-8", errors="replace") as f:
+            return solo_from_text(f.read())
+    except (OSError, ValueError):
+        return False
+
+
+def _shown(mode):
+    plain = isinstance(mode, str) and mode and mode == mode.strip() and mode.isprintable()
+    shown = mode if plain else json.dumps(mode, default=str)
+    if len(shown) > 80:
+        shown = shown[:80] + "…"
+    longest = max([len(r) for r in re.findall(r"`+", shown)] or [0])
+    fence = "`" * (longest + 1)
+    return fence + shown + fence if not longest else fence + " " + shown + " " + fence
+
+
+def mode_lines(mode):
+    """Why an ask was refused in a mode that never asks, and how to be asked."""
+    name = _shown(mode)
+    if modes.known(mode):
+        first = "The kit would have asked you about this, but nobody is asked in the {} permission mode, so it was refused.".format(name)
+    else:
+        first = (
+            "The kit would have asked you about this, but the permission mode is {}, which the kit doesn't know, "
+            "so it counts as one where nobody is asked and this was refused. Tell the kit's maintainers about this mode."
+        ).format(name)
+    return [first, "To be asked, switch the permission mode (Shift+Tab, or the mode selector)."]
+
+
+def _by_hand(event):
+    tool = event.get("tool_name") if isinstance(event, dict) else None
+    if tool == "Bash":
+        # The guard couldn't check it for sensitive data, so it isn't repeated.
+        return "Or run it yourself in your own terminal (the command isn't repeated here, since nothing could check it)."
+    return "Or do it yourself on GitHub."
+
+
+def decide(event, solo_mode, why):
+    """The fallback's (decision, reason) for `event` in an attended session, or
+    None to leave it alone. `solo_mode`: the profile says `ruleset = false`.
+    `why`: what went wrong, for the reason."""
+    if not push_or_merge(event):
+        return None
+    what = "merge" if _is_merge(event) else "push"
+    head = "The workflow's guard isn't working, so it couldn't check this {}: {}. {}".format(what, why, FIXES)
+    mode = event.get("permission_mode")
+    if solo_mode:
+        lines = [head, "In solo mode (`ruleset = false` in the profile) a push or a merge the guard can't check is refused.", _by_hand(event)]
+        return "deny", "\n".join(lines)
+    if modes.never_asks(mode):
+        return "deny", "\n".join([head] + mode_lines(mode) + [_by_hand(event)])
+    return "ask", head + " Allow it only if you mean to."
+
+
+def _is_merge(event):
+    tool = event.get("tool_name")
+    if tool != "Bash":
+        return tool.endswith("merge_pull_request")
+    cmd = event["tool_input"]["command"]
+    return bool(_MERGE.search(cmd)) and not _PUSH.search(cmd)
+
+
+def output(decision, reason):
+    """The PreToolUse hook's output for a decision."""
+    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision, "permissionDecisionReason": reason}}
