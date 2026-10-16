@@ -31,8 +31,8 @@ def _level_change():
 
 def _setup_explaining():
     """Set-up's paragraph on explaining the glossary's words."""
-    m = re.search(r"^\*\*Explaining the kit's words\.\*\*.*?(?=\n\n)", _text(SETUP), re.M | re.S)
-    assert m, "no 'Explaining the kit's words.' paragraph in setup-workflow"
+    m = re.search(r"^\*\*Explaining the glossary's words\.\*\*.*?(?=\n\n)", _text(SETUP), re.M | re.S)
+    assert m, "no 'Explaining the glossary's words.' paragraph in setup-workflow"
     return m.group(0)
 
 
@@ -48,6 +48,8 @@ def test_developer_and_explain_less_stop_the_explanations_for_the_session():
 
 def test_explain_more_reads_the_glossary_again_in_both_install_modes():
     para = _level_change()
+    # words used while explaining nothing are explained at their next use
+    assert "A word you used while explaining nothing hasn't been explained yet." in para
     assert 'After "explain more", read the glossary again' in para
     assert "`.claude/workflow/docs/glossary.md` vendored" in para
     assert "`docs/glossary.md` beside `skills/` in the plugin" in para
@@ -68,42 +70,45 @@ def test_setup_explains_nothing_after_a_developer_answer():
     assert "A *developer* answer gets none" in _setup_explaining()
 
 
+def test_setup_treats_a_skipped_question_as_new_to_building():
+    assert "or a skipped question (worded as *new to building*)" in _setup_explaining()
+
+
+def test_setup_asks_the_experience_question_first_on_its_own():
+    """So the other questions' words come after the answer is known."""
+    assert "Ask the experience question first, on its own" in _setup_explaining()
+
+
 def test_setup_explains_after_the_question_is_asked_not_before():
     """It sits under "Ask", after the questions' table, since the rule starts with the answer."""
     text = _text(SETUP)
     ask = text.index("## 2. Ask")
-    assert ask < text.index("**Explaining the kit's words.**") < text.index("## 3. Write, on a branch")
+    assert ask < text.index("**Explaining the glossary's words.**") < text.index("## 3. Write, on a branch")
 
 
 def test_setup_keeps_explanations_out_of_its_pull_request():
     para = _setup_explaining()
-    assert "the set-up pull request's body included" in para
+    assert "the set-up pull request's body included, and the files and commit messages it carries" in para
 
 
-# The same rule everywhere
+# The same rule everywhere, never on GitHub included (both skills, and the hook)
 
 KEY_PHRASES = [
-    "in the glossary's wording",  # the glossary's wording
-    "the first time you use",  # first use
-    "never again in this session",  # never again this session
-    "never explain them in what you write on github",  # never on GitHub
+    "in the glossary's wording",
+    "the first time you use",
+    "never again in this session",
+    "never explain them in what you write on github (pull request descriptions, comments, reports)",
 ]
 
 
 @pytest.mark.parametrize(
     "where",
     [
-        pytest.param(lambda: _level_change(), id="start"),
-        pytest.param(lambda: _setup_explaining(), id="setup-workflow"),
+        pytest.param(_level_change, id="start"),
+        pytest.param(_setup_explaining, id="setup-workflow"),
         pytest.param(lambda: context.GLOSSARY_RULE, id="hook"),
     ],
 )
 @pytest.mark.parametrize("phrase", KEY_PHRASES)
-def test_the_rule_s_key_phrases_are_the_same_in_both_skills_and_the_hook(where, phrase):
+def test_the_rules_key_phrases_are_the_same_in_all_three(where, phrase):
     assert phrase in _flat(where())
-
-
-@pytest.mark.parametrize("path", [START, SETUP], ids=["start", "setup-workflow"])
-def test_both_skills_keep_explanations_out_of_what_is_written_on_github(path):
-    text = _flat(_text(path))
-    assert "never explain them in what you write on github (pull request descriptions, comments, reports)" in text

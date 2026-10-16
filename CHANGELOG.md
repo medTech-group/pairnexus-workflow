@@ -13,8 +13,8 @@
 **Explanations stop, restart, and run during set-up** (#75, part of the quickstart and the glossary, #35).
 
 - **The guided start (`start`):** *developer* (the first question's answer) or "explain less" stops explaining the glossary's words for the rest of the session. "Explain more" reads the glossary again (`.claude/workflow/docs/glossary.md` vendored, the plugin's `docs/glossary.md` otherwise) and explains each word from then on.
-- **Set-up (`setup-workflow`):** after a *new to building* answer (or a skipped question), it follows the same rule from `docs/glossary.md` in its clone of the kit. A *developer* answer gets none.
-- **The same rule everywhere:** both skills word it as the context hook (#74) does: each word in the glossary's wording, the first time it's used in the session, never again, and never in what is written on GitHub (the set-up pull request's body included). `tests/test_explanations_75.py` pins the key phrases in all three.
+- **Set-up (`setup-workflow`):** asks the experience question first, on its own. After a *new to building* answer (or a skipped question), it follows the same rule from `docs/glossary.md` in its clone of the kit, and keeps explanations out of the set-up pull request (its body, files and commit messages). A *developer* answer gets none.
+- **The same rule everywhere:** both skills word it as the context hook (#74) does: each word in the glossary's wording, the first time it's used in the session, never again, and never in what is written on GitHub. `tests/test_glossary_explaining.py` pins the key phrases in all three.
 - **For projects updating:** nothing to do.
 
 **The context hook explains the glossary's words to someone new to building** (#74, part of the quickstart and the glossary, #35).
