@@ -5214,13 +5214,16 @@ def decide(
     d = _decide(event, profile, role, root, current_branch, role_from_env, cwd)
     mode = event.get("permission_mode")
     if d.action == "ask" and role == "attended" and modes.never_asks(mode):
-        return Decision("deny", d.reason + "\n" + _nobody_asked(event, mode, d.sensitive), d.sensitive)
+        return Decision("deny", d.reason + "\n" + _nobody_asked(event, mode, d.sensitive, profile), d.sensitive)
     return d
 
 
-def _nobody_asked(event: dict, mode, sensitive: bool) -> str:
+def _nobody_asked(event: dict, mode, sensitive: bool, profile: Profile) -> str:
     """What a refusal adds to the ask's reason in a mode that never asks: the
-    kit would have asked, the mode, how to be asked, and how to do it by hand."""
+    kit would have asked, the mode, how to be asked, and how to do it by hand.
+    `sensitive`: the ask is about sensitive data. Input matching a sensitive
+    pattern is never repeated, whichever check asked (an earlier ask in the
+    command can stop the guard before it reads the post)."""
     plain = isinstance(mode, str) and mode and mode == mode.strip() and mode.isprintable()
     shown = mode if plain else json.dumps(mode, default=str)  # quoted: empty, blank or multi-line
     name = _code_span(shown if len(shown) <= 80 else shown[:80] + "…")
@@ -5238,12 +5241,24 @@ def _nobody_asked(event: dict, mode, sensitive: bool) -> str:
     if sensitive:
         # Never repeat sensitive data, nor suggest posting it by hand.
         lines.append("Or remove the text that matches the project's sensitive-data pattern, and try again.")
-    elif isinstance(command, str) and command.strip():
-        lines.append(f"Or run it yourself in your own terminal:{_hand_command(command)}")
-    elif isinstance(tool, str) and tool.startswith("mcp__") and "github" in tool.lower():
-        lines.append("Or do it yourself on GitHub.")
     else:
-        lines.append("Or make the change yourself, by hand.")
+        github = isinstance(tool, str) and tool.startswith("mcp__") and "github" in tool.lower()
+        bash = isinstance(command, str) and command.strip()
+        text = "\n".join(_strings(inp))
+        if any(re.search(pat, text) for pat in profile.sensitive_patterns):
+            without = "without the text that matches the project's sensitive-data pattern"
+            if bash:
+                lines.append(f"Or run it yourself in your own terminal, {without} (the command isn't repeated here, since it holds that text).")
+            elif github:
+                lines.append(f"Or do it yourself on GitHub, {without}.")
+            else:
+                lines.append(f"Or make the change yourself, by hand, {without}.")
+        elif bash:
+            lines.append(f"Or run it yourself in your own terminal:{_hand_command(command)}")
+        elif github:
+            lines.append("Or do it yourself on GitHub.")
+        else:
+            lines.append("Or make the change yourself, by hand.")
     return "\n".join(lines)
 
 

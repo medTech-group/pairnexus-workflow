@@ -343,11 +343,23 @@ def test_sensitive_text_read_from_a_file_is_never_offered_by_hand(tmp_path):
     assert "sensitive-data pattern" in extra
 
 
-def test_other_asks_keep_the_hand_command_when_the_command_matches_a_pattern(tmp_path):
+@pytest.mark.parametrize(
+    "event",
+    [
+        bash("scripts/deploy.sh --note MRN-123456"),
+        bash('git push origin main && gh issue comment 5 --body "about MRN-123456"'),
+        {"tool_name": "mcp__github__create_or_update_file", "tool_input": {"owner": "acme", "repo": "demo", "path": "a.md", "content": "MRN-123456", "message": "m", "branch": "main"}},
+    ],
+)
+def test_an_earlier_ask_never_repeats_sensitive_text_by_hand(tmp_path, event):
     p = _sensitive(tmp_path)
-    d = act(p, bash("scripts/deploy.sh --note MRN-123456"), "dontAsk")
+    asked = act(p, event, None)
+    assert asked.action == "ask"
+    d = act(p, event, "dontAsk")
     assert d.action == "deny"
-    assert "your own terminal" in d.reason and "remove the text" not in d.reason
+    extra = d.reason[len(asked.reason):]
+    assert "MRN-123456" not in extra
+    assert "without the text that matches the project's sensitive-data pattern" in extra
 
 
 def test_a_long_unknown_mode_is_shown_cut(prof):
