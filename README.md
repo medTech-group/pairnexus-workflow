@@ -92,7 +92,7 @@ It changes `.claude/` and `.github/`, so merging it is always yours, never an ag
 
 ### Protect `main`
 
-Ask Claude to **protect `main`**, or pick **Protect `main`** when the kit offers it (a refusal in solo mode, the conductor's pre-flight). The `upgrade-setup` skill guides you click by click to the ruleset and the merge settings, reads them back to confirm, and opens a small pull request that takes the project out of solo mode (`ruleset = true`). Until you merge it, the guard stays in solo mode. If you're not the repository's admin, it gives you a ready message for the owner instead.
+Ask Claude to **protect `main`**, or pick **Protect `main`** where the kit offers it. The `upgrade-setup` skill guides you click by click to the ruleset and the merge settings, reads them back to confirm, and opens the pull request that leaves solo mode (`ruleset = true`). Until you merge it, the guard stays in solo mode. If you're not the repository's admin, it gives you a ready message for the owner instead.
 
 [Step 3](#step-3-protect-the-base-branch-with-a-ruleset) and [Step 4](#step-4-check-the-merge-settings) below are the same clicks by hand: they are its fallback.
 

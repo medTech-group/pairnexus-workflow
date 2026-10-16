@@ -1,6 +1,6 @@
 ---
 name: upgrade-setup
-description: Move a project from solo mode to the full set-up, one upgrade at a time. Its first path, "Protect `main`", guides the person click by click to a ruleset and the merge settings on the base branch, reads them back with `workflow protection`, and opens the small pull request that takes the project out of solo mode. Use when the person asks to protect main, when the guard's solo-mode refusal or the conductor's pre-flight offers it, or when `workflow doctor` reports the base branch unprotected.
+description: Move a project from solo mode to the full set-up, one upgrade at a time. Its first path, "Protect `main`", guides the person click by click to a ruleset and the merge settings on the base branch, reads them back with `workflow protection`, and opens the pull request that leaves solo mode. Use when the person asks to protect main, or picks "Protect `main`" where the kit offers it.
 ---
 
 # Upgrade the set-up
@@ -30,13 +30,13 @@ Below, `main` stands for the profile's `project.base_branch`: use its real name 
 
 Offered, never as a nag, at these moments only. Each comes with "Not now", and "Not now" ends it for that moment:
 - when the person asks ("protect main", "set up the ruleset");
-- in the guard's solo-mode refusal, which tells Claude to offer "Protect `main`";
-- before an unattended run in solo mode, in the conductor's pre-flight;
-- later, by `workflow doctor` (#34), when it finds the base branch unprotected.
+- in the guard's solo-mode refusal, once it offers "Protect `main`" (#45);
+- before an unattended run in solo mode, once the conductor's pre-flight offers it (#32's conductor ticket);
+- by `workflow doctor` (#34), once it exists, when it finds the base branch unprotected.
 
 The offers have names, which `workflow doctor` and the other skills use:
-- **`protect_main`**: the project is in solo mode (`ruleset = false`). The path ends with the flip pull request.
-- **`restore_protection`**: the profile says `ruleset = true` but the read-back says the base branch isn't protected (the protection was removed or weakened). The same path, without the flip: the profile is already right.
+- **`protect_main`**: the project is in solo mode (`ruleset = false`). The path ends with the pull request that leaves solo mode.
+- **`restore_protection`**: the profile says `ruleset = true` but the read-back says the base branch isn't protected (the protection was removed or weakened). The same path, without the pull request that leaves solo mode: the profile is already right.
 
 ## The screens
 
@@ -67,10 +67,10 @@ Before anything else, read the repository's permissions: `GET repos/<repo>` (`gh
 
 Before guiding any click, fetch the rulesets and read them back with `WF protection`, exactly as step 4 does. A repository may already have one.
 
-- **Already protected** (`protected` is `true`): no clicks for the ruleset. If the merge settings are missing, guide only those (step 3's last screen). Then, for `protect_main`, go straight to the flip pull request (step 5); for `restore_protection`, say it is protected again and stop.
+- **Already protected** (`protected` is `true`): no clicks for the ruleset. If the merge settings are missing, guide only those first (step 3's screen 3), since they are part of this upgrade too. Then, for `protect_main`, go straight to the pull request that leaves solo mode (step 5); for `restore_protection`, say it is protected again and stop.
 - **Not protected, with rulesets there:** show what is missing. This skill never edits an existing ruleset, and never guides a change to one (#38 decides that path). It guides a new ruleset beside them. When an existing one stops the verdict whatever is added (its bypass list, say), say which ruleset and what in it, and leave that ruleset to the person.
 - **No rulesets:** go on to step 3.
-- **Can't read the rulesets** (no access from here): say so. Guide the clicks anyway, but without a read-back there is no flip: an unknown counts as unprotected.
+- **Can't read the rulesets** (no access from here): say so. Guide the clicks anyway, but without a read-back there is no pull request that leaves solo mode: an unknown counts as unprotected.
 
 ## 3. The guided clicks
 
@@ -107,15 +107,15 @@ Check the exit code before reading the output:
 - **Exit 2:** an input is wrong (the message is on standard error, and nothing is printed). Fetch again, usually a ruleset that wasn't fetched in full; never read it as protected.
 - **Exit 0:** read the JSON.
   - `protected` is `true`: the base branch is protected. Say so in one line (new to building), or show the report (developer).
-  - `protected` is `false`: show each line of `missing` in plain words, and offer the screen that fixes it again ("Open the ruleset again"), with "Not now". Then read it back again.
+  - `protected` is `false`: show each line of `missing` in plain words, and offer the click again: the screen that fixes it, as a choice ("Open the ruleset again"), with "Not now". Then read it back again.
   - `merge`: its `missing` lines are the merge settings that are off or unknown. Offer screen 3 again for them. They don't change the verdict.
   - `checks.note` is "checks not required yet" when no checks are required: report it as that, not as a failure.
 
-The read-back doesn't check approvals or Code Owners yet. Look at the `pull_request` rule's `parameters` in the fetched rulesets yourself: if `required_approving_review_count` is above 0 or `require_code_owner_review` is `true`, say that unattended runs will then stop at "ready for review". It doesn't stop the flip.
+The read-back doesn't check approvals or Code Owners yet. Look at the `pull_request` rule's `parameters` in the fetched rulesets yourself: if `required_approving_review_count` is above 0 or `require_code_owner_review` is `true`, say that unattended runs will then stop at "ready for review". It doesn't stop the pull request that leaves solo mode.
 
 ## 5. Leave solo mode
 
-Only for `protect_main`, and only once the read-back says `"protected": true`. Then open a small pull request that sets `ruleset = true`:
+Only for `protect_main`, and only once the read-back says `"protected": true`. Then open **the pull request that leaves solo mode**: a small one that sets `ruleset = true`.
 
 1. A branch from the base branch, such as `workflow/protect-main`.
 2. In `.claude/workflow/profile.toml`'s `[project]` table, a plain `ruleset = true` line on its own: in place of a `ruleset = false` line, or of the template's commented `# ruleset = false`, or after `base_branch` when neither is there. Change nothing else.

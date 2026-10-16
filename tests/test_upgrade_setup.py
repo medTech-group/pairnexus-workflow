@@ -86,8 +86,8 @@ def test_it_checks_admin_first_and_hands_over_a_message_for_the_owner():
 def test_it_reads_existing_rulesets_back_before_any_click_and_never_edits_one():
     first = _section("Read what is there")
     assert "`WF protection" in first
-    assert "already protected" in first.lower() and "flip" in first.lower()
-    assert "never edits" in _text().lower() and "ruleset" in _text()
+    assert "already protected" in first.lower() and "the pull request that leaves solo mode" in first
+    assert "never edits an existing ruleset" in first
 
 
 # The guided clicks: ruleset, required checks, merge settings, each linked.
@@ -114,7 +114,7 @@ def test_it_lists_the_rulesets_settings_checks_and_merge_settings_with_their_pag
     assert "one screen at a time" in clicks.lower()
     # A link to each exact settings page.
     assert "https://github.com/<repo>/settings/rules/new?target=branch" in clicks
-    assert "https://github.com/<repo>/settings" in clicks
+    assert "`https://github.com/<repo>/settings`" in clicks
     # The automatic path and adding checks later are #38's.
     assert "#38" in clicks
 
@@ -125,8 +125,9 @@ def test_it_lists_the_rulesets_settings_checks_and_merge_settings_with_their_pag
 def test_the_read_back_runs_workflow_protection_and_reoffers_the_click():
     back = _section("Read it back")
     assert "WF protection --rulesets" in back and "--repo" in back and "--json" in back
-    assert "exit" in back.lower() and "2" in back
-    assert "missing" in back and "again" in back
+    assert "**Exit 2:**" in back and "**Exit 0:**" in back
+    assert "never read it as protected" in back
+    assert "`missing`" in back and "offer the click again" in back
     # Each ruleset in full, by its id.
     assert "rulesets/<id>" in _text()
 
@@ -146,6 +147,7 @@ def test_the_flip_pr_comes_only_after_a_protected_read_back():
     text = _text()
     flip = _section("Leave solo mode")
     assert "`ruleset = true`" in flip
+    assert "**the pull request that leaves solo mode**" in flip
     assert "pull request" in flip
     assert "stays in solo mode until it merges" in flip
     assert "owner" in flip.lower()
@@ -180,7 +182,7 @@ def test_it_ships_in_the_plugin():
     kit = next(p for p in market["plugins"] if p["name"] == "pairnexus-workflow")
     assert kit["source"] == "./"
     assert "skills" not in json.loads((KIT / ".claude-plugin/plugin.json").read_text())
-    assert SKILL.is_file()
+    assert SKILL.parent.parent == KIT / "skills"
 
 
 def test_the_readme_points_at_the_upgrade_with_the_clicks_as_its_fallback():
