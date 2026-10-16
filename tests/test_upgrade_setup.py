@@ -49,7 +49,7 @@ def test_it_names_protect_main_and_its_offers():
     for place in ("asks", "refusal", "unattended run", "workflow doctor"):
         assert place in offers, place
     assert "never as a nag" in offers.lower()
-    # The second path is the next ticket's; its offer name is reserved.
+    # The other paths' offer names.
     assert "`set_up_unattended_runs`" in text
 
 
@@ -147,9 +147,9 @@ def test_it_lists_the_rulesets_settings_checks_and_merge_settings_with_their_pag
     # A link to each exact settings page.
     assert "https://github.com/<repo>/settings/rules/new?target=branch" in clicks
     assert "`https://github.com/<repo>/settings`" in clicks
-    # The automatic path and adding checks later come later, named in words:
-    # the skill ships into projects, where a kit issue number means their issue.
-    assert "later release" in clicks
+    # Adding checks later is the third path, named in words: the skill ships
+    # into projects, where a kit issue number means their issue.
+    assert '"Require these checks"' in clicks
     assert not re.search(r"#\d", _text())
 
 
@@ -365,3 +365,170 @@ def test_enforcement_doc_section_one_says_the_kit_makes_the_ruleset():
     # The name it gives is the one `workflow protection --protect` builds.
     body = protection.protect("main", {"full_name": "a/b", "default_branch": "main"})[0].body
     assert body["name"] == "Protect main (pairnexus-workflow)"
+
+
+# ---------- "Require these checks", the third path (#68, seam 4 of #38) ----------
+
+
+def _part(title):
+    """The text of the `# ...` part (a top-level heading) whose heading contains `title`."""
+    m = re.search(rf"^# [^\n]*{re.escape(title)}[^\n]*\n(.*?)(?=^# |\Z)", _text(), re.M | re.S)
+    assert m, f"no part {title!r}"
+    return m.group(1)
+
+
+def test_the_third_path_is_named_with_its_offer():
+    text = _text()
+    assert "Require these checks" in _head()
+    assert '**"Require these checks"**' in text
+    assert "# Require these checks" in text
+    assert text.index("# Protect `main`") < text.index("# Set up unattended runs") < text.index("# Require these checks")
+    assert "The third path (offer `require_checks`)." in text
+    offers = _section("When it's offered")
+    assert "**`require_checks`**" in offers
+    # Only through doctor's offer, or when asked; never anywhere else.
+    assert "only through `workflow doctor`'s `require_checks` offer" in offers
+    assert "`check-setup`" in offers and "the conductor's pre-flight" in offers
+    assert "or when the person asks" in offers
+    assert "Never anywhere else" in offers
+
+
+def test_it_waits_in_solo_mode_naming_the_pull_request_that_leaves_it():
+    part = _part("Require these checks")
+    wait = _section("Solo mode waits")
+    assert "`solo_mode` is `true`" in wait
+    assert "the checks are added once the pull request that leaves solo mode has merged" in wait
+    assert "point at it" in wait
+    assert "if it has merged already, the local base branch is behind, so say to pull it and ask again" in wait
+    assert "and stop" in wait
+    assert part.index("## Solo mode waits") < part.index("## Which ruleset")
+
+
+def test_the_ruleset_is_the_kits_own_else_the_one_protecting_the_base_branch():
+    which = _section("Which ruleset")
+    assert '"Protect <base> (pairnexus-workflow)"' in which
+    assert "the one ruleset" in which and "protecting the base branch" in which
+    assert "several" in which and "none is the kit's" in which and "the clicks naming them" in which
+    # Not protected: the offer that fits the profile.
+    assert "`restore_protection` when the profile says `ruleset = true`, `protect_main` when `solo_mode` is `null`" in which
+    # Only what the read-back counts: a pattern target never reads back.
+    assert "exactly as `workflow protection` reads a target" in which
+    assert "its `target` is `branch` (a tag or push ruleset never counts)" in which
+    assert "its enforcement is active" in which
+    assert "a pattern matching it, ignoring case" in which
+    assert "no `exclude` entry matches it" in which and "one not starting with `refs/`" in which
+    # The patterns the read-back can't match, as protection.UNREAD_GLOB lists them.
+    for glob in protection.UNREAD_GLOB:
+        assert f"`{glob}`" in which, glob
+    assert "isn't counted by the read-back, so checks added to it would never read back: leave it out" in which
+    assert "https://github.com/organizations/<org>/settings/rules/<id>" in which
+    # An organisation's ruleset is never the kit's to change.
+    assert "organisation" in which
+
+
+def test_the_screen_shows_results_ticks_passing_and_says_why_not_the_others():
+    screen = _section("The checks screen")
+    assert "WF protection --checks-ran" in screen
+    # Reads work in a cloud session too; with no tool for them, it says so.
+    assert "they use `gh api` wherever it is signed in, a cloud session too" in screen
+    assert "say the checks that ran can't be read from here" in screen
+    part = _part("Require these checks")
+    assert part.index("## Which way, for the checks") < part.index("## The checks screen")
+    assert "with its result" in screen
+    assert "Passing ones are ticked by default" in screen
+    assert "failing" in screen and "pending" in screen and "not ticked" in screen
+    assert "a failing required check blocks every merge until it passes" in screen
+    assert "hasn't finished" in screen
+    # By experience.
+    assert '"GitHub won\'t merge a change until these pass"' in screen
+    assert '*A developer* gets the names, and that "Require branches to be up to date" goes on with them' in screen
+    # The choices, and "Not now".
+    assert "**Require the ticked ones** (recommended" in screen
+    assert "**Choose which**" in screen and "**Not now**" in screen
+    # A single failing check is never the recommended answer.
+    assert "**Require it** (recommended only when it is passing)" in screen
+    assert "**Not now** leaves everything as it is" in screen and "`workflow doctor` still says what's left" in screen
+    # Already-required ones are left out; nothing left to add says so.
+    assert "already required" in screen
+
+
+def test_the_local_update_after_one_confirmation_with_the_expected_prompt():
+    which = _section("Which way, for the checks")
+    assert 'The same four conditions as "Which way"' in which
+    local = _section("The update with `gh`")
+    assert "Claude Code will ask you to approve the GitHub command that changes the ruleset. That is expected" in local
+    order = [
+        "`gh api repos/<repo>/rulesets/<id> > .workflow/ruleset.json`",
+        "`WF protection --require-checks .workflow/ruleset.json",
+        ".workflow/checks-request.json",
+        "`gh api -X PUT repos/<repo>/rulesets/<id> --input .workflow/checks-request.json`",
+    ]
+    at = [local.index(s) for s in order]
+    assert at == sorted(at), order
+    assert "With the Write tool" in local
+    # Never-ask modes: the mode switch, never a retry.
+    assert 'Answer "switch the permission mode and try again"' in local
+    assert "never retry the command in that mode" in local
+
+
+def test_the_clicks_name_each_check_and_up_to_date_and_the_owner_gets_a_message():
+    clicks = _section("The clicks for the checks")
+    assert "one screen at a time" in clicks
+    assert "https://github.com/<repo>/settings/rules/<id>" in clicks
+    assert "**Require status checks to pass**" in clicks
+    assert "**Require branches to be up to date before merging**" in clicks
+    assert "**Add checks**" in clicks and "exactly" in clicks
+    assert "**Save changes**" in clicks
+    assert "message for the owner" in clicks
+    # Nothing was read for a non-admin: no ids or names guessed.
+    assert "but no ruleset id or check names" in clicks
+    assert "https://github.com/organizations/<org>/settings/rules/<id>" in clicks
+
+
+def test_it_reads_back_either_way_and_reoffers_the_click():
+    back = _section("Read the checks back")
+    assert "either way" in back.lower()
+    assert "WF protection --rulesets .workflow/rulesets.json --repo .workflow/repo.json --json" in back
+    assert "`checks.required`" in back
+    assert "`strict_required_status_checks_policy`" in back
+    assert "in plain words" in back and "offer the click again" in back
+
+
+def test_the_profile_pull_request_with_its_marker_and_none_when_already_listed():
+    pr = _section("The profile's pull request")
+    assert "`ci.required_checks`" in pr
+    assert "`ci.none = false`" in pr
+    assert "<!-- workflow:required-checks -->" in pr
+    assert "never removing" in pr
+    assert "already lists every one of them, no pull request is opened, and say so" in pr
+    # Every required name, so a check required by hand before reaches the profile too.
+    assert "The names are the read-back's whole `checks.required`, not only the ones ticked now" in pr
+    # An open one lacking names gets them, or says which are left.
+    assert "if it lists every required name, point at it" in pr
+    assert "add them to that branch in a new commit" in pr and "say which names it still lacks" in pr
+    assert "open none beside it" in pr
+    assert "merging it is the owner's" in pr
+    assert "WF profile check" in pr
+
+
+def test_a_failure_partway_says_what_was_done_and_whats_left_and_only_adds():
+    part = _part("Require these checks")
+    assert "**A failure partway:** say what was done and what's left" in part
+    assert "the clicks for the rest" in part
+    assert "Checks are only ever added, never removed" in part
+
+
+def test_the_protect_path_no_longer_says_adding_checks_comes_later():
+    clicks = _section("The guided clicks")
+    assert "Adding them later comes in a later release" not in clicks
+    assert '"Require these checks"' in clicks
+
+
+def test_the_readme_and_enforcement_say_checks_are_required_once_ci_has_run():
+    readme = (KIT / "README.md").read_text()
+    section = re.search(r"^### Protect `main`\n(.*?)(?=^### )", readme, re.M | re.S).group(1)
+    assert "once CI has run" in section and "`check-setup`" in section
+    doc = (KIT / "docs/enforcement.md").read_text()
+    one = re.search(r"^## 1\.[^\n]*\n(.*?)(?=^## )", doc, re.M | re.S).group(1)
+    assert "the kit adds the required checks once CI has run" in one
+    assert '"up to date"' in one

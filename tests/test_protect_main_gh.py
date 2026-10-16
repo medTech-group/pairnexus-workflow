@@ -1,5 +1,6 @@
 """#67: "Protect `main`" automatically on the owner's computer, with `gh`
-(the `upgrade-setup` skill's automatic path, #38).
+(the `upgrade-setup` skill's automatic path, #38), and #68's "Require these
+checks", which adds checks to the ruleset with a `PUT`.
 
 Seam 2: the guard's existing decisions on the exact commands the skill runs,
 through `decide()` with the profile on disk, as the guard suites do. The
@@ -24,6 +25,13 @@ from workflow.profile import load
 SKILL = KIT / "skills/upgrade-setup/SKILL.md"
 REPO = {"full_name": "acme/demo", "default_branch": "main", "allow_merge_commit": False, "allow_auto_merge": False}
 WF = "python3 -B .claude/workflow/bin/workflow.py"
+# The kit's own ruleset on the base branch, as GET repos/<repo>/rulesets/<id> returns it.
+KIT_RULESET = {
+    **protection.protect("main", REPO)[0].body,
+    "id": 42,
+    "source_type": "Repository",
+    "source": "acme/demo",
+}
 
 
 def _toml(ruleset):
@@ -48,6 +56,10 @@ def on_disk(root: Path, ruleset):
     (root / ".workflow/ruleset-request.json").write_text(json.dumps(ruleset_req.body))
     (root / ".workflow/merge-request.json").write_text(json.dumps(merge_req.body))
     (root / ".workflow/repo.json").write_text(json.dumps(REPO))
+    # #68: the kit's ruleset as GET returns it, and the request adding the checks.
+    (root / ".workflow/ruleset.json").write_text(json.dumps(KIT_RULESET))
+    checks_req = protection.require_checks(KIT_RULESET, ["test"])
+    (root / ".workflow/checks-request.json").write_text(json.dumps(checks_req.body))
     return load(root)
 
 
@@ -83,6 +95,8 @@ def act(profile, cmd, role="attended", mode=None, branch="feature"):
 # The commands, exactly as the skill gives them (with acme/demo and main filled in).
 POST = "gh api -X POST repos/acme/demo/rulesets --input .workflow/ruleset-request.json"
 PATCH = "gh api -X PATCH repos/acme/demo --input .workflow/merge-request.json"
+# #68: "Require these checks" adds them to the ruleset protecting the base branch.
+PUT = "gh api -X PUT repos/acme/demo/rulesets/42 --input .workflow/checks-request.json"
 READS = [
     "gh auth status --hostname github.com",
     "gh api repos/acme/demo",
@@ -95,6 +109,9 @@ READS = [
     f"{WF} protection --checks-ran .workflow/check-runs.json --statuses .workflow/status.json"
     " --rulesets .workflow/rulesets.json --repo .workflow/repo.json --base main --json",
     f"{WF} protection --protect --repo .workflow/repo.json --base main --check test --json > .workflow/protect.json",
+    # #68's reads: the one ruleset in full, and the request built from it.
+    "gh api repos/acme/demo/rulesets/42 > .workflow/ruleset.json",
+    f"{WF} protection --require-checks .workflow/ruleset.json --check test --json > .workflow/checks.json",
 ]
 
 
@@ -143,6 +160,45 @@ def test_the_ruleset_post_is_refused_in_ticket_and_conductor_sessions(prof, role
     assert act(prof, POST, role=role, branch="claude/build-1").action == "deny"
 
 
+# ---------- #68: the require-checks PUT ----------
+
+
+def test_the_put_is_the_require_checks_request():
+    req = protection.require_checks(KIT_RULESET, ["test"])
+    assert (req.method, req.path) == ("PUT", "repos/acme/demo/rulesets/42")
+    assert PUT.startswith(f"gh api -X {req.method} {req.path} ")
+    rule = next(r for r in req.body["rules"] if r["type"] == "required_status_checks")
+    assert rule["parameters"]["strict_required_status_checks_policy"] is True
+
+
+@pytest.mark.parametrize("ruleset", [True, None], ids=["protected", "unset"])
+@pytest.mark.parametrize("mode", [None, "default", "acceptEdits", "auto"])
+def test_the_put_is_asked_in_an_attended_session_outside_solo_mode(tmp_path, ruleset, mode):
+    assert act(on_disk(tmp_path, ruleset), PUT, mode=mode).action == "ask"
+
+
+def test_the_put_is_refused_in_solo_mode(solo):
+    assert act(solo, PUT).action == "deny"
+
+
+@pytest.mark.parametrize("ruleset", [True, None], ids=["protected", "unset"])
+@pytest.mark.parametrize("mode", ["bypassPermissions", "dontAsk"])
+def test_the_put_is_refused_in_modes_that_never_ask_naming_the_mode(tmp_path, ruleset, mode):
+    profile = on_disk(tmp_path, ruleset)
+    asked = act(profile, PUT)
+    d = act(profile, PUT, mode=mode)
+    assert d.action == "deny"
+    assert d.reason.startswith(asked.reason)
+    extra = d.reason[len(asked.reason):]
+    assert f"`{mode}`" in extra and "would have asked" in extra
+    assert "switch the permission mode" in extra
+
+
+@pytest.mark.parametrize("role", ["ticket", "conductor"])
+def test_the_put_is_refused_in_ticket_and_conductor_sessions(prof, role):
+    assert act(prof, PUT, role=role, branch="claude/build-1").action == "deny"
+
+
 # ---------- the commands tested are the ones the skill gives ----------
 
 
@@ -151,9 +207,13 @@ def test_every_gh_command_the_skill_runs_is_one_tested_here():
     whose decision is tested above, so a changed command can't slip past."""
     text = SKILL.read_text(encoding="utf-8")
     given = re.findall(r"`(gh (?:api|auth status)[^`]*)`", text)
-    tested = {POST, PATCH, *READS}
+    tested = {POST, PATCH, PUT, *READS}
     # `gh api` alone names the tool, not a command.
-    commands = [c.replace("<repo>", "acme/demo").replace("<base>", "main") for c in given if c != "gh api"]
+    fill = {"<repo>": "acme/demo", "<base>": "main", "<id>": "42"}
+    commands = [c for c in given if c != "gh api"]
+    for k, v in fill.items():
+        commands = [c.replace(k, v) for c in commands]
     assert POST.replace("acme/demo", "<repo>") in given and PATCH.replace("acme/demo", "<repo>") in given
+    assert PUT.replace("acme/demo", "<repo>").replace("/42 ", "/<id> ") in given
     for c in commands:
         assert c in tested, c

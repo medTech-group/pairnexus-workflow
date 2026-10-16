@@ -8,6 +8,14 @@
 - **The reader** sits in the same module (`scripts/workflow/reviews.py`: `records_in(text)` for one comment, `read(comments)` for a pull request's comments, with who posted each), so the coming `workflow merge-check` and the writer can't drift. A malformed record line is skipped, never a crash.
 - **The `review-panel` skill** posts a record after every round, whatever it found, and after each later Correctness pass, in attended and unattended sessions alike. `build-ticket` posts the records of the rounds run before its pull request opened, once it does; its findings table stays in the PR body.
 - Docs: `docs/flow.md` §3. Tests: `tests/test_review_record.py`.
+
+**"Require these checks": failing tests stop merges once CI has run** (#68, part of the automated GitHub set-up, #38).
+
+- **A third path in the `upgrade-setup` skill,** offer name `require_checks`, offered only through `workflow doctor`'s offer (which `check-setup` and the conductor's pre-flight show) or when you ask. It shows the checks that ran on the base branch's latest commit with their results (already-required ones left out), passing ones ticked by default and failing or pending ones not, saying why; *new to building* gets one plain sentence, a developer the names and "up to date". **Not now** changes nothing.
+- **On your own computer, with `gh` signed in as the repository's admin,** it adds the ticked checks to the ruleset protecting the base branch (the kit's own, else the only one) with `workflow protection --require-checks`'s `PUT` sent by `gh api`, after one confirmation that says Claude Code's prompt is expected. Everywhere else, and when several rulesets protect the branch and none is the kit's: the clicks, one screen at a time, with the exact names and "Require branches to be up to date". Not an admin: a ready message for the owner. Either way it reads back with `workflow protection`.
+- **Then the profile:** a small pull request adding every name the ruleset now requires to `ci.required_checks` (and `ci.none = false` when it was set), with `<!-- workflow:required-checks -->` in its body; none when the profile already lists them. Checks are only ever added, never removed. In solo mode it waits for the pull request that leaves solo mode.
+- **The guard is unchanged.** Its existing decisions on the `PUT`: asked in an attended session with `ruleset = true` or no `ruleset` setting; refused in solo mode, in `bypassPermissions` and `dontAsk` (naming the mode), and in ticket and conductor sessions; the reads allowed.
+- Docs: the README's "Protect `main`", `docs/enforcement.md` §1. Tests: `tests/test_protect_main_gh.py` (the guard), `tests/test_upgrade_setup.py` (the wording).
 - **For projects updating:** nothing to do.
 
 **The guard sees `Monitor` and `PowerShell`** (#55, part of guard robustness, #33).
