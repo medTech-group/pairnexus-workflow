@@ -783,3 +783,14 @@ def test_late_pass_echo_options_after_others_and_long_lines_stay_fast(solo):
         start = time.monotonic()
         assert act(solo, bash(q + tail, solo.root)).action != "deny"
         assert time.monotonic() - start < 5
+
+
+def test_alias_reading_stays_fast_on_repeated_quotes(solo):
+    import time
+
+    start = time.monotonic()
+    act(solo, "gh alias set " + '""' * 5000 + "x; gh m 1")
+    act(solo, "gh alias set m " + "''" * 5000)
+    assert time.monotonic() - start < 5
+    assert act(solo, "gh alias set m 'pr merge' && gh m 5 --admin").action == "deny"
+    assert act(solo, "gh alias set \"m\" \"pr merge\"; gh m 5 --admin").action == "deny"

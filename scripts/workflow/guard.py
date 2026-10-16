@@ -4666,7 +4666,7 @@ def _aliases_set_in(raw: str) -> dict[str, str]:
     """The gh aliases a command sets (`gh alias set NAME EXPANSION`), which a
     later part of it may use."""
     out: dict[str, str] = {}
-    for m in re.finditer(r"\bgh\s+alias\s+set\s+((?:'[^']*'|\"[^\"]*\"|[^\s;&|])+)\s+('[^']*'|\"[^\"]*\"|[^\s;&|]+)", raw):
+    for m in re.finditer(r"\bgh\s+alias\s+set\s+((?:'[^']*'|\"[^\"]*\"|[^\s;&|'\"])+)\s+('[^']*'|\"[^\"]*\"|[^\s;&|'\"]+)", raw):
         try:
             name, exp = shlex.split(m.group(1))[0], shlex.split(m.group(2))[0]
         except (ValueError, IndexError):
