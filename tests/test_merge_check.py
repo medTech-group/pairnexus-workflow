@@ -1296,4 +1296,4 @@ def test_a_forks_comparison_and_an_encoded_base_are_read(project, capsys):
     data["pr"]["base"]["ref"] = "release/2.0"
     data["compare"]["url"] = f"https://api.github.com/repos/acme/demo/compare/release%2F2.0...{HEAD}"
     got, _ = check(project, capsys, data)
-    assert "couldnt_read" not in ids(got) or "compare" not in [r.get("input") for r in got["reasons"]]
+    assert got["decision"] == "ready", got["reasons"]
