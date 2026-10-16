@@ -7,6 +7,7 @@
   them, in its own line endings; a byte order mark moves to the top;
 - when it already starts with `## In plain words` (after any blank lines and
   HTML comments), the file unchanged, with a note, so running it twice adds nothing;
+- for an empty one, the kit's; one that isn't UTF-8 is refused;
 - for a folder of templates (`.github/PULL_REQUEST_TEMPLATE/`), nothing to
   write. GitHub picks those through a query string, so the headings go in by hand.
 
@@ -28,6 +29,10 @@ BOM = b"\xef\xbb\xbf"
 _LEADING = re.compile(rb"(?:\s+|<!--.*?-->)*", re.S)
 
 
+class TemplateError(ValueError):
+    pass
+
+
 @dataclass
 class Result:
     text: bytes | None  # the file to write; None for a folder: the headings go in by hand
@@ -42,17 +47,23 @@ def _starts_with_headings(text: bytes) -> bool:
 
 def build(kit_root: Path, existing: Path | None = None) -> Result:
     """The file to write, from the kit's template and the project's, if any.
-    Raises OSError when either can't be read."""
+    Raises OSError when either can't be read, TemplateError when the project's isn't UTF-8."""
     kit = (kit_root / TEMPLATE).read_bytes().replace(b"\r\n", b"\n")
     if existing is None:
         return Result(kit, "")
     if existing.is_dir():
         return Result(
             None,
-            f"{existing} holds several templates, which GitHub picks through a query string: "
-            f"left alone. Add the headings to the top of each by hand, from {TEMPLATE}.",
+            f"{existing} is a folder, not one template: left alone. GitHub picks a folder's templates "
+            f"through a query string, so add the headings to the top of each by hand, from {TEMPLATE}.",
         )
     mine = existing.read_bytes()
+    try:
+        mine.decode("utf-8")
+    except UnicodeDecodeError:
+        raise TemplateError(f"{existing} isn't UTF-8 text, as GitHub reads a template: add the headings to it by hand, from {TEMPLATE}")
+    if not mine.removeprefix(BOM).strip():
+        return Result(kit, f"{existing} is empty: the kit's template.")
     if _starts_with_headings(mine):
         return Result(mine, f"{existing} already starts with {TOP}: printed unchanged, nothing to add.")
     bom = BOM if mine.startswith(BOM) else b""

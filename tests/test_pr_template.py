@@ -153,10 +153,28 @@ def test_a_heading_further_down_isnt_the_top(tmp_path):
 
 def test_an_empty_file_gets_the_template(tmp_path):
     f = tmp_path / "pull_request_template.md"
-    f.write_bytes(b"")
+    for empty in (b"", b"  \n\n", b"\xef\xbb\xbf\n"):
+        f.write_bytes(empty)
+        p = _run("--existing", str(f))
+        assert p.returncode == 0
+        assert p.stdout == TEMPLATE.read_bytes()
+        assert "is empty" in p.stderr.decode()
+
+
+def test_an_empty_existing_value_is_refused():
+    for args in (("--existing", ""), ("--existing=",)):
+        p = _run(*args)
+        assert p.returncode == 1 and p.stdout == b""
+        assert "--existing is empty" in p.stderr.decode()
+
+
+def test_a_file_that_isnt_utf8_is_refused(tmp_path):
+    f = tmp_path / "pull_request_template.md"
+    f.write_bytes("## In plain words\n".encode("utf-16"))
     p = _run("--existing", str(f))
-    assert p.returncode == 0
-    assert p.stdout == TEMPLATE.read_bytes() + b"\n"
+    assert p.returncode == 1 and p.stdout == b""
+    err = p.stderr.decode()
+    assert "isn't UTF-8" in err and "by hand" in err and "Traceback" not in err
 
 
 def test_a_folder_of_templates_is_left_alone(tmp_path):
@@ -167,7 +185,7 @@ def test_a_folder_of_templates_is_left_alone(tmp_path):
     assert p.returncode == 3
     assert p.stdout == b""
     err = p.stderr.decode()
-    assert "by hand" in err and "query" in err
+    assert "by hand" in err and "query" in err and "is a folder" in err
     assert (d / "feature.md").read_text(encoding="utf-8") == "## Feature\n"
 
 

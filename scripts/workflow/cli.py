@@ -545,10 +545,16 @@ def cmd_briefing(a) -> int:
 def cmd_pr_template(a) -> int:
     """`pr-template`: the pull request template to write, on stdout, and a note on
     stderr. Changes nothing. Exits 3 for a folder of templates (nothing to write)."""
+    if a.existing == "":
+        print("workflow pr-template: --existing is empty: give the project's template, or leave the flag out", file=sys.stderr)
+        return 1
     try:
-        r = pr_template_mod.build(KIT_ROOT, Path(a.existing) if a.existing else None)
+        r = pr_template_mod.build(KIT_ROOT, Path(a.existing) if a.existing is not None else None)
     except OSError as e:
         print(f"workflow pr-template: can't read {e.filename}: {e.strerror or e}", file=sys.stderr)
+        return 1
+    except pr_template_mod.TemplateError as e:
+        print(f"workflow pr-template: {e}", file=sys.stderr)
         return 1
     if r.note:
         print(r.note, file=sys.stderr)
