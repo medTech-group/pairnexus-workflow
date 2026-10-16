@@ -413,7 +413,11 @@ def test_the_ruleset_is_the_kits_own_else_the_one_protecting_the_base_branch():
     assert "`restore_protection` when the profile says `ruleset = true`, `protect_main` when `solo_mode` is `null`" in which
     # Only what the read-back counts: a pattern target never reads back.
     assert "exactly as `workflow protection` reads a target" in which
+    assert "its `target` is `branch` (a tag or push ruleset never counts)" in which
     assert "no `exclude` entry matches it" in which and "one not starting with `refs/`" in which
+    # The patterns the read-back can't match, as protection.UNREAD_GLOB lists them.
+    for glob in protection.UNREAD_GLOB:
+        assert f"`{glob}`" in which, glob
     assert "isn't counted by the read-back, so checks added to it would never read back: leave it out" in which
     assert "https://github.com/organizations/<org>/settings/rules/<id>" in which
     # An organisation's ruleset is never the kit's to change.

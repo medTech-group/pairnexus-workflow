@@ -310,9 +310,10 @@ When `solo_mode` is `true` (`ruleset = false`), nothing is changed and no rulese
    - `protected` is `false`, or the rulesets can't be read: no checks are added to an unprotected branch. Say what is missing in plain words and offer "Protect `main`" first, then stop: `restore_protection` when the profile says `ruleset = true`, `protect_main` when `solo_mode` is `null` (its pull request sets `ruleset = true`). Its confirmation offers the checks that ran too.
    - `protected` is `true`: go on.
 3. **The ruleset to change:** among the fetched rulesets, the ones protecting the base branch are those the read-back counted, exactly as `workflow protection` reads a target:
+   - its `target` is `branch` (a tag or push ruleset never counts);
    - its enforcement is active;
    - `conditions.ref_name.include` names `~ALL`, `refs/heads/<base>`, or `~DEFAULT_BRANCH` when the base branch is the default;
-   - no `exclude` entry matches it: an entry naming it or a pattern matching it, one using `**`, `{` or `[!`, and one not starting with `refs/` all count as excluding it.
+   - no `exclude` entry matches it: an entry naming it (as the include names above do) or a pattern matching it, one holding `**`, `[^`, `[!`, `\`, `{` or `}`, and one not starting with `refs/` all count as excluding it.
 
    A ruleset whose include is any other pattern (`refs/heads/ma*`) isn't counted by the read-back, so checks added to it would never read back: leave it out.
    - The kit's own, named "Protect <base> (pairnexus-workflow)", when one of those is it.
@@ -367,7 +368,7 @@ A non-admin gets "Protect `main`" step 1's ready message for the owner, in a cod
 ## Read the checks back
 
 Either way, the update with `gh` or the clicks: fetch the rulesets again, each in full, and the repository, as step 4 does, then run `WF protection --rulesets .workflow/rulesets.json --repo .workflow/repo.json --json`, with the same exit-code rules.
-- Every ticked name is in `checks.required`, and the ruleset it was added to has `strict_required_status_checks_policy` `true` in its `required_status_checks` rule's parameters: say so in one line (new to building), or show the report (developer).
+- Every ticked name is in `checks.required`, and a ruleset protecting the base branch that requires them (the one they were added to) has `strict_required_status_checks_policy` `true` in its `required_status_checks` rule's parameters: say so in one line (new to building), or show the report (developer).
 - Anything missing (a name, "up to date", or the base branch no longer protected): show each in plain words, and offer the click again, as a choice with **Not now**. Then read it back again.
 
 ## The profile's pull request
