@@ -752,3 +752,16 @@ def test_round_3_refused(cmd, solo):
 @pytest.mark.parametrize("cmd", ['gh repo edit -d "$DESC"', 'curl -X POST "$API_URL/graphql" -d \'{"query":"{ me { id } }"}\''])
 def test_round_3_not_refused(cmd, solo):
     assert act(solo, bash(cmd, solo.root)).action != "deny", cmd
+
+
+def test_late_pass_piped_echo_with_backslashes_is_read(solo):
+    cmd = "echo '{\"query\":\"query { repository(owner:\\\"acme\\\", name:\\\"demo\\\") { id } }\"}' | gh api graphql --input -"
+    assert act(solo, bash(cmd, solo.root)).action != "deny"
+    cmd = "echo '{\"description\":\"a\\nb\"}' | gh api -X PATCH repos/acme/demo --input -"
+    assert act(solo, bash(cmd, solo.root)).action != "deny"
+
+
+@pytest.mark.parametrize("write", ["cat > ./q.graphql <<'EOF'\nmutation { deleteRef(input:{refId:\"X\"}){clientMutationId} }\nEOF", "cp m.graphql q.graphql", "mv m.graphql ./q.graphql"])
+def test_late_pass_query_file_written_by_the_command(write, solo):
+    (solo.root / "q.graphql").write_text("query { viewer { login } }\n")
+    assert act(solo, bash(write + "\ngh api graphql -f query=\"$(cat q.graphql)\"", solo.root)).action == "deny"

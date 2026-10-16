@@ -4403,7 +4403,8 @@ def _gql_queries(queries: list[str | None], cwd: str | None, raw: str = "") -> l
     for q in queries:
         m = re.fullmatch(r"\s*\$\(\s*cat\s+([^\s$`;&|<>()]+)\s*\)\s*", q or "")
         f = m.group(1).strip("'\"") if m else ""
-        written = bool(f) and re.search(rf"(?:>|\btee\s+(?:-a\s+)?)\s*['\"]?{re.escape(f)}\b", raw)
+        name = re.escape(f.removeprefix("./"))
+        written = bool(f) and re.search(rf"(?:>|\btee\s+(?:-a\s+)?|\b(?:cp|mv|install)\s+.*?)\s*['\"]?(?:\./)?{name}(?![\w.-])|\bsed\s+-i\S*\s.*?(?:\./)?{name}(?![\w.-])", raw)
         out.append(None if written else _read_text(f, cwd) if m else q)
     return out
 
@@ -4724,8 +4725,9 @@ def _echoed(seg: Seg) -> str | None:
     """The text a plain `echo` or one-argument `printf` pipes into the command,
     when the shell fills nothing in."""
     w = seg.piped.words if seg.piped is not None else []
-    if seg.stdins or seg.stdin_unseen or seg.stdin or any("\\" in x for x in w[1:]):
-        return None  # the command's own stdin, or escapes `echo -e` would turn into other text
+    escapes = any(re.fullmatch(r"-[neE]*e[neE]*", x) for x in w[1:3])  # `echo -e` turns `\x5f` into other text
+    if seg.stdins or seg.stdin_unseen or seg.stdin or escapes and any("\\" in x for x in w[1:]):
+        return None  # the command's own stdin, or escapes the kit doesn't decode
     if not w or Path(w[0]).name not in ("echo", "printf") or any(_EXPANDS.search(x) for x in w[1:]):
         return None
     args = [x for x in w[1:] if not (Path(w[0]).name == "echo" and re.fullmatch(r"-[neE]+", x))]
