@@ -168,6 +168,9 @@ def _vendored(tmp_path):
     cli = tmp_path / vendor.HOOK_TAG
     cli.parent.mkdir(parents=True)
     cli.write_text("raise SystemExit('should not run')\n")
+    # The shell fallback ships beside it (#56); without it every tool is asked.
+    (cli.with_suffix("")).mkdir()
+    shutil.copy(KIT / "scripts/workflow/fallback.sh", cli.with_suffix("") / "fallback.sh")
     return tmp_path
 
 

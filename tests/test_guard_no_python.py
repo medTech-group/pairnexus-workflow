@@ -248,7 +248,7 @@ def _shell_decision(event_text, project):
 
 @pytest.mark.parametrize("command", PARITY)
 def test_the_shell_reads_a_command_as_fallback_py_does(tmp_path, command):
-    for mode in (None, "default", "dontAsk", "x"):
+    for mode in (None, "", "default", "dontAsk", "x", "a\"b"):
         event = _bash(command, mode)
         want = fallback.decide(event, False, "why")
         assert _shell_decision(json.dumps(event), tmp_path) == (want[0] if want else None), (command, mode)
@@ -286,6 +286,43 @@ def test_the_shell_reads_the_solo_line_as_fallback_py_does(tmp_path):
         profile.write_bytes(text.encode("utf-8"))
         want = fallback.decide(_bash(PUSH), fallback.solo(tmp_path), "why")[0]
         assert _shell_decision(json.dumps(_bash(PUSH)), tmp_path) == want, repr(text)
+
+
+def test_the_shell_reads_the_bom_in_a_utf8_locale(tmp_path):
+    profile = tmp_path / ".claude/workflow/profile.toml"
+    profile.parent.mkdir(parents=True)
+    profile.write_text("\ufeffruleset = false\n", encoding="utf-8")
+    p = subprocess.run(["sh", str(KIT / "scripts/workflow/fallback.sh")], input=json.dumps(_bash(PUSH)), capture_output=True,
+                       text=True, env={"PATH": os.environ["PATH"], "CLAUDE_PROJECT_DIR": str(tmp_path), "LC_ALL": "C.UTF-8"})
+    assert json.loads(p.stdout)["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_an_unknown_mode_is_named_when_plain(tmp_path):
+    reason = lambda mode: json.loads(subprocess.run(  # noqa: E731
+        ["sh", str(KIT / "scripts/workflow/fallback.sh")], input=json.dumps(_bash(PUSH, mode)), capture_output=True,
+        text=True, env={"PATH": os.environ["PATH"], "CLAUDE_PROJECT_DIR": str(tmp_path)}).stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "`someNewMode`" in reason("someNewMode")
+    assert "one the kit doesn't know" in reason("a b")
+
+
+def test_a_partial_kit_without_its_fallback_asks_about_every_tool(tmp_path):
+    for layout in LAYOUTS:
+        (tmp_path / layout).mkdir()
+        s = Setup(tmp_path / layout, layout, "failing")
+        cli = s.proj / vendor.HOOK_TAG if layout == "vendored" else tmp_path / layout / "plugin/scripts/workflow.py"
+        (cli.with_suffix("") / "fallback.sh").unlink()
+        for event in (_bash("ls"), _bash(PUSH)):
+            p = s.run("guard", event)
+            assert _decision(p) == "ask" and "broken" in p.stdout, (layout, event)
+
+
+def test_the_vendored_fallback_with_no_role_on_another_branch(tmp_path):
+    s = Setup(tmp_path, "vendored", "missing", solo=True)
+    git = ["git", "-C", str(s.proj), "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    subprocess.run(["git", "init", "-q", "-b", "main", str(s.proj)], check=True)
+    subprocess.run(git + ["commit", "-q", "--allow-empty", "-m", "x"], check=True)
+    assert _decision(s.run("guard", _bash(PUSH), WORKFLOW_ROLE="")) == "deny"
+    assert _decision(s.run("guard", _bash("ls"), WORKFLOW_ROLE="")) is None
 
 
 def test_the_shell_reads_a_truncated_or_spaced_event(tmp_path):

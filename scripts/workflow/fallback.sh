@@ -35,7 +35,7 @@ END {
     }
     if (what == "") exit 0
 
-    head = "The workflow'"'"'s guard isn'"'"'t working, so it couldn'"'"'t check this " what ": python3 couldn'"'"'t run the workflow kit (it is missing or failing). To fix it: check that `python3 --version` runs and says 3.11 or newer, then start a new session."
+    head = "The workflow'"'"'s guard isn'"'"'t working, so it couldn'"'"'t check this " what ": python3 couldn'"'"'t run the workflow kit (it is missing or failing). To fix it: check that `python3 --version` runs and says 3.11 or newer, then start a new session; if it is, the kit itself failed: report the error to the kit'"'"'s maintainers."
     if (tool == "Bash") by_hand = "Or run it yourself in your own terminal (the command isn'"'"'t repeated here, since nothing could check it)."
     else by_hand = "Or do it yourself on GitHub."
     mode = permission_mode()
@@ -44,7 +44,9 @@ END {
     } else if (mode == "bypassPermissions" || mode == "dontAsk") {
         out("deny", head "\\nThe kit would have asked you about this, but nobody is asked in the `" mode "` permission mode, so it was refused.\\nTo be asked, switch the permission mode (Shift+Tab, or the mode selector).\\n" by_hand)
     } else if (mode != "" && mode != "default" && mode != "acceptEdits" && mode != "auto" && mode != "plan") {
-        out("deny", head "\\nThe kit would have asked you about this, but the permission mode is one the kit doesn'"'"'t know, so it counts as one where nobody is asked and this was refused. Tell the kit'"'"'s maintainers about this mode.\\nTo be asked, switch the permission mode (Shift+Tab, or the mode selector).\\n" by_hand)
+        # A plain name is shown; anything else would need escaping for JSON.
+        shown = (mode ~ /^[A-Za-z0-9_-]+$/ && length(mode) <= 80) ? "`" mode "`" : "one the kit doesn'"'"'t know"
+        out("deny", head "\\nThe kit would have asked you about this, but the permission mode is " shown ", which the kit doesn'"'"'t know, so it counts as one where nobody is asked and this was refused. Tell the kit'"'"'s maintainers about this mode.\\nTo be asked, switch the permission mode (Shift+Tab, or the mode selector).\\n" by_hand)
     } else {
         out("ask", head " Allow it only if you mean to.")
     }
@@ -61,12 +63,13 @@ function plain(name,    s) {
 # The permission mode: "" when absent or null (a mode that asks), the value
 # when a plain string, and "?" (a mode the kit doesn'"'"'t know) for anything else.
 function permission_mode(    m, rest) {
+    # An empty value is one the kit doesn'"'"'t know, as in modes.never_asks.
     if (!match(ev, "\"permission_mode\"[ \t\r\n]*:[ \t\r\n]*")) return ""
     rest = substr(ev, RSTART + RLENGTH)
     if (substr(rest, 1, 4) == "null") return ""
     if (substr(rest, 1, 1) != "\"") return "?"
     m = plain("permission_mode")
-    return (substr(rest, length(m) + 2, 1) == "\"") ? m : "?"
+    return (m != "" && substr(rest, length(m) + 2, 1) == "\"") ? m : "?"
 }
 
 # The Bash command: the first "command" string value, decoded far enough to
@@ -103,12 +106,13 @@ function in_order(part, seq,    words, want, n, k, i, j) {
 }
 
 # Solo mode: the profile'"'"'s first plain `ruleset = <word>` line says false.
-function solo(    f, line, first, word) {
+function solo(    f, line, first, word, bom) {
     f = ENVIRON["PROFILE_TOML"]
+    bom = "\357\273\277"  # by index, so an awk that counts characters strips it too
     RS = "\n"  # the profile line by line (the event was read whole)
     first = 1
     while ((getline line < f) > 0) {
-        if (first) { while (substr(line, 1, 3) == "\357\273\277") line = substr(line, 4); first = 0 }
+        if (first) { while (index(line, bom) == 1) line = substr(line, length(bom) + 1); first = 0 }
         if (line ~ /^[ \t]*ruleset[ \t]*=[ \t]*[A-Za-z0-9_]/) {
             sub(/^[ \t]*ruleset[ \t]*=[ \t]*/, "", line)
             match(line, /^[A-Za-z0-9_]+/)

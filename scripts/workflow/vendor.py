@@ -122,10 +122,15 @@ _BRANCH = (
 PLUGIN_CLI = "${CLAUDE_PLUGIN_ROOT}/scripts/workflow.py"
 # The plugin has no profile check to point to: it says only what python3 needs.
 PLUGIN_NO_PYTHON_REASON = (
-    "python3 could not run the workflow kit (it is missing or failing), so nothing can be checked and a push "
+    "python3 could not run the workflow kit (it is missing or failing, or the kit failed), so nothing can be checked and a push "
     "or a merge is asked first; check python3 --version (3.11 or newer is needed), then start a new session"
 )
-assert "'" not in PLUGIN_NO_PYTHON_REASON
+BROKEN_KIT_REASON = (
+    "The workflow kit is broken (python3 could not run it, and its fallback.sh is missing), so the guard cannot check "
+    "anything and asks about every tool. Restore the kit (a vendored project: git checkout -- .claude/workflow; the "
+    "plugin: reinstall it) and check python3 --version (3.11 or newer), then start a new session."
+)
+assert "'" not in PLUGIN_NO_PYTHON_REASON + BROKEN_KIT_REASON
 
 
 def hook_command(sub: str, plugin: bool = False) -> str:
@@ -181,7 +186,15 @@ def hook_command(sub: str, plugin: bool = False) -> str:
         'if [ -f "$F" ] && command -v python3 >/dev/null 2>&1; then '
         """O=$(printf '%s\\n' "$E" | python3 -B "$F" hook guard) && { [ -z "$O" ] || printf '%s\\n' "$O"; exit 0; }; fi; """
     )
-    fallback = """if [ -f "$F" ]; then printf '%s\\n' "$E" | sh "${F%.py}/fallback.sh"; fi; exit 0"""
+    # With fallback.sh missing too (a partial copy of the kit), every tool is asked.
+    broken = json.dumps(
+        {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask", "permissionDecisionReason": BROKEN_KIT_REASON}},
+        separators=(",", ":"),
+    )
+    fallback = (
+        """if [ -f "${F%.py}/fallback.sh" ]; then printf '%s\\n' "$E" | sh "${F%.py}/fallback.sh"; """
+        f"""elif [ -f "$F" ]; then printf '%s\\n' '{broken}'; fi; exit 0"""
+    )
     if plugin:
         return run + fallback
 
