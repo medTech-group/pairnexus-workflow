@@ -147,7 +147,7 @@ def test_it_lists_the_rulesets_settings_checks_and_merge_settings_with_their_pag
     # A link to each exact settings page.
     assert "https://github.com/<repo>/settings/rules/new?target=branch" in clicks
     assert "`https://github.com/<repo>/settings`" in clicks
-    # Adding checks later is the second path, named in words: the skill ships
+    # Adding checks later is the third path, named in words: the skill ships
     # into projects, where a kit issue number means their issue.
     assert '"Require these checks"' in clicks
     assert not re.search(r"#\d", _text())
@@ -399,6 +399,7 @@ def test_it_waits_in_solo_mode_naming_the_pull_request_that_leaves_it():
     assert "`solo_mode` is `true`" in wait
     assert "the checks are added once the pull request that leaves solo mode has merged" in wait
     assert "point at it" in wait
+    assert "if it has merged already, the local base branch is behind, so say to pull it and ask again" in wait
     assert "and stop" in wait
     assert part.index("## Solo mode waits") < part.index("## Which ruleset")
 
@@ -408,11 +409,11 @@ def test_the_ruleset_is_the_kits_own_else_the_one_protecting_the_base_branch():
     assert '"Protect <base> (pairnexus-workflow)"' in which
     assert "the one ruleset" in which and "protecting the base branch" in which
     assert "several" in which and "none is the kit's" in which and "the clicks naming them" in which
-    # Not protected: this path adds nothing; Protect `main` comes first.
     # Not protected: the offer that fits the profile.
     assert "`restore_protection` when the profile says `ruleset = true`, `protect_main` when `solo_mode` is `null`" in which
     # Only what the read-back counts: a pattern target never reads back.
     assert "exactly as `workflow protection` reads a target" in which
+    assert "no `exclude` entry matches it" in which and "one not starting with `refs/`" in which
     assert "isn't counted by the read-back, so checks added to it would never read back: leave it out" in which
     assert "https://github.com/organizations/<org>/settings/rules/<id>" in which
     # An organisation's ruleset is never the kit's to change.
@@ -422,6 +423,11 @@ def test_the_ruleset_is_the_kits_own_else_the_one_protecting_the_base_branch():
 def test_the_screen_shows_results_ticks_passing_and_says_why_not_the_others():
     screen = _section("The checks screen")
     assert "WF protection --checks-ran" in screen
+    # Reads work in a cloud session too; with no tool for them, it says so.
+    assert "they use `gh api` wherever it is signed in, a cloud session too" in screen
+    assert "say the checks that ran can't be read from here" in screen
+    part = _part("Require these checks")
+    assert part.index("## Which way, for the checks") < part.index("## The checks screen")
     assert "with its result" in screen
     assert "Passing ones are ticked by default" in screen
     assert "failing" in screen and "pending" in screen and "not ticked" in screen
@@ -494,6 +500,7 @@ def test_the_profile_pull_request_with_its_marker_and_none_when_already_listed()
     # An open one lacking names gets them, or says which are left.
     assert "if it lists every required name, point at it" in pr
     assert "add them to that branch in a new commit" in pr and "say which names it still lacks" in pr
+    assert "open none beside it" in pr
     assert "merging it is the owner's" in pr
     assert "WF profile check" in pr
 

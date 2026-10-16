@@ -299,7 +299,7 @@ The level changes only the words, as in "The screens": read `WF status --json` f
 
 ## Solo mode waits
 
-When `solo_mode` is `true` (`ruleset = false`), nothing is read or sent. Say the checks are added once the pull request that leaves solo mode has merged: point at it if one is open (from `workflow/protect-main`, or any open pull request changing `ruleset` in the profile), otherwise say "Protect `main`" opens it, and that its confirmation already offers the checks that ran, so a project with CI is protected and its checks required in one go, and stop.
+When `solo_mode` is `true` (`ruleset = false`), nothing is changed and no ruleset is read. Say the checks are added once the pull request that leaves solo mode has merged: point at it if one is open (from `workflow/protect-main`, or any open pull request changing `ruleset` in the profile); if it has merged already, the local base branch is behind, so say to pull it and ask again; otherwise say "Protect `main`" opens it, and that its confirmation already offers the checks that ran, so a project with CI is protected and its checks required in one go, and stop.
 
 `false`, or `null` (set up before solo mode existed): go on.
 
@@ -309,15 +309,24 @@ When `solo_mode` is `true` (`ruleset = false`), nothing is read or sent. Say the
 2. **The rulesets, read back:** fetch each in full and run `WF protection` on them, as "Read it back" (step 4) does.
    - `protected` is `false`, or the rulesets can't be read: no checks are added to an unprotected branch. Say what is missing in plain words and offer "Protect `main`" first, then stop: `restore_protection` when the profile says `ruleset = true`, `protect_main` when `solo_mode` is `null` (its pull request sets `ruleset = true`). Its confirmation offers the checks that ran too.
    - `protected` is `true`: go on.
-3. **The ruleset to change:** among the fetched rulesets, the ones protecting the base branch are those the read-back counted: active, and targeting it exactly as `workflow protection` reads a target: `conditions.ref_name.include` names `~ALL`, `refs/heads/<base>`, or `~DEFAULT_BRANCH` when the base branch is the default, and `exclude` doesn't name it. A ruleset whose include is any other pattern (`refs/heads/ma*`) isn't counted by the read-back, so checks added to it would never read back: leave it out.
+3. **The ruleset to change:** among the fetched rulesets, the ones protecting the base branch are those the read-back counted, exactly as `workflow protection` reads a target:
+   - its enforcement is active;
+   - `conditions.ref_name.include` names `~ALL`, `refs/heads/<base>`, or `~DEFAULT_BRANCH` when the base branch is the default;
+   - no `exclude` entry matches it: an entry naming it or a pattern matching it, one using `**`, `{` or `[!`, and one not starting with `refs/` all count as excluding it.
+
+   A ruleset whose include is any other pattern (`refs/heads/ma*`) isn't counted by the read-back, so checks added to it would never read back: leave it out.
    - The kit's own, named "Protect <base> (pairnexus-workflow)", when one of those is it.
    - Else the one ruleset protecting the base branch, when there is exactly one.
    - When there are several and none is the kit's: the clicks naming them, each with its page, for the person to pick the one to add the checks to. The kit doesn't guess.
    - An organisation's ruleset (`source_type` `Organization`) is the organisation owner's: `WF protection --require-checks` refuses it. Say whose it is, and give the clicks with its page in the organisation's settings (`https://github.com/organizations/<org>/settings/rules/<id>`), for the organisation owner.
 
+## Which way, for the checks
+
+The same four conditions as "Which way", read the same way. All four, and a repository's own ruleset chosen in "Which ruleset": the update with `gh`. A cloud session, a conductor session, `gh` missing or signed out, or an admin claimed with "I'm an admin: go on": the clicks. Not an admin: the message for the owner.
+
 ## The checks screen
 
-Fetch the base branch's latest commit's check runs and statuses, every page, with the commands of the automatic path's step 1, then `WF protection --checks-ran .workflow/check-runs.json --statuses .workflow/status.json --rulesets .workflow/rulesets.json --repo .workflow/repo.json --base <base> --json`. Its `checks` are the ones to offer, each with its result; those already required (its `required`) and the Cloudflare check are left out by the command. Exit 2 or any other failure: fetch again once; if it still fails, say so and why, and stop. When `checks` is empty, say so ("every check that ran on `main` is already required", or "CI hasn't run on `main` yet") and stop.
+Fetch the base branch's latest commit's check runs and statuses, every page, with the commands of the automatic path's step 1. These are reads: they use `gh api` wherever it is signed in, a cloud session too (only the update is kept to the person's own computer); without it, a tool that returns GitHub's JSON as it is, `app.slug` and `total_count` included, into the same files. When no tool here gives them, say the checks that ran can't be read from here, and to ask again where `gh` is signed in, and stop. Then `WF protection --checks-ran .workflow/check-runs.json --statuses .workflow/status.json --rulesets .workflow/rulesets.json --repo .workflow/repo.json --base <base> --json`. Its `checks` are the ones to offer, each with its result; those already required (its `required`) and the Cloudflare check are left out by the command. Exit 2 or any other failure: fetch again once; if it still fails, say so and why, and stop. When `checks` is empty, say so ("every check that ran on `main` is already required", or "CI hasn't run on `main` yet") and stop.
 
 Show each check with its result:
 - **Passing ones are ticked by default.**
@@ -330,10 +339,6 @@ By experience, the words only:
 The choices, with `AskUserQuestion` as the automatic path's checks question has them: **Require the ticked ones** (recommended, naming each with its result), **Choose which** (multiSelect questions, two to four checks each, in a follow-up call; past sixteen, a numbered list), and **Not now**. With a single check: **Require it** (recommended only when it is passing) and **Not now**; a failing or pending one gets **Not now** first. With none ticked by default, no **Require the ticked ones**. On the update with `gh`, the same screen says Claude Code's prompt is expected (below).
 
 **Not now** leaves everything as it is: nothing is sent, and `workflow doctor` still says what's left.
-
-## Which way, for the checks
-
-The same four conditions as "Which way", read the same way. All four, and a repository's own ruleset chosen in "Which ruleset": the update with `gh`. A cloud session, a conductor session, `gh` missing or signed out, or an admin claimed with "I'm an admin: go on": the clicks. Not an admin: the message for the owner.
 
 ## The update with `gh`
 
@@ -369,7 +374,7 @@ Either way, the update with `gh` or the clicks: fetch the rulesets again, each i
 
 Once the read-back has the names required. The names are the read-back's whole `checks.required`, not only the ones ticked now, so a check required by hand before this run reaches the profile too and the two agree.
 
-First look for one already open (carrying `<!-- workflow:required-checks -->`, or from `workflow/required-checks`): if it lists every required name, point at it rather than opening another. If it lacks some and is the kit's `workflow/required-checks` branch, add them to that branch in a new commit, as step 2 below, and say which; any other open one, say which names it still lacks.
+First look for one already open (carrying `<!-- workflow:required-checks -->`, or from `workflow/required-checks`): if it lists every required name, point at it rather than opening another. If it lacks some and is the kit's `workflow/required-checks` branch, add them to that branch in a new commit, as step 2 below, and say which. Any other open one (the pull request that leaves solo mode carries the marker too): say which names it still lacks, and open none beside it, since two pull requests changing `ci.required_checks` would conflict; once it merges, asking again adds the rest.
 
 When the profile's `ci.required_checks` already lists every one of them, no pull request is opened, and say so ("the profile already lists them", as a starter project's does from the start). Otherwise:
 
