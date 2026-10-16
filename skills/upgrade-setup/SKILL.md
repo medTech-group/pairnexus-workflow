@@ -75,7 +75,7 @@ Before guiding any click, fetch the rulesets and read them back with `WF protect
   - An organisation's ruleset (`source_type` `Organization`) is the organisation owner's, even for a repository admin: say which one and what in it (its bypass list, or that its bypass list can't be read from here), and that the organisation owner changes it or reads it back. Don't send the message of step 1 for it: running this skill again as a repository admin gives the same answer.
   - A repository's own ruleset whose bypass list "can't be read":
     - when step 1 couldn't tell and the person chose "I'm an admin: go on", they aren't its admin after all: go back to step 1's not-an-admin path and hand over the message for the owner;
-    - when step 1 read `permissions.admin` as `true`, the GitHub access this session uses can't see bypass lists (a token without admin rights): say so, and that the read-back needs access with admin rights, such as `gh` signed in as the person. Don't hand over the message for the owner: the owner is the person.
+    - when step 1 read `permissions.admin` as `true`, the GitHub access this session uses can't see bypass lists (a token without admin rights): say so, and that the read-back needs access with admin rights, such as `gh` signed in as the person. Don't hand over the message for the owner: the owner is the person. Nothing in the ruleset needs a click, so stop here, and read it back again once the session has that access.
 - **No rulesets:** go on to step 3.
 - **Can't read the rulesets** (no access from here): say so. Guide the clicks anyway, but without a read-back there is no pull request that leaves solo mode: an unknown counts as unprotected.
 
@@ -145,4 +145,5 @@ Say where it stands in one line, adding the checks line from "The screens" when 
 - "`main` is protected again." (`restore_protection`);
 - "`main` isn't protected yet: <what's missing>." with the choice to try that screen again;
 - "`main` isn't protected yet: <ruleset> is <the organisation owner's, or its admin's> to change." with no retry, when the blocker is a ruleset this run didn't make;
+- "`main` isn't protected yet: this session can't read <ruleset>'s bypass list. Read it back with `gh` signed in as you." with no retry, when the access here lacks admin rights;
 - or, not an admin, "The message for the owner is above."
