@@ -10,6 +10,13 @@
 - Docs: `docs/enforcement.md`'s solo-mode section. Tests: `tests/test_guard_solo_github.py`.
 - **For projects updating:** nothing to do. With `ruleset = true` or no setting, and in ticket and conductor sessions, nothing changes.
 
+**Explanations stop, restart, and run during set-up** (#75, part of the quickstart and the glossary, #35).
+
+- **The guided start (`start`):** *developer* (the first question's answer) or "explain less" stops explaining the glossary's words for the rest of the session. "Explain more" reads the glossary again (`.claude/workflow/docs/glossary.md` vendored, the plugin's `docs/glossary.md` otherwise) and explains each word from then on.
+- **Set-up (`setup-workflow`):** after a *new to building* answer (or a skipped question), it follows the same rule from `docs/glossary.md` in its clone of the kit. A *developer* answer gets none.
+- **The same rule everywhere:** both skills word it as the context hook (#74) does: each word in the glossary's wording, the first time it's used in the session, never again, and never in what is written on GitHub (the set-up pull request's body included). `tests/test_explanations_75.py` pins the key phrases in all three.
+- **For projects updating:** nothing to do.
+
 **The context hook explains the glossary's words to someone new to building** (#74, part of the quickstart and the glossary, #35).
 
 - **At the first prompt of an attended session** whose experience is `new` or unknown (from `WORKFLOW_EXPERIENCE`, `.workflow/experience` or `project.experience`, through `resolve_experience`), `workflow hook context` adds the glossary and the rule: explain each of its words in the glossary's wording, in one or two sentences, the first time it's used in the session, never again, and never in what is written on GitHub.
