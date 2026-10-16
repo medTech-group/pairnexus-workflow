@@ -128,16 +128,17 @@ def test_attended_push_and_merge_are_asked_or_refused(tmp_path, layout, kind):
         for mode in NEVER_ASKING:
             assert _decision(s.run("guard", _bash(command, mode))) == "deny", (command, mode)
     for tool in MCP_TOOLS:
-        assert _decision(s.run("guard", _mcp(tool))) == "ask", tool
-        assert _decision(s.run("guard", _mcp(tool, "default"))) == "ask", tool
-        assert _decision(s.run("guard", _mcp(tool, "dontAsk"))) == "deny", tool
+        for mode in ASKING:
+            assert _decision(s.run("guard", _mcp(tool, mode))) == "ask", (tool, mode)
+        for mode in NEVER_ASKING:
+            assert _decision(s.run("guard", _mcp(tool, mode))) == "deny", (tool, mode)
 
 
 @pytest.mark.parametrize("layout", LAYOUTS)
 @pytest.mark.parametrize("kind", KINDS)
 def test_attended_solo_mode_refuses_a_push_or_a_merge(tmp_path, layout, kind):
     s = Setup(tmp_path, layout, kind, solo=True)
-    for event in (_bash(PUSH), _bash(MERGE, "default"), _mcp("mcp__github__merge_pull_request", "acceptEdits")):
+    for event in (_bash(PUSH), _bash(MERGE, "default")) + tuple(_mcp(tool, "acceptEdits") for tool in MCP_TOOLS):
         p = s.run("guard", event)
         assert _decision(p) == "deny", event
         assert "ruleset = false" in json.loads(p.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
