@@ -12,6 +12,16 @@
 - Docs: `docs/profile.md` and the template describe both settings. Tests: `tests/test_solo_mode_profile.py`.
 - **For projects updating:** nothing to do. Without the two settings, the kit behaves as before.
 
+**Solo mode: the guard refuses git pushes that touch the base branch** (#45, part of solo mode, #32).
+
+- **In solo mode** (`ruleset = false`), an attended session's push to the base branch is refused, never asked: a push to it (a bare push whose upstream it is, or a push from it, included), a force-push or deletion of it, `--mirror`, `--all`, `--prune` and the settings that make every push a mirror.
+- **A push whose destination the guard can't tell** (a variable, `@` with no known branch, a glob, a brace list, a detached HEAD, another directory) counts as the base branch in solo mode, and the refusal says to push the branch by name.
+- **Force-pushing or deleting a named feature branch is still asked:** the force and delete options are read with their destinations in solo mode.
+- **The refusal's reason** says why in plain words, explains what `main` is to someone new to building (or of unknown experience), gives the command to run in their own terminal, and tells Claude to offer "Protect `main`" with "Not now". It is built by `guard.solo_refusal`, for the other solo-mode refusals to reuse.
+- **Unchanged:** ticket and conductor sessions, and projects with `ruleset = true` or no setting.
+- Docs: `docs/enforcement.md` §4. Tests: `tests/test_guard_solo.py`.
+- **For projects updating:** nothing to do. Solo mode only applies once the profile says `ruleset = false`.
+
 **A guard test no longer fails when `WORKFLOW_ROLE` is set** (#132). `test_hook_takes_the_project_roots_branch_when_the_cwd_has_none` clears the variable for its in-process assertions too, not only for the hook it runs, so the local suite passes in ticket sessions and the conductor's. No assertion changed.
 
 ## 0.1.10

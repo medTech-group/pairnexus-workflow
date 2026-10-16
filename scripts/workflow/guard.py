@@ -46,7 +46,10 @@ branch, its name, the default branch (`gh repo edit --default-branch`, `gh api`
 with its body in a file too), its protection or rulesets through the API; a
 GraphQL mutation that does so is looked for in the whole command and the files
 it reads with `cat`. Ticket sessions and the conductor are denied; attended
-sessions are asked. Ticket sessions and the conductor also may not write the
+sessions are asked, except in solo mode (`project.ruleset = false`), where an
+attended session's git push that touches the base branch, or whose destination
+can't be told, is refused with `solo_refusal`'s reason; a force-push or deletion
+of a named feature branch is still asked. Ticket sessions and the conductor also may not write the
 global git config (~/.gitconfig, ~/.config/git/, $XDG_CONFIG_HOME/git/, the
 file $GIT_CONFIG_GLOBAL names).
 
@@ -105,7 +108,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from .posts import AGENT_MARKER
-from .profile import Profile
+from .profile import Profile, resolve_experience
 
 SKIP_MARKERS = [
     r"pytest\.mark\.skip(?:if)?\b",
@@ -151,6 +154,60 @@ def _deny(role: str, reason: str) -> Decision:
     if role == "attended":
         return Decision("ask", reason.replace("is never allowed", "is outside the workflow's rules; allow it only if you mean to"))
     return Decision("deny", reason)
+
+
+# ---------- solo mode ----------
+
+
+@dataclass
+class Solo:
+    """A solo-mode refusal: an attended session's command that touches the base
+    branch (`unknown`: might, since the guard can't tell which branch it
+    updates). `what` says what the guard saw, in a few words."""
+
+    what: str
+    unknown: bool = False
+
+
+def _code(text: str) -> str:
+    """`text` as code, whatever backticks it holds: inline, or a fenced block
+    when it runs over more than one line (a heredoc)."""
+    text = text.strip()
+    longest = max((len(r) for r in re.findall(r"`+", text)), default=0)
+    if "\n" in text:
+        fence = "`" * max(3, longest + 1)
+        return f"\n{fence}\n{text}\n{fence}"
+    if not longest:
+        return f"`{text}`"
+    fence = "`" * (longest + 1)
+    return f"{fence} {text} {fence}"
+
+
+def solo_refusal(base: str, level: str, command: str, what: str = "", unknown: bool = False) -> str:
+    """The reason a solo-mode refusal gives, which Claude relays: why in plain
+    words, what `base` is (only for `level` "new"), the command to run by hand,
+    and the "Protect" offer. Wording follows `level`; what is refused never does."""
+    seen = f" ({what})" if what else ""
+    if unknown:
+        why = (
+            f"The kit can't tell which branch this would change{seen}, so it counts as `{base}`. "
+            f"Without GitHub's protection set up, the kit doesn't allow that: push the branch by name (`git push origin <branch>`)."
+        )
+    else:
+        why = f"This would change `{base}` directly{seen}. Without GitHub's protection set up, the kit doesn't allow that."
+    lines = [why]
+    if level == "new":
+        lines.append(f"`{base}` is the project's main branch: the version everyone builds on, which should change only through a pull request.")
+    lines.append(f"If you really mean it, run it yourself in your own terminal: {_code(command)}")
+    lines.append(
+        f'Offer "Protect `{base}`" as a choice, with "Not now": it sets up GitHub\'s protection, so `{base}` changes only through pull requests.'
+    )
+    return "\n".join(lines)
+
+
+def _solo_deny(s: Solo, profile: Profile, root: Path, command: str) -> Decision:
+    level = resolve_experience(root, profile.experience).wording_level
+    return Decision("deny", solo_refusal(profile.base_branch, level, command, s.what, s.unknown))
 
 
 # ---------- paths ----------
@@ -1116,9 +1173,16 @@ def _dst(ref: str) -> str:
     return m.group(1) if m else r
 
 
-def _push_problem(args: list[str], base: str, branch: str | None, role: str, ticket_pat: str, upstream=None) -> str | None:
+_PUSH_EVERY = {"all", "branches", "mirror", "prune"}
+
+
+def _push_problem(args: list[str], base: str, branch: str | None, role: str, ticket_pat: str, upstream=None, solo: bool = False) -> str | Solo | None:
     """`args` starts with push, send-pack or http-push. `upstream` is called for
-    a push without refspecs and returns the upstream's branch name or None."""
+    a push without refspecs and returns the upstream's branch name or None.
+
+    In solo mode (`solo`, attended only) what touches the base branch, or might,
+    comes back as a `Solo`; a force-push or deletion is read with its
+    destinations, so one of a named feature branch is still only asked."""
     kind = args[0]
     rest = args[1:]
     pos: list[str] = []
@@ -1126,6 +1190,7 @@ def _push_problem(args: list[str], base: str, branch: str | None, role: str, tic
     dry = False
     tags = False
     only_pos = False
+    forced: str | None = None  # solo mode: a force or delete option, judged by its destinations
     while i < len(rest):
         a = rest[i]
         if only_pos or not a.startswith("-") or a == "-":
@@ -1137,12 +1202,21 @@ def _push_problem(args: list[str], base: str, branch: str | None, role: str, tic
             if name is None:
                 bad = [c for c in cands if c in _PUSH_ALWAYS_DENY or c in ("tags", "follow-tags", "stdin")]
                 if bad:
+                    if solo:
+                        return Solo(f"`{a}` could mean `--{bad[0]}`; spell the option out")
                     return f"`git {kind} {a}` is ambiguous and could mean --{bad[0]}; spell the option out"
             elif name in _PUSH_ALWAYS_DENY:
-                return f"`git {kind} --{name}` is never allowed (force-push, delete, mirror or push-all)"
+                msg = f"`git {kind} --{name}` is never allowed (force-push, delete, mirror or push-all)"
+                if not solo:
+                    return msg
+                if name in _PUSH_EVERY:
+                    return Solo(f"`--{name}` pushes or deletes every branch, `{base}` among them")
+                forced = forced or msg
             elif name in ("tags", "follow-tags"):
                 tags = True
             elif name == "stdin":
+                if solo:
+                    return Solo("`--stdin` reads the branches where the guard can't see them", unknown=True)
                 return f"`git {kind} --stdin` reads its refs where the guard can't see them; name the branch"
             elif name == "dry-run":
                 dry = True
@@ -1154,9 +1228,15 @@ def _push_problem(args: list[str], base: str, branch: str | None, role: str, tic
             cluster = a[1:]
             for k, ch in enumerate(cluster):
                 if ch == "f":
-                    return f"`git {kind} -f` (force-push) is never allowed"
+                    msg = f"`git {kind} -f` (force-push) is never allowed"
+                    if not solo:
+                        return msg
+                    forced = forced or msg
                 if ch in "dD":
-                    return f"`git {kind} -{ch}` deletes a branch, which is never allowed"
+                    msg = f"`git {kind} -{ch}` deletes a branch, which is never allowed"
+                    if not solo:
+                        return msg
+                    forced = forced or msg
                 if ch == "n":
                     dry = True
                 if ch == "o":
@@ -1165,18 +1245,29 @@ def _push_problem(args: list[str], base: str, branch: str | None, role: str, tic
                     break
         i += 1
     if dry:
-        return None
+        return forced  # a dry run changes nothing (a forced one is still asked, as before)
     if role == "ticket" and tags:
         return "ticket sessions don't push tags (`--tags`, `--follow-tags`); push your branch by name"
     refspecs = [_CURRENT_BRANCH.sub("HEAD", r) for r in pos[1:]]
     dsts: list[str] = []
     for r in refspecs:
         if r.startswith("+"):
-            return f"`git push {r}` is a force-push (a leading +), which is never allowed"
+            msg = f"`git push {r}` is a force-push (a leading +), which is never allowed"
+            if not solo:
+                return msg
+            forced = forced or msg
+            r = r[1:]
         if r.startswith(":"):
-            return f"`git push {r}` deletes a branch (or pushes every matching one), which is never allowed"
+            msg = f"`git push {r}` deletes a branch (or pushes every matching one), which is never allowed"
+            if not solo:
+                return msg
+            if r == ":":
+                return Solo(f"`git push {r}` pushes every matching branch, `{base}` among them")
+            forced = forced or msg
         raw_dst = r.split(":", 1)[1] if ":" in r else r
-        if role != "attended" and raw_dst not in ("@", "HEAD") and _UNSAFE_REF.search(raw_dst):
+        if (role != "attended" or solo) and raw_dst not in ("@", "HEAD") and _UNSAFE_REF.search(raw_dst):
+            if solo:
+                return Solo(f"`{raw_dst}` is a variable, `@`, a glob or a brace list", unknown=True)
             return f"can't tell which branch `{raw_dst}` is (a variable, `@`, a glob or a brace list); push your branch by name"
         if role == "ticket" and (raw_dst.startswith(("refs/tags/", "tags/")) or r.startswith("refs/tags/")):
             return f"ticket sessions don't push tags (`{r}`); push your branch by name"
@@ -1184,16 +1275,26 @@ def _push_problem(args: list[str], base: str, branch: str | None, role: str, tic
         dsts.append((branch or "?") if d in ("HEAD", "@") else d)
     if not refspecs:
         if kind != "push":
+            if solo:
+                return Solo(f"`git {kind}` without refs pushes every matching branch, `{base}` among them")
             return f"`git {kind}` without refs pushes every matching branch; name the branch"
         dsts = [branch or "?"]
         up = upstream() if upstream else None
         if up and up == base:
+            if solo:
+                return Solo(f"this branch's upstream is `{base}`, so a bare push updates it; push the branch by name: `git push origin {branch or '<branch>'}`")
             return f"this branch's upstream is the base branch `{base}`, so a bare push would update it; push the branch by name: `git push origin {branch or '<branch>'}`"
         if role == "ticket" and up and branch and up != branch:
             return f"this branch's upstream is `{up}`, not `{branch}`, so a bare push would update another branch; push it by name: `git push origin {branch}`"
     for d in dsts:
         if d == base:
+            if solo:
+                return Solo(f"a force-push or deletion of `{base}`" if forced else f"a push to `{base}`")
             return f"pushing to the base branch `{base}` is never allowed: open a pull request"
+    if solo:
+        if "?" in dsts:
+            return Solo("a detached HEAD, or a directory the guard can't follow", unknown=True)
+        return forced
     if role == "ticket":
         own = branch if branch and fnmatch.fnmatchcase(branch, ticket_pat) else None
         for d in dsts:
@@ -1246,12 +1347,18 @@ def _env_problem(seg: Seg, role: str) -> str | None:
     return None
 
 
-def _git_config_problem(glob: list[str], args: list[str], role: str) -> str | None:
+def _git_config_problem(glob: list[str], args: list[str], role: str, solo: bool = False) -> str | Solo | None:
+    """In solo mode (`solo`, attended only) a mirror setting, or a push setting
+    on a push, comes back as a `Solo`."""
     firm = role in ("ticket", "conductor")
     for j, g in enumerate(glob):
         if g == "-c" and j + 1 < len(glob):
             key = glob[j + 1]
             if (_INJECT_KEYS if firm else _PUSH_SETTINGS).match(key):
+                if solo and _MIRROR_SETTINGS.match(key):
+                    return Solo(f"`git -c {key}` makes a push mirror every branch or go elsewhere")
+                if solo and args[:1] in (["push"], ["send-pack"], ["http-push"]):
+                    return Solo(f"`git -c {key}` changes where the push goes", unknown=True)
                 return f"`git -c {key}` can redirect a push or run a program; set no aliases, push, remote, credential or command settings"
         if firm and (g == "--config-env" or g.startswith("--config-env=")):
             return "`git --config-env` sets config from the environment, which isn't allowed here"
@@ -1262,6 +1369,8 @@ def _git_config_problem(glob: list[str], args: list[str], role: str) -> str | No
     if args[0] == "remote" and len(args) > 1 and args[1] == "set-url" and role == "ticket":
         return "ticket sessions don't change where a remote points (`git remote set-url`)"
     if args[0] == "remote" and len(args) > 1 and args[1] == "add" and any(a == "--mirror" or a.startswith("--mirror=") for a in args[2:]):
+        if solo:
+            return Solo("`git remote add --mirror` makes every push to that remote a mirror of every branch")
         return "`git remote add --mirror` makes every push to that remote a mirror (force-updating and deleting branches), which is never allowed"
     if args[0] != "config":
         return None
@@ -1295,6 +1404,8 @@ def _git_config_problem(glob: list[str], args: list[str], role: str) -> str | No
         return "`git config --edit` changes the config by hand, which isn't allowed here" if firm else None
     key = positional[0]
     if _MIRROR_SETTINGS.match(key) or _MIRROR_SETTINGS.match(key + "."):
+        if solo:
+            return Solo(f"`git config {key}` makes pushes mirror every branch or go elsewhere")
         return f"`git config {key}` makes pushes mirror every branch (force-updating and deleting them) or go elsewhere, which is never allowed"
     if firm and (_INJECT_KEYS.match(key) or _INJECT_KEYS.match(key + ".")):
         return f"`git config {key}` can redirect a push or run a program; {role} sessions don't change it"
@@ -3834,6 +3945,8 @@ def check_bash(
     start = _start_cwd(root, cwd)
     segs = segments(command, root, start)
     protected = list(profile.protected_paths) + (GIT_INTERNALS if role == "ticket" else [])
+    # Solo mode: no ruleset protects the base branch, so what touches it is refused, not asked.
+    solo = role == "attended" and profile.ruleset is False
     posts: list[Seg] = []
     cache: dict[str, str] = {}
 
@@ -3854,16 +3967,22 @@ def check_bash(
         g = _git(toks)
         if g is not None:
             glob, args, cdir = g
-            p = _git_config_problem(glob, args, role)
+            p = _git_config_problem(glob, args, role, solo)
+            if isinstance(p, Solo):
+                return _solo_deny(p, profile, root, command)
             if p:
                 return _deny(role, p)
             d = _git_dir_of(root, seg.cwd, cdir)
             same = cdir is None and seg.cwd == start
             if args and args[0] in ("push", "send-pack", "http-push"):
-                if role != "attended" and any(o == "--git-dir" or o.startswith(("--git-dir=", "--work-tree")) for o in glob):
+                if (role != "attended" or solo) and any(o == "--git-dir" or o.startswith(("--git-dir=", "--work-tree")) for o in glob):
+                    if solo:
+                        return _solo_deny(Solo("`--git-dir` or `--work-tree` points at another repository", unknown=True), profile, root, command)
                     return _deny(role, "push from the repository's own directory, not with `--git-dir`/`--work-tree`")
                 branch = current_branch if same else _branch_of(d)
-                p = _push_problem(args, profile.base_branch, branch, role, profile.ticket_branch, upstream=lambda d=d: _upstream_branch(d))
+                p = _push_problem(args, profile.base_branch, branch, role, profile.ticket_branch, upstream=lambda d=d: _upstream_branch(d), solo=solo)
+                if isinstance(p, Solo):
+                    return _solo_deny(p, profile, root, command)
                 if p:
                     return _deny(role, p)
             if role == "ticket" and not role_from_env:
