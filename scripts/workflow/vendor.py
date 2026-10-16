@@ -123,7 +123,7 @@ PLUGIN_CLI = "${CLAUDE_PLUGIN_ROOT}/scripts/workflow.py"
 # The plugin has no profile check to point to: it says only what python3 needs.
 PLUGIN_NO_PYTHON_REASON = (
     "python3 could not run the workflow kit (it is missing or failing, or the kit failed), so nothing can be checked and a push "
-    "or a merge is asked first; check python3 --version (3.11 or newer is needed), then start a new session"
+    "or a merge is asked first (refused in solo mode or where nobody is asked); check python3 --version (3.11 or newer is needed), then start a new session"
 )
 BROKEN_KIT_REASON = (
     "The workflow kit is broken (python3 could not run it, and its fallback.sh is missing), so the guard cannot check "
@@ -164,8 +164,9 @@ def hook_command(sub: str, plugin: bool = False) -> str:
     (#22). The CLI itself exits 0 whenever it has decided, so a non-zero exit
     means it couldn't.
 
-    The plugin is for attended work only: its guard never refuses every tool,
-    and runs the fallback whatever WORKFLOW_ROLE says."""
+    The plugin is for attended work only: without a working python3 its guard
+    never refuses every tool, and runs the fallback whatever WORKFLOW_ROLE
+    says (an old python3 still reads the role, as the CLI does)."""
     cli = PLUGIN_CLI if plugin else f"$CLAUDE_PROJECT_DIR/{HOOK_TAG}"
     if sub not in ("guard", "repair"):
         return (
@@ -192,7 +193,7 @@ def hook_command(sub: str, plugin: bool = False) -> str:
         separators=(",", ":"),
     )
     fallback = (
-        """if [ -f "${F%.py}/fallback.sh" ]; then printf '%s\\n' "$E" | sh "${F%.py}/fallback.sh"; """
+        """if [ -f "$F" ] && [ -f "${F%.py}/fallback.sh" ]; then printf '%s\\n' "$E" | sh "${F%.py}/fallback.sh"; """
         f"""elif [ -f "$F" ]; then printf '%s\\n' '{broken}'; fi; exit 0"""
     )
     if plugin:

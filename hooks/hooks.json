@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "F=\"${CLAUDE_PLUGIN_ROOT}/scripts/workflow.py\"; E=$(cat); if [ -f \"$F\" ] && command -v python3 >/dev/null 2>&1; then O=$(printf '%s\\n' \"$E\" | python3 -B \"$F\" hook guard) && { [ -z \"$O\" ] || printf '%s\\n' \"$O\"; exit 0; }; fi; if [ -f \"${F%.py}/fallback.sh\" ]; then printf '%s\\n' \"$E\" | sh \"${F%.py}/fallback.sh\"; elif [ -f \"$F\" ]; then printf '%s\\n' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"The workflow kit is broken (python3 could not run it, and its fallback.sh is missing), so the guard cannot check anything and asks about every tool. Restore the kit (a vendored project: git checkout -- .claude/workflow; the plugin: reinstall it) and check python3 --version (3.11 or newer), then start a new session.\"}}'; fi; exit 0",
+            "command": "F=\"${CLAUDE_PLUGIN_ROOT}/scripts/workflow.py\"; E=$(cat); if [ -f \"$F\" ] && command -v python3 >/dev/null 2>&1; then O=$(printf '%s\\n' \"$E\" | python3 -B \"$F\" hook guard) && { [ -z \"$O\" ] || printf '%s\\n' \"$O\"; exit 0; }; fi; if [ -f \"$F\" ] && [ -f \"${F%.py}/fallback.sh\" ]; then printf '%s\\n' \"$E\" | sh \"${F%.py}/fallback.sh\"; elif [ -f \"$F\" ]; then printf '%s\\n' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"The workflow kit is broken (python3 could not run it, and its fallback.sh is missing), so the guard cannot check anything and asks about every tool. Restore the kit (a vendored project: git checkout -- .claude/workflow; the plugin: reinstall it) and check python3 --version (3.11 or newer), then start a new session.\"}}'; fi; exit 0",
             "timeout": 15
           }
         ],
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "F=\"${CLAUDE_PLUGIN_ROOT}/scripts/workflow.py\"; if [ -f \"$F\" ] && command -v python3 >/dev/null 2>&1; then python3 -B \"$F\" hook repair && exit 0; fi; if [ -f \"$F\" ]; then printf '%s\\n' '{\"systemMessage\":\"Workflow kit: python3 could not run the workflow kit (it is missing or failing, or the kit failed), so nothing can be checked and a push or a merge is asked first; check python3 --version (3.11 or newer is needed), then start a new session.\"}'; fi; exit 0",
+            "command": "F=\"${CLAUDE_PLUGIN_ROOT}/scripts/workflow.py\"; if [ -f \"$F\" ] && command -v python3 >/dev/null 2>&1; then python3 -B \"$F\" hook repair && exit 0; fi; if [ -f \"$F\" ]; then printf '%s\\n' '{\"systemMessage\":\"Workflow kit: python3 could not run the workflow kit (it is missing or failing, or the kit failed), so nothing can be checked and a push or a merge is asked first (refused in solo mode or where nobody is asked); check python3 --version (3.11 or newer is needed), then start a new session.\"}'; fi; exit 0",
             "timeout": 600
           }
         ],

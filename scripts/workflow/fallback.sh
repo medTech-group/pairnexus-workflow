@@ -35,7 +35,7 @@ END {
     }
     if (what == "") exit 0
 
-    head = "The workflow'"'"'s guard isn'"'"'t working, so it couldn'"'"'t check this " what ": python3 couldn'"'"'t run the workflow kit (it is missing or failing). To fix it: check that `python3 --version` runs and says 3.11 or newer, then start a new session; if it is, the kit itself failed: report the error to the kit'"'"'s maintainers."
+    head = "The workflow'"'"'s guard isn'"'"'t working, so it couldn'"'"'t check this " what ": python3 couldn'"'"'t run the workflow kit (it is missing or failing). To fix it: check that `python3 --version` runs and says 3.11 or newer, then start a new session; if it does, the kit itself failed: report the error to the kit'"'"'s maintainers."
     if (tool == "Bash") by_hand = "Or run it yourself in your own terminal (the command isn'"'"'t repeated here, since nothing could check it)."
     else by_hand = "Or do it yourself on GitHub."
     mode = permission_mode()
@@ -45,8 +45,8 @@ END {
         out("deny", head "\\nThe kit would have asked you about this, but nobody is asked in the `" mode "` permission mode, so it was refused.\\nTo be asked, switch the permission mode (Shift+Tab, or the mode selector).\\n" by_hand)
     } else if (mode != "" && mode != "default" && mode != "acceptEdits" && mode != "auto" && mode != "plan") {
         # A plain name is shown; anything else would need escaping for JSON.
-        shown = (mode ~ /^[A-Za-z0-9_-]+$/ && length(mode) <= 80) ? "`" mode "`" : "one the kit doesn'"'"'t know"
-        out("deny", head "\\nThe kit would have asked you about this, but the permission mode is " shown ", which the kit doesn'"'"'t know, so it counts as one where nobody is asked and this was refused. Tell the kit'"'"'s maintainers about this mode.\\nTo be asked, switch the permission mode (Shift+Tab, or the mode selector).\\n" by_hand)
+        shown = (mode ~ /^[A-Za-z0-9_-]+$/ && length(mode) <= 80) ? "is `" mode "`, which the kit doesn'"'"'t know" : "isn'"'"'t one the kit knows"
+        out("deny", head "\\nThe kit would have asked you about this, but the permission mode " shown ", so it counts as one where nobody is asked and this was refused. Tell the kit'"'"'s maintainers about this mode.\\nTo be asked, switch the permission mode (Shift+Tab, or the mode selector).\\n" by_hand)
     } else {
         out("ask", head " Allow it only if you mean to.")
     }

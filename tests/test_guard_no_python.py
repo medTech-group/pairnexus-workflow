@@ -302,7 +302,7 @@ def test_an_unknown_mode_is_named_when_plain(tmp_path):
         ["sh", str(KIT / "scripts/workflow/fallback.sh")], input=json.dumps(_bash(PUSH, mode)), capture_output=True,
         text=True, env={"PATH": os.environ["PATH"], "CLAUDE_PROJECT_DIR": str(tmp_path)}).stdout)["hookSpecificOutput"]["permissionDecisionReason"]
     assert "`someNewMode`" in reason("someNewMode")
-    assert "one the kit doesn't know" in reason("a b")
+    assert "isn't one the kit knows" in reason("a b") and "know, which" not in reason("a b")
 
 
 def test_a_partial_kit_without_its_fallback_asks_about_every_tool(tmp_path):
@@ -314,6 +314,17 @@ def test_a_partial_kit_without_its_fallback_asks_about_every_tool(tmp_path):
         for event in (_bash("ls"), _bash(PUSH)):
             p = s.run("guard", event)
             assert _decision(p) == "ask" and "broken" in p.stdout, (layout, event)
+
+
+def test_an_attended_session_with_the_cli_missing_stays_silent(tmp_path):
+    # Its package left behind changes nothing: the kit is missing, as before #56.
+    for layout in LAYOUTS:
+        (tmp_path / layout).mkdir()
+        s = Setup(tmp_path / layout, layout, "missing")
+        cli = s.proj / vendor.HOOK_TAG if layout == "vendored" else tmp_path / layout / "plugin/scripts/workflow.py"
+        cli.unlink()
+        p = s.run("guard", _bash(PUSH))
+        assert (p.returncode, p.stdout) == (0, ""), layout
 
 
 def test_the_vendored_fallback_with_no_role_on_another_branch(tmp_path):
