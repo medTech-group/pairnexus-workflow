@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.1.9
+
+**The guard's script and skip-marker patterns run in linear time.** In a ticket session the guard counts the test-skip markers an editing script (`sed`, `perl`) or an edit adds, and refuses new ones. Two of its patterns could take far longer than the text they read:
+- the patterns for an `s` command and an address (`/x/d`) could read a backslash two ways, and backtracked exponentially on a script with many escapes and no closing delimiter: about 3 seconds at 24 escapes, four times longer with every 2 more;
+- the `pytest.mark.xfail(… run=False` marker was quadratic on text holding many `xfail(`.
+
+Either could run past the guard hook's timeout, and in 0.1.8 a hook that runs past its timeout doesn't block the command.
+
+- **An editing script is read as `sed` reads it.** A backslash always starts an escape, so `\/` never ends an `s` command or an address, and each pattern runs in linear time. The slow inputs now return in milliseconds.
+- **A command's flags** (`g`, perl's `s`) start no new command, though they're still read for markers.
+- **A regex class like `\s*`** is no longer taken for an `s` command (an `s` straight after a backslash starts none). So `/^\s*$/d; s/it\.only(/it(/` is read as cleanup plus a removal.
+- **An `s` command the guard can't read,** one that never closes, ends the netting. From there on, every skip marker in the script counts as added, and no address is dropped. perl's bracketed `s{…}{…}` is read as an `s` command delimited by `{`, so a pair of them nets as before, while a single one before a removal ends the netting.
+- **The xfail marker** stops at the next `xfail(`, so it stays linear with no length limit. It counts each `xfail(… run=False` on its own, where 0.1.8 could count two as one.
+- **Decisions:**
+  - well-formed `sed` and `perl` scripts are read as before, except that these are now refused:
+    - a single perl `s{…}{…}` before a removal;
+    - a `\s*` followed by `s` commands with `*` in them (`/\s*a/d; s/x/it.only(/; s/b*/c/; s/d*/e/`), which 0.1.8 read as one command, netting the marker away;
+    - a script that inserts a marker after a stray `\s`, which 0.1.8 netted as a removal;
+  - on malformed scripts the guard follows `sed`'s reading. Fuzzed against 0.1.8 over 900,000 random scripts (regex classes like `\s*` included), that refused about 25,600 that 0.1.8 allowed, and allowed 249 that it refused. The ones examined were scripts where 0.1.8 found a marker only by misreading the script, not text the file would hold: a marker run into a following `\s` (which `sed` writes as `skips`), `xfail(` joined to a `run=False` past a `)` the script writes, or a marker read across a mismatched address.
+- CodeQL flagged the 0.1.8 patterns. Tests cover the slow inputs, an escaped delimiter, flags, regex classes, long xfail arguments, and scripts that never close.
+- **For projects updating to 0.1.9:** nothing to do beyond the update.
+
 ## 0.1.8
 
 **The hooks fail closed without Python 3.11** (#22). The kit needs Python 3.11 or later as `python3`. With an older one, the entry point exited 1, which Claude Code treats as a hook error and then runs the tool anyway, so every hook failed open, the guard included. With no `python3` at all, the hook command exited 127, which fails open the same way. Cloud sessions have Python 3.11+, so unattended runs weren't affected; a local session on macOS's own `python3` (3.9) was.
