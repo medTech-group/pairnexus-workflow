@@ -82,7 +82,7 @@ Easy to undo. Only the notes list's order changes.
   - else, when the project has preview links, where the link will appear ("A try-it link will appear as a comment on this pull request in a few minutes.");
   - else what to check another way (as in the example), or "Nothing to try: this change is behind the scenes".
 
-  The kit doesn't make preview links yet, so for now always use the last case: what to check another way, or "Nothing to try".
+  The kit doesn't read preview links yet, so for now always use the last case: what to check another way, or "Nothing to try".
 - `**What could go wrong**`: whether the change is easy or hard to undo, and what it could affect.
 
 The section is the same for everyone, never worded by experience, so a pull request reads alike whoever wrote it and whoever reads it. Examples are everyday ones (a notes app, a shop, a booking page). If the `pr` skill is loaded too, its sections go below; the body still opens with `## In plain words`.
