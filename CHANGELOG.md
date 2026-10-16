@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.1.10
+
+**The guard reads editing scripts as their tools do, and fails closed when it runs out of time.** In a ticket session the guard refuses a new test-skip or focus marker that an editing script (`sed`, `perl`, `awk`, `vim`, `ed`) or a patch adds. The correctness reviews of 0.1.9 found older ways, all in 0.1.8 already, that a script could add one unseen, and ways to make the guard slow enough to outlast the hook's timeout, which in 0.1.8 doesn't block. Reported and fixed privately, under `SECURITY.md`.
+
+- **A sed script on standard input** (`-f -`, `-f /dev/stdin`) is read from the heredoc, the `<` file or the `cat` piped in, and a `-f` file the guard can't read (not written yet, a device, a directory) is refused: both were read as empty. `/dev/null` reads as empty.
+- **stdin is read as bash gives it:** only fd 0's heredocs, here-strings and `<` files are stdin; more than one of them, stdin from another descriptor (`<&3`) or beside another descriptor's input (`3<f`), is refused for an editing command or a patch. A `cat` piped in gets the last of its own inputs and joins files with nothing between them; what anything else pipes in (a group's output too, `( cat f ) 2>/dev/null |`) can't be seen. A sed script is taken from stdin once. A `/dev/` or `/proc/` path other than `/dev/null` isn't read. Text another command pipes into `ed`, or into vim in ex mode, is refused.
+- **vim given stdin** (a heredoc, `<` or a pipe) runs it, so it edits its files: in ex mode (`-e`, `-es`, `-Nes` …) stdin is read as commands, otherwise as keys typed, `:` commands among them, which count as added. So a heredoc of keys that removes a marker is refused too; `-c` or ex mode reads it exactly.
+- **sed scripts are read by sed's grammar:** an address (`/re/`, `\%re%`) is read only where a command starts, so text that `a`, `i` and `c` write always counts as added, slashes and `s` commands in it included; an `s` inside an address starts no command; and a command followed by more than sed accepts ends the reading, so the rest counts as added.
+- **vim's and ed's `s` ends at the end of its line,** as they read it (the closing delimiter can be left out). The lines `a`, `i` and `c` add count as added, and the keys of `normal` and `execute` are read for markers they run into (`normal Oit.only(`).
+- **perl and awk:** a string (`"…"`, `q(…)`, a heredoc) is text the code writes, and a regex (`/re/` where a value is expected, `m{…}`, `qr`) only finds. So an `s` command or a regex inside a string is no longer read as one. perl's bracketed `s` takes the replacement's own delimiters, as perl reads it (`s{…}{…}`, `s{…}/…/`, `s(…) […]`), and a quote-like operator takes its delimiter after a space or as any punctuation (`s /a/b/`, `s,a,b,`, `qq,…,`). A hash key `{s}`, or a comment before the delimiter, counts as added; an `s` after a binary operator (`1-s/…/`, `/x/&&s/…/`, `"a" %s/…/`) is still one, and only a method (`->s`), a file test (`-s $f`) or a sigil after a bareword (`my %s`) makes it a name. awk is read as awk: it has no such operators.
+- **What a command finds is read as a regex:** a backslash and a letter (`\s`, `\b`) is a class or an anchor, never that letter. What it puts is read as before.
+- **A patch's lines are read as the file's text,** without unescaping, so a removed line holding `it\.only\(` doesn't net away an added `it.only(`.
+- **Limits on what the guard reads.** Past these, a ticket session's command is refused rather than read in part:
+  - an in-place edit's scripts, `-f` files included, are read once per command, however many files it edits, up to 1 MB together (a vim script sourced with `-S` isn't read, as before: it's among the documented limits);
+  - patches up to 4 MB together, where a patch past 1 MB was cut off before (given through a `cat` too);
+  - a test file a Write replaces, up to 4 MB.
+- **A branch name that isn't UTF-8** is read, and matched against `run.ticket_branch`, instead of making the hooks fail.
+- **A time budget:** the guard's hook stops 12 seconds after the kit's CLI starts loading, under its 15-second timeout, and refuses the tool in ticket and conductor sessions. Reading the session's role from the branch counts within it, and a role not read in time counts as ticket. In an attended session it reports the error, as for any guard error. It needs `SIGALRM`, so it doesn't apply on Windows.
+- **Decisions:**
+  - fuzzed against GNU sed 4.9, perl (bracketed `s` with either form of replacement included) and vim's ex mode, running random scripts on a test file: none that they accepted added a marker the guard missed (copies of lines already in the file aside, which the guard has never counted). Against 0.1.9, the new reading refuses scripts that 0.1.9 allowed, and allows some it refused: those were valid scripts 0.1.9 misread, such as `it.only(` at the start of a sed command, which is sed's `i` inserting `t.only(`, or a vim `s` that leaves out its closing delimiter;
+  - a sed `#` comment isn't read for markers, and a sed address with its own delimiter (`\%re%d`) is now read as one;
+  - perl's bracketed `s{…}{…}` is now read as perl reads it, so `s{foo}{bar}g; s/xit\(/it(/g`, a removal that 0.1.9 refused, is allowed (its 0.1.9 test moved to `tests/test_kit_0110.py`).
+- Tests cover each way in, a big `-f` script across 30 test files, the caps and the time budget (`tests/test_kit_0110.py`).
+- **For projects updating to 0.1.10:** nothing to do beyond the update.
+
 ## 0.1.9
 
 **The guard's script and skip-marker patterns run in linear time.** In a ticket session the guard counts the test-skip markers an editing script (`sed`, `perl`) or an edit adds, and refuses new ones. Two of its patterns could take far longer than the text they read:

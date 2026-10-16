@@ -98,8 +98,7 @@ def test_a_script_sed_cant_read_counts_its_markers_as_added(profile, tmp_path):
         # Valid sed: inserts a line holding the marker.
         "sed -i '1i s/\\/pytest.mark.skip/' tests/test_x.py",
         "sed -i '1i s/\\/ s|pytest.skip(|x| /' tests/test_x.py",
-        # perl's bracketed form is read as an `s` command delimited by `{`: on
-        # its own it never closes, so a removal after it counts as added.
-        "perl -pi -e 's{foo}{bar}g; s/xit\\(/it(/g' tests/a.spec.js",
+        # (perl's bracketed `s{foo}{bar}g; s/xit\(/it(/g` was here: 0.1.10 reads
+        # it as perl does, a removal, in tests/test_kit_0110.py.)
     ):
         assert act(profile, tmp_path, cmd) == "deny", cmd

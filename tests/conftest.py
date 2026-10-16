@@ -30,6 +30,17 @@ BASE_PROFILE = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _fresh_guard_budget(monkeypatch):
+    """Each test's in-process hook gets the guard's whole time budget, however
+    long the suite has run (`_STARTED` is set once, when the CLI is imported)."""
+    import time
+
+    from workflow import cli
+
+    monkeypatch.setattr(cli, "_STARTED", time.monotonic())
+
+
 @pytest.fixture
 def profile(tmp_path):
     return parse(json.loads(json.dumps(BASE_PROFILE)), tmp_path)
