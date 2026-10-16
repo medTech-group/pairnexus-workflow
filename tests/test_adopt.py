@@ -457,7 +457,7 @@ def test_a_symlinked_file_is_refused_and_nothing_changes(copy):
     (copy / "package.json").symlink_to("real-package.json")
     before = _snapshot(copy)
     p = _run(copy)
-    assert p.returncode == 1 and "package.json is a symbolic link" in p.stderr
+    assert p.returncode == 1 and "package.json is, or is under, a symbolic link" in p.stderr
     assert _snapshot(copy) == before and (copy / "package.json").is_symlink()
 
 
@@ -518,3 +518,42 @@ def test_a_profile_with_a_bom_is_refused(copy):
     p = _run(copy)
     assert p.returncode == 1 and "byte order mark" in p.stderr
     assert _snapshot(copy) == before
+
+
+# Review round 2: the explorer's cases.
+
+
+@pytest.mark.parametrize("name", ["My\u00a0Notes", "ノート\u3000App", "Dev notes 👩\u200d💻"])
+def test_ordinary_unicode_names_are_taken(copy, name):
+    p = _run(copy, name=name)
+    assert p.returncode == 0, p.stderr
+    assert tomllib.loads((copy / ".claude/workflow/profile.toml").read_text())["project"]["name"] == name
+
+
+def test_letters_without_a_decomposition_are_spelled_out():
+    assert adopt.dashed("Straße") == "strasse"
+    assert adopt.dashed("Łódź notes") == "lodz-notes"
+    assert adopt.dashed("Ærø") == "aero"
+
+
+def test_a_title_with_a_comment_opener_is_found_again(copy):
+    assert _run(copy, name="Notes <!-- draft").returncode == 0
+    p = _run(copy, name="Other")
+    assert p.returncode == 0
+    assert (copy / "README.md").read_text().splitlines()[1] == "# Other"
+
+
+def test_a_symlinked_folder_is_refused_and_nothing_outside_changes(tmp_path):
+    copy = _starter(tmp_path / "copy")
+    outside = tmp_path / "outside"
+    (copy / ".claude").rename(outside)
+    (copy / ".claude").symlink_to(outside, target_is_directory=True)
+    before = (outside / "workflow/profile.toml").read_bytes()
+    p = _run(copy)
+    assert p.returncode == 1 and "symbolic link" in p.stderr
+    assert (outside / "workflow/profile.toml").read_bytes() == before
+
+
+def test_no_profile_names_the_folder(tmp_path):
+    p = _cli(tmp_path, "adopt", "--owner=ada", "--repo=ada/x", "--name=x", f"--project={tmp_path / 'typo'}")
+    assert p.returncode == 1 and str(tmp_path / "typo") in p.stderr

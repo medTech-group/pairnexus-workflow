@@ -61,8 +61,8 @@ class Result:
     def read(self, root: Path, rel: str) -> str | None:
         """The file's text without any BOM, or None when it isn't there."""
         path = root / rel
-        if path.is_symlink():
-            raise AdoptError(f"{rel} is a symbolic link: replace it with the file itself, then run this again")
+        if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()):
+            raise AdoptError(f"{rel} is, or is under, a symbolic link: replace it with the file itself, then run this again")
         if not path.is_file():
             return None
         try:
@@ -87,9 +87,14 @@ class Result:
         return "\n".join(lines)
 
 
+# Letters NFKD doesn't break into an ASCII letter and an accent, spelled out.
+_SPELLED = str.maketrans({"ß": "ss", "Æ": "AE", "æ": "ae", "Ø": "O", "ø": "o", "Œ": "OE", "œ": "oe", "Ł": "L", "ł": "l", "Đ": "D", "đ": "d", "Þ": "Th", "þ": "th", "ı": "i"})
+
+
 def dashed(name: str) -> str:
     """The project's name in lower case with dashes: a Worker's and a package's name."""
-    folded = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()  # "Café" → "Cafe"
+    spelled = name.translate(_SPELLED)
+    folded = unicodedata.normalize("NFKD", spelled).encode("ascii", "ignore").decode()  # "Café" → "Cafe"
     out = re.sub(r"[^a-z0-9]+", "-", folded.lower()).strip("-")
     return out[:WORKER_NAME_MAX].rstrip("-")
 
@@ -200,11 +205,11 @@ def _readme(text: str, name: str) -> str | None:
             commented = "-->" not in body
         elif _FENCE.match(body):
             fenced = not fenced
-        elif not fenced and "<!--" in body and "-->" not in body.split("<!--", 1)[1]:
-            commented = True
-        elif not fenced and body.startswith("# "):
+        elif not fenced and body.startswith("# "):  # before comments: a title may hold `<!--`
             lines[i] = (f"# {name}", end)
             return _join(lines)
+        elif not fenced and "<!--" in body and "-->" not in body.split("<!--", 1)[1]:
+            commented = True
     return None
 
 
@@ -217,7 +222,7 @@ def plan(root: Path, owner: str, repo: str, name: str) -> Result:
         raise AdoptError(f"--owner must be a GitHub login (letters, digits and hyphens), without the @: got {owner!r}")
     if not name:
         raise AdoptError("--name is empty")
-    if not name.isprintable():
+    if any(unicodedata.category(c) in ("Cc", "Zl", "Zp") for c in name):
         raise AdoptError("--name must be one line of plain text, with no tabs or control characters")
     dashed_name = dashed(name)
     if not dashed_name:
@@ -226,7 +231,7 @@ def plan(root: Path, owner: str, repo: str, name: str) -> Result:
     res = Result()
     text = res.read(root, PROFILE)
     if text is None:
-        raise AdoptError(f"no profile at {PROFILE}: run this in a copy of the starter")
+        raise AdoptError(f"no profile at {root / PROFILE}: run this in a copy of the starter")
     if PROFILE in res.boms:
         raise AdoptError(f"{PROFILE} starts with a byte order mark, which the kit can't read: remove it, then run this again")
     try:
