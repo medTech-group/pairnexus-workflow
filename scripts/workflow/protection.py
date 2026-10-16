@@ -16,11 +16,13 @@ lives: the "Protect `main`" upgrade, set-up, the conductor's pre-flight and
 
 from __future__ import annotations
 
+import copy
 import fnmatch
 import json
 import re
 import unicodedata
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 # The rules that make a branch protected, with what their absence means.
 NEEDED = {
@@ -296,4 +298,230 @@ def text(rep: Report) -> str:
         state = {True: "allowed", False: "not allowed", None: "unknown"}
         lines.append("Merge settings: " + ", ".join(f"{words} {state[rep.merge[name]]}" for _, name, words in MERGE) + ".")
         lines += [f"- {m}" for m in rep.merge["missing"]]
+    return "\n".join(lines)
+
+
+# ---------- the requests: protect, require checks, the checks that ran (#66) ----------
+#
+# Built from JSON a session hands over, and printed for it to send. Nothing here
+# sends a request: the session does, with `gh api` or the GitHub MCP tools, under
+# the guard (#17, #33).
+
+KIT = "pairnexus-workflow"
+REPO_NAME = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+# What GitHub accepts on an update (PUT repos/<repo>/rulesets/<id>); the rest of
+# a ruleset as GET returns it (id, source, node_id, _links, ...) is read-only.
+UPDATE_FIELDS = ("name", "target", "enforcement", "bypass_actors", "conditions", "rules")
+PULL_REQUEST = {
+    "required_approving_review_count": 0,
+    "dismiss_stale_reviews_on_push": False,
+    "require_code_owner_review": False,
+    "require_last_push_approval": False,
+    "required_review_thread_resolution": False,
+}
+MERGE_SETTINGS = {"allow_merge_commit": True, "allow_auto_merge": True}
+# The try-it link's check (#41): never offered for requiring (#18).
+NEVER_OFFERED_APPS = ("cloudflare-workers-and-pages",)
+# Check-run conclusions GitHub counts as passing a required check.
+PASSING = ("success", "neutral", "skipped")
+STATUS_RESULT = {"success": "passing", "pending": "pending", "failure": "failing", "error": "failing"}
+
+
+@dataclass
+class Request:
+    what: str
+    method: str
+    path: str
+    body: dict
+
+    def as_dict(self) -> dict:
+        return {"what": self.what, "method": self.method, "path": self.path, "body": self.body}
+
+
+def check_names(names) -> list[str]:
+    """The check names as given, each once; raises on one that can't be a check name."""
+    out: list[str] = []
+    for n in names or []:
+        if not isinstance(n, str) or not n.strip() or any(unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp") for c in n):
+            raise ProtectionError(f"the check name {quote(n) if isinstance(n, str) else n!r} isn't a check name (empty, or holding a line break or a control character)")
+        if n not in out:
+            out.append(n)
+    return out
+
+
+def _checks_rule(names: list[str]) -> dict:
+    return {
+        "type": "required_status_checks",
+        "parameters": {"strict_required_status_checks_policy": True, "required_status_checks": [{"context": n} for n in names]},
+    }
+
+
+def _repo_of(settings) -> tuple[str, str]:
+    """(owner/repo, default branch) from the repository's settings."""
+    if not isinstance(settings, dict):
+        raise ProtectionError("the repository's settings must be a JSON object, as GET repos/<repo> returns it")
+    full = settings.get("full_name")
+    if not isinstance(full, str) or not REPO_NAME.fullmatch(full):
+        raise ProtectionError("the repository's settings have no full_name (owner/repo), so the requests can't name the repository")
+    default = settings.get("default_branch")
+    if not isinstance(default, str) or not default:
+        raise ProtectionError("the repository's settings have no default_branch, so it can't tell whether the base branch is the default")
+    return full, default
+
+
+def protect(base: str, settings, names=()) -> list[Request]:
+    """The ruleset to create on the base branch, and the merge settings to change."""
+    base = branch(base)
+    names = check_names(names)
+    repo, default = _repo_of(settings)
+    rules = [{"type": "deletion"}, {"type": "non_fast_forward"}, {"type": "pull_request", "parameters": dict(PULL_REQUEST)}]
+    if names:
+        rules.append(_checks_rule(names))
+    ruleset = {
+        "name": f"Protect {base} ({KIT})",
+        "target": "branch",
+        "enforcement": "active",
+        "bypass_actors": [],
+        "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH" if base == default else f"refs/heads/{base}"], "exclude": []}},
+        "rules": rules,
+    }
+    return [
+        Request("create the ruleset", "POST", f"repos/{repo}/rulesets", ruleset),
+        Request("allow merge commits and auto-merge", "PATCH", f"repos/{repo}", dict(MERGE_SETTINGS)),
+    ]
+
+
+def require_checks(ruleset, names) -> Request:
+    """The ruleset with the names added to its required checks and "up to date" on.
+
+    Nothing else changes and nothing is removed; only the fields GitHub accepts
+    on an update are sent.
+    """
+    names = check_names(names)
+    if not names:
+        raise ProtectionError("give the checks to require with --check NAME (one for each)")
+    if not isinstance(ruleset, dict):
+        raise ProtectionError("the ruleset file must be one ruleset (a JSON object), as GET repos/<repo>/rulesets/<id> returns it")
+    where = _checked_name(ruleset, 0)
+    rid = ruleset.get("id")
+    if not isinstance(rid, int) or isinstance(rid, bool) or rid <= 0:
+        raise ProtectionError(f"{where} has no id, so the request can't name it")
+    if ruleset.get("source_type") == "Organization":
+        raise ProtectionError(f"{where} is an organisation's ruleset: the kit adds checks only to the repository's own, so change it in the organisation's settings")
+    source = ruleset.get("source")
+    if ruleset.get("source_type") != "Repository" or not isinstance(source, str) or not REPO_NAME.fullmatch(source):
+        raise ProtectionError(f"{where} has no source repository (source_type Repository, source owner/repo), so the request can't name it")
+    body = {k: copy.deepcopy(ruleset[k]) for k in UPDATE_FIELDS if k in ruleset}
+    rule = next((r for r in body["rules"] if r["type"] == "required_status_checks"), None)
+    if rule is None:
+        body["rules"].append(_checks_rule(names))
+    else:
+        if rule.get("parameters") is None:
+            rule["parameters"] = {}
+        params = rule["parameters"]
+        if params.get("required_status_checks") is None:
+            params["required_status_checks"] = []
+        have = params["required_status_checks"]
+        if not isinstance(have, list):
+            raise ProtectionError(f"{where}: required_status_checks must be a list of objects")
+        known = {c.get("context") for c in have}
+        have += [{"context": n} for n in names if n not in known]
+        params["strict_required_status_checks_policy"] = True
+    return Request("add the checks to the ruleset", "PUT", f"repos/{source}/rulesets/{rid}", body)
+
+
+def _when(v, what: str):
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        raise ProtectionError(f"the {what}: a time must be a string, as GitHub gives it")
+    try:
+        t = datetime.fromisoformat(v.replace("Z", "+00:00"))
+    except ValueError as e:
+        raise ProtectionError(f"the {what}: {quote(v)} isn't a time") from e
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
+def _pages(data, key: str, what: str) -> list:
+    """The items of a GitHub list: one response, or pages from `--paginate --slurp`."""
+    if isinstance(data, dict):
+        data = [data]
+    if not isinstance(data, list):
+        raise ProtectionError(f"the {what} file must be JSON as GitHub returns it")
+    if key == "check_runs":
+        if not all(isinstance(p, dict) and isinstance(p.get(key), list) for p in data):
+            raise ProtectionError(f"the {what} file must hold check_runs, as GET repos/<repo>/commits/<ref>/check-runs returns them")
+        return [x for p in data for x in p[key]]
+    # statuses: a list of statuses, pages of them, or the combined status's object
+    out: list = []
+    for p in data:
+        if isinstance(p, list):
+            out += p
+        elif isinstance(p, dict) and "statuses" in p:
+            if not isinstance(p["statuses"], list):
+                raise ProtectionError(f"the {what} file: statuses must be a list")
+            out += p["statuses"]
+        else:
+            out.append(p)
+    return out
+
+
+def checks_ran(check_runs, statuses=None, required=()) -> list[dict]:
+    """Each check that ran on the commit, with its latest result, less those required.
+
+    Results are passing, failing or pending. Check runs from the try-it link's
+    app are never offered. A name reported more than once (a re-run, or a check
+    run and a status of the same name) appears once, with its latest result.
+    """
+    seen: list[tuple] = []  # (no time?, time, id, name, result)
+    for r in _pages(check_runs, "check_runs", "check runs"):
+        what = "check runs"
+        if not isinstance(r, dict) or not isinstance(r.get("name"), str) or not isinstance(r.get("status"), str):
+            raise ProtectionError(f"the {what} file: each check run must be an object with a name and a status")
+        app = r.get("app")
+        if app is not None and not (isinstance(app, dict) and isinstance(app.get("slug", ""), (str, type(None)))):
+            raise ProtectionError(f"the {what} file: a check run's app must be an object")
+        if app and app.get("slug") in NEVER_OFFERED_APPS:
+            continue
+        if r["status"] != "completed":
+            result = "pending"
+        elif not isinstance(r.get("conclusion"), str):
+            raise ProtectionError(f"the {what} file: the completed check run {quote(r['name'])} has no conclusion")
+        else:
+            result = "passing" if r["conclusion"] in PASSING else "failing"
+        started, completed = _when(r.get("started_at"), what), _when(r.get("completed_at"), what)
+        t = started or completed
+        seen.append((t is None, t, r.get("id") if isinstance(r.get("id"), int) else 0, r["name"], result))
+    for s in _pages(statuses if statuses is not None else [], "statuses", "statuses"):
+        what = "statuses"
+        if not isinstance(s, dict) or not isinstance(s.get("context"), str) or s.get("state") not in STATUS_RESULT:
+            raise ProtectionError(f"the {what} file: each status must be an object with a context and a state (success, pending, failure or error)")
+        updated, created = _when(s.get("updated_at"), what), _when(s.get("created_at"), what)
+        t = updated or created
+        seen.append((t is None, t, s.get("id") if isinstance(s.get("id"), int) else 0, s["context"], STATUS_RESULT[s["state"]]))
+    latest: dict[str, tuple] = {}
+    for item in seen:
+        key = (item[0], item[1] or datetime.min.replace(tzinfo=timezone.utc), item[2])
+        name = item[3]
+        if name not in latest or key >= latest[name][0]:
+            latest[name] = (key, item[4])
+    out = [{"name": n, "result": res} for n, (_, res) in latest.items() if n not in set(required)]
+    return sorted(out, key=lambda c: (c["name"].casefold(), c["name"]))
+
+
+def requests_text(reqs: list[Request]) -> str:
+    lines = ["The requests (not sent: send each with `gh api -X <method> <path> --input <body>` or the GitHub MCP tools):"]
+    for i, r in enumerate(reqs, 1):
+        lines.append(f"{i}. To {r.what}: {r.method} {r.path}")
+        lines.append(json.dumps(r.body, indent=2, ensure_ascii=False))
+    return "\n".join(lines)
+
+
+def ran_text(checks: list[dict], required: list[str]) -> str:
+    if checks:
+        lines = ["Checks that ran and aren't required yet:"] + [f"- {quote(c['name'])}: {c['result']}" for c in checks]
+    else:
+        lines = ["No checks that ran are left to require."]
+    if required:
+        lines.append("Already required: " + ", ".join(quote(n) for n in required))
     return "\n".join(lines)
