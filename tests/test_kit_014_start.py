@@ -144,8 +144,10 @@ def test_status_text_outside_a_git_checkout(tmp_path):
 
 
 def _first(repo, prompt, session=None, env=None):
+    """As a developer, so the glossary (tests/test_glossary_context.py) stays out."""
     ev = {"prompt": prompt, "session_id": session or uuid.uuid4().hex}
-    _, out, _ = run_hook("context", ev, repo, {"TMPDIR": str(repo.parent), **(env or {})})
+    env = {"TMPDIR": str(repo.parent), "WORKFLOW_EXPERIENCE": "developer", **(env or {})}
+    _, out, _ = run_hook("context", ev, repo, env)
     return (out or {}).get("hookSpecificOutput", {}).get("additionalContext", "")
 
 
