@@ -210,21 +210,34 @@ def cmd_protection(a) -> int:
 
     def given(path: str, what: str):
         try:
-            return _json(path)
+            return json.loads(_read(path).removeprefix("\ufeff"))
         except OSError as e:
             raise protection_mod.ProtectionError(f"can't read the {what} file {path}: {e.strerror or e}") from e
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            raise protection_mod.ProtectionError(f"the {what} file {path} isn't JSON ({e})") from e
+        except (json.JSONDecodeError, UnicodeDecodeError, RecursionError) as e:
+            why = "nested too deeply" if isinstance(e, RecursionError) else str(e)
+            raise protection_mod.ProtectionError(f"the {what} file {path} isn't JSON ({why})") from e
 
     try:
-        base = a.base
-        if not base:
-            prof = load(required=False)
+        if a.rulesets == "-" and a.repo == "-":
+            raise protection_mod.ProtectionError("only one of --rulesets and --repo can be read from standard input (-)")
+        if a.base is not None:
+            base = a.base.strip().removeprefix("refs/heads/")
+            if not base:
+                raise protection_mod.ProtectionError("--base was given no branch")
+        else:
+            try:
+                prof = load(required=False)
+            except ProfileError as e:
+                raise protection_mod.ProtectionError(f"{e}; give the base branch with --base") from e
             if not prof:
                 raise protection_mod.ProtectionError("the kit isn't set up here, so give the base branch with --base")
             base = prof.base_branch
         rulesets = given(a.rulesets, "rulesets")
-        settings = given(a.repo, "repository settings") if a.repo else None
+        settings = None
+        if a.repo:
+            settings = given(a.repo, "repository's settings")
+            if not isinstance(settings, dict):
+                raise protection_mod.ProtectionError("the repository's settings must be a JSON object, as GET repos/<repo> returns it")
         rep = protection_mod.check(rulesets, base, settings)
     except protection_mod.ProtectionError as e:
         print(f"workflow protection: {e}", file=sys.stderr)
@@ -749,7 +762,7 @@ def main(argv: list[str] | None = None) -> int:
 
     s = sub.add_parser("protection", help="whether the base branch is protected, read back from GitHub's JSON; changes nothing")
     s.add_argument("--rulesets", required=True, help="the repository's rulesets, each in full (GET repos/<repo>/rulesets/<id>), as a JSON list (or -)")
-    s.add_argument("--repo", help="the repository's settings (GET repos/<repo>), for the merge settings")
+    s.add_argument("--repo", help="the repository's settings (GET repos/<repo>): the merge settings, and the default branch that ~DEFAULT_BRANCH means")
     s.add_argument("--base", help="the base branch (default: the profile's project.base_branch)")
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_protection)

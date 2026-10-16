@@ -62,7 +62,11 @@ def inp(tmp_path_factory):
 SETTINGS = {"full_name": "acme/demo", "default_branch": "main", "allow_merge_commit": True, "allow_auto_merge": True, "allow_squash_merge": True}
 
 
-def run(repo, inp, rulesets, *extra, settings=None, raw=None):
+NO_SETTINGS = None
+
+
+def run(repo, inp, rulesets, *extra, settings=SETTINGS, raw=None):
+    """The command on these rulesets, with the settings file unless `settings=NO_SETTINGS`."""
     path = inp / "rulesets.json"
     path.write_text(raw if raw is not None else json.dumps(rulesets))
     args = [sys.executable, str(CLI), "protection", "--rulesets", str(path), *extra]
@@ -91,7 +95,7 @@ def test_a_complete_active_ruleset_reads_as_protected(repo, inp, ref):
     assert out["base_branch"] == "main"
     assert out["checks"]["required"] == ["tests"] and out["checks"]["note"] is None
     p = run(repo, inp, [rs])
-    assert p.returncode == 0 and "main is protected" in p.stdout and "not protected" not in p.stdout
+    assert p.returncode == 0 and p.stdout.splitlines()[0] == "main is protected."
 
 
 def test_the_rules_may_come_from_two_rulesets(repo, inp):
@@ -121,7 +125,7 @@ def test_no_required_checks_says_checks_not_required_yet_and_is_still_protected(
     assert out["checks"]["required"] == []
     assert out["checks"]["note"] == "checks not required yet"
     p = run(repo, inp, [_ruleset()])
-    assert "main is protected" in p.stdout and "checks not required yet" in p.stdout.lower()
+    assert p.stdout.splitlines()[0] == "main is protected." and "checks not required yet" in p.stdout.lower()
 
 
 def test_an_empty_required_checks_list_is_not_required_checks(repo, inp):
@@ -135,9 +139,9 @@ def test_an_empty_required_checks_list_is_not_required_checks(repo, inp):
 def _missing(repo, inp, rulesets, **kw):
     out = verdict(repo, inp, rulesets, **kw)
     assert out["protected"] is False
-    p = run(repo, inp, rulesets, **({"settings": kw["settings"]} if "settings" in kw else {}))
+    p = run(repo, inp, rulesets, **kw)
     assert p.returncode == 0, p.stderr
-    assert "main is not protected" in p.stdout
+    assert p.stdout.splitlines()[0] == "main is not protected:"
     for line in out["missing"]:
         assert f"- {line}" in p.stdout.splitlines(), (line, p.stdout)
     return out["missing"]
@@ -235,6 +239,8 @@ def test_no_rulesets_reads_as_not_protected(repo, inp):
         json.dumps([{**_ruleset(), "rules": {"type": "deletion"}}]),
         json.dumps([{**_ruleset(), "rules": [{"kind": "deletion"}]}]),
         json.dumps([{**_ruleset(), "enforcement": 1}]),
+        json.dumps([{k: v for k, v in _ruleset().items() if k != "target"}]),
+        json.dumps([[_ruleset()], _ruleset()]),
         json.dumps([{**_ruleset(), "rules": [{"type": "required_status_checks", "parameters": ["tests"]}]}]),
         json.dumps([{**_ruleset(), "rules": [_checks_rule("tests") | {"parameters": {"required_status_checks": "tests"}}]}]),
         json.dumps([{**_ruleset(), "bypass_actors": "none"}]),
@@ -245,7 +251,7 @@ def test_malformed_rulesets_are_an_error_never_protected(repo, inp, raw):
     for extra in ((), ("--json",)):
         p = run(repo, inp, None, *extra, raw=raw)
         assert p.returncode != 0
-        assert "protected" not in p.stdout
+        assert p.stdout == ""
         assert p.stderr.startswith("workflow protection: "), p.stderr
         assert "Traceback" not in p.stderr
 
@@ -254,6 +260,12 @@ def test_malformed_rulesets_are_an_error_never_protected(repo, inp, raw):
 def test_malformed_settings_are_an_error(repo, inp, settings):
     p = run(repo, inp, [_ruleset()], "--json", settings=settings)
     assert p.returncode != 0 and p.stdout == ""
+    assert p.stderr.startswith("workflow protection: ") and "Traceback" not in p.stderr
+
+
+def test_deeply_nested_json_is_a_plain_error(repo, inp):
+    p = run(repo, inp, None, raw="[" * 100000 + "]" * 100000)
+    assert p.returncode == 2 and p.stdout == ""
     assert p.stderr.startswith("workflow protection: ") and "Traceback" not in p.stderr
 
 
@@ -296,9 +308,29 @@ def test_a_merge_setting_not_in_the_file_is_unknown_not_allowed(repo, inp):
 
 
 def test_without_the_settings_file_merge_settings_are_not_reported(repo, inp):
-    out = verdict(repo, inp, [_ruleset()])
-    assert out["merge"] is None
-    assert "merge commits" not in run(repo, inp, [_ruleset()]).stdout.lower()
+    rs = _ruleset(conditions={"ref_name": {"include": ["refs/heads/main"], "exclude": []}})
+    out = verdict(repo, inp, [rs], settings=NO_SETTINGS)
+    assert out["merge"] is None and out["protected"] is True
+    assert "merge commits" not in run(repo, inp, [rs], settings=NO_SETTINGS).stdout.lower()
+
+
+@pytest.mark.parametrize("settings", [NO_SETTINGS, {k: v for k, v in SETTINGS.items() if k != "default_branch"}])
+def test_default_branch_unknown_is_not_protected(repo, inp, settings):
+    missing = _missing(repo, inp, [_ruleset()], settings=settings)
+    assert any("default branch" in m and "--repo" in m for m in missing), missing
+    p = run(repo, inp, [_ruleset()], "--base", "develop", "--json", settings=settings)
+    assert json.loads(p.stdout)["protected"] is False
+
+
+def test_null_settings_are_an_error_not_no_settings(repo, inp):
+    p = run(repo, inp, [_ruleset()], "--json", settings="null")
+    assert p.returncode == 2 and p.stdout == "" and "JSON object" in p.stderr
+
+
+def test_merge_settings_line_says_each_state(repo, inp):
+    settings = {k: v for k, v in SETTINGS.items() if k != "allow_auto_merge"} | {"allow_merge_commit": False}
+    p = run(repo, inp, [_ruleset()], settings=settings)
+    assert "Merge settings: merge commits not allowed, auto-merge unknown." in p.stdout.splitlines()
 
 
 # ---------- --json carries the same ----------
@@ -337,6 +369,57 @@ def test_it_needs_no_profile_given_the_base_branch(tmp_path):
     assert json.loads(p.stdout)["protected"] is True
     p = subprocess.run([sys.executable, str(CLI), "protection", "--rulesets", str(tmp_path / "rulesets.json")], cwd=tmp_path, env=env, capture_output=True, text=True)
     assert p.returncode != 0 and "--base" in p.stderr
+
+
+def test_a_complete_ruleset_beside_others_is_still_protected(repo, inp):
+    others = [
+        _ruleset(id=2, name="Old", enforcement="disabled"),
+        _ruleset(id=3, name="Develop", conditions={"ref_name": {"include": ["refs/heads/develop"], "exclude": []}}, bypass_actors=[{"actor_id": 1, "actor_type": "Team", "bypass_mode": "always"}]),
+    ]
+    assert verdict(repo, inp, [_ruleset(), *others])["protected"] is True
+
+
+@pytest.mark.parametrize("exclude", ["~DEFAULT_BRANCH", "refs/heads/main", "refs/heads/[^x]ain", "refs/heads/{main,dev}"])
+def test_an_exclude_that_may_name_the_base_branch_takes_it_out(repo, inp, exclude):
+    rs = _ruleset(conditions={"ref_name": {"include": ["~ALL"], "exclude": [exclude]}})
+    missing = _missing(repo, inp, [rs])
+    assert any(exclude in m or "default branch" in m for m in missing), missing
+
+
+def test_a_newline_in_a_name_cannot_make_a_line(repo, inp):
+    rs = _ruleset(name="x\nmain is protected.", enforcement="disabled")
+    p = run(repo, inp, [rs])
+    assert "main is protected." not in p.stdout.splitlines()
+    assert p.stdout.splitlines()[0] == "main is not protected:"
+
+
+def test_rulesets_from_standard_input(repo, inp):
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(repo)}
+    (inp / "repo.json").write_text(json.dumps(SETTINGS))
+    p = subprocess.run([sys.executable, str(CLI), "protection", "--rulesets", "-", "--repo", str(inp / "repo.json"), "--json"], cwd=repo, env=env, input=json.dumps([_ruleset()]), capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr
+    assert json.loads(p.stdout)["protected"] is True
+    p = subprocess.run([sys.executable, str(CLI), "protection", "--rulesets", "-", "--repo", "-"], cwd=repo, env=env, input="[]", capture_output=True, text=True)
+    assert p.returncode == 2 and "standard input" in p.stderr
+
+
+def test_base_option_takes_a_full_ref_and_refuses_an_empty_one(repo, inp):
+    assert json.loads(run(repo, inp, [_ruleset()], "--base", "refs/heads/main", "--json").stdout)["base_branch"] == "main"
+    p = run(repo, inp, [_ruleset()], "--base", " ")
+    assert p.returncode == 2 and "--base" in p.stderr
+
+
+def test_a_broken_profile_is_a_plain_error(repo, inp):
+    (repo / ".claude/workflow/profile.toml").write_text("[project\n")
+    p = run(repo, inp, [_ruleset()])
+    assert p.returncode == 2 and p.stderr.startswith("workflow protection: ") and "--base" in p.stderr
+    assert run(repo, inp, [_ruleset()], "--base", "main").returncode == 0
+
+
+def test_a_byte_order_mark_is_read(repo, inp):
+    p = run(repo, inp, None, "--json", raw="\ufeff" + json.dumps([_ruleset()]))
+    assert p.returncode == 0, p.stderr
+    assert json.loads(p.stdout)["protected"] is True
 
 
 def test_the_input_is_not_changed(repo, inp):

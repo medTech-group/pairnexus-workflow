@@ -2,7 +2,12 @@
 
 ## Unreleased
 
-- **`workflow protection` reads back whether the base branch is protected** (#44), from the rulesets (each in full) and, optionally, the repository's settings, as JSON files a session hands it. It says protected or not, lists each missing protection in plain words (no rulesets, not active, evaluate only, not targeting the base branch, a bypass list, deletions or force pushes allowed, pull requests not required), says "checks not required yet" when no status checks are required, and reports the merge settings. `--json` gives the same for skills. It asks GitHub nothing and writes nothing; a wrong input is an error, never "protected". The "Protect `main`" upgrade, set-up, the conductor's pre-flight and `workflow doctor` are to use it ([docs/protection.md](docs/protection.md)).
+- **`workflow protection` reads back whether the base branch is protected** (#44). A session hands it the rulesets, each in full, and the repository's settings, as JSON files ([docs/protection.md](docs/protection.md)).
+  - It says whether the base branch is protected, and lists each missing protection on its own line, in plain words.
+  - It says "checks not required yet" when no status checks are required, and reports the merge settings.
+  - `--json` gives the same for skills.
+  - It asks GitHub nothing and writes nothing. A wrong input is an error, never "protected", and so is a ruleset on `~DEFAULT_BRANCH` without the settings that name the default branch.
+  - The "Protect `main`" upgrade, set-up, the conductor's pre-flight and `workflow doctor` are to use it.
 
 ## 0.1.10
 
