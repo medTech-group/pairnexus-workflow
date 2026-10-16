@@ -25,7 +25,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .profile import PROFILE_PATH, ProfileError, parse
+from .profile import _FENCE, PROFILE_PATH, ProfileError, parse
 
 # Where GitHub looks for CODEOWNERS, in its order: it reads the first it finds.
 CODEOWNERS_PATHS = (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS")
@@ -44,7 +44,6 @@ _TABLE = re.compile(r"^\s*\[")
 _PROJECT_TABLE = re.compile(r"^\s*\[\s*project\s*\]\s*(#.*)?$")
 # `key = "value"` or `key = 'value'`, then anything (a comment) after it.
 _TOML_KEY = r"^(?P<lead>\s*{key}\s*=\s*)(?P<value>\"(?:[^\"\\\n]|\\.)*\"|'[^'\n]*')(?P<rest>\s*(?:#.*)?)$"
-_FENCE = re.compile(r"^\s*(```|~~~)")
 BOM = "\ufeff"
 
 
