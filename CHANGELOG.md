@@ -9,7 +9,7 @@
 - **The conductor's pre-flight** reads the ruleset back with `workflow protection` and, in either case, states the gap plainly: nothing on GitHub stops a mistake reaching `main`, and the kit's "never merge while CI is red" check is the only one. It offers "Protect `main`" (or restoring it) through `upgrade-setup`, or "Go ahead", which goes in `accepted_gaps`. The ticket environment is still required; when the profile names none, the pre-flight now offers "Set up unattended runs" beside the README's Step 5. Projects with `ruleset` left out keep today's ruleset checks.
 - **The run report** repeats a solo-mode run's gap under its summary.
 - Docs: `docs/charter.md`. Tests: `tests/test_charter_solo.py`.
-- **For projects updating:** nothing to do. Without `ruleset = false`, the charter behaves as before.
+- **For projects updating:** nothing to do. With `ruleset` left out, nothing changes; with `ruleset = true`, the conductor also reads the protection back before each run.
 
 **Experience in the guided start and kit updates** (#49, part of solo mode, #32).
 

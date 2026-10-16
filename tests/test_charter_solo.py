@@ -173,7 +173,15 @@ def test_an_accepted_removed_protection_gap_carries_the_verdict(tmp_path):
 
 @pytest.mark.parametrize(
     "gap",
-    ["  removed protection: solo mode: x", "Removed protection: x", "REMOVED PROTECTION: x", "removed protection:solo mode: x"],
+    [
+        "  removed protection: solo mode: x",
+        "Removed protection: x",
+        "REMOVED PROTECTION: x",
+        "removed protection:solo mode: x",
+        "removed  protection : x",
+        "removed\u00a0protection: x",
+        "note\nremoved protection: x",
+    ],
 )
 def test_a_retyped_removed_protection_line_still_counts(gap):
     c = charter.defaults(["ship"])
@@ -305,7 +313,7 @@ def test_run_report_repeats_a_solo_mode_runs_gap():
     assert "accepted_gaps" in text and "solo mode" in text.lower()
     # It finds the gap by the prefixes the kick-off records.
     assert charter.SOLO_GAP.startswith("solo mode:")
-    assert "`solo mode:`" in text and "`removed protection: solo mode:`" in text
+    assert "`solo mode:`" in text and "`removed protection:`, whatever its case or spacing" in text
     assert "Restore protection" in text
     assert GAP_WORDS in text and ONLY_CHECK in text
     assert "Protect `main`" in text

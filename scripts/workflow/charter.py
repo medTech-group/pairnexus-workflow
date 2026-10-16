@@ -22,6 +22,7 @@ what changed, and the comment URL or quoted words it came from.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -38,6 +39,8 @@ SOLO_GAP = (
     'the kit\'s "never merge while CI is red" check is the only one'
 )
 REMOVED_PROTECTION = "removed protection: "
+# A line that starts with it, whatever its case and spacing, on any line of the entry.
+_REMOVED_PROTECTION_LINE = re.compile(r"^\s*removed\s+protection\s*:", re.I | re.M)
 
 
 def solo_reason(ruleset: bool | None, protected: bool | None = None) -> str | None:
@@ -48,18 +51,17 @@ def solo_reason(ruleset: bool | None, protected: bool | None = None) -> str | No
     if ruleset is False:
         return "solo mode (project.ruleset is false)"
     if ruleset is True and protected is False:
-        return "removed protection (project.ruleset is true, but the read-back found the base branch unprotected)"
+        return "removed protection (project.ruleset is true, but the read-back didn't find the base branch protected)"
     return None
 
 
 def removed_protection_accepted(c: Any) -> bool:
     """The charter records removed protection: an `accepted_gaps` line that
-    starts with REMOVED_PROTECTION, whatever its case and spacing (a line typed
-    again in an amendment still counts). It carries the read-back's verdict to
-    every later check of the charter."""
+    starts with `removed protection:`, whatever its case and spacing (a line
+    typed again in an amendment still counts). It carries the read-back's
+    verdict to every later check of the charter."""
     gaps = c.get("accepted_gaps") if isinstance(c, dict) else None
-    head = REMOVED_PROTECTION.strip().casefold()
-    return isinstance(gaps, list) and any(isinstance(g, str) and g.strip().casefold().startswith(head) for g in gaps)
+    return isinstance(gaps, list) and any(isinstance(g, str) and _REMOVED_PROTECTION_LINE.search(g) for g in gaps)
 
 
 def _auto_merge_risk(why: str, solo: bool) -> str:

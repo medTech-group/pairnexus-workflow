@@ -22,7 +22,7 @@ One comment on the tracking issue, written for the owner to act on. Build it onl
    - how many tickets merged, how many were set aside, how many weren't started;
    - why the run ended: done, the end time, a limit, or the stop label.
 
-   **A solo-mode run** repeats its gap right under the summary. It is one whose charter's `accepted_gaps` has a line starting `solo mode:` or `removed protection: solo mode:` (whatever its case or leading spaces). Use these words, with the base branch's name in place of `main` where it isn't `main`:
+   **A solo-mode run** repeats its gap right under the summary. It is one whose charter's `accepted_gaps` has a line starting `solo mode:` or `removed protection:`, whatever its case or spacing (the charter's own check reads `removed protection:` the same way). Use these words, with the base branch's name in place of `main` where it isn't `main`:
 
    > This run was in solo mode: nothing on GitHub stops a mistake reaching `main`, and the kit's "never merge while CI is red" check is the only one.
 
