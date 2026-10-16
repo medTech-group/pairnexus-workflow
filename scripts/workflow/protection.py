@@ -506,10 +506,11 @@ def _whole(pages: list, key: str, what: str) -> None:
         )
 
 
-def _check_runs(data, commit: str | None = None) -> list[Ran]:
+def _check_runs(data, commit: str | None = None, previews: bool = True) -> list[Ran]:
     """The check runs: one response of GET .../check-runs, or its pages from `--paginate --slurp`.
 
-    With `commit`, a run whose `head_sha` names another commit is left out."""
+    With `commit`, a run whose `head_sha` names another commit is left out;
+    with `previews=False`, the try-it link's runs are, before they are read."""
     what = "check runs"
     pages = data if isinstance(data, list) else [data]
     if not all(isinstance(p, dict) and isinstance(p.get("check_runs"), list) for p in pages):
@@ -524,6 +525,8 @@ def _check_runs(data, commit: str | None = None) -> list[Ran]:
             # Without it, the try-it link's check can't be told apart, and would be offered.
             raise ProtectionError(f"the {what} file: each check run must have its app, with a slug, as GitHub gives it")
         started, completed = _when(r.get("started_at"), what), _when(r.get("completed_at"), what)
+        if not previews and app["slug"].casefold() in NEVER_OFFERED_APPS:
+            continue
         if commit is not None and isinstance(r.get("head_sha"), str) and r["head_sha"].lower() != commit.lower():
             continue
         if r["status"] != "completed":
@@ -595,8 +598,7 @@ def checks_ran(check_runs, statuses=None, required=()) -> list[dict]:
     a control character).
     """
     skip = set(required)
-    runs = [r for r in _check_runs(check_runs) if not r.preview]
-    ran = _collapse(runs + _statuses(statuses if statuses is not None else []))
+    ran = _collapse(_check_runs(check_runs, previews=False) + _statuses(statuses if statuses is not None else []))
     out = [{"name": r.name, "result": r.result} for r in ran if r.name not in skip and _a_check_name(r.name)]
     return sorted(out, key=lambda c: (c["name"].casefold(), c["name"]))
 

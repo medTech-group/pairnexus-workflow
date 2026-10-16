@@ -534,20 +534,29 @@ def cmd_merge_check(a) -> int:
     Changes nothing, posts nothing, and exits 0 whatever it finds: anything it
     can't read is a reason of its own, never "ready"."""
     inputs: dict = {}
+    stdin_for = None
     for name in merge_mod.INPUTS:
         path = getattr(a, name, None)
-        if name == "profile" or path is None:
+        if path is None:
             continue
+        if path == "-":
+            if stdin_for is not None:
+                inputs[name] = (None, f"standard input (-) is already --{stdin_for}'s: only one file can be read from it")
+                continue
+            stdin_for = name
         try:
-            text = _read(path).removeprefix("\ufeff")
-            values = posts_mod.decode_values(text)
-            if not values:
-                raise posts_mod.CommentsError("the file is empty")
-            inputs[name] = (values[0] if len(values) == 1 else values, None)
+            if path == "-" and sys.stdin is None:
+                raise ValueError("standard input (-) is closed")
+            values = posts_mod.decode_values(_read(path).removeprefix("\ufeff"))
+            inputs[name] = (values[0], None) if len(values) == 1 else (values, None) if values else (None, f"{path} is empty")
         except OSError as e:
             inputs[name] = (None, f"can't open {path}: {e.strerror or e}")
-        except (posts_mod.CommentsError, UnicodeDecodeError) as e:
+        except posts_mod.CommentsError as e:
             inputs[name] = (None, f"{path} isn't JSON ({e})")
+        except UnicodeDecodeError:
+            inputs[name] = (None, f"{path} isn't UTF-8 text")
+        except ValueError as e:  # a closed standard input
+            inputs[name] = (None, str(e) if path == "-" else f"can't read {path}")
     prof, profile_error = None, None
     try:
         prof = load(required=False)
@@ -1032,10 +1041,10 @@ def main(argv: list[str] | None = None) -> int:
         "merge-check", allow_abbrev=False, help="whether a pull request may merge under the merge rule (flow §4), from JSON files; changes nothing, posts nothing, exits 0"
     )
     for name, what in merge_mod.INPUTS.items():
-        if name != "profile":
-            s.add_argument(f"--{name}", metavar="F", help=f"{what}, as JSON from the GitHub API (or -)")
+        source = "#41's preview reader: state built, building, failed or none; url; commit" if name == "preview" else "as JSON from the GitHub API, every page"
+        s.add_argument(f"--{name}", metavar="F", help=f"{what} ({source}); a file, or - for standard input")
     s.add_argument("--asker", metavar="LOGIN", help="the GitHub login of whoever asks (the owner gets \"Ready once you've read\" for kit and CI files)")
-    s.add_argument("--json", action="store_true")
+    s.add_argument("--json", action="store_true", help="the decision, its reasons and notes, and each check's name and state, as JSON")
     s.set_defaults(fn=cmd_merge_check)
 
     s = sub.add_parser("briefing", help="check a ticket session's copy of its briefing against its `Briefing <hash>` line")
