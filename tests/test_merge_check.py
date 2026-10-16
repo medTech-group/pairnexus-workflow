@@ -540,7 +540,7 @@ def test_a_built_preview_gives_its_link(project, capsys):
     assert got["decision"] == "ready", got["reasons"]
     assert got["preview"] == {"state": "built", "url": "https://pr-12.demo.pages.dev"}
     out, _ = check(project, capsys, data, as_json=False)
-    assert "https://pr-12.demo.pages.dev" in out
+    assert "Try it first: https://pr-12.demo.pages.dev" in out.splitlines()
 
 
 def test_no_previews_is_a_note_never_a_block(project, capsys):
