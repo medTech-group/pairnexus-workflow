@@ -20,7 +20,8 @@ ROLES = {"ticket", "conductor", "attended"}
 def current_branch(cwd: Path) -> str | None:
     try:
         out = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=cwd, capture_output=True, text=True, timeout=5
+            # A name that isn't UTF-8 is still read (and matched), never an error that fails open.
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=cwd, capture_output=True, text=True, errors="replace", timeout=5
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
