@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **One support promise** (#97), in the same words in the README's new "Support" section, its status note, `SECURITY.md` and `CONTRIBUTING.md`: best effort, with no guaranteed response time for issues or pull requests; security reports acknowledged within 5 working days; a fix release when a Claude Code update breaks the guard or the hooks.
+- **A new issue template, "The guard or a hook stopped working after a Claude Code update"** (`.github/ISSUE_TEMPLATE/claude-code-break.md`). It asks for `claude --version`, `workflow version`, vendored or plugin, what was run and what happened instead, and applies the `claude-code-break` label once the owner creates it. A break that lets a session past the guard goes to the private security report instead.
+- Tests read the text as files (`tests/test_support_promise.py`).
+
 ## 0.1.10
 
 **The guard reads editing scripts as their tools do, and fails closed when it runs out of time.** In a ticket session the guard refuses a new test-skip or focus marker that an editing script (`sed`, `perl`, `awk`, `vim`, `ed`) or a patch adds. The correctness reviews of 0.1.9 found older ways, all in 0.1.8 already, that a script could add one unseen, and ways to make the guard slow enough to outlast the hook's timeout, which in 0.1.8 doesn't block. Reported and fixed privately, under `SECURITY.md`.
