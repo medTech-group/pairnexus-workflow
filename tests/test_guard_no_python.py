@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from workflow import fallback, vendor
+from workflow import fallback, modes, vendor
 
 KIT = Path(__file__).resolve().parents[1]
 KINDS = ("old", "missing", "failing")
@@ -252,6 +252,13 @@ def test_the_shell_reads_a_command_as_fallback_py_does(tmp_path, command):
         event = _bash(command, mode)
         want = fallback.decide(event, False, "why")
         assert _shell_decision(json.dumps(event), tmp_path) == (want[0] if want else None), (command, mode)
+
+
+def test_the_shell_knows_every_mode_modes_py_lists(tmp_path):
+    # fallback.sh keeps its own copy of the list: a mode added to modes.py must be added there too.
+    for mode in modes.ASKING_MODES + modes.NEVER_ASK_MODES:
+        want = fallback.decide(_bash(PUSH, mode), False, "why")[0]
+        assert _shell_decision(json.dumps(_bash(PUSH, mode)), tmp_path) == want, mode
 
 
 def test_the_shell_reads_only_the_command(tmp_path):
