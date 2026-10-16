@@ -301,8 +301,7 @@ def test_require_checks_refuses_a_ruleset_that_isnt_whole(repo, inp, change, wor
 
 @pytest.mark.parametrize("raw", ["[]", "{nope", '"ruleset"', json.dumps([recorded_ruleset()])])
 def test_require_checks_refuses_what_isnt_one_ruleset(repo, inp, raw):
-    p = require(repo, inp, None, "tests", raw=raw)
-    assert p.returncode == 2 and p.stdout == "" and "Traceback" not in p.stderr
+    bad(require(repo, inp, None, "tests", raw=raw))
 
 
 # ---------- the checks that ran ----------
@@ -593,3 +592,56 @@ def test_a_check_run_counts_from_when_it_finished(repo, inp):
     run["completed_at"] = "2026-10-01T10:30:00Z"
     statuses = [status_("tests", "success", at="2026-10-01T10:15:00Z")]
     assert ok(ran(repo, inp, [run], statuses, (), "--json"))["checks"] == [{"name": "tests", "result": "failing"}]
+
+
+# ---------- review round 2 ----------
+
+
+@pytest.mark.parametrize("app", ["drop", None])
+def test_a_check_run_without_its_app_is_an_error_so_the_cloudflare_check_cant_slip_through(repo, inp, app):
+    r = run_("Workers Builds: notes-app")
+    if app == "drop":
+        del r["app"]
+    else:
+        r["app"] = None
+    bad(ran(repo, inp, [r], None, ()), "app")
+
+
+def test_a_number_too_large_for_a_float_is_not_json(repo, inp):
+    rs = json.dumps(recorded_ruleset()).replace('"required_approving_review_count": 1', '"required_approving_review_count": 1e400')
+    assert "1e400" in rs
+    bad(require(repo, inp, None, "tests", raw=rs), "isn't JSON")
+
+
+def test_pages_of_the_combined_status_are_read_and_must_be_whole(repo, inp):
+    pages = [{"state": "success", "total_count": 2, "statuses": [status_("a")]}, {"state": "success", "total_count": 2, "statuses": [status_("b", id=2)]}]
+    assert [c["name"] for c in ok(ran(repo, inp, [], pages, (), "--json"))["checks"]] == ["a", "b"]
+    bad(ran(repo, inp, [], pages[:1], ()), "1 of the commit's 2")
+
+
+@pytest.mark.parametrize("total", [True, "5", -1, 1.5])
+def test_a_total_count_that_isnt_a_count_is_an_error(repo, inp, total):
+    bad(ran(repo, inp, json.dumps({"total_count": total, "check_runs": [run_("a")]}), None, ()), "total_count")
+
+
+def test_names_check_would_refuse_are_never_offered(repo, inp):
+    runs = [run_("", id=1), run_("a\tb", id=2), run_("lint ", id=3), run_("lint", id=4)]
+    assert ok(ran(repo, inp, runs, None, (), "--json"))["checks"] == [{"name": "lint", "result": "passing"}]
+
+
+def test_at_the_same_time_the_higher_id_wins(repo, inp):
+    statuses = [status_("ci", "success", id=8), status_("ci", "pending", id=7)]
+    assert ok(ran(repo, inp, [], statuses, (), "--json"))["checks"] == [{"name": "ci", "result": "passing"}]
+    statuses = [status_("ci", "pending", id=8), status_("ci", "success", id=7)]
+    assert ok(ran(repo, inp, [], statuses, (), "--json"))["checks"] == [{"name": "ci", "result": "pending"}]
+
+
+@pytest.mark.parametrize("params", [{}, {"strict_required_status_checks_policy": False}, None])
+def test_require_checks_fills_a_checks_rule_with_no_list(repo, inp, params):
+    rs = recorded_ruleset()
+    rs["rules"][2] = {"type": "required_status_checks", "parameters": params}
+    body = ok(require(repo, inp, rs, "tests"))["requests"][0]["body"]
+    assert body["rules"][2] == {
+        "type": "required_status_checks",
+        "parameters": {"strict_required_status_checks_policy": True, "required_status_checks": [{"context": "tests"}]},
+    }

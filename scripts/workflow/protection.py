@@ -1,4 +1,5 @@
-"""Whether the base branch is protected, read back from GitHub's JSON.
+"""Whether the base branch is protected, read back from GitHub's JSON, and
+the requests that protect it.
 
 `workflow protection` takes the repository's rulesets, each in full (as
 `GET repos/<repo>/rulesets/<id>` returns it), and optionally the repository's
@@ -12,6 +13,11 @@ and none of them has a bypass list. Anything it can't tell counts as missing,
 so an unknown never reads as protected. `check` is the one place this rule
 lives: the "Protect `main`" upgrade, set-up, the conductor's pre-flight and
 `workflow doctor` will call it rather than repeat it.
+
+Beside it, the request builder (#66): the requests that create the ruleset and
+set the merge settings (`protect`), that add checks to a ruleset
+(`require_checks`), and the checks that ran on a commit (`checks_ran`). It
+prints them for a session to send, and sends nothing.
 """
 
 from __future__ import annotations
@@ -345,8 +351,8 @@ class Request:
 
 
 @dataclass
-class Reported:
-    """One report of a check on the commit: a check run or a status."""
+class Ran:
+    """A check run or a status on the commit."""
 
     name: str
     result: str
@@ -354,11 +360,15 @@ class Reported:
     id: int
 
 
+def _a_check_name(n) -> bool:
+    return isinstance(n, str) and bool(n.strip()) and n == n.strip() and not any(unicodedata.category(c) in NOT_IN_A_CHECK for c in n)
+
+
 def check_names(names) -> list[str]:
     """The check names as given, each once; raises on one that can't be a check name."""
     out: list[str] = []
     for n in names or []:
-        if not isinstance(n, str) or not n.strip() or n != n.strip() or any(unicodedata.category(c) in NOT_IN_A_CHECK for c in n):
+        if not _a_check_name(n):
             shown = quote(n) if isinstance(n, str) else repr(n)
             raise ProtectionError(
                 f"the check name {shown} isn't a check name: it is empty, has spaces at either end, "
@@ -386,10 +396,10 @@ def _checks_rule(names: list[str]) -> dict:
 
 def _repo_of(settings) -> tuple[str, str]:
     """(owner/repo, default branch) from the repository's settings."""
-    _, default = _settings(settings)
+    _, default = _settings(settings)  # checks the settings as the read-back does; the merge report isn't needed here
     full = _repo_name(settings.get("full_name"))
     if full is None:
-        raise ProtectionError("the repository's settings have no full_name (owner/repo), so the requests can't name the repository")
+        raise ProtectionError("the repository's settings: full_name isn't owner/repo, so the requests can't name the repository")
     if not default:
         raise ProtectionError("the repository's settings have no default_branch, so it can't tell whether the base branch is the default")
     try:
@@ -477,7 +487,11 @@ def _when(v, what: str) -> datetime | None:
 
 def _whole(pages: list, key: str, what: str) -> None:
     """Raises when the pages hold fewer items than GitHub's total_count says there are."""
-    total = max((p["total_count"] for p in pages if isinstance(p.get("total_count"), int)), default=None)
+    for p in pages:
+        t = p.get("total_count")
+        if t is not None and (not isinstance(t, int) or isinstance(t, bool) or t < 0):
+            raise ProtectionError(f"the {what} file: total_count must be a number, as GitHub gives it")
+    total = max((p["total_count"] for p in pages if p.get("total_count") is not None), default=None)
     have = sum(len(p[key]) for p in pages)
     if total is not None and have < total:
         raise ProtectionError(
@@ -486,22 +500,23 @@ def _whole(pages: list, key: str, what: str) -> None:
         )
 
 
-def _check_runs(data) -> list[Reported]:
+def _check_runs(data) -> list[Ran]:
     """The check runs: one response of GET .../check-runs, or its pages from `--paginate --slurp`."""
     what = "check runs"
     pages = data if isinstance(data, list) else [data]
     if not all(isinstance(p, dict) and isinstance(p.get("check_runs"), list) for p in pages):
         raise ProtectionError(f"the {what} file must hold check_runs, as GET repos/<repo>/commits/<ref>/check-runs returns them")
     _whole(pages, "check_runs", what)
-    out: list[Reported] = []
+    out: list[Ran] = []
     for r in (r for p in pages for r in p["check_runs"]):
         if not isinstance(r, dict) or not isinstance(r.get("name"), str) or not isinstance(r.get("status"), str):
             raise ProtectionError(f"the {what} file: each check run must be an object with a name and a status")
         app = r.get("app")
-        if app is not None and not (isinstance(app, dict) and isinstance(app.get("slug"), (str, type(None)))):
-            raise ProtectionError(f"the {what} file: a check run's app must be an object")
+        if not isinstance(app, dict) or not isinstance(app.get("slug"), str):
+            # Without it, the try-it link's check can't be told apart, and would be offered.
+            raise ProtectionError(f"the {what} file: each check run must have its app, with a slug, as GitHub gives it")
         started, completed = _when(r.get("started_at"), what), _when(r.get("completed_at"), what)
-        if app and isinstance(app.get("slug"), str) and app["slug"].casefold() in NEVER_OFFERED_APPS:
+        if app["slug"].casefold() in NEVER_OFFERED_APPS:
             continue
         if r["status"] != "completed":
             result = "pending"
@@ -509,28 +524,31 @@ def _check_runs(data) -> list[Reported]:
             raise ProtectionError(f"the {what} file: the completed check run {quote(r['name'])} has no conclusion")
         else:
             result = "passing" if r["conclusion"] in PASSING else "failing"
-        out.append(Reported(r["name"], result, completed or started, _id(r)))
+        out.append(Ran(r["name"], result, completed or started, _id(r)))
     return out
 
 
-def _statuses(data) -> list[Reported]:
+def _statuses(data) -> list[Ran]:
     """The statuses: GET .../statuses (or its pages), or the combined GET .../status."""
     what = "statuses"
+    combined = data if isinstance(data, list) and data and all(isinstance(p, dict) and "statuses" in p for p in data) else None
     if isinstance(data, dict):
-        if not isinstance(data.get("statuses"), list):
+        combined = [data]
+    if combined is not None:  # the combined status, or its pages
+        if not all(isinstance(p.get("statuses"), list) for p in combined):
             raise ProtectionError(f"the {what} file must be a list of statuses, or the combined status with its statuses")
-        _whole([data], "statuses", what)
-        items = data["statuses"]
+        _whole(combined, "statuses", what)
+        items = [s for p in combined for s in p["statuses"]]
     elif isinstance(data, list):
         items = [s for p in data for s in p] if data and all(isinstance(p, list) for p in data) else data
     else:
         raise ProtectionError(f"the {what} file must be a list of statuses, as GET repos/<repo>/commits/<ref>/statuses returns them")
-    out: list[Reported] = []
+    out: list[Ran] = []
     for s in items:
         if not isinstance(s, dict) or not isinstance(s.get("context"), str) or not isinstance(s.get("state"), str) or s["state"] not in STATUS_RESULT:
             raise ProtectionError(f"the {what} file: each status must be an object with a context and a state (success, pending, failure or error)")
         updated, created = _when(s.get("updated_at"), what), _when(s.get("created_at"), what)
-        out.append(Reported(s["context"], STATUS_RESULT[s["state"]], updated or created, _id(s)))
+        out.append(Ran(s["context"], STATUS_RESULT[s["state"]], updated or created, _id(s)))
     return out
 
 
@@ -545,16 +563,18 @@ def checks_ran(check_runs, statuses=None, required=()) -> list[dict]:
     app are never offered. A name reported more than once (a re-run, or a check
     run and a status of the same name) appears once, with its latest result:
     the one that finished (or, not finished, started; a status: was updated)
-    last. A report with no time counts as the oldest; at the same time, the
-    higher id wins.
+    last. A check run or status with no time counts as the oldest; at the
+    same time, the higher id wins. A name `--check` would refuse (empty,
+    spaces at either end, a control character) is never offered.
     """
     oldest = datetime.min.replace(tzinfo=timezone.utc)
-    latest: dict[str, Reported] = {}
-    for rep in _check_runs(check_runs) + _statuses(statuses if statuses is not None else []):
-        have = latest.get(rep.name)
-        if have is None or (rep.when or oldest, rep.id) >= (have.when or oldest, have.id):
-            latest[rep.name] = rep
-    out = [{"name": n, "result": r.result} for n, r in latest.items() if n not in set(required)]
+    latest: dict[str, Ran] = {}
+    for r in _check_runs(check_runs) + _statuses(statuses if statuses is not None else []):
+        have = latest.get(r.name)
+        if have is None or (r.when or oldest, r.id) >= (have.when or oldest, have.id):
+            latest[r.name] = r
+    skip = set(required)
+    out = [{"name": n, "result": r.result} for n, r in latest.items() if n not in skip and _a_check_name(n)]
     return sorted(out, key=lambda c: (c["name"].casefold(), c["name"]))
 
 
