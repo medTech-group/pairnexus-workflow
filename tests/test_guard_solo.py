@@ -607,3 +607,77 @@ def test_stdin_and_pushdefault_wording(solo):
 def test_authorization_header_masked(solo):
     cmd = 'git -c http.extraHeader="Authorization: Bearer tok_abcdef123456" push origin main'
     assert "tok_abcdef123456" not in act(solo, cmd).reason
+
+
+# ---------- the explorer, round 2 ----------
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "git checkout main && git push",
+        "git switch main; git push origin HEAD",
+        "git checkout main && git push origin @",
+        "git switch -C main && git push -u origin HEAD",
+        "git checkout main && git push -f",
+        "git checkout -q main && git push origin HEAD",
+    ],
+)
+def test_switching_to_the_base_branch_then_pushing(cmd, solo):
+    assert act(solo, cmd).action == "deny", cmd
+
+
+@pytest.mark.parametrize("cmd", ["git checkout -b fix && git push -u origin HEAD", "git switch other && git push origin other", "git checkout main -- README.md && git push origin HEAD"])
+def test_switching_to_another_branch_then_pushing_it(cmd, solo):
+    assert act(solo, cmd).action == "allow", cmd
+
+
+@pytest.mark.parametrize("cmd", ['git config alias.pm "push origin main" && git pm', "git config alias.pm '!git push origin main'"])
+def test_writing_an_alias_that_pushes(cmd, solo):
+    assert act(solo, cmd).action == "deny", cmd
+
+
+def test_harmless_alias_write(solo):
+    assert act(solo, "git config alias.st status").action == "allow"
+
+
+def test_reason_wording_round_2(solo):
+    r = act(solo, "git push origin HEAD", branch=None).reason
+    assert "guard" not in r
+    r = act(solo, "git config push.default matching").reason
+    assert "base branch" not in r
+    r = act(solo, "git push", branch="main").reason
+    assert "bare push" not in r and "make a branch" not in r.split("\n")[1]
+    r = act(solo, 'git push origin "$B"').reason
+    assert "own directory" not in r and "name the branch" in r
+
+
+def test_prune_of_tags_only_is_asked(solo):
+    assert act(solo, "git push --prune --tags origin").action == "ask"
+
+
+def test_many_bare_pushes_stay_within_the_budget(on_feature):
+    import time
+
+    prof = on_disk(on_feature, False)
+    cmd = "; ".join(["git push"] * 400 + ["git zz"] * 400 + ["git push origin main"])
+    t = time.monotonic()
+    d = decide(bash(cmd, on_feature), prof, "attended", on_feature, "feature")
+    assert d.action == "deny"
+    assert time.monotonic() - t < 6  # the git lookups are made once per directory
+
+
+def test_a_slow_guard_in_solo_mode_refuses(solo_repo, monkeypatch, capsys):
+    import time
+
+    from workflow import cli
+
+    monkeypatch.setattr(cli, "GUARD_BUDGET", 0.2)
+    monkeypatch.setattr(cli, "_STARTED", time.monotonic())  # so the timer itself runs out
+    monkeypatch.setattr(cli.guard_mod, "decide", lambda *a, **k: time.sleep(5))
+    monkeypatch.setenv("WORKFLOW_ROLE", "attended")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(solo_repo))
+    monkeypatch.chdir(solo_repo)
+    assert cli._hook_guard(bash("git push origin main", solo_repo)) == 0
+    out = json.loads(capsys.readouterr().out)["hookSpecificOutput"]
+    assert out["permissionDecision"] == "deny" and "ran out of time" in out["permissionDecisionReason"]

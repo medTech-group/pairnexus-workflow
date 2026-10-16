@@ -18,6 +18,7 @@
 - **A push whose destination the guard can't tell** (a variable, `@` with no known branch, a glob, a brace list, a detached HEAD, another directory or repository, a git alias that pushes) counts as the base branch in solo mode, and the refusal says to push the branch by name.
 - **Force-pushing or deleting a named feature branch is still asked:** the force and delete options are read with their destinations in solo mode. An ask earlier in a command never hides a refusal later in it.
 - **The refusal's reason** says why in plain words, explains what `main` is to someone new to building (or of unknown experience), gives the command to run in their own terminal, and tells Claude to offer "Protect `main`" with "Not now". It is built by `guard.solo_refusal`, for the other solo-mode refusals to reuse.
+- **When the guard runs out of time** in solo mode, the command is refused, as in ticket sessions.
 - **Unchanged:** ticket and conductor sessions, and projects with `ruleset = true` or no setting.
 - Docs: `docs/enforcement.md` §4. Tests: `tests/test_guard_solo.py`.
 - **For projects updating:** nothing to do. Solo mode only applies once the profile says `ruleset = false`.
