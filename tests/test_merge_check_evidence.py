@@ -176,7 +176,7 @@ def test_a_waived_check_killed_not_failed_counts(project, capsys, monkeypatch):
 
 
 def test_a_killed_pytest_run_with_only_passing_progress_counts(project, capsys, monkeypatch):
-    log = "tests/test_a.py ......ss..   [ 40%]\ntests/test_b.py ..\nError: Process completed with exit code 143."
+    log = "tests/test_a.py ......ss..   [ 40%]\n.....xX...   [ 80%]\ntests/test_b.py ..\nError: Process completed with exit code 143."
     data, logs = waiver_case(project, monkeypatch, log=log)
     got, _ = run(project, capsys, data, "--check-logs", str(logs), files={"charter": json.dumps(a_charter())})
     assert got["decision"] == "ready", got["reasons"]
@@ -216,6 +216,10 @@ def test_a_log_not_named_by_the_heads_run_isnt_read(project, capsys, monkeypatch
     "tests/test_a.py ..F..                                                    [ 40%]\nError: Process completed with exit code 143.",
     "tests/test_a.py::test_x[a b] FAILED\nError: Process completed with exit code 143.",
     "\x1b[31mtests/test_a.py ..E\x1b[0m [ 40%]\nError: Process completed with exit code 143.",
+    "..F.......                                                               [ 40%]\nError: Process completed with exit code 143.",
+    "..........F\nError: Process completed with exit code 143.",
+    "[gw0] [ 50%] FAILED tests/test_a.py::test_x\nError: Process completed with exit code 143.",
+    "FAIL src/sum.test.js\nError: Process completed with exit code 143.",
 ])
 def test_a_killed_marker_beside_a_real_failure_blocks(project, capsys, monkeypatch, log):
     data, logs = waiver_case(project, monkeypatch, log=log)

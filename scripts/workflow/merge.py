@@ -788,11 +788,14 @@ def _checks(ctx: Context, add) -> None:
 
 _EXIT_CODE = re.compile(r"\bexit code (\d+)")
 # A test that failed, as runners report it while they run, before any count:
-# pytest's `path::test FAILED`, `FAILED path::test` and its progress line's
-# `F` or `E` (`tests/test_a.py ..F.  [ 40%]`), go's `--- FAIL:`, jest's `✕`.
-# Matched on each line as `_log_line` leaves it.
+# pytest's `path::test FAILED`, `FAILED path::test` (xdist's `[gw0] [ 50%] FAILED
+# path::test` too) and its progress line's `F` or `E`, with the file's path or,
+# under -q or continued, without (`tests/test_a.py ..F.  [ 40%]`, `..F..  [ 40%]`);
+# go's `--- FAIL:`; jest's `✕` and `FAIL path`. Matched on each line as
+# `_log_line` leaves it.
 _TEST_FAILED = re.compile(
-    r"::.*? (?:FAILED|ERROR)(?:\s|$)|^(?:FAILED|ERROR) \S+::|\.py [.sxXFE]*[FE][.sxXFE]*(?:\s|$)|^--- FAIL:|^✕ "
+    r"::.*? (?:FAILED|ERROR)(?:\s|$)|(?:^|\s)(?:FAILED|ERROR) \S+::|\.py [.sxXFE]*[FE][.sxXFE]*(?:\s|$)"
+    r"|^[.sxXFE]*[FE][.sxXFE]*(?:\s+\[\s*\d+%\])?$|^--- FAIL:|^✕ |^FAIL \S"
 )
 # What starts a line of a check's log before the runner's own text: `gh run
 # view --log-failed`'s job and step (tab-separated), Actions' timestamp, colours.
