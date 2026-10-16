@@ -112,7 +112,7 @@ import zipfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from . import modes
+from . import fallback, modes
 from .posts import AGENT_MARKER
 from .profile import Profile, resolve_experience
 
@@ -5241,17 +5241,7 @@ def _nobody_asked(event: dict, mode, sensitive: bool, profile: Profile, root: Pa
     `sensitive`: the ask is about sensitive data. Input matching a sensitive
     pattern is never repeated, whichever check asked (an earlier ask in the
     command can stop the guard before it reads the post)."""
-    plain = isinstance(mode, str) and mode and mode == mode.strip() and mode.isprintable()
-    shown = mode if plain else json.dumps(mode, default=str)  # quoted: empty, blank or multi-line
-    name = _code_span(shown if len(shown) <= 80 else shown[:80] + "…")
-    if modes.known(mode):
-        lines = [f"The kit would have asked you about this, but nobody is asked in the {name} permission mode, so it was refused."]
-    else:
-        lines = [
-            f"The kit would have asked you about this, but the permission mode is {name}, which the kit doesn't know, "
-            "so it counts as one where nobody is asked and this was refused. Tell the kit's maintainers about this mode."
-        ]
-    lines.append("To be asked, switch the permission mode (Shift+Tab, or the mode selector).")
+    lines = fallback.mode_lines(mode)  # the same lines as the can't-decide fallback's
     tool = event.get("tool_name") or ""
     inp = event.get("tool_input") if isinstance(event.get("tool_input"), dict) else {}
     command = inp.get("command") if tool == "Bash" else None
