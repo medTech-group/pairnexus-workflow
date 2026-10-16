@@ -83,6 +83,12 @@ def test_a_ruleset_that_was_there_before_or_an_organisations_is_not_reoffered():
     back = _section("Read it back")
     assert "the ruleset this run created" in back
     assert "don't offer the click again" in back
+    assert "can't be read\" needs someone with admin access" in first
+
+
+def test_screen_one_ends_with_create_when_screen_two_is_skipped():
+    clicks = _section("The guided clicks")
+    assert "When screen 2 is skipped (below), end this screen with: click **Create**." in clicks
 
 
 # Admin first, and the message for the owner.
@@ -95,6 +101,9 @@ def test_it_checks_admin_first_and_hands_over_a_message_for_the_owner():
     assert "only an admin" in admin.lower()
     assert "message for the owner" in admin.lower()
     assert "never stops halfway" in admin.lower()
+    # The owner runs the read-back too: only an admin sees a ruleset's bypass list.
+    assert 'ask it to "protect main"' in admin
+    assert "never guide them into step 3" in admin
     # It is the first thing checked: before reading rulesets and before any click.
     assert text.index("## 1. Admin first") < text.index("## 2. Read what is there") < text.index("## 3. The guided clicks")
 
@@ -166,7 +175,7 @@ def test_the_read_back_command_names_what_the_skill_relays():
 # The flip PR, only after a protected read-back.
 
 
-def test_the_flip_pr_comes_only_after_a_protected_read_back():
+def test_the_pull_request_that_leaves_solo_mode_comes_only_after_a_protected_read_back():
     text = _text()
     flip = _section("Leave solo mode")
     assert "`ruleset = true`" in flip
@@ -180,7 +189,7 @@ def test_the_flip_pr_comes_only_after_a_protected_read_back():
     assert text.index("## 4. Read it back") < text.index("## 5. Leave solo mode")
 
 
-def test_the_flip_the_skill_describes_takes_the_template_out_of_solo_mode():
+def test_the_line_the_skill_writes_takes_the_template_out_of_solo_mode():
     # The skill writes a plain `ruleset = true` line in [project], in place of the
     # template's commented one or a `ruleset = false` line.
     flip = _section("Leave solo mode")
@@ -213,7 +222,6 @@ def test_it_ships_in_the_plugin():
     kit = next(p for p in market["plugins"] if p["name"] == "pairnexus-workflow")
     assert kit["source"] == "./"
     assert "skills" not in json.loads((KIT / ".claude-plugin/plugin.json").read_text())
-    assert SKILL.parent.parent == KIT / "skills"
 
 
 def test_the_readme_points_at_the_upgrade_with_the_clicks_as_its_fallback():

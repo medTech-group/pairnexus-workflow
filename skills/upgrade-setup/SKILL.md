@@ -57,22 +57,23 @@ with **Do it now** (recommended) and **Not now**. Each later step is one short s
 Before anything else, read the repository's permissions: `GET repos/<repo>` (`gh api repos/<repo>`, or the GitHub MCP tools), and look at `permissions.admin`. Keep that JSON: the read-back uses it as `--repo`.
 
 - **An admin** (`true`): go on to step 2.
-- **Not an admin** (`false`): say plainly that only an admin can do this, since rulesets and the merge settings are under the repository's Settings, which only admins see. Then hand over a ready message for the owner, in a code block they can copy:
+- **Not an admin** (`false`): say plainly that only an admin can do this, since rulesets and the merge settings are under the repository's Settings, which only admins see. Then hand over a ready message for the owner (here, whoever is the repository's admin), in a code block they can copy:
   - what it's for, in one line;
-  - the links and the clicks of step 3, filled in with the repository's name and base branch;
-  - "Tell me once it's done, and I'll read it back."
+  - the easy way: open a Claude session on the repository and ask it to "protect main", which guides them, reads it back and opens the pull request that leaves solo mode;
+  - or by hand: the links and the clicks of step 3, filled in with the repository's name and base branch, then the same request to Claude for the read-back and the pull request.
 
-  That is the end of this run of the skill: it never stops halfway, with a ruleset half made or a pull request waiting on clicks nobody can make. When the person says the owner has done it, start again at step 2.
+  The read-back is the owner's too: GitHub shows a ruleset's bypass list only to its admins, so a read-back by someone else never comes back protected. That is the end of this run of the skill: it never stops halfway, with a ruleset half made or a pull request waiting on clicks nobody can make. If the person asks again later, still not an admin, give the message again; never guide them into step 3.
 - **Can't tell** (no `permissions` in the answer, or the request failed): say so, and offer both: "I'm an admin: go on" and "Give me the message for the owner".
 
 ## 2. Read what is there
 
-Before guiding any click, fetch the rulesets and read them back with `WF protection`, exactly as step 4 does. A repository may already have one.
+Before guiding any click, fetch the rulesets and read them back with `WF protection`, exactly as step 4 does. Some repositories already have one.
 
 - **Already protected** (`protected` is `true`): no clicks for the ruleset. If the merge settings are missing, guide only those first (step 3's screen 3), since they are part of this upgrade too. Then, for `protect_main`, go straight to the pull request that leaves solo mode (step 5); for `restore_protection`, say it is protected again and stop.
 - **Not protected, with rulesets there:** show what is missing. This skill never edits an existing ruleset, and never guides a change to one: changing a ruleset that was there before is left to a later release. It guides a new ruleset beside them. Note which rulesets were there before this run: step 4 needs to know.
-  - When an existing one stops the verdict whatever is added (its bypass list, or a bypass list that can't be read), say which ruleset and what in it, and that it is its admin's to change. Don't guide a new ruleset that can't help.
-  - An organisation's ruleset (`source_type` `Organization`) is the organisation owner's, even for a repository admin: hand over the message for the owner (step 1), naming that ruleset and what in it.
+  - When an existing one stops the verdict whatever is added (its bypass list, say), say which ruleset and what in it, and that it is its admin's to change. Don't guide a new ruleset that can't help.
+  - A bypass list that "can't be read" needs someone with admin access to that ruleset to read it back, not a change: say so, and hand over the message for the owner (step 1), so they run it.
+  - An organisation's ruleset (`source_type` `Organization`) is the organisation owner's, even for a repository admin: say which one and what in it, and that the organisation owner changes it and reads it back.
 - **No rulesets:** go on to step 3.
 - **Can't read the rulesets** (no access from here): say so. Guide the clicks anyway, but without a read-back there is no pull request that leaves solo mode: an unknown counts as unprotected.
 
@@ -90,10 +91,11 @@ One screen at a time, each with a link to the exact settings page, in every kind
   - **Block force pushes**;
   - **Require a pull request before merging**, with **Required approvals: 0** and **Require review from Code Owners** left unticked (GitHub never lets an author approve their own pull request, and sessions post as the person).
 - Leave **Require linear history** unticked: the kit merges with a merge commit, which it forbids.
+- When screen 2 is skipped (below), end this screen with: click **Create**.
 
 **Screen 2: the required checks.** Only when CI has already run on the base branch and the profile lists its checks (`ci.required_checks`): check that each name appears in the base branch's latest check runs (`GET repos/<repo>/commits/<base>/check-runs?per_page=100`, every page). If they all do, add to the same ruleset before creating it: **Require status checks to pass**, **Require branches to be up to date before merging**, and **Add checks** with each name exactly. Otherwise skip this screen and report "checks not required yet": the ruleset protects the base branch without them, and they are added once CI has run and their names are known. Adding them later, and the automatic path with `gh`, come in a later release; leave the ruleset as it is for that.
 
-Then click **Create**.
+Then click **Create**, at the end of whichever of screens 1 and 2 is the last.
 
 **Screen 3: the merge settings.** Open `https://github.com/<repo>/settings` (**Settings → General**) and scroll to **Pull Requests**:
 - keep **Allow merge commits** ticked: sessions and the conductor always merge with a merge commit;
@@ -104,7 +106,7 @@ Then click **Create**.
 Fetch, then hand the files to `WF protection`. Write them under `.workflow/`, which git ignores:
 
 1. The rulesets, **each in full**: list the ids with `GET repos/<repo>/rulesets?includes_parents=true` (every page), then fetch each one by its id with `GET repos/<repo>/rulesets/<id>`, through the repository even for an organisation's ruleset. Put them in one JSON list in `.workflow/rulesets.json`. The list endpoint alone gives summaries without their rules, which the command refuses.
-2. The repository's settings: `GET repos/<repo>` again (the merge settings may have changed), in `.workflow/repo.json`.
+2. The repository's settings: `GET repos/<repo>` again, to read the merge settings as they are now, in `.workflow/repo.json`.
 3. Run `WF protection --rulesets .workflow/rulesets.json --repo .workflow/repo.json --json`. Always give `--repo`: without it, a ruleset on the default branch can't be counted.
 
 Check the exit code before reading the output:
