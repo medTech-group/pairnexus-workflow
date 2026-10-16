@@ -254,6 +254,58 @@ def test_ticket_and_conductor_unchanged_in_solo_mode(role, cmd, tmp_path):
     assert (a.action, a.reason) == (b.action, b.reason), cmd
 
 
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "gh api -X PUT repos/other/thing/branches/main/protection --input p.json",
+        "gh api -X DELETE repos/other/thing/rulesets/42",
+        "gh api -X DELETE orgs/other/rulesets/7",
+        "gh pr merge 3 --admin -R other/thing",
+        "gh pr merge https://github.com/other/thing/pull/3 --admin",
+        "gh repo edit other/thing --default-branch trunk",
+        "curl -X DELETE https://api.github.com/repos/other/thing/rulesets/42",
+    ],
+)
+def test_another_repository_is_not_refused(cmd, solo, tmp_path):
+    unset = on_disk(tmp_path / "unset", None)
+    a, b = act(solo, cmd), act(unset, cmd)
+    assert (a.action, a.reason) == (b.action, b.reason), cmd
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "gh pr merge 3 --admin -R acme/demo",
+        "gh pr merge 3 --admin --repo=ACME/Demo",
+        'gh pr merge 3 --admin -R "$R"',
+        "gh repo edit acme/demo --default-branch trunk",
+        "gh api -X DELETE repos/ACME/demo/rulesets/42",
+        "gh api -X DELETE orgs/acme/rulesets/7",
+        "gh api -X DELETE repos/acme/demo/git/refs/heads/Main",
+        f"env curl -X DELETE {API}/rulesets/42",
+        f"sudo curl -X DELETE {API}/rulesets/42",
+    ],
+)
+def test_the_project_named_any_way_is_refused(cmd, solo):
+    assert act(solo, cmd).action == "deny", cmd
+
+
+@pytest.mark.parametrize("cmd", [f"env curl -X POST {API}/rulesets -d @r.json", f"timeout 5 curl {API}/rulesets -d @r.json"])
+def test_a_wrapped_curl_ruleset_create_is_asked(cmd, solo):
+    assert act(solo, cmd).action == "ask", cmd
+
+
+def test_mcp_on_another_repository_is_not_refused(solo, tmp_path):
+    unset = on_disk(tmp_path / "unset", None)
+    for name, inp in [
+        ("create_or_update_file", {"owner": "other", "repo": "thing", "path": "a", "branch": "main", "content": "x", "message": "m"}),
+        ("update_ref", {"owner": "other", "repo": "thing", "ref": "heads/main", "sha": "abc"}),
+    ]:
+        a, b = act(solo, mcp(name, inp)), act(unset, mcp(name, inp))
+        assert (a.action, a.reason) == (b.action, b.reason), name
+    assert act(solo, mcp("update_ref", {"owner": "ACME", "repo": "demo", "ref": "heads/main", "sha": "abc"})).action == "deny"
+
+
 def test_an_earlier_ask_never_hides_a_later_refusal(solo):
     cmd = "gh api -X PUT repos/acme/demo/branches/feature/protection --input p.json; gh api -X DELETE repos/acme/demo/rulesets/42"
     assert act(solo, cmd).action == "deny"

@@ -4186,22 +4186,38 @@ def _json_value(body: str, key: str) -> str | None:
     return None if not m else (m.group(1) if m.group(1) is not None else "")
 
 
+def _another_repo(name: str | None, repo: str) -> bool:
+    """Whether `name` (OWNER/REPO, as gh or a URL takes it) is literally another
+    repository than the project's; one the kit can't read counts as the project's."""
+    if not name or not repo or re.search(r"[$`*?\[{]", name):
+        return False
+    return _repo_name(name) != repo.casefold()
+
+
 def _solo_branch(b: str | None, base: str) -> str | None:
-    """"change" when `b` is the base branch, "unknown" when the kit can't read it."""
+    """"change" when `b` is the base branch (in any case, as the MCP check reads
+    it), "unknown" when the kit can't read it."""
     if b is None:
         return None
     b = urllib.parse.unquote(b).removeprefix("refs/").removeprefix("heads/")
-    if b == base:
+    if b.casefold() == base.casefold():
         return "change"
     return "unknown" if _SOLO_UNSAFE_REF.search(b) or not b else None
 
 
-def _solo_rest(method: str, path: str, base: str, body: str, field) -> SoloRefusal | None:
-    """Solo mode: a REST call (`path` without its host) that changes the base
-    branch, its name or protection, the default branch, or a ruleset (other
-    than creating one). `field(name)` is a body field's value, or None."""
+def _solo_rest(method: str, path: str, base: str, body: str, field, repo: str = "") -> SoloRefusal | None:
+    """Solo mode: a REST call (`path` without its host) to the project's
+    repository `repo` (or its owner's rulesets) that changes the base branch,
+    its name or protection, the default branch, or a ruleset (other than
+    creating one). `field(name)` is a body field's value, or None."""
     unknown = bool(re.search(r"[$`]", method)) or method == "?"
     if method in ("GET", "HEAD"):
+        return None
+    m = re.match(r"repos/([^/]+/[^/]+)", path)
+    if m and _another_repo(urllib.parse.unquote(m.group(1)), repo):
+        return None
+    m = re.match(r"orgs/([^/]+)/", path)
+    if m and repo and not re.search(r"[$`*?\[{]", m.group(1)) and m.group(1).casefold() != repo.split("/")[0].casefold():
         return None
     call = f"`{method} {path}`" if not unknown else f"`{path}`, with a method the kit can't read,"
     if unknown:
@@ -4345,10 +4361,12 @@ def _solo_github(seg: Seg, profile: Profile, raw: str, read) -> SoloRefusal | No
             return None
         if c.path == "graphql":
             return _solo_graphql(c.body + ("\n" + read() if read is not None else ""), base)
-        return _solo_rest(c.method, c.path, base, c.body, lambda key: _json_value(c.body, key))
+        return _solo_rest(c.method, c.path, base, c.body, lambda key: _json_value(c.body, key), profile.repo)
     if name != "gh":
         return None
     group, sub = _gh_group(toks)
+    if group in ("pr", "repo") and _another_repo(_gh_repo(toks, group, sub), profile.repo):
+        return None
     if group == "pr" and sub == "merge" and any(t == "--admin" or t.startswith("--admin=") for t in toks):
         return SoloRefusal(f"`gh pr merge --admin` merges into `{base}` past its required checks")
     if group == "repo" and sub == "edit" and any(t == "--default-branch" or t.startswith("--default-branch=") for t in toks):
@@ -4366,7 +4384,25 @@ def _solo_github(seg: Seg, profile: Profile, raw: str, read) -> SoloRefusal | No
         v = _field(call, key)
         return v if v is not None else _json_value(body, key) if call.files or call.stdin else None
 
-    return _solo_rest(call.method, call.path, base, body, field)
+    return _solo_rest(call.method, call.path, base, body, field, profile.repo)
+
+
+def _gh_repo(toks: list[str], group: str, sub: str | None) -> str | None:
+    """The repository a `gh pr`/`gh repo` command names: `-R`/`--repo`, a pull
+    request's URL, or `gh repo edit`'s own argument; None when it names none."""
+    for j, t in enumerate(toks):
+        if t in ("-R", "--repo"):
+            return toks[j + 1] if j + 1 < len(toks) else None
+        if t.startswith(("--repo=", "-R=")) or (t.startswith("-R") and len(t) > 2):
+            return t.split("=", 1)[1] if "=" in t else t[2:]
+        u = re.match(r"(?i)(?:https?://)?(?:www\.)?github\.com/([^/\s]+/[^/\s]+)/pull/", t)
+        if u:
+            return u.group(1)
+    if group == "repo" and sub == "edit":
+        # Only right after `edit`: later, a word may be a flag's value.
+        nxt = toks[toks.index("edit") + 1 : toks.index("edit") + 2] if "edit" in toks else []
+        return nxt[0] if nxt and not nxt[0].startswith("-") else None
+    return None
 
 
 def _solo_curl_ask(seg: Seg, profile: Profile, raw: str, read) -> str | None:
@@ -4398,6 +4434,8 @@ def _solo_mcp(name: str, inp: dict, profile: Profile) -> tuple[SoloRefusal, str]
         return None
     owner, repo = inp.get("owner"), inp.get("repo")
     r = f"{owner}/{repo}" if isinstance(owner, str) and isinstance(repo, str) and owner and repo else profile.repo
+    if _another_repo(r, profile.repo):
+        return None
 
     def is_base(v) -> bool:
         b = _mcp_ref(v)
