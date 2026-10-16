@@ -15,6 +15,7 @@ CLI = KIT / "scripts/workflow.py"
 def run_hook(name, event, cwd, env_extra=None):
     env = {**os.environ, "CLAUDE_PROJECT_DIR": str(cwd), **(env_extra or {})}
     env.pop("WORKFLOW_ROLE", None) if "WORKFLOW_ROLE" not in (env_extra or {}) else None
+    env.pop("WORKFLOW_EXPERIENCE", None) if "WORKFLOW_EXPERIENCE" not in (env_extra or {}) else None
     p = subprocess.run([sys.executable, str(CLI), "hook", name], input=json.dumps(event), capture_output=True, text=True, cwd=cwd, env=env)
     return p.returncode, (json.loads(p.stdout) if p.stdout.strip() else None), p.stderr
 

@@ -31,6 +31,8 @@ Each person's experience is worked out by one function, `resolve_experience` in 
 
 In the environment and the file, case and spaces around the value don't matter (the profile takes only `"new"` or `"developer"`, exactly). An unrecognised value there is skipped, with a warning in `workflow status` that doesn't repeat the value; it never makes a hook fail.
 
+**The glossary.** At the first prompt of an attended session whose level is `new` or unknown, the context hook (`workflow hook context`) adds the kit's glossary (`.claude/workflow/docs/glossary.md` when vendored, the plugin's `docs/glossary.md` otherwise) with the rule: explain each of its words in the glossary's wording, once a session, and never in what is written on GitHub. It comes beside the guided start's nudge or the flow, whatever the first prompt brings, under its own once-a-session marker. Beside the whole flow, or when the text wouldn't stay under Claude Code's 10,000-character limit for a hook's added context, it adds only the rule and the glossary's path, to read at once, ahead of the flow so it is within the 2,000 characters Claude sees of a longer string. An empty or unreadable glossary adds nothing, and a failure here never costs the flow or the nudge. Never for a developer, in a ticket or conductor session, after the first prompt, or without a profile.
+
 ## `[commands]`
 
 | Key | What it is |

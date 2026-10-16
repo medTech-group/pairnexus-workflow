@@ -754,13 +754,30 @@ def _hook_context(event: dict) -> int:
     files = context_mod.flow_files(root, KIT_ROOT, prof.flow_addendum if prof else "")
     prompt, session = event.get("prompt") or "", event.get("session_id") or ""
     ctx = context_mod.context_for(prompt, session, files)
+    role: list[str] = []  # read once, and only at a first prompt
+
+    def attended() -> bool:
+        if not role:
+            role.append(roles.role(root, prof.ticket_branch))
+        return role[0] == "attended"
+
     # The guided start, at the first prompt only (marked whatever it was):
     # attended sessions only, since ticket and conductor sessions start from a
     # briefing or a charter, never from a menu.
     if prof is not None and prof.guided_start:
         nudge = context_mod.start_for(prompt, session)
-        if nudge and not ctx and roles.role(root, prof.ticket_branch) == "attended":
+        if nudge and not ctx and attended():
             ctx = nudge
+    # The glossary, beside whatever came above, at the first prompt of an
+    # attended session for someone new to building (unknown counts as new).
+    # Its own marker, set at the first prompt whatever it brings. A failure
+    # here never costs the flow or the nudge.
+    if prof is not None:
+        try:
+            if context_mod.first_glossary_prompt(session) and attended() and resolve_experience(root, prof.experience).wording_level == "new":
+                ctx = context_mod.with_glossary(ctx, context_mod.glossary_file(root, KIT_ROOT))
+        except Exception:
+            pass
     if ctx:
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": ctx}}))
     return 0
