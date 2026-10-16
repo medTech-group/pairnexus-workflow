@@ -223,7 +223,7 @@ def solo_refusal(base: str, level: str, command: str, refusal: SoloRefusal) -> s
         lines.append(f"What the kit saw: {what}.")
     if level == "new":
         lines.append(f"`{base}` is the branch the project's work comes together on: the version everyone builds on, which should change only through a pull request.")
-    name_it = " name the branch and" if refusal.kind == "unknown" else ""
+    name_it = " name the branch and" if refusal.kind == "unknown" and not refusal.hint else ""
     lines.append(f"If you really mean it,{name_it} run it yourself in your own terminal:{_hand_command(command)}")
     lines.append(
         f'Offer "Protect `{base}`" as a choice, with "Not now": it sets up GitHub\'s protection, so `{base}` changes only through pull requests.'
@@ -4164,7 +4164,7 @@ def _switched_to(args: list[str], d: str | None) -> tuple[bool, str | None]:
 
 # ---------- solo mode: GitHub-side changes to the base branch ----------
 
-_SOLO_API_HINT = "name the repository, the branch, the method and the ruleset literally"
+_SOLO_API_HINT = "spell out the call's path, method and body"
 # GraphQL mutations that change a branch (refs are named by id, and a branch
 # name may come in a variable, so any of them may be the base branch), its
 # protection, or a ruleset. Creating a ruleset is left to the ask: it is how a
@@ -4294,7 +4294,7 @@ def _plain_resource(path: str) -> bool:
     """Whether a path with parts the shell fills in is plainly not one this
     check is about: under a repository's literal issues, pull requests and the
     like, or outside `repos/`, `orgs/` and `repositories/` altogether."""
-    if re.match(rf"(?:repos/[^/]+/[^/]+|repositories/[^/]+)/(?:{_PLAIN_RESOURCES})(?:/|$)", path):
+    if re.match(rf"(?:repos/[^/]+/[^/]+|repos/[^/]*[$`][^/]*|repositories/[^/]+)/(?:{_PLAIN_RESOURCES})(?:/|$)", path):
         return True
     first = path.split("/", 1)[0]
     return not _EXPANDS.search(first) and first not in ("repos", "orgs", "repositories") and "rulesets" not in path
@@ -4358,8 +4358,17 @@ def _solo_rest(method: str, path: str, base: str, body: _Body, repo: str = "") -
     return None
 
 
-def _solo_graphql(text: str, base: str) -> SoloRefusal | None:
-    m = _SOLO_GQL.search(text)
+def _solo_graphql(text: str, base: str, literal: bool = False) -> SoloRefusal | None:
+    """The refusal for a GraphQL text: by the mutation fields a `literal` query
+    calls (so a name in a string is only text), else by any name in it."""
+    calls = _mutation_calls(text) if literal else None
+    if calls is not None:
+        names = [f for f, _ in calls]
+        m = next((_SOLO_GQL.fullmatch(n) for n in names if _SOLO_GQL.fullmatch(n)), None)
+        if "createRef" not in names:
+            text = ""
+    else:
+        m = _SOLO_GQL.search(text)
     if m:
         return SoloRefusal(f"the GraphQL mutation `{m.group(1)}` changes a branch, its protection or a ruleset, and the kit can't tell it isn't `{base}`'s")
     if re.search(r"\bcreateRef\b", text) and re.search(rf"refs/heads/{re.escape(base)}(?![\w/.-])", text, re.I):
@@ -4394,22 +4403,23 @@ def _gql_queries(queries: list[str | None], cwd: str | None) -> list[str | None]
     return out
 
 
-def _gql_text(queries: list[str | None], fallback) -> str:
-    """The GraphQL text to look for mutations in: the queries themselves when
-    every one is read and none is filled in by the shell, else `fallback()`
-    (the whole command and the files it reads)."""
+def _gql_text(queries: list[str | None], fallback) -> tuple[str, bool]:
+    """The GraphQL text to look for mutations in, and whether it is only the
+    queries themselves (every one read, none filled in by the shell); else the
+    queries with `fallback()` (the whole command and the files it reads)."""
     if queries and all(q is not None and (not _EXPANDS.search(q) or _gql_literal(q)) for q in queries):
-        return "\n".join(q for q in queries if q)
-    return "\n".join(q for q in queries if q) + "\n" + fallback()
+        return "\n".join(q for q in queries if q), True
+    return "\n".join(q for q in queries if q) + "\n" + fallback(), False
 
 
-def _solo_gql(queries: list[str | None], fallback, base: str, cwd: str | None = None) -> SoloRefusal | None:
+def _solo_gql(queries: list[str | None], fallback, base: str, cwd: str | None = None, strict: bool = True) -> SoloRefusal | None:
     """Solo mode: a GraphQL request's refusal, from its queries (`fallback()`
-    when they hold expansions); a query the kit can't read at all counts as
-    a mutation that changes the base branch."""
+    when they hold expansions); with `strict`, a query the kit can't read at
+    all counts as a mutation that changes the base branch."""
     queries = _gql_queries(queries, cwd)
-    r = _solo_graphql(_gql_text(queries, fallback), base)
-    if not r and _gql_unread(queries):
+    text, literal = _gql_text(queries, fallback)
+    r = _solo_graphql(text, base, literal)
+    if not r and strict and _gql_unread(queries):
         r = SoloRefusal("a GraphQL request whose query the kit can't read, which may be a mutation that changes a branch or a ruleset", "unknown", _SOLO_API_HINT)
     return r
 
@@ -4465,8 +4475,8 @@ def _curl_call(toks: list[str], cwd: str | None) -> _CurlCall:
                 text = None if _STDIN_FILE.fullmatch(value) else _read_text(value, cwd)
                 if text is not None and not _GITHUB_HINT.search(text) and not re.search(r"(?im)^\s*-?-?(?:url|request|x)\b", text):
                     unsure = False  # a config the kit has read, with nothing for GitHub in it
-                elif text is None or _GITHUB_HINT.search(text):
-                    hinted = True
+                elif text is not None and _GITHUB_HINT.search(text):
+                    hinted = True  # it names GitHub (an unread one counts only beside GitHub in the command)
         elif flag == "url":
             urls.append(value)
 
@@ -4569,7 +4579,9 @@ def _solo_curl(toks: list[str], seg: Seg, base: str, repo: str, raw: str, read) 
                 pairs = _json_pairs(d) if d is not None else None
                 qs = [v for k, v in pairs or [] if k == "query"]
                 texts += [v if isinstance(v, str) else None for v in qs] if pairs is not None else [d]
-            r = _solo_gql(texts, lambda: raw + "\n" + read(), base, seg.cwd)
+            # Another host's `/api/graphql` may be a GitHub Enterprise server or an
+            # app's own: only a mutation the kit sees is refused there.
+            r = _solo_gql(texts, lambda: raw + "\n" + read(), base, seg.cwd, strict=bool(re.search(r"(?i)\bapi\.github\.com", u)))
         else:
             r = _solo_rest(c.method, path, base, c.body, repo)
         if r:
@@ -4632,7 +4644,12 @@ def _aliases_set_in(raw: str) -> dict[str, str]:
     return out
 
 
-_GH_ALIAS_RISK = re.compile(r"--admin\b|--default-branch\b|\bapi\b|\bcurl\b")
+# An alias that may merge with --admin, change the default branch, write through
+# the API or run a shell; a read through `api` is not one.
+_GH_ALIAS_RISK = re.compile(
+    r"--admin\b|--default-branch\b|\bcurl\b|^\s*!|\bapi\b.*(?:\s-X\s*(?!GET\b)\S|--method\b(?!\s*=?\s*GET\b)|\s-[fF]\b|--(?:raw-)?field\b|--input\b|\bgraphql\b)",
+    re.I,
+)
 
 
 def _solo_gh(toks: list[str], seg: Seg, profile: Profile, raw: str, read, depth: int = 0) -> SoloRefusal | None:

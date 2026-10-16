@@ -687,3 +687,40 @@ def test_hook_asks_for_a_ruleset_create_and_outside_solo_mode(solo_repo):
     (solo_repo / ".claude/workflow/profile.toml").write_text(_toml(True))
     out = run_hook(bash("gh pr merge 12 --admin", solo_repo), solo_repo, {"WORKFLOW_ROLE": "attended"})
     assert out["permissionDecision"] == "ask"
+
+
+# ---------- review round 2: the explorer ----------
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        'gh api "repos/$GITHUB_REPOSITORY/issues" -f title=t',
+        "gh api graphql -f query='mutation { addComment(input:{subjectId:\"X\", body:\"the guard refuses mergeBranch\"}){ clientMutationId } }'",
+        "gh alias set prs 'api repos/{owner}/{repo}/pulls'",
+        'curl -X POST https://myapp.example.com/api/graphql -d "$Q"',
+        "curl -K missing.cfg https://example.com/",
+        "curl -X POST http://localhost:4000/graphql -d '{\"query\":\"mutation { updateRefs(input:{}) { clientMutationId } }\"}'",
+    ],
+)
+def test_explorer_round_2_not_refused(cmd, solo):
+    assert act(solo, bash(cmd, solo.root)).action != "deny", cmd
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "gh api graphql -f query='mutation { mergeBranch(input:{repositoryId:\"R\", base:\"main\", head:\"f\"}){ clientMutationId } }'",
+        "gh alias set d 'api -X DELETE repos/acme/demo/rulesets/42'",
+        "gh alias set c 'api graphql -f query=@q'",
+        "curl -X POST https://ghe.example.com/api/graphql -d '{\"query\":\"mutation { deleteRef(input:{refId:\\\"X\\\"}) { clientMutationId } }\"}'",
+        'curl -X POST https://api.github.com/graphql -d "$Q"',
+    ],
+)
+def test_explorer_round_2_still_refused(cmd, solo):
+    assert act(solo, bash(cmd, solo.root)).action == "deny", cmd
+
+
+def test_cant_tell_wording_for_an_api_call(solo):
+    r = act(solo, 'gh api -X DELETE "repos/acme/demo/$X"').reason
+    assert "spell out the call's path, method and body" in r and "name the branch and run" not in r
