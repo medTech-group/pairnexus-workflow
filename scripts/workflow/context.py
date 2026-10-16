@@ -153,17 +153,17 @@ def with_glossary(ctx: str | None, path: Path | None) -> str | None:
     whole when it all stays under Claude Code's limit; beside the whole flow,
     or when it wouldn't fit, only the rule and its path with "read it now",
     put first so it stays within the 2,000 characters Claude sees of a longer
-    string. An empty glossary adds nothing."""
+    string. An empty or unreadable glossary adds nothing."""
     if path is None:
         return ctx
     try:
         text = path.read_text(encoding="utf-8").strip()
     except (OSError, UnicodeDecodeError):
-        text = None
-    if text == "":
+        return ctx  # Claude couldn't read it either
+    if not text:
         return ctx
     rule = GLOSSARY_RULE.format(where=path)
-    if text and not is_whole_flow(ctx):
+    if not is_whole_flow(ctx):
         whole = f"{ctx}\n\n{rule}\n\n{text}" if ctx else f"{rule}\n\n{text}"
         if len(whole) < CONTEXT_LIMIT:
             return whole

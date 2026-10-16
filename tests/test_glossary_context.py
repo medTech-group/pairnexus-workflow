@@ -139,8 +139,9 @@ def test_after_a_command_as_first_prompt(repo, prompt):
 
 
 def test_beside_the_whole_flow_as_the_rule_and_its_path(repo):
-    flow = KIT / "docs/flow.md"
-    (repo / ".claude/workflow/flow.md").write_text(flow.read_text(encoding="utf-8"))
+    # The kit's flow, made sure to pass the limit however #76 trims it.
+    flow = (KIT / "docs/flow.md").read_text(encoding="utf-8") + "\n\nPadding.\n" * 1_000
+    (repo / ".claude/workflow/flow.md").write_text(flow)
     ctx = _ctx(repo, "implement #5")
     assert "Follow the flow below" in ctx and "# The flow" in ctx
     assert len(ctx) > LIMIT  # so Claude sees only the start of it
@@ -148,7 +149,7 @@ def test_beside_the_whole_flow_as_the_rule_and_its_path(repo):
     assert RULE in shown and "read it now" in shown and str(KIT / "docs/glossary.md") in shown
     assert "### Pull request" not in ctx
     # what the glossary adds is short: the flow is what passes the limit (#76)
-    assert len(ctx) - len(flow.read_text(encoding="utf-8")) < 1_000
+    assert len(ctx) - len(flow) < 1_000
 
 
 def test_beside_a_short_flow_still_only_the_path(repo):
@@ -203,6 +204,14 @@ def test_an_empty_glossary_adds_nothing(repo):
     vendored = repo / ".claude/workflow/docs/glossary.md"
     vendored.parent.mkdir(parents=True)
     vendored.write_text("  \n")
+    ctx = _ctx(repo, "hi")
+    assert "guided start" in ctx and RULE not in ctx
+
+
+def test_an_unreadable_glossary_adds_nothing(repo):
+    vendored = repo / ".claude/workflow/docs/glossary.md"
+    vendored.parent.mkdir(parents=True)
+    vendored.write_bytes(b"\xff\xfe not UTF-8 \xc3\x28")
     ctx = _ctx(repo, "hi")
     assert "guided start" in ctx and RULE not in ctx
 
