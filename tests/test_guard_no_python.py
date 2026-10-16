@@ -9,6 +9,7 @@ exiting non-zero). Then what set-up installs (seam 3) and the docs (seam 4).
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -255,7 +256,10 @@ def test_the_shell_reads_a_command_as_fallback_py_does(tmp_path, command):
 
 
 def test_the_shell_knows_every_mode_modes_py_lists(tmp_path):
-    # fallback.sh keeps its own copy of the list: a mode added to modes.py must be added there too.
+    # fallback.sh keeps its own copy of the lists: they must be the same as modes.py's.
+    text = (KIT / "scripts/workflow/fallback.sh").read_text()
+    assert set(re.findall(r'mode == "(\w+)"', text)) == set(modes.NEVER_ASK_MODES)
+    assert set(re.findall(r'mode != "(\w+)"', text)) == set(modes.ASKING_MODES)
     for mode in modes.ASKING_MODES + modes.NEVER_ASK_MODES:
         want = fallback.decide(_bash(PUSH, mode), False, "why")[0]
         assert _shell_decision(json.dumps(_bash(PUSH, mode)), tmp_path) == want, mode
