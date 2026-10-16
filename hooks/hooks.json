@@ -9,7 +9,7 @@
             "timeout": 15
           }
         ],
-        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*[Gg]it[Hh]ub.*"
+        "matcher": "Bash|Monitor|PowerShell|Edit|Write|MultiEdit|NotebookEdit|mcp__.*[Gg]it[Hh]ub.*"
       }
     ],
     "Stop": [
