@@ -634,7 +634,8 @@ def _hook_guard(event) -> int:
             d = guard_mod.decide(event, prof, role, root, roles.current_branch(cwd), role_from_env=firm is not None, cwd=event.get("cwd") or None)
     except _OverBudget:
         role = role or firm or "ticket"  # a role not read in time: the strictest
-        if role in ("ticket", "conductor"):
+        # Solo mode refuses what touches the base branch, so a check not finished in time is refused too.
+        if role in ("ticket", "conductor") or (role == "attended" and prof.ruleset is False):
             _deny_json(f"[workflow guard, {_role_label(role)}] the guard ran out of time ({GUARD_BUDGET:g} seconds) checking this, so it was refused; split the command, or give it smaller files")
             return 0
         raise RuntimeError(f"the guard ran out of time ({GUARD_BUDGET:g} seconds)") from None
