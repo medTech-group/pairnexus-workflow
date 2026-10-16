@@ -4404,7 +4404,7 @@ def _gql_queries(queries: list[str | None], cwd: str | None, raw: str = "") -> l
         m = re.fullmatch(r"\s*\$\(\s*cat\s+([^\s$`;&|<>()]+)\s*\)\s*", q or "")
         f = m.group(1).strip("'\"") if m else ""
         name = re.escape(f.removeprefix("./"))
-        written = bool(f) and re.search(rf"(?:>|\btee\s+(?:-a\s+)?|\b(?:cp|mv|install)\s+.*?)\s*['\"]?(?:\./)?{name}(?![\w.-])|\bsed\s+-i\S*\s.*?(?:\./)?{name}(?![\w.-])", raw)
+        written = bool(f) and re.search(rf"(?:>|\btee\s+(?:-a\s+)?|\b(?:cp|mv|install)\s+[^;&|\n()]*?)\s*['\"]?(?:\./)?{name}(?![\w.-])|\bsed\s+-i\S*\s[^;&|\n()]*?(?:\./)?{name}(?![\w.-])", raw)
         out.append(None if written else _read_text(f, cwd) if m else q)
     return out
 

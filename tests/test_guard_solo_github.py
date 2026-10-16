@@ -765,3 +765,8 @@ def test_late_pass_piped_echo_with_backslashes_is_read(solo):
 def test_late_pass_query_file_written_by_the_command(write, solo):
     (solo.root / "q.graphql").write_text("query { viewer { login } }\n")
     assert act(solo, bash(write + "\ngh api graphql -f query=\"$(cat q.graphql)\"", solo.root)).action == "deny"
+
+
+def test_late_pass_an_earlier_move_of_another_file_is_not_a_write(solo):
+    (solo.root / "q.graphql").write_text("query { viewer { login } }\n")
+    assert act(solo, bash("mv a b; gh api graphql -f query=\"$(cat q.graphql)\"", solo.root)).action != "deny"
