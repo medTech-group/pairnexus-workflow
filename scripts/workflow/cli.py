@@ -5,7 +5,7 @@
     workflow protection --rulesets F [--repo F] [--base BRANCH] [--json]
     workflow version [--fresh] [--json] | --repo
     workflow ready [--issues F --prs F | --fetch] [--exclude 1,2] [--only 1,2] [--override 3] [--running-area A ...] [--slots N] [--json]
-    workflow charter defaults | validate F [--approved] | markdown F [--tickets 13:area,143:-] | diff OLD NEW | reuse OLD | pin-plan F | questions
+    workflow charter defaults [--unprotected] | validate F [--approved] [--unprotected] | markdown F [--tickets 13:area,143:-] | diff OLD NEW | reuse OLD | pin-plan F | questions [--unprotected]
     workflow charter splice --body F --charter F [--out F] [--tickets 13:area,143:-]
     workflow state init --charter F --run-id ID [--by-hand N] [--read-through ID] | get --body F | put --body F --state F [--out F] | patch --body F --patch F [--out F]
     workflow render --template F --ticket F --charter F --slots F --tracking N [--by-hand N] [--out F] [--print]
@@ -289,10 +289,10 @@ def cmd_version(a) -> int:
 
 def cmd_charter(a) -> int:
     if a.action == "defaults":
-        _out(charter_mod.defaults(profile=load(required=False)))
+        _out(charter_mod.defaults(profile=load(required=False), protected=_protected(a)))
         return 0
     if a.action == "questions":
-        _out(charter_mod.questions(profile=load(required=False)))
+        _out(charter_mod.questions(profile=load(required=False), protected=_protected(a)))
         return 0
     if a.action == "reuse":
         old = _json(a.file)
@@ -318,12 +318,12 @@ def cmd_charter(a) -> int:
         prof = load(required=False)
         # Against the profile only once the charter itself is sound.
         if prof is not None and not problems:
-            problems += _against_profile(c, prof, who=a.approved)
+            problems += _against_profile(c, prof, who=a.approved, protected=_protected(a))
         if problems:
             print("The charter has problems:\n- " + "\n- ".join(problems), file=sys.stderr)
             return 1
         if prof is None:
-            print("note: no profile found: release steps and waived checks weren't checked", file=sys.stderr)
+            print("note: no profile found: release steps and waived checks weren't checked, nor the merge mode or the owner", file=sys.stderr)
         print("ok")
         return 0
     if a.action == "markdown":
@@ -363,15 +363,24 @@ def cmd_charter(a) -> int:
     return 2
 
 
-def _against_profile(c: dict, prof, who: bool = True) -> list[str]:
-    """The charter against the profile: release steps, waived checks and, with
-    `who`, that the profile's project.owner approved and amended it."""
+def _protected(a) -> bool | None:
+    """`--unprotected`: the conductor's read-back (`workflow protection`) found
+    the base branch unprotected. Without it, the verdict isn't known here."""
+    return False if getattr(a, "unprotected", False) else None
+
+
+def _against_profile(c: dict, prof, who: bool = True, protected: bool | None = None) -> list[str]:
+    """The charter against the profile: release steps, waived checks, auto-merge
+    in solo mode and, with `who`, that the profile's project.owner approved and
+    amended it."""
     return charter_mod.check_against_profile(
         c,
         [st["name"] for st in prof.release_steps],
         prof.required_checks,
         ci_none=prof.ci_none,
         owner=prof.owner if who else "",
+        ruleset=prof.ruleset,
+        protected=protected,
     )
 
 
@@ -786,6 +795,12 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("file", nargs="?")
     s.add_argument("other", nargs="?")
     s.add_argument("--approved", action="store_true", help="also require the owner's approval")
+    s.add_argument(
+        "--unprotected",
+        action="store_true",
+        help="defaults, questions, validate: the read-back found the base branch unprotected; with project.ruleset true, "
+        "that counts as solo mode (removed protection), so auto-merge isn't offered",
+    )
     s.add_argument("--tickets", help='markdown, splice: the planned tickets in order with their areas, e.g. "13:messages,143:-"')
     s.add_argument("--body", help="splice: the tracking issue's body (a file, or -)")
     s.add_argument("--charter", help="splice: the charter")
