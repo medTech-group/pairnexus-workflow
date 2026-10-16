@@ -11,7 +11,7 @@ from conftest import KIT, git
 from test_in_plain_words import HEADINGS, _template as _build_ticket_block
 from test_vendor_evidence import kit, mattpocock, proj  # noqa: F401  (fixtures)
 
-from workflow import vendor
+from workflow import pr_template, vendor
 from workflow.guard import matches
 from workflow.profile import DEFAULT_PROTECTED
 
@@ -136,6 +136,29 @@ def test_leading_blank_lines_still_count_as_starting_with_the_headings(tmp_path)
     assert p.stdout == f.read_bytes()
 
 
+def test_leading_html_comments_still_count_as_starting_with_the_headings(tmp_path):
+    f = tmp_path / "pull_request_template.md"
+    f.write_bytes(b"<!-- Thanks for\ncontributing -->\n\n" + TEMPLATE.read_bytes())
+    p = _run("--existing", str(f))
+    assert p.stdout == f.read_bytes()
+    assert "already starts with" in p.stderr.decode()
+
+
+def test_a_heading_further_down_isnt_the_top(tmp_path):
+    f = tmp_path / "pull_request_template.md"
+    f.write_text("## Summary\n\n## In plain words\n", encoding="utf-8")
+    p = _run("--existing", str(f))
+    assert _out(p).startswith("## In plain words\n") and _out(p).endswith("## Summary\n\n## In plain words\n")
+
+
+def test_an_empty_file_gets_the_template(tmp_path):
+    f = tmp_path / "pull_request_template.md"
+    f.write_bytes(b"")
+    p = _run("--existing", str(f))
+    assert p.returncode == 0
+    assert p.stdout == TEMPLATE.read_bytes() + b"\n"
+
+
 def test_a_folder_of_templates_is_left_alone(tmp_path):
     d = tmp_path / ".github/PULL_REQUEST_TEMPLATE"
     d.mkdir(parents=True)
@@ -153,6 +176,36 @@ def test_a_missing_file_is_refused_in_words(tmp_path):
     assert p.returncode == 1
     assert p.stdout == b""
     assert "Traceback" not in p.stderr.decode() and "nope.md" in p.stderr.decode()
+
+
+def test_the_kits_own_line_endings_dont_leak_into_the_output(tmp_path):
+    # A clone that checked the kit out with CRLF still gives an LF project LF headings.
+    k = tmp_path / "kit"
+    (k / "templates/github").mkdir(parents=True)
+    (k / "templates/github/pull_request_template.md").write_bytes(TEMPLATE.read_bytes().replace(b"\n", b"\r\n"))
+    f = tmp_path / "mine.md"
+    f.write_bytes(b"## Summary\n")
+    assert b"\r" not in pr_template.build(k, f).text
+    assert b"\r" not in pr_template.build(k).text
+
+
+def test_a_missing_kit_template_names_the_kits_file(tmp_path):
+    from workflow import cli
+
+    k = tmp_path / "kit"
+    k.mkdir()
+    old = cli.KIT_ROOT
+    cli.KIT_ROOT = k
+    try:
+        import contextlib
+        import io
+
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            assert cli.main(["pr-template"]) == 1
+    finally:
+        cli.KIT_ROOT = old
+    assert "pull_request_template.md" in err.getvalue() and "None" not in err.getvalue()
 
 
 def test_it_changes_nothing_in_the_working_tree(tmp_path):
@@ -174,6 +227,7 @@ def test_it_changes_nothing_in_the_working_tree(tmp_path):
 def test_the_cli_lists_the_command():
     doc = (KIT / "scripts/workflow/cli.py").read_text(encoding="utf-8").split('"""', 2)[1]
     assert "workflow pr-template [--existing FILE]" in doc
+    assert "exits 3 for a folder of templates" in doc
 
 
 # A vendored copy, as the vendor tests read what set-up installs.
@@ -202,6 +256,11 @@ def test_setup_writes_the_template_beside_the_issue_templates():
     assert "`WF pr-template --existing <file>`" in step
     assert "`.github/PULL_REQUEST_TEMPLATE/`" in step
     assert "exits 0" in step
+    # Never redirected straight over the file it reads: that empties it first.
+    assert "`.workflow/pr-template.md`" in step
+    assert "never straight over the file it reads" in step
+    # A single template beside a folder still gets the headings.
+    assert "A single template beside the folder still gets the headings" in step
     # The issue templates' step comes just before it.
     assert write.index("**10. Issue templates:**") < write.index("**11. The pull request template:**")
 
@@ -223,6 +282,15 @@ def test_update_adds_it_to_an_older_project_in_the_update_pr():
     assert "--existing" in item
     assert "shown in the PR body" in item
     assert "left as it is" in item
+    # Only once: after that the file is the owner's, and later updates don't put the headings back.
+    assert "only in the update that brings it in" in item
+    assert "later updates leave it as it is, even when the owner has changed the headings" in item
+
+
+def test_the_readme_lists_it_with_the_issue_templates():
+    text = (KIT / "README.md").read_text(encoding="utf-8")
+    assert "issue templates, the pull request template" in text
+    assert "adds the pull request template once to a project set up before it" in text
 
 
 def test_install_lists_it_among_what_setup_writes():

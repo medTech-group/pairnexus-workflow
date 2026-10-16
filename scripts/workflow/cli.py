@@ -14,7 +14,7 @@
     workflow render --template F --ticket F --charter F --slots F --tracking N [--by-hand N] [--out F] [--print]
     workflow comments --file F [--owner LOGIN] [--since-id N]
     workflow briefing verify --file F
-    workflow pr-template [--existing FILE]
+    workflow pr-template [--existing FILE]      (prints the file to write; exits 3 for a folder of templates)
     workflow evidence [--suite NAME ...] [--base-count N | --base-ref BRANCH] [--fresh] [--allow-dirty]
     workflow repair
     workflow vendor install|update [--kit DIR] [--mattpocock DIR | --no-mattpocock] [--project DIR] [--adopt] [--strict-pin]
@@ -548,12 +548,13 @@ def cmd_pr_template(a) -> int:
     try:
         r = pr_template_mod.build(KIT_ROOT, Path(a.existing) if a.existing else None)
     except OSError as e:
-        print(f"workflow pr-template: can't read {a.existing}: {e.strerror or e}", file=sys.stderr)
+        print(f"workflow pr-template: can't read {e.filename}: {e.strerror or e}", file=sys.stderr)
         return 1
     if r.note:
         print(r.note, file=sys.stderr)
-    if r.kind == pr_template_mod.FOLDER:
+    if r.text is None:
         return 3
+    # Bytes, so the project's own line endings and encoding come through as they are.
     sys.stdout.flush()
     sys.stdout.buffer.write(r.text)
     sys.stdout.buffer.flush()
