@@ -80,6 +80,18 @@ In the environment and the file, case and spaces around the value don't matter (
 | `description` | In words, what must never appear in an issue, comment, PR or notification (patients' names, phone numbers) |
 | `patterns` | Regexes checked against every GitHub post, in every role; a match is refused. Anchor them so ordinary words don't match |
 
+## `[previews]`
+
+Try-it links: a live preview of the app for each pull request. The section is added by the "Add try-it links" upgrade through its own pull request, never by hand and never by set-up; the starter ships without it. Left out, a project has no previews.
+
+| Key | What it is | Default |
+|---|---|---|
+| `provider` | Who builds the previews: only `"cloudflare"` (Cloudflare Workers Builds) for now. Any other value is an error | `"cloudflare"` |
+| `on` | `true` when pull requests get try-it links | `false` |
+| `access` | `true` once the owner has confirmed that Cloudflare Access guards the preview URLs. The kit can't check Access itself; it relies on this | `false` |
+
+An unknown key is an error, so a typo can't quietly turn previews off. In a profile with `[sensitive]` patterns, `on = true` without `access = true` is an error: a sensitive project's previews sit behind Access, or aren't made. The CLI's profile loader reads the section as `Profile.previews` (`provider`, `on`, `access`), and `workflow profile check` prints it under `previews`.
+
 ## `[areas]`
 
 `<name> = [globs]`, one line per area: the parts of the project two sessions shouldn't change at once. A build ticket names one with an `Area: <name>` line (one word). A run starts at most one session per area; a ticket with no area can run beside anything, and an unknown name is its own area. The globs are hints for readers, not enforced.

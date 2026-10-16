@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**`[previews]` in the profile: whether pull requests get try-it links** (#112, part of a preview deploy per PR, #41).
+
+- **Three keys:** `provider` (only `"cloudflare"`, the default), `on` and `access` (the owner's word that Cloudflare Access guards the preview URLs), `on` and `access` both `false` by default. A profile without the section has no previews, so every project behaves as before.
+- **Refused by `profile check`** (exit 1, in words): an unknown key in `[previews]`, named; a provider other than `"cloudflare"`; `on` or `access` that isn't true or false; and `on = true` without `access = true` in a profile with `[sensitive]` patterns, since a sensitive project's previews must sit behind Access or not be made.
+- **Read by the CLI's loader** as `Profile.previews` (`provider`, `on`, `access`), and printed by `workflow profile check` under `previews`, for the preview reader and `merge-check` to come.
+- **Written by "Add try-it links"** through its own pull request: set-up never writes it, and the starter ships only a commented-out example in `templates/profile.toml`. Docs: `docs/profile.md`'s new `[previews]` table. Tests: `tests/test_previews_profile.py`.
+- **For projects updating:** nothing to do.
+
 **"Make this project yours": `workflow adopt` rewrites a copy of the starter's names** (#106, part of one starter template, #40).
 
 - **`workflow adopt --owner LOGIN --repo OWNER/NAME --name NAME [--project DIR]`,** run in a checkout, rewrites only these: the profile's `project.owner`, `project.name` and `project.repo` (an `owner` line the profile left out goes in under `repo`); in CODEOWNERS (`.github/`, the root or `docs/`, the first GitHub would read) the profile's old owner becomes the new one on every line, a whole login in any case, never `@old/team` or a longer login; `wrangler.toml`'s top-level `name` and `package.json`'s top-level `name`, both the name in lower case with dashes (accents dropped and letters like `ß` spelled out, other letters outside ASCII left out, at most 63 characters, a Worker's limit); and the README's title, its first `# ` line outside a code fence. It prints each file it changed and what; a second run changes nothing and says "Already yours: nothing to change."
