@@ -23,12 +23,12 @@ M = AGENT_MARKER
 # garbage collector off (as `timeit` does). The ratio of the two is what is
 # judged, never seconds. Linear work grows about 8 times from one size to the
 # other, quadratic about 64 times and exponential beyond measure; a ratio
-# under 24 passes. A large run past ENOUGH seconds of CPU ends the repeats: a
+# under 24 passes. A large run past ENOUGH_CPU_SECONDS ends the repeats: a
 # run that long is a regression to judge now, never noise.
 GROWTH = 8
 LINEAR_LIMIT = 24
 REPEATS = 5
-ENOUGH = 2
+ENOUGH_CPU_SECONDS = 2
 
 
 def assert_grows_linearly(run, make, n):
@@ -44,7 +44,7 @@ def assert_grows_linearly(run, make, n):
                 start = time.process_time()
                 run(arg)
                 best[i] = min(best[i], time.process_time() - start)
-            if best[1] > ENOUGH:
+            if best[1] > ENOUGH_CPU_SECONDS:
                 break
     finally:
         if enabled:
