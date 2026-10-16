@@ -58,7 +58,7 @@ with **Do it now** (recommended) and **Not now**. Each later step is one short s
 
 **A developer** gets the ruleset's settings listed (from step 3), with the same **Do it now** and **Not now**, and the read-back's report as it is at the end.
 
-**On the automatic path, skip this opening choice:** the automatic path's step 2 is the only confirmation, asked once steps 1 and 2 and "Which way" have settled the way, and the kit's requests take the place of the clicks ("The automatic path"). Elsewhere, show it first, as above.
+**On the automatic path, skip this opening choice:** the automatic path's step 2 is the only confirmation, asked once step 1, "Which way" and step 2 have settled it, and the kit's requests take the place of the clicks ("The automatic path"). Elsewhere, show it first, as above.
 
 ## 1. Admin first
 
@@ -88,6 +88,7 @@ Then:
 - **A conductor session:** the guided clicks.
 - **`gh` missing or signed out:** the guided clicks, with one line on the other way, for the person who would rather: "Or install the GitHub CLI (`gh`), run `gh auth login` in your own terminal, and ask me again: I'll then make it for you after one confirmation."
 - **Not an admin:** step 1's message for the owner, before anything is tried. Never the automatic path, and never the clicks.
+- **Otherwise** (admin claimed with "I'm an admin: go on", or read without `gh api`): the guided clicks (step 3).
 
 ## 2. Read what is there
 
@@ -195,10 +196,10 @@ Only for `protect_main`, and only once the read-back says `"protected": true`. F
 
 1. A branch from the base branch, such as `workflow/protect-main`.
 2. In `.claude/workflow/profile.toml`'s `[project]` table, a plain `ruleset = true` line on its own: in place of a `ruleset = false` line, or of the template's commented `# ruleset = false`, or after `base_branch` when neither is there.
-   - When names were ticked on the automatic path, the same pull request adds them to `ci.required_checks`, after the names already there, never removing a name the profile already lists.
+   - When names were ticked on the automatic path, the same pull request adds the ticked names it doesn't already list to `ci.required_checks`, after the names already there, never removing a name the profile already lists and never listing one twice.
    - Change nothing else.
 3. `WF profile check` passes, and `WF status --json` gives `solo_mode: false` on the branch.
-4. Push the branch and open the pull request. Its body: what the read-back found (the report, "checks not required yet" if so), and that merging it takes the project out of solo mode. When it adds required checks, it names them and carries this marker on a line of its own, so `workflow doctor` can name the pull request while it's open:
+4. Push the branch and open the pull request. Its body: what the read-back found (the report, "checks not required yet" if so), and that merging it takes the project out of solo mode. When it adds at least one new required check, it names them and carries this marker on a line of its own, so `workflow doctor` can name the pull request while it's open:
 
    ```
    <!-- workflow:required-checks -->

@@ -263,6 +263,8 @@ def test_the_automatic_paths_conditions_and_the_other_ways():
     assert "run `gh auth login` in your own terminal, and ask me again" in which
     # Not an admin: the ready message, before anything is tried.
     assert "step 1's message for the owner, before anything is tried" in which
+    # A claimed admin, or one not read through `gh api`, takes the clicks.
+    assert "**Otherwise** (admin claimed with \"I'm an admin: go on\", or read without `gh api`): the guided clicks (step 3)." in which
     text = _text()
     assert text.index("## 1. Admin first") < text.index("## Which way") < text.index("## 2. Read what is there")
 
@@ -321,7 +323,9 @@ def test_the_order_ruleset_merge_settings_read_back_pull_request_that_leaves_sol
     at = [auto.index(s) for s in order]
     assert at == sorted(at), order
     flip = _section("Leave solo mode")
-    assert "the same pull request adds them to `ci.required_checks`" in flip
+    assert "the same pull request adds the ticked names it doesn't already list to `ci.required_checks`" in flip
+    assert "never listing one twice" in flip
+    assert "When it adds at least one new required check, it names them and carries this marker" in flip
     assert "never removing a name the profile already lists" in flip
     assert "<!-- workflow:required-checks -->" in flip
 
