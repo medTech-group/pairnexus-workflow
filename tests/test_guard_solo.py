@@ -704,3 +704,50 @@ def test_tracking_checkout_of_the_base_then_pushing(cmd, solo):
 @pytest.mark.parametrize("cmd", ['git -C "$A" checkout feature && git -C "$B" push', 'cd "$A" && git checkout feature; cd "$B" && git push'])
 def test_a_switch_in_one_unknown_directory_says_nothing_of_another(cmd, solo):
     assert act(solo, cmd).action == "deny", cmd
+
+
+# ---------- the explorer, round 3 ----------
+
+
+@pytest.fixture
+def repo_on_feature(on_feature):
+    """`on_feature` (tracking the remote's `feature`), with a `sub` directory inside it."""
+    (on_feature / "sub").mkdir()
+    return on_feature
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "git checkout -bmain && git push -u origin HEAD",
+        "git switch -Cmain && git push origin HEAD",
+        "git switch --create=main && git push origin @",
+        "git switch --force-create=main && git push",
+        "git checkout --orphan=main && git push origin HEAD",
+        "git checkout -t origin/main && git push origin HEAD",
+        "git switch --track origin/main && git push",
+        "git -C sub checkout main && git push origin HEAD",
+        "cd sub && git checkout main && cd .. && git push origin HEAD",
+        "git checkout - && git push origin HEAD",
+        "git symbolic-ref HEAD refs/heads/main && git push origin HEAD",
+        "git config alias.co checkout && git co main && git push",
+        "git -c alias.co=checkout co main && git push",
+    ],
+)
+def test_switch_spellings_then_pushing(cmd, repo_on_feature):
+    prof = on_disk(repo_on_feature, False)
+    assert decide(bash(cmd, repo_on_feature), prof, "attended", repo_on_feature, "feature").action == "deny", cmd
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    ["git checkout -bfix && git push -u origin HEAD", "git switch -cfix && git push -u origin HEAD", "git switch --create=fix && git push -u origin HEAD", "git -C sub switch -c fix && git push -u origin HEAD"],
+)
+def test_making_a_branch_from_the_base_then_pushing_it(cmd, repo_on_feature):
+    prof = on_disk(repo_on_feature, False)
+    git(repo_on_feature, "checkout", "-q", "main")
+    assert decide(bash(cmd, repo_on_feature), prof, "attended", repo_on_feature, "main").action != "deny", cmd
+
+
+def test_matching_setting_wording(solo):
+    assert "the one it tracks" not in act(solo, "git config push.default matching").reason

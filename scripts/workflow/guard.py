@@ -1449,7 +1449,7 @@ def _push_problem(
             return f"pushing to the base branch `{base}` is never allowed: open a pull request"
     if solo:
         if "?" in dsts:
-            return SoloRefusal("a detached HEAD, or a directory the kit can't follow", "unknown")
+            return SoloRefusal("a detached HEAD, a directory the kit can't follow, or a switch of branch it can't read", "unknown")
         return forced_msg
     if role == "ticket":
         own = branch if branch and fnmatch.fnmatchcase(branch, ticket_pat) else None
@@ -1577,7 +1577,8 @@ def _git_config_problem(glob: list[str], args: list[str], role: str, solo: bool 
     if solo and not unset:
         value = positional[1].lower() if len(positional) > 1 else ""
         if key.lower() == "push.default" and value not in ("simple", "current", "nothing"):
-            return SoloRefusal(f"`git config push.default {value or '…'}` can make `git push` with no branch named update every matching branch, or the one it tracks", "setting")
+            what = "every matching branch" if value == "matching" else "the branch it tracks"
+            return SoloRefusal(f"`git config push.default {value or '…'}` can make `git push` with no branch named update {what}", "setting")
         if re.fullmatch(r"(?i)remote\..*\.push", key):
             return SoloRefusal(f"`git config {key}` sets where every `git push` to that remote goes when no branch is named", "setting")
         raw = positional[1] if len(positional) > 1 else ""
@@ -4112,10 +4113,16 @@ _GIT_ENV = re.compile(r"^(GIT_CONFIG\w*|GIT_DIR|GIT_WORK_TREE|GIT_NAMESPACE|GIT_
 _DECLARES = ("export", "declare", "typeset", "local", "readonly")
 
 
+_CREATE_SHORT = re.compile(r"-[bBcC](.+)")
+_CREATE_LONG = ("--create", "--force-create", "--orphan")
+
+
 def _switched_to(args: list[str], d: str | None) -> tuple[bool, str | None]:
-    """(whether `git checkout`/`git switch` changes the branch, the branch it
-    leaves checked out or None when that can't be told). A checkout of files
-    (`--`, a path, more than one name, `HEAD`) changes no branch."""
+    """(whether `git checkout`/`git switch`/`git symbolic-ref HEAD` changes the
+    branch, the branch it leaves checked out or None when that can't be told).
+    A checkout of files (`--`, a path, more than one name, `HEAD`) changes none."""
+    if args[:2] == ["symbolic-ref", "HEAD"] and len(args) > 2:
+        return True, _dst(args[2])
     if not args or args[0] not in ("checkout", "switch") or "--" in args:
         return False, None
     names: list[str] = []
@@ -4123,20 +4130,25 @@ def _switched_to(args: list[str], d: str | None) -> tuple[bool, str | None]:
     i = 1
     while i < len(args):
         a = args[i]
-        if a in ("-b", "-B", "-c", "-C", "--orphan") and i + 1 < len(args):
+        if a in ("-b", "-B", "-c", "-C") + _CREATE_LONG and i + 1 < len(args):
             return True, args[i + 1]
+        m = _CREATE_SHORT.fullmatch(a)
+        if m:
+            return True, m.group(1)
+        if a.startswith(tuple(o + "=" for o in _CREATE_LONG)):
+            return True, a.split("=", 1)[1]
         if a in ("--detach", "-d") or (args[0] == "switch" and re.fullmatch(r"-[a-zA-Z]*d[a-zA-Z]*", a)):
             return True, None
         if a in ("-t", "--track") or a.startswith("--track="):
             track = True
-        elif not a.startswith("-"):
+        elif a == "-" or not a.startswith("-"):
             names.append(a)
         i += 1
     if not names or (args[0] == "checkout" and len(names) > 1) or names[0] == "HEAD":
         return False, None
     t = names[0]
-    if t == "-" or _SOLO_UNSAFE_REF.search(t):
-        return True, None
+    if t == "-" or _SOLO_UNSAFE_REF.search(t) or t.startswith("@"):
+        return True, None  # the previous branch, or one the kit can't read
     if track:  # `--track origin/main` makes and checks out `main`
         return True, t.split("/", 1)[1] if "/" in t else t
     if args[0] == "checkout" and not _git_out(d, "show-ref", "--verify", f"refs/heads/{t}") and d and os.path.exists(os.path.join(d, t)):
@@ -4176,9 +4188,12 @@ def _solo_scan(segs: list[Seg], profile: Profile, start: str, current_branch: st
         if isinstance(refusal, SoloRefusal):
             return refusal
         d = _git_dir_of(Path(start), seg.cwd, cdir)
+        repo = _git_out(d, "rev-parse", "--show-toplevel") or d  # a switch holds for the whole repository
         changes, to = _switched_to(args, d)
-        if changes and d is not None:  # an unknown directory: its push is refused as can't-tell anyway
-            switched[d] = to
+        if args and args[0] not in _GIT_COMMANDS and not args[0].startswith("-"):
+            changes, to = True, None  # an alias, which may switch branches
+        if changes and repo:  # an unknown directory: its push is refused as can't-tell anyway
+            switched[repo] = to
         env_here = env_set or any(_GIT_ENV.match(a) for a in seg.assigns)
         config_elsewhere = any(o == "--config-env" or o.startswith("--config-env=") for o in glob) or any(
             glob[j] == "-c" and re.match(r"(?i)include(if)?\.", glob[j + 1]) for j in range(len(glob) - 1)
@@ -4196,9 +4211,9 @@ def _solo_scan(segs: list[Seg], profile: Profile, start: str, current_branch: st
             return SoloRefusal("`--git-dir` or `--work-tree` points the push at another repository", "unknown")
         same = cdir is None and seg.cwd == start
         branch = current_branch if same else _branch_of(d)
-        after_switch = d in switched
+        after_switch = repo in switched
         if after_switch:
-            branch = switched[d]
+            branch = switched[repo]
         refusal = _push_problem(
             args, base, branch, "attended", profile.ticket_branch,
             upstream=lambda d=d, b=branch if after_switch else None: _upstream_branch(d, b), solo=True,
