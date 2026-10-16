@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+**One support promise, and an issue template for a Claude Code update that breaks the guard or a hook** (#97, part of open-source readiness, #37).
+
+- **The promise,** in the same words in the README's new "Support" section, its status note, `SECURITY.md` and `CONTRIBUTING.md`:
+  - best effort, with no guaranteed response time for issues or pull requests;
+  - security reports acknowledged within 5 working days;
+  - a fix release when a Claude Code update breaks the guard or the hooks.
+- **A new issue template, "The guard or a hook stopped working after a Claude Code update"** (`.github/ISSUE_TEMPLATE/claude-code-break.md`). It asks for `claude --version`, `workflow version`, vendored or plugin, what was run and what happened instead, and applies the `claude-code-break` label once the owner creates it. A break that lets a session past the guard is reported privately instead, with **Report a vulnerability** (`SECURITY.md`).
+- Docs: the README's "Support", `SECURITY.md` and `CONTRIBUTING.md`. Tests check that the promise reads the same in each file, and what the template asks for (`tests/test_support_promise.py`).
+- **For projects updating:** nothing to do. None of these files ship.
+
 **`workflow merge-check`: whether a pull request may merge, as one command** (#80, part of judging a PR without reading code, #39).
 
 - **It reads JSON files and nothing else:** `--pr`, `--files`, `--commits`, `--checks` (the head commit's check runs and statuses, one after another in one file), `--rulesets`, `--threads`, `--reviews`, `--comments`, `--permissions`, `--compare`, an optional `--preview` (`state` built/building/failed/none, `url`, `commit`), and `--asker`. It answers `ready`, `not_yet` or `owner_review`, with every reason that applies. Each reason has an id, wording for *new to building* and for *developer* (unknown counts as new), a fix and an optional action (`review`, `update_branch`, `resolve_conflict`, `fix_checks`). Notes never change the answer. Output is text, or `--json` with each check's name and state. It changes nothing, posts nothing, and always exits 0. Anything it can't read, or wasn't given, is a "couldn't read …" reason, never `ready`.
@@ -211,15 +221,6 @@
 - **"Set up unattended runs"** (offer `set_up_unattended_runs`): in solo mode it offers "Protect `main`" first, with a plain warning when skipped (GitHub won't hold a merge for failing checks); it asks areas, environment names, ticket sessions' permission mode, merge approvals, releases and repair; it shows one guided screen for the two environments (names, `WORKFLOW_ROLE`, no secrets, the setup script); and it writes the answers to the profile in one pull request. Vendored mode only.
 - Docs: the README's "Getting started" leads with the solo set-up, with Steps 3 to 5 kept as the upgrades' click-by-click fallback; `docs/install.md` matches. Tests: `tests/test_solo_setup.py`.
 - **For projects updating:** nothing changes for projects set up already. The new set-up applies to new projects; "Set up unattended runs" is there when wanted.
-
-**One support promise, and an issue template for a Claude Code update that breaks the guard or a hook** (#97, part of open-source readiness, #37).
-
-- **The promise,** in the same words in the README's new "Support" section, its status note, `SECURITY.md` and `CONTRIBUTING.md`:
-  - best effort, with no guaranteed response time for issues or pull requests;
-  - security reports acknowledged within 5 working days;
-  - a fix release when a Claude Code update breaks the guard or the hooks.
-- **A new issue template, "The guard or a hook stopped working after a Claude Code update"** (`.github/ISSUE_TEMPLATE/claude-code-break.md`). It asks for `claude --version`, `workflow version`, vendored or plugin, what was run and what happened instead, and applies the `claude-code-break` label once the owner creates it. A break that lets a session past the guard is reported privately instead, with **Report a vulnerability** (`SECURITY.md`).
-- Tests check that the promise reads the same in each file, and what the template asks for (`tests/test_support_promise.py`).
 
 ## 0.1.10
 
