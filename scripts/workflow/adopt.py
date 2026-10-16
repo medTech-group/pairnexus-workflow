@@ -21,10 +21,11 @@ import os
 import re
 import tempfile
 import tomllib
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .profile import OWNER, PROFILE_PATH, ProfileError, parse
+from .profile import PROFILE_PATH, ProfileError, parse
 
 # Where GitHub looks for CODEOWNERS, in its order: it reads the first it finds.
 CODEOWNERS_PATHS = (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS")
@@ -36,12 +37,13 @@ WORKER_NAME_MAX = 63  # a Worker's name is a DNS label; the package's is cut the
 
 # GitHub's rules: a login of letters, digits and single inner hyphens; a
 # repository name of letters, digits, `.`, `_` and `-`, but not `.` or `..`.
-_LOGIN = r"[A-Za-z0-9](?:-?[A-Za-z0-9])*"
-REPO = re.compile(rf"^{_LOGIN}/(?!\.\.?$)[A-Za-z0-9._-]+$")
+_LOGIN = r"(?=.{1,39}/|.{1,39}$)[A-Za-z0-9](?:-?[A-Za-z0-9])*"
+LOGIN = re.compile(rf"^{_LOGIN}$")
+REPO = re.compile(rf"^{_LOGIN}/(?!\.\.?$)[A-Za-z0-9._-]{{1,100}}$")
 _TABLE = re.compile(r"^\s*\[")
 _PROJECT_TABLE = re.compile(r"^\s*\[\s*project\s*\]\s*(#.*)?$")
 # `key = "value"` or `key = 'value'`, then anything (a comment) after it.
-_TOML_KEY = r"^(?P<lead>\s*{key}\s*=\s*)(?P<value>\"(?:[^\"\\\n]|\\.)*\"|'[^'\n]*')(?P<rest>.*)$"
+_TOML_KEY = r"^(?P<lead>\s*{key}\s*=\s*)(?P<value>\"(?:[^\"\\\n]|\\.)*\"|'[^'\n]*')(?P<rest>\s*(?:#.*)?)$"
 _FENCE = re.compile(r"^\s*(```|~~~)")
 BOM = "\ufeff"
 
@@ -60,6 +62,8 @@ class Result:
     def read(self, root: Path, rel: str) -> str | None:
         """The file's text without any BOM, or None when it isn't there."""
         path = root / rel
+        if path.is_symlink():
+            raise AdoptError(f"{rel} is a symbolic link: replace it with the file itself, then run this again")
         if not path.is_file():
             return None
         try:
@@ -86,7 +90,8 @@ class Result:
 
 def dashed(name: str) -> str:
     """The project's name in lower case with dashes: a Worker's and a package's name."""
-    out = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    folded = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()  # "Café" → "Cafe"
+    out = re.sub(r"[^a-z0-9]+", "-", folded.lower()).strip("-")
     return out[:WORKER_NAME_MAX].rstrip("-")
 
 
@@ -144,11 +149,14 @@ def _profile(text: str, owner: str, repo: str, name: str) -> str:
     return _join(lines)
 
 
+def _owner(login: str) -> re.Pattern:
+    """`@login` in CODEOWNERS as a whole login, any case (GitHub's logins are),
+    but not `@login/team` or an email address's domain (`ops@login.example`)."""
+    return re.compile(rf"(?<!\S)@{re.escape(login)}(?![A-Za-z0-9/.-])", re.I)
+
+
 def _codeowners(text: str, old: str, new: str) -> str:
-    # `@old` as a whole login, any case (GitHub's logins are), but not `@old/team`
-    # or an email address's domain (`ops@old.example`).
-    pat = re.compile(rf"(?<!\S)@{re.escape(old)}(?![A-Za-z0-9/.-])", re.I)
-    return pat.sub(f"@{new}", text)
+    return _owner(old).sub(f"@{new}", text)
 
 
 def _wrangler(text: str, dashed_name: str) -> str | None:
@@ -201,13 +209,15 @@ def _readme(text: str, name: str) -> str | None:
 
 def plan(root: Path, owner: str, repo: str, name: str) -> Result:
     """What adopting would change, with each file's new bytes. Writes nothing."""
-    owner, repo, name = (owner or "").strip().lstrip("@"), (repo or "").strip(), (name or "").strip()
+    owner, repo, name = (owner or "").strip().removeprefix("@"), (repo or "").strip(), (name or "").strip()
     if not REPO.match(repo):
         raise AdoptError(f"--repo must be owner/name on GitHub, like acme/notes: got {repo!r}")
-    if not OWNER.match(owner):
+    if not LOGIN.match(owner):
         raise AdoptError(f"--owner must be a GitHub login (letters, digits and hyphens), without the @: got {owner!r}")
-    if not name or any(ord(c) < 32 or ord(c) == 127 for c in name):
-        raise AdoptError("--name must be one line of text")
+    if not name:
+        raise AdoptError("--name is empty")
+    if any(ord(c) < 32 or ord(c) == 127 for c in name):
+        raise AdoptError("--name must be one line of plain text, with no tabs or control characters")
     dashed_name = dashed(name)
     if not dashed_name:
         raise AdoptError(f"--name {name!r} has no ASCII letters or digits, so it makes an empty Worker name")
@@ -239,7 +249,7 @@ def plan(root: Path, owner: str, repo: str, name: str) -> Result:
     elif old_owner != owner:
         text = res.read(root, found)
         new_text = _codeowners(text, old_owner, owner)
-        if new_text == text:
+        if new_text == text and not _owner(owner).search(text):  # already yours after a failed run: nothing to say
             res.notes.append(f"Left {found} as it is: it doesn't name @{old_owner}")
         res.record(found, text, new_text, f"@{old_owner} → @{owner}")
 

@@ -620,7 +620,10 @@ def cmd_pr_template(a) -> int:
 def cmd_adopt(a) -> int:
     """`adopt`: rewrite a copy of the starter's names to the person's own, and
     say what changed. Refused in words (exit 1) with nothing written."""
-    root = Path(a.project).resolve() if a.project else project_root()
+    if a.project == "":
+        print("workflow adopt: --project is empty: give the checkout, or leave the flag out", file=sys.stderr)
+        return 1
+    root = Path(a.project).resolve() if a.project is not None else project_root()
     try:
         r = adopt_mod.adopt(root, a.owner, a.repo, a.name)
     except adopt_mod.AdoptError as e:
@@ -1039,7 +1042,7 @@ def main(argv: list[str] | None = None) -> int:
     alone = s.add_mutually_exclusive_group()
     alone.add_argument("--json", action="store_true")
     alone.add_argument("--repo", action="store_true", help="print only the kit's home on GitHub (owner/repo); no network, so --fresh doesn't apply")
-    alone.add_argument("--starter", action="store_true", help="print only the starter template's home on GitHub (owner/repo); no network")
+    alone.add_argument("--starter", action="store_true", help="print only the starter template's home on GitHub (owner/repo); no network, so --fresh doesn't apply")
     s.set_defaults(fn=cmd_version)
 
     s = sub.add_parser("charter")

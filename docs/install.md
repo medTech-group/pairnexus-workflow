@@ -80,7 +80,7 @@ A project made from the starter template (`workflow version --starter` names it)
 python3 -B .claude/workflow/bin/workflow.py adopt --owner LOGIN --repo OWNER/NAME --name "My notes"
 ```
 
-It rewrites only the template's names, line by line, keeping comments and formatting: the profile's `project.owner`, `project.name` and `project.repo`; the old owner in CODEOWNERS, on every line; `wrangler.toml`'s top-level `name` and `package.json`'s `name` (the name in lower case with dashes, `my-notes`); and the README's title. It prints what it changed. A file that isn't there is skipped with a note, never created. A second run changes nothing and says the project is already yours. A `--repo` that isn't `owner/name`, or a name with no letters or digits, is refused with nothing written.
+It rewrites only the template's names, line by line, keeping comments and formatting: the profile's `project.owner`, `project.name` and `project.repo`; the old owner in CODEOWNERS, on every line; `wrangler.toml`'s top-level `name` and `package.json`'s `name` (the name in lower case with dashes, `my-notes`); and the README's title. It prints what it changed. A file that isn't there is skipped with a note, never created. A second run changes nothing and says the project is already yours. A `--repo` that isn't `owner/name`, or a name with no ASCII letters or digits (accents are dropped: `Café` gives `cafe`), is refused with nothing written.
 
 ## Org-wide (optional)
 

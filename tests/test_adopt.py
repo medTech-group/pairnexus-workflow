@@ -429,3 +429,60 @@ def test_repos_github_refuses_are_refused(copy, repo):
 def test_a_name_with_no_ascii_says_so(copy):
     p = _run(copy, name="笔记")
     assert p.returncode == 1 and "no ASCII letters or digits" in p.stderr
+
+
+# Review round 1: the explorer's cases.
+
+
+def test_an_empty_project_is_refused(copy):
+    before = _snapshot(copy)
+    p = _cli(copy, "adopt", "--owner=ada", "--repo=ada/x", "--name=x", "--project=")
+    assert p.returncode == 1 and "--project is empty" in p.stderr
+    assert _snapshot(copy) == before
+
+
+def test_a_rerun_after_a_failed_write_says_nothing_about_codeowners(copy, monkeypatch):
+    real = adopt._write
+    monkeypatch.setattr(adopt, "_write", lambda path, data: (_ for _ in ()).throw(OSError(28, "full")) if path.name == "package.json" else real(path, data))
+    with pytest.raises(adopt.AdoptError):
+        adopt.adopt(copy, "ada", "ada/my-notes", "My Notes!")
+    monkeypatch.setattr(adopt, "_write", real)
+    r = adopt.adopt(copy, "ada", "ada/my-notes", "My Notes!")
+    assert not any("CODEOWNERS" in n for n in r.notes)
+    assert [path for path, _ in r.changed] == [".claude/workflow/profile.toml", "package.json", "README.md"]
+
+
+def test_a_symlinked_file_is_refused_and_nothing_changes(copy):
+    (copy / "package.json").rename(copy / "real-package.json")
+    (copy / "package.json").symlink_to("real-package.json")
+    before = _snapshot(copy)
+    p = _run(copy)
+    assert p.returncode == 1 and "package.json is a symbolic link" in p.stderr
+    assert _snapshot(copy) == before and (copy / "package.json").is_symlink()
+
+
+def test_accents_are_folded():
+    assert adopt.dashed("Café Notes") == "cafe-notes"
+    assert adopt.dashed("Ünïcödé") == "unicode"
+
+
+@pytest.mark.parametrize("name, says", [("   ", "--name is empty"), ("a\tb", "no tabs or control characters")])
+def test_blank_and_control_names_say_why(copy, name, says):
+    p = _run(copy, name=name)
+    assert p.returncode == 1 and says in p.stderr
+
+
+@pytest.mark.parametrize("owner", ["-ada", "ada-", "a--b", "@@ada", "a" * 40])
+def test_owners_github_refuses_are_refused(copy, owner):
+    assert _run(copy, owner=owner).returncode == 1
+
+
+def test_a_repo_name_over_100_characters_is_refused(copy):
+    assert _run(copy, repo="ada/" + "n" * 101).returncode == 1
+    assert _run(copy, repo="ada/" + "n" * 100).returncode == 0
+
+
+def test_a_triple_quoted_name_is_refused_in_words(copy):
+    (copy / "wrangler.toml").write_text('name = """old"""\n')
+    p = _run(copy)
+    assert p.returncode == 1 and "can't rewrite line by line" in p.stderr
