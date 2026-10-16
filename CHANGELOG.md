@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**Modes that never ask: the guard refuses what it would have asked** (#52, part of guard robustness, #33).
+
+- **The guard reads `permission_mode`** from each tool call. In an attended session, in `bypassPermissions`, `dontAsk` or a mode the kit doesn't know, every ask becomes a refusal, solo mode's remaining asks included; in `default`, `acceptEdits`, `auto`, `plan` or with no mode sent, asks stay asks.
+- **The refusal** keeps the ask's reason and adds the mode, how to switch it (Shift+Tab, or the mode selector) to be asked, and how to do it by hand (the command for your own terminal, or on GitHub for a GitHub MCP tool). An unknown mode is named.
+- **The modes are listed once,** in `scripts/workflow/modes.py` (Python 3.7 syntax), which the old-Python fallback shares.
+- Denies, allows, and ticket and conductor sessions are unchanged in every mode. Docs: `docs/enforcement.md`'s mode table, the README's "When something goes wrong" row. Tests: `tests/test_guard_modes.py`.
+- **For projects updating:** nothing to do. A person who works in `bypassPermissions` now sees the guard's asks refused, with the command to run by hand.
+
 **Solo mode: the guard refuses GitHub-side changes to the base branch** (#46, part of solo mode, #32).
 
 - **In solo mode** (`ruleset = false`), an attended session is refused, never asked: `gh pr merge --admin`, changing the default branch, renaming the base branch, writing its protection, updating or deleting its ref, merging or writing files into it through the API, and a ruleset's `PUT`, `PATCH` or `DELETE`, through `gh api`, `curl`, GraphQL or the GitHub MCP tools. They are read as gh and curl send them (every URL, every value a field may take, decoded paths), and a path, method, body or alias the guard can't read counts as the base branch. Calls to another repository are unchanged.

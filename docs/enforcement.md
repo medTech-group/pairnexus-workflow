@@ -110,6 +110,22 @@ The refusal says, in plain words (`main` here stands for the profile's `project.
 
 What still protects the base branch in solo mode is only this refusal, and the guard's other limits below apply to it: it can't see a script that pushes, or a program's own network calls. When the guard runs out of time in solo mode, the command is refused, as in ticket sessions; when the guard itself fails, an attended session's hook reports the error and doesn't decide, so that command isn't refused. Settings written in the same command by other means than `git config` (a redirect or `cp` into `.git/config`, an editor) are read only once they are on disk, by the next push; a command run through a tool the guard doesn't read as a wrapper (`parallel`) isn't seen; and an alias whose text hides `push` with quoting (`pu\sh`) isn't read as one. A switch of branch earlier in the command (`git checkout`, `git switch`, `git symbolic-ref HEAD`, or an alias that may run one) is followed: the push then counts from the branch it leaves, or as can't-tell. The person can still push from their own terminal, which the guard never sees. Protecting `main` with a ruleset (§1) is the lasting fix, after which `ruleset = true` takes the project out of solo mode. Ticket and conductor sessions are unchanged: they already deny all of this, in solo mode or not. With `ruleset = true`, or no setting, attended sessions are asked as before.
 
+**Where nobody is asked.** In an attended session the guard's ask is no safeguard where nobody is asked: in a mode that never asks, it would go through unseen or not at all, and the ruleset is what protects `main` (§1). So the guard reads the `permission_mode` Claude Code sends with every tool call (a subagent's too, and a mode switched mid-session with Shift+Tab is followed call by call), and where nobody is asked it refuses what it would have asked:
+
+| Permission mode | The guard's `ask` | The guard's `deny` |
+|---|---|---|
+| `default` | prompts | refused |
+| `acceptEdits` | prompts | refused |
+| `auto` | prompts | refused |
+| `plan` | prompts | refused |
+| `bypassPermissions` | refused, with the guard's reason | refused |
+| `dontAsk` | refused, with the guard's reason | refused |
+| any other value | refused, with the guard's reason, which names the value | refused |
+| none sent (an older Claude Code) | prompts | refused |
+| headless `claude -p` runs | refused by Claude Code, which has nobody to ask | refused |
+
+Every ask is covered, attended and solo mode's alike (a base-branch push, a force-push, a deploy command, `gh pr merge --admin`, a GitHub MCP write, a feature branch's force-push or delete, creating a ruleset). The refusal keeps the ask's reason and adds that the kit would have asked, that nobody is asked in this mode (named), to switch the permission mode (Shift+Tab, or the mode selector) to be asked, and how to do it by hand: the command itself, to run in your own terminal, or for a GitHub MCP tool, on GitHub. A mode the kit doesn't know counts as one that never asks; its refusal names it, so the kit can learn it. The modes are listed once, in `scripts/workflow/modes.py`, which the old-Python fallback can share. Denies, and what the guard leaves alone, are the same in every mode, and ticket and conductor sessions, which deny already, are unchanged.
+
 **In ticket sessions it also denies:**
 - the profile's deploy commands, however they're run (directly, through a shell, piped, `env -C`, `find -exec`);
 - writes to protected paths, `.git/config` and `.git/hooks/**`, by Edit/Write, by the shell's writers (redirects, `cp`/`mv`/`install`/`rsync`/`ln` destinations, `rm`, `sed -i`, `perl -pi`, `dd`, `tee`, `mkdir`, `curl -o`, `wget -O`, `find -delete` and `find -exec` over a tree holding one (a plain `find DIR -name GLOB … -delete` or `-exec … {} +` that the guard can read exactly is checked by name against the files there, directories holding protected paths and links to them included; anything else is a write into the whole tree), commands run by `xargs` (their targets are what the producer names exactly, else they can't be seen), a tree checked on disk for a protected path a pattern matches anywhere (`**/.env`, up to 50,000 entries), `git rm`/`mv`/`checkout`/`restore`, archives and patches that touch them, deleting a parent directory, globs and brace lists that expand to them, symlinks resolved), or through GitHub's file tools;
