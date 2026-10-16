@@ -85,6 +85,8 @@ def test_a_ruleset_that_was_there_before_or_an_organisations_is_not_reoffered():
     assert "don't offer the click again" in back
     assert "Don't send the message of step 1 for it" in first
     assert "go back to step 1's not-an-admin path" in first
+    assert "Don't hand over the message for the owner: the owner is the person." in first
+    assert "with no retry, when the blocker is a ruleset this run didn't make" in _section("The end")
 
 
 def test_screen_one_ends_with_create_when_screen_two_is_skipped():

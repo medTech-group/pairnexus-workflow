@@ -73,7 +73,9 @@ Before guiding any click, fetch the rulesets and read them back with `WF protect
 - **Not protected, with rulesets there:** show what is missing. This skill never edits an existing ruleset, and never guides a change to one: changing a ruleset that was there before is left to a later release. It guides a new ruleset beside them. Note which rulesets were there before this run: step 4 needs to know.
   - When an existing one stops the verdict whatever is added (its bypass list, say), say which ruleset and what in it, and that it is its admin's to change. Don't guide a new ruleset that can't help.
   - An organisation's ruleset (`source_type` `Organization`) is the organisation owner's, even for a repository admin: say which one and what in it (its bypass list, or that its bypass list can't be read from here), and that the organisation owner changes it or reads it back. Don't send the message of step 1 for it: running this skill again as a repository admin gives the same answer.
-  - A repository's own ruleset whose bypass list "can't be read" means the person isn't its admin after all (they chose "I'm an admin: go on"): go back to step 1's not-an-admin path and hand over the message for the owner.
+  - A repository's own ruleset whose bypass list "can't be read":
+    - when step 1 couldn't tell and the person chose "I'm an admin: go on", they aren't its admin after all: go back to step 1's not-an-admin path and hand over the message for the owner;
+    - when step 1 read `permissions.admin` as `true`, the GitHub access this session uses can't see bypass lists (a token without admin rights): say so, and that the read-back needs access with admin rights, such as `gh` signed in as the person. Don't hand over the message for the owner: the owner is the person.
 - **No rulesets:** go on to step 3.
 - **Can't read the rulesets** (no access from here): say so. Guide the clicks anyway, but without a read-back there is no pull request that leaves solo mode: an unknown counts as unprotected.
 
@@ -142,4 +144,5 @@ Say where it stands in one line, adding the checks line from "The screens" when 
 - "`main` is protected, and the pull request that leaves solo mode is #<n>: merge it when you're ready.";
 - "`main` is protected again." (`restore_protection`);
 - "`main` isn't protected yet: <what's missing>." with the choice to try that screen again;
+- "`main` isn't protected yet: <ruleset> is <the organisation owner's, or its admin's> to change." with no retry, when the blocker is a ruleset this run didn't make;
 - or, not an admin, "The message for the owner is above."
