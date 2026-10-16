@@ -18,7 +18,7 @@ from workflow.profile import load
 
 KIT = Path(__file__).resolve().parents[1]
 CLI = KIT / "scripts/workflow.py"
-MAIN_LINE = "`main` is the project's main branch"
+MAIN_LINE = "`main` is the branch the project's work comes together on"
 
 
 def bash(cmd, cwd=None):
@@ -87,7 +87,6 @@ REFUSED = [
     "git push --mirror origin",
     "git push --all origin",
     "git push --branches origin",
-    "git push --prune origin feature",
     "git push origin :",
     "git push --mirr origin",
     "git -c remote.origin.mirror=true push origin feature",
@@ -440,3 +439,76 @@ def test_reason_names_a_force_only_when_the_base_is_forced(solo):
 def test_reason_starts_with_the_plain_sentence(solo):
     first = act(solo, "git push origin main").reason.splitlines()[0]
     assert first == "This would change `main` directly. Without GitHub's protection set up, the kit doesn't allow that."
+
+
+# ---------- the explorer, round 1 ----------
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "printf main | xargs git push origin",
+        "xargs -n1 git push origin < branches.txt",
+        'alias gp="git push origin main"; gp',
+        "git push --prune origin",
+    ],
+)
+def test_destinations_from_stdin_shell_aliases_and_prune(cmd, solo):
+    assert act(solo, cmd).action == "deny", cmd
+
+
+@pytest.mark.parametrize("cmd", ["git push --forc origin feature", "git push --force-w origin feature", "git push --prune origin feature"])
+def test_abbreviated_force_or_prune_of_a_feature_branch_still_asked(cmd, solo):
+    assert act(solo, cmd).action == "ask", cmd
+
+
+def test_abbreviated_force_of_the_base_branch_refused(solo):
+    assert act(solo, "git push --forc origin main").action == "deny"
+
+
+def test_bare_push_on_the_base_branch_never_advises_pushing_it(solo):
+    r = act(solo, "git push", branch="main").reason
+    assert "git push origin main`" not in r.split("run it yourself")[0]
+
+
+@pytest.mark.parametrize(
+    "cmd,secret",
+    [
+        ("git push https://u:ghp_abcdefghijklmnopqrstuvwxyz0123456789@github.com/acme/demo.git main", "ghp_abcdefghijklmnopqrstuvwxyz0123456789"),
+        ("GH_TOKEN=s3cr3tvalue git push origin main", "s3cr3tvalue"),
+        ("GITHUB_TOKEN=abc123xyz git push origin main", "abc123xyz"),
+    ],
+)
+def test_hand_command_hides_credentials(cmd, secret, solo):
+    r = act(solo, cmd).reason
+    assert secret not in r and "run it yourself in your own terminal" in r
+
+
+def test_a_very_long_command_is_not_repeated(solo):
+    cmd = "echo " + "x" * 5000 + "; git push origin main"
+    r = act(solo, cmd).reason
+    assert len(r) < 2000 and 'Protect `main`' in r
+
+
+def test_multi_line_hand_command_has_no_trailing_space(solo):
+    r = act(solo, "cd sub\ngit push origin main").reason
+    assert all(line == line.rstrip() for line in r.splitlines())
+
+
+@pytest.mark.parametrize(
+    "cmd,word",
+    [('git push origin "$B"', "variable"), ("git push origin 'feat*'", "glob"), ("git push origin {a,main}", "brace list"), ("git push origin @{u}", "`@`")],
+)
+def test_cant_tell_names_what_it_saw(cmd, word, solo):
+    r = act(solo, cmd).reason
+    assert word in r and "a variable, `@`, a glob or a brace list" not in r
+
+
+@pytest.mark.parametrize("cmd", ["git config remote.origin.mirror true", "git config push.default matching", "git remote add --mirror=push b ../b.git"])
+def test_settings_are_worded_as_setting_up_a_later_push(cmd, solo):
+    first = act(solo, cmd).reason.splitlines()[0]
+    assert "later push" in first and "directly" not in first
+
+
+def test_matching_refspec_quoted_with_its_remote(solo):
+    assert "git push origin :" in act(solo, "git push origin :").reason
