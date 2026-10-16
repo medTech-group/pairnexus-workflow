@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+**Unattended runs in solo mode: the charter and the conductor's warning** (#50, part of solo mode, #32).
+
+- **The charter in solo mode** (`ruleset = false`): `workflow charter defaults` picks `session` merging, `charter questions` leaves `auto-merge` out of the merge question's new `options` and says why in its `note`, and `charter validate` (and `state init`) refuse `auto-merge`. GitHub auto-merge would merge at once there, with no required checks to wait for.
+- **Removed protection** (`ruleset = true` while `workflow protection` reads the base branch back as unprotected) counts as solo mode too: the conductor passes the new `--unprotected` to `charter defaults`, `questions` and `validate`. The rule is one function, `charter.solo_mode`, for `workflow doctor` and presets to reuse.
+- **The conductor's pre-flight** reads the ruleset back with `workflow protection` and, in either case, states the gap plainly: nothing on GitHub stops a mistake reaching `main`, and the kit's "never merge while CI is red" check is the only one. It offers "Protect `main`" (or restoring it) through `upgrade-setup`, or "Go ahead", which goes in `accepted_gaps`. The ticket environment is still required, and a missing one now offers "Set up unattended runs" beside the README's Step 5.
+- **The run report** repeats a solo-mode run's gap under its summary.
+- Docs: `docs/charter.md`. Tests: `tests/test_charter_solo.py`.
+- **For projects updating:** nothing to do. Without `ruleset = false`, the charter behaves as before.
+
 **Experience in the guided start and kit updates** (#49, part of solo mode, #32).
 
 - **The guided start** (`start`) asks how much the person knows, *new to building* or *developer*, as the session's very first question, only when `workflow status` finds no level. Skipping counts as new.

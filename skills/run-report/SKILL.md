@@ -21,6 +21,8 @@ One comment on the tracking issue, written for the owner to act on. Build it onl
 1. **Summary.** One line:
    - how many tickets merged, how many were set aside, how many weren't started;
    - why the run ended: done, the end time, a limit, or the stop label.
+
+   **A solo-mode run** (the charter's `accepted_gaps` has a line starting `solo mode:` or `removed protection:`) repeats its gap right under the summary, in these words: "This run was in solo mode: nothing on GitHub stops a mistake reaching `main`, and the kit's "never merge while CI is red" check is the only one." (For removed protection, add that the profile says `main` is protected but GitHub had no adequate ruleset on it.) Then one line: "Protect `main`" (the `upgrade-setup` skill, in an attended session) closes the gap before the next run.
 2. **Merged.** A table of ticket, title, PR, review rounds, wall time (from `started_at` to `merged_at`) and attempts.
 3. **Set aside.** Each `needs-human` or set-aside ticket, with exactly what it needs and from whom.
 4. **What's live.** Each release step in the ledger: what ran, from which commit, and the smoke test's result. A release skipped because the owner stopped the run says so, and that the owner can release by hand.
