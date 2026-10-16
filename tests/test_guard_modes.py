@@ -383,8 +383,9 @@ def test_an_earlier_ask_never_offers_a_files_sensitive_text_by_hand(tmp_path, cm
 def test_a_matching_description_alone_keeps_the_hand_command(tmp_path):
     p = _sensitive(tmp_path)
     ev = {"tool_name": "Bash", "tool_input": {"command": "scripts/deploy.sh", "description": "deploy for MRN-123456"}}
-    extra = act(p, ev, "dontAsk").reason
-    assert "`scripts/deploy.sh`" in extra
+    asked = act(p, ev, None)
+    extra = act(p, ev, "dontAsk").reason[len(asked.reason):]
+    assert "your own terminal: `scripts/deploy.sh`" in extra
 
 
 def test_a_long_unknown_mode_is_shown_cut(prof):
