@@ -12,6 +12,14 @@ Prompts and hooks are not a security boundary. A session can phrase a command a 
 
 ## 1. The ruleset (GitHub → the repo → Settings → Rules → Rulesets → New branch ruleset)
 
+The `upgrade-setup` skill's "Protect `main`" sets this up.
+
+- **On the owner's own computer,** with `gh` signed in as the repository's admin and no ruleset on the base branch yet, the kit makes this ruleset itself after one confirmation, with `gh api` and the requests `workflow protection --protect` builds.
+- **The ruleset it makes:** a branch ruleset named "Protect <base> (pairnexus-workflow)", **Active**, with an empty bypass list, on the base branch (`~DEFAULT_BRANCH` when it is the default). Its rules: Restrict deletions, Block force pushes, Require a pull request before merging (required approvals 0, Code Owners off) and, for the checks the owner ticks, Require status checks to pass with "up to date" on.
+- **The merge settings:** it then turns on "Allow merge commits" and "Allow auto-merge".
+- **The guard** asks before the ruleset is created; the merge settings are not asked.
+- **Everyone else gets the guided clicks below:** cloud sessions, a missing or signed-out `gh`, and a ruleset already on the base branch that doesn't protect it. The clicks stay the fallback whenever a step fails. The kit never edits an existing ruleset in solo mode.
+
 - **Target:** the profile's `project.base_branch`, normally the default branch ("Include default branch"); if they differ, target the base branch by name.
 - **Rules:** Restrict deletions; Block force pushes; Require a pull request before merging (required approvals **0**, so unattended runs can merge: with more, the conductor recommends `merge.mode: owner` and runs stop at "ready for review"; "Require review from Code Owners": see below); Require status checks to pass (add the profile's `ci.required_checks`, and tick "Require branches to be up to date", which the API calls `strict_required_status_checks_policy`).
 - **Bypass list:** empty. Sessions act through the owner's GitHub account, so whatever the owner may bypass, a session may too.
