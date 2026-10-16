@@ -220,6 +220,9 @@ def test_a_log_not_named_by_the_heads_run_isnt_read(project, capsys, monkeypatch
     "..........F\nError: Process completed with exit code 143.",
     "[gw0] [ 50%] FAILED tests/test_a.py::test_x\nError: Process completed with exit code 143.",
     "FAIL src/sum.test.js\nError: Process completed with exit code 143.",
+    "\x1b[1m\x1b[31m FAIL \x1b[39m\x1b[22m src/sum.test.js\nError: Process completed with exit code 143.",
+    "FAIL\texample.com/pkg\t0.01s\nError: Process completed with exit code 143.",
+    "..F                                                                      [ 3/10]\nError: Process completed with exit code 143.",
 ])
 def test_a_killed_marker_beside_a_real_failure_blocks(project, capsys, monkeypatch, log):
     data, logs = waiver_case(project, monkeypatch, log=log)
