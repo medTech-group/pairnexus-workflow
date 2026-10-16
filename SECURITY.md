@@ -14,7 +14,7 @@ Say what you found, how to reproduce it (a hook event's JSON, a command, a profi
 ## What's in scope
 
 - **A way past the guard** (`scripts/workflow/guard.py`): a command, an edit or a GitHub post that a ticket or conductor session should be refused but isn't, such as a push to the base branch, a write to a protected path, a deploy command, a post without the agents' marker, or one matching the profile's sensitive patterns.
-- **The other hooks failing open** where `docs/enforcement.md` says they fail closed.
+- **A hook failing open where `docs/enforcement.md` says it asks or refuses**, in any role, attended sessions included (the guard's can't-decide fallback, for one).
 - **The update path:** a way to get a project to vendor something other than a release of the kit, or to pass `vendor verify --strict` with files the lock doesn't record.
 - **The kit's own release and CI workflows** (`.github/`).
 - **Anything that leaks** a project's secrets or sensitive data through what the kit posts or logs.
