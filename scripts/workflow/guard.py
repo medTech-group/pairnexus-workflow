@@ -4972,6 +4972,36 @@ def _solo_scan(segs: list[Seg], profile: Profile, start: str, current_branch: st
     return None
 
 
+def _post_texts(s: Seg) -> list[str]:
+    """The texts a post may send: its body files, its stdin, a piped producer's files."""
+    out: list[str] = []
+    files = [(f, s.cwd) for f in _body_files(s.words)]
+    files += [(f, s.cwd) for f in (s.inputs or ([s.stdin] if s.stdin else []))]
+    if s.piped is not None:  # what its producer reads: `cat body.md | gh pr comment 1 --body-file -`
+        files += [(w, s.piped.cwd) for w in s.piped.words[1:] if not w.startswith("-")]
+        if s.piped.stdin:
+            files.append((s.piped.stdin, s.piped.cwd))
+    for f, fcwd in files:
+        txt = _read_text(f, fcwd)
+        if txt:
+            out.append(txt)
+    return out
+
+
+def _bash_holds_sensitive(command: str, profile: Profile, root: Path, cwd: str | os.PathLike | None) -> bool:
+    """True when a command, the files it reads, or what any part of it may post
+    matches a sensitive pattern: read whole, since an earlier ask stops
+    check_bash before it reads the posts."""
+    if not profile.sensitive_patterns:
+        return False
+    segs = segments(command, root, _start_cwd(root, cwd))
+    texts = [command, *_command_reads(segs)]
+    for seg in segs:
+        texts += _post_texts(seg)
+    text = "\n".join(texts)
+    return any(re.search(pat, text) for pat in profile.sensitive_patterns)
+
+
 def check_bash(
     command: str,
     profile: Profile,
@@ -5072,20 +5102,7 @@ def check_bash(
     if not posts:
         return ALLOW
 
-    def post_texts(s: Seg) -> list[str]:
-        """The texts a post may send: its body files, its stdin, a piped producer's files."""
-        out: list[str] = []
-        files = [(f, s.cwd) for f in _body_files(s.words)]
-        files += [(f, s.cwd) for f in (s.inputs or ([s.stdin] if s.stdin else []))]
-        if s.piped is not None:  # what its producer reads: `cat body.md | gh pr comment 1 --body-file -`
-            files += [(w, s.piped.cwd) for w in s.piped.words[1:] if not w.startswith("-")]
-            if s.piped.stdin:
-                files.append((s.piped.stdin, s.piped.cwd))
-        for f, fcwd in files:
-            txt = _read_text(f, fcwd)
-            if txt:
-                out.append(txt)
-        return out
+    post_texts = _post_texts
 
     if profile.sensitive_patterns:
         texts = [command, read()]
@@ -5214,11 +5231,11 @@ def decide(
     d = _decide(event, profile, role, root, current_branch, role_from_env, cwd)
     mode = event.get("permission_mode")
     if d.action == "ask" and role == "attended" and modes.never_asks(mode):
-        return Decision("deny", d.reason + "\n" + _nobody_asked(event, mode, d.sensitive, profile), d.sensitive)
+        return Decision("deny", d.reason + "\n" + _nobody_asked(event, mode, d.sensitive, profile, root, cwd), d.sensitive)
     return d
 
 
-def _nobody_asked(event: dict, mode, sensitive: bool, profile: Profile) -> str:
+def _nobody_asked(event: dict, mode, sensitive: bool, profile: Profile, root: Path, cwd: str | os.PathLike | None) -> str:
     """What a refusal adds to the ask's reason in a mode that never asks: the
     kit would have asked, the mode, how to be asked, and how to do it by hand.
     `sensitive`: the ask is about sensitive data. Input matching a sensitive
@@ -5244,11 +5261,15 @@ def _nobody_asked(event: dict, mode, sensitive: bool, profile: Profile) -> str:
     else:
         github = isinstance(tool, str) and tool.startswith("mcp__") and "github" in tool.lower()
         bash = isinstance(command, str) and command.strip()
-        text = "\n".join(_strings(inp))
-        if any(re.search(pat, text) for pat in profile.sensitive_patterns):
+        if bash:
+            holds = _bash_holds_sensitive(command, profile, root, cwd if cwd is not None else event.get("cwd") or None)
+        else:
+            text = "\n".join(_strings(inp))
+            holds = any(re.search(pat, text) for pat in profile.sensitive_patterns)
+        if holds:
             without = "without the text that matches the project's sensitive-data pattern"
             if bash:
-                lines.append(f"Or run it yourself in your own terminal, {without} (the command isn't repeated here, since it holds that text).")
+                lines.append(f"Or run it yourself in your own terminal, {without} (the command isn't repeated here, since it or what it posts holds that text).")
             elif github:
                 lines.append(f"Or do it yourself on GitHub, {without}.")
             else:

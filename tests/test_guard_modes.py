@@ -362,6 +362,31 @@ def test_an_earlier_ask_never_repeats_sensitive_text_by_hand(tmp_path, event):
     assert "without the text that matches the project's sensitive-data pattern" in extra
 
 
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "git push origin main && gh issue comment 5 --body-file note.md",
+        "git push origin main && cat note.md | gh issue comment 5 --body-file -",
+        "git push origin main; gh issue comment 5 --body-file - < note.md",
+    ],
+)
+def test_an_earlier_ask_never_offers_a_files_sensitive_text_by_hand(tmp_path, cmd):
+    p = _sensitive(tmp_path)
+    (tmp_path / "note.md").write_text("about MRN-123456\n")
+    ev = dict(bash(cmd), cwd=str(tmp_path))
+    asked = act(p, ev, None)
+    assert asked.action == "ask"
+    extra = act(p, ev, "dontAsk").reason[len(asked.reason):]
+    assert "note.md" not in extra and "without the text that matches" in extra
+
+
+def test_a_matching_description_alone_keeps_the_hand_command(tmp_path):
+    p = _sensitive(tmp_path)
+    ev = {"tool_name": "Bash", "tool_input": {"command": "scripts/deploy.sh", "description": "deploy for MRN-123456"}}
+    extra = act(p, ev, "dontAsk").reason
+    assert "`scripts/deploy.sh`" in extra
+
+
 def test_a_long_unknown_mode_is_shown_cut(prof):
     d = act(prof, bash("scripts/deploy.sh"), "x" * 200)
     assert "x" * 80 + "…" in d.reason and "x" * 81 not in d.reason
