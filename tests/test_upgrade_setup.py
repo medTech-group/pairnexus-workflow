@@ -147,9 +147,9 @@ def test_it_lists_the_rulesets_settings_checks_and_merge_settings_with_their_pag
     # A link to each exact settings page.
     assert "https://github.com/<repo>/settings/rules/new?target=branch" in clicks
     assert "`https://github.com/<repo>/settings`" in clicks
-    # The automatic path and adding checks later come later, named in words:
-    # the skill ships into projects, where a kit issue number means their issue.
-    assert "later release" in clicks
+    # Adding checks later is the second path, named in words: the skill ships
+    # into projects, where a kit issue number means their issue.
+    assert '"Require these checks"' in clicks
     assert not re.search(r"#\d", _text())
 
 
@@ -434,7 +434,7 @@ def test_the_screen_shows_results_ticks_passing_and_says_why_not_the_others():
 
 def test_the_local_update_after_one_confirmation_with_the_expected_prompt():
     which = _section("Which way, for the checks")
-    assert 'the same four conditions as "Which way"' in which
+    assert 'The same four conditions as "Which way"' in which
     local = _section("The update with `gh`")
     assert "Claude Code will ask you to approve the GitHub command that changes the ruleset. That is expected" in local
     order = [

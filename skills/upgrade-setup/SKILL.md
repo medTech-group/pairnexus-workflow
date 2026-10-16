@@ -1,6 +1,6 @@
 ---
 name: upgrade-setup
-description: Move a project from solo mode to the full set-up, one upgrade at a time. "Protect `main`" makes a ruleset and the merge settings on the base branch with `gh` after one confirmation on the owner's own computer, or guides the person click by click to them everywhere else, reads them back with `workflow protection`, and opens the pull request that leaves solo mode. "Set up unattended runs" asks the questions only runs need, guides the two cloud environments, and writes the answers to the profile in one pull request. Use when the person asks to protect main or to set up unattended runs, or picks either where the kit offers it.
+description: Move a project from solo mode to the full set-up, one upgrade at a time. "Protect `main`" makes a ruleset and the merge settings on the base branch with `gh` after one confirmation on the owner's own computer, or guides the person click by click to them everywhere else, reads them back with `workflow protection`, and opens the pull request that leaves solo mode. "Require these checks", once CI has run on the base branch, adds the ticked checks that ran to the ruleset protecting it (with "up to date" on) and to the profile's `ci.required_checks`. "Set up unattended runs" asks the questions only runs need, guides the two cloud environments, and writes the answers to the profile in one pull request. Use when the person asks to protect main, to require the checks, or to set up unattended runs, or picks one where the kit offers it.
 ---
 
 # Upgrade the set-up
@@ -8,9 +8,10 @@ description: Move a project from solo mode to the full set-up, one upgrade at a 
 A project set up in solo mode (`project.ruleset = false`) works attended from the start, with the kit's guard refusing what touches the base branch. This skill takes it the rest of the way, one upgrade at a time, each one offered and never pushed:
 
 - **"Protect `main`"**: a ruleset on the base branch and the merge settings, then a pull request that sets `ruleset = true`. The first part of this file.
-- **"Set up unattended runs"**: the questions only runs need, the two cloud environments, and a pull request that writes the answers to the profile. The second part, after it.
+- **"Require these checks"**: once CI has run on the base branch, the checks that ran, ticked, added to the ruleset protecting it and listed in the profile's `ci.required_checks`, so failing tests stop merges and the two agree. The second part.
+- **"Set up unattended runs"**: the questions only runs need, the two cloud environments, and a pull request that writes the answers to the profile. The third part, after it.
 
-"Where things are" and "When it's offered" are shared by both.
+"Where things are" and "When it's offered" are shared by all three.
 
 Below, `main` stands for the profile's `project.base_branch`: use its real name in everything you show.
 
@@ -22,7 +23,7 @@ Below, `main` stands for the profile's `project.base_branch`: use its real name 
 
 **The repository** (`<repo>`, `owner/name`) is the profile's `project.repo`; the base branch is `project.base_branch`.
 
-**GitHub.** Read with `gh api` where it is signed in, or the GitHub MCP tools in a cloud session. On the person's own computer, with `gh` signed in as the repository's admin, the kit makes the ruleset and the merge settings itself after one confirmation ("The automatic path"). Everywhere else nothing here writes a ruleset or a setting: the person clicks, and this skill reads back. The GitHub MCP tools never write them.
+**GitHub.** Read with `gh api` where it is signed in, or the GitHub MCP tools in a cloud session. On the person's own computer, with `gh` signed in as the repository's admin, the kit makes the ruleset and the merge settings itself after one confirmation ("The automatic path"), and adds required checks to the ruleset the same way ("The update with `gh`"). Everywhere else nothing here writes a ruleset or a setting: the person clicks, and this skill reads back. The GitHub MCP tools never write them.
 
 The read-back needs GitHub's own JSON: the repository (`GET repos/<repo>`, with `permissions`, `default_branch` and the merge settings) and each ruleset by its id. Use a tool that returns those responses as they are, `gh api` where it is signed in. When no tool here gives them, treat the rulesets as unreadable ("Protect `main`", step 2).
 
@@ -42,7 +43,8 @@ Offered, never as a nag, at these moments only. Each comes with "Not now", and "
 The offers have names, which `workflow doctor` and the other skills use:
 - **`protect_main`**: the project is in solo mode (`ruleset = false`), or set up before solo mode existed (`ruleset` left out, `solo_mode` `null`). The path ends with the pull request that leaves solo mode.
 - **`restore_protection`**: the profile says `ruleset = true` but the read-back says the base branch isn't protected (the protection was removed or weakened). The same path, without the pull request that leaves solo mode: the profile is already right.
-- **`set_up_unattended_runs`**: the person wants Claude to work while nobody is watching, and the profile names no environments yet (`run.ticket_environment` empty). The second path, "Set up unattended runs".
+- **`require_checks`**: CI has run on the base branch and some checks that ran aren't required yet (`WF protection --checks-ran … --json` gives a non-empty `checks`). The second path, "Require these checks". Unlike the others it is offered only through `workflow doctor`'s `require_checks` offer (which `check-setup` and the conductor's pre-flight show), or when the person asks ("require the checks", "make failing tests block merges"). Never anywhere else: not after set-up, not in the guard's refusals.
+- **`set_up_unattended_runs`**: the person wants Claude to work while nobody is watching, and the profile names no environments yet (`run.ticket_environment` empty). The third path, "Set up unattended runs".
 
 # Protect `main`
 
@@ -95,7 +97,7 @@ Then:
 Before guiding any click, fetch the rulesets and read them back with `WF protection`, exactly as step 4 does. Some repositories already have one.
 
 - **Already protected** (`protected` is `true`): nothing is created, and no clicks for the ruleset. If the merge settings are missing, set only those first, since they are part of this upgrade too. Where "Which way" chose the automatic path, ask first, as a choice: "Turn on GitHub's merge settings: allow merge commits and auto-merge" with **Do it now** (recommended) and **Not now**; on **Do it now**, build the requests (the automatic path's step 3.1, with no `--check`) and send only the merge settings (its step 3.3). Otherwise step 3's screen 3. Then, for `protect_main`, go straight to the pull request that leaves solo mode (step 5); for `restore_protection`, say it is protected again and stop.
-- **Not protected, with rulesets there:** show what is missing. This skill never edits an existing ruleset, and never guides a change to one: changing a ruleset that was there before is left to a later release. It guides a new ruleset beside them, by the clicks, on the automatic path too: the kit makes a ruleset itself only where none targets the base branch yet (below). Note which rulesets were there before this run: step 4 needs to know.
+- **Not protected, with rulesets there:** show what is missing. This path never edits an existing ruleset, and never guides a change to one: changing a ruleset that was there before is left to a later release (only "Require these checks" adds checks to one, once the base branch is protected). It guides a new ruleset beside them, by the clicks, on the automatic path too: the kit makes a ruleset itself only where none targets the base branch yet (below). Note which rulesets were there before this run: step 4 needs to know.
   - When an existing one stops the verdict whatever is added (its bypass list, say), say which ruleset and what in it, and that it is its admin's to change. Don't guide a new ruleset that can't help.
   - An organisation's ruleset (`source_type` `Organization`) is the organisation owner's, even for a repository admin: say which one and what in it (its bypass list, or that its bypass list can't be read from here), and that the organisation owner changes it or reads it back. Don't send the message of step 1 for it: running this skill again as a repository admin gives the same answer.
   - A repository's own ruleset whose bypass list "can't be read":
@@ -158,7 +160,7 @@ For everyone the automatic path isn't for: one screen at a time, each with a lin
 - Leave **Require linear history** unticked: the kit merges with a merge commit, which it forbids.
 - When screen 2 is skipped (below), end this screen with: click **Create**.
 
-**Screen 2: the required checks.** Only when CI has already run on the base branch and the profile lists its checks (`ci.required_checks`): check that each name appears in the base branch's latest check runs (`GET repos/<repo>/commits/<base>/check-runs?per_page=100`, every page). If they all do, add to the same ruleset before creating it: **Require status checks to pass**, **Require branches to be up to date before merging**, and **Add checks** with each name exactly. Otherwise skip this screen and report "checks not required yet": the ruleset protects the base branch without them, and they are added once CI has run and their names are known. Adding them later comes in a later release; leave the ruleset as it is for that.
+**Screen 2: the required checks.** Only when CI has already run on the base branch and the profile lists its checks (`ci.required_checks`): check that each name appears in the base branch's latest check runs (`GET repos/<repo>/commits/<base>/check-runs?per_page=100`, every page). If they all do, add to the same ruleset before creating it: **Require status checks to pass**, **Require branches to be up to date before merging**, and **Add checks** with each name exactly. Otherwise skip this screen and report "checks not required yet": the ruleset protects the base branch without them, and they are added once CI has run and their names are known, by "Require these checks" (the second part of this file).
 
 Then click **Create**, at the end of whichever of screens 1 and 2 is the last.
 
@@ -219,9 +221,110 @@ Say where it stands in one line, adding the checks line from "The screens" when 
 - "`main` isn't protected yet: this session can't read <ruleset>'s bypass list. Read it back with `gh` signed in as you." with no retry, when the access here lacks admin rights;
 - or, not an admin, "The message for the owner is above."
 
+# Require these checks
+
+The second path (offer `require_checks`). Once CI has run on the base branch, the checks that ran are shown for ticking, then required by the ruleset protecting the base branch, with "Require branches to be up to date" on, and listed in the profile's `ci.required_checks`, so failing tests stop merges and the ruleset and the profile agree. Offered only as "When it's offered" says, each time with **Not now**. Checks are only ever added, never removed: nothing here takes a required check out of a ruleset or a name out of the profile.
+
+The level changes only the words, as in "The screens": read `WF status --json` for `experience.wording_level` and `solo_mode`.
+
+## Solo mode waits
+
+When `solo_mode` is `true` (`ruleset = false`), nothing is read or sent. Say the checks are added once the pull request that leaves solo mode has merged: point at it if one is open (from `workflow/protect-main`, or any open pull request changing `ruleset` in the profile), otherwise say "Protect `main`" opens it, and that its confirmation already offers the checks that ran, so a project with CI is protected and its checks required in one go, and stop.
+
+`false`, or `null` (set up before solo mode existed): go on.
+
+## Which ruleset, and is it protected
+
+1. **Admin first,** exactly as "Protect `main`" step 1 does, keeping the JSON in `.workflow/repo.json`. Not an admin: the message for the owner, with this path's clicks ("The clicks for the checks"), before anything else is tried. Can't tell: the same two choices.
+2. **The rulesets, read back:** fetch each in full and run `WF protection` on them, as "Read it back" (step 4) does.
+   - `protected` is `false`, or the rulesets can't be read: no checks are added to an unprotected branch. Say what is missing in plain words and offer `restore_protection` ("Protect `main`" without the pull request that leaves solo mode) first, then stop. Its confirmation offers the checks that ran too.
+   - `protected` is `true`: go on.
+3. **The ruleset to change:** among the fetched rulesets, the ones protecting the base branch are those the read-back counted: active, and targeting it (`conditions.ref_name.include` names `~DEFAULT_BRANCH` when the base branch is the default, `~ALL`, `refs/heads/<base>` or a pattern matching it, and `exclude` doesn't).
+   - The kit's own, named "Protect <base> (pairnexus-workflow)", when one of those is it.
+   - Else the one ruleset protecting the base branch, when there is exactly one.
+   - When there are several and none is the kit's: the clicks naming them, each with its page, for the person to pick the one to add the checks to. The kit doesn't guess.
+   - An organisation's ruleset (`source_type` `Organization`) is the organisation owner's: `WF protection --require-checks` refuses it. Say whose it is, and give the clicks for its page in the organisation's settings, for them.
+
+## The checks screen
+
+Fetch the base branch's latest commit's check runs and statuses, every page, with the commands of the automatic path's step 1, then `WF protection --checks-ran .workflow/check-runs.json --statuses .workflow/status.json --rulesets .workflow/rulesets.json --repo .workflow/repo.json --base <base> --json`. Its `checks` are the ones to offer, each with its result; those already required (its `required`) and the Cloudflare check are left out by the command. Exit 2 or any other failure: fetch again once; if it still fails, say so and why, and stop. When `checks` is empty, say so ("every check that ran on `main` is already required", or "CI hasn't run on `main` yet") and stop.
+
+Show each check with its result:
+- **Passing ones are ticked by default.**
+- **Failing and pending ones are not ticked,** and say why: failing, "a failing required check blocks every merge until it passes"; pending, "it hasn't finished, so its result isn't known yet".
+
+By experience, the words only:
+- *New to building* gets one plain sentence above the list: "GitHub won't merge a change until these pass".
+- *A developer* gets the names, and that "Require branches to be up to date" goes on with them (a branch behind `main` must be updated before it merges).
+
+The choices, with `AskUserQuestion` as the automatic path's checks question has them: **Require the ticked ones** (recommended, naming each with its result), **Choose which** (multiSelect questions, two to four checks each, in a follow-up call; past sixteen, a numbered list), and **Not now**. With a single check: **Require it** and **Not now**. With none ticked by default, no **Require the ticked ones**. On the update with `gh`, the same screen says Claude Code's prompt is expected (below).
+
+**Not now** leaves everything as it is: nothing is sent, and `workflow doctor` still says what's left.
+
+## Which way, for the checks
+
+The same four conditions as "Which way": local, attended (not `conductor`), `gh` signed in, and admin read through `gh api`. All four, and a repository's own ruleset chosen in "Which ruleset": the update with `gh`. A cloud session, a conductor session, `gh` missing or signed out, or an admin claimed with "I'm an admin: go on": the clicks. Not an admin: the message for the owner.
+
+## The update with `gh`
+
+One confirmation: the checks screen is it. On the same screen: "Claude Code will ask you to approve the GitHub command that changes the ruleset. That is expected: it is how the kit's guard lets you see it first." Then, in order:
+
+1. **The ruleset, in full:** `gh api repos/<repo>/rulesets/<id> > .workflow/ruleset.json`, the ruleset chosen above.
+2. **The request:** `WF protection --require-checks .workflow/ruleset.json --check NAME ... --json > .workflow/checks.json`, one `--check` for each ticked name. It gives one `PUT` with the ruleset's rules, the names added and "up to date" on, and sends nothing. With the Write tool, put its `body` in `.workflow/checks-request.json`, checking its `method` is `PUT` and its `path` is `repos/<repo>/rulesets/<id>`. Exit 2 or any other failure: nothing was sent; say so, and give the clicks.
+3. **The update:** `gh api -X PUT repos/<repo>/rulesets/<id> --input .workflow/checks-request.json`. The guard asks; Claude Code's prompt is the person's approval. Send it once.
+4. **The read-back,** below.
+5. **The profile's pull request,** below.
+
+**A refusal naming the permission mode** (nobody is asked in `bypassPermissions` or `dontAsk`): nothing was sent. Answer "switch the permission mode and try again" (Shift+Tab, or the mode selector), and never retry the command in that mode. A solo-mode refusal: the profile went back to solo mode, so "Solo mode waits". Any other refusal, or the person declining the prompt: nothing was sent; say so, and offer the clicks.
+
+**A failure partway:** say what was done and what's left, read back, and give the clicks for the rest: the request failed to build or send, the clicks for all of it; the update went through but the read-back finds a name or "up to date" missing, the clicks for those on the ruleset's page; the update went through but the profile's pull request couldn't be opened, the ruleset stands, so say so and give the profile change to make by hand.
+
+## The clicks for the checks
+
+For everyone the update with `gh` isn't for, one screen at a time, each with the link and the exact names to type. After each, wait for "Done" (or "Something's different", then help with what they see).
+
+**Screen 1: open the ruleset.** `https://github.com/<repo>/settings/rules/<id>` (**Settings → Rules → Rulesets →** the ruleset's name). With several and none the kit's, list each with its link and say to open the one that protects `main`.
+
+**Screen 2: the checks.** Tick **Require status checks to pass**, and under it **Require branches to be up to date before merging**. Then **Add checks**, and type each name exactly, one at a time: the ticked names, each in a code span. Leave any checks already listed. Click **Save changes**.
+
+A non-admin gets "Protect `main`" step 1's ready message for the owner, in a code block, with these steps instead: what it's for in one line; the easy way, a Claude session on the repository asked to "require the checks"; or by hand these two screens, filled in, then the same request to Claude for the read-back and the profile's pull request.
+
+## Read the checks back
+
+Either way, the update with `gh` or the clicks: fetch the rulesets again, each in full, and the repository, as step 4 does, then run `WF protection --rulesets .workflow/rulesets.json --repo .workflow/repo.json --json`, with the same exit-code rules.
+- Every ticked name is in `checks.required`, and the ruleset it was added to has `strict_required_status_checks_policy` `true` in its `required_status_checks` rule's parameters: say so in one line (new to building), or show the report (developer).
+- Anything missing (a name, "up to date", or the base branch no longer protected): show each in plain words, and offer the click again, as a choice with **Not now**. Then read it back again.
+
+## The profile's pull request
+
+Once the read-back has the names required. First look for one already open (carrying `<!-- workflow:required-checks -->`, or from `workflow/required-checks`): if there is one, point at it rather than opening another.
+
+When the profile's `ci.required_checks` already lists every one of them, no pull request is opened, and say so ("the profile already lists them", as a starter project's does from the start). Otherwise:
+
+1. A branch from the base branch, such as `workflow/required-checks`.
+2. In `.claude/workflow/profile.toml`'s `[ci]` table, add the required names the profile doesn't list to `ci.required_checks`, after the names already there, never removing one and never listing one twice; and set `ci.none = false` when it was `true`. Change nothing else.
+3. `WF profile check` passes.
+4. Push the branch and open the pull request. Its body: the names now required, the read-back's report, and this marker on a line of its own, so `workflow doctor` can name the pull request while it's open:
+
+   ```
+   <!-- workflow:required-checks -->
+   ```
+
+The profile is a protected path: Merging it is the owner's. Never merge it, or enable auto-merge on it, yourself.
+
+## Where the checks end
+
+Say where it stands in one line:
+- "<names> are required on `main`, and the profile's pull request is #<n>: merge it when you're ready." (or "…; the profile already lists them.");
+- "Nothing was changed." after **Not now**;
+- "The checks wait for the pull request that leaves solo mode." in solo mode;
+- "<what was done>; <what's left>: the clicks for it are above." after a failure;
+- "Nothing was changed: switch the permission mode and try again." after a refusal naming the mode;
+- or, not an admin, "The message for the owner is above."
+
 # Set up unattended runs
 
-The second path (offer `set_up_unattended_runs`). It takes a project that works attended to one where the conductor can build ready tickets in cloud sessions while nobody is watching: it asks the questions only runs need, which set-up leaves out, guides the two cloud environments, and writes the answers to the profile in one pull request.
+The third path (offer `set_up_unattended_runs`). It takes a project that works attended to one where the conductor can build ready tickets in cloud sessions while nobody is watching: it asks the questions only runs need, which set-up leaves out, guides the two cloud environments, and writes the answers to the profile in one pull request.
 
 **The vendored kit only.** Cloud sessions don't install the plugin from a project's settings, so unattended runs need the vendored kit. In plugin mode (no `.claude/workflow/lock.json`), say so plainly, and that moving to vendored mode is the kit's `setup-workflow` skill run again in vendored mode; then stop.
 
