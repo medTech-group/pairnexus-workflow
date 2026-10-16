@@ -8,6 +8,7 @@
 - **The reader** sits in the same module (`scripts/workflow/reviews.py`: `records_in(text)` for one comment, `read(comments)` for a pull request's comments, with who posted each), so the coming `workflow merge-check` and the writer can't drift. A malformed record line is skipped, never a crash.
 - **The `review-panel` skill** posts a record after every round, whatever it found, and after each later Correctness pass, in attended and unattended sessions alike. `build-ticket` posts the records of the rounds run before its pull request opened, once it does; its findings table stays in the PR body.
 - Docs: `docs/flow.md` §3. Tests: `tests/test_review_record.py`.
+- **For projects updating:** nothing to do.
 
 **"Require these checks": failing tests stop merges once CI has run** (#68, part of the automated GitHub set-up, #38).
 
