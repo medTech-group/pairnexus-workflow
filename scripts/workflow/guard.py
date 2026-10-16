@@ -180,8 +180,9 @@ class SoloRefusal:
 
 # Credentials a command may carry: a URL's user:password@, a token variable's value.
 _URL_CREDENTIALS = re.compile(r"(?<=://)[^/\s@'\"]+@")
-_SECRET_VARS = re.compile(r"(?i)\b(\w*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|CREDENTIALS?)\w*)=(?:'[^']*'|\"[^\"]*\"|\S+)")
+_SECRET_VARS = re.compile(r"(?i)\b(\w*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|CREDENTIALS?)\w*)[ \t]*=[ \t]*(?:'[^']*'|\"[^\"]*\"|\S+)")
 _SECRET_HEADERS = re.compile(r"(?i)(authorization:\s*(?:\w+\s+)?|bearer\s+|extraheader=)[^\s\"']+")
+_WITHOUT_SENSITIVE = "without the text that matches the project's sensitive-data pattern"
 _HAND_MAX = 400  # longer than this, the hand command isn't repeated
 
 
@@ -209,10 +210,11 @@ def _code_span(text: str) -> str:
     return f"{fence} {text} {fence}"
 
 
-def solo_refusal(base: str, level: str, command: str, refusal: SoloRefusal) -> str:
+def solo_refusal(base: str, level: str, command: str, refusal: SoloRefusal, sensitive: bool = False) -> str:
     """The reason a solo-mode refusal gives, which Claude relays: why in plain
-    words, what `base` is (only for `level` "new"), the command to run by hand,
-    and the "Protect" offer. Wording follows `level`; what is refused never does."""
+    words, what `base` is (only for `level` "new"), the command to run by hand
+    (never repeated when `sensitive`: it holds text matching a sensitive
+    pattern), and the "Protect" offer. Wording follows `level`; what is refused never does."""
     what = refusal.what
     if refusal.kind == "unknown":
         hint = refusal.hint or "push the branch by name (`git push origin <branch>`)"
@@ -226,16 +228,19 @@ def solo_refusal(base: str, level: str, command: str, refusal: SoloRefusal) -> s
     if level == "new":
         lines.append(f"`{base}` is the branch the project's work comes together on: the version everyone builds on, which should change only through a pull request.")
     name_it = " name the branch and" if refusal.kind == "unknown" and not refusal.hint else ""
-    lines.append(f"If you really mean it,{name_it} run it yourself in your own terminal:{_hand_command(command)}")
+    if sensitive:
+        lines.append(f"If you really mean it,{name_it} run it yourself in your own terminal, {_WITHOUT_SENSITIVE}.")
+    else:
+        lines.append(f"If you really mean it,{name_it} run it yourself in your own terminal:{_hand_command(command)}")
     lines.append(
         f'Offer "Protect `{base}`" as a choice, with "Not now": it sets up GitHub\'s protection, so `{base}` changes only through pull requests.'
     )
     return "\n".join(lines)
 
 
-def _solo_deny(s: SoloRefusal, profile: Profile, root: Path, command: str) -> Decision:
+def _solo_deny(s: SoloRefusal, profile: Profile, root: Path, command: str, sensitive: bool = False) -> Decision:
     level = resolve_experience(root, profile.experience).wording_level
-    return Decision("deny", solo_refusal(profile.base_branch, level, command, s))
+    return Decision("deny", solo_refusal(profile.base_branch, level, command, s, sensitive), sensitive)
 
 
 # ---------- paths ----------
@@ -5230,14 +5235,8 @@ def check_powershell(inp: dict, profile: Profile, role: str, root: Path) -> Deci
         return ALLOW
     command = inp.get("command") if isinstance(inp.get("command"), str) else ""
     if profile.ruleset is False:
-        hint = "run it through Bash instead, where the kit can tell"
-        d = _solo_deny(SoloRefusal(f"a {what} in PowerShell, which the kit can't read", "unknown", hint), profile, root, command)
-        if _text_holds_sensitive(command, profile):
-            # Never repeat sensitive data: the hand command goes.
-            lines = [l for l in d.reason.splitlines() if not l.startswith("If you really mean it")]
-            lines.insert(-1, "If you really mean it, run it yourself in your own terminal, without the text that matches the project's sensitive-data pattern.")
-            d = Decision("deny", "\n".join(lines), True)
-        return d
+        refusal = SoloRefusal(f"a {what} in PowerShell, which the kit can't read", "unknown", "run it through Bash instead, where the kit can tell")
+        return _solo_deny(refusal, profile, root, command, _text_holds_sensitive(command, profile))
     return Decision(
         "ask",
         f"the guard can't read PowerShell, so it can't check this {what} (which branch, which pull request); "
@@ -5278,7 +5277,7 @@ def _nobody_asked(event: dict, mode, sensitive: bool, profile: Profile, root: Pa
     lines = fallback.mode_lines(mode)  # the same lines as the can't-decide fallback's
     tool = event.get("tool_name") or ""
     inp = event.get("tool_input") if isinstance(event.get("tool_input"), dict) else {}
-    command = inp.get("command") if tool in ("Bash", "Monitor", "PowerShell") else None
+    command = inp.get("command") if tool in fallback.COMMAND_TOOLS else None
     if sensitive:
         # Never repeat sensitive data, nor suggest posting it by hand.
         lines.append("Or remove the text that matches the project's sensitive-data pattern, and try again.")
@@ -5290,10 +5289,9 @@ def _nobody_asked(event: dict, mode, sensitive: bool, profile: Profile, root: Pa
         elif bash:
             holds = _bash_holds_sensitive(command, profile, root, cwd if cwd is not None else event.get("cwd") or None)
         else:
-            text = "\n".join(_strings(inp))
-            holds = any(re.search(pat, text) for pat in profile.sensitive_patterns)
+            holds = _text_holds_sensitive("\n".join(_strings(inp)), profile)
         if holds:
-            without = "without the text that matches the project's sensitive-data pattern"
+            without = _WITHOUT_SENSITIVE
             if bash:
                 lines.append(f"Or run it yourself in your own terminal, {without} (the command isn't repeated here, since it or what it posts holds that text).")
             elif github:
@@ -5324,9 +5322,7 @@ def _decide(
         inp = {}
     if cwd is None:
         cwd = event.get("cwd") or None
-    if tool == "Bash":
-        return check_bash(inp.get("command") or "", profile, role, root, current_branch, role_from_env, cwd)
-    if tool == "Monitor":
+    if tool in ("Bash", "Monitor"):
         # Monitor runs its command as Bash does; a WebSocket watch (`ws`, no command) runs nothing.
         return check_bash(inp.get("command") or "", profile, role, root, current_branch, role_from_env, cwd)
     if tool == "PowerShell":

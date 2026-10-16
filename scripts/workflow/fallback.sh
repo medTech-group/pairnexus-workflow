@@ -32,7 +32,8 @@ END {
         if (tool ~ /merge_pull_request$/) what = "merge"
         else if (tool ~ /(push_files|create_or_update_file|delete_file)$/) what = "push"
     } else if (runs_a_command(tool)) {
-        what = push_or_merge(command())
+        # PowerShell and Windows ignore case: `Git Push` runs git.exe.
+        what = push_or_merge(tool == "PowerShell" ? tolower(command()) : command())
     }
     if (what == "") exit 0
 
@@ -90,6 +91,7 @@ function command(    s, i) {
     gsub(/\\"/, "\003", s)    # an escaped quote: not the end
     i = index(s, "\"")
     if (i) s = substr(s, 1, i - 1)
+    gsub(/\\r\\n/, "\n", s)  # CRLF: one newline
     gsub(/\\n/, "\n", s)
     gsub(/\\./, " ", s)
     gsub("\002\n", " ", s)    # a line continuation joins its lines

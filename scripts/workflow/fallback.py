@@ -68,7 +68,10 @@ def push_or_merge(event):
     cmd = inp.get("command") if tool in COMMAND_TOOLS and isinstance(inp, dict) else None
     if not isinstance(cmd, str):
         return None
+    if tool == "PowerShell":
+        cmd = cmd.lower()  # PowerShell and Windows ignore case: `Git Push` runs git.exe
     # A line continuation (`\` in a shell, a backtick in PowerShell) joins its lines.
+    cmd = cmd.replace("\r\n", "\n")
     parts = _SEPARATORS.split(cmd.replace("\\\n", " ").replace("`\n", " "))
     if any(_in_order(p, _PUSH) for p in parts):
         return "push"

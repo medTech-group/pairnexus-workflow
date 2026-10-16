@@ -133,9 +133,8 @@ def test_a_websocket_monitor_is_allowed(prof, role, mode):
 @pytest.mark.parametrize("cmd", ["Get-ChildItem", PUSH, MERGE, "", "Remove-Item -Recurse .claude"])
 def test_powershell_is_refused_in_a_run(prof, role, cmd):
     d = act(prof, tool("PowerShell", command=cmd), role)
-    assert d.action == "deny"
-    assert "the guard can't read PowerShell; use Bash" in d.reason
-    assert d.reason == POWERSHELL_REFUSAL
+    assert (d.action, d.reason) == ("deny", POWERSHELL_REFUSAL)
+    assert POWERSHELL_REFUSAL == "the guard can't read PowerShell; use Bash"
 
 
 @pytest.mark.parametrize("cmd", [PUSH, MERGE, "cd repo; git push", "gh pr view 3 | Out-Null\ngh pr merge 3"])
@@ -165,15 +164,27 @@ def test_attended_powershell_push_or_merge_is_refused_in_solo_mode(solo, cmd, mo
 
 @pytest.mark.parametrize("cmd", ["Get-ChildItem", "Write-Output 'git'", "", "gh pr view 3"])
 @pytest.mark.parametrize("mode", ASKING + NEVER)
-def test_attended_powershell_anything_else_is_left_alone(prof, solo, cmd, mode):
-    for p in (prof, solo):
+def test_attended_powershell_anything_else_is_left_alone(tmp_path, cmd, mode):
+    for p in (on_disk(tmp_path / "plain"), on_disk(tmp_path / "solo", False)):
         d = act(p, tool("PowerShell", mode, command=cmd), "attended")
         assert (d.action, d.reason) == ("allow", "")
 
 
-def test_attended_powershell_backtick_continuation_is_one_line(prof):
-    d = act(prof, tool("PowerShell", command="git `\npush origin main"), "attended")
+@pytest.mark.parametrize("cmd", ["git `\npush origin main", "git `\r\npush origin main", "gh pr `\r\nmerge 3"])
+def test_attended_powershell_backtick_continuation_is_one_line(prof, cmd):
+    d = act(prof, tool("PowerShell", command=cmd), "attended")
     assert d.action == "ask"
+
+
+@pytest.mark.parametrize("cmd", ["Git Push origin main", "GIT push", "git.exe PUSH origin main", "GH pr Merge 3"])
+def test_attended_powershell_ignores_case_as_powershell_does(prof, solo, cmd):
+    assert act(prof, tool("PowerShell", command=cmd), "attended").action == "ask"
+    assert act(prof, tool("PowerShell", "dontAsk", command=cmd), "attended").action == "deny"
+
+
+def test_a_bash_command_keeps_its_case(prof):
+    # Bash runs `Git` only where such a program exists: the one definition is unchanged for it.
+    assert fallback.push_or_merge(tool("Bash", command="Git Push")) is None
 
 
 # ---------- the hand command where nobody is asked ----------
@@ -189,15 +200,41 @@ def test_the_hand_command_is_the_command_itself(prof, name, cmd):
     assert f"Or run it yourself in your own terminal: `{cmd}`" in d.reason
 
 
-def test_a_powershell_hand_command_with_sensitive_text_is_not_repeated(tmp_path):
-    (tmp_path / ".claude/workflow").mkdir(parents=True)
-    (tmp_path / ".claude/workflow/profile.toml").write_text(_toml(None).replace(
+def _sensitive(root, ruleset):
+    (root / ".claude/workflow").mkdir(parents=True)
+    (root / ".claude/workflow/profile.toml").write_text(_toml(ruleset).replace(
         "[guard]", '[sensitive]\npatterns = ["PATIENT-\\\\d+"]\n\n[guard]'))
-    p = load(tmp_path)
-    cmd = "git commit -m PATIENT-1234; git push origin main"
-    d = act(p, tool("PowerShell", "bypassPermissions", command=cmd), "attended")
+    return load(root)
+
+
+SENSITIVE_COMMANDS = [
+    "git commit -m PATIENT-1234; git push origin main",
+    "git commit -m PATIENT-1234\ngit push origin main",
+    "git push origin main\rPATIENT-1234",
+    "git push origin main # PATIENT-1234 `",
+]
+
+
+@pytest.mark.parametrize("cmd", SENSITIVE_COMMANDS)
+@pytest.mark.parametrize("ruleset,mode", [(None, "bypassPermissions"), (False, None), (False, "dontAsk")])
+def test_a_powershell_hand_command_with_sensitive_text_is_not_repeated(tmp_path, cmd, ruleset, mode):
+    p = _sensitive(tmp_path, ruleset)
+    d = act(p, tool("PowerShell", mode, command=cmd), "attended")
     assert d.action == "deny"
-    assert "PATIENT-1234" not in d.reason
+    assert "PATIENT" not in d.reason
+    assert "without the text that matches the project's sensitive-data pattern" in d.reason
+
+
+@pytest.mark.parametrize("cmd", [
+    "$env:GH_TOKEN = 'ghp_abc123'; git push origin main",
+    "$env:GH_TOKEN='ghp_abc123'; git push origin main",
+    "$env:API_KEY = ghp_abc123; git push origin main",
+])
+def test_a_powershell_token_is_masked_in_the_hand_command(prof, cmd):
+    d = act(prof, tool("PowerShell", "bypassPermissions", command=cmd), "attended")
+    assert d.action == "deny"
+    assert "ghp_abc123" not in d.reason
+    assert "git push origin main" in d.reason
 
 
 # ---------- through the hook ----------
@@ -243,7 +280,8 @@ def _shell_decision(event_text, project):
 
 
 @pytest.mark.parametrize("name", ["Bash", "Monitor", "PowerShell", "Read"])
-@pytest.mark.parametrize("cmd", [PUSH, MERGE, "ls", "git `\npush", "git \\\npush", "Get-ChildItem"])
+@pytest.mark.parametrize("cmd", [PUSH, MERGE, "ls", "git `\npush", "git `\r\npush", "git \\\npush", "Get-ChildItem",
+                                 "Git Push", "GH PR MERGE 3", "gh pr \\\r\nmerge"])
 @pytest.mark.parametrize("mode", [None, "default", "dontAsk"])
 def test_the_shell_fallback_reads_them_as_fallback_py_does(tmp_path, name, cmd, mode):
     event = tool(name, mode, command=cmd)
