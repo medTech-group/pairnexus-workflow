@@ -161,7 +161,8 @@ def waiver_case(project, monkeypatch, conclusion="failure", log="Error: Process 
     logs = project.parent / "logs"
     logs.mkdir(exist_ok=True)
     if log is not None:
-        (logs / log_name).write_text(f"tests\tRun tests\t{log}\n")
+        # As `gh run view --log-failed` prints it: job, step, Actions' timestamp, the line.
+        (logs / log_name).write_text("".join(f"tests\tRun tests\t2026-10-16T10:00:0{i}.1234567Z {line}\n" for i, line in enumerate(log.split("\n"))))
     return data, logs
 
 
@@ -172,6 +173,13 @@ def test_a_waived_check_killed_not_failed_counts(project, capsys, monkeypatch):
     assert got["decision"] == "ready", got["reasons"]
     assert got["checks"] == [{"name": "tests", "state": "waived", "required": True}]
     assert "waived" in note_ids(got)
+
+
+def test_a_killed_pytest_run_with_only_passing_progress_counts(project, capsys, monkeypatch):
+    log = "tests/test_a.py ......ss..   [ 40%]\ntests/test_b.py ..\nError: Process completed with exit code 143."
+    data, logs = waiver_case(project, monkeypatch, log=log)
+    got, _ = run(project, capsys, data, "--check-logs", str(logs), files={"charter": json.dumps(a_charter())})
+    assert got["decision"] == "ready", got["reasons"]
 
 
 def test_a_cancelled_waived_check_with_a_marker_counts(project, capsys, monkeypatch):
@@ -203,6 +211,11 @@ def test_a_log_not_named_by_the_heads_run_isnt_read(project, capsys, monkeypatch
     "tests/test_a.py::test_x FAILED\nError: Process completed with exit code 143.",
     "FAILED tests/test_a.py::test_x - AssertionError\nError: Process completed with exit code 143.",
     "--- FAIL: TestX (0.00s)\nError: Process completed with exit code 143.",
+    "  ✕ adds two numbers (3 ms)\nError: Process completed with exit code 143.",
+    "ERROR tests/test_a.py::test_x - ImportError\nError: Process completed with exit code 143.",
+    "tests/test_a.py ..F..                                                    [ 40%]\nError: Process completed with exit code 143.",
+    "tests/test_a.py::test_x[a b] FAILED\nError: Process completed with exit code 143.",
+    "\x1b[31mtests/test_a.py ..E\x1b[0m [ 40%]\nError: Process completed with exit code 143.",
 ])
 def test_a_killed_marker_beside_a_real_failure_blocks(project, capsys, monkeypatch, log):
     data, logs = waiver_case(project, monkeypatch, log=log)

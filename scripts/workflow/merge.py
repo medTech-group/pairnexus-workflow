@@ -788,9 +788,21 @@ def _checks(ctx: Context, add) -> None:
 
 _EXIT_CODE = re.compile(r"\bexit code (\d+)")
 # A test that failed, as runners report it while they run, before any count:
-# pytest's `path::test FAILED` and `FAILED path::test`, go's `--- FAIL:`, jest's `✕`.
-# A line of `gh run view --log-failed` starts with its job and step, tab-separated.
-_TEST_FAILED = re.compile(r"::\S+ (?:FAILED|ERROR)\b|(?:^|\t)\s*(?:FAILED|ERROR) \S+::|(?:^|\t)\s*--- FAIL:|(?:^|\t)\s*✕ ", re.M)
+# pytest's `path::test FAILED`, `FAILED path::test` and its progress line's
+# `F` or `E` (`tests/test_a.py ..F.  [ 40%]`), go's `--- FAIL:`, jest's `✕`.
+# Matched on each line as `_log_line` leaves it.
+_TEST_FAILED = re.compile(
+    r"::.*? (?:FAILED|ERROR)(?:\s|$)|^(?:FAILED|ERROR) \S+::|\.py [.sxXFE]*[FE][.sxXFE]*(?:\s|$)|^--- FAIL:|^✕ "
+)
+# What starts a line of a check's log before the runner's own text: `gh run
+# view --log-failed`'s job and step (tab-separated), Actions' timestamp, colours.
+_LOG_PREFIX = re.compile(r"^(?:[^\t\n]*\t){0,2}(?:\ufeff)?(?:\d{4}-\d\d-\d\dT[\d:.]+Z ?)?")
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07")
+
+
+def _log_line(line: str) -> str:
+    """A line of a check's log as its runner printed it."""
+    return _LOG_PREFIX.sub("", _ANSI.sub("", line), count=1).strip()
 
 
 def log_names(run_id: int) -> list[str]:
@@ -824,7 +836,7 @@ def _not_killed(run_id: int, logs: dict, prof) -> str | None:
                     return "its log also shows tests that failed"
             except re.error:
                 return "its log can't be read with the profile's suite counts"
-    if _TEST_FAILED.search(text):
+    if any(_TEST_FAILED.search(_log_line(line)) for line in text.splitlines()):
         return "its log also shows a test that failed"
     named = {code for m in markers for code in _EXIT_CODE.findall(m)}
     if set(_EXIT_CODE.findall(text)) - named:
