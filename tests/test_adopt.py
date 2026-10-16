@@ -568,3 +568,13 @@ def test_an_invalid_wrangler_toml_is_refused_in_words(copy):
     p = _run(copy)
     assert p.returncode == 1 and "wrangler.toml isn't valid TOML" in p.stderr and "Traceback" not in p.stderr
     assert _snapshot(copy) == before
+
+
+def test_a_comment_opened_after_a_closed_one_hides_what_follows(copy):
+    (copy / "README.md").write_text("<!-- one --> <!-- two\n# hidden\n-->\n# Real\n")
+    assert _run(copy).returncode == 0
+    assert (copy / "README.md").read_text() == "<!-- one --> <!-- two\n# hidden\n-->\n# My Notes!\n"
+
+
+def test_a_repo_ending_in_git_is_refused(copy):
+    assert _run(copy, repo="ada/notes.git").returncode == 1

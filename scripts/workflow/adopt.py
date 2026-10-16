@@ -39,7 +39,7 @@ WORKER_NAME_MAX = 63  # a Worker's name is a DNS label; the package's is cut the
 # repository name of letters, digits, `.`, `_` and `-`, but not `.` or `..`.
 _LOGIN = r"(?=.{1,39}/|.{1,39}$)[A-Za-z0-9](?:-?[A-Za-z0-9])*"
 LOGIN = re.compile(rf"^{_LOGIN}$")
-REPO = re.compile(rf"^{_LOGIN}/(?!\.\.?$)[A-Za-z0-9._-]{{1,100}}$")
+REPO = re.compile(rf"^{_LOGIN}/(?!\.\.?$)(?!.*\.git$)[A-Za-z0-9._-]{{1,100}}$")  # `x.git` is a clone URL's ending
 _TABLE = re.compile(r"^\s*\[")
 _PROJECT_TABLE = re.compile(r"^\s*\[\s*project\s*\]\s*(#.*)?$")
 # `key = "value"` or `key = 'value'`, then anything (a comment) after it.
@@ -208,7 +208,7 @@ def _readme(text: str, name: str) -> str | None:
         elif not fenced and body.startswith("# "):  # before comments: a title may hold `<!--`
             lines[i] = (f"# {name}", end)
             return _join(lines)
-        elif not fenced and "<!--" in body and "-->" not in body.split("<!--", 1)[1]:
+        elif not fenced and "<!--" in body and "-->" not in body.rsplit("<!--", 1)[1]:
             commented = True
     return None
 
