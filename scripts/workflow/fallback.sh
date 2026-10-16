@@ -105,6 +105,7 @@ function in_order(part, seq,    words, want, n, k, i, j) {
 # Solo mode: the profile'"'"'s first plain `ruleset = <word>` line says false.
 function solo(    f, line, first, word) {
     f = ENVIRON["PROFILE_TOML"]
+    RS = "\n"  # the profile line by line (the event was read whole)
     first = 1
     while ((getline line < f) > 0) {
         if (first) { while (substr(line, 1, 3) == "\357\273\277") line = substr(line, 4); first = 0 }

@@ -119,8 +119,20 @@ _BRANCH = (
 )
 
 
-def hook_command(sub: str) -> str:
-    """The kit's hook command, run by Claude Code with sh.
+PLUGIN_CLI = "${CLAUDE_PLUGIN_ROOT}/scripts/workflow.py"
+# The plugin has no profile check to point to: it says only what python3 needs.
+PLUGIN_NO_PYTHON_REASON = (
+    "python3 could not run the workflow kit (it is missing or failing), so nothing can be checked and pushes "
+    "and merges ask first; check python3 --version (3.11 or newer is needed), then start a new session"
+)
+assert "'" not in PLUGIN_NO_PYTHON_REASON
+
+
+def hook_command(sub: str, plugin: bool = False) -> str:
+    """The kit's hook command, run by Claude Code with sh: a vendored
+    project's (the CLI under $CLAUDE_PROJECT_DIR), or with `plugin` the
+    plugin's (the CLI under ${CLAUDE_PLUGIN_ROOT}). The CLI's directory holds
+    the kit's package, `fallback.sh` included, in both.
 
     With the CLI there and `python3` on the PATH: `python3 -B` runs it (-B: no
     __pycache__ in the checkout); on a Python older than 3.11 the entry point
@@ -140,22 +152,38 @@ def hook_command(sub: str) -> str:
     version, a broken checkout: a non-zero exit, which Claude Code reads as a
     non-blocking error, so the tool would run), the guard denies every tool to
     a ticket or conductor session (WORKFLOW_ROLE, or with it unset a branch
-    matching the profile's run.ticket_branch) and passes the error on in an
-    attended one; SessionStart says so to everyone (#22). The CLI itself exits
-    0 whenever it has decided, so a non-zero exit means it couldn't."""
+    matching the profile's run.ticket_branch), and an attended session gets
+    the can't-decide fallback without Python (`fallback.sh`, #56): a push or a
+    merge is asked, or refused in solo mode and where nobody is asked. An
+    attended session's guard always exits 0. SessionStart says so to everyone
+    (#22). The CLI itself exits 0 whenever it has decided, so a non-zero exit
+    means it couldn't.
+
+    The plugin is for attended work only: its guard never refuses every tool,
+    and runs the fallback whatever WORKFLOW_ROLE says."""
+    cli = PLUGIN_CLI if plugin else f"$CLAUDE_PROJECT_DIR/{HOOK_TAG}"
     if sub not in ("guard", "repair"):
         return (
-            f'F="$CLAUDE_PROJECT_DIR/{HOOK_TAG}"; '
+            f'F="{cli}"; '
             f'if [ -f "$F" ] && command -v python3 >/dev/null 2>&1; then exec python3 -B "$F" hook {sub}; fi; exit 0'
         )
-    run = (
-        f'F="$CLAUDE_PROJECT_DIR/{HOOK_TAG}"; rc=0; '
-        f'if [ -f "$F" ] && command -v python3 >/dev/null 2>&1; then python3 -B "$F" hook {sub}; rc=$?; '
-        'if [ "$rc" -eq 0 ]; then exit 0; fi; fi; '
-    )
     if sub == "repair":
-        told = json.dumps({"systemMessage": f"Workflow kit: {NO_PYTHON_REASON}."}, separators=(",", ":"))
-        return run + f"if [ -f \"$F\" ]; then printf '%s\\n' '{told}'; fi; exit 0"
+        reason = PLUGIN_NO_PYTHON_REASON if plugin else NO_PYTHON_REASON
+        told = json.dumps({"systemMessage": f"Workflow kit: {reason}."}, separators=(",", ":"))
+        return (
+            f'F="{cli}"; '
+            f'if [ -f "$F" ] && command -v python3 >/dev/null 2>&1; then python3 -B "$F" hook repair && exit 0; fi; '
+            f"if [ -f \"$F\" ]; then printf '%s\\n' '{told}'; fi; exit 0"
+        )
+    # The event is read once, so the fallback still has it after python3 failed.
+    run = (
+        f'F="{cli}"; E=$(cat); '
+        'if [ -f "$F" ] && command -v python3 >/dev/null 2>&1; then '
+        """O=$(printf '%s\\n' "$E" | python3 -B "$F" hook guard) && { [ -z "$O" ] || printf '%s\\n' "$O"; exit 0; }; fi; """
+    )
+    fallback = """if [ -f "$F" ]; then printf '%s\\n' "$E" | sh "${F%.py}/fallback.sh"; fi; exit 0"""
+    if plugin:
+        return run + fallback
 
     def deny(reason: str) -> str:
         return json.dumps(
@@ -172,26 +200,38 @@ def hook_command(sub: str) -> str:
         run
         + _ROLE
         + 'if [ -f "$F" ]; then ' + _BRANCH + 'fi; '
-        + 'if [ -z "$R" ] || [ "$R" = attended ]; then exit "$rc"; fi; '
+        + 'if [ -z "$R" ] || [ "$R" = attended ]; then ' + fallback + '; fi; '
         + f"if [ -f \"$F\" ]; then printf '%s\\n' '{deny('Refused: ' + NO_PYTHON_REASON + '.')}'; exit 0; fi; "
-        + f"if command -v python3 >/dev/null 2>&1 && python3 -c '{restore}' 2>/dev/null; then exit 0; fi; "
+        + f"""if command -v python3 >/dev/null 2>&1 && printf '%s\\n' "$E" | python3 -c '{restore}' 2>/dev/null; then exit 0; fi; """
         + f"printf '%s\\n' '{deny(MISSING_KIT_REASON)}'"
     )
 
 
-def _hook(sub: str, matcher: str | None = None, timeout: int = 30) -> dict:
-    entry: dict = {"hooks": [{"type": "command", "command": hook_command(sub), "timeout": timeout}]}
+def _hook(sub: str, matcher: str | None = None, timeout: int = 30, plugin: bool = False) -> dict:
+    entry: dict = {"hooks": [{"type": "command", "command": hook_command(sub, plugin), "timeout": timeout}]}
     if matcher:
         entry["matcher"] = matcher
     return entry
 
 
-KIT_HOOKS = {
-    "PreToolUse": [_hook("guard", GUARD_MATCHER, 15)],
-    "Stop": [_hook("gate", None, 15)],
-    "UserPromptSubmit": [_hook("context", None, 10)],
-    "SessionStart": [_hook("repair", "startup|resume", 600)],
-}
+def _kit_hooks(plugin: bool = False) -> dict:
+    return {
+        "PreToolUse": [_hook("guard", GUARD_MATCHER, 15, plugin)],
+        "Stop": [_hook("gate", None, 15, plugin)],
+        "UserPromptSubmit": [_hook("context", None, 10, plugin)],
+        "SessionStart": [_hook("repair", "startup|resume", 600, plugin)],
+    }
+
+
+KIT_HOOKS = _kit_hooks()
+
+
+def plugin_hooks() -> dict:
+    """The plugin's hooks file (`hooks/hooks.json`): the same hooks as a
+    vendored project's settings, rooted at the plugin's directory (#56). A
+    test checks the file against this; to write it again, run
+    `python3 -c "import json,sys; sys.path.insert(0, 'scripts'); from workflow import vendor; print(json.dumps(vendor.plugin_hooks(), indent=2))" > hooks/hooks.json`."""
+    return {"hooks": _kit_hooks(plugin=True)}
 
 
 def _is_kit_hook(h: dict) -> bool:

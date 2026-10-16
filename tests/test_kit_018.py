@@ -154,10 +154,10 @@ def test_the_entry_point_on_a_real_python_3_9(tmp_path):
 
 
 def _no_python_path(tmp_path):
-    """A PATH with sh, git, tr, printf and the like, but no python3."""
+    """A PATH with sh, git, tr, awk, printf and the like, but no python3."""
     bindir = tmp_path / "bin"
     bindir.mkdir()
-    for tool in ("sh", "tr", "sed", "head", "printf", "cat", "env", "git"):
+    for tool in ("sh", "tr", "sed", "awk", "head", "printf", "cat", "env", "git"):
         found = shutil.which(tool)
         if found:
             (bindir / tool).symlink_to(found)
@@ -273,7 +273,7 @@ def test_a_python3_that_fails_refuses_a_run_and_says_so(tmp_path, code):
     p = _guard_sh({"PATH": path, "CLAUDE_PROJECT_DIR": str(proj), "WORKFLOW_ROLE": "ticket"})
     assert p.returncode == 0 and _decision(p.stdout) == "deny"
     attended = _guard_sh({"PATH": path, "CLAUDE_PROJECT_DIR": str(proj)})
-    assert (attended.returncode, attended.stdout) == (code, "")  # passed on, as the CLI's own errors are
+    assert (attended.returncode, attended.stdout) == (0, "")  # never non-zero in an attended session (#56)
     start = subprocess.run([shutil.which("sh"), "-c", vendor.hook_command("repair")], input="{}", capture_output=True,
                            text=True, env={"PATH": path, "CLAUDE_PROJECT_DIR": str(proj)})
     assert start.returncode == 0 and "python3" in json.loads(start.stdout)["systemMessage"]

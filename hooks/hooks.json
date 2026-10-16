@@ -2,24 +2,48 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*[Gg]it[Hh]ub.*",
-        "hooks": [{ "type": "command", "command": "python3 -B \"${CLAUDE_PLUGIN_ROOT}/scripts/workflow.py\" hook guard", "timeout": 15 }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "F=\"${CLAUDE_PLUGIN_ROOT}/scripts/workflow.py\"; E=$(cat); if [ -f \"$F\" ] && command -v python3 >/dev/null 2>&1; then O=$(printf '%s\\n' \"$E\" | python3 -B \"$F\" hook guard) && { [ -z \"$O\" ] || printf '%s\\n' \"$O\"; exit 0; }; fi; if [ -f \"$F\" ]; then printf '%s\\n' \"$E\" | sh \"${F%.py}/fallback.sh\"; fi; exit 0",
+            "timeout": 15
+          }
+        ],
+        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*[Gg]it[Hh]ub.*"
       }
     ],
     "Stop": [
       {
-        "hooks": [{ "type": "command", "command": "python3 -B \"${CLAUDE_PLUGIN_ROOT}/scripts/workflow.py\" hook gate", "timeout": 15 }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "F=\"${CLAUDE_PLUGIN_ROOT}/scripts/workflow.py\"; if [ -f \"$F\" ] && command -v python3 >/dev/null 2>&1; then exec python3 -B \"$F\" hook gate; fi; exit 0",
+            "timeout": 15
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [
       {
-        "hooks": [{ "type": "command", "command": "python3 -B \"${CLAUDE_PLUGIN_ROOT}/scripts/workflow.py\" hook context", "timeout": 10 }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "F=\"${CLAUDE_PLUGIN_ROOT}/scripts/workflow.py\"; if [ -f \"$F\" ] && command -v python3 >/dev/null 2>&1; then exec python3 -B \"$F\" hook context; fi; exit 0",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "SessionStart": [
       {
-        "matcher": "startup|resume",
-        "hooks": [{ "type": "command", "command": "python3 -B \"${CLAUDE_PLUGIN_ROOT}/scripts/workflow.py\" hook repair", "timeout": 600 }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "F=\"${CLAUDE_PLUGIN_ROOT}/scripts/workflow.py\"; if [ -f \"$F\" ] && command -v python3 >/dev/null 2>&1; then python3 -B \"$F\" hook repair && exit 0; fi; if [ -f \"$F\" ]; then printf '%s\\n' '{\"systemMessage\":\"Workflow kit: python3 could not run the workflow kit (it is missing or failing), so nothing can be checked and pushes and merges ask first; check python3 --version (3.11 or newer is needed), then start a new session.\"}'; fi; exit 0",
+            "timeout": 600
+          }
+        ],
+        "matcher": "startup|resume"
       }
     ]
   }

@@ -28,7 +28,7 @@ python3 <kit>/scripts/workflow.py vendor install --project /path/to/project --ma
 - `--adopt` replaces files that already exist and aren't the kit's (an earlier hand-vendored copy); it lists every one. Rename the project's own skills of the same name first.
 - Install checks every file before writing any, so a refused install changes nothing.
 
-The hooks run `python3 .claude/workflow/bin/workflow.py`: the project needs Python 3.11+ wherever Claude Code runs (with an older `python3`, or none, the kit can't check anything, so ticket and conductor sessions are refused every tool and an attended session is told at its start). Repo hooks load in cloud sessions only when the session has a single repository: don't add a second repository to a conductor or ticket session.
+The hooks run `python3 .claude/workflow/bin/workflow.py`: the project needs Python 3.11+ wherever Claude Code runs (with an older `python3`, or none, or one that fails, the kit can't check anything: ticket and conductor sessions are refused every tool; in an attended session pushes and merges are still asked, and refused in solo mode or in a permission mode where nobody is asked, and the session is told at its start). Repo hooks load in cloud sessions only when the session has a single repository: don't add a second repository to a conductor or ticket session.
 
 ## Plugin
 
@@ -58,6 +58,8 @@ To suggest it to everyone working on a project, put this in the project's `.clau
 Installing it installs its dependency, `mattpocock-skills`, from the same marketplace, pinned. Don't also add Matt Pocock's own marketplace: two plugins named `mattpocock-skills` drop one's hooks.
 
 The plugin's commands carry its name: `/pairnexus-workflow:start`, `/pairnexus-workflow:next`, `/mattpocock-skills:to-spec`. The guided start comes up by itself at the first message only in a project with a profile; before set-up, type `/pairnexus-workflow:start` or `/pairnexus-workflow:setup-workflow`. The plugin follows the kit's `main`, not only its releases.
+
+Plugin mode fails the same way as vendored: its hooks run the same commands as a vendored project's, from the plugin's directory. With an older `python3`, or none, or one that fails, pushes and merges are still asked (refused in solo mode or in a permission mode where nobody is asked), not only a notice at the session's start, which says what is wrong. The plugin is for attended work, so it never refuses every tool.
 
 ## Every project, whichever mode
 
