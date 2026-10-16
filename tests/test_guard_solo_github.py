@@ -770,3 +770,16 @@ def test_late_pass_query_file_written_by_the_command(write, solo):
 def test_late_pass_an_earlier_move_of_another_file_is_not_a_write(solo):
     (solo.root / "q.graphql").write_text("query { viewer { login } }\n")
     assert act(solo, bash("mv a b; gh api graphql -f query=\"$(cat q.graphql)\"", solo.root)).action != "deny"
+
+
+def test_late_pass_echo_options_after_others_and_long_lines_stay_fast(solo):
+    import time
+
+    cmd = "echo -n -n -e '{\"default\\x5fbranch\":\"dev\"}' | gh api -X PATCH repos/acme/demo --input -"
+    assert act(solo, bash(cmd, solo.root)).action == "deny"
+    (solo.root / "q.graphql").write_text("query { viewer { login } }\n")
+    q = 'gh api graphql -f query="$(cat q.graphql)"'
+    for tail in ("; cp" + " " * 20000 + "x", "; " + "cp a " * 20000):
+        start = time.monotonic()
+        assert act(solo, bash(q + tail, solo.root)).action != "deny"
+        assert time.monotonic() - start < 5

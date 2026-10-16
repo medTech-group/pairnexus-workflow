@@ -4396,6 +4396,28 @@ def _gql_literal(q: str) -> bool:
     return all(n in declared for n in re.findall(r"\$(\w+)", q))
 
 
+def _writes_file(raw: str, f: str) -> bool:
+    """Whether the command writes the file `f`: a redirect or `tee` into it, or
+    `cp`/`mv`/`install`/`sed -i` naming it. Read word by word, in linear time."""
+    name = f.removeprefix("./")
+
+    def same(w: str) -> bool:
+        return w.strip("'\"").removeprefix("./") == name
+
+    if re.search(rf"(?:>|\btee(?:\s+-a)?)[ \t]*['\"]?(?:\./)?{re.escape(name)}(?![\w.-])", raw):
+        return True
+    for part in re.split(r"[;&|\n()]", raw):
+        words = part.split()
+        if not words:
+            continue
+        cmd = Path(words[0]).name
+        if cmd in ("cp", "mv", "install") and any(same(w) for w in words[1:]):
+            return True
+        if cmd == "sed" and any(w.startswith("-i") or w == "--in-place" for w in words[1:]) and any(same(w) for w in words[1:]):
+            return True
+    return False
+
+
 def _gql_queries(queries: list[str | None], cwd: str | None, raw: str = "") -> list[str | None]:
     """The queries, a `$(cat FILE)` one read from its file (unread when the
     command also writes the file)."""
@@ -4403,8 +4425,7 @@ def _gql_queries(queries: list[str | None], cwd: str | None, raw: str = "") -> l
     for q in queries:
         m = re.fullmatch(r"\s*\$\(\s*cat\s+([^\s$`;&|<>()]+)\s*\)\s*", q or "")
         f = m.group(1).strip("'\"") if m else ""
-        name = re.escape(f.removeprefix("./"))
-        written = bool(f) and re.search(rf"(?:>|\btee\s+(?:-a\s+)?|\b(?:cp|mv|install)\s+[^;&|\n()]*?)\s*['\"]?(?:\./)?{name}(?![\w.-])|\bsed\s+-i\S*\s[^;&|\n()]*?(?:\./)?{name}(?![\w.-])", raw)
+        written = bool(f) and _writes_file(raw, f)
         out.append(None if written else _read_text(f, cwd) if m else q)
     return out
 
@@ -4725,7 +4746,12 @@ def _echoed(seg: Seg) -> str | None:
     """The text a plain `echo` or one-argument `printf` pipes into the command,
     when the shell fills nothing in."""
     w = seg.piped.words if seg.piped is not None else []
-    escapes = any(re.fullmatch(r"-[neE]*e[neE]*", x) for x in w[1:3])  # `echo -e` turns `\x5f` into other text
+    opts = []
+    for x in w[1:]:  # echo's leading options, however many
+        if not re.fullmatch(r"-[neE]+", x):
+            break
+        opts.append(x)
+    escapes = any("e" in x for x in opts)  # `echo -e` turns `\x5f` into other text
     if seg.stdins or seg.stdin_unseen or seg.stdin or escapes and any("\\" in x for x in w[1:]):
         return None  # the command's own stdin, or escapes the kit doesn't decode
     if not w or Path(w[0]).name not in ("echo", "printf") or any(_EXPANDS.search(x) for x in w[1:]):
