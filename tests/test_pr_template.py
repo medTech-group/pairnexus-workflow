@@ -207,23 +207,13 @@ def test_the_kits_own_line_endings_dont_leak_into_the_output(tmp_path):
     assert b"\r" not in pr_template.build(k).text
 
 
-def test_a_missing_kit_template_names_the_kits_file(tmp_path):
+def test_a_missing_kit_template_names_the_kits_file(tmp_path, monkeypatch, capsys):
     from workflow import cli
 
-    k = tmp_path / "kit"
-    k.mkdir()
-    old = cli.KIT_ROOT
-    cli.KIT_ROOT = k
-    try:
-        import contextlib
-        import io
-
-        err = io.StringIO()
-        with contextlib.redirect_stderr(err):
-            assert cli.main(["pr-template"]) == 1
-    finally:
-        cli.KIT_ROOT = old
-    assert "pull_request_template.md" in err.getvalue() and "None" not in err.getvalue()
+    monkeypatch.setattr(cli, "KIT_ROOT", tmp_path)
+    assert cli.main(["pr-template"]) == 1
+    err = capsys.readouterr().err
+    assert "pull_request_template.md" in err and "None" not in err
 
 
 def test_it_changes_nothing_in_the_working_tree(tmp_path):
@@ -297,7 +287,8 @@ def test_update_adds_it_to_an_older_project_in_the_update_pr():
     once = UPDATE.read_text(encoding="utf-8").split("**The files set-up copied once,**", 1)[1].split("\n7. ", 1)[0]
     item = next(line for line in once.splitlines() if "pull_request_template.md" in line)
     assert "`WF pr-template`" in item
-    assert "--existing" in item
+    assert "--existing <project>/<file>" in item
+    assert "`<project>/.workflow/pr-template.md`" in item
     assert "shown in the PR body" in item
     assert "left as it is" in item
     # Only once: after that the file is the owner's, and later updates don't put the headings back.

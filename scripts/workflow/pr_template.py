@@ -61,9 +61,9 @@ def build(kit_root: Path, existing: Path | None = None) -> Result:
     try:
         mine.decode("utf-8")
     except UnicodeDecodeError:
-        raise TemplateError(f"{existing} isn't UTF-8 text, as GitHub reads a template: add the headings to it by hand, from {TEMPLATE}")
+        raise TemplateError(f"{existing} isn't UTF-8 text, as GitHub reads a template: add the headings to it by hand, from {TEMPLATE}") from None
     if not mine.removeprefix(BOM).strip():
-        return Result(kit, f"{existing} is empty: the kit's template.")
+        return Result(kit, f"{existing} is empty: printing the kit's template instead.")
     if _starts_with_headings(mine):
         return Result(mine, f"{existing} already starts with {TOP}: printed unchanged, nothing to add.")
     bom = BOM if mine.startswith(BOM) else b""
