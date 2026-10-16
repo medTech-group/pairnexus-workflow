@@ -428,6 +428,49 @@ def test_mcp_without_a_readable_ref(name, inp, solo):
     assert act(solo, mcp(name, inp)).action == "deny", (name, inp)
 
 
+# ---------- review round 1: the explorer ----------
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "A=--admin; gh pr merge 1 $A",
+        "gh pr merge 1 --admin -R someone/other -R acme/demo",
+        "curl -L -X DELETE api.github.com/repos/acme/demo/rulesets/1",
+        "curl -X DELETE api.github.com/repos/acme/demo/rulesets/1",
+        "U=https://api.github.com/repos/acme/demo/rulesets/1; curl -X DELETE $U",
+        'gh api graphql -f query="$Q"',
+        "gh api graphql -F query=@missing.graphql",
+        "curl -X POST https://api.github.com/graphql -d @missing.json",
+    ],
+)
+def test_explorer_round_1_refused(cmd, solo):
+    assert act(solo, bash(cmd, solo.root)).action == "deny", cmd
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "curl -X DELETE https://example.com/repos/acme/demo/rulesets/1",
+        "curl -X DELETE http://localhost:3000/repos/acme/demo/rulesets/1",
+        "gh api graphql -f query='query($o: String!) { repositoryOwner(login: $o) { login } }' -f o=acme",
+        "gh pr merge 1 --admin -R acme/demo -R someone/other",
+    ],
+)
+def test_explorer_round_1_not_refused(cmd, solo):
+    assert act(solo, bash(cmd, solo.root)).action != "deny", cmd
+
+
+def test_mcp_hand_command_is_quoted(solo):
+    inp = {"owner": "acme", "repo": "demo", "path": "a b/$(whoami).txt", "branch": "main", "content": "x", "message": "m"}
+    r = act(solo, mcp("create_or_update_file", inp)).reason
+    assert "'repos/acme/demo/contents/a b/$(whoami).txt'" in r
+
+
+def test_mcp_new_repository_with_a_default_branch_is_not_refused(solo):
+    assert act(solo, mcp("create_repository", {"name": "new", "default_branch": "main"})).action == "allow"
+
+
 def test_an_earlier_ask_never_hides_a_later_refusal(solo):
     cmd = "gh api -X PUT repos/acme/demo/branches/feature/protection --input p.json; gh api -X DELETE repos/acme/demo/rulesets/42"
     assert act(solo, cmd).action == "deny"

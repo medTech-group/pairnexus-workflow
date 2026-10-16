@@ -4344,6 +4344,15 @@ def _solo_graphql(text: str, base: str) -> SoloRefusal | None:
     return None
 
 
+_WHOLE_VAR = re.compile(r"\s*(?:\$\w+|\$\{[^}]*\}|\$\(.*\)|`.*`)\s*", re.S)
+
+
+def _gql_unread(queries: list[str | None]) -> bool:
+    """A query the kit can't read at all: a file not there yet, stdin, or one
+    variable or substitution (a query's own `$var`s are GraphQL's)."""
+    return any(q is None or _WHOLE_VAR.fullmatch(q) for q in queries)
+
+
 def _gql_text(queries: list[str | None], fallback) -> str:
     """The GraphQL text to look for mutations in: the queries themselves when
     every one is read and none is filled in by the shell, else `fallback()`
@@ -4468,6 +4477,20 @@ def _curl_call(toks: list[str], cwd: str | None) -> _CurlCall:
     return _CurlCall(verb, urls, body, data, unsure, not globoff and any(re.search(r"[{\[]", u) for u in urls), hinted)
 
 
+def _curl_github_path(url: str) -> str | None:
+    """The API path of a curl URL to GitHub (github.com's API hosts, or a
+    server's `/api/v3/` and `/api/graphql`), else None. curl takes a URL
+    without a scheme too."""
+    m = re.match(r"(?i)(?:[a-z][\w+.-]*://)?(?:[^/@\s]*@)?([^/\s?#]+)(.*)", url)
+    if not m:
+        return None
+    host = m.group(1).split(":", 1)[0].rstrip(".").casefold()
+    path = _api_path(m.group(2) or "/")
+    if host in ("api.github.com", "uploads.github.com") or re.match(r"(?i)api/v3/", urllib.parse.unquote(m.group(2).lstrip("/"))) or path == "graphql":
+        return path
+    return None
+
+
 def _solo_curl(toks: list[str], seg: Seg, base: str, repo: str, raw: str, read) -> SoloRefusal | None:
     c = _curl_call(toks, seg.cwd)
     if c.method in ("GET", "HEAD"):
@@ -4478,11 +4501,11 @@ def _solo_curl(toks: list[str], seg: Seg, base: str, repo: str, raw: str, read) 
     if c.globs and hint:
         return SoloRefusal("a curl URL with `{…}` or `[…]`, which curl expands into other URLs", "unknown", _SOLO_API_HINT)
     for u in c.urls:
-        if not _GITHUB_HINT.search(u):
-            continue
-        if _EXPANDS.search(u):
+        if _EXPANDS.search(u) and (_GITHUB_HINT.search(u) or _GITHUB_HINT.search(raw)):
             return SoloRefusal(f"the curl URL {_code_span(u)} is filled in by the shell", "unknown", _SOLO_API_HINT)
-        path = _api_path(u)
+        path = _curl_github_path(u)
+        if path is None:
+            continue
         if path == "graphql":
             texts: list[str | None] = []
             for d in c.data:
@@ -4490,6 +4513,8 @@ def _solo_curl(toks: list[str], seg: Seg, base: str, repo: str, raw: str, read) 
                 qs = [v for k, v in pairs or [] if k == "query"]
                 texts += [v if isinstance(v, str) else None for v in qs] if pairs is not None else [d]
             r = _solo_graphql(_gql_text(texts, lambda: raw + "\n" + read()), base)
+            if not r and _gql_unread(texts):
+                r = SoloRefusal("a GraphQL request whose query the kit can't read, which may be a mutation that changes a branch or a ruleset", "unknown", _SOLO_API_HINT)
         else:
             r = _solo_rest(c.method, path, base, c.body, repo)
         if r:
@@ -4541,6 +4566,8 @@ def _solo_gh(toks: list[str], seg: Seg, profile: Profile, raw: str, read, depth:
         return _solo_gh([toks[0], *words, *toks[at + 1 :]], seg, profile, raw, read, depth + 1)
     if group in ("pr", "repo") and _another_repo(_gh_repo(toks, group, sub), profile.repo):
         return None
+    if (group, sub) in (("pr", "merge"), ("repo", "edit")) and any(_EXPANDS.search(t) for t in toks[2:]):
+        return SoloRefusal(f"`gh {group} {sub}` with words the shell fills in, which may be `--admin` or `--default-branch`", "unknown", _SOLO_API_HINT)
     if group == "pr" and sub == "merge" and any(t == "--admin" or t.startswith("--admin=") for t in toks):
         return SoloRefusal(f"`gh pr merge --admin` merges into `{base}` past its required checks")
     if group == "repo" and sub == "edit" and any(t == "--default-branch" or t.startswith("--default-branch=") for t in toks):
@@ -4570,7 +4597,10 @@ def _solo_gh(toks: list[str], seg: Seg, profile: Profile, raw: str, read, depth:
         pairs = _json_pairs(text) if text is not None else None
         queries += [v if isinstance(v, str) else None for k, v in pairs or [] if k == "query"] if text is not None and pairs is not None else [None]
     if path == "graphql":
-        return _solo_graphql(_gql_text(queries, lambda: call.rest + "\n" + raw + "\n" + read()), base)
+        r = _solo_graphql(_gql_text(queries, lambda: call.rest + "\n" + raw + "\n" + read()), base)
+        if not r and _gql_unread(queries):
+            r = SoloRefusal("a GraphQL request whose query the kit can't read, which may be a mutation that changes a branch or a ruleset", "unknown", _SOLO_API_HINT)
+        return r
     return _solo_rest(call.method, path, base, body, profile.repo)
 
 
@@ -4619,14 +4649,16 @@ def _solo_github(seg: Seg, profile: Profile, raw: str, read) -> SoloRefusal | No
 def _gh_repo(toks: list[str], group: str, sub: str | None) -> str | None:
     """The repository a `gh pr`/`gh repo` command names: `-R`/`--repo`, a pull
     request's URL, or `gh repo edit`'s own argument; None when it names none."""
+    found = None  # gh takes the last one given
     for j, t in enumerate(toks):
         if t in ("-R", "--repo"):
-            return toks[j + 1] if j + 1 < len(toks) else None
-        if t.startswith(("--repo=", "-R=")) or (t.startswith("-R") and len(t) > 2):
-            return t.split("=", 1)[1] if "=" in t else t[2:]
-        u = re.match(r"(?i)(?:https?://)?(?:www\.)?github\.com/([^/\s]+/[^/\s]+)/pull/", t)
-        if u:
-            return u.group(1)
+            found = toks[j + 1] if j + 1 < len(toks) else None
+        elif t.startswith(("--repo=", "-R=")) or (t.startswith("-R") and len(t) > 2):
+            found = t.split("=", 1)[1] if "=" in t else t[2:]
+        elif u := re.match(r"(?i)(?:https?://)?(?:www\.)?github\.com/([^/\s]+/[^/\s]+)/pull/", t):
+            found = u.group(1)
+    if found is not None:
+        return found
     if group == "repo" and sub == "edit":
         # Only right after `edit`: later, a word may be a flag's value.
         nxt = toks[toks.index("edit") + 1 : toks.index("edit") + 2] if "edit" in toks else []
@@ -4665,6 +4697,7 @@ def _solo_mcp(name: str, inp: dict, profile: Profile) -> tuple[SoloRefusal, str]
     r = f"{owner}/{repo}" if isinstance(owner, str) and isinstance(repo, str) and owner and repo else profile.repo
     if _another_repo(r, profile.repo):
         return None
+    q = shlex.quote
 
     def is_base(v) -> bool:
         if v is not None and not isinstance(v, str):
@@ -4676,34 +4709,34 @@ def _solo_mcp(name: str, inp: dict, profile: Profile) -> tuple[SoloRefusal, str]
     if name in GITHUB_WRITE_FILES and is_base(inp.get("branch")):
         what = f"`{name}` writes files straight to `{base}`" + ("" if _mcp_ref(inp.get("branch")) else " (the default branch, as no branch is named)")
         hand = {
-            "create_or_update_file": f"gh api -X PUT repos/{r}/contents/{path} -f branch={base} -f message=… -f content=…",
-            "delete_file": f"gh api -X DELETE repos/{r}/contents/{path} -f branch={base} -f message=… -f sha=…",
-        }.get(name, f"git push origin {base}")
+            "create_or_update_file": f"gh api -X PUT {q(f'repos/{r}/contents/{path}')} -f {q('branch=' + base)} -f message=… -f content=…",
+            "delete_file": f"gh api -X DELETE {q(f'repos/{r}/contents/{path}')} -f {q('branch=' + base)} -f message=… -f sha=…",
+        }.get(name, f"git push origin {q(base)}")
         return SoloRefusal(what), hand
     if "ruleset" in low:
         if low.startswith("create"):
             return True
         rid = inp.get("ruleset_id") or inp.get("id") or "…"
         verb = "DELETE" if low.startswith("delete") else "PUT"
-        hand = f"gh api -X {verb} repos/{r}/rulesets/{rid}" + (" --input ruleset.json" if verb == "PUT" else "")
+        hand = f"gh api -X {verb} {q(f'repos/{r}/rulesets/{rid}')}" + (" --input ruleset.json" if verb == "PUT" else "")
         return SoloRefusal(f"`{name}` changes or removes a ruleset, which is what protects `{base}`"), hand
     if "protection" in low and is_base(inp.get("branch")):
         verb = "DELETE" if low.startswith("delete") else "PUT"
-        hand = f"gh api -X {verb} repos/{r}/branches/{base}/protection" + (" --input protection.json" if verb == "PUT" else "")
+        hand = f"gh api -X {verb} {q(f'repos/{r}/branches/{base}/protection')}" + (" --input protection.json" if verb == "PUT" else "")
         return SoloRefusal(f"`{name}` changes `{base}`'s protection"), hand
     m = re.fullmatch(r"(create|update|delete|rename)_(?:ref|branch)", low)
     ref = next((inp[k] for k in ("ref", "branch", "name") if inp.get(k) is not None), None)
     # Making a branch needs its name; changing or removing one with no name the kit can read counts as the base.
     if m and (is_base(ref) if m.group(1) != "create" else ref is not None and is_base(ref)):
         hand = {
-            "create": f"gh api -X POST repos/{r}/git/refs -f ref=refs/heads/{base} -f sha=…",
-            "update": f"gh api -X PATCH repos/{r}/git/refs/heads/{base} -f sha={inp.get('sha') or '…'}" + (" -F force=true" if inp.get("force") else ""),
-            "delete": f"gh api -X DELETE repos/{r}/git/refs/heads/{base}",
-            "rename": f"gh api -X POST repos/{r}/branches/{base}/rename -f new_name={inp.get('new_name') or '…'}",
+            "create": f"gh api -X POST {q(f'repos/{r}/git/refs')} -f {q('ref=refs/heads/' + base)} -f sha=…",
+            "update": f"gh api -X PATCH {q(f'repos/{r}/git/refs/heads/{base}')} -f {q('sha=' + str(inp.get('sha') or '…'))}" + (" -F force=true" if inp.get("force") else ""),
+            "delete": f"gh api -X DELETE {q(f'repos/{r}/git/refs/heads/{base}')}",
+            "rename": f"gh api -X POST {q(f'repos/{r}/branches/{base}/rename')} -f {q('new_name=' + str(inp.get('new_name') or '…'))}",
         }[m.group(1)]
         return SoloRefusal(f"`{name}` changes the branch `{base}`" + ("" if isinstance(ref, str) and _mcp_ref(ref) else ", or one the kit can't read")), hand
-    if "default_branch" in inp:
-        return SoloRefusal(f"`{name}` changes the default branch, which is `{base}`"), f"gh repo edit {r} --default-branch {inp.get('default_branch') or '…'}"
+    if "default_branch" in inp and re.search(r"(?:update|edit)_repo", low):
+        return SoloRefusal(f"`{name}` changes the default branch, which is `{base}`"), f"gh repo edit {q(r)} --default-branch {q(str(inp.get('default_branch') or '…'))}"
     return None
 
 
