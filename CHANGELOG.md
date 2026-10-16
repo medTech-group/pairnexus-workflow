@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**Solo mode: the guard refuses GitHub-side changes to the base branch** (#46, part of solo mode, #32).
+
+- **In solo mode** (`ruleset = false`), an attended session is refused, never asked: `gh pr merge --admin`, changing the default branch, renaming the base branch, writing its protection, updating or deleting its ref, merging or writing files into it through the API, and a ruleset's `PUT`, `PATCH` or `DELETE`, through `gh api`, `curl`, GraphQL or the GitHub MCP tools. A branch, method or ruleset the guard can't read counts as the base branch.
+- **Creating a ruleset is still asked**, since it is how a project leaves solo mode (a `curl` that creates one is now asked in solo mode too). The repository's merge settings are unchanged.
+- **The refusal** carries #45's wording; for an MCP tool, the hand command is the `gh` command that does the same.
+- Docs: `docs/enforcement.md`'s solo-mode section. Tests: `tests/test_guard_solo_github.py`.
+- **For projects updating:** nothing to do. With `ruleset = true` or no setting, and in ticket and conductor sessions, nothing changes.
+
 **Experience in the guided start and kit updates** (#49, part of solo mode, #32).
 
 - **The guided start** (`start`) asks how much the person knows, *new to building* or *developer*, as the session's very first question, only when `workflow status` finds no level. Skipping counts as new.

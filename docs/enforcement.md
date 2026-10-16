@@ -91,6 +91,16 @@ In attended sessions the guard doesn't stop changes to protected paths: the pers
 - a bare push (no branch named) that the settings already on disk send to the base branch, for the remote git would pick: `push.default = matching`, the remote's `mirror` or its `push` refspecs naming the base branch (or ones it can't tell), or `push.default = upstream` with the branch merging into the base branch;
 - a push whose destination it can't tell, which counts as the base branch: a variable, `@` or `HEAD` where the branch is unknown, a glob, a brace list, a detached HEAD, a directory it can't follow, `--git-dir` or `--work-tree`, `GIT_DIR`, `GIT_WORK_TREE`, `GIT_CONFIG…`, `HOME` or `XDG_CONFIG_HOME` set in the command, `--stdin`, branches given by `xargs`, and an alias that pushes (a git alias given with `-c` or set in the config, followed through other aliases, one that may come from config the guard can't read, or a shell alias defined in the command). The refusal says to push the branch by name.
 
+
+It also refuses what changes the base branch through GitHub rather than git, so there is no side door:
+- `gh pr merge --admin`, which merges past the base branch's required checks;
+- changing the default branch (`gh repo edit --default-branch`, a `PATCH` of the repository with `default_branch`) and renaming the base branch (`POST …/branches/main/rename`);
+- writing the base branch's protection (`…/branches/main/protection` and everything under it), and a ruleset's `PUT`, `PATCH` or `DELETE` (the repository's or the organisation's `…/rulesets/<id>`);
+- updating or deleting the base branch's ref (`…/git/refs/heads/main`), merging into it through the merges API, and writing a file to it through the contents API (with no `branch`, that's the default branch);
+- the same through `gh api`, `curl` (`-X`/`--request`, or the method its data or upload implies), a GraphQL mutation (`updateRef`, `deleteRef`, `mergeBranch`, `createCommitOnBranch`, the branch-protection-rule mutations, `updateRepositoryRuleset`, `deleteRepositoryRuleset`, looked for in the command and the files it reads), and the GitHub MCP tools (`push_files`, `create_or_update_file` and `delete_file` on the base branch or with none named, a ref or branch tool naming it, a protection tool for it, a ruleset tool other than creating one, and any write with `default_branch`). A branch, method or ruleset the guard can't read (a variable, a `curl -K` config file) counts as the base branch. For an MCP tool, the refusal gives the `gh` command that does the same by hand.
+
+*Creating* a ruleset (a `POST` to `…/rulesets`, the `createRepositoryRuleset` mutation, an MCP tool that creates one) is still asked: it is how a project leaves solo mode. A `curl` that creates one, which attended sessions aren't asked about outside solo mode, is asked too. The repository's merge settings (`allow_auto_merge` and the like) are neither asked nor refused because of solo mode.
+
 Every part of the command is read for these, so an ask earlier in it (a deploy command, a feature branch's force-push) never hides a refusal later on.
 
 Force-pushing, deleting or pruning a named feature branch (`git push -f origin my-branch`, `git push origin --delete my-branch`, `git push --prune origin my-branch`) is still asked, since the force options are read with their destinations; everything else is unchanged.
