@@ -127,7 +127,9 @@ def test_setup_offers_protect_main_once_after_the_merge():
     assert "offer \"Protect `main`\" once" in after and "**Not now**" in after
     assert "don't offer it again in this session" in after
     # The upgrade runs on the merged base branch, without asking twice.
-    assert "git merge --ff-only origin/<base>" in after
+    assert "git fetch origin <base> && git checkout <base> && git merge --ff-only origin/<base>" in after
+    assert "never reset or rebase it" in after
+    assert 'from its "The screens"' in after
     assert "skip its opening choice" in after
     # The skill's path in both modes: the plugin may not be installed yet.
     assert "`$KIT/skills/upgrade-setup/SKILL.md` in plugin mode" in after
@@ -166,6 +168,8 @@ def test_in_solo_mode_it_offers_protect_main_first_with_the_warning_when_skipped
     assert "come back here, whatever its end" in first
     # A "Not now" earlier in the session isn't asked again.
     assert "already went through \"Protect `main`\" in this session, whatever their answer or its end" in first
+    assert "show the warning below if `main` still isn't protected" in first
+    assert 'from "The screens", reading the level as it says, but skipping its opening choice' in first
     assert "If `main` still isn't protected when you come back, show the warning" in first
     text = UPGRADE.read_text()
     assert text.index("## 1. Protect `main` first") < text.index("## 2. The questions only runs need")
