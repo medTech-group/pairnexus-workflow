@@ -1022,7 +1022,8 @@ def test_each_reason_on_its_own_at_both_levels_in_text_and_json(project, capsys,
         seen[level] = got["decision"]
         out, code = check(project, capsys, data, as_json=False)
         assert code == 0 and out.startswith("Not yet")
-        assert r["message"].removeprefix("Not yet: ") in out and r["fix"] in out
+        bullet = r["message"].removeprefix("Not yet: ")
+        assert f"- {bullet[:1].upper()}{bullet[1:]} {r['fix']}" in out
     assert seen["new"] == seen["developer"] == "not_yet"
     assert r["wording"]["new"]["message"] != r["wording"]["developer"]["message"]
 
@@ -1218,3 +1219,31 @@ def test_a_control_character_in_the_base_or_state_never_reaches_the_text(project
     data["compare"]["behind_by"] = 1
     out, _ = check(project, capsys, data, as_json=False)
     assert "\x1b" not in out
+
+
+# ---------- round 3's explorer ----------
+
+
+def test_a_whole_gh_pull_request_object_as_reviews_reads_its_reviews(project, capsys):
+    data = inputs()
+    data["reviews"] = {"number": 12, "state": "OPEN", "reviews": [{"author": {"login": "dev"}, "state": "CHANGES_REQUESTED", "submittedAt": "2026-10-16T09:00:00Z"}]}
+    got, _ = check(project, capsys, data)
+    assert ids(got) == ["changes_requested"]
+
+
+def test_graphql_responses_for_commits_files_and_reviews_are_read(project, capsys):
+    data = inputs()
+    pr = lambda key, nodes: {"data": {"repository": {"pullRequest": {key: {"totalCount": len(nodes), "nodes": nodes}}}}}
+    data["commits"] = pr("commits", [{"commit": {"oid": EARLIER}}, {"commit": {"oid": HEAD}}])
+    data["files"] = pr("files", [{"path": "src/app.py"}])
+    data["reviews"] = pr("reviews", [{"author": {"login": "dev"}, "state": "CHANGES_REQUESTED", "submittedAt": "2026-10-16T09:00:00Z"}])
+    got, _ = check(project, capsys, data)
+    assert ids(got) == ["changes_requested"]
+
+
+def test_a_missing_count_says_to_fix_the_pull_request_file(project, capsys):
+    data = inputs()
+    del data["pr"]["comments"]
+    got, _ = check(project, capsys, data)
+    [r] = got["reasons"]
+    assert "--pr" in r["message"] and "gh pr view --json" in r["message"]

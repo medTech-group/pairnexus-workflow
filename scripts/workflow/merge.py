@@ -52,8 +52,11 @@ INPUTS = {
     "preview": "the preview's status",
 }
 PROFILE = "profile"  # read from the project, not given by a flag
+# How GraphQL nests a pull request's lists.
+GRAPHQL = ("data", "repository", "pullRequest")
 # Where the pull request says how long each list is (REST, then gh's --json).
 COUNT_KEYS = {"files": "changed_files", "comments": "comments", "commits": "commits"}
+GH_COUNT_KEYS = {"files": "changedFiles", "comments": "comments", "commits": "commits"}
 # Permissions whose review records and "changes requested" count (#36).
 WRITE = ("admin", "maintain", "write")
 RANK = {"admin": 5, "maintain": 4, "write": 3, "triage": 2, "read": 1, "none": 0}
@@ -121,7 +124,7 @@ class Result:
 
 REASONS = {
     "couldnt_read": Reason("", None, {
-        "new": ("Not yet: couldn't read {what}.", "Ask Claude to fetch it again, then ask again."),
+        "new": ("Not yet: couldn't read {what}.", "Ask Claude to fetch the pull request's details again, then ask again."),
         "developer": ("Not yet: couldn't read {what} (--{input}): {why}.", "Give --{input} as GitHub returns it, every page, then run merge-check again."),
     }),
     # The profile isn't fetched: its own wording, still the id `couldnt_read`.
@@ -187,7 +190,7 @@ REASONS = {
     }),
     "unresolved_threads": Reason("people", None, {
         "new": ("Not yet: {who} asked about the code, and it hasn't been resolved.", "Answer each question, then resolve the conversation."),
-        "developer": ("Not yet: {threads} from {who}.", "Address and resolve them."),
+        "developer": ("Not yet: {threads} from {who}.", "Address and resolve each one."),
     }),
     "changes_requested": Reason("people", None, {
         "new": ("Not yet: {who} asked for changes.", "Make the changes, then ask {who} to look again."),
@@ -288,10 +291,9 @@ def _walk(value, name: str, is_item: Callable[[dict], bool], keys: tuple[str, ..
         if isinstance(v, list):
             for x in v:
                 go(x, depth + 1)
-        elif isinstance(v, dict) and is_item(v):
-            out.append(v)
-        elif isinstance(v, dict) and any(k in v for k in keys):
-            k = next(k for k in keys if k in v)
+        elif isinstance(v, dict) and any(isinstance(v.get(k), (list, dict)) for k in keys):
+            # A container first: a pull request object (`gh pr view --json`) holds its lists.
+            k = next(k for k in keys if isinstance(v.get(k), (list, dict)))
             if "pageInfo" in v or "totalCount" in v:
                 total = v.get("totalCount")
                 if total is not None and _int(total) is None:
@@ -299,6 +301,8 @@ def _walk(value, name: str, is_item: Callable[[dict], bool], keys: tuple[str, ..
                 page = v.get("pageInfo")
                 pages.append((flag(page, "hasPreviousPage"), flag(page, "hasNextPage"), total, len(v[k]) if isinstance(v[k], list) else 0))
             go(v[k], depth + 1)
+        elif isinstance(v, dict) and is_item(v):
+            out.append(v)
         else:
             what = "an empty object" if v == {} else "something"
             raise Unreadable(name, f"it holds {what} that isn't {INPUTS[name]}, as GitHub gives them")
@@ -503,7 +507,7 @@ class Context:
         except Unreadable:
             return
         if want is None and required:
-            raise Unreadable(name, f"the pull request file doesn't say how many there are ({COUNT_KEYS[name]}), so a page left out can't be told")
+            raise Unreadable(name, f"--pr doesn't say how many there are, so a page left out can't be told: give --pr from GET repos/<repo>/pulls/<n> ({COUNT_KEYS[name]}), or add {GH_COUNT_KEYS[name]} to `gh pr view --json`")
         if want is not None and have < min(want, MAX_COMMITS if name == "commits" else want):
             raise Unreadable(name, PARTIAL)
 
@@ -512,8 +516,9 @@ class Context:
 
     def commits(self) -> set[str]:
         def read():
-            items = _walk(self.raw("commits"), "commits", lambda d: "sha" in d or "oid" in d, ("commits", "nodes"))
-            shas = {_sha(c.get("sha") or c.get("oid")) for c in items}
+            items = _walk(self.raw("commits"), "commits", lambda d: "sha" in d or "oid" in d or isinstance(d.get("commit"), dict), GRAPHQL + ("commits", "nodes"))
+            # REST's {sha}, gh's {oid}, GraphQL's {commit: {oid}}
+            shas = {_sha(c.get("sha") or c.get("oid") or c["commit"].get("oid")) for c in items}
             if None in shas:
                 raise Unreadable("commits", "a commit's SHA isn't a full 40-character SHA")
             self._complete("commits", len(items), required=False)  # a commit left out only leaves out records
@@ -525,7 +530,7 @@ class Context:
         """Every path the PR changes, a rename's old path too."""
 
         def read():
-            items = _walk(self.raw("files"), "files", lambda d: "filename" in d or "path" in d, ("files", "nodes"))
+            items = _walk(self.raw("files"), "files", lambda d: "filename" in d or "path" in d, GRAPHQL + ("files", "nodes"))
             out: list[str] = []
             for f in items:
                 for k in ("filename", "path", "previous_filename"):
@@ -597,7 +602,7 @@ class Context:
                 self.raw("threads"),
                 "threads",
                 lambda d: any(k in d for k in ("isResolved", "is_resolved", "resolved")),
-                ("data", "repository", "pullRequest", "reviewThreads", "review_threads", "threads", "nodes"),
+                GRAPHQL + ("reviewThreads", "review_threads", "threads", "nodes"),
             )
             out = []
             for t in items:
@@ -617,7 +622,7 @@ class Context:
         """(login, state) for each review, oldest first."""
 
         def read():
-            items = _walk(self.raw("reviews"), "reviews", lambda d: "state" in d, ("reviews", "nodes"))
+            items = _walk(self.raw("reviews"), "reviews", lambda d: "state" in d and any(k in d for k in ("user", "author", "submitted_at", "submittedAt")), GRAPHQL + ("reviews", "nodes"))
             for r in items:
                 if not isinstance(r.get("state"), str):
                     raise Unreadable("reviews", "a review's state isn't text")
@@ -938,7 +943,9 @@ def text(res: Result) -> str:
         lines += [f"- `{_clean(f)}`" for f in res.files]
     else:
         lines = [f"Not yet: {n} isn't ready to merge."]
-        lines += [f"- {r['message'].removeprefix('Not yet: ')} {r['fix']}" for r in res.reasons]
+        for r in res.reasons:
+            message = r["message"].removeprefix("Not yet: ")
+            lines.append(f"- {message[:1].upper()}{message[1:]} {r['fix']}")
     if res.preview and res.decision != "not_yet":
         lines.append(f"Try it first: {_clean(res.preview['url'])}")
     if res.notes:
