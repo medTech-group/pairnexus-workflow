@@ -62,7 +62,7 @@ class Status:
 
     def as_dict(self) -> dict:
         d = asdict(self)
-        d["experience"]["wording"] = self.experience.wording
+        d["experience"]["wording_level"] = self.experience.wording_level
         return d
 
 

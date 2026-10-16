@@ -20,9 +20,10 @@ flow_addendum = ""                      # e.g. "docs/agents/flow-addendum.md"
 guided_start = true
 # Solo mode: false while no GitHub ruleset protects the base branch, so the
 # kit's guard is all that stops a change to it; true once a ruleset does.
-# Leave it out to keep the behaviour from before solo mode. Keep it a plain
-# `ruleset = true` or `ruleset = false` line: a shell script reads it.
-ruleset = false
+# Left out, the kit behaves as before solo mode. Set-up writes it once it can
+# read the rulesets. Keep it a plain `ruleset = true` or `ruleset = false`
+# line, with nothing after it: a shell script reads it without TOML.
+# ruleset = false
 # How much the people working here know, as the project's default: "new"
 # (new to building) or "developer". It names no person and changes only
 # wording. Each person's WORKFLOW_EXPERIENCE, or their untracked

@@ -325,10 +325,11 @@ def parse(data: dict, root: Path) -> Profile:
         raise ProfileError("project.guided_start must be true or false")
     ruleset = proj.get("ruleset")
     if ruleset is not None and not isinstance(ruleset, bool):
-        raise ProfileError(f"project.ruleset must be true or false (false is solo mode), not {ruleset!r}; leave it out for no solo mode")
+        raise ProfileError(f"project.ruleset must be true or false (false is solo mode), not {repr(ruleset)[:40]}; leave it out for no solo mode")
     experience = proj.get("experience")
     if experience is not None and experience not in EXPERIENCE_LEVELS:
-        raise ProfileError(f'project.experience must be "new" or "developer", not {experience!r}; leave it out to ask each person')
+        levels = " or ".join(f'"{x}"' for x in EXPERIENCE_LEVELS)
+        raise ProfileError(f"project.experience must be {levels}, not {repr(experience)[:40]}; leave it out to ask each person")
     allow = guard.get("allow_new_skips", False)
     if not isinstance(allow, bool):
         raise ProfileError("guard.allow_new_skips must be true or false")
@@ -395,60 +396,72 @@ class Experience:
     warnings: list[str] = field(default_factory=list)
 
     @property
-    def wording(self) -> str:
+    def wording_level(self) -> str:
+        """The level wording follows: unknown counts as new to building."""
         return self.level or "new"
+
+
+_LEVELS_WORDS = " or ".join(EXPERIENCE_LEVELS)
 
 
 def _level(value) -> str | None:
     if not isinstance(value, str):
         return None
-    v = value.strip().lower()
+    v = value.strip().lstrip("\ufeff").strip().lower()  # a byte-order mark too
     return v if v in EXPERIENCE_LEVELS else None
 
 
-def _read_experience_file(root: Path) -> str | None:
-    """The local file's text, or None when there is none to read. Never raises."""
+def _read_experience_file(root) -> tuple[str | None, str]:
+    """(the level, why it was skipped) from the local file: (None, "") when
+    there is no file to read. Never raises. A skipped file's text is never
+    shown, since the path might lead anywhere (a symlink to a secret)."""
     try:
         path = Path(root) / EXPERIENCE_FILE
+        if path.is_dir():
+            return None, "it is a directory"
         if not path.is_file():
-            return None
+            return None, ""
         with path.open("rb") as f:
             data = f.read(_EXPERIENCE_FILE_MAX + 1)
     except (OSError, ValueError, TypeError):
-        return None
+        return None, ""
     if len(data) > _EXPERIENCE_FILE_MAX:
-        return "(more than one short line)"
+        return None, "it is longer than one short line"
     try:
-        return data.decode("utf-8")
+        lines = data.decode("utf-8").strip().splitlines()
     except UnicodeDecodeError:
-        return "(not UTF-8 text)"
+        return None, "it isn't UTF-8 text"
+    if not lines:
+        return None, "it is empty"
+    if len(lines) > 1:
+        return None, "it holds more than one line"
+    lvl = _level(lines[0])
+    return (lvl, "") if lvl else (None, f"it holds neither {_LEVELS_WORDS}")
 
 
 def resolve_experience(root: Path | None, profile_value=None, environ=None) -> Experience:
     """The person's experience. First match wins: WORKFLOW_EXPERIENCE in the
     environment, the untracked .workflow/experience file, the profile's
     project.experience, else unknown. An unrecognised environment or file
-    value is skipped with a warning. Shared by the guard, `status` and the
-    skills through `status`, so it never raises, whatever it is given."""
+    value is skipped with a warning, which never repeats the value. The guard
+    tickets call it from a hook, so it never raises, whatever it is given."""
     env = os.environ if environ is None else environ
     warnings: list[str] = []
     try:
         raw = env.get(EXPERIENCE_ENV)
-    except Exception:
+    except Exception:  # the guard may hand it any mapping
         raw = None
     if isinstance(raw, str) and raw.strip():
         lvl = _level(raw)
         if lvl:
             return Experience(lvl, "environment", warnings)
-        warnings.append(f"ignored {EXPERIENCE_ENV}={raw.strip()[:40]!r}: expected new or developer")
-    text = _read_experience_file(root) if root is not None else None
-    if text is not None:
-        lines = text.strip().splitlines()
-        lvl = _level(lines[0]) if len(lines) == 1 else None
+        warnings.append(f"ignored {EXPERIENCE_ENV}: it holds neither {_LEVELS_WORDS}")
+    if root is not None:
+        lvl, why = _read_experience_file(root)
         if lvl:
             return Experience(lvl, "local file", warnings)
-        shown = text.strip()[:40] if text.strip() else "(empty)"
-        warnings.append(f"ignored {EXPERIENCE_FILE.as_posix()} holding {shown!r}: expected one line, new or developer")
+        if why:
+            warnings.append(f"ignored {EXPERIENCE_FILE.as_posix()}: {why} (write {_LEVELS_WORDS})")
     lvl = profile_value if profile_value in EXPERIENCE_LEVELS else None
     if lvl:
         return Experience(lvl, "profile", warnings)

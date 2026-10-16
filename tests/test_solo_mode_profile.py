@@ -58,10 +58,17 @@ def test_profile_check_accepts_each_experience_value(tmp_path, line, want):
 
 @pytest.mark.parametrize("line", ['experience = "expert"\n', 'experience = "New"\n', 'experience = ""\n', "experience = true\n"])
 def test_profile_check_refuses_any_other_experience(tmp_path, line):
+    # (A long value is cut short in the message: see the next test.)
     _write_profile(tmp_path, line)
     p = _cli(tmp_path, "profile", "check")
     assert p.returncode == 1
     assert "project.experience" in p.stderr and '"new" or "developer"' in p.stderr
+
+
+def test_profile_check_cuts_a_long_bad_value_short(tmp_path):
+    _write_profile(tmp_path, f'experience = "{"x" * 5000}"\n')
+    p = _cli(tmp_path, "profile", "check")
+    assert p.returncode == 1 and "project.experience" in p.stderr and len(p.stderr) < 300
 
 
 # status: solo mode
@@ -129,7 +136,7 @@ def test_status_experience_from_the_profile(repo):
 
 def test_status_experience_unknown_counts_as_new(repo):
     exp, text = _experience(repo)
-    assert (exp["level"], exp["source"], exp["wording"]) == (None, "unknown", "new")
+    assert (exp["level"], exp["source"], exp["wording_level"]) == (None, "unknown", "new")
     assert "Experience: unknown (worded as new to building until asked)" in text
 
 
@@ -137,7 +144,8 @@ def test_status_skips_an_unrecognised_environment_value_with_a_warning(repo):
     _local(repo, "developer\n")
     exp, text = _experience(repo, {"WORKFLOW_EXPERIENCE": "expert"})
     assert (exp["level"], exp["source"]) == ("developer", "local file")
-    assert len(exp["warnings"]) == 1 and "WORKFLOW_EXPERIENCE" in exp["warnings"][0] and "expert" in exp["warnings"][0]
+    assert len(exp["warnings"]) == 1 and "WORKFLOW_EXPERIENCE" in exp["warnings"][0]
+    assert "expert" not in exp["warnings"][0]  # a value is never repeated
     assert "warning: " + exp["warnings"][0] in text
 
 
@@ -146,14 +154,15 @@ def test_status_skips_an_unrecognised_local_file_with_a_warning(repo):
     _local(repo, "guru\n")
     exp, text = _experience(repo)
     assert (exp["level"], exp["source"]) == ("developer", "profile")
-    assert len(exp["warnings"]) == 1 and ".workflow/experience" in exp["warnings"][0] and "guru" in exp["warnings"][0]
+    assert len(exp["warnings"]) == 1 and ".workflow/experience" in exp["warnings"][0]
+    assert "guru" not in exp["warnings"][0]
     assert "warning: " + exp["warnings"][0] in text
 
 
 def test_status_skips_both_bad_values_to_unknown(repo):
     _local(repo, "")
     exp, _ = _experience(repo, {"WORKFLOW_EXPERIENCE": "lots"})
-    assert (exp["level"], exp["source"], exp["wording"]) == (None, "unknown", "new")
+    assert (exp["level"], exp["source"], exp["wording_level"]) == (None, "unknown", "new")
     assert len(exp["warnings"]) == 2
 
 
@@ -170,7 +179,7 @@ def test_resolution_reads_a_value_with_spaces_and_case_around_it(tmp_path):
 
 def test_resolution_takes_the_profile_value_it_is_given(tmp_path):
     exp = profile_mod.resolve_experience(tmp_path, "developer", environ={})
-    assert (exp.level, exp.source, exp.wording) == ("developer", "profile", "developer")
+    assert (exp.level, exp.source, exp.wording_level) == ("developer", "profile", "developer")
 
 
 def test_an_empty_environment_value_is_as_if_unset(tmp_path):
@@ -179,20 +188,39 @@ def test_an_empty_environment_value_is_as_if_unset(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "setup",
+    "setup, warned",
     [
-        lambda root: (root / ".workflow").mkdir(),  # no file
-        lambda root: (root / ".workflow/experience").mkdir(parents=True),  # a directory
-        lambda root: _local_bytes(root, b"\xff\xfe\x00bad"),  # not UTF-8
-        lambda root: _local_bytes(root, b"developer\nnew\n"),  # more than one line
-        lambda root: _local_bytes(root, b"x" * 100_000),  # far too long
-        lambda root: (root / ".workflow").write_text("a file, not a directory"),
+        (lambda root: (root / ".workflow").mkdir(), 0),  # no file
+        (lambda root: (root / ".workflow/experience").mkdir(parents=True), 1),  # a directory: a mistake
+        (lambda root: (root / ".workflow").write_text("a file, not a directory"), 0),
+        (lambda root: _local_bytes(root, b"\xff\xfe\x00bad"), 1),  # not UTF-8
+        (lambda root: _local_bytes(root, b"developer\nnew\n"), 1),  # more than one line
+        (lambda root: _local_bytes(root, b"x" * 100_000), 1),  # far too long
+        (lambda root: _local_bytes(root, b"   \n"), 1),  # empty
     ],
 )
-def test_resolution_never_raises_on_a_bad_local_file(tmp_path, setup):
+def test_resolution_never_raises_on_a_bad_local_file(tmp_path, setup, warned):
     setup(tmp_path)
     exp = profile_mod.resolve_experience(tmp_path, "developer", environ={})
     assert (exp.level, exp.source) == ("developer", "profile")
+    assert len(exp.warnings) == warned
+
+
+def test_a_byte_order_mark_is_read_past(tmp_path):
+    _local_bytes(tmp_path, "\ufeffdeveloper\r\n".encode())
+    exp = profile_mod.resolve_experience(tmp_path, environ={})
+    assert (exp.level, exp.source, exp.warnings) == ("developer", "local file", [])
+
+
+def test_a_skipped_file_s_text_is_never_shown(tmp_path):
+    # The path may be a symlink to anything, a secret among them.
+    secret = tmp_path / "secret.txt"
+    secret.write_text("API_KEY=made-up-value\n")
+    (tmp_path / ".workflow").mkdir()
+    (tmp_path / ".workflow/experience").symlink_to(secret)
+    exp = profile_mod.resolve_experience(tmp_path, environ={"WORKFLOW_EXPERIENCE": "TOKEN=also-made-up"})
+    assert exp.source == "unknown" and len(exp.warnings) == 2
+    assert not any("made-up" in w or "API_KEY" in w or "TOKEN" in w for w in exp.warnings)
 
 
 def _local_bytes(root, data):
@@ -203,7 +231,7 @@ def _local_bytes(root, data):
 @pytest.mark.parametrize("bad", [None, 3, "guru", ["new"], {"a": 1}])
 def test_resolution_never_raises_on_a_bad_profile_value(tmp_path, bad):
     exp = profile_mod.resolve_experience(tmp_path, bad, environ={})
-    assert exp.source == "unknown" and exp.wording == "new"
+    assert exp.source == "unknown" and exp.wording_level == "new"
 
 
 def test_resolution_never_raises_without_a_root():
@@ -231,7 +259,7 @@ def test_the_template_and_the_profile_doc_describe_both_settings():
     template = (KIT / "templates/profile.toml").read_text()
     doc = (KIT / "docs/profile.md").read_text()
     # A plain line #33's shell wrapper can read without TOML.
-    assert any(line.startswith("ruleset = ") for line in template.splitlines())
+    assert any(line in ("# ruleset = false", "# ruleset = true") for line in template.splitlines())
     assert "experience" in template
     for word in ("`ruleset`", "`experience`", "solo mode", "WORKFLOW_EXPERIENCE", ".workflow/experience", "profile check"):
         assert word in doc, word
@@ -242,4 +270,6 @@ def test_the_template_still_parses():
 
     data = tomllib.loads((KIT / "templates/profile.toml").read_text())
     p = profile_mod.parse(data, KIT)
-    assert p.ruleset in (True, False, None)
+    # Left out until set-up writes it, so a project set up before set-up
+    # reads its rulesets doesn't land in solo mode with main protected.
+    assert p.ruleset is None and p.experience == ""
