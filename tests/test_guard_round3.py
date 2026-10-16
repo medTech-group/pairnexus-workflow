@@ -369,7 +369,9 @@ def test_heredoc_patch_is_checked_from_its_text(profile, tmp_path):
 # ---------- 12. no branch at the cwd ----------
 
 
-def test_hook_takes_the_project_roots_branch_when_the_cwd_has_none(repo, tmp_path_factory):
+def test_hook_takes_the_project_roots_branch_when_the_cwd_has_none(repo, tmp_path_factory, monkeypatch):
+    # roles.role reads WORKFLOW_ROLE, which ticket sessions and the conductor have set.
+    monkeypatch.delenv("WORKFLOW_ROLE", raising=False)
     outside = tmp_path_factory.mktemp("outside")
     assert roles.current_branch(outside) is None
     git(repo, "checkout", "-qb", "claude/build-7")
