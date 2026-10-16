@@ -414,6 +414,8 @@ def test_the_ruleset_is_the_kits_own_else_the_one_protecting_the_base_branch():
     # Only what the read-back counts: a pattern target never reads back.
     assert "exactly as `workflow protection` reads a target" in which
     assert "its `target` is `branch` (a tag or push ruleset never counts)" in which
+    assert "its enforcement is active" in which
+    assert "a pattern matching it, ignoring case" in which
     assert "no `exclude` entry matches it" in which and "one not starting with `refs/`" in which
     # The patterns the read-back can't match, as protection.UNREAD_GLOB lists them.
     for glob in protection.UNREAD_GLOB:

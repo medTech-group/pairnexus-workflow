@@ -313,7 +313,7 @@ When `solo_mode` is `true` (`ruleset = false`), nothing is changed and no rulese
    - its `target` is `branch` (a tag or push ruleset never counts);
    - its enforcement is active;
    - `conditions.ref_name.include` names `~ALL`, `refs/heads/<base>`, or `~DEFAULT_BRANCH` when the base branch is the default;
-   - no `exclude` entry matches it: an entry naming it (as the include names above do) or a pattern matching it, one holding `**`, `[^`, `[!`, `\`, `{` or `}`, and one not starting with `refs/` all count as excluding it.
+   - no `exclude` entry matches it: an entry naming it (as the include names above do) or a pattern matching it, ignoring case, one holding `**`, `[^`, `[!`, `\`, `{` or `}`, and one not starting with `refs/` all count as excluding it.
 
    A ruleset whose include is any other pattern (`refs/heads/ma*`) isn't counted by the read-back, so checks added to it would never read back: leave it out.
    - The kit's own, named "Protect <base> (pairnexus-workflow)", when one of those is it.
