@@ -30,7 +30,7 @@ One saved step of a change on a [branch](#branch), with a note of what it does.
 
 ### Pull request (PR)
 
-A request to bring a [branch](#branch)'s changes into [`main`](#main), laid out to read.
+A request to bring a [branch](#branch)'s changes into [`main`](#main), laid out to read. Each one the kit opens starts with "In plain words": what changes for you, how to try it, what could go wrong.
 
 **Why it matters to you:** it is where you see what Claude did and decide if it goes in.
 
@@ -104,7 +104,7 @@ Claude reviewers who each read a change from one side (does it work, does it fol
 
 ### Solo mode
 
-How a project starts while GitHub doesn't protect [`main`](#main) yet: the [profile](#profile) says `ruleset = false`, and the kit refuses Claude's pushes to `main`, and its changes to `main` on GitHub, so Claude's changes go through a [pull request](#pull-request-pr).
+How a project starts while GitHub doesn't protect [`main`](#main) yet: the [profile](#profile) says `ruleset = false`, and the kit refuses Claude's pushes and GitHub changes to `main`, so Claude's changes go through a [pull request](#pull-request-pr).
 
 **Why it matters to you:** you can start on GitHub's free plan, and Claude's changes still reach `main` only when you [merge](#merge).
 
@@ -134,6 +134,6 @@ The kit's settings for your project, in `.claude/workflow/profile.toml`: which i
 
 ### Check the set-up
 
-Ask Claude to "check the set-up": the `check-setup` skill runs `workflow doctor`, lists what's missing, and offers each fix, such as [Protect `main`](#protect-main), with "Not now". It changes nothing itself; in [solo mode](#solo-mode) the [guided start](#guided-start) offers it once a session.
+Ask Claude to "check the set-up": the `check-setup` skill runs `workflow doctor`, lists what's missing, and offers each fix with "Not now". It changes nothing itself; in [solo mode](#solo-mode) the [guided start](#guided-start) offers it once a session.
 
 **Why it matters to you:** you see in one place what is set up and what's left.

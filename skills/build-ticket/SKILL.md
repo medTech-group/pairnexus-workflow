@@ -61,7 +61,33 @@ Follow the `review-panel` skill on the diff against the base branch:
 
 ## 4. Open the pull request
 
-To the base branch. Its body:
+To the base branch. Its body opens with **In plain words**, above everything else, so someone new to building can judge the change without reading code. Use exactly these headings, each on its own line with its text below it (the kit's PR template uses the same ones):
+
+```markdown
+## In plain words
+
+**What changes for you**
+The notes list now shows the newest note first.
+
+**How to try it**
+Nothing to try: this change is behind the scenes.
+
+**What could go wrong**
+Easy to undo. Only the notes list's order changes.
+```
+
+- **What changes for you:** one to three sentences about what a user notices, not the code.
+- **How to try it:** the first of these that fits:
+  - the try-it link and two or three things to click, when a link exists;
+  - else, when the project has previews, where the link will appear ("A try-it link will appear as a comment on this pull request in a few minutes.");
+  - else what to check another way ("Open the booking page and pick tomorrow."), or "Nothing to try: this change is behind the scenes".
+
+  The kit doesn't read previews yet, so for now one of the last two applies.
+- **What could go wrong:** whether the change is easy or hard to undo, and what it could affect.
+
+The section is the same for everyone, never worded by experience: GitHub text reads the same whoever writes or reads it. Examples are everyday ones (a notes app, a shop, a booking page).
+
+Below it, unchanged:
 - `Closes #<n>`;
 - what was built: routes, screens, tables, settings;
 - how it was tested: the seams, the suites, what the explorer exercised;
