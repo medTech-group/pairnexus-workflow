@@ -559,9 +559,11 @@ def cmd_merge_check(a) -> int:
             inputs[name] = (None, str(e) if path == "-" else f"can't read {path}")
     prof, profile_error = None, None
     try:
-        prof = load(required=False)
+        prof = load()  # its protected paths and required checks are rules: none found is a reason
     except ProfileError as e:
         profile_error = str(e)
+    except (OSError, UnicodeDecodeError) as e:
+        profile_error = f"can't read {PROFILE_PATH}: {getattr(e, 'strerror', None) or e}"
     root = prof.root if prof else project_root()
     level = resolve_experience(root, prof.experience if prof else None).wording_level
     res = merge_mod.evaluate(inputs, prof, profile_error, asker=a.asker, level=level)

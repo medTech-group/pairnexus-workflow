@@ -251,16 +251,22 @@ def _settings(settings) -> tuple[dict, str | None]:
     return merge, default
 
 
-def check(rulesets, base: str, settings=None) -> Report:
+def check(rulesets, base: str, settings=None, base_if_unknown: bool = False) -> Report:
     """The verdict for `base`, from the rulesets (and settings) as GitHub returns them.
 
     `settings=None` means no settings were given: the merge settings aren't
-    reported, and a ruleset on `~DEFAULT_BRANCH` can't be counted.
+    reported, and a ruleset on `~DEFAULT_BRANCH` can't be counted. With
+    `base_if_unknown`, a default branch the settings don't give is taken to be
+    `base`, unless a ruleset excludes `~DEFAULT_BRANCH`: that can only count
+    more rulesets as targeting it, never fewer (merge-check's required checks).
     """
     base = branch(base)
     rulesets = _flatten(rulesets)
     names = [_checked_name(rs, i) for i, rs in enumerate(rulesets)]
     merge, default = _settings(settings) if settings is not None else (None, None)
+    excluded = any("~DEFAULT_BRANCH" in (((rs.get("conditions") or {}).get("ref_name") or {}).get("exclude") or []) for rs in rulesets)
+    if default is None and base_if_unknown and not excluded:
+        default, settings = base, settings if settings is not None else {}
     if not rulesets:
         return Report(base, False, [f"no rulesets: nothing on GitHub protects {base}"], [], merge)
 

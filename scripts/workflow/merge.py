@@ -52,11 +52,14 @@ INPUTS = {
     "preview": "the preview's status",
 }
 PROFILE = "profile"  # read from the project, not given by a flag
+# Where the pull request says how long each list is (REST, then gh's --json).
+COUNT_KEYS = {"files": "changed_files", "comments": "comments", "commits": "commits"}
 # Permissions whose review records and "changes requested" count (#36).
 WRITE = ("admin", "maintain", "write")
 RANK = {"admin": 5, "maintain": 4, "write": 3, "triage": 2, "read": 1, "none": 0}
-# GitHub lists at most this many of a pull request's files.
+# GitHub lists at most this many of a pull request's files, and of its commits.
 MAX_FILES = 3000
+MAX_COMMITS = 250
 PARTIAL = "it holds only part of the list: fetch every page (gh api --paginate --slurp; with GraphQL, until pageInfo.hasNextPage is false)"
 _SHA = re.compile(r"[0-9a-f]{40}")
 _STATUS_URL_SHA = re.compile(r"/statuses/([0-9a-fA-F]{40})\b")
@@ -175,8 +178,8 @@ REASONS = {
         "developer": ("Not yet: the pull request is a draft.", "Mark it ready for review (`gh pr ready <n>`)."),
     }),
     "closed": Reason("mergeable", None, {
-        "new": ("Not yet: this pull request is closed or already merged.", "Nothing to merge: reopen it if it should still go in."),
-        "developer": ("Not yet: the pull request isn't open (state {state}).", "Reopen it if it should still merge."),
+        "new": ("Not open: this pull request is closed or has already merged.", "Nothing to merge: reopen it if it should still go in."),
+        "developer": ("Not open: the pull request's state is {state}.", "Reopen it if it should still merge."),
     }),
     "unresolved_threads": Reason("people", None, {
         "new": ("Not yet: {who} asked about the code, and it hasn't been resolved.", "Answer each question, then resolve the conversation."),
@@ -226,13 +229,15 @@ def _time(v) -> datetime | None:
     return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
 
 
-def _in_time_order(items: list, when: Callable) -> list:
-    """`items` oldest first by `when(item)`, when every item has a time;
-    otherwise as given (GitHub's order). Ties keep their order."""
+def _in_time_order(items: list, when: Callable, number: Callable) -> list:
+    """`items` oldest first by `when(item)`, then by `number(item)` (GitHub's
+    ids grow with time), when every item has a time; otherwise as given
+    (GitHub's order). Items alike in both keep their order."""
     times = [when(x) for x in items]
     if any(t is None for t in times):
         return items
-    return [x for _, _, x in sorted(zip(times, range(len(items)), items), key=lambda p: (p[0], p[1]))]
+    keyed = [(t, _int(number(x)) or 0, i, x) for i, (t, x) in enumerate(zip(times, items))]
+    return [x for *_, x in sorted(keyed, key=lambda k: k[:3])]
 
 
 def _short(sha: str | None) -> str:
@@ -355,9 +360,11 @@ def _pr(v) -> PR:
         login = who.get("login") if isinstance(who, dict) else None
         if isinstance(login, str) and login:
             requested.add(login.casefold())  # a team (no login) asks nobody in particular
+    # gh's --json gives the comments themselves, all of them.
+    comments = v.get("comments")
     counts = {
         "files": _int(v.get("changed_files", v.get("changedFiles"))),
-        "comments": _int(v.get("comments")),
+        "comments": len(comments) if isinstance(comments, list) else _int(comments),
         "commits": _int(v.get("commits")),
     }
     return PR(_int(v.get("number")), sha, ref.strip(), default, mergeable, state == "behind", draft or state == "draft", pr_state, requested, counts)
@@ -468,13 +475,17 @@ class Context:
         except Unreadable:
             return None
 
-    def _complete(self, name: str, have: int) -> None:
-        """Raises when the pull request says the list holds more than `have`."""
+    def _complete(self, name: str, have: int, required: bool = True) -> None:
+        """Raises when the pull request says the list holds more than `have`,
+        or (`required`) doesn't say how many it holds: a page left out would
+        then go unseen."""
         try:
             want = self.pr().counts[name]
         except Unreadable:
             return
-        if want is not None and have < want:
+        if want is None and required:
+            raise Unreadable(name, f"the pull request file doesn't say how many there are ({COUNT_KEYS[name]}), so a page left out can't be told")
+        if want is not None and have < min(want, MAX_COMMITS if name == "commits" else want):
             raise Unreadable(name, PARTIAL)
 
     def permissions(self) -> dict[str, str]:
@@ -486,7 +497,7 @@ class Context:
             shas = {_sha(c.get("sha") or c.get("oid")) for c in items}
             if None in shas:
                 raise Unreadable("commits", "a commit's SHA isn't a full 40-character SHA")
-            self._complete("commits", len(items))
+            self._complete("commits", len(items), required=False)  # a commit left out only leaves out records
             return shas
 
         return self.once("commits", read)
@@ -520,14 +531,21 @@ class Context:
         def read():
             head = self.head()
             runs, statuses, flat = [], [], []
+            unknown = "names no commit, so it can't be told to be the head's: keep each check run's head_sha, the combined status's sha, a status's url"
             for v in _walk(self.raw("checks"), "checks", lambda d: any(k in d for k in ("check_runs", "statuses", "context"))):
                 if "check_runs" in v:
+                    if isinstance(v["check_runs"], list) and any(isinstance(r, dict) and not isinstance(r.get("head_sha"), str) for r in v["check_runs"]):
+                        raise Unreadable("checks", "a check run " + unknown)
                     runs.append(v)
                 elif "statuses" in v:
+                    if not isinstance(v.get("sha"), str):
+                        raise Unreadable("checks", "a combined status " + unknown)
                     statuses.append(v)
                 else:
-                    m = _STATUS_URL_SHA.search(str(v.get("url") or ""))
-                    if m is None or head is None or m.group(1).lower() == head:  # a plain status names its commit only in its URL
+                    m = _STATUS_URL_SHA.search(str(v.get("url") or ""))  # a plain status names its commit only in its URL
+                    if m is None:
+                        raise Unreadable("checks", "a status " + unknown)
+                    if head is None or m.group(1).lower() == head:
                         flat.append(v)
             if flat:
                 statuses.append({"statuses": flat})
@@ -545,13 +563,10 @@ class Context:
             except Unreadable:  # still read, to say whether they can be
                 protection.check(rulesets, self.profile.base_branch if self.profile else "main")
                 raise
-            default = pr.default_branch
-            # Without the repository's default branch, take the profile's base
-            # as it, unless a ruleset excludes ~DEFAULT_BRANCH: that can only
-            # add a ruleset's required checks, never leave one out.
-            if default is None and self.profile and pr.base == self.profile.base_branch and "~DEFAULT_BRANCH" not in _excludes(rulesets):
-                default = pr.base
-            return protection.check(rulesets, pr.base, {"default_branch": default} if default else None)
+            settings = {"default_branch": pr.default_branch} if pr.default_branch else None
+            # Without the repository's default branch, the profile's base counts as it.
+            assume = bool(self.profile) and pr.base == self.profile.base_branch
+            return protection.check(rulesets, pr.base, settings, base_if_unknown=assume)
 
         return self.once("rulesets", read)
 
@@ -587,7 +602,7 @@ class Context:
             for r in items:
                 if not isinstance(r.get("state"), str):
                     raise Unreadable("reviews", "a review's state isn't text")
-            items = _in_time_order(items, lambda r: _time(r.get("submitted_at") or r.get("submittedAt")))
+            items = _in_time_order(items, lambda r: _time(r.get("submitted_at") or r.get("submittedAt")), lambda r: r.get("id"))
             return [(_login(r), r["state"].upper()) for r in items]
 
         return self.once("reviews", read)
@@ -596,9 +611,9 @@ class Context:
         """The review records in the comments (`reviews.read`), oldest first."""
 
         def read():
-            raw = self.raw("comments")
-            self._complete("comments", len(comments_from(raw)))
-            return _in_time_order(reviews.read(raw), lambda r: _time(r.created_at))
+            comments = comments_from(self.raw("comments"))
+            self._complete("comments", len(comments))
+            return _in_time_order(reviews.read(comments), lambda r: _time(r.created_at), lambda r: r.comment_id)
 
         return self.once("comments", read)
 
@@ -611,10 +626,13 @@ class Context:
             if not isinstance(v, dict) or _int(v.get("behind_by")) is None:
                 raise Unreadable("compare", "it has no behind_by, as GET repos/<repo>/compare/<base>...<head> gives it")
             commits = v.get("commits")
-            last = commits[-1].get("sha") if isinstance(commits, list) and commits and isinstance(commits[-1], dict) else None
+            # The list stops at 250 commits: its last is the head only when it holds them all.
+            whole = isinstance(commits, list) and commits and len(commits) == _int(v.get("ahead_by")) and isinstance(commits[-1], dict)
+            last = _sha(commits[-1].get("sha")) if whole else None
             named = re.search(r"\.\.\.([0-9a-fA-F]{40})\b", str(v.get("url") or v.get("html_url") or ""))
-            if head is not None and ((last is not None and _sha(last) != head) or (named and named.group(1).lower() != head)):
-                raise Unreadable("compare", "it compares another commit than the pull request's head: compare <base>...<head SHA>")
+            told = [s for s in (last, named.group(1).lower() if named else None) if s]
+            if head is not None and (not told and _int(v.get("ahead_by")) != 0 or any(s != head for s in told)):
+                raise Unreadable("compare", "it doesn't compare the pull request's head: compare <base>...<head SHA>")
             return v["behind_by"]
 
         return self.once("compare", read)
@@ -633,24 +651,14 @@ class Context:
                 raise Unreadable("preview", "its url isn't a web address (https://…)")
             if commit is not None and not isinstance(commit, str):
                 raise Unreadable("preview", "its commit isn't a SHA")
+            if v["state"] == "built" and not url:
+                raise Unreadable("preview", "it is built but gives no url")
             return v["state"], url, commit
 
         return self.once("preview", read)
 
 
-def _excludes(rulesets) -> set:
-    """Every exclude pattern in the rulesets, as far as they can be read."""
-    out: set = set()
-    for rs in rulesets if isinstance(rulesets, list) else []:
-        for r in rs if isinstance(rs, list) else [rs]:
-            cond = r.get("conditions") if isinstance(r, dict) else None
-            ref = cond.get("ref_name") if isinstance(cond, dict) else None
-            ex = ref.get("exclude") if isinstance(ref, dict) else None
-            out |= {p for p in ex if isinstance(p, str)} if isinstance(ex, list) else set()
-    return out
-
-
-def _counts(login: str | None, perms: dict[str, str]) -> bool:
+def _may_review(login: str | None, perms: dict[str, str]) -> bool:
     """The account has write, maintain or admin permission."""
     return bool(login) and perms.get(login.casefold()) in WRITE
 
@@ -729,7 +737,7 @@ def _panel(ctx: Context, add) -> None:
     perms = ctx.permissions()
     shas = ctx.commits() | {head}
     records = ctx.records()
-    counted = [r for r in records if _counts(r.author, perms) and r.commit in shas]
+    counted = [r for r in records if _may_review(r.author, perms) and r.commit in shas]
     if len(records) > len(counted):
         left_out = _plural(len(records) - len(counted), "review record")
         _note(ctx, "records_ignored", f"Left out {left_out}: posted by an account without write access, or naming a commit outside this pull request.")
@@ -775,7 +783,7 @@ def _people(ctx: Context, add) -> None:
     perms = ctx.permissions()
     standing: dict[str, tuple[str, str]] = {}
     for login, state in revs:
-        if state in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED") and _counts(login, perms):
+        if state in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED") and _may_review(login, perms):
             standing[login.casefold()] = (login, state)
     asked = [login for key, (login, state) in standing.items() if state == "CHANGES_REQUESTED" and key not in pr.requested]
     if asked:
@@ -793,7 +801,7 @@ def _preview(ctx: Context, add) -> None:
     for_head = commit is not None and len(commit) >= 7 and head.startswith(commit.lower())
     if state == "failed" and (for_head or commit is None):
         add("preview_failed")
-    elif state == "built" and for_head and url:
+    elif state == "built" and for_head:
         ctx.preview = {"state": "built", "url": url}
     elif state == "building" and (for_head or commit is None):
         add("preview_building", what=f"the preview for {_short(head)} is still building")
@@ -826,6 +834,7 @@ RULES = (
 
 def _reason(rid: str, rule: Rule | None, level: str, details: dict, wording_id: str | None = None) -> dict:
     reason = REASONS[wording_id or rid]
+    details = {k: _clean(v) if isinstance(v, str) else v for k, v in details.items()}
     wording = {lvl: {"message": m.format(**details), "fix": f.format(**details)} for lvl, (m, f) in reason.wording.items()}
     out = {
         "id": rid,
