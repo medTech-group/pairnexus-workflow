@@ -664,7 +664,7 @@ PAIR (MedTech LLC) maintains the kit for its own work and shares it as it is. Wh
 
 How to report each:
 - **A question, a bug or an idea:** open an [issue](https://github.com/medTech-group/pairnexus-workflow/issues).
-- **The guard or a hook stopped working after a Claude Code update:** open an issue with the [Claude Code update template](https://github.com/medTech-group/pairnexus-workflow/issues/new?template=claude-code-break.md) (`.github/ISSUE_TEMPLATE/claude-code-break.md`). It asks for Claude Code's version, the kit's and how the kit is installed.
+- **The guard or a hook stopped working after a Claude Code update:** open an issue with the template ["The guard or a hook stopped working after a Claude Code update"](https://github.com/medTech-group/pairnexus-workflow/issues/new?template=claude-code-break.md) (`.github/ISSUE_TEMPLATE/claude-code-break.md`). It asks for Claude Code's version, the kit's and how the kit is installed.
 - **A security problem,** including a Claude Code update that lets a session past the guard: report it privately, as [SECURITY.md](SECURITY.md) says, never in a public issue.
 
 ## What's in it

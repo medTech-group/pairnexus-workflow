@@ -9,7 +9,7 @@ The kit decides what Claude Code sessions may run, push, merge and post in the p
 1. **GitHub:** this repository's **Security** tab → **Report a vulnerability** (private vulnerability reporting).
 2. **Email**, if you can't use GitHub: info@med-technologies.com, with "pairnexus-workflow security" in the subject.
 
-Say what you found, how to reproduce it (a hook event's JSON, a command, a profile), and what it lets a session do. We acknowledge a report within 5 working days, and agree a fix and a disclosure date with you. This is a small team's project, so there is no bounty.
+Say what you found, how to reproduce it (a hook event's JSON, a command, a profile), and what it lets a session do. We aim to acknowledge a report within 5 working days, best effort, and to agree a fix and a disclosure date with you. This is a small team's project, so there is no bounty.
 
 ## The support promise
 
@@ -18,7 +18,7 @@ The same in the [README](README.md#support) and [CONTRIBUTING.md](CONTRIBUTING.m
 - security reports acknowledged within 5 working days;
 - a fix release when a Claude Code update breaks the guard or the hooks.
 
-A Claude Code update that only stops the guard or a hook working goes in a public issue, with the "after a Claude Code update" template. One that lets a session past the guard is a security problem: report it here, privately.
+A Claude Code update that only stops the guard or a hook working goes in a public issue, with the template "The guard or a hook stopped working after a Claude Code update". One that lets a session past the guard is a security problem: report it here, privately.
 
 ## What's in scope
 
