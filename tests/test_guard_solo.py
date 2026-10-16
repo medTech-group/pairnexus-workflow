@@ -751,3 +751,21 @@ def test_making_a_branch_from_the_base_then_pushing_it(cmd, repo_on_feature):
 
 def test_matching_setting_wording(solo):
     assert "the one it tracks" not in act(solo, "git config push.default matching").reason
+
+
+# ---------- the Correctness pass after round 3 ----------
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    ["git symbolic-ref -m x HEAD refs/heads/main && git push", "git symbolic-ref -q HEAD refs/heads/main && git push", "git checkout -fBmain && git push", "git checkout -qB main && git push", "git switch -fCmain && git push"],
+)
+def test_switches_with_options_before_them(cmd, repo_on_feature):
+    prof = on_disk(repo_on_feature, False)
+    assert decide(bash(cmd, repo_on_feature), prof, "attended", repo_on_feature, "feature").action == "deny", cmd
+
+
+@pytest.mark.parametrize("cmd", ["git checkout -p main && git push origin HEAD", "git checkout --patch main && git push origin HEAD"])
+def test_a_patch_checkout_changes_no_branch(cmd, repo_on_feature):
+    prof = on_disk(repo_on_feature, False)
+    assert decide(bash(cmd, repo_on_feature), prof, "attended", repo_on_feature, "feature").action == "allow", cmd

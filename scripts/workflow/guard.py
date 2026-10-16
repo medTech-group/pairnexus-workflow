@@ -4113,7 +4113,7 @@ _GIT_ENV = re.compile(r"^(GIT_CONFIG\w*|GIT_DIR|GIT_WORK_TREE|GIT_NAMESPACE|GIT_
 _DECLARES = ("export", "declare", "typeset", "local", "readonly")
 
 
-_CREATE_SHORT = re.compile(r"-[bBcC](.+)")
+_CREATE_SHORT = re.compile(r"-[a-zA-Z]*?[bBcC](.*)")  # `-B x`, `-Bx`, `-fBx`, `-qB x`
 _CREATE_LONG = ("--create", "--force-create", "--orphan")
 
 
@@ -4121,20 +4121,22 @@ def _switched_to(args: list[str], d: str | None) -> tuple[bool, str | None]:
     """(whether `git checkout`/`git switch`/`git symbolic-ref HEAD` changes the
     branch, the branch it leaves checked out or None when that can't be told).
     A checkout of files (`--`, a path, more than one name, `HEAD`) changes none."""
-    if args[:2] == ["symbolic-ref", "HEAD"] and len(args) > 2:
-        return True, _dst(args[2])
-    if not args or args[0] not in ("checkout", "switch") or "--" in args:
-        return False, None
+    if args[:1] == ["symbolic-ref"]:
+        rest = [a for j, a in enumerate(args[1:], 1) if not a.startswith("-") and args[j - 1] != "-m"]
+        return (True, _dst(rest[1])) if rest[:1] == ["HEAD"] and len(rest) > 1 else (False, None)
+    if not args or args[0] not in ("checkout", "switch") or "--" in args or "-p" in args or "--patch" in args:
+        return False, None  # `-p` copies changes in, on the same branch
     names: list[str] = []
     track = False
     i = 1
     while i < len(args):
         a = args[i]
-        if a in ("-b", "-B", "-c", "-C") + _CREATE_LONG and i + 1 < len(args):
+        if a in _CREATE_LONG and i + 1 < len(args):
             return True, args[i + 1]
-        m = _CREATE_SHORT.fullmatch(a)
+        m = _CREATE_SHORT.fullmatch(a) if not a.startswith("--") else None
         if m:
-            return True, m.group(1)
+            name = m.group(1) or (args[i + 1] if i + 1 < len(args) else "")
+            return True, name or None
         if a.startswith(tuple(o + "=" for o in _CREATE_LONG)):
             return True, a.split("=", 1)[1]
         if a in ("--detach", "-d") or (args[0] == "switch" and re.fullmatch(r"-[a-zA-Z]*d[a-zA-Z]*", a)):
