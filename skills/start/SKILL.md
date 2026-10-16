@@ -39,7 +39,7 @@ The kit words things and paces itself for each person's experience: *new to buil
 
 **Is it known?** At a session's first message (not a resumed one), run `WF status --json` before reading the message. Ask only when its `experience.source` is `"unknown"`: no `WORKFLOW_EXPERIENCE`, no local file and no project default. Otherwise word things for its `experience.wording_level` and go on to step 0.
 
-**Never in a ticket or conductor session** (`WORKFLOW_ROLE` set, or a branch named like the profile's `run.ticket_branch`): they never ask, whatever status says, and word things for its `wording_level`. **Nor when the kit isn't set up here** (status's `set_up` is false): set-up asks the same question, so it would come twice.
+**Never in a ticket or conductor session** (`WORKFLOW_ROLE` set to anything but `attended`, or a branch named like the profile's `run.ticket_branch`): they never ask, whatever status says, and word things for its `wording_level`. **Nor when the kit isn't set up here** (status's `set_up` is false): set-up asks the experience question, so it would come twice.
 
 **Ask it** as the very first question of the session, before step 0's work or any other question, with `AskUserQuestion`: "How much do you know about building software?" (header "Experience"). It describes the person, so no option is recommended:
 - *New to building*: "Explain the words and go one step at a time."
@@ -54,7 +54,7 @@ Then go on to step 0, with their first message. With the profile's `guided_start
 - **Check first** that the file stays out of the repository: `git check-ignore -q .workflow/experience` must succeed, and nothing that isn't a plain file may sit at that path (a link, say). If either check fails, don't write it: keep the level in this conversation for this session.
 - **A cloud session** (`CLAUDE_CODE_REMOTE` is `true`) starts from a fresh clone, so the file lasts for this session only. **Say once**, in one line, how to keep it: "To be asked only once, add `WORKFLOW_EXPERIENCE=<level>` to this cloud environment's variables on claude.ai."
 
-**"Explain less" or "explain more",** at any point in the session, changes the level: "explain less" to `developer`, "explain more" to `new`. It is recorded the same way, and confirmed in one line ("Got it: I'll keep it short."). When `experience.source` is `"environment"`, the file can't override it: keep the new level for this session, and say once that `WORKFLOW_EXPERIENCE` (on the cloud environment, or in their shell) changes it for good.
+**"Explain less" or "explain more",** at any point in the session, changes the level: "explain less" to `developer`, "explain more" to `new`. It is recorded the same way, and confirmed in one line ("Got it: I'll keep it short."). When `experience.source` is `"environment"`, the file can't override it: keep the new level for this session, and say once that `WORKFLOW_EXPERIENCE` (on the cloud environment, or in their shell) changes it for good. Then carry on where you were: don't restart the guided start.
 
 **Tell yourself the new level** whenever you record one, answer or change alike, in one line: "From now on: <level>." With *developer*, stop explaining the building words (the glossary's) for the rest of the session. After "explain more", read the glossary again, if this session has it, and explain each of its words the first time you use one.
 

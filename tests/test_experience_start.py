@@ -81,12 +81,14 @@ def test_explain_less_and_explain_more_change_the_level_the_same_way():
     assert '"Explain less"' in level and '"explain more"' in level
     assert '"explain less" to `developer`' in level and '"explain more" to `new`' in level
     assert "recorded the same way" in level
+    # Said mid-session, it brings this skill: it never restarts the guided start.
+    assert "Then carry on where you were: don't restart the guided start." in level
     # An environment value wins over the file: the session keeps the new level,
     # and the person learns how to change it for good.
     assert '`experience.source` is `"environment"`' in level
 
 
-def test_the_guided_start_tells_claude_when_it_records_a_new_level_section():
+def test_the_guided_start_tells_claude_when_it_records_a_new_level():
     # #35's glossary explanations stop or start again on this line.
     level = _level_section()
     assert "**Tell yourself the new level**" in level
@@ -97,7 +99,8 @@ def test_the_guided_start_tells_claude_when_it_records_a_new_level_section():
 def test_ticket_and_conductor_sessions_are_never_asked():
     level = _level_section()
     assert "**Never in a ticket or conductor session**" in level
-    assert "`WORKFLOW_ROLE` set, or a branch named like the profile's `run.ticket_branch`" in level
+    # An attended session may set WORKFLOW_ROLE=attended, as roles.py allows: it is asked.
+    assert "`WORKFLOW_ROLE` set to anything but `attended`, or a branch named like the profile's `run.ticket_branch`" in level
     assert "they never ask, whatever status says" in level
 
 
@@ -190,6 +193,8 @@ def test_update_asks_the_project_default_once_when_the_profile_has_none():
     assert "ask once" in step
     assert "*new to building*" in step and "*developer*" in step
     assert "*Leave it unset*" in step
+    # Not the same question twice: the person's own level comes first.
+    assert "put that level first" in step and "the project's default, not theirs again" in step
     # Unset, each later update asks once again: said plainly.
     assert "each later update asks once while the profile has no `experience`" in step
 
@@ -206,7 +211,7 @@ def test_update_writes_the_default_into_its_existing_pull_request():
     assert text.index("**The project's experience default") < text.index("**The PR,**")
 
 
-def test_update_says_github_posts_are_the_same_for_every_level_section():
+def test_update_says_github_posts_are_the_same_for_every_level():
     assert "same for every level" in _update_default()
 
 

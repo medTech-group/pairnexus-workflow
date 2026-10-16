@@ -53,7 +53,7 @@ Then follow **this release's** copy of this skill, `$KIT/skills/update-workflow/
      - `.github/workflows/workflow-kit-update.yml` with `$KIT/templates/github/workflow-kit-update.yml`;
      - `docs/agents/issue-tracker.md` with `$KIT/templates/issue-tracker.md`;
      - `.github/ISSUE_TEMPLATE/build-ticket.md` and `owner-task.md` with `$KIT/templates/github/ISSUE_TEMPLATE/`.
-7. **The project's experience default.** When `WF profile check` shows `"experience": null` (the profile has no `experience`), ask once, with `AskUserQuestion`: "How much do the people working on this project know, as its default?" Each person's own answer still wins over it. The options:
+7. **The project's experience default.** When `WF profile check` shows `"experience": null` (the profile has no `experience`), ask once, with `AskUserQuestion`: "How much do the people working on this project know, as its default?" Each person's own answer still wins over it. When they gave their own level earlier in this session, put that level first, "(Recommended)", and say this one is the project's default, not theirs again. The options:
    - *new to building*: "Explain the words and go one step at a time.";
    - *developer*: "Keep it short: git, pull requests and CI are familiar.";
    - *Leave it unset*: "The guided start asks each person instead."
