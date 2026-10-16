@@ -41,7 +41,7 @@ Use `AskUserQuestion`, recommended answers first. Set-up asks only what attended
 
 | Topic | What to ask |
 |---|---|
-| Experience | How much the people working here know, as the project's default: *new to building* or *developer*. It changes only how the kit words things and paces itself, never what it allows. Skipping it counts as *new to building*. |
+| Experience | How much the people working here know, as the project's default: *new to building* or *developer*. It changes only how the kit words things and paces itself, never what it allows. Skipping it leaves the project's default unset (each person is then asked by the guided start); meanwhile word things as for *new to building*. |
 | Mode | Vendored (works in cloud sessions, and needed for unattended runs later) or the plugin (attended only). One mode per project; if the plugin is enabled org-wide, vendoring would duplicate it, so say so. |
 | Owner | The GitHub login of the person whose words are approval. |
 | Sensitive data | What counts here, and which patterns would catch it in a post. |
@@ -57,11 +57,11 @@ Everything else takes the template's default, or what exploring found: the comma
 - Write `.claude/workflow/profile.toml` from `$KIT/templates/profile.toml`, filled in.
 - Write `.claude/workflow/profile.md` from `$KIT/templates/profile.md`. It points to the rules by reference (anchors in `CLAUDE.md`), and covers sensitive data, secrets and environment quirks.
 - **`ruleset`,** as a plain line on a line of its own, in place of the template's `# ruleset = false` (the key at the start, nothing after the value: a shell script reads it without TOML):
-  - `ruleset = true` only when the rulesets could be read and `WF protection --rulesets .workflow/rulesets.json --repo .workflow/repo.json --json` exits 0 with `"protected": true`;
-  - otherwise `ruleset = false`, which is solo mode. That includes rulesets that can't be read from here, **Exit 2** (an input it refuses), any other failure, and a bypass list it can't see (only a ruleset's admins can): an unknown counts as unprotected.
-- **`experience`,** from the answer, in place of the template's `# experience = "new"`: `experience = "new"` (*new to building*, also when the question was skipped) or `experience = "developer"`.
+  - `ruleset = true` only when the rulesets could be read and `WF protection --rulesets .workflow/rulesets.json --repo .workflow/repo.json --base <the base branch> --json`, run in the project, exits 0 with `"protected": true`. Always give `--base`, the base branch exploring found: without it the command reads the base branch from whichever profile it finds, the kit's own included;
+  - otherwise `ruleset = false`, which is solo mode. That includes rulesets that can't be read from here, **Exit 2** (an input it refuses, usually a ruleset fetched as a summary: fetch each in full by its id again, once, and write `false` only if it still exits 2), any other failure, and a bypass list it can't see (only a ruleset's admins can): an unknown counts as unprotected.
+- **`experience`,** from the answer, in place of the template's `# experience = "new"`: `experience = "new"` (*new to building*) or `experience = "developer"`. When the question was skipped, leave the template's commented line as it is: left out, the level is unknown and the guided start asks.
 - The run-only settings (`[areas]`, `[release]`, `run.ticket_environment`, `run.conductor_environment`, `run.permission_mode`, `run.environment_setup`) keep the template's defaults until "Set up unattended runs".
-- Run `WF profile check` with `CLAUDE_PROJECT_DIR` set to the project, and fix what it reports.
+- Run `WF profile check` with `CLAUDE_PROJECT_DIR` set to the project, and fix what it reports, except its two warnings that `run.ticket_environment` and `run.conductor_environment` are empty: those are expected until "Set up unattended runs" names them. Leave them, and don't ask for the names.
 - **Setup:** `commands.setup` installs the project's own dependencies from its files (`npm ci`, a virtualenv from `requirements.txt`), and `commands.setup_check` exits 0 once that has run (`test -d node_modules`, `test -x .venv/bin/python`). The kit runs setup at each session start when the check fails, since a cloud session starts from a fresh clone. Both empty when there is nothing to install. The environments' setup script (`run.environment_setup`) is left to "Set up unattended runs".
 
 **2. The kit.**
@@ -99,7 +99,7 @@ Everything else takes the template's default, or what exploring found: the comma
 
 **6. A CI job,** in vendored mode: copy `$KIT/templates/github/workflow-kit.yml` to `.github/workflows/workflow-kit.yml`, replacing `BASE_BRANCH` with the base branch. Its check, `workflow kit`, goes in `ci.required_checks`. Also copy `$KIT/templates/github/workflow-kit-update.yml` to `.github/workflows/workflow-kit-update.yml`: the weekly check that opens an issue when a newer kit release is out (not a required check).
 
-**7. `.gitignore` gets `.workflow/` and `__pycache__/`.** `vendor install` adds them; check they're there.
+**7. `.gitignore` gets `.workflow/` and `__pycache__/`.** `vendor install` adds them in vendored mode; check they're there. In plugin mode, add them yourself. Either way, before committing, check that nothing under `.workflow/` (the read-back's files) is staged.
 
 **8. A "Workflow" section in `CLAUDE.md`.** It points at `.claude/workflow/flow.md` and the profile, says a session starts with the guided start (the `start` skill: "What are we working on?", or `/start`), and replaces any older flow description. The project's own rules stay where they are.
 
@@ -118,7 +118,7 @@ Then commit, push the branch, and open the pull request. It touches protected pa
 
 Its body is short. It opens with **Merge this and start working**: once it merges, attended work starts (a session begins with the guided start, or `/start`). Then:
 - what it adds, in a few lines;
-- whether the project starts in solo mode: with `ruleset = false`, one plain line that the kit's guard refuses changes straight to `main` until it is protected, and why (no ruleset was read back, or the rulesets couldn't be read from here); with `ruleset = true`, that the base branch is protected already;
+- whether the project starts in solo mode: with `ruleset = false`, one plain line that the kit's guard refuses changes straight to the base branch (by its real name) until it is protected, and why (no ruleset was read back, or the rulesets couldn't be read from here); with `ruleset = true`, that the base branch is protected already;
 - two optional next steps, each one request to Claude, none needed to start:
   - **"Protect `main`"**: a ruleset and the merge settings, guided click by click, then a small pull request that leaves solo mode. Left out when `ruleset = true`;
   - **"Set up unattended runs"**: the two cloud environments and the questions only runs need, so Claude can work while nobody is watching. Vendored mode only.
@@ -127,7 +127,7 @@ It carries no checklist of clicks: the upgrades guide those when the person want
 
 ## 5. After the merge
 
-When the person says the pull request has merged (or you see it merged), offer "Protect `main`" once, as a choice (`AskUserQuestion`) with **Do it now** (recommended) and **Not now**. It is the `upgrade-setup` skill's `protect_main` offer: on **Do it now**, follow that skill (`.claude/skills/upgrade-setup/SKILL.md`, vendored; or the plugin's). **Not now** ends it: don't offer it again in this session. Don't offer it when set-up wrote `ruleset = true`: the base branch is protected already. Don't offer "Set up unattended runs" here unless the person asks; the PR body names it.
+When the person says the pull request has merged (or you see it merged), offer "Protect `main`" once, as a choice (`AskUserQuestion`) with **Do it now** (recommended) and **Not now**. It is the `upgrade-setup` skill's `protect_main` offer: on **Do it now**, follow that skill: `.claude/skills/upgrade-setup/SKILL.md` in vendored mode, or `$KIT/skills/upgrade-setup/SKILL.md` in plugin mode (the person may not have installed the plugin yet). **Not now** ends it: don't offer it again in this session. Don't offer it when set-up wrote `ruleset = true`: the base branch is protected already. Don't offer "Set up unattended runs" here unless the person asks; the PR body names it.
 
 ## Checklist
 

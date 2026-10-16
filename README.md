@@ -142,6 +142,8 @@ To create one:
 
 Either way it's the same environment, so create each one once.
 
+The names come from the profile's `run.ticket_environment` and `run.conductor_environment`, which set-up leaves empty. If you do this by hand, choose the two names first and put them in the profile by a pull request; "Set up unattended runs" does that for you.
+
 **The ticket environment**, named exactly as in the profile's `run.ticket_environment` (for example `myproject-ticket`):
 - **Environment variables:** only `WORKFLOW_ROLE=ticket`. Type it exactly: a value the kit doesn't know counts as `ticket` too, the strictest.
 - **Secrets:** **none.** Leave **Network secrets** empty, and put no key or token in an environment variable: no cloud keys, no Auth0, Firebase or payment credentials, no deploy tokens. Tests use fakes, and a session can't misuse a key it doesn't have.

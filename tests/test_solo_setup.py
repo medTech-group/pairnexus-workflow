@@ -57,6 +57,10 @@ def test_setup_no_longer_asks_the_run_only_questions():
 def test_setup_writes_ruleset_from_the_read_back_as_a_plain_line():
     write = _section(SETUP, "Write, on a branch")
     assert "`WF protection --rulesets" in write and "--repo" in write
+    # The base branch given, never read from whichever profile the command finds.
+    assert "--base <the base branch>" in write and "Always give `--base`" in write
+    # A ruleset fetched as a summary is fetched again before solo mode is chosen.
+    assert "fetch each in full by its id again, once" in write
     assert '`"protected": true`' in write
     assert "`ruleset = true`" in write and "`ruleset = false`" in write
     # An unknown counts as unprotected: unreadable rulesets, a failed command,
@@ -68,6 +72,8 @@ def test_setup_writes_ruleset_from_the_read_back_as_a_plain_line():
     assert "on a line of its own" in write
     # The experience from the answer.
     assert '`experience = "new"`' in write and '`experience = "developer"`' in write
+    # A skipped answer writes nothing: left out, the guided start asks.
+    assert "When the question was skipped, leave the template's commented line as it is" in write
 
 
 def test_the_lines_setup_writes_parse_as_the_profile_reads_them():
@@ -80,6 +86,18 @@ def test_the_lines_setup_writes_parse_as_the_profile_reads_them():
             assert p.ruleset is (ruleset == "true") and p.experience == level
             # Alone on its line, so the shell wrapper reads it without TOML.
             assert re.search(rf"^ruleset = {ruleset}$", after, re.M)
+
+
+def test_profile_checks_environment_warnings_are_expected_not_asked():
+    write = _section(SETUP, "Write, on a branch")
+    assert "those are expected until \"Set up unattended runs\" names them" in write
+    assert "don't ask for the names" in write
+
+
+def test_the_read_back_files_are_never_committed_in_either_mode():
+    write = _section(SETUP, "Write, on a branch")
+    assert "In plugin mode, add them yourself" in write
+    assert "nothing under `.workflow/`" in write
 
 
 def test_setup_writes_everything_else_as_today():
@@ -106,7 +124,10 @@ def test_the_pr_body_says_merge_and_start_working_with_the_upgrades_as_optional_
 
 def test_setup_offers_protect_main_once_after_the_merge():
     after = _section(SETUP, "After the merge")
-    assert "once" in after and '"Protect `main`"' in after and "**Not now**" in after
+    assert "offer \"Protect `main`\" once" in after and "**Not now**" in after
+    assert "don't offer it again in this session" in after
+    # The skill's path in both modes: the plugin may not be installed yet.
+    assert "`$KIT/skills/upgrade-setup/SKILL.md` in plugin mode" in after
     assert "`protect_main`" in after and "upgrade-setup" in after
     # Not offered when set-up found the base branch protected already.
     assert "`ruleset = true`" in after
@@ -138,6 +159,9 @@ def test_in_solo_mode_it_offers_protect_main_first_with_the_warning_when_skipped
     first = _runs("Protect `main` first")
     assert "`solo_mode`" in first and "**Not now**" in first
     assert "GitHub won't hold a merge for failing checks" in first
+    # Whatever the first path's end, this path goes on, with the warning if needed.
+    assert "come back here, whatever its end" in first
+    assert "If `main` still isn't protected when you come back, show the warning" in first
     text = UPGRADE.read_text()
     assert text.index("## 1. Protect `main` first") < text.index("## 2. The questions only runs need")
 
@@ -182,6 +206,9 @@ def test_the_readme_leads_with_the_solo_setup_and_keeps_the_fallback_steps():
     assert m, "no Set up unattended runs section"
     assert "upgrade-setup" in m.group(1) and "Step 5" in m.group(1) and "fallback" in m.group(1)
     assert readme.index("### Set up unattended runs") < readme.index("### Step 5.")
+    # Steps 3 to 5 stay, after the upgrades, as their fallback.
+    for step in ("### Step 3.", "### Step 4.", "### Step 5."):
+        assert readme.index("### Protect `main`") < readme.index(step), step
 
 
 def test_install_md_matches_the_solo_setup():
