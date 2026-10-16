@@ -28,8 +28,6 @@ import re
 import subprocess
 import sys
 
-from . import fallback
-
 NEEDS = "3.11"
 DEFAULT_TICKET_BRANCH = "claude/build-*"
 _TICKET_BRANCH = re.compile(r"""^\s*ticket_branch\s*=\s*["']([^"']+)["']""", re.M)
@@ -85,12 +83,15 @@ def _problem(version):
     ).format(NEEDS, version, NEEDS)
 
 
-_decision = fallback.output
+def _decision(decision, reason):
+    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision, "permissionDecisionReason": reason}}
 
 
 def _guard(event, firm, version, root=None):
     if firm:
         return _decision("deny", "Refused: " + _problem(version) + ".")
+    from . import fallback  # here, inside main's try: a ticket session's refusal never depends on it
+
     why = "`python3` here is {} and the kit needs Python {} or newer".format(version, NEEDS)
     fixes = "To fix it: install Python {}+ (python.org, Homebrew or your package manager) so that `python3` runs it, then start a new session.".format(NEEDS)
     d = fallback.decide(event, fallback.solo(root) if root else False, why, fixes)
@@ -134,6 +135,8 @@ def main(argv, stdin_text=None, env=None, version=None, cwd=None):
 def _hook(sub, stdin_text, env, version, cwd):
     if sub == "guard" and _env_firm(env):  # nothing to read: every tool is refused
         return _guard(None, True, version)
+    from . import fallback  # here, inside main's try, as in _guard
+
     text = sys.stdin.buffer.read().decode("utf-8", "replace") if stdin_text is None else stdin_text
     event = fallback.read_event(text) if text.strip() else {}
     here = event.get("cwd") if isinstance(event, dict) and isinstance(event.get("cwd"), str) else None

@@ -703,7 +703,8 @@ def _ticket_branch_without_the_kit(event: dict) -> bool:
     """With the profile unreadable, whether the branch matches its
     `run.ticket_branch`, read as the old-Python fallback reads it."""
     try:
-        return _old_python._firm(os.environ, event.get("cwd") or str(project_root()))
+        cwd = event.get("cwd")
+        return _old_python._firm(os.environ, cwd if isinstance(cwd, str) and cwd else str(project_root()))
     except Exception:
         return False
 
@@ -711,6 +712,8 @@ def _ticket_branch_without_the_kit(event: dict) -> bool:
 def _hook_guard(event, raw: str = "") -> int:
     firm = roles.env_role()
     if not isinstance(event, dict):  # malformed: nothing can be checked
+        if firm is None and _ticket_branch_without_the_kit({}):
+            firm = "ticket"
         if firm in ("ticket", "conductor"):
             _deny_json(f"[workflow guard, {_role_label(firm)}] the hook's event wasn't a JSON object, so nothing could be checked and this was refused")
             return 0
@@ -865,7 +868,10 @@ def cmd_hook(a) -> int:
         return _hook_guard(event, raw) if a.name == "guard" else HOOKS[a.name](event)
     except Exception as e:  # a bug in a hook must not stop the session; say so
         if a.name == "guard":
-            if roles.env_role() in ("ticket", "conductor"):
+            firm = roles.env_role()
+            if firm is None and _ticket_branch_without_the_kit(event if isinstance(event, dict) else {}):
+                firm = "ticket"
+            if firm in ("ticket", "conductor"):
                 _deny_json(f"[workflow guard] the guard failed ({type(e).__name__}: {e}), so this was refused")
                 return 0
             print(f"workflow guard hook failed ({type(e).__name__}: {e})", file=sys.stderr)

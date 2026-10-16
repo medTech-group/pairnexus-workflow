@@ -408,3 +408,31 @@ def test_old_python_says_to_install_a_newer_python(tmp_path, capsys):
     env = {"WORKFLOW_ROLE": "attended", "CLAUDE_PROJECT_DIR": str(tmp_path)}
     reason = _old(capsys, PUSH, env, tmp_path)[1]["permissionDecisionReason"]
     assert "install Python 3.11+" in reason and "profile check" not in reason
+
+
+def test_a_malformed_event_on_a_ticket_branch_is_refused_without_a_role(tmp_path, monkeypatch, capsys):
+    root = _project(tmp_path, VALID + '[run]\nticket_branch = "agents/*"\n')
+    git = ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    subprocess.run(git + ["commit", "-q", "--allow-empty", "-m", "x"], check=True)
+    subprocess.run(git + ["checkout", "-qb", "agents/t-2"], check=True)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    monkeypatch.delenv("WORKFLOW_ROLE", raising=False)
+    monkeypatch.chdir(root)
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(b"{not json"), encoding="utf-8"))
+    assert cli.main(["hook", "guard"]) == 0
+    assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_old_python_refuses_a_ticket_session_without_importing_the_fallback(capsys, tmp_path, monkeypatch):
+    import builtins
+
+    real = builtins.__import__
+
+    def no_fallback(name, globals=None, locals=None, fromlist=(), level=0):
+        if fromlist and "fallback" in fromlist:
+            raise ImportError("fallback is missing")
+        return real(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", no_fallback)
+    code = _old_python.main(["hook", "guard"], stdin_text=json.dumps(OTHERS[0]), env={"WORKFLOW_ROLE": "ticket"}, version="3.9.6", cwd=tmp_path)
+    assert code == 0 and json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecision"] == "deny"

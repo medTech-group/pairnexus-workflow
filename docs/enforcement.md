@@ -139,7 +139,7 @@ In ticket and conductor sessions, a post that creates text (an issue, PR, commen
 The marker is looked for in the command's texts as a whole (the command, its heredocs, its body and `--input` files, what it reads with `cat` or `<`), not in each post separately: a command that posts twice passes when either text carries it. It is a seatbelt against forgetting the marker, not proof that each post is an agent's. A conductor's GraphQL post assembled by the shell (a field name from a variable, brace expansion, `xargs`) can get past it; the conductor is trusted not to hide its posts, and ticket sessions use no GraphQL at all.
 
 **When something is wrong it fails closed** in ticket and conductor sessions (`WORKFLOW_ROLE` set, or set to a value it doesn't recognise, which counts as ticket):
-- an invalid or missing profile;
+- an invalid or missing profile (an invalid profile, a malformed event or a failure outside the guard on a branch matching the profile's `run.ticket_branch` line counts as a ticket session even with `WORKFLOW_ROLE` unset, the branch read as the old-Python fallback reads it);
 - a malformed hook event;
 - an error in the guard itself;
 - the guard running out of time: 12 seconds after the kit's CLI starts loading, under the hook's 15-second timeout, its check is refused (since 0.1.10; where Python has `SIGALRM`, which Windows lacks). Reading the session's role counts too: one not read in time counts as ticket;
