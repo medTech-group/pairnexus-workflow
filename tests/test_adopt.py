@@ -557,3 +557,14 @@ def test_a_symlinked_folder_is_refused_and_nothing_outside_changes(tmp_path):
 def test_no_profile_names_the_folder(tmp_path):
     p = _cli(tmp_path, "adopt", "--owner=ada", "--repo=ada/x", "--name=x", f"--project={tmp_path / 'typo'}")
     assert p.returncode == 1 and str(tmp_path / "typo") in p.stderr
+
+
+# Review round 3.
+
+
+def test_an_invalid_wrangler_toml_is_refused_in_words(copy):
+    (copy / "wrangler.toml").write_text('name = "bad\\q"\n')
+    before = _snapshot(copy)
+    p = _run(copy)
+    assert p.returncode == 1 and "wrangler.toml isn't valid TOML" in p.stderr and "Traceback" not in p.stderr
+    assert _snapshot(copy) == before

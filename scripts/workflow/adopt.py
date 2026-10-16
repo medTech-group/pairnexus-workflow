@@ -265,6 +265,10 @@ def plan(root: Path, owner: str, repo: str, name: str) -> Result:
     if text is None:
         res.notes.append(f"Skipped {WRANGLER}: not there")
     else:
+        try:
+            tomllib.loads(text)
+        except tomllib.TOMLDecodeError as e:
+            raise AdoptError(f"{WRANGLER} isn't valid TOML: {e}") from e
         new_text = _wrangler(text, dashed_name)
         if new_text is None:
             res.notes.append(f"Skipped {WRANGLER}: no top-level name")
