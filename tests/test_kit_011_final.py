@@ -23,10 +23,12 @@ M = AGENT_MARKER
 # garbage collector off (as `timeit` does). The ratio of the two is what is
 # judged, never seconds. Linear work grows about 8 times from one size to the
 # other, quadratic about 64 times and exponential beyond measure; a ratio
-# under 24 passes.
+# under 24 passes. A large run past ENOUGH seconds of CPU ends the repeats: a
+# run that long is a regression to judge now, never noise.
 GROWTH = 8
 LINEAR_LIMIT = 24
 REPEATS = 5
+ENOUGH = 2
 
 
 def assert_grows_linearly(run, make, n):
@@ -42,6 +44,8 @@ def assert_grows_linearly(run, make, n):
                 start = time.process_time()
                 run(arg)
                 best[i] = min(best[i], time.process_time() - start)
+            if best[1] > ENOUGH:
+                break
     finally:
         if enabled:
             gc.enable()
@@ -401,8 +405,8 @@ def test_bundled_repo_flag_is_linear(profile, tmp_path):
     from workflow.guard import _gh_problem  # noqa: F401  (the path the regex runs on)
 
     def run(cmd):  # each size reaches the `-R` reading, so the regex is what is timed
-        d = act(profile, tmp_path, cmd, role="ticket")
-        assert d.action == "deny" and "work only in acme/demo" in d.reason
+        decision = act(profile, tmp_path, cmd, role="ticket")
+        assert decision.action == "deny" and "work only in acme/demo" in decision.reason
 
     assert_grows_linearly(run, lambda n: "gh pr list --search '-" + "R" * n + "\nx'", 80_000)
 
@@ -460,14 +464,19 @@ def test_more_routes_refused(cmd, profile, tmp_path):
 
 
 def test_many_words_stay_fast(profile, tmp_path):
-    def deciding(action):  # each size reads every word and decides as the full size does
-        def run(cmd):
-            assert act(profile, tmp_path, cmd, role="ticket").action == action
+    from workflow.guard import _NO_MARKER
 
-        return run
+    # Each size reads every word: an allow comes only at the end, and the
+    # missing marker is found once every word has been read.
+    def allowed(cmd):
+        assert act(profile, tmp_path, cmd, role="ticket").action == "allow"
 
-    assert_grows_linearly(deciding("allow"), lambda n: "git status " + "a " * n, 5000)
-    assert_grows_linearly(deciding("deny"), lambda n: "gh pr create " + "-t x " * n, 3000)
+    def refused_for_the_marker(cmd):
+        decision = act(profile, tmp_path, cmd, role="ticket")
+        assert decision.action == "deny" and decision.reason == _NO_MARKER
+
+    assert_grows_linearly(allowed, lambda n: "git status " + "a " * n, 5000)
+    assert_grows_linearly(refused_for_the_marker, lambda n: "gh pr create " + "-t x " * n, 3000)
 
 
 # ---------- the review of the heredoc rule ----------
