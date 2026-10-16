@@ -180,7 +180,7 @@ class SoloRefusal:
 
 # Credentials a command may carry: a URL's user:password@, a token variable's value.
 _URL_CREDENTIALS = re.compile(r"(?<=://)[^/\s@'\"]+@")
-_SECRET_VARS = re.compile(r"(?i)\b(\w*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|CREDENTIALS?)\w*)(?:[ \t]+=[ \t]*|=)(?:'[^']*'|\"[^\"]*\"|\S+)")
+_SECRET_VARS = re.compile(r"(?i)\b(\w*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|CREDENTIALS?)\w*)([ \t]+=[ \t]*|=(?:[ \t]+(?=['\"]))?)(?:'[^']*'|\"[^\"]*\"|\S+)")
 _SECRET_HEADERS = re.compile(r"(?i)(authorization:\s*(?:\w+\s+)?|bearer\s+|extraheader=)[^\s\"']+")
 _WITHOUT_SENSITIVE = "without the text that matches the project's sensitive-data pattern"
 _HAND_MAX = 400  # longer than this, the hand command isn't repeated
@@ -189,7 +189,7 @@ _HAND_MAX = 400  # longer than this, the hand command isn't repeated
 def _hand_command(command: str) -> str:
     """The command to run by hand, as code, with credentials masked; or a
     pointer back to it when it's too long to repeat."""
-    text = _SECRET_HEADERS.sub(r"\1…", _SECRET_VARS.sub(r"\1=…", _URL_CREDENTIALS.sub("…@", command.strip())))
+    text = _SECRET_HEADERS.sub(r"\1…", _SECRET_VARS.sub(r"\1\2…", _URL_CREDENTIALS.sub("…@", command.strip())))
     if len(text) > _HAND_MAX:
         return " the command as you gave it (too long to repeat here)."
     code = _code_span(text)
@@ -213,8 +213,8 @@ def _code_span(text: str) -> str:
 def solo_refusal(base: str, level: str, command: str, refusal: SoloRefusal, sensitive: bool = False) -> str:
     """The reason a solo-mode refusal gives, which Claude relays: why in plain
     words, what `base` is (only for `level` "new"), the command to run by hand
-    (never repeated when `sensitive`: it holds text matching a sensitive
-    pattern), and the "Protect" offer. Wording follows `level`; what is refused never does."""
+    and what the kit saw (neither when `sensitive`: the input holds text
+    matching a sensitive pattern, which either may repeat), and the "Protect" offer. Wording follows `level`; what is refused never does."""
     what = refusal.what
     if refusal.kind == "unknown":
         hint = refusal.hint or "push the branch by name (`git push origin <branch>`)"
@@ -223,7 +223,7 @@ def solo_refusal(base: str, level: str, command: str, refusal: SoloRefusal, sens
         lines = [f"This would set git up so that a later push changes `{base}` without a pull request. Without GitHub's protection set up, the kit doesn't allow that."]
     else:
         lines = [f"This would change `{base}` directly. Without GitHub's protection set up, the kit doesn't allow that."]
-    if what:
+    if what and not sensitive:
         lines.append(f"What the kit saw: {what}.")
     if level == "new":
         lines.append(f"`{base}` is the branch the project's work comes together on: the version everyone builds on, which should change only through a pull request.")

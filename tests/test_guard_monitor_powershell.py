@@ -231,6 +231,7 @@ def test_a_powershell_hand_command_with_sensitive_text_is_not_repeated(tmp_path,
     "$env:GH_TOKEN = 'ghp_abc123'; git push origin main",
     "$env:GH_TOKEN='ghp_abc123'; git push origin main",
     "$env:API_KEY = ghp_abc123; git push origin main",
+    "$env:GH_TOKEN= 'ghp_abc123'; git push origin main",
 ])
 def test_a_powershell_token_is_masked_in_the_hand_command(prof, cmd):
     d = act(prof, tool("PowerShell", "bypassPermissions", command=cmd), "attended")
@@ -348,6 +349,9 @@ def test_enforcement_md_records_the_release_gate_step_for_item_10():
     assert "#36" in line
 
 
+# ---------- masks and sensitive text in the refusals ----------
+
+
 @pytest.mark.parametrize("cmd", ["GITHUB_TOKEN= gh pr merge 5 --admin", "GH_TOKEN= git push origin main"])
 def test_an_emptied_token_keeps_the_command_after_it(prof, cmd):
     # `VAR= cmd` unsets a token for one command: the mask stops at the `=`.
@@ -356,10 +360,22 @@ def test_an_emptied_token_keeps_the_command_after_it(prof, cmd):
     assert f"`{cmd}`" in d.reason
 
 
+def test_a_spaced_comparison_keeps_its_spaces(prof):
+    cmd = "[ $GH_TOKEN = abc ] && git push origin main"
+    d = act(prof, tool("Bash", "bypassPermissions", command=cmd), "attended")
+    assert "abc" not in d.reason
+    assert "[ $GH_TOKEN = … ] && git push origin main" in d.reason
+
+
 @pytest.mark.parametrize("name", ["Bash", "Monitor"])
-def test_a_solo_refusal_never_repeats_sensitive_text(tmp_path, name):
+@pytest.mark.parametrize("cmd", [
+    "git commit -m PATIENT-1234; git push origin main",
+    "git push origin 'HEAD:PATIENT-1234-*'",
+    "gh api -X PATCH 'repos/acme/demo/git/refs/heads/main?n=PATIENT-1234' -f sha=x",
+])
+def test_a_solo_refusal_never_repeats_sensitive_text(tmp_path, name, cmd):
     p = _sensitive(tmp_path, False)
-    d = act(p, tool(name, command="git commit -m PATIENT-1234; git push origin main"), "attended")
+    d = act(p, tool(name, command=cmd), "attended")
     assert d.action == "deny"
     assert "PATIENT" not in d.reason
     assert "without the text that matches the project's sensitive-data pattern" in d.reason
@@ -367,8 +383,9 @@ def test_a_solo_refusal_never_repeats_sensitive_text(tmp_path, name):
 
 def test_a_solo_mcp_refusal_never_repeats_sensitive_text(tmp_path):
     p = _sensitive(tmp_path, False)
-    ev = tool("mcp__github__create_or_update_file", owner="acme", repo="demo", path="notes.md",
+    ev = tool("mcp__github__create_or_update_file", owner="acme", repo="demo", path="PATIENT-1234.md",
               content="PATIENT-1234", message="PATIENT-1234", branch="main")
     d = act(p, ev, "attended")
     assert d.action == "deny"
     assert "PATIENT" not in d.reason
+    assert "without the text that matches the project's sensitive-data pattern" in d.reason
