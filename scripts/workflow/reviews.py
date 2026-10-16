@@ -35,13 +35,14 @@ RESULTS = ("clean", "not-clean")
 
 _FIELDS = ("kind", "round", "commit", "reviewers", "result")
 # A record line is a line of its own, at the start of the line as the writer
-# writes it, outside any code block: one quoted in a sentence, in backticks, in
+# writes it, before any code fence: one quoted in a sentence, in backticks, in
 # a list or quote, or in a code block isn't read as a record. When in doubt the
-# reader leaves a line out: a record missed is asked for again, a quoted one
-# counted could pass a review that never happened.
+# reader leaves a line out: a record missed is posted again, a quoted one
+# counted could pass a review that never happened. Telling where a code block
+# ends takes Markdown's whole grammar, so nothing after the first fence-like
+# line counts; the writer's comment has none.
 _LINE = re.compile(r"<!-- workflow:review (\S[^\n]*?\S) -->[ \t]*")
-# A fence, after any indentation and any list or quote markers before it.
-_FENCE = re.compile(r"((?:[ \t]|>|[-+*](?=[ \t])|[0-9]{1,9}[.)](?=[ \t]))*)(`{3,}|~{3,})(.*)")
+_FENCE = ("```", "~~~")
 _LINE_END = re.compile(r"\r\n|\r|\n")
 _SHA = re.compile(r"[0-9a-f]{40}")
 # A round's number, at most six digits (int() refuses past Python's digit limit).
@@ -80,7 +81,7 @@ def _shown(value, n: int) -> str:
     """A value as the refusal quotes it: cut to `n` characters, control
     characters and backticks escaped."""
     text = str(value)
-    cut = "".join("\\`" if c == "`" else c if c.isprintable() else repr(c)[1:-1] for c in text[:n])
+    cut = "".join("\\" + c if c in "`\\" else c if c.isprintable() else repr(c)[1:-1] for c in text[:n])
     return cut + ("…" if len(text) > n else "")
 
 
@@ -155,35 +156,15 @@ def _parse(fields: str) -> Record | None:
 
 
 def records_in(text) -> list[Record]:
-    """Every well-formed record line in one comment's text, in order, outside
-    code blocks. A malformed one, or text that isn't a string, yields nothing;
-    never raises."""
+    """Every well-formed record line in one comment's text, in order, up to its
+    first code fence. A malformed one, or text that isn't a string, yields
+    nothing; never raises."""
     if not isinstance(text, str):
         return []
     out = []
-    fence, nested = "", False  # the open fence, and whether it opened inside a list or quote
     for line in _LINE_END.split(text):
-        f = _FENCE.fullmatch(line)
-        # A backtick fence's info string can't hold a backtick (it's code in a line then).
-        if f and f.group(2)[0] == "`" and "`" in f.group(3):
-            f = None
-        if fence:
-            if f and not f.group(1) and nested:
-                # A fence at the start of the line ends the list or quote, so its
-                # code block too, and opens a new one.
-                fence, nested = f.group(2), False
-            elif f and f.group(2)[0] == fence[0] and len(f.group(2)) >= len(fence) and not f.group(3).strip():
-                # Closed by a line of the same character, at least as long.
-                if nested or len(f.group(1)) <= 3 and not f.group(1).strip():
-                    fence = ""
-            continue
-        if f:
-            prefix = f.group(1)
-            # Indented, it may sit in a list item: treated as nested, the safe side.
-            fence, nested = f.group(2), bool(prefix)
-            if len(prefix) > 3 and not prefix.strip():
-                fence = ""  # indented four or more: code already, not a fence
-            continue
+        if any(f in line for f in _FENCE):
+            break
         m = _LINE.fullmatch(line)
         r = _parse(m.group(1)) if m else None
         if r is not None:

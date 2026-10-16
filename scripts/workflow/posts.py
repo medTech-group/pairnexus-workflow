@@ -54,6 +54,8 @@ def decode_values(text: str) -> list:
         except ValueError:
             # A number past Python's digit limit (int() refuses it).
             raise CommentsError("a number in the JSON is too long to read") from None
+        except RecursionError:
+            raise CommentsError("the JSON is nested too deeply to read") from None
         out.append(value)
 
 
@@ -72,7 +74,7 @@ def _number(comment: dict) -> int | None:
     the `#issuecomment-<n>` of its URL (node ids such as "IC_kw…" aren't numbers)."""
     cid = comment.get("id")
     if isinstance(cid, int) and not isinstance(cid, bool):
-        return cid
+        return cid if 0 <= cid < 10**20 else None
     if isinstance(cid, str) and re.fullmatch(r"[0-9]{1,20}", cid.strip()):
         return int(cid.strip())
     for key in ("html_url", "url"):
@@ -111,7 +113,10 @@ def comments_from(value) -> list[dict]:
         else:
             raise CommentsError(f"{where} is a {type(v).__name__}, not a comment or a list of them")
 
-    walk(value, "the JSON")
+    try:
+        walk(value, "the JSON")
+    except RecursionError:
+        raise CommentsError("the JSON is nested too deeply to read") from None
     return out
 
 
