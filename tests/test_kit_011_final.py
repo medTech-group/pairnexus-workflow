@@ -16,6 +16,30 @@ from workflow.profile import DEFAULT_PROTECTED
 
 M = AGENT_MARKER
 
+# How the linear-time checks below measure: the same call at size n/8 and at
+# size n, interleaved and best of a few repeats each, so a busy machine slows
+# both alike and the ratio of the two is what is judged, never seconds. Linear
+# work grows about 8 times from one size to the other, quadratic about 64
+# times and exponential beyond measure; a ratio under 24 passes.
+GROWTH = 8
+LINEAR_LIMIT = 24
+REPEATS = 5
+
+
+def grows_linearly(run, make, n):
+    """The ratio of `run(make(n))`'s best time to `run(make(n // GROWTH))`'s,
+    asserted under LINEAR_LIMIT. `make` builds the input outside the timing."""
+    small, large = make(n // GROWTH), make(n)
+    best = {"small": float("inf"), "large": float("inf")}
+    for _ in range(REPEATS):
+        for size, arg in (("small", small), ("large", large)):
+            start = time.perf_counter()
+            run(arg)
+            best[size] = min(best[size], time.perf_counter() - start)
+    ratio = best["large"] / max(best["small"], 1e-9)
+    assert ratio < LINEAR_LIMIT, f"{n // GROWTH} -> {n} took {ratio:.1f} times as long ({best})"
+
+
 
 def act(profile, root, cmd, role="conductor"):
     branch = "claude/build-1" if role == "ticket" else "main"
@@ -99,9 +123,8 @@ def test_issue_view_with_its_comments_reads_the_comments():
 
 
 def test_seal_of_many_blank_lines_is_fast():
-    start = time.perf_counter()
     assert render.seal_of("x" + "\n" * 200_000 + "y") == (None, None)
-    assert time.perf_counter() - start < 1
+    grows_linearly(render.seal_of, lambda n: "x" + "\n" * n + "y", 200_000)
 
 
 def test_seal_still_reads_as_before():
@@ -157,16 +180,18 @@ def test_conductor_reads_what_graphql_reads(case, profile, tmp_path):
 def test_gql_lexing_is_linear():
     from workflow.guard import _gql_plain
 
-    start = time.perf_counter()
     assert _gql_plain('"' + '\\"' * 200_000) is None
     assert _gql_plain('"""' + '\\"""' * 100_000) is None
-    assert time.perf_counter() - start < 1
+    grows_linearly(_gql_plain, lambda n: '"' + '\\"' * n, 200_000)
+    grows_linearly(_gql_plain, lambda n: '"""' + '\\"""' * n, 100_000)
 
 
 def test_into_is_linear():
-    start = time.perf_counter()
-    protected_named("Add it to" + " " * 200_000 + "x\n```\n.env\n```\n", DEFAULT_PROTECTED)
-    assert time.perf_counter() - start < 1
+    grows_linearly(
+        lambda text: protected_named(text, DEFAULT_PROTECTED),
+        lambda n: "Add it to" + " " * n + "x\n```\n.env\n```\n",
+        200_000,
+    )
 
 
 def test_more_clauses_and_fences():
@@ -222,10 +247,8 @@ def test_a_name_graphql_doesnt_allow_fails_closed(profile, tmp_path):
 def test_many_mutation_words_are_read_in_linear_time():
     from workflow.guard import _mutation_calls
 
-    start = time.perf_counter()
-    _mutation_calls("mutation " * 20_000 + "{a}")
-    _mutation_calls("mutation{" + "a " * 50_000 + "}")
-    assert time.perf_counter() - start < 1
+    grows_linearly(_mutation_calls, lambda n: "mutation " * n + "{a}", 20_000)
+    grows_linearly(_mutation_calls, lambda n: "mutation{" + "a " * n + "}", 50_000)
 
 
 # ---------- the last pass: older routes it found ----------
@@ -366,17 +389,14 @@ def test_parameters_and_routes_outside_free_text(cmd, profile, tmp_path):
     assert act(profile, tmp_path, cmd, role="ticket").action == "deny", cmd
 
 
-def test_bundled_repo_flag_is_linear():
+def test_bundled_repo_flag_is_linear(profile, tmp_path):
     from workflow.guard import _gh_problem  # noqa: F401  (the path the regex runs on)
 
-    start = time.perf_counter()
-    act_cmd = "gh pr list --search '-" + "R" * 80_000 + "\nx'"
-    from workflow.guard import decide as _d
-    from workflow.profile import parse as _p
-    import conftest, tempfile, pathlib
-    root = pathlib.Path(tempfile.mkdtemp())
-    _d({"tool_name": "Bash", "tool_input": {"command": act_cmd}}, _p(json.loads(json.dumps(conftest.BASE_PROFILE)), root), "ticket", root, "claude/build-1", role_from_env=True)
-    assert time.perf_counter() - start < 2
+    grows_linearly(
+        lambda cmd: act(profile, tmp_path, cmd, role="ticket"),
+        lambda n: "gh pr list --search '-" + "R" * n + "\nx'",
+        80_000,
+    )
 
 
 # ---------- what the guard can't tell from text: the heredoc is the way ----------
@@ -432,10 +452,11 @@ def test_more_routes_refused(cmd, profile, tmp_path):
 
 
 def test_many_words_stay_fast(profile, tmp_path):
-    start = time.perf_counter()
-    act(profile, tmp_path, "git status " + "a " * 5000, role="ticket")
-    act(profile, tmp_path, "gh pr create " + "-t x " * 3000, role="ticket")
-    assert time.perf_counter() - start < 3
+    def run(cmd):
+        act(profile, tmp_path, cmd, role="ticket")
+
+    grows_linearly(run, lambda n: "git status " + "a " * n, 5000)
+    grows_linearly(run, lambda n: "gh pr create " + "-t x " * n, 3000)
 
 
 # ---------- the review of the heredoc rule ----------

@@ -94,6 +94,8 @@
 
 **A guard test no longer fails when `WORKFLOW_ROLE` is set** (#132). `test_hook_takes_the_project_roots_branch_when_the_cwd_has_none` clears the variable for its in-process assertions too, not only for the hook it runs, so the local suite passes in ticket sessions and the conductor's. No assertion changed.
 
+**The guard's linear-time tests no longer fail on a busy machine** (#146). The six tests in `tests/test_kit_011_final.py` that held a call to a time limit in seconds (the seal, GraphQL lexing, `protected_named`, mutation words, a bundled `-R` and many words) now time the same call at size n/8 and at size n, interleaved and best of five each, and fail when the larger takes 24 times as long or more: linear work takes about 8 times, quadratic about 64. Load slows both sizes alike, so they passed 30 runs in a row beside two busy processes per CPU, and each still fails when the call is made quadratic. No test was removed or skipped.
+
 **`workflow protection` reads back whether the base branch is protected** (#44, part of solo mode, #32). A session hands it the rulesets, each in full, and the repository's settings, as JSON files ([docs/protection.md](docs/protection.md)).
 
 - It says whether the base branch is protected, and lists each missing protection on its own line, in plain words.
