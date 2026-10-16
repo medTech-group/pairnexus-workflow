@@ -3,8 +3,8 @@
 `merge_inputs` fetches what `workflow merge-check --fetch <n>` needs, in the
 shapes its files take (`merge.INPUTS`), every page: each input becomes
 `(value, None)`, or `(None, why)` when it couldn't be fetched, so the command
-says which input is missing and how to give it as a file. It only reads: every
-call is a GET (GraphQL's query included), and nothing is written.
+says which input is missing and how to give it as a file. It only reads:
+nothing is written, here or on GitHub.
 
 `gh api --paginate --slurp` gives the pages as one list; a gh too old for
 `--slurp` prints them one after another, which are read one by one.
@@ -19,7 +19,8 @@ from urllib.parse import quote
 from .posts import CommentsError, _login, comments_from, decode_values
 
 TIMEOUT = 120  # seconds for one `gh api` call, every page
-NO_GH = "gh (the GitHub CLI) isn't installed here, so it couldn't be fetched: give --{name} as a file"
+NOT_INSTALLED = "gh (the GitHub CLI) isn't installed here"
+AS_A_FILE = "so it couldn't be fetched: give --{name} as a file"
 
 # A pull request's review threads come only from GraphQL, 100 to a page; gh's
 # --paginate follows pageInfo.endCursor through $endCursor.
@@ -48,9 +49,9 @@ def available() -> bool:
 
 def _run(args: list[str]) -> subprocess.CompletedProcess:
     try:
-        return subprocess.run(["gh", *args], capture_output=True, text=True, timeout=TIMEOUT)
+        return subprocess.run(["gh", *args], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=TIMEOUT)
     except FileNotFoundError:
-        raise GhError("gh (the GitHub CLI) isn't installed here") from None
+        raise GhError(NOT_INSTALLED) from None
     except subprocess.TimeoutExpired:
         raise GhError(f"gh api took longer than {TIMEOUT} seconds") from None
     except OSError as e:
@@ -74,7 +75,11 @@ def _values(text: str):
 
 def api(path: str, paginate: bool = False, fields: list[tuple[str, str]] | None = None):
     """`gh api <path>`'s JSON; with `paginate`, every page as a list of pages.
-    `fields` are (flag, "key=value") pairs: `-f` for text, `-F` for a number."""
+    `fields` are (flag, "key=value") pairs, `-f` for text and `-F` for a
+    number, for GraphQL's query only: on a REST path they would make gh send
+    a POST, a write."""
+    if fields and path != "graphql":
+        raise ValueError("fields go only with graphql")
     extra = [a for flag, kv in (fields or []) for a in (flag, kv)]
     if not paginate:
         p = _run(["api", path, *extra])
@@ -89,8 +94,18 @@ def api(path: str, paginate: bool = False, fields: list[tuple[str, str]] | None 
     p = _run(["api", "--paginate", path, *extra])
     if p.returncode:
         raise _failed(p)
-    v = decode_values(p.stdout) if p.stdout.strip() else []
-    return v  # the pages, one after another
+    try:
+        return decode_values(p.stdout)  # the pages, one after another
+    except CommentsError as e:
+        raise GhError(f"gh api's output isn't JSON ({e})") from None
+
+
+def _items(v) -> list:
+    """The items of a paginated answer: its pages' items, a page taken as one item."""
+    out = []
+    for page in v if isinstance(v, list) else [v]:
+        out += page if isinstance(page, list) else [page]
+    return out
 
 
 def _not_found(e: GhError) -> bool:
@@ -107,7 +122,7 @@ def merge_inputs(repo: str, number: int, have: dict, names) -> dict:
     if not names:
         return out
     if not available():
-        return {n: (None, NO_GH.format(name=n)) for n in names}
+        return {n: (None, f"{NOT_INSTALLED}, {AS_A_FILE.format(name=n)}") for n in names}
     r = f"repos/{repo}"
     owner, _, name = repo.partition("/")
 
@@ -116,7 +131,7 @@ def merge_inputs(repo: str, number: int, have: dict, names) -> dict:
             try:
                 out[n] = (fn(), None)
             except GhError as e:
-                out[n] = (None, str(e))
+                out[n] = (None, f"{e}, {AS_A_FILE.format(name=n)}")
 
     def given(n: str):
         got = have.get(n) or out.get(n)
@@ -145,13 +160,13 @@ def merge_inputs(repo: str, number: int, have: dict, names) -> dict:
         sha = need("head commit", head)
         runs = api(f"{r}/commits/{sha}/check-runs?per_page=100", paginate=True)
         status = api(f"{r}/commits/{sha}/status?per_page=100", paginate=True)
-        return [*(runs if isinstance(runs, list) else [runs]), *(status if isinstance(status, list) else [status])]
+        return _items(runs) + _items(status)  # the pages of each: every value one after another, as --checks takes them
 
     get("checks", checks)
 
     def rulesets():
         listed = api(f"{r}/rulesets?includes_parents=true&per_page=100", paginate=True)
-        flat = [x for page in (listed if isinstance(listed, list) else [listed]) for x in (page if isinstance(page, list) else [page])]
+        flat = _items(listed)
         ids = [x.get("id") for x in flat if isinstance(x, dict)]
         if any(not isinstance(i, int) for i in ids) or len(ids) != len(flat):
             raise GhError("gh api's list of rulesets has an entry without an id")
@@ -171,7 +186,7 @@ def merge_inputs(repo: str, number: int, have: dict, names) -> dict:
             items = comments_from(comments)
         except CommentsError as e:
             raise GhError(f"not fetched: the comments couldn't be read ({e})") from None
-        items += [x for page in (reviews if isinstance(reviews, list) else [reviews]) for x in (page if isinstance(page, list) else [page]) if isinstance(x, dict)]
+        items += [x for x in _items(reviews) if isinstance(x, dict)]
         for x in items:
             who = _login(x)
             if who:

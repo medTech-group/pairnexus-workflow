@@ -46,7 +46,7 @@ PYTEST = re.compile(r"(?<![\w-])pytest\b")
 
 # The report's first line, which `workflow merge-check` reads back (flow §4.2).
 DIRTY = ", on a dirty tree: NOT A PROOF OF THE COMMIT"
-_HEADLINE = re.compile(r"\*\*Local full suite on `([0-9a-fA-F]{7,40})`\*\*: (passed|FAILED)((?:, on a dirty tree: NOT A PROOF OF THE COMMIT)?)")
+_HEADLINE = re.compile(r"\*\*Local full suite on `([0-9a-fA-F]{7,40})`\*\*: (passed|FAILED)(" + re.escape(DIRTY) + ")?")
 
 
 class EvidenceError(RuntimeError):

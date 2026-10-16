@@ -46,7 +46,7 @@ from . import protection, reviews, state
 from .evidence import read_headline
 from .guard import matches
 from .posts import CommentsError, _login, _number, comments_from, decode_values
-from .profile import DEFAULT_PROTECTED
+from .profile import DEFAULT_PROTECTED, Suite
 
 # The inputs, each given by its own flag (`--<name>`), and what each is called.
 INPUTS = {
@@ -770,12 +770,13 @@ def _checks(ctx: Context, add) -> None:
         add("checks_pending", names="; ".join(parts))
     failed = [n for n in required if n in by_name and by_name[n].result == "failing"]
     for n in [n for n in failed if n in ctx.waivable]:
-        if _killed(n, ctx.logs, prof.killed_markers if prof else []):
+        why = _not_killed(by_name[n].id, ctx.logs, prof)
+        if why is None:
             failed.remove(n)
             ctx.waived.append(n)
             next(c for c in ctx.checks if c["name"] == n and c["required"])["state"] = "waived"
         else:
-            _note(ctx, "waiver_not_taken", f"{_names([n])} is waived, but its log (--check-logs) shows none of the profile's `ci.killed_markers`: a real failure always blocks.")
+            _note(ctx, "waiver_not_taken", f"{_names([n])} is waived, but {why}: a real failure always blocks.")
     if ctx.waived:
         _note(ctx, "waived", f"Waived, killed rather than failed: {_names(ctx.waived)}. The suite's evidence is required (flow §4.2).")
     if failed:
@@ -785,16 +786,44 @@ def _checks(ctx: Context, add) -> None:
         _note(ctx, "failed_not_required", f"Failed, but not required, so it doesn't block: {_names(loose)}.")
 
 
-def _killed(name: str, logs: dict, markers) -> bool:
-    """The check's log (`<name>`, `<name>.log` or `<name>.txt`, a character a
-    file name can't hold written as `_`) holds one of the killed markers."""
-    safe = re.sub(r"[^\w .()-]", "_", name)
-    for key in dict.fromkeys((name, safe)):
-        for ext in ("", ".log", ".txt"):
-            text = logs.get(key + ext)
-            if text is not None and any(m and m in text for m in markers):
-                return True
-    return False
+_EXIT_CODE = re.compile(r"\bexit code (\d+)")
+
+
+def log_names(run_id: int) -> list[str]:
+    """The file names a check's log may have in --check-logs: its latest run's
+    id on the head (the check run's id, which is its Actions job's id, as
+    `gh run view --log-failed --job <id>` takes it), bare or with `.log` or
+    `.txt`. By the id, not the name, so a log kept from an earlier run, or
+    another commit's, is never read for this one."""
+    return [f"{run_id}{ext}" for ext in ("", ".log", ".txt")] if run_id else []
+
+
+def _not_killed(run_id: int, logs: dict, prof) -> str | None:
+    """Why the check's log doesn't show it was killed rather than failed; None
+    when it does. Only the first of `log_names` given is read. It must hold one
+    of the profile's `ci.killed_markers`, and no sign of a real failure: a
+    count the profile's suites read as failed or errored, or an exit code no
+    marker names."""
+    markers = [m for m in (prof.killed_markers if prof else []) if m]
+    if not markers:
+        return "the profile lists no `ci.killed_markers`"
+    text = next((logs[k] for k in log_names(run_id) if k in logs), None)
+    if text is None:
+        return f"no log was given for its run on the head (--check-logs, a file named {run_id or 'by its run id'}.log)"
+    if not any(m in text for m in markers):
+        return "its log shows none of the profile's `ci.killed_markers`"
+    # The profile's suites read their runners' counts; the defaults (pytest's) always count too.
+    for suite in [*prof.suites, Suite("", "")]:
+        for pattern in (suite.failed, suite.errors):
+            try:
+                if any(str(x).isdigit() and int(x) > 0 for x in re.findall(pattern, text)):
+                    return "its log also shows tests that failed"
+            except re.error:
+                return "its log can't be read with the profile's suite counts"
+    named = {code for m in markers for code in _EXIT_CODE.findall(m)}
+    if set(_EXIT_CODE.findall(text)) - named:
+        return "its log also shows an exit code no killed marker names"
+    return None
 
 
 def _evidence(ctx: Context, add) -> None:
@@ -965,16 +994,20 @@ def charter_from(text: str) -> dict:
     return s["charter"]
 
 
-def waivers(charter: tuple | None, role: str, profile) -> tuple[frozenset, list[dict]]:
-    """The checks the charter waives, and notes. `charter` is (text, None) or
-    (None, why it couldn't be read); None when none was given. None are taken
-    in an attended session (`role`, as the guard reads it), nor from a charter
-    that isn't approved by the owner, valid and in `merge.mode` session."""
-    if charter is None:
+def waivers(charter_input: tuple | None, role: str | None, profile) -> tuple[frozenset, list[dict]]:
+    """The checks the charter waives, and notes. `charter_input` is (text, None)
+    or (None, why it couldn't be read); None when none was given. `role` is the
+    session's as `WORKFLOW_ROLE` sets it (`roles.env_role`): waivers are taken
+    only in a ticket or conductor session, never an attended one, nor where the
+    role is only guessed from the branch or unrecognised (the guard reads both
+    as ticket, its strictest, which for waivers would be the loosest). Nor from
+    a charter that isn't approved by the owner, valid and in `merge.mode` session."""
+    if charter_input is None:
         return frozenset(), []
-    if role == "attended":
-        return frozenset(), [{"id": "charter_ignored", "message": "The charter (--charter) is ignored in an attended session: nobody waives a check by hand."}]
-    text, error = charter
+    if role not in ("ticket", "conductor"):
+        why = "in an attended session" if role == "attended" else "unless `WORKFLOW_ROLE` says this is a ticket or conductor session"
+        return frozenset(), [{"id": "charter_ignored", "message": f"The charter (--charter) is ignored {why}: nobody waives a check by hand."}]
+    text, error = charter_input
     problems: list[str] = []
     c = None
     if error is None:
@@ -984,12 +1017,12 @@ def waivers(charter: tuple | None, role: str, profile) -> tuple[frozenset, list[
             error = str(e)
     if error is not None:
         problems = [f"couldn't read it: {error}"]
+    elif profile is None or not profile.owner:
+        problems = ["the profile names no `project.owner`, so who approved it can't be checked"]
     else:
         problems = charter_mod.validate(c, require_approval=True)
-        if not problems and profile is not None:
-            problems = charter_mod.check_against_profile(
-                c, [st["name"] for st in profile.release_steps], profile.required_checks, ci_none=profile.ci_none, owner=profile.owner, ruleset=profile.ruleset
-            )
+        if not problems:
+            problems = charter_mod.against_profile(c, profile)
         if not problems and c["merge"].get("waived_checks") and c["merge"].get("mode") != "session":
             problems = [f"waivers need merge.mode session, and it is {c['merge'].get('mode')}"]
     if problems:
@@ -1023,16 +1056,16 @@ def evaluate(
     profile_error: str | None = None,
     asker: str | None = None,
     level: str = "new",
-    charter: tuple | None = None,
+    charter_input: tuple | None = None,
     logs: dict | None = None,
-    role: str = "attended",
+    role: str | None = None,
 ) -> Result:
     """The decision. `inputs` maps each name in INPUTS to (value, None) when
     read, (None, why) when it couldn't be; a name left out wasn't given (the
     preview: none). `profile_error` says why the profile couldn't be read.
-    `charter` (see `waivers`), `logs` (the checks' logs, by file name) and
-    `role` (the session's) are for the run's waivers."""
-    waivable, charter_notes = waivers(charter, role, profile)
+    `charter_input` and `role` (see `waivers`) and `logs` (the checks' logs,
+    by file name) are for the run's waivers."""
+    waivable, charter_notes = waivers(charter_input, role, profile)
     ctx = Context(inputs, profile, profile_error, waivable, logs)
     ctx.notes += charter_notes
     try:

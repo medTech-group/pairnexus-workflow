@@ -446,15 +446,7 @@ def _against_profile(c: dict, prof, who: bool = True, protected: bool | None = N
     """The charter against the profile: release steps, waived checks, auto-merge
     in solo mode and, with `who`, that the profile's project.owner approved and
     amended it."""
-    return charter_mod.check_against_profile(
-        c,
-        [st["name"] for st in prof.release_steps],
-        prof.required_checks,
-        ci_none=prof.ci_none,
-        owner=prof.owner if who else "",
-        ruleset=prof.ruleset,
-        protected=protected,
-    )
+    return charter_mod.against_profile(c, prof, who=who, protected=protected)
 
 
 def cmd_state(a) -> int:
@@ -533,6 +525,12 @@ def cmd_comments(a) -> int:
     return 0
 
 
+def _pr_number(v: str) -> int:
+    if not v.isdigit() or int(v) < 1:
+        raise argparse.ArgumentTypeError(f"{v!r} isn't a pull request's number")
+    return int(v)
+
+
 def cmd_merge_check(a) -> int:
     """Whether the pull request may merge (flow §4), from the files given, and
     with --fetch the rest through `gh api`. Changes nothing, posts nothing, and
@@ -577,19 +575,24 @@ def cmd_merge_check(a) -> int:
     charter = inputs.pop("charter", None)
     if a.fetch is not None:
         wanted = [n for n in merge_mod.INPUTS if n != "preview"]  # the preview is #41's reader's
-        if prof is None or not prof.repo:
-            inputs.update({n: (None, f"not fetched: the profile names no repository (project.repo), so give --{n} as a file") for n in wanted if n not in inputs})
+        if prof is None:
+            inputs.update({n: (None, f"not fetched: the profile couldn't be read, so its repository isn't known: give --{n} as a file") for n in wanted if n not in inputs})
         else:
             inputs.update(fetch_mod.merge_inputs(prof.repo, a.fetch, inputs, wanted))
+        pr = inputs.get("pr", (None, None))[0]
+        pr = pr[0] if isinstance(pr, list) and len(pr) == 1 else pr
+        if isinstance(pr, dict) and pr.get("number") not in (None, a.fetch):
+            # The other inputs are #<fetch>'s: a --pr file of another pull request can't go with them.
+            inputs["pr"] = (None, f"it is #{merge_mod._clean(pr.get('number'))}, not #{a.fetch} (--fetch)")
     logs: dict = {}
     if a.check_logs:
         try:
             logs = {f.name: f.read_text(encoding="utf-8", errors="replace") for f in Path(a.check_logs).iterdir() if f.is_file()}
         except OSError as e:
             print(f"workflow merge-check: can't read --check-logs {a.check_logs}: {e.strerror or e}; no check's log was read", file=sys.stderr)
-    role = roles.role(root, prof.ticket_branch, fallback=root) if prof else roles.role(root, fallback=root)
+    role = roles.env_role() if not roles.unrecognised() else None  # waivers want a firm role: see merge.waivers
     level = resolve_experience(root, prof.experience if prof else None).wording_level
-    res = merge_mod.evaluate(inputs, prof, profile_error, asker=a.asker, level=level, charter=charter, logs=logs, role=role)
+    res = merge_mod.evaluate(inputs, prof, profile_error, asker=a.asker, level=level, charter_input=charter, logs=logs, role=role)
     _out(res.as_dict() if a.json else merge_mod.text(res))
     return 0
 
@@ -1098,9 +1101,9 @@ def main(argv: list[str] | None = None) -> int:
             "threads": "GraphQL's reviewThreads, with totalCount and pageInfo, every page",
         }.get(name, "as JSON from the GitHub API, every page")
         s.add_argument(f"--{name}", metavar="F", help=f"{what} ({source}); a file, or - for standard input")
-    s.add_argument("--fetch", metavar="N", type=int, help="fetch every input not given as a file for pull request N, through `gh api` (the profile's project.repo); a file given wins")
+    s.add_argument("--fetch", metavar="N", type=_pr_number, help="fetch every input not given as a file for pull request N, through `gh api` (the profile's project.repo); a file given wins")
     s.add_argument("--charter", metavar="F", help="the run's approved charter, as JSON, or the tracking issue's body (its run state holds it): the checks it waives (flow §4.1); ignored in an attended session")
-    s.add_argument("--check-logs", metavar="DIR", help="a waived check's log, one file per check name (<name>, <name>.log or <name>.txt), as `gh run view --log-failed` gives its tail")
+    s.add_argument("--check-logs", metavar="DIR", help="a waived check's log, one file per check, named by its run's id on the head (<id>, <id>.log or <id>.txt: the check run's id, which is its job's), as `gh run view --log-failed --job <id>` gives its tail")
     s.add_argument("--asker", metavar="LOGIN", help="the GitHub login of whoever asks (the owner gets \"Ready once you've read\" for kit and CI files)")
     s.add_argument("--json", action="store_true", help="the decision, its reasons and notes, and each check's name and state, as JSON")
     s.set_defaults(fn=cmd_merge_check)

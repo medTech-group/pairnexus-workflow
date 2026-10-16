@@ -151,7 +151,7 @@ def a_charter(waived=("tests",), mode="session", approved_by="owner"):
     return c
 
 
-def waiver_case(project, monkeypatch, conclusion="failure", log="Error: Process completed with exit code 143.", role="conductor", evidence=True, log_name="tests"):
+def waiver_case(project, monkeypatch, conclusion="failure", log="Error: Process completed with exit code 143.", role="conductor", evidence=True, log_name="1"):
     markers(project)
     monkeypatch.setenv("WORKFLOW_ROLE", role)
     data = inputs()
@@ -181,9 +181,48 @@ def test_a_cancelled_waived_check_with_a_marker_counts(project, capsys, monkeypa
 
 
 def test_a_log_file_ending_in_log_counts_too(project, capsys, monkeypatch):
-    data, logs = waiver_case(project, monkeypatch, log_name="tests.log")
+    data, logs = waiver_case(project, monkeypatch, log_name="1.log")
     got, _ = run(project, capsys, data, "--check-logs", str(logs), files={"charter": json.dumps(a_charter())})
     assert got["decision"] == "ready", got["reasons"]
+
+
+@pytest.mark.parametrize("log_name", ["tests", "2.log", "tests.1.log"])
+def test_a_log_not_named_by_the_heads_run_isnt_read(project, capsys, monkeypatch, log_name):
+    # A log kept from an earlier, killed run (another id) never waives this run's failure.
+    data, logs = waiver_case(project, monkeypatch, log_name=log_name)
+    got, _ = run(project, capsys, data, "--check-logs", str(logs), files={"charter": json.dumps(a_charter())})
+    assert ids(got) == ["checks_failed"]
+    [n] = [n for n in got["notes"] if n["id"] == "waiver_not_taken"]
+    assert "no log was given for its run on the head" in n["message"]
+
+
+@pytest.mark.parametrize("log", [
+    "FAILED tests/test_a.py::test_x - AssertionError\n1 failed, 3 passed in 0.2s\nError: Process completed with exit code 143.",
+    "Error: Process completed with exit code 1.\nError: Process completed with exit code 143.",
+    "Error: Process completed with exit code 143.\n2 errors in 0.1s",
+])
+def test_a_killed_marker_beside_a_real_failure_blocks(project, capsys, monkeypatch, log):
+    data, logs = waiver_case(project, monkeypatch, log=log)
+    got, _ = run(project, capsys, data, "--check-logs", str(logs), files={"charter": json.dumps(a_charter())})
+    assert ids(got) == ["checks_failed"]
+    assert "waiver_not_taken" in note_ids(got)
+
+
+def test_a_pending_waived_check_stays_pending(project, capsys, monkeypatch):
+    data, logs = waiver_case(project, monkeypatch)
+    data["checks"]["check_runs"] = [run_("tests", status="in_progress")]
+    got, _ = run(project, capsys, data, "--check-logs", str(logs), files={"charter": json.dumps(a_charter())})
+    assert ids(got) == ["checks_pending"]
+
+
+def test_no_waiver_when_the_profile_names_no_owner(project, capsys, monkeypatch):
+    data, logs = waiver_case(project, monkeypatch)
+    path = project / ".claude/workflow/profile.toml"
+    path.write_text(path.read_text().replace('owner = "owner"\n', ""))
+    got, _ = run(project, capsys, data, "--check-logs", str(logs), files={"charter": json.dumps(a_charter(approved_by="anyone"))})
+    assert ids(got) == ["checks_failed"]
+    [n] = [n for n in got["notes"] if n["id"] == "charter_refused"]
+    assert "names no `project.owner`" in n["message"]
 
 
 def test_a_used_waiver_makes_the_evidence_required(project, capsys, monkeypatch):
@@ -225,15 +264,15 @@ def test_no_waiver_without_a_charter(project, capsys, monkeypatch):
 
 
 @pytest.mark.parametrize("bad, words", [
-    (a_charter(approved_by=None), "not been approved"),
-    (a_charter(approved_by="someone-else"), "only the owner approves a run"),
-    (a_charter(mode="auto-merge"), "auto-merge"),
-    (a_charter(mode="owner"), "merge.mode session"),
+    ({"approved_by": None}, "not been approved"),
+    ({"approved_by": "someone-else"}, "only the owner approves a run"),
+    ({"mode": "auto-merge"}, "auto-merge"),
+    ({"mode": "owner"}, "merge.mode session"),
     ("not a charter at all", "no charter"),
 ])
 def test_no_waiver_from_an_unapproved_or_unusable_charter(project, capsys, monkeypatch, bad, words):
     data, logs = waiver_case(project, monkeypatch)
-    text = bad if isinstance(bad, str) else json.dumps(bad)
+    text = bad if isinstance(bad, str) else json.dumps(a_charter(**bad))  # its times taken now, not at import
     got, code = run(project, capsys, data, "--check-logs", str(logs), files={"charter": text})
     assert code == 0
     assert ids(got) == ["checks_failed"]
@@ -254,18 +293,30 @@ def test_the_charter_from_the_tracking_issues_body(project, capsys, monkeypatch)
     assert got["decision"] == "ready", got["reasons"]
 
 
-@pytest.mark.parametrize("role", ["attended", None])
-def test_never_a_waiver_in_an_attended_session(project, capsys, monkeypatch, role):
-    data, logs = waiver_case(project, monkeypatch)
-    if role is None:  # no WORKFLOW_ROLE, and a project that isn't on a ticket branch
-        monkeypatch.delenv("WORKFLOW_ROLE")
-    else:
-        monkeypatch.setenv("WORKFLOW_ROLE", role)
+def test_never_a_waiver_in_an_attended_session(project, capsys, monkeypatch):
+    data, logs = waiver_case(project, monkeypatch, role="attended")
     got, code = run(project, capsys, data, "--check-logs", str(logs), files={"charter": json.dumps(a_charter())})
     assert code == 0
     assert ids(got) == ["checks_failed"]
     [n] = [n for n in got["notes"] if n["id"] == "charter_ignored"]
     assert n["message"] == "The charter (--charter) is ignored in an attended session: nobody waives a check by hand."
+
+
+@pytest.mark.parametrize("role, branch", [(None, "main"), (None, "claude/build-81"), ("atended", "main"), ("", "claude/build-81")])
+def test_no_waiver_unless_workflow_role_says_ticket_or_conductor(project, capsys, monkeypatch, role, branch):
+    # The guard reads a ticket branch, or a role it doesn't know, as ticket (its strictest);
+    # for waivers that would be the loosest, so only WORKFLOW_ROLE's own word counts.
+    data, logs = waiver_case(project, monkeypatch)
+    if role is None:
+        monkeypatch.delenv("WORKFLOW_ROLE")
+    else:
+        monkeypatch.setenv("WORKFLOW_ROLE", role)
+    subprocess.run(["git", "init", "-q", "-b", branch], cwd=project, check=True)
+    got, code = run(project, capsys, data, "--check-logs", str(logs), files={"charter": json.dumps(a_charter())})
+    assert code == 0
+    assert ids(got) == ["checks_failed"]
+    [n] = [n for n in got["notes"] if n["id"] == "charter_ignored"]
+    assert n["message"] == "The charter (--charter) is ignored unless `WORKFLOW_ROLE` says this is a ticket or conductor session: nobody waives a check by hand."
 
 
 def test_a_ticket_session_takes_the_waiver(project, capsys, monkeypatch):
@@ -340,6 +391,52 @@ def test_fetched_pages_left_out_are_couldnt_read(project, capsys, tmp_path, monk
     assert [x["input"] for x in got["reasons"] if x["id"] == "couldnt_read"] == ["threads"]
 
 
+def test_review_authors_permissions_are_fetched_too(project, capsys, tmp_path, monkeypatch):
+    data = with_report(inputs())
+    data["reviews"] = [review("CHANGES_REQUESTED", who="dev")]
+    r = routes(data)
+    r[f"{REPO}/collaborators/dev/permission"] = {"permission": "write", "role_name": "write", "user": {"login": "dev"}}
+    gh = fake_gh.install(tmp_path, monkeypatch, r)
+    got, _ = run(project, capsys, {}, "--fetch", "12")
+    assert ids(got) == ["changes_requested"]
+    assert f"{REPO}/collaborators/dev/permission" in gh.paths()
+
+
+def test_a_pr_file_of_another_pull_request_is_couldnt_read(project, capsys, tmp_path, monkeypatch):
+    fake_gh.install(tmp_path, monkeypatch, routes())
+    pr = with_report(inputs())["pr"]
+    pr["number"] = 13
+    got, code = run(project, capsys, {"pr": pr}, "--fetch", "12")
+    assert code == 0 and got["decision"] == "not_yet"
+    [x] = [x for x in got["reasons"] if x["id"] == "couldnt_read"]
+    assert x["input"] == "pr" and "it is #13, not #12 (--fetch)" in x["wording"]["developer"]["message"]
+
+
+def test_output_from_gh_that_isnt_json_is_couldnt_read(project, capsys, tmp_path, monkeypatch):
+    r = routes()
+    r[f"{REPO}/pulls/12/files"] = fake_gh.reply(stdout="<html>oops</html>")
+    fake_gh.install(tmp_path, monkeypatch, r, slurp=False)
+    got, code = run(project, capsys, {}, "--fetch", "12")
+    assert code == 0
+    [x] = [x for x in got["reasons"] if x["id"] == "couldnt_read"]
+    assert x["input"] == "files" and "isn't JSON" in x["wording"]["developer"]["message"]
+
+
+def test_a_listed_ruleset_without_an_id_is_couldnt_read(project, capsys, tmp_path, monkeypatch):
+    r = routes()
+    r[f"{REPO}/rulesets"] = fake_gh.pages([{"name": "Protect main"}])
+    fake_gh.install(tmp_path, monkeypatch, r)
+    got, _ = run(project, capsys, {}, "--fetch", "12")
+    assert [x["input"] for x in got["reasons"] if x["id"] == "couldnt_read"] == ["rulesets"]
+
+
+@pytest.mark.parametrize("bad", ["0", "-3", "abc"])
+def test_fetch_needs_a_pull_requests_number(project, capsys, bad):
+    with pytest.raises(SystemExit):
+        cli.main(["merge-check", "--fetch", bad])
+    assert "isn't a pull request's number" in capsys.readouterr().err or bad == "-3"
+
+
 def test_an_author_github_doesnt_know_has_no_permission(project, capsys, tmp_path, monkeypatch):
     data = inputs()
     data["comments"] = [comment(data["comments"][0]["body"], author="ghost")]
@@ -374,13 +471,14 @@ def test_gh_not_signed_in_is_couldnt_read_never_ready(project, capsys, tmp_path,
     got, code = run(project, capsys, {}, "--fetch", "12")
     assert code == 0 and got["decision"] == "not_yet"
     pr = next(x for x in got["reasons"] if x.get("input") == "pr")
-    assert "gh auth login" in pr["wording"]["developer"]["message"]
+    assert pr["wording"]["developer"]["message"].endswith("gh auth login, so it couldn't be fetched: give --pr as a file.")
 
 
 def test_without_fetch_or_files_each_input_is_named(project, capsys, tmp_path, monkeypatch):
-    fake_gh.install(tmp_path, monkeypatch, routes())
+    gh = fake_gh.install(tmp_path, monkeypatch, routes())
     got, code = run(project, capsys, {})
     assert code == 0 and got["decision"] == "not_yet"
+    assert gh.calls() == []
     assert [x["input"] for x in got["reasons"] if x["id"] == "couldnt_read"] == [n for n in merge.INPUTS if n != "preview"]
 
 
