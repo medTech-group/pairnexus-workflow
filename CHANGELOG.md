@@ -14,9 +14,9 @@
 
 **Solo mode: the guard refuses git pushes that touch the base branch** (#45, part of solo mode, #32).
 
-- **In solo mode** (`ruleset = false`), an attended session's push to the base branch is refused, never asked: a push to it (a bare push whose upstream it is, or a push from it, included), a force-push or deletion of it, `--mirror`, `--all`, `--prune` and the settings that make every push a mirror.
-- **A push whose destination the guard can't tell** (a variable, `@` with no known branch, a glob, a brace list, a detached HEAD, another directory) counts as the base branch in solo mode, and the refusal says to push the branch by name.
-- **Force-pushing or deleting a named feature branch is still asked:** the force and delete options are read with their destinations in solo mode.
+- **In solo mode** (`ruleset = false`), an attended session's push to the base branch is refused, never asked: a push to it (a bare push whose upstream it is, or a push from it, included), a force-push or deletion of it, `--mirror`, `--all`, `--prune`, and the settings that make every push a mirror or send a bare push to it (set in the command, or already on disk for a bare push).
+- **A push whose destination the guard can't tell** (a variable, `@` with no known branch, a glob, a brace list, a detached HEAD, another directory or repository, a git alias that pushes) counts as the base branch in solo mode, and the refusal says to push the branch by name.
+- **Force-pushing or deleting a named feature branch is still asked:** the force and delete options are read with their destinations in solo mode. An ask earlier in a command never hides a refusal later in it.
 - **The refusal's reason** says why in plain words, explains what `main` is to someone new to building (or of unknown experience), gives the command to run in their own terminal, and tells Claude to offer "Protect `main`" with "Not now". It is built by `guard.solo_refusal`, for the other solo-mode refusals to reuse.
 - **Unchanged:** ticket and conductor sessions, and projects with `ruleset = true` or no setting.
 - Docs: `docs/enforcement.md` §4. Tests: `tests/test_guard_solo.py`.

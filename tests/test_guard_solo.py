@@ -342,3 +342,101 @@ def test_hook_still_asks_for_a_feature_branch_and_outside_solo_mode(solo_repo):
     (solo_repo / ".claude/workflow/profile.toml").write_text(_toml(True))
     out = run_hook(bash("git push origin main", solo_repo), solo_repo, {"WORKFLOW_ROLE": "attended"})
     assert out["permissionDecision"] == "ask"
+
+
+# ---------- review round 1 ----------
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "git push -f origin my-branch && git push origin main",
+        "scripts/deploy.sh; git push origin main",
+        "git -c core.pager=less log; git push --mirror origin",
+        "git push origin :old-branch; git push origin +main",
+    ],
+)
+def test_an_earlier_ask_never_hides_a_later_refusal(cmd, solo):
+    assert act(solo, cmd).action == "deny", cmd
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "M=true git --config-env=remote.origin.mirror=M push origin feature",
+        "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.origin.mirror GIT_CONFIG_VALUE_0=true git push origin feature",
+        "GIT_CONFIG_PARAMETERS=\"'remote.origin.mirror'='true'\" git push origin feature",
+        "GIT_DIR=../other/.git git push origin HEAD",
+        "export GIT_DIR=../other/.git; git push origin HEAD",
+        "env GIT_WORK_TREE=../other git push origin HEAD",
+        "git -c alias.p='push origin main' p",
+        "git -c alias.p=push p origin main",
+        "git config push.default matching",
+        "git config remote.origin.push refs/heads/main:refs/heads/main",
+        "git config --add remote.origin.push HEAD",
+    ],
+)
+def test_config_from_the_environment_aliases_and_push_settings(cmd, solo):
+    assert act(solo, cmd).action == "deny", cmd
+
+
+@pytest.mark.parametrize("cmd", ["git config push.default simple", "git config user.name x", "git -c core.pager=less log"])
+def test_harmless_config_still_as_before(cmd, solo, tmp_path):
+    unset = on_disk(tmp_path / "unset", None)
+    assert act(solo, cmd).action == act(unset, cmd).action, cmd
+
+
+@pytest.fixture
+def on_feature(tracking_main):
+    """`feature`, tracking the remote's `feature` (not `main`)."""
+    git(tracking_main, "push", "-q", "origin", "feature:feature")
+    git(tracking_main, "branch", "-q", "-u", "origin/feature")
+    return tracking_main
+
+
+@pytest.mark.parametrize(
+    "setting",
+    [
+        ("push.default", "matching"),
+        ("remote.origin.mirror", "true"),
+        ("remote.origin.push", "refs/heads/main:refs/heads/main"),
+        ("remote.origin.push", "+refs/heads/*:refs/heads/*"),
+    ],
+)
+@pytest.mark.parametrize("cmd", ["git push", "git push origin"])
+def test_bare_push_reads_the_settings_on_disk(setting, cmd, on_feature):
+    prof = on_disk(on_feature, False)
+    assert decide(bash(cmd, on_feature), prof, "attended", on_feature, "feature").action == "allow"
+    git(on_feature, "config", *setting)
+    assert decide(bash(cmd, on_feature), prof, "attended", on_feature, "feature").action == "deny", setting
+
+
+def test_bare_push_upstream_setting_naming_the_base(on_feature):
+    prof = on_disk(on_feature, False)
+    git(on_feature, "config", "push.default", "upstream")
+    git(on_feature, "config", "branch.feature.merge", "refs/heads/main")
+    git(on_feature, "update-ref", "-d", "refs/remotes/origin/main")
+    assert decide(bash("git push", on_feature), prof, "attended", on_feature, "feature").action == "deny"
+
+
+def test_persisted_alias_that_pushes(on_feature):
+    prof = on_disk(on_feature, False)
+    git(on_feature, "config", "alias.p", "push origin main")
+    assert decide(bash("git p", on_feature), prof, "attended", on_feature, "feature").action == "deny"
+    git(on_feature, "config", "alias.l", "log --oneline")
+    assert decide(bash("git l", on_feature), prof, "attended", on_feature, "feature").action == "allow"
+
+
+def test_forced_dry_run_is_still_asked(solo):
+    assert act(solo, "git push -n -f origin main").action == "ask"
+
+
+def test_reason_names_a_force_only_when_the_base_is_forced(solo):
+    assert "force-push" not in act(solo, "git push origin +feature main").reason
+    assert "force-push" in act(solo, "git push origin feature +main").reason
+    assert "force-push" in act(solo, "git push -f origin main").reason
+
+
+def test_reason_starts_with_the_plain_sentence(solo):
+    first = act(solo, "git push origin main").reason.splitlines()[0]
+    assert first == "This would change `main` directly. Without GitHub's protection set up, the kit doesn't allow that."
