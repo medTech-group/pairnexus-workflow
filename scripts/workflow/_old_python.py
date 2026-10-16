@@ -26,6 +26,8 @@ import re
 import subprocess
 import sys
 
+from . import modes  # noqa: F401  the modes that never ask, shared with the guard (#52)
+
 NEEDS = "3.11"
 DEFAULT_TICKET_BRANCH = "claude/build-*"
 _PUSH = re.compile(r"\bgit\b[^;&|\n]*\bpush\b")

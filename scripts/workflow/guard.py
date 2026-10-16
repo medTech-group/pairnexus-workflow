@@ -112,6 +112,7 @@ import zipfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+from . import modes
 from .posts import AGENT_MARKER
 from .profile import Profile, resolve_experience
 
@@ -5205,7 +5206,49 @@ def decide(
     cwd: str | os.PathLike | None = None,
 ) -> Decision:
     """The guard's decision on one PreToolUse event. `cwd` is the shell's
-    directory (the event's `cwd`, which is used when it isn't given)."""
+    directory (the event's `cwd`, which is used when it isn't given). In an
+    attended session, an `ask` becomes a `deny` where nobody is asked (the
+    event's `permission_mode`, see `modes`)."""
+    d = _decide(event, profile, role, root, current_branch, role_from_env, cwd)
+    mode = event.get("permission_mode")
+    if d.action == "ask" and role == "attended" and modes.never_asks(mode):
+        return Decision("deny", d.reason + "\n" + _nobody_asked(event, mode))
+    return d
+
+
+def _nobody_asked(event: dict, mode) -> str:
+    """What a refusal adds to the ask's reason in a mode that never asks: the
+    kit would have asked, the mode, how to be asked, and how to do it by hand."""
+    name = _code_span(str(mode)[:80])
+    if modes.known(mode):
+        lines = [f"The kit would have asked you about this, but nobody is asked in the {name} permission mode, so it was refused."]
+    else:
+        lines = [
+            f"The kit would have asked you about this, but the permission mode is {name}, which the kit doesn't know, "
+            "so it counts as one where nobody is asked and this was refused. Tell the kit's maintainers about this mode."
+        ]
+    lines.append("To be asked, switch the permission mode (Shift+Tab, or the mode selector).")
+    tool = event.get("tool_name") or ""
+    inp = event.get("tool_input") if isinstance(event.get("tool_input"), dict) else {}
+    command = inp.get("command") if tool == "Bash" else None
+    if isinstance(command, str) and command.strip():
+        lines.append(f"Or run it yourself in your own terminal:{_hand_command(command)}")
+    elif isinstance(tool, str) and tool.startswith("mcp__") and "github" in tool.lower():
+        lines.append("Or do it yourself on GitHub.")
+    else:
+        lines.append("Or make the change yourself, by hand.")
+    return "\n".join(lines)
+
+
+def _decide(
+    event: dict,
+    profile: Profile,
+    role: str,
+    root: Path,
+    current_branch: str | None,
+    role_from_env: bool = True,
+    cwd: str | os.PathLike | None = None,
+) -> Decision:
     tool = event.get("tool_name") or ""
     inp = event.get("tool_input") or {}
     if not isinstance(inp, dict):
