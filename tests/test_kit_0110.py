@@ -3,6 +3,7 @@ and a time budget so a slow guard fails closed."""
 
 import json
 import signal
+import sys
 import time
 
 import pytest
@@ -174,6 +175,25 @@ def test_perl_quote_like_operators_take_any_delimiter_after_space(profile, tmp_p
         assert act(profile, tmp_path, cmd) == "allow", cmd
 
 
+def test_an_s_after_a_binary_operator_is_still_an_s(profile, tmp_path):
+    for cmd in (
+        "perl -pi -e '$n = 1-s/^/it.only(/' tests/a.spec.js",
+        "perl -pi -e '(k=>s/^/it.only(/)' tests/a.spec.js",
+        "perl -pi -e '2*s/^/it.only(/' tests/a.spec.js",
+        "perl -pi -e '2**s/^/it.only(/' tests/a.spec.js",
+        "perl -pi -e '/x/&&s/^/it.only(/' tests/a.spec.js",
+        "perl -pi -e '$x %s/^/it.only(/' tests/a.spec.js",
+    ):
+        assert act(profile, tmp_path, cmd) == "deny", cmd
+    assert act(profile, tmp_path, "perl -pi -e '$o->s(1); s/xit\\(/it(/' tests/a.spec.js") == "allow"
+    assert act(profile, tmp_path, "perl -pi -e '/x/ && s/xit\\(/it(/' tests/a.spec.js") == "allow"
+
+
+def test_awk_is_read_as_awk(profile, tmp_path):
+    # awk has no `m"…"` match operator: the string is what it prints.
+    assert act(profile, tmp_path, "awk -i inplace 'NR==1{ print m\"it.only(a, f)\" } 1' tests/a.spec.js") == "deny"
+
+
 # A sed script from standard input, or a `-f` file that can't be read, is never taken as empty.
 
 
@@ -195,9 +215,36 @@ def test_a_sed_script_on_standard_input_is_read(profile, tmp_path):
     ev = {"tool_name": "Bash", "tool_input": {"command": "cat c.sed | sed -i -f - tests/test_x.py"}}
     d = decide(ev, profile, "ticket", tmp_path, "claude/build-1", role_from_env=True)
     assert d.action == "deny" and "a script of over 1,000,000 bytes" in d.reason
-    # Bytes given on stdin are counted once each, UTF-8 or not.
-    (tmp_path / "latin.sed").write_bytes(b"1i caf\xe9\n" * 60_000)  # 600 kB
+    # Bytes given on stdin are counted once each, UTF-8 or not: 960 kB, though 1.2 MB decoded.
+    (tmp_path / "latin.sed").write_bytes(b"1i caf\xe9\n" * 120_000)
     assert act(profile, tmp_path, "sed -i -f - tests/test_x.py < latin.sed") == "allow"
+    # stdin is read once: a second `-f -` finds it at its end.
+    cmd = "sed -i -e '1i it.only(' -e '1i it.only(' -f - -f - src/app.spec.ts <<<'s/it\\.only(//'"
+    assert act(profile, tmp_path, cmd) == "deny"
+
+
+def test_stdin_is_read_as_bash_gives_it(profile, tmp_path):
+    (tmp_path / "add.sed").write_text("1i it.only(\n")
+    (tmp_path / "rm.sed").write_text("s/it\\.only(//\n")
+    for cmd in (
+        # Another descriptor's input isn't stdin.
+        "cat add.sed | sed -i -f - src/app.spec.ts 3<<<'s/a/b/'",
+        "sed -i -e '1i it.only(' -f - src/app.spec.ts 3<rm.sed",
+        "sed -i -f /dev/fd/3 src/app.spec.ts 3<add.sed",
+        # stdin from another descriptor can't be followed.
+        "sed -i -f - src/app.spec.ts <<<'' <&3",
+        # The `cat` gets the last of its own inputs.
+        "cat <<<'s/a/b/' < add.sed | sed -i -f - src/app.spec.ts",
+        # A redirection alone sends nothing down the pipe.
+        "< rm.sed | sed -i -e '1i it.only(' -f - src/app.spec.ts",
+        # Text from another command is ed's commands, which the guard can't see.
+        "printf '1i\\nit.only(\\n.\\nw\\n' | ed -s src/app.spec.ts",
+    ):
+        assert act(profile, tmp_path, cmd) == "deny", cmd
+    # `cat` joins files with nothing between them.
+    (tmp_path / "a.sed").write_text("s/^/it.on")
+    (tmp_path / "b.sed").write_text("ly(/\n")
+    assert act(profile, tmp_path, "cat a.sed b.sed | sed -i -f - src/app.spec.ts") == "deny"
 
 
 def test_more_than_one_input_on_stdin_is_refused(profile, tmp_path):
@@ -267,6 +314,13 @@ def test_a_piped_patch_is_read_past_a_megabyte(tmp_path):
     assert act_in(tmp_path, "cat mid.patch | git apply").action == "deny"
     (tmp_path / "ok.patch").write_text(head + lines)
     assert act_in(tmp_path, "cat ok.patch | git apply").action == "allow"
+
+
+def test_a_patch_given_two_inputs_on_stdin_is_refused(tmp_path):
+    (tmp_path / "ok.patch").write_text("--- a/tests/a.spec.js\n+++ b/tests/a.spec.js\n@@ -1 +1 @@\n-a\n+b\n")
+    cmd = "git apply < ok.patch <<'EOF'\n--- a/tests/a.spec.js\n+++ b/tests/a.spec.js\n@@ -1 +1 @@\n-a\n+it.only('a', f)\nEOF"
+    d = act_in(tmp_path, cmd)
+    assert d.action == "deny" and "more than one input on stdin" in d.reason
 
 
 def test_a_patch_over_the_cap_is_refused(tmp_path):
@@ -364,10 +418,13 @@ def test_the_budget_counts_from_the_hooks_start(repo, monkeypatch, capsys):
     assert out["permissionDecision"] == "deny" and "ran out of time" in out["permissionDecisionReason"]
 
 
-def test_a_branch_name_that_isnt_utf8_still_reads_as_a_ticket_branch(repo):
+@pytest.mark.skipif(sys.platform == "darwin", reason="APFS refuses file names that aren't UTF-8")
+def test_a_branch_name_that_isnt_utf8_still_reads_as_a_ticket_branch(repo, monkeypatch):
     import subprocess
 
     from workflow import roles
+
+    monkeypatch.delenv("WORKFLOW_ROLE", raising=False)
 
     subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "x"], cwd=repo, check=True)
     subprocess.run([b"git", b"checkout", b"-qb", b"claude/build-1\xff"], cwd=repo, check=True)
