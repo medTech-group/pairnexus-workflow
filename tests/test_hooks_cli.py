@@ -53,7 +53,8 @@ def test_hooks_do_nothing_without_a_profile(tmp_path):
 def test_invalid_profile_is_reported_not_silent(repo):
     (repo / ".claude/workflow/profile.toml").write_text("[project]\nname=1\n")
     code, out, err = run_hook("guard", {"tool_name": "Bash", "tool_input": {"command": "ls"}}, repo)
-    assert code == 1 and out is None and "profile is invalid" in err
+    # Reported, and the hook exits 0 in an attended session (#53): nothing to decide for an `ls`.
+    assert code == 0 and out is None and "profile is invalid" in err
 
 
 def test_gate_hook_only_for_ticket_sessions(repo, tmp_path):

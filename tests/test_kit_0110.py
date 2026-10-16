@@ -450,8 +450,8 @@ def test_a_slow_guard_in_an_attended_session_is_reported_not_refused(repo, monke
     monkeypatch.setenv("WORKFLOW_ROLE", "attended")
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
     monkeypatch.chdir(repo)
-    with pytest.raises(RuntimeError, match="ran out of time"):
-        cli._hook_guard(_event(repo))
+    # The can't-decide fallback (#53): an `ls` is left alone, and the hook exits 0.
+    assert cli._hook_guard(_event(repo)) == 0
     assert capsys.readouterr().out == ""
 
 
@@ -502,8 +502,8 @@ def test_a_role_that_fails_to_read_is_not_taken_for_ticket(repo, monkeypatch, ca
     monkeypatch.delenv("WORKFLOW_ROLE", raising=False)
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
     monkeypatch.chdir(repo)
-    with pytest.raises(ValueError):
-        cli._hook_guard(_event(repo))
+    # The can't-decide fallback (#53) leaves an `ls` alone, and the hook exits 0.
+    assert cli._hook_guard(_event(repo)) == 0
     assert capsys.readouterr().out == ""
 
 
