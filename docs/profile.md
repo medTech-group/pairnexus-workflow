@@ -16,7 +16,7 @@ It sits in `.claude/`, a protected path: ticket sessions can't change it, and a 
 | `flow_addendum` | A project file read with the kit's flow | empty |
 | `guided_start` | The first-message menu in attended sessions; `/start` works either way | `true` |
 | `ruleset` | `true` or `false`. `false` is **solo mode**: no GitHub ruleset protects the base branch yet, so the kit's own guard is all that stops a change to it. `true` says a ruleset protects it. Write it as a plain `ruleset = true` or `ruleset = false` line, with nothing after it: a shell script reads it without a TOML parser. The template leaves it out; set-up writes it | absent: not set (as before) |
-| `experience` | How much the people working here know, as the project's default: `"new"` (new to building) or `"developer"`. It names no person, and changes only wording and pacing, never what the guard refuses (see "Experience" below) | absent: the person is asked (set-up asks for the project's default; the guided start will ask each person); until then, unknown |
+| `experience` | How much the people working here know, as the project's default: `"new"` (new to building) or `"developer"`. It names no person, and changes only wording and pacing, never what the guard refuses (see "Experience" below) | absent: the person is asked (set-up asks for the project's default; the guided start asks each person whose level is unknown, and a kit update asks for the project's default); until then, unknown |
 
 Any other value of `ruleset` or `experience` is a `workflow profile check` error, so a typo never silently turns solo mode off. `workflow status` reports both: `Solo mode: yes`, `no` or `not set (as before)`, and `Experience:` with where it came from.
 
@@ -25,7 +25,7 @@ Any other value of `ruleset` or `experience` is a `workflow profile check` error
 Each person's experience is worked out by one function, `resolve_experience` in `scripts/workflow/profile.py`. `workflow status` reports what it finds. The guard's solo-mode tickets will call the same function, and skills will read the level from `status`. The first of these that holds a value wins:
 
 1. `WORKFLOW_EXPERIENCE` in the environment: `new` or `developer`. Set it on a claude.ai environment to keep a cloud session's answer.
-2. `.workflow/experience` in the project: one line, `new` or `developer`, written by a local session. `.workflow/` is untracked, so a person's level never lands in the repository's history.
+2. `.workflow/experience` in the project: one line, `new` or `developer`, written by the guided start (in a cloud session it lasts for that session only). `.workflow/` is untracked, so a person's level never lands in the repository's history.
 3. The profile's `project.experience`.
 4. Unknown. Wording then treats the person as new to building, since skipping the question counts as new.
 

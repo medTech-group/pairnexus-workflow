@@ -42,7 +42,8 @@ _SLASH = re.compile(r"^\s*/[\w:-]+(?=\s|$)")
 
 START = (
     "This is the first message of the session. Follow the kit's guided start, the `start` skill "
-    "(`.claude/skills/start/SKILL.md`, or `pairnexus-workflow:start` as a plugin): if this message already asks for "
+    "(`.claude/skills/start/SKILL.md`, or `pairnexus-workflow:start` as a plugin): first, when `workflow status` finds "
+    "no experience level, ask it as the skill says; then, if this message already asks for "
     "one clear thing, just do it; if it describes work to plan, or more than one thing, don't start on any of it: "
     "split it into items with a path for each and agree the plan first; otherwise "
     "ask \"What are we working on?\" with choices. If the conversation was already under way before this message "

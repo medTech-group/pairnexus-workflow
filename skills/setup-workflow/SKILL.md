@@ -41,7 +41,7 @@ Use `AskUserQuestion`, recommended answers first. Set-up asks only what attended
 
 | Topic | What to ask |
 |---|---|
-| Experience | How much the people working here know, as the project's default: *new to building* or *developer*. It changes only how the kit words things and paces itself, never what it allows. Skipping it leaves the project's default unset, so each person's own answer counts; until someone gives one, word things as for *new to building*. |
+| Experience | How much the people working here know, as the project's default: *new to building* or *developer*. It changes only how the kit words things and paces itself, never what it allows. Skipping it leaves the project's default unset, so each person's own answer counts: the guided start asks each person whose level is unknown, at their first session. Until someone gives one, word things as for *new to building*. |
 | Mode | Vendored (works in cloud sessions, and needed for unattended runs later) or the plugin (attended only). One mode per project; if the plugin is enabled org-wide, vendoring would duplicate it, so say so. |
 | Owner | The GitHub login of the person whose words are approval. |
 | Sensitive data | What counts here, and which patterns would catch it in a post. |
