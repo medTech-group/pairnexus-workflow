@@ -49,7 +49,10 @@ it reads with `cat`. Ticket sessions and the conductor are denied; attended
 sessions are asked, except in solo mode (`project.ruleset = false`): there an
 attended session's git push that touches the base branch, or whose destination
 can't be told, is refused with `solo_refusal`'s reason (a force-push or
-deletion of a named feature branch is still asked). Ticket sessions and the
+deletion of a named feature branch is still asked), and so is a change to the
+base branch through GitHub (`gh pr merge --admin`, the default branch, its name,
+ref or protection, a ruleset other than creating one; by `gh api`, `curl`,
+GraphQL or the GitHub MCP tools). Ticket sessions and the
 conductor also may not write the global git config (~/.gitconfig,
 ~/.config/git/, $XDG_CONFIG_HOME/git/, the file $GIT_CONFIG_GLOBAL names).
 
