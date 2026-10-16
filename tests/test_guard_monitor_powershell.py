@@ -352,7 +352,8 @@ def test_enforcement_md_records_the_release_gate_step_for_item_10():
 # ---------- masks and sensitive text in the refusals ----------
 
 
-@pytest.mark.parametrize("cmd", ["GITHUB_TOKEN= gh pr merge 5 --admin", "GH_TOKEN= git push origin main"])
+@pytest.mark.parametrize("cmd", ["GITHUB_TOKEN= gh pr merge 5 --admin", "GH_TOKEN= git push origin main",
+                                 "GH_TOKEN= 'gh' pr merge 5 --admin"])
 def test_an_emptied_token_keeps_the_command_after_it(prof, cmd):
     # `VAR= cmd` unsets a token for one command: the mask stops at the `=`.
     d = act(prof, tool("Bash", "bypassPermissions", command=cmd), "attended")
