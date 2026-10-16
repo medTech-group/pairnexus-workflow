@@ -48,7 +48,7 @@ Bringing a [pull request](#pull-request-pr)'s changes into [`main`](#main) with 
 
 ### Revert
 
-Undoing a [merged](#merge) change with a new [pull request](#pull-request-pr) that takes it back out: ask Claude to revert it.
+Undoing a [merged](#merge) change with a new [pull request](#pull-request-pr) that takes it out: ask Claude to revert it.
 
 **Why it matters to you:** a mistake is never final, so merging needn't be scary.
 
@@ -98,7 +98,7 @@ A plan for work too big or too unclear for one [spec](#spec), decided one questi
 
 ### Review panel
 
-Claude reviewers who each read a change from one side (does it work, does it follow the rules) before its [pull request](#pull-request-pr) opens.
+Claude reviewers who each read a change from one side (does it work, does it follow the rules) before its [pull request](#pull-request-pr) opens. Each round leaves a record on the pull request.
 
 **Why it matters to you:** mistakes are caught before you see the change.
 
@@ -116,7 +116,7 @@ GitHub's own protection, ending [solo mode](#solo-mode): a ruleset (GitHub's rul
 
 ### Unattended run
 
-Claude building ready [tickets](#ticket) while you're away, each in its own [cloud session](#cloud-session). "Set up unattended runs" prepares it: a few questions, two cloud environments, and one [pull request](#pull-request-pr) for you to [merge](#merge).
+Claude building ready [tickets](#ticket) while you're away, each in its own [cloud session](#cloud-session). "Set up unattended runs" prepares it: two cloud environments, and one [pull request](#pull-request-pr) for you to [merge](#merge).
 
 **Why it matters to you:** work moves on while you're away, and you come back to a report.
 
@@ -128,7 +128,7 @@ The Claude session that runs an [unattended run](#unattended-run): it hands out 
 
 ### Profile
 
-The kit's settings for your project, in `.claude/workflow/profile.toml`: which is [`main`](#main), how to run the tests, [solo mode](#solo-mode) (`ruleset`) and the default [experience level](#experience-level) (`experience`).
+The kit's settings for your project, in `.claude/workflow/profile.toml`: which is [`main`](#main), how to run the tests, [solo mode](#solo-mode) and the default [experience level](#experience-level).
 
 **Why it matters to you:** Claude reads it instead of guessing.
 

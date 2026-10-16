@@ -7,10 +7,13 @@ description: Review a diff or pull request with independent agents in parallel -
 
 Independent reviewers read the change fresh, each in its own context and in parallel. They report; they change no code. You verify each finding and fix the real ones.
 
+`WF` is the kit's CLI: `python3 .claude/workflow/bin/workflow.py` (vendored), or `python3 <this skill's directory>/../../scripts/workflow.py` (plugin).
+
 ## 1. Gather the inputs, outside the repo
 
 Make a scratch directory outside the repo, for example `/tmp/review-<ticket>-r<round>/`. Write into it:
 
+- `commit.txt`: `git rev-parse HEAD`, the commit this round covers.
 - `diff.patch`: `git diff <base>...HEAD`. The base is the profile's `project.base_branch`, as `origin/<base>` after a `git fetch`.
 - `ticket.md`: the ticket's body and comments, its spec (the issue under "Parent") and the issues they link.
 - `rules.md`: the project's rules, copied from each document in the profile's `project.rules` (safety rules, wording), plus `profile.md`'s sensitive-data and secrets sections.
@@ -46,15 +49,37 @@ Give each reviewer the round number. From round 2, give each `previous.md`, so i
 3. Record each that isn't a problem, with the reason.
 4. Run `git status`: it must show nothing a reviewer made. Discard anything stray and say so.
 5. Rerun the typecheck and the affected tests.
+6. Post the round's review record (section 4).
 
-## 4. When to stop
+## 4. Post the review record
+
+Post a record on the pull request after every round, whatever it found, and after each later Correctness pass, in attended and unattended sessions alike. A record says which commit was reviewed, by whom, and whether anything was left to fix, so a merge never has to guess.
+
+- **A round:** with the commit from `commit.txt` (the branch's head when the round ran, from `git rev-parse HEAD`), the reviewers that ran (from `standards`, `spec`, `correctness`, `security`, `explorer`), and `--clean` when the round found nothing to fix, else `--not-clean`:
+
+  ```
+  WF review-record --kind round --round <n> --commit <sha> --reviewers standards,spec,correctness --clean > /tmp/review-<ticket>-r<n>/record.md
+  ```
+- **A later Correctness pass:** the round it follows, the commit from its own `commit.txt` (section 5), only `correctness`, and `--clean`, or `--not-clean` when it found something to fix:
+
+  ```
+  WF review-record --kind pass --round <last round> --commit <sha> --reviewers correctness --clean > /tmp/review-<ticket>-pass<k>/record.md
+  ```
+
+Keep `record.md` only when the command exited 0. If it refuses, delete the empty `record.md`, fix what it names and run it again: never write a record by hand.
+
+Post `record.md` as it is, as a comment on the pull request: `gh api repos/<repo>/issues/<pr>/comments -F body=@/tmp/review-<ticket>-r<n>/record.md` (the pass's path for a pass), or the GitHub MCP tools with its text. It already ends with the agents' marker; add nothing.
+
+No pull request yet (the first rounds of `build-ticket` run before it opens)? Keep each `record.md` in its scratch directory and post them, oldest first, as soon as the pull request is open.
+
+## 5. When to stop
 
 Repeat on the new diff until a round finds nothing to fix, at most the profile's `run.review_rounds`.
 
 - Anything still open after the last round goes to the owner in the PR body, never silently.
-- Any commit after the last round gets a Correctness pass on just those commits before merging.
+- Any commit after the last round gets a Correctness pass on just those commits before merging. Before it starts, `mkdir -p /tmp/review-<ticket>-pass<k>` (its scratch directory, `k` counting the passes from 1) and write `git rev-parse HEAD` to `commit.txt` there: the commit it covers, never one made after. Then post its record (section 4).
 
-## 5. The findings table (for the PR body)
+## 6. The findings table (for the PR body)
 
 | # | Round | Reviewer | Finding | Outcome |
 |---|---|---|---|---|
