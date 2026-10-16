@@ -126,11 +126,8 @@ def test_the_reason_says_the_guard_isnt_working_why_and_how_to_fix_it(tmp_path, 
     code, out = _hook(monkeypatch, capsys, root, failure, PUSH)
     reason = out["permissionDecisionReason"]
     assert "guard isn't working" in reason and why in reason
-    if failure == "malformed":  # nothing in the profile or the Python to fix
-        assert "report it to the kit's maintainers" in reason and "profile check" not in reason
-    else:
-        assert "profile check" in reason and "python3 --version" in reason and "3.11" in reason
-        assert "report the error" in reason
+    assert "profile check" in reason and "python3 --version" in reason and "3.11" in reason
+    assert "report the error" in reason
 
 
 def test_the_command_isnt_repeated_where_nothing_could_check_it(tmp_path, monkeypatch, capsys):
