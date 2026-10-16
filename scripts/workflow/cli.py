@@ -520,6 +520,7 @@ def _role_label(role: str) -> str:
 # deciding when it runs out is refused in ticket and conductor sessions, since a
 # hook that outlasts its timeout doesn't block.
 GUARD_BUDGET = 12.0
+_STARTED = time.monotonic()  # the budget counts from here, as the hook's process starts
 
 
 class _OverBudget(BaseException):
@@ -534,6 +535,8 @@ def _budget(seconds: float):
     if not hasattr(signal, "setitimer") or threading.current_thread() is not threading.main_thread():
         yield
         return
+    if seconds <= 0:
+        raise _OverBudget()
 
     def over(signum, frame):
         raise _OverBudget()
@@ -543,8 +546,10 @@ def _budget(seconds: float):
     try:
         yield
     finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, previous)
+        try:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+        finally:  # even when the alarm goes off here
+            signal.signal(signal.SIGALRM, previous)
 
 
 def _hook_guard(event) -> int:
@@ -570,10 +575,11 @@ def _hook_guard(event) -> int:
         return 0
     root = prof.root
     cwd = Path(event.get("cwd") or root)
-    # A cwd with no branch (outside the repository, e.g. /tmp) takes the project root's.
-    role = roles.role(cwd, prof.ticket_branch, fallback=root)
+    role = firm or "ticket"  # the strictest, until the branch has been read
     try:
-        with _budget(GUARD_BUDGET):
+        with _budget(GUARD_BUDGET - (time.monotonic() - _STARTED)):
+            # A cwd with no branch (outside the repository, e.g. /tmp) takes the project root's.
+            role = roles.role(cwd, prof.ticket_branch, fallback=root)
             d = guard_mod.decide(event, prof, role, root, roles.current_branch(cwd), role_from_env=firm is not None, cwd=event.get("cwd") or None)
     except _OverBudget:
         if role in ("ticket", "conductor"):

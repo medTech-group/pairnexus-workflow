@@ -2445,7 +2445,7 @@ def _patch_texts(cmd: str, args: list[str], seg: Seg) -> tuple[list[str], str | 
             return None, f"the patches are over {_PATCH_CAP:,} bytes, more than the guard reads; apply them in smaller parts"
         if txt is None:
             return None, f"can't read the patch `{f}` to see what it changes"
-        left -= len(txt.encode("utf-8", "replace"))
+        left -= _size(txt)
         return txt, None
 
     for f in texts_from:
@@ -3599,6 +3599,10 @@ _SCRIPT_CAP = 1_000_000
 _PATCH_CAP = 4_000_000
 
 
+def _size(text: str) -> int:
+    return len(text.encode("utf-8", "replace"))
+
+
 def _added_markers(seg: Seg, root: Path) -> int | None:
     """Skip or focus markers the writing command itself puts in, net of what it
     removes; None when its script is too large to read. Text another command
@@ -3609,20 +3613,22 @@ def _added_markers(seg: Seg, root: Path) -> int | None:
         ed = _inplace_edit(toks)
         if ed is not None:
             text = ed.script
+            left = _SCRIPT_CAP - _size(text)  # bytes, for the scripts and `-f` files together
             if cmd == "sed":
                 for f in _sed_args(toks[1:])[2]:
-                    txt, over = _read_capped(f, seg.cwd, _SCRIPT_CAP - len(text))
+                    txt, over = _read_capped(f, seg.cwd, max(left, 0))
                     if over:
                         return None
+                    left -= _size(txt or "")
                     text += "\n" + (txt or "")
-            if len(text) > _SCRIPT_CAP:
+            if left < 0:
                 return None
             return _script_net(text, "sed" if cmd == "sed" else "code")
     if cmd in ("ed", "red") or cmd in _VIMS:
         ed = _vim_edit(toks) if cmd in _VIMS else None
         stdin, over = _read_capped(seg.stdin, seg.cwd, _SCRIPT_CAP) if seg.stdin else (None, False)
         text = "\n".join([ed.script if ed else "", seg.heredoc or "", stdin or ""])
-        if over or len(text) > _SCRIPT_CAP:
+        if over or _size(text) > _SCRIPT_CAP:
             return None
         return _script_net(text, "ex")
     if cmd == "patch" or (cmd == "git" and (_git(toks) or ([], [], None))[1][:1] in (["apply"], ["am"])):

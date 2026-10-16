@@ -2,6 +2,7 @@
 and a time budget so a slow guard fails closed."""
 
 import json
+import signal
 import time
 
 import pytest
@@ -94,7 +95,7 @@ def _patch(root, removed, added, path="tests/a.spec.js"):
     (root / "fix.patch").write_text(
         f"--- a/{path}\n+++ b/{path}\n@@ -1,1 +1,1 @@\n-{removed}\n+{added}\n"
     )
-    return act_in(root, "git apply fix.patch")
+    return act_in(root, "git apply fix.patch").action
 
 
 def act_in(root, cmd):
@@ -103,7 +104,7 @@ def act_in(root, cmd):
 
     profile = parse(json.loads(json.dumps(BASE_PROFILE)), root)
     ev = {"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": str(root)}
-    return decide(ev, profile, "ticket", root, "claude/build-1", role_from_env=True).action
+    return decide(ev, profile, "ticket", root, "claude/build-1", role_from_env=True)
 
 
 def test_patch_lines_are_read_without_unescaping(tmp_path):
@@ -140,18 +141,27 @@ def test_perl_strings_are_text_and_regexes_only_find(profile, tmp_path):
 # 6. A big `-f` script is read once per command, and over the cap it is refused.
 
 
-def test_a_big_sed_script_is_read_once_for_many_files(profile, tmp_path):
+def test_a_big_sed_script_is_read_once_for_many_files(profile, tmp_path, monkeypatch):
     (tmp_path / "big.sed").write_text("s/a/b/\n" * 140_000)
     files = " ".join(f"tests/test_{i}.py" for i in range(30))
+    calls = []
+    read = guard._script_net
+    monkeypatch.setattr(guard, "_script_net", lambda *a: calls.append(1) or read(*a))
     t = time.monotonic()
     assert act(profile, tmp_path, f"sed -i -f big.sed {files}") == "allow"
-    assert time.monotonic() - t < 5
+    assert len(calls) == 1 and time.monotonic() - t < 10
 
 
 def test_sed_scripts_over_the_cap_are_refused(profile, tmp_path):
     (tmp_path / "a.sed").write_text("s/a/b/\n" * 100_000)
     (tmp_path / "b.sed").write_text("s/a/b/\n" * 100_000)
-    assert act(profile, tmp_path, "sed -i -f a.sed -f b.sed tests/test_x.py") == "deny"
+    ev = {"tool_name": "Bash", "tool_input": {"command": "sed -i -f a.sed -f b.sed tests/test_x.py"}}
+    d = decide(ev, profile, "ticket", tmp_path, "claude/build-1", role_from_env=True)
+    assert d.action == "deny" and "more than the guard reads" in d.reason
+    # The cap is in bytes: 400,000 three-byte characters are over it.
+    (tmp_path / "wide.sed").write_text("s/a/\u00e9\u00e9/\n" * 100_000)
+    assert act(profile, tmp_path, "sed -i -f wide.sed -f wide.sed tests/test_x.py") == "deny"
+    assert act(profile, tmp_path, "sed -i -f wide.sed tests/test_x.py") == "allow"
     # A marker past the first megabyte of one script is seen, not cut off.
     (tmp_path / "c.sed").write_text("s/a/b/\n" * 150_000 + "1i @pytest.mark.skip\n")
     assert act(profile, tmp_path, "sed -i -f c.sed tests/test_x.py") == "deny"
@@ -159,9 +169,17 @@ def test_sed_scripts_over_the_cap_are_refused(profile, tmp_path):
 
 
 def test_a_patch_over_the_cap_is_refused(tmp_path):
-    big = "".join(f"+x = {i}\n" for i in range(200_000))
-    (tmp_path / "big.patch").write_text(f"--- a/tests/a.spec.js\n+++ b/tests/a.spec.js\n@@ -0,0 +1,200000 @@\n{big}+it.only('a', f)\n")
-    assert act_in(tmp_path, "git apply big.patch") == "deny"
+    lines = "".join(f"+x = {i:07d}\n" for i in range(400_000))  # 5.2 MB, no marker in it
+    head = "--- a/tests/a.spec.js\n+++ b/tests/a.spec.js\n@@ -0,0 +1,400000 @@\n"
+    (tmp_path / "big.patch").write_text(head + lines)
+    d = act_in(tmp_path, "git apply big.patch")
+    assert d.action == "deny" and "more than the guard reads" in d.reason
+    # Under the cap, the same patch is read, past where 0.1.9 cut a patch off (1 MB).
+    (tmp_path / "mid.patch").write_text(head + lines[: 2_000_000] + "+it.only('a', f)\n")
+    d = act_in(tmp_path, "git apply mid.patch")
+    assert d.action == "deny" and "skip or focus marker" in d.reason
+    (tmp_path / "ok.patch").write_text(head + lines[: 2_000_000])
+    assert act_in(tmp_path, "git apply ok.patch").action == "allow"
 
 
 # 7. A Write reads at most a capped amount of the file it replaces.
@@ -180,7 +198,14 @@ def test_a_write_over_a_huge_test_file_is_refused(profile, tmp_path, monkeypatch
 
 # 8. A guard that runs past its budget is refused in ticket and conductor sessions.
 
+needs_alarm = pytest.mark.skipif(not hasattr(signal, "setitimer"), reason="the budget needs SIGALRM")
 
+
+def _event(repo):
+    return {"tool_name": "Bash", "tool_input": {"command": "ls"}, "cwd": str(repo)}
+
+
+@needs_alarm
 @pytest.mark.parametrize("role", ["ticket", "conductor"])
 def test_a_slow_guard_fails_closed(repo, monkeypatch, capsys, role):
     def slow(*a, **k):
@@ -188,6 +213,7 @@ def test_a_slow_guard_fails_closed(repo, monkeypatch, capsys, role):
         return guard.ALLOW
 
     monkeypatch.setattr(cli, "GUARD_BUDGET", 0.2)
+    monkeypatch.setattr(cli, "_STARTED", time.monotonic())  # so the timer itself runs out
     monkeypatch.setattr(cli.guard_mod, "decide", slow)
     monkeypatch.setenv("WORKFLOW_ROLE", role)
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
@@ -199,13 +225,51 @@ def test_a_slow_guard_fails_closed(repo, monkeypatch, capsys, role):
     assert out["permissionDecision"] == "deny" and "time" in out["permissionDecisionReason"]
 
 
-def test_a_quick_guard_is_untouched_by_the_budget(repo, monkeypatch, capsys):
+@needs_alarm
+def test_a_slow_guard_in_an_attended_session_is_reported_not_refused(repo, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "GUARD_BUDGET", 0.2)
+    monkeypatch.setattr(cli, "_STARTED", time.monotonic())  # so the timer itself runs out
+    monkeypatch.setattr(cli.guard_mod, "decide", lambda *a, **k: time.sleep(5))
+    monkeypatch.setenv("WORKFLOW_ROLE", "attended")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+    monkeypatch.chdir(repo)
+    with pytest.raises(RuntimeError, match="ran out of time"):
+        cli._hook_guard(_event(repo))
+    assert capsys.readouterr().out == ""
+
+
+@needs_alarm
+def test_reading_the_role_counts_within_the_budget(repo, monkeypatch, capsys):
+    # A branch that takes too long to read leaves the role unknown: the strictest is taken.
+    monkeypatch.setattr(cli, "GUARD_BUDGET", 0.2)
+    monkeypatch.setattr(cli, "_STARTED", time.monotonic())  # so the timer itself runs out
+    monkeypatch.setattr(cli.roles, "role", lambda *a, **k: time.sleep(5))
+    monkeypatch.delenv("WORKFLOW_ROLE", raising=False)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+    monkeypatch.chdir(repo)
+    assert cli._hook_guard(_event(repo)) == 0
+    out = json.loads(capsys.readouterr().out)["hookSpecificOutput"]
+    assert out["permissionDecision"] == "deny" and "ticket session" in out["permissionDecisionReason"]
+
+
+@needs_alarm
+def test_the_budget_counts_from_the_hooks_start(repo, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_STARTED", time.monotonic() - cli.GUARD_BUDGET)  # already spent
     monkeypatch.setenv("WORKFLOW_ROLE", "ticket")
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
     monkeypatch.chdir(repo)
-    assert cli._hook_guard({"tool_name": "Bash", "tool_input": {"command": "ls"}, "cwd": str(repo)}) == 0
-    assert capsys.readouterr().out == ""
-    import signal
+    assert cli._hook_guard(_event(repo)) == 0
+    assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecision"] == "deny"
 
+
+def test_a_quick_guard_is_untouched_by_the_budget(repo, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_STARTED", time.monotonic())
+    monkeypatch.setenv("WORKFLOW_ROLE", "ticket")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+    monkeypatch.chdir(repo)
+    previous = signal.getsignal(signal.SIGALRM) if hasattr(signal, "SIGALRM") else None
+    assert cli._hook_guard(_event(repo)) == 0
+    assert capsys.readouterr().out == ""
     if hasattr(signal, "setitimer"):
         assert signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0)  # no alarm left behind
+        assert signal.getsignal(signal.SIGALRM) == previous
