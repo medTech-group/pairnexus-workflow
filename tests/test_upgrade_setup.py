@@ -301,7 +301,8 @@ def test_one_confirmation_by_experience_with_the_checks_that_ran():
     assert "For `restore_protection`, offer only the names the profile already lists" in auto
     assert "naming each with its result" in confirm
     # AskUserQuestion takes four options to a question: every check still fits.
-    assert "four checks to a question and up to four questions in the call; with more than sixteen, a numbered list" in confirm
+    assert "spread evenly so each question has two to four checks, up to four questions in the call; with more than sixteen, a numbered list" in confirm
+    assert "With a single check, there is no **Choose which**" in confirm
     # Claude Code's prompt, said up front as expected.
     assert "Claude Code will ask you to approve the GitHub command that makes the ruleset. That is expected" in confirm
 
@@ -340,6 +341,8 @@ def test_a_failure_says_what_was_done_and_left_and_gives_the_clicks_for_the_rest
     assert "never retry an edit to the ruleset in solo mode" in auto
     assert "Partial progress is only ever stricter" in auto
     assert "screen 3, then step 5 if the read-back says protected" in auto
+    assert "the ruleset's request failed: nothing protects the base branch yet unless the read-back finds the new ruleset" in auto
+    assert "the read-back finds something missing in the new ruleset: the clicks on its own page" in auto
     assert "<what was done>; <what's left>: the clicks for it are above." in _section("The end")
 
 
