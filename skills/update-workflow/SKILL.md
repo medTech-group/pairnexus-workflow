@@ -53,6 +53,7 @@ Then follow **this release's** copy of this skill, `$KIT/skills/update-workflow/
      - `.github/workflows/workflow-kit-update.yml` with `$KIT/templates/github/workflow-kit-update.yml`;
      - `docs/agents/issue-tracker.md` with `$KIT/templates/issue-tracker.md`;
      - `.github/ISSUE_TEMPLATE/build-ticket.md` and `owner-task.md` with `$KIT/templates/github/ISSUE_TEMPLATE/`.
+     - `.github/pull_request_template.md`, from `WF pr-template`, run from the new release (as set-up's step 11 does, with `--existing <file>` when the project has a template of its own): a project set up before the kit had it gets the template, or the "In plain words" headings at the top of its own, shown in the PR body. One that starts with them already is left as it is, and a `.github/PULL_REQUEST_TEMPLATE/` folder is left for the headings to be added by hand.
 7. **The project's experience default.** When `WF profile check` shows `"experience": null` (the profile has no `experience`), ask once, with `AskUserQuestion`: "How much do the people working on this project know, as its default?" Each person's own answer still wins over it. When they gave their own level earlier in this session, put that level first, "(Recommended)", and say this one is the project's default, not theirs again. The options:
    - *new to building*: "Explain the words and go one step at a time.";
    - *developer*: "Keep it short: git, pull requests and CI are familiar.";

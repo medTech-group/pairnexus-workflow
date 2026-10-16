@@ -1,6 +1,6 @@
 ---
 name: setup-workflow
-description: Set a project up for the pairnexus workflow in solo mode - explore it, ask only what attended work needs (experience, sensitive data, the explorer, the mode, the owner), read the rulesets back, write the profile, vendor the kit for cloud sessions, write the Matt Pocock skills' per-repo docs, labels, issue templates and CODEOWNERS, and open one pull request to merge and start working. Run once per project.
+description: Set a project up for the pairnexus workflow in solo mode - explore it, ask only what attended work needs (experience, sensitive data, the explorer, the mode, the owner), read the rulesets back, write the profile, vendor the kit for cloud sessions, write the Matt Pocock skills' per-repo docs, labels, issue templates, the pull request template and CODEOWNERS, and open one pull request to merge and start working. Run once per project.
 disable-model-invocation: true
 ---
 
@@ -114,12 +114,17 @@ Everything else takes the template's default, or what exploring found: the comma
 
 **10. Issue templates:** copy `$KIT/templates/github/ISSUE_TEMPLATE/build-ticket.md` and `owner-task.md` to `.github/ISSUE_TEMPLATE/`, keeping any the project has.
 
+**11. The pull request template:** write `.github/pull_request_template.md` from `WF pr-template`, so every pull request, the owner's own included, opens with "In plain words" (`build-ticket`'s headings). It prints the file to write and changes nothing; write what it prints only when it exits 0.
+- No template yet: `WF pr-template`, written to `.github/pull_request_template.md`.
+- One template already (`pull_request_template.md`, in any case, at the root, in `docs/` or in `.github/`): `WF pr-template --existing <file>`, written back to that same file, so the project keeps one. The headings go above its content, which is kept whole. When it already starts with them, it prints the file unchanged and says so: nothing to add.
+- A `.github/PULL_REQUEST_TEMPLATE/` folder (several templates, which GitHub picks through a query string): left alone. `WF pr-template --existing .github/PULL_REQUEST_TEMPLATE` exits 3 and says to add the headings to each by hand; say so in the pull request.
+
 Then commit, push the branch, and open the pull request. It touches protected paths, so it's the owner's to review and merge.
 
 ## 4. The pull request
 
 Its body is short. It opens with **Merge this and start working**: once it merges, attended work starts (a session begins with the guided start, or `/start`). Then:
-- what it adds, in a few lines;
+- what it adds, in a few lines, the pull request template among them: that it was added, or what was added at the top of the existing one (the "In plain words" headings), or, for a folder of templates, that they were left for the headings to be added by hand;
 - whether the project starts in solo mode: with `ruleset = false`, one plain line that the kit's guard refuses changes straight to the base branch (by its real name) until it is protected, and why (no ruleset was read back, or the rulesets couldn't be read from here); with `ruleset = true`, that the base branch is protected already;
 - two optional next steps, each one request to Claude, none needed to start:
   - **"Protect `main`"**: a ruleset and the merge settings, guided click by click, then a small pull request that leaves solo mode. Left out when `ruleset = true`;
@@ -137,6 +142,6 @@ When the person says the pull request has merged (or you see it merged), first c
 - [ ] Profile written with `ruleset` and `experience`; `WF profile check` passes; `profile.md` points to the rules
 - [ ] Kit vendored with its lock, or the plugin enabled, only one of the two; earlier flow retired or made an addendum
 - [ ] Matt Pocock's per-repo docs written
-- [ ] CODEOWNERS, vendor CI check, `.gitignore`, CLAUDE.md section, labels, issue templates
+- [ ] CODEOWNERS, vendor CI check, `.gitignore`, CLAUDE.md section, labels, issue templates, the pull request template
 - [ ] PR opened: "Merge this and start working", with the two upgrades as optional next steps
 - [ ] After the merge, "Protect `main`" offered once (unless already protected)

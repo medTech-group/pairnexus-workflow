@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**The pull request template set-up installs: "In plain words" for every pull request** (#83, part of judging a PR without reading code, #39).
+
+- **The template,** `templates/github/pull_request_template.md`, has `build-ticket`'s headings (#82): `## In plain words`, then `**What changes for you**`, `**How to try it**` and `**What could go wrong**`, each with a one-line prompt under it in an HTML comment, so an unedited pull request shows only the headings. A test reads the headings from both files, so the two can't drift.
+- **`workflow pr-template [--existing FILE]`** prints the file to write and changes nothing: the kit's template; with `--existing`, the headings above the project's template, whose content is kept whole (in its own line endings); a file that already starts with `## In plain words` unchanged, with a note, so running it twice adds nothing. A `.github/PULL_REQUEST_TEMPLATE/` folder is left alone: it exits 3 and says to add the headings by hand, since GitHub picks those through a query string.
+- **`setup-workflow`** gains step 11, beside the issue templates: `.github/pull_request_template.md` from `workflow pr-template` (with `--existing` when the project has one, written back to that file). The set-up pull request says it was added, or what was added at the top of the existing one. **`update-workflow`** brings it to a project set up before this, among the files set-up copied once, shown in the update PR; one that has it already is left as it is. It isn't a protected path, so the owner changes it freely. The starter (#40) is to take the file from `workflow pr-template` when it is built.
+- Docs: `docs/install.md`'s list of what set-up writes. Tests: `tests/test_pr_template.py`.
+- **For projects updating:** the update adds `.github/pull_request_template.md`, or the "In plain words" headings at the top of yours; a folder of templates gets them by hand.
+
 **"In plain words" at the top of every pull request `build-ticket` opens** (#82, part of judging a PR without reading code, #39).
 
 - **`build-ticket`'s PR body** (step 4) now opens with `## In plain words`, then `**What changes for you**` (one to three sentences about what a user notices), `**How to try it**` (the try-it link and things to click; else where the link will appear, when the project has preview links; else what to check another way, or "Nothing to try: this change is behind the scenes"; for now always the last, as the kit doesn't read preview links yet) and `**What could go wrong**` (easy or hard to undo, and what it could affect). Each heading is on its own line, its text below it. The section is the same for everyone, never worded by experience, and when the `pr` skill is loaded too its sections go below. Below it the body is unchanged: `Closes #<n>`, what was built, how it was tested, the findings table, "Decisions for the owner" and the by-hand checks.

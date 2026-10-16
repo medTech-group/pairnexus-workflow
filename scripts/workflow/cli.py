@@ -14,6 +14,7 @@
     workflow render --template F --ticket F --charter F --slots F --tracking N [--by-hand N] [--out F] [--print]
     workflow comments --file F [--owner LOGIN] [--since-id N]
     workflow briefing verify --file F
+    workflow pr-template [--existing FILE]
     workflow evidence [--suite NAME ...] [--base-count N | --base-ref BRANCH] [--fresh] [--allow-dirty]
     workflow repair
     workflow vendor install|update [--kit DIR] [--mattpocock DIR | --no-mattpocock] [--project DIR] [--adopt] [--strict-pin]
@@ -45,6 +46,7 @@ from . import gate as gate_mod
 from . import guard as guard_mod
 from . import issues as issues_mod
 from . import posts as posts_mod
+from . import pr_template as pr_template_mod
 from . import protection as protection_mod
 from . import render as render_mod
 from . import repair as repair_mod
@@ -540,6 +542,24 @@ def cmd_briefing(a) -> int:
     return 0
 
 
+def cmd_pr_template(a) -> int:
+    """`pr-template`: the pull request template to write, on stdout, and a note on
+    stderr. Changes nothing. Exits 3 for a folder of templates (nothing to write)."""
+    try:
+        r = pr_template_mod.build(KIT_ROOT, Path(a.existing) if a.existing else None)
+    except OSError as e:
+        print(f"workflow pr-template: can't read {a.existing}: {e.strerror or e}", file=sys.stderr)
+        return 1
+    if r.note:
+        print(r.note, file=sys.stderr)
+    if r.kind == pr_template_mod.FOLDER:
+        return 3
+    sys.stdout.flush()
+    sys.stdout.buffer.write(r.text)
+    sys.stdout.buffer.flush()
+    return 0
+
+
 def cmd_review_record(a) -> int:
     """`review-record`: the comment a review round or a later Correctness pass posts."""
     # Each flag is a list (`append`), so a repeated one is refused rather than
@@ -999,6 +1019,10 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("action", choices=["verify"])
     s.add_argument("--file", required=True, help="the briefing as the session received it (or -)")
     s.set_defaults(fn=cmd_briefing)
+
+    s = sub.add_parser("pr-template", help="print the pull request template to write, with \"In plain words\" at the top; changes nothing")
+    s.add_argument("--existing", metavar="FILE", help="the project's template: the headings go above its content (or its .github/PULL_REQUEST_TEMPLATE/ folder)")
+    s.set_defaults(fn=cmd_pr_template)
 
     s = sub.add_parser(
         "review-record", allow_abbrev=False, help="the record a review round or a later Correctness pass posts on the pull request"
