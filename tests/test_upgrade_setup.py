@@ -237,3 +237,120 @@ def test_the_readme_points_at_the_upgrade_with_the_clicks_as_its_fallback():
     assert "Step 3" in section and "Step 4" in section and "fallback" in section
     assert readme.index("### Protect `main`") < readme.index("### Step 3.")
     assert "`skills/upgrade-setup`" in readme
+
+
+# ---------- the automatic path with `gh` (#67, seam 4 of #38) ----------
+
+
+def test_the_automatic_path_no_longer_comes_later():
+    text = _text()
+    assert "An automatic path with `gh` comes in a later release" not in text
+    assert "the automatic path with `gh`, come in a later release" not in text
+    where = _section("Where things are")
+    assert "the kit makes the ruleset and the merge settings itself after one confirmation" in where
+
+
+def test_the_automatic_paths_conditions_and_the_other_ways():
+    which = _section("Which way")
+    assert "Read all four before anything is tried" in which
+    assert "(`CLAUDE_CODE_REMOTE` isn't `true`)" in which
+    assert "`WORKFLOW_ROLE` isn't `conductor`" in which
+    assert "`gh auth status --hostname github.com` exits 0" in which
+    assert "step 1 read `permissions.admin` as `true` through `gh api`" in which
+    # Cloud sessions always take the clicks, and never try the API.
+    assert "always the guided clicks (step 3), never the API, even with `gh` there" in which
+    # `gh` missing or signed out: the clicks, with how to sign in.
+    assert "run `gh auth login` in your own terminal, and ask me again" in which
+    # Not an admin: the ready message, before anything is tried.
+    assert "step 1's message for the owner, before anything is tried" in which
+    text = _text()
+    assert text.index("## 1. Admin first") < text.index("## Which way") < text.index("## 2. Read what is there")
+
+
+def test_the_automatic_path_only_where_no_ruleset_is_on_the_base_branch():
+    auto = _section("The automatic path")
+    assert auto.lstrip().startswith('Only when "Which way" chose it and step 2 found no ruleset on the base branch.')
+    first = _section("Read what is there")
+    # Rulesets that don't target the base branch don't count, read from `missing`.
+    assert 'every `missing` line that names a ruleset says it "doesn\'t target" the base branch' in first
+    # One already there that doesn't protect: the clicks beside it, never an edit.
+    assert "by the clicks, on the automatic path too" in first
+    assert "never edits an existing ruleset" in first
+    # Already protected: nothing created; the merge settings only after a choice.
+    assert "nothing is created, and no clicks for the ruleset" in first
+    assert '"Turn on GitHub\'s merge settings: allow merge commits and auto-merge" with **Do it now** (recommended) and **Not now**' in first
+    assert "send only the merge settings (its step 3.3)" in first
+
+
+def test_one_confirmation_by_experience_with_the_checks_that_ran():
+    screens = _section("The screens")
+    assert "**On the automatic path, skip this opening choice:** the automatic path's step 2 is the only confirmation" in screens
+    auto = _section("The automatic path")
+    confirm = auto[auto.index("**2. One confirmation,**"):auto.index("**3. Then, in order:**")]
+    assert "Protect your main branch: GitHub will then refuse changes that skip a pull request or a failing test" in confirm
+    assert "**Do it now** (recommended) and **Not now**" in confirm
+    assert "*A developer*: the ruleset's settings and the merge settings it will set" in confirm
+    assert "**Not now** ends it: nothing is created." in confirm
+    # The checks that ran, every page, for ticking.
+    assert "--paginate --slurp" in auto and "WF protection --checks-ran" in auto
+    assert "Passing ones are ticked by default." in auto
+    assert "Names the profile's `ci.required_checks` lists" in auto and "are ticked by default too, when they ran" in auto
+    assert "For `restore_protection`, offer only the names the profile already lists" in auto
+    assert "naming each with its result" in confirm and "one multiSelect question" in confirm
+    # Claude Code's prompt, said up front as expected.
+    assert "Claude Code will ask you to approve the GitHub command that makes the ruleset. That is expected" in confirm
+
+
+def test_a_refusal_naming_the_mode_is_answered_with_the_mode_switch():
+    auto = _section("The automatic path")
+    assert "**A refusal naming the permission mode**" in auto
+    assert 'Answer "switch the permission mode and try again"' in auto
+    assert "never retry the command in that mode" in auto
+    assert "A refusal or a declined prompt sent nothing, so after a mode switch the person can ask again." in auto
+
+
+def test_the_order_ruleset_merge_settings_read_back_pull_request_that_leaves_solo_mode():
+    auto = _section("The automatic path")
+    order = [
+        "1. **The requests:** `WF protection --protect",
+        "2. **The ruleset:** `gh api -X POST repos/<repo>/rulesets --input .workflow/ruleset-request.json`",
+        "3. **The merge settings:** `gh api -X PATCH repos/<repo> --input .workflow/merge-request.json`",
+        "4. **The read-back:** step 4",
+        "5. **The pull request that leaves solo mode:** step 5",
+    ]
+    at = [auto.index(s) for s in order]
+    assert at == sorted(at), order
+    flip = _section("Leave solo mode")
+    assert "the same pull request adds them to `ci.required_checks`" in flip
+    assert "never removing a name the profile already lists" in flip
+    assert "<!-- workflow:required-checks -->" in flip
+
+
+def test_a_failure_says_what_was_done_and_left_and_gives_the_clicks_for_the_rest():
+    auto = _section("The automatic path")
+    assert "**A failure at any step:** say what was done and what's left, read back (step 4), and give the clicks for the rest" in auto
+    assert "Send the ruleset's `POST` once." in auto
+    assert "never retry an edit to the ruleset in solo mode" in auto
+    assert "Partial progress is only ever stricter" in auto
+    assert "<what was done>; <what's left>: the clicks for it are above." in _section("The end")
+
+
+def test_the_readme_says_the_kit_makes_the_ruleset_with_the_clicks_as_the_fallback():
+    readme = (KIT / "README.md").read_text()
+    section = re.search(r"^### Protect `main`\n(.*?)(?=^### )", readme, re.M | re.S).group(1)
+    assert section.startswith("\nAsk Claude to protect `main`")
+    assert "**On your own computer, with `gh` signed in as the repository's admin:**" in section
+    assert "the kit makes the ruleset and the merge settings itself with `gh`" in section
+    assert "**In a cloud session, or without `gh`:** guided clicks" in section
+    assert "they are its fallback" in section
+
+
+def test_enforcement_doc_section_one_says_the_kit_makes_the_ruleset():
+    doc = (KIT / "docs/enforcement.md").read_text()
+    one = re.search(r"^## 1\.[^\n]*\n(.*?)(?=^## )", doc, re.M | re.S).group(1)
+    assert "the kit makes this ruleset itself after one confirmation" in one
+    assert 'named "Protect <base> (pairnexus-workflow)"' in one
+    assert "The clicks stay the fallback whenever a step fails." in one
+    # The name it gives is the one `workflow protection --protect` builds.
+    body = protection.protect("main", {"full_name": "a/b", "default_branch": "main"})[0].body
+    assert body["name"] == "Protect main (pairnexus-workflow)"

@@ -58,7 +58,7 @@ with **Do it now** (recommended) and **Not now**. Each later step is one short s
 
 **A developer** gets the ruleset's settings listed (from step 3), with the same **Do it now** and **Not now**, and the read-back's report as it is at the end.
 
-On the automatic path, its confirmation is this first screen, and the kit's requests take the place of the clicks ("The automatic path").
+**On the automatic path, skip this opening choice:** the automatic path's step 2 is the only confirmation, asked once steps 1 and 2 and "Which way" have settled the way, and the kit's requests take the place of the clicks ("The automatic path"). Elsewhere, show it first, as above.
 
 ## 1. Admin first
 
@@ -75,15 +75,17 @@ Before anything else, read the repository's permissions: `GET repos/<repo>` (`gh
 
 ## Which way
 
-Once step 1 has an answer, decide whether the kit makes the protection itself or guides the clicks. Read all three before anything is tried:
+Once step 1 has an answer, decide whether the kit makes the protection itself or guides the clicks. Read all four before anything is tried:
 
 - **Local:** the session runs on the person's own computer (`CLAUDE_CODE_REMOTE` isn't `true`).
-- **`gh` signed in:** `gh auth status` exits 0. A missing `gh` (command not found) or a non-zero exit counts as signed out.
+- **Attended:** `WORKFLOW_ROLE` isn't `conductor`. The guard refuses a conductor session's ruleset request, so a conductor's kick-off takes the clicks.
+- **`gh` signed in:** `gh auth status --hostname github.com` exits 0 (the host alone, so a problem with another account doesn't count). A missing `gh` (command not found) or a non-zero exit counts as signed out.
 - **Admin:** step 1 read `permissions.admin` as `true` through `gh api`. "Can't tell", followed by "I'm an admin: go on", isn't enough.
 
 Then:
-- **All three:** the automatic path, after step 2's read-back.
-- **A cloud session** (`CLAUDE_CODE_REMOTE` is `true`): A cloud session always takes the guided clicks (step 3), and never tries the API, even with `gh` there: its GitHub access is not the person's own computer.
+- **All four:** the automatic path, after step 2's read-back.
+- **A cloud session** (`CLAUDE_CODE_REMOTE` is `true`): always the guided clicks (step 3), never the API, even with `gh` there. The automatic path is for the person's own computer only.
+- **A conductor session:** the guided clicks.
 - **`gh` missing or signed out:** the guided clicks, with one line on the other way, for the person who would rather: "Or install the GitHub CLI (`gh`), run `gh auth login` in your own terminal, and ask me again: I'll then make it for you after one confirmation."
 - **Not an admin:** step 1's message for the owner, before anything is tried. Never the automatic path, and never the clicks.
 
@@ -91,14 +93,14 @@ Then:
 
 Before guiding any click, fetch the rulesets and read them back with `WF protection`, exactly as step 4 does. Some repositories already have one.
 
-- **Already protected** (`protected` is `true`): nothing is created, and no clicks for the ruleset. If the merge settings are missing, set only those first, since they are part of this upgrade too: on the automatic path, its merge-settings request alone (no confirmation of a ruleset); otherwise step 3's screen 3. Then, for `protect_main`, go straight to the pull request that leaves solo mode (step 5); for `restore_protection`, say it is protected again and stop.
+- **Already protected** (`protected` is `true`): nothing is created, and no clicks for the ruleset. If the merge settings are missing, set only those first, since they are part of this upgrade too. Where "Which way" chose the automatic path, ask first, as a choice: "Turn on GitHub's merge settings: allow merge commits and auto-merge" with **Do it now** (recommended) and **Not now**; on **Do it now**, build the requests (the automatic path's step 3.1, with no `--check`) and send only the merge settings (its step 3.3). Otherwise step 3's screen 3. Then, for `protect_main`, go straight to the pull request that leaves solo mode (step 5); for `restore_protection`, say it is protected again and stop.
 - **Not protected, with rulesets there:** show what is missing. This skill never edits an existing ruleset, and never guides a change to one: changing a ruleset that was there before is left to a later release. It guides a new ruleset beside them, by the clicks, on the automatic path too: the kit makes a ruleset itself only where none targets the base branch yet (below). Note which rulesets were there before this run: step 4 needs to know.
   - When an existing one stops the verdict whatever is added (its bypass list, say), say which ruleset and what in it, and that it is its admin's to change. Don't guide a new ruleset that can't help.
   - An organisation's ruleset (`source_type` `Organization`) is the organisation owner's, even for a repository admin: say which one and what in it (its bypass list, or that its bypass list can't be read from here), and that the organisation owner changes it or reads it back. Don't send the message of step 1 for it: running this skill again as a repository admin gives the same answer.
   - A repository's own ruleset whose bypass list "can't be read":
     - when step 1 couldn't tell and the person chose "I'm an admin: go on", they aren't its admin after all: go back to step 1's not-an-admin path and hand over the message for the owner;
     - when step 1 read `permissions.admin` as `true`, the GitHub access this session uses can't see bypass lists (a token without admin rights): say so, and that the read-back needs access with admin rights, such as `gh` signed in as the person. Don't hand over the message for the owner: the owner is the person. Nothing in the ruleset needs a click, so stop here, and read it back again once the session has that access.
-- **No rulesets,** or only ones that don't target the base branch (each of their `missing` lines says it "doesn't target" it): the automatic path when "Which way" chose it, otherwise step 3.
+- **No rulesets,** or only ones that don't target the base branch (every `missing` line that names a ruleset says it "doesn't target" the base branch; the other lines are the rules still missing): the automatic path when "Which way" chose it, otherwise step 3.
 - **Can't read the rulesets** (no access from here): say so. Guide the clicks anyway, but without a read-back there is no pull request that leaves solo mode: an unknown counts as unprotected.
 
 ## The automatic path
@@ -111,13 +113,13 @@ Only when "Which way" chose it and step 2 found no ruleset on the base branch. E
 - `gh api --paginate --slurp 'repos/<repo>/commits/<base>/status?per_page=100' > .workflow/status.json`;
 - `WF protection --checks-ran .workflow/check-runs.json --statuses .workflow/status.json --rulesets .workflow/rulesets.json --repo .workflow/repo.json --base <base> --json`.
 
-Its `checks` are the ones to offer, each with its `result` (`passing`, `failing` or `pending`). Passing ones are ticked by default. Names the profile's `ci.required_checks` lists (a starter project's lists its checks from the start) are ticked by default too, when they ran. Exit 2 (an input is wrong, often a page missing) or any other failure: fetch again once; if it still fails, offer no checks and say "checks not required yet".
+Its `checks` are the ones to offer, each with its `result` (`passing`, `failing` or `pending`). Passing ones are ticked by default. Names the profile's `ci.required_checks` lists (a starter project's lists its checks from the start) are ticked by default too, when they ran. For `restore_protection`, offer only the names the profile already lists: its pull request is not opened, so no new name could reach the profile. Exit 2 (an input is wrong, often a page missing) or any other failure: fetch again once; if it still fails, offer no checks and say "checks not required yet", and why. A `gh` that answers "unknown flag: --slurp" is older than the kit needs: say to update `gh`.
 
 **2. One confirmation,** worded by experience as "The screens" are, and asked once with `AskUserQuestion`:
 
 - *New to building*: "Protect your main branch: GitHub will then refuse changes that skip a pull request or a failing test", with **Do it now** (recommended) and **Not now**.
-- *A developer*: the ruleset's settings and the merge settings it will set, from the requests below (`WF protection --protect …` without `--json` prints them), with the same **Do it now** and **Not now**.
-- **The checks that ran,** when there are any, in the same call as a second question: **Require the ticked ones** (recommended, naming them), **Choose which** (then one multiSelect question listing every check with its result), and **None for now**. When none ran, say "checks not required yet" instead.
+- *A developer*: the ruleset's settings and the merge settings it will set, from the requests below (`WF protection --protect …` without `--json` prints them, given a `--check` for each name ticked by default), with the same **Do it now** and **Not now**. Say the checks rule follows the ticks.
+- **The checks that ran,** when there are any, in the same call as a second question: **Require the ticked ones** (recommended, naming each with its result, so a failing one is seen: a failing required check blocks every merge until it passes), **Choose which** (then one multiSelect question listing every check with its result), and **None for now**. When none ran, say "checks not required yet" instead.
 - Then, on the same screen: "Claude Code will ask you to approve the GitHub command that makes the ruleset. That is expected: it is how the kit's guard lets you see it first."
 
 **Not now** ends it: nothing is created. Without `AskUserQuestion`, the same choices as a numbered list.
@@ -137,7 +139,7 @@ Its `checks` are the ones to offer, each with its `result` (`passing`, `failing`
 - the merge settings failed: the ruleset stands; screen 3;
 - the read-back finds something missing in the new ruleset: the clicks on its own page, as step 4 says.
 
-Never retry an edit to the ruleset in solo mode, and never send its `POST` a second time: a second ruleset, or one changed by the kit, is not this path's. Partial progress is only ever stricter: a ruleset without the merge settings protects more than nothing, and the guard stays in solo mode until the pull request that leaves it merges.
+Send the ruleset's `POST` once. After a failure, read back and give the clicks: never send the `POST` a second time once it was sent, and never retry an edit to the ruleset in solo mode, since a second ruleset, or one changed by the kit, is not this path's. A refusal or a declined prompt sent nothing, so after a mode switch the person can ask again. Partial progress is only ever stricter: a ruleset without the merge settings protects more than nothing, and the guard stays in solo mode until the pull request that leaves it merges.
 
 ## 3. The guided clicks
 

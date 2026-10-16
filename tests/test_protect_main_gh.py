@@ -1,14 +1,12 @@
 """#67: "Protect `main`" automatically on the owner's computer, with `gh`
-(the `upgrade-setup` skill's local path, #38).
+(the `upgrade-setup` skill's automatic path, #38).
 
 Seam 2: the guard's existing decisions on the exact commands the skill runs,
 through `decide()` with the profile on disk, as the guard suites do. The
 request bodies are the ones `workflow protection --protect` builds, written
 where the skill writes them. Every command here is data passed to `decide`;
-none is run, and nothing is sent to GitHub.
-
-Seam 4: the skill's wording, read from its file as the kit-release tests read
-skills, and the README's and `docs/enforcement.md`'s.
+none is run, and nothing is sent to GitHub. The skill's wording is tested in
+tests/test_upgrade_setup.py.
 """
 
 import json
@@ -18,11 +16,11 @@ from pathlib import Path
 
 import pytest
 
+from conftest import KIT
 from workflow import protection
 from workflow.guard import decide
 from workflow.profile import load
 
-KIT = Path(__file__).resolve().parents[1]
 SKILL = KIT / "skills/upgrade-setup/SKILL.md"
 REPO = {"full_name": "acme/demo", "default_branch": "main", "allow_merge_commit": False, "allow_auto_merge": False}
 WF = "python3 -B .claude/workflow/bin/workflow.py"
@@ -86,7 +84,8 @@ def act(profile, cmd, role="attended", mode=None, branch="feature"):
 POST = "gh api -X POST repos/acme/demo/rulesets --input .workflow/ruleset-request.json"
 PATCH = "gh api -X PATCH repos/acme/demo --input .workflow/merge-request.json"
 READS = [
-    "gh auth status",
+    "gh auth status --hostname github.com",
+    "gh api repos/acme/demo",
     "gh api repos/acme/demo > .workflow/repo.json",
     "gh api --paginate --slurp 'repos/acme/demo/rulesets?includes_parents=true' > .workflow/ruleset-list.json",
     "gh api repos/acme/demo/rulesets/42 > .workflow/ruleset-42.json",
@@ -144,123 +143,17 @@ def test_the_ruleset_post_is_refused_in_ticket_and_conductor_sessions(prof, role
     assert act(prof, POST, role=role, branch="claude/build-1").action == "deny"
 
 
-# ---------- seam 4: the skill's wording ----------
+# ---------- the commands tested are the ones the skill gives ----------
 
 
-def _text():
-    return SKILL.read_text(encoding="utf-8")
-
-
-def _protect_part():
-    text = _text()
-    return text[text.index("# Protect `main`"):text.index("# Set up unattended runs")]
-
-
-def _section(title):
-    m = re.search(rf"^## [^\n]*{re.escape(title)}[^\n]*\n(.*?)(?=^#{{1,2}} |\Z)", _text(), re.M | re.S)
-    assert m, f"no section {title!r}"
-    return m.group(1)
-
-
-def test_the_automatic_path_no_longer_comes_later():
-    where = _section("Where things are")
-    assert "An automatic path with `gh` comes in a later release" not in _text()
-    assert "the automatic path with `gh`, come in a later release" not in _text()
-    assert "`gh`" in where and "automatic" in where.lower()
-
-
-def test_the_local_paths_conditions_and_the_other_ways():
-    which = _section("Which way")
-    # The three conditions, each read before anything is tried.
-    assert "`CLAUDE_CODE_REMOTE`" in which
-    assert "`gh auth status`" in which
-    assert "`permissions.admin`" in which
-    # Cloud sessions always take the clicks, and never try the API.
-    assert "A cloud session always takes the guided clicks" in which
-    assert "never tries the API" in which
-    # `gh` missing or signed out: the clicks, with how to sign in.
-    assert "`gh auth login`" in which
-    # Not an admin: the ready message, before anything is tried.
-    assert "message for the owner" in which and "before anything is tried" in which
-    text = _text()
-    assert text.index("## 1. Admin first") < text.index("## Which way") < text.index("## 2. Read what is there")
-
-
-def test_existing_rulesets_are_read_back_first_with_no_edit_in_solo_mode():
-    auto = _section("The automatic path")
-    assert "step 2" in auto and "first" in auto
-    first = _section("Read what is there")
-    assert "never edits an existing ruleset" in first
-    assert "nothing is created" in first.lower()
-
-
-def test_the_one_confirmation_by_experience_with_the_checks_that_ran():
-    auto = _section("The automatic path")
-    assert "Protect your main branch: GitHub will then refuse changes that skip a pull request or a failing test" in auto
-    assert "**Do it now**" in auto and "**Not now**" in auto
-    assert "developer" in auto.lower() and "merge settings" in auto
-    # The checks that ran, for ticking, passing ones ticked by default.
-    assert "--checks-ran" in auto and "--paginate --slurp" in auto
-    assert "Passing ones are ticked by default" in auto
-    assert "`ci.required_checks`" in auto and "ticked by default too" in auto
-    assert "multiSelect" in auto
-    # Claude Code's prompt, said up front as expected.
-    assert "Claude Code will ask you to approve the GitHub command" in auto and "expected" in auto
-
-
-def test_a_refusal_naming_the_mode_is_answered_with_the_mode_switch():
-    auto = _section("The automatic path")
-    assert "switch the permission mode and try again" in auto
-    assert "never retry" in auto.lower()
-
-
-def test_the_order_ruleset_merge_settings_read_back_flip_pull_request():
-    auto = _section("The automatic path")
-    order = [
-        "1. **The requests:** `WF protection --protect",
-        "2. **The ruleset:** `gh api -X POST repos/<repo>/rulesets --input .workflow/ruleset-request.json`",
-        "3. **The merge settings:** `gh api -X PATCH repos/<repo> --input .workflow/merge-request.json`",
-        "4. **The read-back:** step 4",
-        "5. **The pull request that leaves solo mode:** step 5",
-    ]
-    at = [auto.index(s) for s in order]
-    assert at == sorted(at), order
-    flip = _section("Leave solo mode")
-    assert "<!-- workflow:required-checks -->" in flip
-    assert "never removing a name the profile already lists" in flip
-    assert "`ci.required_checks`" in flip
-
-
-def test_a_failure_says_what_was_done_and_left_and_gives_the_clicks_for_the_rest():
-    auto = _section("The automatic path")
-    assert "what was done and what's left" in auto
-    assert "the clicks for the rest" in auto
-    assert "Never retry an edit to the ruleset" in auto
-    assert "only ever stricter" in auto
-
-
-def test_the_skill_still_names_no_kit_issue_numbers():
-    assert not re.search(r"#\d", _text())
-
-
-# ---------- the docs ----------
-
-
-def test_the_readme_says_the_kit_makes_the_ruleset_with_the_clicks_as_the_fallback():
-    readme = (KIT / "README.md").read_text()
-    m = re.search(r"^### Protect `main`\n(.*?)(?=^### )", readme, re.M | re.S)
-    assert m
-    section = m.group(1)
-    assert "ask claude to protect `main`" in section.lower()
-    assert "`gh`" in section and "own computer" in section and "makes the ruleset" in section
-    assert "guided clicks" in section and "cloud" in section
-    assert "fallback" in section
-
-
-def test_enforcement_doc_section_one_says_the_kit_makes_the_ruleset():
-    doc = (KIT / "docs/enforcement.md").read_text()
-    m = re.search(r"^## 1\.[^\n]*\n(.*?)(?=^## )", doc, re.M | re.S)
-    assert m
-    one = m.group(1)
-    assert "the kit makes this ruleset" in one
-    assert "`gh`" in one
+def test_every_gh_command_the_skill_runs_is_one_tested_here():
+    """Each `gh` command in the skill, with <repo> and <base> filled in, is one
+    whose decision is tested above, so a changed command can't slip past."""
+    text = SKILL.read_text(encoding="utf-8")
+    given = re.findall(r"`(gh (?:api|auth status)[^`]*)`", text)
+    tested = {POST, PATCH, *READS}
+    # `gh api` alone names the tool, not a command.
+    commands = [c.replace("<repo>", "acme/demo").replace("<base>", "main") for c in given if c != "gh api"]
+    assert POST.replace("acme/demo", "<repo>") in given and PATCH.replace("acme/demo", "<repo>") in given
+    for c in commands:
+        assert c in tested, c
