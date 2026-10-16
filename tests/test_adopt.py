@@ -578,3 +578,10 @@ def test_a_comment_opened_after_a_closed_one_hides_what_follows(copy):
 
 def test_a_repo_ending_in_git_is_refused(copy):
     assert _run(copy, repo="ada/notes.git").returncode == 1
+
+
+def test_a_comment_closed_and_reopened_on_one_line_still_hides(copy):
+    (copy / "README.md").write_text("<!-- a\nend --> <!-- b\n# hidden\n-->\n# Real\n")
+    assert _run(copy).returncode == 0
+    assert (copy / "README.md").read_text() == "<!-- a\nend --> <!-- b\n# hidden\n-->\n# My Notes!\n"
+    assert _run(copy, repo="ada/notes.GIT").returncode == 1

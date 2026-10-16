@@ -39,7 +39,7 @@ WORKER_NAME_MAX = 63  # a Worker's name is a DNS label; the package's is cut the
 # repository name of letters, digits, `.`, `_` and `-`, but not `.` or `..`.
 _LOGIN = r"(?=.{1,39}/|.{1,39}$)[A-Za-z0-9](?:-?[A-Za-z0-9])*"
 LOGIN = re.compile(rf"^{_LOGIN}$")
-REPO = re.compile(rf"^{_LOGIN}/(?!\.\.?$)(?!.*\.git$)[A-Za-z0-9._-]{{1,100}}$")  # `x.git` is a clone URL's ending
+REPO = re.compile(rf"^{_LOGIN}/(?!\.\.?$)(?!.*\.[Gg][Ii][Tt]$)[A-Za-z0-9._-]{{1,100}}$")  # `x.git` is a clone URL's ending
 _TABLE = re.compile(r"^\s*\[")
 _PROJECT_TABLE = re.compile(r"^\s*\[\s*project\s*\]\s*(#.*)?$")
 # `key = "value"` or `key = 'value'`, then anything (a comment) after it.
@@ -197,19 +197,29 @@ def _package(text: str, dashed_name: str) -> str | None:
     return None
 
 
+def _in_comment(line: str, inside: bool) -> bool:
+    """Whether an HTML comment is still open at the end of the line."""
+    while True:
+        mark = "-->" if inside else "<!--"
+        at = line.find(mark)
+        if at < 0:
+            return inside
+        line, inside = line[at + len(mark):], not inside
+
+
 def _readme(text: str, name: str) -> str | None:
     lines = _lines(text)
     fenced = commented = False
     for i, (body, end) in enumerate(lines):
         if commented:
-            commented = "-->" not in body
+            commented = _in_comment(body, True)
         elif _FENCE.match(body):
             fenced = not fenced
         elif not fenced and body.startswith("# "):  # before comments: a title may hold `<!--`
             lines[i] = (f"# {name}", end)
             return _join(lines)
-        elif not fenced and "<!--" in body and "-->" not in body.rsplit("<!--", 1)[1]:
-            commented = True
+        elif not fenced:
+            commented = _in_comment(body, False)
     return None
 
 
