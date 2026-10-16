@@ -263,6 +263,7 @@ def test_the_automatic_paths_conditions_and_the_other_ways():
     assert "run `gh auth login` in your own terminal, and ask me again" in which
     # Not an admin: the ready message, before anything is tried.
     assert "step 1's message for the owner, before anything is tried" in which
+    assert "On the person's own computer, try `gh api repos/<repo>` first" in _section("Admin first")
     # A claimed admin, or one not read through `gh api`, takes the clicks.
     assert "**Otherwise** (admin claimed with \"I'm an admin: go on\", or read without `gh api`): the guided clicks (step 3)." in which
     text = _text()
@@ -298,7 +299,9 @@ def test_one_confirmation_by_experience_with_the_checks_that_ran():
     assert "Passing ones are ticked by default." in auto
     assert "Names the profile's `ci.required_checks` lists" in auto and "are ticked by default too, when they ran" in auto
     assert "For `restore_protection`, offer only the names the profile already lists" in auto
-    assert "naming each with its result" in confirm and "one multiSelect question" in confirm
+    assert "naming each with its result" in confirm
+    # AskUserQuestion takes four options to a question: every check still fits.
+    assert "four checks to a question and up to four questions in the call; with more than sixteen, a numbered list" in confirm
     # Claude Code's prompt, said up front as expected.
     assert "Claude Code will ask you to approve the GitHub command that makes the ruleset. That is expected" in confirm
 
@@ -336,6 +339,7 @@ def test_a_failure_says_what_was_done_and_left_and_gives_the_clicks_for_the_rest
     assert "Send the ruleset's `POST` once." in auto
     assert "never retry an edit to the ruleset in solo mode" in auto
     assert "Partial progress is only ever stricter" in auto
+    assert "screen 3, then step 5 if the read-back says protected" in auto
     assert "<what was done>; <what's left>: the clicks for it are above." in _section("The end")
 
 

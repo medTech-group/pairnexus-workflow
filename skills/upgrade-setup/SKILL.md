@@ -62,7 +62,7 @@ with **Do it now** (recommended) and **Not now**. Each later step is one short s
 
 ## 1. Admin first
 
-Before anything else, read the repository's permissions: `GET repos/<repo>` (`gh api repos/<repo>`, or the GitHub MCP tools), and look at `permissions.admin`. Keep that JSON: the read-back uses it as `--repo`.
+Before anything else, read the repository's permissions: `GET repos/<repo>` (`gh api repos/<repo>`, or the GitHub MCP tools), and look at `permissions.admin`. On the person's own computer, try `gh api repos/<repo>` first, so the automatic path can use the answer ("Which way"); the MCP tools only when `gh` isn't there or isn't signed in. Keep that JSON: the read-back uses it as `--repo`.
 
 - **An admin** (`true`): go on to step 2.
 - **Not an admin** (`false`): say plainly that only an admin can do this, since rulesets and the merge settings are under the repository's Settings, which only admins see. Then hand over a ready message for the owner (here, whoever is the repository's admin), in a code block they can copy:
@@ -120,7 +120,7 @@ Its `checks` are the ones to offer, each with its `result` (`passing`, `failing`
 
 - *New to building*: "Protect your main branch: GitHub will then refuse changes that skip a pull request or a failing test", with **Do it now** (recommended) and **Not now**.
 - *A developer*: the ruleset's settings and the merge settings it will set, from the requests below (`WF protection --protect …` without `--json` prints them, given a `--check` for each name ticked by default), with the same **Do it now** and **Not now**. Say the checks rule follows the ticks.
-- **The checks that ran,** when there are any, in the same call as a second question: **Require the ticked ones** (recommended, naming each with its result, so a failing one is seen: a failing required check blocks every merge until it passes), **Choose which** (then one multiSelect question listing every check with its result), and **None for now**. When none ran, say "checks not required yet" instead.
+- **The checks that ran,** when there are any, in the same call as a second question: **Require the ticked ones** (recommended, naming each with its result, so a failing one is seen: a failing required check blocks every merge until it passes), **Choose which** (then multiSelect questions listing every check with its result, four checks to a question and up to four questions in the call; with more than sixteen, a numbered list to pick from), and **None for now**. When none ran, say "checks not required yet" instead.
 - Then, on the same screen: "Claude Code will ask you to approve the GitHub command that makes the ruleset. That is expected: it is how the kit's guard lets you see it first."
 
 **Not now** ends it: nothing is created. Without `AskUserQuestion`, the same choices as a numbered list.
@@ -137,7 +137,7 @@ Its `checks` are the ones to offer, each with its `result` (`passing`, `failing`
 
 **A failure at any step:** say what was done and what's left, read back (step 4), and give the clicks for the rest:
 - the ruleset's request failed: nothing protects the base branch yet unless the read-back finds the new ruleset; step 3's screens for what is missing;
-- the merge settings failed: the ruleset stands; screen 3;
+- the merge settings failed: the ruleset stands; screen 3, then step 5 if the read-back says protected (the merge settings don't change the verdict);
 - the read-back finds something missing in the new ruleset: the clicks on its own page, as step 4 says.
 
 Send the ruleset's `POST` once. After a failure, read back and give the clicks: never send the `POST` a second time once it was sent, and never retry an edit to the ruleset in solo mode, since a second ruleset, or one changed by the kit, is not this path's. A refusal or a declined prompt sent nothing, so after a mode switch the person can ask again. Partial progress is only ever stricter: a ruleset without the merge settings protects more than nothing, and the guard stays in solo mode until the pull request that leaves it merges.
