@@ -30,7 +30,7 @@ One saved step of a change on a [branch](#branch), with a note of what it does.
 
 ### Pull request (PR)
 
-A request to bring a [branch](#branch)'s changes into [`main`](#main), laid out to read.
+A request to bring a [branch](#branch)'s changes into [`main`](#main). Each one the kit opens starts with "In plain words": what changes for you, how to try it, what could go wrong.
 
 **Why it matters to you:** it is where you see what Claude did and decide if it goes in.
 
@@ -48,19 +48,19 @@ Bringing a [pull request](#pull-request-pr)'s changes into [`main`](#main) with 
 
 ### Revert
 
-Undoing a [merged](#merge) change with a new [pull request](#pull-request-pr) that takes it back out: ask Claude to revert it.
+Undoing a [merged](#merge) change with a new [pull request](#pull-request-pr) that takes it out: ask Claude to revert it.
 
 **Why it matters to you:** a mistake is never final, so merging needn't be scary.
 
 ### Preview link
 
-A link on a [pull request](#pull-request-pr) that opens a working copy of the change, such as your shop, to try before you [merge](#merge) it.
+A link on a [pull request](#pull-request-pr) that opens a working copy of the change to try before you [merge](#merge) it.
 
 **Why it matters to you:** you see the change for yourself, not only its code.
 
 ### Cloud session
 
-Claude Code running on Anthropic's computers, from the Claude app or claude.ai/code. Its environment sets what it starts with: the [repository](#repository), the websites it may reach, any secrets.
+Claude Code on Anthropic's computers, from the Claude app or claude.ai/code. Its environment sets what it starts with: the [repository](#repository), the websites it may reach, any secrets.
 
 **Why it matters to you:** there is nothing to install on your computer.
 
@@ -104,7 +104,7 @@ Claude reviewers who each read a change from one side (does it work, does it fol
 
 ### Solo mode
 
-How a project starts while GitHub doesn't protect [`main`](#main) yet: the [profile](#profile) says `ruleset = false`, and the kit refuses Claude's pushes to `main`, and its changes to `main` on GitHub, so Claude's changes go through a [pull request](#pull-request-pr).
+How a project starts while GitHub doesn't protect [`main`](#main) yet: the [profile](#profile) says `ruleset = false`, and the kit refuses Claude's pushes to `main` and its changes to it on GitHub, so Claude's changes go through a [pull request](#pull-request-pr).
 
 **Why it matters to you:** you can start on GitHub's free plan, and Claude's changes still reach `main` only when you [merge](#merge).
 
@@ -116,7 +116,7 @@ GitHub's own protection, ending [solo mode](#solo-mode): a ruleset (GitHub's rul
 
 ### Unattended run
 
-Claude building ready [tickets](#ticket) while you're away, each in its own [cloud session](#cloud-session). "Set up unattended runs" prepares it: a few questions, two cloud environments, and one [pull request](#pull-request-pr) for you to [merge](#merge).
+Claude building ready [tickets](#ticket) while you're away, each in its own [cloud session](#cloud-session). "Set up unattended runs" prepares it: two cloud environments, and one [pull request](#pull-request-pr) for you to [merge](#merge).
 
 **Why it matters to you:** work moves on while you're away, and you come back to a report.
 
@@ -128,7 +128,7 @@ The Claude session that runs an [unattended run](#unattended-run): it hands out 
 
 ### Profile
 
-The kit's settings for your project, in `.claude/workflow/profile.toml`: which is [`main`](#main), how to run the tests, [solo mode](#solo-mode) (`ruleset`) and the default [experience level](#experience-level) (`experience`).
+The kit's settings for your project, in `.claude/workflow/profile.toml`: which is [`main`](#main), how to run the tests, [solo mode](#solo-mode) and the default [experience level](#experience-level).
 
 **Why it matters to you:** Claude reads it instead of guessing.
 

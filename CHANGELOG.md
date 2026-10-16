@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**"In plain words" at the top of every pull request `build-ticket` opens** (#82, part of judging a PR without reading code, #39).
+
+- **`build-ticket`'s PR body** (step 4) now opens with `## In plain words`, then `**What changes for you**` (one to three sentences about what a user notices), `**How to try it**` (the try-it link and things to click; else where the link will appear, when the project has preview links; else what to check another way, or "Nothing to try: this change is behind the scenes"; for now always the last, as the kit doesn't read preview links yet) and `**What could go wrong**` (easy or hard to undo, and what it could affect). Each heading is on its own line, its text below it. The section is the same for everyone, never worded by experience, and when the `pr` skill is loaded too its sections go below. Below it the body is unchanged: `Closes #<n>`, what was built, how it was tested, the findings table, "Decisions for the owner" and the by-hand checks.
+- Docs: `docs/flow.md` §3's pull-request step names "In plain words" first; `docs/glossary.md`'s "pull request" entry says each one the kit opens starts with it (a few words trimmed elsewhere to keep the file under 6,000 characters; no entry lost). Tests: `tests/test_in_plain_words.py`.
+- **For projects updating:** nothing to do; pull requests `build-ticket` opens after the next kit update start with the section.
+
 **Review records: each review round leaves one on the pull request** (#79, part of judging a PR without reading code, #39).
 
 - **`workflow review-record`** prints the comment a round or a later Correctness pass posts: a line for people ("Review round 2 on `3f2a9c0`: clean. Reviewers: Standards, Spec, Correctness."), one machine-readable line (`<!-- workflow:review kind=round round=2 commit=<full sha> reviewers=standards,spec,correctness result=clean -->`) and the agents' marker. Flags: `--kind round|pass`, `--round`, `--commit` (the full SHA), `--reviewers` (from `standards`, `spec`, `correctness`, `security`, `explorer`; a `pass` is `correctness` alone), `--clean` or `--not-clean`. A missing field, a short or non-hex SHA, an unknown reviewer or a pass with other reviewers is refused in plain words, with a non-zero exit.
