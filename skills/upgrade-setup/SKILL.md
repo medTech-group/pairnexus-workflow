@@ -221,5 +221,5 @@ It changes `.claude/`, so merging it is the owner's: never merge it, or enable a
 
 Say where it stands in one line:
 - "Unattended runs are set up once #<n> merges: then start a session in the conductor environment and ask it to run the backlog unattended.";
-- with "Not now" to "Protect `main`", add: "`main` isn't protected: GitHub won't hold a merge for failing checks.";
+- when `main` still isn't protected (after "Not now" to "Protect `main`", or after that path), add: "`main` isn't protected: GitHub won't hold a merge for failing checks.";
 - in plugin mode, "Unattended runs need the vendored kit."

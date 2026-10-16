@@ -194,6 +194,7 @@ def test_it_writes_the_answers_in_one_profile_pull_request():
     assert "`WF profile check`" in pr
     assert "pre-flight" in pr
     assert "never merge it" in pr
+    assert "when `main` still isn't protected" in _runs("Where it ends")
 
 
 def test_the_readme_leads_with_the_solo_setup_and_keeps_the_fallback_steps():
