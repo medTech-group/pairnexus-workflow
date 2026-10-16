@@ -14,7 +14,7 @@ It packages what worked over the pair-drop weekend run of 9–12 Oct 2026 (about
 > **Status: beta.** One project has used it so far.
 > - **Not yet tried for real:** some mechanisms of unattended runs ([docs/spike.md](docs/spike.md) lists what has and hasn't been).
 > - **What it needs:** Claude Code (unattended runs need its cloud sessions), GitHub, and Python 3.11+.
-> - **Support:** maintained by PAIR (MedTech LLC) for its own work and shared as it is, on a best-effort basis, with no guaranteed response time.
+> - **Support:** maintained by PAIR (MedTech LLC) for its own work and shared as it is: best effort, with no guaranteed response time for issues or pull requests; security reports acknowledged within 5 working days; and a fix release when a Claude Code update breaks the guard or the hooks ([Support](#support)).
 > - **Taking part:** questions, bugs and ideas go in [issues](https://github.com/medTech-group/pairnexus-workflow/issues), and contributions are welcome ([CONTRIBUTING.md](CONTRIBUTING.md)). Report security problems privately ([SECURITY.md](SECURITY.md)).
 
 **Contents**
@@ -22,7 +22,7 @@ It packages what worked over the pair-drop weekend run of 9–12 Oct 2026 (about
 - [Using it](#using-it): the guided start, [`/next`](#one-piece-at-a-time-next), [unattended runs](#unattended)
 - [Planning new work](#planning-new-work-what-happens-underneath): the interview, specs, tickets, maps, and [every Matt Pocock skill](#every-matt-pocock-skill-in-a-project)
 - [Keeping it up to date](#keeping-it-up-to-date) and [as a plugin](#as-a-plugin-on-your-own-computer)
-- [When something goes wrong](#when-something-goes-wrong) and [Good to know](#good-to-know)
+- [When something goes wrong](#when-something-goes-wrong), [Good to know](#good-to-know) and [Support](#support)
 - [What's in it](#whats-in-it), [Development](#development), [Forking the kit](#forking-the-kit)
 - Reference: [the flow](docs/flow.md), [the run charter](docs/charter.md), [the profile](docs/profile.md), [enforcement](docs/enforcement.md), [install modes](docs/install.md), [what's verified](docs/spike.md)
 
@@ -676,6 +676,18 @@ Matt Pocock's take `mattpocock-skills:`, such as `/mattpocock-skills:to-spec`, `
   - [docs/protection.md](docs/protection.md): reading back whether the base branch is protected;
   - [docs/spike.md](docs/spike.md): what has been tried for real, and what hasn't.
 
+### Support
+
+PAIR (MedTech LLC) maintains the kit for its own work and shares it as it is. What it promises, in the same words here, in [SECURITY.md](SECURITY.md) and in [CONTRIBUTING.md](CONTRIBUTING.md):
+- best effort, with no guaranteed response time for issues or pull requests;
+- security reports acknowledged within 5 working days;
+- a fix release when a Claude Code update breaks the guard or the hooks.
+
+How to report each:
+- **A question, a bug or an idea:** open an [issue](https://github.com/medTech-group/pairnexus-workflow/issues).
+- **The guard or a hook stopped working after a Claude Code update:** open an issue with the template ["The guard or a hook stopped working after a Claude Code update"](https://github.com/medTech-group/pairnexus-workflow/issues/new?template=claude-code-break.md) (`.github/ISSUE_TEMPLATE/claude-code-break.md`). It asks for Claude Code's version, the kit's and how the kit is installed.
+- **A security problem,** including a Claude Code update that lets a session past the guard: report it privately, as [SECURITY.md](SECURITY.md) says, never in a public issue.
+
 ## What's in it
 
 | Part | What it does |
@@ -722,7 +734,7 @@ A fork can run its own releases, with its own projects following it rather than 
   - `.claude-plugin/marketplace.json` (`name`, `owner`) and `.claude-plugin/plugin.json` (`name`, `author`);
   - the `pairnexus-workflow@pairnexus` key and the `pairnexus-workflow:` command prefix: `PLUGIN_UPDATE` in `updates.py`, `PLUGIN_KEY` in `vendor.py`, `scripts/workflow/context.py`, the skills `start`, `setup-workflow` and `review-panel`, `docs/flow.md`, `docs/install.md` and this README. `grep -rn "pairnexus-workflow[@:]" .` finds them.
 - **The install commands** in `docs/install.md` and this README (the marketplace's `owner/repo`).
-- **This repository's own pages:** the security advisory link in `.github/ISSUE_TEMPLATE/config.yml`, and the contacts in `SECURITY.md`, `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md`.
+- **This repository's own pages:** the security advisory link in `.github/ISSUE_TEMPLATE/config.yml` and `.github/ISSUE_TEMPLATE/claude-code-break.md`, the issue-template link in `SECURITY.md`, and the contacts in `SECURITY.md`, `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md`.
 - **The rest:**
   - the `User-Agent` in `updates.py`;
   - the release title in `.github/scripts/release.py`;

@@ -1,6 +1,9 @@
 # Contributing
 
-Thank you for helping. This kit started inside one team (PAIR, MedTech LLC) and is shared as it is: issues and pull requests are welcome, and it is maintained on a best-effort basis.
+Thank you for helping. This kit started inside one team (PAIR, MedTech LLC) and is shared as it is: issues and pull requests are welcome. What it promises, the same as in the [README](README.md#support) and [SECURITY.md](SECURITY.md):
+- best effort, with no guaranteed response time for issues or pull requests;
+- security reports acknowledged within 5 working days;
+- a fix release when a Claude Code update breaks the guard or the hooks.
 
 ## Before you start
 
