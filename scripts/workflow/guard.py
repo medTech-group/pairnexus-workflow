@@ -4112,25 +4112,36 @@ _GIT_ENV = re.compile(r"^(GIT_CONFIG\w*|GIT_DIR|GIT_WORK_TREE|GIT_NAMESPACE|GIT_
 _DECLARES = ("export", "declare", "typeset", "local", "readonly")
 
 
-def _switched_to(args: list[str]) -> tuple[bool, str | None]:
+def _switched_to(args: list[str], d: str | None) -> tuple[bool, str | None]:
     """(whether `git checkout`/`git switch` changes the branch, the branch it
-    leaves checked out or None when that can't be told)."""
+    leaves checked out or None when that can't be told). A checkout of files
+    (`--`, a path, more than one name, `HEAD`) changes no branch."""
     if not args or args[0] not in ("checkout", "switch") or "--" in args:
         return False, None
-    target = None
+    names: list[str] = []
+    track = False
     i = 1
     while i < len(args):
         a = args[i]
         if a in ("-b", "-B", "-c", "-C", "--orphan") and i + 1 < len(args):
             return True, args[i + 1]
-        if a in ("--detach", "-d") or (a.startswith("-") and not a.startswith("--") and "d" in a[1:] and args[0] == "switch"):
+        if a in ("--detach", "-d") or (args[0] == "switch" and re.fullmatch(r"-[a-zA-Z]*d[a-zA-Z]*", a)):
             return True, None
-        if not a.startswith("-") and target is None:
-            target = a
+        if a in ("-t", "--track") or a.startswith("--track="):
+            track = True
+        elif not a.startswith("-"):
+            names.append(a)
         i += 1
-    if target is None:
+    if not names or (args[0] == "checkout" and len(names) > 1) or names[0] == "HEAD":
         return False, None
-    return True, None if target == "-" or _SOLO_UNSAFE_REF.search(target) else target
+    t = names[0]
+    if t == "-" or _SOLO_UNSAFE_REF.search(t):
+        return True, None
+    if track:  # `--track origin/main` makes and checks out `main`
+        return True, t.split("/", 1)[1] if "/" in t else t
+    if args[0] == "checkout" and not _git_out(d, "show-ref", "--verify", f"refs/heads/{t}") and d and os.path.exists(os.path.join(d, t)):
+        return False, None  # a path, not a branch
+    return True, t
 
 
 def _solo_problem(segs: list[Seg], profile: Profile, start: str, current_branch: str | None) -> SoloRefusal | None:
@@ -4165,8 +4176,8 @@ def _solo_scan(segs: list[Seg], profile: Profile, start: str, current_branch: st
         if isinstance(refusal, SoloRefusal):
             return refusal
         d = _git_dir_of(Path(start), seg.cwd, cdir)
-        changes, to = _switched_to(args)
-        if changes:
+        changes, to = _switched_to(args, d)
+        if changes and d is not None:  # an unknown directory: its push is refused as can't-tell anyway
             switched[d] = to
         env_here = env_set or any(_GIT_ENV.match(a) for a in seg.assigns)
         config_elsewhere = any(o == "--config-env" or o.startswith("--config-env=") for o in glob) or any(

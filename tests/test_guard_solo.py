@@ -681,3 +681,26 @@ def test_a_slow_guard_in_solo_mode_refuses(solo_repo, monkeypatch, capsys):
     assert cli._hook_guard(bash("git push origin main", solo_repo)) == 0
     out = json.loads(capsys.readouterr().out)["hookSpecificOutput"]
     assert out["permissionDecision"] == "deny" and "ran out of time" in out["permissionDecisionReason"]
+
+
+# ---------- review round 3 ----------
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    ["git checkout README.md && git push", "git checkout . && git push", "git checkout HEAD && git push origin HEAD", "git checkout feature README.md && git push origin HEAD"],
+)
+def test_checking_out_files_on_the_base_branch_then_pushing(cmd, tracking_main):
+    prof = on_disk(tracking_main, False)
+    git(tracking_main, "checkout", "-q", "main")
+    assert decide(bash(cmd, tracking_main), prof, "attended", tracking_main, "main").action == "deny", cmd
+
+
+@pytest.mark.parametrize("cmd", ["git checkout --track origin/main && git push", "git switch -t origin/main && git push origin HEAD", "git checkout --track=direct origin/main && git push"])
+def test_tracking_checkout_of_the_base_then_pushing(cmd, solo):
+    assert act(solo, cmd).action == "deny", cmd
+
+
+@pytest.mark.parametrize("cmd", ['git -C "$A" checkout feature && git -C "$B" push', 'cd "$A" && git checkout feature; cd "$B" && git push'])
+def test_a_switch_in_one_unknown_directory_says_nothing_of_another(cmd, solo):
+    assert act(solo, cmd).action == "deny", cmd
