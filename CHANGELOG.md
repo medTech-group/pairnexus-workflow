@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**`workflow protection` builds the requests: protect, require checks, the checks that ran** (#66, part of automated GitHub set-up, #38).
+
+- **`--protect --repo F`** prints the two requests that protect the base branch: the ruleset to create ("Protect <base> (pairnexus-workflow)", active, an empty bypass list, on `~DEFAULT_BRANCH` when the base branch is the default or `refs/heads/<base>`; `deletion`, `non_fast_forward`, `pull_request` with 0 approvals; `required_status_checks` with "up to date" on only when `--check` names are given), and the merge settings (`allow_merge_commit`, `allow_auto_merge`).
+- **`--require-checks F --check NAME`** prints the update that adds the names to a ruleset's required checks with "up to date" on, removing nothing and sending only the fields GitHub accepts on an update.
+- **`--checks-ran F [--statuses F] --rulesets F --repo F`** lists the checks that ran on a commit, each passing, failing or pending, the latest result of each name, less those already required; the try-it link's Cloudflare check is never offered, and a file holding one page of several is an error.
+- It sends nothing: a session sends each request. `--json` for skills and `workflow doctor`. The read-back is unchanged, except that it now refuses JSON's `NaN` and `Infinity` as not JSON. Docs: `docs/protection.md`. Tests: `tests/test_protection_requests.py`.
+- **For projects updating:** nothing to do.
+
 **Unattended runs in solo mode: the charter and the conductor's warning** (#50, part of solo mode, #32).
 
 - **The charter in solo mode** (`ruleset = false`): `workflow charter defaults` picks `session` merging, `charter questions` leaves `auto-merge` out of the merge question's new `options` and says why in its `note` (as it now does with no CI or no required checks), and `charter validate` and `state init` refuse `auto-merge`. GitHub auto-merge could merge at once there, since nothing on GitHub reliably requires checks.
