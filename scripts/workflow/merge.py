@@ -668,8 +668,11 @@ class Context:
             url = str(v.get("url") or v.get("html_url") or "")
             # A fork's head is `owner:<sha>`. The url names the head exactly; the
             # list's last commit is by date, so it is used only when the url names none.
-            named = re.search(r"\.\.\.(?:[^/.:]+:)?([0-9a-fA-F]{40})\b", url)
+            named = re.search(r"\.\.\.(?:[^/.:]+:)?([0-9a-fA-F]{40})(?=$|[?#])", url)
             told = [named.group(1).lower()] if named else [last] if last else []
+            head_side = re.search(r"\.\.\.([^?#]*)", url)
+            if head_side and any(c in unquote(head_side.group(1)) for c in "~^@{"):
+                told = ["a revision, not a commit"]  # `<head>~1` and the like name another commit
             base_side = re.search(r"/compare/(.+?)\.\.\.", url)
             if base_side and self.head() is not None and unquote(base_side.group(1)) not in (self.pr().base, f"refs/heads/{self.pr().base}"):
                 raise Unreadable("compare", "it compares the head with something other than the base branch: compare <base branch>...<head SHA>")

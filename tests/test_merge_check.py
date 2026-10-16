@@ -1297,3 +1297,11 @@ def test_a_forks_comparison_and_an_encoded_base_are_read(project, capsys):
     data["compare"]["url"] = f"https://api.github.com/repos/acme/demo/compare/release%2F2.0...{HEAD}"
     got, _ = check(project, capsys, data)
     assert got["decision"] == "ready", got["reasons"]
+
+
+@pytest.mark.parametrize("url", [f"https://api.github.com/repos/acme/demo/compare/main...someone:{EARLIER}", f"https://api.github.com/repos/acme/demo/compare/main...{HEAD}~1"])
+def test_the_url_wins_over_the_commits_list(project, capsys, url):
+    data = inputs()
+    data["compare"]["url"] = url
+    got, _ = check(project, capsys, data)
+    assert [r["input"] for r in got["reasons"] if r["id"] == "couldnt_read"] == ["compare"]
