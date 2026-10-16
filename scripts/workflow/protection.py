@@ -63,7 +63,7 @@ def branch(name: str) -> str:
     bad = (
         not name
         or any(c in NOT_IN_A_BRANCH or unicodedata.category(c) in ("Cf", "Cs", "Zl", "Zp") for c in name)
-        or name == "@"
+        or name in ("@", "HEAD")
         or ".." in name
         or "@{" in name
         or "//" in name
@@ -206,7 +206,7 @@ def _targets(rs: dict, base: str, default: str | None, have_settings: bool) -> s
             return f"excludes the default branch, and {unknown}, so it can't tell whether that is {base}"
         if hit:
             return f"doesn't target {base} (it excludes {quote(p)})"
-        if any(s in p for s in UNREAD_GLOB) or not (p.startswith("refs/") or p.startswith("~")):
+        if any(s in p for s in UNREAD_GLOB) or not p.startswith("refs/"):
             return f"excludes {quote(p)}, a pattern this command can't match, so it can't tell whether {base} is left out"
         if fnmatch.fnmatchcase(full, p) or fnmatch.fnmatchcase(full.casefold(), p.casefold()):
             return f"doesn't target {base} (it excludes {quote(p)})"

@@ -269,9 +269,14 @@ def test_deeply_nested_json_is_a_plain_error(repo, inp):
     assert p.stderr.startswith("workflow protection: ") and "Traceback" not in p.stderr
 
 
-@pytest.mark.parametrize("raw", ['[{"id": ' + "1" * 5000 + "}]", '[{"name": "\\ud800"}]', "\udcff".encode("utf-8", "surrogateescape").decode("latin-1")])
+@pytest.mark.parametrize("raw", ['[{"id": ' + "1" * 5000 + "}]", '[{"name": "\\ud800"}]', b"[\xff]"])
 def test_odd_numbers_and_characters_are_a_plain_error(repo, inp, raw):
-    p = run(repo, inp, None, raw=raw)
+    if isinstance(raw, bytes):  # not UTF-8
+        (inp / "rulesets.json").write_bytes(raw)
+        env = {**os.environ, "CLAUDE_PROJECT_DIR": str(repo)}
+        p = subprocess.run([sys.executable, str(CLI), "protection", "--rulesets", str(inp / "rulesets.json")], cwd=repo, env=env, capture_output=True, text=True)
+    else:
+        p = run(repo, inp, None, raw=raw)
     assert p.returncode == 2 and p.stdout == "" and "Traceback" not in p.stderr
 
 
@@ -418,7 +423,7 @@ def test_a_complete_ruleset_beside_others_is_still_protected(repo, inp):
 
 @pytest.mark.parametrize(
     "exclude",
-    ["~DEFAULT_BRANCH", "refs/heads/main", "refs/heads/[^x]ain", "refs/heads/{main,dev}", "refs/heads/**/*", "refs/heads/**/main", "main", "refs/heads/MAIN"],
+    ["~DEFAULT_BRANCH", "refs/heads/main", "refs/heads/[^x]ain", "refs/heads/{main,dev}", "refs/heads/**/*", "refs/heads/**/main", "main", "refs/heads/MAIN", "~all"],
 )
 def test_an_exclude_that_may_name_the_base_branch_takes_it_out(repo, inp, exclude):
     rs = _ruleset(conditions={"ref_name": {"include": ["~ALL"], "exclude": [exclude]}})
@@ -464,7 +469,7 @@ def test_a_disabled_ruleset_says_so_even_when_its_target_is_unknown(repo, inp):
 
 @pytest.mark.parametrize(
     "base",
-    ["release/*", "ma in", "main\n- x", "~DEFAULT_BRANCH", "refs/heads/", "a..b", "main.lock", "main/", "/main", "@", "ma@{in", "-main", "main\u2028", "\u200bmain", "\u202emain", "\udcffmain"],
+    ["release/*", "ma in", "main\n- x", "~DEFAULT_BRANCH", "refs/heads/", "a..b", "main.lock", "main/", "/main", "@", "ma@{in", "-main", "main\u2028", "\u200bmain", "\u202emain", "\udcffmain", "HEAD"],
 )
 def test_a_base_that_is_not_a_branch_name_is_an_error(repo, inp, base):
     rs = _ruleset(conditions={"ref_name": {"include": [f"refs/heads/{base}"], "exclude": []}})
