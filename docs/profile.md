@@ -15,6 +15,21 @@ It sits in `.claude/`, a protected path: ticket sessions can't change it, and a 
 | `rules` | Files (with an optional `#heading`) holding the project's own rules; reviewers read them | `[]` (the template has `["CLAUDE.md"]`) |
 | `flow_addendum` | A project file read with the kit's flow | empty |
 | `guided_start` | The first-message menu in attended sessions; `/start` works either way | `true` |
+| `ruleset` | `true` or `false`. `false` is **solo mode**: no GitHub ruleset protects the base branch yet, so the kit's own guard is all that stops a change to it. `true` says a ruleset protects it. Write it as a plain `ruleset = true` or `ruleset = false` line: a shell script reads it without a TOML parser | absent: as before solo mode existed |
+| `experience` | How much the people working here know, as the project's default: `"new"` (new to building) or `"developer"`. It names no person, and changes only wording and pacing, never what the guard refuses (see "Experience" below) | absent: ask each person |
+
+Any other value of `ruleset` or `experience` is a `workflow profile check` error, so a typo never silently turns solo mode off. `workflow status` reports both: `Solo mode: yes`, `no` or `not set (as before)`, and `Experience:` with where it came from.
+
+### Experience
+
+Each person's experience is worked out by one shared function (`resolve_experience` in `scripts/workflow/profile.py`), which the guard, `workflow status`, and the skills through `status` use. The first of these that holds a value wins:
+
+1. `WORKFLOW_EXPERIENCE` in the environment: `new` or `developer`. Set it on a claude.ai environment to keep a cloud session's answer.
+2. `.workflow/experience` in the project: one line, `new` or `developer`, written by a local session. `.workflow/` is untracked, so a person's level never lands in the repository's history.
+3. The profile's `project.experience`.
+4. Unknown. Wording then treats the person as new to building, since skipping the question counts as new.
+
+Case and spaces around the value don't matter. An unrecognised value in the environment or the file is skipped, with a warning in `workflow status`; it never makes a hook fail.
 
 ## `[commands]`
 
@@ -96,5 +111,6 @@ The run's limits default from here; each run's charter can change them (`charter
 | Variable | Read by | What it does |
 |---|---|---|
 | `WORKFLOW_ROLE` | The hooks | `ticket`, `conductor` or `attended` (any case). Set it in the claude.ai environment, never in the profile. Any other value counts as `ticket`, the strictest |
+| `WORKFLOW_EXPERIENCE` | `workflow status`, the guard and the skills | `new` or `developer`: this person's experience, ahead of `.workflow/experience` and `project.experience` (see "Experience" above). Any other value is skipped with a warning |
 | `WORKFLOW_UPDATE_CHECK` | The session start | `off` (or `0`, `false`, `no`) stops the lookup of the latest kit release |
 | `TMPDIR` | The hooks | Where the hooks keep their per-session markers and the latest-release cache (six hours) |

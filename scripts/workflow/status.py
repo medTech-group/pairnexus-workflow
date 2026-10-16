@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from . import issues as issues_mod
+from .profile import EXPERIENCE_ENV, EXPERIENCE_FILE, Experience
 
 # A request recorded by the guided start, one issue per item, so a plan made in
 # one session is still there in the next: `<!-- workflow:item path=spec -->`.
@@ -44,6 +45,10 @@ class Status:
     brand_new: bool
     own_files: int
     issues_read: bool = False
+    # The profile's project.ruleset: False is solo mode, so solo_mode is its
+    # opposite; None is "not set (as before)".
+    solo_mode: bool | None = None
+    experience: Experience = field(default_factory=lambda: Experience(None, "unknown"))
     run: list[Item] = field(default_factory=list)
     in_progress: list[Item] = field(default_factory=list)
     prs: list[Item] = field(default_factory=list)
@@ -56,7 +61,9 @@ class Status:
     kit_update_pr: int | None = None
 
     def as_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        d["experience"]["wording"] = self.experience.wording
+        return d
 
 
 def own_files(root: Path) -> int:
@@ -103,9 +110,14 @@ def snapshot(
     repo: str | None = None,
     areas: list[str] | None = None,
     protected: list[str] | None = None,
+    ruleset: bool | None = None,
+    experience: Experience | None = None,
 ) -> Status:
     files = own_files(root)
     st = Status(set_up=set_up, brand_new=files == 0, own_files=files)
+    st.solo_mode = None if ruleset is None else not ruleset
+    if experience is not None:
+        st.experience = experience
     if issues is None or prs is None:
         return st
     st.issues_read = True
@@ -167,11 +179,28 @@ _SECTIONS = [
 ]
 
 
+_SOURCES = {
+    "environment": f"the environment, {EXPERIENCE_ENV}",
+    "local file": f"the local file, {EXPERIENCE_FILE.as_posix()}",
+    "profile": "the profile, project.experience",
+}
+
+
+def experience_lines(exp: Experience) -> list[str]:
+    if exp.level:
+        first = f"Experience: {exp.level} (from {_SOURCES.get(exp.source, exp.source)})"
+    else:
+        first = "Experience: unknown (worded as new to building until asked)"
+    return [first, *(f"warning: {w}" for w in exp.warnings)]
+
+
 def text(st: Status) -> str:
     lines = [
         "Kit: " + ("set up" if st.set_up else "NOT set up here (no .claude/workflow/profile.toml)"),
         "Project: "
         + ("brand new (no code of its own yet)" if st.brand_new else "unknown (not a git checkout)" if st.own_files < 0 else f"{st.own_files} files of its own"),
+        "Solo mode: " + ("not set (as before)" if st.solo_mode is None else "yes" if st.solo_mode else "no"),
+        *experience_lines(st.experience),
     ]
     if not st.issues_read:
         lines.append("Issues: not read (pass --fetch, or --issues and --prs files)")

@@ -41,7 +41,7 @@ class ProfileError(ValueError):
 # Every key the profile may hold, so a typo ("required_check", "[area]") fails
 # instead of being quietly ignored. None: any key (area names).
 ALLOWED: dict[str, set[str] | None] = {
-    "project": {"name", "repo", "base_branch", "rules", "flow_addendum", "owner", "guided_start"},
+    "project": {"name", "repo", "base_branch", "rules", "flow_addendum", "owner", "guided_start", "ruleset", "experience"},
     "commands": {"setup", "setup_check", "typecheck", "test_file", "suite", "package"},
     "ci": {"required_checks", "killed_markers", "none", "path_filtered"},
     "ui": {"explorer", "start", "sizes", "notes"},
@@ -67,6 +67,12 @@ SUITE_KEYS = {"name", "run", "files", "group", "passed", "failed", "skipped", "e
 PACKAGE_KEYS = {"name", "path", "typecheck", "test_file", "cwd"}
 RELEASE_STEP_KEYS = {"name", "run", "smoke"}
 OWNER = re.compile(r"^[A-Za-z0-9-]+$")
+# How much the people working here know: `project.experience`, the
+# WORKFLOW_EXPERIENCE variable and the local file (resolve_experience).
+EXPERIENCE_LEVELS = ("new", "developer")
+EXPERIENCE_ENV = "WORKFLOW_EXPERIENCE"
+EXPERIENCE_FILE = Path(".workflow/experience")  # untracked: .workflow/ is in .gitignore
+_EXPERIENCE_FILE_MAX = 200  # bytes: one short line
 
 
 def _unknown(keys, allowed: set[str], where: str) -> None:
@@ -117,6 +123,10 @@ class Profile:
     rules: list[str] = field(default_factory=list)
     flow_addendum: str = ""
     guided_start: bool = True
+    # False is solo mode; None (absent) is as before solo mode existed.
+    ruleset: bool | None = None
+    # The project's default: "new" or "developer"; "" (absent) means ask.
+    experience: str = ""
     setup: str = ""
     setup_check: str = ""
     typecheck: str = ""
@@ -313,6 +323,12 @@ def parse(data: dict, root: Path) -> Profile:
     guided = proj.get("guided_start", True)
     if not isinstance(guided, bool):
         raise ProfileError("project.guided_start must be true or false")
+    ruleset = proj.get("ruleset")
+    if ruleset is not None and not isinstance(ruleset, bool):
+        raise ProfileError(f"project.ruleset must be true or false (false is solo mode), not {ruleset!r}; leave it out for no solo mode")
+    experience = proj.get("experience")
+    if experience is not None and experience not in EXPERIENCE_LEVELS:
+        raise ProfileError(f'project.experience must be "new" or "developer", not {experience!r}; leave it out to ask each person')
     allow = guard.get("allow_new_skips", False)
     if not isinstance(allow, bool):
         raise ProfileError("guard.allow_new_skips must be true or false")
@@ -325,6 +341,8 @@ def parse(data: dict, root: Path) -> Profile:
         rules=_strs(proj.get("rules"), "project.rules"),
         flow_addendum=str(proj.get("flow_addendum") or ""),
         guided_start=guided,
+        ruleset=ruleset,
+        experience=experience or "",
         setup=str(cmds.get("setup") or ""),
         setup_check=str(cmds.get("setup_check") or ""),
         typecheck=str(cmds.get("typecheck") or ""),
@@ -362,6 +380,79 @@ def parse(data: dict, root: Path) -> Profile:
         environment_setup=str(run.get("environment_setup") or ""),
         permission_mode=pmode,
     )
+
+
+@dataclass
+class Experience:
+    """How much the person knows, and where that came from.
+
+    `level` is "new", "developer" or None (unknown); `source` is "environment",
+    "local file", "profile" or "unknown". `warnings` name values skipped on the
+    way. Wording uses `wording`: unknown counts as new to building."""
+
+    level: str | None
+    source: str
+    warnings: list[str] = field(default_factory=list)
+
+    @property
+    def wording(self) -> str:
+        return self.level or "new"
+
+
+def _level(value) -> str | None:
+    if not isinstance(value, str):
+        return None
+    v = value.strip().lower()
+    return v if v in EXPERIENCE_LEVELS else None
+
+
+def _read_experience_file(root: Path) -> str | None:
+    """The local file's text, or None when there is none to read. Never raises."""
+    try:
+        path = Path(root) / EXPERIENCE_FILE
+        if not path.is_file():
+            return None
+        with path.open("rb") as f:
+            data = f.read(_EXPERIENCE_FILE_MAX + 1)
+    except (OSError, ValueError, TypeError):
+        return None
+    if len(data) > _EXPERIENCE_FILE_MAX:
+        return "(more than one short line)"
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return "(not UTF-8 text)"
+
+
+def resolve_experience(root: Path | None, profile_value=None, environ=None) -> Experience:
+    """The person's experience. First match wins: WORKFLOW_EXPERIENCE in the
+    environment, the untracked .workflow/experience file, the profile's
+    project.experience, else unknown. An unrecognised environment or file
+    value is skipped with a warning. Shared by the guard, `status` and the
+    skills through `status`, so it never raises, whatever it is given."""
+    env = os.environ if environ is None else environ
+    warnings: list[str] = []
+    try:
+        raw = env.get(EXPERIENCE_ENV)
+    except Exception:
+        raw = None
+    if isinstance(raw, str) and raw.strip():
+        lvl = _level(raw)
+        if lvl:
+            return Experience(lvl, "environment", warnings)
+        warnings.append(f"ignored {EXPERIENCE_ENV}={raw.strip()[:40]!r}: expected new or developer")
+    text = _read_experience_file(root) if root is not None else None
+    if text is not None:
+        lines = text.strip().splitlines()
+        lvl = _level(lines[0]) if len(lines) == 1 else None
+        if lvl:
+            return Experience(lvl, "local file", warnings)
+        shown = text.strip()[:40] if text.strip() else "(empty)"
+        warnings.append(f"ignored {EXPERIENCE_FILE.as_posix()} holding {shown!r}: expected one line, new or developer")
+    lvl = profile_value if profile_value in EXPERIENCE_LEVELS else None
+    if lvl:
+        return Experience(lvl, "profile", warnings)
+    return Experience(None, "unknown", warnings)
 
 
 def load(root: Path | None = None, required: bool = True) -> Profile | None:
@@ -465,6 +556,8 @@ def summary(profile: Profile) -> dict:
         "repo": profile.repo,
         "owner": profile.owner or None,
         "base_branch": profile.base_branch,
+        "ruleset": profile.ruleset,
+        "experience": profile.experience or None,
         "rules": profile.rules,
         "typecheck": profile.typecheck or None,
         "test_file": profile.test_file or None,

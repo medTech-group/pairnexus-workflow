@@ -18,6 +18,16 @@ flow_addendum = ""                      # e.g. "docs/agents/flow-addendum.md"
 # what we're working on, with choices (skills/start). false turns it off;
 # /start still works.
 guided_start = true
+# Solo mode: false while no GitHub ruleset protects the base branch, so the
+# kit's guard is all that stops a change to it; true once a ruleset does.
+# Leave it out to keep the behaviour from before solo mode. Keep it a plain
+# `ruleset = true` or `ruleset = false` line: a shell script reads it.
+ruleset = false
+# How much the people working here know, as the project's default: "new"
+# (new to building) or "developer". It names no person and changes only
+# wording. Each person's WORKFLOW_EXPERIENCE, or their untracked
+# .workflow/experience file, comes first. Leave it out to ask each person.
+# experience = "new"
 
 [commands]
 # The project's own dependencies, from the repository's files: e.g.

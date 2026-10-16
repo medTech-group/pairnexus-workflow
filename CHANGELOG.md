@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+**Solo mode and experience in the profile, reported by `workflow status`** (#43, the first part of solo mode, #32).
+
+- **`project.ruleset`:** `true` or `false`; `false` is solo mode. Left out, nothing changes. The profile template writes `ruleset = false` as a plain line.
+- **`project.experience`:** `"new"` or `"developer"`, the project's default. Left out, each person is asked.
+- **`workflow profile check`** refuses any other value of either, naming the setting, so a typo never silently turns solo mode off.
+- **Experience resolution:** one function, `resolve_experience`, for the guard, `status` and the skills. `WORKFLOW_EXPERIENCE` wins, then the untracked `.workflow/experience` file, then `project.experience`, else unknown (worded as new to building). An unrecognised value is skipped with a warning; it never raises.
+- **`workflow status`** reports `Solo mode:` (yes, no, or not set) and `Experience:` with its source and any warning, in text and in `--json` (`solo_mode`, `experience`).
+- Docs: `docs/profile.md` and the template describe both settings. Tests: `tests/test_solo_mode_profile.py`.
+- **For projects updating:** nothing to do. Without the two settings, the kit behaves as before.
+
 ## 0.1.10
 
 **The guard reads editing scripts as their tools do, and fails closed when it runs out of time.** In a ticket session the guard refuses a new test-skip or focus marker that an editing script (`sed`, `perl`, `awk`, `vim`, `ed`) or a patch adds. The correctness reviews of 0.1.9 found older ways, all in 0.1.8 already, that a script could add one unseen, and ways to make the guard slow enough to outlast the hook's timeout, which in 0.1.8 doesn't block. Reported and fixed privately, under `SECURITY.md`.
