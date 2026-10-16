@@ -5,11 +5,11 @@
 **Experience in the guided start and kit updates** (#49, part of solo mode, #32).
 
 - **The guided start** (`start`) asks how much the person knows, *new to building* or *developer*, as the session's very first question, only when `workflow status` finds no level. Skipping counts as new.
-- **The answer** goes in the untracked `.workflow/experience`, the file `status` reads. A cloud session's file lasts for that session, so the guided start says once how to keep it with `WORKFLOW_EXPERIENCE` on the environment.
+- **The answer** goes in the untracked `.workflow/experience`, the file `status` reads, only after checking that git ignores it and that nothing but a plain file is there. A cloud session's file lasts for that session, so the guided start says once how to keep it with `WORKFLOW_EXPERIENCE` on the environment. Where the kit isn't set up yet, set-up asks instead, so the question never comes twice. The first-message hook's nudge now says to ask the level first.
 - **"Explain less" or "explain more"** changes the level the same way, and the guided start tells Claude the new level when it records one (#35's glossary explanations stop or start on it).
-- **In solo mode,** the guided start's look around says so in one line, with what it means and the offer to protect `main`.
+- **In solo mode,** the guided start's look around says so in one line, with what it means, naming the base branch. It doesn't offer "Protect `main`" there, so the offer never nags.
 - **Ticket and conductor sessions** are never asked. The level changes wording and pacing only; what the kit writes on GitHub is the same for every level, plain summary first.
-- **Kit updates** (`update-workflow`) ask the project's default once when the profile has no `experience`, and write it in the update pull request. `setup-workflow` now says the guided start asks each person whose level is unknown.
+- **Kit updates** (`update-workflow`) ask the project's default once when the profile has no `experience`, and write it in the update pull request; while it stays unset, each later update asks once again. `setup-workflow` now says the guided start asks each person whose level is unknown.
 - Tests: `tests/test_experience_start.py`.
 - **For projects updating:** the update asks the project's experience default once if the profile has none; "Leave it unset" changes nothing.
 

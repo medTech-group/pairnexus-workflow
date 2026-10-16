@@ -25,7 +25,7 @@ Any other value of `ruleset` or `experience` is a `workflow profile check` error
 Each person's experience is worked out by one function, `resolve_experience` in `scripts/workflow/profile.py`. `workflow status` reports what it finds. The guard's solo-mode tickets will call the same function, and skills will read the level from `status`. The first of these that holds a value wins:
 
 1. `WORKFLOW_EXPERIENCE` in the environment: `new` or `developer`. Set it on a claude.ai environment to keep a cloud session's answer.
-2. `.workflow/experience` in the project: one line, `new` or `developer`, written by a local session. `.workflow/` is untracked, so a person's level never lands in the repository's history.
+2. `.workflow/experience` in the project: one line, `new` or `developer`, written by the guided start (in a cloud session it lasts for that session only). `.workflow/` is untracked, so a person's level never lands in the repository's history.
 3. The profile's `project.experience`.
 4. Unknown. Wording then treats the person as new to building, since skipping the question counts as new.
 
