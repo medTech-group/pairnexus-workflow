@@ -251,7 +251,7 @@ def test_merge_hooks_keeps_the_projects_hooks_in_shared_entries():
     pre = out["hooks"]["PreToolUse"]
     assert pre[0] == {"matcher": "Bash", "hooks": [{"type": "command", "command": "mine.sh"}]}
     assert all(e.get("matcher") != "Edit" for e in pre)  # emptied: dropped
-    assert pre[-1]["matcher"] == "Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*[Gg]it[Hh]ub.*"
+    assert pre[-1]["matcher"] == "Bash|Monitor|PowerShell|Edit|Write|MultiEdit|NotebookEdit|mcp__.*[Gg]it[Hh]ub.*"
     assert len(_kit_hooks(out)) == 4 and out["permissions"] == settings["permissions"]
     assert vendor.merge_hooks(out) == out  # idempotent: the tag still finds the kit's hooks
 

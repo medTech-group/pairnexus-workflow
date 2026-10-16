@@ -7,7 +7,8 @@
 # The same rule as `fallback.py` (#53), read from the event's raw text:
 # - a push or a merge is asked: `git` then `push`, or `gh` then `pr` then
 #   `merge`, as whole words within one part of a Bash command (split at
-#   ; & | and newlines, a `\` line continuation joined first), or a GitHub MCP
+#   ; & | and newlines, a `\` or PowerShell backtick line continuation joined
+#   first) run by Bash, Monitor or PowerShell, or a GitHub MCP
 #   tool ending in merge_pull_request, push_files, create_or_update_file or
 #   delete_file;
 # - it is refused in solo mode (the profile's first plain `ruleset = …` line
@@ -30,13 +31,13 @@ END {
     if (tool ~ /^mcp__/ && tolower(tool) ~ /github/) {
         if (tool ~ /merge_pull_request$/) what = "merge"
         else if (tool ~ /(push_files|create_or_update_file|delete_file)$/) what = "push"
-    } else if (tool == "Bash") {
+    } else if (runs_a_command(tool)) {
         what = push_or_merge(command())
     }
     if (what == "") exit 0
 
     head = "The workflow'"'"'s guard isn'"'"'t working, so it couldn'"'"'t check this " what ": python3 couldn'"'"'t run the workflow kit (it is missing or failing). To fix it: check that `python3 --version` runs and says 3.11 or newer, then start a new session; if it does, the kit itself failed: report the error to the kit'"'"'s maintainers."
-    if (tool == "Bash") by_hand = "Or run it yourself in your own terminal (the command isn'"'"'t repeated here, since nothing could check it)."
+    if (runs_a_command(tool)) by_hand = "Or run it yourself in your own terminal (the command isn'"'"'t repeated here, since nothing could check it)."
     else by_hand = "Or do it yourself on GitHub."
     mode = permission_mode()
     if (solo()) {
@@ -50,6 +51,12 @@ END {
     } else {
         out("ask", head " Allow it only if you mean to.")
     }
+}
+
+# The tools that run a command (fallback.py'"'"'s COMMAND_TOOLS): Monitor runs
+# it as Bash does, PowerShell in PowerShell.
+function runs_a_command(tool) {
+    return tool == "Bash" || tool == "Monitor" || tool == "PowerShell"
 }
 
 # The first "name": "…" string value without escapes (a tool name, a mode).
@@ -86,6 +93,7 @@ function command(    s, i) {
     gsub(/\\n/, "\n", s)
     gsub(/\\./, " ", s)
     gsub("\002\n", " ", s)    # a line continuation joins its lines
+    gsub("`\n", " ", s)       # and so does PowerShell'"'"'s backtick
     return s
 }
 

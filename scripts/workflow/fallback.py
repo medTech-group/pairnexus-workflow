@@ -35,6 +35,8 @@ _MERGE = ("gh", "pr", "merge")
 _WORDS = {w: re.compile(r"\b" + w + r"\b") for w in _PUSH + _MERGE}
 _WHY_LIMIT = 200
 MCP_PUSH = ("merge_pull_request", "push_files", "create_or_update_file", "delete_file")
+# The tools that run a command: Monitor runs it as Bash does, PowerShell in PowerShell.
+COMMAND_TOOLS = ("Bash", "Monitor", "PowerShell")
 _RULESET = re.compile(r"^[ \t]*ruleset[ \t]*=[ \t]*(\w+)", re.M)
 PROFILE = os.path.join(".claude", "workflow", "profile.toml")
 FIXES = (
@@ -63,10 +65,11 @@ def push_or_merge(event):
     if tool.startswith("mcp__") and "github" in tool.lower() and tool.endswith(MCP_PUSH):
         return "merge" if tool.endswith("merge_pull_request") else "push"
     inp = event.get("tool_input")
-    cmd = inp.get("command") if tool == "Bash" and isinstance(inp, dict) else None
+    cmd = inp.get("command") if tool in COMMAND_TOOLS and isinstance(inp, dict) else None
     if not isinstance(cmd, str):
         return None
-    parts = _SEPARATORS.split(cmd.replace("\\\n", " "))  # a line continuation joins its lines
+    # A line continuation (`\` in a shell, a backtick in PowerShell) joins its lines.
+    parts = _SEPARATORS.split(cmd.replace("\\\n", " ").replace("`\n", " "))
     if any(_in_order(p, _PUSH) for p in parts):
         return "push"
     return "merge" if any(_in_order(p, _MERGE) for p in parts) else None
@@ -84,7 +87,7 @@ def _in_order(text, words):
 
 def read_event(text):
     """The hook's event from its text: the JSON object, or, when the text isn't
-    one, what can still be read of it (the tool, a Bash command and the
+    one, what can still be read of it (the tool, a command and the
     permission mode, as JSON strings); None when nothing can."""
     try:
         event = json.loads(text)
@@ -154,7 +157,7 @@ def mode_lines(mode):
 
 def _by_hand(event):
     tool = event.get("tool_name") if isinstance(event, dict) else None
-    if tool == "Bash":
+    if tool in COMMAND_TOOLS:
         # The guard couldn't check it for sensitive data, so it isn't repeated.
         return "Or run it yourself in your own terminal (the command isn't repeated here, since nothing could check it)."
     return "Or do it yourself on GitHub."

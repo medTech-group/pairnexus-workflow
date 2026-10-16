@@ -5215,6 +5215,40 @@ def check_mcp(tool: str, inp: dict, profile: Profile, role: str, root: Path) -> 
     return ALLOW
 
 
+POWERSHELL_REFUSAL = "the guard can't read PowerShell; use Bash"
+
+
+def check_powershell(inp: dict, profile: Profile, role: str, root: Path) -> Decision:
+    """The guard can't read PowerShell, and never tries to parse it. Ticket and
+    conductor sessions are refused it; an attended session gets the can't-decide
+    rule (#53) on its text: a push or a merge is asked (refused in solo mode),
+    anything else is left alone."""
+    if role != "attended":
+        return Decision("deny", POWERSHELL_REFUSAL)
+    what = fallback.push_or_merge({"tool_name": "PowerShell", "tool_input": inp})
+    if not what:
+        return ALLOW
+    command = inp.get("command") if isinstance(inp.get("command"), str) else ""
+    if profile.ruleset is False:
+        hint = "run it through Bash instead, where the kit can tell"
+        d = _solo_deny(SoloRefusal(f"a {what} in PowerShell, which the kit can't read", "unknown", hint), profile, root, command)
+        if _text_holds_sensitive(command, profile):
+            # Never repeat sensitive data: the hand command goes.
+            lines = [l for l in d.reason.splitlines() if not l.startswith("If you really mean it")]
+            lines.insert(-1, "If you really mean it, run it yourself in your own terminal, without the text that matches the project's sensitive-data pattern.")
+            d = Decision("deny", "\n".join(lines), True)
+        return d
+    return Decision(
+        "ask",
+        f"the guard can't read PowerShell, so it can't check this {what} (which branch, which pull request); "
+        "allow it only if you mean to, or run it through Bash, which the guard can check",
+    )
+
+
+def _text_holds_sensitive(text: str, profile: Profile) -> bool:
+    return any(re.search(pat, text) for pat in profile.sensitive_patterns)
+
+
 def decide(
     event: dict,
     profile: Profile,
@@ -5244,14 +5278,16 @@ def _nobody_asked(event: dict, mode, sensitive: bool, profile: Profile, root: Pa
     lines = fallback.mode_lines(mode)  # the same lines as the can't-decide fallback's
     tool = event.get("tool_name") or ""
     inp = event.get("tool_input") if isinstance(event.get("tool_input"), dict) else {}
-    command = inp.get("command") if tool == "Bash" else None
+    command = inp.get("command") if tool in ("Bash", "Monitor", "PowerShell") else None
     if sensitive:
         # Never repeat sensitive data, nor suggest posting it by hand.
         lines.append("Or remove the text that matches the project's sensitive-data pattern, and try again.")
     else:
         github = isinstance(tool, str) and tool.startswith("mcp__") and "github" in tool.lower()
         bash = isinstance(command, str) and command.strip()
-        if bash:
+        if bash and tool == "PowerShell":
+            holds = _text_holds_sensitive(command, profile)  # the guard can't read what it reads
+        elif bash:
             holds = _bash_holds_sensitive(command, profile, root, cwd if cwd is not None else event.get("cwd") or None)
         else:
             text = "\n".join(_strings(inp))
@@ -5290,6 +5326,11 @@ def _decide(
         cwd = event.get("cwd") or None
     if tool == "Bash":
         return check_bash(inp.get("command") or "", profile, role, root, current_branch, role_from_env, cwd)
+    if tool == "Monitor":
+        # Monitor runs its command as Bash does; a WebSocket watch (`ws`, no command) runs nothing.
+        return check_bash(inp.get("command") or "", profile, role, root, current_branch, role_from_env, cwd)
+    if tool == "PowerShell":
+        return check_powershell(inp, profile, role, root)
     if tool in WRITE_TOOLS:
         return check_write(tool, inp, profile, role, root, cwd)
     if tool.startswith("mcp__"):

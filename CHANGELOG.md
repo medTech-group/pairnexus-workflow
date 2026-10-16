@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+**The guard sees `Monitor` and `PowerShell`** (#55, part of guard robustness, #33).
+
+- **The guard's matcher adds `Monitor` and `PowerShell`**, in a vendored project's settings and in the plugin's hooks file. Before, neither reached the guard, even in a ticket session.
+- **`Monitor`:** its `command` is checked exactly as a Bash command, in every role (a ticket session's `gh run watch` still passes; a push or a deploy through it is refused or asked as through Bash). A WebSocket watch (`ws`, no command) is allowed.
+- **`PowerShell`:** the guard can't read it and never parses it. Ticket and conductor sessions are refused it ("the guard can't read PowerShell; use Bash"). In an attended session, a push or a merge in its text is asked, and refused in solo mode or where nobody is asked; anything else is left alone. The can't-decide fallbacks (`fallback.py`, `fallback.sh`) read a `Monitor` or `PowerShell` command as they read a Bash one.
+- Where nobody is asked, the refusal gives the `Monitor` or `PowerShell` command itself to run by hand.
+- Docs: `docs/enforcement.md` §4 lists the tools the guard sees, and records the release-gate step for item 10 (#36): compare Claude Code's tools reference with that list. Tests: `tests/test_guard_monitor_powershell.py`; `tests/test_vendor_evidence.py`'s matcher assertion now includes the two tools.
+- **For projects updating:** nothing to do; the next kit update writes the new matcher into `.claude/settings.json`.
+
 **No `python3`, and the plugin: the hook commands get the same fallback** (#56, part of guard robustness, #33).
 
 - **Without a working `python3`** (missing, a stub, a shim with no version, a non-zero exit), an attended session's guard hook command still applies #53's rule: a push or a merge is asked, and refused in solo mode or in a permission mode where nobody is asked; everything else is left alone. It reads the event's raw text in the new `scripts/workflow/fallback.sh` (POSIX `sh` and `awk`, matched word by word): only a Bash command or a GitHub MCP tool's name, never a file's content. The reason says the guard isn't working and to check `python3 --version` (3.11 or newer).

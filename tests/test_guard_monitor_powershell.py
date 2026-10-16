@@ -105,11 +105,13 @@ def test_monitor_gets_the_same_decision_as_bash(prof, role, what, mode):
     assert (as_monitor.action, as_monitor.reason) == (as_bash.action, as_bash.reason)
 
 
-@pytest.mark.parametrize("role", ROLES)
-def test_monitor_refuses_or_asks_what_bash_does(prof, role):
+def test_monitor_refuses_or_asks_what_bash_does(prof):
+    # Not only the same as Bash: actually checked (a Monitor left alone would allow all of these).
     for cmd in (PUSH, "scripts/deploy.sh staging", "echo x > .claude/settings.json"):
-        want = "ask" if role == "attended" else "deny"
-        assert act(prof, tool("Monitor", command=cmd), role).action == want, cmd
+        assert act(prof, tool("Monitor", command=cmd), "ticket").action == "deny", cmd
+    for cmd in (PUSH, "scripts/deploy.sh staging"):
+        assert act(prof, tool("Monitor", command=cmd), "attended").action == "ask", cmd
+    assert act(prof, tool("Monitor", command=PUSH), "conductor").action == "deny"
 
 
 def test_a_ticket_session_may_watch_ci_through_monitor(prof):
@@ -291,7 +293,8 @@ def _doc():
 
 def test_enforcement_md_lists_exactly_the_tools_the_guard_sees():
     (line,) = [l for l in _doc().splitlines() if l.startswith("**The tools the guard sees:**")]
-    named = set(re.findall(r"`([^`]+)`", line))
+    listed = line.split(". ")[0]  # the list itself, before what it is
+    named = set(re.findall(r"`([^`]+)`", listed))
     assert named == {"Bash", "Monitor", "PowerShell", "Edit", "Write", "MultiEdit", "NotebookEdit", "mcp__…github…"}
     plain = {n for n in named if "…" not in n}
     assert plain == {t for t in vendor.GUARD_MATCHER.split("|") if t.isalpha()}

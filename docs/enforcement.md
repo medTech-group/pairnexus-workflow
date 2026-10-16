@@ -63,6 +63,13 @@ The guard also recognises ticket sessions by their branch (`run.ticket_branch`) 
 
 ## 4. What the guard does and doesn't catch
 
+**The tools the guard sees:** `Bash`, `Monitor`, `PowerShell`, the file-editing tools (`Edit`, `Write`, `MultiEdit`, `NotebookEdit`) and the GitHub MCP tools (`mcp__…github…`, any case). These are its hook's matcher, in a vendored project's settings and in the plugin's hooks file alike (`GUARD_MATCHER` in `scripts/workflow/vendor.py`); any other tool never reaches it.
+- `Monitor` runs a shell command as Bash does, so its `command` is checked exactly as a Bash command, in every role: the same parse, allow-lists and deny-lists (a ticket session's `gh run watch` or `gh pr checks --watch` passes; a push or a deploy through it is refused or asked as through Bash). A `Monitor` with `ws` and no command (a WebSocket watch) runs nothing, and is allowed.
+- `PowerShell`: the guard can't read PowerShell, and never tries to parse it. Ticket and conductor sessions are refused it ("the guard can't read PowerShell; use Bash"). An attended session gets the can't-decide rule (below) on the command's text: a push or a merge (`git … push`, `gh … pr … merge`, a backtick line continuation joined first) is asked, and refused in solo mode or where nobody is asked; anything else is left alone.
+- Where nobody is asked, the refusal for a `Monitor` or `PowerShell` command gives the command itself to run by hand, as for Bash.
+
+**Release gate (item 10):** before a release, compare Claude Code's tools reference with the list above; a tool that runs commands (or writes files, or reaches GitHub) and is missing from it is a finding, to be added to the guard's matcher and checks before the release. This ticket (#55) records the step; item 10's spec (#36) builds it.
+
 It reads each command the way a shell would, well enough to catch a well-meaning session's mistakes and the obvious tricks:
 - operators and subshells wherever they sit (`;(`, `&&(`, `$(…)`, backticks, `<(…)`, function bodies);
 - heredocs (scanned when they feed a shell, or when their delimiter can't be read);
