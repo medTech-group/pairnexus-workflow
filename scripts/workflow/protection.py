@@ -100,6 +100,9 @@ class Report:
     missing: list[str] = field(default_factory=list)
     required_checks: list[str] = field(default_factory=list)
     merge: dict | None = None  # {"merge_commits": bool | None, "auto_merge": ..., "missing": [...]}
+    # Active rulesets it can't tell target the base branch, so their required
+    # checks aren't in `required_checks` (merge-check won't say "Ready" then).
+    unsure: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict:
         return {
@@ -262,6 +265,7 @@ def check(rulesets, base: str, settings=None) -> Report:
         return Report(base, False, [f"no rulesets: nothing on GitHub protects {base}"], [], merge)
 
     ignored: list[str] = []
+    unsure: list[str] = []
     effective: list[tuple[str, dict]] = []
     for name, rs in zip(names, rulesets):
         off_target = _targets(rs, base, default, settings is not None)
@@ -273,6 +277,7 @@ def check(rulesets, base: str, settings=None) -> Report:
             ignored.append(f"{name} is not active (enforcement {quote(rs['enforcement'])})")
         elif off_target:
             ignored.append(f"{name} {off_target}")
+            unsure.append(f"{name} {off_target}")
         else:
             effective.append((name, rs))
 
@@ -295,7 +300,7 @@ def check(rulesets, base: str, settings=None) -> Report:
                         checks.append(c["context"])
 
     protected = not problems
-    return Report(base, protected, [] if protected else ignored + problems, checks, merge)
+    return Report(base, protected, [] if protected else ignored + problems, checks, merge, unsure)
 
 
 def text(rep: Report) -> str:
@@ -358,6 +363,7 @@ class Ran:
     result: str
     when: datetime | None
     id: int
+    preview: bool = False  # from the try-it link's app (NEVER_OFFERED_APPS)
 
 
 def _a_check_name(n) -> bool:
@@ -500,8 +506,10 @@ def _whole(pages: list, key: str, what: str) -> None:
         )
 
 
-def _check_runs(data) -> list[Ran]:
-    """The check runs: one response of GET .../check-runs, or its pages from `--paginate --slurp`."""
+def _check_runs(data, commit: str | None = None) -> list[Ran]:
+    """The check runs: one response of GET .../check-runs, or its pages from `--paginate --slurp`.
+
+    With `commit`, a run whose `head_sha` names another commit is left out."""
     what = "check runs"
     pages = data if isinstance(data, list) else [data]
     if not all(isinstance(p, dict) and isinstance(p.get("check_runs"), list) for p in pages):
@@ -516,7 +524,7 @@ def _check_runs(data) -> list[Ran]:
             # Without it, the try-it link's check can't be told apart, and would be offered.
             raise ProtectionError(f"the {what} file: each check run must have its app, with a slug, as GitHub gives it")
         started, completed = _when(r.get("started_at"), what), _when(r.get("completed_at"), what)
-        if app["slug"].casefold() in NEVER_OFFERED_APPS:
+        if commit is not None and isinstance(r.get("head_sha"), str) and r["head_sha"].lower() != commit.lower():
             continue
         if r["status"] != "completed":
             result = "pending"
@@ -524,12 +532,14 @@ def _check_runs(data) -> list[Ran]:
             raise ProtectionError(f"the {what} file: the completed check run {quote(r['name'])} has no conclusion")
         else:
             result = "passing" if r["conclusion"] in PASSING else "failing"
-        out.append(Ran(r["name"], result, completed or started, _id(r)))
+        out.append(Ran(r["name"], result, completed or started, _id(r), app["slug"].casefold() in NEVER_OFFERED_APPS))
     return out
 
 
-def _statuses(data) -> list[Ran]:
-    """The statuses: GET .../statuses (or its pages), or the combined GET .../status."""
+def _statuses(data, commit: str | None = None) -> list[Ran]:
+    """The statuses: GET .../statuses (or its pages), or the combined GET .../status.
+
+    With `commit`, a combined status whose `sha` names another commit is left out."""
     what = "statuses"
     combined = data if isinstance(data, list) and data and all(isinstance(p, dict) and "statuses" in p for p in data) else None
     if isinstance(data, dict):
@@ -538,7 +548,7 @@ def _statuses(data) -> list[Ran]:
         if not all(isinstance(p.get("statuses"), list) for p in combined):
             raise ProtectionError(f"the {what} file must be a list of statuses, or the combined status with its statuses")
         _whole(combined, "statuses", what)
-        items = [s for p in combined for s in p["statuses"]]
+        items = [s for p in combined if commit is None or not isinstance(p.get("sha"), str) or p["sha"].lower() == commit.lower() for s in p["statuses"]]
     elif isinstance(data, list):
         items = [s for p in data for s in p] if data and all(isinstance(p, list) for p in data) else data
     else:
@@ -556,25 +566,38 @@ def _id(item: dict) -> int:
     return item["id"] if isinstance(item.get("id"), int) and not isinstance(item.get("id"), bool) else 0
 
 
-def checks_ran(check_runs, statuses=None, required=()) -> list[dict]:
-    """Each check that ran on the commit, with its latest result, less those required.
-
-    Results are passing, failing or pending. Check runs from the try-it link's
-    app are never offered. A name reported more than once (a re-run, or a check
-    run and a status of the same name) appears once, with its latest result:
-    the one that finished (or, not finished, started; a status: was updated)
-    last. A check run or status with no time counts as the oldest; at the
-    same time, the higher id wins. A name `--check` would refuse (empty,
-    spaces at either end, a control character) is never offered.
-    """
+def _collapse(results: list[Ran]) -> list[Ran]:
+    """Each name once, with its latest result: the one that finished (or, not
+    finished, started; a status: was updated) last. One with no time counts as
+    the oldest; at the same time, the higher id wins."""
     oldest = datetime.min.replace(tzinfo=timezone.utc)
-    latest: dict[str, Ran] = {}
-    for r in _check_runs(check_runs) + _statuses(statuses if statuses is not None else []):
-        have = latest.get(r.name)
+    out: dict[str, Ran] = {}
+    for r in results:
+        have = out.get(r.name)
         if have is None or (r.when or oldest, r.id) >= (have.when or oldest, have.id):
-            latest[r.name] = r
+            out[r.name] = r
+    return list(out.values())
+
+
+def latest(check_runs, statuses=None, commit: str | None = None) -> list[Ran]:
+    """Each check that ran on the commit, once, with its latest result
+    (passing, failing or pending): a re-run, or a check run and a status of the
+    same name, counts once (`_collapse`). The try-it link's check runs are
+    kept, marked `preview`. With `commit`, results for another commit are left
+    out. `workflow merge-check` reads the checks here."""
+    return _collapse(_check_runs(check_runs, commit) + _statuses(statuses if statuses is not None else [], commit))
+
+
+def checks_ran(check_runs, statuses=None, required=()) -> list[dict]:
+    """Each check that ran on the commit, with its latest result (`_collapse`),
+    less those required. Check runs from the try-it link's app are never
+    offered, nor is a name `--check` would refuse (empty, spaces at either end,
+    a control character).
+    """
     skip = set(required)
-    out = [{"name": n, "result": r.result} for n, r in latest.items() if n not in skip and _a_check_name(n)]
+    runs = [r for r in _check_runs(check_runs) if not r.preview]
+    ran = _collapse(runs + _statuses(statuses if statuses is not None else []))
+    out = [{"name": r.name, "result": r.result} for r in ran if r.name not in skip and _a_check_name(r.name)]
     return sorted(out, key=lambda c: (c["name"].casefold(), c["name"]))
 
 

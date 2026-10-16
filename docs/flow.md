@@ -64,6 +64,8 @@ A pull request merges only when all of these hold on its current head:
 
 This section is the merge rule's one source; skills and briefings point here rather than restate it.
 
+`workflow merge-check` is its one implementation, run by the `merge-check` skill and the conductor. Each of its rules names the item above, or #30's condition, that it implements (no conflict, no open review threads or outstanding "changes requested", a try-it link that built, and the owner's review for kit and CI files). A test fails when this list and the command's rules differ.
+
 Merging is the owner's in attended work. In an unattended run it follows the charter's `merge.mode`: GitHub auto-merge behind the ruleset (the session or the conductor keeps the branch up to date until it merges), the session merges with a merge commit (`session`), or nothing merges unattended and the PR waits for the owner (`owner`). In `auto-merge` mode, when GitHub refuses to enable auto-merge because the PR is already mergeable (clean), whoever tried (the session, or the conductor) checks this rule again at that moment and, if it holds, merges with a merge commit. The conductor never merges a change to a protected path itself: it goes to the owner.
 
 ## 5. Unattended runs

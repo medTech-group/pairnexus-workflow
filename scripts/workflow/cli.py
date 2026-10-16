@@ -13,6 +13,7 @@
     workflow state init --charter F --run-id ID [--by-hand N] [--read-through ID] | get --body F | put --body F --state F [--out F] | patch --body F --patch F [--out F]
     workflow render --template F --ticket F --charter F --slots F --tracking N [--by-hand N] [--out F] [--print]
     workflow comments --file F [--owner LOGIN] [--since-id N]
+    workflow merge-check --pr F --files F --commits F --checks F --rulesets F --threads F --reviews F --comments F --permissions F --compare F [--preview F] [--asker LOGIN] [--json]
     workflow briefing verify --file F
     workflow evidence [--suite NAME ...] [--base-count N | --base-ref BRANCH] [--fresh] [--allow-dirty]
     workflow repair
@@ -44,6 +45,7 @@ from . import _old_python, fallback
 from . import gate as gate_mod
 from . import guard as guard_mod
 from . import issues as issues_mod
+from . import merge as merge_mod
 from . import posts as posts_mod
 from . import protection as protection_mod
 from . import render as render_mod
@@ -527,6 +529,37 @@ def cmd_comments(a) -> int:
     return 0
 
 
+def cmd_merge_check(a) -> int:
+    """Whether the pull request may merge (flow §4), from the files given.
+    Changes nothing, posts nothing, and exits 0 whatever it finds: anything it
+    can't read is a reason of its own, never "ready"."""
+    inputs: dict = {}
+    for name in merge_mod.INPUTS:
+        path = getattr(a, name, None)
+        if name == "profile" or path is None:
+            continue
+        try:
+            text = _read(path).removeprefix("\ufeff")
+            values = posts_mod.decode_values(text)
+            if not values:
+                raise posts_mod.CommentsError("the file is empty")
+            inputs[name] = (values[0] if len(values) == 1 else values, None)
+        except OSError as e:
+            inputs[name] = (None, f"can't open {path}: {e.strerror or e}")
+        except (posts_mod.CommentsError, UnicodeDecodeError) as e:
+            inputs[name] = (None, f"{path} isn't JSON ({e})")
+    prof, profile_error = None, None
+    try:
+        prof = load(required=False)
+    except ProfileError as e:
+        profile_error = str(e)
+    root = prof.root if prof else project_root()
+    level = resolve_experience(root, prof.experience if prof else None).wording_level
+    res = merge_mod.evaluate(inputs, prof, profile_error, asker=a.asker, level=level)
+    _out(res.as_dict() if a.json else merge_mod.text(res))
+    return 0
+
+
 def cmd_briefing(a) -> int:
     """`briefing verify`: the session's copy of its briefing against its last line."""
     stated, got = render_mod.seal_of(_read(a.file))
@@ -994,6 +1027,16 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--owner", help="the owner's GitHub login (default: the profile's project.owner)")
     s.add_argument("--since-id", type=int, help="only comments with a greater id (the state's comments_read_through)")
     s.set_defaults(fn=cmd_comments)
+
+    s = sub.add_parser(
+        "merge-check", allow_abbrev=False, help="whether a pull request may merge under the merge rule (flow §4), from JSON files; changes nothing, posts nothing, exits 0"
+    )
+    for name, what in merge_mod.INPUTS.items():
+        if name != "profile":
+            s.add_argument(f"--{name}", metavar="F", help=f"{what}, as JSON from the GitHub API (or -)")
+    s.add_argument("--asker", metavar="LOGIN", help="the GitHub login of whoever asks (the owner gets \"Ready once you've read\" for kit and CI files)")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_merge_check)
 
     s = sub.add_parser("briefing", help="check a ticket session's copy of its briefing against its `Briefing <hash>` line")
     s.add_argument("action", choices=["verify"])
