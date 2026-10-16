@@ -50,9 +50,12 @@ def on_disk(root: Path, ruleset):
 
 @pytest.fixture(autouse=True)
 def _session_env(monkeypatch):
-    """No experience or role from the session running the suite."""
+    """No experience, role or git config from the machine running the suite
+    (the guard reads push settings in every scope)."""
     monkeypatch.delenv("WORKFLOW_EXPERIENCE", raising=False)
     monkeypatch.delenv("WORKFLOW_ROLE", raising=False)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
 
 
 @pytest.fixture
@@ -512,3 +515,95 @@ def test_settings_are_worded_as_setting_up_a_later_push(cmd, solo):
 
 def test_matching_refspec_quoted_with_its_remote(solo):
     assert "git push origin :" in act(solo, "git push origin :").reason
+
+
+# ---------- review round 2 ----------
+
+TODAY = {  # attended, outside solo mode: today's decision, pinned
+    "git push origin main": "ask",
+    "git push -f origin main": "ask",
+    "git push --mirror origin": "ask",
+    "git push origin :main": "ask",
+    "git config remote.origin.mirror true": "ask",
+    "git push -f origin my-branch": "ask",
+    "git push origin --delete my-branch": "ask",
+    "git push origin feature": "allow",
+    'git push origin "$BRANCH"': "allow",
+    "git push origin @": "allow",
+    "git config push.default matching": "allow",
+    "printf main | xargs git push origin": "allow",
+}
+
+
+@pytest.mark.parametrize("cmd,expected", list(TODAY.items()))
+def test_todays_attended_decisions_pinned(cmd, expected, tmp_path):
+    for ruleset in (True, None):
+        prof = on_disk(tmp_path / str(ruleset), ruleset)
+        assert act(prof, cmd, branch=None if "@" in cmd else "feature").action == expected, (ruleset, cmd)
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "git -c include.path=/tmp/m.cfg push origin",
+        "git -c includeIf.onbranch:feature.path=/tmp/m.cfg push",
+        "git -c include.path=/tmp/a.cfg p",
+        "HOME=/tmp/h git push",
+        "export XDG_CONFIG_HOME=/tmp/x; git push origin feature",
+        "P='push origin main' git --config-env=alias.p=P p",
+        "P='push origin main' git --config-env alias.p=P p",
+        "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.p GIT_CONFIG_VALUE_0='push origin main' git p",
+        "git -c remote.pushdefault=backup push",
+    ],
+)
+def test_config_from_includes_home_and_the_environment(cmd, solo):
+    assert act(solo, cmd).action == "deny", cmd
+
+
+@pytest.mark.parametrize("value", ["true", "yes", "on", "1", "push"])
+def test_mirror_on_disk_for_a_remote_with_capitals(value, on_feature):
+    prof = on_disk(on_feature, False)
+    git(on_feature, "remote", "add", "Backup", str(on_feature.parent / "remote.git"))
+    git(on_feature, "config", "remote.Backup.mirror", value)
+    assert decide(bash("git push Backup", on_feature), prof, "attended", on_feature, "feature").action == "deny", value
+
+
+def test_another_remotes_mirror_doesnt_refuse_a_bare_push_to_origin(on_feature):
+    prof = on_disk(on_feature, False)
+    git(on_feature, "remote", "add", "backup", str(on_feature.parent / "remote.git"))
+    git(on_feature, "config", "remote.backup.mirror", "true")
+    assert decide(bash("git push", on_feature), prof, "attended", on_feature, "feature").action == "allow"
+    git(on_feature, "config", "remote.pushDefault", "backup")
+    assert decide(bash("git push", on_feature), prof, "attended", on_feature, "feature").action == "deny"
+
+
+def test_alias_chains_and_shell_aliases_on_disk(on_feature):
+    prof = on_disk(on_feature, False)
+    git(on_feature, "config", "alias.q", "push origin main")
+    git(on_feature, "config", "alias.p", "q")
+    git(on_feature, "config", "alias.s", "!f(){ git $1 origin main; }; f")
+    for cmd in ("git p", "git s push"):
+        assert decide(bash(cmd, on_feature), prof, "attended", on_feature, "feature").action == "deny", cmd
+
+
+def test_bare_force_push_of_a_feature_branch_still_asked(on_feature):
+    prof = on_disk(on_feature, False)
+    assert decide(bash("git push -f", on_feature), prof, "attended", on_feature, "feature").action == "ask"
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    ["git config --unset push.default", "git config --unset-all remote.origin.push", "git config unset push.default", "git push origin user@fix"],
+)
+def test_safer_settings_and_at_signs_in_names_not_refused(cmd, solo):
+    assert act(solo, cmd).action != "deny", cmd
+
+
+def test_stdin_and_pushdefault_wording(solo):
+    assert "pushes every branch" not in act(solo, "git push --s origin feature").reason
+    assert "This would change `main` directly" not in act(solo, "git -c remote.pushdefault=backup push").reason
+
+
+def test_authorization_header_masked(solo):
+    cmd = 'git -c http.extraHeader="Authorization: Bearer tok_abcdef123456" push origin main'
+    assert "tok_abcdef123456" not in act(solo, cmd).reason

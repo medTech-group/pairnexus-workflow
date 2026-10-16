@@ -50,8 +50,8 @@ sessions are asked, except in solo mode (`project.ruleset = false`): there an
 attended session's git push that touches the base branch, or whose destination
 can't be told, is refused with `solo_refusal`'s reason (a force-push or
 deletion of a named feature branch is still asked). Ticket sessions and the
-conductor also may not write the global git config (~/.gitconfig, ~/.config/git/, $XDG_CONFIG_HOME/git/, the
-file $GIT_CONFIG_GLOBAL names).
+conductor also may not write the global git config (~/.gitconfig,
+~/.config/git/, $XDG_CONFIG_HOME/git/, the file $GIT_CONFIG_GLOBAL names).
 
 **Ticket sessions also may not:** run the profile's deploy commands (also fed
 to a shell on stdin, run by an interpreter or launcher such as `python3`,
@@ -162,24 +162,25 @@ def _deny(role: str, reason: str) -> Decision:
 @dataclass
 class SoloRefusal:
     """Why solo mode refuses an attended session's command. `what` says what the
-    guard saw, in a few words. `unknown` is set when the guard can't tell which
-    branch the command changes, so it counts as the base branch."""
+    guard saw, in a few words. `kind` is "change" (it changes the base branch),
+    "unknown" (the guard can't tell which branch it changes, so it counts as the
+    base branch) or "setting" (it sets git up so a later push changes it)."""
 
     what: str
-    unknown: bool = False
-    setting: bool = False  # a setting that makes a later push change the base branch
+    kind: str = "change"
 
 
 # Credentials a command may carry: a URL's user:password@, a token variable's value.
 _URL_CREDENTIALS = re.compile(r"(?<=://)[^/\s@'\"]+@")
 _SECRET_VARS = re.compile(r"(?i)\b(\w*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|CREDENTIALS?)\w*)=(?:'[^']*'|\"[^\"]*\"|\S+)")
+_SECRET_HEADERS = re.compile(r"(?i)(authorization:\s*(?:\w+\s+)?|bearer\s+|extraheader=)[^\s\"']+")
 _HAND_MAX = 400  # longer than this, the hand command isn't repeated
 
 
 def _hand_command(command: str) -> str:
     """The command to run by hand, as code, with credentials masked; or a
     pointer back to it when it's too long to repeat."""
-    text = _SECRET_VARS.sub(r"\1=…", _URL_CREDENTIALS.sub("…@", command.strip()))
+    text = _SECRET_HEADERS.sub(r"\1…", _SECRET_VARS.sub(r"\1=…", _URL_CREDENTIALS.sub("…@", command.strip())))
     if len(text) > _HAND_MAX:
         return " the command as you gave it (too long to repeat here)."
     code = _code_span(text)
@@ -200,17 +201,18 @@ def _code_span(text: str) -> str:
     return f"{fence} {text} {fence}"
 
 
-def solo_refusal(base: str, level: str, command: str, what: str = "", unknown: bool = False, setting: bool = False) -> str:
+def solo_refusal(base: str, level: str, command: str, refusal: SoloRefusal) -> str:
     """The reason a solo-mode refusal gives, which Claude relays: why in plain
     words, what `base` is (only for `level` "new"), the command to run by hand,
     and the "Protect" offer. Wording follows `level`; what is refused never does."""
-    if unknown:
+    what = refusal.what
+    if refusal.kind == "unknown":
         lines = [
             f"The kit can't tell which branch this would change, so it counts as `{base}`. "
             f"Without GitHub's protection set up, the kit doesn't allow that: push the branch by name, "
             f"from the project's own directory (`git push origin <branch>`)."
         ]
-    elif setting:
+    elif refusal.kind == "setting":
         lines = [f"This would set git up so that a later push changes `{base}` without a pull request. Without GitHub's protection set up, the kit doesn't allow that."]
     else:
         lines = [f"This would change `{base}` directly. Without GitHub's protection set up, the kit doesn't allow that."]
@@ -227,7 +229,7 @@ def solo_refusal(base: str, level: str, command: str, what: str = "", unknown: b
 
 def _solo_deny(s: SoloRefusal, profile: Profile, root: Path, command: str) -> Decision:
     level = resolve_experience(root, profile.experience).wording_level
-    return Decision("deny", solo_refusal(profile.base_branch, level, command, s.what, s.unknown, s.setting))
+    return Decision("deny", solo_refusal(profile.base_branch, level, command, s))
 
 
 # ---------- paths ----------
@@ -1107,35 +1109,43 @@ def _upstream_branch(d: str | None) -> str | None:
     return full.removeprefix("refs/heads/")
 
 
-_PUSH_CONFIG = r"^(remote\..*\.(mirror|push)|push\.default|branch\..*\.merge)$"
+_PUSH_CMDS = ("push", "send-pack", "http-push")
+_PUSH_CONFIG = r"^(remote\..*\.(mirror|push)|remote\.pushdefault|push\.default|branch\..*\.(merge|remote|pushremote))$"
+_FALSE = ("false", "no", "off", "0")
 
 
 def _solo_push_settings(d: str | None, base: str, branch: str | None, remote: str | None) -> SoloRefusal | None:
     """Solo mode, a push without refspecs: whether the push settings on disk send
     it to the base branch (or every branch). Reads the repository's config in
-    every scope (`git config --get-regexp`), since a session can write them."""
+    every scope (`git config --get-regexp`), since a session can write them.
+    With no remote named, the remote is the one git picks for a bare push."""
     out = _git_out(d, "config", "--get-regexp", _PUSH_CONFIG)
     if not out:
         return None
-    conf: dict[str, list[str]] = {}
+    conf: dict[str, list[str]] = {}  # keys lowercased whole: git keeps a remote's or branch's case
     for line in out.splitlines():
         k, _, v = line.partition(" ")
         conf.setdefault(k.lower(), []).append(v.strip())
-    remotes = [remote] if remote else sorted({k.split(".")[1] for k in conf if k.startswith("remote.")})
-    for r in remotes:
-        if any(v.lower() in ("true", "fetch", "push") for v in conf.get(f"remote.{r}.mirror", [])):
-            return SoloRefusal(f"`remote.{r}.mirror` makes every push to `{r}` a mirror of every branch, `{base}` among them")
-        for spec in conf.get(f"remote.{r}.push", []):
-            dst = spec.lstrip("+").split(":", 1)[-1]
-            if not dst or _UNSAFE_REF.search(dst) or _dst(dst) in (base, "HEAD"):
-                return SoloRefusal(f"`remote.{r}.push` (`{spec}`) sends a bare push to `{base}`, or to branches the kit can't tell")
-    default = (conf.get("push.default") or [""])[-1].lower()
+
+    def values(key: str) -> list[str]:
+        return conf.get(key.lower(), [])
+
+    def last(key: str) -> str:
+        return (values(key) or [""])[-1]
+
+    b = branch or ""
+    r = remote or last(f"branch.{b}.pushremote") or last("remote.pushdefault") or last(f"branch.{b}.remote") or "origin"
+    if any(v.lower() not in _FALSE for v in values(f"remote.{r}.mirror")):
+        return SoloRefusal(f"`remote.{r}.mirror` makes every push to `{r}` a mirror of every branch, `{base}` among them")
+    for spec in values(f"remote.{r}.push"):
+        dst = spec.lstrip("+").split(":", 1)[-1]
+        if not dst or _UNSAFE_REF.search(dst) or _dst(dst) in (base, "HEAD"):
+            return SoloRefusal(f"`remote.{r}.push` (`{spec}`) sends a bare push to `{base}`, or to branches the kit can't tell")
+    default = last("push.default").lower()
     if default == "matching":
         return SoloRefusal(f"`push.default` is `matching`, so a bare push updates every matching branch, `{base}` among them")
-    if default in ("upstream", "tracking") and branch:
-        merge = (conf.get(f"branch.{branch.lower()}.merge") or conf.get(f"branch.{branch}.merge") or [""])[-1]
-        if _dst(merge) == base:
-            return SoloRefusal(f"`push.default` is `{default}` and this branch merges into `{base}`, so a bare push updates it")
+    if default in ("upstream", "tracking") and branch and _dst(last(f"branch.{branch}.merge")) == base:
+        return SoloRefusal(f"`push.default` is `{default}` and this branch merges into `{base}`, so a bare push updates it")
     return None
 
 
@@ -1150,18 +1160,30 @@ _GIT_COMMANDS = {
 _PUSHES = re.compile(r"\b(push|send-pack|http-push)\b")
 
 
-def _solo_alias(glob: list[str], args: list[str], d: str | None) -> SoloRefusal | None:
-    """Solo mode: a git alias that pushes, given with `-c` or set on disk."""
+def _solo_alias(glob: list[str], args: list[str], d: str | None, elsewhere: bool) -> SoloRefusal | None:
+    """Solo mode: a git alias that pushes, given with `-c` or set on disk, through
+    other aliases too. `elsewhere`: the command takes git config the guard can't
+    read (`--config-env`, `-c include.*`, `GIT_CONFIG*`, `HOME`), so any alias might."""
     if not args or args[0] in _GIT_COMMANDS or args[0].startswith("-"):
         return None
     name = args[0]
-    defs = [glob[j + 1].split("=", 1)[1] for j, g in enumerate(glob[:-1]) if g == "-c" and glob[j + 1].lower().startswith(f"alias.{name.lower()}=")]
-    if not defs:
-        stored = _git_out(d, "config", "--get", f"alias.{name}")
-        defs = [stored] if stored else []
-    if any(_PUSHES.search(v) for v in defs):
-        return SoloRefusal(f"the alias `git {name}` runs a push the guard can't read", unknown=True)
-    return None
+    if elsewhere:
+        return SoloRefusal(f"`git {name}` may be an alias from config the kit can't read", "unknown")
+    for _ in range(5):  # an alias of an alias …
+        defs = [glob[j + 1].split("=", 1)[1] for j, g in enumerate(glob[:-1]) if g == "-c" and glob[j + 1].lower().startswith(f"alias.{name.lower()}=")]
+        if not defs:
+            stored = _git_out(d, "config", "--get", f"alias.{name}")
+            defs = [stored] if stored else []
+        if not defs:
+            return None
+        v = defs[-1].strip()
+        if _PUSHES.search(v) or (v.startswith("!") and "$" in v and "git" in v):
+            return SoloRefusal(f"the alias `git {args[0]}` runs a push, or a git command the kit can't read", "unknown")
+        nxt = v.split()[0] if v and not v.startswith("!") else ""
+        if not nxt or nxt in _GIT_COMMANDS:
+            return None
+        name = nxt
+    return SoloRefusal(f"the alias `git {args[0]}` goes through too many other aliases to read", "unknown")
 
 
 # ---------- git ----------
@@ -1225,6 +1247,7 @@ _PUSH_LONG: dict[str, bool] = {
 _PUSH_LONGS = sorted(set(_PUSH_LONG) | {"no-" + k for k in _PUSH_LONG})
 _PUSH_ALWAYS_DENY = {"all", "branches", "mirror", "prune", "delete", "force", "force-with-lease", "force-if-includes"}
 _UNSAFE_REF = re.compile(r"[$`*?\[{]|@")
+_SOLO_UNSAFE_REF = re.compile(r"[$`*?\[{]")  # `@` alone is HEAD and `@{…}` holds a brace; `user@fix` is a name
 # The current branch's name by substitution, which a refspec may use for HEAD.
 _CURRENT_CMD = r"\s*git\s+(?:branch\s+--show-current|rev-parse\s+--abbrev-ref\s+HEAD|symbolic-ref\s+--short\s+HEAD)\s*"
 _CURRENT_BRANCH = re.compile(rf"\$\({_CURRENT_CMD}\)|`{_CURRENT_CMD}`")
@@ -1300,7 +1323,9 @@ def _push_problem(
                 bad = [c for c in cands if c in _PUSH_ALWAYS_DENY or c in ("tags", "follow-tags", "stdin")]
                 if bad:
                     if solo:
-                        every = [c for c in bad if c in _PUSH_EVERY or c == "stdin"]
+                        if "stdin" in bad:
+                            return SoloRefusal(f"`{a}` could mean `--stdin`, which reads the branches where the kit can't see them; spell the option out", "unknown")
+                        every = [c for c in bad if c in _PUSH_EVERY]
                         if every:
                             return SoloRefusal(f"`{a}` could mean `--{every[0]}`, which pushes every branch; spell the option out")
                         if any(c in _PUSH_ALWAYS_DENY for c in bad):  # a force or delete: judged by its destinations
@@ -1321,7 +1346,7 @@ def _push_problem(
                 tags = True
             elif name == "stdin":
                 if solo:
-                    return SoloRefusal("`--stdin` reads the branches where the guard can't see them", unknown=True)
+                    return SoloRefusal("`--stdin` reads the branches where the guard can't see them", "unknown")
                 return f"`git {kind} --stdin` reads its refs where the guard can't see them; name the branch"
             elif name == "dry-run":
                 dry = True
@@ -1371,9 +1396,9 @@ def _push_problem(
                 return SoloRefusal(f"a bare `:` pushes every matching branch, `{base}` among them")
             forced_msg, this_forced = forced_msg or msg, True
         raw_dst = r.split(":", 1)[1] if ":" in r else r
-        if (role != "attended" or solo) and raw_dst not in ("@", "HEAD") and _UNSAFE_REF.search(raw_dst):
+        if (role != "attended" or solo) and raw_dst not in ("@", "HEAD") and (_SOLO_UNSAFE_REF if solo else _UNSAFE_REF).search(raw_dst):
             if solo:
-                return SoloRefusal(f"the branch {_code_span(raw_dst)} is {_unsafe_kind(raw_dst)}", unknown=True)
+                return SoloRefusal(f"the branch {_code_span(raw_dst)} is {_unsafe_kind(raw_dst)}", "unknown")
             return f"can't tell which branch `{raw_dst}` is (a variable, `@`, a glob or a brace list); push your branch by name"
         if role == "ticket" and (raw_dst.startswith(("refs/tags/", "tags/")) or r.startswith("refs/tags/")):
             return f"ticket sessions don't push tags (`{r}`); push your branch by name"
@@ -1409,7 +1434,7 @@ def _push_problem(
             return f"pushing to the base branch `{base}` is never allowed: open a pull request"
     if solo:
         if "?" in dsts:
-            return SoloRefusal("a detached HEAD, or a directory the guard can't follow", unknown=True)
+            return SoloRefusal("a detached HEAD, or a directory the guard can't follow", "unknown")
         return forced_msg
     if role == "ticket":
         own = branch if branch and fnmatch.fnmatchcase(branch, ticket_pat) else None
@@ -1471,14 +1496,19 @@ def _git_config_problem(glob: list[str], args: list[str], role: str, solo: bool 
     for j, g in enumerate(glob):
         if g == "-c" and j + 1 < len(glob):
             key = glob[j + 1]
+            pushes = bool(args) and args[0] in _PUSH_CMDS
+            if solo and pushes and re.match(r"(?i)include(if)?\.", key):
+                return SoloRefusal(f"`git -c {key}` reads config the kit can't see into the push", "unknown")
             if (_INJECT_KEYS if firm else _PUSH_SETTINGS).match(key):
+                if solo and re.match(r"(?i)remote\.pushdefault\b", key):
+                    return SoloRefusal(f"`git -c {key}` sends the push to another remote", "unknown")
                 if solo and _MIRROR_SETTINGS.match(key):
                     return SoloRefusal(f"`git -c {key}` makes the push mirror every branch or go elsewhere")
-                if solo and args[:1] in (["push"], ["send-pack"], ["http-push"]):
-                    return SoloRefusal(f"`git -c {key}` changes where the push goes", unknown=True)
+                if solo and pushes:
+                    return SoloRefusal(f"`git -c {key}` changes where the push goes", "unknown")
                 return f"`git -c {key}` can redirect a push or run a program; set no aliases, push, remote, credential or command settings"
-        if solo and (g == "--config-env" or g.startswith("--config-env=")) and args[:1] in (["push"], ["send-pack"], ["http-push"]):
-            return SoloRefusal("`git --config-env` sets the push's config from the environment", unknown=True)
+        if solo and (g == "--config-env" or g.startswith("--config-env=")) and args[:1] and args[0] in _PUSH_CMDS:
+            return SoloRefusal("`git --config-env` sets the push's config from the environment", "unknown")
         if firm and (g == "--config-env" or g.startswith("--config-env=")):
             return "`git --config-env` sets config from the environment, which isn't allowed here"
         if firm and g.startswith("--exec-path="):
@@ -1489,7 +1519,7 @@ def _git_config_problem(glob: list[str], args: list[str], role: str, solo: bool 
         return "ticket sessions don't change where a remote points (`git remote set-url`)"
     if args[0] == "remote" and len(args) > 1 and args[1] == "add" and any(a == "--mirror" or a.startswith("--mirror=") for a in args[2:]):
         if solo:
-            return SoloRefusal("`git remote add --mirror` makes every push to that remote a mirror of every branch", setting=True)
+            return SoloRefusal("`git remote add --mirror` makes every push to that remote a mirror of every branch", "setting")
         return "`git remote add --mirror` makes every push to that remote a mirror (force-updating and deleting branches), which is never allowed"
     if args[0] != "config":
         return None
@@ -1522,18 +1552,19 @@ def _git_config_problem(glob: list[str], args: list[str], role: str, solo: bool 
     if not positional:
         return "`git config --edit` changes the config by hand, which isn't allowed here" if firm else None
     key = positional[0]
+    unset = any(t in ("--unset", "--unset-all", "unset") for t in rest)  # takes a setting away: sends no push anywhere new
     if _MIRROR_SETTINGS.match(key) or _MIRROR_SETTINGS.match(key + "."):
-        if solo:
-            return SoloRefusal(f"`git config {key}` makes pushes mirror every branch or go elsewhere", setting=True)
+        if solo and not unset:
+            return SoloRefusal(f"`git config {key}` makes pushes mirror every branch or go elsewhere", "setting")
         return f"`git config {key}` makes pushes mirror every branch (force-updating and deleting them) or go elsewhere, which is never allowed"
     if firm and (_INJECT_KEYS.match(key) or _INJECT_KEYS.match(key + ".")):
         return f"`git config {key}` can redirect a push or run a program; {role} sessions don't change it"
-    if solo:
+    if solo and not unset:
         value = positional[1].lower() if len(positional) > 1 else ""
         if key.lower() == "push.default" and value not in ("simple", "current", "nothing"):
-            return SoloRefusal(f"`git config push.default {value or '…'}` can make a bare push update the base branch, or every matching branch", setting=True)
+            return SoloRefusal(f"`git config push.default {value or '…'}` can make a bare push update the base branch, or every matching branch", "setting")
         if re.fullmatch(r"(?i)remote\..*\.push", key):
-            return SoloRefusal(f"`git config {key}` sets where every bare push to that remote goes", setting=True)
+            return SoloRefusal(f"`git config {key}` sets where every bare push to that remote goes", "setting")
     return None
 
 
@@ -4059,7 +4090,8 @@ def _word_problem(toks: list[str], role: str) -> str | None:
 
 
 # Variables that point git at other config or another repository.
-_GIT_ENV = re.compile(r"^(GIT_CONFIG\w*|GIT_DIR|GIT_WORK_TREE|GIT_NAMESPACE|GIT_COMMON_DIR)(\+?=|$)")
+_GIT_ENV = re.compile(r"^(GIT_CONFIG\w*|GIT_DIR|GIT_WORK_TREE|GIT_NAMESPACE|GIT_COMMON_DIR|HOME|XDG_CONFIG_HOME)(\+?=|$)")
+_DECLARES = ("export", "declare", "typeset", "local", "readonly")
 
 
 def _solo_problem(segs: list[Seg], profile: Profile, start: str, current_branch: str | None) -> SoloRefusal | None:
@@ -4069,12 +4101,12 @@ def _solo_problem(segs: list[Seg], profile: Profile, start: str, current_branch:
     env_set = False  # git variables set anywhere in the command (exported, or for one command)
     for seg in segs:
         names = list(seg.assigns)
-        if seg.words and seg.words[0] in ("export", "declare", "typeset", "local", "readonly"):
+        if seg.words[:1] and seg.words[0] in _DECLARES:
             names += [w for w in seg.words[1:] if not w.startswith("-")]
-        if not seg.words or seg.words[0] in ("export", "declare", "typeset", "local", "readonly"):
+        if not seg.words or seg.words[0] in _DECLARES:
             env_set = env_set or any(_GIT_ENV.match(a) for a in names)
         if seg.words[:1] == ["alias"] and any(_PUSHES.search(w) for w in seg.words[1:]):
-            return SoloRefusal("a shell alias that pushes, which the kit can't follow", unknown=True)
+            return SoloRefusal("a shell alias that pushes, which the kit can't follow", "unknown")
         g = _git(seg.words)
         if g is None:
             continue
@@ -4083,17 +4115,21 @@ def _solo_problem(segs: list[Seg], profile: Profile, start: str, current_branch:
         if isinstance(refusal, SoloRefusal):
             return refusal
         d = _git_dir_of(Path(start), seg.cwd, cdir)
-        refusal = _solo_alias(glob, args, d)
+        env_here = env_set or any(_GIT_ENV.match(a) for a in seg.assigns)
+        config_elsewhere = any(o == "--config-env" or o.startswith("--config-env=") for o in glob) or any(
+            glob[j] == "-c" and re.match(r"(?i)include(if)?\.", glob[j + 1]) for j in range(len(glob) - 1)
+        )
+        refusal = _solo_alias(glob, args, d, env_here or config_elsewhere)
         if refusal:
             return refusal
-        if not args or args[0] not in ("push", "send-pack", "http-push"):
+        if not args or args[0] not in _PUSH_CMDS:
             continue
         if seg.fed:
-            return SoloRefusal("xargs gives this push its branches, which the kit can't see", unknown=True)
-        if env_set or any(_GIT_ENV.match(a) for a in seg.assigns):
-            return SoloRefusal("a `GIT_DIR`, `GIT_WORK_TREE` or `GIT_CONFIG…` variable points the push at other config or another repository", unknown=True)
+            return SoloRefusal("xargs gives this push its branches, which the kit can't see", "unknown")
+        if env_here:
+            return SoloRefusal("a `GIT_DIR`, `GIT_WORK_TREE`, `GIT_CONFIG…`, `HOME` or `XDG_CONFIG_HOME` variable points the push at other config or another repository", "unknown")
         if any(o == "--git-dir" or o.startswith(("--git-dir=", "--work-tree")) for o in glob):
-            return SoloRefusal("`--git-dir` or `--work-tree` points the push at another repository", unknown=True)
+            return SoloRefusal("`--git-dir` or `--work-tree` points the push at another repository", "unknown")
         same = cdir is None and seg.cwd == start
         branch = current_branch if same else _branch_of(d)
         refusal = _push_problem(
