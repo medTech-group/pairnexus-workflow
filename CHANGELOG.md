@@ -6,8 +6,9 @@
   - It says whether the base branch is protected, and lists each missing protection on its own line, in plain words.
   - It says "checks not required yet" when no status checks are required, and reports the merge settings.
   - `--json` gives the same for skills.
-  - It asks GitHub nothing and writes nothing. A wrong input is an error, never "protected", and so is a ruleset on `~DEFAULT_BRANCH` without the settings that name the default branch.
-  - The "Protect `main`" upgrade, set-up, the conductor's pre-flight and `workflow doctor` are to use it.
+  - It asks GitHub nothing and writes nothing. A wrong input is an error, never "protected".
+  - Anything it can't tell reads as not protected, with a line saying why: a ruleset on `~DEFAULT_BRANCH` without the settings that name the default branch, say.
+  - The "Protect `main`" upgrade, set-up, the conductor's pre-flight and `workflow doctor` will use it; none does yet.
 
 ## 0.1.10
 

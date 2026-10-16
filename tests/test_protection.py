@@ -317,7 +317,8 @@ def test_without_the_settings_file_merge_settings_are_not_reported(repo, inp):
 @pytest.mark.parametrize("settings", [NO_SETTINGS, {k: v for k, v in SETTINGS.items() if k != "default_branch"}])
 def test_default_branch_unknown_is_not_protected(repo, inp, settings):
     missing = _missing(repo, inp, [_ruleset()], settings=settings)
-    assert any("default branch" in m and "--repo" in m for m in missing), missing
+    why = "--repo" if settings is NO_SETTINGS else "no default_branch"
+    assert any("default branch" in m and why in m for m in missing), missing
     p = run(repo, inp, [_ruleset()], "--base", "develop", "--json", settings=settings)
     assert json.loads(p.stdout)["protected"] is False
 
@@ -379,7 +380,10 @@ def test_a_complete_ruleset_beside_others_is_still_protected(repo, inp):
     assert verdict(repo, inp, [_ruleset(), *others])["protected"] is True
 
 
-@pytest.mark.parametrize("exclude", ["~DEFAULT_BRANCH", "refs/heads/main", "refs/heads/[^x]ain", "refs/heads/{main,dev}"])
+@pytest.mark.parametrize(
+    "exclude",
+    ["~DEFAULT_BRANCH", "refs/heads/main", "refs/heads/[^x]ain", "refs/heads/{main,dev}", "refs/heads/**/*", "refs/heads/**/main", "main", "refs/heads/MAIN"],
+)
 def test_an_exclude_that_may_name_the_base_branch_takes_it_out(repo, inp, exclude):
     rs = _ruleset(conditions={"ref_name": {"include": ["~ALL"], "exclude": [exclude]}})
     missing = _missing(repo, inp, [rs])
@@ -391,6 +395,69 @@ def test_a_newline_in_a_name_cannot_make_a_line(repo, inp):
     p = run(repo, inp, [rs])
     assert "main is protected." not in p.stdout.splitlines()
     assert p.stdout.splitlines()[0] == "main is not protected:"
+
+
+@pytest.mark.parametrize("name", ["x\x85main is protected.", "x\u2028main is protected.", "x\u2029main is protected."])
+def test_no_line_break_in_a_name_makes_a_line(repo, inp, name):
+    p = run(repo, inp, [_ruleset(name=name, enforcement="disabled")])
+    assert "main is protected." not in p.stdout.splitlines()
+
+
+def test_a_check_name_cannot_make_a_line(repo, inp):
+    rs = _ruleset(rules=[{"type": "deletion"}, {"type": "non_fast_forward"}, _checks_rule("ci\n\nmain is protected.")])
+    p = run(repo, inp, [rs])
+    assert p.stdout.splitlines()[0] == "main is not protected:"
+    assert "main is protected." not in p.stdout.splitlines()
+
+
+def test_other_text_from_the_input_is_quoted(repo, inp):
+    rulesets = [
+        _ruleset(id=1, target="x\nmain is protected."),
+        _ruleset(id=2, conditions={"ref_name": {"include": ["~ALL"], "exclude": ["refs/heads/{\nmain is protected.\n"]}}),
+    ]
+    p = run(repo, inp, rulesets)
+    assert "main is protected." not in p.stdout.splitlines()
+    p = run(repo, inp, [_ruleset()], settings={**SETTINGS, "default_branch": "dev\nmain is protected."})
+    assert "main is protected." not in p.stdout.splitlines()
+
+
+def test_a_disabled_ruleset_says_so_even_when_its_target_is_unknown(repo, inp):
+    missing = _missing(repo, inp, [_ruleset(enforcement="disabled")], settings=NO_SETTINGS)
+    assert any("not active" in m for m in missing), missing
+
+
+@pytest.mark.parametrize("base", ["release/*", "ma in", "main\n- x", "~DEFAULT_BRANCH", "refs/heads/"])
+def test_a_base_that_is_not_a_branch_name_is_an_error(repo, inp, base):
+    rs = _ruleset(conditions={"ref_name": {"include": [f"refs/heads/{base}"], "exclude": []}})
+    p = run(repo, inp, [rs], "--base", base)
+    assert p.returncode == 2 and p.stdout == "" and "branch name" in p.stderr
+
+
+def test_the_profiles_base_branch_is_read_as_a_branch_name(repo, inp):
+    path = repo / ".claude/workflow/profile.toml"
+    path.write_text(path.read_text().replace("[project]", '[project]\nbase_branch = "refs/heads/main"', 1))
+    out = json.loads(run(repo, inp, [_ruleset()], "--json").stdout)
+    assert out["base_branch"] == "main" and out["protected"] is True
+
+
+@pytest.mark.parametrize("flag", ["--rulesets", "--repo"])
+def test_an_empty_path_is_an_error(repo, inp, flag):
+    (inp / "rulesets.json").write_text(json.dumps([_ruleset()]))
+    args = {"--rulesets": str(inp / "rulesets.json"), "--repo": None}
+    args[flag] = ""
+    cmd = [sys.executable, str(CLI), "protection", *[x for k, v in args.items() if v is not None for x in (k, v)]]
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(repo)}
+    p = subprocess.run(cmd, cwd=repo, env=env, capture_output=True, text=True)
+    assert p.returncode == 2 and p.stdout == "" and "no path" in p.stderr
+
+
+def test_closed_standard_input_is_a_plain_error(repo, inp):
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(repo)}
+    p = subprocess.run(
+        ["sh", "-c", f'"{sys.executable}" "{CLI}" protection --rulesets - --base main <&-'],
+        cwd=repo, env=env, capture_output=True, text=True,
+    )
+    assert p.returncode == 2 and "Traceback" not in p.stderr and "closed" in p.stderr
 
 
 def test_rulesets_from_standard_input(repo, inp):

@@ -2,11 +2,11 @@
 
 `workflow protection` says whether the base branch is protected, from JSON that a session fetched from GitHub. It asks GitHub nothing and changes nothing: it reads the files it is given and prints a report.
 
-The rule for "protected" lives here, so these are to call it rather than repeat it (solo mode, #32; none of them calls it yet):
+The rule for "protected" lives here. These will call it rather than repeat it (solo mode, #32); none does yet:
 - the "Protect `main`" upgrade, to read back the clicks;
 - set-up, to choose `ruleset = true` or `false`;
 - the conductor's pre-flight, to spot protection that was removed;
-- `workflow doctor` (#34), whose `--rulesets` and `--repo` files are to take this command's input format.
+- `workflow doctor` (#34), whose `--rulesets` and `--repo` files will take this command's input format.
 
 ## Running it
 
@@ -16,15 +16,16 @@ workflow protection --rulesets rulesets.json [--repo repo.json] [--base main] [-
 
 - `--rulesets`: the repository's rulesets as a JSON list, each one **in full**. The list endpoint (`GET repos/<repo>/rulesets`) gives only summaries, without their rules, so fetch each ruleset by its id (`GET repos/<repo>/rulesets/<id>`) and put them in one list. Pages from `gh api --paginate --slurp` are read as one list too.
 - `--repo`: the repository's settings (`GET repos/<repo>`). With it, the report adds the merge settings, and a ruleset on `~DEFAULT_BRANCH` counts when the settings' `default_branch` is the base branch. Without it (or without `default_branch` in it), such a ruleset can't be counted, so give it whenever the rulesets use `~DEFAULT_BRANCH`, as the ones the kit guides you to make do.
-- `--base`: the base branch (`main` or `refs/heads/main`). Without it, the profile's `project.base_branch`; with no profile, `--base` is needed.
+- `--base`: the base branch (`main` or `refs/heads/main`). Without it, the profile's `project.base_branch`; with no profile, `--base` is needed. A name no branch can have (a space, `*`, `~` and the like) is an error.
 - `--json`: the same report for skills.
 - `-` for a file reads it from standard input (for one of the two files only).
 
 With `gh`:
 
 ```bash
+set -eo pipefail
 gh api --paginate "repos/<repo>/rulesets?includes_parents=true" --jq '.[].id' \
-  | while read id; do gh api "repos/<repo>/rulesets/$id"; done | jq -s . > rulesets.json
+  | while read id; do gh api "repos/<repo>/rulesets/$id" || exit 1; done | jq -s . > rulesets.json
 gh api repos/<repo> > repo.json
 ```
 
@@ -40,7 +41,7 @@ The base branch is protected when the active rulesets that target it, taken toge
 - require a pull request (a `pull_request` rule);
 - and none of them has a bypass list.
 
-A ruleset **targets** the base branch when it is a branch ruleset and its ref conditions include `refs/heads/<base>`, `~ALL`, or `~DEFAULT_BRANCH` when the base branch is the default branch, and none of its excludes matches the base branch. An include pattern such as `refs/heads/ma*` doesn't count. An exclude pattern GitHub reads differently from this command (one with `[^`, `[!`, `\`, `{` or `}`) counts as excluding the base branch.
+A ruleset **targets** the base branch when it is a branch ruleset and its ref conditions include `refs/heads/<base>`, `~ALL`, or `~DEFAULT_BRANCH` when the base branch is the default branch, and none of its excludes matches the base branch. An include pattern such as `refs/heads/ma*` doesn't count. Excludes are matched ignoring case. An exclude pattern GitHub reads differently from this command (one with `**`, `[^`, `[!`, `\`, `{` or `}`), or one that isn't a full ref name (`main` rather than `refs/heads/main`), counts as excluding the base branch.
 
 Each thing missing is its own line, in plain words:
 - no rulesets;
@@ -49,7 +50,7 @@ Each thing missing is its own line, in plain words:
 - a bypass list, or a bypass list that can't be read (GitHub shows it only to admins);
 - deletions allowed, force pushes allowed, pull requests not required.
 
-Ruleset names are printed as JSON strings, so a name can't make a line of its own.
+Text from the input (ruleset names, check names, patterns) is printed as JSON strings, with line breaks escaped, so it can't make a line of its own.
 
 **Checks:** when no active ruleset on the base branch requires status checks, the report says "checks not required yet". The branch can still read as protected: the checks are added once CI has run and their names are known.
 

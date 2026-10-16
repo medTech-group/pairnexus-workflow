@@ -11,7 +11,7 @@ together, restrict deletions, block force pushes and require pull requests,
 and none of them has a bypass list. Anything it can't tell counts as missing,
 so an unknown never reads as protected. `check` is the one place this rule
 lives: the "Protect `main`" upgrade, set-up, the conductor's pre-flight and
-`workflow doctor` are to call it rather than repeat it.
+`workflow doctor` will call it rather than repeat it.
 """
 
 from __future__ import annotations
@@ -32,9 +32,31 @@ MERGE = (
     ("allow_merge_commit", "merge_commits", "merge commits"),
     ("allow_auto_merge", "auto_merge", "auto-merge"),
 )
-# Glob syntax GitHub reads differently from Python's fnmatch (negation,
-# escapes, braces): an exclude holding one can't be matched here.
-UNREAD_GLOB = ("[^", "[!", "\\", "{", "}")
+# Glob syntax GitHub (Ruby's File.fnmatch) reads differently from Python's
+# fnmatch, so that an exclude could leave out more there than here: `**/`
+# (any number of directories), negation, escapes and braces. An exclude holding
+# one can't be matched here.
+UNREAD_GLOB = ("**", "[^", "[!", "\\", "{", "}")
+# What a branch name can't hold (git check-ref-format), and what would make
+# the report's first line say something else.
+NOT_IN_A_BRANCH = set(" ~^:?*[\\") | {chr(c) for c in range(0x20)} | {"\x7f", "\x85", "\u2028", "\u2029"}
+
+
+def quote(s: str) -> str:
+    """Text from the input, as a JSON string: no character of it can start a line.
+
+    json.dumps escapes the control characters; these line breaks it leaves.
+    """
+    out = json.dumps(s, ensure_ascii=False)
+    return out.replace("\x85", "\\u0085").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
+
+
+def branch(name: str) -> str:
+    """The base branch as a plain name (`refs/heads/` dropped); raises when it can't be one."""
+    name = name.strip().removeprefix("refs/heads/")
+    if not name or any(c in NOT_IN_A_BRANCH for c in name):
+        raise ProtectionError(f"the base branch {quote(name)} isn't a branch name")
+    return name
 
 
 class ProtectionError(ValueError):
@@ -80,7 +102,7 @@ def _checks_of(rule: dict) -> list:
     return (rule.get("parameters") or {}).get("required_status_checks") or []
 
 
-def _validate(rs, i: int) -> str:
+def _checked_name(rs, i: int) -> str:
     """The ruleset as it is named in reports; raises when it isn't a full ruleset.
 
     The name is quoted as JSON, so a newline in it can't make a line of its own.
@@ -88,7 +110,7 @@ def _validate(rs, i: int) -> str:
     if not isinstance(rs, dict):
         raise ProtectionError(f"item {i + 1} in the rulesets file isn't a ruleset (a JSON object)")
     raw = rs.get("name") if isinstance(rs.get("name"), str) else f"#{rs.get('id', i + 1)}"
-    where = "ruleset " + json.dumps(raw, ensure_ascii=False)
+    where = "ruleset " + quote(raw)
     if "rules" not in rs:
         raise ProtectionError(
             f"{where} isn't in full (it has no rules): the rulesets list gives only summaries, "
@@ -123,17 +145,18 @@ def _validate(rs, i: int) -> str:
     return where
 
 
-def _targets(rs: dict, base: str, default: str | None) -> str | None:
+def _targets(rs: dict, base: str, default: str | None, have_settings: bool) -> str | None:
     """Why the ruleset doesn't take in the base branch, or None when it does.
 
     It counts `~ALL`, `refs/heads/<base>`, and `~DEFAULT_BRANCH` when the
     settings say the base branch is the default branch. An include pattern
     (`refs/heads/ma*`) isn't matched, so it doesn't count. An exclude that
     matches the base branch, a pattern included, takes it out, and one whose
-    pattern can't be matched here counts as taking it out.
+    pattern can't be matched here (or isn't a full ref name) counts as taking
+    it out. Excludes are matched ignoring case, so they only ever take out more.
     """
     if rs["target"] != "branch":
-        return f"doesn't target {base} (it is a {rs['target']} ruleset)"
+        return f"doesn't target {base} (it is a {quote(rs['target'])} ruleset)"
     ref = (rs.get("conditions") or {}).get("ref_name") or {}
     full = f"refs/heads/{base}"
 
@@ -145,23 +168,28 @@ def _targets(rs: dict, base: str, default: str | None) -> str | None:
             return None if default is None else default == base
         return False
 
+    unknown = (
+        "the settings file has no default_branch"
+        if have_settings
+        else "without the repository's settings (--repo)"
+    )
     hits = [names_base(p) for p in ref.get("include") or []]
     if True not in hits:
         if None in hits:
-            return f"targets the default branch, and without the repository's settings (--repo) it can't tell whether that is {base}"
+            return f"targets the default branch, and {unknown} it can't tell whether that is {base}"
         if "~DEFAULT_BRANCH" in (ref.get("include") or []):
-            return f"doesn't target {base} (it targets the default branch, {default})"
+            return f"doesn't target {base} (it targets the default branch, {quote(default)})"
         return f"doesn't target {base}"
     for p in ref.get("exclude") or []:
         hit = names_base(p)
         if hit is None:
-            return f"excludes the default branch, and without the repository's settings (--repo) it can't tell whether that is {base}"
+            return f"excludes the default branch, and {unknown} it can't tell whether that is {base}"
         if hit:
-            return f"doesn't target {base} (it excludes {p})"
-        if any(s in p for s in UNREAD_GLOB):
-            return f"excludes {p}, a pattern this command can't match, so it can't tell whether {base} is left out"
-        if fnmatch.fnmatchcase(full, p):
-            return f"doesn't target {base} (it excludes {p})"
+            return f"doesn't target {base} (it excludes {quote(p)})"
+        if any(s in p for s in UNREAD_GLOB) or not (p.startswith("refs/") or p.startswith("~")):
+            return f"excludes {quote(p)}, a pattern this command can't match, so it can't tell whether {base} is left out"
+        if fnmatch.fnmatchcase(full.casefold(), p.casefold()):
+            return f"doesn't target {base} (it excludes {quote(p)})"
     return None
 
 
@@ -193,8 +221,9 @@ def check(rulesets, base: str, settings=None) -> Report:
     `settings=None` means no settings were given: the merge settings aren't
     reported, and a ruleset on `~DEFAULT_BRANCH` can't be counted.
     """
+    base = branch(base)
     rulesets = _flatten(rulesets)
-    names = [_validate(rs, i) for i, rs in enumerate(rulesets)]
+    names = [_checked_name(rs, i) for i, rs in enumerate(rulesets)]
     merge, default = _settings(settings) if settings is not None else (None, None)
     if not rulesets:
         return Report(base, False, [f"no rulesets: nothing on GitHub protects {base}"], [], merge)
@@ -202,13 +231,13 @@ def check(rulesets, base: str, settings=None) -> Report:
     ignored: list[str] = []
     effective: list[tuple[str, dict]] = []
     for name, rs in zip(names, rulesets):
-        off_target = _targets(rs, base, default)
-        if off_target:
-            ignored.append(f"{name} {off_target}")
-        elif rs["enforcement"] == "evaluate":
+        off_target = _targets(rs, base, default, settings is not None)
+        if rs["enforcement"] == "evaluate":
             ignored.append(f"{name} is evaluate only: it reports but doesn't block")
         elif rs["enforcement"] != "active":
-            ignored.append(f"{name} is not active (enforcement {json.dumps(rs['enforcement'])})")
+            ignored.append(f"{name} is not active (enforcement {quote(rs['enforcement'])})")
+        elif off_target:
+            ignored.append(f"{name} {off_target}")
         else:
             effective.append((name, rs))
 
@@ -238,7 +267,7 @@ def text(rep: Report) -> str:
     lines = [f"{rep.base_branch} is protected." if rep.protected else f"{rep.base_branch} is not protected:"]
     lines += [f"- {m}" for m in rep.missing]
     if rep.required_checks:
-        lines.append("Required checks: " + ", ".join(rep.required_checks))
+        lines.append("Required checks: " + ", ".join(quote(c) for c in rep.required_checks))
     else:
         lines.append(f"Checks not required yet: no active ruleset on {rep.base_branch} requires status checks.")
     if rep.merge is not None:

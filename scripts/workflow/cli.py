@@ -209,6 +209,10 @@ def cmd_protection(a) -> int:
     """Whether the base branch is protected, from the rulesets (and settings) JSON. Writes nothing."""
 
     def given(path: str, what: str):
+        if not path:
+            raise protection_mod.ProtectionError(f"the {what} file was given no path")
+        if path == "-" and sys.stdin is None:
+            raise protection_mod.ProtectionError(f"the {what} file is standard input (-), and standard input is closed")
         try:
             return json.loads(_read(path).removeprefix("\ufeff"))
         except OSError as e:
@@ -221,9 +225,9 @@ def cmd_protection(a) -> int:
         if a.rulesets == "-" and a.repo == "-":
             raise protection_mod.ProtectionError("only one of --rulesets and --repo can be read from standard input (-)")
         if a.base is not None:
-            base = a.base.strip().removeprefix("refs/heads/")
-            if not base:
+            if not a.base.strip():
                 raise protection_mod.ProtectionError("--base was given no branch")
+            base = a.base
         else:
             try:
                 prof = load(required=False)
@@ -234,7 +238,7 @@ def cmd_protection(a) -> int:
             base = prof.base_branch
         rulesets = given(a.rulesets, "rulesets")
         settings = None
-        if a.repo:
+        if a.repo is not None:
             settings = given(a.repo, "repository's settings")
             if not isinstance(settings, dict):
                 raise protection_mod.ProtectionError("the repository's settings must be a JSON object, as GET repos/<repo> returns it")
