@@ -49,7 +49,10 @@ it reads with `cat`. Ticket sessions and the conductor are denied; attended
 sessions are asked, except in solo mode (`project.ruleset = false`): there an
 attended session's git push that touches the base branch, or whose destination
 can't be told, is refused with `solo_refusal`'s reason (a force-push or
-deletion of a named feature branch is still asked). Ticket sessions and the
+deletion of a named feature branch is still asked), and so is a change to the
+base branch through GitHub (`gh pr merge --admin`, the default branch, its name,
+ref or protection, a ruleset other than creating one; by `gh api`, `curl`,
+GraphQL or the GitHub MCP tools). Ticket sessions and the
 conductor also may not write the global git config (~/.gitconfig,
 ~/.config/git/, $XDG_CONFIG_HOME/git/, the file $GIT_CONFIG_GLOBAL names).
 
@@ -101,8 +104,10 @@ import json
 import os
 import posixpath
 import re
+import shlex
 import subprocess
 import tarfile
+import urllib.parse
 import zipfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -168,6 +173,7 @@ class SoloRefusal:
 
     what: str
     kind: str = "change"
+    hint: str = ""  # for "unknown": what to do instead (by default, push the branch by name)
 
 
 # Credentials a command may carry: a URL's user:password@, a token variable's value.
@@ -207,10 +213,8 @@ def solo_refusal(base: str, level: str, command: str, refusal: SoloRefusal) -> s
     and the "Protect" offer. Wording follows `level`; what is refused never does."""
     what = refusal.what
     if refusal.kind == "unknown":
-        lines = [
-            f"The kit can't tell which branch this would change, so it counts as `{base}`. "
-            f"Without GitHub's protection set up, the kit doesn't allow that: push the branch by name (`git push origin <branch>`)."
-        ]
+        hint = refusal.hint or "push the branch by name (`git push origin <branch>`)"
+        lines = [f"The kit can't tell which branch this would change, so it counts as `{base}`. Without GitHub's protection set up, the kit doesn't allow that: {hint}."]
     elif refusal.kind == "setting":
         lines = [f"This would set git up so that a later push changes `{base}` without a pull request. Without GitHub's protection set up, the kit doesn't allow that."]
     else:
@@ -219,7 +223,7 @@ def solo_refusal(base: str, level: str, command: str, refusal: SoloRefusal) -> s
         lines.append(f"What the kit saw: {what}.")
     if level == "new":
         lines.append(f"`{base}` is the branch the project's work comes together on: the version everyone builds on, which should change only through a pull request.")
-    name_it = " name the branch and" if refusal.kind == "unknown" else ""
+    name_it = " name the branch and" if refusal.kind == "unknown" and not refusal.hint else ""
     lines.append(f"If you really mean it,{name_it} run it yourself in your own terminal:{_hand_command(command)}")
     lines.append(
         f'Offer "Protect `{base}`" as a choice, with "Not now": it sets up GitHub\'s protection, so `{base}` changes only through pull requests.'
@@ -4158,19 +4162,756 @@ def _switched_to(args: list[str], d: str | None) -> tuple[bool, str | None]:
     return True, t
 
 
-def _solo_problem(segs: list[Seg], profile: Profile, start: str, current_branch: str | None) -> SoloRefusal | None:
+# ---------- solo mode: GitHub-side changes to the base branch ----------
+
+_SOLO_API_HINT = "spell out the call's path, method and body"
+# GraphQL mutations that change a branch (refs are named by id, and a branch
+# name may come in a variable, so any of them may be the base branch), its
+# protection, or a ruleset. Creating a ruleset is left to the ask: it is how a
+# project leaves solo mode.
+_SOLO_GQL = re.compile(
+    r"\b(updateRefs?|deleteRef|renameRef|createCommitOnBranch|mergeBranch|createBranchProtectionRule|"
+    r"updateBranchProtectionRule|deleteBranchProtectionRule|updateRepositoryRuleset|deleteRepositoryRuleset)\b"
+)
+_EXPANDS = re.compile(r"[$`]")
+# What makes a curl call one to GitHub's API, or one that may be: its host, or a
+# path only GitHub's API has.
+_GITHUB_HINT = re.compile(
+    r"(?i)(?:api|uploads)\.github\.com|/api/v3\b|/rulesets\b|/protection\b|/git/refs\b|/branches/|/merges\b|/merge-upstream\b|/contents/"
+)
+_CURL_SHORT_VALUE = set("AbcCdDeEFHKmoPQrtTuUwxXyYz")
+_CURL_LONG_VALUE = {
+    "request", "data", "data-raw", "data-binary", "data-ascii", "data-urlencode", "json", "form", "form-string",
+    "upload-file", "config", "header", "url", "output", "user", "user-agent", "referer", "cookie", "cookie-jar",
+    "proxy", "max-time", "write-out", "cert", "key", "cacert", "connect-timeout", "retry", "range", "variable",
+    "url-query", "oauth2-bearer", "netrc-file", "output-dir", "trace", "trace-ascii", "trace-config", "resolve",
+    "connect-to", "retry-delay", "retry-max-time", "limit-rate", "unix-socket", "abstract-unix-socket", "aws-sigv4",
+    "proxy-user", "dns-servers", "interface", "local-port", "max-filesize", "max-redirs", "speed-limit", "speed-time",
+    "time-cond", "keepalive-time", "dump-header", "stderr", "capath", "key-type", "cert-type", "pinnedpubkey",
+    "ciphers", "proto", "proto-redir", "request-target", "service-name", "socks5", "socks5-hostname", "noproxy",
+    "preproxy", "happy-eyeballs-timeout-ms", "expect100-timeout", "login-options", "mail-from", "mail-rcpt",
+    "ftp-port", "quote", "delegation", "hostpubmd5", "hostpubsha256", "krb", "pass", "tls-max", "tlsuser",
+    "tlspassword", "hsts", "alt-svc", "etag-save", "etag-compare", "ech", "ipfs-gateway", "haproxy-clientip",
+}  # fmt: skip
+_CURL_LONG_FLAGS = {"get", "head", "globoff", "next", "path-as-is"}
+# An abbreviated long option counts as the first of these it may stand for.
+_CURL_PRIORITY = ("request", "data", "json", "form", "upload-file", "config", "url", "variable", "get", "head", "next", "globoff")
+# gh's own command groups; another first word is an alias or an extension.
+_GH_GROUPS = {
+    "agent-task", "alias", "api", "attestation", "auth", "browse", "cache", "co", "codespace", "completion", "config",
+    "copilot", "extension", "gist", "gpg-key", "help", "issue", "label", "org", "pr", "preview", "project", "release",
+    "repo", "ruleset", "run", "search", "secret", "ssh-key", "status", "variable", "version", "workflow",
+}  # fmt: skip
+
+
+def _another_repo(name: str | None, repo: str) -> bool:
+    """Whether `name` (OWNER/REPO, as gh or a URL takes it) is literally another
+    repository than the project's; one the kit can't read counts as the project's."""
+    if not name or not repo or _SOLO_UNSAFE_REF.search(name):
+        return False
+    return _repo_name(name) != repo.casefold()
+
+
+def _solo_branch(b: str | None, base: str) -> str | None:
+    """"change" when `b` is the base branch (in any case, as the MCP check reads
+    it), "unknown" when the kit can't read it (None, empty, or filled in by the shell)."""
+    if b is None:
+        return "unknown"
+    b = urllib.parse.unquote(b).removeprefix("refs/").removeprefix("heads/")
+    if b.casefold() == base.casefold():
+        return "change"
+    return "unknown" if _SOLO_UNSAFE_REF.search(b) or not b else None
+
+
+def _solo_branches(values: list[str | None], base: str) -> str | None:
+    """The worst of `_solo_branch` over every value a field may take."""
+    kinds = {_solo_branch(v, base) for v in values}
+    return "change" if "change" in kinds else "unknown" if "unknown" in kinds else None
+
+
+def _json_pairs(text: str) -> list[tuple[str, object]] | None:
+    """Every key and value in a JSON text, at any depth and duplicates kept
+    (GitHub reads the last); None when it isn't JSON."""
+    pairs: list[tuple[str, object]] = []
+
+    def hook(ps):
+        pairs.extend(ps)
+        return dict(ps)
+
+    try:
+        json.loads(text, object_pairs_hook=hook)
+    except (ValueError, RecursionError):
+        return None
+    return pairs
+
+
+@dataclass
+class _Body:
+    """What a request sends, as far as the kit can read it: `fields` are the
+    name=value pairs (gh's `-f`, a JSON body's keys, every value kept), and
+    `unread` says some of it can't be read (a file not there yet, stdin, a name
+    the shell fills in), so any field may be in it."""
+
+    fields: list[tuple[str, str | None]]
+    unread: bool = False
+
+    def get(self, key: str) -> list[str | None]:
+        """Every value `key` may take; [] when it isn't sent."""
+        out = [v for k, v in self.fields if k == key]
+        return out + [None] if self.unread else out
+
+    def add_text(self, text: str | None) -> None:
+        """A body's text: JSON's keys, else the `"key": "value"` pairs it holds."""
+        if text is None:
+            self.unread = True
+            return
+        pairs = _json_pairs(text)
+        if pairs is None:
+            self.fields += [(k, v) for k, v in re.findall(r'"(\w+)"\s*:\s*"([^"\\]*)"', text)]
+            if re.search(r"\\u|\\[\"/]", text):  # escapes this reading doesn't decode
+                self.unread = True
+            return
+        self.fields += [(k, v if isinstance(v, str) else None) for k, v in pairs if isinstance(k, str)]
+
+
+def _api_path(path: str) -> str:
+    """A request path as GitHub reads it: decoded, dot segments removed, with
+    no host, `api/v3/` prefix or slashes around it."""
+    p = re.sub(r"(?i)^[a-z][\w+.-]*://[^/]*", "", path) if "://" in path else path  # any host, one the shell fills in too
+    p = urllib.parse.unquote(p.split("?", 1)[0].split("#", 1)[0])
+    p = posixpath.normpath("/" + p.lstrip("/")).strip("/")
+    p = re.sub(r"(?i)^api/v3/", "", p)
+    p = re.sub(r"^repositories/\d+(?=/|$)", "repos/{id}/{id}", p)  # the same repository, by its id
+    return "graphql" if re.fullmatch(r"(?i)(?:api/)?graphql", p) else p
+
+
+# What a repository's issues, pull requests and the like live under: a path the
+# shell fills in after one of these never reaches a branch, its protection or a ruleset.
+_PLAIN_RESOURCES = r"issues|pulls|labels|milestones|releases|check-runs|check-suites|statuses|commits|comments|deployments|actions|projects|discussions|assignees|collaborators|notifications|hooks|keys|forks|invitations|environments|pages|subscription|stargazers"
+
+
+def _plain_resource(path: str) -> bool:
+    """Whether a path with parts the shell fills in is plainly not one this
+    check is about: under a repository's literal issues, pull requests and the
+    like, or outside `repos/`, `orgs/` and `repositories/` altogether."""
+    if re.search(r"(?:^|/)(?:rulesets|protection|branches|git|refs|merges|merge-upstream|contents)(?:/|$)", path):
+        return False  # a refused part after what the shell fills in: `issues/$X/../rulesets/1`
+    if re.match(rf"(?:repos/[^/]+/[^/]+|repos/[^/]*[$`][^/]*|repositories/[^/]+)/(?:{_PLAIN_RESOURCES})(?:/|$)", path):
+        return True
+    first = path.split("/", 1)[0]
+    return not _EXPANDS.search(first) and first not in ("repos", "orgs", "repositories") and "rulesets" not in path
+
+
+def _solo_rest(method: str, path: str, base: str, body: _Body, repo: str = "") -> SoloRefusal | None:
+    """Solo mode: a REST call (`path` as `_api_path` gives it) to the project's
+    repository `repo` (or its owner's rulesets) that changes the base branch,
+    its name or protection, the default branch, or a ruleset (other than
+    creating one)."""
+    unknown = bool(_EXPANDS.search(method)) or method == "?"
+    if method in ("GET", "HEAD"):
+        return None
+    if not path or (_EXPANDS.search(path) and not _plain_resource(path)):
+        return SoloRefusal("a GitHub API call whose path the shell fills in", "unknown", _SOLO_API_HINT)
+    m = re.match(r"repos/([^/]+/[^/]+)", path)
+    if m and _another_repo(m.group(1), repo):
+        return None
+    m = re.match(r"orgs/([^/]+)/", path)
+    if m and repo and not _SOLO_UNSAFE_REF.search(m.group(1)) and m.group(1).casefold() != repo.split("/")[0].casefold():
+        return None
+    call = f"`{method} {path}`" if not unknown else f"`{path}`, with a method the kit can't read,"
+    if unknown:
+        method = "a write"
+    m = re.fullmatch(r"(?:repos/[^/]+/[^/]+|orgs/[^/]+)/rulesets(/.*)?", path)
+    if m:
+        if not m.group(1) and method == "POST":
+            return None  # creating a ruleset: asked
+        if unknown:
+            return SoloRefusal(f"{call} may change or remove a ruleset, which is what protects `{base}`", "unknown", _SOLO_API_HINT)
+        return SoloRefusal(f"{call} changes or removes a ruleset, which is what protects `{base}`")
+    # A branch's name may hold slashes: the base branch is matched as itself first.
+    b = re.escape(base)
+    m = re.fullmatch(rf"repos/[^/]+/[^/]+/(?:branches/(?:(?i:{b})|(.+?))/(protection(?:/.*)?|rename)|git/refs/heads/(?:(?i:{b})|(.+)))", path)
+    if m:
+        named = m.group(1) if m.group(2) else m.group(3)
+        kind = "change" if named is None else _solo_branch(named, base)
+        if kind:
+            what = "name" if m.group(2) == "rename" else "protection" if m.group(2) else "branch"
+            return SoloRefusal(f"{call} changes `{base}`'s {what}" if kind == "change" else f"{call} names its branch with something the kit can't read", kind, _SOLO_API_HINT)
+        return None
+    if re.fullmatch(r"repos/[^/]+/[^/]+/git/refs", path):
+        values = body.get("ref")
+        kind = _solo_branches(values, base) if values else None
+        if kind:
+            return SoloRefusal(f"{call} makes a ref the kit reads as `{base}`'s, or can't read", kind, _SOLO_API_HINT)
+        return None
+    if re.fullmatch(r"repos/[^/]+/[^/]+", path):
+        if any(k == "default_branch" for k, _ in body.fields):
+            return SoloRefusal(f"{call} changes the default branch, which is `{base}`")
+        if body.unread:
+            return SoloRefusal(f"{call} sends a body the kit can't read, which may change the default branch", "unknown", _SOLO_API_HINT)
+        return None
+    for tail, key, what in (("merges", "base", "merges a branch straight into"), ("merge-upstream", "branch", "updates"), ("contents/.+", "branch", "writes a file straight to")):
+        if re.fullmatch(rf"repos/[^/]+/[^/]+/{tail}", path):
+            values = body.get(key)
+            kind = "change" if not values else _solo_branches(values, base)  # none named: the default branch
+            if kind:
+                return SoloRefusal(f"{call} {what} `{base}`, or a branch the kit can't read", kind, _SOLO_API_HINT)
+            return None
+    return None
+
+
+def _solo_graphql(text: str, base: str, literal: bool = False) -> SoloRefusal | None:
+    """The refusal for a GraphQL text: by the mutation fields a `literal` query
+    calls (so a name in a string is only text), else by any name in it."""
+    calls = _mutation_calls(text) if literal else None
+    if calls is not None:
+        names = [f for f, _ in calls]
+        m = next((_SOLO_GQL.fullmatch(n) for n in names if _SOLO_GQL.fullmatch(n)), None)
+        if "createRef" not in names:
+            text = ""
+    else:
+        m = _SOLO_GQL.search(text)
+    if m:
+        return SoloRefusal(f"the GraphQL mutation `{m.group(1)}` changes a branch, its protection or a ruleset, and the kit can't tell it isn't `{base}`'s")
+    if re.search(r"\bcreateRef\b", text) and re.search(rf"refs/heads/{re.escape(base)}(?![\w/.-])", text, re.I):
+        return SoloRefusal(f"the GraphQL mutation `createRef` makes `refs/heads/{base}`")
+    return None
+
+
+_WHOLE_VAR = re.compile(r"\s*(?:\$\w+|\$\{[^}]*\}|\$\(.*\)|`.*`)\s*", re.S)
+
+
+def _gql_unread(queries: list[str | None]) -> bool:
+    """A query the kit can't read at all: a file not there yet, stdin, or one
+    variable or substitution (a query's own `$var`s are GraphQL's)."""
+    return any(q is None or _WHOLE_VAR.fullmatch(q) for q in queries)
+
+
+def _gql_literal(q: str) -> bool:
+    """Whether a query's `$`s are all GraphQL variables its operation declares
+    (`query($o: String!)`), not the shell's."""
+    if "`" in q or re.search(r"\$[({]", q):
+        return False
+    declared = set(re.findall(r"\$(\w+)\s*:", q))
+    return all(n in declared for n in re.findall(r"\$(\w+)", q))
+
+
+def _writes_file(raw: str, f: str) -> bool:
+    """Whether the command writes the file `f`: a redirect or `tee` into it, or
+    `cp`/`mv`/`install`/`sed -i` naming it. Read word by word, in linear time."""
+    name = f.removeprefix("./")
+
+    def same(w: str) -> bool:
+        return w.strip("'\"").removeprefix("./") == name
+
+    if re.search(rf"(?:>|\btee(?:\s+-a)?)[ \t]*['\"]?(?:\./)?{re.escape(name)}(?![\w.-])", raw):
+        return True
+    for part in re.split(r"[;&|\n()]", raw):
+        words = part.split()
+        if not words:
+            continue
+        cmd = Path(words[0]).name
+        if cmd in ("cp", "mv", "install") and any(same(w) for w in words[1:]):
+            return True
+        if cmd == "sed" and any(w.startswith("-i") or w == "--in-place" for w in words[1:]) and any(same(w) for w in words[1:]):
+            return True
+    return False
+
+
+def _gql_queries(queries: list[str | None], cwd: str | None, raw: str = "") -> list[str | None]:
+    """The queries, a `$(cat FILE)` one read from its file (unread when the
+    command also writes the file)."""
+    out: list[str | None] = []
+    for q in queries:
+        m = re.fullmatch(r"\s*\$\(\s*cat\s+([^\s$`;&|<>()]+)\s*\)\s*", q or "")
+        f = m.group(1).strip("'\"") if m else ""
+        written = bool(f) and _writes_file(raw, f)
+        out.append(None if written else _read_text(f, cwd) if m else q)
+    return out
+
+
+def _gql_text(queries: list[str | None], fallback) -> tuple[str, bool]:
+    """The GraphQL text to look for mutations in, and whether it is only the
+    queries themselves (every one read, none filled in by the shell); else the
+    queries with `fallback()` (the whole command and the files it reads)."""
+    if queries and all(q is not None and (not _EXPANDS.search(q) or _gql_literal(q)) for q in queries):
+        return "\n".join(q for q in queries if q), True
+    return "\n".join(q for q in queries if q) + "\n" + fallback(), False
+
+
+def _solo_gql(queries: list[str | None], fallback, base: str, cwd: str | None = None, strict: bool = True) -> SoloRefusal | None:
+    """Solo mode: a GraphQL request's refusal, from its queries (`fallback()`
+    when they hold expansions); with `strict`, a query the kit can't read at
+    all counts as a mutation that changes the base branch."""
+    queries = _gql_queries(queries, cwd, fallback())
+    text, literal = _gql_text(queries, fallback)
+    r = _solo_graphql(text, base, literal)
+    if not r and strict and _gql_unread(queries):
+        r = SoloRefusal("a GraphQL request whose query the kit can't read, which may be a mutation that changes a branch or a ruleset", "unknown", _SOLO_API_HINT)
+    return r
+
+
+@dataclass
+class _CurlCall:
+    method: str  # "?" when a config file, `--next` or `--expand-*` may set it
+    urls: list[str]
+    body: _Body
+    data: list[str | None]  # the data texts, None for one the kit can't read
+    unsure: bool  # a config file, `--variable` or `--expand-*`: the URL may be anywhere
+    globs: bool  # curl expands `{…}` and `[…]` in the URLs
+    hinted: bool = False  # a config file that names GitHub, or can't be read
+
+
+def _curl_long(name: str) -> str:
+    """A long option as curl reads it, abbreviations included."""
+    if name in _CURL_LONG_VALUE or name in _CURL_LONG_FLAGS or name.startswith("expand-"):
+        return name
+    cands = [o for o in (*_CURL_LONG_VALUE, *_CURL_LONG_FLAGS) if o.startswith(name)]
+    for o in _CURL_PRIORITY:
+        if o in cands:
+            return o
+    return cands[0] if len(cands) == 1 else name
+
+
+def _curl_call(toks: list[str], cwd: str | None) -> _CurlCall:
+    """A curl command's method, URLs and body, as far as the kit can read them."""
+    method = None
+    urls: list[str] = []
+    data: list[str | None] = []
+    upload = get = head = unsure = nxt_seen = hinted = False
+    globoff = False
+
+    def _option(flag: str, value: str) -> None:
+        nonlocal method, upload, unsure, hinted
+        if flag in ("X", "request"):
+            method = value
+        elif flag in ("d", "F", "json", "form", "form-string") or flag.startswith("data"):
+            v = value.split("=", 1)[1] if flag in ("F", "form") and "=" in value else value
+            if flag == "data-urlencode" and "@" in v:
+                v = "@" + v.split("@", 1)[1]
+            if v.startswith("@") and flag not in ("data-raw", "form-string"):
+                f = v[1:]
+                data.append(None if _STDIN_FILE.fullmatch(f) else _read_text(f, cwd))
+            else:
+                data.append(v)
+        elif flag in ("T", "upload-file"):
+            upload = True
+        elif flag in ("K", "config", "variable"):
+            unsure = True
+            if flag != "variable":
+                text = None if _STDIN_FILE.fullmatch(value) else _read_text(value, cwd)
+                if text is not None and not _GITHUB_HINT.search(text) and not re.search(r"(?im)^\s*-?-?(?:url|request|x)\b", text):
+                    unsure = False  # a config the kit has read, with nothing for GitHub in it
+                elif text is not None and _GITHUB_HINT.search(text):
+                    hinted = True  # it names GitHub (an unread one counts only beside GitHub in the command)
+        elif flag == "url":
+            urls.append(value)
+
+    i = 1
+    while i < len(toks):
+        t = toks[i]
+        nxt = toks[i + 1] if i + 1 < len(toks) else ""
+        if t == "--":
+            urls += toks[i + 1 :]
+            break
+        if t.startswith("--") and len(t) > 2:
+            raw_name, eq, val = t[2:].partition("=")
+            name = _curl_long(raw_name)
+            takes = name in _CURL_LONG_VALUE or name.startswith("expand-")
+            if name == "get":
+                get = True
+            elif name == "head":
+                head = True
+            elif name == "globoff":
+                globoff = True
+            elif name == "next":
+                nxt_seen = True
+            elif name.startswith("expand-"):
+                unsure = True
+                if name == "expand-url":
+                    urls.append(val if eq else nxt)
+            elif takes:
+                _option(name, val if eq else nxt)
+            i += 2 if takes and not eq else 1
+            continue
+        if t.startswith("-") and len(t) > 1:
+            used_next = False
+            for j, c in enumerate(t[1:], 1):
+                if c in _CURL_SHORT_VALUE:
+                    value = t[j + 1 :] or nxt
+                    used_next = not t[j + 1 :]
+                    _option(c, value)
+                    break
+                if c == "G":
+                    get = True
+                elif c == "I":
+                    head = True
+                elif c == "g":
+                    globoff = True
+                elif c == ":":
+                    nxt_seen = True
+            i += 2 if used_next else 1
+            continue
+        urls.append(t)
+        i += 1
+    if unsure or nxt_seen:
+        verb = "?"
+    elif method is not None:
+        verb = method.upper()
+    else:
+        verb = "HEAD" if head else "GET" if get else "PUT" if upload else "POST" if data else "GET"
+    body = _Body([])
+    for d in data:
+        body.add_text(d)
+    return _CurlCall(verb, urls, body, data, unsure, not globoff and any(re.search(r"[{\[]", u) for u in urls), hinted)
+
+
+def _curl_github_path(url: str) -> str | None:
+    """The API path of a curl URL to GitHub (github.com's API hosts, or a
+    server's `/api/v3/` and `/api/graphql`), else None. curl takes a URL
+    without a scheme too."""
+    m = re.match(r"(?i)(?:[a-z][\w+.-]*://)?(?:[^/@\s]*@)?([^/\s?#]+)(.*)", url)
+    if not m:
+        return None
+    host = m.group(1).split(":", 1)[0].rstrip(".").casefold()
+    path = _api_path(m.group(2) or "/")
+    if host in ("api.github.com", "uploads.github.com"):
+        return path
+    local = host in ("localhost", "0.0.0.0", "[::1]") or host.startswith("127.") or host.endswith((".local", ".localhost", ".test"))
+    rest = urllib.parse.unquote(m.group(2).lstrip("/"))
+    if re.match(r"(?i)api/v3/", rest) or not local and re.match(r"(?i)api/graphql/?(?:[?#]|$)", rest):
+        return path  # a GitHub Enterprise server
+    if _EXPANDS.search(host) and (path == "graphql" or re.match(r"(?:repos|orgs|repositories)/", path)):
+        return path  # a host the shell fills in (`$GITHUB_API_URL`), with GitHub's API paths
+    return None
+
+
+def _solo_curl(toks: list[str], seg: Seg, base: str, repo: str, raw: str, read) -> SoloRefusal | None:
+    c = _curl_call(toks, seg.cwd)
+    if c.method in ("GET", "HEAD"):
+        return None
+    hint = _GITHUB_HINT.search(" ".join(c.urls))
+    if (c.unsure or seg.fed) and (hint or c.hinted or _GITHUB_HINT.search(raw)):
+        return SoloRefusal("a curl call whose URL or method comes from a config file, a curl variable or xargs, and may be GitHub's", "unknown", _SOLO_API_HINT)
+    if c.globs and hint:
+        return SoloRefusal("a curl URL with `{…}` or `[…]`, which curl expands into other URLs", "unknown", _SOLO_API_HINT)
+    for u in c.urls:
+        whole = bool(_WHOLE_VAR.fullmatch(u))
+        if _EXPANDS.search(u) and (_GITHUB_HINT.search(u) or whole and _GITHUB_HINT.search(raw)) and not ("/" in u.split("://", 1)[-1] and _plain_resource(_api_path(u.split("://", 1)[-1].split("/", 1)[1]))):
+            return SoloRefusal(f"the curl URL {_code_span(u)} is filled in by the shell", "unknown", _SOLO_API_HINT)
+        path = _curl_github_path(u)
+        if path is None:
+            continue
+        if path == "graphql":
+            texts: list[str | None] = []
+            for d in c.data:
+                pairs = _json_pairs(d) if d is not None else None
+                qs = [v for k, v in pairs or [] if k == "query"]
+                texts += [v if isinstance(v, str) else None for v in qs] if pairs is not None else [d]
+            # Another host's `/api/graphql` may be a GitHub Enterprise server or an
+            # app's own: only a mutation the kit sees is refused there.
+            r = _solo_gql(texts, lambda: raw + "\n" + read(), base, seg.cwd, strict=bool(re.search(r"(?i)\bapi\.github\.com", u)))
+        else:
+            r = _solo_rest(c.method, path, base, c.body, repo)
+        if r:
+            return r
+    return None
+
+
+def _gh_aliases() -> dict[str, str] | None:
+    """gh's aliases from its config file (`aliases:` in config.yml), None when
+    the file can't be read."""
+    d = os.environ.get("GH_CONFIG_DIR") or os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "gh")
+    text = _read_text(os.path.join(d, "config.yml"), None)
+    if text is None:
+        return None
+    m = re.search(r"(?m)^aliases:[ \t]*\n((?:[ \t]+.*\n?)*)", text)
+    out: dict[str, str] = {}
+    for line in (m.group(1) if m else "").splitlines():
+        a = re.match(r"\s+([^:\s]+):\s*(.*)$", line)
+        if a:
+            v = a.group(2).strip()
+            out[a.group(1).strip("'\"")] = v[1:-1] if len(v) > 1 and v[0] == v[-1] and v[0] in "'\"" else v
+    return out
+
+
+# `gh pr merge` and `gh repo edit` options whose value is text, never an option.
+_GH_TEXT_OPTS = {
+    "-b", "--body", "-F", "--body-file", "-t", "--subject", "-A", "--author-email", "--match-head-commit",
+    "--description", "-h", "--homepage", "--add-topic", "--remove-topic", "--visibility", "--template",
+}  # fmt: skip
+
+
+def _unread_words(toks: list[str]) -> bool:
+    """Whether a `gh pr merge`/`gh repo edit` holds a word the shell fills in that
+    may be an option (`--admin`, `--default-branch`): not an option's text value,
+    the pull request or repository named first, or a quoted heredoc."""
+    sub_at = 2
+    positional_seen = False
+    for j in range(sub_at + 1, len(toks)):
+        t, prev = toks[j], toks[j - 1]
+        if toks[1:3] == ["repo", "edit"] and prev == "-d":
+            continue  # `gh repo edit -d` is the description (`gh pr merge -d` deletes the branch)
+        if not _EXPANDS.search(t) or prev in _GH_TEXT_OPTS or re.match(r"--[\w-]+=", t) and t.split("=", 1)[0] in _GH_TEXT_OPTS:
+            positional_seen = positional_seen or not t.startswith("-") and prev not in _GH_TEXT_OPTS
+            continue
+        if not positional_seen and prev not in ("-R", "--repo"):
+            positional_seen = True  # the pull request (`"$PR"`) or repository
+            continue
+        return True
+    return False
+
+
+def _aliases_set_in(raw: str) -> dict[str, str]:
+    """The gh aliases a command sets (`gh alias set NAME EXPANSION`), which a
+    later part of it may use."""
+    out: dict[str, str] = {}
+    for m in re.finditer(r"\bgh\s+alias\s+set\s+((?:'[^']*'|\"[^\"]*\"|[^\s;&|'\"])+)\s+('[^']*'|\"[^\"]*\"|[^\s;&|'\"]+)", raw):
+        try:
+            name, exp = shlex.split(m.group(1))[0], shlex.split(m.group(2))[0]
+        except (ValueError, IndexError):
+            continue
+        out[name] = exp
+    return out
+
+
+# An alias that may merge with --admin, change the default branch, write through
+# the API or run a shell; a read through `api` is not one.
+_GH_ALIAS_RISK = re.compile(
+    r"--admin\b|--default-branch\b|\bcurl\b|^\s*!|\bapi\b.*(?:\s-X\s*(?!GET\b)\S|--method\b(?!\s*=?\s*GET\b)|\s-[fF]\b|--(?:raw-)?field\b|--input\b|\bgraphql\b)",
+    re.I,
+)
+
+
+def _solo_gh(toks: list[str], seg: Seg, profile: Profile, raw: str, read, depth: int = 0) -> SoloRefusal | None:
+    base = profile.base_branch
+    group, sub = _gh_group(toks)
+    if group == "alias" and sub in ("set", "import"):
+        words = [t for t in toks[toks.index(sub) + 1 :] if not t.startswith("-")]
+        text = " ".join(words[1:]) if sub == "set" else (_read_text(words[0], seg.cwd) if words and words[0] != "-" else None)
+        if text is None or _GH_ALIAS_RISK.search(text):
+            return SoloRefusal("a gh alias that may merge with `--admin`, change the default branch or call the API", "unknown", "spell the gh command out instead of an alias")
+        return None
+    if group and group not in _GH_GROUPS and not group.startswith("-"):
+        aliases = {**(_gh_aliases() or {}), **_aliases_set_in(raw)}
+        exp = aliases.get(group)
+        if exp is None:
+            return None  # an extension, or a typo: gh says so
+        if exp.startswith("!") or depth > 4:
+            return SoloRefusal(f"the gh alias `{group}` runs a shell command, or other aliases, the kit doesn't follow", "unknown", _SOLO_API_HINT)
+        try:
+            words = shlex.split(exp)
+        except ValueError:
+            return SoloRefusal(f"the gh alias `{group}` can't be read", "unknown", _SOLO_API_HINT)
+        at = toks.index(group)
+        return _solo_gh([toks[0], *words, *toks[at + 1 :]], seg, profile, raw, read, depth + 1)
+    if group in ("pr", "repo") and _another_repo(_gh_repo(toks, group, sub), profile.repo):
+        return None
+    if (group, sub) in (("pr", "merge"), ("repo", "edit")) and _unread_words(toks):
+        return SoloRefusal(f"`gh {group} {sub}` with words the shell fills in, which may be `--admin` or `--default-branch`", "unknown", _SOLO_API_HINT)
+    if group == "pr" and sub == "merge" and any(t == "--admin" or t.startswith("--admin=") for t in toks):
+        return SoloRefusal(f"`gh pr merge --admin` merges into `{base}` past its required checks")
+    if group == "repo" and sub == "edit" and any(t == "--default-branch" or t.startswith("--default-branch=") for t in toks):
+        return SoloRefusal(f"`gh repo edit --default-branch` changes the default branch, which is `{base}`")
+    call = _api(toks)
+    if call is None:
+        return None
+    path = _api_path(call.path) if call.path else ""
+    if seg.fed and call.method != "GET" and not (path and _plain_resource(path)):
+        return SoloRefusal("xargs gives this `gh api` call its path or fields, which the kit can't see", "unknown", _SOLO_API_HINT)
+    body = _Body([])
+    queries: list[str | None] = []
+    for f in call.fields:
+        k, _, v = f.partition("=")
+        if _EXPANDS.search(k):
+            body.unread = True
+        val: str | None = v
+        if v.startswith("@") and f in _raw_fields(toks):
+            val = None if _STDIN_FILE.fullmatch(v[1:]) else _read_text(v[1:], seg.cwd)
+            val = val.strip() if val is not None and k != "query" else val
+        body.fields.append((k, val))
+        if k == "query":
+            queries.append(val)
+    for f in _input_files(toks):
+        text = (_stdin_text(seg) or _echoed(seg)) if _STDIN_FILE.fullmatch(f) else _read_text(f, seg.cwd)
+        body.add_text(text)
+        pairs = _json_pairs(text) if text is not None else None
+        queries += [v if isinstance(v, str) else None for k, v in pairs or [] if k == "query"] if text is not None and pairs is not None else [None]
+    if path == "graphql":
+        return _solo_gql(queries, lambda: call.rest + "\n" + raw + "\n" + read(), base, seg.cwd)
+    return _solo_rest(call.method, path, base, body, profile.repo)
+
+
+def _echoed(seg: Seg) -> str | None:
+    """The text a plain `echo` or one-argument `printf` pipes into the command,
+    when the shell fills nothing in."""
+    w = seg.piped.words if seg.piped is not None else []
+    opts = []
+    for x in w[1:]:  # echo's leading options, however many
+        if not re.fullmatch(r"-[neE]+", x):
+            break
+        opts.append(x)
+    escapes = any("e" in x for x in opts)  # `echo -e` turns `\x5f` into other text
+    if seg.stdins or seg.stdin_unseen or seg.stdin or escapes and any("\\" in x for x in w[1:]):
+        return None  # the command's own stdin, or escapes the kit doesn't decode
+    if not w or Path(w[0]).name not in ("echo", "printf") or any(_EXPANDS.search(x) for x in w[1:]):
+        return None
+    args = [x for x in w[1:] if not (Path(w[0]).name == "echo" and re.fullmatch(r"-[neE]+", x))]
+    if Path(w[0]).name == "printf" and (len(args) != 1 or "%" in args[0] or "\\" in args[0]):
+        return None
+    return " ".join(args)
+
+
+def _raw_fields(toks: list[str]) -> set[str]:
+    """The `-F`/`--field` values of a `gh api` command (gh reads `@file` in these only)."""
+    out: set[str] = set()
+    for j, t in enumerate(toks):
+        if t in ("-F", "--field") and j + 1 < len(toks):
+            out.add(toks[j + 1])
+        elif t.startswith("--field="):
+            out.add(t.split("=", 1)[1])
+        elif re.fullmatch(r"-i*F.+", t):
+            v = t[t.index("F") + 1 :]
+            out.add(v[1:] if v.startswith("=") else v)
+    return out
+
+
+def _input_files(toks: list[str]) -> list[str]:
+    """The files `gh api --input` sends as the body."""
+    out = []
+    for j, t in enumerate(toks):
+        if t == "--input" and j + 1 < len(toks):
+            out.append(toks[j + 1])
+        elif t.startswith("--input="):
+            out.append(t.split("=", 1)[1])
+    return out
+
+
+def _solo_github(seg: Seg, profile: Profile, raw: str, read) -> SoloRefusal | None:
+    """Solo mode: a `gh` or `curl` command that changes the base branch through
+    GitHub: `gh pr merge --admin`, the default branch, the base branch's name,
+    ref or protection, a ruleset, a merge or a file written straight to it.
+    What the kit can't read (a path, a method, a body or an alias) counts as
+    the base branch."""
+    read = read or (lambda: "")
+    k = _vcs_index(seg.words, "attended")
+    toks = seg.words[k:] if k is not None else seg.words
+    name = Path(toks[0]).name if toks else ""
+    if name == "curl":
+        return _solo_curl(toks, seg, profile.base_branch, profile.repo, raw, read)
+    if name == "gh":
+        return _solo_gh(toks, seg, profile, raw, read)
+    return None
+
+
+def _gh_repo(toks: list[str], group: str, sub: str | None) -> str | None:
+    """The repository a `gh pr`/`gh repo` command names: `-R`/`--repo`, a pull
+    request's URL, or `gh repo edit`'s own argument; None when it names none."""
+    found = None  # gh takes the last one given
+    for j, t in enumerate(toks):
+        if t in ("-R", "--repo"):
+            found = toks[j + 1] if j + 1 < len(toks) else None
+        elif t.startswith(("--repo=", "-R=")) or (t.startswith("-R") and len(t) > 2):
+            found = t.split("=", 1)[1] if "=" in t else t[2:]
+        elif u := re.match(r"(?i)(?:https?://)?(?:www\.)?github\.com/([^/\s]+/[^/\s]+)/pull/", t):
+            found = u.group(1)
+    if found is not None:
+        return found
+    if group == "repo" and sub == "edit":
+        # Only right after `edit`: later, a word may be a flag's value.
+        nxt = toks[toks.index("edit") + 1 : toks.index("edit") + 2] if "edit" in toks else []
+        return nxt[0] if nxt and not nxt[0].startswith("-") else None
+    return None
+
+
+def _solo_curl_ask(seg: Seg, profile: Profile, raw: str, read) -> str | None:
+    """Solo mode: a curl command that creates a ruleset, which is asked (as
+    `gh api` is), since it's how a project leaves solo mode."""
+    if not seg.words or Path(seg.words[0]).name != "curl":
+        return None
+    c = _curl_call(seg.words, seg.cwd)
+    for u in c.urls:
+        path = _api_path(u) if _GITHUB_HINT.search(u) else ""
+        if (c.method == "POST" and re.fullmatch(r"(?:repos/[^/]+/[^/]+|orgs/[^/]+)/rulesets", path)) or (
+            path == "graphql" and re.search(r"\bcreateRepositoryRuleset\b", "\n".join(d or "" for d in c.data) + "\n" + raw)
+        ):
+            return "creating a ruleset through the API changes what protects the branches; allow it only if you mean to"
+    return None
+
+
+def _mcp_ref(v) -> str:
+    return str(v or "").strip().removeprefix("refs/").removeprefix("heads/")
+
+
+def _solo_mcp(name: str, inp: dict, profile: Profile) -> tuple[SoloRefusal, str] | bool | None:
+    """Solo mode: a GitHub MCP call that changes the base branch: the refusal and
+    the `gh` command that does the same by hand; True for creating a ruleset
+    (asked); None for the rest."""
+    base = profile.base_branch
+    low = name.lower()
+    if low.startswith(_READ_PREFIXES):
+        return None
+    owner, repo = inp.get("owner"), inp.get("repo")
+    r = f"{owner}/{repo}" if isinstance(owner, str) and isinstance(repo, str) and owner and repo else profile.repo
+    if _another_repo(r, profile.repo):
+        return None
+    q = shlex.quote
+
+    def is_base(v) -> bool:
+        if v is not None and not isinstance(v, str):
+            return True  # not a name the kit can read
+        b = _mcp_ref(v)
+        return not b or b.casefold() == base.casefold()  # as check_mcp's file writes compare it
+
+    path = str(inp.get("path") or "…").lstrip("/")
+    if name in GITHUB_WRITE_FILES and is_base(inp.get("branch")):
+        what = f"`{name}` writes files straight to `{base}`" + ("" if _mcp_ref(inp.get("branch")) else " (the default branch, as no branch is named)")
+        hand = {
+            "create_or_update_file": f"gh api -X PUT {q(f'repos/{r}/contents/{path}')} -f {q('branch=' + base)} -f message=… -f content=…",
+            "delete_file": f"gh api -X DELETE {q(f'repos/{r}/contents/{path}')} -f {q('branch=' + base)} -f message=… -f sha=…",
+        }.get(name, f"git push origin {q(base)}")
+        return SoloRefusal(what), hand
+    if "ruleset" in low:
+        if low.startswith("create"):
+            return True
+        rid = inp.get("ruleset_id") or inp.get("id") or "…"
+        verb = "DELETE" if low.startswith("delete") else "PUT"
+        hand = f"gh api -X {verb} {q(f'repos/{r}/rulesets/{rid}')}" + (" --input ruleset.json" if verb == "PUT" else "")
+        return SoloRefusal(f"`{name}` changes or removes a ruleset, which is what protects `{base}`"), hand
+    if "protection" in low and is_base(inp.get("branch")):
+        verb = "DELETE" if low.startswith("delete") else "PUT"
+        hand = f"gh api -X {verb} {q(f'repos/{r}/branches/{base}/protection')}" + (" --input protection.json" if verb == "PUT" else "")
+        return SoloRefusal(f"`{name}` changes `{base}`'s protection"), hand
+    m = re.fullmatch(r"(create|update|delete|rename)_(?:ref|branch)", low)
+    ref = next((inp[k] for k in ("ref", "branch", "name") if inp.get(k) is not None), None)
+    # Making a branch needs its name; changing or removing one with no name the kit can read counts as the base.
+    if m and (is_base(ref) if m.group(1) != "create" else ref is not None and is_base(ref)):
+        hand = {
+            "create": f"gh api -X POST {q(f'repos/{r}/git/refs')} -f {q('ref=refs/heads/' + base)} -f sha=…",
+            "update": f"gh api -X PATCH {q(f'repos/{r}/git/refs/heads/{base}')} -f {q('sha=' + str(inp.get('sha') or '…'))}" + (" -F force=true" if inp.get("force") else ""),
+            "delete": f"gh api -X DELETE {q(f'repos/{r}/git/refs/heads/{base}')}",
+            "rename": f"gh api -X POST {q(f'repos/{r}/branches/{base}/rename')} -f {q('new_name=' + str(inp.get('new_name') or '…'))}",
+        }[m.group(1)]
+        return SoloRefusal(f"`{name}` changes the branch `{base}`" + ("" if isinstance(ref, str) and _mcp_ref(ref) else ", or one the kit can't read")), hand
+    if "default_branch" in inp and re.search(r"(?:update|edit)_repo", low):
+        return SoloRefusal(f"`{name}` changes the default branch, which is `{base}`"), f"gh repo edit {q(r)} --default-branch {q(str(inp.get('default_branch') or '…'))}"
+    return None
+
+
+def _solo_problem(segs: list[Seg], profile: Profile, start: str, current_branch: str | None, command: str = "", read=None) -> SoloRefusal | None:
     """Solo mode (an attended session, `ruleset = false`): the first thing in the
-    command that touches the base branch, or might. Every segment is read, each
-    git lookup made once."""
+    command that touches the base branch, or might, through git or GitHub. Every
+    segment is read, each git lookup made once. `read` gives the text of the
+    files the command reads (a GraphQL query or a body may come from one)."""
     global _GIT_MEMO
     _GIT_MEMO = {}
     try:
-        return _solo_scan(segs, profile, start, current_branch)
+        return _solo_scan(segs, profile, start, current_branch, command, read)
     finally:
         _GIT_MEMO = None
 
 
-def _solo_scan(segs: list[Seg], profile: Profile, start: str, current_branch: str | None) -> SoloRefusal | None:
+def _solo_scan(segs: list[Seg], profile: Profile, start: str, current_branch: str | None, command: str = "", read=None) -> SoloRefusal | None:
     base = profile.base_branch
     switched: dict[str | None, str | None] = {}  # directory -> the branch a switch in this command left checked out
     env_set = False  # git variables set anywhere in the command (exported, or for one command)
@@ -4182,6 +4923,9 @@ def _solo_scan(segs: list[Seg], profile: Profile, start: str, current_branch: st
             env_set = env_set or any(_GIT_ENV.match(a) for a in names)
         if seg.words[:1] == ["alias"] and any(_PUSHES.search(w) for w in seg.words[1:]):
             return SoloRefusal("a shell alias that pushes, which the kit can't follow", "unknown")
+        refusal = _solo_github(seg, profile, command, read)
+        if refusal:
+            return refusal
         g = _git(seg.words)
         if g is None:
             continue
@@ -4241,11 +4985,6 @@ def check_bash(
     # Solo mode: no ruleset protects the base branch, so what touches it is
     # refused, not asked, wherever it sits in the command (an ask earlier on
     # never hides it). The rest is then checked as in any attended session.
-    if role == "attended" and profile.ruleset is False:
-        refusal = _solo_problem(segs, profile, start, current_branch)
-        if refusal:
-            return _solo_deny(refusal, profile, root, command)
-    posts: list[Seg] = []
     cache: dict[str, str] = {}
 
     def read() -> str:
@@ -4253,6 +4992,13 @@ def check_bash(
         if "text" not in cache:
             cache["text"] = "\n".join(_command_reads(segs))
         return cache["text"]
+
+    solo = role == "attended" and profile.ruleset is False
+    if solo:
+        refusal = _solo_problem(segs, profile, start, current_branch, command, read)
+        if refusal:
+            return _solo_deny(refusal, profile, root, command)
+    posts: list[Seg] = []
 
     for seg in segs:
         p = _word_problem(seg.words, role) or _env_problem(seg, role)
@@ -4299,6 +5045,9 @@ def check_bash(
         p = _api_problem(seg.words, profile, role, seg.cwd, command, read) if seg.words and Path(seg.words[0]).name == "curl" else None
         if p:
             return _deny(role, p)
+        p = _solo_curl_ask(seg, profile, command, read) if solo else None
+        if p:
+            return Decision("ask", p)
         if _post_kind(toks):
             posts.append(seg if k is None else replace(seg, words=toks))  # every other field kept, stdin's too
         if role in ("ticket", "attended"):
@@ -4406,6 +5155,12 @@ def check_mcp(tool: str, inp: dict, profile: Profile, role: str, root: Path) -> 
     server, name = m.group(1), m.group(2)
     if "github" not in server.lower():
         return ALLOW
+    if role == "attended" and profile.ruleset is False:
+        s = _solo_mcp(name, inp, profile)
+        if s is True:
+            return Decision("ask", f"`{name}` creates a ruleset, which changes what protects the branches; allow it only if you mean to")
+        if s:
+            return _solo_deny(s[0], profile, root, s[1])
     if role == "ticket" and (name in _TICKET_MCP_DENY or any(w in name.lower() for w in _TICKET_MCP_DENY_WORDS)):
         return Decision("deny", f"`{name}` isn't something a ticket session uses (it runs workflows, makes repositories, deletes files or touches secrets)")
     if name in GITHUB_WRITE_FILES:

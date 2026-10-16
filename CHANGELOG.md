@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**Solo mode: the guard refuses GitHub-side changes to the base branch** (#46, part of solo mode, #32).
+
+- **In solo mode** (`ruleset = false`), an attended session is refused, never asked: `gh pr merge --admin`, changing the default branch, renaming the base branch, writing its protection, updating or deleting its ref, merging or writing files into it through the API, and a ruleset's `PUT`, `PATCH` or `DELETE`, through `gh api`, `curl`, GraphQL or the GitHub MCP tools. They are read as gh and curl send them (every URL, every value a field may take, decoded paths), and a path, method, body or alias the guard can't read counts as the base branch. Calls to another repository are unchanged.
+- **Creating a ruleset is still asked**, since it is how a project leaves solo mode (a `curl` that creates one is now asked in solo mode too). The repository's merge settings are unchanged.
+- **The refusal** carries #45's wording; for an MCP tool, the hand command is the `gh` command that does the same.
+- Docs: `docs/enforcement.md`'s solo-mode section. Tests: `tests/test_guard_solo_github.py`.
+- **For projects updating:** nothing to do. With `ruleset = true` or no setting, and in ticket and conductor sessions, nothing changes.
+
 **The glossary: `docs/glossary.md`** (#73, part of the quickstart and the glossary, #35).
 
 - **One page of plain words** for someone new to building, read by people and by Claude alike, in two parts: "Building words" (repository, branch, `main`, commit, pull request, checks, merge, revert, preview link, cloud session) and "The kit's words" (guided start, experience level, ticket, spec, map, review panel, solo mode, "Protect `main`", unattended run, conductor, profile, "Check the set-up"). Each entry is one or two sentences, then "Why it matters to you:", and links any other glossary word it uses.
