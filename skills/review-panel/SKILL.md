@@ -60,7 +60,7 @@ Post a record on the pull request after every round, whatever it found, and afte
   ```
   WF review-record --kind round --round <n> --commit <sha> --reviewers standards,spec,correctness --clean > /tmp/review-<ticket>-r<n>/record.md
   ```
-- **A later Correctness pass:** first `mkdir -p /tmp/review-<ticket>-pass<k>` (its scratch directory, `k` counting the passes from 1), then the round it follows, the commit it covered (`git rev-parse HEAD` when the pass starts), only `correctness`, and `--clean`, or `--not-clean` when it found something to fix:
+- **A later Correctness pass:** the round it follows, the commit from its own `commit.txt` (section 5), only `correctness`, and `--clean`, or `--not-clean` when it found something to fix:
 
   ```
   WF review-record --kind pass --round <last round> --commit <sha> --reviewers correctness --clean > /tmp/review-<ticket>-pass<k>/record.md
@@ -77,7 +77,7 @@ No pull request yet (the first rounds of `build-ticket` run before it opens)? Ke
 Repeat on the new diff until a round finds nothing to fix, at most the profile's `run.review_rounds`.
 
 - Anything still open after the last round goes to the owner in the PR body, never silently.
-- Any commit after the last round gets a Correctness pass on just those commits before merging.
+- Any commit after the last round gets a Correctness pass on just those commits before merging. Before it starts, `mkdir -p /tmp/review-<ticket>-pass<k>` (its scratch directory, `k` counting the passes from 1) and write `git rev-parse HEAD` to `commit.txt` there: the commit it covers, never one made after. Then post its record (section 4).
 
 ## 6. The findings table (for the PR body)
 

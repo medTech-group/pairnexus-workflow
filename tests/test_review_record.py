@@ -61,7 +61,9 @@ def test_reviewers_are_read_in_any_case_and_order_and_written_in_the_panels_orde
         (["--commit", SHA[:7]], "full 40-character"),
         (["--commit", "g" * 40], "full 40-character"),
         (["--commit", SHA + "a"], "full 40-character"),
-        (["--commit", ""], "full 40-character"),
+        (["--commit", ""], "give --commit"),
+        (["--commit", "  "], "give --commit"),
+        (["--commit", "0" * 64], "full 40-character"),
         (["--reviewers", "standards,linter"], "unknown reviewer `linter`"),
         (["--reviewers", ""], "give --reviewers"),
         (["--reviewers", "standards,,spec"], "--reviewers has an empty name"),
@@ -97,6 +99,39 @@ def test_no_result_is_refused(capsys):
     code, out, err = run(capsys, "--kind", "round", "--round", "1", "--commit", SHA, "--reviewers", "correctness")
     assert code != 0 and out == ""
     assert "give --clean or --not-clean" in err
+
+
+@pytest.mark.parametrize("flag, value", [("--kind", "pass"), ("--round", "3"), ("--commit", OTHER)])
+def test_a_flag_given_twice_is_refused_rather_than_the_last_winning(capsys, flag, value):
+    full = {"--kind": "round", "--round": "1", "--commit": SHA, "--reviewers": "correctness"}
+    flat = [x for kv in full.items() for x in kv]
+    code, out, err = run(capsys, *flat, flag, value, "--clean")
+    assert code != 0 and out == ""
+    assert f"give {flag} once" in err
+
+
+def test_reviewers_given_twice_add_up(capsys):
+    out = body(capsys, "--kind", "round", "--round", "2", "--commit", SHA, "--reviewers", "spec", "--reviewers", "standards", "--clean")
+    assert "reviewers=standards,spec " in out
+
+
+def test_shortened_flags_are_not_taken():
+    with pytest.raises(SystemExit) as e:
+        cli.main(["review-record", "--kin", "round", "--round", "1", "--commit", SHA, "--reviewers", "spec", "--cle"])
+    assert e.value.code != 0
+
+
+def test_a_refusal_quotes_a_value_cut_short_with_control_characters_escaped(capsys):
+    code, out, err = run(capsys, "--kind", "\x1b[31m" + "x" * 5000, "--round", "1", "--commit", SHA, "--reviewers", "spec", "--clean")
+    assert code != 0 and out == ""
+    assert "\x1b" not in err and "\\x1b" in err and len(err) < 300
+    code, out, err = run(capsys, "--kind", "rou\nnd", "--round", "1", "--commit", SHA, "--reviewers", "spec", "--clean")
+    assert err.count("\n") == 1 and "rou\\nnd" in err
+
+
+def test_the_python_writer_refuses_reviewers_that_arent_names():
+    with pytest.raises(reviews.RecordError, match="give --reviewers"):
+        reviews.record(kind="round", round=1, commit=SHA, reviewers=5, clean=True)
 
 
 def test_both_results_are_refused(capsys):
@@ -162,7 +197,22 @@ def test_a_record_line_quoted_inside_other_text_is_not_a_record(capsys):
     line = written(capsys, "--kind", "round", "--round", "3", "--reviewers", "spec", "--clean").splitlines()[1]
     assert reviews.records_in(f"The record `{line}` was wrong.") == []
     assert reviews.records_in(f"Before: {line}") == []
-    assert len(reviews.records_in(f"  {line}  \r\n")) == 1
+    assert len(reviews.records_in(f"   {line}  \r\n")) == 1
+    # In a code block, fenced or indented, it is quoted, not posted.
+    assert reviews.records_in(f"Round 2's record was:\n```\n{line}\n```\n") == []
+    assert reviews.records_in(f"~~~~text\n{line}\n~~~\n{line}\n~~~~\n") == []
+    assert reviews.records_in(f"Quoted:\n\n    {line}\n") == []
+    assert reviews.records_in(f"\t{line}") == []
+    # After the block closes, a record line counts again.
+    assert len(reviews.records_in(f"```\n{line}\n```\n{line}\n")) == 1
+    # An unclosed fence runs to the end, as Markdown renders it.
+    assert reviews.records_in(f"```\n{line}") == []
+
+
+def test_read_skips_a_comment_id_too_long_to_be_a_number(capsys):
+    a = written(capsys, "--kind", "round", "--round", "1", "--reviewers", "spec", "--clean")
+    (r,) = reviews.read([{"id": "1" * 5000, "url": "https://x/pull/5#issuecomment-" + "2" * 5000, "body": a}])
+    assert r.comment_id is None and r.round == 1
 
 
 @pytest.mark.parametrize(
@@ -181,6 +231,12 @@ def test_a_record_line_quoted_inside_other_text_is_not_a_record(capsys):
         f"<!-- workflow:review kind=round round=1 commit={SHA} reviewers=spec,standards result=clean -->",
         f"<!-- workflow:review kind=round round=1 commit={SHA} reviewers=spec,spec result=clean -->",
         f"<!-- workflow:review kind=round round=1 commit={SHA} reviewers=spec, result=clean -->",
+        f"<!-- workflow:review result=clean reviewers=spec commit={SHA} round=1 kind=round -->",
+        f"<!-- workflow:review kind=round  round=1 commit={SHA} reviewers=spec result=clean -->",
+        f"<!-- workflow:review kind=round\tround=1 commit={SHA} reviewers=spec result=clean -->",
+        f"<!-- workflow:review kind=round round=1 commit={SHA} reviewers=spec result=clean  -->",
+        f"<!-- workflow:review kind=round round=1 commit={SHA} reviewers=spec\u00a0result=clean -->",
+        f"<!-- workflow:review kind=round round round=1 commit={SHA} reviewers=spec result=clean -->",
         f"<!-- workflow:review kind=light round=1 commit={SHA} reviewers=spec result=clean -->",
         f"<!-- workflow:review kind=pass round=1 commit={SHA} reviewers=spec result=clean -->",
         f"<!-- workflow:review kind=round round=1 round=2 commit={SHA} reviewers=spec result=clean -->",

@@ -24,7 +24,7 @@ import re
 
 AGENT_MARKER = "<!-- workflow:agent -->"
 
-_COMMENT_URL_ID = re.compile(r"#issuecomment-(\d+)\b")
+_COMMENT_URL_ID = re.compile(r"#issuecomment-([0-9]{1,20})\b")
 
 
 class CommentsError(ValueError):
@@ -70,7 +70,7 @@ def _number(comment: dict) -> int | None:
     cid = comment.get("id")
     if isinstance(cid, int) and not isinstance(cid, bool):
         return cid
-    if isinstance(cid, str) and re.fullmatch(r"[0-9]+", cid.strip()):
+    if isinstance(cid, str) and re.fullmatch(r"[0-9]{1,20}", cid.strip()):
         return int(cid.strip())
     for key in ("html_url", "url"):
         m = _COMMENT_URL_ID.search(str(comment.get(key) or ""))

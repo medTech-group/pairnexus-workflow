@@ -34,9 +34,11 @@ REVIEWERS = ("standards", "spec", "correctness", "security", "explorer")
 RESULTS = ("clean", "not-clean")
 
 _FIELDS = ("kind", "round", "commit", "reviewers", "result")
-# A record line is a line of its own, so one quoted inside a sentence or in
-# backticks isn't read as a record.
-_LINE = re.compile(r"^[ \t]*<!-- workflow:review ([^\n]*?) -->[ \t]*\r?$", re.M)
+# A record line is a line of its own (at most three spaces in, as Markdown
+# allows outside a code block), so one quoted in a sentence, in backticks or in
+# a code block isn't read as a record.
+_LINE = re.compile(r" {0,3}<!-- workflow:review (\S[^\n]*?\S) -->[ \t]*\r?")
+_FENCE = re.compile(r" {0,3}(`{3,}|~{3,})")
 _SHA = re.compile(r"[0-9a-f]{40}")
 # A round's number, at most six digits (int() refuses past Python's digit limit).
 _ROUND = re.compile(r"[1-9][0-9]{0,5}")
@@ -70,25 +72,35 @@ class Record:
         )
 
 
+def _shown(value, n: int) -> str:
+    """A value as the refusal quotes it: cut to `n` characters, control
+    characters escaped."""
+    text = str(value)
+    cut = "".join(c if c.isprintable() else repr(c)[1:-1] for c in text[:n])
+    return cut + ("…" if len(text) > n else "")
+
+
 def _checked(kind, round, commit, reviewers, result) -> Record:
     """The one set of rules the writer and the reader share: a Record, or
     RecordError saying which flag to fix. Names are read in any case;
     `reviewers` is a comma-separated string or a list, put in the panel's order."""
-    kind = str(kind or "").strip().lower()
+    given, kind = kind, str(kind or "").strip().lower()
     if not kind:
         raise RecordError("give --kind: `round` for a review round, `pass` for a later Correctness pass")
     if kind not in KINDS:
-        raise RecordError(f"--kind is `round` or `pass`, not `{kind}`")
+        raise RecordError(f"--kind is `round` or `pass`, not `{_shown(given, 20)}`")
     rnd = "" if round is None else str(round).strip()
     if not rnd:
         raise RecordError("give --round: the round's number (for a pass, the round it follows)")
     if not _ROUND.fullmatch(rnd):
-        raise RecordError(f"--round is a whole number from 1 to 999999, not `{rnd[:20]}`")
-    if commit is None:
+        raise RecordError(f"--round is a whole number from 1 to 999999, not `{_shown(rnd, 20)}`")
+    if commit is None or not str(commit).strip():
         raise RecordError("give --commit: the full SHA the round covered (`git rev-parse HEAD`)")
     sha = str(commit).strip().lower()
     if not _SHA.fullmatch(sha):
-        raise RecordError(f"--commit is the full 40-character SHA (`git rev-parse HEAD`), not `{str(commit)[:50]}`")
+        raise RecordError(f"--commit is the full 40-character SHA (`git rev-parse HEAD`), not `{_shown(commit, 50)}`")
+    if reviewers is not None and not isinstance(reviewers, (str, list, tuple)):
+        raise RecordError("give --reviewers as names, comma-separated")
     parts = [reviewers] if isinstance(reviewers, str) else list(reviewers or [])
     names = [n.strip().lower() for part in parts for n in str(part).split(",")]
     if not any(names):
@@ -97,7 +109,7 @@ def _checked(kind, round, commit, reviewers, result) -> Record:
         raise RecordError("--reviewers has an empty name: give them comma-separated, with nothing between two commas")
     for n in names:
         if n not in REVIEWERS:
-            raise RecordError(f"unknown reviewer `{n[:30]}`: the reviewers are " + ", ".join(REVIEWERS))
+            raise RecordError(f"unknown reviewer `{_shown(n, 30)}`: the reviewers are " + ", ".join(REVIEWERS))
     who = tuple(r for r in REVIEWERS if r in names)
     if kind == "pass" and who != ("correctness",):
         raise RecordError("a pass is reviewed by correctness alone: give --reviewers correctness")
@@ -112,7 +124,12 @@ def record(*, kind, round, commit, reviewers, clean) -> str:
     `round` is a number (or its digits), `reviewers` a list of names or one
     comma-separated string, `clean` True or False (None: not given). Raises
     RecordError, saying which flag to fix, for a missing or malformed field."""
-    result = {True: "clean", False: "not-clean"}.get(clean) if isinstance(clean, bool) else None
+    if clean is True:
+        result = "clean"
+    elif clean is False:
+        result = "not-clean"
+    else:
+        result = None
     r = _checked(kind, round, commit, reviewers, result)
     what = f"Review round {r.round}" if r.kind == "round" else f"Correctness pass after round {r.round}"
     names = ", ".join(n.capitalize() for n in r.reviewers)
@@ -120,24 +137,40 @@ def record(*, kind, round, commit, reviewers, clean) -> str:
 
 
 def _parse(fields: str) -> Record | None:
-    pairs = [p.partition("=") for p in fields.split()]
-    got = {k: v for k, eq, v in pairs if eq}
-    if len(got) != len(pairs) or set(got) != set(_FIELDS):
+    got = dict(p.partition("=")[::2] for p in fields.split(" "))
+    if set(got) != set(_FIELDS):
         return None
     try:
         r = _checked(*(got[k] for k in _FIELDS))
     except RecordError:
         return None
-    # Only exactly what the writer writes: lowercase, the panel's order, no repeats.
-    return r if r.line() == f"<!-- workflow:review {' '.join(f'{k}={got[k]}' for k in _FIELDS)} -->" else None
+    # Only exactly what the writer writes: the fields in order, single spaces,
+    # lowercase, the panel's order, no repeats.
+    return r if r.line() == f"<!-- workflow:review {fields} -->" else None
 
 
 def records_in(text) -> list[Record]:
-    """Every well-formed record line in one comment's text, in order. A
-    malformed one, or text that isn't a string, yields nothing; never raises."""
+    """Every well-formed record line in one comment's text, in order, outside
+    code blocks. A malformed one, or text that isn't a string, yields nothing;
+    never raises."""
     if not isinstance(text, str):
         return []
-    return [r for r in (_parse(m.group(1)) for m in _LINE.finditer(text)) if r is not None]
+    out, fence = [], ""
+    for line in text.split("\n"):
+        f = _FENCE.match(line)
+        if fence:
+            # A fence closes on a line of the same character, at least as long.
+            if f and f.group(1)[0] == fence[0] and len(f.group(1)) >= len(fence) and not line[f.end():].strip():
+                fence = ""
+            continue
+        if f:
+            fence = f.group(1)
+            continue
+        m = _LINE.fullmatch(line)
+        r = _parse(m.group(1)) if m else None
+        if r is not None:
+            out.append(r)
+    return out
 
 
 def read(comments) -> list[Record]:
