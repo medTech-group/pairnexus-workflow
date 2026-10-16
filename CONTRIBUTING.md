@@ -41,6 +41,11 @@ A change to shipped files also:
 
 Keep a skill's instructions where they act, not in a separate essay.
 
+**The glossary.** `docs/glossary.md` holds the kit's words for someone new to building, and ships to projects:
+- a new kit term a person meets goes into `docs/glossary.md` in the same pull request: a heading, one or two sentences, then "Why it matters to you:";
+- the whole file stays under 6,000 characters, because the context hook adds it whole at a new-to-building session's first prompt (#35), within Claude Code's 10,000-character cap;
+- a session using `domain-modeling` on the kit treats `docs/glossary.md` as the kit's glossary (`docs/agents/domain.md`), not a root `GLOSSARY.md`.
+
 ## Pull requests
 
 - One change per pull request, with what it does and why, and how you tested it.
