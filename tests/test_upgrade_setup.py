@@ -64,6 +64,25 @@ def test_it_has_a_screen_for_each_experience_and_the_same_steps():
     assert "one-line result" in screens
     assert "developer" in screens.lower() and "ruleset's settings" in screens
     assert "same steps" in screens
+    # The new person's one-line result keeps the checks note: experience never
+    # changes what the person is told about safety.
+    assert "Failing tests don't block a merge yet" in screens
+
+
+def test_it_never_runs_in_a_ticket_session():
+    assert "When `WORKFLOW_ROLE` is `ticket`, don't run it or offer it" in _text()
+
+
+def test_an_unset_ruleset_follows_protect_main():
+    assert "`ruleset` left out" in _section("When it's offered")
+
+
+def test_a_ruleset_that_was_there_before_or_an_organisations_is_not_reoffered():
+    first = _section("Read what is there")
+    assert "`Organization`" in first and "message for the owner" in first
+    back = _section("Read it back")
+    assert "the ruleset this run created" in back
+    assert "don't offer the click again" in back
 
 
 # Admin first, and the message for the owner.
@@ -115,8 +134,10 @@ def test_it_lists_the_rulesets_settings_checks_and_merge_settings_with_their_pag
     # A link to each exact settings page.
     assert "https://github.com/<repo>/settings/rules/new?target=branch" in clicks
     assert "`https://github.com/<repo>/settings`" in clicks
-    # The automatic path and adding checks later are #38's.
-    assert "#38" in clicks
+    # The automatic path and adding checks later come later, named in words:
+    # the skill ships into projects, where a kit issue number means their issue.
+    assert "later release" in clicks
+    assert not re.search(r"#\d", _text())
 
 
 # The read-back runs `workflow protection` and offers the click again.
@@ -136,8 +157,10 @@ def test_the_read_back_command_names_what_the_skill_relays():
     # The JSON keys the skill reads are the ones `workflow protection --json` gives.
     back = _section("Read it back")
     report = protection.check([], "main", {"allow_merge_commit": True, "allow_auto_merge": True}).as_dict()
-    for key in ("protected", "missing", "merge"):
-        assert key in report and f"`{key}`" in back, key
+    for key in ("protected", "missing", "merge", "checks"):
+        assert key in report and f"`{key}" in back, key
+    assert protection.CHECKS_NOTE in back
+    assert "**Any other exit:**" in back
 
 
 # The flip PR, only after a protected read-back.
@@ -151,7 +174,9 @@ def test_the_flip_pr_comes_only_after_a_protected_read_back():
     assert "pull request" in flip
     assert "stays in solo mode until it merges" in flip
     assert "owner" in flip.lower()
-    assert '"protected": true' in flip or "`protected` is `true`" in flip
+    assert 'only once the read-back says `"protected": true`' in flip
+    assert "already open" in flip
+    assert "never merge it, or enable auto-merge on it, yourself" in flip
     assert text.index("## 4. Read it back") < text.index("## 5. Leave solo mode")
 
 
@@ -162,9 +187,15 @@ def test_the_flip_the_skill_describes_takes_the_template_out_of_solo_mode():
     assert "`# ruleset = false`" in flip and "`ruleset = false`" in flip
     template = (KIT / "templates/profile.toml").read_text()
     assert "# ruleset = false" in template
+    assert "after `base_branch` when neither is there" in flip
+    no_line = template.replace("# ruleset = false\n", "")
     for before in (template, template.replace("# ruleset = false", "ruleset = false")):
         after = re.sub(r"^#? ?ruleset = false$", "ruleset = true", before, count=1, flags=re.M)
         assert parse(tomllib.loads(after), KIT).ruleset is True
+        # Alone on its line, as the template asks, so a shell check can read it.
+        assert re.search(r"^ruleset = true$", after, re.M)
+    after = re.sub(r"^(base_branch = .*)$", r"\1\nruleset = true", no_line, count=1, flags=re.M)
+    assert "ruleset = true" not in no_line and parse(tomllib.loads(after), KIT).ruleset is True
 
 
 # It ships, vendored and as the plugin, as the other skills do.
