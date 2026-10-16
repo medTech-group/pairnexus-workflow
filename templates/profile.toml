@@ -21,8 +21,8 @@ guided_start = true
 # Solo mode: false while no GitHub ruleset protects the base branch, so the
 # kit's guard is all that stops a change to it; true once a ruleset does.
 # Left out, the kit behaves as before solo mode. Set-up writes it once it can
-# read the rulesets. Keep it a plain `ruleset = true` or `ruleset = false`
-# line, with nothing after it: a shell script reads it without TOML.
+# read the rulesets. Keep it on one line of its own, the key at the start
+# and nothing after the value: a shell script reads it without TOML.
 # ruleset = false
 # How much the people working here know, as the project's default: "new"
 # (new to building) or "developer". It names no person and changes only

@@ -389,7 +389,7 @@ class Experience:
 
     `level` is "new", "developer" or None (unknown); `source` is "environment",
     "local file", "profile" or "unknown". `warnings` name values skipped on the
-    way. Wording uses `wording`: unknown counts as new to building."""
+    way. Wording uses `wording_level`: unknown counts as new to building."""
 
     level: str | None
     source: str
