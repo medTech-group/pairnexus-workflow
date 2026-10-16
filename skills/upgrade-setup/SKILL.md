@@ -85,7 +85,7 @@ One screen at a time, each with a link to the exact settings page, in every kind
 - **Ruleset name:** anything, for example `main`.
 - **Enforcement status:** **Active**. "Disabled" and "Evaluate" enforce nothing.
 - **Bypass list:** leave it empty. Sessions act through the person's GitHub account, so anything they can bypass, a session could too.
-- **Target branches:** **Add target → Include default branch** (the default branch). If the base branch isn't the default branch, add it by name instead.
+- **Target branches:** **Add target → Include default branch**. If the base branch isn't the default branch, add it by name instead.
 - **Rules**, tick:
   - **Restrict deletions**;
   - **Block force pushes**;
@@ -138,7 +138,7 @@ Tell the person: the guard stays in solo mode until it merges, so until then the
 
 ## The end
 
-Say where it stands in one line:
+Say where it stands in one line, adding the checks line from "The screens" when no checks are required yet:
 - "`main` is protected, and the pull request that leaves solo mode is #<n>: merge it when you're ready.";
 - "`main` is protected again." (`restore_protection`);
 - "`main` isn't protected yet: <what's missing>." with the choice to try that screen again;
