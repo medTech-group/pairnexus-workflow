@@ -14,6 +14,7 @@
     workflow render --template F --ticket F --charter F --slots F --tracking N [--by-hand N] [--out F] [--print]
     workflow comments --file F [--owner LOGIN] [--since-id N]
     workflow merge-check --pr F --files F --commits F --checks F --rulesets F --threads F --reviews F --comments F --permissions F --compare F [--preview F] [--asker LOGIN] [--json]
+    workflow merge-check --fetch N [any of the files above] [--charter F --check-logs DIR] [--asker LOGIN] [--json]
     workflow briefing verify --file F
     workflow pr-template [--existing FILE]      (prints the file to write; exits 3 for a folder of templates)
     workflow evidence [--suite NAME ...] [--base-count N | --base-ref BRANCH] [--fresh] [--allow-dirty]
@@ -42,6 +43,7 @@ _STARTED = time.monotonic()  # the guard's time budget counts from here, before 
 from . import charter as charter_mod
 from . import context as context_mod
 from . import evidence as evidence_mod
+from . import fetch as fetch_mod
 from . import _old_python, fallback
 from . import gate as gate_mod
 from . import guard as guard_mod
@@ -532,12 +534,13 @@ def cmd_comments(a) -> int:
 
 
 def cmd_merge_check(a) -> int:
-    """Whether the pull request may merge (flow §4), from the files given.
-    Changes nothing, posts nothing, and exits 0 whatever it finds: anything it
-    can't read is a reason of its own, never "ready"."""
+    """Whether the pull request may merge (flow §4), from the files given, and
+    with --fetch the rest through `gh api`. Changes nothing, posts nothing, and
+    exits 0 whatever it finds: anything it can't read is a reason of its own,
+    never "ready"."""
     inputs: dict = {}
     stdin_for = None
-    for name in merge_mod.INPUTS:
+    for name in [*merge_mod.INPUTS, "charter"]:
         path = getattr(a, name, None)
         if path is None:
             continue
@@ -549,7 +552,11 @@ def cmd_merge_check(a) -> int:
         try:
             if path == "-" and sys.stdin is None:
                 raise ValueError("standard input (-) is closed")
-            values = posts_mod.decode_values(_read(path).removeprefix("\ufeff"))
+            text = _read(path).removeprefix("\ufeff")
+            if name == "charter":  # JSON, or the tracking issue's body: merge.charter_from reads it
+                inputs[name] = (text, None)
+                continue
+            values = posts_mod.decode_values(text)
             inputs[name] = (values[0], None) if len(values) == 1 else (values, None) if values else (None, f"{path} is empty")
         except OSError as e:
             inputs[name] = (None, f"can't open {path}: {e.strerror or e}")
@@ -567,8 +574,22 @@ def cmd_merge_check(a) -> int:
     except (OSError, UnicodeDecodeError) as e:
         profile_error = f"can't read {PROFILE_PATH}: {getattr(e, 'strerror', None) or e}"
     root = prof.root if prof else project_root()
+    charter = inputs.pop("charter", None)
+    if a.fetch is not None:
+        wanted = [n for n in merge_mod.INPUTS if n != "preview"]  # the preview is #41's reader's
+        if prof is None or not prof.repo:
+            inputs.update({n: (None, f"not fetched: the profile names no repository (project.repo), so give --{n} as a file") for n in wanted if n not in inputs})
+        else:
+            inputs.update(fetch_mod.merge_inputs(prof.repo, a.fetch, inputs, wanted))
+    logs: dict = {}
+    if a.check_logs:
+        try:
+            logs = {f.name: f.read_text(encoding="utf-8", errors="replace") for f in Path(a.check_logs).iterdir() if f.is_file()}
+        except OSError as e:
+            print(f"workflow merge-check: can't read --check-logs {a.check_logs}: {e.strerror or e}; no check's log was read", file=sys.stderr)
+    role = roles.role(root, prof.ticket_branch, fallback=root) if prof else roles.role(root, fallback=root)
     level = resolve_experience(root, prof.experience if prof else None).wording_level
-    res = merge_mod.evaluate(inputs, prof, profile_error, asker=a.asker, level=level)
+    res = merge_mod.evaluate(inputs, prof, profile_error, asker=a.asker, level=level, charter=charter, logs=logs, role=role)
     _out(res.as_dict() if a.json else merge_mod.text(res))
     return 0
 
@@ -1077,6 +1098,9 @@ def main(argv: list[str] | None = None) -> int:
             "threads": "GraphQL's reviewThreads, with totalCount and pageInfo, every page",
         }.get(name, "as JSON from the GitHub API, every page")
         s.add_argument(f"--{name}", metavar="F", help=f"{what} ({source}); a file, or - for standard input")
+    s.add_argument("--fetch", metavar="N", type=int, help="fetch every input not given as a file for pull request N, through `gh api` (the profile's project.repo); a file given wins")
+    s.add_argument("--charter", metavar="F", help="the run's approved charter, as JSON, or the tracking issue's body (its run state holds it): the checks it waives (flow §4.1); ignored in an attended session")
+    s.add_argument("--check-logs", metavar="DIR", help="a waived check's log, one file per check name (<name>, <name>.log or <name>.txt), as `gh run view --log-failed` gives its tail")
     s.add_argument("--asker", metavar="LOGIN", help="the GitHub login of whoever asks (the owner gets \"Ready once you've read\" for kit and CI files)")
     s.add_argument("--json", action="store_true", help="the decision, its reasons and notes, and each check's name and state, as JSON")
     s.set_defaults(fn=cmd_merge_check)

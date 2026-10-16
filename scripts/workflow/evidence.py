@@ -44,8 +44,25 @@ PYTEST_QUIET = re.compile(
 PYTEST = re.compile(r"(?<![\w-])pytest\b")
 
 
+# The report's first line, which `workflow merge-check` reads back (flow §4.2).
+DIRTY = ", on a dirty tree: NOT A PROOF OF THE COMMIT"
+_HEADLINE = re.compile(r"\*\*Local full suite on `([0-9a-fA-F]{7,40})`\*\*: (passed|FAILED)((?:, on a dirty tree: NOT A PROOF OF THE COMMIT)?)")
+
+
 class EvidenceError(RuntimeError):
     pass
+
+
+def headline(sha: str, ok: bool, dirty: bool = False) -> str:
+    """The report's first line: `**Local full suite on `<sha>`**: passed`."""
+    return f"**Local full suite on `{sha}`**: {'passed' if ok else 'FAILED'}{DIRTY if dirty else ''}"
+
+
+def read_headline(line: str) -> tuple[str, bool, bool] | None:
+    """(sha, passed, dirty) from a report's first line, or None when the line
+    isn't one `headline` writes."""
+    m = _HEADLINE.fullmatch((line or "").strip())
+    return (m.group(1).lower(), m.group(2) == "passed", bool(m.group(3))) if m else None
 
 
 @dataclass
@@ -484,10 +501,7 @@ def report(
         if r.log:
             lines += ["", f"Full output: `{r.log}`"]
         lines.append("</details>")
-    head = "passed" if ok else "FAILED"
-    if dirty:
-        head += ", on a dirty tree: NOT A PROOF OF THE COMMIT"
-    lines[0] = f"**Local full suite on `{sha}`**: {head}"
+    lines[0] = headline(sha, ok, bool(dirty))
     # The session posts this report on its PR: an agent's post, so it carries the marker.
     lines += ["", AGENT_MARKER]
     return ok, "\n".join(lines)
