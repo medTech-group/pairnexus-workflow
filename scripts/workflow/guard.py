@@ -710,6 +710,7 @@ def _simple(toks: list) -> list:
                 else:
                     if op == "<>" and on_stdin:  # opened for reading and writing, on stdin
                         cur.stdin = nxt
+                        cur.inputs.append(nxt)
                         cur.stdins += 1
                     cur.redirects.append(nxt)
                 i += 2
@@ -2855,7 +2856,7 @@ def _named_hit(
 
 
 _VIMS = {"vim", "vi", "nvim", "vimdiff", "view", "ex"}
-_VIM_EX = re.compile(r"-[AbCdDfFghHlLmMnNRrsvxXyZ]*[eE][AbCdDfFghHlLmMnNRrsvxXyZeE]*")  # ex mode, alone or among flags that take no value (`-es`, `-Nes`, `-Xe`)
+_VIM_EX = re.compile(r"-[AbCdDfFghHlLmMnNRrsvxXyZ]*[eE][AbCdDfFghHlLmMnNRrsxXyZeE]*")  # ex mode, alone or among flags that take no value (`-es`, `-Nes`, `-Xe`); a `v` after it is normal mode again
 
 
 @dataclass
