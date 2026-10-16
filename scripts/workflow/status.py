@@ -190,7 +190,7 @@ def experience_lines(exp: Experience) -> list[str]:
     if exp.level:
         first = f"Experience: {exp.level} (from {_SOURCES.get(exp.source, exp.source)})"
     else:
-        first = "Experience: unknown (worded as new to building until asked)"
+        first = "Experience: unknown (worded as new to building)"
     return [first, *(f"warning: {w}" for w in exp.warnings)]
 
 

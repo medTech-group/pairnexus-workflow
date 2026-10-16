@@ -27,7 +27,8 @@ guided_start = true
 # How much the people working here know, as the project's default: "new"
 # (new to building) or "developer". It names no person and changes only
 # wording. Each person's WORKFLOW_EXPERIENCE, or their untracked
-# .workflow/experience file, comes first. Left out, the person is asked.
+# .workflow/experience file, comes first. Left out, the level is unknown
+# until set-up or the guided start asks.
 # experience = "new"
 
 [commands]

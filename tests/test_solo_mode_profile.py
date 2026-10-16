@@ -137,7 +137,7 @@ def test_status_experience_from_the_profile(repo):
 def test_status_experience_unknown_counts_as_new(repo):
     exp, text = _experience(repo)
     assert (exp["level"], exp["source"], exp["wording_level"]) == (None, "unknown", "new")
-    assert "Experience: unknown (worded as new to building until asked)" in text
+    assert "Experience: unknown (worded as new to building)" in text
 
 
 def test_status_skips_an_unrecognised_environment_value_with_a_warning(repo):
