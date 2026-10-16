@@ -85,6 +85,15 @@ def test_vim_normal_keys_run_into_the_text_they_insert(profile, tmp_path):
     assert act(profile, tmp_path, "vim -es -c 'normal ggdd' -c wq tests/a.spec.js") == "allow"
 
 
+def test_vim_given_stdin_edits_its_files(profile, tmp_path):
+    # Without ex mode, vim reads stdin as keys typed, `:` commands among them.
+    assert act(profile, tmp_path, "vim tests/test_x.py <<'EOF'\n:1s/^/@pytest\\.mark\\.skip/\n:wq\nEOF") == "deny"
+    assert act(profile, tmp_path, "vim tests/a.spec.js <<'EOF'\nggOit.only(\n:wq\nEOF") == "deny"
+    # Ex mode in a cluster of options.
+    assert act(profile, tmp_path, "vim -Nes tests/a.spec.js <<'EOF'\n1s/^/it\\.only\\(/\nEOF") == "deny"
+    assert act(profile, tmp_path, "vim -Nes tests/a.spec.js <<'EOF'\n%s/xit(/it(/\nwq\nEOF") == "allow"
+
+
 def test_ed_appended_text_counts_as_added(profile, tmp_path):
     assert act(profile, tmp_path, "ed -s tests/test_x.py <<'EOF'\n1a\n@pytest.mark.skip\n.\nw\nq\nEOF") == "deny"
 
@@ -189,6 +198,11 @@ def test_an_s_after_a_binary_operator_is_still_an_s(profile, tmp_path):
     assert act(profile, tmp_path, "perl -pi -e '/x/ && s/xit\\(/it(/' tests/a.spec.js") == "allow"
 
 
+def test_a_bareword_before_a_sigil_isnt_a_value(profile, tmp_path):
+    assert act(profile, tmp_path, "perl -pi -e 'my %s; s/^/it.only(/ if $. == 1; 1;' tests/a.spec.js") == "deny"
+    assert act(profile, tmp_path, "perl -pi -e '$x = \"a\" %s/^/it.only(/' tests/a.spec.js") == "deny"
+
+
 def test_awk_is_read_as_awk(profile, tmp_path):
     # awk has no `m"…"` match operator: the string is what it prints.
     assert act(profile, tmp_path, "awk -i inplace 'NR==1{ print m\"it.only(a, f)\" } 1' tests/a.spec.js") == "deny"
@@ -218,9 +232,14 @@ def test_a_sed_script_on_standard_input_is_read(profile, tmp_path):
     # Bytes given on stdin are counted once each, UTF-8 or not: 960 kB, though 1.2 MB decoded.
     (tmp_path / "latin.sed").write_bytes(b"1i caf\xe9\n" * 120_000)
     assert act(profile, tmp_path, "sed -i -f - tests/test_x.py < latin.sed") == "allow"
-    # stdin is read once: a second `-f -` finds it at its end.
-    cmd = "sed -i -e '1i it.only(' -e '1i it.only(' -f - -f - src/app.spec.ts <<<'s/it\\.only(//'"
-    assert act(profile, tmp_path, cmd) == "deny"
+    # A script from stdin is given once: `-f -` twice, or `/dev/stdin` (which reopens it), is refused.
+    for cmd in (
+        "sed -i -e '1i it.only(' -e '1i it.only(' -f - -f - src/app.spec.ts <<<'s/it\\.only(//'",
+        "sed -i -f /dev/stdin -f /dev/stdin src/app.spec.ts < rm.sed",
+    ):
+        ev = {"tool_name": "Bash", "tool_input": {"command": cmd}}
+        d = decide(ev, profile, "ticket", tmp_path, "claude/build-1", role_from_env=True)
+        assert d.action == "deny" and "more than one script from standard input" in d.reason, cmd
 
 
 def test_stdin_is_read_as_bash_gives_it(profile, tmp_path):
@@ -266,6 +285,8 @@ def test_a_sed_script_file_the_guard_cant_read_is_refused(profile, tmp_path):
     d = decide(ev, profile, "ticket", tmp_path, "claude/build-1", role_from_env=True)
     assert d.action == "deny" and "write it in an earlier command" in d.reason
     assert act(profile, tmp_path, "sed -i -f /dev/fd/0 tests/test_x.py") == "deny"
+    assert act(profile, tmp_path, "sed -i -f //dev/fd/3 tests/test_x.py") == "deny"
+    assert act(profile, tmp_path, "sed -i -f /./proc/self/fd/3 tests/test_x.py") == "deny"
     (tmp_path / "dir.sed").mkdir()
     assert act(profile, tmp_path, "sed -i -f dir.sed tests/test_x.py") == "deny"
     (tmp_path / "ok.sed").write_text("/xit(/d\n")
@@ -314,6 +335,23 @@ def test_a_piped_patch_is_read_past_a_megabyte(tmp_path):
     assert act_in(tmp_path, "cat mid.patch | git apply").action == "deny"
     (tmp_path / "ok.patch").write_text(head + lines)
     assert act_in(tmp_path, "cat ok.patch | git apply").action == "allow"
+
+
+def test_a_groups_output_down_a_pipe_isnt_taken_as_empty(tmp_path):
+    (tmp_path / "add.sed").write_text("1i it.only(\n")
+    (tmp_path / "evil.patch").write_text("--- a/tests/a.spec.js\n+++ b/tests/a.spec.js\n@@ -1 +1 @@\n-a\n+it.only('a', f)\n")
+    for cmd in (
+        "( cat add.sed ) 2>/dev/null | sed -i -f - tests/a.spec.js",
+        "{ cat add.sed; } 2>/dev/null | sed -i -f - tests/a.spec.js",
+        "( cat evil.patch ) 2>/dev/null | git apply",
+    ):
+        assert act_in(tmp_path, cmd).action == "deny", cmd
+
+
+def test_other_descriptors_inputs_are_still_read_by_the_other_checks(tmp_path):
+    (tmp_path / "notes.md").write_text("see MRN-123456\n")  # the fixture profile's sensitive pattern
+    d = act_in(tmp_path, "gh pr comment 1 --body-file /dev/fd/3 3<notes.md")
+    assert d.action == "deny" and "sensitive" in d.reason
 
 
 def test_a_patch_given_two_inputs_on_stdin_is_refused(tmp_path):

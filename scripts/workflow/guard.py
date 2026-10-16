@@ -653,7 +653,7 @@ class _Cmd:
     stdin: str | None = None
     heredoc: str | None = None
     stdins: int = 0  # heredocs, here-strings and `<` files given: bash reads only the last
-    stdin_unseen: bool = False  # stdin from another descriptor (`<&3`) or closed
+    stdin_unseen: bool = False  # stdin from another descriptor (`<&3`), closed, or not what `stdin`/`heredoc` hold (`3<f`)
 
 
 _REDIR = re.compile(r"(\d*)(>>|>\||&>>|&>|>&|<&|<>|<<<|<<|<|>)")
@@ -674,9 +674,11 @@ def _simple(toks: list) -> list:
     while i < len(toks):
         t = toks[i]
         if isinstance(t, Heredoc):
-            if t.fd in ("", "0"):  # another descriptor's (`3<<EOF`) isn't stdin
-                cur.heredoc = (cur.heredoc or "") + t.body
+            cur.heredoc = (cur.heredoc or "") + t.body  # read by the other checks, whatever its descriptor
+            if t.fd in ("", "0"):
                 cur.stdins += 1
+            else:
+                cur.stdin_unseen = True  # `3<<EOF`: so stdin isn't this text
             i += 1
             continue
         if isinstance(t, Op):
@@ -694,14 +696,14 @@ def _simple(toks: list) -> list:
                     pass  # duplicating or closing a descriptor
                 elif op == "<&":
                     pass
-                elif op in ("<", "<<<") and not on_stdin:
-                    pass  # another descriptor's input (`3<f`), not stdin
                 elif op == "<":
-                    cur.stdin = nxt
-                    cur.stdins += 1
+                    cur.stdin = nxt  # read by the other checks, whatever its descriptor
+                    cur.stdins += on_stdin
+                    cur.stdin_unseen = cur.stdin_unseen or not on_stdin  # `3<f`: so stdin isn't this file
                 elif op == "<<<":
                     cur.heredoc = (cur.heredoc or "") + nxt
-                    cur.stdins += 1
+                    cur.stdins += on_stdin
+                    cur.stdin_unseen = cur.stdin_unseen or not on_stdin
                 else:
                     if op == "<>" and on_stdin:  # opened for reading and writing, on stdin
                         cur.stdin = nxt
@@ -1632,8 +1634,8 @@ def _read_sized(path: str, cwd: str | None, cap: int) -> tuple[str | None, int, 
     """A regular file's text (at most `cap` bytes), the bytes read, and whether it holds more."""
     if path == os.devnull:  # as written: `/dev/fd/0` can resolve to it here and be something else when it runs
         return "", 0, False
-    if path.startswith(("/dev/", "/proc/")):  # a descriptor or device: what it holds when the command runs isn't here
-        return None, 0, False
+    if posixpath.normpath(re.sub("/+", "/", os.path.expanduser(path))).startswith(("/dev/", "/proc/")):
+        return None, 0, False  # a descriptor or device: what it holds when the command runs isn't here
     a = _abspath(path, cwd)
     if not a or not os.path.isfile(a):
         return None, 0, False
@@ -2434,9 +2436,9 @@ def _piped_text(seg: Seg) -> str | None:
 def _piped_sized(seg: Seg, cap: int) -> tuple[str | None, int, bool]:
     """`_piped_text` read up to `cap` bytes in all: (its text, the bytes, whether there is more)."""
     p = seg.piped
-    if p is not None and not p.words:
-        return "", 0, False  # a redirection alone (`< f |`) sends nothing
-    if p is None or Path(p.words[0]).name != "cat" or p.stdins > 1 or p.stdin_unseen:
+    if p is None or not p.words or Path(p.words[0]).name != "cat" or p.stdins > 1 or p.stdin_unseen:
+        # Not a `cat` the guard can read; no words is a redirection alone, or a
+        # group's (`( cat f ) 2>/dev/null |`), whose output can't be seen.
         return None, 0, False
     ops = [w for w in p.words[1:] if w == "-" or not w.startswith("-")]
     if not ops or ops == ["-"]:
@@ -2650,7 +2652,7 @@ def _write_targets_raw(seg: Seg, root: Path) -> _Targets:
         skip = set(_opt_values(toks, ("-p",)))
         t.files += [a for a in operands if a not in skip]
     elif cmd in _VIMS:
-        ed = _vim_edit(toks)
+        ed = _vim_edit(toks, stdin=seg.heredoc is not None or bool(seg.stdin) or seg.piped is not None)
         if ed is not None:
             t.files += ed.files
     elif cmd == "curl":
@@ -2845,6 +2847,7 @@ def _named_hit(
 
 
 _VIMS = {"vim", "vi", "nvim", "vimdiff", "view", "ex"}
+_VIM_EX = re.compile(r"-[A-Za-z]*[eE][A-Za-z]*")  # ex mode, alone or in a cluster (`-es`, `-Nes`)
 
 
 @dataclass
@@ -2990,14 +2993,15 @@ def _inplace_edit(toks: list[str]) -> _InPlace | None:
     return _InPlace(text, files) if inplace else None
 
 
-def _vim_edit(toks: list[str]) -> _InPlace | None:
-    """vim/vi/nvim run with a script (-c, --cmd, +cmd, -S, -s, ex mode): what it
-    runs and the files it edits; None when it is interactive."""
+def _vim_edit(toks: list[str], stdin: bool = False) -> _InPlace | None:
+    """vim/vi/nvim run with a script (-c, --cmd, +cmd, -S, -s, ex mode, or
+    `stdin`: commands or keys given on it): what it runs and the files it
+    edits; None when it is interactive."""
     values = {"-c", "--cmd", "-S", "-u", "-U", "-i", "-T", "-W", "-w", "-t", "-q", "-r"}
-    exmode = Path(toks[0]).name == "ex" or any(a in ("-e", "-E", "-es", "-Es") for a in toks[1:])
+    exmode = Path(toks[0]).name == "ex" or any(_VIM_EX.fullmatch(a) for a in toks[1:])
     script: list[str] = []
     files: list[str] = []
-    scripted = exmode
+    scripted = exmode or stdin
     i = 1
     while i < len(toks):
         a = toks[i]
@@ -3565,7 +3569,7 @@ _QUOTE_LIKE = {"s", "m", "qr", "q", "qq", "qw", "tr", "y"}
 
 def _code_net(text: str, perl: bool = True) -> int:
     net, kept, last, pos, term, n = 0, [], 0, 0, False, len(text)
-    prev, before = "", False  # the last token, and whether a term came before it
+    prev, before, bare = "", False, False  # the last token, whether a term came before it, whether it was a bareword
 
     def rest() -> int:  # from where the script can't be read, everything left counts
         return net + _markers(" ".join(kept) + " " + text[last:])
@@ -3576,7 +3580,7 @@ def _code_net(text: str, perl: bool = True) -> int:
             end = _close(text, pos + 1, c)
             if end is None:
                 return rest()
-            pos, term = end + 1, True
+            pos, term, bare = end + 1, True, False
             continue
         if c == "#":  # a comment: kept
             end = text.find("\n", pos)
@@ -3588,10 +3592,10 @@ def _code_net(text: str, perl: bool = True) -> int:
                 return rest()
             kept.append(text[last:pos] + " ")
             pos = last = end + 1
-            pos, term = _CODE_REGEX_FLAGS.match(text, pos).end(), True  # its flags stay kept
+            pos, term, bare = _CODE_REGEX_FLAGS.match(text, pos).end(), True, False  # its flags stay kept
             continue
-        if term and c in "%&*" and not text.startswith("&&", pos):  # after a term, an operator (`$a % s/…/`), not a sigil
-            pos, term, before, prev = pos + 1, False, True, c
+        if term and not bare and c in "%&*" and not text.startswith("&&", pos):  # after a value, an operator (`$a % s/…/`); after `my`, a sigil
+            pos, term, before, prev, bare = pos + 1, False, True, c, False
             continue
         m = _CODE_TOKEN.match(text, pos)
         word = m.group(0)
@@ -3616,7 +3620,7 @@ def _code_net(text: str, perl: bool = True) -> int:
             net += _markers(put) - _found(found)
             kept.append(text[last:pos] + " ")
             pos = last = end
-            pos, term = _CODE_REGEX_FLAGS.match(text, pos).end(), True
+            pos, term, bare = _CODE_REGEX_FLAGS.match(text, pos).end(), True, False
             continue
         if at is not None:
             p, d = at + 1, text[at]
@@ -3628,12 +3632,13 @@ def _code_net(text: str, perl: bool = True) -> int:
             if word in ("m", "qr"):
                 kept.append(text[last:pos] + " ")
                 last = end + 1
-            pos, term = _CODE_REGEX_FLAGS.match(text, end + 1).end(), True
+            pos, term, bare = _CODE_REGEX_FLAGS.match(text, end + 1).end(), True, False
             continue
         pos = m.end()
         if not word.isspace():  # after a term a `/` divides; elsewhere it starts a regex
             before, prev = term, word
             term = (word[0].isalnum() or word[0] in "_$@%&)]}\\") and word not in _CODE_EXPECT_TERM and word != "&&"
+            bare = word[0].isalpha() or word[0] == "_"  # a bareword: `my`, `keys`, a sub's name
     return rest()
 
 
@@ -3718,8 +3723,8 @@ def _added_markers(seg: Seg, root: Path) -> int | str:
             if cmd == "sed":
                 stdin_read = False
                 for f in _sed_args(toks[1:])[2]:
-                    if f in ("-", "/dev/stdin") and stdin_read:
-                        txt, size, over = "", 0, False  # stdin is read once: after that, sed finds it at its end
+                    if f in ("-", "/dev/stdin") and stdin_read:  # `-` shares one stream, `/dev/stdin` reopens it
+                        return "more than one script from standard input; give it once"
                     elif f in ("-", "/dev/stdin"):  # sed reads the script from standard input
                         stdin_read = True
                         txt, size, over = _stdin_script(seg, max(left, 0))
@@ -3739,21 +3744,25 @@ def _added_markers(seg: Seg, root: Path) -> int | str:
                 return too_big
             return _script_net(text, {"sed": "sed", "perl": "code"}.get(cmd, "awk"))
     if cmd in ("ed", "red") or cmd in _VIMS:
-        ed = _vim_edit(toks) if cmd in _VIMS else None
+        given = bool(seg.stdin) or seg.heredoc is not None or seg.piped is not None
+        ed = _vim_edit(toks, stdin=given) if cmd in _VIMS else None
         script = ed.script if ed else ""
         # ed and vim's ex mode take stdin as commands; vim otherwise as keys typed.
-        exmode = cmd in ("ed", "red", "ex") or any(a in ("-e", "-E", "-es", "-Es") for a in toks[1:])
-        given = seg.stdin or seg.heredoc is not None or seg.piped is not None
+        exmode = cmd in ("ed", "red", "ex") or any(_VIM_EX.fullmatch(a) for a in toks[1:])
         stdin, size, over = _stdin_script(seg, _SCRIPT_CAP) if given else ("", 0, False)
         if over:
             return too_big
         if stdin is None:
-            return f"commands from `{seg.stdin}`, which the guard can't read" if seg.stdin else "commands on stdin from another command, which the guard can't see; give them with -c or in a heredoc"
+            if seg.stdin:
+                return f"commands from `{seg.stdin}`, which the guard can't read"
+            return "commands on stdin from another command, which the guard can't see; give them in a heredoc" + ("" if cmd in ("ed", "red") else " or with -c")
         if size + _size(script) > _SCRIPT_CAP:
             return too_big
         if exmode:
             return _script_net(script + "\n" + stdin, "ex")
-        return _script_net(script, "ex") + len(_SKIP_IN_KEYS.findall(stdin))
+        # Keys typed: `:` commands among them are read as ex commands too, and the most counts.
+        keys = max(len(_SKIP_IN_KEYS.findall(stdin)), len(_SKIP_IN_KEYS.findall(re.sub(r"\\(.)", r"\1", stdin))), _script_net(stdin, "ex"))
+        return _script_net(script, "ex") + keys
     if cmd == "patch" or (cmd == "git" and (_git(toks) or ([], [], None))[1][:1] in (["apply"], ["am"])):
         if cmd == "patch":
             texts = _patch_texts("patch", toks[1:], seg)[0]
