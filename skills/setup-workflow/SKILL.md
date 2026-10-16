@@ -1,6 +1,6 @@
 ---
 name: setup-workflow
-description: Set a project up for the pairnexus workflow - interview the owner about the project (stack, tests, CI, UI, areas, sensitive data, releases), write the profile, vendor the kit for cloud sessions, write the Matt Pocock skills' per-repo docs, labels, issue templates and CODEOWNERS, and list the owner's one-time steps. Run once per project.
+description: Set a project up for the pairnexus workflow in solo mode - explore it, ask only what attended work needs (experience, sensitive data, the explorer, the mode, the owner), read the rulesets back, write the profile, vendor the kit for cloud sessions, write the Matt Pocock skills' per-repo docs, labels, issue templates and CODEOWNERS, and open one pull request to merge and start working. Run once per project.
 disable-model-invocation: true
 ---
 
@@ -24,7 +24,10 @@ Explore first, ask only what you can't find, show what you'll write, and write i
 
 **What it is and how it ships**
 - Its interface: a web app, a mobile app, an API, a CLI, or none. Note how it starts locally.
-- Deploy scripts, infrastructure tools, secrets files.
+- Deploy scripts, infrastructure tools, secrets files. Deploy commands are asked about only when there are some.
+
+**Whether the base branch is protected already**
+- Read the rulesets back as the `upgrade-setup` skill's "Read it back" does (`$KIT/skills/upgrade-setup/SKILL.md`): the repository (`GET repos/<repo>`) in `.workflow/repo.json`, and each ruleset in full, by its id, in one JSON list in `.workflow/rulesets.json`. Ask nothing; the profile (step 3, item 1) writes `ruleset` from it. Never commit these files: `.workflow/` is git-ignored once step 3's `.gitignore` entry (item 7) is there.
 
 **What's there already**
 - `.claude/skills`, including an earlier hand-vendored copy of these skills or of Matt Pocock's.
@@ -34,32 +37,32 @@ Explore first, ask only what you can't find, show what you'll write, and write i
 
 ## 2. Ask
 
-Use `AskUserQuestion`, recommended answers first. Ask only what exploring didn't settle:
+Use `AskUserQuestion`, recommended answers first. Set-up asks only what attended work needs, and only what exploring didn't settle:
 
 | Topic | What to ask |
 |---|---|
-| Mode | Vendored (works in cloud sessions; recommended for unattended runs) or the plugin (attended only). One mode per project; if the plugin is enabled org-wide, vendoring would duplicate it, so say so. |
-| Owner | The GitHub login of the person whose words are approval in runs. |
-| Merging | Can a PR merge with no human approval? Unattended runs need that. If the team's rules require an approval, say that each run's conductor sees it in the ruleset and recommends the merge mode **owner**, so runs end at "ready for review". The merge mode is chosen per run in the charter, not in the profile: there is no `[merge]` table. |
-| No CI | Then the local full suite is the gate (`ci.none = true`), and every run report says "add CI". |
-| Monorepo | Commands per package, and which required checks are path-filtered, so they may never run on a PR (`ci.path_filtered`). |
-| Explorer | Browser, API, CLI or none. |
-| Areas | The parts of the project two sessions shouldn't touch at once: features, layers or packages. |
+| Experience | How much the people working here know, as the project's default: *new to building* or *developer*. It changes only how the kit words things and paces itself, never what it allows. Skipping it leaves the project's default unset, so each person's own answer counts; until someone gives one, word things as for *new to building*. |
+| Mode | Vendored (works in cloud sessions, and needed for unattended runs later) or the plugin (attended only). One mode per project; if the plugin is enabled org-wide, vendoring would duplicate it, so say so. |
+| Owner | The GitHub login of the person whose words are approval. |
 | Sensitive data | What counts here, and which patterns would catch it in a post. |
-| Releases | Which commands deploy, and what runs after merges, each step with its smoke test. |
-| Repair | What a fresh or restarted container needs: start Docker or a database, free disk. |
-| Environments | The names of the two claude.ai environments, one for the conductor and one for ticket sessions, and the permission mode ticket sessions run in (`auto` recommended). |
+| Explorer | Browser, API, CLI or none. |
+| Deploy commands | Only when exploring found deploy scripts or infrastructure tools: which commands deploy (`guard.deploy_commands`), so sessions are refused them or asked first. With none found, don't ask. |
 | Earlier flow | If the project has its own flow doc or flow hook: keep it as an addendum (`project.flow_addendum`) or retire it. Two flows injected on every prompt contradict each other. |
+
+Everything else takes the template's default, or what exploring found: the commands and suites, the CI check names (`ci.required_checks`), no CI (`ci.none = true`, so the local full suite is the gate) and a monorepo's per-package commands and path-filtered checks. Ask nothing about areas, environment names, ticket sessions' permission mode, merge approvals and releases: they matter only for unattended runs, and the upgrade "Set up unattended runs" (the `upgrade-setup` skill) asks them when the person wants runs. If the person brings one up now, say so, and offer that upgrade once the set-up pull request has merged.
 
 ## 3. Write, on a branch
 
 **1. The profile.**
 - Write `.claude/workflow/profile.toml` from `$KIT/templates/profile.toml`, filled in.
 - Write `.claude/workflow/profile.md` from `$KIT/templates/profile.md`. It points to the rules by reference (anchors in `CLAUDE.md`), and covers sensitive data, secrets and environment quirks.
-- Run `WF profile check` with `CLAUDE_PROJECT_DIR` set to the project, and fix what it reports.
-- **Setup, in two parts** (`templates/profile.toml` explains both):
-  - `commands.setup` installs the project's own dependencies from its files (`npm ci`, a virtualenv from `requirements.txt`), and `commands.setup_check` exits 0 once that has run (`test -d node_modules`, `test -x .venv/bin/python`). The kit runs setup at each session start when the check fails, since a cloud session starts from a fresh clone. Both empty when there is nothing to install.
-  - `run.environment_setup` is the environments' setup script: only machine tools the cloud image lacks (it has Python, Node.js, Java, Go, Rust, Ruby, PHP, Docker, PostgreSQL and Redis), never reading the repository's files, exiting 0, under about five minutes. Empty for most projects; e.g. downloading Flutter for a Flutter app.
+- **`ruleset`,** as a plain line on a line of its own, in place of the template's `# ruleset = false` (the key at the start, nothing after the value: a shell script reads it without TOML):
+  - `ruleset = true` only when the rulesets could be read and `WF protection --rulesets .workflow/rulesets.json --repo .workflow/repo.json --base <the base branch> --json`, run in the project, exits 0 with `"protected": true`. Always give `--base`, the base branch exploring found: without it the command reads the base branch from whichever profile it finds, the kit's own included;
+  - otherwise `ruleset = false`, which is solo mode. That includes rulesets that can't be read from here, **Exit 2** (an input it refuses, usually a ruleset fetched as a summary: fetch each in full by its id again, once, and write `false` only if it still exits 2), any other failure, and a bypass list it can't see (only a ruleset's admins can): an unknown counts as unprotected.
+- **`experience`,** from the answer, in place of the template's `# experience = "new"`: `experience = "new"` (*new to building*) or `experience = "developer"`. When the question was skipped, leave the template's commented line as it is: left out, the level is unknown (worded as *new to building*).
+- The run-only settings (`[areas]`, `[release]`, `run.ticket_environment`, `run.conductor_environment`, `run.permission_mode`, `run.environment_setup`) keep the template's defaults until "Set up unattended runs".
+- Run `WF profile check` with `CLAUDE_PROJECT_DIR` set to the project, and fix what it reports, except its two warnings that `run.ticket_environment` and `run.conductor_environment` are empty: those are expected until "Set up unattended runs" names them. Leave them, and don't ask for the names.
+- **Setup:** `commands.setup` installs the project's own dependencies from its files (`npm ci`, a virtualenv from `requirements.txt`), and `commands.setup_check` exits 0 once that has run (`test -d node_modules`, `test -x .venv/bin/python`). The kit runs setup at each session start when the check fails, since a cloud session starts from a fresh clone. Both empty when there is nothing to install. The environments' setup script (`run.environment_setup`) is left to "Set up unattended runs".
 
 **2. The kit.**
 - Vendored mode:
@@ -92,11 +95,11 @@ Use `AskUserQuestion`, recommended answers first. Ask only what exploring didn't
 - Retire the old flow hook from `.claude/settings.json`, and the old flow doc.
 - Or point `project.flow_addendum` at the doc, trimmed to what the kit's flow doesn't cover.
 
-**5. `.github/CODEOWNERS`.** It covers `/.claude/`, `/.github/workflows/` and itself, with the owner's handle (`enforcement.md` §3). It requests the owner's review on those paths; whether the ruleset also requires it depends on whose GitHub account the sessions use (§4 below).
+**5. `.github/CODEOWNERS`.** It covers `/.claude/`, `/.github/workflows/` and itself, with the owner's handle (`enforcement.md` §3). It requests the owner's review on those paths; the ruleset that "Protect `main`" guides leaves "Require review from Code Owners" off while sessions act under the owner's GitHub account, since GitHub never lets an author approve their own pull request.
 
 **6. A CI job,** in vendored mode: copy `$KIT/templates/github/workflow-kit.yml` to `.github/workflows/workflow-kit.yml`, replacing `BASE_BRANCH` with the base branch. Its check, `workflow kit`, goes in `ci.required_checks`. Also copy `$KIT/templates/github/workflow-kit-update.yml` to `.github/workflows/workflow-kit-update.yml`: the weekly check that opens an issue when a newer kit release is out (not a required check).
 
-**7. `.gitignore` gets `.workflow/` and `__pycache__/`.** `vendor install` adds them; check they're there.
+**7. `.gitignore` gets `.workflow/` and `__pycache__/`.** `vendor install` adds them in vendored mode; check they're there. In plugin mode, add them yourself. Either way, before committing, check that nothing under `.workflow/` (the read-back's files) is staged.
 
 **8. A "Workflow" section in `CLAUDE.md`.** It points at `.claude/workflow/flow.md` and the profile, says a session starts with the guided start (the `start` skill: "What are we working on?", or `/start`), and replaces any older flow description. The project's own rules stay where they are.
 
@@ -111,28 +114,27 @@ Use `AskUserQuestion`, recommended answers first. Ask only what exploring didn't
 
 Then commit, push the branch, and open the pull request. It touches protected paths, so it's the owner's to review and merge.
 
-## 4. The owner's one-time steps
+## 4. The pull request
 
-List them in the PR body as a checklist, with the clicks of `$KIT/README.md` ("Getting started", steps 2 to 6) filled in with this project's values: the required check names one per line, both environment names, and the environments' setup script exactly as it is pasted: the profile's `run.environment_setup`, or "leave Setup script blank" when it is empty, as it is for most projects. The owner should be able to do every step from the PR body alone. The checklist, from `enforcement.md`:
+Its body is short. It opens with **Merge this and start working**: once it merges, attended work starts (a session begins with the guided start, or `/start`). Then:
+- what it adds, in a few lines;
+- whether the project starts in solo mode: with `ruleset = false`, one plain line that the kit's guard refuses changes straight to the base branch (by its real name) until it is protected, and why (no ruleset was read back, or the rulesets couldn't be read from here); with `ruleset = true`, that the base branch is protected already;
+- two optional next steps, each one request to Claude, none needed to start:
+  - **"Protect `main`"**: a ruleset and the merge settings, guided click by click, then a small pull request that leaves solo mode. Left out when `ruleset = true`;
+  - **"Set up unattended runs"**: the two cloud environments and the questions only runs need, so Claude can work while nobody is watching. Vendored mode only.
 
-- [ ] **The organisation's GitHub plan,** if rulesets on private repos aren't available: first, since the ruleset needs it.
-- [ ] **The base branch's ruleset,** set to **Active**:
-  - no direct push, no force-push, no deletion;
-  - required checks, including the vendor check, and "Require branches to be up to date" ticked;
-  - "Require review from Code Owners" **off** while sessions act under the owner's GitHub account (the usual setup): GitHub never lets an author approve their own PR, so a PR touching a CODEOWNERS path would never merge. CODEOWNERS still requests the owner's review, and the protected paths stay protected by the guard, the credential-free ticket environment, and those changes going to the owner as owner tasks. Turn it **on** only when agents use their own GitHub identity (a bot account or a GitHub App);
-  - 0 required approvals for unattended merges;
-  - an empty bypass list (sessions act through the owner's account), and "Require linear history" off.
-- [ ] **"Allow auto-merge"** on, for runs whose charter says `merge.mode: auto-merge`, and **"Allow merge commits"** on: sessions merge with a merge commit.
-- [ ] **Two claude.ai environments,** named exactly as in the profile (the conductor finds the ticket environment by name):
-  - ticket sessions: no credentials, `WORKFLOW_ROLE=ticket`, and the setup script (usually blank);
-  - the conductor: `WORKFLOW_ROLE=conductor`, the same setup script, and only the release credentials the owner chooses.
-- [ ] **Check it:** ask a cloud session to check the ruleset, the merge settings and the two environments (the kit's README, step 6).
+It carries no checklist of clicks: the upgrades guide those when the person wants them, and the kit's README keeps them as the fallback.
+
+## 5. After the merge
+
+When the person says the pull request has merged (or you see it merged), first check out the base branch and bring it up to date with the merge (`git fetch origin <base> && git checkout <base> && git merge --ff-only origin/<base>`), so the profile and the kit are there. If the fast-forward fails (the local base branch has its own commits), say so and stop there: never reset or rebase it. Then offer "Protect `main`" once, as a choice (`AskUserQuestion`) with **Do it now** (recommended) and **Not now**. It is the `upgrade-setup` skill's `protect_main` offer: on **Do it now**, follow that skill from its "The screens", reading the level as it says, but skip its opening choice (the person has just chosen): `.claude/skills/upgrade-setup/SKILL.md` in vendored mode, or `$KIT/skills/upgrade-setup/SKILL.md` in plugin mode (the person may not have installed the plugin yet). **Not now** ends it: don't offer it again in this session. Don't offer it when set-up wrote `ruleset = true`: the base branch is protected already. Don't offer "Set up unattended runs" here unless the person asked for it, or brought up its questions during set-up; the PR body names it.
 
 ## Checklist
 
-- [ ] Project explored; only open questions asked
-- [ ] Profile written; `WF profile check` passes; `profile.md` points to the rules
+- [ ] Project explored, the rulesets read back; only the attended questions asked
+- [ ] Profile written with `ruleset` and `experience`; `WF profile check` passes; `profile.md` points to the rules
 - [ ] Kit vendored with its lock, or the plugin enabled, only one of the two; earlier flow retired or made an addendum
 - [ ] Matt Pocock's per-repo docs written
 - [ ] CODEOWNERS, vendor CI check, `.gitignore`, CLAUDE.md section, labels, issue templates
-- [ ] PR opened with the owner's one-time steps
+- [ ] PR opened: "Merge this and start working", with the two upgrades as optional next steps
+- [ ] After the merge, "Protect `main`" offered once (unless already protected)

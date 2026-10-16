@@ -46,6 +46,15 @@
 - Docs: the README's new "Protect `main`" section, with Steps 3 and 4 as its fallback. Tests: `tests/test_upgrade_setup.py`.
 - **For projects updating:** nothing to do.
 
+**The solo set-up, and "Set up unattended runs"** (#48, part of solo mode, #32). `setup-workflow` becomes the short set-up for every new project, and the questions only runs need move to the `upgrade-setup` skill's second path in the same change, so every question still has a place.
+
+- **Set-up asks only what attended work needs:** the project's experience default, sensitive data, the explorer, the mode, the owner and an earlier flow, and deploy commands only when it found deploy scripts. Everything else takes the template's default or what exploring found. It asks nothing about areas, environment names, permission modes, merge approvals or releases.
+- **It writes `ruleset`** as a plain line: `true` only when the rulesets can be read and `workflow protection` says the base branch is protected, otherwise `false` (solo mode): an unknown counts as unprotected. It writes `experience` from the answer.
+- **Its pull request** says "Merge this and start working", with "Protect `main`" and "Set up unattended runs" as optional next steps. The one-time-steps checklist is gone. After the merge, the set-up session offers "Protect `main`" once, with "Not now".
+- **"Set up unattended runs"** (offer `set_up_unattended_runs`): in solo mode it offers "Protect `main`" first, with a plain warning when skipped (GitHub won't hold a merge for failing checks); it asks areas, environment names, ticket sessions' permission mode, merge approvals, releases and repair; it shows one guided screen for the two environments (names, `WORKFLOW_ROLE`, no secrets, the setup script); and it writes the answers to the profile in one pull request. Vendored mode only.
+- Docs: the README's "Getting started" leads with the solo set-up, with Steps 3 to 5 kept as the upgrades' click-by-click fallback; `docs/install.md` matches. Tests: `tests/test_solo_setup.py`.
+- **For projects updating:** nothing changes for projects set up already. The new set-up applies to new projects; "Set up unattended runs" is there when wanted.
+
 ## 0.1.10
 
 **The guard reads editing scripts as their tools do, and fails closed when it runs out of time.** In a ticket session the guard refuses a new test-skip or focus marker that an editing script (`sed`, `perl`, `awk`, `vim`, `ed`) or a patch adds. The correctness reviews of 0.1.9 found older ways, all in 0.1.8 already, that a script could add one unseen, and ways to make the guard slow enough to outlast the hook's timeout, which in 0.1.8 doesn't block. Reported and fixed privately, under `SECURITY.md`.

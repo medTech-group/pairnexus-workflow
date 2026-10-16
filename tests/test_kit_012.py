@@ -54,11 +54,15 @@ def test_the_conductor_never_starts_tickets_without_the_named_environment():
     assert "Never start ticket sessions in another environment" in text
 
 
-def test_setup_puts_every_click_in_the_pr_body():
+def test_setup_leaves_every_click_to_the_upgrades():
+    # Solo set-up (#48): the PR body no longer lists the one-time clicks; the two
+    # upgrades guide them, filled in with the project's values.
     text = (KIT / "skills/setup-workflow/SKILL.md").read_text()
-    assert "The owner should be able to do every step from the PR body alone" in text
-    plan = text.index("**The organisation's GitHub plan,**")
-    assert plan < text.index("**The base branch's ruleset,**")
+    assert "The owner should be able to do every step from the PR body alone" not in text
+    assert '"Protect `main`"' in text and '"Set up unattended runs"' in text
+    upgrade = (KIT / "skills/upgrade-setup/SKILL.md").read_text()
+    assert "settings/rules/new?target=branch" in upgrade
+    assert "WORKFLOW_ROLE=ticket" in upgrade and "WORKFLOW_ROLE=conductor" in upgrade
 
 
 def test_flow_names_the_projects_glossary_not_context_md():
