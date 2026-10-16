@@ -177,9 +177,11 @@ def test_attended_powershell_backtick_continuation_is_one_line(prof, cmd):
 
 
 @pytest.mark.parametrize("cmd", ["Git Push origin main", "GIT push", "git.exe PUSH origin main", "GH pr Merge 3"])
-def test_attended_powershell_ignores_case_as_powershell_does(prof, solo, cmd):
-    assert act(prof, tool("PowerShell", command=cmd), "attended").action == "ask"
-    assert act(prof, tool("PowerShell", "dontAsk", command=cmd), "attended").action == "deny"
+def test_attended_powershell_ignores_case_as_powershell_does(tmp_path, cmd):
+    plain, solo = on_disk(tmp_path / "plain"), on_disk(tmp_path / "solo", False)
+    assert act(plain, tool("PowerShell", command=cmd), "attended").action == "ask"
+    assert act(plain, tool("PowerShell", "dontAsk", command=cmd), "attended").action == "deny"
+    assert act(solo, tool("PowerShell", command=cmd), "attended").action == "deny"
 
 
 def test_a_bash_command_keeps_its_case(prof):
@@ -344,3 +346,29 @@ def test_enforcement_md_records_the_release_gate_step_for_item_10():
     assert "finding" in line
     assert "runs commands" in line
     assert "#36" in line
+
+
+@pytest.mark.parametrize("cmd", ["GITHUB_TOKEN= gh pr merge 5 --admin", "GH_TOKEN= git push origin main"])
+def test_an_emptied_token_keeps_the_command_after_it(prof, cmd):
+    # `VAR= cmd` unsets a token for one command: the mask stops at the `=`.
+    d = act(prof, tool("Bash", "bypassPermissions", command=cmd), "attended")
+    assert d.action == "deny"
+    assert f"`{cmd}`" in d.reason
+
+
+@pytest.mark.parametrize("name", ["Bash", "Monitor"])
+def test_a_solo_refusal_never_repeats_sensitive_text(tmp_path, name):
+    p = _sensitive(tmp_path, False)
+    d = act(p, tool(name, command="git commit -m PATIENT-1234; git push origin main"), "attended")
+    assert d.action == "deny"
+    assert "PATIENT" not in d.reason
+    assert "without the text that matches the project's sensitive-data pattern" in d.reason
+
+
+def test_a_solo_mcp_refusal_never_repeats_sensitive_text(tmp_path):
+    p = _sensitive(tmp_path, False)
+    ev = tool("mcp__github__create_or_update_file", owner="acme", repo="demo", path="notes.md",
+              content="PATIENT-1234", message="PATIENT-1234", branch="main")
+    d = act(p, ev, "attended")
+    assert d.action == "deny"
+    assert "PATIENT" not in d.reason

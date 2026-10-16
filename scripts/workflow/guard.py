@@ -151,7 +151,7 @@ GIT_INTERNALS = [".git/config", ".git/hooks/**"]
 class Decision:
     action: str  # "allow", "deny" or "ask"
     reason: str = ""
-    sensitive: bool = False  # it stops sensitive data: never repeat the input, nor say to post it by hand
+    sensitive: bool = False  # the input holds sensitive data: never repeat it, nor say to post it by hand
 
 
 ALLOW = Decision("allow")
@@ -180,7 +180,7 @@ class SoloRefusal:
 
 # Credentials a command may carry: a URL's user:password@, a token variable's value.
 _URL_CREDENTIALS = re.compile(r"(?<=://)[^/\s@'\"]+@")
-_SECRET_VARS = re.compile(r"(?i)\b(\w*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|CREDENTIALS?)\w*)[ \t]*=[ \t]*(?:'[^']*'|\"[^\"]*\"|\S+)")
+_SECRET_VARS = re.compile(r"(?i)\b(\w*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|CREDENTIALS?)\w*)(?:[ \t]+=[ \t]*|=)(?:'[^']*'|\"[^\"]*\"|\S+)")
 _SECRET_HEADERS = re.compile(r"(?i)(authorization:\s*(?:\w+\s+)?|bearer\s+|extraheader=)[^\s\"']+")
 _WITHOUT_SENSITIVE = "without the text that matches the project's sensitive-data pattern"
 _HAND_MAX = 400  # longer than this, the hand command isn't repeated
@@ -5034,7 +5034,7 @@ def check_bash(
     if solo:
         refusal = _solo_problem(segs, profile, start, current_branch, command, read)
         if refusal:
-            return _solo_deny(refusal, profile, root, command)
+            return _solo_deny(refusal, profile, root, command, _bash_holds_sensitive(command, profile, root, start))
     posts: list[Seg] = []
 
     for seg in segs:
@@ -5184,7 +5184,7 @@ def check_mcp(tool: str, inp: dict, profile: Profile, role: str, root: Path) -> 
         if s is True:
             return Decision("ask", f"`{name}` creates a ruleset, which changes what protects the branches; allow it only if you mean to")
         if s:
-            return _solo_deny(s[0], profile, root, s[1])
+            return _solo_deny(s[0], profile, root, s[1], _text_holds_sensitive("\n".join(_strings(inp)), profile))
     if role == "ticket" and (name in _TICKET_MCP_DENY or any(w in name.lower() for w in _TICKET_MCP_DENY_WORDS)):
         return Decision("deny", f"`{name}` isn't something a ticket session uses (it runs workflows, makes repositories, deletes files or touches secrets)")
     if name in GITHUB_WRITE_FILES:
@@ -5283,22 +5283,22 @@ def _nobody_asked(event: dict, mode, sensitive: bool, profile: Profile, root: Pa
         lines.append("Or remove the text that matches the project's sensitive-data pattern, and try again.")
     else:
         github = isinstance(tool, str) and tool.startswith("mcp__") and "github" in tool.lower()
-        bash = isinstance(command, str) and command.strip()
-        if bash and tool == "PowerShell":
+        runs_command = isinstance(command, str) and command.strip()
+        if runs_command and tool == "PowerShell":
             holds = _text_holds_sensitive(command, profile)  # the guard can't read what it reads
-        elif bash:
+        elif runs_command:
             holds = _bash_holds_sensitive(command, profile, root, cwd if cwd is not None else event.get("cwd") or None)
         else:
             holds = _text_holds_sensitive("\n".join(_strings(inp)), profile)
         if holds:
             without = _WITHOUT_SENSITIVE
-            if bash:
+            if runs_command:
                 lines.append(f"Or run it yourself in your own terminal, {without} (the command isn't repeated here, since it or what it posts holds that text).")
             elif github:
                 lines.append(f"Or do it yourself on GitHub, {without}.")
             else:
                 lines.append(f"Or make the change yourself, by hand, {without}.")
-        elif bash:
+        elif runs_command:
             lines.append(f"Or run it yourself in your own terminal:{_hand_command(command)}")
         elif github:
             lines.append("Or do it yourself on GitHub.")
