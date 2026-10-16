@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import re
+import unicodedata
 from dataclasses import dataclass, field
 
 # The rules that make a branch protected, with what their absence means.
@@ -37,6 +39,8 @@ MERGE = (
 # (any number of directories), negation, escapes and braces. An exclude holding
 # one can't be matched here.
 UNREAD_GLOB = ("**", "[^", "[!", "\\", "{", "}")
+# What makes a ref condition a pattern rather than a name.
+GLOB = set("*?[{\\")
 # What a branch name can't hold (git check-ref-format), and what would make
 # the report's first line say something else.
 NOT_IN_A_BRANCH = set(" ~^:?*[\\") | {chr(c) for c in range(0x20)} | {"\x7f", "\x85", "\u2028", "\u2029"}
@@ -48,13 +52,26 @@ def quote(s: str) -> str:
     json.dumps escapes the control characters; these line breaks it leaves.
     """
     out = json.dumps(s, ensure_ascii=False)
-    return out.replace("\x85", "\\u0085").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
+    out = out.replace("\x85", "\\u0085").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
+    # A lone surrogate can't be printed; escape it as JSON does.
+    return re.sub("[\ud800-\udfff]", lambda m: f"\\u{ord(m.group()):04x}", out)
 
 
 def branch(name: str) -> str:
     """The base branch as a plain name (`refs/heads/` dropped); raises when it can't be one."""
-    name = name.strip().removeprefix("refs/heads/")
-    if not name or any(c in NOT_IN_A_BRANCH for c in name):
+    name = name.strip(" \t").removeprefix("refs/heads/")
+    bad = (
+        not name
+        or any(c in NOT_IN_A_BRANCH or unicodedata.category(c) in ("Cf", "Cs", "Zl", "Zp") for c in name)
+        or name == "@"
+        or ".." in name
+        or "@{" in name
+        or "//" in name
+        or name.startswith(("-", "/"))
+        or name.endswith(("/", ".", ".lock"))
+        or any(part.startswith(".") or part.endswith(".lock") for part in name.split("/"))
+    )
+    if bad:
         raise ProtectionError(f"the base branch {quote(name)} isn't a branch name")
     return name
 
@@ -176,19 +193,22 @@ def _targets(rs: dict, base: str, default: str | None, have_settings: bool) -> s
     hits = [names_base(p) for p in ref.get("include") or []]
     if True not in hits:
         if None in hits:
-            return f"targets the default branch, and {unknown} it can't tell whether that is {base}"
+            return f"targets the default branch, and {unknown}, so it can't tell whether that is {base}"
+        patterns = [p for p in ref.get("include") or [] if any(c in GLOB for c in p)]
+        if patterns:
+            return f"includes {quote(patterns[0])}, a pattern this command doesn't match, so it can't tell whether it targets {base}"
         if "~DEFAULT_BRANCH" in (ref.get("include") or []):
             return f"doesn't target {base} (it targets the default branch, {quote(default)})"
         return f"doesn't target {base}"
     for p in ref.get("exclude") or []:
         hit = names_base(p)
         if hit is None:
-            return f"excludes the default branch, and {unknown} it can't tell whether that is {base}"
+            return f"excludes the default branch, and {unknown}, so it can't tell whether that is {base}"
         if hit:
             return f"doesn't target {base} (it excludes {quote(p)})"
         if any(s in p for s in UNREAD_GLOB) or not (p.startswith("refs/") or p.startswith("~")):
             return f"excludes {quote(p)}, a pattern this command can't match, so it can't tell whether {base} is left out"
-        if fnmatch.fnmatchcase(full.casefold(), p.casefold()):
+        if fnmatch.fnmatchcase(full, p) or fnmatch.fnmatchcase(full.casefold(), p.casefold()):
             return f"doesn't target {base} (it excludes {quote(p)})"
     return None
 
@@ -232,7 +252,9 @@ def check(rulesets, base: str, settings=None) -> Report:
     effective: list[tuple[str, dict]] = []
     for name, rs in zip(names, rulesets):
         off_target = _targets(rs, base, default, settings is not None)
-        if rs["enforcement"] == "evaluate":
+        if off_target and off_target.startswith("doesn't target"):
+            ignored.append(f"{name} {off_target}")
+        elif rs["enforcement"] == "evaluate":
             ignored.append(f"{name} is evaluate only: it reports but doesn't block")
         elif rs["enforcement"] != "active":
             ignored.append(f"{name} is not active (enforcement {quote(rs['enforcement'])})")

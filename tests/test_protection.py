@@ -269,6 +269,42 @@ def test_deeply_nested_json_is_a_plain_error(repo, inp):
     assert p.stderr.startswith("workflow protection: ") and "Traceback" not in p.stderr
 
 
+@pytest.mark.parametrize("raw", ['[{"id": ' + "1" * 5000 + "}]", '[{"name": "\\ud800"}]', "\udcff".encode("utf-8", "surrogateescape").decode("latin-1")])
+def test_odd_numbers_and_characters_are_a_plain_error(repo, inp, raw):
+    p = run(repo, inp, None, raw=raw)
+    assert p.returncode == 2 and p.stdout == "" and "Traceback" not in p.stderr
+
+
+def test_a_lone_surrogate_in_a_name_is_printed_escaped(repo, inp):
+    p = run(repo, inp, None, raw=json.dumps([_ruleset(name="\ud800", enforcement="disabled")]))
+    assert p.returncode == 0, p.stderr
+    assert '"\\ud800"' in p.stdout
+
+
+def test_an_include_pattern_cannot_be_told(repo, inp):
+    rs = _ruleset(conditions={"ref_name": {"include": ["refs/heads/*"], "exclude": []}})
+    missing = _missing(repo, inp, [rs])
+    assert any("can't tell" in m and '"refs/heads/*"' in m for m in missing), missing
+
+
+def test_a_disabled_ruleset_on_another_branch_says_it_targets_another_branch(repo, inp):
+    rs = _ruleset(name="Protect develop", enforcement="disabled", conditions={"ref_name": {"include": ["refs/heads/develop"], "exclude": []}})
+    missing = _missing(repo, inp, [rs, _ruleset(id=2, rules=[{"type": "deletion"}])])
+    assert 'ruleset "Protect develop" doesn\'t target main' in missing, missing
+
+
+def test_the_reason_reads_as_a_sentence_when_settings_lack_the_default_branch(repo, inp):
+    settings = {k: v for k, v in SETTINGS.items() if k != "default_branch"}
+    missing = _missing(repo, inp, [_ruleset()], settings=settings)
+    assert any("has no default_branch, so it can't tell whether that is main" in m for m in missing), missing
+
+
+def test_excludes_match_without_folding_too(repo, inp):
+    rs = _ruleset(conditions={"ref_name": {"include": ["refs/heads/\u00df"], "exclude": ["refs/heads/?"]}})
+    p = run(repo, inp, [rs], "--base", "\u00df", "--json")
+    assert json.loads(p.stdout)["protected"] is False
+
+
 def test_a_missing_file_is_a_plain_error(repo, inp):
     env = {**os.environ, "CLAUDE_PROJECT_DIR": str(repo)}
     p = subprocess.run([sys.executable, str(CLI), "protection", "--rulesets", str(inp / "nope.json")], cwd=repo, env=env, capture_output=True, text=True)
@@ -387,7 +423,7 @@ def test_a_complete_ruleset_beside_others_is_still_protected(repo, inp):
 def test_an_exclude_that_may_name_the_base_branch_takes_it_out(repo, inp, exclude):
     rs = _ruleset(conditions={"ref_name": {"include": ["~ALL"], "exclude": [exclude]}})
     missing = _missing(repo, inp, [rs])
-    assert any(exclude in m or "default branch" in m for m in missing), missing
+    assert any(m.startswith('ruleset "Protect main" ') and (json.dumps(exclude) in m or "default branch" in m) for m in missing), missing
 
 
 def test_a_newline_in_a_name_cannot_make_a_line(repo, inp):
@@ -426,10 +462,13 @@ def test_a_disabled_ruleset_says_so_even_when_its_target_is_unknown(repo, inp):
     assert any("not active" in m for m in missing), missing
 
 
-@pytest.mark.parametrize("base", ["release/*", "ma in", "main\n- x", "~DEFAULT_BRANCH", "refs/heads/"])
+@pytest.mark.parametrize(
+    "base",
+    ["release/*", "ma in", "main\n- x", "~DEFAULT_BRANCH", "refs/heads/", "a..b", "main.lock", "main/", "/main", "@", "ma@{in", "-main", "main\u2028", "\u200bmain", "\u202emain", "\udcffmain"],
+)
 def test_a_base_that_is_not_a_branch_name_is_an_error(repo, inp, base):
     rs = _ruleset(conditions={"ref_name": {"include": [f"refs/heads/{base}"], "exclude": []}})
-    p = run(repo, inp, [rs], "--base", base)
+    p = run(repo, inp, [rs], f"--base={base}")
     assert p.returncode == 2 and p.stdout == "" and "branch name" in p.stderr
 
 

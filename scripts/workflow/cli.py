@@ -217,7 +217,7 @@ def cmd_protection(a) -> int:
             return json.loads(_read(path).removeprefix("\ufeff"))
         except OSError as e:
             raise protection_mod.ProtectionError(f"can't read the {what} file {path}: {e.strerror or e}") from e
-        except (json.JSONDecodeError, UnicodeDecodeError, RecursionError) as e:
+        except (ValueError, RecursionError) as e:  # ValueError: bad JSON, bad UTF-8, a number too long
             why = "nested too deeply" if isinstance(e, RecursionError) else str(e)
             raise protection_mod.ProtectionError(f"the {what} file {path} isn't JSON ({why})") from e
 

@@ -16,7 +16,7 @@ workflow protection --rulesets rulesets.json [--repo repo.json] [--base main] [-
 
 - `--rulesets`: the repository's rulesets as a JSON list, each one **in full**. The list endpoint (`GET repos/<repo>/rulesets`) gives only summaries, without their rules, so fetch each ruleset by its id (`GET repos/<repo>/rulesets/<id>`) and put them in one list. Pages from `gh api --paginate --slurp` are read as one list too.
 - `--repo`: the repository's settings (`GET repos/<repo>`). With it, the report adds the merge settings, and a ruleset on `~DEFAULT_BRANCH` counts when the settings' `default_branch` is the base branch. Without it (or without `default_branch` in it), such a ruleset can't be counted, so give it whenever the rulesets use `~DEFAULT_BRANCH`, as the ones the kit guides you to make do.
-- `--base`: the base branch (`main` or `refs/heads/main`). Without it, the profile's `project.base_branch`; with no profile, `--base` is needed. A name no branch can have (a space, `*`, `~` and the like) is an error.
+- `--base`: the base branch (`main` or `refs/heads/main`). Without it, the profile's `project.base_branch`; with no profile, `--base` is needed. A name git refuses for a branch (a space, `*`, `~`, `..`, a `.lock` ending and the like) is an error.
 - `--json`: the same report for skills.
 - `-` for a file reads it from standard input (for one of the two files only).
 
@@ -41,7 +41,7 @@ The base branch is protected when the active rulesets that target it, taken toge
 - require a pull request (a `pull_request` rule);
 - and none of them has a bypass list.
 
-A ruleset **targets** the base branch when it is a branch ruleset and its ref conditions include `refs/heads/<base>`, `~ALL`, or `~DEFAULT_BRANCH` when the base branch is the default branch, and none of its excludes matches the base branch. An include pattern such as `refs/heads/ma*` doesn't count. Excludes are matched ignoring case. An exclude pattern GitHub reads differently from this command (one with `**`, `[^`, `[!`, `\`, `{` or `}`), or one that isn't a full ref name (`main` rather than `refs/heads/main`), counts as excluding the base branch.
+A ruleset **targets** the base branch when it is a branch ruleset and its ref conditions include `refs/heads/<base>`, `~ALL`, or `~DEFAULT_BRANCH` when the base branch is the default branch, and none of its excludes matches the base branch. An include pattern such as `refs/heads/ma*` doesn't count: the report says it can't tell. Excludes are matched ignoring case. An exclude pattern GitHub reads differently from this command (one with `**`, `[^`, `[!`, `\`, `{` or `}`), or one that isn't a full ref name (`main` rather than `refs/heads/main`), counts as excluding the base branch.
 
 Each thing missing is its own line, in plain words:
 - no rulesets;
