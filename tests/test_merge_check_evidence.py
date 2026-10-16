@@ -231,6 +231,17 @@ def test_a_killed_marker_beside_a_real_failure_blocks(project, capsys, monkeypat
     assert "waiver_not_taken" in note_ids(got)
 
 
+def test_a_go_package_failure_in_a_job_log_without_ghs_columns_blocks(project, capsys, monkeypatch):
+    # As the jobs/<id>/logs API gives it: a timestamp, then the runner's own line.
+    data, logs = waiver_case(project, monkeypatch, log=None)
+    (logs / "1").write_text("2026-10-16T10:00:00.1234567Z FAIL\texample.com/pkg\t0.01s\n2026-10-16T10:00:01.1234567Z ##[error]Process completed with exit code 143.\n")
+    got, _ = run(project, capsys, data, "--check-logs", str(logs), files={"charter": json.dumps(a_charter())})
+    assert ids(got) == ["checks_failed"]
+    (logs / "1").write_text("2026-10-16T10:00:00.1234567Z ok  \texample.com/pkg\t0.01s\n2026-10-16T10:00:01.1234567Z ##[error]Process completed with exit code 143.\n")
+    got, _ = run(project, capsys, data, "--check-logs", str(logs), files={"charter": json.dumps(a_charter())})
+    assert got["decision"] == "ready", got["reasons"]
+
+
 def test_a_pending_waived_check_stays_pending(project, capsys, monkeypatch):
     data, logs = waiver_case(project, monkeypatch)
     data["checks"]["check_runs"] = [run_("tests", status="in_progress")]

@@ -792,20 +792,24 @@ _EXIT_CODE = re.compile(r"\bexit code (\d+)")
 # path::test` too) and its progress line's `F` or `E`, with the file's path or,
 # under -q or continued, without (`tests/test_a.py ..F.  [ 40%]`, `..F..  [ 40%]`);
 # go's `--- FAIL:` and `FAIL<tab>pkg`; jest's `✕` and `FAIL path` (coloured, ` FAIL  path`). Matched on each line as
-# `_log_line` leaves it.
+# `_log_lines` leaves it.
 _TEST_FAILED = re.compile(
     r"::.*? (?:FAILED|ERROR)(?:\s|$)|(?:^|\s)(?:FAILED|ERROR) \S+::|\.py [.sxXFE]*[FE][.sxXFE]*(?:\s|$)"
     r"|^[.sxXFE]*[FE][.sxXFE]*(?:\s+\[\s*\d+(?:%|/\s*\d+)\])?$|^--- FAIL:|^✕ |^FAIL\s+\S"
 )
 # What starts a line of a check's log before the runner's own text: `gh run
 # view --log-failed`'s job and step (tab-separated), Actions' timestamp, colours.
-_LOG_PREFIX = re.compile(r"^(?:[^\t\n]*\t){0,2}(?:\ufeff)?(?:\d{4}-\d\d-\d\dT[\d:.]+Z ?)?")
+_GH_COLUMNS = re.compile(r"^[^\t\n]*\t[^\t\n]*\t")
+_TIMESTAMP = re.compile(r"^\ufeff?(?:\d{4}-\d\d-\d\dT[\d:.]+Z ?)?")
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07")
 
 
-def _log_line(line: str) -> str:
-    """A line of a check's log as its runner printed it."""
-    return _LOG_PREFIX.sub("", _ANSI.sub("", line), count=1).strip()
+def _log_lines(line: str) -> list[str]:
+    """A line of a check's log as its runner may have printed it: with gh's job
+    and step columns left out, and as it is (a job log the API gives has no
+    columns, and a runner's own line may hold tabs, as go's `FAIL<tab>pkg` does)."""
+    line = _ANSI.sub("", line)
+    return [_TIMESTAMP.sub("", x, count=1).strip() for x in (_GH_COLUMNS.sub("", line, count=1), line)]
 
 
 def log_names(run_id: int) -> list[str]:
@@ -839,7 +843,7 @@ def _not_killed(run_id: int, logs: dict, prof) -> str | None:
                     return "its log also shows tests that failed"
             except re.error:
                 return "its log can't be read with the profile's suite counts"
-    if any(_TEST_FAILED.search(_log_line(line)) for line in text.splitlines()):
+    if any(_TEST_FAILED.search(x) for line in text.splitlines() for x in _log_lines(line)):
         return "its log also shows a test that failed"
     named = {code for m in markers for code in _EXIT_CODE.findall(m)}
     if set(_EXIT_CODE.findall(text)) - named:
