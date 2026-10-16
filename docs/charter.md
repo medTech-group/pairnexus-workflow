@@ -18,13 +18,21 @@ The conductor first works out what it can by itself, so it only asks about real 
 
 Asked in rounds of up to four with `AskUserQuestion` (three rounds for a first run), each with its recommended default first. `workflow charter questions` prints them; `workflow charter defaults` gives defaults that fit the project's profile: the limits from its `[run]`, release "never" when it has no release steps, and merge `session` when it has no CI or no required checks, or in solo mode.
 
-**Solo mode never uses GitHub auto-merge.** With no ruleset on the base branch, GitHub has no required checks to wait for, so auto-merge would merge a PR at once, before CI finishes. In solo mode `charter defaults` picks `session`, `charter questions` leaves `auto-merge` out of the merge question's `options` and says why in its `note`, and `charter validate` refuses a charter with `auto-merge`. For removed protection the profile still says `ruleset = true`, so the conductor passes `--unprotected` (the read-back's verdict) to all three. The rule is one function, `charter.solo_mode`, for `workflow doctor` and presets to reuse.
+**Solo mode never uses GitHub auto-merge.** Nothing on GitHub reliably requires checks there, so auto-merge could merge a PR at once, before CI finishes. In solo mode `charter defaults` picks `session`, `charter questions` leaves `auto-merge` out of the merge question's `options` and says why in its `note` (as it does with no CI or no required checks), and `charter validate` and `state init` refuse a charter with `auto-merge`.
+
+For removed protection the profile still says `ruleset = true`, so the conductor passes `--unprotected` (the read-back's verdict) to `defaults`, `questions` and `validate`. Once the owner accepts the gap, its `accepted_gaps` line starts `removed protection: `, and the charter carries the verdict itself: every later check refuses `auto-merge`, amendments included. The rule is one function, `charter.solo_reason`.
+
+The accepted gap's line is fixed, so the run report can find it (`charter.SOLO_GAP`, with the base branch's name):
+
+```
+solo mode: nothing on GitHub stops a mistake reaching main; the kit's "never merge while CI is red" check is the only one
+```
 
 | Key | Question | Recommended default |
 |---|---|---|
 | `scope` | Which tickets? Any to exclude? Also tickets unblocked during the run? | Every ready ticket; yes |
 | `limits` | When does the run end? Sessions at once, in all, retries per ticket, check-in cadence? | The owner's end time; 2; 40; 1, then `needs-human`; 20 minutes |
-| `merge` | Merge automatically when a ticket passes the merge rule? Which checks may be waived when killed (not failed)? | GitHub auto-merge (`session` with no CI or in solo mode; `owner` when the ruleset requires approvals); none waived. A waiver needs mode `session`, and the check taken out of the ruleset's required checks for the run, which pre-flight then shows as a gap to accept |
+| `merge` | Merge automatically when a ticket passes the merge rule? Which checks may be waived when killed (not failed)? | GitHub auto-merge (`session` with no CI, no required checks or in solo mode; `owner` when the ruleset requires approvals); none waived. A waiver needs mode `session`, and the check taken out of the ruleset's required checks for the run, which pre-flight then shows as a gap to accept |
 | `release` | Deploy and build after merges? Never, each merge, or once at the end? Which of the profile's release steps? | Once at the end, the first release step, with its smoke test; never when the profile has none |
 | `outward` | Any change outside the repo (cloud, secrets, accounts, DNS, payments)? Which, exactly? | None: listed as owner tasks |
 | `conductor_fixes` | May the conductor open its own PRs for test, CI or deploy-script problems? | Yes, each reviewed and logged |
@@ -82,6 +90,6 @@ When a previous charter exists, start from `workflow charter reuse old.json` (ap
 - `ends_at` in the future and after the approval;
 - `max_parallel` 1–16, `max_sessions` 1–500 and no fewer than `max_parallel`, `max_retries` 0–5, `check_in_minutes` 5–240;
 - no keys it doesn't know;
-- waived checks among the profile's required checks, and no `auto-merge` when the profile has no CI or no required checks, or in solo mode (`--unprotected` for removed protection);
+- waived checks among the profile's required checks, and no `auto-merge` when the profile has no CI or no required checks, or in solo mode (`--unprotected`, or a `removed protection: ` gap, for removed protection);
 - release steps among the profile's;
 - `approved.by` and each amendment's `by` to be the profile's `project.owner`.

@@ -323,7 +323,7 @@ def cmd_charter(a) -> int:
             print("The charter has problems:\n- " + "\n- ".join(problems), file=sys.stderr)
             return 1
         if prof is None:
-            print("note: no profile found: release steps and waived checks weren't checked", file=sys.stderr)
+            print("note: no profile found: release steps and waived checks weren't checked, nor the merge mode or the owner", file=sys.stderr)
         print("ok")
         return 0
     if a.action == "markdown":

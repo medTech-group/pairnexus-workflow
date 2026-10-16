@@ -59,13 +59,13 @@ def _merge_q(out):
 
 
 def test_solo_mode_is_ruleset_false_or_removed_protection():
-    assert charter.solo_mode(False) and "project.ruleset is false" in charter.solo_mode(False)
-    assert charter.solo_mode(False, protected=True)  # the profile still says solo until its flip PR merges
-    removed = charter.solo_mode(True, protected=False)
-    assert removed and "isn't protected" in removed
-    assert charter.solo_mode(True) is None and charter.solo_mode(True, protected=True) is None
+    assert charter.solo_reason(False) and "project.ruleset is false" in charter.solo_reason(False)
+    assert charter.solo_reason(False, protected=True)  # the profile still says solo until its flip PR merges
+    removed = charter.solo_reason(True, protected=False)
+    assert removed and removed.startswith("removed protection")
+    assert charter.solo_reason(True) is None and charter.solo_reason(True, protected=True) is None
     # Left out: as before, whatever the read-back says.
-    assert charter.solo_mode(None) is None and charter.solo_mode(None, protected=False) is None
+    assert charter.solo_reason(None) is None and charter.solo_reason(None, protected=False) is None
 
 
 # ---------- charter defaults ----------
@@ -97,13 +97,13 @@ def test_questions_dont_offer_auto_merge_in_solo_mode_and_say_why(tmp_path):
     assert "auto-merge" not in q["options"] and set(q["options"]) == {"session", "owner"}
     assert q["default"]["mode"] == "session"
     assert "solo mode" in q["note"].lower() and "auto-merge" in q["note"]
-    assert "merge at once" in q["note"] and "required checks" in q["note"]
+    assert "merge at once" in q["note"] and "requires checks" in q["note"]
 
 
 def test_questions_with_removed_protection(tmp_path):
     env = _profile(tmp_path, True)
     q = _merge_q(_cli("charter", "questions", "--unprotected", env=env).stdout)
-    assert "auto-merge" not in q["options"] and "isn't protected" in q["note"]
+    assert "auto-merge" not in q["options"] and "removed protection" in q["note"]
 
 
 @pytest.mark.parametrize("ruleset", [True, None])
@@ -139,7 +139,7 @@ def test_check_flags_auto_merge_with_removed_protection(tmp_path):
     env = _profile(tmp_path, True)
     f = _charter_file(tmp_path, "auto-merge")
     p = _cli("charter", "validate", str(f), "--unprotected", env=env)
-    assert p.returncode == 1 and "isn't protected" in p.stderr and "use session" in p.stderr
+    assert p.returncode == 1 and "removed protection" in p.stderr and "use session" in p.stderr
 
 
 def test_check_against_profile_names_one_reason():
@@ -149,6 +149,56 @@ def test_check_against_profile_names_one_reason():
     assert len(p) == 1 and "solo mode" in p[0]  # not also "no ci.required_checks"
     assert charter.check_against_profile(c, ["ship"], ["CI"], ruleset=True) == []
     assert charter.check_against_profile(c, ["ship"], ["CI"]) == []
+
+
+def _with_gap(tmp_path, mode, gap):
+    f = _charter_file(tmp_path, mode)
+    c = json.loads(f.read_text())
+    c["accepted_gaps"] = [gap]
+    f.write_text(json.dumps(c))
+    return f
+
+
+def test_an_accepted_removed_protection_gap_carries_the_verdict(tmp_path):
+    # Mid-run, an amendment to auto-merge is checked without --unprotected: the charter knows.
+    env = _profile(tmp_path, True)
+    gap = charter.REMOVED_PROTECTION + charter.SOLO_GAP.format(base="main")
+    p = _cli("charter", "validate", str(_with_gap(tmp_path, "auto-merge", gap)), env=env)
+    assert p.returncode == 1 and "removed protection" in p.stderr
+    assert _cli("charter", "validate", str(_with_gap(tmp_path, "session", gap)), env=env).returncode == 0
+    # A plain solo-mode line doesn't make a ruleset = true project solo: its read-back decides.
+    p = _cli("charter", "validate", str(_with_gap(tmp_path, "auto-merge", charter.SOLO_GAP.format(base="main"))), env=env)
+    assert p.returncode == 0, p.stderr
+
+
+def _approved_file(tmp_path, mode, gaps=()):
+    f = _charter_file(tmp_path, mode)
+    c = json.loads(f.read_text())
+    c["accepted_gaps"] = list(gaps)
+    c["approved"] = {"by": "o", "at": "2026-01-01T00:00:00Z", "source": "chat"}
+    f.write_text(json.dumps(c))
+    return f
+
+
+def test_state_init_refuses_auto_merge_in_solo_mode(tmp_path):
+    env = _profile(tmp_path, False)
+    p = _cli("state", "init", "--charter", str(_approved_file(tmp_path, "auto-merge")), "--run-id", "r", "--read-through", "0", env=env)
+    assert p.returncode == 1 and "solo mode" in p.stderr
+    p = _cli("state", "init", "--charter", str(_approved_file(tmp_path, "session")), "--run-id", "r", "--read-through", "0", env=env)
+    assert p.returncode == 0, p.stderr
+    # Removed protection, through the charter's own gap line.
+    env = _profile(tmp_path, True)
+    gap = charter.REMOVED_PROTECTION + charter.SOLO_GAP.format(base="main")
+    f = _approved_file(tmp_path, "auto-merge", [gap])
+    p = _cli("state", "init", "--charter", str(f), "--run-id", "r", "--read-through", "0", env=env)
+    assert p.returncode == 1 and "removed protection" in p.stderr
+
+
+def test_questions_never_offer_auto_merge_that_validate_refuses(tmp_path):
+    env = _profile(tmp_path, True, checks=())
+    q = _merge_q(_cli("charter", "questions", env=env).stdout)
+    assert "auto-merge" not in q["options"] and "no ci.required_checks" in q["note"]
+    assert "owner (you merge each PR yourself)" in q["note"]
 
 
 # ---------- the conductor's pre-flight (seam 4) ----------
@@ -170,6 +220,17 @@ def _kickoff():
     m = re.search(r"^### 2\. The kick-off.*?(?=^## )", text, re.M | re.S)
     assert m, "no kick-off section"
     return m.group(0)
+
+
+def test_projects_without_ruleset_keep_todays_checks():
+    pre = _preflight()
+    assert "It must be `enforcement: active`, cover the default branch, and block force pushes and deletion." in pre
+    assert "With `ruleset` left out, nothing here changes" in pre
+
+
+def test_an_unreadable_read_back_is_unconfirmed_not_removed():
+    pre = _preflight()
+    assert "can't be confirmed from this session, not that it was removed" in pre
 
 
 def test_preflight_treats_both_cases_as_solo_mode():
@@ -195,7 +256,10 @@ def test_preflight_offers_protecting_or_restoring_or_going_ahead():
 
 def test_acceptance_goes_in_accepted_gaps_and_auto_merge_is_never_offered():
     text = _preflight() + _kickoff()
-    assert "accepted_gaps" in text
+    # The exact line the kick-off records is the charter's, so the run report can find it.
+    assert charter.SOLO_GAP.format(base="main") in [line.strip() for line in _kickoff().splitlines()]
+    assert "`removed protection: ` in front" in _kickoff()
+    assert charter.REMOVED_PROTECTION == "removed protection: "
     assert "--unprotected" in text
     assert re.search(r"never (offers|uses|offer|use) (GitHub )?`?auto-merge", text)
 
@@ -213,6 +277,10 @@ def test_the_ticket_environment_is_still_required_and_the_upgrade_offered():
 def test_run_report_repeats_a_solo_mode_runs_gap():
     text = RUN_REPORT.read_text(encoding="utf-8")
     assert "accepted_gaps" in text and "solo mode" in text.lower()
+    # It finds the gap by the prefixes the kick-off records.
+    assert charter.SOLO_GAP.startswith("solo mode:")
+    assert "`solo mode:`" in text and "`removed protection: solo mode:`" in text
+    assert "Restore protection" in text
     assert GAP_WORDS in text and ONLY_CHECK in text
     assert "Protect `main`" in text
 
@@ -225,3 +293,4 @@ def test_charter_doc_covers_solo_modes_merge_default_and_the_gap():
     assert "solo mode" in text.lower()
     assert GAP_WORDS in text and ONLY_CHECK in text
     assert "--unprotected" in text
+    assert charter.SOLO_GAP.format(base="main") in text
