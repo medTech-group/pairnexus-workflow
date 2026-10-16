@@ -6,7 +6,7 @@
   - best effort, with no guaranteed response time for issues or pull requests;
   - security reports acknowledged within 5 working days;
   - a fix release when a Claude Code update breaks the guard or the hooks.
-- **A new issue template, "The guard or a hook stopped working after a Claude Code update"** (`.github/ISSUE_TEMPLATE/claude-code-break.md`). It asks for `claude --version`, `workflow version`, vendored or plugin, what was run and what happened instead, and applies the `claude-code-break` label once the owner creates it. A break that lets a session past the guard goes to the private security report instead.
+- **A new issue template, "The guard or a hook stopped working after a Claude Code update"** (`.github/ISSUE_TEMPLATE/claude-code-break.md`). It asks for `claude --version`, `workflow version`, vendored or plugin, what was run and what happened instead, and applies the `claude-code-break` label once the owner creates it. A break that lets a session past the guard is reported privately instead, with **Report a vulnerability** (`SECURITY.md`).
 - Tests check that the promise reads the same in each file, and what the template asks for (`tests/test_support_promise.py`).
 
 ## 0.1.10

@@ -18,7 +18,7 @@ The same in the [README](README.md#support) and [CONTRIBUTING.md](CONTRIBUTING.m
 - security reports acknowledged within 5 working days;
 - a fix release when a Claude Code update breaks the guard or the hooks.
 
-A Claude Code update that only stops the guard or a hook working goes in a public issue, with the template "The guard or a hook stopped working after a Claude Code update". One that lets a session past the guard is a security problem: report it here, privately.
+A Claude Code update that only stops the guard or a hook working goes in a public issue, with the template ["The guard or a hook stopped working after a Claude Code update"](https://github.com/medTech-group/pairnexus-workflow/issues/new?template=claude-code-break.md). One that lets a session past the guard is a security problem: report it here, privately.
 
 ## What's in scope
 

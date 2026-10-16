@@ -4,11 +4,11 @@ about: A Claude Code update broke the guard or a hook (a way past the guard is a
 labels: claude-code-break
 ---
 
-**Does the break let a session past the guard?** Then it is a security problem: report it privately through the [security advisory link](https://github.com/medTech-group/pairnexus-workflow/security/advisories/new), as SECURITY.md says, never with this template. Past the guard means a push, an edit, a deploy or a post that the guard should refuse now goes through.
+**Does the break let a session past the guard?** Then it is a security problem: report it privately with [Report a vulnerability](https://github.com/medTech-group/pairnexus-workflow/security/advisories/new), as SECURITY.md says, never with this template. Past the guard means a push, an edit, a deploy or a post that the guard should refuse now goes through.
 
 **Where**
 - Claude Code version (`claude --version`):
-- Kit version (`workflow version`, as `python3 -B .claude/workflow/bin/workflow.py version`, or the plugin's):
+- Kit version (`workflow version`: in a vendored project `python3 -B .claude/workflow/bin/workflow.py version`; or the plugin's):
 - Vendored or plugin:
 - Session: attended, conductor or ticket session; cloud or local:
 - The last Claude Code version it worked with, if you know it:
