@@ -451,7 +451,7 @@ def test_a_clean_round_on_an_earlier_commit_needs_a_later_clean_pass_on_the_head
 
     data["comments"][1] = comment(rec("pass", commit=HEAD, clean=False), cid=2)
     got, _ = check(project, capsys, data)
-    assert ids(got) == ["review_stale"]
+    assert ids(got) == ["pass_not_clean"]
 
 
 def test_a_pass_before_the_round_doesnt_cover_it(project, capsys):
@@ -987,6 +987,7 @@ SCENARIOS = {
     "no_review": (None, lambda d: d.update(comments=[])),
     "review_not_clean": (None, lambda d: d.update(comments=[comment(rec(clean=False))])),
     "review_stale": (None, lambda d: d.update(comments=[comment(rec(commit=EARLIER))])),
+    "pass_not_clean": (None, lambda d: d.update(comments=[comment(rec(), cid=1), comment(rec("pass", clean=False), cid=2)])),
     "conflict": (None, _set(("pr", "mergeable"), False)),
     "mergeable_unknown": (None, _set(("pr", "mergeable"), None)),
     "draft": (None, _set(("pr", "draft"), True)),
@@ -1131,3 +1132,89 @@ def test_a_built_preview_without_a_url_is_couldnt_read(project, capsys):
     data["preview"] = {"state": "built", "commit": HEAD}
     got, _ = check(project, capsys, data)
     assert [r["input"] for r in got["reasons"] if r["id"] == "couldnt_read"] == ["preview"]
+
+
+# ---------- round 2's explorer ----------
+
+
+def thread_page(nodes, has_next, has_previous=False, total=3):
+    return {"data": {"repository": {"pullRequest": {"reviewThreads": {"totalCount": total, "pageInfo": {"hasNextPage": has_next, "hasPreviousPage": has_previous}, "nodes": nodes}}}}}
+
+
+def test_graphql_pages_fetched_whole_are_read(project, capsys):
+    data = inputs()
+    data["threads"] = [thread_page([thread(True), thread(True)], True), thread_page([thread(False)], False, True)]
+    got, _ = check(project, capsys, data)
+    assert ids(got) == ["unresolved_threads"]
+
+
+@pytest.mark.parametrize("pages", [
+    [thread_page([thread(True)], True)],
+    [thread_page([thread(True)], False, True)],
+    [thread_page([thread(True), thread(True)], True), thread_page([], False, True)],
+    [{"data": {"repository": {"pullRequest": {"reviewThreads": {"pageInfo": {"hasNextPage": "true"}, "nodes": []}}}}}],
+])
+def test_graphql_pages_left_out_are_couldnt_read(project, capsys, pages):
+    data = inputs()
+    data["threads"] = pages
+    got, _ = check(project, capsys, data)
+    assert [r["input"] for r in got["reasons"] if r["id"] == "couldnt_read"] == ["threads"]
+
+
+@pytest.mark.parametrize("url", [
+    f"https://api.github.com/repos/acme/demo/compare/{EARLIER}...{HEAD}",
+    f"https://api.github.com/repos/acme/demo/compare/release...{HEAD}",
+])
+def test_a_comparison_from_something_other_than_the_base_is_couldnt_read(project, capsys, url):
+    data = inputs()
+    data["compare"]["url"] = url
+    got, _ = check(project, capsys, data)
+    assert [r["input"] for r in got["reasons"] if r["id"] == "couldnt_read"] == ["compare"]
+
+
+def test_a_pending_review_without_a_time_leaves_the_order_by_time(project, capsys):
+    data = inputs()
+    data["reviews"] = [review("CHANGES_REQUESTED", rid=2, when="2026-10-16T10:00:00Z"), review("APPROVED", rid=1), {"id": 3, "user": {"login": "dev"}, "state": "PENDING"}]
+    got, _ = check(project, capsys, data)
+    assert ids(got) == ["changes_requested"]
+
+
+def test_a_not_clean_pass_on_the_head_after_a_clean_round_on_it_is_not_yet(project, capsys):
+    data = inputs()
+    data["comments"] = [comment(rec(), cid=1), comment(rec("pass", clean=False), cid=2)]
+    got, _ = check(project, capsys, data)
+    assert ids(got) == ["pass_not_clean"]
+    data["comments"].append(comment(rec("pass"), cid=3))
+    got, _ = check(project, capsys, data)
+    assert got["decision"] == "ready", got["reasons"]
+
+
+@pytest.mark.parametrize("change", [{"state": ""}, {"state": "weird"}, {"merged": "true"}])
+def test_pull_request_states_github_never_gives_are_couldnt_read(project, capsys, change):
+    data = inputs()
+    data["pr"].update(change)
+    got, _ = check(project, capsys, data)
+    assert [r["input"] for r in got["reasons"] if r["id"] == "couldnt_read"] == ["pr"]
+
+
+@pytest.mark.parametrize("bad", [{"state": "built", "url": "https://x\ny", "commit": HEAD}, {"state": "built", "url": "https://x", "commit": "aaaaaa"}])
+def test_a_preview_url_with_a_line_break_or_a_short_commit_is_couldnt_read(project, capsys, bad):
+    data = inputs()
+    data["preview"] = bad
+    got, _ = check(project, capsys, data)
+    assert [r["input"] for r in got["reasons"] if r["id"] == "couldnt_read"] == ["preview"]
+
+
+def test_the_draft_fix_names_the_pull_request(project, capsys):
+    data = inputs()
+    data["pr"]["draft"] = True
+    got, _ = check(project, capsys, data)
+    assert "`gh pr ready 12`" in got["reasons"][0]["fix"]
+
+
+def test_a_control_character_in_the_base_or_state_never_reaches_the_text(project, capsys):
+    data = inputs()
+    data["pr"]["base"]["ref"] = "ma\x1b[2Jin"
+    data["compare"]["behind_by"] = 1
+    out, _ = check(project, capsys, data, as_json=False)
+    assert "\x1b" not in out

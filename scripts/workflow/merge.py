@@ -161,6 +161,10 @@ REASONS = {
         "new": ("Not yet: the last review found things to fix.", "Fix them, then review it again."),
         "developer": ("Not yet: review round {round} on {round_short} wasn't clean.", "Fix the findings and run another round."),
     }),
+    "pass_not_clean": Reason("review_panel", "review", {
+        "new": ("Not yet: the last check of the newest changes found things to fix.", "Fix them, then ask Claude to check again."),
+        "developer": ("Not yet: the Correctness pass on {short} after round {round} wasn't clean.", "Fix the findings and run another pass."),
+    }),
     "review_stale": Reason("review_panel", "review", {
         "new": ("Not yet: the newest changes haven't been reviewed.", "Review it now: a short check of the latest changes."),
         "developer": ("Not yet: the last clean round covers {round_short}, not the head {short}, and no later clean Correctness pass covers the head.", "Run a Correctness pass on the head (review-panel §5)."),
@@ -175,11 +179,11 @@ REASONS = {
     }),
     "draft": Reason("mergeable", None, {
         "new": ("Not yet: this change is still marked as a draft.", "Mark it ready for review once it's done, or ask Claude to."),
-        "developer": ("Not yet: the pull request is a draft.", "Mark it ready for review (`gh pr ready <n>`)."),
+        "developer": ("Not yet: the pull request is a draft.", "Mark it ready for review (`gh pr ready {number}`)."),
     }),
     "closed": Reason("mergeable", None, {
-        "new": ("Not open: this pull request is closed or has already merged.", "Nothing to merge: reopen it if it should still go in."),
-        "developer": ("Not open: the pull request's state is {state}.", "Reopen it if it should still merge."),
+        "new": ("Not open: this pull request is closed or has already merged.", "Nothing to merge. If it should still go in and hasn't merged, reopen it."),
+        "developer": ("Not open: the pull request's state is {state}.", "If it should still go in and hasn't merged, reopen it."),
     }),
     "unresolved_threads": Reason("people", None, {
         "new": ("Not yet: {who} asked about the code, and it hasn't been resolved.", "Answer each question, then resolve the conversation."),
@@ -265,9 +269,18 @@ def _walk(value, name: str, is_item: Callable[[dict], bool], keys: tuple[str, ..
     """The items in `value`: a list of them, pages of them, or an object
     holding them under one of `keys` (nested, as GraphQL nests them).
 
-    Raises Unreadable for anything else, and for a GraphQL connection with
-    more pages (`pageInfo.hasNextPage`) or fewer nodes than its `totalCount`."""
+    Raises Unreadable for anything else, and for a GraphQL list fetched only in
+    part: its pages (`gh api graphql --paginate --slurp`) taken together hold
+    fewer nodes than `totalCount`, or the last says `pageInfo.hasNextPage`, or
+    the first `hasPreviousPage`."""
     out: list[dict] = []
+    pages: list[tuple[bool, bool, int | None, int]] = []  # (has previous, has next, total, nodes)
+
+    def flag(page, key) -> bool:
+        v = page.get(key, False) if isinstance(page, dict) else False
+        if not isinstance(v, bool):
+            raise Unreadable(name, f"its pageInfo.{key} isn't true or false")
+        return v
 
     def go(v, depth: int) -> None:
         if depth > 8:
@@ -278,19 +291,23 @@ def _walk(value, name: str, is_item: Callable[[dict], bool], keys: tuple[str, ..
         elif isinstance(v, dict) and is_item(v):
             out.append(v)
         elif isinstance(v, dict) and any(k in v for k in keys):
-            page = v.get("pageInfo")
-            if isinstance(page, dict) and page.get("hasNextPage") is True:
-                raise Unreadable(name, PARTIAL)
             k = next(k for k in keys if k in v)
-            total = _int(v.get("totalCount"))
-            if total is not None and isinstance(v[k], list) and len(v[k]) < total:
-                raise Unreadable(name, PARTIAL)
+            if "pageInfo" in v or "totalCount" in v:
+                total = v.get("totalCount")
+                if total is not None and _int(total) is None:
+                    raise Unreadable(name, "its totalCount isn't a whole number")
+                page = v.get("pageInfo")
+                pages.append((flag(page, "hasPreviousPage"), flag(page, "hasNextPage"), total, len(v[k]) if isinstance(v[k], list) else 0))
             go(v[k], depth + 1)
         else:
             what = "an empty object" if v == {} else "something"
             raise Unreadable(name, f"it holds {what} that isn't {INPUTS[name]}, as GitHub gives them")
 
     go(value, 0)
+    if pages:
+        total = max((t for *_, t, _ in pages if t is not None), default=None)
+        if pages[0][0] or pages[-1][1] or (total is not None and sum(n for *_, n in pages) < total):
+            raise Unreadable(name, PARTIAL)
     return out
 
 
@@ -344,9 +361,11 @@ def _pr(v) -> PR:
     if not isinstance(draft, bool):
         raise Unreadable("pr", "its draft isn't true or false")
     pr_state = v.get("state", "open")
-    if not isinstance(pr_state, str):
-        raise Unreadable("pr", "its state isn't text")
-    pr_state = "merged" if v.get("merged") is True or v.get("merged_at") or pr_state.upper() == "MERGED" else pr_state.lower()
+    if not isinstance(pr_state, str) or pr_state.lower() not in ("open", "closed", "merged"):
+        raise Unreadable("pr", "its state isn't open, closed or merged")
+    if v.get("merged") not in (None, True, False):
+        raise Unreadable("pr", "its merged isn't true or false")
+    pr_state = "merged" if v.get("merged") is True or v.get("merged_at") or pr_state.lower() == "merged" else pr_state.lower()
     requested: set[str] = set()
     asked = v.get("requested_reviewers", v.get("reviewRequests", []))
     if isinstance(asked, dict) and isinstance(asked.get("nodes"), list):
@@ -602,6 +621,7 @@ class Context:
             for r in items:
                 if not isinstance(r.get("state"), str):
                     raise Unreadable("reviews", "a review's state isn't text")
+            items = [r for r in items if r["state"].upper() != "PENDING"]  # a draft review nobody else sees
             items = _in_time_order(items, lambda r: _time(r.get("submitted_at") or r.get("submittedAt")), lambda r: r.get("id"))
             return [(_login(r), r["state"].upper()) for r in items]
 
@@ -631,6 +651,9 @@ class Context:
             last = _sha(commits[-1].get("sha")) if whole else None
             named = re.search(r"\.\.\.([0-9a-fA-F]{40})\b", str(v.get("url") or v.get("html_url") or ""))
             told = [s for s in (last, named.group(1).lower() if named else None) if s]
+            base_side = re.search(r"/compare/(.+?)\.\.\.", str(v.get("url") or v.get("html_url") or ""))
+            if base_side and self.head() is not None and base_side.group(1) not in (self.pr().base, f"refs/heads/{self.pr().base}"):
+                raise Unreadable("compare", "it compares the head with something other than the base branch: compare <base branch>...<head SHA>")
             if head is not None and (not told and _int(v.get("ahead_by")) != 0 or any(s != head for s in told)):
                 raise Unreadable("compare", "it doesn't compare the pull request's head: compare <base>...<head SHA>")
             return v["behind_by"]
@@ -647,10 +670,10 @@ class Context:
             if not isinstance(v, dict) or v.get("state") not in ("built", "building", "failed", "none"):
                 raise Unreadable("preview", "its state isn't built, building, failed or none")
             url, commit = v.get("url"), v.get("commit")
-            if url is not None and not (isinstance(url, str) and url.startswith(("https://", "http://"))):
+            if url is not None and not (isinstance(url, str) and url.startswith(("https://", "http://")) and url.isprintable() and " " not in url):
                 raise Unreadable("preview", "its url isn't a web address (https://…)")
-            if commit is not None and not isinstance(commit, str):
-                raise Unreadable("preview", "its commit isn't a SHA")
+            if commit is not None and not (isinstance(commit, str) and re.fullmatch(r"[0-9a-fA-F]{7,40}", commit)):
+                raise Unreadable("preview", "its commit isn't a SHA (at least 7 hex characters)")
             if v["state"] == "built" and not url:
                 raise Unreadable("preview", "it is built but gives no url")
             return v["state"], url, commit
@@ -750,12 +773,11 @@ def _panel(ctx: Context, add) -> None:
     if not last.clean:
         add("review_not_clean", **details)
         return
-    if last.commit == head:
-        return
     passes = [r for r in counted[rounds[-1] + 1:] if r.kind == "pass" and r.commit == head]
-    if passes and passes[-1].clean:
-        return
-    add("review_stale", **details)
+    if passes and not passes[-1].clean:
+        add("pass_not_clean", **details)
+    elif last.commit != head and not passes:
+        add("review_stale", **details)
 
 
 def _mergeable(ctx: Context, add) -> None:
@@ -859,7 +881,7 @@ def evaluate(inputs: dict, profile=None, profile_error: str | None = None, asker
         number, head, base = pr.number, pr.head, pr.base
     except Unreadable:
         number, head, base = None, None, profile.base_branch if profile else "main"
-    common = {"short": _short(head), "base": base}
+    common = {"short": _short(head), "base": base, "number": number if number is not None else "<n>"}
 
     def unreadable(e: Unreadable) -> dict:
         what = "the profile" if e.name == PROFILE else INPUTS[e.name]
