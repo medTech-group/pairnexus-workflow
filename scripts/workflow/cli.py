@@ -49,7 +49,7 @@ from . import state as state_mod
 from . import status as status_mod
 from . import updates as updates_mod
 from . import vendor as vendor_mod
-from .profile import ProfileError, load, project_root
+from .profile import ProfileError, load, project_root, resolve_experience
 
 KIT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -195,6 +195,8 @@ def cmd_status(a) -> int:
         repo=prof.repo if prof else None,
         areas=list(prof.areas) if prof else None,
         protected=list(prof.protected_paths) if prof else None,
+        ruleset=prof.ruleset if prof else None,
+        experience=resolve_experience(root, prof.experience if prof else None),
     )
     kit = updates_mod.check(root, KIT_ROOT) if a.fetch else {"installed": updates_mod.installed(root, KIT_ROOT)}
     if a.json:

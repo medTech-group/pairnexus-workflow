@@ -2,13 +2,26 @@
 
 ## Unreleased
 
-- **`workflow protection` reads back whether the base branch is protected** (#44). A session hands it the rulesets, each in full, and the repository's settings, as JSON files ([docs/protection.md](docs/protection.md)).
-  - It says whether the base branch is protected, and lists each missing protection on its own line, in plain words.
-  - It says "checks not required yet" when no status checks are required, and reports the merge settings.
-  - `--json` gives the same for skills.
-  - It asks GitHub nothing and writes nothing. A wrong input is an error, never "protected".
-  - Anything it can't tell reads as not protected, with a line saying why: a ruleset on `~DEFAULT_BRANCH` without the settings that name the default branch, say.
-  - The "Protect `main`" upgrade, set-up, the conductor's pre-flight and `workflow doctor` will use it; none does yet.
+**Solo mode and experience in the profile, reported by `workflow status`** (#43, the first part of solo mode, #32).
+
+- **`project.ruleset`:** `true` or `false`; `false` is solo mode. Left out, nothing changes. The profile template shows it as a plain `ruleset = …` line, commented out until set-up writes it.
+- **`project.experience`:** `"new"` or `"developer"`, the project's default. Left out, the person's own answer counts, else unknown (set-up and the guided start will ask).
+- **`workflow profile check`** refuses any other value of either, naming the setting, so a typo never silently turns solo mode off.
+- **Experience resolution:** one function, `resolve_experience`, which `status` uses now and the guard's solo-mode tickets will call. `WORKFLOW_EXPERIENCE` wins, then the untracked `.workflow/experience` file, then `project.experience`, else unknown (worded as new to building). An unrecognised value is skipped with a warning that doesn't repeat it; it never raises.
+- **`workflow status`** reports `Solo mode:` (yes, no, or not set) and `Experience:` with its source and any warning, in text and in `--json` (`solo_mode`, `experience`).
+- Docs: `docs/profile.md` and the template describe both settings. Tests: `tests/test_solo_mode_profile.py`.
+- **For projects updating:** nothing to do. Without the two settings, the kit behaves as before.
+
+**A guard test no longer fails when `WORKFLOW_ROLE` is set** (#132). `test_hook_takes_the_project_roots_branch_when_the_cwd_has_none` clears the variable for its in-process assertions too, not only for the hook it runs, so the local suite passes in ticket sessions and the conductor's. No assertion changed.
+
+**`workflow protection` reads back whether the base branch is protected** (#44, part of solo mode, #32). A session hands it the rulesets, each in full, and the repository's settings, as JSON files ([docs/protection.md](docs/protection.md)).
+
+- It says whether the base branch is protected, and lists each missing protection on its own line, in plain words.
+- It says "checks not required yet" when no status checks are required, and reports the merge settings.
+- `--json` gives the same for skills.
+- It asks GitHub nothing and writes nothing. A wrong input is an error, never "protected".
+- Anything it can't tell reads as not protected, with a line saying why: a ruleset on `~DEFAULT_BRANCH` without the settings that name the default branch, say.
+- The "Protect `main`" upgrade, set-up, the conductor's pre-flight and `workflow doctor` will use it; none does yet.
 
 ## 0.1.10
 
