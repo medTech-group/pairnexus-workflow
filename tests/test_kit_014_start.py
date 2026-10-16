@@ -137,7 +137,7 @@ def test_code_named_like_boilerplate_is_the_project_s_own(repo, name):
 
 def test_status_text_outside_a_git_checkout(tmp_path):
     st = status.snapshot(tmp_path, False)
-    assert st.own_files == -1 and not st.brand_new and "unknown" in status.text(st)
+    assert st.own_files == -1 and not st.brand_new and "Project: unknown (not a git checkout)" in status.text(st)
 
 
 # The first-message hook ---------------------------------------------------
