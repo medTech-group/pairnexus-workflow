@@ -151,7 +151,7 @@ GIT_INTERNALS = [".git/config", ".git/hooks/**"]
 class Decision:
     action: str  # "allow", "deny" or "ask"
     reason: str = ""
-    sensitive: bool = False  # it stops sensitive data: never repeat the input, nor say to post it by hand
+    sensitive: bool = False  # the input holds sensitive data: never repeat it, nor say to post it by hand
 
 
 ALLOW = Decision("allow")
@@ -180,15 +180,16 @@ class SoloRefusal:
 
 # Credentials a command may carry: a URL's user:password@, a token variable's value.
 _URL_CREDENTIALS = re.compile(r"(?<=://)[^/\s@'\"]+@")
-_SECRET_VARS = re.compile(r"(?i)\b(\w*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|CREDENTIALS?)\w*)=(?:'[^']*'|\"[^\"]*\"|\S+)")
+_SECRET_VARS = re.compile(r"(?i)\b(\w*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|CREDENTIALS?)\w*)([ \t]+=[ \t]*|=(?:[ \t]+(?=['\"]))?)(?:'[^']*'|\"[^\"]*\"|\S+)")
 _SECRET_HEADERS = re.compile(r"(?i)(authorization:\s*(?:\w+\s+)?|bearer\s+|extraheader=)[^\s\"']+")
+_WITHOUT_SENSITIVE = "without the text that matches the project's sensitive-data pattern"
 _HAND_MAX = 400  # longer than this, the hand command isn't repeated
 
 
 def _hand_command(command: str) -> str:
     """The command to run by hand, as code, with credentials masked; or a
     pointer back to it when it's too long to repeat."""
-    text = _SECRET_HEADERS.sub(r"\1…", _SECRET_VARS.sub(r"\1=…", _URL_CREDENTIALS.sub("…@", command.strip())))
+    text = _SECRET_HEADERS.sub(r"\1…", _SECRET_VARS.sub(r"\1\2…", _URL_CREDENTIALS.sub("…@", command.strip())))
     if len(text) > _HAND_MAX:
         return " the command as you gave it (too long to repeat here)."
     code = _code_span(text)
@@ -209,10 +210,11 @@ def _code_span(text: str) -> str:
     return f"{fence} {text} {fence}"
 
 
-def solo_refusal(base: str, level: str, command: str, refusal: SoloRefusal) -> str:
+def solo_refusal(base: str, level: str, command: str, refusal: SoloRefusal, sensitive: bool = False) -> str:
     """The reason a solo-mode refusal gives, which Claude relays: why in plain
-    words, what `base` is (only for `level` "new"), the command to run by hand,
-    and the "Protect" offer. Wording follows `level`; what is refused never does."""
+    words, what `base` is (only for `level` "new"), the command to run by hand
+    and what the kit saw (neither when `sensitive`: the input holds text
+    matching a sensitive pattern, which either may repeat), and the "Protect" offer. Wording follows `level`; what is refused never does."""
     what = refusal.what
     if refusal.kind == "unknown":
         hint = refusal.hint or "push the branch by name (`git push origin <branch>`)"
@@ -221,21 +223,24 @@ def solo_refusal(base: str, level: str, command: str, refusal: SoloRefusal) -> s
         lines = [f"This would set git up so that a later push changes `{base}` without a pull request. Without GitHub's protection set up, the kit doesn't allow that."]
     else:
         lines = [f"This would change `{base}` directly. Without GitHub's protection set up, the kit doesn't allow that."]
-    if what:
+    if what and not sensitive:
         lines.append(f"What the kit saw: {what}.")
     if level == "new":
         lines.append(f"`{base}` is the branch the project's work comes together on: the version everyone builds on, which should change only through a pull request.")
     name_it = " name the branch and" if refusal.kind == "unknown" and not refusal.hint else ""
-    lines.append(f"If you really mean it,{name_it} run it yourself in your own terminal:{_hand_command(command)}")
+    if sensitive:
+        lines.append(f"If you really mean it,{name_it} run it yourself in your own terminal, {_WITHOUT_SENSITIVE}.")
+    else:
+        lines.append(f"If you really mean it,{name_it} run it yourself in your own terminal:{_hand_command(command)}")
     lines.append(
         f'Offer "Protect `{base}`" as a choice, with "Not now": it sets up GitHub\'s protection, so `{base}` changes only through pull requests.'
     )
     return "\n".join(lines)
 
 
-def _solo_deny(s: SoloRefusal, profile: Profile, root: Path, command: str) -> Decision:
+def _solo_deny(s: SoloRefusal, profile: Profile, root: Path, command: str, sensitive: bool = False) -> Decision:
     level = resolve_experience(root, profile.experience).wording_level
-    return Decision("deny", solo_refusal(profile.base_branch, level, command, s))
+    return Decision("deny", solo_refusal(profile.base_branch, level, command, s, sensitive), sensitive)
 
 
 # ---------- paths ----------
@@ -5029,7 +5034,7 @@ def check_bash(
     if solo:
         refusal = _solo_problem(segs, profile, start, current_branch, command, read)
         if refusal:
-            return _solo_deny(refusal, profile, root, command)
+            return _solo_deny(refusal, profile, root, command, _bash_holds_sensitive(command, profile, root, start))
     posts: list[Seg] = []
 
     for seg in segs:
@@ -5179,7 +5184,7 @@ def check_mcp(tool: str, inp: dict, profile: Profile, role: str, root: Path) -> 
         if s is True:
             return Decision("ask", f"`{name}` creates a ruleset, which changes what protects the branches; allow it only if you mean to")
         if s:
-            return _solo_deny(s[0], profile, root, s[1])
+            return _solo_deny(s[0], profile, root, s[1], _text_holds_sensitive("\n".join(_strings(inp)), profile))
     if role == "ticket" and (name in _TICKET_MCP_DENY or any(w in name.lower() for w in _TICKET_MCP_DENY_WORDS)):
         return Decision("deny", f"`{name}` isn't something a ticket session uses (it runs workflows, makes repositories, deletes files or touches secrets)")
     if name in GITHUB_WRITE_FILES:
@@ -5215,6 +5220,34 @@ def check_mcp(tool: str, inp: dict, profile: Profile, role: str, root: Path) -> 
     return ALLOW
 
 
+POWERSHELL_REFUSAL = "the guard can't read PowerShell; use Bash"
+
+
+def check_powershell(inp: dict, profile: Profile, role: str, root: Path) -> Decision:
+    """The guard can't read PowerShell, and never tries to parse it. Ticket and
+    conductor sessions are refused it; an attended session gets the can't-decide
+    rule (#53) on its text: a push or a merge is asked (refused in solo mode),
+    anything else is left alone."""
+    if role != "attended":
+        return Decision("deny", POWERSHELL_REFUSAL)
+    what = fallback.push_or_merge({"tool_name": "PowerShell", "tool_input": inp})
+    if not what:
+        return ALLOW
+    command = inp.get("command") if isinstance(inp.get("command"), str) else ""
+    if profile.ruleset is False:
+        refusal = SoloRefusal(f"a {what} in PowerShell, which the kit can't read", "unknown", "run it through Bash instead, where the kit can tell")
+        return _solo_deny(refusal, profile, root, command, _text_holds_sensitive(command, profile))
+    return Decision(
+        "ask",
+        f"the guard can't read PowerShell, so it can't check this {what} (which branch, which pull request); "
+        "allow it only if you mean to, or run it through Bash, which the guard can check",
+    )
+
+
+def _text_holds_sensitive(text: str, profile: Profile) -> bool:
+    return any(re.search(pat, text) for pat in profile.sensitive_patterns)
+
+
 def decide(
     event: dict,
     profile: Profile,
@@ -5244,27 +5277,28 @@ def _nobody_asked(event: dict, mode, sensitive: bool, profile: Profile, root: Pa
     lines = fallback.mode_lines(mode)  # the same lines as the can't-decide fallback's
     tool = event.get("tool_name") or ""
     inp = event.get("tool_input") if isinstance(event.get("tool_input"), dict) else {}
-    command = inp.get("command") if tool == "Bash" else None
+    command = inp.get("command") if tool in fallback.COMMAND_TOOLS else None
     if sensitive:
         # Never repeat sensitive data, nor suggest posting it by hand.
         lines.append("Or remove the text that matches the project's sensitive-data pattern, and try again.")
     else:
         github = isinstance(tool, str) and tool.startswith("mcp__") and "github" in tool.lower()
-        bash = isinstance(command, str) and command.strip()
-        if bash:
+        runs_command = isinstance(command, str) and command.strip()
+        if runs_command and tool == "PowerShell":
+            holds = _text_holds_sensitive(command, profile)  # the guard can't read what it reads
+        elif runs_command:
             holds = _bash_holds_sensitive(command, profile, root, cwd if cwd is not None else event.get("cwd") or None)
         else:
-            text = "\n".join(_strings(inp))
-            holds = any(re.search(pat, text) for pat in profile.sensitive_patterns)
+            holds = _text_holds_sensitive("\n".join(_strings(inp)), profile)
         if holds:
-            without = "without the text that matches the project's sensitive-data pattern"
-            if bash:
+            without = _WITHOUT_SENSITIVE
+            if runs_command:
                 lines.append(f"Or run it yourself in your own terminal, {without} (the command isn't repeated here, since it or what it posts holds that text).")
             elif github:
                 lines.append(f"Or do it yourself on GitHub, {without}.")
             else:
                 lines.append(f"Or make the change yourself, by hand, {without}.")
-        elif bash:
+        elif runs_command:
             lines.append(f"Or run it yourself in your own terminal:{_hand_command(command)}")
         elif github:
             lines.append("Or do it yourself on GitHub.")
@@ -5288,8 +5322,11 @@ def _decide(
         inp = {}
     if cwd is None:
         cwd = event.get("cwd") or None
-    if tool == "Bash":
+    if tool in ("Bash", "Monitor"):
+        # Monitor runs its command as Bash does; a WebSocket watch (`ws`, no command) runs nothing.
         return check_bash(inp.get("command") or "", profile, role, root, current_branch, role_from_env, cwd)
+    if tool == "PowerShell":
+        return check_powershell(inp, profile, role, root)
     if tool in WRITE_TOOLS:
         return check_write(tool, inp, profile, role, root, cwd)
     if tool.startswith("mcp__"):
