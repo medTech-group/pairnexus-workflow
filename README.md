@@ -90,6 +90,12 @@ The PR body lists your one-time steps, filled in with this repository's check na
 
 It changes `.claude/` and `.github/`, so merging it is always yours, never an agent's.
 
+### Protect `main`
+
+Ask Claude to **protect `main`**, or pick **Protect `main`** when the kit offers it (a refusal in solo mode, the conductor's pre-flight). The `upgrade-setup` skill guides you click by click to the ruleset and the merge settings, reads them back to confirm, and opens a small pull request that takes the project out of solo mode (`ruleset = true`). Until you merge it, the guard stays in solo mode. If you're not the repository's admin, it gives you a ready message for the owner instead.
+
+[Step 3](#step-3-protect-the-base-branch-with-a-ruleset) and [Step 4](#step-4-check-the-merge-settings) below are the same clicks by hand: they are its fallback.
+
 ### Step 3. Protect the base branch with a ruleset
 
 The ruleset is what really stops anyone, a session included, from pushing straight to the base branch or merging before CI is green. The kit's own guard is a seatbelt; the ruleset is the wall.
@@ -619,6 +625,7 @@ Everything above is the **vendored** mode, which every project that runs unatten
 | `/pairnexus-workflow:build-ticket` | Builds one ready ticket, from claim to merge |
 | `/pairnexus-workflow:review-panel` | The review panel on a diff or pull request |
 | `/pairnexus-workflow:run-report` | A run's report |
+| `/pairnexus-workflow:upgrade-setup` | "Protect `main`": the ruleset and merge settings, read back, then the pull request that leaves solo mode |
 | `/pairnexus-workflow:setup-workflow` | Sets a project up; Claude never starts it on its own |
 | `/pairnexus-workflow:conductor` | An unattended run. It runs cloud sessions, which need the vendored mode |
 
@@ -667,6 +674,7 @@ Matt Pocock's take `mattpocock-skills:`, such as `/mattpocock-skills:to-spec`, `
 | `skills/review-panel` | Standards, Spec, Correctness (with a security review for auth, upload, payment or API changes) and, when the profile has an explorer and the change touches a screen, endpoint or command, the explorer, in parallel rounds until clean |
 | `skills/conductor` | The unattended run: charter, sessions, check-ins, merges, release, stop |
 | `skills/run-report` | The end-of-run report for the owner |
+| `skills/upgrade-setup` | The upgrades from solo mode: "Protect `main`", guided click by click, read back, then the pull request that leaves solo mode |
 | `skills/update-workflow` | Update a project's vendored copy |
 | `agents/` | The read-only Correctness reviewer and the UI explorer |
 | `scripts/workflow.py`, `scripts/workflow/` | The CLI the skills and hooks run (Python 3.11+, standard library only): `profile`, `status`, `protection`, `version`, `ready`, `charter`, `state`, `render`, `comments`, `briefing`, `evidence`, `repair`, `vendor`, `hook`. `python3 -B scripts/workflow.py --help` lists every flag |

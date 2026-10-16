@@ -23,6 +23,18 @@
 - Anything it can't tell reads as not protected, with a line saying why: a ruleset on `~DEFAULT_BRANCH` without the settings that name the default branch, say.
 - The "Protect `main`" upgrade, set-up, the conductor's pre-flight and `workflow doctor` will use it; none does yet.
 
+**"Protect `main`": the `upgrade-setup` skill's first path** (#47, part of solo mode, #32). It takes a project from solo mode to a protected base branch, guided click by click. Claude may load it itself; it ships vendored and in the plugin.
+
+- **Offered, never as a nag:** when the person asks, in the guard's solo-mode refusal, before an unattended run in solo mode, and later by `workflow doctor`. The offers are `protect_main` (solo mode) and `restore_protection` (the profile says protected, GitHub doesn't).
+- **By experience:** someone new to building gets one plain screen with "Do it now" and "Not now", and a one-line result; a developer gets the ruleset's settings. The steps are the same.
+- **Admin first:** a person who isn't the repository's admin is told so plainly and handed a ready message for the owner, with the links and the clicks.
+- **Rulesets read first:** an already protected base branch goes straight to the pull request. It never edits an existing ruleset.
+- **The guided clicks:** the ruleset, its required checks when CI has run on the base branch (otherwise "checks not required yet"), and the merge settings, each with a link to its settings page.
+- **Read-back** with `workflow protection`; anything missing is shown in plain words, with the click offered again.
+- **Leaving solo mode:** only after a protected read-back, a small pull request sets `ruleset = true`. The guard stays in solo mode until the owner merges it.
+- Docs: the README's new "Protect `main`" section, with Steps 3 and 4 as its fallback. Tests: `tests/test_upgrade_setup.py`.
+- **For projects updating:** nothing to do.
+
 ## 0.1.10
 
 **The guard reads editing scripts as their tools do, and fails closed when it runs out of time.** In a ticket session the guard refuses a new test-skip or focus marker that an editing script (`sed`, `perl`, `awk`, `vim`, `ed`) or a patch adds. The correctness reviews of 0.1.9 found older ways, all in 0.1.8 already, that a script could add one unseen, and ways to make the guard slow enough to outlast the hook's timeout, which in 0.1.8 doesn't block. Reported and fixed privately, under `SECURITY.md`.

@@ -2,8 +2,8 @@
 
 `workflow protection` says whether the base branch is protected, from JSON that a session fetched from GitHub. It asks GitHub nothing and changes nothing: it reads the files it is given and prints a report.
 
-The rule for "protected" lives here. These will call it rather than repeat it (solo mode, #32); none does yet:
-- the "Protect `main`" upgrade, to read back the clicks;
+The rule for "protected" lives here, and these call it rather than repeat it (solo mode, #32). The first does already; the others come with their tickets:
+- the "Protect `main`" upgrade (`skills/upgrade-setup`), to read back the clicks;
 - set-up, to choose `ruleset = true` or `false`;
 - the conductor's pre-flight, to spot protection that was removed;
 - `workflow doctor` (#34), whose `--rulesets` and `--repo` files will take this command's input format.
