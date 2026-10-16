@@ -101,7 +101,7 @@ import re
 import subprocess
 import tarfile
 import zipfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from .posts import AGENT_MARKER
@@ -697,7 +697,8 @@ def _simple(toks: list) -> list:
                 elif op == "<&":
                     pass
                 elif op == "<":
-                    cur.stdin = nxt  # read by the other checks, whatever its descriptor
+                    if on_stdin or cur.stdin is None:  # read by the other checks; fd 0's file comes first
+                        cur.stdin = nxt
                     cur.stdins += on_stdin
                     cur.stdin_unseen = cur.stdin_unseen or not on_stdin  # `3<f`: so stdin isn't this file
                 elif op == "<<<":
@@ -1634,7 +1635,10 @@ def _read_sized(path: str, cwd: str | None, cap: int) -> tuple[str | None, int, 
     """A regular file's text (at most `cap` bytes), the bytes read, and whether it holds more."""
     if path == os.devnull:  # as written: `/dev/fd/0` can resolve to it here and be something else when it runs
         return "", 0, False
-    if posixpath.normpath(re.sub("/+", "/", os.path.expanduser(path))).startswith(("/dev/", "/proc/")):
+    written = os.path.expanduser(path)
+    if not written.startswith("/") and cwd:
+        written = cwd + "/" + written
+    if posixpath.normpath(re.sub("/+", "/", written)).startswith(("/dev/", "/proc/")):
         return None, 0, False  # a descriptor or device: what it holds when the command runs isn't here
     a = _abspath(path, cwd)
     if not a or not os.path.isfile(a):
@@ -1997,6 +2001,8 @@ def _carries_text(txt: str | None) -> bool:
 def _stdin_text(seg: Seg) -> str | None:
     """What the command reads on stdin, when the guard can see it: a heredoc or
     here-string, a `<` file, or a `cat` piping into it. None otherwise."""
+    if seg.stdins > 1 or seg.stdin_unseen:
+        return None
     if seg.heredoc is not None:
         return seg.heredoc
     if seg.stdin:
@@ -2847,7 +2853,7 @@ def _named_hit(
 
 
 _VIMS = {"vim", "vi", "nvim", "vimdiff", "view", "ex"}
-_VIM_EX = re.compile(r"-[A-Za-z]*[eE][A-Za-z]*")  # ex mode, alone or in a cluster (`-es`, `-Nes`)
+_VIM_EX = re.compile(r"-[bdhlLmMnNRsyZAFH]*[eE][bdhlLmMnNRsyZAFHeE]*")  # ex mode, alone or among flags that take no value (`-es`, `-Nes`)
 
 
 @dataclass
@@ -3565,6 +3571,7 @@ _CODE_EXPECT_TERM = {
 }
 _CODE_REGEX_FLAGS = re.compile(r"[A-Za-z]*")
 _QUOTE_LIKE = {"s", "m", "qr", "q", "qq", "qw", "tr", "y"}
+_CODE_SIGIL_AFTER = {"my", "our", "local", "state", "keys", "values", "each", "delete", "exists", "scalar", "ref", "defined", "undef"}
 
 
 def _code_net(text: str, perl: bool = True) -> int:
@@ -3638,7 +3645,7 @@ def _code_net(text: str, perl: bool = True) -> int:
         if not word.isspace():  # after a term a `/` divides; elsewhere it starts a regex
             before, prev = term, word
             term = (word[0].isalnum() or word[0] in "_$@%&)]}\\") and word not in _CODE_EXPECT_TERM and word != "&&"
-            bare = word[0].isalpha() or word[0] == "_"  # a bareword: `my`, `keys`, a sub's name
+            bare = word in _CODE_SIGIL_AFTER  # `my %s`: a sigil follows, not an operator
     return rest()
 
 
@@ -3877,7 +3884,7 @@ def check_bash(
         if p:
             return _deny(role, p)
         if _post_kind(toks):
-            posts.append(seg if k is None else Seg(toks, seg.redirects, seg.cwd, seg.stdin, seg.heredoc, seg.piped, seg.assigns))
+            posts.append(seg if k is None else replace(seg, words=toks))  # every other field kept, stdin's too
         if role in ("ticket", "attended"):
             p = _deploy_problem(seg, profile.deploy_commands, root)
             if p:

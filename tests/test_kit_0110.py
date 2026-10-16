@@ -92,6 +92,10 @@ def test_vim_given_stdin_edits_its_files(profile, tmp_path):
     # Ex mode in a cluster of options.
     assert act(profile, tmp_path, "vim -Nes tests/a.spec.js <<'EOF'\n1s/^/it\\.only\\(/\nEOF") == "deny"
     assert act(profile, tmp_path, "vim -Nes tests/a.spec.js <<'EOF'\n%s/xit(/it(/\nwq\nEOF") == "allow"
+    # `-V` takes the rest of the word as its file: not ex mode, so these are keys.
+    assert act(profile, tmp_path, "vim -Vlogfile tests/a.spec.js <<'EOF'\nOit.only(\n:wq\nEOF") == "deny"
+    # Keys that only remove a marker can't be told from typing it: refused.
+    assert act(profile, tmp_path, "vim tests/a.spec.js <<'EOF'\n:%s/xit(/it(/\n:wq\nEOF") == "deny"
 
 
 def test_ed_appended_text_counts_as_added(profile, tmp_path):
@@ -201,6 +205,7 @@ def test_an_s_after_a_binary_operator_is_still_an_s(profile, tmp_path):
 def test_a_bareword_before_a_sigil_isnt_a_value(profile, tmp_path):
     assert act(profile, tmp_path, "perl -pi -e 'my %s; s/^/it.only(/ if $. == 1; 1;' tests/a.spec.js") == "deny"
     assert act(profile, tmp_path, "perl -pi -e '$x = \"a\" %s/^/it.only(/' tests/a.spec.js") == "deny"
+    assert act(profile, tmp_path, "perl -pi -e 'time %s/^/it.only(/' tests/a.spec.js") == "deny"
 
 
 def test_awk_is_read_as_awk(profile, tmp_path):
@@ -246,7 +251,7 @@ def test_stdin_is_read_as_bash_gives_it(profile, tmp_path):
     (tmp_path / "add.sed").write_text("1i it.only(\n")
     (tmp_path / "rm.sed").write_text("s/it\\.only(//\n")
     for cmd in (
-        # Another descriptor's input isn't stdin.
+        # Beside another descriptor's input, stdin can't be followed.
         "cat add.sed | sed -i -f - src/app.spec.ts 3<<<'s/a/b/'",
         "sed -i -e '1i it.only(' -f - src/app.spec.ts 3<rm.sed",
         "sed -i -f /dev/fd/3 src/app.spec.ts 3<add.sed",
@@ -287,6 +292,7 @@ def test_a_sed_script_file_the_guard_cant_read_is_refused(profile, tmp_path):
     assert act(profile, tmp_path, "sed -i -f /dev/fd/0 tests/test_x.py") == "deny"
     assert act(profile, tmp_path, "sed -i -f //dev/fd/3 tests/test_x.py") == "deny"
     assert act(profile, tmp_path, "sed -i -f /./proc/self/fd/3 tests/test_x.py") == "deny"
+    assert act(profile, tmp_path, "sed -i -f ../../../../../../../../../dev/fd/3 tests/test_x.py") == "deny"
     (tmp_path / "dir.sed").mkdir()
     assert act(profile, tmp_path, "sed -i -f dir.sed tests/test_x.py") == "deny"
     (tmp_path / "ok.sed").write_text("/xit(/d\n")
@@ -350,8 +356,17 @@ def test_a_groups_output_down_a_pipe_isnt_taken_as_empty(tmp_path):
 
 def test_other_descriptors_inputs_are_still_read_by_the_other_checks(tmp_path):
     (tmp_path / "notes.md").write_text("see MRN-123456\n")  # the fixture profile's sensitive pattern
-    d = act_in(tmp_path, "gh pr comment 1 --body-file /dev/fd/3 3<notes.md")
-    assert d.action == "deny" and "sensitive" in d.reason
+    for cmd in (
+        "gh pr comment 1 --body-file /dev/fd/3 3<notes.md",
+        # fd 0's file is the one stdin reads, whatever comes after it.
+        "gh pr comment 1 --body-file - < notes.md 3</dev/null",
+    ):
+        d = act_in(tmp_path, cmd)
+        assert d.action == "deny" and "sensitive" in d.reason, cmd
+    # Another descriptor's here-string isn't what a post reads on stdin.
+    (tmp_path / "body.json").write_text('{"body": "hello"}')
+    d = act_in(tmp_path, "gh api repos/acme/demo/issues/1 -X PATCH --input - < body.json 3<<<'{}'")
+    assert d.action == "deny" and "workflow:agent" in d.reason
 
 
 def test_a_patch_given_two_inputs_on_stdin_is_refused(tmp_path):
