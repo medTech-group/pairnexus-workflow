@@ -40,6 +40,7 @@ _STARTED = time.monotonic()  # the guard's time budget counts from here, before 
 from . import charter as charter_mod
 from . import context as context_mod
 from . import evidence as evidence_mod
+from . import _old_python, fallback
 from . import gate as gate_mod
 from . import guard as guard_mod
 from . import issues as issues_mod
@@ -52,7 +53,7 @@ from . import state as state_mod
 from . import status as status_mod
 from . import updates as updates_mod
 from . import vendor as vendor_mod
-from .profile import ProfileError, load, project_root, resolve_experience
+from .profile import PROFILE_PATH, ProfileError, load, project_root, resolve_experience
 
 KIT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -677,20 +678,57 @@ def _budget(seconds: float):
             signal.signal(signal.SIGALRM, previous)
 
 
-def _hook_guard(event) -> int:
+def _cant_decide(event, why: str, solo: bool | None = None, fixes: str = fallback.FIXES) -> int:
+    """The can't-decide fallback (`fallback`, #53) in an attended session: a push
+    or a merge is asked, or refused in solo mode or where nobody is asked;
+    anything else is left alone. A missing profile (the kit isn't set up) is
+    left alone too. Always 0, and never raises: a hook that exits non-zero
+    would let the tool run, or, once the hook blocks on failure, block them all."""
+    try:
+        if solo is None:
+            root = project_root()
+            if not (root / PROFILE_PATH).exists():
+                return 0
+            solo = fallback.solo(root)
+        d = fallback.decide(event, solo, why, fixes)
+        if d:
+            out = fallback.output(d[0], f"[workflow guard, {_role_label('attended')}] {d[1]}")
+            print(json.dumps(out))
+    except Exception:
+        pass
+    return 0
+
+
+def _ticket_branch_without_the_kit(event: dict) -> bool:
+    """With the profile unreadable, whether the branch matches its
+    `run.ticket_branch`, read as the old-Python fallback reads it."""
+    try:
+        cwd = event.get("cwd")
+        return _old_python._firm(os.environ, cwd if isinstance(cwd, str) and cwd else str(project_root()))
+    except Exception:
+        return False
+
+
+def _hook_guard(event, raw: str = "") -> int:
     firm = roles.env_role()
     if not isinstance(event, dict):  # malformed: nothing can be checked
+        if firm is None and _ticket_branch_without_the_kit({}):
+            firm = "ticket"
         if firm in ("ticket", "conductor"):
             _deny_json(f"[workflow guard, {_role_label(firm)}] the hook's event wasn't a JSON object, so nothing could be checked and this was refused")
-        return 0
+            return 0
+        return _cant_decide(fallback.read_event(raw), "the hook's event couldn't be read as a JSON object")
     try:
         prof = load(required=False)
     except ProfileError as e:
+        if firm is None and _ticket_branch_without_the_kit(event):
+            firm = "ticket"
         if firm in ("ticket", "conductor"):
             if not _is_restore(event):
                 _deny_json(f"[workflow guard, {_role_label(firm)}] the profile is invalid, so nothing can be checked: {e}. Fix .claude/workflow/profile.toml in a PR from an attended session, or restore it: git checkout -- .claude/workflow")
             return 0
-        raise
+        print(f"workflow guard hook: the profile is invalid, so the guard can't check anything: {e}", file=sys.stderr)
+        return _cant_decide(event, f"the profile is invalid ({e})")
     if prof is None:
         if firm in ("ticket", "conductor") and not _is_restore(event):
             _deny_json(
@@ -712,12 +750,17 @@ def _hook_guard(event) -> int:
         if role in ("ticket", "conductor") or (role == "attended" and prof.ruleset is False):
             _deny_json(f"[workflow guard, {_role_label(role)}] the guard ran out of time ({GUARD_BUDGET:g} seconds) checking this, so it was refused; split the command, or give it smaller files")
             return 0
-        raise RuntimeError(f"the guard ran out of time ({GUARD_BUDGET:g} seconds)") from None
+        return _cant_decide(
+            event,
+            f"it ran out of time ({GUARD_BUDGET:g} seconds) checking this",
+            prof.ruleset is False,
+            "To have it checked, split the command, or give it smaller files.",
+        )
     except Exception as e:  # fail closed where a person isn't there to notice
-        if role in ("ticket", "conductor"):
-            _deny_json(f"[workflow guard, {_role_label(role)}] the guard failed ({type(e).__name__}: {e}), so this was refused; rephrase the command more simply")
+        if role in ("ticket", "conductor") or (role is None and firm in ("ticket", "conductor")):
+            _deny_json(f"[workflow guard, {_role_label(role or firm)}] the guard failed ({type(e).__name__}: {e}), so this was refused; rephrase the command more simply")
             return 0
-        raise
+        return _cant_decide(event, f"it failed ({type(e).__name__}: {e})", prof.ruleset is False)
     if d.action == "allow":
         return 0  # never force "allow": the normal permission rules still apply
     reason = f"[workflow guard, {_role_label(role)}] {d.reason}"
@@ -812,21 +855,31 @@ HOOKS = {"guard": _hook_guard, "gate": _hook_gate, "context": _hook_context, "re
 
 
 def cmd_hook(a) -> int:
+    raw = ""  # the input with undecodable bytes replaced, for the can't-decide fallback
     try:
-        event = json.loads(sys.stdin.read() or "{}")
-    except (json.JSONDecodeError, UnicodeDecodeError, RecursionError):
+        data = sys.stdin.buffer.read()
+        raw = data.decode("utf-8", "replace")
+        event = json.loads(data.decode("utf-8") or "{}")  # the event itself is read strictly
+    except (ValueError, RecursionError, OSError, AttributeError):  # AttributeError: no stdin
         event = None
     if a.name != "guard" and not isinstance(event, dict):
         event = {}  # the guard decides what a malformed event means
     try:
-        return HOOKS[a.name](event)
-    except ProfileError as e:
-        print(f"workflow {a.name} hook: the profile is invalid, so the hook did nothing: {e}", file=sys.stderr)
-        return 1
+        return _hook_guard(event, raw) if a.name == "guard" else HOOKS[a.name](event)
     except Exception as e:  # a bug in a hook must not stop the session; say so
-        if a.name == "guard" and roles.env_role() in ("ticket", "conductor"):
-            _deny_json(f"[workflow guard] the guard failed ({type(e).__name__}: {e}), so this was refused")
-            return 0
+        if a.name == "guard":
+            firm = roles.env_role()
+            if firm is None and _ticket_branch_without_the_kit(event if isinstance(event, dict) else {}):
+                firm = "ticket"
+            if firm in ("ticket", "conductor"):
+                _deny_json(f"[workflow guard] the guard failed ({type(e).__name__}: {e}), so this was refused")
+                return 0
+            print(f"workflow guard hook failed ({type(e).__name__}: {e})", file=sys.stderr)
+            why = f"the profile is invalid ({e})" if isinstance(e, ProfileError) else f"it failed ({type(e).__name__}: {e})"
+            return _cant_decide(event if isinstance(event, dict) else fallback.read_event(raw), why)
+        if isinstance(e, ProfileError):
+            print(f"workflow {a.name} hook: the profile is invalid, so the hook did nothing: {e}", file=sys.stderr)
+            return 1
         print(f"workflow {a.name} hook failed ({type(e).__name__}: {e}); it did nothing this time", file=sys.stderr)
         return 1
 

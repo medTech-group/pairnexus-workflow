@@ -7,7 +7,7 @@ mode that never asks; an absent one (an older Claude Code) as a mode that asks.
 
 Keep it free of imports and to syntax Python 3.7 reads (a test checks), so
 the old-Python fallback (`_old_python.py`) can classify modes from the same
-list when it reads them (the next tickets). Not to be confused with the
+list (`fallback`, #53). Not to be confused with the
 profile's `run.permission_mode` choices (`profile.PERMISSION_MODES`): the
 modes an unattended run's sessions may start in.
 """

@@ -2,11 +2,20 @@
 
 ## Unreleased
 
+**When the guard can't decide: pushes and merges wait for the person** (#53, part of guard robustness, #33).
+
+- **The can't-decide fallback.** In an attended session, when the guard raises or runs out of time, the profile is invalid, the hook's event can't be read, or `python3` is older than 3.11, a push or a merge is asked, and refused in solo mode (`ruleset = false`) or in a permission mode where nobody is asked; everything else is left alone. Before, the CLI's errors exited 1 and let every tool through.
+- **One definition of a push or a merge** (`git … push`, `gh … pr … merge`, the GitHub MCP tools that push, write files or merge), in the new `scripts/workflow/fallback.py` (Python 3.7 syntax, the standard library and `modes` only), used by the CLI's error paths and the old-Python fallback alike. Solo mode is read from the profile's first plain `ruleset = …` line, so an invalid profile still counts; an unreadable event is read for its tool, command and mode.
+- **The reason** says the guard isn't working, why (the error, the profile's error, the Python version) and how to fix it; where nobody is asked it adds how to be asked and to do it by hand, without repeating the command, since nothing could check it for sensitive data.
+- **`hook guard` always exits 0 in an attended session**, printing the fallback's decision or nothing (an invalid profile is still reported on stderr). Ticket and conductor sessions, a missing profile, and the other hooks are unchanged.
+- Docs: `docs/enforcement.md`'s "When something is wrong", `SECURITY.md`'s scope (a hook failing open where `docs/enforcement.md` says it asks or refuses, in any role), a README row. Tests: `tests/test_guard_cant_decide.py`.
+- **For projects updating:** nothing to do.
+
 **Modes that never ask: the guard refuses what it would have asked** (#52, part of guard robustness, #33).
 
 - **The guard reads `permission_mode`** from each tool call. In an attended session, in `bypassPermissions`, `dontAsk` or a mode the kit doesn't know, every ask the guard makes becomes a refusal, solo mode's remaining asks included; in `default`, `acceptEdits`, `auto`, `plan` or with no mode sent, asks stay asks.
 - **The refusal** keeps the ask's reason and adds the mode, how to switch it (Shift+Tab, or the mode selector) to be asked, and how to do it by hand (the command for your own terminal, or on GitHub for a GitHub MCP tool). An unknown mode is named.
-- **The guard's modes are listed** in `scripts/workflow/modes.py`, in Python 3.7 syntax with no imports, ready for the old-Python fallback, which doesn't read the mode yet (a later ticket).
+- **The guard's modes are listed** in `scripts/workflow/modes.py`, in Python 3.7 syntax with no imports, ready for the old-Python fallback (which reads it since #53).
 - Denies, allows, and ticket and conductor sessions are unchanged in every mode. Docs: `docs/enforcement.md`'s mode table, the README's "When something goes wrong" row. Tests: `tests/test_guard_modes.py`.
 - **For projects updating:** nothing to do. A person who works in `bypassPermissions` now sees the guard's asks refused, with the command to run by hand.
 
