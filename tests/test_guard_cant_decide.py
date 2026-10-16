@@ -126,8 +126,11 @@ def test_the_reason_says_the_guard_isnt_working_why_and_how_to_fix_it(tmp_path, 
     code, out = _hook(monkeypatch, capsys, root, failure, PUSH)
     reason = out["permissionDecisionReason"]
     assert "guard isn't working" in reason and why in reason
-    assert "profile check" in reason and "python3 --version" in reason and "3.11" in reason
-    assert "report the error" in reason
+    if failure == "malformed":  # nothing in the profile or the Python to fix
+        assert "report it to the kit's maintainers" in reason and "profile check" not in reason
+    else:
+        assert "profile check" in reason and "python3 --version" in reason and "3.11" in reason
+        assert "report the error" in reason
 
 
 def test_the_command_isnt_repeated_where_nothing_could_check_it(tmp_path, monkeypatch, capsys):
@@ -377,3 +380,34 @@ def test_old_python_without_a_profile_keeps_asking_as_since_0_1_8(tmp_path, caps
     env = {"WORKFLOW_ROLE": "attended", "CLAUDE_PROJECT_DIR": str(tmp_path)}
     assert _old(capsys, PUSH, env, tmp_path)[1]["permissionDecision"] == "ask"
     assert _old(capsys, _with_mode(PUSH, "dontAsk"), env, tmp_path)[1]["permissionDecision"] == "deny"
+
+
+@pytest.mark.parametrize("text,want", [
+    ('{"permission_mode": "bypassPermissions", "tool_name": "Bash", "tool_input": {"command": "git push o', "deny"),
+    ('{"tool_name": "Bash", "tool_input": {"command": "git push origin main"}, "permission_mode": "bypassPermiss', "deny"),
+    ('{"tool_name": "Bash", "tool_input": {"command": "gh pr merge 3', "ask"),
+    ('{"tool_name": "Bash", "tool_input": {"command": "ls -la', None),
+])
+def test_a_truncated_event_is_read_to_its_end(tmp_path, monkeypatch, capsys, text, want):
+    root = _project(tmp_path, VALID)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    monkeypatch.setenv("WORKFLOW_ROLE", "attended")
+    monkeypatch.chdir(root)
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(text.encode()), encoding="utf-8"))
+    assert cli.main(["hook", "guard"]) == 0
+    out = capsys.readouterr().out
+    assert (json.loads(out)["hookSpecificOutput"]["permissionDecision"] if out else None) == want
+    env = {"WORKFLOW_ROLE": "attended", "CLAUDE_PROJECT_DIR": str(root)}
+    assert _old_python.main(["hook", "guard"], stdin_text=text, env=env, version="3.9.6", cwd=root) == 0
+    out = capsys.readouterr().out
+    assert (json.loads(out)["hookSpecificOutput"]["permissionDecision"] if out else None) == want
+
+
+def test_solo_mode_is_read_after_a_byte_order_mark():
+    assert fallback.solo_from_text("\ufeffruleset = false\n")
+
+
+def test_old_python_says_to_install_a_newer_python(tmp_path, capsys):
+    env = {"WORKFLOW_ROLE": "attended", "CLAUDE_PROJECT_DIR": str(tmp_path)}
+    reason = _old(capsys, PUSH, env, tmp_path)[1]["permissionDecisionReason"]
+    assert "install Python 3.11+" in reason and "profile check" not in reason

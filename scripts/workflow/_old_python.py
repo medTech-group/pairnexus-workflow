@@ -92,7 +92,8 @@ def _guard(event, firm, version, root=None):
     if firm:
         return _decision("deny", "Refused: " + _problem(version) + ".")
     why = "`python3` here is {} and the kit needs Python {} or newer".format(version, NEEDS)
-    d = fallback.decide(event, fallback.solo(root) if root else False, why)
+    fixes = "To fix it: install Python {}+ (python.org, Homebrew or your package manager) so that `python3` runs it, then start a new session.".format(NEEDS)
+    d = fallback.decide(event, fallback.solo(root) if root else False, why, fixes)
     return _decision(*d) if d else None
 
 

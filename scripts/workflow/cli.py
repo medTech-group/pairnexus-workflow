@@ -714,7 +714,11 @@ def _hook_guard(event, raw: str = "") -> int:
         if firm in ("ticket", "conductor"):
             _deny_json(f"[workflow guard, {_role_label(firm)}] the hook's event wasn't a JSON object, so nothing could be checked and this was refused")
             return 0
-        return _cant_decide(fallback.read_event(raw), "the hook's event couldn't be read as a JSON object")
+        return _cant_decide(
+            fallback.read_event(raw),
+            "the hook's event couldn't be read as a JSON object",
+            fixes="If it happens again, report it to the kit's maintainers.",
+        )
     try:
         prof = load(required=False)
     except ProfileError as e:

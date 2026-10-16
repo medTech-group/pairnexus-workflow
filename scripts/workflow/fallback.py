@@ -44,8 +44,9 @@ FIXES = (
 
 
 def _string_field(name):
-    # A JSON string value: characters other than a quote or a backslash, or an escape.
-    return re.compile(r'"' + name + r'"\s*:\s*"((?:[^"\\]|\\.)*)"')
+    # A JSON string value: characters other than a quote or a backslash, or an
+    # escape, up to its closing quote or, in a truncated event, the end.
+    return re.compile(r'"' + name + r'"\s*:\s*"((?:[^"\\]|\\.)*)')
 
 
 _LOOSE = {name: _string_field(name) for name in ("tool_name", "command", "permission_mode")}
@@ -114,7 +115,7 @@ def read_event(text):
 def solo_from_text(text):
     """True when the profile's first plain `ruleset = …` line says false (solo
     mode), whatever else the profile holds."""
-    m = _RULESET.search(text or "")
+    m = _RULESET.search((text or "").lstrip("\ufeff"))
     return bool(m) and m.group(1) == "false"
 
 
