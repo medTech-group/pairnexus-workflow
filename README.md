@@ -712,7 +712,7 @@ A fork can run its own releases, with its own projects following it rather than 
   - `.claude-plugin/marketplace.json` (`name`, `owner`) and `.claude-plugin/plugin.json` (`name`, `author`);
   - the `pairnexus-workflow@pairnexus` key and the `pairnexus-workflow:` command prefix: `PLUGIN_UPDATE` in `updates.py`, `PLUGIN_KEY` in `vendor.py`, `scripts/workflow/context.py`, the skills `start`, `setup-workflow` and `review-panel`, `docs/flow.md`, `docs/install.md` and this README. `grep -rn "pairnexus-workflow[@:]" .` finds them.
 - **The install commands** in `docs/install.md` and this README (the marketplace's `owner/repo`).
-- **This repository's own pages:** the security advisory link in `.github/ISSUE_TEMPLATE/config.yml` and `.github/ISSUE_TEMPLATE/claude-code-break.md`, and the contacts in `SECURITY.md`, `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md`.
+- **This repository's own pages:** the security advisory link in `.github/ISSUE_TEMPLATE/config.yml` and `.github/ISSUE_TEMPLATE/claude-code-break.md`, the issue-template link in `SECURITY.md`, and the contacts in `SECURITY.md`, `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md`.
 - **The rest:**
   - the `User-Agent` in `updates.py`;
   - the release title in `.github/scripts/release.py`;
