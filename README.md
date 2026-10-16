@@ -90,6 +90,12 @@ The PR body lists your one-time steps, filled in with this repository's check na
 
 It changes `.claude/` and `.github/`, so merging it is always yours, never an agent's.
 
+### Protect `main`
+
+Ask Claude to **protect `main`**, or pick **Protect `main`** where the kit offers it. The `upgrade-setup` skill guides you click by click to the ruleset and the merge settings, reads them back to confirm, and opens the pull request that leaves solo mode (`ruleset = true`). Solo mode is how a project starts with no ruleset: the kit's guard is then all that keeps changes off `main`, so it refuses them. Until you merge that pull request, the guard stays in solo mode. If you're not the repository's admin, it gives you a ready message for the owner instead.
+
+[Step 3](#step-3-protect-the-base-branch-with-a-ruleset) and [Step 4](#step-4-check-the-merge-settings) below are the same clicks by hand: they are its fallback.
+
 ### Step 3. Protect the base branch with a ruleset
 
 The ruleset is what really stops anyone, a session included, from pushing straight to the base branch or merging before CI is green. The kit's own guard is a seatbelt; the ruleset is the wall.
@@ -619,6 +625,7 @@ Everything above is the **vendored** mode, which every project that runs unatten
 | `/pairnexus-workflow:build-ticket` | Builds one ready ticket, from claim to merge |
 | `/pairnexus-workflow:review-panel` | The review panel on a diff or pull request |
 | `/pairnexus-workflow:run-report` | A run's report |
+| `/pairnexus-workflow:upgrade-setup` | "Protect `main`": the ruleset and merge settings, read back, then the pull request that leaves solo mode |
 | `/pairnexus-workflow:setup-workflow` | Sets a project up; Claude never starts it on its own |
 | `/pairnexus-workflow:conductor` | An unattended run. It runs cloud sessions, which need the vendored mode |
 
@@ -653,6 +660,7 @@ Matt Pocock's take `mattpocock-skills:`, such as `/mattpocock-skills:to-spec`, `
   - [docs/enforcement.md](docs/enforcement.md): what stops a session, and why;
   - [docs/install.md](docs/install.md): vendored and plugin modes;
   - [docs/profile.md](docs/profile.md): the profile's settings and the environment variables;
+  - [docs/protection.md](docs/protection.md): reading back whether the base branch is protected;
   - [docs/spike.md](docs/spike.md): what has been tried for real, and what hasn't.
 
 ## What's in it
@@ -666,11 +674,12 @@ Matt Pocock's take `mattpocock-skills:`, such as `/mattpocock-skills:to-spec`, `
 | `skills/review-panel` | Standards, Spec, Correctness (with a security review for auth, upload, payment or API changes) and, when the profile has an explorer and the change touches a screen, endpoint or command, the explorer, in parallel rounds until clean |
 | `skills/conductor` | The unattended run: charter, sessions, check-ins, merges, release, stop |
 | `skills/run-report` | The end-of-run report for the owner |
+| `skills/upgrade-setup` | The upgrades from solo mode: "Protect `main`", guided click by click, read back, then the pull request that leaves solo mode |
 | `skills/update-workflow` | Update a project's vendored copy |
 | `agents/` | The read-only Correctness reviewer and the UI explorer |
-| `scripts/workflow.py`, `scripts/workflow/` | The CLI the skills and hooks run (Python 3.11+, standard library only): `profile`, `status`, `version`, `ready`, `charter`, `state`, `render`, `comments`, `briefing`, `evidence`, `repair`, `vendor`, `hook`. `python3 -B scripts/workflow.py --help` lists every flag |
+| `scripts/workflow.py`, `scripts/workflow/` | The CLI the skills and hooks run (Python 3.11+, standard library only): `profile`, `status`, `protection`, `version`, `ready`, `charter`, `state`, `render`, `comments`, `briefing`, `evidence`, `repair`, `vendor`, `hook`. `python3 -B scripts/workflow.py --help` lists every flag |
 | `hooks/hooks.json` | The plugin's hooks (a vendored project gets the same hooks in its `.claude/settings.json`): the guard (the never-list), the status gate, the flow context and the guided start's first-message nudge, and at session start the environment repair, project setup and update notice |
-| `docs/` | `flow.md`, `charter.md`, `enforcement.md`, `install.md`, `profile.md`, `spike.md` (what's verified), `proposal.md` (the original design, historical) |
+| `docs/` | `flow.md`, `charter.md`, `enforcement.md`, `install.md`, `profile.md`, `protection.md`, `spike.md` (what's verified), `proposal.md` (the original design, historical) |
 | `templates/` | The profile (`profile.toml`, `profile.md`), the ticket-session briefing, tracking and by-hand issues, `issue-tracker.md` (for `docs/agents/`), the issue templates, the `workflow kit` CI job and the weekly update check |
 | `.claude-plugin/` | The plugin manifest and the `pairnexus` marketplace, which pins Matt Pocock's skills |
 | `.github/` | The kit's own CI (the tests on Python 3.11 to 3.13, the hooks on a Python 3.9, and a check that the versions agree), the `release` workflow, and this repository's issue templates |

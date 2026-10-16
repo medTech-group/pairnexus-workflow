@@ -25,6 +25,27 @@
 
 **A guard test no longer fails when `WORKFLOW_ROLE` is set** (#132). `test_hook_takes_the_project_roots_branch_when_the_cwd_has_none` clears the variable for its in-process assertions too, not only for the hook it runs, so the local suite passes in ticket sessions and the conductor's. No assertion changed.
 
+**`workflow protection` reads back whether the base branch is protected** (#44, part of solo mode, #32). A session hands it the rulesets, each in full, and the repository's settings, as JSON files ([docs/protection.md](docs/protection.md)).
+
+- It says whether the base branch is protected, and lists each missing protection on its own line, in plain words.
+- It says "checks not required yet" when no status checks are required, and reports the merge settings.
+- `--json` gives the same for skills.
+- It asks GitHub nothing and writes nothing. A wrong input is an error, never "protected".
+- Anything it can't tell reads as not protected, with a line saying why: a ruleset on `~DEFAULT_BRANCH` without the settings that name the default branch, say.
+- The "Protect `main`" upgrade uses it (#47); set-up, the conductor's pre-flight and `workflow doctor` will.
+
+**"Protect `main`": the `upgrade-setup` skill's first path** (#47, part of solo mode, #32). It takes a project from solo mode to a protected base branch, guided click by click. Claude loads it itself when the person asks; it ships vendored and in the plugin.
+
+- **Offered, never as a nag:** when the person asks, and, once their tickets land, in the guard's solo-mode refusal, before an unattended run in solo mode, and by `workflow doctor`. The offers are `protect_main` (solo mode) and `restore_protection` (the profile says protected, GitHub doesn't).
+- **By experience:** someone new to building gets one plain screen with "Do it now" and "Not now", and a one-line result; a developer gets the ruleset's settings. The steps are the same.
+- **Admin first:** a person who isn't the repository's admin is told so plainly and handed a ready message for the owner, with the links and the clicks.
+- **Rulesets read first:** an already protected base branch goes straight to the pull request. It never edits an existing ruleset.
+- **The guided clicks:** the ruleset, its required checks when CI has run on the base branch (otherwise "checks not required yet"), and the merge settings, each with a link to its settings page.
+- **Read-back** with `workflow protection`; anything missing is shown in plain words, with the click offered again.
+- **The pull request that leaves solo mode:** only after a protected read-back, it sets `ruleset = true`. The guard stays in solo mode until the owner merges it.
+- Docs: the README's new "Protect `main`" section, with Steps 3 and 4 as its fallback. Tests: `tests/test_upgrade_setup.py`.
+- **For projects updating:** nothing to do.
+
 ## 0.1.10
 
 **The guard reads editing scripts as their tools do, and fails closed when it runs out of time.** In a ticket session the guard refuses a new test-skip or focus marker that an editing script (`sed`, `perl`, `awk`, `vim`, `ed`) or a patch adds. The correctness reviews of 0.1.9 found older ways, all in 0.1.8 already, that a script could add one unseen, and ways to make the guard slow enough to outlast the hook's timeout, which in 0.1.8 doesn't block. Reported and fixed privately, under `SECURITY.md`.
