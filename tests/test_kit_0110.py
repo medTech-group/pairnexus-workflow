@@ -92,6 +92,9 @@ def test_vim_given_stdin_edits_its_files(profile, tmp_path):
     # Ex mode in a cluster of options.
     assert act(profile, tmp_path, "vim -Nes tests/a.spec.js <<'EOF'\n1s/^/it\\.only\\(/\nEOF") == "deny"
     assert act(profile, tmp_path, "vim -Nes tests/a.spec.js <<'EOF'\n%s/xit(/it(/\nwq\nEOF") == "allow"
+    # `-X` and the like sit in a cluster with `e`: ex mode, and `-s` after it takes no value.
+    assert act(profile, tmp_path, "vim -Xe -s tests/a.spec.js <<'EOF'\n1s/^/it.only(/\nwq\nEOF") == "deny"
+    assert act(profile, tmp_path, "vim -Xes tests/a.spec.js <<'EOF'\n%s/xit(/it(/\nwq\nEOF") == "allow"
     # `-V` takes the rest of the word as its file: not ex mode, so these are keys.
     assert act(profile, tmp_path, "vim -Vlogfile tests/a.spec.js <<'EOF'\nOit.only(\n:wq\nEOF") == "deny"
     # Keys that only remove a marker can't be told from typing it: refused.
@@ -358,8 +361,9 @@ def test_other_descriptors_inputs_are_still_read_by_the_other_checks(tmp_path):
     (tmp_path / "notes.md").write_text("see MRN-123456\n")  # the fixture profile's sensitive pattern
     for cmd in (
         "gh pr comment 1 --body-file /dev/fd/3 3<notes.md",
-        # fd 0's file is the one stdin reads, whatever comes after it.
+        # Every `<` file is read, whichever descriptor it feeds.
         "gh pr comment 1 --body-file - < notes.md 3</dev/null",
+        "gh pr comment 1 --body-file /dev/fd/3 < /dev/null 3<notes.md",
     ):
         d = act_in(tmp_path, cmd)
         assert d.action == "deny" and "sensitive" in d.reason, cmd

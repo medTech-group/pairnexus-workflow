@@ -652,6 +652,7 @@ class _Cmd:
     redirects: list[str] = field(default_factory=list)
     stdin: str | None = None
     heredoc: str | None = None
+    inputs: list[str] = field(default_factory=list)  # every `<` file, whatever its descriptor
     stdins: int = 0  # heredocs, here-strings and `<` files given: bash reads only the last
     stdin_unseen: bool = False  # stdin from another descriptor (`<&3`), closed, or not what `stdin`/`heredoc` hold (`3<f`)
 
@@ -697,6 +698,7 @@ def _simple(toks: list) -> list:
                 elif op == "<&":
                     pass
                 elif op == "<":
+                    cur.inputs.append(nxt)
                     if on_stdin or cur.stdin is None:  # read by the other checks; fd 0's file comes first
                         cur.stdin = nxt
                     cur.stdins += on_stdin
@@ -736,6 +738,7 @@ class Seg:
     match_only: bool = False  # run by find -execdir on the match alone (`rm -f {}`), which the find's own check covers
     stdins: int = 0  # how many inputs it was given on stdin (heredocs, here-strings, `<` files)
     stdin_unseen: bool = False  # stdin from another descriptor (`<&3`) or closed
+    inputs: list[str] = field(default_factory=list)  # every `<` file, whatever its descriptor
 
 
 _KEYWORDS = {"{", "}", "!", "if", "then", "else", "elif", "fi", "do", "done", "while", "until", "esac", "coproc"}
@@ -926,7 +929,7 @@ def _segments_of(toks: list, root: Path, cwd: str | None, depth: int) -> list[Se
                 if toks2[0] == "pushd":
                     dirs.append(cwd)
             oldpwd, cwd = cwd, new
-            seg = Seg(toks2, item.redirects, cwd, item.stdin, item.heredoc, prev if piped else None, assigns, stdins=item.stdins, stdin_unseen=item.stdin_unseen)
+            seg = Seg(toks2, item.redirects, cwd, item.stdin, item.heredoc, prev if piped else None, assigns, stdins=item.stdins, stdin_unseen=item.stdin_unseen, inputs=item.inputs)
             segs.append(seg)
             prev = seg
             continue
@@ -935,7 +938,7 @@ def _segments_of(toks: list, root: Path, cwd: str | None, depth: int) -> list[Se
             seg_cwd = _cd_target([chdir], root, cwd)
         if not toks2 and not item.redirects and not assigns and item.stdin is None and item.heredoc is None:
             continue
-        seg = Seg(toks2, item.redirects, seg_cwd, item.stdin, item.heredoc, prev if piped else None, assigns, stdins=item.stdins, stdin_unseen=item.stdin_unseen)
+        seg = Seg(toks2, item.redirects, seg_cwd, item.stdin, item.heredoc, prev if piped else None, assigns, stdins=item.stdins, stdin_unseen=item.stdin_unseen, inputs=item.inputs)
         if "xargs" in stripped:
             seg.fed = True
             # A list read from a file (`-a f`, `< f`), not the pipe: anywhere in the words, to be safe.
@@ -2107,8 +2110,7 @@ def _command_reads(segs: list[Seg]) -> list[str]:
         if s.words and Path(s.words[0]).name in _READERS:
             skip = set(_opt_values(s.words, ("-n", "-c", "--lines", "--bytes")))
             files += [w for w in s.words[1:] if not w.startswith("-") and w not in skip]
-        if s.stdin:
-            files.append(s.stdin)
+        files += s.inputs or ([s.stdin] if s.stdin else [])
         for f in files[:50]:
             txt = _read_text(f, s.cwd)
             if txt:
@@ -2853,7 +2855,7 @@ def _named_hit(
 
 
 _VIMS = {"vim", "vi", "nvim", "vimdiff", "view", "ex"}
-_VIM_EX = re.compile(r"-[bdhlLmMnNRsyZAFH]*[eE][bdhlLmMnNRsyZAFHeE]*")  # ex mode, alone or among flags that take no value (`-es`, `-Nes`)
+_VIM_EX = re.compile(r"-[AbCdDfFghHlLmMnNRrsvxXyZ]*[eE][AbCdDfFghHlLmMnNRrsvxXyZeE]*")  # ex mode, alone or among flags that take no value (`-es`, `-Nes`, `-Xe`)
 
 
 @dataclass
@@ -3016,6 +3018,8 @@ def _vim_edit(toks: list[str], stdin: bool = False) -> _InPlace | None:
             if a in ("-c", "--cmd", "-S", "-s"):
                 scripted = True
                 script.append(nxt)
+            if a == "-s":
+                files.append(nxt)  # if ex mode wasn't seen, `-s` is "silent" and this is the file it edits
             i += 2
             continue
         if a.startswith("+"):
@@ -3909,8 +3913,7 @@ def check_bash(
         """The texts a post may send: its body files, its stdin, a piped producer's files."""
         out: list[str] = []
         files = [(f, s.cwd) for f in _body_files(s.words)]
-        if s.stdin:
-            files.append((s.stdin, s.cwd))
+        files += [(f, s.cwd) for f in (s.inputs or ([s.stdin] if s.stdin else []))]
         if s.piped is not None:  # what its producer reads: `cat body.md | gh pr comment 1 --body-file -`
             files += [(w, s.piped.cwd) for w in s.piped.words[1:] if not w.startswith("-")]
             if s.piped.stdin:
