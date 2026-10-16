@@ -4171,7 +4171,6 @@ _SOLO_GQL = re.compile(
     r"\b(updateRefs?|deleteRef|renameRef|createCommitOnBranch|mergeBranch|createBranchProtectionRule|"
     r"updateBranchProtectionRule|deleteBranchProtectionRule|updateRepositoryRuleset|deleteRepositoryRuleset)\b"
 )
-_SOLO_NAME_UNSAFE = re.compile(r"[$`*?\[{]")
 _CURL_SHORT_VALUE = set("AbcCdDeEFHKmoPQrtTuUwxXyYz")
 _CURL_LONG_VALUE = {
     "request", "data", "data-raw", "data-binary", "data-ascii", "data-urlencode", "json", "form", "form-string",
@@ -4194,7 +4193,7 @@ def _solo_branch(b: str | None, base: str) -> str | None:
     b = urllib.parse.unquote(b).removeprefix("refs/").removeprefix("heads/")
     if b == base:
         return "change"
-    return "unknown" if _SOLO_NAME_UNSAFE.search(b) or not b else None
+    return "unknown" if _SOLO_UNSAFE_REF.search(b) or not b else None
 
 
 def _solo_rest(method: str, path: str, base: str, body: str, field) -> SoloRefusal | None:
@@ -4221,8 +4220,9 @@ def _solo_rest(method: str, path: str, base: str, body: str, field) -> SoloRefus
             what = "protection" if (m.group(2) or "").startswith("protection") else "name" if m.group(2) else "branch"
             return SoloRefusal(f"{call} changes `{base}`'s {what}" if kind == "change" else f"{call} names its branch with something the kit can't read", kind, _SOLO_API_HINT)
         return None
-    if re.fullmatch(r"repos/[^/]+/[^/]+/git/refs", path) and _solo_branch(field("ref"), base):
-        return SoloRefusal(f"{call} makes the ref `{field('ref')}`", _solo_branch(field("ref"), base) or "change", _SOLO_API_HINT)
+    kind = _solo_branch(field("ref"), base) if re.fullmatch(r"repos/[^/]+/[^/]+/git/refs", path) else None
+    if kind:
+        return SoloRefusal(f"{call} makes the ref `{field('ref')}`", kind, _SOLO_API_HINT)
     if re.fullmatch(r"repos/[^/]+/[^/]+", path):
         if field("default_branch") is not None or re.search(r"default(?:_|\\u005f)branch", body, re.I):
             return SoloRefusal(f"{call} changes the default branch, which is `{base}`")
@@ -4262,7 +4262,7 @@ def _curl_call(toks: list[str], cwd: str | None, raw: str, read) -> _CurlCall | 
     files: list[str] = []
     stdin = False
 
-    def took(flag: str, value: str) -> None:
+    def _option(flag: str, value: str) -> None:
         nonlocal method, url, data, upload, get, head, config, stdin
         if flag in ("X", "request"):
             method = value
@@ -4294,7 +4294,7 @@ def _curl_call(toks: list[str], cwd: str | None, raw: str, read) -> _CurlCall | 
             elif name == "head":
                 head = True
             elif takes:
-                took(name, val if eq else nxt)
+                _option(name, val if eq else nxt)
             i += 2 if takes and not eq else 1
             continue
         if t.startswith("-") and len(t) > 1:
@@ -4303,7 +4303,7 @@ def _curl_call(toks: list[str], cwd: str | None, raw: str, read) -> _CurlCall | 
                 if c in _CURL_SHORT_VALUE:
                     value = t[j + 1 :] or nxt
                     used_next = not t[j + 1 :]
-                    took(c, value)
+                    _option(c, value)
                     break
                 if c == "G":
                     get = True
@@ -4398,7 +4398,11 @@ def _solo_mcp(name: str, inp: dict, profile: Profile) -> tuple[SoloRefusal, str]
         return None
     owner, repo = inp.get("owner"), inp.get("repo")
     r = f"{owner}/{repo}" if isinstance(owner, str) and isinstance(repo, str) and owner and repo else profile.repo
-    is_base = lambda v: (b := _mcp_ref(v)).casefold() == base.casefold() or not b  # noqa: E731
+
+    def is_base(v) -> bool:
+        b = _mcp_ref(v)
+        return not b or b.casefold() == base.casefold()  # as check_mcp's file writes compare it
+
     path = str(inp.get("path") or "…").lstrip("/")
     if name in GITHUB_WRITE_FILES and is_base(inp.get("branch")):
         what = f"`{name}` writes files straight to `{base}`" + ("" if _mcp_ref(inp.get("branch")) else " (the default branch, as no branch is named)")

@@ -91,7 +91,6 @@ In attended sessions the guard doesn't stop changes to protected paths: the pers
 - a bare push (no branch named) that the settings already on disk send to the base branch, for the remote git would pick: `push.default = matching`, the remote's `mirror` or its `push` refspecs naming the base branch (or ones it can't tell), or `push.default = upstream` with the branch merging into the base branch;
 - a push whose destination it can't tell, which counts as the base branch: a variable, `@` or `HEAD` where the branch is unknown, a glob, a brace list, a detached HEAD, a directory it can't follow, `--git-dir` or `--work-tree`, `GIT_DIR`, `GIT_WORK_TREE`, `GIT_CONFIG…`, `HOME` or `XDG_CONFIG_HOME` set in the command, `--stdin`, branches given by `xargs`, and an alias that pushes (a git alias given with `-c` or set in the config, followed through other aliases, one that may come from config the guard can't read, or a shell alias defined in the command). The refusal says to push the branch by name.
 
-
 It also refuses what changes the base branch through GitHub rather than git, so there is no side door:
 - `gh pr merge --admin`, which merges past the base branch's required checks;
 - changing the default branch (`gh repo edit --default-branch`, a `PATCH` of the repository with `default_branch`) and renaming the base branch (`POST …/branches/main/rename`);
