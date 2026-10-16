@@ -135,7 +135,7 @@ def _cli(root: Path, *args):
 
 
 def _run(root: Path, owner="ada", repo="ada/my-notes", name="My Notes!"):
-    return _cli(root, "adopt", "--owner", owner, "--repo", repo, "--name", name)
+    return _cli(root, "adopt", f"--owner={owner}", f"--repo={repo}", f"--name={name}")
 
 
 @pytest.fixture
@@ -342,3 +342,90 @@ def test_version_starter_reads_nothing_else(monkeypatch, capsys):
     monkeypatch.setattr(updates, "check", lambda *a, **k: pytest.fail("asked for the latest release"))
     assert cli.main(["version", "--starter"]) == 0
     assert capsys.readouterr().out == updates.STARTER_REPO + "\n"
+
+
+# Review round 1's cases.
+
+
+def test_a_failed_write_leaves_the_profile_so_a_rerun_finishes(copy, monkeypatch):
+    real = adopt._write
+
+    def failing(path, data):
+        if path.name == "CODEOWNERS":
+            raise OSError(28, "No space left on device")
+        real(path, data)
+
+    monkeypatch.setattr(adopt, "_write", failing)
+    with pytest.raises(adopt.AdoptError, match="couldn't write .github/CODEOWNERS: No space left on device"):
+        adopt.adopt(copy, "ada", "ada/my-notes", "My Notes!")
+    assert (copy / ".claude/workflow/profile.toml").read_text() == PROFILE
+    monkeypatch.setattr(adopt, "_write", real)
+    adopt.adopt(copy, "ada", "ada/my-notes", "My Notes!")
+    assert "* @ada" in (copy / ".github/CODEOWNERS").read_text()
+    assert not [p for p in copy.rglob(".*.*") if p.is_file() and p.name.startswith((".CODEOWNERS.", ".profile.toml."))]
+
+
+def test_a_write_error_is_refused_in_words(copy, monkeypatch):
+    monkeypatch.setattr(adopt.os, "replace", lambda *a: (_ for _ in ()).throw(PermissionError(13, "Permission denied")))
+    from workflow import cli
+
+    monkeypatch.chdir(copy)
+    assert cli.main(["adopt", "--owner", "ada", "--repo", "ada/my-notes", "--name", "x", "--project", str(copy)]) == 1
+
+
+def test_an_email_owner_isnt_rewritten(copy):
+    (copy / ".github/CODEOWNERS").write_text("* @old-owner ops@old-owner.example\n")
+    assert _run(copy).returncode == 0
+    assert (copy / ".github/CODEOWNERS").read_text() == "* @ada ops@old-owner.example\n"
+
+
+def test_codeowners_without_the_old_owner_gets_a_note(copy):
+    (copy / ".github/CODEOWNERS").write_text("* @medTech-group/maintainers\n")
+    p = _run(copy)
+    assert p.returncode == 0
+    assert "Left .github/CODEOWNERS as it is: it doesn't name @old-owner" in p.stdout
+
+
+def test_an_owner_goes_in_under_a_last_line_without_a_newline(copy):
+    path = copy / ".claude/workflow/profile.toml"
+    path.write_text('[project]\nname = "x"\nrepo = "a/b"')
+    assert _run(copy).returncode == 0
+    assert path.read_text() == '[project]\nname = "My Notes!"\nrepo = "ada/my-notes"\nowner = "ada"'
+
+
+def test_a_value_already_right_in_other_quotes_is_left(copy):
+    path = copy / ".claude/workflow/profile.toml"
+    text = PROFILE.replace('name = "pairnexus-starter-web"', "name = 'My Notes!'").replace('repo = "medTech-group/pairnexus-starter-web"', "repo = 'ada/my-notes'")
+    path.write_text(text)
+    assert _run(copy).returncode == 0
+    assert path.read_text() == text.replace('owner = "old-owner"', 'owner = "ada"')
+
+
+def test_a_bom_is_kept_and_the_title_after_it_found(copy):
+    (copy / "README.md").write_bytes(b"\xef\xbb\xbf# old\n\n# second\n")
+    (copy / "package.json").write_bytes(b'\xef\xbb\xbf{"name": "old"}\n')
+    assert _run(copy).returncode == 0
+    assert (copy / "README.md").read_bytes() == b"\xef\xbb\xbf# My Notes!\n\n# second\n"
+    assert (copy / "package.json").read_bytes() == b'\xef\xbb\xbf{"name": "my-notes"}\n'
+
+
+def test_decoys_before_the_real_names_are_left(copy):
+    (copy / "README.md").write_text("<!--\n# in a comment\n-->\n```\n# in a fence\n```\n# old\n")
+    (copy / "package.json").write_text('{"repository": {"name": "decoy"}, "name": "old"}\n')
+    (copy / "wrangler.toml").write_text('[previews]\nname = "keep-me"\n')
+    p = _run(copy)
+    assert p.returncode == 0
+    assert (copy / "README.md").read_text() == "<!--\n# in a comment\n-->\n```\n# in a fence\n```\n# My Notes!\n"
+    assert (copy / "package.json").read_text() == '{"repository": {"name": "decoy"}, "name": "my-notes"}\n'
+    assert (copy / "wrangler.toml").read_text() == '[previews]\nname = "keep-me"\n'
+    assert "Skipped wrangler.toml: no top-level name" in p.stdout
+
+
+@pytest.mark.parametrize("repo", ["ada/..", "ada/.", "-ada/x", "ada-/x", "ada--x/y"])
+def test_repos_github_refuses_are_refused(copy, repo):
+    assert _run(copy, repo=repo).returncode == 1
+
+
+def test_a_name_with_no_ascii_says_so(copy):
+    p = _run(copy, name="笔记")
+    assert p.returncode == 1 and "no ASCII letters or digits" in p.stderr

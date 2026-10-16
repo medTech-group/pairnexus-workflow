@@ -15,8 +15,11 @@ before anything is written, so a refusal leaves the working tree unchanged.
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import re
+import tempfile
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -31,12 +34,16 @@ README = "README.md"
 PROFILE = PROFILE_PATH.as_posix()
 WORKER_NAME_MAX = 63  # a Worker's name is a DNS label; the package's is cut the same, so the two match
 
-REPO = re.compile(r"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$")
+# GitHub's rules: a login of letters, digits and single inner hyphens; a
+# repository name of letters, digits, `.`, `_` and `-`, but not `.` or `..`.
+_LOGIN = r"[A-Za-z0-9](?:-?[A-Za-z0-9])*"
+REPO = re.compile(rf"^{_LOGIN}/(?!\.\.?$)[A-Za-z0-9._-]+$")
 _TABLE = re.compile(r"^\s*\[")
 _PROJECT_TABLE = re.compile(r"^\s*\[\s*project\s*\]\s*(#.*)?$")
 # `key = "value"` or `key = 'value'`, then anything (a comment) after it.
 _TOML_KEY = r"^(?P<lead>\s*{key}\s*=\s*)(?P<value>\"(?:[^\"\\\n]|\\.)*\"|'[^'\n]*')(?P<rest>.*)$"
 _FENCE = re.compile(r"^\s*(```|~~~)")
+BOM = "\ufeff"
 
 
 class AdoptError(ValueError):
@@ -48,11 +55,26 @@ class Result:
     changed: list[tuple[str, str]] = field(default_factory=list)  # (path, what changed)
     notes: list[str] = field(default_factory=list)
     writes: dict[str, bytes] = field(default_factory=dict)
+    boms: set[str] = field(default_factory=set)  # files that start with a BOM, kept on write
+
+    def read(self, root: Path, rel: str) -> str | None:
+        """The file's text without any BOM, or None when it isn't there."""
+        path = root / rel
+        if not path.is_file():
+            return None
+        try:
+            text = path.read_bytes().decode("utf-8")
+        except UnicodeDecodeError as e:
+            raise AdoptError(f"{rel} isn't UTF-8 text") from e
+        if text.startswith(BOM):
+            self.boms.add(rel)
+            text = text[1:]
+        return text
 
     def record(self, rel: str, old: str, new: str, what: str) -> None:
         if new != old:
             self.changed.append((rel, what))
-            self.writes[rel] = new.encode("utf-8")
+            self.writes[rel] = ((BOM if rel in self.boms else "") + new).encode("utf-8")
 
     def text(self) -> str:
         lines = [f"Changed {path}: {what}" for path, what in self.changed]
@@ -94,21 +116,13 @@ def _set_key(lines, start: int, stop: int, key: str, value: str) -> bool:
         body, end = lines[i]
         m = pat.match(body)
         if m:
-            lines[i] = (m.group("lead") + _toml_string(value) + m.group("rest"), end)
+            # A value already right, in either quoting, is left as it is.
+            if tomllib.loads(f"v = {m.group('value')}")["v"] != value:
+                lines[i] = (m.group("lead") + _toml_string(value) + m.group("rest"), end)
             return True
         if bare.match(body):
             raise AdoptError(f"line {i + 1} sets {key} in a form this can't rewrite line by line: {body.strip()}")
     return False
-
-
-def _read(root: Path, rel: str) -> str | None:
-    path = root / rel
-    if not path.is_file():
-        return None
-    try:
-        return path.read_bytes().decode("utf-8")
-    except UnicodeDecodeError as e:
-        raise AdoptError(f"{rel} isn't UTF-8 text") from e
 
 
 def _profile(text: str, owner: str, repo: str, name: str) -> str:
@@ -123,13 +137,17 @@ def _profile(text: str, owner: str, repo: str, name: str) -> str:
     if not _set_key(lines, start, stop, "owner", owner):
         # An owner the profile left out goes in under repo, as the template has it.
         at = next(i for i in range(start, stop) if re.match(r"^\s*repo\s*=", lines[i][0]))
-        lines.insert(at + 1, (f"owner = {_toml_string(owner)}", lines[at][1] or "\n"))
+        ending = next((end for _, end in lines if end), "\n")
+        if not lines[at][1]:
+            lines[at] = (lines[at][0], ending)
+        lines.insert(at + 1, (f"owner = {_toml_string(owner)}", ending if at + 1 < len(lines) else ""))
     return _join(lines)
 
 
 def _codeowners(text: str, old: str, new: str) -> str:
-    # `@old` as a whole login, any case (GitHub's logins are), but not `@old/team`.
-    pat = re.compile(rf"@{re.escape(old)}(?![A-Za-z0-9/-])", re.I)
+    # `@old` as a whole login, any case (GitHub's logins are), but not `@old/team`
+    # or an email address's domain (`ops@old.example`).
+    pat = re.compile(rf"(?<!\S)@{re.escape(old)}(?![A-Za-z0-9/.-])", re.I)
     return pat.sub(f"@{new}", text)
 
 
@@ -167,10 +185,14 @@ def _package(text: str, dashed_name: str) -> str | None:
 
 def _readme(text: str, name: str) -> str | None:
     lines = _lines(text)
-    fenced = False
+    fenced = commented = False
     for i, (body, end) in enumerate(lines):
-        if _FENCE.match(body):
+        if commented:
+            commented = "-->" not in body
+        elif _FENCE.match(body):
             fenced = not fenced
+        elif not fenced and "<!--" in body and "-->" not in body.split("<!--", 1)[1]:
+            commented = True
         elif not fenced and body.startswith("# "):
             lines[i] = (f"# {name}", end)
             return _join(lines)
@@ -188,10 +210,10 @@ def plan(root: Path, owner: str, repo: str, name: str) -> Result:
         raise AdoptError("--name must be one line of text")
     dashed_name = dashed(name)
     if not dashed_name:
-        raise AdoptError(f"--name {name!r} has no letters or digits, so it makes an empty Worker name")
+        raise AdoptError(f"--name {name!r} has no ASCII letters or digits, so it makes an empty Worker name")
 
     res = Result()
-    text = _read(root, PROFILE)
+    text = res.read(root, PROFILE)
     if text is None:
         raise AdoptError(f"no profile at {PROFILE}: run this in a copy of the starter")
     try:
@@ -205,7 +227,7 @@ def plan(root: Path, owner: str, repo: str, name: str) -> Result:
         raise AdoptError(f"the rewritten profile wouldn't read: {e}") from e
     if (prof.name, prof.repo, prof.owner) != (name, repo, owner):
         raise AdoptError(f"{PROFILE}: the rewritten profile doesn't read back the new names")
-    keys = [f"project.{k}" for k, v in (("owner", owner), ("name", name), ("repo", repo)) if old.get(k) != v]
+    keys = [f"project.{k}" for k, v in (("owner", owner), ("name", name), ("repo", repo)) if (old.get(k) or "") != v]
     res.record(PROFILE, text, new_text, ", ".join(keys))
 
     old_owner = old.get("owner") or ""
@@ -215,10 +237,13 @@ def plan(root: Path, owner: str, repo: str, name: str) -> Result:
     elif not old_owner:
         res.notes.append(f"Skipped {found}: the profile named no owner to replace")
     elif old_owner != owner:
-        text = _read(root, found)
-        res.record(found, text, _codeowners(text, old_owner, owner), f"@{old_owner} → @{owner}")
+        text = res.read(root, found)
+        new_text = _codeowners(text, old_owner, owner)
+        if new_text == text:
+            res.notes.append(f"Left {found} as it is: it doesn't name @{old_owner}")
+        res.record(found, text, new_text, f"@{old_owner} → @{owner}")
 
-    text = _read(root, WRANGLER)
+    text = res.read(root, WRANGLER)
     if text is None:
         res.notes.append(f"Skipped {WRANGLER}: not there")
     else:
@@ -234,7 +259,7 @@ def plan(root: Path, owner: str, repo: str, name: str) -> Result:
                 raise AdoptError(f"{WRANGLER}: the rewritten file doesn't read back the new name")
             res.record(WRANGLER, text, new_text, f"name = {dashed_name}")
 
-    text = _read(root, PACKAGE)
+    text = res.read(root, PACKAGE)
     if text is None:
         res.notes.append(f"Skipped {PACKAGE}: not there")
     else:
@@ -250,7 +275,7 @@ def plan(root: Path, owner: str, repo: str, name: str) -> Result:
                 raise AdoptError(f"{PACKAGE}: the rewritten file doesn't read back the new name")
             res.record(PACKAGE, text, new_text, f"name = {dashed_name}")
 
-    text = _read(root, README)
+    text = res.read(root, README)
     if text is None:
         res.notes.append(f"Skipped {README}: not there")
     else:
@@ -262,8 +287,28 @@ def plan(root: Path, owner: str, repo: str, name: str) -> Result:
     return res
 
 
+def _write(path: Path, data: bytes) -> None:
+    """Through a temporary file beside it, so a failed write never leaves half a file."""
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.chmod(tmp, path.stat().st_mode & 0o7777)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
 def adopt(root: Path, owner: str, repo: str, name: str) -> Result:
+    """Write what `plan` worked out. The profile goes last: its old owner is what
+    a second run reads CODEOWNERS by, so a write that fails before it can be
+    run again. A failed write is an AdoptError."""
     res = plan(root, owner, repo, name)
-    for rel, data in res.writes.items():
-        (root / rel).write_bytes(data)
+    for rel in sorted(res.writes, key=lambda rel: rel == PROFILE):
+        try:
+            _write(root / rel, res.writes[rel])
+        except OSError as e:
+            raise AdoptError(f"couldn't write {rel}: {e.strerror or e}; run it again once that's fixed") from e
     return res
