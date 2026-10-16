@@ -69,6 +69,8 @@ To the base branch. Its body:
 - the decisions taken, under "Decisions for the owner";
 - the by-hand checks added.
 
+Then post the review records of the rounds so far: each round's `record.md`, kept in its scratch directory (`review-panel`, "Review records"), oldest first. Later rounds and Correctness passes post theirs as they run. The records sit alongside the findings table; they don't replace it.
+
 Lasting knowledge for later work (how a new module is meant to be used, a pitfall) goes in the repo's own docs, in this PR, before it merges.
 
 Then subscribe to its activity. Schedule a check-in about every `run.check_in_minutes` (`send_later` in cloud sessions; `/loop` or a cron task locally), and end the turn with `WORKFLOW-STATUS: waiting`.

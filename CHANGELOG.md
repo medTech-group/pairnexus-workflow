@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**Review records: each review round leaves one on the pull request** (#79, part of judging a PR without reading code, #39).
+
+- **`workflow review-record`** prints the comment a round or a later Correctness pass posts: a line for people ("Review round 2 on `3f2a9c0`: clean. Reviewers: Standards, Spec, Correctness."), one machine-readable line (`<!-- workflow:review kind=round round=2 commit=<full sha> reviewers=standards,spec,correctness result=clean -->`) and the agents' marker. Flags: `--kind round|pass`, `--round`, `--commit` (the full SHA), `--reviewers` (from `standards`, `spec`, `correctness`, `security`, `explorer`; a `pass` is `correctness` alone), `--clean` or `--not-clean`. A missing field, a short or non-hex SHA, an unknown reviewer or a pass with other reviewers is refused in plain words, with a non-zero exit.
+- **The reader** sits in the same module (`scripts/workflow/reviews.py`: `records_in(text)` for one comment, `read(comments)` for a pull request's comments, with who posted each), so the coming `workflow merge-check` and the writer can't drift. A malformed record line is skipped, never a crash.
+- **The `review-panel` skill** posts a record after every round, whatever it found, and after each later Correctness pass, in attended and unattended sessions alike. `build-ticket` posts the records of the rounds run before its pull request opened, once it does; its findings table stays in the PR body.
+- Docs: `docs/flow.md` §3. Tests: `tests/test_review_record.py`.
+- **For projects updating:** nothing to do.
+
 **The guard sees `Monitor` and `PowerShell`** (#55, part of guard robustness, #33).
 
 - **The guard's matcher adds `Monitor` and `PowerShell`**, in a vendored project's settings and in the plugin's hooks file. Before, neither reached the guard, even in a ticket session.
