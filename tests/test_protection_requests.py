@@ -645,3 +645,15 @@ def test_require_checks_fills_a_checks_rule_with_no_list(repo, inp, params):
         "type": "required_status_checks",
         "parameters": {"strict_required_status_checks_policy": True, "required_status_checks": [{"context": "tests"}]},
     }
+
+
+# ---------- review round 3 ----------
+
+
+@pytest.mark.parametrize("form", [(), ("--json",)])
+def test_a_ruleset_nested_deep_enough_to_parse_but_not_to_copy_is_a_plain_error(repo, inp, form):
+    rs = json.dumps(recorded_ruleset())
+    deep = rs.replace('"exclude": ["refs/heads/old"]}', '"exclude": ["refs/heads/old"]}, "x": ' + "[" * 600 + "]" * 600, 1)
+    assert deep != rs
+    p = cli(repo, "--require-checks", put(inp, "ruleset.json", deep), "--check", "tests", *form)
+    bad(p, "nested too deeply")

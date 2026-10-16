@@ -306,10 +306,14 @@ def cmd_protection(a) -> int:
         else:
             rep = read_back()
             out = rep.as_dict() if a.json else protection_mod.text(rep)
+        out = out if isinstance(out, str) else json.dumps(out, indent=2)
+    except RecursionError:  # input JSON can parse yet be too deep to copy or print
+        print("workflow protection: an input file is nested too deeply to be what GitHub returns", file=sys.stderr)
+        return 2
     except protection_mod.ProtectionError as e:
         print(f"workflow protection: {e}", file=sys.stderr)
         return 2
-    _out(out)
+    print(out)
     return 0
 
 
