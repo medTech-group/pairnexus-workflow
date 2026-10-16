@@ -268,14 +268,15 @@ def _who(logins) -> str:
     return ", ".join(f"@{_clean(w)}" if w else "someone" for w in logins) or "someone"
 
 
-def _walk(value, name: str, is_item: Callable[[dict], bool], keys: tuple[str, ...] = ()) -> list[dict]:
+def _walk(value, name: str, is_item: Callable[[dict], bool], keys: tuple[str, ...] = (), counted: bool = False) -> list[dict]:
     """The items in `value`: a list of them, pages of them, or an object
     holding them under one of `keys` (nested, as GraphQL nests them).
 
     Raises Unreadable for anything else, and for a GraphQL list fetched only in
     part: its pages (`gh api graphql --paginate --slurp`) taken together hold
     fewer nodes than `totalCount`, or the last says `pageInfo.hasNextPage`, or
-    the first `hasPreviousPage`."""
+    the first `hasPreviousPage`. With `counted`, a list that doesn't say how
+    long it is (no `totalCount` or `pageInfo`) can't be read either."""
     out: list[dict] = []
     pages: list[tuple[bool, bool, int | None, int]] = []  # (has previous, has next, total, nodes)
 
@@ -308,6 +309,8 @@ def _walk(value, name: str, is_item: Callable[[dict], bool], keys: tuple[str, ..
             raise Unreadable(name, f"it holds {what} that isn't {INPUTS[name]}, as GitHub gives them")
 
     go(value, 0)
+    if counted and not pages:
+        raise Unreadable(name, "it doesn't say how many there are, so a page left out can't be told: give GraphQL's connection with totalCount and pageInfo")
     if pages:
         total = max((t for *_, t, _ in pages if t is not None), default=None)
         if pages[0][0] or pages[-1][1] or (total is not None and sum(n for *_, n in pages) < total):
@@ -332,8 +335,14 @@ class PR:
     counts: dict  # what GitHub says the lists hold: files, comments, commits
 
 
+def _one(v):
+    """One object as `--paginate --slurp` gives it too: a list of one page."""
+    return v[0] if isinstance(v, list) and len(v) == 1 and isinstance(v[0], dict) else v
+
+
 def _pr(v) -> PR:
     """The pull request, from GET repos/<repo>/pulls/<n> or `gh pr view --json`."""
+    v = _one(v)
     if not isinstance(v, dict):
         raise Unreadable("pr", "it isn't a JSON object, as GET repos/<repo>/pulls/<n> returns one")
     head = v.get("head")
@@ -603,6 +612,7 @@ class Context:
                 "threads",
                 lambda d: any(k in d for k in ("isResolved", "is_resolved", "resolved")),
                 GRAPHQL + ("reviewThreads", "review_threads", "threads", "nodes"),
+                counted=True,  # threads come only from GraphQL, 100 to a page
             )
             out = []
             for t in items:
@@ -646,7 +656,7 @@ class Context:
         """How many commits the head is behind the base."""
 
         def read():
-            v = self.raw("compare")
+            v = _one(self.raw("compare"))
             head = self.head()
             if not isinstance(v, dict) or _int(v.get("behind_by")) is None:
                 raise Unreadable("compare", "it has no behind_by, as GET repos/<repo>/compare/<base>...<head> gives it")
@@ -659,7 +669,7 @@ class Context:
             base_side = re.search(r"/compare/(.+?)\.\.\.", str(v.get("url") or v.get("html_url") or ""))
             if base_side and self.head() is not None and base_side.group(1) not in (self.pr().base, f"refs/heads/{self.pr().base}"):
                 raise Unreadable("compare", "it compares the head with something other than the base branch: compare <base branch>...<head SHA>")
-            if head is not None and (not told and _int(v.get("ahead_by")) != 0 or any(s != head for s in told)):
+            if head is not None and (not told or any(s != head for s in told)):
                 raise Unreadable("compare", "it doesn't compare the pull request's head: compare <base>...<head SHA>")
             return v["behind_by"]
 

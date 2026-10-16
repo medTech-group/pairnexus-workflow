@@ -77,7 +77,7 @@ def inputs():
         "commits": [{"sha": EARLIER}, {"sha": HEAD}],
         "checks": {"total_count": 1, "check_runs": [run_("tests")]},
         "rulesets": [ruleset("tests")],
-        "threads": [],
+        "threads": {"totalCount": 0, "nodes": []},
         "reviews": [],
         "comments": [comment(rec())],
         "permissions": {"owner": "admin", "dev": "write", "keeper": "maintain", "stranger": "read"},
@@ -352,7 +352,7 @@ def thread(resolved, who="dev"):
 
 def test_an_unresolved_thread_is_not_yet_naming_who_asked(project, capsys):
     data = inputs()
-    data["threads"] = [thread(False, "stranger"), thread(True)]
+    data["threads"] = {"totalCount": 2, "nodes": [thread(False, "stranger"), thread(True)]}
     got, _ = check(project, capsys, data)
     [r] = got["reasons"]
     assert r["id"] == "unresolved_threads" and "@stranger" in r["message"]
@@ -360,7 +360,7 @@ def test_an_unresolved_thread_is_not_yet_naming_who_asked(project, capsys):
 
 def test_threads_in_graphqls_own_shape(project, capsys):
     data = inputs()
-    data["threads"] = {"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": [thread(False)]}}}}}
+    data["threads"] = {"data": {"repository": {"pullRequest": {"reviewThreads": {"totalCount": 1, "nodes": [thread(False)]}}}}}
     got, _ = check(project, capsys, data)
     assert ids(got) == ["unresolved_threads"]
 
@@ -603,7 +603,7 @@ def everything_wrong():
     data["checks"]["check_runs"] = [run_("tests", "failure")]
     data["pr"].update(mergeable=False, mergeable_state="dirty")
     data["compare"]["behind_by"] = 4
-    data["threads"] = [thread(False)]
+    data["threads"] = {"totalCount": 1, "nodes": [thread(False)]}
     data["reviews"] = [review("CHANGES_REQUESTED")]
     data["comments"] = []
     data["preview"] = preview("failed")
@@ -888,7 +888,7 @@ def test_without_the_default_branch_the_profiles_base_counts_as_it(project, caps
 
 def test_reasons_found_before_a_shared_input_failed_are_kept(project, capsys):
     data = inputs()
-    data["threads"] = [thread(False)]
+    data["threads"] = {"totalCount": 1, "nodes": [thread(False)]}
     got, _ = check(project, capsys, data, raw={"permissions": "{not json"})
     assert "unresolved_threads" in ids(got)
     assert [r["input"] for r in got["reasons"] if r["id"] == "couldnt_read"] == ["permissions"]
@@ -992,7 +992,7 @@ SCENARIOS = {
     "mergeable_unknown": (None, _set(("pr", "mergeable"), None)),
     "draft": (None, _set(("pr", "draft"), True)),
     "closed": (None, _set(("pr", "state"), "closed")),
-    "unresolved_threads": (None, lambda d: d.update(threads=[thread(False)])),
+    "unresolved_threads": (None, lambda d: d.update(threads={"totalCount": 1, "nodes": [thread(False)]})),
     "changes_requested": (None, lambda d: d.update(reviews=[review("CHANGES_REQUESTED")])),
     "preview_failed": (None, lambda d: d.update(preview=preview("failed"))),
     "preview_building": (None, lambda d: d.update(preview=preview("building"))),
@@ -1247,3 +1247,32 @@ def test_a_missing_count_says_to_fix_the_pull_request_file(project, capsys):
     got, _ = check(project, capsys, data)
     [r] = got["reasons"]
     assert "--pr" in r["message"] and "gh pr view --json" in r["message"]
+
+
+# ---------- round 3's Correctness ----------
+
+
+@pytest.mark.parametrize("threads", [[], [thread(True)], {"nodes": [thread(True)]}])
+def test_threads_that_dont_say_how_many_there_are_are_couldnt_read(project, capsys, threads):
+    data = inputs()
+    data["threads"] = threads
+    got, _ = check(project, capsys, data)
+    assert [r["input"] for r in got["reasons"] if r["id"] == "couldnt_read"] == ["threads"]
+
+
+@pytest.mark.parametrize("compare", [
+    {"ahead_by": 0, "behind_by": 0, "commits": [], "url": "https://api.github.com/repos/acme/demo/compare/main...main"},
+    {"ahead_by": 0, "behind_by": 0, "commits": [], "url": "https://api.github.com/repos/acme/demo/compare/main...feature"},
+])
+def test_a_comparison_that_doesnt_name_the_head_is_couldnt_read_even_level(project, capsys, compare):
+    data = inputs()
+    data["compare"] = compare
+    got, _ = check(project, capsys, data)
+    assert [r["input"] for r in got["reasons"] if r["id"] == "couldnt_read"] == ["compare"]
+
+
+def test_the_pull_request_and_comparison_as_slurped_pages_are_read(project, capsys):
+    data = inputs()
+    data["pr"], data["compare"] = [data["pr"]], [data["compare"]]
+    got, _ = check(project, capsys, data)
+    assert got["decision"] == "ready", got["reasons"]

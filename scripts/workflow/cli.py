@@ -1043,7 +1043,12 @@ def main(argv: list[str] | None = None) -> int:
         "merge-check", allow_abbrev=False, help="whether a pull request may merge under the merge rule (flow §4), from JSON files; changes nothing, posts nothing, exits 0"
     )
     for name, what in merge_mod.INPUTS.items():
-        source = "#41's preview reader: state built, building, failed or none; url; commit" if name == "preview" else "as JSON from the GitHub API, every page"
+        source = {
+            "preview": "#41's preview reader: state built, building, failed or none; url; commit",
+            "pr": "as JSON from the GitHub API",
+            "compare": "as JSON from the GitHub API",
+            "threads": "GraphQL's reviewThreads, with totalCount and pageInfo, every page",
+        }.get(name, "as JSON from the GitHub API, every page")
         s.add_argument(f"--{name}", metavar="F", help=f"{what} ({source}); a file, or - for standard input")
     s.add_argument("--asker", metavar="LOGIN", help="the GitHub login of whoever asks (the owner gets \"Ready once you've read\" for kit and CI files)")
     s.add_argument("--json", action="store_true", help="the decision, its reasons and notes, and each check's name and state, as JSON")
