@@ -301,7 +301,7 @@ def test_one_confirmation_by_experience_with_the_checks_that_ran():
     assert "For `restore_protection`, offer only the names the profile already lists" in auto
     assert "naming each with its result" in confirm
     # AskUserQuestion takes four options to a question: every check still fits.
-    assert "spread evenly so each question has two to four checks, up to four questions in the call; with more than sixteen, a numbered list" in confirm
+    assert "spread evenly so each question has two to four checks, up to four questions in a follow-up call; with more than sixteen, a numbered list" in confirm
     assert "With a single check, there is no **Choose which**" in confirm
     # Claude Code's prompt, said up front as expected.
     assert "Claude Code will ask you to approve the GitHub command that makes the ruleset. That is expected" in confirm
