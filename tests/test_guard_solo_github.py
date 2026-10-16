@@ -478,6 +478,52 @@ def test_mcp_new_repository_with_a_default_branch_is_not_refused(solo):
     assert act(solo, mcp("create_repository", {"name": "new", "default_branch": "main"})).action == "allow"
 
 
+# ---------- review round 2: ordinary work stays as it was ----------
+
+ORDINARY = [
+    'gh api "repos/acme/demo/issues/$N/comments" -f body=hi',
+    "for n in 3 4; do gh api -X PATCH repos/acme/demo/issues/$n -f state=closed; done",
+    'gh api "repos/{owner}/{repo}/pulls/$PR/reviews" -f event=APPROVE',
+    f'curl -X POST -H "Authorization: Bearer $GITHUB_TOKEN" "{API}/issues/$N/comments" -d \'{{"body":"x"}}\'',
+    "gh issue list --json number -q '.[].number' | xargs -I{} gh api repos/acme/demo/issues/{}/comments -f body=x",
+    "curl -s localhost:4000/graphql -H 'Content-Type: application/json' --data-binary @- <<'EOF'\n{\"query\": \"{ me { id } }\"}\nEOF",
+    'curl localhost:3000/api/graphql -d "$(jq -n --arg q "$Q" \'{query:$q}\')"',
+    'curl -X POST "$API_URL/graphql" -d \'{"query":"{ me { id } }"}\'',
+    "gh pr merge 12 --squash --body \"$(cat <<'EOF'\nDone.\nEOF\n)\"",
+    'gh pr merge "$PR" --merge --delete-branch',
+    'gh repo edit --description "$(cat desc.txt)"',
+    "gh api graphql -f query=\"$(cat q.graphql)\"",
+    "git commit -m 'refuse updateRef in solo mode' && gh api graphql -f query='query($o:String!){ repositoryOwner(login:$o){ login } }' -f o=acme",
+    "echo '{\"allow_auto_merge\":true}' | gh api -X PATCH repos/acme/demo --input -",
+    "gh api -X PATCH repos/acme/demo --input - <<'EOF'\n{\"allow_auto_merge\":true}\nEOF",
+    f'curl --oauth2-bearer "$GITHUB_TOKEN" -X POST {API}/issues -d @i.json',
+]
+
+
+@pytest.mark.parametrize("cmd", ORDINARY)
+def test_round_2_ordinary_work_not_refused(cmd, solo):
+    (solo.root / "q.graphql").write_text("query { viewer { login } }\n")
+    assert act(solo, bash(cmd, solo.root)).action != "deny", cmd
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "gh api -X DELETE repositories/123456/rulesets/42",
+        "gh api -X PATCH repositories/123456 -f default_branch=x",
+        'gh api -X DELETE "repos/acme/demo/$X"',
+        'gh pr merge 3 --merge "$FLAG"',
+        "gh api graphql -f query=\"$(cat del.graphql)\"",
+        "gh api graphql -f query='mutation($id:ID!){ deleteRepositoryRuleset(input:{repositoryRulesetId:$id}){ clientMutationId } }' -f id=X",
+        "echo '{\"default_branch\":\"x\"}' | gh api -X PATCH repos/acme/demo --input -",
+        "curl -X DELETE https://ghe.example.com/api/v3/repos/acme/demo/rulesets/42",
+    ],
+)
+def test_round_2_still_refused(cmd, solo):
+    (solo.root / "del.graphql").write_text("mutation { deleteRepositoryRuleset(input: {id: X}) { clientMutationId } }\n")
+    assert act(solo, bash(cmd, solo.root)).action == "deny", cmd
+
+
 def test_an_earlier_ask_never_hides_a_later_refusal(solo):
     cmd = "gh api -X PUT repos/acme/demo/branches/feature/protection --input p.json; gh api -X DELETE repos/acme/demo/rulesets/42"
     assert act(solo, cmd).action == "deny"

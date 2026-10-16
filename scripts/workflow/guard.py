@@ -4177,14 +4177,21 @@ _EXPANDS = re.compile(r"[$`]")
 # What makes a curl call one to GitHub's API, or one that may be: its host, or a
 # path only GitHub's API has.
 _GITHUB_HINT = re.compile(
-    r"(?i)(?:api|uploads)\.github\.com|/api/v3\b|/api/graphql|\bgraphql\b|/rulesets\b|/protection\b|/git/refs\b|/branches/|/merges\b|/merge-upstream\b|/contents/"
+    r"(?i)(?:api|uploads)\.github\.com|/api/v3\b|/rulesets\b|/protection\b|/git/refs\b|/branches/|/merges\b|/merge-upstream\b|/contents/"
 )
 _CURL_SHORT_VALUE = set("AbcCdDeEFHKmoPQrtTuUwxXyYz")
 _CURL_LONG_VALUE = {
     "request", "data", "data-raw", "data-binary", "data-ascii", "data-urlencode", "json", "form", "form-string",
     "upload-file", "config", "header", "url", "output", "user", "user-agent", "referer", "cookie", "cookie-jar",
     "proxy", "max-time", "write-out", "cert", "key", "cacert", "connect-timeout", "retry", "range", "variable",
-    "url-query",
+    "url-query", "oauth2-bearer", "netrc-file", "output-dir", "trace", "trace-ascii", "trace-config", "resolve",
+    "connect-to", "retry-delay", "retry-max-time", "limit-rate", "unix-socket", "abstract-unix-socket", "aws-sigv4",
+    "proxy-user", "dns-servers", "interface", "local-port", "max-filesize", "max-redirs", "speed-limit", "speed-time",
+    "time-cond", "keepalive-time", "dump-header", "stderr", "capath", "key-type", "cert-type", "pinnedpubkey",
+    "ciphers", "proto", "proto-redir", "request-target", "service-name", "socks5", "socks5-hostname", "noproxy",
+    "preproxy", "happy-eyeballs-timeout-ms", "expect100-timeout", "login-options", "mail-from", "mail-rcpt",
+    "ftp-port", "quote", "delegation", "hostpubmd5", "hostpubsha256", "krb", "pass", "tls-max", "tlsuser",
+    "tlspassword", "hsts", "alt-svc", "etag-save", "etag-compare", "ech", "ipfs-gateway", "haproxy-clientip",
 }  # fmt: skip
 _CURL_LONG_FLAGS = {"get", "head", "globoff", "next", "path-as-is"}
 # An abbreviated long option counts as the first of these it may stand for.
@@ -4274,7 +4281,23 @@ def _api_path(path: str) -> str:
     p = urllib.parse.unquote(p.split("?", 1)[0].split("#", 1)[0])
     p = posixpath.normpath("/" + p.lstrip("/")).strip("/")
     p = re.sub(r"(?i)^api/v3/", "", p)
+    p = re.sub(r"^repositories/\d+(?=/|$)", "repos/{id}/{id}", p)  # the same repository, by its id
     return "graphql" if re.fullmatch(r"(?i)(?:api/)?graphql", p) else p
+
+
+# What a repository's issues, pull requests and the like live under: a path the
+# shell fills in after one of these never reaches a branch, its protection or a ruleset.
+_PLAIN_RESOURCES = r"issues|pulls|labels|milestones|releases|check-runs|check-suites|statuses|commits|comments|deployments|actions|projects|discussions|assignees|collaborators|notifications|hooks|keys|forks|invitations|environments|pages|subscription|stargazers"
+
+
+def _plain_resource(path: str) -> bool:
+    """Whether a path with parts the shell fills in is plainly not one this
+    check is about: under a repository's literal issues, pull requests and the
+    like, or outside `repos/`, `orgs/` and `repositories/` altogether."""
+    if re.match(rf"(?:repos/[^/]+/[^/]+|repositories/[^/]+)/(?:{_PLAIN_RESOURCES})(?:/|$)", path):
+        return True
+    first = path.split("/", 1)[0]
+    return not _EXPANDS.search(first) and first not in ("repos", "orgs", "repositories") and "rulesets" not in path
 
 
 def _solo_rest(method: str, path: str, base: str, body: _Body, repo: str = "") -> SoloRefusal | None:
@@ -4285,7 +4308,7 @@ def _solo_rest(method: str, path: str, base: str, body: _Body, repo: str = "") -
     unknown = bool(_EXPANDS.search(method)) or method == "?"
     if method in ("GET", "HEAD"):
         return None
-    if _EXPANDS.search(path) or not path:
+    if not path or (_EXPANDS.search(path) and not _plain_resource(path)):
         return SoloRefusal("a GitHub API call whose path the shell fills in", "unknown", _SOLO_API_HINT)
     m = re.match(r"repos/([^/]+/[^/]+)", path)
     if m and _another_repo(m.group(1), repo):
@@ -4353,19 +4376,38 @@ def _gql_unread(queries: list[str | None]) -> bool:
     return any(q is None or _WHOLE_VAR.fullmatch(q) for q in queries)
 
 
+def _gql_literal(q: str) -> bool:
+    """Whether a query's `$`s are all GraphQL variables its operation declares
+    (`query($o: String!)`), not the shell's."""
+    if "`" in q or re.search(r"\$[({]", q):
+        return False
+    declared = set(re.findall(r"\$(\w+)\s*:", q))
+    return all(n in declared for n in re.findall(r"\$(\w+)", q))
+
+
+def _gql_queries(queries: list[str | None], cwd: str | None) -> list[str | None]:
+    """The queries, a `$(cat FILE)` one read from its file."""
+    out: list[str | None] = []
+    for q in queries:
+        m = re.fullmatch(r"\s*\$\(\s*cat\s+([^\s$`;&|<>()]+)\s*\)\s*", q or "")
+        out.append(_read_text(m.group(1).strip("'\""), cwd) if m else q)
+    return out
+
+
 def _gql_text(queries: list[str | None], fallback) -> str:
     """The GraphQL text to look for mutations in: the queries themselves when
     every one is read and none is filled in by the shell, else `fallback()`
     (the whole command and the files it reads)."""
-    if queries and all(q is not None and not _EXPANDS.search(q) for q in queries):
+    if queries and all(q is not None and (not _EXPANDS.search(q) or _gql_literal(q)) for q in queries):
         return "\n".join(q for q in queries if q)
     return "\n".join(q for q in queries if q) + "\n" + fallback()
 
 
-def _solo_gql(queries: list[str | None], fallback, base: str) -> SoloRefusal | None:
+def _solo_gql(queries: list[str | None], fallback, base: str, cwd: str | None = None) -> SoloRefusal | None:
     """Solo mode: a GraphQL request's refusal, from its queries (`fallback()`
     when they hold expansions); a query the kit can't read at all counts as
     a mutation that changes the base branch."""
+    queries = _gql_queries(queries, cwd)
     r = _solo_graphql(_gql_text(queries, fallback), base)
     if not r and _gql_unread(queries):
         r = SoloRefusal("a GraphQL request whose query the kit can't read, which may be a mutation that changes a branch or a ruleset", "unknown", _SOLO_API_HINT)
@@ -4496,8 +4538,12 @@ def _curl_github_path(url: str) -> str | None:
         return None
     host = m.group(1).split(":", 1)[0].rstrip(".").casefold()
     path = _api_path(m.group(2) or "/")
-    if host in ("api.github.com", "uploads.github.com") or re.match(r"(?i)api/v3/", urllib.parse.unquote(m.group(2).lstrip("/"))) or path == "graphql":
+    if host in ("api.github.com", "uploads.github.com"):
         return path
+    local = host in ("localhost", "0.0.0.0", "[::1]") or host.startswith("127.") or host.endswith((".local", ".localhost", ".test"))
+    rest = urllib.parse.unquote(m.group(2).lstrip("/"))
+    if not local and (re.match(r"(?i)api/v3/", rest) or re.match(r"(?i)api/graphql/?(?:[?#]|$)", rest)):
+        return path  # a GitHub Enterprise server
     return None
 
 
@@ -4511,7 +4557,8 @@ def _solo_curl(toks: list[str], seg: Seg, base: str, repo: str, raw: str, read) 
     if c.globs and hint:
         return SoloRefusal("a curl URL with `{…}` or `[…]`, which curl expands into other URLs", "unknown", _SOLO_API_HINT)
     for u in c.urls:
-        if _EXPANDS.search(u) and (_GITHUB_HINT.search(u) or _GITHUB_HINT.search(raw)):
+        whole = bool(_WHOLE_VAR.fullmatch(u))
+        if _EXPANDS.search(u) and (_GITHUB_HINT.search(u) or whole and _GITHUB_HINT.search(raw)) and not ("/" in u.split("://", 1)[-1] and _plain_resource(_api_path(u.split("://", 1)[-1].split("/", 1)[1]))):
             return SoloRefusal(f"the curl URL {_code_span(u)} is filled in by the shell", "unknown", _SOLO_API_HINT)
         path = _curl_github_path(u)
         if path is None:
@@ -4522,7 +4569,7 @@ def _solo_curl(toks: list[str], seg: Seg, base: str, repo: str, raw: str, read) 
                 pairs = _json_pairs(d) if d is not None else None
                 qs = [v for k, v in pairs or [] if k == "query"]
                 texts += [v if isinstance(v, str) else None for v in qs] if pairs is not None else [d]
-            r = _solo_gql(texts, lambda: raw + "\n" + read(), base)
+            r = _solo_gql(texts, lambda: raw + "\n" + read(), base, seg.cwd)
         else:
             r = _solo_rest(c.method, path, base, c.body, repo)
         if r:
@@ -4545,6 +4592,31 @@ def _gh_aliases() -> dict[str, str] | None:
             v = a.group(2).strip()
             out[a.group(1).strip("'\"")] = v[1:-1] if len(v) > 1 and v[0] == v[-1] and v[0] in "'\"" else v
     return out
+
+
+# `gh pr merge` and `gh repo edit` options whose value is text, never an option.
+_GH_TEXT_OPTS = {
+    "-b", "--body", "-F", "--body-file", "-t", "--subject", "-A", "--author-email", "--match-head-commit",
+    "-d", "--description", "-h", "--homepage", "--add-topic", "--remove-topic", "--visibility", "--template",
+}  # fmt: skip
+
+
+def _unread_words(toks: list[str]) -> bool:
+    """Whether a `gh pr merge`/`gh repo edit` holds a word the shell fills in that
+    may be an option (`--admin`, `--default-branch`): not an option's text value,
+    the pull request or repository named first, or a quoted heredoc."""
+    sub_at = 2
+    positional_seen = False
+    for j in range(sub_at + 1, len(toks)):
+        t, prev = toks[j], toks[j - 1]
+        if not _EXPANDS.search(t) or _literal_heredoc(t) or prev in _GH_TEXT_OPTS or re.match(r"--[\w-]+=", t) and t.split("=", 1)[0] in _GH_TEXT_OPTS:
+            positional_seen = positional_seen or not t.startswith("-") and prev not in _GH_TEXT_OPTS
+            continue
+        if not positional_seen and prev not in ("-R", "--repo"):
+            positional_seen = True  # the pull request (`"$PR"`) or repository
+            continue
+        return True
+    return False
 
 
 def _aliases_set_in(raw: str) -> dict[str, str]:
@@ -4587,7 +4659,7 @@ def _solo_gh(toks: list[str], seg: Seg, profile: Profile, raw: str, read, depth:
         return _solo_gh([toks[0], *words, *toks[at + 1 :]], seg, profile, raw, read, depth + 1)
     if group in ("pr", "repo") and _another_repo(_gh_repo(toks, group, sub), profile.repo):
         return None
-    if (group, sub) in (("pr", "merge"), ("repo", "edit")) and any(_EXPANDS.search(t) for t in toks[2:]):
+    if (group, sub) in (("pr", "merge"), ("repo", "edit")) and _unread_words(toks):
         return SoloRefusal(f"`gh {group} {sub}` with words the shell fills in, which may be `--admin` or `--default-branch`", "unknown", _SOLO_API_HINT)
     if group == "pr" and sub == "merge" and any(t == "--admin" or t.startswith("--admin=") for t in toks):
         return SoloRefusal(f"`gh pr merge --admin` merges into `{base}` past its required checks")
@@ -4597,7 +4669,7 @@ def _solo_gh(toks: list[str], seg: Seg, profile: Profile, raw: str, read, depth:
     if call is None:
         return None
     path = _api_path(call.path) if call.path else ""
-    if seg.fed and call.method != "GET":
+    if seg.fed and call.method != "GET" and not (path and _plain_resource(path)):
         return SoloRefusal("xargs gives this `gh api` call its path or fields, which the kit can't see", "unknown", _SOLO_API_HINT)
     body = _Body([])
     queries: list[str | None] = []
@@ -4613,13 +4685,25 @@ def _solo_gh(toks: list[str], seg: Seg, profile: Profile, raw: str, read, depth:
         if k == "query":
             queries.append(val)
     for f in _input_files(toks):
-        text = None if _STDIN_FILE.fullmatch(f) else _read_text(f, seg.cwd)
+        text = (_stdin_text(seg) or _echoed(seg)) if _STDIN_FILE.fullmatch(f) else _read_text(f, seg.cwd)
         body.add_text(text)
         pairs = _json_pairs(text) if text is not None else None
         queries += [v if isinstance(v, str) else None for k, v in pairs or [] if k == "query"] if text is not None and pairs is not None else [None]
     if path == "graphql":
-        return _solo_gql(queries, lambda: call.rest + "\n" + raw + "\n" + read(), base)
+        return _solo_gql(queries, lambda: call.rest + "\n" + raw + "\n" + read(), base, seg.cwd)
     return _solo_rest(call.method, path, base, body, profile.repo)
+
+
+def _echoed(seg: Seg) -> str | None:
+    """The text a plain `echo` or one-argument `printf` pipes into the command,
+    when the shell fills nothing in."""
+    w = seg.piped.words if seg.piped is not None else []
+    if not w or Path(w[0]).name not in ("echo", "printf") or any(_EXPANDS.search(x) for x in w[1:]):
+        return None
+    args = [x for x in w[1:] if not (Path(w[0]).name == "echo" and re.fullmatch(r"-[neE]+", x))]
+    if Path(w[0]).name == "printf" and (len(args) != 1 or "%" in args[0] or "\\" in args[0]):
+        return None
+    return " ".join(args)
 
 
 def _raw_fields(toks: list[str]) -> set[str]:
