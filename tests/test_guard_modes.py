@@ -332,6 +332,24 @@ def test_a_sensitive_data_refusal_never_repeats_the_text_or_suggests_posting_it(
     assert "sensitive-data pattern" in extra
 
 
+def test_sensitive_text_read_from_a_file_is_never_offered_by_hand(tmp_path):
+    p = _sensitive(tmp_path)
+    (tmp_path / "note.md").write_text("about MRN-123456\n")
+    ev = dict(bash("gh issue comment 5 --body-file note.md"), cwd=str(tmp_path))
+    asked = act(p, ev, None)
+    assert asked.action == "ask"
+    extra = act(p, ev, "dontAsk").reason[len(asked.reason):]
+    assert "terminal" not in extra and "note.md" not in extra
+    assert "sensitive-data pattern" in extra
+
+
+def test_other_asks_keep_the_hand_command_when_the_command_matches_a_pattern(tmp_path):
+    p = _sensitive(tmp_path)
+    d = act(p, bash("scripts/deploy.sh --note MRN-123456"), "dontAsk")
+    assert d.action == "deny"
+    assert "your own terminal" in d.reason and "remove the text" not in d.reason
+
+
 def test_a_long_unknown_mode_is_shown_cut(prof):
     d = act(prof, bash("scripts/deploy.sh"), "x" * 200)
     assert "x" * 80 + "…" in d.reason and "x" * 81 not in d.reason

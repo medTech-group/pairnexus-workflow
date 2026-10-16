@@ -151,15 +151,16 @@ GIT_INTERNALS = [".git/config", ".git/hooks/**"]
 class Decision:
     action: str  # "allow", "deny" or "ask"
     reason: str = ""
+    sensitive: bool = False  # it stops sensitive data: never repeat the input, nor say to post it by hand
 
 
 ALLOW = Decision("allow")
 
 
-def _deny(role: str, reason: str) -> Decision:
+def _deny(role: str, reason: str, sensitive: bool = False) -> Decision:
     if role == "attended":
-        return Decision("ask", reason.replace("is never allowed", "is outside the workflow's rules; allow it only if you mean to"))
-    return Decision("deny", reason)
+        return Decision("ask", reason.replace("is never allowed", "is outside the workflow's rules; allow it only if you mean to"), sensitive)
+    return Decision("deny", reason, sensitive)
 
 
 # ---------- solo mode ----------
@@ -5093,7 +5094,7 @@ def check_bash(
         text = "\n".join(texts)
         for pat in profile.sensitive_patterns:
             if re.search(pat, text):
-                return _deny(role, f"this would post text matching the sensitive-data pattern {pat!r}; refer to things by id")
+                return _deny(role, f"this would post text matching the sensitive-data pattern {pat!r}; refer to things by id", sensitive=True)
     if role in ("ticket", "conductor"):
         for s in posts:
             # In the command's texts as a whole: a seatbelt, not proof that each post carries it.
@@ -5188,6 +5189,7 @@ def check_mcp(tool: str, inp: dict, profile: Profile, role: str, root: Path) -> 
                     role,
                     f"this {name} would post text matching the project's sensitive-data pattern {pat!r} "
                     f"({profile.sensitive_description or 'see profile.md'}); remove it and refer to things by id",
+                    sensitive=True,
                 )
     if role in ("ticket", "conductor") and _mcp_creates_text(name, inp):
         body = inp.get("body")
@@ -5212,11 +5214,11 @@ def decide(
     d = _decide(event, profile, role, root, current_branch, role_from_env, cwd)
     mode = event.get("permission_mode")
     if d.action == "ask" and role == "attended" and modes.never_asks(mode):
-        return Decision("deny", d.reason + "\n" + _nobody_asked(event, mode, profile))
+        return Decision("deny", d.reason + "\n" + _nobody_asked(event, mode, d.sensitive), d.sensitive)
     return d
 
 
-def _nobody_asked(event: dict, mode, profile: Profile) -> str:
+def _nobody_asked(event: dict, mode, sensitive: bool) -> str:
     """What a refusal adds to the ask's reason in a mode that never asks: the
     kit would have asked, the mode, how to be asked, and how to do it by hand."""
     plain = isinstance(mode, str) and mode and mode == mode.strip() and mode.isprintable()
@@ -5233,8 +5235,7 @@ def _nobody_asked(event: dict, mode, profile: Profile) -> str:
     tool = event.get("tool_name") or ""
     inp = event.get("tool_input") if isinstance(event.get("tool_input"), dict) else {}
     command = inp.get("command") if tool == "Bash" else None
-    text = "\n".join(_strings(inp))
-    if any(re.search(pat, text) for pat in profile.sensitive_patterns):
+    if sensitive:
         # Never repeat sensitive data, nor suggest posting it by hand.
         lines.append("Or remove the text that matches the project's sensitive-data pattern, and try again.")
     elif isinstance(command, str) and command.strip():
