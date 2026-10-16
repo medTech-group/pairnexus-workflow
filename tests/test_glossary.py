@@ -49,7 +49,7 @@ MENTIONS = {
     "main": r"(?<!Protect `)(?<![-#])\bmain\b",
     "commit": r"\bcommits?\b",
     "pull-request-pr": r"\bpull requests?\b|\bPRs?\b",
-    "checks-ci": r"\bchecks?\b(?! the set-up|-setup)|\bCI\b",
+    "checks-ci": r"\bchecks\b|\bcheck\b(?! the set-up|-setup)|\bCI\b",
     "merge": r"\bmerg(?:e|es|ed|ing)\b",
     "revert": r"\brevert",
     "preview-link": r"\bpreview links?\b",
@@ -103,7 +103,7 @@ def _entries() -> dict[str, str]:
 
 
 def _sentences(text: str) -> list[str]:
-    return [s for s in re.split(r"(?<=[.!?])[\"')*_`]*\s+(?=[A-Z*\"`(\[])", " ".join(text.split())) if s]
+    return [s for s in re.split(r"(?<=[.!?])[\"')*_`]*\s+(?=[A-Z0-9*\"`(\[])", " ".join(text.split())) if s]
 
 
 def test_the_glossary_has_the_two_parts_with_each_word_under_its_part():
