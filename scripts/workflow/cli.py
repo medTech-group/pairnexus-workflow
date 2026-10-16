@@ -48,6 +48,7 @@ from . import posts as posts_mod
 from . import protection as protection_mod
 from . import render as render_mod
 from . import repair as repair_mod
+from . import reviews as reviews_mod
 from . import roles
 from . import state as state_mod
 from . import status as status_mod
@@ -539,6 +540,25 @@ def cmd_briefing(a) -> int:
     return 0
 
 
+def cmd_review_record(a) -> int:
+    """`review-record`: the comment a review round or a later Correctness pass posts."""
+    # Each flag is a list (`append`), so a repeated one is refused rather than
+    # the last silently winning; repeated --reviewers add up.
+    for flag in ("kind", "round", "commit"):
+        if len(getattr(a, flag) or []) > 1:
+            print(f"workflow review-record: give --{flag} once", file=sys.stderr)
+            return 2
+    one = {flag: (getattr(a, flag) or [None])[0] for flag in ("kind", "round", "commit")}
+    reviewers = ",".join(a.reviewers) if a.reviewers else None
+    try:
+        text = reviews_mod.record(**one, reviewers=reviewers, clean=a.clean)
+    except reviews_mod.RecordError as e:
+        print(f"workflow review-record: {e}", file=sys.stderr)
+        return 2
+    sys.stdout.write(text)
+    return 0
+
+
 def cmd_evidence(a) -> int:
     prof = load()
     root = prof.root
@@ -979,6 +999,18 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("action", choices=["verify"])
     s.add_argument("--file", required=True, help="the briefing as the session received it (or -)")
     s.set_defaults(fn=cmd_briefing)
+
+    s = sub.add_parser(
+        "review-record", allow_abbrev=False, help="the record a review round or a later Correctness pass posts on the pull request"
+    )
+    s.add_argument("--kind", action="append", help="`round`, or `pass` for a Correctness pass after the last round")
+    s.add_argument("--round", action="append", help="the round's number; for a pass, the round it follows")
+    s.add_argument("--commit", action="append", help="the full SHA the round covered (`git rev-parse HEAD`)")
+    s.add_argument("--reviewers", action="append", help="those that ran, comma-separated: " + ",".join(reviews_mod.REVIEWERS))
+    result = s.add_mutually_exclusive_group()
+    result.add_argument("--clean", dest="clean", action="store_true", default=None, help="nothing left to fix")
+    result.add_argument("--not-clean", dest="clean", action="store_false", help="the round found something to fix")
+    s.set_defaults(fn=cmd_review_record)
 
     s = sub.add_parser("evidence")
     s.add_argument("--suite", action="append")
