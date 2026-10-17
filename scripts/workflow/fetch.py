@@ -8,6 +8,12 @@ nothing is written, here or on GitHub.
 
 `gh api --paginate --slurp` gives the pages as one list; a gh too old for
 `--slurp` prints them one after another, which are read one by one.
+
+A Claude Code cloud session's proxy refuses two routes (#165): GraphQL, where
+review threads come from, and `collaborators/<u>/permission`. The usual route
+is tried first; then threads come from the session route (`session_threads`)
+and permissions from the token's own (`token_permission`), each only as far
+as it can be shown: what can't be shown stays "couldn't read", never a guess.
 """
 
 from __future__ import annotations
@@ -16,11 +22,13 @@ import shutil
 import subprocess
 from urllib.parse import quote
 
+from . import merge
 from .posts import CommentsError, _login, comments_from, decode_values
 
 TIMEOUT = 120  # seconds for one `gh api` call, every page
 NOT_INSTALLED = "gh (the GitHub CLI) isn't installed here"
 AS_A_FILE = "so it couldn't be fetched: give --{name} as a file"
+PROXY_REFUSED = "not permitted through this proxy"  # a cloud session's proxy, refusing a route
 
 # A pull request's review threads come only from GraphQL, 100 to a page; gh's
 # --paginate follows pageInfo.endCursor through $endCursor.
@@ -112,6 +120,99 @@ def _not_found(e: GhError) -> bool:
     return "HTTP 404" in str(e)
 
 
+def _refused(e: GhError) -> bool:
+    """The cloud session's proxy refused the route, not GitHub (whose own 403s,
+    for a token without push access or a rate limit, stay failures)."""
+    return PROXY_REFUSED in str(e)
+
+
+def _id(v) -> int | None:
+    return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+
+def session_threads(r: str, number: int, pr) -> dict:
+    """The pull request's review threads from the cloud session's route
+    `<r>/pulls/<n>/ccr/review_threads`, in GraphQL's shape, as `--threads`
+    takes it. The route gives a bare list (`resolved`, `comment_ids`, no count
+    and no authors), so it counts as whole only when every review comment of
+    the pull request (`pulls/<n>/comments`, every page, and as many as `pr`'s
+    `review_comments` says) sits in one of its threads. Raises GhError when it
+    can't be shown whole."""
+    listed = _items(api(f"{r}/pulls/{number}/ccr/review_threads?per_page=100", paginate=True))
+    threads = []
+    for t in listed:
+        ids = t.get("comment_ids") if isinstance(t, dict) else None
+        if not isinstance(t, dict) or not isinstance(t.get("resolved"), bool) or not isinstance(ids, list) or any(_id(i) is None for i in ids):
+            raise GhError("the session route's threads aren't a list of threads, each with resolved and comment_ids")
+        threads.append((t["resolved"], ids))
+    comments = _items(api(f"{r}/pulls/{number}/comments?per_page=100", paginate=True))
+    authors: dict[int, str] = {}
+    for c in comments:
+        cid = _id(c.get("id")) if isinstance(c, dict) else None
+        if cid is None:
+            raise GhError("a review comment has no id")
+        authors[cid] = _login(c)
+    counted = _id(pr.get("review_comments")) if isinstance(pr, dict) else None
+    if counted is None:
+        raise GhError("the pull request doesn't say how many review comments it has (review_comments), so the session route's threads can't be shown whole")
+    if len(authors) < counted:
+        raise GhError(f"gh api gave {len(authors)} of the pull request's {counted} review comments, so the session route's threads can't be shown whole")
+    in_threads = {i for _, ids in threads for i in ids}
+    if set(authors) - in_threads:
+        raise GhError("the session route left out the threads of some review comments, so its list isn't whole")
+    nodes = []
+    for resolved, ids in threads:
+        first = authors.get(ids[0], "") if ids else ""
+        nodes.append({"isResolved": resolved, "comments": {"nodes": [{"author": {"login": first}}] if first else []}})
+    return {"totalCount": len(nodes), "pageInfo": {"hasNextPage": False, "hasPreviousPage": False}, "nodes": nodes}
+
+
+def token_permission(r: str) -> tuple[str, str]:
+    """(the token's own login, its permission on the repository), from `user`
+    and `<r>`'s `permissions`: what a cloud session can read when the
+    collaborator route is refused. Raises GhError when either can't be read."""
+    me = api("user")
+    login = me.get("login") if isinstance(me, dict) else None
+    if not isinstance(login, str) or not login:
+        raise GhError("gh api user gave no login")
+    repo = api(r)
+    flags = repo.get("permissions") if isinstance(repo, dict) else None
+    if not isinstance(flags, dict):
+        raise GhError(f"gh api {r} gave no permissions")
+    for flag, perm in (("admin", "admin"), ("maintain", "maintain"), ("push", "write"), ("triage", "triage"), ("pull", "read")):
+        if flags.get(flag) is True:
+            return login, perm
+    return login, "none"
+
+
+def _reviews_read(reviews, pr) -> tuple[list[tuple[str, str]], set[str]]:
+    """(login, state) for each review, as merge-check reads them (any shape it
+    takes, oldest first, drafts left out), and the logins (casefolded) asked
+    to review again. Raises GhError when the reviews can't be read."""
+    ctx = merge.Context({"reviews": (reviews, None), "pr": (pr, None)}, None, None)
+    try:
+        revs = ctx.reviews()
+    except merge.Unreadable as e:
+        raise GhError(f"not fetched: the reviews couldn't be read ({e})") from None
+    try:
+        asked = ctx.pr().requested
+    except merge.Unreadable:
+        asked = set()
+    return revs, asked
+
+
+def _standing_change_requests(revs: list[tuple[str, str]], asked: set[str]) -> set[str]:
+    """The logins (casefolded) whose change request still stands, as
+    merge-check's `_people` reads it: their latest approving,
+    change-requesting or dismissed review requests changes, and they haven't
+    been asked to review again."""
+    standing: dict[str, str] = {}
+    for login, state in revs:
+        if login and state in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
+            standing[login.casefold()] = state
+    return {w for w, state in standing.items() if state == "CHANGES_REQUESTED" and w not in asked}
+
+
 def merge_inputs(repo: str, number: int, have: dict, names, asker: str | None = None) -> dict:
     """`merge-check`'s inputs `names`, fetched for pull request `number` of
     `repo` (owner/name). `have` holds the inputs already given as files: those
@@ -175,7 +276,17 @@ def merge_inputs(repo: str, number: int, have: dict, names, asker: str | None = 
         return [api(f"{r}/rulesets/{i}") for i in ids]  # each in full: the list gives summaries
 
     get("rulesets", rulesets)
-    get("threads", lambda: api("graphql", paginate=True, fields=[("-f", f"query={THREADS_QUERY}"), ("-f", f"owner={owner}"), ("-f", f"name={name}"), ("-F", f"number={number}")]))
+
+    def threads():
+        try:
+            return api("graphql", paginate=True, fields=[("-f", f"query={THREADS_QUERY}"), ("-f", f"owner={owner}"), ("-f", f"name={name}"), ("-F", f"number={number}")])
+        except GhError as refused:  # a cloud session refuses GraphQL: its own route, if it can be shown whole
+            try:
+                return session_threads(r, number, pr)
+            except GhError as e:
+                raise GhError(f"{refused}; then pulls/{number}/ccr/review_threads: {e}") from None
+
+    get("threads", threads)
     get("reviews", lambda: api(f"{r}/pulls/{number}/reviews?per_page=100", paginate=True))
     get("comments", lambda: api(f"{r}/issues/{number}/comments?per_page=100", paginate=True))
 
@@ -188,18 +299,42 @@ def merge_inputs(repo: str, number: int, have: dict, names, asker: str | None = 
             items = comments_from(comments)
         except CommentsError as e:
             raise GhError(f"not fetched: the comments couldn't be read ({e})") from None
-        items += [x for x in _items(reviews) if isinstance(x, dict)]
-        for who in [_login(x) for x in items] + [(asker or "").strip().lstrip("@")]:
+        unread = None
+        try:
+            revs, asked = _reviews_read(reviews, pr)  # in any shape merge-check takes, so no reviewer is left out
+        except GhError as bad:  # merge-check says so for --reviews; the authors it can see still get theirs
+            revs, asked, unread = [(_login(x), "") for x in _items(reviews) if isinstance(x, dict)], set(), bad
+        for who in [_login(x) for x in items] + [login for login, _ in revs] + [(asker or "").strip().lstrip("@")]:
             if who:
                 logins.setdefault(who.casefold(), who)
-        answers = []
+        answers, token, blocking = [], None, None
         for who in logins.values():
             try:
                 answers.append(api(f"{r}/collaborators/{quote(who, safe='')}/permission"))
             except GhError as e:
-                if not _not_found(e):
+                if _not_found(e):
+                    answers.append({"permission": "none", "user": {"login": who}})  # GitHub doesn't know them here
+                    continue
+                if not _refused(e):
                     raise
-                answers.append({"permission": "none", "user": {"login": who}})  # GitHub doesn't know them here
+                # A cloud session's proxy refuses the route: the token's own permission shows its
+                # login's; nothing the session can read shows anyone else's, so they count as
+                # without write access, but a change request of theirs isn't dropped on that guess.
+                if token is None:
+                    try:
+                        token = token_permission(r)
+                    except GhError as e2:
+                        raise GhError(f"{e}; then the token's own permission: {e2}") from None
+                    if unread is not None:  # a change request can't be told from the reviews, so none is dropped
+                        raise GhError(f"{e}; then {unread}") from None
+                    blocking = _standing_change_requests(revs, asked)
+                token_login, token_perm = token
+                if who.casefold() == token_login.casefold():
+                    answers.append({"permission": token_perm, "user": {"login": who}})
+                elif who.casefold() in blocking:
+                    raise GhError(f"{e}, so whether @{who}, who requested changes, has write access can't be shown") from None
+                else:
+                    answers.append({"permission": "none", "user": {"login": who}})
         return answers
 
     get("permissions", permissions)
