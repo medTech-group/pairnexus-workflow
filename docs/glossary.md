@@ -42,7 +42,7 @@ Tests that run by themselves on each [pull request](#pull-request-pr), green whe
 
 ### Merge
 
-Bringing a [pull request](#pull-request-pr)'s changes into [`main`](#main) with GitHub's green button.
+Bringing a [pull request](#pull-request-pr)'s changes into [`main`](#main) with GitHub's green button. Ask Claude "is #12 ready to merge?" for "Ready" or "Not yet" and why; nothing merges until you choose "Merge it now".
 
 **Why it matters to you:** once merged, the change is part of your project.
 
@@ -54,13 +54,13 @@ Undoing a [merged](#merge) change with a new [pull request](#pull-request-pr) th
 
 ### Preview link
 
-A link on a [pull request](#pull-request-pr) that opens a working copy of the change to try before you [merge](#merge) it.
+A link on a [pull request](#pull-request-pr) that opens a working copy of the change to try before you [merge](#merge).
 
 **Why it matters to you:** you see the change for yourself, not only its code.
 
 ### Cloud session
 
-Claude Code on Anthropic's computers, from the Claude app or claude.ai/code. Its environment sets what it starts with: the [repository](#repository), the websites it may reach, any secrets.
+Claude Code on Anthropic's computers, from the Claude app or claude.ai/code. Its environment sets what it has: the [repository](#repository), the websites it may reach, any secrets.
 
 **Why it matters to you:** there is nothing to install on your computer.
 
@@ -68,7 +68,7 @@ Claude Code on Anthropic's computers, from the Claude app or claude.ai/code. Its
 
 ### Guided start
 
-How a session begins: Claude asks "What are we working on?" with choices to click. Type `/start` for it at any time.
+How a session begins: Claude asks "What are we working on?" with choices to click. Type `/start` for it any time.
 
 **Why it matters to you:** you never need to remember a command.
 
@@ -92,31 +92,31 @@ A bigger feature written down, with its decisions and tests, before it is split 
 
 ### Map
 
-A plan for work too big or too unclear for one [spec](#spec), decided one question at a time.
+A plan for work too big or unclear for one [spec](#spec), decided one question at a time.
 
 **Why it matters to you:** a big idea gets settled step by step, not all at once.
 
 ### Review panel
 
-Claude reviewers who each read a change from one side (does it work, does it follow the rules) before its [pull request](#pull-request-pr) opens. Each round leaves a record on the pull request.
+Claude reviewers who each read a change from one side (does it work, does it follow the rules) before its [pull request](#pull-request-pr) opens. Each round leaves its record there.
 
 **Why it matters to you:** mistakes are caught before you see the change.
 
 ### Solo mode
 
-How a project starts while GitHub doesn't protect [`main`](#main) yet: the [profile](#profile) says `ruleset = false`, and the kit refuses Claude's pushes to `main` and its changes to it on GitHub, so Claude's changes go through a [pull request](#pull-request-pr).
+How a project starts while GitHub doesn't protect [`main`](#main) yet: the [profile](#profile) says `ruleset = false`, and the kit refuses Claude's changes straight to `main`, so they go through a [pull request](#pull-request-pr).
 
-**Why it matters to you:** you can start on GitHub's free plan, and Claude's changes still reach `main` only when you [merge](#merge).
+**Why it matters to you:** you can start on GitHub's free plan, and Claude's changes reach `main` only when you [merge](#merge).
 
 ### Protect `main`
 
-GitHub's own protection, ending [solo mode](#solo-mode): a ruleset (GitHub's rules for a [branch](#branch)) sends every change to [`main`](#main) through a [pull request](#pull-request-pr), and "Require these checks", once CI has run, stops a [merge](#merge) while [checks](#checks-ci) fail. On your own computer, with `gh` and admin rights, Claude does it; in a [cloud session](#cloud-session) it guides your clicks.
+GitHub's own protection, ending [solo mode](#solo-mode): a ruleset (GitHub's rules for a [branch](#branch)) sends every change to [`main`](#main) through a [pull request](#pull-request-pr), and "Require these checks", once CI has run, stops a [merge](#merge) while [checks](#checks-ci) fail. On your own computer, with `gh` and admin rights, Claude does it; elsewhere it guides your clicks.
 
 **Why it matters to you:** GitHub itself then stops a mistake reaching `main`.
 
 ### Unattended run
 
-Claude building ready [tickets](#ticket) while you're away, each in its own [cloud session](#cloud-session). "Set up unattended runs" prepares it: two cloud environments, and one [pull request](#pull-request-pr) for you to [merge](#merge).
+Claude building ready [tickets](#ticket) while you're away, each in its own [cloud session](#cloud-session). "Set up unattended runs" prepares it: two cloud environments and a [pull request](#pull-request-pr) to [merge](#merge).
 
 **Why it matters to you:** work moves on while you're away, and you come back to a report.
 
@@ -134,6 +134,6 @@ The kit's settings for your project, in `.claude/workflow/profile.toml`: which i
 
 ### Check the set-up
 
-Ask Claude to "check the set-up": the `check-setup` skill runs `workflow doctor`, lists what's missing, and offers each fix, such as [Protect `main`](#protect-main), with "Not now". It changes nothing itself; in [solo mode](#solo-mode) the [guided start](#guided-start) offers it once a session.
+Ask Claude to "check the set-up": the `check-setup` skill runs `workflow doctor`, lists what's missing, and offers each fix, such as [Protect `main`](#protect-main). It changes nothing itself; in [solo mode](#solo-mode) the [guided start](#guided-start) offers it once a session.
 
 **Why it matters to you:** you see in one place what is set up and what's left.
