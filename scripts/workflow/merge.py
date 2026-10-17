@@ -4,7 +4,15 @@
 files, commits, checks, the rulesets, review threads, reviews, comments with
 their authors' permissions, the base comparison and the preview) and answers
 `ready`, `not_yet` or `owner_review`, with every reason that applies. It reads
-only what it is given: it asks GitHub nothing, posts nothing and writes nothing.
+only what it is given (`workflow merge-check --fetch` fetches it first, through
+`fetch.merge_inputs`): it asks GitHub nothing, posts nothing and writes nothing.
+
+The run's charter waives named checks (flow §4.1): one counts as passed only
+when it failed or was cancelled with one of the profile's `ci.killed_markers`
+in its log, and only from an approved charter in a ticket or conductor
+session, never an attended one. A waiver used, or `ci.none`, makes the suite's
+evidence required (flow §4.2): `workflow evidence`'s report for the head,
+read through its own `evidence.read_headline`.
 
 Every rule is in `RULES`, each naming the flow §4 item (or #30's condition) it
 implements; `tests/test_merge_check.py` fails when flow §4 and `RULES` differ.
@@ -33,10 +41,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from . import protection, reviews
+from . import charter as charter_mod
+from . import protection, reviews, state
+from .evidence import read_headline
 from .guard import matches
-from .posts import CommentsError, _login, comments_from
-from .profile import DEFAULT_PROTECTED
+from .posts import CommentsError, _login, _number, comments_from, decode_values
+from .profile import DEFAULT_PROTECTED, Suite
 
 # The inputs, each given by its own flag (`--<name>`), and what each is called.
 INPUTS = {
@@ -151,7 +161,7 @@ REASONS = {
     }),
     "evidence_missing": Reason("evidence", None, {
         "new": ("Not yet: the tests' results haven't been posted for this commit.", "Ask Claude to run the tests and post their results."),
-        "developer": ("Not yet: no `workflow evidence` report read for {short} (the profile says `ci.none`).", "Run `workflow evidence --base-ref origin/{base}` and post the report."),
+        "developer": ("Not yet: no passing `workflow evidence` report for {short} from an account with write access ({why}).", "Run `workflow evidence --base-ref origin/{base}` and post the report."),
     }),
     "behind": Reason("up_to_date", "update_branch", {
         "new": ("Not yet: {base} has moved on since this was made.", "Bring it up to date: Claude merges {base} in, and the checks run again."),
@@ -445,10 +455,13 @@ class Context:
     """The inputs as the rules read them. Each reader raises Unreadable (the
     same one each time) for an input it can't read."""
 
-    def __init__(self, inputs: dict, profile, profile_error: str | None):
+    def __init__(self, inputs: dict, profile, profile_error: str | None, waivable: frozenset = frozenset(), logs: dict | None = None):
         self.inputs = inputs
         self.profile = profile
         self.profile_error = profile_error
+        self.waivable = waivable  # the checks the charter waives, when it may (`waivers`)
+        self.logs = logs or {}  # --check-logs: file name -> the log's tail
+        self.waived: list[str] = []  # the waivers used
         self.notes: list[dict] = []
         self.checks: list[dict] = []
         self.preview: dict | None = None
@@ -643,15 +656,19 @@ class Context:
 
         return self.once("reviews", read)
 
-    def records(self) -> list[reviews.Record]:
-        """The review records in the comments (`reviews.read`), oldest first."""
+    def comments(self) -> list[dict]:
+        """The pull request's comments, oldest first."""
 
         def read():
             comments = comments_from(self.raw("comments"))
             self._complete("comments", len(comments))
-            return _in_time_order(reviews.read(comments), lambda r: _time(r.created_at), lambda r: r.comment_id)
+            return _in_time_order(comments, lambda c: _time(c.get("created_at") or c.get("createdAt")), _number)
 
         return self.once("comments", read)
+
+    def records(self) -> list[reviews.Record]:
+        """The review records in the comments (`reviews.read`), oldest first."""
+        return reviews.read(self.comments())
 
     def compare(self) -> int:
         """How many commits the head is behind the base."""
@@ -752,6 +769,16 @@ def _checks(ctx: Context, add) -> None:
         parts = ([_names(running)] if running else []) + ([f"not started yet: {_names(missing)}"] if missing else [])
         add("checks_pending", names="; ".join(parts))
     failed = [n for n in required if n in by_name and by_name[n].result == "failing"]
+    for n in [n for n in failed if n in ctx.waivable]:
+        why = _not_killed(by_name[n].id, ctx.logs, prof)
+        if why is None:
+            failed.remove(n)
+            ctx.waived.append(n)
+            next(c for c in ctx.checks if c["name"] == n and c["required"])["state"] = "waived"
+        else:
+            _note(ctx, "waiver_not_taken", f"{_names([n])} is waived, but {why}: a real failure always blocks.")
+    if ctx.waived:
+        _note(ctx, "waived", f"Waived, killed rather than failed: {_names(ctx.waived)}. The suite's evidence is required (flow §4.2).")
     if failed:
         add("checks_failed", names=_names(failed))
     loose = [r.name for r in others if r.result == "failing" and not r.preview]
@@ -759,12 +786,101 @@ def _checks(ctx: Context, add) -> None:
         _note(ctx, "failed_not_required", f"Failed, but not required, so it doesn't block: {_names(loose)}.")
 
 
+_EXIT_CODE = re.compile(r"\bexit code (\d+)")
+# A test that failed, as runners report it while they run, before any count:
+# pytest's `path::test FAILED`, `FAILED path::test` (xdist's `[gw0] [ 50%] FAILED
+# path::test` too) and its progress line's `F` or `E`, with the file's path or,
+# under -q or continued, without (`tests/test_a.py ..F.  [ 40%]`, `..F..  [ 40%]`);
+# go's `--- FAIL:` and `FAIL<tab>pkg`; jest's `✕` and `FAIL path` (coloured, ` FAIL  path`). Matched on each line as
+# `_log_lines` leaves it.
+_TEST_FAILED = re.compile(
+    r"::.*? (?:FAILED|ERROR)(?:\s|$)|(?:^|\s)(?:FAILED|ERROR) \S+::|\.py [.sxXFE]*[FE][.sxXFE]*(?:\s|$)"
+    r"|^[.sxXFE]*[FE][.sxXFE]*(?:\s+\[\s*\d+(?:%|/\s*\d+)\])?$|^--- FAIL:|^✕ |^FAIL\s+\S"
+)
+# What starts a line of a check's log before the runner's own text: `gh run
+# view --log-failed`'s job and step (tab-separated), Actions' timestamp, colours.
+_GH_COLUMNS = re.compile(r"^[^\t\n]*\t[^\t\n]*\t")
+_TIMESTAMP = re.compile(r"^\ufeff?(?:\d{4}-\d\d-\d\dT[\d:.]+Z ?)?")
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07")
+
+
+def _log_lines(line: str) -> list[str]:
+    """A line of a check's log as its runner may have printed it: with gh's job
+    and step columns left out, and as it is (a job log the API gives has no
+    columns, and a runner's own line may hold tabs, as go's `FAIL<tab>pkg` does)."""
+    line = _ANSI.sub("", line)
+    return [_TIMESTAMP.sub("", x, count=1).strip() for x in (_GH_COLUMNS.sub("", line, count=1), line)]
+
+
+def log_names(run_id: int) -> list[str]:
+    """The file names a check's log may have in --check-logs: its latest run's
+    id on the head (the check run's id, which is its Actions job's id, as
+    `gh run view --log-failed --job <id>` takes it), bare or with `.log` or
+    `.txt`. By the id, not the name, so a log kept from an earlier run, or
+    another commit's, is never read for this one."""
+    return [f"{run_id}{ext}" for ext in ("", ".log", ".txt")] if run_id else []
+
+
+def _not_killed(run_id: int, logs: dict, prof) -> str | None:
+    """Why the check's log doesn't show it was killed rather than failed; None
+    when it does. Only the first of `log_names` given is read. It must hold one
+    of the profile's `ci.killed_markers`, and no sign of a real failure: a
+    count the profile's suites read as failed or errored, or an exit code no
+    marker names, or a test reported failed as the runner went."""
+    markers = [m for m in (prof.killed_markers if prof else []) if m]
+    if not markers:
+        return "the profile lists no `ci.killed_markers`"
+    text = next((logs[k] for k in log_names(run_id) if k in logs), None)
+    if text is None:
+        return f"no log was given for its run on the head (--check-logs, a file named {run_id or 'by its run id'}.log)"
+    if not any(m in text for m in markers):
+        return "its log shows none of the profile's `ci.killed_markers`"
+    # The profile's suites read their runners' counts; the defaults (pytest's) always count too.
+    for suite in [*prof.suites, Suite("", "")]:
+        for pattern in (suite.failed, suite.errors):
+            try:
+                if any(str(x).isdigit() and int(x) > 0 for x in re.findall(pattern, text)):
+                    return "its log also shows tests that failed"
+            except re.error:
+                return "its log can't be read with the profile's suite counts"
+    if any(_TEST_FAILED.search(x) for line in text.splitlines() for x in _log_lines(line)):
+        return "its log also shows a test that failed"
+    named = {code for m in markers for code in _EXIT_CODE.findall(m)}
+    if set(_EXIT_CODE.findall(text)) - named:
+        return "its log also shows an exit code no killed marker names"
+    return None
+
+
 def _evidence(ctx: Context, add) -> None:
-    """flow §4.2: the suite's evidence where the profile says `ci.none`. Reading
-    the report is #81's; until then `ci.none` is never ready."""
+    """flow §4.2: where the profile says `ci.none`, or a waiver was used on this
+    head, `workflow evidence`'s report for the head is on the pull request: the
+    latest comment, from an account with write access, whose first line is the
+    report's headline for the head (a short SHA of 7 or more counts) says
+    passed, not on a dirty tree. Recommended always, required only there."""
     ctx.read_profile()
-    if ctx.profile and ctx.profile.ci_none:
-        add("evidence_missing")
+    prof = ctx.profile
+    if prof and prof.ci_none:
+        why = "the profile says `ci.none`"
+    elif ctx.waived:
+        why = f"{_names(ctx.waived)} was waived"
+    else:
+        return
+    head = ctx.pr().head
+    perms = ctx.permissions()
+    found, latest = 0, None
+    for c in ctx.comments():
+        body = (c.get("body") or "").lstrip("\ufeff")
+        line = read_headline(body.split("\n", 1)[0].rstrip("\r")) if body else None
+        if line is None:
+            continue
+        found += 1
+        sha, passed, dirty = line
+        if head.startswith(sha) and _may_review(_login(c), perms):
+            latest = passed and not dirty
+    if not latest:
+        add("evidence_missing", why=why)
+        if found:
+            _note(ctx, "evidence_ignored", f"Left out {_plural(found, 'evidence report')}: none is the latest passing report for the head from an account with write access (one that says FAILED, names another commit, says \"on a dirty tree\", or comes from another account doesn't count).")
 
 
 def _up_to_date(ctx: Context, add) -> None:
@@ -873,6 +989,72 @@ RULES = (
 )
 
 
+# ---------- the run's waivers ----------
+
+
+def charter_from(text: str) -> dict:
+    """The charter in a file: the charter as JSON, the tracking issue as GitHub
+    returns it (its `body`), or the issue's body itself, from whose run state
+    (`workflow state get`) it is taken. Raises ValueError saying what's wrong."""
+    try:
+        values = decode_values(text)
+    except CommentsError:
+        values = None
+    if values and len(values) == 1 and isinstance(values[0], dict):
+        v = values[0]
+        if "version" in v and "merge" in v:
+            return v
+        if isinstance(v.get("body"), str):
+            text = v["body"]
+        else:
+            raise ValueError("it is JSON, but neither a charter nor an issue with a body")
+    elif values is not None and values:
+        raise ValueError("it is JSON, but not a charter")
+    try:
+        s = state.get(text)
+    except state.StateError as e:
+        raise ValueError(str(e)) from None
+    if not isinstance(s, dict) or not isinstance(s.get("charter"), dict):
+        raise ValueError("no charter in it: give the charter's JSON, or the tracking issue's body with its run state")
+    return s["charter"]
+
+
+def waivers(charter_input: tuple | None, role: str | None, profile) -> tuple[frozenset, list[dict]]:
+    """The checks the charter waives, and notes. `charter_input` is (text, None)
+    or (None, why it couldn't be read); None when none was given. `role` is the
+    session's as `WORKFLOW_ROLE` sets it (`roles.env_role`): waivers are taken
+    only in a ticket or conductor session, never an attended one, nor where the
+    role is only guessed from the branch or unrecognised (the guard reads both
+    as ticket, its strictest, which for waivers would be the loosest). Nor from
+    a charter that isn't approved by the owner, valid and in `merge.mode` session."""
+    if charter_input is None:
+        return frozenset(), []
+    if role not in ("ticket", "conductor"):
+        why = "in an attended session" if role == "attended" else "unless `WORKFLOW_ROLE` says this is a ticket or conductor session"
+        return frozenset(), [{"id": "charter_ignored", "message": f"The charter (--charter) is ignored {why}: nobody waives a check by hand."}]
+    text, error = charter_input
+    problems: list[str] = []
+    c = None
+    if error is None:
+        try:
+            c = charter_from(text)
+        except ValueError as e:
+            error = str(e)
+    if error is not None:
+        problems = [f"couldn't read it: {error}"]
+    elif profile is None or not profile.owner:
+        problems = ["the profile names no `project.owner`, so who approved it can't be checked"]
+    else:
+        problems = charter_mod.validate(c, require_approval=True)
+        if not problems:
+            problems = charter_mod.against_profile(c, profile)
+        if not problems and c["merge"].get("waived_checks") and c["merge"].get("mode") != "session":
+            problems = [f"waivers need merge.mode session, and it is {c['merge'].get('mode')}"]
+    if problems:
+        return frozenset(), [{"id": "charter_refused", "message": "The charter wasn't used, so no check is waived: " + _clean("; ".join(problems)) + "."}]
+    return frozenset(c["merge"].get("waived_checks") or []), []
+
+
 # ---------- the decision ----------
 
 
@@ -893,11 +1075,24 @@ def _reason(rid: str, rule: Rule | None, level: str, details: dict, wording_id: 
     return out
 
 
-def evaluate(inputs: dict, profile=None, profile_error: str | None = None, asker: str | None = None, level: str = "new") -> Result:
+def evaluate(
+    inputs: dict,
+    profile=None,
+    profile_error: str | None = None,
+    asker: str | None = None,
+    level: str = "new",
+    charter_input: tuple | None = None,
+    logs: dict | None = None,
+    role: str | None = None,
+) -> Result:
     """The decision. `inputs` maps each name in INPUTS to (value, None) when
     read, (None, why) when it couldn't be; a name left out wasn't given (the
-    preview: none). `profile_error` says why the profile couldn't be read."""
-    ctx = Context(inputs, profile, profile_error)
+    preview: none). `profile_error` says why the profile couldn't be read.
+    `charter_input` and `role` (see `waivers`) and `logs` (the checks' logs,
+    by file name) are for the run's waivers."""
+    waivable, charter_notes = waivers(charter_input, role, profile)
+    ctx = Context(inputs, profile, profile_error, waivable, logs)
+    ctx.notes += charter_notes
     try:
         pr = ctx.pr()
         number, head, base = pr.number, pr.head, pr.base
