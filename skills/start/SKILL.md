@@ -103,6 +103,7 @@ Tell the person what matters in two to four lines, for example: "PR #297 is wait
 |---|---|---|
 | **Update the workflow kit to <version> (Recommended)** | A newer kit release is out, no run is in progress, and no update pull request is open (status's `kit_update_pr`; else offer "Carry on: the kit update PR #n"). It comes first, before a brand-new project's map | "A pull request for you to merge, with what's new; then we carry on." |
 | **Carry on: <the thing>** | Something is under way (the table below): name the most pressing one | What it is and what happens next |
+| **Check whether #N is ready to merge** | Status lists an open PR: one for each it lists, as room allows | "Ready, or not yet and why; nothing merges until you choose." |
 | **Something new, or a change to what's there** | Always | "Tell me in your own words; several things at once is fine." |
 | **Fix something that's broken** | Unless four better options fill the list | "Describe what goes wrong; I'll find the cause." |
 | **Sort the new issues (N)** | Status lists issues to sort | "One by one: ready to build, needs more info, or won't do." |
@@ -121,6 +122,7 @@ Tell the person what matters in two to four lines, for example: "PR #297 is wait
 
 **What the other options lead to:**
 - **Update the workflow kit:** in plugin mode (no `.claude/workflow/lock.json`), tell them to type `/plugin update pairnexus-workflow@pairnexus`. Vendored: read the project's `.claude/skills/update-workflow/SKILL.md` (user-only, so read it) for where the kit lives and how to clone the new release outside the project, then read **that release's** `$KIT/skills/update-workflow/SKILL.md` and follow it. It ends with a pull request for them to merge. Then ask "What are we working on?" again, without this option. With a run in progress, don't offer it: a run stays on the version it started with.
+- **Check whether #N is ready to merge:** load `merge-check` with the Skill tool, for that PR. Only when they pick it: never run the check on its own.
 - **New, a change, or a fix:** ask in plain text, "Tell me what you have in mind: as much or as little as you like." Then step 2.
 - **Sort the new issues:** step 5.
 - **A brand-new project or a large effort:** step 2, with the path already chosen: a map.
