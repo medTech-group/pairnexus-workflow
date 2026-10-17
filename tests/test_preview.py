@@ -702,3 +702,36 @@ def test_names_are_matched_as_words_in_any_case(tmp_path, capsys):
 def test_in_one_comment_the_heads_row_for_a_worker_wins(tmp_path, capsys):
     got, _, _ = preview(tmp_path, capsys, [bot(row("❌ Deployment failed", sha=OLDER, links=""), row())], checks(cf_run()))
     assert got == answer("built", BRANCH_URL)
+
+
+# ---------- the Correctness pass after round 3 ----------
+
+
+def test_a_retry_still_running_is_building_though_the_heads_row_failed(tmp_path, capsys):
+    got, _, _ = preview(tmp_path, capsys, [bot(row("❌ Deployment failed", links=""))], checks(cf_run(status="in_progress")))
+    assert got == answer("building")
+
+
+def test_a_worker_gone_from_the_newest_comment_doesnt_fail_the_preview(tmp_path, capsys):
+    # A renamed or removed Worker's failed row, left in an older comment, can never rebuild.
+    old = bot(row("❌ Deployment failed", worker="old-worker", sha=OLDER, links=""), cid=501, updated="2026-10-16T09:00:00Z")
+    new = bot(row(), cid=502, updated="2026-10-16T10:30:00Z")
+    got, _, _ = preview(tmp_path, capsys, [old, new], checks(cf_run()))
+    assert got == answer("built", BRANCH_URL)
+
+
+def test_a_fresh_push_with_one_workers_check_still_starting_is_building(tmp_path, capsys):
+    rows = (row(worker="a-web", sha=OLDER), row("❌ Deployment failed", worker="b-api", sha=OLDER, links=""))
+    got, _, _ = preview(tmp_path, capsys, [bot(*rows)], checks(cf_run(status="in_progress", worker="a-web")))
+    assert got == answer("building")
+
+
+def test_an_unchecked_workers_failed_row_counts_when_the_others_were_skipped(tmp_path, capsys):
+    rows = (row(worker="a-web", sha=OLDER), row("❌ Deployment failed", worker="b-api", sha=OLDER, links=""))
+    got, _, _ = preview(tmp_path, capsys, [bot(*rows)], checks(cf_run("skipped", worker="a-web")))
+    assert got == answer("failed")
+
+
+def test_a_bare_url_inside_html_tags_is_read(tmp_path, capsys):
+    got, _, _ = preview(tmp_path, capsys, [bot(row(links=f"<code>{BRANCH_URL}</code>"))], checks(cf_run()))
+    assert got == answer("built", BRANCH_URL)

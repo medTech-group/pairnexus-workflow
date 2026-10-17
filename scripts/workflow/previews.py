@@ -82,6 +82,7 @@ class Row:
     failed: bool
     url: str | None
     empty: bool  # the Preview URL cell holds nothing
+    newest: bool = False  # from the bot's newest comment
 
 
 def is_sha(v) -> bool:
@@ -196,7 +197,7 @@ def _link(cell: str) -> str | None:
     links = [(text, url) for text, url in _MD_LINK.findall(cell)] + [(text, url) for url, text in _HTML_LINK.findall(cell)]
     if not links and "](" not in cell and "<a" not in cell.lower():  # a link it couldn't parse isn't guessed at
         bare = _BARE.findall(cell)
-        rest = _BARE.sub(" ", re.sub(r"<br\s*/?>", " ", cell, flags=re.I))
+        rest = _BARE.sub(" ", re.sub(r"<[^>]+>", " ", cell))
         if rest.strip(" -—–") or any(u[-1] in ".,;:!?" for u in bare):
             return None  # words beside it, or a URL that may run on past a space or into a full stop
         links = [("", url) for url in bare]
@@ -278,6 +279,9 @@ def _bot_rows(value, head: str) -> tuple[bool, list[Row]]:
     if all(t is None for t in tables):
         raise _unknown("it has no table the reader knows (Status, Latest Commit and Preview URL columns)")
     rows: dict[str, Row] = {}
+    for table in tables[:1]:
+        for r in table or []:
+            r.newest = True
     for table in tables:
         mine: dict[str, Row] = {}
         for r in table or []:
@@ -302,13 +306,20 @@ def read(comments, checks, sha: str) -> Preview:
     older = next((r.commit for r in rows if not same_commit(r.commit, head)), None)
 
     def broken(r: Row) -> bool:
-        """A row that says its deployment failed: the head's, whatever its check says; or, once the
-        head's builds have started, an older one of a Worker with no check on the head (build watch
-        paths kept it from rebuilding, so its preview is still the broken one)."""
+        """A row that says its deployment failed: the head's; or, once the head's builds have
+        started (or were skipped), an older one in the bot's newest comment of a Worker with no
+        check on the head (build watch paths kept it from rebuilding, so its preview is still the
+        broken one; a Worker gone from the newest comment doesn't count)."""
         if not r.failed:
             return False
-        return same_commit(r.commit, head) or (bool(builds) and bool(r.worker) and _name(r.worker) not in workers)
+        if same_commit(r.commit, head):
+            return True
+        return bool(builds or skipped) and r.newest and bool(r.worker) and _name(r.worker) not in workers
 
+    if any(b.result == "failing" for b in builds):
+        return Preview("failed", None, head)
+    if any(b.result == "pending" for b in builds):
+        return Preview("building", None, head)  # a re-run still going, whatever the comment said of the last
     if any(broken(r) for r in rows):
         return Preview("failed", None, head)
     if not builds:
@@ -318,10 +329,6 @@ def read(comments, checks, sha: str) -> Preview:
             return Preview("none", None, None)
         # The bot has commented, but the head's build hasn't started (Cloudflare can take minutes).
         return Preview("building", None, head if on_head else older)
-    if any(b.result == "failing" for b in builds):
-        return Preview("failed", None, head)
-    if any(b.result == "pending" for b in builds):
-        return Preview("building", None, head)
     # Each Worker built on the head needs its row to say so; a Worker with no check on the head
     # (build watch paths: Cloudflare skipped it) doesn't hold the others up.
     by_worker = {_name(r.worker): r for r in rows}
