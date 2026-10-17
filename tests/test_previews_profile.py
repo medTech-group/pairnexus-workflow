@@ -89,13 +89,13 @@ def test_a_provider_other_than_cloudflare_fails(tmp_path, provider):
 
 
 @pytest.mark.parametrize("key", ["on", "access"])
-@pytest.mark.parametrize("value", ['"true"', "1", '"yes"', "[]"])
-def test_on_and_access_must_be_true_or_false(tmp_path, key, value):
+@pytest.mark.parametrize("value, shown", [('"true"', "'true'"), ("1", "1"), ('"yes"', "'yes'"), ("[]", "[]")])
+def test_on_and_access_must_be_true_or_false(tmp_path, key, value, shown):
     _write_profile(tmp_path, f"\n[previews]\n{key} = {value}\n")
     p = _check(tmp_path)
     assert p.returncode == 1
     assert f"previews.{key}" in p.stderr and "true or false" in p.stderr
-    assert f"not {value.strip(chr(34))}" in p.stderr or f"not '{value.strip(chr(34))}'" in p.stderr
+    assert f"not {shown}" in p.stderr
 
 
 def test_a_long_bad_provider_is_cut_short(tmp_path):
