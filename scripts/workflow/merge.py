@@ -78,6 +78,8 @@ PARTIAL = "it holds only part of the list: fetch every page (gh api --paginate -
 _SHA = re.compile(r"[0-9a-f]{40}")
 _STATUS_URL_SHA = re.compile(r"/statuses/([0-9a-fA-F]{40})\b")
 PREVIEWS_DOC = Path(__file__).resolve().parents[2] / "docs/previews.md"
+DEFAULT_REVIEW_ROUNDS = 3  # the profile's run.review_rounds when it can't be read
+REVIEW_ROUNDS = range(1, 11)  # what --review-rounds and run.review_rounds accept
 
 
 class Unreadable(Exception):
@@ -101,6 +103,8 @@ class Reason:
     action: str | None  # review, update_branch, resolve_conflict, fix_checks
     # level -> (message, fix); both formatted with the reason's details.
     wording: dict
+    # A case of the same reason worded its own way: case -> level -> (message, fix).
+    cases: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -115,6 +119,7 @@ class Result:
     checks: list[dict] = field(default_factory=list)
     files: list[str] = field(default_factory=list)
     preview: dict | None = None
+    review_rounds: int = 3  # the allowed review rounds the review rule used
 
     def as_dict(self) -> dict:
         return {
@@ -128,6 +133,7 @@ class Result:
             "checks": self.checks,
             "files": self.files,
             "preview": self.preview,
+            "review_rounds": self.review_rounds,
         }
 
 
@@ -173,7 +179,13 @@ REASONS = {
     }),
     "review_not_clean": Reason("review_panel", "review", {
         "new": ("Not yet: the last review found things to fix.", "Fix them, then review it again."),
-        "developer": ("Not yet: review round {round} on {round_short} wasn't clean.", "Fix the findings and run another round."),
+        "developer": ("Not yet: review round {round} of {allowed} on {round_short} wasn't clean.", "Fix the findings and run another round."),
+    }, cases={
+        # The last allowed round (#170): a clean Correctness pass on the head lifts it.
+        "last_round": {
+            "new": ("Not yet: the last review found things to fix.", "Fix them, then ask for a short check of the latest changes."),
+            "developer": ("Not yet: review round {round} on {round_short} wasn't clean, and it was the last of {allowed} allowed.", "Fix the findings and run a Correctness pass on the head (review-panel §5); no further round."),
+        },
     }),
     "pass_not_clean": Reason("review_panel", "review", {
         "new": ("Not yet: the last check of the newest changes found things to fix.", "Fix them, then ask Claude to check again."),
@@ -455,12 +467,14 @@ class Context:
     """The inputs as the rules read them. Each reader raises Unreadable (the
     same one each time) for an input it can't read."""
 
-    def __init__(self, inputs: dict, profile, profile_error: str | None, waivable: frozenset = frozenset(), logs: dict | None = None):
+    def __init__(self, inputs: dict, profile, profile_error: str | None, waivable: frozenset = frozenset(), logs: dict | None = None, review_rounds: int | None = None):
         self.inputs = inputs
         self.profile = profile
         self.profile_error = profile_error
         self.waivable = waivable  # the checks the charter waives, when it may (`waivers`)
         self.logs = logs or {}  # --check-logs: file name -> the log's tail
+        # The allowed review rounds: --review-rounds, else the profile's run.review_rounds.
+        self.review_rounds = review_rounds or (profile.review_rounds if profile else DEFAULT_REVIEW_ROUNDS)
         self.waived: list[str] = []  # the waivers used
         self.notes: list[dict] = []
         self.checks: list[dict] = []
@@ -892,7 +906,10 @@ def _up_to_date(ctx: Context, add) -> None:
 
 def _panel(ctx: Context, add) -> None:
     """flow §4.4: a clean round on the head, or on an earlier commit of the PR
-    with a later clean Correctness pass on the head. Records from accounts
+    with a later clean Correctness pass on the head. A round that wasn't clean
+    needs another round, unless it is the last allowed one (its number at least
+    `ctx.review_rounds`, #170): then a later clean Correctness pass on the head
+    lifts its findings, and no further round is asked for. Records from accounts
     without write access, or naming a commit outside the PR, are ignored."""
     head = ctx.pr().head
     perms = ctx.permissions()
@@ -907,11 +924,17 @@ def _panel(ctx: Context, add) -> None:
         add("no_review")
         return
     last = counted[rounds[-1]]
-    details = {"round": last.round, "round_short": _short(last.commit)}
-    if not last.clean:
-        add("review_not_clean", **details)
-        return
+    allowed = ctx.review_rounds
+    details = {"round": last.round, "round_short": _short(last.commit), "allowed": allowed, "reviewers": list(last.reviewers)}
     passes = [r for r in counted[rounds[-1] + 1:] if r.kind == "pass" and r.commit == head]
+    if not last.clean:
+        if last.round < allowed:
+            add("review_not_clean", next="round", **details)
+        elif not passes:
+            add("review_not_clean", next="pass", case="last_round", **details)
+        elif not passes[-1].clean:
+            add("pass_not_clean", **details)
+        return
     if passes and not passes[-1].clean:
         add("pass_not_clean", **details)
     elif last.commit != head and not passes:
@@ -1061,7 +1084,8 @@ def waivers(charter_input: tuple | None, role: str | None, profile) -> tuple[fro
 def _reason(rid: str, rule: Rule | None, level: str, details: dict, wording_id: str | None = None) -> dict:
     reason = REASONS[wording_id or rid]
     details = {k: _clean(v) if isinstance(v, str) else v for k, v in details.items()}
-    wording = {lvl: {"message": m.format(**details), "fix": f.format(**details)} for lvl, (m, f) in reason.wording.items()}
+    worded = reason.cases[details["case"]] if details.get("case") else reason.wording
+    wording = {lvl: {"message": m.format(**details), "fix": f.format(**details)} for lvl, (m, f) in worded.items()}
     out = {
         "id": rid,
         "rule": rule.id if rule else None,
@@ -1072,6 +1096,12 @@ def _reason(rid: str, rule: Rule | None, level: str, details: dict, wording_id: 
     }
     if rid == "couldnt_read":
         out["input"] = details["input"]
+    if rule is not None and rule.id == "review_panel" and "round" in details:
+        # The counted round, so a caller needn't parse the wording (#122's notes);
+        # for review_not_clean, `next` says what lifts it: another round, or a pass.
+        out["round"], out["reviewers"] = details["round"], details["reviewers"]
+        if "next" in details:
+            out["next"] = details["next"]
     return out
 
 
@@ -1084,14 +1114,16 @@ def evaluate(
     charter_input: tuple | None = None,
     logs: dict | None = None,
     role: str | None = None,
+    review_rounds: int | None = None,
 ) -> Result:
     """The decision. `inputs` maps each name in INPUTS to (value, None) when
     read, (None, why) when it couldn't be; a name left out wasn't given (the
     preview: none). `profile_error` says why the profile couldn't be read.
     `charter_input` and `role` (see `waivers`) and `logs` (the checks' logs,
-    by file name) are for the run's waivers."""
+    by file name) are for the run's waivers. `review_rounds` is the allowed
+    review rounds (`--review-rounds`); None takes the profile's `run.review_rounds`."""
     waivable, charter_notes = waivers(charter_input, role, profile)
-    ctx = Context(inputs, profile, profile_error, waivable, logs)
+    ctx = Context(inputs, profile, profile_error, waivable, logs, review_rounds)
     ctx.notes += charter_notes
     try:
         pr = ctx.pr()
@@ -1136,7 +1168,7 @@ def evaluate(
         decision = "owner_review"
     else:
         decision = "ready"
-    return Result(decision, number, head, level, owner, reasons, ctx.notes, ctx.checks, kit, ctx.preview)
+    return Result(decision, number, head, level, owner, reasons, ctx.notes, ctx.checks, kit, ctx.preview, ctx.review_rounds)
 
 
 # ---------- text ----------
