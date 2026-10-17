@@ -163,8 +163,12 @@ def test_a_patch_cant_drop_removed_protection_and_turn_on_auto_merge(tmp_path):
     p = _patch(tmp_path, env, {"charter": {"accepted_gaps": [], "merge": {"mode": "auto-merge"}}})
     assert p.returncode == 1 and "removed protection" in p.stderr
     assert b.read_text() == before
-    # Dropping the record alone, while on session, is a valid change.
+    # Review round 2: nor in two patches. Dropping the record is refused on its own.
     p = _patch(tmp_path, env, {"charter": {"accepted_gaps": []}})
+    assert p.returncode == 1 and "can't be dropped" in p.stderr
+    assert b.read_text() == before
+    # Other changes keeping the line, and more gaps beside it, are written.
+    p = _patch(tmp_path, env, {"charter": {"accepted_gaps": c["accepted_gaps"] + ["another gap"]}})
     assert p.returncode == 0, p.stderr
 
 
@@ -180,6 +184,11 @@ def test_a_broken_profile_refuses_a_charter_change_but_not_a_tickets_patch(tmp_p
         assert p.stdout == "" and b.read_text() == before
         p = _patch(tmp_path, env, {"tickets": {"7": {"status": "running"}}})
         assert p.returncode == 0, p.stderr
+    prof.unlink()
+    prof.mkdir()  # not a file
+    p = _patch(tmp_path, env, {"charter": {"merge": {"mode": "auto-merge"}}})
+    assert p.returncode == 1 and p.stderr.startswith("workflow: ") and "Traceback" not in p.stderr
+    assert b.read_text() == before
 
 
 def test_body_problems_come_before_the_profile_check(tmp_path):
@@ -199,3 +208,15 @@ def test_no_profile_says_the_change_wasnt_checked(tmp_path):
     assert p.returncode == 0 and "no profile found" in p.stderr
     p = _patch(tmp_path, {"CLAUDE_PROJECT_DIR": str(tmp_path)}, {"tickets": {"7": {"status": "running"}}})
     assert p.returncode == 0 and p.stderr == ""
+
+
+def test_put_still_replaces_a_block_that_isnt_json(tmp_path):
+    # Review round 2: the documented way to recover a broken block.
+    env = _profile(tmp_path, ruleset=True)
+    b = tmp_path / "body.md"
+    b.write_text(f"# Tracking\n\n{state.BEGIN}\n```json\n{{not json\n```\n{state.END}\n")
+    sf = tmp_path / "state.json"
+    sf.write_text(json.dumps(state.empty(_charter())))
+    p = _cli("state", "put", "--body", str(b), "--state", str(sf), env=env)
+    assert p.returncode == 0, p.stderr
+    assert state.get(p.stdout)["charter"]["merge"]["mode"] == "session"

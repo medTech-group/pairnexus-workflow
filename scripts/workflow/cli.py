@@ -509,21 +509,26 @@ def _against_profile(c: dict, prof, who: bool = True, protected: bool | None = N
 def _charter_change_problems(old, new) -> list[str]:
     """A put or patch that changes the charter: the checks `charter validate
     --approved` runs against the profile on disk. Removed protection the old
-    charter recorded still counts, so one patch can't drop the record and turn
-    on auto-merge. A state whose charter is unchanged isn't checked; a charter
-    that is itself unsound is left to `state.put` to refuse."""
+    charter recorded can't be dropped: the charter carries that verdict for the
+    whole run, so auto-merge stays refused. A state whose charter is unchanged
+    isn't checked; a charter that is itself unsound is left to `state.put`."""
     c = new.get("charter") if isinstance(new, dict) else None
     was = old.get("charter") if isinstance(old, dict) else None
     if not isinstance(c, dict) or c == was or charter_mod.validate(c):
         return []
+    if charter_mod.removed_protection_accepted(was) and not charter_mod.removed_protection_accepted(c):
+        return [
+            "accepted_gaps: the `removed protection:` line can't be dropped during the run; "
+            "the charter carries the read-back's verdict until the run ends"
+        ]
     try:
         prof = load(required=False)
-    except UnicodeDecodeError as e:
-        raise ProfileError(f"the profile isn't UTF-8 text ({e}), so the charter change can't be checked") from e
+    except (UnicodeDecodeError, OSError) as e:
+        raise ProfileError(f"the profile can't be read ({e}), so the charter change can't be checked") from e
     if prof is None:
         print("note: no profile found: the charter change wasn't checked against it", file=sys.stderr)
         return []
-    return _against_profile(c, prof, protected=False if charter_mod.removed_protection_accepted(was) else None)
+    return _against_profile(c, prof)
 
 
 def cmd_state(a) -> int:
