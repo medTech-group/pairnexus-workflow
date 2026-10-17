@@ -16,10 +16,10 @@ RULE = (
     "runs only against an absolute path to a scratch project, never the session's checkout",
     "a fresh temporary directory, or a `git clone` of the checkout into one with its `origin` removed",
     "shares the session's `.git`",
-    "`--project` that absolute path on every call",
+    "`--project` the scratch project's absolute path on every call",
     "`$CLAUDE_PROJECT_DIR` or the nearest checkout",
     "left out (or empty, for `vendor`)",
-    "`git status --porcelain --ignored --untracked-files=all` in the session's checkout before",
+    "`git status --porcelain --ignored --untracked-files=all` in the session's checkout (and in the clean copy too, when",
     "any difference between the two as a finding",
     "the guard can refuse the undo",
 )
