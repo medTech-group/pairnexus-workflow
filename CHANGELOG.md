@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**The review panel's explorer runs commands that write files only on a scratch project** (#172, found by #106).
+
+- **`review-panel` and the `ui-explorer` agent:** a command under review that writes files (`workflow adopt`, `workflow pr-template`, the set-up and upgrade paths, anything taking `--project`) runs only against an absolute path to a scratch project, in a fresh temporary directory or a `git worktree`, never the session's checkout. The explorer runs `git status --porcelain` in the real checkout before and after, and reports any change as a finding instead of undoing it, since the guard can refuse the undo of a protected file.
+- Tests read both texts (`tests/test_review_scratch_project.py`).
+- **For projects updating:** nothing to do.
+
 **An estimate before a run, in sessions and hours** (#123, part of a session budget and a light review, #42).
 
 - **`workflow charter estimate charter.json --tickets N`** says roughly what a run will use, never in money: "About 14 ticket sessions over roughly 7 hours (7 tickets, up to 1 retry each), plus the conductor's check-ins". With no past runs it is the worst case (every retry used) at an hour a session; given `--runs` (past `workflow:run` issues, as the GitHub API returns them) with two or more that merged something, it uses the five most recent runs' sessions per ticket (never above the retries the charter allows) and wall time per merged ticket. The approved estimate is kept in the run state as `estimate`, for later splices. A body whose run state can't be read is skipped with a note.

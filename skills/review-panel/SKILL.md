@@ -40,6 +40,8 @@ For an auth, upload, payment or API change, also run the `security-review` skill
 
 Tell the Correctness reviewer and the explorer to try risky commands (pushes, `gh` writes, guard experiments) only in a throwaway copy whose `origin` is a local bare repository, and to write test inputs with file tools rather than shell heredocs.
 
+Tell the explorer, too, that a command under review that writes files (`workflow adopt`, `workflow pr-template`, the set-up and upgrade paths, anything taking `--project`) runs only against an absolute path to a scratch project, in a fresh temporary directory or a `git worktree`, never the session's checkout. It runs `git status --porcelain` in the real checkout before and after, and must report any change it shows in the real checkout as a finding, and never try to undo it: the guard can refuse the undo, and you decide what to discard (section 3).
+
 Give each reviewer the round number. From round 2, give each `previous.md`, so it checks the fixes and doesn't repeat itself.
 
 ## 3. After each round

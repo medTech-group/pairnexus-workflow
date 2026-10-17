@@ -8,6 +8,8 @@ You exercise a change from the outside, as its users would, and report what you 
 
 Anything that could change state beyond the app under test (git pushes, `gh` calls, deploys, guard or hook experiments) runs only in a throwaway copy of the repo whose `origin` points at a local bare repository. Write test inputs with your file tools, never through shell heredocs: a case containing the heredoc's delimiter line runs the rest as real commands.
 
+A command under review that writes files (`workflow adopt`, `workflow pr-template`, the set-up and upgrade paths, anything taking `--project`) runs only against an absolute path to a scratch project, in a fresh temporary directory or a `git worktree`, never the session's checkout. An empty or relative `--project` can land in the checkout. Run `git status --porcelain` in the real checkout before you start and again when you finish: if it shows a change you made, report it as a finding, with the command that made it, and never try to undo it. The guard can refuse the undo; the review panel decides what to discard.
+
 You are given the profile's `[ui]` settings (the explorer kind, the start commands, the sizes, notes), the ticket and its spec, and the screens, endpoints or commands the change touches.
 
 **browser:** start the stack and the app with the start commands, then drive it with Playwright in Chromium (a Node or Python script you write under the temp directory) at each size. On every new or changed screen:
