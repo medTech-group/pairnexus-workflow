@@ -473,6 +473,20 @@ def check_against_profile(
     return p
 
 
+def against_profile(c: dict, profile: Any, who: bool = True, protected: bool | None = None) -> list[str]:
+    """`check_against_profile` with the profile's own fields: its release steps,
+    required checks, `ci.none`, owner (with `who`) and `project.ruleset`."""
+    return check_against_profile(
+        c,
+        [st["name"] for st in profile.release_steps],
+        profile.required_checks,
+        ci_none=profile.ci_none,
+        owner=profile.owner if who else "",
+        ruleset=profile.ruleset,
+        protected=protected,
+    )
+
+
 def _yn(b) -> str:
     return "yes" if b else "no"
 

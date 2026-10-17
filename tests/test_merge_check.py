@@ -495,7 +495,7 @@ def test_permissions_in_the_apis_own_shapes(project, capsys):
     assert ids(got) == ["no_review"]
 
 
-# ---------- rule 6: the suite's evidence (until #81) ----------
+# ---------- rule 6: the suite's evidence (more in test_merge_check_evidence.py) ----------
 
 
 def test_ci_none_is_not_yet_until_the_evidence_is_read(project, capsys):
