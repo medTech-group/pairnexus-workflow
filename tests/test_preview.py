@@ -628,3 +628,77 @@ def test_control_characters_in_a_workers_name_are_escaped_in_the_refusal(tmp_pat
     worker = "demo\x1b[31mred\u202e"
     out, code, err = preview(tmp_path, capsys, [bot(row(worker=worker, links="see the dashboard"))], checks(cf_run(worker=worker)))
     assert code == 1 and "\x1b" not in err and "\u202e" not in err and "\\x1b" in err
+
+
+# ---------- round 3's cases ----------
+
+API_LINKS = "[Branch Preview URL](https://notes-page-demo-api.example-account.workers.dev)"
+
+
+def test_a_bare_preview_url_is_its_link(tmp_path, capsys):
+    got, _, _ = preview(tmp_path, capsys, [bot(row(links=BRANCH_URL))], checks(cf_run()))
+    assert got == answer("built", BRANCH_URL)
+
+
+@pytest.mark.parametrize("cell", [BRANCH_URL + " extra words", BRANCH_URL + ".", "https://b demo.example.workers.dev"])
+def test_a_bare_url_with_more_beside_it_is_refused_not_cut_short(tmp_path, capsys, cell):
+    out, code, err = preview(tmp_path, capsys, [bot(row(links=cell))], checks(cf_run()))
+    assert code == 1 and "Preview URL cell" in err
+
+
+def test_an_html_link_is_read(tmp_path, capsys):
+    got, _, _ = preview(tmp_path, capsys, [bot(row(links=f'<a href="{BRANCH_URL}">Branch Preview URL</a>'))], checks(cf_run()))
+    assert got == answer("built", BRANCH_URL)
+
+
+def test_a_markdown_link_with_parentheses_keeps_them(tmp_path, capsys):
+    got, _, _ = preview(tmp_path, capsys, [bot(row(links="[Branch Preview URL](https://a.example.workers.dev/a_(b))"))], checks(cf_run()))
+    assert got == answer("built", "https://a.example.workers.dev/a_(b)")
+
+
+def test_a_skipped_run_then_a_successful_rerun_is_built(tmp_path, capsys):
+    first = cf_run("skipped", rid=7001, when="2026-10-16T10:01:00Z")
+    rerun = cf_run("success", rid=7002, when="2026-10-16T10:08:00Z")
+    got, _, _ = preview(tmp_path, capsys, [bot(row())], checks(first, rerun))
+    assert got == answer("built", BRANCH_URL)
+
+
+def test_a_worker_checked_on_the_head_but_missing_from_the_comment_is_building(tmp_path, capsys):
+    got, _, _ = preview(tmp_path, capsys, [bot(row(worker="demo-notes"))], checks(cf_run(worker="demo-notes"), cf_run(worker="demo-api", rid=7040)))
+    assert got == answer("building")
+
+
+def test_an_older_comment_supplies_a_worker_the_newest_lacks(tmp_path, capsys):
+    older = bot(row(worker="demo-api", links=API_LINKS), cid=501, updated="2026-10-16T10:00:00Z")
+    newer = bot(row(worker="demo-notes"), cid=502, updated="2026-10-16T10:30:00Z")
+    got, _, _ = preview(tmp_path, capsys, [older, newer], checks(cf_run(worker="demo-notes"), cf_run(worker="demo-api", rid=7041)))
+    assert got == answer("built", "https://notes-page-demo-api.example-account.workers.dev")
+
+
+def test_an_unchecked_workers_failed_row_is_failed(tmp_path, capsys):
+    # Build watch paths kept demo-api from rebuilding: its preview on this branch is still the broken one.
+    rows = (row(worker="demo-notes"), row("❌ Deployment failed", worker="demo-api", sha=OLDER, links=""))
+    got, _, _ = preview(tmp_path, capsys, [bot(*rows)], checks(cf_run(worker="demo-notes")))
+    assert got == answer("failed")
+
+
+def test_an_earlier_failed_row_before_the_heads_build_starts_is_building(tmp_path, capsys):
+    comments, _, _ = recorded("failed")
+    got, _, _ = preview(tmp_path, capsys, comments, checks(), HEAD)
+    assert got["state"] == "building"
+
+
+def test_a_head_row_that_failed_with_no_check_is_failed(tmp_path, capsys):
+    got, _, _ = preview(tmp_path, capsys, [bot(row("❌ Deployment failed", links=""))], checks())
+    assert got == answer("failed")
+
+
+def test_names_are_matched_as_words_in_any_case(tmp_path, capsys):
+    rows = (row(worker="`Demo-Notes`"), row(worker="**demo-api**", links=API_LINKS))
+    got, _, _ = preview(tmp_path, capsys, [bot(*rows)], checks(cf_run(worker="demo-notes"), cf_run(worker="demo-api", rid=7042)))
+    assert got == answer("built", "https://notes-page-demo-api.example-account.workers.dev")  # the first Worker by its check's name
+
+
+def test_in_one_comment_the_heads_row_for_a_worker_wins(tmp_path, capsys):
+    got, _, _ = preview(tmp_path, capsys, [bot(row("❌ Deployment failed", sha=OLDER, links=""), row())], checks(cf_run()))
+    assert got == answer("built", BRANCH_URL)
