@@ -9,7 +9,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
-from conftest import BASE_PROFILE, git
+from conftest import BASE_PROFILE, git, pinned
 
 from workflow.guard import decide, matches, segments
 from workflow.profile import DEFAULT_PROTECTED, DEFAULT_TEST_PATHS, parse
@@ -328,8 +328,8 @@ def test_ticket_gh_allow_list(cmd, profile, tmp_path):
         "gh pr list",
         "gh pr diff 3",
         "gh pr ready 3",
-        "gh pr merge 3 --auto --squash",
-        "gh pr merge 3 --merge",
+        "gh pr merge 3 --auto --squash --match-head-commit {sha}",
+        "gh pr merge 3 --merge --match-head-commit {sha}",
         "gh issue view 3",
         "gh issue comment 3 --body 'x <!-- workflow:agent -->'",
         "gh issue edit 3 --add-label x",
@@ -349,7 +349,7 @@ def test_ticket_gh_allow_list(cmd, profile, tmp_path):
     ],
 )
 def test_ticket_gh_allowed(cmd, profile, tmp_path):
-    assert ticket(profile, tmp_path, cmd).action == "allow", cmd
+    assert ticket(profile, tmp_path, pinned(cmd, tmp_path)).action == "allow", cmd
 
 
 def test_gh_pr_merge_admin_in_every_role(profile, tmp_path):
