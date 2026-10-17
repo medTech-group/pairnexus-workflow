@@ -509,19 +509,17 @@ def _against_profile(c: dict, prof, who: bool = True, protected: bool | None = N
 def _charter_change_problems(old, new) -> list[str]:
     """A put or patch that changes the charter: the checks `charter validate
     --approved` runs against the profile on disk. Removed protection the old
-    charter recorded can't be dropped: the charter carries that verdict for the
-    whole run, so auto-merge stays refused. A state whose charter is unchanged
-    isn't checked; a charter that is itself unsound is left to `state.put`."""
+    charter recorded can't be dropped, not even by clearing the charter
+    (`charter.dropped_removed_protection`). A state whose charter is unchanged
+    isn't checked; a charter that is otherwise unsound is left to `state.put`."""
     c = new.get("charter") if isinstance(new, dict) else None
     was = old.get("charter") if isinstance(old, dict) else None
     if c == was:
         return []
     # Before anything else, so clearing the charter can't drop it either.
-    if charter_mod.removed_protection_accepted(was) and not charter_mod.removed_protection_accepted(c):
-        return [
-            "accepted_gaps: the `removed protection:` line can't be dropped during the run; the charter carries "
-            "the read-back's verdict until the run ends (auto-merge needs a new run, whose kick-off reads protection back)"
-        ]
+    dropped = charter_mod.dropped_removed_protection(was, c)
+    if dropped:
+        return [dropped]
     if not isinstance(c, dict) or charter_mod.validate(c):
         return []
     try:
