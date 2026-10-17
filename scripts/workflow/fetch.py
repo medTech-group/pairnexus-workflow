@@ -22,11 +22,13 @@ import shutil
 import subprocess
 from urllib.parse import quote
 
+from . import merge
 from .posts import CommentsError, _login, comments_from, decode_values
 
 TIMEOUT = 120  # seconds for one `gh api` call, every page
 NOT_INSTALLED = "gh (the GitHub CLI) isn't installed here"
 AS_A_FILE = "so it couldn't be fetched: give --{name} as a file"
+PROXY_REFUSED = "not permitted through this proxy"  # a cloud session's proxy, refusing a route
 
 # A pull request's review threads come only from GraphQL, 100 to a page; gh's
 # --paginate follows pageInfo.endCursor through $endCursor.
@@ -119,7 +121,9 @@ def _not_found(e: GhError) -> bool:
 
 
 def _refused(e: GhError) -> bool:
-    return "HTTP 403" in str(e)
+    """The cloud session's proxy refused the route, not GitHub (whose own 403s,
+    for a token without push access or a rate limit, stay failures)."""
+    return PROXY_REFUSED in str(e)
 
 
 def _id(v) -> int | None:
@@ -149,7 +153,9 @@ def session_threads(r: str, number: int, pr) -> dict:
             raise GhError("a review comment has no id")
         authors[cid] = _login(c)
     counted = _id(pr.get("review_comments")) if isinstance(pr, dict) else None
-    if counted is not None and len(authors) < counted:
+    if counted is None:
+        raise GhError("the pull request doesn't say how many review comments it has (review_comments), so the session route's threads can't be shown whole")
+    if len(authors) < counted:
         raise GhError(f"gh api gave {len(authors)} of the pull request's {counted} review comments, so the session route's threads can't be shown whole")
     in_threads = {i for _, ids in threads for i in ids}
     if set(authors) - in_threads:
@@ -179,16 +185,32 @@ def token_permission(r: str) -> tuple[str, str]:
     return login, "none"
 
 
-def _standing_change_requests(reviews) -> set[str]:
-    """The logins (casefolded) whose latest approving, change-requesting or
-    dismissed review requests changes."""
+def _reviews_read(reviews, pr) -> tuple[list[tuple[str, str]], set[str]]:
+    """(login, state) for each review, as merge-check reads them (any shape it
+    takes, oldest first, drafts left out), and the logins (casefolded) asked
+    to review again. Raises GhError when the reviews can't be read."""
+    ctx = merge.Context({"reviews": (reviews, None), "pr": (pr, None)}, None, None)
+    try:
+        revs = ctx.reviews()
+    except merge.Unreadable as e:
+        raise GhError(f"not fetched: the reviews couldn't be read ({e})") from None
+    try:
+        asked = ctx.pr().requested
+    except merge.Unreadable:
+        asked = set()
+    return revs, asked
+
+
+def _standing_change_requests(revs: list[tuple[str, str]], asked: set[str]) -> set[str]:
+    """The logins (casefolded) whose change request still stands, as
+    merge-check's `_people` reads it: their latest approving,
+    change-requesting or dismissed review requests changes, and they haven't
+    been asked to review again."""
     standing: dict[str, str] = {}
-    for x in _items(reviews):
-        if isinstance(x, dict) and isinstance(x.get("state"), str) and x["state"].upper() in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
-            who = _login(x)
-            if who:
-                standing[who.casefold()] = x["state"].upper()
-    return {w for w, state in standing.items() if state == "CHANGES_REQUESTED"}
+    for login, state in revs:
+        if login and state in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
+            standing[login.casefold()] = state
+    return {w for w, state in standing.items() if state == "CHANGES_REQUESTED" and w not in asked}
 
 
 def merge_inputs(repo: str, number: int, have: dict, names, asker: str | None = None) -> dict:
@@ -254,6 +276,7 @@ def merge_inputs(repo: str, number: int, have: dict, names, asker: str | None = 
         return [api(f"{r}/rulesets/{i}") for i in ids]  # each in full: the list gives summaries
 
     get("rulesets", rulesets)
+
     def threads():
         try:
             return api("graphql", paginate=True, fields=[("-f", f"query={THREADS_QUERY}"), ("-f", f"owner={owner}"), ("-f", f"name={name}"), ("-F", f"number={number}")])
@@ -276,11 +299,11 @@ def merge_inputs(repo: str, number: int, have: dict, names, asker: str | None = 
             items = comments_from(comments)
         except CommentsError as e:
             raise GhError(f"not fetched: the comments couldn't be read ({e})") from None
-        items += [x for x in _items(reviews) if isinstance(x, dict)]
-        for who in [_login(x) for x in items] + [(asker or "").strip().lstrip("@")]:
+        revs, asked = _reviews_read(reviews, pr)  # in any shape merge-check takes, so no reviewer is left out
+        for who in [_login(x) for x in items] + [login for login, _ in revs] + [(asker or "").strip().lstrip("@")]:
             if who:
                 logins.setdefault(who.casefold(), who)
-        answers, token = [], None
+        answers, token, blocking = [], None, None
         for who in logins.values():
             try:
                 answers.append(api(f"{r}/collaborators/{quote(who, safe='')}/permission"))
@@ -298,9 +321,11 @@ def merge_inputs(repo: str, number: int, have: dict, names, asker: str | None = 
                         token = token_permission(r)
                     except GhError as e2:
                         raise GhError(f"{e}; then the token's own permission: {e2}") from None
-                if who.casefold() == token[0].casefold():
-                    answers.append({"permission": token[1], "user": {"login": who}})
-                elif who.casefold() in _standing_change_requests(reviews):
+                    blocking = _standing_change_requests(revs, asked)
+                token_login, token_perm = token
+                if who.casefold() == token_login.casefold():
+                    answers.append({"permission": token_perm, "user": {"login": who}})
+                elif who.casefold() in blocking:
                     raise GhError(f"{e}, so whether @{who}, who requested changes, has write access can't be shown") from None
                 else:
                     answers.append({"permission": "none", "user": {"login": who}})

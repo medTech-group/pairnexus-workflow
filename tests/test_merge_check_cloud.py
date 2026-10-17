@@ -37,11 +37,12 @@ def review_comment(cid, who="dev", reply_to=None):
 def cloud(data=None, threads=((),), comments=((),), me="owner", perms=ADMIN):
     """routes() as a cloud session's proxy answers them: GraphQL and the
     collaborator route refused, the session route and `user` answering."""
+    data = data or with_report(inputs())
+    data["pr"].setdefault("review_comments", sum(len(p) for p in comments))
     r = routes(data)
     r["graphql"] = REFUSED_GRAPHQL
     for k in [k for k in r if "/collaborators/" in k]:
         r[k] = REFUSED_PATH
-    r[f"{REPO}/collaborators/owner/permission"] = REFUSED_PATH
     r[f"{REPO}/pulls/12/ccr/review_threads"] = fake_gh.pages(*[list(p) for p in threads])
     r[f"{REPO}/pulls/12/comments"] = fake_gh.pages(*[list(p) for p in comments])
     r["user"] = {"login": me}
@@ -104,6 +105,15 @@ def test_a_session_route_that_ends_early_is_couldnt_read_never_ready(project, ca
     said = couldnt_read(got)
     assert list(said) == ["threads"]
     assert "give --threads as a file" in said["threads"]
+
+
+def test_a_pull_request_that_doesnt_count_its_review_comments_leaves_the_threads_couldnt_read(project, capsys, tmp_path, monkeypatch):
+    r = cloud(threads=([thread(True, 501)],), comments=([review_comment(501)],))
+    del r[f"{REPO}/pulls/12"]["review_comments"]
+    fake_gh.install(tmp_path, monkeypatch, r)
+    got, _ = run(project, capsys, {}, "--fetch", "12")
+    said = couldnt_read(got)
+    assert list(said) == ["threads"] and "review_comments" in said["threads"]
 
 
 def test_review_comments_fewer_than_the_pull_request_counts_are_couldnt_read(project, capsys, tmp_path, monkeypatch):
@@ -219,6 +229,33 @@ def test_a_change_request_from_someone_whose_access_cant_be_shown_isnt_guessed(p
     assert list(said) == ["permissions"] and "@dev" in said["permissions"] and "give --permissions as a file" in said["permissions"]
 
 
+def test_a_change_request_is_read_in_time_order_and_in_graphqls_shape(project, capsys, tmp_path, monkeypatch):
+    # Listed newest first, in GraphQL's shape: dev's change request (11:00) is still their latest.
+    data = with_report(inputs())
+    nodes = [{"author": {"login": "dev"}, "state": "CHANGES_REQUESTED", "submittedAt": "2026-10-16T11:00:00Z"},
+             {"author": {"login": "dev"}, "state": "APPROVED", "submittedAt": "2026-10-16T10:00:00Z"}]
+    r = cloud(data)
+    r[f"{REPO}/collaborators/dev/permission"] = REFUSED_PATH
+    fake_gh.install(tmp_path, monkeypatch, r)
+    reviews = [review("CHANGES_REQUESTED", who="dev", rid=2, when="2026-10-16T11:00:00Z"), review("APPROVED", who="dev", rid=1)]
+    got, _ = run(project, capsys, {"reviews": reviews}, "--fetch", "12")
+    assert "@dev" in couldnt_read(got).get("permissions", ""), got["reasons"]
+    got, _ = run(project, capsys, {"reviews": {"reviews": {"totalCount": 2, "nodes": nodes}}}, "--fetch", "12")
+    assert got["decision"] == "not_yet", got["reasons"]
+
+
+def test_a_change_request_whose_reviewer_was_asked_again_doesnt_stall(project, capsys, tmp_path, monkeypatch):
+    # merge-check already sets aside a change request once its reviewer is asked to review again.
+    data = with_report(inputs())
+    data["reviews"] = [review("CHANGES_REQUESTED", who="dev")]
+    data["pr"]["requested_reviewers"] = [{"login": "dev"}]
+    r = cloud(data)
+    r[f"{REPO}/collaborators/dev/permission"] = REFUSED_PATH
+    fake_gh.install(tmp_path, monkeypatch, r)
+    got, _ = run(project, capsys, {}, "--fetch", "12")
+    assert got["decision"] == "ready", got["reasons"]
+
+
 def test_a_change_request_later_approved_is_counted_as_without_write_access(project, capsys, tmp_path, monkeypatch):
     data = with_report(inputs())
     data["reviews"] = [review("CHANGES_REQUESTED", who="dev"), review("COMMENTED", who="dev", rid=2, when="2026-10-16T10:00:00Z"),
@@ -269,17 +306,15 @@ def test_the_asker_is_the_owner_only_through_the_tokens_own_permission(project, 
     assert got["owner"] is True, got["reasons"]
 
 
-@pytest.mark.parametrize("broken", ["user", "repo", "no_login", "no_flags"])
-def test_a_token_permission_that_cant_be_read_leaves_permissions_couldnt_read(project, capsys, tmp_path, monkeypatch, broken):
+@pytest.mark.parametrize("route, answer", [
+    ("user", fake_gh.reply(exit=1, stderr="gh: Server Error (HTTP 502)")),
+    (REPO, REFUSED_PATH),
+    ("user", {"id": 1}),
+    (REPO, {"full_name": "acme/demo"}),
+])
+def test_a_token_permission_that_cant_be_read_leaves_permissions_couldnt_read(project, capsys, tmp_path, monkeypatch, route, answer):
     r = cloud()
-    if broken == "user":
-        r["user"] = fake_gh.reply(exit=1, stderr="gh: Server Error (HTTP 502)")
-    elif broken == "repo":
-        r[REPO] = REFUSED_PATH
-    elif broken == "no_login":
-        r["user"] = {"id": 1}
-    else:
-        r[REPO] = {"full_name": "acme/demo"}
+    r[route] = answer
     fake_gh.install(tmp_path, monkeypatch, r)
     got, _ = run(project, capsys, {}, "--fetch", "12")
     assert got["decision"] == "not_yet"
@@ -288,10 +323,15 @@ def test_a_token_permission_that_cant_be_read_leaves_permissions_couldnt_read(pr
     assert "not permitted through this proxy" in said["permissions"]
 
 
-def test_a_collaborator_route_failing_otherwise_is_still_couldnt_read(project, capsys, tmp_path, monkeypatch):
-    # Only a refusal (HTTP 403) falls back: a server error isn't a cloud session's proxy.
+@pytest.mark.parametrize("stderr", [
+    "gh: Server Error (HTTP 502)",
+    "gh: Must have push access to view repository collaborators. (HTTP 403)",
+    "gh: You have exceeded a secondary rate limit. (HTTP 403)",
+])
+def test_a_collaborator_route_failing_otherwise_is_still_couldnt_read(project, capsys, tmp_path, monkeypatch, stderr):
+    # Only the proxy's refusal falls back: GitHub's own 403s and server errors stay failures, as before.
     r = cloud()
-    r[f"{REPO}/collaborators/owner/permission"] = fake_gh.reply(exit=1, stderr="gh: Server Error (HTTP 502)")
+    r[f"{REPO}/collaborators/owner/permission"] = fake_gh.reply(exit=1, stderr=stderr)
     gh = fake_gh.install(tmp_path, monkeypatch, r)
     got, _ = run(project, capsys, {}, "--fetch", "12")
     assert list(couldnt_read(got)) == ["permissions"]
@@ -315,3 +355,15 @@ def test_a_permissions_file_still_wins_in_a_cloud_session(project, capsys, tmp_p
     got, _ = run(project, capsys, {"permissions": {"owner": "admin"}}, "--fetch", "12")
     assert got["decision"] == "ready", got["reasons"]
     assert not [p for p in gh.paths() if "/collaborators/" in p or p == "user"]
+
+
+def test_reviewers_in_graphqls_shape_have_their_permission_fetched(project, capsys, tmp_path, monkeypatch):
+    # Outside a cloud session too: a --reviews file in GraphQL's shape used to leave its reviewers
+    # unasked, so their change request counted as from someone without write access.
+    r = routes()
+    r[f"{REPO}/collaborators/dev/permission"] = {"permission": "write", "user": {"login": "dev"}}
+    gh = fake_gh.install(tmp_path, monkeypatch, r)
+    nodes = [{"author": {"login": "dev"}, "state": "CHANGES_REQUESTED", "submittedAt": "2026-10-16T11:00:00Z"}]
+    got, _ = run(project, capsys, {"reviews": {"reviews": {"totalCount": 1, "nodes": nodes}}}, "--fetch", "12")
+    assert ids(got) == ["changes_requested"], got["reasons"]
+    assert f"{REPO}/collaborators/dev/permission" in gh.paths()
