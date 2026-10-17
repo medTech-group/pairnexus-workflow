@@ -10,16 +10,16 @@ COMMANDS = (
     "`workflow vendor`",
     "`workflow repair`",
     "the set-up step that saves `workflow pr-template`'s output",
-    "anything taking `--project` or `--out`",
+    "anything taking `--project` or `--out`, and any other command that writes files, `workflow evidence` among them",
 )
 RULE = (
     "runs only against an absolute path to a scratch project, never the session's checkout",
-    "a fresh temporary directory, or a `git clone` of the checkout into one",
+    "a fresh temporary directory, or a `git clone` of the checkout into one with its `origin` removed",
     "shares the session's `.git`",
     "`--project` that absolute path on every call",
     "`$CLAUDE_PROJECT_DIR` or the nearest checkout",
     "left out (or empty, for `vendor`)",
-    "`git status --porcelain --ignored` in the session's checkout before",
+    "`git status --porcelain --ignored --untracked-files=all` in the session's checkout before",
     "any difference between the two as a finding",
     "the guard can refuse the undo",
 )
@@ -72,6 +72,8 @@ def test_the_explorer_states_the_scratch_project_rule():
     assert "before you start and again when you finish" in text
     assert "Call the CLI by its absolute path in the session's checkout" in text
     assert "delete it when you finish" in text
+    assert "`git -C <scratch> remote remove origin`" in text
+    assert "with literal absolute paths" in text
     assert "with the command that made it, and never try to undo it" in text
 
 
@@ -86,3 +88,4 @@ def test_a_discard_the_guard_refuses_finishes_in_a_clean_copy():
     # A worktree of the branch itself is refused while the checkout holds it.
     assert "`git worktree add --detach <a directory outside the repo> HEAD`" in after
     assert "`git push origin HEAD:<branch>`" in after
+    assert "Do everything after it there: later fixes, the tests, `commit.txt`, the diff and the next rounds" in after

@@ -40,7 +40,7 @@ For an auth, upload, payment or API change, also run the `security-review` skill
 
 Tell the Correctness reviewer and the explorer to try risky commands (pushes, `gh` writes, guard experiments) only in a throwaway copy whose `origin` is a local bare repository, and to write test inputs with file tools rather than shell heredocs.
 
-Tell the explorer, too, that a command under review that writes files (`workflow adopt`, `workflow vendor`, `workflow repair`, the set-up step that saves `workflow pr-template`'s output, anything taking `--project` or `--out`) runs only against an absolute path to a scratch project, never the session's checkout: a fresh temporary directory, or a `git clone` of the checkout into one, never a `git worktree`, which shares the session's `.git`. It gives `--project` that absolute path on every call: left out (or empty, for `vendor`), the flag means `$CLAUDE_PROJECT_DIR` or the nearest checkout. It runs `git status --porcelain --ignored` in the session's checkout before and after, and reports any difference between the two as a finding. It never tries to undo a change: the guard can refuse the undo, and you decide what to discard (section 3). Its own text says how to run a command that has no `--project`.
+Tell the explorer, too, that a command under review that writes files (`workflow adopt`, `workflow vendor`, `workflow repair`, the set-up step that saves `workflow pr-template`'s output, anything taking `--project` or `--out`, and any other command that writes files, `workflow evidence` among them) runs only against an absolute path to a scratch project, never the session's checkout: a fresh temporary directory, or a `git clone` of the checkout into one with its `origin` removed, never a `git worktree`, which shares the session's `.git`. It gives `--project` that absolute path on every call: left out (or empty, for `vendor`), the flag means `$CLAUDE_PROJECT_DIR` or the nearest checkout. It runs `git status --porcelain --ignored --untracked-files=all` in the session's checkout before and after, and reports any difference between the two as a finding. It never tries to undo a change: the guard can refuse the undo, and you decide what to discard (section 3). Its own text says how to run a command that has no `--project`.
 
 Give each reviewer the round number. From round 2, give each `previous.md`, so it checks the fixes and doesn't repeat itself.
 
@@ -49,7 +49,7 @@ Give each reviewer the round number. From round 2, give each `previous.md`, so i
 1. Check each finding against the code. A reviewer can be wrong.
 2. Fix every real one, with a test for each bug.
 3. Record each that isn't a problem, with the reason.
-4. Run `git status`: it must show nothing a reviewer made. Discard anything stray and say so. If the guard refuses the discard (a protected file), finish in a clean copy, and say so in the PR body: `git worktree add --detach <a directory outside the repo> HEAD`, commit there, and push with `git push origin HEAD:<branch>`.
+4. Run `git status`: it must show nothing a reviewer made. Discard anything stray and say so. If the guard refuses the discard (a protected file), finish in a clean copy, and say so in the PR body: `git worktree add --detach <a directory outside the repo> HEAD`, commit there, and push with `git push origin HEAD:<branch>`. Do everything after it there: later fixes, the tests, `commit.txt`, the diff and the next rounds.
 5. Rerun the typecheck and the affected tests.
 6. Post the round's review record (section 4).
 
