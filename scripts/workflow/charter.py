@@ -101,9 +101,10 @@ QUESTIONS: list[dict[str, Any]] = [
     },
     {
         "key": "limits",
-        "ask": "How big a run: Light, Normal or Thorough (each sets sessions at once, in all, retries per ticket, "
-        "review rounds and the UI explorer; any one number can then be changed)? When does the run end (ends_at; "
-        "required: there is no default end time)? How often to check in (check_in_minutes)?",
+        "ask": "How big a run: Light, Normal or Thorough (each sets sessions at once (max_parallel), in all "
+        "(max_sessions), retries per ticket (max_retries), review rounds and the UI explorer; any one number can then "
+        "be changed)? When does the run end (ends_at; required: there is no default end time)? How often to check in "
+        "(check_in_minutes)?",
         "note": "limits.ends_at must be given by the owner: an ISO time with its zone, e.g. 2026-10-13T03:30:00Z. "
         "Choosing a preset sets preset, limits (but ends_at and check_in_minutes) and review from presets[name].",
         "options": list(presets_mod.PRESETS),
