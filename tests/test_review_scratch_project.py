@@ -14,10 +14,12 @@ COMMANDS = (
 )
 RULE = (
     "runs only against an absolute path to a scratch project, never the session's checkout",
-    "a `git worktree add --detach` outside the repo",
-    "`--project` that absolute path on every call: left out",
-    "means `$CLAUDE_PROJECT_DIR` or the checkout",
-    "`git status --porcelain` in the session's checkout before",
+    "a fresh temporary directory, or a `git clone` of the checkout into one",
+    "shares the session's `.git`",
+    "`--project` that absolute path on every call",
+    "`$CLAUDE_PROJECT_DIR` or the nearest checkout",
+    "left out (or empty, for `vendor`)",
+    "`git status --porcelain --ignored` in the session's checkout before",
     "any difference between the two as a finding",
     "the guard can refuse the undo",
 )
@@ -57,7 +59,8 @@ def test_the_skill_sends_file_writing_commands_to_a_scratch_project():
     for phrase in COMMANDS + RULE:
         assert phrase in text, phrase
     assert "before and after" in text
-    assert "It never tries to undo it" in text
+    assert "It never tries to undo a change" in text
+    assert "how to run a command that has no `--project`" in text
 
 
 def test_the_explorer_states_the_scratch_project_rule():
@@ -67,6 +70,8 @@ def test_the_explorer_states_the_scratch_project_rule():
     # A command with no --project is tried with the variable pointed at the scratch project.
     assert "`cd <scratch> && CLAUDE_PROJECT_DIR=<scratch> <the command>`" in text
     assert "before you start and again when you finish" in text
+    assert "Call the CLI by its absolute path in the session's checkout" in text
+    assert "delete it when you finish" in text
     assert "with the command that made it, and never try to undo it" in text
 
 
@@ -75,7 +80,9 @@ def test_the_explorer_never_cleans_up_the_checkout_to_finish_clean():
     assert "must show nothing you made; if it does, report it (below) and leave it" in opening
 
 
-def test_a_discard_the_guard_refuses_finishes_in_a_clean_worktree():
+def test_a_discard_the_guard_refuses_finishes_in_a_clean_copy():
     after = _section("skills/review-panel/SKILL.md", "## 3. After each round", "\n## 4.")
-    assert "If the guard refuses the discard (a protected file), finish in a clean `git worktree` of the branch" in after
-    assert "say so in the PR body" in after
+    assert "If the guard refuses the discard (a protected file), finish in a clean copy, and say so in the PR body" in after
+    # A worktree of the branch itself is refused while the checkout holds it.
+    assert "`git worktree add --detach <a directory outside the repo> HEAD`" in after
+    assert "`git push origin HEAD:<branch>`" in after
