@@ -12,6 +12,14 @@
 - The numbers live in one place, `scripts/workflow/presets.py`. Docs: `docs/charter.md` §2 and §5, `docs/profile.md`. Tests: `tests/test_charter_presets.py`.
 - **For projects updating:** nothing to do. A charter written before this, with no `preset` or `review`, stays valid and reads as Normal (the profile's review rounds and UI explorer), so a run in progress keeps working. Ticket sessions still take their rounds and explorer from the profile until #120.
 
+**The light review, offered second: "Build it with a light review", and "Review it now" as a light review** (#122, part of a session budget and a light review, #42).
+
+- **`next` and the guided start** offer "Build it with a light review" wherever they offer to build a ticket, as the second choice after the full build: never first, never "(Recommended)", never chosen for the person. `next` asks before claiming, only in an attended session, and not when the person already said how ("build #12", "build #12 with a light review", "quick build #12"); a ticket session asks nothing.
+- **The `merge-check` skill's "Review it now"** now runs the light review (`review-panel` §6) instead of the full panel when nothing has been reviewed yet, and the choice says so. After a round with findings: the fixes, then another round (Correctness-only after a light review's Correctness-only round, by its record, else the full panel, never lighter); after a pass with findings, the fixes and another pass; after newer changes, a Correctness pass on the head. On a fork, only the reviews that need no push are offered.
+- **The glossary's "Review panel" entry** says what a light review is: one round with no walk-through of the screens, for small changes, never chosen for you. Other entries are trimmed a little to keep it under 6,000 characters. The README's guided-start example lists the new choice.
+- Tests: `tests/test_light_review_offers.py`.
+- **For projects updating:** nothing to do.
+
 **The conductor and ticket sessions merge on `workflow merge-check`** (#85, part of judging a PR without reading code, #39).
 
 - **One command decides every merge in a run.** Right before merging or arming auto-merge, the conductor's check-in and `build-ticket` §6 run `WF merge-check --fetch <PR> --json --charter <file>`. The file is the tracking issue's body (its run state holds the charter), saved under `.workflow/` so the evidence still sees a clean tree. A waived check's log goes under `--check-logs`; an input `gh` can't read is given as a file. It is the same command a person's `merge-check` runs, so a run and a person never disagree on "ready".

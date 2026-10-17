@@ -298,7 +298,7 @@ Claude replies with two items and asks about each:
   - **Quick ticket (Recommended):** "the screen has the medicines already; it's how they're shown";
   - **Spec**.
 
-Then *"Go with this plan? 1. Reminders screen (quick ticket) 2. Refill reminders (spec)"*. You click **Go**. It files #301 and #302, writes the reminders ticket, shows it to you, publishes it on your click, and asks **Build it now**, **Leave it ready for later** or **Next item**.
+Then *"Go with this plan? 1. Reminders screen (quick ticket) 2. Refill reminders (spec)"*. You click **Go**. It files #301 and #302, writes the reminders ticket, shows it to you, publishes it on your click, and asks **Build it now**, **Build it with a light review** (one review round, for a small change; never the recommendation), **Leave it ready for later** or **Next item**.
 
 **At every handover, a choice:**
 
