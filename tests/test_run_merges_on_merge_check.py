@@ -78,7 +78,7 @@ def test_conductor_ready_is_the_only_yes_in_every_mode():
     clean = _row(rows, "You tried to enable auto-merge and GitHub refused")
     assert "merge-check" in clean and "On `ready`, merge it yourself as the `session` row does, pinned to its `head`" in clean
     behind = _row(rows, "PR open, behind the base")
-    assert "disable it first" in behind and "Arm it again only on the new head's `ready`" in behind
+    assert "disarm it first" in behind and "`WF merge-check` gives a `behind` reason" in behind and "Arm it again only on the new head's `ready`" in behind
     owner = _row(rows, "`owner` mode")
     assert "`ready`" in owner and "ready for you to merge" in owner
 
@@ -139,7 +139,7 @@ def test_build_ticket_runs_merge_check_with_the_charter_before_merging():
     assert "**`ready` is the only yes**" in step
     assert "- `not_yet`: never merge or arm auto-merge, and if auto-merge is armed, disarm it (" + DISARM + ")" in step
     assert "`review_stale`: a Correctness pass on the new commits" in step
-    assert "right before you merge, arm auto-merge or say it's ready, run `WF merge-check --fetch <PR> --json" in step
+    assert "right before each of these (merging, arming auto-merge, saying it's ready), run `WF merge-check --fetch <PR> --json" in step
     session = next(ln for ln in step.splitlines() if ln.startswith("   | `session` |"))
     assert all(pin in session for pin in PINS), session
     auto = next(ln for ln in step.splitlines() if ln.startswith("   | `auto-merge` |"))
@@ -213,7 +213,8 @@ def test_briefing_names_merge_check_and_the_charter(tmp_path):
     assert "the body of the tracking issue #232 saved to `.workflow/tracking.md`" in merging
     assert "`ready` is the only yes. On `not_yet`, never merge or arm auto-merge (disarm it if it's armed)" in merging
     assert "merge it yourself with a merge commit pinned to the head it checked" in merging
-    assert "disarm auto-merge before any push while it's armed" in merging
+    assert "On `ready`, act by the merge mode: `session` merges with a merge commit pinned to the head it checked; `auto-merge` arms auto-merge pinned to it, and disarms it before any push while it's armed; `owner` says it's ready and leaves it." in merging
+    assert "Before each of these (merging, arming auto-merge, saying it's ready), run `workflow merge-check`" in merging
     assert "Merge mode: **session**" in merging and "Backend tests" in merging
     assert "--check-logs" in merging
     assert "evidence --base-ref origin/main" in merging
