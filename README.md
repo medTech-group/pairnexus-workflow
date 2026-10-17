@@ -216,7 +216,7 @@ The conductor checks the ruleset, CODEOWNERS and the ticket environment again at
 > |---|---|---|
 > | **Plan:** tell Claude what you found, settle decisions, write specs and tickets | **the Default environment** (any environment **without `WORKFLOW_ROLE`**), or a local session | Say what you have in mind. Claude asks with choices and publishes the specs and tickets on GitHub |
 > | **Build the tickets unattended** | **the conductor environment** (for example `myproject-conductor`), permission mode **Auto** | Say **"Run the backlog unattended"**. It asks its questions once, then starts every ticket session itself |
-> | **Build one ticket with you there** | the Default environment, as for planning | Type **`/next build`**. You merge its pull request |
+> | **Build one ticket with you there** | the Default environment, as for planning | Type **`/next build`**. You merge its pull request: ask Claude "is #N ready to merge?" first, and choose "Merge it now" once it says "Ready" |
 >
 > - **Never start a session in the ticket environment yourself.** The conductor starts those, one per ticket.
 > - **Never plan in the ticket or conductor environment.** Their `WORKFLOW_ROLE` tells the kit the session is part of an unattended run: it asks you nothing, follows a ticket session's or the conductor's rules, and the guided start never shows.
@@ -637,6 +637,7 @@ Everything above is the **vendored** mode, which every project that runs unatten
 | `/pairnexus-workflow:build-ticket` | Builds one ready ticket, from claim to merge |
 | `/pairnexus-workflow:review-panel` | The review panel on a diff or pull request |
 | `/pairnexus-workflow:run-report` | A run's report |
+| `/pairnexus-workflow:merge-check` | "Is #12 ready to merge?": "Ready" or "Not yet" and why, the fixes as choices, then "Merge it now". Claude also uses it when you ask |
 | `/pairnexus-workflow:upgrade-setup` | "Protect `main`": the ruleset and merge settings, read back, then the pull request that leaves solo mode |
 | `/pairnexus-workflow:setup-workflow` | Sets a project up; Claude never starts it on its own |
 | `/pairnexus-workflow:conductor` | An unattended run. It runs cloud sessions, which need the vendored mode |
@@ -699,6 +700,7 @@ How to report each:
 | `skills/review-panel` | Standards, Spec, Correctness (with a security review for auth, upload, payment or API changes) and, when the profile has an explorer and the change touches a screen, endpoint or command, the explorer, in parallel rounds until clean |
 | `skills/conductor` | The unattended run: charter, sessions, check-ins, merges, release, stop |
 | `skills/run-report` | The end-of-run report for the owner |
+| `skills/merge-check` | "Is #12 ready to merge?": the merge rule's answer in plain words, posting nothing, with the fixes as choices and "Merge it now" when it's ready |
 | `skills/upgrade-setup` | The upgrades from solo mode: "Protect `main`", guided click by click, read back, then the pull request that leaves solo mode |
 | `skills/update-workflow` | Update a project's vendored copy |
 | `agents/` | The read-only Correctness reviewer and the UI explorer |

@@ -112,11 +112,13 @@ def _not_found(e: GhError) -> bool:
     return "HTTP 404" in str(e)
 
 
-def merge_inputs(repo: str, number: int, have: dict, names) -> dict:
+def merge_inputs(repo: str, number: int, have: dict, names, asker: str | None = None) -> dict:
     """`merge-check`'s inputs `names`, fetched for pull request `number` of
     `repo` (owner/name). `have` holds the inputs already given as files: those
     win, and the head commit, base branch and authors are read from them when
-    given there."""
+    given there. `asker` (a login) has their permission fetched too: the CLI
+    passes it only when the profile names no `project.owner`, where it says
+    whether they count as the owner."""
     out: dict = {}
     names = [n for n in names if n not in have]
     if not names:
@@ -187,8 +189,7 @@ def merge_inputs(repo: str, number: int, have: dict, names) -> dict:
         except CommentsError as e:
             raise GhError(f"not fetched: the comments couldn't be read ({e})") from None
         items += [x for x in _items(reviews) if isinstance(x, dict)]
-        for x in items:
-            who = _login(x)
+        for who in [_login(x) for x in items] + [(asker or "").strip().lstrip("@")]:
             if who:
                 logins.setdefault(who.casefold(), who)
         answers = []
