@@ -1,8 +1,9 @@
 """Flow context: a UserPromptSubmit hook.
 
 When a prompt is about the flow (`/next`, or a flow verb next to an issue
-reference), add the kit's flow to the context: the whole file the first time in
-a session, a one-line reminder after that.
+reference), add the kit's flow to the context: the first time in a session, an
+instruction to read it now, all of it, with the sections that fit under Claude
+Code's limit; a one-line reminder after that.
 
 The first prompt of an attended session that isn't about the flow already, and
 isn't a command, brings the guided start instead (`skills/start`): Claude asks
@@ -98,7 +99,56 @@ def flow_files(project: Path, kit_root: Path, addendum: str = "") -> list[Path]:
     return out
 
 
-FLOW_HEAD = "This request is part of the project's workflow. Follow the flow below step by step: skip nothing, and end with its checklist."
+FLOW_HEAD = "This request is part of the project's workflow. Follow its flow step by step: skip nothing, and end with its checklist."
+# What the first flow context may take of Claude Code's limit (CONTEXT_LIMIT,
+# below): the rest is room for the glossary's rule and path put in front of it.
+FLOW_BUDGET = 8_500
+
+
+def _sections(text: str) -> list[str]:
+    """`text` cut before each `## ` heading outside a code block: the opening
+    (before the first heading), then one piece per section."""
+    out, cur, fenced = [], [], False
+    for line in text.splitlines(keepends=True):
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+        if line.startswith("## ") and not fenced and cur:
+            out.append("".join(cur))
+            cur = []
+        cur.append(line)
+    if cur:
+        out.append("".join(cur))
+    return [p.strip() for p in out if p.strip()]
+
+
+def _name(section: str, file: Path) -> str:
+    first = section.splitlines()[0].lstrip("#").strip()
+    return f'"{first}" ({file.name})'
+
+
+def first_flow(files: list[Path]) -> str:
+    """The first flow context: a short, fixed instruction with the flow's paths,
+    then each section that fits under FLOW_BUDGET, whole and in order. Claude
+    Code saves a string over its limit to a file and shows Claude its first
+    2,000 characters, so the instruction comes first and the whole stays under
+    it: the sections left out are named, to be read from the file."""
+    names = ", ".join(str(f) for f in files)
+    pieces = [(f, s) for f in files for s in _sections(f.read_text(encoding="utf-8"))]
+    head = f"{FLOW_HEAD} Read it now, all of it, before acting: {names}."
+    # The longest the instruction can get, every section named as left out.
+    room = FLOW_BUDGET - len(head) - len(" Left out below, to read there: .") - sum(len(_name(s, f)) + 2 for f, s in pieces)
+    given, left = [], []
+    for f, s in pieces:
+        if len(s) + 2 <= room:
+            given.append(s)
+            room -= len(s) + 2
+        else:
+            left.append(_name(s, f))
+    if left:
+        head += f" Left out below, to read there: {'; '.join(left)}."
+    else:
+        head += " All of it is below."
+    return "\n\n".join([head, *given])
 
 
 def context_for(prompt: str, session_id: str, files: list[Path]) -> str | None:
@@ -107,17 +157,16 @@ def context_for(prompt: str, session_id: str, files: list[Path]) -> str | None:
     marker = _marker("flow", session_id)
     names = ", ".join(str(f) for f in files)
     if marker.exists():
-        return f"Follow the workflow's flow ({names}) for this request, step by step, and end with its checklist. If it is no longer in your context, read it again first."
+        return f"Follow the workflow's flow ({names}) for this request, step by step, and end with its checklist. If all of it is no longer in your context, read it again first."
     try:
         marker.touch()
     except OSError:
         pass
-    body = "\n\n".join(f.read_text(encoding="utf-8") for f in files)
-    return f"{FLOW_HEAD}\n\n{body}"
+    return first_flow(files)
 
 
 def is_whole_flow(ctx: str | None) -> bool:
-    """Whether `context_for` gave the whole flow, not the one-line reminder."""
+    """Whether `context_for` gave the first flow context, not the one-line reminder."""
     return bool(ctx and ctx.startswith(FLOW_HEAD))
 
 
