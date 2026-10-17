@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**`merge-check`: a clean Correctness pass after the last allowed review round lifts that round's findings** (#170, decided for run 2026-10-16-weekend's open question; part of #39).
+
+- **`workflow merge-check`** follows flow §3 and §4.4: a review round that wasn't clean still answers `review_not_clean` (run another round) unless it was the last allowed one (its number at least the allowed rounds); then a later clean Correctness pass on the head lifts it, a not-clean one answers `pass_not_clean`, and with none it answers `review_not_clean` saying to fix the findings and run a Correctness pass on the head. No fourth round is ever asked for. Before, a last round with findings blocked for good, even after a clean pass on the head: #76's PR #177 had to be merged by hand.
+- **`--review-rounds N`** (1 to 10) gives the allowed rounds; without it, the profile's `run.review_rounds` (3 by default, and 3 when the profile can't be read). Any other value is refused with a plain message. The answer's JSON says which number it used (`review_rounds`), and a review reason with a counted round carries its `round` and `reviewers`, and on `review_not_clean` its `next` (`round` or `pass`), so a caller needn't read the wording.
+- **build-ticket and the conductor** pass the briefing's (the charter's) review rounds to `merge-check`; the `merge-check` skill's "Review it now" runs a Correctness pass for `next: pass` (on a fork's branch too, once the author has pushed fixes), and it checks a light review's PR with `--review-rounds 1`. `docs/flow.md` §4.4 and `docs/charter.md` say so. Tests: `tests/test_merge_check_rounds.py`, with PR #177's own records.
+- **For projects updating:** nothing to do.
+
 **The flow the context hook adds stays under Claude Code's 10,000-character limit** (#76).
 
 - **The first flow request of a session** (`workflow hook context`) now gets a short, fixed instruction first: follow the flow, and read it now, all of it, before acting, at its paths (the flow and any `flow_addendum`). Then come the flow's sections from its start, each whole, as far as they fit in 8,500 characters, with room left for the glossary's rule (#74); the instruction names only the section where they stop, so it stays short however much is left out. A flow file that can't be read now leaves only the instruction, where the hook used to fail. Before, the whole flow went in (12,000 characters and more), over Claude Code's limit for a hook's added context, so Claude may have seen only its first 2,000 characters while being told to "follow the flow below".

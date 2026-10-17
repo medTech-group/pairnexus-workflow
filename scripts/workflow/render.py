@@ -135,6 +135,7 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
         "merge.mode": merge.get("mode", "auto-merge"),
         "merge.waived": ", ".join(waived) if waived else "none: every required check must be green",
         "run.review_rounds": _rounds(review["rounds"]),
+        "review.rounds": str(review["rounds"]),  # the bare number, for merge-check's --review-rounds
         "run.check_in_minutes": str((charter.get("limits") or {}).get("check_in_minutes", profile.check_in_minutes)),
         "open_decisions": "take the choice most consistent with the spec, ADRs and the project's rules, and record it in the PR body"
         if charter.get("open_decisions", "decide-and-record") == "decide-and-record"
