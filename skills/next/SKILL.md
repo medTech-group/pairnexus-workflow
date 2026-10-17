@@ -46,7 +46,13 @@ It leaves out specs (the `spec` label, a "Spec:" title, or an issue with sub-iss
 
 Ready research tickets start at once in background subagents (the `research` skill), alongside whatever you pick.
 
-Say which one you picked and why, in one line. Then claim it and follow the matching section of the flow. At the end, name what comes next.
+Say which one you picked and why, in one line. For a build ticket, ask how first (below). Then claim it and follow the matching section of the flow. At the end, name what comes next.
+
+**How to build it, in an attended session:** ask with the `AskUserQuestion` tool, or as a numbered list where it isn't available:
+- **Build it now (Recommended)**: the full review panel;
+- **Build it with a light review**: one review round, for a small change (`review-panel` §6, "The light review").
+
+The light review is always second, never recommended, and never chosen for them. When they already said how ("build #12", "build #12 with a light review", "quick build #12"; the `build` argument alone isn't saying how), don't ask again: build it as they said. In a ticket or conductor session (`WORKFLOW_ROLE` set to anything but `attended`, or a branch named like the profile's `run.ticket_branch`), ask nothing: build as the briefing says.
 
 ## 3. Nothing ready
 
