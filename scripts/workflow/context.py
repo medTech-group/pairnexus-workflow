@@ -149,7 +149,7 @@ def first_flow(files: list[Path]) -> str:
     except (OSError, UnicodeDecodeError):
         return head
     given: list[str] = []
-    for n, (f, s) in enumerate(pieces):
+    for f, s in pieces:
         stop = f" Only its start fits below. It stops before {_name(s, f)}: read that section and everything after it there."
         if len(head) + len(stop) + sum(len(g) + 2 for g in given) + len(s) + 2 > FLOW_BUDGET:
             return "\n\n".join([head + stop, *given])

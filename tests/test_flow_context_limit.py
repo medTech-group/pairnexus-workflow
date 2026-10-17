@@ -34,9 +34,11 @@ def _headings(text):
     return [l[3:].strip() for l in text.splitlines() if l.startswith("## ")]
 
 
-def _add_addendum(repo, text):
-    (repo / "docs").mkdir(exist_ok=True)
-    (repo / "docs/our-flow.md").write_text(text)
+def _add_addendum(repo, text=None):
+    """Name docs/our-flow.md as the profile's addendum, writing `text` there unless None."""
+    if text is not None:
+        (repo / "docs").mkdir(exist_ok=True)
+        (repo / "docs/our-flow.md").write_text(text)
     p = repo / ".claude/workflow/profile.toml"
     p.write_text(p.read_text().replace('repo = "acme/demo"', 'repo = "acme/demo"\nflow_addendum = "docs/our-flow.md"'))
 
@@ -138,7 +140,7 @@ def test_fences_of_each_kind(repo):
     )
     (repo / ".claude/workflow/flow.md").write_text(flow)
     ctx = _ctx(repo, "implement #5", env={"WORKFLOW_EXPERIENCE": "developer"})
-    assert flow.strip().split("# The flow\n\n")[1].replace("\n\n## 2. Merge", "\n\n## 2. Merge") in ctx
+    assert flow.strip().split("# The flow\n\n")[1] in ctx
 
 
 def test_an_unreadable_flow_leaves_the_instruction_and_never_fails(repo):
@@ -176,11 +178,7 @@ def test_a_byte_order_mark_is_left_out(repo):
 
 def test_a_directory_is_not_a_flow_file(repo):
     (repo / "docs/our-flow.md").mkdir(parents=True)
-    _add_addendum_path_only(repo)
+    _add_addendum(repo)
     ctx = _ctx(repo, "implement #5", env={"WORKFLOW_EXPERIENCE": "developer"})
     assert ctx and "our-flow.md" not in ctx
 
-
-def _add_addendum_path_only(repo):
-    p = repo / ".claude/workflow/profile.toml"
-    p.write_text(p.read_text().replace('repo = "acme/demo"', 'repo = "acme/demo"\nflow_addendum = "docs/our-flow.md"'))
