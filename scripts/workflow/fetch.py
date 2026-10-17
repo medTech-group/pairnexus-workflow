@@ -18,6 +18,7 @@ as it can be shown: what can't be shown stays "couldn't read", never a guess.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from urllib.parse import quote
@@ -357,7 +358,7 @@ def preview_inputs(repo: str, number: int, have: dict) -> dict:
     if not names:
         return {}
     if not available():
-        return {n: (None, f"{NOT_INSTALLED}, {AS_A_FILE.format(name=n)}") for n in names}
+        return {n: (None, f"{NOT_INSTALLED}, " + ("so it couldn't be fetched: give --sha" if n == "sha" else AS_A_FILE.format(name=n))) for n in names}
     r = f"repos/{repo}"
     out: dict = {}
 
@@ -366,15 +367,15 @@ def preview_inputs(repo: str, number: int, have: dict) -> dict:
             try:
                 out[n] = (fn(), None)
             except GhError as e:
-                out[n] = (None, f"{e}, {AS_A_FILE.format(name=n)}")
+                out[n] = (None, f"{e}, " + ("so it couldn't be fetched: give --sha" if n == "sha" else AS_A_FILE.format(name=n)))
 
     def head():
         pr = api(f"{r}/pulls/{number}")
         h = pr.get("head") if isinstance(pr, dict) else None
         sha = h.get("sha") if isinstance(h, dict) else None
-        if not isinstance(sha, str) or not sha:
-            raise GhError(f"gh api {r}/pulls/{number} gave no head commit")
-        return sha
+        if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", sha):
+            raise GhError(f"gh api {r}/pulls/{number} gave no head commit's SHA")
+        return sha.lower()
 
     get("sha", head)
     get("comments", lambda: api(f"{r}/issues/{number}/comments?per_page=100", paginate=True))
@@ -383,7 +384,7 @@ def preview_inputs(repo: str, number: int, have: dict) -> dict:
 
     def checks():
         if sha is None:
-            raise GhError("not fetched: it needs the pull request's head commit, and that couldn't be read")
+            raise GhError("it needs the pull request's head commit, which couldn't be read")
         return api(f"{r}/commits/{sha}/check-runs?per_page=100", paginate=True)
 
     get("checks", checks)

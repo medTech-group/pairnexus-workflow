@@ -11,20 +11,24 @@ JSON `workflow merge-check --preview` takes:
   `Workers Builds: <worker>` from the `cloudflare-workers-and-pages` app (a
   check from another app, or another of Cloudflare's, is ignored), each by its
   latest result (`protection.latest`). Any failed is `failed`, any still
-  running is `building`.
+  running is `building`. A skipped or neutral run built nothing, so it is left
+  out; with only those, there's no preview of the head: `none`.
 - **The URL** comes from the Cloudflare bot's comment, read as it stands (it
-  edits one comment for each build): the Preview URL of its row for the head
-  SHA, and only when that row says the deployment succeeded. With every check
-  passed and no such row, the preview shown is an older commit's, so it is
-  `building`, never `built`; a successful row with no link (a build that ran
-  no `wrangler preview`) is `none`.
+  edits one comment for each build; with several, each Worker's row comes from
+  the newest): the Preview URL of the head's row, and only when that row says
+  the deployment succeeded. A head row that says it failed is `failed`. With
+  every check passed and no row for the head, the link shown is an older
+  commit's, so it is `building`, never `built`. A successful row with an empty
+  Preview URL cell (a build that ran no `wrangler preview`) is `none`, with
+  the head as its commit.
 - **No bot comment and no check** is `none`. A bot comment but no check on
   the head yet is `building`.
 
 The comment's shape is Cloudflare's documented one (`tests/fixtures/cloudflare/README.md`):
 a Markdown table with Status, Name, Latest Commit and Preview URL columns. A
-bot comment with no such table raises PreviewError, so a change in its format
-shows up rather than reading as "no preview". It reads only what it is given.
+bot comment, a row or a Preview URL cell the reader can't make out raises
+PreviewError, so a change in its format shows up rather than reading as "no
+preview". It reads only what it is given.
 """
 
 from __future__ import annotations
@@ -35,10 +39,9 @@ from dataclasses import dataclass
 from . import protection
 from .posts import CommentsError, _login, comments_from
 
-APP = "cloudflare-workers-and-pages"
-BOT = APP  # the bot's login, `cloudflare-workers-and-pages[bot]` in REST and without `[bot]` from gh's GraphQL
+APP = "cloudflare-workers-and-pages"  # the GitHub App's slug, and its bot's login (`<slug>[bot]` in REST)
 CHECK = "Workers Builds: "
-STATES = ("built", "building", "failed", "none")
+NO_BUILD = ("skipped", "neutral")  # conclusions of a run that built nothing
 SHA = re.compile(r"[0-9a-fA-F]{7,40}")
 _HEX = re.compile(r"(?<![0-9A-Za-z])[0-9a-fA-F]{7,40}(?![0-9A-Za-z])")
 _MD_LINK = re.compile(r"\[([^\]]*)\]\((\S+?)\)")
@@ -58,7 +61,7 @@ class PreviewError(Exception):
 
 @dataclass
 class Preview:
-    state: str
+    state: str  # built, building, failed or none
     url: str | None
     commit: str | None
 
@@ -73,11 +76,19 @@ class Row:
     worker: str
     commit: str  # as the row gives it, lower case: 7 to 40 hex characters
     success: bool
+    failed: bool
     url: str | None
+    empty: bool  # the Preview URL cell holds nothing
 
 
 def is_sha(v) -> bool:
     return isinstance(v, str) and SHA.fullmatch(v) is not None
+
+
+def same_commit(a: str, b: str) -> bool:
+    """Two SHAs, either of them short, name the same commit."""
+    a, b = a.lower(), b.lower()
+    return a.startswith(b) or b.startswith(a)
 
 
 def _runs(value) -> list[dict]:
@@ -108,36 +119,60 @@ def _runs(value) -> list[dict]:
     return pages
 
 
-def _builds(value, sha: str) -> list[protection.Ran]:
-    """Cloudflare's Workers Builds runs on the head, each name by its latest result."""
+def _builds(value, sha: str) -> tuple[list[protection.Ran], bool, str]:
+    """Cloudflare's Workers Builds runs on the head, each name by its latest
+    result; whether one was skipped (or neutral), building nothing; and the
+    head's full SHA when a short one names a single run's commit."""
     pages = _runs(value)
-    if len(sha) < 40:  # a short SHA: the runs' own head_sha, when they name one commit it starts
-        named = {r["head_sha"].lower() for p in pages for r in p.get("check_runs") or [] if isinstance(r, dict) and isinstance(r.get("head_sha"), str)}
-        full = [s for s in named if s.startswith(sha)]
-        sha = full[0] if len(full) == 1 else sha
-    commit = sha if len(sha) == 40 else None
     try:
-        protection.latest(pages, None, commit)  # every run read, and the list whole
-        # Another app's run of the same name mustn't stand in for Cloudflare's latest result.
-        theirs = [{"check_runs": [r for r in p["check_runs"] if r["app"]["slug"].casefold() == APP]} for p in pages]
-        ran = protection.latest(theirs, None, commit)
+        protection.latest(pages, None, None)  # reads every run, and refuses a list shorter than its total_count
     except protection.ProtectionError as e:
         raise PreviewError("checks", str(e).replace("the check runs file", "it")) from None
-    return sorted((r for r in ran if r.name.startswith(CHECK)), key=lambda r: r.name)
+
+    def theirs(r: dict) -> bool:
+        # Another app's run of the same name mustn't stand in for Cloudflare's latest result,
+        # nor a run for another commit (a short SHA is matched as a prefix).
+        on = r.get("head_sha")
+        return r["app"]["slug"].casefold() == APP and r["name"].startswith(CHECK) and (not isinstance(on, str) or same_commit(on, sha))
+
+    runs = [r for p in pages for r in p["check_runs"] if theirs(r)]
+    built = [r for r in runs if not (r["status"] == "completed" and r.get("conclusion") in NO_BUILD)]
+    ran = protection.latest([{"check_runs": built}])
+    full = {r["head_sha"].lower() for r in runs if isinstance(r.get("head_sha"), str) and len(r["head_sha"]) == 40}
+    return sorted(ran, key=lambda r: r.name), len(built) < len(runs), full.pop() if len(full) == 1 else sha
 
 
 def _is_bot(c: dict) -> bool:
-    who = _login(c).casefold().removesuffix("[bot]")
-    user = c.get("user") if isinstance(c.get("user"), dict) else c.get("author") if isinstance(c.get("author"), dict) else {}
-    kind = user.get("type") if isinstance(user, dict) else None
-    return who == BOT and kind in (None, "Bot")
+    """The comment is the Cloudflare bot's: its login, and GitHub saying it is
+    a bot (REST's `type`, a `[bot]` login, the app it came through, or
+    GraphQL's `__typename`/`is_bot`). A person can't stand in for it with a
+    login alone."""
+    login = _login(c).casefold()
+    who = next((c[k] for k in ("user", "author") if isinstance(c.get(k), dict)), {})
+    app = c.get("performed_via_github_app")
+    said = (
+        login.endswith("[bot]")
+        or (isinstance(app, dict) and str(app.get("slug", "")).casefold() == APP)
+        or who.get("type") == "Bot"
+        or who.get("__typename") == "Bot"
+        or who.get("is_bot") is True
+    )
+    return login.removesuffix("[bot]") == APP and said and who.get("type") in (None, "Bot")
 
 
 def _cells(line: str) -> list[str] | None:
     line = line.strip()
     if not line.startswith("|"):
         return None
-    return [c.strip() for c in line.strip("|").split("|")]
+    line = line[1:-1] if line.endswith("|") and not line.endswith("\\|") else line[1:]
+    return [c.strip().replace("\\|", "|") for c in re.split(r"(?<!\\)\|", line)]
+
+
+def _words(cell: str) -> str:
+    """The cell's own words: links' text kept, their URLs, HTML and bare URLs left out."""
+    cell = _MD_LINK.sub(lambda m: m.group(1), cell)
+    cell = _BARE.sub(" ", re.sub(r"<[^>]+>", " ", cell))
+    return cell
 
 
 def _link(cell: str) -> str | None:
@@ -153,6 +188,10 @@ def _link(cell: str) -> str | None:
             if wanted(t):
                 return u
     return links[0][1] if len(links) == 1 else None
+
+
+def _unknown(why: str) -> PreviewError:
+    return PreviewError("comments", f"the Cloudflare bot's comment: {why}: has its format changed?")
 
 
 def _rows(body: str) -> list[Row] | None:
@@ -171,23 +210,27 @@ def _rows(body: str) -> list[Row] | None:
         }
         if None in (col["status"], col["commit"], col["url"]):
             continue
-        out: list[Row] = []
-        for line2 in lines[i + 1 :]:
-            cells = _cells(line2)
+        rows: list[Row] = []
+        for below in lines[i + 1 :]:
+            cells = _cells(below)
             if cells is None:
                 break
             if all(re.fullmatch(r":?-+:?", c) for c in cells if c):
                 continue  # the separator
             if len(cells) <= max(k for k in col.values() if k is not None):
-                continue
+                raise _unknown("a row of its table has fewer cells than its header")
             hexes = sorted(_HEX.findall(cells[col["commit"]]), key=len, reverse=True)
             if not hexes:
-                continue
-            status = cells[col["status"]]
+                raise _unknown("a row of its table names no commit")
+            status = _words(cells[col["status"]])
             success = bool(_SUCCESS.search(status)) and not _NOT_SUCCESS.search(status)
+            cell = cells[col["url"]]
+            empty = not _words(cell).strip(" -—–") and not _MD_LINK.search(cell) and not _HTML_LINK.search(cell) and not _BARE.search(cell)
             worker = cells[col["name"]] if col["name"] is not None else ""
-            out.append(Row(worker, hexes[0].lower(), success, _link(cells[col["url"]])))
-        return out
+            rows.append(Row(worker, hexes[0].lower(), success, bool(_NOT_SUCCESS.search(status)), _link(cell), empty))
+        if not rows:
+            raise _unknown("its table has no rows")
+        return rows
     return None
 
 
@@ -196,75 +239,72 @@ def _when(c: dict) -> str:
 
 
 def _bot_rows(value) -> tuple[bool, list[Row]]:
-    """(whether the bot commented, its rows, newest comment first)."""
+    """(whether the bot commented, each Worker's row from its newest comment that has one)."""
     try:
         comments = comments_from(value)
     except CommentsError as e:
         raise PreviewError("comments", str(e)) from None
-    mine = [c for c in comments if _is_bot(c)]
-    if not mine:
+    by_bot = [c for c in comments if _is_bot(c)]
+    if not by_bot:
         return False, []
-    mine.sort(key=lambda c: (_when(c), c.get("id") if isinstance(c.get("id"), int) else 0), reverse=True)
-    tables = [_rows(c.get("body") or "") for c in mine]
+    by_bot.sort(key=lambda c: (_when(c), c.get("id") if isinstance(c.get("id"), int) else 0), reverse=True)
+    tables = [_rows(c.get("body") or "") for c in by_bot]
     if all(t is None for t in tables):
-        raise PreviewError(
-            "comments",
-            "the Cloudflare bot's comment has no table the reader knows (Status, Latest Commit and Preview URL columns): has its format changed?",
-        )
-    return True, [r for t in tables if t for r in t]
+        raise _unknown("it has no table the reader knows (Status, Latest Commit and Preview URL columns)")
+    rows: dict[str, Row] = {}
+    for table in tables:
+        for r in table or []:
+            rows.setdefault(r.worker.casefold(), r)  # the newest comment's row wins
+    return True, list(rows.values())
 
 
 def read(comments, checks, sha: str) -> Preview:
     """The preview of the head commit `sha`, from the pull request's comments and
     the head's check runs. Raises PreviewError for an input it can't read."""
-    head = sha.lower()
-
-    def for_head(r: Row) -> bool:
-        return head.startswith(r.commit) or r.commit.startswith(head)
-
-    builds = _builds(checks, head)
+    builds, skipped, head = _builds(checks, sha.lower())
     commented, rows = _bot_rows(comments)
+    workers = [b.name[len(CHECK) :] for b in builds]
+    rows.sort(key=lambda r: workers.index(r.worker) if r.worker in workers else len(workers))
+    on_head = [r for r in rows if same_commit(r.commit, head)]
+    older = next((r.commit for r in rows if not same_commit(r.commit, head)), None)
     if not builds:
+        if skipped:
+            return Preview("none", None, head)  # Cloudflare built nothing for the head
         if not commented:
             return Preview("none", None, None)
         # The bot has commented, but the head's build hasn't started (Cloudflare can take minutes).
-        return Preview("building", None, head if any(for_head(r) for r in rows) else rows[0].commit if rows else None)
+        return Preview("building", None, head if on_head else older)
     if any(b.result == "failing" for b in builds):
         return Preview("failed", None, head)
     if any(b.result == "pending" for b in builds):
         return Preview("building", None, head)
-    workers = [b.name[len(CHECK) :] for b in builds]
-    mine = [r for r in rows if for_head(r)]
-    done = [r for r in mine if r.success]
-
-    def order(r: Row) -> int:
-        return workers.index(r.worker) if r.worker in workers else len(workers)
-
-    linked = sorted((r for r in done if r.url), key=order)
+    if any(r.failed for r in on_head):
+        return Preview("failed", None, head)  # the check passed, but the deployment it reports didn't
+    done = [r for r in on_head if r.success]
+    for r in done:
+        if r.url is None and not r.empty:
+            raise _unknown(f"the head's row{' for ' + r.worker if r.worker else ''} has a Preview URL cell the reader can't make out")
+    linked = [r for r in done if r.url]
     if linked:
         return Preview("built", linked[0].url, head)
     if done:
         return Preview("none", None, head)  # built, with no link to try
-    return Preview("building", None, head if mine else (rows[0].commit if rows else head))
-
-
-def _short(commit: str | None) -> str:
-    return (commit or "")[:7]
+    return Preview("building", None, head if on_head else older or head)
 
 
 def text(p: Preview, sha: str) -> str:
     """The answer in plain words, then its three fields."""
-    head = _short(sha)
+    head = sha[:7]
     if p.state == "built":
         said = f"The try-it link for {head} is ready: {p.url}"
     elif p.state == "failed":
-        said = f"The try-it link for {head} didn't build: Cloudflare's check failed. Its log is linked from the check's Details."
-    elif p.state == "building" and p.commit and not sha.lower().startswith(p.commit) and not p.commit.startswith(sha.lower()):
-        said = f"The try-it link shown is for {_short(p.commit)}, not the head {head}: the head's is still building (Cloudflare's builds can take a few minutes to start)."
+        said = f"The try-it link for {head} didn't build: Cloudflare's check or its comment says it failed. Its log is linked from the check's Details."
+    elif p.state == "building" and p.commit and not same_commit(p.commit, sha):
+        said = f"The try-it link shown is for {p.commit[:7]}, not the head {head}: the head's is still building (Cloudflare's builds can take a few minutes to start)."
     elif p.state == "building":
         said = f"The try-it link for {head} is still building (Cloudflare's builds can take a few minutes to start)."
     elif p.commit:
-        said = f"No try-it link for {head}: Cloudflare built it but its comment gives no Preview URL."
+        said = f"No try-it link for {head}: Cloudflare built nothing to try for it (its build was skipped, or ran no `wrangler preview`)."
     else:
         said = "No try-it link: this pull request has no Cloudflare Workers Builds check or comment."
     return "\n".join([said, f"state: {p.state}", f"url: {p.url or '-'}", f"commit: {p.commit or '-'}"])

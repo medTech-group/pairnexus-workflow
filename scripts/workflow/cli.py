@@ -633,14 +633,13 @@ def _review_rounds(v: str) -> int:
     return int(v)
 
 
-def cmd_merge_check(a) -> int:
-    """Whether the pull request may merge (flow §4), from the files given, and
-    with --fetch the rest through `gh api`. Changes nothing, posts nothing, and
-    exits 0 whatever it finds: anything it can't read is a reason of its own,
-    never "ready"."""
+def _json_inputs(a, names, raw=()) -> dict:
+    """Each of `names` given as a file (or - for standard input, once): its
+    JSON, several values in a row read as a list, `(value, None)`; or
+    `(None, why)` when it can't be read. The `raw` names keep their text."""
     inputs: dict = {}
     stdin_for = None
-    for name in [*merge_mod.INPUTS, "charter"]:
+    for name in names:
         path = getattr(a, name, None)
         if path is None:
             continue
@@ -653,7 +652,7 @@ def cmd_merge_check(a) -> int:
             if path == "-" and sys.stdin is None:
                 raise ValueError("standard input (-) is closed")
             text = _read(path).removeprefix("\ufeff")
-            if name == "charter":  # JSON, or the tracking issue's body: merge.charter_from reads it
+            if name in raw:
                 inputs[name] = (text, None)
                 continue
             values = posts_mod.decode_values(text)
@@ -666,6 +665,15 @@ def cmd_merge_check(a) -> int:
             inputs[name] = (None, f"{path} isn't UTF-8 text")
         except ValueError as e:  # a closed standard input
             inputs[name] = (None, str(e) if path == "-" else f"can't read {path}")
+    return inputs
+
+
+def cmd_merge_check(a) -> int:
+    """Whether the pull request may merge (flow §4), from the files given, and
+    with --fetch the rest through `gh api`. Changes nothing, posts nothing, and
+    exits 0 whatever it finds: anything it can't read is a reason of its own,
+    never "ready"."""
+    inputs = _json_inputs(a, [*merge_mod.INPUTS, "charter"], raw=("charter",))  # the charter: JSON, or the tracking issue's body, as merge.charter_from reads it
     prof, profile_error = None, None
     try:
         prof = load()  # its protected paths and required checks are rules: none found is a reason
@@ -712,49 +720,40 @@ def cmd_preview(a) -> int:
     commit (#41's reader), from the files given, and with --fetch the rest
     through `gh api`. Changes nothing, posts nothing. Exits 0 with an answer,
     1 when an input can't be read, 2 when one is missing."""
-    inputs: dict = {}
+    inputs = _json_inputs(a, ("comments", "checks"))
     if a.sha is not None:
         inputs["sha"] = (a.sha, None)
-    for name in ("comments", "checks"):
-        path = getattr(a, name)
-        if path is None:
-            continue
-        try:
-            values = posts_mod.decode_values(_read(path).removeprefix("\ufeff"))
-            inputs[name] = (values[0], None) if len(values) == 1 else (values, None) if values else (None, f"{path} is empty")
-        except OSError as e:
-            inputs[name] = (None, f"can't open {path}: {e.strerror or e}")
-        except posts_mod.CommentsError as e:
-            inputs[name] = (None, f"{path} isn't JSON ({e})")
-        except UnicodeDecodeError:
-            inputs[name] = (None, f"{path} isn't UTF-8 text")
     give = "give --comments F (the pull request's issue comments), --checks F (its head commit's check runs), as JSON from the GitHub API, and --sha SHA (its head commit)"
+
+    def unread() -> bool:
+        said = [(n, why) for n, (_, why) in inputs.items() if why is not None]
+        for n, why in said:
+            print(f"workflow preview: couldn't read --{n}: {why}", file=sys.stderr)
+        return bool(said)
+
+    if unread():  # before asking gh for the rest
+        return 1
     missing = [n for n in fetch_mod.PREVIEW_INPUTS if n not in inputs]
     if a.fetch is not None and missing:
         try:
             prof = load(required=False)
         except ProfileError as e:
             prof, why = None, f"the profile can't be read ({e})"
+        except (OSError, UnicodeDecodeError) as e:
+            prof, why = None, f"{PROFILE_PATH} can't be read ({getattr(e, 'strerror', None) or e})"
         else:
             why = f"there's no profile ({PROFILE_PATH})"
         if prof is None:
             print(f"workflow preview: --fetch needs the profile's project.repo, and {why}: {give}", file=sys.stderr)
             return 2
         inputs.update(fetch_mod.preview_inputs(prof.repo, a.fetch, inputs))
-        missing = [n for n in fetch_mod.PREVIEW_INPUTS if n not in inputs]
+        if unread():
+            return 1
+        missing = []
     if missing:
         print(f"workflow preview: missing {', '.join('--' + n for n in missing)}: {give}, or --fetch <PR> to read them with gh", file=sys.stderr)
         return 2
-    unread = [(n, why) for n, (_, why) in inputs.items() if why is not None]
-    for n, why in unread:
-        print(f"workflow preview: couldn't read --{n}: {why}", file=sys.stderr)
-    if unread:
-        return 1
     sha = inputs["sha"][0]
-    if not previews_mod.is_sha(sha):  # a head fetched from the pull request
-        print(f"workflow preview: couldn't read --sha: the pull request's head isn't a commit's SHA; give --sha", file=sys.stderr)
-        return 1
-    sha = sha.lower()
     try:
         got = previews_mod.read(inputs["comments"][0], inputs["checks"][0], sha)
     except previews_mod.PreviewError as e:

@@ -175,9 +175,9 @@ def test_a_comment_edited_after_the_check_is_read_as_it_stands(tmp_path, capsys)
     run = cf_run(when="2026-10-16T10:04:00Z")
     got, _, _ = preview(tmp_path, capsys, [bot(row(), updated="2026-10-16T10:30:00Z")], checks(run))
     assert got == answer("built", BRANCH_URL)
-    # Edited again later to a failed row for the head: the URL no longer counts.
+    # Edited again later to a failed row for the head: the URL no longer counts, and it failed.
     got, _, _ = preview(tmp_path, capsys, [bot(row("❌ Deployment failed", links=""), updated="2026-10-16T10:40:00Z")], checks(run))
-    assert got["state"] != "built" and got["url"] is None
+    assert got == answer("failed")
 
 
 @pytest.mark.parametrize("slug", ["cloudflare-workers-builds", "my-ci", "cloudflare-pages"])
@@ -201,10 +201,22 @@ def test_a_comment_from_someone_else_with_the_same_table_is_ignored(tmp_path, ca
         assert got == answer("none", None, None), c["user"]
 
 
-def test_the_bots_login_without_bot_counts_as_gh_gives_it(tmp_path, capsys):
+def test_the_bots_login_without_bot_counts_when_github_says_its_a_bot(tmp_path, capsys):
+    c = bot(row())
+    c.pop("user")
+    c["author"] = {"login": "cloudflare-workers-and-pages", "__typename": "Bot"}
+    got, _, _ = preview(tmp_path, capsys, [c], checks(cf_run()))
+    assert got == answer("built", BRANCH_URL)
+
+
+def test_the_bots_login_alone_doesnt_make_a_comment_the_bots(tmp_path, capsys):
+    # A person's account with the app's login, in a shape that doesn't say who is a bot.
     c = bot(row())
     c.pop("user")
     c["author"] = {"login": "cloudflare-workers-and-pages"}
+    got, _, _ = preview(tmp_path, capsys, [c], checks())
+    assert got == answer("none", None, None)
+    c["performed_via_github_app"] = {"slug": APP}
     got, _, _ = preview(tmp_path, capsys, [c], checks(cf_run()))
     assert got == answer("built", BRANCH_URL)
 
@@ -230,9 +242,74 @@ def test_a_successful_row_without_a_preview_url_has_no_link(tmp_path, capsys):
     assert got == answer("none", None, HEAD)
 
 
-def test_a_link_that_isnt_a_web_address_doesnt_count(tmp_path, capsys):
-    got, _, _ = preview(tmp_path, capsys, [bot(row(links="[Branch Preview URL](javascript:alert(1))"))], checks(cf_run()))
-    assert got["url"] is None and got["state"] != "built"
+def test_a_link_that_isnt_a_web_address_is_refused_never_given(tmp_path, capsys):
+    out, code, err = preview(tmp_path, capsys, [bot(row(links="[Branch Preview URL](javascript:alert(1))"))], checks(cf_run()))
+    assert code == 1 and "javascript" not in out and "Preview URL cell" in err
+
+
+@pytest.mark.parametrize("links", ["[Visit](https://a.example.workers.dev) [Alias](https://b.example.workers.dev)", "see the dashboard"])
+def test_a_preview_url_cell_it_cant_make_out_is_refused_never_none(tmp_path, capsys, links):
+    # Were it `none`, merge-check would call the project one without previews and let it merge.
+    out, code, err = preview(tmp_path, capsys, [bot(row(links=links))], checks(cf_run()))
+    assert code == 1 and "--comments" in err and "format changed" in err
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        "",  # a header and no rows
+        "| ✅ Deployment successful! | demo-notes | | |\n",  # no commit
+        "| ✅ Deployment successful! | demo-notes |\n",  # fewer cells
+    ],
+)
+def test_a_table_whose_rows_it_cant_read_is_refused(tmp_path, capsys, rows):
+    out, code, err = preview(tmp_path, capsys, [bot(rows)], checks(cf_run()))
+    assert code == 1 and "--comments" in err and "format changed" in err
+
+
+@pytest.mark.parametrize("worker", ["error-pages", "failover-api", "cancel-orders"])
+def test_words_in_the_view_logs_link_dont_change_the_status(tmp_path, capsys, worker):
+    got, _, _ = preview(tmp_path, capsys, [bot(row(worker=worker))], checks(cf_run(worker=worker)))
+    assert got == answer("built", BRANCH_URL)
+
+
+def test_a_worker_named_success_doesnt_make_a_row_in_progress_a_success(tmp_path, capsys):
+    got, _, _ = preview(tmp_path, capsys, [bot(row("⚡️ Deployment in progress", worker="success-stories"))], checks(cf_run(worker="success-stories")))
+    assert got == answer("building")
+
+
+@pytest.mark.parametrize("conclusion", ["skipped", "neutral"])
+def test_a_skipped_build_has_no_preview_of_the_head(tmp_path, capsys, conclusion):
+    got, _, _ = preview(tmp_path, capsys, [bot(row(sha=OLDER))], checks(cf_run(conclusion)))
+    assert got == answer("none", None, HEAD)
+    # Beside a Worker that did build, it is left out.
+    api = row(worker="demo-api", links="[Branch Preview URL](https://notes-page-demo-api.example-account.workers.dev)")
+    got, _, _ = preview(tmp_path, capsys, [bot(row(sha=OLDER), api)], checks(cf_run(conclusion), cf_run(worker="demo-api", rid=7020)))
+    assert got == answer("built", "https://notes-page-demo-api.example-account.workers.dev")
+
+
+def test_a_short_sha_matching_no_run_leaves_other_commits_runs_out(tmp_path, capsys):
+    got, _, _ = preview(tmp_path, capsys, [person()], checks(cf_run("failure", sha=OLDER)), HEAD[:7])
+    assert got == answer("none", None, None)
+
+
+def test_a_newer_bot_comment_wins_over_an_older_ones_row(tmp_path, capsys):
+    stale = bot(row(), cid=501, updated="2026-10-16T10:05:00Z")
+    newer = bot(row("❌ Deployment failed", links=""), cid=502, updated="2026-10-16T11:00:00Z")
+    got, _, _ = preview(tmp_path, capsys, [stale, newer], checks(cf_run()))
+    assert got == answer("failed", None, HEAD)
+
+
+def test_a_head_row_that_failed_is_failed_though_the_check_passed(tmp_path, capsys):
+    comments, _, sha = recorded("failed")
+    got, _, _ = preview(tmp_path, capsys, comments, checks(cf_run(sha=sha)), sha)
+    assert got == answer("failed", None, sha)
+
+
+def test_the_older_commit_named_is_the_first_workers(tmp_path, capsys):
+    rows = (row(worker="b-api", sha="d" * 40), row(worker="a-web", sha=OLDER))
+    got, _, _ = preview(tmp_path, capsys, [bot(*rows)], checks(cf_run(worker="a-web"), cf_run(worker="b-api", rid=7030)))
+    assert got == answer("building", None, OLDER)
 
 
 def test_two_workers_need_both_built_and_give_the_first_link(tmp_path, capsys):
@@ -244,6 +321,10 @@ def test_two_workers_need_both_built_and_give_the_first_link(tmp_path, capsys):
     assert got["state"] == "failed"
     got, _, _ = preview(tmp_path, capsys, [bot(*rows)], checks(cf_run(worker="demo-notes"), cf_run(status="queued", worker="demo-api", rid=7010)))
     assert got["state"] == "building"
+    # The second Worker's row still names an older commit: only the first's link is the head's.
+    rows = (row(worker="demo-notes"), row(worker="demo-api", sha=OLDER, links=api_links))
+    got, _, _ = preview(tmp_path, capsys, [bot(*rows)], checks(cf_run(worker="demo-notes"), cf_run(worker="demo-api", rid=7010)))
+    assert got == answer("built", BRANCH_URL)
 
 
 def test_a_check_run_for_another_commit_in_the_file_is_left_out(tmp_path, capsys):
@@ -266,7 +347,10 @@ def test_comments_as_pages_and_in_the_mcp_tools_shape_are_read(tmp_path, capsys)
 
 def test_a_short_sha_is_matched_to_the_rows_commit(tmp_path, capsys):
     got, _, _ = preview(tmp_path, capsys, [bot(row())], checks(cf_run()), HEAD[:12])
-    assert got == answer("built", BRANCH_URL, HEAD[:12])
+    assert got == answer("built", BRANCH_URL, HEAD)
+    # With no run naming its commit, the short SHA is the answer's.
+    got, _, _ = preview(tmp_path, capsys, [bot(row())], checks(), HEAD[:12])
+    assert got == answer("building", None, HEAD[:12])
 
 
 # ---------- what can't be read ----------
@@ -413,7 +497,7 @@ def test_fetch_with_a_gh_too_old_to_slurp(project, tmp_path, capsys, monkeypatch
 def test_a_comments_file_wins_over_fetchs_gh(project, tmp_path, capsys, monkeypatch):
     gh = fake_gh.install(tmp_path, monkeypatch, routes())
     got, code, _ = preview(tmp_path, capsys, [bot(row("❌ Deployment failed", links=""))], None, None, "--fetch", "12")
-    assert code == 0 and got == answer("building", None, HEAD)
+    assert code == 0 and got == answer("failed", None, HEAD)
     assert f"{R}/issues/12/comments" not in gh.paths()
 
 
@@ -464,3 +548,50 @@ def test_fetch_without_a_profile_says_so(tmp_path, capsys, monkeypatch):
 def test_fetch_refuses_a_number_that_isnt_one(tmp_path, capsys):
     with pytest.raises(SystemExit):
         cli.main(["preview", "--fetch", "twelve"])
+
+
+def test_standard_input_is_read_once(tmp_path, capsys, monkeypatch):
+    import io
+
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps([bot(row())])))
+    code = cli.main(["preview", "--comments", "-", "--checks", "-", "--sha", HEAD])
+    out, err = capsys.readouterr()
+    assert code == 1 and "already --comments's" in err
+
+
+def test_a_closed_standard_input_says_so(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr("sys.stdin", None)
+    code = cli.main(["preview", "--comments", "-", "--checks", "-", "--sha", HEAD])
+    assert code == 1 and "closed" in capsys.readouterr().err
+
+
+def test_fetch_with_a_profile_that_isnt_utf8_says_so(project, tmp_path, capsys):
+    (project / ".claude/workflow/profile.toml").write_bytes(b"\xff\xfe[project]\n")
+    out, code, err = preview(tmp_path, capsys, None, None, None, "--fetch", "12")
+    assert code == 2 and "can't be read" in err and "--comments" in err
+
+
+def test_a_short_sha_answers_with_the_full_commit_the_runs_name(tmp_path, capsys):
+    got, _, _ = preview(tmp_path, capsys, [bot(row())], checks(cf_run()), HEAD[:7])
+    assert got == answer("built", BRANCH_URL, HEAD)
+
+
+def test_an_escaped_pipe_in_a_link_stays_in_it(tmp_path, capsys):
+    got, _, _ = preview(tmp_path, capsys, [bot(row(links="[Branch Preview URL](https://a.example.workers.dev/?q=1\\|2)"))], checks(cf_run()))
+    assert got == answer("built", "https://a.example.workers.dev/?q=1|2")
+
+
+def test_a_fetched_head_that_isnt_a_sha_is_said_so_and_not_asked_for(project, tmp_path, capsys, monkeypatch):
+    r = routes()
+    r[f"{R}/pulls/12"] = {"number": 12, "head": {"sha": "not-a-sha"}}
+    gh = fake_gh.install(tmp_path, monkeypatch, r)
+    out, code, err = preview(tmp_path, capsys, None, None, None, "--fetch", "12")
+    assert code == 1 and "head commit's SHA" in err and "give --sha" in err and "as a file: give --sha" not in err
+    assert not any("not-a-sha" in p for p in gh.paths())
+
+
+def test_an_unreadable_file_is_said_before_gh_is_asked(project, tmp_path, capsys, monkeypatch):
+    gh = fake_gh.install(tmp_path, monkeypatch, routes())
+    out, code, err = preview(tmp_path, capsys, None, None, None, "--fetch", "12", raw={"comments": "not json"})
+    assert code == 1 and "--comments" in err
+    assert gh.paths() == []
