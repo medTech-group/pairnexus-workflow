@@ -1,0 +1,45 @@
+{
+  "total_count": 2,
+  "check_runs": [
+    {
+      "id": 9101,
+      "name": "Workers Builds: demo-notes",
+      "head_sha": "5e1a0c3b9d2f4a6c8e0b1d3f5a7c9e1b3d5f7a90",
+      "status": "completed",
+      "conclusion": "failure",
+      "started_at": "2026-10-15T17:01:08Z",
+      "completed_at": "2026-10-15T17:05:40Z",
+      "details_url": "https://dash.cloudflare.com/0123456789abcdef0123456789abcdef/workers/services/view/demo-notes/production/builds/00000000-0000-4000-8000-000000000001",
+      "app": {
+        "slug": "cloudflare-workers-and-pages",
+        "name": "Cloudflare Workers and Pages"
+      },
+      "output": {
+        "title": null,
+        "summary": null,
+        "text": null,
+        "annotations_count": 0
+      }
+    },
+    {
+      "id": 9102,
+      "name": "tests",
+      "head_sha": "5e1a0c3b9d2f4a6c8e0b1d3f5a7c9e1b3d5f7a90",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-10-15T17:02:00Z",
+      "completed_at": "2026-10-15T17:02:00Z",
+      "details_url": "https://github.com/acme/demo/actions/runs/9102",
+      "app": {
+        "slug": "github-actions",
+        "name": "GitHub Actions"
+      },
+      "output": {
+        "title": null,
+        "summary": null,
+        "text": null,
+        "annotations_count": 0
+      }
+    }
+  ]
+}

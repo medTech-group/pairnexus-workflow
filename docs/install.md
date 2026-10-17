@@ -72,6 +72,15 @@ The kit's README ("Getting started", https://github.com/medTech-group/pairnexus-
 
 The profile's settings: `docs/profile.md`.
 
+**Reading a pull request's try-it link.** Where Cloudflare Workers Builds builds a preview of each pull request, `workflow preview` says whether the link is ready for the head commit: `built` with its URL, `building`, `failed`, or `none`. It changes nothing and posts nothing:
+
+```bash
+python3 -B .claude/workflow/bin/workflow.py preview --fetch 12 --json
+python3 -B .claude/workflow/bin/workflow.py preview --comments comments.json --checks check-runs.json --sha <head SHA> --json
+```
+
+`--fetch` reads the pull request's comments, its head commit's check runs and its head through `gh api`; a file given wins. The JSON (`state`, `url`, `commit`) is what `workflow merge-check --preview F` takes. The state comes from the `Workers Builds: <worker>` check on the head commit, and the link from the Cloudflare bot's comment, only when its row for the head commit says the deployment succeeded; a link for an older commit is `building`.
+
 ## A copy of the starter
 
 A project made from the starter template (`workflow version --starter` names it) arrives with the kit set up, so it needs no set-up pull request. Its first session opens one small "Make this project yours" pull request instead, made with:

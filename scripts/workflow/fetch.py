@@ -340,3 +340,56 @@ def merge_inputs(repo: str, number: int, have: dict, names, asker: str | None = 
     get("permissions", permissions)
     get("compare", lambda: api(f"{r}/compare/{quote(need('base branch', base), safe='/')}...{need('head commit', head)}"))
     return out
+
+
+# `workflow preview --fetch <n>`'s inputs, by their flags.
+PREVIEW_INPUTS = ("comments", "checks", "sha")
+
+
+def _give(name: str) -> str:
+    """How to give an input that couldn't be fetched: a file, or the head's SHA itself."""
+    return "so it couldn't be fetched: give --sha" if name == "sha" else AS_A_FILE.format(name=name)
+
+
+def preview_inputs(repo: str, number: int, have: dict) -> dict:
+    """`workflow preview`'s inputs not in `have`, fetched for pull request
+    `number` of `repo` (owner/name), each `(value, None)` or `(None, why)`:
+    the pull request's issue comments, its head commit's check runs (every
+    page of each, through REST routes a cloud session allows), and the head
+    SHA from the pull request. A head given in `have` wins, so its check runs
+    are fetched and the pull request isn't."""
+    names = [n for n in PREVIEW_INPUTS if n not in have]
+    if not names:
+        return {}
+    if not available():
+        return {n: (None, f"{NOT_INSTALLED}, {_give(n)}") for n in names}
+    r = f"repos/{repo}"
+    out: dict = {}
+
+    def get(n: str, fn) -> None:
+        if n in names:
+            try:
+                out[n] = (fn(), None)
+            except GhError as e:
+                out[n] = (None, f"{e}, {_give(n)}")
+
+    def head():
+        pr = api(f"{r}/pulls/{number}")
+        h = pr.get("head") if isinstance(pr, dict) else None
+        sha = h.get("sha") if isinstance(h, dict) else None
+        if merge._sha(sha) is None:
+            raise GhError(f"gh api {r}/pulls/{number} gave no head commit's SHA")
+        return merge._sha(sha)
+
+    get("sha", head)
+    get("comments", lambda: api(f"{r}/issues/{number}/comments?per_page=100", paginate=True))
+    got = have.get("sha") or out.get("sha")
+    sha = got[0] if got and got[1] is None else None
+
+    def checks():
+        if sha is None:
+            raise GhError("it needs the pull request's head commit, which couldn't be read")
+        return api(f"{r}/commits/{sha}/check-runs?per_page=100", paginate=True)
+
+    get("checks", checks)
+    return out
