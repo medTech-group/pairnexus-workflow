@@ -2,10 +2,10 @@
 
 ## Unreleased
 
-**`workflow state patch` checks a charter change against the profile** (#171, found by #50).
+**`workflow state patch` and `state put` check a charter change against the profile** (#171, found by #50).
 
-- **`state patch` and `state put`** run the checks `workflow charter validate` runs against the profile on disk whenever the charter in the state changes: auto-merge in solo mode or with no `ci.required_checks` (#50), release steps, waived checks, the explorer and the owner. A change that fails is refused with the same message and the state is left unchanged, so a mid-run patch can't set `merge.mode = "auto-merge"` where the kick-off couldn't. Before, only the conductor's amendment step caught it, by running `charter validate` first.
-- A patch that doesn't change the charter (`tickets`, `status`, …) is written as before, with no new checks and no network calls; so is any write when there is no profile. The conductor skill's amendment step and `docs/charter.md` §4 say so. Tests: `tests/test_state_charter_profile.py`.
+- **`state patch` and `state put`** run the checks `workflow charter validate --approved` runs against the profile on disk whenever the charter in the state changes: auto-merge in solo mode or with no `ci.required_checks` (#50), release steps, waived checks, the explorer and the owner. A change that fails is refused, listing the same problems, and the state is left unchanged, so a mid-run patch can't set `merge.mode = "auto-merge"` where the kick-off couldn't. Removed protection the old charter recorded still counts, so one patch can't drop that line and turn on auto-merge. Before, only the conductor's amendment step caught any of this, by running `charter validate` first.
+- A patch that doesn't change the charter (`tickets`, `status`, …) is written as before, unchecked. With no profile a charter change is written with a note; a profile that can't be read (not TOML, not UTF-8) refuses it. The conductor skill's amendment step and `docs/charter.md` §4 say so. Tests: `tests/test_state_charter_profile.py`.
 - **For projects updating:** nothing to do.
 
 **An estimate before a run, in sessions and hours** (#123, part of a session budget and a light review, #42).

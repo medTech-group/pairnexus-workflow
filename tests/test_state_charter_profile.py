@@ -151,3 +151,51 @@ def test_without_a_profile_a_charter_patch_is_written(tmp_path):
     _body(tmp_path)
     p = _patch(tmp_path, {"CLAUDE_PROJECT_DIR": str(tmp_path)}, {"charter": {"merge": {"mode": "auto-merge"}}})
     assert p.returncode == 0, p.stderr
+
+
+def test_a_patch_cant_drop_removed_protection_and_turn_on_auto_merge(tmp_path):
+    # Review round 1: the old charter's record of removed protection still counts.
+    env = _profile(tmp_path, ruleset=True)
+    c = _charter()
+    c["accepted_gaps"] = ["removed protection: the read-back found main unprotected"]
+    b = _body(tmp_path, c)
+    before = b.read_text()
+    p = _patch(tmp_path, env, {"charter": {"accepted_gaps": [], "merge": {"mode": "auto-merge"}}})
+    assert p.returncode == 1 and "removed protection" in p.stderr
+    assert b.read_text() == before
+    # Dropping the record alone, while on session, is a valid change.
+    p = _patch(tmp_path, env, {"charter": {"accepted_gaps": []}})
+    assert p.returncode == 0, p.stderr
+
+
+def test_a_broken_profile_refuses_a_charter_change_but_not_a_tickets_patch(tmp_path):
+    env = _profile(tmp_path, ruleset=True)
+    b = _body(tmp_path)
+    before = b.read_text()
+    prof = tmp_path / ".claude/workflow/profile.toml"
+    for broken in (b"[project\nname=1\n", b"\xff\xfe[project]\n"):
+        prof.write_bytes(broken)
+        p = _patch(tmp_path, env, {"charter": {"merge": {"mode": "auto-merge"}}})
+        assert p.returncode == 1 and p.stderr.startswith("workflow: ") and "Traceback" not in p.stderr
+        assert p.stdout == "" and b.read_text() == before
+        p = _patch(tmp_path, env, {"tickets": {"7": {"status": "running"}}})
+        assert p.returncode == 0, p.stderr
+
+
+def test_body_problems_come_before_the_profile_check(tmp_path):
+    env = _profile(tmp_path, ruleset=False)
+    b = _body(tmp_path)
+    b.write_text(b.read_text() * 2)  # two blocks
+    s = state.empty(_charter("auto-merge"))
+    sf = tmp_path / "state.json"
+    sf.write_text(json.dumps(s))
+    p = _cli("state", "put", "--body", str(b), "--state", str(sf), env=env)
+    assert p.returncode == 1 and "2 state blocks" in p.stderr and "solo mode" not in p.stderr
+
+
+def test_no_profile_says_the_change_wasnt_checked(tmp_path):
+    _body(tmp_path)
+    p = _patch(tmp_path, {"CLAUDE_PROJECT_DIR": str(tmp_path)}, {"charter": {"merge": {"mode": "auto-merge"}}})
+    assert p.returncode == 0 and "no profile found" in p.stderr
+    p = _patch(tmp_path, {"CLAUDE_PROJECT_DIR": str(tmp_path)}, {"tickets": {"7": {"status": "running"}}})
+    assert p.returncode == 0 and p.stderr == ""

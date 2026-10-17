@@ -507,17 +507,23 @@ def _against_profile(c: dict, prof, who: bool = True, protected: bool | None = N
 
 
 def _charter_change_problems(old, new) -> list[str]:
-    """A put or patch that changes the charter: the checks `charter validate`
-    runs against the profile on disk (solo mode, required checks, release steps,
-    the owner…). A state whose charter is unchanged, or with no profile, isn't
-    checked; a charter that is itself unsound is left to `state.put` to refuse."""
+    """A put or patch that changes the charter: the checks `charter validate
+    --approved` runs against the profile on disk. Removed protection the old
+    charter recorded still counts, so one patch can't drop the record and turn
+    on auto-merge. A state whose charter is unchanged isn't checked; a charter
+    that is itself unsound is left to `state.put` to refuse."""
     c = new.get("charter") if isinstance(new, dict) else None
-    if not isinstance(c, dict) or (isinstance(old, dict) and old.get("charter") == c):
+    was = old.get("charter") if isinstance(old, dict) else None
+    if not isinstance(c, dict) or c == was or charter_mod.validate(c):
         return []
-    if charter_mod.validate(c):
+    try:
+        prof = load(required=False)
+    except UnicodeDecodeError as e:
+        raise ProfileError(f"the profile isn't UTF-8 text ({e}), so the charter change can't be checked") from e
+    if prof is None:
+        print("note: no profile found: the charter change wasn't checked against it", file=sys.stderr)
         return []
-    prof = load(required=False)
-    return _against_profile(c, prof) if prof is not None else []
+    return _against_profile(c, prof, protected=False if charter_mod.removed_protection_accepted(was) else None)
 
 
 def cmd_state(a) -> int:
@@ -554,7 +560,7 @@ def cmd_state(a) -> int:
     if a.action == "put":
         try:
             cur = state_mod.get(body)
-        except state_mod.StateError:  # a broken block: `put` may still replace it
+        except state_mod.StateError:  # a block that isn't JSON: `put` replaces it
             cur = None
         s = _json(a.state)
     else:  # patch
@@ -562,11 +568,12 @@ def cmd_state(a) -> int:
         if cur is None:
             raise SystemExit("no state block to patch; use `state put` first")
         s = state_mod.patch(cur, _json(a.patch))
+    # The body and the state's own problems first, then the charter against the profile.
+    new = state_mod.put(body, s)
     problems = _charter_change_problems(cur, s)
     if problems:
         print("workflow state: refusing to write the state. The charter has problems:\n- " + "\n- ".join(problems), file=sys.stderr)
         return 1
-    new = state_mod.put(body, s)
     if a.out:
         Path(a.out).write_text(new, encoding="utf-8")
     else:
