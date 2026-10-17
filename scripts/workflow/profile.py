@@ -131,10 +131,11 @@ def _previews(raw: dict, sensitive: bool) -> Previews:
     if provider not in PREVIEW_PROVIDERS:
         names = " or ".join(f'"{x}"' for x in PREVIEW_PROVIDERS)
         raise ProfileError(f"previews.provider must be {names}, not {repr(provider)[:40]}")
-    for k in ("on", "access"):
-        if not isinstance(raw.get(k, False), bool):
-            raise ProfileError(f"previews.{k} must be true or false")
-    p = Previews(provider=provider, on=raw.get("on", False), access=raw.get("access", False))
+    on, access = raw.get("on", False), raw.get("access", False)
+    for k, v in (("on", on), ("access", access)):
+        if not isinstance(v, bool):
+            raise ProfileError(f"previews.{k} must be true or false, not {repr(v)[:40]}")
+    p = Previews(provider=provider, on=on, access=access)
     if p.on and not p.access and sensitive:
         raise ProfileError(
             "previews.on is true but previews.access isn't: this project has [sensitive] patterns, so its "

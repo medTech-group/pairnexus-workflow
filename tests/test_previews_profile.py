@@ -28,7 +28,7 @@ def _check(root):
     return subprocess.run([sys.executable, str(CLI), "profile", "check"], cwd=root, env=e, capture_output=True, text=True)
 
 
-def _previews(on="true", access="true", provider='"cloudflare"'):
+def _previews_toml(on="true", access="true", provider='"cloudflare"'):
     return f'\n[previews]\nprovider = {provider}\non = {on}\naccess = {access}\n'
 
 
@@ -37,7 +37,7 @@ def _previews(on="true", access="true", provider='"cloudflare"'):
 
 @pytest.mark.parametrize("on, access", [("true", "true"), ("true", "false"), ("false", "false"), ("false", "true")])
 def test_a_previews_section_passes_and_the_loader_reads_it(tmp_path, on, access):
-    _write_profile(tmp_path, _previews(on, access))
+    _write_profile(tmp_path, _previews_toml(on, access))
     p = _check(tmp_path)
     assert p.returncode == 0, p.stderr
     want = {"provider": "cloudflare", "on": on == "true", "access": access == "true"}
@@ -74,7 +74,7 @@ def test_a_section_without_provider_reads_as_cloudflare(tmp_path):
 
 @pytest.mark.parametrize("typo", ["enabled", "On", "acess", "url"])
 def test_an_unknown_key_fails_naming_it(tmp_path, typo):
-    _write_profile(tmp_path, _previews() + f"{typo} = true\n")
+    _write_profile(tmp_path, _previews_toml() + f"{typo} = true\n")
     p = _check(tmp_path)
     assert p.returncode == 1
     assert "[previews]" in p.stderr and repr(typo) in p.stderr
@@ -82,7 +82,7 @@ def test_an_unknown_key_fails_naming_it(tmp_path, typo):
 
 @pytest.mark.parametrize("provider", ['"vercel"', '"Cloudflare"', '""', "true", '["cloudflare"]'])
 def test_a_provider_other_than_cloudflare_fails(tmp_path, provider):
-    _write_profile(tmp_path, _previews(provider=provider))
+    _write_profile(tmp_path, _previews_toml(provider=provider))
     p = _check(tmp_path)
     assert p.returncode == 1
     assert "previews.provider" in p.stderr and '"cloudflare"' in p.stderr
@@ -95,10 +95,11 @@ def test_on_and_access_must_be_true_or_false(tmp_path, key, value):
     p = _check(tmp_path)
     assert p.returncode == 1
     assert f"previews.{key}" in p.stderr and "true or false" in p.stderr
+    assert f"not {value.strip(chr(34))}" in p.stderr or f"not '{value.strip(chr(34))}'" in p.stderr
 
 
 def test_a_long_bad_provider_is_cut_short(tmp_path):
-    _write_profile(tmp_path, _previews(provider=f'"{"x" * 5000}"'))
+    _write_profile(tmp_path, _previews_toml(provider=f'"{"x" * 5000}"'))
     p = _check(tmp_path)
     assert p.returncode == 1 and "previews.provider" in p.stderr and len(p.stderr) < 300
 
@@ -116,7 +117,7 @@ def test_on_without_access_fails_in_a_sensitive_profile(tmp_path, access):
 
 
 def test_on_without_access_passes_in_a_profile_without_sensitive_patterns(tmp_path):
-    _write_profile(tmp_path, '\n[sensitive]\ndescription = "nothing"\npatterns = []\n' + _previews(access="false"))
+    _write_profile(tmp_path, '\n[sensitive]\ndescription = "nothing"\npatterns = []\n' + _previews_toml(access="false"))
     p = _check(tmp_path)
     assert p.returncode == 0, p.stderr
     assert json.loads(p.stdout)["previews"]["on"] is True
@@ -124,7 +125,7 @@ def test_on_without_access_passes_in_a_profile_without_sensitive_patterns(tmp_pa
 
 @pytest.mark.parametrize("on, access", [("true", "true"), ("false", "false")])
 def test_a_sensitive_profile_passes_with_access_or_previews_off(tmp_path, on, access):
-    _write_profile(tmp_path, SENSITIVE + _previews(on, access))
+    _write_profile(tmp_path, SENSITIVE + _previews_toml(on, access))
     p = _check(tmp_path)
     assert p.returncode == 0, p.stderr
 
@@ -156,6 +157,8 @@ def test_the_commented_example_passes_when_uncommented(tmp_path):
 def test_profile_md_documents_the_three_keys():
     text = (KIT / "docs/profile.md").read_text()
     assert "[previews]" in text
-    section = text[text.index("[previews]"):]
+    start = text.index("## `[previews]`")
+    end = text.find("\n## ", start + 1)
+    section = text[start:end if end != -1 else len(text)]
     for key in ("`provider`", "`on`", "`access`"):
         assert key in section, key

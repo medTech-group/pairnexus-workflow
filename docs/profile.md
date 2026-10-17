@@ -82,7 +82,7 @@ In the environment and the file, case and spaces around the value don't matter (
 
 ## `[previews]`
 
-Try-it links: a live preview of the app for each pull request. The section is added by the "Add try-it links" upgrade through its own pull request, never by hand and never by set-up; the starter ships without it. Left out, a project has no previews.
+Try-it links: a [preview link](glossary.md#preview-link) on each pull request. The section is added by the "Add try-it links" upgrade (#41, to come) through its own pull request, never by hand and never by set-up; the starter ships without it. Left out, a project has no previews.
 
 | Key | What it is | Default |
 |---|---|---|

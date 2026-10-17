@@ -5,9 +5,9 @@
 **`[previews]` in the profile: whether pull requests get try-it links** (#112, part of a preview deploy per PR, #41).
 
 - **Three keys:** `provider` (only `"cloudflare"`, the default), `on` and `access` (the owner's word that Cloudflare Access guards the preview URLs), `on` and `access` both `false` by default. A profile without the section has no previews, so every project behaves as before.
-- **Refused by `profile check`** (exit 1, in words): an unknown key in `[previews]`, named; a provider other than `"cloudflare"`; `on` or `access` that isn't true or false; and `on = true` without `access = true` in a profile with `[sensitive]` patterns, since a sensitive project's previews must sit behind Access or not be made.
+- **Refused by `profile check`** (exit 1, in words): an unknown key in `[previews]`, named; a provider other than `"cloudflare"`; `on` or `access` that isn't true or false (the message shows the value given); and `on = true` without `access = true` in a profile with `[sensitive]` patterns, since a sensitive project's previews must sit behind Access or not be made.
 - **Read by the CLI's loader** as `Profile.previews` (`provider`, `on`, `access`), and printed by `workflow profile check` under `previews`, for the preview reader and `merge-check` to come.
-- **Written by "Add try-it links"** through its own pull request: set-up never writes it, and the starter ships only a commented-out example in `templates/profile.toml`. Docs: `docs/profile.md`'s new `[previews]` table. Tests: `tests/test_previews_profile.py`.
+- **Written by "Add try-it links"** (#41, to come) through its own pull request: set-up never writes it, and the starter ships only a commented-out example in `templates/profile.toml`. Docs: `docs/profile.md`'s new `[previews]` table. Tests: `tests/test_previews_profile.py`.
 - **For projects updating:** nothing to do.
 
 **"Make this project yours": `workflow adopt` rewrites a copy of the starter's names** (#106, part of one starter template, #40).
