@@ -299,7 +299,10 @@ def merge_inputs(repo: str, number: int, have: dict, names, asker: str | None = 
             items = comments_from(comments)
         except CommentsError as e:
             raise GhError(f"not fetched: the comments couldn't be read ({e})") from None
-        revs, asked = _reviews_read(reviews, pr)  # in any shape merge-check takes, so no reviewer is left out
+        try:
+            revs, asked, unread = *_reviews_read(reviews, pr), None  # in any shape merge-check takes, so no reviewer is left out
+        except GhError as bad:  # merge-check says so for --reviews; the authors it can see still get theirs
+            revs, asked, unread = [(_login(x), "") for x in _items(reviews) if isinstance(x, dict)], set(), bad
         for who in [_login(x) for x in items] + [login for login, _ in revs] + [(asker or "").strip().lstrip("@")]:
             if who:
                 logins.setdefault(who.casefold(), who)
@@ -321,6 +324,8 @@ def merge_inputs(repo: str, number: int, have: dict, names, asker: str | None = 
                         token = token_permission(r)
                     except GhError as e2:
                         raise GhError(f"{e}; then the token's own permission: {e2}") from None
+                    if unread is not None:  # a change request can't be told from the reviews, so none is dropped
+                        raise GhError(f"{e}; then {unread}") from None
                     blocking = _standing_change_requests(revs, asked)
                 token_login, token_perm = token
                 if who.casefold() == token_login.casefold():

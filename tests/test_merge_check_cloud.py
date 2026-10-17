@@ -241,7 +241,7 @@ def test_a_change_request_is_read_in_time_order_and_in_graphqls_shape(project, c
     got, _ = run(project, capsys, {"reviews": reviews}, "--fetch", "12")
     assert "@dev" in couldnt_read(got).get("permissions", ""), got["reasons"]
     got, _ = run(project, capsys, {"reviews": {"reviews": {"totalCount": 2, "nodes": nodes}}}, "--fetch", "12")
-    assert got["decision"] == "not_yet", got["reasons"]
+    assert "@dev" in couldnt_read(got).get("permissions", ""), got["reasons"]
 
 
 def test_a_change_request_whose_reviewer_was_asked_again_doesnt_stall(project, capsys, tmp_path, monkeypatch):
@@ -279,14 +279,14 @@ def test_the_token_without_push_has_no_write_access(project, capsys, tmp_path, m
     # The owner's token reads only: the owner's evidence and review record don't come from a write-access account.
     fake_gh.install(tmp_path, monkeypatch, cloud(perms={"admin": False, "maintain": False, "push": False, "triage": False, "pull": True}))
     got, _ = run(project, capsys, {}, "--fetch", "12")
-    assert got["decision"] != "ready"
+    assert ids(got) == ["no_review"], got["reasons"]  # the owner's record no longer counts
     assert not couldnt_read(got)
 
 
 def test_a_token_with_no_permission_flags_set_is_read_as_none(project, capsys, tmp_path, monkeypatch):
     fake_gh.install(tmp_path, monkeypatch, cloud(perms={"admin": False, "push": False, "pull": False}))
     got, _ = run(project, capsys, {}, "--fetch", "12")
-    assert got["decision"] != "ready"
+    assert ids(got) == ["no_review"], got["reasons"]  # the owner's record no longer counts
     assert not couldnt_read(got)
 
 
@@ -367,3 +367,20 @@ def test_reviewers_in_graphqls_shape_have_their_permission_fetched(project, caps
     got, _ = run(project, capsys, {"reviews": {"reviews": {"totalCount": 1, "nodes": nodes}}}, "--fetch", "12")
     assert ids(got) == ["changes_requested"], got["reasons"]
     assert f"{REPO}/collaborators/dev/permission" in gh.paths()
+
+
+def test_reviews_merge_check_cant_read_leave_the_other_authors_permissions_fetched(project, capsys, tmp_path, monkeypatch):
+    # Outside a cloud session the authors still get their permission: only --reviews is couldn't read.
+    gh = fake_gh.install(tmp_path, monkeypatch, routes())
+    got, _ = run(project, capsys, {"reviews": [{"user": {"login": "dev"}, "state": 3, "submitted_at": "2026-10-16T09:00:00Z"}]}, "--fetch", "12")
+    assert list(couldnt_read(got)) == ["reviews"], got["reasons"]
+    assert f"{REPO}/collaborators/owner/permission" in gh.paths()
+
+
+def test_reviews_merge_check_cant_read_leave_a_refused_permission_couldnt_read(project, capsys, tmp_path, monkeypatch):
+    # In a cloud session a change request can't be told from them, so nobody else is counted as without write access.
+    r = cloud()
+    r[f"{REPO}/collaborators/dev/permission"] = REFUSED_PATH
+    fake_gh.install(tmp_path, monkeypatch, r)
+    got, _ = run(project, capsys, {"reviews": [{"user": {"login": "dev"}, "state": 3, "submitted_at": "2026-10-16T09:00:00Z"}]}, "--fetch", "12")
+    assert set(couldnt_read(got)) == {"reviews", "permissions"}, got["reasons"]
