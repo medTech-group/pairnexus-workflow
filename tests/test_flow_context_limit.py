@@ -124,14 +124,26 @@ def test_the_budget_counts_the_name_where_the_text_stops(tmp_path):
         path.write_text(flow.replace("# The flow", "# The flow" + "y" * pad, 1))
         ctx = context.first_flow([path])
         assert len(ctx) <= FLOW_BUDGET and "stops before" in ctx, pad
+        # and the latest cut that fits: one more section, stopping before the next, would not
+        pieces = [(path, p) for p in context._sections(path.read_text())]
+        k = ctx.count("\n\n## ") + 1  # the opening and the sections given
+        if k + 1 < len(pieces):
+            more = "\n\n".join([f"{context.FLOW_HEAD}{context._READ}{path}." + context._stop(*pieces[k + 1]), *(q for _, q in pieces[: k + 1])])
+            assert len(more) > FLOW_BUDGET, pad
 
 
-def test_a_flow_that_fits_whole_is_never_cut(repo):
-    room = FLOW_BUDGET - 400
-    flow = "# The flow\n\n" + "x" * room + "\n\n## Done\n\nShip it.\n"
-    (repo / ".claude/workflow/flow.md").write_text(flow)
-    ctx = _ctx(repo, "implement #5", env={"WORKFLOW_EXPERIENCE": "developer"})
-    assert "All of it is below" in ctx and "Ship it." in ctx and len(ctx) <= FLOW_BUDGET
+def test_a_flow_that_fits_whole_is_never_cut(tmp_path):
+    # exactly the budget in the whole form, which the cut form's longer instruction would pass
+    from workflow import context
+
+    path = tmp_path / "flow.md"
+    whole_head = f"{context.FLOW_HEAD}{context._WHOLE}{path})."
+    tail = "## Done\n\nShip it."
+    opening = "# The flow\n\n"
+    opening += "x" * (FLOW_BUDGET - len(whole_head) - len(opening) - 2 - len(tail) - 2)
+    path.write_text(f"{opening}\n\n{tail}\n")
+    ctx = context.first_flow([path])
+    assert len(ctx) == FLOW_BUDGET and "All of it is below" in ctx and ctx.endswith("Ship it.")
 
 
 def test_an_opening_too_long_for_the_budget_leaves_the_instruction_alone(repo):
