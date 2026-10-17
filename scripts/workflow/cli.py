@@ -14,7 +14,7 @@
     workflow state init --charter F --run-id ID [--by-hand N] [--read-through ID] | get --body F | put --body F --state F [--out F] | patch --body F --patch F [--out F]
     workflow render --template F --ticket F --charter F --slots F --tracking N [--by-hand N] [--out F] [--print]
     workflow comments --file F [--owner LOGIN] [--since-id N]
-    workflow merge-check --pr F --files F --commits F --checks F --rulesets F --threads F --reviews F --comments F --permissions F --compare F [--preview F] [--asker LOGIN] [--json]
+    workflow merge-check --pr F --files F --commits F --checks F --rulesets F --threads F --reviews F --comments F --permissions F --compare F [--preview F] [--asker LOGIN] [--review-rounds N] [--json]
     workflow merge-check --fetch N [any of the files above] [--charter F --check-logs DIR] [--asker LOGIN] [--review-rounds N] [--json]
     workflow briefing verify --file F
     workflow pr-template [--existing FILE]      (prints the file to write; exits 3 for a folder of templates)
@@ -33,6 +33,7 @@ import argparse
 import json
 import contextlib
 import os
+import re
 import signal
 import time
 import subprocess
@@ -625,7 +626,7 @@ def _pr_number(v: str) -> int:
 
 
 def _review_rounds(v: str) -> int:
-    if not (v.isdigit() and int(v) in merge_mod.REVIEW_ROUNDS):
+    if not (re.fullmatch(r"[0-9]{1,2}", v) and int(v) in merge_mod.REVIEW_ROUNDS):
         raise argparse.ArgumentTypeError(f"{v!r} isn't a whole number from 1 to 10 (the review rounds allowed, as the briefing or the profile's run.review_rounds gives them)")
     return int(v)
 

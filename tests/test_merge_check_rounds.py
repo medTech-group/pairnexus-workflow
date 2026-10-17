@@ -6,6 +6,7 @@ The allowed rounds come from `--review-rounds`, else the profile's
 one still needs another round; no fourth round is ever asked for.
 """
 
+import json
 import re
 from pathlib import Path
 
@@ -49,7 +50,7 @@ def test_last_round_3_of_3_not_clean_with_no_pass_names_the_correctness_pass(pro
     assert r["id"] == "review_not_clean" and r["action"] == "review"
     assert r["next"] == "pass" and r["round"] == 3
     dev, new = r["wording"]["developer"], r["wording"]["new"]
-    assert "the last of 3 allowed" in dev["message"]
+    assert "wasn't clean, and no round is left (3 allowed)" in dev["message"]
     assert "Correctness pass on the head" in dev["fix"] and "another round" not in dev["fix"]
     assert "short check of the latest changes" in new["fix"]
 
@@ -78,7 +79,7 @@ def test_round_2_of_3_not_clean_and_a_clean_pass_still_needs_another_round(proje
     dev = r["wording"]["developer"]
     assert "round 2 of 3" in dev["message"]
     assert "run another round" in dev["fix"]
-    assert "review it again" in r["wording"]["new"]["fix"]
+    assert r["wording"]["new"]["fix"] == "Fix them, then run another review round."
 
 
 def test_round_1_of_1_the_light_review_not_clean_and_a_clean_pass_is_ready(project, capsys):
@@ -180,7 +181,7 @@ def test_an_unreadable_profile_still_says_3(project, capsys):
     assert got["review_rounds"] == 3
 
 
-@pytest.mark.parametrize("value", ["0", "11", "-1", "three", "2.5", ""])
+@pytest.mark.parametrize("value", ["0", "11", "-1", "three", "2.5", "", " 3", "+3", "٣", "１", "²", "9" * 5000])
 def test_a_value_outside_1_to_10_is_refused_with_a_plain_message(project, capsys, value):
     with pytest.raises(SystemExit) as e:
         check(project, capsys, inputs(), "--review-rounds", value)
@@ -190,11 +191,43 @@ def test_a_value_outside_1_to_10_is_refused_with_a_plain_message(project, capsys
     assert "Traceback" not in err
 
 
-def test_the_text_answer_names_the_correctness_pass(project, capsys):
+def test_the_text_answer_names_the_correctness_pass_at_both_levels(project, capsys, monkeypatch):
     data = inputs()
     data["comments"] = records(rec(rnd=3, clean=False))
     out, _ = check(project, capsys, data, as_json=False)
-    assert "Correctness pass on the head" in out or "short check of the latest changes" in out
+    assert "no round is left (3 allowed). Fix the findings and run a Correctness pass on the head; no further round." in out
+    monkeypatch.setenv("WORKFLOW_EXPERIENCE", "new")
+    out, _ = check(project, capsys, data, as_json=False)
+    assert "The last review found things to fix. Fix them, then ask for a short check of the latest changes." in out
+
+
+def test_the_flag_can_allow_more_rounds_than_the_profile(project, capsys):
+    rounds_in_profile(project, 1)
+    data = inputs()
+    data["comments"] = records(rec(rnd=1, commit=EARLIER, clean=False), rec("pass", rnd=1, commit=HEAD))
+    got, _ = check(project, capsys, data, "--review-rounds", "3")
+    [r] = review_reasons(got)
+    assert r["id"] == "review_not_clean" and r["next"] == "round"
+
+
+def test_a_pass_from_an_account_without_write_access_doesnt_lift_the_last_round(project, capsys):
+    data = inputs()
+    data["comments"] = [comment(rec(rnd=3, commit=EARLIER, clean=False), cid=1), comment(rec("pass", rnd=3, commit=HEAD), author="stranger", cid=2)]
+    got, _ = check(project, capsys, data)
+    [r] = review_reasons(got)
+    assert r["id"] == "review_not_clean" and r["next"] == "pass"
+    assert "records_ignored" in [n["id"] for n in got["notes"]]
+
+
+def test_every_case_is_worded_at_both_levels():
+    from workflow import merge
+
+    for rid, reason in merge.REASONS.items():
+        for case, wording in reason.cases.items():
+            assert set(wording) == set(reason.wording), (rid, case)
+            for level, (message, fix) in wording.items():
+                assert message.startswith("Not yet: ") and fix, (rid, case, level)
+            assert wording["new"] != wording["developer"], (rid, case)
 
 
 def test_review_reasons_carry_the_counted_rounds_reviewers(project, capsys):
@@ -217,16 +250,18 @@ def _read(rel):
 def test_build_ticket_and_the_conductor_pass_the_review_rounds():
     build = _read("skills/build-ticket/SKILL.md")
     assert "--charter .workflow/tracking.md --review-rounds <N>`, with `<N>` the briefing's review rounds" in build
-    assert "a Correctness pass on the head when it is `pass`, after the last allowed round, never a further round" in build
+    assert "its `next` says what follows: `round` is another round, `pass` is a Correctness pass on the head, since that was the last allowed round" in build
     conductor = _read("skills/conductor/SKILL.md")
-    assert "--charter .workflow/run/tracking.md --review-rounds <N>`, with `<N>` the charter's review rounds" in conductor
+    assert "--charter .workflow/run/tracking.md --review-rounds <N>`, with `<N>` the charter's review rounds as the briefings give them (its `review.rounds`, else its preset's, else the profile's `run.review_rounds`)" in conductor
     assert "--review-rounds <the charter's review rounds>" in _read("docs/charter.md")
 
 
 def test_the_merge_check_skill_runs_a_pass_for_next_pass():
     skill = _read("skills/merge-check/SKILL.md")
-    assert "When its `next` is `pass` (that round was the last allowed one, by the profile's `run.review_rounds`), fix the findings, then a Correctness pass on the head (§5) instead" in skill
-    assert "- `review_rounds`: the review rounds allowed it used" in skill
+    assert "When its `next` is `pass` (that round was the last allowed one, by the answer's `review_rounds`), fix the findings, then a Correctness pass on the head (§5) instead" in skill
+    assert "The reason's `round` and `reviewers` give that round directly." in skill
+    assert "- `review_rounds`: how many review rounds it allowed" in skill
+    assert "so a person needs no `--review-rounds`" in skill
 
 
 def test_the_flow_says_the_last_round_is_lifted_by_a_clean_pass():
@@ -241,7 +276,7 @@ def test_the_briefing_passes_its_review_rounds():
 
     import conftest
 
-    prof = parse(conftest.BASE_PROFILE, KIT)
+    prof = parse(json.loads(json.dumps(conftest.BASE_PROFILE)), KIT)
     template = _read("templates/ticket-session-prompt.md")
     assert "--review-rounds {{review.rounds}}" in template
     for n in (1, 4):
@@ -249,9 +284,12 @@ def test_the_briefing_passes_its_review_rounds():
         v = render.values(prof, {"number": 7, "title": "t"}, charter, {}, 9, None)
         assert v["review.rounds"] == str(n)
         assert presets.review_of(charter, prof)["rounds"] == n
+    # A charter with only a preset: the briefing gives its preset's rounds.
+    light = {"preset": "light"}
+    assert render.values(prof, {"number": 7, "title": "t"}, light, {}, 9, None)["review.rounds"] == str(presets.review_of(light, prof)["rounds"]) == "1"
 
 
-def test_the_changelog_has_the_note_and_version_is_unchanged():
+def test_the_changelog_has_the_note():
     unreleased = _read("CHANGELOG.md").split("## Unreleased", 1)[1].split("\n## ", 1)[0]
     assert "(#170" in unreleased and "--review-rounds N" in unreleased
 

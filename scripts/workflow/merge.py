@@ -79,7 +79,7 @@ _SHA = re.compile(r"[0-9a-f]{40}")
 _STATUS_URL_SHA = re.compile(r"/statuses/([0-9a-fA-F]{40})\b")
 PREVIEWS_DOC = Path(__file__).resolve().parents[2] / "docs/previews.md"
 DEFAULT_REVIEW_ROUNDS = 3  # the profile's run.review_rounds when it can't be read
-REVIEW_ROUNDS = range(1, 11)  # what --review-rounds and run.review_rounds accept
+REVIEW_ROUNDS = range(1, 11)  # what --review-rounds accepts, as profile.py's run.review_rounds
 
 
 class Unreadable(Exception):
@@ -104,6 +104,7 @@ class Reason:
     # level -> (message, fix); both formatted with the reason's details.
     wording: dict
     # A case of the same reason worded its own way: case -> level -> (message, fix).
+    # Unlike couldnt_read_profile's own entry, a case keeps its reason's id and action.
     cases: dict = field(default_factory=dict)
 
 
@@ -119,7 +120,7 @@ class Result:
     checks: list[dict] = field(default_factory=list)
     files: list[str] = field(default_factory=list)
     preview: dict | None = None
-    review_rounds: int = 3  # the allowed review rounds the review rule used
+    review_rounds: int = DEFAULT_REVIEW_ROUNDS  # the allowed review rounds the review rule used
 
     def as_dict(self) -> dict:
         return {
@@ -178,13 +179,13 @@ REASONS = {
         "developer": ("Not yet: no review record from an account with write access on this PR.", "Run the review panel; each round posts its record."),
     }),
     "review_not_clean": Reason("review_panel", "review", {
-        "new": ("Not yet: the last review found things to fix.", "Fix them, then review it again."),
+        "new": ("Not yet: the last review found things to fix.", "Fix them, then run another review round."),
         "developer": ("Not yet: review round {round} of {allowed} on {round_short} wasn't clean.", "Fix the findings and run another round."),
     }, cases={
         # The last allowed round (#170): a clean Correctness pass on the head lifts it.
         "last_round": {
             "new": ("Not yet: the last review found things to fix.", "Fix them, then ask for a short check of the latest changes."),
-            "developer": ("Not yet: review round {round} on {round_short} wasn't clean, and it was the last of {allowed} allowed.", "Fix the findings and run a Correctness pass on the head (review-panel §5); no further round."),
+            "developer": ("Not yet: review round {round} on {round_short} wasn't clean, and no round is left ({allowed} allowed).", "Fix the findings and run a Correctness pass on the head; no further round."),
         },
     }),
     "pass_not_clean": Reason("review_panel", "review", {
