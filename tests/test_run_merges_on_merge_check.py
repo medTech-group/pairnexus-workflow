@@ -12,6 +12,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from workflow import charter
+
 KIT = Path(__file__).resolve().parents[1]
 CLI = KIT / "scripts/workflow.py"
 CONDUCTOR = KIT / "skills/conductor/SKILL.md"
@@ -20,7 +22,9 @@ TEMPLATE = KIT / "templates/ticket-session-prompt.md"
 CHARTER_DOC = KIT / "docs/charter.md"
 CHANGELOG = KIT / "CHANGELOG.md"
 
-COMMAND = re.compile(r"`WF merge-check --fetch <(?:PR|pr|n)> --json --charter [^`]+`")
+COMMAND = re.compile(r"`WF merge-check --fetch <(?:PR|pr|n)> --json --charter \.workflow/[^`]+`")
+# Each way of merging pins the head merge-check checked.
+PINS = ("--match-head-commit <sha>", "-f sha=<sha>", "`expectedHeadSha`")
 
 
 def _read(p):
@@ -51,19 +55,24 @@ def test_conductor_runs_merge_check_with_the_charter():
     rows = _check_in_rows()
     assert COMMAND.search(rows), "the conductor's merge rows run WF merge-check --fetch <PR> --json --charter …"
     # Files where gh can't read an input.
-    assert "as a file" in rows or "with files" in rows
+    assert "give it as a file (`--pr F`, `--checks F`, …)" in rows
+    # Scratch files stay where git ignores them, so the evidence sees a clean tree.
+    assert "> .workflow/run/tracking.md" in rows and "--check-logs .workflow/run/check-logs" in rows
 
 
 def test_conductor_ready_is_the_only_yes_in_every_mode():
     rows = _check_in_rows()
     assert "`ready` is the only yes" in rows
     session = _row(rows, "`session` mode")
-    assert "`ready`" in session and "--match-head-commit" in session and "`sha`" in session
+    assert all(pin in session for pin in PINS), session
     assert "merge` grant" in session
     auto = _row(rows, "`auto-merge` mode")
-    assert "`ready`" in auto and ("enable_pr_auto_merge" in auto or "--auto --merge" in auto)
+    assert "`gh pr merge <n> --auto --merge --match-head-commit <sha>`" in auto
+    assert "Never arm it on anything but `ready`" in auto
     clean = _row(rows, "You tried to enable auto-merge and GitHub refused")
-    assert "merge-check" in clean and "`ready`" in clean and "--match-head-commit" in clean
+    assert "merge-check" in clean and "On `ready`, merge it yourself as the `session` row does, pinned to its `head`" in clean
+    behind = _row(rows, "PR open, behind the base")
+    assert "disable it first" in behind and "Arm it again only on the new head's `ready`" in behind
     owner = _row(rows, "`owner` mode")
     assert "`ready`" in owner and "ready for you to merge" in owner
 
@@ -80,8 +89,11 @@ def test_conductor_sends_owner_review_to_for_owner_with_the_files():
 def test_conductor_never_merges_on_not_yet():
     rows = _check_in_rows()
     not_yet = _row(rows, "`not_yet`")
-    assert "never merge" in not_yet.lower()
-    assert "reasons" in not_yet and "update_branch" in not_yet
+    assert not_yet.split("|")[2].strip().startswith("Never merge it or arm auto-merge.")
+    assert "update_branch" in not_yet and "A reason with no `action`" in not_yet
+    assert "The path-filtered row below wins over this one." in not_yet
+    path_filtered = _row(rows, "A required check never started")
+    assert "never says `ready`" in path_filtered and "settled for \"Done\"" in path_filtered
 
 
 def test_conductor_no_longer_restates_the_rule_or_lists_files():
@@ -92,6 +104,11 @@ def test_conductor_no_longer_restates_the_rule_or_lists_files():
     assert "checks the branch is level before each merge" not in text
     assert "you check the branch is level with the base and update it first" not in text
     assert "merge rule met" not in text
+    assert "In `session` mode it counts as passed" not in text
+    assert "Don't list the files yourself" not in text
+    enforcement = _read(KIT / "docs/enforcement.md")
+    assert "checks the branch is level with the base before each merge" not in enforcement
+    assert "`workflow merge-check`" in enforcement
 
 
 def test_conductor_solo_kick_off_names_the_command():
@@ -110,11 +127,22 @@ def _merge_step():
 def test_build_ticket_runs_merge_check_with_the_charter_before_merging():
     step = _merge_step()
     assert COMMAND.search(step)
-    assert "tracking issue" in step and "the briefing names" in step
-    assert "`ready`" in step and "only" in step
-    assert "--match-head-commit" in step or "`sha`" in step
-    clean = step[step.index("already mergeable"):]
-    assert "merge-check" in clean.split("|")[0] and "`ready`" in clean.split("|")[0]
+    assert "the tracking issue the briefing names saved there (`gh api repos/<repo>/issues/<tracking> --jq .body > .workflow/tracking.md`" in step
+    assert "--check-logs .workflow/check-logs" in step
+    assert "**`ready` is the only yes**" in step
+    assert "- `not_yet`: never merge or arm auto-merge." in step
+    session = next(ln for ln in step.splitlines() if ln.startswith("   | `session` |"))
+    assert all(pin in session for pin in PINS), session
+    auto = next(ln for ln in step.splitlines() if ln.startswith("   | `auto-merge` |"))
+    assert "--auto --merge --match-head-commit <sha>" in auto and "arm it again only on the new head's `ready`" in auto
+    clean = auto[auto.index("already mergeable"):]
+    assert "run the same `WF merge-check` again at that moment; on `ready`" in clean
+    assert all(pin in clean for pin in PINS)
+    # The renumbered cross-references land where they mean.
+    assert "notes for the next tickets (step 6.5)" in auto and "5. **Once it has merged,**" in _read(BUILD_TICKET)
+    assert "wake the conductor (step 6.7)" in _read(BUILD_TICKET) and "7. **Wake the conductor.**" in _read(BUILD_TICKET)
+    assert "a red check (§5)" in step
+    assert "in `session` mode it counts as passed once the evidence is posted" not in _read(BUILD_TICKET)
 
 
 def test_build_ticket_handles_owner_review_and_attended_work():
@@ -123,7 +151,8 @@ def test_build_ticket_handles_owner_review_and_attended_work():
     i = step.index("`owner_review`")
     assert "owner" in step[i:i + 300] and "waiting" in step[i:i + 300]
     assert "is #N ready to merge?" in step
-    assert "`not_yet`" in step
+    attended = step[step.index("3. **Ask the merge rule.**"):].split("\n")[0]
+    assert "In attended work, skip this and step 4: say the PR is ready and leave it" in attended
 
 
 # ---------- the briefing ----------
@@ -140,8 +169,6 @@ def _profile(tmp_path):
 
 
 def _render(tmp_path, mode, waived):
-    from workflow import charter
-
     _profile(tmp_path)
     c = charter.defaults(["ship"])
     c["limits"]["ends_at"] = "2099-10-13T03:30:00Z"
@@ -168,8 +195,8 @@ def _render(tmp_path, mode, waived):
 
 def test_briefing_names_merge_check_and_the_charter(tmp_path):
     merging = _render(tmp_path, "session", ["Backend tests"])
-    assert "merge-check --fetch <PR> --json --charter" in merging
-    assert "#232" in merging and "body" in merging
+    assert "merge-check --fetch <PR> --json --charter .workflow/tracking.md" in merging
+    assert "the body of the tracking issue #232 saved to `.workflow/tracking.md`" in merging
     assert "`ready`" in merging
     assert "Merge mode: **session**" in merging and "Backend tests" in merging
     assert "--check-logs" in merging
@@ -189,7 +216,8 @@ def test_briefing_keeps_auto_merge_and_no_waivers(tmp_path):
 def test_charter_doc_names_the_command():
     text = _read(CHARTER_DOC)
     merging = _section(text, "**Merges are decided by `workflow merge-check`,**", "**Kill switch.**")
-    assert "`workflow merge-check`" in merging and "--charter" in merging and "`ready`" in merging
+    assert "`workflow merge-check`" in merging and "--charter" in merging and "**`ready` is the only yes.**" in merging
+    assert "flow §4.1" in merging
     solo = next(ln for ln in text.splitlines() if ln.startswith("- **Solo mode:**"))
     assert "`workflow merge-check`" in solo
 
