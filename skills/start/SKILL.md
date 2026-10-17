@@ -103,7 +103,7 @@ Tell the person what matters in two to four lines, for example: "PR #297 is wait
 |---|---|---|
 | **Update the workflow kit to <version> (Recommended)** | A newer kit release is out, no run is in progress, and no update pull request is open (status's `kit_update_pr`; else offer "Carry on: the kit update PR #n"). It comes first, before a brand-new project's map | "A pull request for you to merge, with what's new; then we carry on." |
 | **Carry on: <the thing>** | Something is under way (the table below): name the most pressing one | What it is and what happens next |
-| **Check whether #N is ready to merge** | Status lists an open PR: one for each it lists, as room allows | "Ready, or not yet and why; nothing merges until you choose." |
+| **Check whether #N is ready to merge** | Status lists an open PR: one for each it lists, as room allows, leaving out one already offered as "Carry on" | "Ready, or not yet and why; nothing merges until you choose." |
 | **Something new, or a change to what's there** | Always | "Tell me in your own words; several things at once is fine." |
 | **Fix something that's broken** | Unless four better options fill the list | "Describe what goes wrong; I'll find the cause." |
 | **Sort the new issues (N)** | Status lists issues to sort | "One by one: ready to build, needs more info, or won't do." |
@@ -114,7 +114,7 @@ Tell the person what matters in two to four lines, for example: "PR #297 is wait
 
 | Under way | What to do |
 |---|---|
-| A PR waiting for them | Give its link, what it does and its checks. Ask **Review it with me (Recommended)**, **I'll merge it myself** or **Later**. |
+| A PR waiting for them | Give its link, what it does and its checks. Ask **Check whether it's ready to merge (Recommended)**, which loads `merge-check` for it, **Review it with me**, **I'll merge it myself** or **Later**. |
 | Work claimed (`workflow:in-progress`), no run in progress | An earlier session stopped part-way. Read the issue's comments and look for its branch (an open PR that closes it, or a branch naming its number). Ask **Carry on from there (Recommended)**, then follow `build-ticket` on that branch, or **Release it**, which removes the label so `/next` can take it. |
 | A planned item | Read its body and comments. A `path=spec` item may have an interview's decisions in a comment: carry on the interview from them, or go to the spec if nothing is left open. Then step 4 for its path. |
 | An open spec with no tickets | `to-tickets` for it (step 4, "Spec", step 3) |

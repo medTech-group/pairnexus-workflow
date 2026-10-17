@@ -584,7 +584,7 @@ def cmd_merge_check(a) -> int:
         if prof is None:
             inputs.update({n: (None, f"not fetched: the profile couldn't be read, so its repository isn't known: give --{n} as a file") for n in wanted if n not in inputs})
         else:
-            inputs.update(fetch_mod.merge_inputs(prof.repo, a.fetch, inputs, wanted))
+            inputs.update(fetch_mod.merge_inputs(prof.repo, a.fetch, inputs, wanted, asker=a.asker))
         pr = inputs.get("pr", (None, None))[0]
         pr = pr[0] if isinstance(pr, list) and len(pr) == 1 else pr
         if isinstance(pr, dict) and pr.get("number") != a.fetch:

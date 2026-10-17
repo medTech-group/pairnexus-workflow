@@ -438,6 +438,21 @@ def test_review_authors_permissions_are_fetched_too(project, capsys, tmp_path, m
     assert f"{REPO}/collaborators/dev/permission" in gh.paths()
 
 
+def test_the_askers_permission_is_fetched_when_the_profile_names_no_owner(project, capsys, tmp_path, monkeypatch):
+    # #84: an admin who hasn't commented or reviewed still counts as the owner.
+    path = project / ".claude/workflow/profile.toml"
+    path.write_text(path.read_text().replace('owner = "owner"\n', ""))
+    data = with_report(inputs())
+    data["files"] = [{"filename": ".github/workflows/ci.yml", "status": "modified"}]
+    data["pr"]["changed_files"] = 1
+    r = routes(data)
+    r[f"{REPO}/collaborators/Boss/permission"] = {"permission": "admin", "role_name": "admin", "user": {"login": "Boss"}}
+    gh = fake_gh.install(tmp_path, monkeypatch, r)
+    got, _ = run(project, capsys, {}, "--fetch", "12", "--asker", "@Boss")
+    assert got["decision"] == "owner_review" and got["owner"] is True, got["reasons"]
+    assert f"{REPO}/collaborators/Boss/permission" in gh.paths()
+
+
 def test_a_pr_file_of_another_pull_request_is_couldnt_read(project, capsys, tmp_path, monkeypatch):
     fake_gh.install(tmp_path, monkeypatch, routes())
     pr = with_report(inputs())["pr"]

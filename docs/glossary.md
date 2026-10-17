@@ -110,7 +110,7 @@ How a project starts while GitHub doesn't protect [`main`](#main) yet: the [prof
 
 ### Protect `main`
 
-GitHub's own protection, ending [solo mode](#solo-mode): a ruleset (GitHub's rules for a [branch](#branch)) sends every change to [`main`](#main) through a [pull request](#pull-request-pr), and "Require these checks", once CI has run, stops a [merge](#merge) while [checks](#checks-ci) fail. Claude does it with `gh` and admin rights, or guides your clicks in a [cloud session](#cloud-session).
+GitHub's own protection, ending [solo mode](#solo-mode): a ruleset (GitHub's rules for a [branch](#branch)) sends every change to [`main`](#main) through a [pull request](#pull-request-pr), and "Require these checks", once CI has run, stops a [merge](#merge) while [checks](#checks-ci) fail. On your own computer, with `gh` and admin rights, Claude does it; elsewhere it guides your clicks.
 
 **Why it matters to you:** GitHub itself then stops a mistake reaching `main`.
 
