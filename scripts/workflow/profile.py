@@ -47,6 +47,7 @@ ALLOWED: dict[str, set[str] | None] = {
     "ui": {"explorer", "start", "sizes", "notes"},
     "guard": {"protected_paths", "deploy_commands", "test_paths", "allow_new_skips"},
     "sensitive": {"description", "patterns"},
+    "previews": {"provider", "on", "access"},
     "areas": None,
     "repair": {"commands"},
     "release": {"steps"},
@@ -62,6 +63,7 @@ ALLOWED: dict[str, set[str] | None] = {
         "permission_mode",
     },
 }
+PREVIEW_PROVIDERS = ("cloudflare",)
 PERMISSION_MODES = {"auto", "acceptEdits", "bypassPermissions", "dontAsk"}
 SUITE_KEYS = {"name", "run", "files", "group", "passed", "failed", "skipped", "errors", "total", "cwd"}
 PACKAGE_KEYS = {"name", "path", "typecheck", "test_file", "cwd"}
@@ -114,6 +116,35 @@ class Package:
 
 
 @dataclass
+class Previews:
+    """`[previews]`: whether pull requests get try-it links. An absent section
+    is previews off. `access` is the owner's word that Cloudflare Access guards
+    the preview URLs; the kit can't check it."""
+
+    provider: str = "cloudflare"
+    on: bool = False
+    access: bool = False
+
+
+def _previews(raw: dict, sensitive: bool) -> Previews:
+    provider = raw.get("provider", "cloudflare")
+    if provider not in PREVIEW_PROVIDERS:
+        names = " or ".join(f'"{x}"' for x in PREVIEW_PROVIDERS)
+        raise ProfileError(f"previews.provider must be {names}, not {repr(provider)[:40]}")
+    on, access = raw.get("on", False), raw.get("access", False)
+    for k, v in (("on", on), ("access", access)):
+        if not isinstance(v, bool):
+            raise ProfileError(f"previews.{k} must be true or false, not {repr(v)[:40]}")
+    p = Previews(provider=provider, on=on, access=access)
+    if p.on and not p.access and sensitive:
+        raise ProfileError(
+            "previews.on is true but previews.access isn't: this project has [sensitive] patterns, so its "
+            "previews must sit behind Cloudflare Access (set access = true once you've confirmed it), or not be made (on = false)"
+        )
+    return p
+
+
+@dataclass
 class Profile:
     root: Path
     name: str
@@ -147,6 +178,7 @@ class Profile:
     allow_new_skips: bool = False
     sensitive_description: str = ""
     sensitive_patterns: list[str] = field(default_factory=list)
+    previews: Previews = field(default_factory=Previews)
     areas: dict[str, list[str]] = field(default_factory=dict)
     repair: list[str] = field(default_factory=list)
     release_steps: list[dict] = field(default_factory=list)
@@ -303,6 +335,7 @@ def parse(data: dict, root: Path) -> Profile:
             re.compile(p)
         except re.error as e:
             raise ProfileError(f"sensitive.patterns: {p!r} is not a valid regex ({e})")
+    previews = _previews(data.get("previews") or {}, bool(patterns))
     areas_raw = data.get("areas") or {}
     areas = {k: _strs(v, f"areas.{k}") for k, v in areas_raw.items()}
     rel = data.get("release") or {}
@@ -368,6 +401,7 @@ def parse(data: dict, root: Path) -> Profile:
         allow_new_skips=allow,
         sensitive_description=str(sens.get("description") or ""),
         sensitive_patterns=patterns,
+        previews=previews,
         areas=areas,
         repair=_strs((data.get("repair") or {}).get("commands"), "repair.commands"),
         release_steps=list(steps),
@@ -596,4 +630,5 @@ def summary(profile: Profile) -> dict:
         "ticket_environment": profile.ticket_environment or None,
         "conductor_environment": profile.conductor_environment or None,
         "permission_mode": profile.permission_mode,
+        "previews": {"provider": profile.previews.provider, "on": profile.previews.on, "access": profile.previews.access},
     }

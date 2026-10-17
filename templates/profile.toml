@@ -136,6 +136,12 @@ description = "Secrets and personal data."
 # (the sk- pattern must not fire on "disk-usage-reporting-in-dashboards").
 patterns = ['(?i)aws_secret_access_key\s*[:=]', '-----BEGIN [A-Z ]*PRIVATE KEY-----', 'ghp_[A-Za-z0-9]{36}', '(?<![A-Za-z0-9])sk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}']
 
+# Try-it links, one per PR: added by "Add try-it links" through its own PR, never by hand. Left out: no previews.
+# [previews]
+# provider = "cloudflare"
+# on = true
+# access = true                         # Cloudflare Access guards the preview URLs (required with [sensitive] patterns)
+
 # Areas ("lanes"): tickets carry `Area: <name>`; the conductor runs at most one
 # session per area unless the run state records an override. Globs are hints.
 [areas]
