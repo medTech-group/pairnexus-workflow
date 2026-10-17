@@ -220,3 +220,25 @@ def test_put_still_replaces_a_block_that_isnt_json(tmp_path):
     p = _cli("state", "put", "--body", str(b), "--state", str(sf), env=env)
     assert p.returncode == 0, p.stderr
     assert state.get(p.stdout)["charter"]["merge"]["mode"] == "session"
+
+
+def test_put_cant_drop_removed_protection_either(tmp_path):
+    # Review round 3: through put, and by clearing the charter first.
+    env = _profile(tmp_path, ruleset=True)
+    c = _charter()
+    c["accepted_gaps"] = ["removed protection: the read-back found main unprotected"]
+    b = _body(tmp_path, c)
+    before = b.read_text()
+    sf = tmp_path / "state.json"
+    for charter_now in ({**c, "accepted_gaps": [], "merge": {**c["merge"], "mode": "auto-merge"}}, None):
+        s = state.get(before)
+        s["charter"] = charter_now
+        sf.write_text(json.dumps(s))
+        p = _cli("state", "put", "--body", str(b), "--state", str(sf), env=env)
+        assert p.returncode == 1 and "can't be dropped" in p.stderr and "new run" in p.stderr
+        assert b.read_text() == before
+    s = state.get(before)
+    del s["charter"]
+    sf.write_text(json.dumps(s))
+    p = _cli("state", "put", "--body", str(b), "--state", str(sf), env=env)
+    assert p.returncode == 1 and "can't be dropped" in p.stderr

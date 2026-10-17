@@ -514,13 +514,16 @@ def _charter_change_problems(old, new) -> list[str]:
     isn't checked; a charter that is itself unsound is left to `state.put`."""
     c = new.get("charter") if isinstance(new, dict) else None
     was = old.get("charter") if isinstance(old, dict) else None
-    if not isinstance(c, dict) or c == was or charter_mod.validate(c):
+    if c == was:
         return []
+    # Before anything else, so clearing the charter can't drop it either.
     if charter_mod.removed_protection_accepted(was) and not charter_mod.removed_protection_accepted(c):
         return [
-            "accepted_gaps: the `removed protection:` line can't be dropped during the run; "
-            "the charter carries the read-back's verdict until the run ends"
+            "accepted_gaps: the `removed protection:` line can't be dropped during the run; the charter carries "
+            "the read-back's verdict until the run ends (auto-merge needs a new run, whose kick-off reads protection back)"
         ]
+    if not isinstance(c, dict) or charter_mod.validate(c):
+        return []
     try:
         prof = load(required=False)
     except (UnicodeDecodeError, OSError) as e:
