@@ -342,7 +342,7 @@ How long each takes, roughly:
 Building a ticket follows the kit's flow, the same as in a run except the merge:
 1. it claims the ticket (`workflow:in-progress`);
 2. builds it test-first at the spec's seams;
-3. runs the review panel in rounds until one is clean (at most the profile's `run.review_rounds`);
+3. runs the review panel in rounds until one is clean (at most the profile's `run.review_rounds`; in a run, the charter's);
 4. runs the full suite locally and posts the counts on the pull request (`workflow evidence`, which also counts the base branch's tests);
 5. opens the pull request with its findings table, and watches CI, checking in every `run.check_in_minutes` while it waits;
 6. ends each turn with a `WORKFLOW-STATUS` line and the flow's checklist.

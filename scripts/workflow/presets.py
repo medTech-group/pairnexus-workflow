@@ -22,6 +22,7 @@ DEFAULT = "normal"
 LABELS = {"light": "Light", "normal": "Normal", "thorough": "Thorough"}
 
 NO_EXPLORER = "no UI explorer (the project has none)"
+LIGHT_NO_EXPLORER = "no UI explorer (one round is the light review)"
 
 
 def _run(profile: Any, key: str) -> int:
@@ -66,9 +67,17 @@ def plural(v: int, one: str, many: str) -> str:
     return f"{v} {one if v == 1 else many}"
 
 
-def _explorer_phrase(on: bool, profile: Any) -> str:
-    if on:
+def runs_explorer(review: dict) -> bool:
+    """A review `{rounds, explorer}` runs the UI explorer: it asks for one, and
+    isn't a single round, which is the light review (`review-panel` §6)."""
+    return review.get("explorer") is True and review.get("rounds") != 1
+
+
+def _explorer_phrase(review: dict, profile: Any) -> str:
+    if runs_explorer(review):
         return "UI explorer on"
+    if review.get("explorer") is True:
+        return LIGHT_NO_EXPLORER
     return NO_EXPLORER if profile is not None and not has_explorer(profile) else "UI explorer off"
 
 
@@ -79,7 +88,7 @@ def words(name: str, profile: Any = None) -> str:
     return (
         f"{plural(lim['max_parallel'], 'session', 'sessions')} at once, {lim['max_sessions']} in all, "
         f"{plural(lim['max_retries'], 'retry', 'retries')} per ticket; "
-        f"up to {plural(rev['rounds'], 'review round', 'review rounds')}; {_explorer_phrase(rev['explorer'], profile)}"
+        f"up to {plural(rev['rounds'], 'review round', 'review rounds')}; {_explorer_phrase(rev, profile)}"
     )
 
 
@@ -138,5 +147,6 @@ def changes(c: dict, profile: Any = None) -> list[str]:
 
 
 def explorer_words(c: dict, profile: Any = None) -> str:
-    """The review's explorer for the one page: on, off, or the project has none."""
-    return _explorer_phrase(bool(review_of(c, profile)["explorer"]), profile)
+    """The review's explorer for the one page: on, off, off for the light
+    review, or the project has none."""
+    return _explorer_phrase(review_of(c, profile), profile)

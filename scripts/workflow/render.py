@@ -120,8 +120,6 @@ def _rounds(n: int) -> str:
 def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking: int, by_hand: int | None) -> dict:
     merge = charter.get("merge") or {}
     review = presets_mod.review_of(charter, profile)
-    # One round is the light review, which runs no explorer (`review-panel` §6).
-    explorer = review["explorer"] is True and review["rounds"] != 1
     waived = merge.get("waived_checks") or []
     v = {
         "ticket.number": str(ticket["number"]),
@@ -144,7 +142,7 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
         "commands.typecheck": _per_package(profile, "typecheck", _code),
         "commands.test_file": _per_package(profile, "test_file", _test_file),
         "commands.suites": _bullets([_suite_line(s) for s in profile.suites]),
-        "ui.explorer": profile.explorer if explorer else "none",
+        "ui.explorer": profile.explorer if presets_mod.runs_explorer(review) else "none",
     }
     for k in REQUIRED_SLOTS:
         v[k] = slots.get(k, "")

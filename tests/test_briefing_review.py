@@ -127,3 +127,33 @@ def test_the_skills_take_the_briefings_rounds_and_explorer():
         assert "at most the briefing's review rounds in a ticket session, else the profile's `run.review_rounds`" in text, path
         assert "at most the profile's `run.review_rounds`" not in text, path
     assert "the briefing's UI explorer in a ticket session, else the profile's `ui.explorer`" in (KIT / "skills/review-panel/SKILL.md").read_text()
+
+
+def test_the_one_page_says_one_round_runs_no_explorer(tmp_path):
+    """What the owner approves is what the sessions do: the page and the briefing agree."""
+    _project(tmp_path)
+    c = _charter(rounds=1, explorer=True)
+    (tmp_path / "charter.json").write_text(json.dumps(c))
+    p = _cli(tmp_path, "charter", "markdown", "charter.json")
+    assert p.returncode == 0, p.stderr
+    assert "up to 1 round per ticket; no UI explorer (one round is the light review)." in p.stdout
+    c = _charter(rounds=2, explorer=True)
+    (tmp_path / "charter.json").write_text(json.dumps(c))
+    assert "up to 2 rounds per ticket; UI explorer on." in _cli(tmp_path, "charter", "markdown", "charter.json").stdout
+
+
+def test_normal_with_one_profile_round_offers_no_explorer(profile):
+    from workflow import presets
+
+    profile.review_rounds, profile.explorer = 1, "cli"
+    assert presets.words("normal", profile).endswith("up to 1 review round; no UI explorer (one round is the light review)")
+    assert presets.words("thorough", profile).endswith("UI explorer on")
+
+
+def test_changelog_and_docs():
+    text = (KIT / "CHANGELOG.md").read_text()
+    unreleased = text.split("## Unreleased", 1)[1].split("\n## ", 1)[0]
+    assert "(#120," in unreleased
+    released = text.split("\n## ")[2].split()[0].lstrip("v")
+    assert (KIT / "VERSION").read_text().strip() == released
+    assert "presets.review_of" in (KIT / "docs/charter.md").read_text().split("## 4.", 1)[1].split("\n## ", 1)[0]
