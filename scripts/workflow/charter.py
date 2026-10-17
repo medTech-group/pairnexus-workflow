@@ -550,7 +550,7 @@ def _estimate_lines(est: Any) -> list[str]:
     its basis and, under it, its warnings."""
     if not (isinstance(est, dict) and isinstance(est.get("line"), str) and isinstance(est.get("basis"), str)):
         raise ValueError("the estimate must be `workflow charter estimate --json`'s output")
-    warnings = [w for w in est.get("warnings") or [] if isinstance(w, str)]
+    warnings = [w for w in est["warnings"] if isinstance(w, str)] if isinstance(est.get("warnings"), list) else []
     return [f"- **Estimate:** {est['line']}; {est['basis']}.", *[f"  - {w}" for w in warnings]]
 
 

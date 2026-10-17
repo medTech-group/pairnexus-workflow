@@ -422,7 +422,7 @@ def cmd_charter(a) -> int:
             return 2
         try:
             page = charter_mod.to_markdown(c, plan, _page_profile(), _json(a.estimate) if a.estimate else None)
-        except ValueError as e:
+        except (ValueError, OSError) as e:  # a bad estimate, or its file missing
             print(f"workflow charter markdown: {e}", file=sys.stderr)
             return 1
         print(page)
@@ -437,7 +437,7 @@ def cmd_charter(a) -> int:
             plan = charter_mod.parse_tickets(a.tickets) if a.tickets else None
             est = _json(a.estimate) if a.estimate else None
             new = charter_mod.splice(_read(a.body), charter_mod.to_markdown(c, plan, _page_profile(), est))
-        except ValueError as e:
+        except (ValueError, OSError) as e:
             print(f"workflow charter splice: {e}", file=sys.stderr)
             return 1
         if a.out:
@@ -466,8 +466,8 @@ def _plan_size(tickets: str | None, c) -> int:
 
 
 def _charter_estimate(a) -> int:
-    c = _json(a.file)
     try:
+        c = _json(a.file)
         now = None
         if a.now:
             now = charter_mod._time(a.now)
@@ -475,7 +475,7 @@ def _charter_estimate(a) -> int:
                 raise ValueError("--now must be an ISO time with its zone, e.g. 2026-10-13T03:30:00Z")
         security = sorted(issues_mod.parse_numbers(a.security))
         est = estimate_mod.estimate(c, _plan_size(a.tickets, c), _json(a.runs) if a.runs else None, security, _page_profile(), now)
-    except ValueError as e:  # an EstimateError, a bad --tickets, or a file that isn't JSON
+    except (ValueError, OSError) as e:  # an EstimateError, a bad --tickets, a file missing or not JSON
         print(f"workflow charter estimate: {e}", file=sys.stderr)
         return 1
     for n in est["notes"]:

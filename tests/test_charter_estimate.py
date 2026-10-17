@@ -176,6 +176,32 @@ def test_at_most_five_runs_the_most_recent_and_none_that_merged_nothing(tmp_path
     assert "about 1.9 sessions" in est["basis"]  # (4 × 3 + 5) / (4 × 2 + 1)
 
 
+def test_runs_from_the_github_mcp_tools_count(tmp_path, env):
+    """The MCP issue tools say "CLOSED" and `closedAt`, with labels as names."""
+    mcp = [
+        {"number": 140, "state": "CLOSED", "closedAt": "2026-10-10T00:00:00Z", "labels": ["workflow:run"], "body": _body(RUN_A)},
+        {"number": 150, "state": "CLOSED", "closedAt": "2026-10-12T00:00:00Z", "labels": ["workflow:run"], "body": _body(RUN_B)},
+        {"number": 160, "state": "OPEN", "labels": ["workflow:run"], "body": _body(RUN_A)},
+    ]
+    est, _ = _estimate(env, _charter(tmp_path, env), "--tickets", "7", "--runs", _runs(tmp_path, mcp))
+    assert (est["sessions"], est["runs_used"]) == (11, 2)
+
+
+def test_merges_of_no_time_never_break_the_hours(tmp_path, env):
+    instant = {"1": _ticket(minutes=0), "2": _ticket(minutes=0)}
+    runs = _runs(tmp_path, [_issue(140, instant), _issue(141, instant)])
+    est, _ = _estimate(env, _charter(tmp_path, env, ends_at="2026-10-17T05:00:00Z"), "--tickets", "3", "--runs", runs)
+    assert est["runs_used"] == 2 and est["hours"] >= 1  # no wall time to go on: an hour a ticket
+    assert "1 hour a ticket" in est["basis"]
+
+
+def test_past_runs_never_give_more_sessions_than_the_charter_allows(tmp_path, env):
+    runs = _runs(tmp_path, [_issue(140, RUN_A), _issue(150, RUN_B)])
+    est, _ = _estimate(env, _charter(tmp_path, env, preset="light"), "--tickets", "7", "--runs", runs)
+    assert est["sessions"] == 7  # 1.5 a ticket, but Light has no retries
+    assert est["warnings"] == []
+
+
 def test_the_end_time_warning(tmp_path, env):
     c = _charter(tmp_path, env, ends_at="2026-10-17T05:00:00Z")
     est, _ = _estimate(env, c, "--tickets", "7")
@@ -238,13 +264,15 @@ def test_a_malformed_past_body_is_skipped_with_a_note(tmp_path, env):
         _issue(143, body=_raw({"1": {"status": "merged", "attempts": "two"}})),
         _issue(144, body=_raw({"1": {"status": "lost"}})),
         _issue(146, body=_raw([1, 2])),
+        {**_issue(147, {}), "body": 5},
+        {**_issue(148, RUN_A), "labels": [{"name": ["workflow:run"]}], "number": 148},
         {**_issue(145, {}), "body": None},
     ]
     est, err = _estimate(env, _charter(tmp_path, env), "--tickets", "7", "--runs", _runs(tmp_path, good + bad))
     assert est["runs_used"] == 2 and est["sessions"] == 11
-    for n in (141, 142, 143, 144, 145, 146):
+    for n in (141, 142, 143, 144, 145, 146, 147):
         assert f"#{n} skipped" in err
-    assert len(est["notes"]) == 6
+    assert len(est["notes"]) == 7  # #148's labels aren't names: not a run issue
     # Not even a list of issues: a clean error, not a crash.
     p = _cli("charter", "estimate", _charter(tmp_path, env), "--tickets", "7", "--runs", _runs(tmp_path, "nope"), env=env)
     assert p.returncode == 1 and "Traceback" not in p.stderr
@@ -267,6 +295,30 @@ def test_an_unapproved_charter_without_an_end_time_is_fine(tmp_path, env):
     c = _charter(tmp_path, env, ends_at=None)
     est, _ = _estimate(env, c, "--tickets", "2")
     assert est["sessions"] == 4 and est["warnings"] == []
+
+
+def test_bad_inputs_are_clean_errors(tmp_path, env):
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json")
+    for args in (
+        (str(bad), "--tickets", "2"),
+        (str(tmp_path / "missing.json"), "--tickets", "2"),
+        (_charter(tmp_path, env), "--tickets", "0"),
+        (_charter(tmp_path, env), "--tickets", "2", "--runs", str(tmp_path / "missing.json")),
+        (_charter(tmp_path, env), "--tickets", "2", "--security", "x"),
+        (_charter(tmp_path, env), "--tickets", "2", "--now", "yesterday"),
+        (_charter(tmp_path, env, max_parallel=0), "--tickets", "2"),
+    ):
+        p = _cli("charter", "estimate", *args, env=env)
+        assert p.returncode == 1, args
+        assert p.stderr.startswith("workflow charter estimate:") and "Traceback" not in p.stderr, p.stderr
+    # An unvalidated review says nothing about the review, rather than crashing.
+    c = json.loads(open(_charter(tmp_path, env)).read())
+    c["review"] = {"rounds": "3", "explorer": True}
+    f = tmp_path / "odd.json"
+    f.write_text(json.dumps(c))
+    est, _ = _estimate(env, str(f), "--tickets", "2", "--security", "1")
+    assert est["warnings"] == []
 
 
 def test_never_money(tmp_path, env):
@@ -324,6 +376,20 @@ def test_splice_carries_the_estimate_and_a_bad_one_is_refused(tmp_path, env):
     for args in (("markdown", c), ("splice", "--body", str(body), "--charter", c)):
         p = _cli("charter", *args, "--estimate", str(bad), env=env)
         assert p.returncode == 1 and "estimate --json" in p.stderr and "Traceback" not in p.stderr
+        p = _cli("charter", *args, "--estimate", str(tmp_path / "gone.json"), env=env)
+        assert p.returncode == 1 and "Traceback" not in p.stderr
+    # Warnings that aren't a list are left out, never spelled out letter by letter.
+    odd = json.loads(est.read_text()) | {"warnings": "abc"}
+    est.write_text(json.dumps(odd))
+    page = _cli("charter", "markdown", c, "--estimate", str(est), env=env).stdout
+    assert "  - a" not in page and "**Estimate:**" in page
+
+
+def test_the_run_state_keeps_the_estimate():
+    s = {"version": 1, "tickets": {}, "estimate": {"line": "About 4 ticket sessions", "basis": "assuming about an hour a session"}}
+    assert state.validate(s) == []
+    assert state.validate({**s, "estimate": None}) == []
+    assert state.validate({**s, "estimate": {"sessions": 4}})
 
 
 # ---------- seam 4: the conductor's wording ----------
@@ -348,6 +414,14 @@ def test_the_conductor_puts_the_estimate_on_the_one_page():
     text = _conductor()
     splices = [l for l in text.splitlines() if "WF charter splice" in l]
     assert splices and all("--estimate estimate.json" in l for l in splices)
+
+
+def test_the_conductor_keeps_the_estimate_for_amendments_and_resumes():
+    text = _conductor()
+    assert "`estimate` (the contents of `estimate.json`)" in text
+    amend = next(l for l in text.splitlines() if l.startswith("4. Reply to confirm what changed"))
+    assert "run the estimate again" in amend and "the state's `estimate`" in amend
+    assert "`estimate.json`, `runs.json`" in text
 
 
 def test_the_capacity_line_is_unchanged_with_the_estimate_beside_it():

@@ -10,6 +10,8 @@ body with two blocks, or half of one, is refused rather than guessed at.
 
 Optional: `wake_trigger`, the id of the poke-only routine that wakes the
 conductor when a ticket session ends (`trig_…`), deleted when the run stops.
+Optional: `estimate`, the estimate the owner approved (`charter estimate
+--json`'s output), so a resumed conductor can splice the one page with it.
 """
 
 from __future__ import annotations
@@ -113,6 +115,9 @@ def validate(s: Any) -> list[str]:
     wt = s.get("wake_trigger")
     if wt is not None and not (isinstance(wt, str) and re.fullmatch(r"trig_\w+", wt.strip())):
         p.append("wake_trigger must be the wake routine's trigger id (trig_…) or null")
+    est = s.get("estimate")
+    if est is not None and not (isinstance(est, dict) and isinstance(est.get("line"), str) and isinstance(est.get("basis"), str)):
+        p.append("estimate must be `workflow charter estimate --json`'s output or null")
     if "status" in s and s["status"] not in RUN_STATUSES:
         p.append(f"status must be one of {sorted(RUN_STATUSES)}")
     for i, e in enumerate(s.get("ledger") or []):

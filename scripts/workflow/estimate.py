@@ -41,8 +41,7 @@ class EstimateError(ValueError):
     pass
 
 
-def _int(v) -> bool:
-    return isinstance(v, int) and not isinstance(v, bool)
+_int = state_mod._int
 
 
 def _num(v: float) -> str:
@@ -63,15 +62,22 @@ def _round_hours(h: float) -> int:
 
 
 def _labels(issue: dict) -> set[str]:
-    return {(x.get("name") if isinstance(x, dict) else x) or "" for x in issue.get("labels") or []}
+    labels = issue.get("labels")
+    if not isinstance(labels, list):
+        return set()
+    names = [x.get("name") if isinstance(x, dict) else x for x in labels]
+    return {x for x in names if isinstance(x, str)}
 
 
 def _run_of(issue: dict) -> tuple[dict | None, str | None]:
     """A past run's figures from its tracking issue, or a note saying why it was skipped."""
     n = issue.get("number")
     who = f"#{n}" if _int(n) else "a run issue"
+    body = issue.get("body")
+    if body is not None and not isinstance(body, str):
+        return None, f"{who} skipped: its body isn't text"
     try:
-        s = state_mod.get(issue.get("body") or "")
+        s = state_mod.get(body or "")
     except state_mod.StateError as e:
         return None, f"{who} skipped: its run state can't be read ({e})"
     if s is None:
@@ -97,7 +103,7 @@ def _run_of(issue: dict) -> tuple[dict | None, str | None]:
         if t["status"] == "merged":
             merged += 1
             st, mt = charter_mod._time(t.get("started_at")), charter_mod._time(t.get("merged_at"))
-            if st and mt and mt >= st:
+            if st and mt and mt > st:
                 hours.append((mt - st).total_seconds() / 3600)
     if not merged:
         return None, None  # merged nothing: not counted, and nothing wrong with it
@@ -105,7 +111,14 @@ def _run_of(issue: dict) -> tuple[dict | None, str | None]:
 
 
 def _closed_at(issue: dict) -> datetime:
-    return charter_mod._time(issue.get("closed_at")) or datetime.min.replace(tzinfo=timezone.utc)
+    # `closed_at` from the REST API (`gh api`), `closedAt` from the GitHub MCP tools.
+    return charter_mod._time(issue.get("closed_at") or issue.get("closedAt")) or datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _closed(issue: dict) -> bool:
+    """Closed, or no state given; "CLOSED" as the GitHub MCP tools say it."""
+    v = issue.get("state")
+    return v is None or (isinstance(v, str) and v.lower() == "closed")
 
 
 def past_runs(issues: Any) -> tuple[list[dict], list[str]]:
@@ -120,7 +133,7 @@ def past_runs(issues: Any) -> tuple[list[dict], list[str]]:
         for x in issues
         if isinstance(x, dict)
         and "pull_request" not in x
-        and x.get("state", "closed") == "closed"
+        and _closed(x)
         and ("labels" not in x or RUN_LABEL in _labels(x))
     ]
     candidates.sort(key=lambda x: (_closed_at(x), x.get("number") if _int(x.get("number")) else 0), reverse=True)
@@ -147,6 +160,13 @@ def _limits(c: Any) -> dict:
     return lim
 
 
+def _review(c: dict, profile: Any) -> dict | None:
+    """The run's review, or None when the charter's `review` isn't well formed
+    (an unvalidated charter): then nothing is said about it."""
+    rv = presets_mod.review_of(c, profile)
+    return rv if _int(rv.get("rounds")) and isinstance(rv.get("explorer"), bool) else None
+
+
 def _review_words(rv: dict) -> str:
     return f"up to {presets_mod.plural(rv['rounds'], 'round', 'rounds')}, " + (
         "UI explorer on" if presets_mod.runs_explorer(rv) else "no UI explorer"
@@ -169,24 +189,26 @@ def estimate(
     retries, parallel = lim["max_retries"], lim["max_parallel"]
     runs, notes = past_runs(issues) if issues is not None else ([], [])
     if len(runs) >= MIN_RUNS:
-        per_ticket = max(1.0, sum(r["attempts"] for r in runs) / max(1, sum(r["started"] for r in runs)))
+        # Never below one session a ticket, nor above the tries the charter allows.
+        average = sum(r["attempts"] for r in runs) / max(1, sum(r["started"] for r in runs))
+        per_ticket = min(max(1.0, average), float(1 + retries))
         hours_each = [h for r in runs for h in r["hours"]]
-        per_wave = sum(hours_each) / len(hours_each) if hours_each else 1.0
+        hours_a_ticket = sum(hours_each) / len(hours_each) if hours_each else 1.0
         sessions = math.ceil(tickets * per_ticket - 1e-9)
         a_ticket = f"about {_num(per_ticket)} {'session' if _num(per_ticket) == '1' else 'sessions'}"
-        basis = f"from your last {len(runs)} runs: {a_ticket} and {_duration(per_wave)} a ticket"
+        basis = f"from your last {len(runs)} runs: {a_ticket} and {_duration(hours_a_ticket)} a ticket"
         each = f"{a_ticket} each"
         runs_used = len(runs)
     else:
         if len(runs) == 1:
             notes.append(f"only 1 past run merged anything (#{runs[0]['number']}): the defaults until there are {MIN_RUNS}")
-        per_ticket, per_wave = float(1 + retries), 1.0
+        per_ticket, hours_a_ticket = float(1 + retries), 1.0
         sessions = tickets * (1 + retries)
         basis = DEFAULT_BASIS
         each = f"up to {presets_mod.plural(retries, 'retry', 'retries')} each" if retries else "no retries"
         runs_used = 0
     waves = math.ceil(sessions / parallel)
-    hours = _round_hours(waves * per_wave)
+    hours = _round_hours(waves * hours_a_ticket)
     line = (
         f"About {presets_mod.plural(sessions, 'ticket session', 'ticket sessions')} over roughly "
         f"{presets_mod.plural(hours, 'hour', 'hours')} ({presets_mod.plural(tickets, 'ticket', 'tickets')}, {each}), "
@@ -197,7 +219,7 @@ def estimate(
     ends = charter_mod._time(lim.get("ends_at"))
     if ends is not None:
         left = (ends - (now or datetime.now(timezone.utc))).total_seconds() / 3600
-        fit = math.floor(left / per_wave + 1e-9) if left > 0 else 0
+        fit = math.floor(left / hours_a_ticket + 1e-9) if left > 0 else 0
         if fit < waves:
             done = min(tickets - 1, math.floor(fit * parallel / per_ticket + 1e-9))
             away = f"{lim['ends_at']} is about {presets_mod.plural(max(0, math.floor(left)), 'hour', 'hours')} away" if left > 0 else f"{lim['ends_at']} has passed"
@@ -213,8 +235,9 @@ def estimate(
         )
         wanted = f"up to {presets_mod.plural(retries, 'retry', 'retries')} each" if retries else "one try each"
         warnings.append(f"{have} sessions in all covers {covers}; {wanted} needs {need}.")
-    if security:
-        rv, usual = presets_mod.review_of(c, profile), presets_mod.numbers("normal", profile)["review"]
+    rv = _review(c, profile) if security else None
+    if rv is not None:
+        usual = presets_mod.numbers("normal", profile)["review"]
         if rv["rounds"] < usual["rounds"] or (presets_mod.runs_explorer(usual) and not presets_mod.runs_explorer(rv)):
             named = ", ".join(f"#{n}" for n in security)
             warnings.append(
