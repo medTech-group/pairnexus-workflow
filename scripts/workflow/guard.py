@@ -451,6 +451,18 @@ class Op(str):
     """An unquoted shell operator; a quoted word that looks like one is a plain str."""
 
 
+class Word(str):
+    """A word as the lexer read it. `splits`: outside quotes it holds what the
+    shell expands into other words, or more of them (a variable or substitution,
+    a glob, a brace list, a leading tilde). A word built anywhere else is a plain
+    str, which says nothing either way."""
+
+    splits: bool = False
+
+
+_UNQUOTED_SPLITS = re.compile(r"[$*?\[]|\{[^{}]*(,|\.\.)[^{}]*\}|^~|[=:]~")
+
+
 @dataclass
 class Heredoc:
     body: str
@@ -541,6 +553,7 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
     out: list = []
     cmd_start = 0
     word: list[str] = []
+    unquoted: list[str] = []  # the word's text outside quotes ("\0" for an unquoted substitution)
     in_word = False
     quoted = False
     pending: list[tuple[str, bool, Heredoc]] = []
@@ -548,10 +561,13 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
     n = len(s)
 
     def end_word() -> None:
-        nonlocal word, in_word, quoted
+        nonlocal word, in_word, quoted, unquoted
         if in_word:
-            out.append("".join(word))
-        word, in_word, quoted = [], False, False
+            w = Word("".join(word))
+            bare = "".join(unquoted)
+            w.splits = "\0" in bare or bool(_UNQUOTED_SPLITS.search(bare))
+            out.append(w)
+        word, in_word, quoted, unquoted = [], False, False, []
 
     def hoist(inner: list) -> None:
         nonlocal cmd_start
@@ -664,10 +680,12 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
             continue
         if s.startswith("$(", i):
             in_word = True
+            unquoted.append("\0")
             i = substitution(i, i + 2)
             continue
         if c == "`":
             in_word = True
+            unquoted.append("\0")
             i = backtick(i)
             continue
         if c in "<>" and s.startswith("(", i + 1):  # process substitution
@@ -696,7 +714,7 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
             fd = ""
             if c in "<>" and in_word and not quoted and word and "".join(word).isdigit():
                 fd = "".join(word)
-                word, in_word, quoted = [], False, False
+                word, in_word, quoted, unquoted = [], False, False, []
             else:
                 end_word()
             if s.startswith("<<", i) and not s.startswith("<<<", i):
@@ -728,6 +746,7 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
             i += len(op)
             continue
         word.append(c)
+        unquoted.append(c)
         in_word = True
         i += 1
     end_word()
@@ -2562,8 +2581,11 @@ def _unread_merge_word(seg: Seg, toks: list[str]) -> str | None:
     if seg.fed:
         return "xargs gives it more words"
     for t in toks[1:]:
-        if re.search(r"[$`~*?\[]", t) or re.search(r"\{[^{}]*(,|\.\.)[^{}]*\}", t):
-            return f"the shell may change `{t}`"
+        if isinstance(t, Word):
+            if t.splits:
+                return f"the shell may change `{t}`"
+        elif re.search(r"[$`~*?\[]", t) or re.search(r"\{[^{}]*(,|\.\.)[^{}]*\}", t):
+            return f"the shell may change `{t}`"  # a word the lexer didn't read: whatever it holds
     return None
 
 
@@ -2584,23 +2606,20 @@ def _gh_merge_problem(seg: Seg, toks: list[str], profile: Profile, root: Path) -
 
 def _split_api_word(seg: Seg, toks: list[str]) -> str | None:
     """Why a ticket session's `gh api` call may run another call than it reads
-    as (the lexer drops quoting, so it can't tell text from words the shell
-    splits): xargs feeds it words; a word holds a variable or substitution, a
-    tilde or a brace list (a merge path, or `-X PUT`, can hide in any of them);
-    a flag or path word holds a glob (a planted file name can become one); or a
-    heredoc's text names a merge route. A field's value (`body=…`) may hold a
-    glob: text often has a `?`."""
+    as: xargs feeds it words, or the shell expands a word into others (outside
+    quotes: a variable or substitution, a glob, a brace list, a tilde), in
+    which a merge path or `-X PUT` can hide. Quoted text is fine; a word the
+    lexer didn't read counts if it holds any of these at all."""
     if seg.fed:
         return "xargs gives it more words"
     for t in toks[1:]:
-        key = re.match(r"[\w.\[\]-]+=", t)  # a field's value: `body=$(cat <<'EOF' …)`
-        if _literal_heredoc(t) or (key and _literal_heredoc(t[key.end():])):
-            if re.search(r"(?i)pulls/\S*/(merge|ccr/auto_merge)", t):
-                return "a heredoc's text names a merge route, and unquoted it becomes words of the command"
-        elif re.search(r"[$`]|(?:^|[=:])~|\{[^{}]*(,|\.\.)[^{}]*\}", t):
-            return f"the shell may split `{t}` into more words"
-        elif "=" not in t and (t.startswith("-") or "/" in t) and re.search(r"[*?\[]", t):
-            return f"the shell may turn `{t}` into other words (a glob)"
+        if isinstance(t, Word):
+            if t.splits:
+                return f"the shell may split `{t}` into other words"
+        elif _literal_heredoc(t) or ((key := re.match(r"[\w.\[\]-]+=", t)) and _literal_heredoc(t[key.end():])):
+            continue
+        elif re.search(r"[$`*?\[]|(?:^|[=:])~|\{[^{}]*(,|\.\.)[^{}]*\}", t):
+            return f"the shell may split `{t}` into other words"
     return None
 
 
@@ -2637,8 +2656,8 @@ def _ticket_merge_problem(seg: Seg, toks: list[str], profile: Profile, root: Pat
     split = _split_api_word(seg, toks)  # a GET or DELETE too: `gh api $X` may be a PUT
     if split:
         return (
-            f"write this API call out, with its text in a quoted heredoc or a `-F body=@file` field and a `--jq` filter "
-            f"piped to `jq` instead: {split}, so the guard can't tell which route it calls (a merge must be its own, pinned)"
+            f"write this API call out, quoting what the shell would otherwise expand (text in a quoted heredoc, "
+            f"`\"$(cat <<'EOF' … EOF)\"`, or a `-F body=@file` field): {split}, so the guard can't tell which route it calls"
         )
     if call.method not in ("GET", "DELETE"):
         return _rest_merge_problem(seg, toks, call, profile, root)

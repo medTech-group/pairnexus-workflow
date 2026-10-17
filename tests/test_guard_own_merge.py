@@ -193,7 +193,7 @@ def test_text_that_mentions_a_merge_route_is_no_merge(ticket, form):
     [
         "X='x -X PUT repos/acme/demo/pulls/13/merge -t'; gh api -X PATCH -f $X repos/acme/demo/pulls/12 -f body='<!-- workflow:agent -->'",
         "gh api -X PATCH -t $X repos/acme/demo/pulls/12 -f title=t",
-        "gh api -X PATCH -H \"$(printf 'x -X PUT repos/acme/demo/pulls/13/ccr/auto_merge -t')\" repos/acme/demo/pulls/12 -f title=t",
+        "gh api -X PATCH -H $(printf 'x -X PUT repos/acme/demo/pulls/13/ccr/auto_merge -t') repos/acme/demo/pulls/12 -f title=t",
         "gh api -X PATCH -f {x,-XPUT,repos/acme/demo/pulls/13/merge,-t} repos/acme/demo/pulls/12 -f title=t",
         "gh api -X PATCH -f $(cat <<'EOF'\nx -X PUT repos/acme/demo/pulls/13/merge -t\nEOF\n) repos/acme/demo/pulls/12",
         "echo x | xargs gh api -X PATCH repos/acme/demo/pulls/12 -f title=t",
@@ -204,7 +204,15 @@ def test_text_that_mentions_a_merge_route_is_no_merge(ticket, form):
         "gh api -X GET -f $X repos/acme/demo/pulls/12",
         "gh api repos/acme/demo/pulls/12 --jq $Q",
         # Planted file names: `touch -- -t; mkdir -p repos/acme/demo/pulls/13/merge`.
-        "gh api -X PUT -[t] repos/acme/demo/pulls/12 r[e]pos/acme/demo/pulls/13/merge",
+        "gh api -X PUT -[t] repos/acme/demo/pulls/12",
+        "gh api -X PUT repos/acme/demo/pulls/12 -t x r[e]pos/acme/demo/pulls/13/merge",
+        "gh api repos/acme/demo/pulls/13/merge ?XPUT",
+        "gh api repos/acme/demo/pulls/13/merge [-]X=PUT",
+        "gh api repos/acme/demo/pulls/13/merge *=PUT",
+        # An unquoted heredoc is split (and globbed) by the shell.
+        "gh api repos/acme/demo/pulls/13/merge $(cat <<'EOF'\n-XPUT\nEOF\n)",
+        "gh api $(cat <<'EOF'\n-X PUT repos/acme/demo/pull[s]/13/merge\nEOF\n)",
+        "gh api -X PATCH repos/acme/demo/pulls/12 -f body=$(cat <<'EOF'\nx -X PUT -t\nEOF\n)",
     ],
 )
 def test_a_merge_route_hidden_in_another_api_write_is_refused(ticket, form):
@@ -224,11 +232,30 @@ def test_a_merge_route_hidden_in_another_api_write_is_refused(ticket, form):
         "gh api repos/acme/demo/issues/5/comments --jq '.[-3:][] | .body'",
         "gh api repos/acme/demo/pulls/12/comments | jq '.[] | {id, body}'",
         "gh api -X DELETE repos/acme/demo/issues/5/labels/workflow:in-progress",
+        # Quoted, nothing splits: a filter, a header, a body with `$`, braces and globs.
+        "gh api repos/acme/demo/pulls/12/files --jq '.[] | select(.filename | startswith(\"docs/\")) | .filename'",
+        "gh api repos/acme/demo/pulls/12/comments --jq '.[] | {id, body}'",
+        "gh api -H 'Accept: */*' repos/acme/demo/pulls/12",
+        "gh api repos/acme/demo/issues/5/comments -f body=\"Costs $COST, see ~/x, {a,b} and *.md <!-- workflow:agent -->\"",
+        "gh api -X PATCH -H \"$(printf 'x -X PUT repos/acme/demo/pulls/13/ccr/auto_merge -t')\" repos/acme/demo/pulls/12 -f title=t",
     ],
 )
 def test_ordinary_api_writes_still_pass(ticket, form):
     (ticket / "b").write_text("<!-- workflow:agent -->")
     d = run(ticket, bash(form.replace("/tmp/body.md", str(ticket / "b"))))
+    assert d.action == "allow", d.reason
+
+
+@pytest.mark.parametrize(
+    "form",
+    [
+        "gh pr merge 12 --merge --match-head-commit {sha} --subject \"$T\"",
+        "gh pr merge 12 --merge --match-head-commit {sha} -b \"$(cat <<'EOF'\nUses $1 and --disable-auto\nEOF\n)\"",
+        "gh pr merge 12 --merge --match-head-commit '{sha}' -t 'Readings: *all* of {a,b}'",
+    ],
+)
+def test_a_quoted_subject_or_body_on_a_pinned_merge_is_fine(ticket, form):
+    d = run(ticket, bash(form.replace("{sha}", head(ticket))))
     assert d.action == "allow", d.reason
 
 
@@ -250,8 +277,10 @@ def test_a_merge_in_another_repository_is_refused(ticket, name):
 
 
 def test_a_pin_the_shell_fills_in_is_refused(ticket):
-    d = run(ticket, bash('gh pr merge 12 --merge --match-head-commit "$(git rev-parse HEAD)"'))
+    d = run(ticket, bash('gh pr merge 12 --merge --match-head-commit $(git rev-parse HEAD)'))
     assert d.action == "deny" and "write this merge out" in d.reason and "the sha `git rev-parse HEAD` prints" in d.reason
+    d = run(ticket, bash('gh pr merge 12 --merge --match-head-commit "$(git rev-parse HEAD)"'))  # quoted: one word, still no sha
+    assert d.action == "deny" and "full commit sha that `git rev-parse HEAD` prints" in d.reason
     d = run(ticket, mcp("merge_pull_request", pullNumber=12, expectedHeadSha="$(git rev-parse HEAD)"))
     assert d.action == "deny" and "full commit sha" in d.reason  # no shell fills in an MCP tool's input
 
@@ -264,7 +293,7 @@ def test_a_pin_the_shell_fills_in_is_refused(ticket):
         "gh pr merge --merge --match-head-commit {sha} $(cat <<'EOF'\n99 --match-head-commit=x\nEOF\n)",
         "gh pr merge --merge --match-head-commit {sha} -t $(printf 'x 99 --match-head-commit=')",
         "gh pr merge 99 --merge --match-head-commit {sha} *",
-        "gh pr merge 99 --merge --match-head-commit {sha} --subject \"$T\"",
+        "gh pr merge 99 --merge --match-head-commit {sha} --subject $T",
         "gh pr merge 99 --merge --match-head-commit {sha} -b `cat b.txt`",
         "gh api -X PUT repos/acme/demo/pulls/99/merge -f sha={sha} {-f,sha=x}",
         "gh api -X PUT repos/acme/demo/pulls/99/merge -f sha={sha} $(printf -- '-f sha=X')",
