@@ -35,13 +35,16 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from . import protection
+from .reviews import _shown
 from .posts import CommentsError, _login, comments_from
 
 APP = "cloudflare-workers-and-pages"  # the GitHub App's slug, and its bot's login (`<slug>[bot]` in REST)
 CHECK = "Workers Builds: "
 NO_BUILD = ("skipped", "neutral")  # conclusions of a run that built nothing
+OLDEST = datetime.min.replace(tzinfo=timezone.utc)
 SHA = re.compile(r"[0-9a-fA-F]{7,40}")
 _HEX = re.compile(r"(?<![0-9A-Za-z])[0-9a-fA-F]{7,40}(?![0-9A-Za-z])")
 _MD_LINK = re.compile(r"\[([^\]]*)\]\((\S+?)\)")
@@ -127,7 +130,7 @@ def _builds(value, sha: str) -> tuple[list[protection.Ran], bool, str]:
     try:
         protection.latest(pages, None, None)  # reads every run, and refuses a list shorter than its total_count
     except protection.ProtectionError as e:
-        raise PreviewError("checks", str(e).replace("the check runs file", "it")) from None
+        raise PreviewError("checks", re.sub(r"^the check runs file(: )?", lambda m: "" if m.group(1) else "it", str(e))) from None
 
     def theirs(r: dict) -> bool:
         # Another app's run of the same name mustn't stand in for Cloudflare's latest result,
@@ -136,10 +139,17 @@ def _builds(value, sha: str) -> tuple[list[protection.Ran], bool, str]:
         return r["app"]["slug"].casefold() == APP and r["name"].startswith(CHECK) and (not isinstance(on, str) or same_commit(on, sha))
 
     runs = [r for p in pages for r in p["check_runs"] if theirs(r)]
-    built = [r for r in runs if not (r["status"] == "completed" and r.get("conclusion") in NO_BUILD)]
-    ran = protection.latest([{"check_runs": built}])
+    # Each name by its latest run; one whose latest built nothing (skipped, neutral) is left out.
+    nothing = {id(r) for r in runs if r["status"] == "completed" and r.get("conclusion") in NO_BUILD}
+    latest = {}
+    for r in runs:
+        ran = protection.latest([{"check_runs": [r]}])[0]
+        have = latest.get(ran.name)
+        if have is None or (ran.when or OLDEST, ran.id) >= (have[0].when or OLDEST, have[0].id):
+            latest[ran.name] = (ran, id(r))
+    built = [ran for ran, raw in latest.values() if raw not in nothing]
     full = {r["head_sha"].lower() for r in runs if isinstance(r.get("head_sha"), str) and len(r["head_sha"]) == 40}
-    return sorted(ran, key=lambda r: r.name), len(built) < len(runs), full.pop() if len(full) == 1 else sha
+    return sorted(built, key=lambda r: r.name), len(built) < len(latest), full.pop() if len(full) == 1 else sha
 
 
 def _is_bot(c: dict) -> bool:
@@ -179,7 +189,7 @@ def _link(cell: str) -> str | None:
     """The cell's Preview URL: the branch's (a "Branch Preview URL", or a
     "Preview URL" beside a commit's or deployment's), else its only link."""
     links = [(text, url) for text, url in _MD_LINK.findall(cell)] + [(text, url) for url, text in _HTML_LINK.findall(cell)]
-    if not links:
+    if not links and "](" not in cell and "<a" not in cell.lower():  # a link it couldn't parse isn't guessed at
         links = [("", url) for url in _BARE.findall(cell)]
     links = [(re.sub(r"<[^>]+>", "", t).strip().casefold(), u) for t, u in links]
     links = [(t, u) for t, u in links if u.startswith(("https://", "http://")) and u.isprintable() and " " not in u]
@@ -223,11 +233,11 @@ def _rows(body: str) -> list[Row] | None:
             if not hexes:
                 raise _unknown("a row of its table names no commit")
             status = _words(cells[col["status"]])
-            success = bool(_SUCCESS.search(status)) and not _NOT_SUCCESS.search(status)
+            failed = bool(_NOT_SUCCESS.search(status))
             cell = cells[col["url"]]
             empty = not _words(cell).strip(" -—–") and not _MD_LINK.search(cell) and not _HTML_LINK.search(cell) and not _BARE.search(cell)
             worker = cells[col["name"]] if col["name"] is not None else ""
-            rows.append(Row(worker, hexes[0].lower(), success, bool(_NOT_SUCCESS.search(status)), _link(cell), empty))
+            rows.append(Row(worker, hexes[0].lower(), bool(_SUCCESS.search(status)) and not failed, failed, _link(cell), empty))
         if not rows:
             raise _unknown("its table has no rows")
         return rows
@@ -266,6 +276,8 @@ def read(comments, checks, sha: str) -> Preview:
     workers = [b.name[len(CHECK) :] for b in builds]
     rows.sort(key=lambda r: workers.index(r.worker) if r.worker in workers else len(workers))
     on_head = [r for r in rows if same_commit(r.commit, head)]
+    if len(head) < 40:  # a short SHA: the full one the bot's row names
+        head = next((r.commit for r in on_head if len(r.commit) == 40), head)
     older = next((r.commit for r in rows if not same_commit(r.commit, head)), None)
     if not builds:
         if skipped:
@@ -280,16 +292,22 @@ def read(comments, checks, sha: str) -> Preview:
         return Preview("building", None, head)
     if any(r.failed for r in on_head):
         return Preview("failed", None, head)  # the check passed, but the deployment it reports didn't
-    done = [r for r in on_head if r.success]
-    for r in done:
+    # Each Worker built on the head needs its row to say so; a Worker with no check on the head
+    # (build watch paths: Cloudflare skipped it) doesn't hold the others up.
+    by_worker = {r.worker.casefold(): r for r in rows}
+    if any(w.casefold() in by_worker for w in workers):
+        theirs = [by_worker.get(w.casefold()) for w in workers]
+    else:  # rows that don't name the Workers (no Name column): the head's
+        theirs = on_head or [None]
+    if any(r is None or not r.success or not same_commit(r.commit, head) for r in theirs):
+        return Preview("building", None, head if on_head else older or head)
+    for r in theirs:
         if r.url is None and not r.empty:
-            raise _unknown(f"the head's row{' for ' + r.worker if r.worker else ''} has a Preview URL cell the reader can't make out")
-    linked = [r for r in done if r.url]
+            raise _unknown(f"the head's row{' for ' + _shown(r.worker, 60) if r.worker else ''} has a Preview URL cell the reader can't make out")
+    linked = [r for r in theirs if r.url]
     if linked:
         return Preview("built", linked[0].url, head)
-    if done:
-        return Preview("none", None, head)  # built, with no link to try
-    return Preview("building", None, head if on_head else older or head)
+    return Preview("none", None, head)  # built, with no link to try
 
 
 def text(p: Preview, sha: str) -> str:
@@ -300,7 +318,7 @@ def text(p: Preview, sha: str) -> str:
     elif p.state == "failed":
         said = f"The try-it link for {head} didn't build: Cloudflare's check or its comment says it failed. Its log is linked from the check's Details."
     elif p.state == "building" and p.commit and not same_commit(p.commit, sha):
-        said = f"The try-it link shown is for {p.commit[:7]}, not the head {head}: the head's is still building (Cloudflare's builds can take a few minutes to start)."
+        said = f"Cloudflare's comment is still for {p.commit[:7]}, not the head {head}: the head's try-it link is still building (Cloudflare's builds can take a few minutes to start)."
     elif p.state == "building":
         said = f"The try-it link for {head} is still building (Cloudflare's builds can take a few minutes to start)."
     elif p.commit:

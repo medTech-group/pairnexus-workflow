@@ -18,7 +18,6 @@ as it can be shown: what can't be shown stays "couldn't read", never a guess.
 
 from __future__ import annotations
 
-import re
 import shutil
 import subprocess
 from urllib.parse import quote
@@ -347,6 +346,11 @@ def merge_inputs(repo: str, number: int, have: dict, names, asker: str | None = 
 PREVIEW_INPUTS = ("comments", "checks", "sha")
 
 
+def _give(name: str) -> str:
+    """How to give an input that couldn't be fetched: a file, or the head's SHA itself."""
+    return "so it couldn't be fetched: give --sha" if name == "sha" else AS_A_FILE.format(name=name)
+
+
 def preview_inputs(repo: str, number: int, have: dict) -> dict:
     """`workflow preview`'s inputs not in `have`, fetched for pull request
     `number` of `repo` (owner/name), each `(value, None)` or `(None, why)`:
@@ -358,7 +362,7 @@ def preview_inputs(repo: str, number: int, have: dict) -> dict:
     if not names:
         return {}
     if not available():
-        return {n: (None, f"{NOT_INSTALLED}, " + ("so it couldn't be fetched: give --sha" if n == "sha" else AS_A_FILE.format(name=n))) for n in names}
+        return {n: (None, f"{NOT_INSTALLED}, {_give(n)}") for n in names}
     r = f"repos/{repo}"
     out: dict = {}
 
@@ -367,15 +371,15 @@ def preview_inputs(repo: str, number: int, have: dict) -> dict:
             try:
                 out[n] = (fn(), None)
             except GhError as e:
-                out[n] = (None, f"{e}, " + ("so it couldn't be fetched: give --sha" if n == "sha" else AS_A_FILE.format(name=n)))
+                out[n] = (None, f"{e}, {_give(n)}")
 
     def head():
         pr = api(f"{r}/pulls/{number}")
         h = pr.get("head") if isinstance(pr, dict) else None
         sha = h.get("sha") if isinstance(h, dict) else None
-        if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", sha):
+        if merge._sha(sha) is None:
             raise GhError(f"gh api {r}/pulls/{number} gave no head commit's SHA")
-        return sha.lower()
+        return merge._sha(sha)
 
     get("sha", head)
     get("comments", lambda: api(f"{r}/issues/{number}/comments?per_page=100", paginate=True))

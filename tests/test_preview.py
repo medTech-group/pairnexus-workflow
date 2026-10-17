@@ -321,9 +321,13 @@ def test_two_workers_need_both_built_and_give_the_first_link(tmp_path, capsys):
     assert got["state"] == "failed"
     got, _, _ = preview(tmp_path, capsys, [bot(*rows)], checks(cf_run(worker="demo-notes"), cf_run(status="queued", worker="demo-api", rid=7010)))
     assert got["state"] == "building"
-    # The second Worker's row still names an older commit: only the first's link is the head's.
+    # Both checks passed, but the second Worker's row still names an older commit, or is in progress.
+    for second in (row(worker="demo-api", sha=OLDER, links=api_links), row("⚡️ Deployment in progress", worker="demo-api", links="")):
+        got, _, _ = preview(tmp_path, capsys, [bot(row(worker="demo-notes"), second)], checks(cf_run(worker="demo-notes"), cf_run(worker="demo-api", rid=7010)))
+        assert got == answer("building")
+    # A Worker with no check on the head (build watch paths: Cloudflare skipped it) doesn't hold the other up.
     rows = (row(worker="demo-notes"), row(worker="demo-api", sha=OLDER, links=api_links))
-    got, _, _ = preview(tmp_path, capsys, [bot(*rows)], checks(cf_run(worker="demo-notes"), cf_run(worker="demo-api", rid=7010)))
+    got, _, _ = preview(tmp_path, capsys, [bot(*rows)], checks(cf_run(worker="demo-notes")))
     assert got == answer("built", BRANCH_URL)
 
 
@@ -348,8 +352,10 @@ def test_comments_as_pages_and_in_the_mcp_tools_shape_are_read(tmp_path, capsys)
 def test_a_short_sha_is_matched_to_the_rows_commit(tmp_path, capsys):
     got, _, _ = preview(tmp_path, capsys, [bot(row())], checks(cf_run()), HEAD[:12])
     assert got == answer("built", BRANCH_URL, HEAD)
-    # With no run naming its commit, the short SHA is the answer's.
+    # With no run naming its commit, the bot's row for it does; with neither, the short SHA is the answer's.
     got, _, _ = preview(tmp_path, capsys, [bot(row())], checks(), HEAD[:12])
+    assert got == answer("building", None, HEAD)
+    got, _, _ = preview(tmp_path, capsys, [bot(row(sha=OLDER))], checks(cf_run(status="queued", sha=None)), HEAD[:12])
     assert got == answer("building", None, HEAD[:12])
 
 
@@ -595,3 +601,30 @@ def test_an_unreadable_file_is_said_before_gh_is_asked(project, tmp_path, capsys
     out, code, err = preview(tmp_path, capsys, None, None, None, "--fetch", "12", raw={"comments": "not json"})
     assert code == 1 and "--comments" in err
     assert gh.paths() == []
+
+
+def test_a_skipped_rerun_after_a_failed_run_built_nothing(tmp_path, capsys):
+    first = cf_run("failure", rid=7001, when="2026-10-16T10:01:00Z")
+    rerun = cf_run("skipped", rid=7002, when="2026-10-16T10:08:00Z")
+    got, _, _ = preview(tmp_path, capsys, [bot(row(sha=OLDER))], checks(first, rerun))
+    assert got == answer("none", None, HEAD)
+
+
+def test_a_check_runs_file_error_reads_plainly(tmp_path, capsys):
+    run = cf_run()
+    run.pop("app")
+    out, code, err = preview(tmp_path, capsys, [], checks(run))
+    assert code == 1 and "couldn't read --checks: each check run must have its app" in err
+    out, code, err = preview(tmp_path, capsys, [], {"total_count": 7, "check_runs": [cf_run()]})
+    assert code == 1 and "couldn't read --checks: it holds 1 of" in err
+
+
+def test_a_link_with_a_space_in_it_is_refused_not_cut_short(tmp_path, capsys):
+    out, code, err = preview(tmp_path, capsys, [bot(row(links="[Branch Preview URL](https://b demo.example.workers.dev)"))], checks(cf_run()))
+    assert code == 1 and "https://b" not in out and "Preview URL cell" in err
+
+
+def test_control_characters_in_a_workers_name_are_escaped_in_the_refusal(tmp_path, capsys):
+    worker = "demo\x1b[31mred\u202e"
+    out, code, err = preview(tmp_path, capsys, [bot(row(worker=worker, links="see the dashboard"))], checks(cf_run(worker=worker)))
+    assert code == 1 and "\x1b" not in err and "\u202e" not in err and "\\x1b" in err
