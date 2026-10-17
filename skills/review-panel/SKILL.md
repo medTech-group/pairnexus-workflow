@@ -74,12 +74,33 @@ No pull request yet (the first rounds of `build-ticket` run before it opens)? Ke
 
 ## 5. When to stop
 
-Repeat on the new diff until a round finds nothing to fix, at most the profile's `run.review_rounds`.
+Repeat on the new diff until a round finds nothing to fix, at most the profile's `run.review_rounds`. For a light review, and when the briefing's review rounds are 1, follow the light review (section 6) instead.
 
 - Anything still open after the last round goes to the owner in the PR body, never silently.
 - Any commit after the last round gets a Correctness pass on just those commits before merging. Before it starts, `mkdir -p /tmp/review-<ticket>-pass<k>` (its scratch directory, `k` counting the passes from 1) and write `git rev-parse HEAD` to `commit.txt` there: the commit it covers, never one made after. Then post its record (section 4).
 
-## 6. The findings table (for the PR body)
+## 6. The light review
+
+A shorter review for a small, low-risk ticket, asked for as "build #12 with a light review" (`build-ticket`, "Review it"). It keeps every reviewer but the explorer, and it never changes the merge rule: CI green, the review record, and the owner's review of kit and CI files all stand.
+
+- **Round 1** runs the full panel (Standards, Spec, Correctness, and the security review where it applies) but no UI explorer. Its record:
+
+  ```
+  WF review-record --kind round --round 1 --commit <sha> --reviewers standards,spec,correctness --clean > /tmp/review-<ticket>-r1/record.md
+  ```
+
+  (`standards,spec,correctness,security` when the security review ran; `--not-clean` when it found something to fix.)
+- **If round 1 isn't clean,** fix its findings as in section 3, then run Correctness-only rounds until one is clean, at most 2 more. Each is a round of its own, with its own scratch directory, `commit.txt` and `previous.md`, and posts its record as a round, never as a pass:
+
+  ```
+  WF review-record --kind round --round <n> --commit <sha> --reviewers correctness --clean > /tmp/review-<ticket>-r<n>/record.md
+  ```
+- **Post each record** as section 4 says. A later commit after the last round still gets its Correctness pass (section 5).
+- **Anything still open** after them goes to the owner in the PR body, never silently.
+
+**In a run:** when the briefing's review rounds are 1 (the Light preset), ticket sessions use this same shape, so one round means one full-panel round, without the explorer, in attended and unattended work alike. Otherwise it is never chosen for the person: only they ask for it.
+
+## 7. The findings table (for the PR body)
 
 | # | Round | Reviewer | Finding | Outcome |
 |---|---|---|---|---|

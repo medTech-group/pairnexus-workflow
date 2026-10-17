@@ -1,6 +1,6 @@
 ---
 name: build-ticket
-description: Build one ready ticket from claim to merge - tdd at the spec's seams, the review panel in rounds until clean, a pull request with its findings table, CI green, the local suite's evidence, and the merge under the merge rule. Use for "implement #N", "build #N", or a ticket session's briefing.
+description: Build one ready ticket from claim to merge - tdd at the spec's seams, the review panel in rounds until clean, a pull request with its findings table, CI green, the local suite's evidence, and the merge under the merge rule. Use for "implement #N", "build #N", "build #N with a light review" ("quick build #N"), or a ticket session's briefing.
 ---
 
 # Build a ticket
@@ -59,6 +59,8 @@ Follow the `review-panel` skill on the diff against the base branch:
 - rerun the typecheck and the affected tests after each round;
 - after the last round, any further commit gets a short Correctness pass.
 
+**A light review,** when the person asks for one: "build #12 with a light review", or "quick build #12". "Light review" is its name; "quick build" is only understood. It is not the guided start's "quick ticket", which files a small ticket. Follow `review-panel`'s light review: one full-panel round without the UI explorer, then Correctness-only rounds for its fixes, at most 2 more, each posting its record. A ticket session uses that shape when its briefing's review rounds are 1. A light review is never chosen for the person, in attended or unattended work, and it never changes the merge rule.
+
 ## 4. Open the pull request
 
 To the base branch. Its body opens with **In plain words**, above everything else, so someone new to building can judge the change without reading code. Use exactly these headings, each on its own line with its text below it (the text here is only an example):
@@ -91,6 +93,7 @@ Below it, unchanged:
 - `Closes #<n>`;
 - what was built: routes, screens, tables, settings;
 - how it was tested: the seams, the suites, what the explorer exercised;
+- after a light review, the line "Light review: one round, no UI explorer", adding "plus N Correctness rounds for the fixes" when there were some, above the findings table;
 - the findings table: round, reviewer, finding, and what happened (fixed in which commit, or not a problem and why);
 - the decisions taken, under "Decisions for the owner";
 - the by-hand checks added.
