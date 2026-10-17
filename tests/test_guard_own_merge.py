@@ -1,13 +1,11 @@
 """A ticket session merges, or arms auto-merge on, only its own pull request (#87).
 
-The merge must be pinned to the head commit of the session's ticket branch,
-in every form the kit's skills use: `merge_pull_request`'s `expectedHeadSha`
-(or `sha`), `gh pr merge --match-head-commit`, the REST merge's `sha`, and
-arming auto-merge pinned the same way. `enable_pr_auto_merge` and the
-session route `pulls/<n>/ccr/auto_merge` take no pin GitHub is known to check,
-so the guard always reads the pull request's head instead (faked here), and a
-pin that only looks like one (`merge_pull_request`'s `sha` alone) doesn't count. Conductor and
-attended sessions are unchanged.
+A merge must be pinned to the head commit of the session's ticket branch, in
+the field GitHub checks: `gh pr merge --match-head-commit`, the REST merge's
+`sha`, `merge_pull_request`'s `expectedHeadSha`. `enable_pr_auto_merge` and
+the session route `pulls/<n>/ccr/auto_merge` take no pin GitHub is known to
+check, so the guard always reads the pull request's head instead (faked
+here). Conductor and attended sessions are unchanged.
 """
 
 import json
@@ -63,7 +61,6 @@ def mcp(name, **inp):
         "gh api --method PUT repos/acme/demo/pulls/12/merge -f sha={sha} -f merge_method=merge",
         "gh api -X PUT repos/acme/demo/pulls/12/merge -f sha={sha} -F sha={sha}",
         "gh pr merge 12 --merge -b 'Done: --disable-auto next' --match-head-commit {sha}",
-        "gh pr merge 12 --merge --body \"$(cat <<'EOF'\nUses $1 now\nEOF\n)\" --match-head-commit {sha}",
         "gh pr merge 12 --disable-auto",
     ],
 )
@@ -198,7 +195,53 @@ def test_a_merge_in_another_repository_is_refused(ticket, name):
 
 def test_a_pin_the_shell_fills_in_is_refused(ticket):
     d = run(ticket, bash('gh pr merge 12 --merge --match-head-commit "$(git rev-parse HEAD)"'))
+    assert d.action == "deny" and "write this merge out" in d.reason
+    d = run(ticket, mcp("merge_pull_request", pullNumber=12, expectedHeadSha="$(git rev-parse HEAD)"))
     assert d.action == "deny" and "literally" in d.reason
+
+
+@pytest.mark.parametrize(
+    "form",
+    [
+        # The lexer drops quoting, so any expansion counts, a heredoc's or a text value's too.
+        "gh pr merge 99 --match-head-commit {sha} {--merge,--match-head-commit=}",
+        "gh pr merge --merge --match-head-commit {sha} $(cat <<'EOF'\n99 --match-head-commit=x\nEOF\n)",
+        "gh pr merge --merge --match-head-commit {sha} -t $(printf 'x 99 --match-head-commit=')",
+        "gh pr merge 99 --merge --match-head-commit {sha} *",
+        "gh pr merge 99 --merge --match-head-commit {sha} --subject \"$T\"",
+        "gh pr merge 99 --merge --match-head-commit {sha} -b `cat b.txt`",
+        "gh api -X PUT repos/acme/demo/pulls/99/merge -f sha={sha} {-f,sha=x}",
+        "gh api -X PUT repos/acme/demo/pulls/99/merge -f sha={sha} $(printf -- '-f sha=X')",
+        "gh api -X PUT repos/acme/demo/pulls/9?/merge -f sha={sha}",
+        "printf '99 --match-head-commit=' | xargs gh pr merge --merge --match-head-commit {sha}",
+        "echo '-f sha=x' | xargs gh api -X PUT repos/acme/demo/pulls/99/merge -f sha={sha}",
+        "echo 12 | xargs -I N gh api -X PUT repos/acme/demo/pulls/N/ccr/auto_merge",
+    ],
+)
+def test_a_merge_the_shell_could_add_words_to_is_refused(ticket, pr_heads, form):
+    pr_heads[12] = (BRANCH, head(ticket))
+    d = run(ticket, bash(form.replace("{sha}", head(ticket))))
+    assert d.action == "deny", form
+    assert "write this" in d.reason or "not `PUT" in d.reason, d.reason
+
+
+@pytest.mark.parametrize(
+    "form",
+    [
+        "gh pr merge 99 --merge --match-head-commit {sha} --match-head-commit ''",
+        "gh pr merge 99 --merge --match-head-commit={sha} --match-head-commit=",
+    ],
+)
+def test_an_empty_pin_beside_a_set_one_is_refused(ticket, form):
+    # gh sends the last value: an empty one leaves the merge unpinned.
+    d = run(ticket, bash(form.replace("{sha}", head(ticket))))
+    assert d.action == "deny" and "full commit sha" in d.reason
+
+
+@pytest.mark.parametrize("form", ["gh pr merge 99 --disable-auto=false", "gh pr merge 99 --disable-auto=false --merge"])
+def test_disable_auto_with_a_value_is_no_disarm(ticket, form):
+    d = run(ticket, bash(form))
+    assert d.action == "deny" and "--match-head-commit" in d.reason
 
 
 def test_the_pin_is_one_more_commit_behind_after_a_new_commit(ticket):
