@@ -93,7 +93,7 @@ Below it, unchanged:
 - `Closes #<n>`;
 - what was built: routes, screens, tables, settings;
 - how it was tested: the seams, the suites, what the explorer exercised;
-- after a light review, the line "Light review: one round, no UI explorer", adding "plus N Correctness rounds for the fixes" when there were some, above the findings table;
+- after a light review (asked for, or a briefing's review rounds at 1), the line "Light review: one round, no UI explorer", adding "plus N Correctness rounds for the fixes" when there were some, above the findings table;
 - the findings table: round, reviewer, finding, and what happened (fixed in which commit, or not a problem and why);
 - the decisions taken, under "Decisions for the owner";
 - the by-hand checks added.

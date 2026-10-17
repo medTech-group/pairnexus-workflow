@@ -55,6 +55,8 @@ def test_the_pr_body_says_light_review_above_the_findings_table():
     assert '"plus N Correctness rounds for the fixes"' in step
     assert step.index(line) < step.index("the findings table: round, reviewer")
     assert "above the findings table" in step
+    # A run's one-round session writes it too, though nobody asked by name.
+    assert "after a light review (asked for, or a briefing's review rounds at 1), the line" in step
 
 
 def test_review_panel_describes_the_light_shape():
@@ -100,6 +102,8 @@ def test_review_panel_uses_the_light_shape_when_the_briefings_review_rounds_are_
     # The stop rule points at it, so a run's single round isn't the plain one.
     stop = _section("skills/review-panel/SKILL.md", "## 5. When to stop", "\n## ")
     assert "light review (section 6)" in stop
+    # Either one is enough: an asked-for light review, or a run's one round.
+    assert "For a light review, or when the briefing's review rounds are 1" in stop
 
 
 def test_it_never_changes_the_merge_rule():
