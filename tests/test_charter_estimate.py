@@ -192,7 +192,7 @@ def test_merges_of_no_time_never_break_the_hours(tmp_path, env):
     runs = _runs(tmp_path, [_issue(140, instant), _issue(141, instant)])
     est, _ = _estimate(env, _charter(tmp_path, env, ends_at="2026-10-17T05:00:00Z"), "--tickets", "3", "--runs", runs)
     assert est["runs_used"] == 2 and est["hours"] >= 1  # no wall time to go on: an hour a ticket
-    assert "1 hour a ticket" in est["basis"]
+    assert est["basis"].endswith("an hour a ticket (no merge times to go on)")
 
 
 def test_past_runs_never_give_more_sessions_than_the_charter_allows(tmp_path, env):
@@ -211,6 +211,12 @@ def test_the_end_time_warning(tmp_path, env):
     # With time enough, no warning.
     est, _ = _estimate(env, _charter(tmp_path, env, ends_at="2026-10-17T07:00:00Z"), "--tickets", "7")
     assert est["warnings"] == []
+    # Less than an hour left.
+    est, _ = _estimate(env, _charter(tmp_path, env, ends_at="2026-10-17T00:30:00Z"), "--tickets", "7")
+    assert "is less than an hour away" in est["warnings"][0]
+    # Not a time: said, never silently skipped.
+    est, err = _estimate(env, _charter(tmp_path, env, ends_at="tomorrow"), "--tickets", "7")
+    assert est["warnings"] == [] and "limits.ends_at isn't an ISO time" in err
     # Already past: nothing gets done.
     est, _ = _estimate(env, _charter(tmp_path, env, ends_at="2026-10-16T07:00:00Z"), "--tickets", "7")
     assert est["warnings"][0].startswith("The end time stops it before any of its 7 tickets is done")
@@ -221,6 +227,8 @@ def test_the_max_sessions_warning(tmp_path, env):
     assert est["warnings"] == ["10 sessions in all covers 7 tickets with 3 retries; up to 1 retry each needs 14."]
     est, _ = _estimate(env, _charter(tmp_path, env, max_sessions=5), "--tickets", "7")
     assert est["warnings"][0].startswith("5 sessions in all covers only 5 of the 7 tickets, with no retries")
+    est, _ = _estimate(env, _charter(tmp_path, env, max_sessions=7), "--tickets", "7")
+    assert est["warnings"][0].startswith("7 sessions in all covers 7 tickets with no retries;")
     est, _ = _estimate(env, _charter(tmp_path, env, max_sessions=14), "--tickets", "7")
     assert est["warnings"] == []
 
@@ -230,7 +238,9 @@ def test_a_lighter_review_with_a_security_review_ticket(tmp_path, env):
     est, _ = _estimate(env, light, "--tickets", "3", "--security", "12,#14")
     (w,) = est["warnings"]
     assert "lighter than the project's default" in w
-    assert "#12, #14" in w and "security review" in w
+    assert "#12, #14" in w and "the plan has tickets the review panel would give a security review" in w
+    est, _ = _estimate(env, light, "--tickets", "3", "--security", "12")
+    assert "the plan has a ticket the review panel would give a security review: #12." in est["warnings"][0]
     # No security-review ticket, or the project's own review: no warning.
     est, _ = _estimate(env, light, "--tickets", "3")
     assert est["warnings"] == []
@@ -317,8 +327,8 @@ def test_bad_inputs_are_clean_errors(tmp_path, env):
     c["review"] = {"rounds": "3", "explorer": True}
     f = tmp_path / "odd.json"
     f.write_text(json.dumps(c))
-    est, _ = _estimate(env, str(f), "--tickets", "2", "--security", "1")
-    assert est["warnings"] == []
+    est, err = _estimate(env, str(f), "--tickets", "2", "--security", "1")
+    assert est["warnings"] == [] and "review isn't well formed" in err
 
 
 def test_never_money(tmp_path, env):

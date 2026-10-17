@@ -193,10 +193,12 @@ def estimate(
         average = sum(r["attempts"] for r in runs) / max(1, sum(r["started"] for r in runs))
         per_ticket = min(max(1.0, average), float(1 + retries))
         hours_each = [h for r in runs for h in r["hours"]]
+        # A ticket's `started_at` is its latest session's start, so this is a session's wall time.
         hours_a_ticket = sum(hours_each) / len(hours_each) if hours_each else 1.0
         sessions = math.ceil(tickets * per_ticket - 1e-9)
         a_ticket = f"about {_num(per_ticket)} {'session' if _num(per_ticket) == '1' else 'sessions'}"
-        basis = f"from your last {len(runs)} runs: {a_ticket} and {_duration(hours_a_ticket)} a ticket"
+        took = f"{_duration(hours_a_ticket)} a ticket" if hours_each else "an hour a ticket (no merge times to go on)"
+        basis = f"from your last {len(runs)} runs: {a_ticket} and {took}"
         each = f"{a_ticket} each"
         runs_used = len(runs)
     else:
@@ -217,32 +219,41 @@ def estimate(
 
     warnings: list[str] = []
     ends = charter_mod._time(lim.get("ends_at"))
+    if ends is None and lim.get("ends_at") is not None:
+        notes.append("limits.ends_at isn't an ISO time with its zone, so the end time wasn't checked")
     if ends is not None:
         left = (ends - (now or datetime.now(timezone.utc))).total_seconds() / 3600
         fit = math.floor(left / hours_a_ticket + 1e-9) if left > 0 else 0
         if fit < waves:
             done = min(tickets - 1, math.floor(fit * parallel / per_ticket + 1e-9))
-            away = f"{lim['ends_at']} is about {presets_mod.plural(max(0, math.floor(left)), 'hour', 'hours')} away" if left > 0 else f"{lim['ends_at']} has passed"
+            if left <= 0:
+                away = f"{lim['ends_at']} has passed"
+            elif left < 1:
+                away = f"{lim['ends_at']} is less than an hour away"
+            else:
+                away = f"{lim['ends_at']} is about {presets_mod.plural(math.floor(left), 'hour', 'hours')} away"
             stops = f"after about {done} of {tickets} tickets" if done else f"before any of its {presets_mod.plural(tickets, 'ticket', 'tickets')} is done"
             warnings.append(f"The end time stops it {stops}: {away}, and the run needs roughly {presets_mod.plural(hours, 'hour', 'hours')}. Move the end time or drop tickets.")
     need = tickets * (1 + retries)
     if lim["max_sessions"] < need:
         have = lim["max_sessions"]
         covers = (
-            f"{tickets} tickets with {presets_mod.plural(have - tickets, 'retry', 'retries')}"
+            f"{tickets} tickets with {presets_mod.plural(have - tickets, 'retry', 'retries') if have > tickets else 'no retries'}"
             if have >= tickets
             else f"only {have} of the {tickets} tickets, with no retries"
         )
         wanted = f"up to {presets_mod.plural(retries, 'retry', 'retries')} each" if retries else "one try each"
         warnings.append(f"{have} sessions in all covers {covers}; {wanted} needs {need}.")
     rv = _review(c, profile) if security else None
+    if security and rv is None:
+        notes.append("the charter's review isn't well formed, so it wasn't compared with the project's default")
     if rv is not None:
         usual = presets_mod.numbers("normal", profile)["review"]
         if rv["rounds"] < usual["rounds"] or (presets_mod.runs_explorer(usual) and not presets_mod.runs_explorer(rv)):
             named = ", ".join(f"#{n}" for n in security)
             warnings.append(
                 f"The review ({_review_words(rv)}) is lighter than the project's default ({_review_words(usual)}), "
-                f"while the plan has tickets the review panel would give a security review: {named}."
+                f"while the plan has {'a ticket' if len(security) == 1 else 'tickets'} the review panel would give a security review: {named}."
             )
     return {
         "sessions": sessions,

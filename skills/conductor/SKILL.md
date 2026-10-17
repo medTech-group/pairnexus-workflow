@@ -193,7 +193,7 @@ Set `comments_read_through` to the newest comment's id, the owner's or not. Comm
 *Answers in this chat.* The owner may answer or decide here, in your chat, at any time. For each such answer:
 1. Record it on the issue it concerns: a comment quoting the owner's words exactly, with `source: "chat <UTC time>"` (and the marker, as every post of yours).
 2. If it completes an owner task, you may close that task as completed, with that comment.
-3. If it changes the charter, it is an amendment like a comment: `{at, by, change, source: "chat <UTC time>"}`, validated, confirmed on the tracking issue, and the charter section spliced again.
+3. If it changes the charter, it is an amendment like a comment: `{at, by, change, source: "chat <UTC time>"}`, validated, confirmed on the tracking issue, and the charter section spliced again with its estimate, as step 4 above says.
 
 **4. Each ticket in flight.** Read it from GitHub, never from the session's words:
 - the ticket's labels;

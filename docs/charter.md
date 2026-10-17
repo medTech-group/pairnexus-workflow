@@ -41,8 +41,8 @@ workflow charter estimate charter.json --tickets 7 --runs runs.json --security 1
 ```
 
 - **Input:** the charter (unapproved is fine, and the end time may not be given yet); the number of tickets in the plan, or the plan as `--tickets "13:messages,143:-"` (without it, the charter's `plan`); optionally `--runs`, past runs' `workflow:run` issues as JSON, as the GitHub API returns them, fetched by the session as `workflow ready --issues` takes issues; and `--security`, the planned tickets the review panel would give a security review (an auth, upload, payment or API change).
-- **Sessions:** tickets × (1 + `max_retries`), the worst case. With two or more past runs, tickets × their average sessions per ticket (the sum of `attempts` over the tickets they started), never below one per ticket.
-- **Hours:** ceil(sessions ÷ `max_parallel`) waves × one hour, or, with two or more past runs, × their average wall time per merged ticket (`started_at` to `merged_at`). Rounded to the hour, as "roughly".
+- **Sessions:** tickets × (1 + `max_retries`), the worst case. With two or more past runs, tickets × their average sessions per ticket (the sum of `attempts` over the tickets they started), never below one per ticket nor above the tries the charter allows (1 + `max_retries`).
+- **Hours:** ceil(sessions ÷ `max_parallel`) waves × one hour, or, with two or more past runs, × their average wall time per merged ticket (`started_at`, its latest session's start, to `merged_at`). Rounded to the hour, as "roughly".
 - **Past runs** are the five most recent closed `workflow:run` issues with at least one merged ticket, read from their run state (`workflow state get`). Fewer than two means the defaults. An open one (the run in progress) isn't a past run; a body whose run state can't be read is skipped with a note, never a crash.
 - **Warnings,** in words, never blocking:
   - the end time stops the run before its tickets are done ("The end time stops it after about 5 of 7 tickets");
