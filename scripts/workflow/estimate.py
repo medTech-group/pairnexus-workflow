@@ -90,7 +90,7 @@ def _run_of(issue: dict) -> tuple[dict | None, str | None]:
     attempts = started = merged = 0
     hours: list[float] = []
     for k, t in tickets.items():
-        if not isinstance(t, dict) or t.get("status") not in state_mod.TICKET_STATUSES:
+        if not isinstance(t, dict) or not isinstance(t.get("status"), str) or t["status"] not in state_mod.TICKET_STATUSES:
             return None, f"{who} skipped: ticket {k} has no status the kit knows"
         for f in ("attempts", "started_at", "merged_at"):
             ok, what = state_mod.TICKET_FIELDS[f]
@@ -123,28 +123,39 @@ def _closed(issue: dict) -> bool:
     return v is None or (isinstance(v, str) and v.lower() == "closed")
 
 
+def _flatten(v: Any) -> list:
+    """Issues from a list, the GitHub MCP tools' wrapped list (`{"issues": […]}`),
+    search's (`{"items": […]}`), or pages of any of them (`gh api --paginate
+    --slurp`, or MCP pages saved together)."""
+    if isinstance(v, list):
+        return [y for x in v for y in _flatten(x)]
+    if isinstance(v, dict) and any(isinstance(v.get(k), list) for k in ("issues", "items")):
+        return [y for k in ("issues", "items") if isinstance(v.get(k), list) for y in _flatten(v[k])]
+    return [v]
+
+
 def past_runs(issues: Any) -> tuple[list[dict], list[str]]:
     """The five most recent closed `workflow:run` issues with a merged ticket,
     newest first, and the notes on the ones skipped."""
-    if isinstance(issues, dict):
-        # The GitHub MCP tools wrap a list ({"issues": […]}), as search does ({"items": […]}).
-        wrapped = [issues[k] for k in ("issues", "items") if isinstance(issues.get(k), list)]
-        issues = wrapped[0] if wrapped else [issues]
-    if isinstance(issues, list) and any(isinstance(x, list) for x in issues):
-        issues = [y for x in issues for y in (x if isinstance(x, list) else [x])]  # `gh api --paginate --slurp`'s pages
-    if not isinstance(issues, list):
+    if not isinstance(issues, (list, dict)):
         raise EstimateError("the past runs must be a JSON list of issues, as the GitHub API returns them")
+    issues = _flatten(issues)
     candidates = [
         x
         for x in issues
         if isinstance(x, dict)
+        and _int(x.get("number"))
         and "pull_request" not in x
         and _closed(x)
         and ("labels" not in x or RUN_LABEL in _labels(x))
     ]
     candidates.sort(key=lambda x: (_closed_at(x), x.get("number") if _int(x.get("number")) else 0), reverse=True)
     runs: list[dict] = []
-    notes: list[str] = []
+    notes: list[str] = [
+        f"an entry that isn't an issue was skipped ({x['message']})" if isinstance(x, dict) and isinstance(x.get("message"), str) else "an entry that isn't an issue was skipped"
+        for x in issues
+        if not (isinstance(x, dict) and _int(x.get("number")))
+    ]
     for x in candidates:
         if len(runs) == MAX_RUNS:
             break
@@ -207,7 +218,7 @@ def estimate(
         hours_a_ticket = sum(hours_each) / len(hours_each) if hours_each else 1.0
         sessions = math.ceil(tickets * per_ticket - 1e-9)
         a_ticket = f"about {_num(per_ticket)} {'session' if _num(per_ticket) == '1' else 'sessions'}"
-        took = f"{_duration(hours_a_ticket)} a ticket" if hours_each else "an hour a ticket (no merge times to go on)"
+        took = f"{_duration(hours_a_ticket)} a ticket" if hours_each else "an hour a ticket (no merge times over zero to go on)"
         basis = f"from your last {len(runs)} runs: {a_ticket} and {took}"
         each = f"{a_ticket} each"
         runs_used = len(runs)
@@ -242,7 +253,10 @@ def estimate(
                 away = f"{lim['ends_at']} is less than an hour away"
             else:
                 away = f"{lim['ends_at']} is about {presets_mod.plural(math.floor(left), 'hour', 'hours')} away"
-            stops = f"after about {done} of {tickets} tickets" if done else f"before any of its {presets_mod.plural(tickets, 'ticket', 'tickets')} is done"
+            if done:
+                stops = f"after about {done} of {tickets} tickets"
+            else:
+                stops = "before its ticket is done" if tickets == 1 else f"before any of its {tickets} tickets is done"
             warnings.append(f"The end time stops it {stops}: {away}, and the run needs roughly {presets_mod.plural(hours, 'hour', 'hours')}. Move the end time or drop tickets.")
     need = tickets * (1 + retries)
     if lim["max_sessions"] < need:

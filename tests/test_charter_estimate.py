@@ -197,7 +197,7 @@ def test_merges_of_no_time_never_break_the_hours(tmp_path, env):
     runs = _runs(tmp_path, [_issue(140, instant), _issue(141, instant)])
     est, _ = _estimate(env, _charter(tmp_path, env, ends_at="2026-10-17T05:00:00Z"), "--tickets", "3", "--runs", runs)
     assert est["runs_used"] == 2 and est["hours"] >= 1  # no wall time to go on: an hour a ticket
-    assert est["basis"].endswith("an hour a ticket (no merge times to go on)")
+    assert est["basis"].endswith("an hour a ticket (no merge times over zero to go on)")
 
 
 def test_past_runs_never_give_more_sessions_than_the_charter_allows(tmp_path, env):
@@ -225,6 +225,8 @@ def test_the_end_time_warning(tmp_path, env):
     # Already past: nothing gets done.
     est, _ = _estimate(env, _charter(tmp_path, env, ends_at="2026-10-16T07:00:00Z"), "--tickets", "7")
     assert est["warnings"][0].startswith("The end time stops it before any of its 7 tickets is done")
+    est, _ = _estimate(env, _charter(tmp_path, env, ends_at="2026-10-16T07:00:00Z"), "--tickets", "1")
+    assert est["warnings"][0].startswith("The end time stops it before its ticket is done")
 
 
 def test_the_max_sessions_warning(tmp_path, env):
@@ -278,17 +280,25 @@ def test_a_malformed_past_body_is_skipped_with_a_note(tmp_path, env):
         _issue(143, body=_raw({"1": {"status": "merged", "attempts": "two"}})),
         _issue(144, body=_raw({"1": {"status": "lost"}})),
         _issue(146, body=_raw([1, 2])),
+        _issue(149, body=_raw({"1": {"status": ["merged"]}})),
         {**_issue(147, {}), "body": 5},
         {**_issue(148, RUN_A), "labels": [{"name": ["workflow:run"]}], "number": 148},
         {**_issue(145, {}), "body": None},
     ]
     est, err = _estimate(env, _charter(tmp_path, env), "--tickets", "7", "--runs", _runs(tmp_path, good + bad))
     assert est["runs_used"] == 2 and est["sessions"] == 11
-    for n in (142, 143, 144, 146, 147):
+    for n in (142, 143, 144, 146, 147, 149):
         assert f"#{n} skipped" in err
     # #145's empty body has no run state, like an abandoned kick-off; #148's labels aren't names.
-    assert len(est["notes"]) == 5
+    assert len(est["notes"]) == 6
     assert "state init" not in err  # the repair advice is for the run in progress
+
+
+def test_an_error_from_github_is_said_not_read_as_no_runs(tmp_path, env):
+    for data, message in (({"message": "Bad credentials", "status": "401"}, "Bad credentials"), ([{"message": "Not Found"}], "Not Found")):
+        est, err = _estimate(env, _charter(tmp_path, env), "--tickets", "7", "--runs", _runs(tmp_path, data))
+        assert est["runs_used"] == 0
+        assert f"an entry that isn't an issue was skipped ({message})" in err
 
 
 def test_an_abandoned_kick_off_is_not_a_run_and_not_a_fault(tmp_path, env):
@@ -298,10 +308,16 @@ def test_an_abandoned_kick_off_is_not_a_run_and_not_a_fault(tmp_path, env):
     assert est["runs_used"] == 2 and err == "" and est["notes"] == []
 
 
-@pytest.mark.parametrize("shape", ["mcp", "search", "slurp"])
+@pytest.mark.parametrize("shape", ["mcp", "search", "slurp", "mcp-pages", "search-pages"])
 def test_wrapped_and_paged_lists_of_runs(tmp_path, env, shape):
     issues = [_issue(140, RUN_A), _issue(150, RUN_B)]
-    data = {"mcp": {"issues": issues, "pageInfo": {}, "totalCount": 2}, "search": {"total_count": 2, "items": issues}, "slurp": [issues[:1], issues[1:]]}[shape]
+    data = {
+        "mcp": {"issues": issues, "pageInfo": {}, "totalCount": 2},
+        "search": {"total_count": 2, "items": issues},
+        "slurp": [issues[:1], issues[1:]],
+        "mcp-pages": [{"issues": issues[:1]}, {"issues": issues[1:]}],
+        "search-pages": [{"items": issues[:1]}, {"items": issues[1:]}],
+    }[shape]
     est, _ = _estimate(env, _charter(tmp_path, env), "--tickets", "7", "--runs", _runs(tmp_path, data))
     assert est["runs_used"] == 2
     # Not even a list of issues: a clean error, not a crash.

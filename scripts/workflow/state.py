@@ -94,7 +94,7 @@ def validate(s: Any) -> list[str]:
         for k, v in t.items():
             if not k.isdigit():
                 p.append(f"tickets key {k!r} must be an issue number")
-            if not isinstance(v, dict) or v.get("status") not in TICKET_STATUSES:
+            if not isinstance(v, dict) or not isinstance(v.get("status"), str) or v["status"] not in TICKET_STATUSES:
                 p.append(f"tickets[{k}].status must be one of {sorted(TICKET_STATUSES)}")
                 continue
             for f, (ok, what) in TICKET_FIELDS.items():
