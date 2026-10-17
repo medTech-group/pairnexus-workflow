@@ -43,7 +43,7 @@ The check answers in the chat only. It posts nothing on GitHub: no comment, no r
 WF merge-check --fetch 12 --asker <login> --json
 ```
 
-It allows the profile's `run.review_rounds`, so a person needs no `--review-rounds`; for a pull request a run built, add `--review-rounds` with the charter's, as its briefing gave them, to get the run's answer. It fetches everything but the preview: where the project has a preview reader, add `--preview F` with its answer, or there is no try-it link.
+It allows the profile's `run.review_rounds`, so a person needs no `--review-rounds`; for a pull request a run built, add `--review-rounds` with the charter's, as its briefing gave them, to get the run's answer, and for one whose body says "Light review:" (build-ticket's line), `--review-rounds 1`. It fetches everything but the preview: where the project has a preview reader, add `--preview F` with its answer, or there is no try-it link.
 
 In a cloud session, whose proxy refuses GraphQL and `collaborators/<login>/permission`, it reads the threads from the session's own route (whole only when every review comment sits in one of them) and the token's own permission from `repos/<repo>`. Anyone else counts as without write access, unless they requested changes: then permissions stay "couldn't read", so give `--permissions` as a file.
 

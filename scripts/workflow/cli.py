@@ -627,7 +627,7 @@ def _pr_number(v: str) -> int:
 
 def _review_rounds(v: str) -> int:
     if not (re.fullmatch(r"[0-9]{1,2}", v) and int(v) in merge_mod.REVIEW_ROUNDS):
-        raise argparse.ArgumentTypeError(f"{v!r} isn't a whole number from 1 to 10 (the review rounds allowed, as the briefing or the profile's run.review_rounds gives them)")
+        raise argparse.ArgumentTypeError(f"'{reviews_mod._shown(v, 20)}' isn't a whole number from 1 to 10 (the review rounds allowed, as the briefing or the profile's run.review_rounds gives them)")
     return int(v)
 
 
