@@ -36,7 +36,12 @@ interpreter one-liners, and in ticket and conductor sessions finds `git`,
 - `git config`, `git -c`, `--config-env` and `GIT_CONFIG*`/`GIT_SSH*`/
   `GIT_DIR`-style variables may not set aliases, push, remote, credential or
   command settings (conductor too);
-- a command word may not be a variable, a glob, a brace list or hold `$IFS`.
+- a command word may not be a variable, a glob, a brace list or hold `$IFS`;
+- a merge, or an arm of auto-merge, only of the session's own pull request:
+  pinned to the checked-out ticket branch's head (`--match-head-commit`, the
+  REST merge's `sha`, `merge_pull_request`'s `expectedHeadSha`), or, for
+  `enable_pr_auto_merge` and `ccr/auto_merge`, with the pull request's head
+  read back from GitHub (`_pr_head`).
 
 **Every role** is held to a deny-list: pushing to the base branch, force-pushes,
 deleting or mirroring branches (also by `remote.*.mirror`, `remote.pushDefault`
@@ -446,6 +451,35 @@ class Op(str):
     """An unquoted shell operator; a quoted word that looks like one is a plain str."""
 
 
+class Word(str):
+    """A word as the lexer read it. `splits`: outside quotes it holds what the
+    shell expands into other words, or more of them (a variable or substitution,
+    a glob, a brace list, a leading tilde). A word built anywhere else is a plain
+    str, which says nothing either way."""
+
+    splits: bool = False
+
+
+_UNQUOTED_SPLITS = re.compile(r"[$*?\[]|^~|[=:]~")
+
+
+def _brace_list(text: str) -> bool:
+    """`text` may hold a brace list the shell expands: a `{`, then a `,` or `..`,
+    then a `}` (braces inside it included: `{-XPUT,x={}}`). Read in one pass."""
+    a = text.find("{")
+    if a < 0:
+        return False
+    b = min((k for k in (text.find(",", a), text.find("..", a)) if k >= 0), default=-1)
+    return b >= 0 and text.find("}", b) >= 0
+
+
+def _unbacktick(body: str, in_dquotes: bool = False) -> str:
+    """A backtick substitution's text as the shell then runs it: inside backticks
+    `\\$`, `\\\\` and `\\`` lose their backslash first, and `\\"` too
+    when the backticks are inside double quotes."""
+    return re.sub(r'\\([$`\\"])' if in_dquotes else r"\\([$`\\])", r"\1", body)
+
+
 @dataclass
 class Heredoc:
     body: str
@@ -521,7 +555,7 @@ def _expansions(text: str) -> list[list]:
             continue
         if c == "`":
             j = _backtick_end(text, i)
-            out.append(_lex(text[i + 1 : j].replace("\\`", "`"))[0])
+            out.append(_lex(_unbacktick(text[i + 1 : j]))[0])
             i = j + 1
             continue
         i += 1
@@ -536,6 +570,7 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
     out: list = []
     cmd_start = 0
     word: list[str] = []
+    unquoted: list[str] = []  # the word's text outside quotes ("\0" for an unquoted substitution)
     in_word = False
     quoted = False
     pending: list[tuple[str, bool, Heredoc]] = []
@@ -543,10 +578,13 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
     n = len(s)
 
     def end_word() -> None:
-        nonlocal word, in_word, quoted
+        nonlocal word, in_word, quoted, unquoted
         if in_word:
-            out.append("".join(word))
-        word, in_word, quoted = [], False, False
+            w = Word("".join(word))
+            bare = "".join(unquoted)
+            w.splits = "\0" in bare or bool(_UNQUOTED_SPLITS.search(bare)) or _brace_list(bare)
+            out.append(w)
+        word, in_word, quoted, unquoted = [], False, False, []
 
     def hoist(inner: list) -> None:
         nonlocal cmd_start
@@ -560,10 +598,10 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
         hoist(toks)
         return j + 1
 
-    def backtick(start: int) -> int:
+    def backtick(start: int, in_dquotes: bool = False) -> int:
         j = _backtick_end(s, start)
         word.append(s[start : j + 1])
-        hoist(_lex(s[start + 1 : j].replace("\\`", "`"))[0])
+        hoist(_lex(_unbacktick(s[start + 1 : j], in_dquotes))[0])
         return j + 1
 
     def read_heredocs(pos: int) -> int:
@@ -651,18 +689,22 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
                     i = substitution(i, i + 2)
                     continue
                 if ch == "`":
-                    i = backtick(i)
+                    i = backtick(i, in_dquotes=True)
                     continue
+                if ch == "$" and re.match(r"\$(?:@|\{!|\{[^}]*\[@\])", s[i : i + 256]):
+                    unquoted.append("\0")  # "$@", "${A[@]}", "${!p@}": several words, quoted or not
                 word.append(ch)
                 i += 1
             i += 1
             continue
         if s.startswith("$(", i):
             in_word = True
+            unquoted.append("\0")
             i = substitution(i, i + 2)
             continue
         if c == "`":
             in_word = True
+            unquoted.append("\0")
             i = backtick(i)
             continue
         if c in "<>" and s.startswith("(", i + 1):  # process substitution
@@ -691,7 +733,7 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
             fd = ""
             if c in "<>" and in_word and not quoted and word and "".join(word).isdigit():
                 fd = "".join(word)
-                word, in_word, quoted = [], False, False
+                word, in_word, quoted, unquoted = [], False, False, []
             else:
                 end_word()
             if s.startswith("<<", i) and not s.startswith("<<<", i):
@@ -723,6 +765,7 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
             i += len(op)
             continue
         word.append(c)
+        unquoted.append(c)
         in_word = True
         i += 1
     end_word()
@@ -1044,6 +1087,19 @@ def _segments_of(toks: list, root: Path, cwd: str | None, depth: int) -> list[Se
     return segs
 
 
+def _reread(text: str, root: Path, cwd: str | None, depth: int, words: list[str] | None = None) -> list[Seg]:
+    """The commands in text another shell runs. When the outer shell may have
+    expanded it first (a `$`, a backtick or a backslash in it, or one of the
+    outer `words` it came from expands: a brace list or glob can open a quote),
+    the quoting the lexer sees isn't the one that runs: the words lose their
+    marks (`Word`), so what reads them falls back to their text."""
+    segs = segments(text, root, cwd, depth + 1)
+    if re.search(r"[$`\\]", text) or any(getattr(w, "splits", True) for w in words or []):
+        for sg in segs:
+            sg.words = [str(w) for w in sg.words]
+    return segs
+
+
 def _nested(seg: Seg, root: Path, depth: int) -> list[Seg]:
     toks = seg.words
     if not toks or depth >= 4:
@@ -1051,18 +1107,18 @@ def _nested(seg: Seg, root: Path, depth: int) -> list[Seg]:
     out: list[Seg] = []
     name = Path(toks[0]).name
     if re.search(r"\s", toks[0]):  # a whole command as one word (`watch 'git push'`)
-        out += segments(toks[0], root, seg.cwd, depth + 1)
+        out += _reread(toks[0], root, seg.cwd, depth, toks[:1])
     if name in _DASH_C:
         inner = _shell_c(toks)
         if inner is not None:
-            out += segments(inner, root, seg.cwd, depth + 1)
+            out += _reread(inner, root, seg.cwd, depth, toks)
     if name in _SHELLS and seg.heredoc and _shell_reads_stdin(toks):
-        out += segments(seg.heredoc, root, seg.cwd, depth + 1)
+        out += _reread(seg.heredoc, root, seg.cwd, depth)
     if name == "eval" and len(toks) > 1:
-        out += segments(" ".join(toks[1:]), root, seg.cwd, depth + 1)
+        out += _reread(" ".join(toks[1:]), root, seg.cwd, depth, toks[1:])
     if _INTERP.match(name):
         for lit in re.findall(r"""['"]([^'"]*\b(?:git|gh)\b[^'"]*)['"]""", _inline_code(toks)):
-            out += segments(lit, root, seg.cwd, depth + 1)
+            out += _reread(lit, root, seg.cwd, depth)
     if name == "find":
         k = 0
         while k < len(toks):
@@ -1786,7 +1842,7 @@ _TICKET_API_WRITES = [
     r"issues/comments/\d+",
     r"pulls",
     r"pulls/\d+",
-    r"pulls/\d+/(merge|reviews|comments|requested_reviewers|update-branch)",
+    r"pulls/\d+/(merge|reviews|comments|requested_reviewers|update-branch|ccr/auto_merge)",
     r"pulls/\d+/reviews/\d+(/events)?",
     r"pulls/comments/\d+(/replies)?",
     r"actions/runs/\d+/rerun(-failed-jobs)?",
@@ -2414,6 +2470,248 @@ def _command_reads(segs: list[Seg]) -> list[str]:
             if txt:
                 out.append(txt)
     return out
+
+
+# ---------- ticket sessions merge only their own pull request ----------
+
+# A ticket session tells its own pull request from another by its head: a merge
+# is pinned to the head commit of the checked-out ticket branch, in the one
+# field GitHub checks (`--match-head-commit`, the REST merge's `sha`,
+# `merge_pull_request`'s `expectedHeadSha`). Arming auto-merge through
+# `enable_pr_auto_merge` or the session route `ccr/auto_merge`, which take no
+# pin GitHub is known to check, has the pull request's head read back instead
+# (`_pr_head`), whatever pin the call names.
+_SHA = re.compile(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}")
+_PIN_HOW = (
+    "`--match-head-commit <sha>` (`gh pr merge`), `-f sha=<sha>` (the REST merge) or `expectedHeadSha` "
+    "(`merge_pull_request`), with `<sha>` from `git rev-parse HEAD` once the branch is pushed"
+)
+# `gh pr merge`'s options that take a value (pflag takes the next word, even one
+# starting with `-`).
+_MERGE_VALUES = {"-t", "--subject", "-b", "--body", "-F", "--body-file", "-A", "--author-email", "--match-head-commit", "-R", "--repo"}
+
+
+def _own_head(root: Path, profile: Profile) -> tuple[str | None, str | None, str | None]:
+    """(ticket branch, its head commit, a problem) of the session's checkout."""
+    d = str(root)
+    branch = _branch_of(d)
+    if not branch or not fnmatch.fnmatchcase(branch, profile.ticket_branch):
+        where = f"on `{branch}`, not a branch matching" if branch else "detached, not on a branch matching"
+        return None, None, (
+            f"a ticket session merges, or arms auto-merge on, only its own pull request, told by its ticket branch's head, and the checkout is {where} "
+            f"`{profile.ticket_branch}`: switch back to your ticket branch"
+        )
+    head = _git_out(d, "rev-parse", "--verify", "-q", "HEAD")
+    if not head:
+        return branch, None, f"can't read the head of the ticket branch `{branch}`, which tells this session's own pull request"
+    return branch, head.lower(), None
+
+
+def _pin_problem(what: str, pins: list[str], root: Path, profile: Profile) -> str | None:
+    """A ticket session's merge `pins` (every head commit it names) must each be
+    its ticket branch's head."""
+    if not pins:
+        return f"a ticket session merges only its own pull request, so this {what} must be pinned to its ticket branch's head: add {_PIN_HOW}"
+    for pin in pins:
+        if not _SHA.fullmatch(pin):
+            return f"pin this {what} to the full commit sha that `git rev-parse HEAD` prints, not " + (f"`{pin}`" if pin else "an empty one")
+    branch, head, problem = _own_head(root, profile)
+    if problem:
+        return problem
+    for pin in pins:
+        if pin.lower() != head:
+            return (
+                f"`{pin}` isn't the head of this session's ticket branch `{branch}` (`{head}`), so this {what} may be another ticket's "
+                f"pull request: a ticket session merges only its own. Push your branch and pin it to `{head}`; if the pull request's "
+                "head moved on GitHub (the branch was updated there), `git pull` first and pin to the new head"
+            )
+    return None
+
+
+def _pr_head(repo: str, number: int) -> tuple[str, str] | None:
+    """(head branch, head sha) of a pull request, read from GitHub with `gh`, or
+    None when it can't be read. A head from another repository (a fork) comes
+    back as `owner/name:branch`, so it never reads as the session's own; one
+    whose repository is gone can't be read."""
+    jq = '.head.ref + " " + .head.sha + " " + (.head.repo.full_name // "")'
+    try:
+        out = subprocess.run(
+            ["gh", "api", f"repos/{repo}/pulls/{number}", "--jq", jq],
+            capture_output=True, text=True, timeout=6, stdin=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None
+    parts = out.stdout.split() if out.returncode == 0 else []
+    if len(parts) != 3:
+        return None
+    ref = parts[0] if parts[2].casefold() == repo.casefold() else f"{parts[2]}:{parts[0]}"
+    return ref, parts[1]
+
+
+def _arm_problem(number: object, repo: str, root: Path, profile: Profile) -> str | None:
+    """Arming auto-merge: the pull request's head is read back and must be the
+    session's ticket branch at its head."""
+    branch, head, problem = _own_head(root, profile)
+    if problem:
+        return problem
+    num = "" if number is None or isinstance(number, bool) else str(number)
+    if not re.fullmatch(r"[0-9]+", num):
+        return "can't tell which pull request this arms auto-merge on; name its number"
+    n = int(num)
+    got = _pr_head(repo, n)
+    if got is None:
+        return (
+            f"a ticket session arms auto-merge only on its own pull request, and the guard couldn't read pull request #{n}'s head to tell; "
+            f"arm it pinned instead (`gh pr merge {n} --auto --merge --match-head-commit <sha>`, with `<sha>` from `git rev-parse HEAD`), "
+            "or comment that it's ready and leave it to the conductor"
+        )
+    ref, sha = got
+    if ref != branch:
+        return f"pull request #{n} is from `{ref}`, not this session's ticket branch `{branch}`: a ticket session arms auto-merge only on its own pull request"
+    if sha.lower() != head:
+        return (
+            f"pull request #{n}'s head `{sha}` isn't the head of `{branch}` (`{head}`): push your branch first, "
+            "or `git pull` if its head moved on GitHub, then arm it again"
+        )
+    return None
+
+
+def _merge_words(toks: list[str]) -> tuple[set[str], list[str]]:
+    """`gh pr merge`'s flags and its `--match-head-commit` values, read as pflag
+    reads them: a text option's value is text, never a flag."""
+    flags: set[str] = set()
+    pins: list[str] = []
+    i = 1
+    while i < len(toks):
+        t = toks[i]
+        i += 1
+        name, val = None, None
+        if t.startswith("--") and len(t) > 2:
+            name, eq, v = t.partition("=")
+            flags.add(name if name != "--disable-auto" or not eq else t)  # `--disable-auto=false` is no disarm
+            if name in _MERGE_VALUES:
+                val = v if eq else (toks[i] if i < len(toks) else "")
+                i += 0 if eq else 1
+        elif t.startswith("-") and len(t) > 1 and t != "--":
+            for k, ch in enumerate(t[1:]):
+                flags.add("-" + ch)
+                if "-" + ch in _MERGE_VALUES:
+                    name, rest = "-" + ch, t[2 + k:]
+                    val = rest.removeprefix("=") if rest else (toks[i] if i < len(toks) else "")
+                    i += 0 if rest else 1
+                    break
+        if name == "--match-head-commit":
+            pins.append(val or "")
+    # gh sends the last value, so an empty one beside a set one unpins it.
+    return flags, pins if any(pins) else []
+
+
+def _unread_merge_word(seg: Seg, toks: list[str]) -> str | None:
+    """Why the guard can't read a ticket session's merge or arm as the shell
+    runs it: xargs feeds it words, or a word (a heredoc's or text value's too:
+    the lexer drops quoting) holds an expansion, a tilde, a glob or a brace list."""
+    if seg.fed:
+        return "xargs gives it more words"
+    for t in toks[1:]:
+        if isinstance(t, Word):
+            if t.splits:
+                return f"the shell may change `{t}`"
+        elif re.search(r"[$`~*?\[]", t) or _brace_list(t):
+            return f"the shell may change `{t}`"  # a word the lexer didn't read: whatever it holds
+    return None
+
+
+def _gh_merge_problem(seg: Seg, toks: list[str], profile: Profile, root: Path) -> str | None:
+    """A ticket session's `gh pr merge` (toks start at the gh word)."""
+    flags, pins = _merge_words(toks)
+    what = "arm of auto-merge" if "--auto" in flags else "merge"
+    unread = _unread_merge_word(seg, toks)  # before the disarm: `--disable-auto $X` may arm
+    if unread:
+        return (
+            f"write this {what} out in full, with no subject or body and the commit pinned as the sha `git rev-parse HEAD` prints: "
+            f"{unread}, so the guard can't tell which pull request it merges or what it is pinned to"
+        )
+    if "--disable-auto" in flags and not flags - {"--disable-auto", "-R", "--repo"}:
+        return None  # a disarm, nothing else
+    return _pin_problem(what, pins, root, profile)
+
+
+def _split_api_word(seg: Seg, toks: list[str]) -> str | None:
+    """Why a ticket session's `gh api` call may run another call than it reads
+    as: xargs feeds it words, or the shell expands a word into others (outside
+    quotes: a variable or substitution, a glob, a brace list, a tilde), in
+    which a merge path or `-X PUT` can hide. Quoted text is fine; a word the
+    lexer didn't read counts if it holds any of these at all."""
+    if seg.fed:
+        return "xargs gives it more words"
+    for t in toks[1:]:
+        if isinstance(t, Word):
+            if t.splits:
+                return f"the shell may split `{t}` into other words"
+        elif _literal_heredoc(t) or ((key := re.match(r"[\w.\[\]-]+=", t)) and _literal_heredoc(t[key.end():])):
+            continue
+        elif re.search(r"[$`*?\[]|(?:^|[=:])~", t) or _brace_list(t):
+            return f"the shell may split `{t}` into other words"
+    return None
+
+
+def _rest_merge_problem(seg: Seg, toks: list[str], call: _ApiCall, profile: Profile, root: Path) -> str | None:
+    """A ticket session's `gh api` write to a pull request's merge or arm route."""
+    m = re.fullmatch(r"repos/([^/]+/[^/]+)/pulls/(\d+)/(merge|ccr/auto_merge)", call.path, re.I)
+    # The path word as written: one the shell fills in (`pulls/9?/merge`) reads as another path.
+    path_words = [t for t in toks[1:] if re.match(r"(?:https?://[^/\s]+/(?:api/v3/)?)?/?repos/", t)]
+    if not m and not any(re.search(r"(?i)pulls/[^/\s]*/(merge|ccr/auto_merge)", t) for t in path_words):
+        return None
+    what = "arm of auto-merge" if m and m.group(3).lower() != "merge" else "merge"
+    unread = _unread_merge_word(seg, toks)
+    if unread:
+        return f"write this {what} out in full: {unread}, so the guard can't tell which pull request it is for or what it is pinned to"
+    if not m:
+        return None
+    if what == "merge":
+        if call.files or call.stdin:
+            return "the guard reads a merge's pin only from its `-f sha=<sha>` field: send the merge without an `--input` body or `@file` fields"
+        pins = [f.split("=", 1)[1] for f in call.fields if f.split("=", 1)[0] == "sha"]
+        return _pin_problem("merge", pins, root, profile)
+    repo = profile.repo if m.group(1) == "{owner}/{repo}" else m.group(1)
+    return _arm_problem(m.group(2), repo, root, profile)
+
+
+def _ticket_merge_problem(seg: Seg, toks: list[str], profile: Profile, root: Path) -> str | None:
+    """A ticket session's `gh pr merge` or REST merge/arm (toks start at the gh word)."""
+    group, sub = _gh_group(toks)
+    if group == "pr" and sub == "merge":
+        return _gh_merge_problem(seg, toks, profile, root)
+    call = _api(toks)
+    if not call:
+        return None
+    split = _split_api_word(seg, toks)  # a GET or DELETE too: `gh api $X` may be a PUT
+    if split:
+        return (
+            f"write this API call out, quoting what the shell would otherwise expand (text in a quoted heredoc, "
+            f"`\"$(cat <<'EOF' … EOF)\"`, or a `-F body=@file` field): {split}, so the guard can't tell which route it calls"
+        )
+    if call.method not in ("GET", "DELETE"):
+        return _rest_merge_problem(seg, toks, call, profile, root)
+    return None
+
+
+def _ticket_mcp_merge_problem(name: str, inp: dict, profile: Profile, root: Path) -> str | None:
+    if name not in ("merge_pull_request", "enable_pr_auto_merge"):
+        return None
+    owner, rname = inp.get("owner"), inp.get("repo")
+    if (owner or rname) and not (isinstance(owner, str) and isinstance(rname, str) and f"{owner}/{rname}".casefold() == profile.repo.casefold()):
+        return f"ticket sessions work only in {profile.repo}; this `{name}` names another repository (give `owner` and `repo` as {profile.repo})"
+    if name == "enable_pr_auto_merge":
+        return _arm_problem(inp.get("pullNumber"), profile.repo, root, profile)
+    # `expectedHeadSha` is the pin the tool sends; a `sha` given as well must match too.
+    given = [inp.get("expectedHeadSha")]
+    if given[0] not in (None, "") and inp.get("sha") not in (None, ""):
+        given.append(inp["sha"])
+    pins = [p for p in given if p not in (None, "")]
+    if not all(isinstance(p, str) for p in pins):
+        return "pin this merge with `expectedHeadSha` given as text: the full commit sha that `git rev-parse HEAD` prints"
+    return _pin_problem("merge", pins, root, profile)
 
 
 # ---------- deploys ----------
@@ -5079,6 +5377,9 @@ def check_bash(
             p = _gh_problem(toks, profile, role, seg.cwd, command, read)
             if p:
                 return _deny(role, p)
+            p = _ticket_merge_problem(seg, toks, profile, root) if role == "ticket" else None
+            if p:
+                return _deny(role, p)
         p = _api_problem(seg.words, profile, role, seg.cwd, command, read) if seg.words and Path(seg.words[0]).name == "curl" else None
         if p:
             return _deny(role, p)
@@ -5199,6 +5500,10 @@ def check_mcp(tool: str, inp: dict, profile: Profile, role: str, root: Path) -> 
                 hit = pth and matches(_norm(pth.lstrip("/"), root), profile.protected_paths)
                 if hit:
                     return Decision("deny", f"`{pth}` is a protected path ({hit}); ticket sessions don't change it")
+    if role == "ticket":
+        p = _ticket_mcp_merge_problem(name, inp, profile, root)
+        if p:
+            return Decision("deny", p)
     if role == "ticket" and name in {"create_branch", "update_ref", "delete_branch"}:
         ref = (inp.get("branch") or inp.get("ref") or "").strip().removeprefix("refs/heads/")
         if ref and not fnmatch.fnmatchcase(ref, profile.ticket_branch):

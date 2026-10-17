@@ -138,6 +138,8 @@ Then subscribe to its activity. Schedule a check-in about every `run.check_in_mi
    | `owner` | Say it's ready, and leave it |
 
    If your permission settings refuse the merge, don't work around it. Comment that it's green and ready, and end with `WORKFLOW-STATUS: waiting`.
+
+   In a ticket session the guard lets you merge or arm only your own pull request: the pin must be your checkout's head (`git rev-parse HEAD` on your ticket branch), so after the branch was updated on GitHub (`update-branch`), `git pull` before you merge or arm. For `enable_pr_auto_merge`, the guard reads the pull request's head back instead.
 5. **Once it has merged,** tell the tracking issue: "#<n> merged in #<PR>", then notes for the next tickets. Tag each note with its area and the tickets it's for ("For #201, area readings: …"): what you added that later tickets build on, decisions to know, and pitfalls.
 6. **The claim label.** Whenever your ticket ends (merged, `needs-human`, or stopped), always remove `workflow:in-progress`; on `needs-human` also remove `ready-for-agent`. Keep the ticket's other labels. The conductor removes leftovers at its next check-in, but don't leave it to.
 7. **Wake the conductor.** When the ticket ends, call `fire_trigger` with the briefing's wake routine id and exactly one of these lines: "#<n> merged in #<PR>", "#<n> needs-human" or "#<n> stopped". The conductor then checks in at once instead of at its next scheduled time. Skip this when the briefing's wake routine says `none`, or in attended work.

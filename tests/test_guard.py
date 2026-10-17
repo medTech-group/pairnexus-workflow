@@ -2,6 +2,7 @@
 
 import pytest
 
+from conftest import pinned, ticket_checkout
 from workflow.guard import decide
 
 
@@ -59,13 +60,13 @@ def test_bare_push_on_base_branch_denied(profile, tmp_path):
         "git push origin claude/build-1",
         "git status && git log --oneline -3",
         "gh api repos/acme/demo/pulls/3",
-        "gh api -X PUT repos/acme/demo/pulls/3/merge -f merge_method=merge",
+        "gh api -X PUT repos/acme/demo/pulls/3/merge -f merge_method=merge -f sha={sha}",
         "echo 'git push origin main' > notes.txt",
         "python -m pytest tests -q",
     ],
 )
 def test_ticket_allowed(cmd, profile, tmp_path):
-    assert decide(bash(cmd), profile, "ticket", tmp_path, "claude/build-1").action == "allow", cmd
+    assert decide(bash(pinned(cmd, tmp_path)), profile, "ticket", tmp_path, "claude/build-1").action == "allow", cmd
 
 
 def test_attended_is_asked_not_denied(profile, tmp_path):
@@ -157,6 +158,8 @@ def test_github_mcp_writes(profile, tmp_path):
     prot = {"tool_name": "mcp__github__push_files", "tool_input": {"branch": "claude/build-1", "files": [{"path": ".github/workflows/ci.yml"}]}}
     assert decide(prot, profile, "ticket", tmp_path, "b").action == "deny"
     merge = {"tool_name": "mcp__github__merge_pull_request", "tool_input": {"pullNumber": 3}}
+    assert decide(merge, profile, "ticket", tmp_path, "b").action == "deny"  # unpinned (#87)
+    merge["tool_input"]["expectedHeadSha"] = ticket_checkout(tmp_path)
     assert decide(merge, profile, "ticket", tmp_path, "b").action == "allow"
 
 

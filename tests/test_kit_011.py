@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from workflow import charter, cli, posts, render, state
+from conftest import pinned, ticket_checkout
+from workflow import charter, cli, guard, posts, render, state
 from workflow.guard import decide
 from workflow.issues import named_paths, protected_named, readiness
 from workflow.posts import AGENT_MARKER, is_agent, owner_words
@@ -109,9 +110,9 @@ NOT_POSTS = [
     "gh api -X POST repos/acme/demo/issues/3/assignees -f 'assignees[]=owner-login'",
     "gh issue close 3",
     "gh pr ready 3",
-    "gh pr merge 3 --merge",
-    "gh pr merge 3 --auto --merge",
-    "gh api -X PUT repos/acme/demo/pulls/3/merge -f merge_method=merge",
+    "gh pr merge 3 --merge --match-head-commit {sha}",
+    "gh pr merge 3 --auto --merge --match-head-commit {sha}",
+    "gh api -X PUT repos/acme/demo/pulls/3/merge -f merge_method=merge -f sha={sha}",
     "gh api -X PUT repos/acme/demo/pulls/3/update-branch",
     "gh api graphql -f query='mutation{enablePullRequestAutoMerge(input:{pullRequestId:\"x\"}){clientMutationId}}'",
     "gh api repos/acme/demo/issues/3/comments",
@@ -123,6 +124,7 @@ NOT_POSTS = [
 def test_labels_state_and_merges_are_not_posts(cmd, role, profile, tmp_path):
     (tmp_path / "state.json").write_text('{"state": "closed"}')
     (tmp_path / "labels.json").write_text('{"labels": ["needs-human"]}')
+    cmd = pinned(cmd, tmp_path)  # a ticket session's merge is pinned to its branch's head (#87)
     if role == "ticket" and cmd.startswith("gh api graphql"):
         assert act(profile, tmp_path, cmd, role=role, branch="claude/build-1").action == "deny", cmd
         return
@@ -149,13 +151,15 @@ def test_mcp_posts_need_the_marker(profile, tmp_path):
         assert mcp(profile, tmp_path, name, bare, "attended").action == "allow", name
 
 
-def test_mcp_labels_state_and_merges_are_not_posts(profile, tmp_path):
+def test_mcp_labels_state_and_merges_are_not_posts(profile, tmp_path, monkeypatch):
+    sha = ticket_checkout(tmp_path)  # a ticket session's merge is pinned to its branch's head (#87)
+    monkeypatch.setattr(guard, "_pr_head", lambda repo, n: ("claude/build-1", sha))
     for name, inp in (
         ("issue_write", {"method": "update", "issue_number": 3, "labels": ["needs-human"]}),
         ("issue_write", {"method": "update", "issue_number": 3, "state": "closed", "state_reason": "completed"}),
         ("update_pull_request", {"pullNumber": 3, "title": "Readings tab"}),
         ("pull_request_review_write", {"method": "submit_pending", "pullNumber": 3, "event": "APPROVE"}),
-        ("merge_pull_request", {"pullNumber": 3, "merge_method": "merge"}),
+        ("merge_pull_request", {"pullNumber": 3, "merge_method": "merge", "expectedHeadSha": sha}),
         ("enable_pr_auto_merge", {"pullNumber": 3, "mergeMethod": "MERGE"}),
         ("update_pull_request_branch", {"pullNumber": 3}),
         ("sub_issue_write", {"method": "add", "issue_number": 3, "sub_issue_id": 99}),

@@ -1,7 +1,7 @@
 """The second review's bypasses and false positives, each pinned."""
 
 import pytest
-from conftest import git
+from conftest import git, pinned
 
 from workflow.guard import decide
 
@@ -87,9 +87,9 @@ ALLOW_TICKET = [
     "gh pr create --title t --body-file - <<'EOF'\nThis stops `git push --force` and `rm -rf .github`.\n<!-- workflow:agent -->\nEOF",
     "gh api repos/acme/demo/issues/3/comments -f body='Record 77fc6d9d failed <!-- workflow:agent -->'",
     "gh api repos/acme/demo/pulls -f title=t -f head=claude/build-1 -f base=main -f body='<!-- workflow:agent -->'",
-    "gh api -X PUT repos/acme/demo/pulls/3/merge -f merge_method=merge",
+    "gh api -X PUT repos/acme/demo/pulls/3/merge -f merge_method=merge -f sha={sha}",
     "gh api repos/acme/demo/pulls/3",
-    "gh pr merge 3 --merge",
+    "gh pr merge 3 --merge --match-head-commit {sha}",
     "git config user.name ci",
     "rm -rf build && mkdir -p build",
     "python -m pytest tests -q",
@@ -98,7 +98,7 @@ ALLOW_TICKET = [
 
 @pytest.mark.parametrize("cmd", ALLOW_TICKET)
 def test_ticket_allowed(cmd, profile, tmp_path):
-    d = decide(bash(cmd), profile, "ticket", tmp_path, "claude/build-1")
+    d = decide(bash(pinned(cmd, tmp_path)), profile, "ticket", tmp_path, "claude/build-1")
     assert d.action == "allow", (cmd, d.reason)
 
 
