@@ -98,7 +98,7 @@ Give each reason in plain words with what to do: its `message`, then its `fix`. 
 
 **Waiting.** A reason with no action (checks still running, GitHub still checking, the try-it link still building) says when to ask again.
 
-**A branch Claude can't push to** (a fork's, without edits from maintainers allowed): don't offer the three fixes that push. Say the pull request's author updates it, and offer "Review it now" (only for `no_review`, as round 1 alone, and `review_stale`: findings are the author's to fix) and "Not now" only.
+**A branch Claude can't push to** (a fork's, without edits from maintainers allowed): don't offer the three fixes that push. Say the pull request's author updates it, and offer "Review it now" (only for `no_review`, as round 1 alone, and `review_stale`: findings are the author's to fix) and "Not now" only. Once the author has pushed fixes, also offer it for `review_not_clean` whose `next` is `pass`, and for `pass_not_clean`: a Correctness pass on the head (§5), which needs no push.
 
 "Check again" means this skill again from step 1, with fresh inputs.
 

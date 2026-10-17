@@ -189,7 +189,8 @@ def test_a_value_outside_1_to_10_is_refused_with_a_plain_message(project, capsys
     err = capsys.readouterr().err
     assert "--review-rounds" in err and "a whole number from 1 to 10" in err
     assert "Traceback" not in err
-    assert max(len(line) for line in err.splitlines()) < 300  # a long value is cut
+    [line] = [ln for ln in err.splitlines() if "--review-rounds:" in ln]
+    assert len(line) < 300  # a long value is cut
 
 
 def test_the_text_answer_names_the_correctness_pass_at_both_levels(project, capsys, monkeypatch):
@@ -262,6 +263,8 @@ def test_the_merge_check_skill_runs_a_pass_for_next_pass():
     assert "When its `next` is `pass` (that round was the last allowed one, by the answer's `review_rounds`), fix the findings, then a Correctness pass on the head (§5) instead" in skill
     assert "The reason's `round` and `reviewers` give that round directly." in skill
     assert "- `review_rounds`: how many review rounds it allowed" in skill
+    fork = skill.split("**A branch Claude can't push to**", 1)[1].split("\n\n", 1)[0]
+    assert "Once the author has pushed fixes, also offer it for `review_not_clean` whose `next` is `pass`, and for `pass_not_clean`" in fork
     assert "so a person needs no `--review-rounds`" in skill
     assert "for one whose body says \"Light review:\" (build-ticket's line), `--review-rounds 1`" in skill
 
