@@ -545,9 +545,19 @@ def parse_tickets(spec: str) -> list[tuple[int, str | None]]:
     return out
 
 
-def _size_lines(c: dict, profile: Any) -> list[str]:
+def _estimate_lines(est: Any) -> list[str]:
+    """The one page's "**Estimate:**" line from `charter estimate --json`, with
+    its basis and, under it, its warnings."""
+    if not (isinstance(est, dict) and isinstance(est.get("line"), str) and isinstance(est.get("basis"), str)):
+        raise ValueError("the estimate must be `workflow charter estimate --json`'s output")
+    warnings = [w for w in est["warnings"] if isinstance(w, str)] if isinstance(est.get("warnings"), list) else []
+    return [f"- **Estimate:** {est['line']}; {est['basis']}.", *[f"  - {w}" for w in warnings]]
+
+
+def _size_lines(c: dict, profile: Any, estimate: Any = None) -> list[str]:
     """The one page's size and review: the preset and what changed from it
-    ("**Normal**, changed: 3 sessions at once"), and the review it gives."""
+    ("**Normal**, changed: 3 sessions at once"), and the review it gives; and,
+    when given, the estimate the owner saw."""
     if c.get("preset") in presets_mod.PRESETS:
         changed = presets_mod.changes(c, profile)
         size = f"**{presets_mod.LABELS[c['preset']]}**" + (f", changed: {', '.join(changed)}" if changed else "")
@@ -558,12 +568,14 @@ def _size_lines(c: dict, profile: Any) -> list[str]:
     return [
         f"- **Size:** {size}.",
         f"- **Review:** up to {rounds} per ticket; {presets_mod.explorer_words(c, profile)}.",
+        *(_estimate_lines(estimate) if estimate is not None else []),
     ]
 
 
-def to_markdown(c: dict, plan: list[tuple[int, str | None]] | None = None, profile: Any = None) -> str:
+def to_markdown(c: dict, plan: list[tuple[int, str | None]] | None = None, profile: Any = None, estimate: Any = None) -> str:
     """The one page. `profile` gives the preset's numbers to compare with
-    (Normal's are the profile's) and whether the project has a UI explorer."""
+    (Normal's are the profile's) and whether the project has a UI explorer;
+    `estimate`, `charter estimate --json`'s output, adds the "**Estimate:**" line."""
     s, lim, m, r, o, n = c["scope"], c["limits"], c["merge"], c["release"], c["outward"], c["notify"]
     tickets = "every ready ticket" if s["tickets"] == "all-ready" else ", ".join(f"#{t}" for t in s["tickets"])
     excl = ", ".join(f"#{t}" for t in s.get("exclude") or []) or "none"
@@ -573,7 +585,7 @@ def to_markdown(c: dict, plan: list[tuple[int, str | None]] | None = None, profi
         f"- **Scope:** {tickets}; excluded: {excl}; tickets unblocked during the run: {_yn(s['follow_unblocked'])}.",
         f"- **Limits:** ends {lim['ends_at']}; {presets_mod.plural(lim['max_parallel'], 'session', 'sessions')} at once, {lim['max_sessions']} in all; "
         f"{presets_mod.plural(lim['max_retries'], 'retry', 'retries')} per ticket, then `needs-human`; check-ins every {lim['check_in_minutes']} minutes.",
-        *_size_lines(c, profile),
+        *_size_lines(c, profile, estimate),
         f"- **Merging:** {m['mode']}"
         + (f"; checks that may be waived when killed (not failed): {', '.join(m['waived_checks'])}" if m.get("waived_checks") else "; no CI waivers")
         + ".",

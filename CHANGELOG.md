@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**An estimate before a run, in sessions and hours** (#123, part of a session budget and a light review, #42).
+
+- **`workflow charter estimate charter.json --tickets N`** says roughly what a run will use, never in money: "About 14 ticket sessions over roughly 7 hours (7 tickets, up to 1 retry each), plus the conductor's check-ins". With no past runs it is the worst case (every retry used) at an hour a session; given `--runs` (past `workflow:run` issues, as the GitHub API returns them) with two or more that merged something, it uses the five most recent runs' sessions per ticket (never above the retries the charter allows) and wall time per merged ticket. The approved estimate is kept in the run state as `estimate`, for later splices. A body whose run state can't be read is skipped with a note.
+- **Warnings,** never blocking: the end time stops the run early, `max_sessions` is below the tickets' tries and retries, or the review is lighter than the project's default while `--security` names a ticket the review panel would give a security review. `--json` gives `sessions`, `hours`, `basis`, `runs_used` and `warnings`.
+- **The one page:** `charter markdown` and `charter splice` take `--estimate estimate.json` and add "**Estimate:** …" with its basis, so the tracking issue records what the owner expected.
+- **The conductor's kick-off** offers the presets first, shows the estimate with them and runs it again on every change; the pre-flight's capacity line is unchanged, with the estimate beside it. `docs/charter.md` §2 describes it.
+- **For projects updating:** nothing to do.
+
 **`merge-check --fetch` works in a cloud session** (#165, a follow-up to #81 found by #85).
 
 - **Review threads:** when GraphQL is refused (a Claude Code cloud session's proxy refuses it), `--fetch` reads the session route `pulls/<n>/ccr/review_threads`, every page, and gives it to `merge-check` in GraphQL's shape. That route is a bare list with no count, so it counts as whole only when every review comment of the pull request (`pulls/<n>/comments`, every page, as many as the PR's `review_comments`) sits in one of its threads; otherwise the threads stay "couldn't read".

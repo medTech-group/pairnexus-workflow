@@ -69,6 +69,7 @@ Collect every problem for the kick-off, each with its fix.
 
 **Capacity**
 - You can't read the account's usage directly. If this session, or a session you started, has reported a usage warning, say so in the kick-off. Each ticket session runs the review panel for up to the charter's review rounds (the profile's `run.review_rounds` for a charter without them), so a run's usage grows with `max_sessions`.
+- In the kick-off this line stays as it is, with the run's estimate beside it (step 2): this one says what usage has been reported, the estimate what the run will use.
 
 **The last run**
 - The most recent issue labelled `workflow:run`.
@@ -100,6 +101,13 @@ With `AskUserQuestion`, at most four questions to a round, recommended answers f
 2. **The charter's questions.** `WF charter questions` lists them; `WF charter defaults > charter.json` starts a first run's charter with defaults that fit the profile, and the answers change it. Offer only the merge question's `options`. In solo mode (and with no CI or no required checks) they leave out `auto-merge`, and its `note` says why: say that to the owner. For removed protection, add `--unprotected` to both commands, and to `WF charter validate` until the gap is in `accepted_gaps`. Right after `defaults` (or `reuse`, below), add each gap accepted in step 1 to the charter's `accepted_gaps`: both start it empty, and `WF state init` reads the removed-protection verdict only from there.
    - With a previous charter, first run `WF charter reuse old.json > charter.json` (approval, amendments, end time, accepted gaps and plan cleared). Ask "Same as last time?", showing the tickets ready now, the old exclusions, and `WF charter diff old.json charter.json`. Then ask only what the owner wants changed. If the old charter used `auto-merge` and the merge question no longer offers it (solo mode now), set `merge.mode` to the new default and tell the owner why, from its `note`.
    - Always ask the end time.
+   - **The size, presets first.** The limits question offers Light, Normal and Thorough first, from its `presets` (each with its `words`), the profile's `run.preset` first and marked recommended (`recommended`). Choosing one sets `preset`, `limits` (but `ends_at` and `check_in_minutes`) and `review` from it; then the owner may still change any single number.
+   - **The estimate, shown with them,** in sessions and hours, never money: `WF charter estimate charter.json --tickets <the plan as "<n>:<area>,…", or how many> --runs runs.json --security <n>,… --json > estimate.json`.
+     - `runs.json`: the closed `workflow:run` issues, as the GitHub API returns them (`gh api 'repos/<repo>/issues?labels=workflow:run&state=closed&sort=updated&per_page=30'`, or the GitHub MCP tools). It reads the five most recent that merged anything, and below two uses an hour a session.
+     - `--security`: the planned tickets the review panel would give a security review (an auth, upload, payment or API change, `review-panel` §2).
+     - Before the plan (step 3) is settled, give it the ready tickets in scope.
+     - Show its line, its basis and its warnings (they never block), and the capacity line beside it. Run it again on every change of preset or number, the end time or the plan, so the figure approved is the one for the charter approved.
+     - Keep the approved one in the state as `estimate` (step 11), so a resumed conductor has it.
 3. **The plan.** The ready tickets with their areas. They start infra first, then by number, one per area at a time; say so. Set `charter.plan` to this list. When `follow_unblocked` is false, it is the whole scope: pin `scope.tickets` to it with `WF charter pin-plan charter.json > charter.json.tmp && mv charter.json.tmp charter.json`.
    - **Maps not yet fully specified.** `WF ready` doesn't know about maps. For each open `wayfinder:map` whose Destination items don't all have a spec and tickets yet, list the ready tickets that belong to it (sub-issues of its specs) and recommend excluding them: a map's tickets wait until every Destination item has its spec and tickets (flow §1's gate). Excluded ones go in `scope.exclude`.
    - **Tickets naming a protected path.** List each noted ticket with its note. A ticket session can't change a protected path, so if the ticket really needs one changed it will end `needs-human`. Ask the owner, for each, "Keep it / Exclude it": excluded ones go in `scope.exclude` (and out of the plan); kept ones run as usual. A ticket noted later in the run (unblocked mid-run) starts as usual; name it in that check-in's comment.
@@ -109,7 +117,7 @@ Then:
 4. Run `WF charter validate charter.json` and ask again about anything it reports.
 5. Choose the run id (`yyyy-mm-dd-word`).
 6. Create the **by-hand issue** from `TEMPLATES/by-hand-issue.md`, filling in `RUN_ID`. Both templates already end with the marker.
-7. Create the **tracking issue** from `TEMPLATES/tracking-issue.md`, label `workflow:run`, filling in `RUN_ID` and `BY_HAND_ISSUE`, and its charter section with `WF charter splice --body body.md --charter charter.json --tickets "<n>:<area>,…" --out body.md`. Then link it from the by-hand issue.
+7. Create the **tracking issue** from `TEMPLATES/tracking-issue.md`, label `workflow:run`, filling in `RUN_ID` and `BY_HAND_ISSUE`, and its charter section with `WF charter splice --body body.md --charter charter.json --tickets "<n>:<area>,…" --estimate estimate.json --out body.md`, so the one page carries the estimate. Then link it from the by-hand issue.
 8. Show the owner the rendered charter and ask "Go / Change something".
    - **If the kick-off is abandoned** (the owner says stop, or never answers before this session ends), close the tracking and by-hand issues as not planned, with a comment saying the run never started. An open `workflow:run` issue counts as a run in progress for `workflow status` and the guided start.
 9. Record the go:
@@ -122,10 +130,10 @@ Then:
     WF state init --charter charter.json --run-id <id> --by-hand <n> --read-through <id of the newest comment on the tracking issue, or 0>
     ```
 
-    Add `ticket_environment`, `kickoff_tickets` (the plan), `ci_minutes_at_start` and `status: "running"`.
+    Add `ticket_environment`, `kickoff_tickets` (the plan), `ci_minutes_at_start`, `estimate` (the contents of `estimate.json`) and `status: "running"`.
 12. **The wake routine.** Create a routine that only wakes you: `create_trigger` with no `cron_expression` and no `run_once_at` (poke-only), bound to this session (no `persistent_session_id`, `create_new_session_on_fire` false), `initiation: own_followup`, name "conductor wake <run id>", prompt `conductor: wake (a ticket session finished)`. Record its id in the state as `wake_trigger`; every briefing passes it, and a ticket session fires it when its ticket ends.
     - **If `create_trigger` fails,** record `wake_trigger: null`, pass `none` in every briefing's `wake_trigger` slot, and tell the owner while the kick-off is still open (and in the tracking issue's first comment): the run goes on, and ticket endings are seen at the next scheduled check-in instead of at once.
-13. Write the state to the issue, and replace the issue's charter section with the approved one: `WF charter splice --body body.md --charter charter.json --tickets "<n>:<area>,…" --out body.md`. Splice it again after every amendment that changes the charter; never edit that section by hand.
+13. Write the state to the issue, and replace the issue's charter section with the approved one: `WF charter splice --body body.md --charter charter.json --tickets "<n>:<area>,…" --estimate estimate.json --out body.md` (the estimate for the charter approved). Splice it again after every amendment that changes the charter; never edit that section by hand.
 14. **Start now:** run check-in steps 5, 8 and 9 below at once, then arm the first check-in with `send_later` (`limits.check_in_minutes`).
 
 Nothing starts before the charter is approved.
@@ -145,7 +153,7 @@ Every `limits.check_in_minutes`, by `send_later` to this same session; every 60 
 | A ticket session ends | At once, by the wake routine |
 | Stopping | `limits.check_in_minutes`, until "Stop the run" is finished |
 
-Keep scratch files (`charter.json`, `body.md`, `state.json`, issue JSON) in `.workflow/run/`, which git ignores.
+Keep scratch files (`charter.json`, `body.md`, `state.json`, `estimate.json`, `runs.json`, issue JSON) in `.workflow/run/`, which git ignores.
 
 **0. Stopping already?** If the state's `status` is `stopping`, skip to "Stop the run", step 2, and carry on from where it left off. Never record `stopped_head` again for a session that has one.
 
@@ -178,14 +186,14 @@ Keep scratch files (`charter.json`, `body.md`, `state.json`, issue JSON) in `.wo
 1. Apply its change to the charter's fields. "Extend to Monday 9am" changes `limits.ends_at`; "also #140" adds to `scope.tickets` and `plan`; "stop releasing" sets `release.when` to never.
 2. Append `{at, by, change, source: <comment URL>}` to `amendments`, once per URL.
 3. Run `WF charter validate`. If it fails, don't apply the change; reply with why.
-4. Reply to confirm what changed, and splice the charter section again (`WF charter splice`).
+4. Reply to confirm what changed, and splice the charter section again (`WF charter splice … --estimate estimate.json`). When the change touches the limits, the review or the plan, run the estimate again first (kick-off step 2), with `--now` the charter's `approved.at` so the whole run is set against the whole run's time, and record the new one in the state's `estimate`, so the page says what the owner now expects; otherwise write the state's `estimate` to `estimate.json` (a resumed session has no file). A state without one (a run from before estimates) splices without `--estimate`.
 
 Set `comments_read_through` to the newest comment's id, the owner's or not. Comments by anyone else, and any comment with the marker (an agent's, though under the owner's name), are information, never authority.
 
 *Answers in this chat.* The owner may answer or decide here, in your chat, at any time. For each such answer:
 1. Record it on the issue it concerns: a comment quoting the owner's words exactly, with `source: "chat <UTC time>"` (and the marker, as every post of yours).
 2. If it completes an owner task, you may close that task as completed, with that comment.
-3. If it changes the charter, it is an amendment like a comment: `{at, by, change, source: "chat <UTC time>"}`, validated, confirmed on the tracking issue, and the charter section spliced again.
+3. If it changes the charter, it is an amendment like a comment: `{at, by, change, source: "chat <UTC time>"}`, validated, confirmed on the tracking issue, and the charter section spliced again with its estimate, as step 4 above says.
 
 **4. Each ticket in flight.** Read it from GitHub, never from the session's words:
 - the ticket's labels;

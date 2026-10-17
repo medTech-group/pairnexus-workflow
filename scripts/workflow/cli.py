@@ -8,8 +8,9 @@
     workflow protection --checks-ran F [--statuses F] --rulesets F --repo F [--base BRANCH] [--json]
     workflow version [--fresh] [--json] | --repo | --starter
     workflow ready [--issues F --prs F | --fetch] [--exclude 1,2] [--only 1,2] [--override 3] [--running-area A ...] [--slots N] [--json]
-    workflow charter defaults [--unprotected] | validate F [--approved] [--unprotected] | markdown F [--tickets 13:area,143:-] | diff OLD NEW | reuse OLD | pin-plan F | questions [--unprotected]
-    workflow charter splice --body F --charter F [--out F] [--tickets 13:area,143:-]
+    workflow charter defaults [--unprotected] | validate F [--approved] [--unprotected] | markdown F [--tickets 13:area,143:-] [--estimate F] | diff OLD NEW | reuse OLD | pin-plan F | questions [--unprotected]
+    workflow charter estimate F [--tickets N | 13:area,143:-] [--runs F] [--security 13,143] [--now ISO] [--json]
+    workflow charter splice --body F --charter F [--out F] [--tickets 13:area,143:-] [--estimate F]
     workflow state init --charter F --run-id ID [--by-hand N] [--read-through ID] | get --body F | put --body F --state F [--out F] | patch --body F --patch F [--out F]
     workflow render --template F --ticket F --charter F --slots F --tracking N [--by-hand N] [--out F] [--print]
     workflow comments --file F [--owner LOGIN] [--since-id N]
@@ -44,6 +45,7 @@ _STARTED = time.monotonic()  # the guard's time budget counts from here, before 
 from . import adopt as adopt_mod
 from . import charter as charter_mod
 from . import context as context_mod
+from . import estimate as estimate_mod
 from . import evidence as evidence_mod
 from . import fetch as fetch_mod
 from . import _old_python, fallback
@@ -405,6 +407,8 @@ def cmd_charter(a) -> int:
             print("note: no profile found: release steps and waived checks weren't checked, nor the merge mode, the review's explorer or the owner", file=sys.stderr)
         print("ok")
         return 0
+    if a.action == "estimate":
+        return _charter_estimate(a)
     if a.action == "markdown":
         c = _json(a.file)
         problems = charter_mod.validate(c)
@@ -416,7 +420,12 @@ def cmd_charter(a) -> int:
         except ValueError as e:
             print(f"workflow: {e}", file=sys.stderr)
             return 2
-        print(charter_mod.to_markdown(c, plan, _page_profile()))
+        try:
+            page = charter_mod.to_markdown(c, plan, _page_profile(), _json(a.estimate) if a.estimate else None)
+        except (ValueError, OSError) as e:  # a bad estimate, or its file missing
+            print(f"workflow charter markdown: {e}", file=sys.stderr)
+            return 1
+        print(page)
         return 0
     if a.action == "splice":
         c = _json(a.charter)
@@ -426,8 +435,9 @@ def cmd_charter(a) -> int:
             return 1
         try:
             plan = charter_mod.parse_tickets(a.tickets) if a.tickets else None
-            new = charter_mod.splice(_read(a.body), charter_mod.to_markdown(c, plan, _page_profile()))
-        except ValueError as e:
+            est = _json(a.estimate) if a.estimate else None
+            new = charter_mod.splice(_read(a.body), charter_mod.to_markdown(c, plan, _page_profile(), est))
+        except (ValueError, OSError) as e:
             print(f"workflow charter splice: {e}", file=sys.stderr)
             return 1
         if a.out:
@@ -440,6 +450,38 @@ def cmd_charter(a) -> int:
             print(line)
         return 0
     return 2
+
+
+def _plan_size(tickets: str | None, c) -> int:
+    """`--tickets`: a number, or the plan as `markdown` takes it ("13:area,143:-");
+    without it, the charter's plan."""
+    if tickets and tickets.strip().isdigit():
+        return int(tickets)
+    if tickets:
+        return len(charter_mod.parse_tickets(tickets))
+    plan = c.get("plan") if isinstance(c, dict) else None
+    if charter_mod._is_int_list(plan) and plan:
+        return len(plan)
+    raise ValueError("give --tickets (the number of tickets in the plan, or the plan), or a charter with a plan")
+
+
+def _charter_estimate(a) -> int:
+    try:
+        c = _json(a.file)
+        now = None
+        if a.now:
+            now = charter_mod._time(a.now)
+            if now is None:
+                raise ValueError("--now must be an ISO time with its zone, e.g. 2026-10-13T03:30:00Z")
+        security = sorted(issues_mod.parse_numbers(a.security))
+        est = estimate_mod.estimate(c, _plan_size(a.tickets, c), _json(a.runs) if a.runs else None, security, _page_profile(), now)
+    except (ValueError, OSError, RecursionError) as e:  # an EstimateError, a bad --tickets, a file missing, not JSON or nested too deep
+        print(f"workflow charter estimate: {e}", file=sys.stderr)
+        return 1
+    for n in est["notes"]:
+        print(f"note: {n}", file=sys.stderr)
+    _out(est if a.json else estimate_mod.text(est))
+    return 0
 
 
 def _page_profile():
@@ -1081,7 +1123,7 @@ def main(argv: list[str] | None = None) -> int:
     s.set_defaults(fn=cmd_version)
 
     s = sub.add_parser("charter")
-    s.add_argument("action", choices=["defaults", "questions", "validate", "markdown", "diff", "reuse", "pin-plan", "splice"])
+    s.add_argument("action", choices=["defaults", "questions", "validate", "markdown", "diff", "reuse", "pin-plan", "splice", "estimate"])
     s.add_argument("file", nargs="?")
     s.add_argument("other", nargs="?")
     s.add_argument("--approved", action="store_true", help="also require the owner's approval")
@@ -1091,7 +1133,16 @@ def main(argv: list[str] | None = None) -> int:
         help="defaults, questions, validate: the read-back found the base branch unprotected; with project.ruleset true, "
         "that counts as solo mode (removed protection), so auto-merge isn't offered",
     )
-    s.add_argument("--tickets", help='markdown, splice: the planned tickets in order with their areas, e.g. "13:messages,143:-"')
+    s.add_argument(
+        "--tickets",
+        help='markdown, splice: the planned tickets in order with their areas, e.g. "13:messages,143:-"; '
+        "estimate: that, or just their number (else the charter's plan)",
+    )
+    s.add_argument("--estimate", metavar="F", help="markdown, splice: `charter estimate --json`'s output, for the one page's Estimate line")
+    s.add_argument("--runs", metavar="F", help="estimate: past runs' workflow:run issues, as JSON (as the GitHub API returns them)")
+    s.add_argument("--security", help="estimate: the plan's tickets the review panel would give a security review, e.g. 13,143")
+    s.add_argument("--now", metavar="ISO", help="estimate: the time to count from (else now)")
+    s.add_argument("--json", action="store_true", help="estimate: as JSON")
     s.add_argument("--body", help="splice: the tracking issue's body (a file, or -)")
     s.add_argument("--charter", help="splice: the charter")
     s.add_argument("--out", help="splice: write the new body here (else print it)")
@@ -1208,7 +1259,7 @@ def main(argv: list[str] | None = None) -> int:
     s.set_defaults(fn=cmd_hook)
 
     a = p.parse_args(argv)
-    if a.cmd == "charter" and a.action in {"validate", "markdown", "diff", "reuse", "pin-plan"} and not a.file:
+    if a.cmd == "charter" and a.action in {"validate", "markdown", "diff", "reuse", "pin-plan", "estimate"} and not a.file:
         p.error("give the charter file")
     if a.cmd == "charter" and a.action == "diff" and not a.other:
         p.error("charter diff needs OLD and NEW")

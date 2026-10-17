@@ -11,7 +11,7 @@ The conductor first works out what it can by itself, so it only asks about real 
 - **Solo mode:** the profile says `ruleset = false`, or `ruleset = true` while `workflow protection` (`docs/protection.md`) reads the base branch back as unprotected (removed protection). Either way it is a safety gap, stated plainly: nothing on GitHub stops a mistake reaching `main`, and the kit's "never merge while CI is red" check is the only one: `workflow merge-check`, which every merge in the run goes through (§4). The kick-off offers "Protect `main`" (or, for removed protection, restoring it), through the `upgrade-setup` skill, or "Go ahead". Accepted, it goes in `accepted_gaps`, and the run report repeats it. The ticket sessions' environment is still required. With `ruleset` left out, nothing changes.
 - **Required approvals:** when the ruleset requires approving reviews, no PR a session opens can merge without a person (sessions post as the owner, and GitHub never lets an author approve their own PR), so the merge question recommends `owner`.
 - **Leftovers:** open PRs and claimed tickets from an earlier run; the base branch's CI is green.
-- **Capacity:** any usage warning a session has reported (the conductor can't read the account's usage directly). Usage grows with `max_sessions`: each ticket session runs the review panel for up to the run's review rounds (§4).
+- **Capacity:** any usage warning a session has reported (the conductor can't read the account's usage directly). Usage grows with `max_sessions`: each ticket session runs the review panel for up to the run's review rounds (§4). In the kick-off this line stays as it is, with the run's estimate beside it (§2).
 - **Last run:** the previous tracking issue's charter (label `workflow:run`), to offer "same as last time".
 
 ## 2. The questions
@@ -33,6 +33,23 @@ Asked in rounds of up to four with `AskUserQuestion` (three rounds for a first r
 - Any single number can still be changed afterwards. The charter keeps its `preset`, and the one page says what changed by comparing the charter with the preset's numbers: "**Normal**, changed: 3 sessions at once".
 - The numbers live in one place, `scripts/workflow/presets.py`: `charter questions` gives each preset's under the limits question's `presets`, with `options` (the recommended one first) and `recommended`. The merge question is separate, so solo mode's rule (no `auto-merge`) stands whatever the preset.
 - `run.preset` is only the recommended answer: attended builds never read it.
+
+**The estimate.** With the presets, the kick-off shows roughly what the run will use, in sessions and hours, never money (the kit can't read the account's usage or prices), and runs it again on every change of preset or number, so the figure approved is the one for the charter approved:
+
+```
+workflow charter estimate charter.json --tickets 7 --runs runs.json --security 13,143 [--now ISO] [--json]
+```
+
+- **Input:** the charter (unapproved is fine, and the end time may not be given yet); the number of tickets in the plan, or the plan as `--tickets "13:messages,143:-"` (without it, the charter's `plan`); optionally `--runs`, past runs' `workflow:run` issues as JSON, as the GitHub API returns them, fetched by the session as `workflow ready --issues` takes issues; and `--security`, the planned tickets the review panel would give a security review (an auth, upload, payment or API change).
+- **Sessions:** tickets × (1 + `max_retries`), the worst case. With two or more past runs, tickets × their average sessions per ticket (the sum of `attempts` over the tickets they started), never below one per ticket nor above the tries the charter allows (1 + `max_retries`).
+- **Hours:** ceil(sessions ÷ `max_parallel`) waves × one hour, or, with two or more past runs, × their average wall time per merged ticket (`started_at`, its latest session's start, to `merged_at`). Rounded to the hour, as "roughly".
+- **Past runs** are the five most recent closed `workflow:run` issues with at least one merged ticket, read from their run state (`workflow state get`). Fewer than two means the defaults. An open one (the run in progress) isn't a past run, nor is one with no run state (a kick-off abandoned before the go); a body whose run state can't be read is skipped with a note, never a crash. The GitHub MCP tools' wrapped lists (`{"issues": […]}`) and `gh api --paginate --slurp`'s pages are read as one list.
+- **Warnings,** in words, never blocking:
+  - the end time stops the run before its tickets are done ("The end time stops it after about 5 of 7 tickets");
+  - `max_sessions` is below the tickets' first tries plus retries ("10 sessions in all covers 7 tickets with 3 retries");
+  - the run's review (`presets.review_of`) is lighter than the project's default (the profile's rounds and explorer) while `--security` names a ticket.
+- **Output:** one plain line, "About 14 ticket sessions over roughly 7 hours (7 tickets, up to 1 retry each), plus the conductor's check-ins", its basis ("assuming about an hour a session", or "from your last 3 runs: …"), and the warnings. Runs skipped are notes on stderr. `--json` gives `sessions`, `hours`, `basis`, `runs_used` (0 with the defaults) and `warnings`, plus `line`, `tickets` and `notes`.
+- **On the one page:** `charter markdown` and `charter splice` take that JSON as `--estimate estimate.json` and add "**Estimate:** …" with its basis (and its warnings under it) beside the size and review, so the tracking issue records what the owner expected. The conductor keeps the approved estimate in the run state as `estimate`, splices with it after each amendment, and runs it again for an amendment that changes the limits, the review or the plan.
 
 **Solo mode never uses GitHub auto-merge.** Nothing on GitHub reliably requires checks there, so auto-merge could merge a PR at once, without waiting for checks. In solo mode `charter defaults` picks `session`, `charter questions` leaves `auto-merge` out of the merge question's `options` and says why in its `note` (as it does with no CI or no required checks), and `charter validate` and `state init` refuse a charter with `auto-merge`.
 
@@ -62,7 +79,7 @@ When a previous charter exists, start from `workflow charter reuse old.json` (it
 
 ## 3. The charter shown back
 
-`workflow charter markdown charter.json --tickets "13:messages,143:-"` renders the one page: the plan (tickets in order with their areas), what it will and won't do, what goes on the owner's lists, the limits and the end time, the size (the preset and what changed from it) and the review, accepted gaps, and the kill switch. The owner replies "go". The conductor:
+`workflow charter markdown charter.json --tickets "13:messages,143:-"` renders the one page: the plan (tickets in order with their areas), what it will and won't do, what goes on the owner's lists, the limits and the end time, the size (the preset and what changed from it) and the review, the estimate (with `--estimate`, §2), accepted gaps, and the kill switch. The owner replies "go". The conductor:
 
 1. sets `approved` to `{by, at, source}`: `by` is the profile's `project.owner`; `source` is the URL of the owner's comment on the tracking issue, or the owner's words quoted with the time when the go came in chat;
 2. checks it: `workflow charter validate charter.json --approved` (also against the profile's release steps);
