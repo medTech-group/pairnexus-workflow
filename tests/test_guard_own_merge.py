@@ -197,6 +197,14 @@ def test_text_that_mentions_a_merge_route_is_no_merge(ticket, form):
         "gh api -X PATCH -f {x,-XPUT,repos/acme/demo/pulls/13/merge,-t} repos/acme/demo/pulls/12 -f title=t",
         "gh api -X PATCH -f $(cat <<'EOF'\nx -X PUT repos/acme/demo/pulls/13/merge -t\nEOF\n) repos/acme/demo/pulls/12",
         "echo x | xargs gh api -X PATCH repos/acme/demo/pulls/12 -f title=t",
+        # Calls the guard reads as a GET or DELETE.
+        "X='-X PUT repos/acme/demo/pulls/13/merge'; gh api $X",
+        "gh api repos/acme/demo/pulls/13/merge {,-XPUT}",
+        "X='a=1 -X PUT repos/acme/demo/pulls/13/merge -t'; gh api -X DELETE -f $X repos/acme/demo/issues/5/labels/x",
+        "gh api -X GET -f $X repos/acme/demo/pulls/12",
+        "gh api repos/acme/demo/pulls/12 --jq $Q",
+        # Planted file names: `touch -- -t; mkdir -p repos/acme/demo/pulls/13/merge`.
+        "gh api -X PUT -[t] repos/acme/demo/pulls/12 r[e]pos/acme/demo/pulls/13/merge",
     ],
 )
 def test_a_merge_route_hidden_in_another_api_write_is_refused(ticket, form):
@@ -211,6 +219,11 @@ def test_a_merge_route_hidden_in_another_api_write_is_refused(ticket, form):
         "gh api repos/acme/demo/issues/5/comments -f body=\"$(cat <<'EOF'\nCosts $COST, see ~/x and {a,b}\n<!-- workflow:agent -->\nEOF\n)\"",
         "gh api repos/acme/demo/issues/5/comments -F body=@/tmp/body.md",
         "gh api -X PUT repos/{owner}/{repo}/pulls/12/update-branch",
+        "gh api repos/acme/demo/issues/5/labels -f 'labels[]=needs-human'",
+        "gh api repos/acme/demo/pulls/12 --jq .head.sha",
+        "gh api repos/acme/demo/issues/5/comments --jq '.[-3:][] | .body'",
+        "gh api repos/acme/demo/pulls/12/comments | jq '.[] | {id, body}'",
+        "gh api -X DELETE repos/acme/demo/issues/5/labels/workflow:in-progress",
     ],
 )
 def test_ordinary_api_writes_still_pass(ticket, form):
