@@ -416,7 +416,7 @@ def cmd_charter(a) -> int:
         except ValueError as e:
             print(f"workflow: {e}", file=sys.stderr)
             return 2
-        print(charter_mod.to_markdown(c, plan))
+        print(charter_mod.to_markdown(c, plan, load(required=False)))
         return 0
     if a.action == "splice":
         c = _json(a.charter)
@@ -426,7 +426,7 @@ def cmd_charter(a) -> int:
             return 1
         try:
             plan = charter_mod.parse_tickets(a.tickets) if a.tickets else None
-            new = charter_mod.splice(_read(a.body), charter_mod.to_markdown(c, plan))
+            new = charter_mod.splice(_read(a.body), charter_mod.to_markdown(c, plan, load(required=False)))
         except ValueError as e:
             print(f"workflow charter splice: {e}", file=sys.stderr)
             return 1

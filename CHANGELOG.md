@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+**A run's size in one choice: Light, Normal or Thorough** (#119, part of a session budget and a light review, #42).
+
+- **The presets** bundle the levers the kit controls: sessions at once, sessions in all, retries per ticket, review rounds and the UI explorer. Light is 1, 10, 0, one round and no explorer; Normal is the profile's own numbers (40 sessions in all); Thorough is 3, 60, 1, at least 3 rounds (more when the profile has more) and the explorer where the project has one. The end time is always asked; the check-in interval stays the profile's.
+- **The charter** gains `preset` (`light`, `normal` or `thorough`) and a `review` section (`rounds` 1–10, `explorer` true or false; unknown keys refused). The check against the profile refuses `review.explorer = true` when `ui.explorer` is `none`.
+- **`charter questions`** offers the presets first under the limits question (`options`, the profile's `run.preset` first and `recommended`, each preset's numbers in `presets`); **`charter defaults`** starts from `run.preset`. Solo mode's merge rule (#50) stands beside them.
+- **The one page** (`charter markdown`, `charter splice`) says the size and the review: "**Normal**, changed: 3 sessions at once", and "no UI explorer (the project has none)" where so. `charter reuse` keeps `preset` and `review`; `charter diff` shows changes to both.
+- **The profile:** `run.preset`, `normal` when absent; anything else fails `profile check`. It is only the charter's recommended answer: attended builds never read it.
+- The numbers live in one place, `scripts/workflow/presets.py`. Docs: `docs/charter.md` §2 and §5, `docs/profile.md`. Tests: `tests/test_charter_presets.py`.
+- **For projects updating:** nothing to do. A charter written before this, with no `preset` or `review`, stays valid and reads as Normal (the profile's review rounds and UI explorer), so a run in progress keeps working. Ticket sessions still take their rounds and explorer from the profile until #120.
+
 **The conductor and ticket sessions merge on `workflow merge-check`** (#85, part of judging a PR without reading code, #39).
 
 - **One command decides every merge in a run.** Right before merging or arming auto-merge, the conductor's check-in and `build-ticket` §6 run `WF merge-check --fetch <PR> --json --charter <file>`. The file is the tracking issue's body (its run state holds the charter), saved under `.workflow/` so the evidence still sees a clean tree. A waived check's log goes under `--check-logs`; an input `gh` can't read is given as a file. It is the same command a person's `merge-check` runs, so a run and a person never disagree on "ready".

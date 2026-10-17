@@ -16,7 +16,23 @@ The conductor first works out what it can by itself, so it only asks about real 
 
 ## 2. The questions
 
-Asked in rounds of up to four with `AskUserQuestion` (three rounds for a first run), each with its recommended default first. `workflow charter questions` prints them; `workflow charter defaults` gives defaults that fit the project's profile: the limits from its `[run]`, release "never" when it has no release steps, and merge `session` when it has no CI or no required checks, or in solo mode.
+Asked in rounds of up to four with `AskUserQuestion` (three rounds for a first run), each with its recommended default first. `workflow charter questions` prints them; `workflow charter defaults` gives defaults that fit the project's profile: the run's size from its `run.preset`, the check-in interval from its `[run]`, release "never" when it has no release steps, and merge `session` when it has no CI or no required checks, or in solo mode.
+
+**A run's size: Light, Normal or Thorough.** The limits question offers three presets first, the profile's `run.preset` recommended (Normal when it has none). Each bundles the levers the kit controls; choosing one sets the charter's `preset`, `limits` (but `ends_at` and `check_in_minutes`) and `review`:
+
+| | Light | Normal | Thorough |
+|---|---|---|---|
+| `limits.max_parallel` | 1 | the profile's `run.max_parallel` | 3 |
+| `limits.max_sessions` | 10 | 40 | 60 |
+| `limits.max_retries` | 0 | the profile's `run.max_retries` | 1 |
+| `review.rounds` | 1 | the profile's `run.review_rounds` | 3, or the profile's if more |
+| `review.explorer` | off | on if the profile has one | on if the profile has one |
+
+- "Has one" means the profile's `ui.explorer` isn't `none`. With `none`, `review.explorer` is always off, and the one page says "no UI explorer (the project has none)".
+- The end time and the check-in interval aren't part of a preset: the end time is always asked, and the check-in interval stays the profile's.
+- Any single number can still be changed afterwards. The charter keeps its `preset`, and the one page says what changed by comparing the charter with the preset's numbers: "**Normal**, changed: 3 sessions at once".
+- The numbers live in one place, `scripts/workflow/presets.py`: `charter questions` gives each preset's under the limits question's `presets`, with `options` (the recommended one first) and `recommended`. The merge question is separate, so solo mode's rule (no `auto-merge`) stands whatever the preset.
+- `run.preset` is only the recommended answer: attended builds never read it.
 
 **Solo mode never uses GitHub auto-merge.** Nothing on GitHub reliably requires checks there, so auto-merge could merge a PR at once, without waiting for checks. In solo mode `charter defaults` picks `session`, `charter questions` leaves `auto-merge` out of the merge question's `options` and says why in its `note` (as it does with no CI or no required checks), and `charter validate` and `state init` refuse a charter with `auto-merge`.
 
@@ -31,7 +47,7 @@ solo mode: nothing on GitHub stops a mistake reaching main; the kit's "never mer
 | Key | Question | Recommended default |
 |---|---|---|
 | `scope` | Which tickets? Any to exclude? Also tickets unblocked during the run? | Every ready ticket; yes |
-| `limits` | When does the run end? Sessions at once, in all, retries per ticket, check-in cadence? | The owner's end time; 2; 40; 1, then `needs-human`; 20 minutes |
+| `limits` | How big a run: Light, Normal or Thorough (sets `limits` and `review`)? When does the run end? Check-in cadence? | The profile's `run.preset` (Normal: 2 at once, 40 in all, 1 retry then `needs-human`, the profile's rounds and explorer); the owner's end time; 20 minutes |
 | `merge` | Merge automatically when a ticket passes the merge rule? Which checks may be waived when killed (not failed)? | GitHub auto-merge (`session` with no CI, no required checks or in solo mode; `owner` when the ruleset requires approvals); none waived. A waiver needs mode `session`, and the check taken out of the ruleset's required checks for the run, which pre-flight then shows as a gap to accept |
 | `release` | Deploy and build after merges? Never, each merge, or once at the end? Which of the profile's release steps? | Once at the end, the first release step, with its smoke test; never when the profile has none |
 | `outward` | Any change outside the repo (cloud, secrets, accounts, DNS, payments)? Which, exactly? | None: listed as owner tasks |
@@ -40,13 +56,13 @@ solo mode: nothing on GitHub stops a mistake reaching main; the kit's "never mer
 | `stop_run_on` | Anything that stops the whole run rather than being set aside? | Nothing |
 | `notify` | Failures and the final report: the tracking issue only, or also a mention (and a phone notification where the session can send one)? | Issue for failures; push for the final report |
 
-When a previous charter exists, start from `workflow charter reuse old.json` (approval, amendments, accepted gaps, plan and end time cleared, and a ticket list that was the old plan reset to every ready ticket) and ask: "Same as last time?", showing the tickets ready now and `workflow charter diff`. Ask again only what the owner wants changed, and always the end time.
+When a previous charter exists, start from `workflow charter reuse old.json` (it keeps `preset` and `review`; approval, amendments, accepted gaps, plan and end time cleared, and a ticket list that was the old plan reset to every ready ticket) and ask: "Same as last time?", showing the tickets ready now and `workflow charter diff`. Ask again only what the owner wants changed, and always the end time.
 
 "push" means: the conductor @mentions the owner (`project.owner` in the profile) in the comment, and also sends a phone notification where the session has a tool for it. The mention alone may not reach the owner: the comment goes out under the owner's own account, and GitHub doesn't notify anyone of their own comments. To be told, watch the tracking issue (Subscribe) or check it; spike.md row 17.
 
 ## 3. The charter shown back
 
-`workflow charter markdown charter.json --tickets "13:messages,143:-"` renders the one page: the plan (tickets in order with their areas), what it will and won't do, what goes on the owner's lists, the limits and the end time, accepted gaps, and the kill switch. The owner replies "go". The conductor:
+`workflow charter markdown charter.json --tickets "13:messages,143:-"` renders the one page: the plan (tickets in order with their areas), what it will and won't do, what goes on the owner's lists, the limits and the end time, the size (the preset and what changed from it) and the review, accepted gaps, and the kill switch. The owner replies "go". The conductor:
 
 1. sets `approved` to `{by, at, source}`: `by` is the profile's `project.owner`; `source` is the URL of the owner's comment on the tracking issue, or the owner's words quoted with the time when the go came in chat;
 2. checks it: `workflow charter validate charter.json --approved` (also against the profile's release steps);
@@ -73,6 +89,8 @@ When a previous charter exists, start from `workflow charter reuse old.json` (ap
   "version": 1,
   "scope":   {"tickets": "all-ready", "exclude": [143], "follow_unblocked": true},
   "limits":  {"ends_at": "2026-10-13T03:30:00Z", "max_parallel": 2, "max_sessions": 40, "max_retries": 1, "check_in_minutes": 20},
+  "preset":  "normal",
+  "review":  {"rounds": 3, "explorer": true},
   "merge":   {"mode": "session", "waived_checks": ["Backend tests (seam 1)"]},
   "release": {"when": "end", "steps": ["deploy poc"], "smoke_test": true},
   "plan":    [146, 147, 148],
@@ -87,9 +105,13 @@ When a previous charter exists, start from `workflow charter reuse old.json` (ap
 }
 ```
 
+`preset`: `light`, `normal` or `thorough`, the one chosen. `review`: `rounds`, the review panel's rounds at most, and `explorer`, whether the UI explorer runs. A charter written before presets has neither: it stays valid and reads as Normal, the profile's `run.review_rounds` and UI explorer, as before (`presets.review_of`).
+
 `merge.mode`: `auto-merge` (GitHub merges once the ruleset's checks pass; no waivers), `session` (the ticket session, or the conductor, merges under the merge rule), `owner` (nothing merges unattended). `release.when`: `never`, `end`, `each-merge`. Validation (`workflow charter validate`) also requires:
 - `ends_at` in the future and after the approval;
 - `max_parallel` 1–16, `max_sessions` 1–500 and no fewer than `max_parallel`, `max_retries` 0–5, `check_in_minutes` 5–240;
+- `preset` one of `light`, `normal`, `thorough` when given; `review.rounds` 1–10 and `review.explorer` true or false when `review` is given;
+- `review.explorer` false when the profile's `ui.explorer` is `none`;
 - no keys it doesn't know;
 - waived checks among the profile's required checks, and no `auto-merge` when the profile has no CI or no required checks, or in solo mode (`--unprotected`, or a `removed protection: ` gap, for removed protection);
 - release steps among the profile's;
