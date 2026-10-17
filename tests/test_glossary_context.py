@@ -139,17 +139,16 @@ def test_after_a_command_as_first_prompt(repo, prompt):
 
 
 def test_beside_the_whole_flow_as_the_rule_and_its_path(repo):
-    # The kit's flow, made sure to pass the limit however #76 trims it.
+    # The kit's flow, padded well past the limit: #76 keeps the whole under it.
     flow = (KIT / "docs/flow.md").read_text(encoding="utf-8") + "\n\nPadding.\n" * 1_000
     (repo / ".claude/workflow/flow.md").write_text(flow)
     ctx = _ctx(repo, "implement #5")
-    assert "Follow the flow below" in ctx and "# The flow" in ctx
-    assert len(ctx) > LIMIT  # so Claude sees only the start of it
+    assert "Follow its flow" in ctx and "# The flow" in ctx
+    assert len(ctx) < LIMIT
+    # still first, should Claude ever see only the start of it
     shown = ctx[:SHOWN]
     assert RULE in shown and "read it now" in shown and str(KIT / "docs/glossary.md") in shown
     assert "### Pull request" not in ctx
-    # what the glossary adds is short: the flow is what passes the limit (#76)
-    assert len(ctx) - len(flow) < 1_000
 
 
 def test_beside_a_short_flow_still_only_the_path(repo):
