@@ -190,14 +190,14 @@ def test_an_upper_case_merge_path_is_a_merge(ticket):
 def test_a_merge_in_another_repository_is_refused(ticket, name):
     event = {"tool_name": f"mcp__github__{name}", "tool_input": {"owner": "other", "repo": "x", "pullNumber": 3, "expectedHeadSha": head(ticket)}}
     d = run(ticket, event)
-    assert d.action == "deny" and "acme/demo" in d.reason and "other/x" in d.reason
+    assert d.action == "deny" and "acme/demo" in d.reason and "another repository" in d.reason
 
 
 def test_a_pin_the_shell_fills_in_is_refused(ticket):
     d = run(ticket, bash('gh pr merge 12 --merge --match-head-commit "$(git rev-parse HEAD)"'))
     assert d.action == "deny" and "write this merge out" in d.reason
     d = run(ticket, mcp("merge_pull_request", pullNumber=12, expectedHeadSha="$(git rev-parse HEAD)"))
-    assert d.action == "deny" and "literally" in d.reason
+    assert d.action == "deny" and "full commit sha" in d.reason  # no shell fills in an MCP tool's input
 
 
 @pytest.mark.parametrize(
@@ -238,10 +238,38 @@ def test_an_empty_pin_beside_a_set_one_is_refused(ticket, form):
     assert d.action == "deny" and "full commit sha" in d.reason
 
 
-@pytest.mark.parametrize("form", ["gh pr merge 99 --disable-auto=false", "gh pr merge 99 --disable-auto=false --merge"])
+@pytest.mark.parametrize(
+    "form",
+    [
+        "gh pr merge 99 --disable-auto=false",
+        "gh pr merge 99 --disable-auto=false --merge",
+        "gh pr merge 99 --disable-auto $X",
+        "gh pr merge 99 --disable-auto {--disable-auto=false,--auto,--merge}",
+        "gh pr merge 99 --disable-auto *",
+    ],
+)
 def test_disable_auto_with_a_value_is_no_disarm(ticket, form):
     d = run(ticket, bash(form))
-    assert d.action == "deny" and "--match-head-commit" in d.reason
+    assert d.action == "deny" and ("--match-head-commit" in d.reason or "write this" in d.reason)
+
+
+@pytest.mark.parametrize("number", ["\u0661\u0662", "12 ", True, 12.0, [12]])
+def test_arming_needs_a_plain_pull_request_number(ticket, pr_heads, number):
+    pr_heads[12] = (BRANCH, head(ticket))
+    d = run(ticket, mcp("enable_pr_auto_merge", pullNumber=number))
+    assert d.action == "deny" and "name its number" in d.reason
+    assert pr_heads["calls"] == []
+
+
+@pytest.mark.parametrize("inp", [{"owner": "acme"}, {"owner": ["acme"], "repo": "demo"}, {"owner": "acme", "repo": "other"}])
+def test_an_mcp_merge_naming_another_repository_reads_plainly(ticket, inp):
+    d = run(ticket, {"tool_name": "mcp__github__merge_pull_request", "tool_input": {"pullNumber": 3, "expectedHeadSha": head(ticket), **inp}})
+    assert d.action == "deny" and "another repository" in d.reason and "None" not in d.reason and "[" not in d.reason
+
+
+def test_a_pin_that_isnt_text_reads_plainly(ticket):
+    d = run(ticket, mcp("merge_pull_request", pullNumber=3, expectedHeadSha={"a": "b"}))
+    assert d.action == "deny" and "not a string" in d.reason and "{" not in d.reason
 
 
 def test_the_pin_is_one_more_commit_behind_after_a_new_commit(ticket):
