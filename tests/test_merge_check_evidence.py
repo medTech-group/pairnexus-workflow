@@ -456,6 +456,7 @@ def test_the_askers_permission_is_fetched_when_the_profile_names_no_owner(projec
 def test_an_asker_who_is_an_author_is_asked_about_once(project, capsys, tmp_path, monkeypatch):
     path = project / ".claude/workflow/profile.toml"
     path.write_text(path.read_text().replace('owner = "owner"\n', ""))
+    assert 'owner = "owner"' not in path.read_text()  # so only the admin permission can make them the owner
     gh = fake_gh.install(tmp_path, monkeypatch, routes())
     got, _ = run(project, capsys, {}, "--fetch", "12", "--asker", "OWNER")
     assert got["owner"] is True
@@ -465,9 +466,10 @@ def test_an_asker_who_is_an_author_is_asked_about_once(project, capsys, tmp_path
 def test_an_asker_github_doesnt_know_isnt_the_owner(project, capsys, tmp_path, monkeypatch):
     path = project / ".claude/workflow/profile.toml"
     path.write_text(path.read_text().replace('owner = "owner"\n', ""))
-    fake_gh.install(tmp_path, monkeypatch, routes())  # no route for stranger: 404
+    gh = fake_gh.install(tmp_path, monkeypatch, routes())  # no route for stranger: 404
     got, _ = run(project, capsys, {}, "--fetch", "12", "--asker", "stranger")
     assert got["decision"] == "ready" and got["owner"] is False, got["reasons"]
+    assert f"{REPO}/collaborators/stranger/permission" in gh.paths()
 
 
 def test_with_a_project_owner_the_askers_permission_isnt_fetched(project, capsys, tmp_path, monkeypatch):
