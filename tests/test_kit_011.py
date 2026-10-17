@@ -8,9 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from workflow import charter, cli, posts, render, state
 from conftest import pinned, ticket_checkout
-from workflow import guard
+from workflow import charter, cli, guard, posts, render, state
 from workflow.guard import decide
 from workflow.issues import named_paths, protected_named, readiness
 from workflow.posts import AGENT_MARKER, is_agent, owner_words

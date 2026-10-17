@@ -40,8 +40,8 @@ interpreter one-liners, and in ticket and conductor sessions finds `git`,
 - a merge, or an arm of auto-merge, only of the session's own pull request:
   pinned to the checked-out ticket branch's head (`--match-head-commit`, the
   REST merge's `sha`, `merge_pull_request`'s `expectedHeadSha`), or, for
-  `enable_pr_auto_merge` and `ccr/auto_merge` with no pin, with the pull
-  request's head read back from GitHub (`_pr_head`).
+  `enable_pr_auto_merge` and `ccr/auto_merge`, with the pull request's head
+  read back from GitHub (`_pr_head`).
 
 **Every role** is held to a deny-list: pushing to the base branch, force-pushes,
 deleting or mirroring branches (also by `remote.*.mirror`, `remote.pushDefault`
@@ -2424,17 +2424,21 @@ def _command_reads(segs: list[Seg]) -> list[str]:
 # ---------- ticket sessions merge only their own pull request ----------
 
 # A ticket session tells its own pull request from another by its head: a merge
-# (or an arm of auto-merge) is pinned to the head commit of the checked-out
-# ticket branch, which GitHub then checks. The tools that can't carry a pin
-# GitHub checks (`enable_pr_auto_merge`, the session route `ccr/auto_merge`
-# without one) have the pull request's head read back instead (`_pr_head`).
+# is pinned to the head commit of the checked-out ticket branch, in the one
+# field GitHub checks (`--match-head-commit`, the REST merge's `sha`,
+# `merge_pull_request`'s `expectedHeadSha`). Arming auto-merge through
+# `enable_pr_auto_merge` or the session route `ccr/auto_merge`, which take no
+# pin GitHub is known to check, has the pull request's head read back instead
+# (`_pr_head`), whatever pin the call names.
 _SHA = re.compile(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}")
-_MCP_PINS = ("expectedHeadSha", "sha", "expectedHeadOid")
-_REST_PINS = ("sha", "expected_head_sha", "expected_head_oid")
 _PIN_HOW = (
     "`--match-head-commit <sha>` (`gh pr merge`), `-f sha=<sha>` (the REST merge) or `expectedHeadSha` "
     "(`merge_pull_request`), with `<sha>` from `git rev-parse HEAD` once the branch is pushed"
 )
+# `gh pr merge`'s options that take a value (pflag takes the next word, even one
+# starting with `-`); the text ones never hold a flag.
+_MERGE_VALUES = {"-t", "--subject", "-b", "--body", "-F", "--body-file", "-A", "--author-email", "--match-head-commit", "-R", "--repo"}
+_MERGE_TEXTS = {"-t", "--subject", "-b", "--body", "-F", "--body-file", "-A", "--author-email"}
 
 
 def _own_head(root: Path, profile: Profile) -> tuple[str | None, str | None, str | None]:
@@ -2442,10 +2446,10 @@ def _own_head(root: Path, profile: Profile) -> tuple[str | None, str | None, str
     d = str(root)
     branch = _branch_of(d)
     if not branch or not fnmatch.fnmatchcase(branch, profile.ticket_branch):
-        where = f"on `{branch}`" if branch else "not on a branch"
+        where = f"on `{branch}`, not a branch matching" if branch else "detached, not on a branch matching"
         return None, None, (
-            f"a ticket session merges only its own pull request, told by its ticket branch's head, and the checkout is {where}, "
-            f"not a branch matching `{profile.ticket_branch}`: switch back to your ticket branch"
+            f"a ticket session merges only its own pull request, told by its ticket branch's head, and the checkout is {where} "
+            f"`{profile.ticket_branch}`: switch back to your ticket branch"
         )
     head = _git_out(d, "rev-parse", "--verify", "-q", "HEAD")
     if not head:
@@ -2454,8 +2458,8 @@ def _own_head(root: Path, profile: Profile) -> tuple[str | None, str | None, str
 
 
 def _pin_problem(what: str, pins: list[str], root: Path, profile: Profile) -> str | None:
-    """A ticket session's merge or arm `pins` (the head commits it names) must
-    each be its ticket branch's head."""
+    """A ticket session's merge `pins` (every head commit it names) must each be
+    its ticket branch's head."""
     if not pins:
         return f"a ticket session merges only its own pull request, so this {what} must be pinned to its ticket branch's head: add {_PIN_HOW}"
     for pin in pins:
@@ -2470,8 +2474,8 @@ def _pin_problem(what: str, pins: list[str], root: Path, profile: Profile) -> st
         if pin.lower() != head:
             return (
                 f"`{pin}` isn't the head of this session's ticket branch `{branch}` (`{head}`), so this {what} may be another ticket's "
-                f"pull request: a ticket session merges only its own. Pin it to `{head}`; if the pull request's head moved on GitHub "
-                "(the branch was updated there), `git pull` first and pin to the new head"
+                f"pull request: a ticket session merges only its own. Push your branch and pin it to `{head}`; if the pull request's "
+                "head moved on GitHub (the branch was updated there), `git pull` first and pin to the new head"
             )
     return None
 
@@ -2479,30 +2483,32 @@ def _pin_problem(what: str, pins: list[str], root: Path, profile: Profile) -> st
 def _pr_head(repo: str, number: int) -> tuple[str, str] | None:
     """(head branch, head sha) of a pull request, read from GitHub with `gh`, or
     None when it can't be read. A head from another repository (a fork) comes
-    back as `owner/name:branch`, so it never reads as the session's own."""
+    back as `owner/name:branch`, so it never reads as the session's own; one
+    whose repository is gone can't be read."""
     jq = '.head.ref + " " + .head.sha + " " + (.head.repo.full_name // "")'
     try:
-        out = subprocess.run(["gh", "api", f"repos/{repo}/pulls/{number}", "--jq", jq], capture_output=True, text=True, timeout=6)
+        out = subprocess.run(
+            ["gh", "api", f"repos/{repo}/pulls/{number}", "--jq", jq],
+            capture_output=True, text=True, timeout=6, stdin=subprocess.DEVNULL,
+        )
     except (OSError, subprocess.TimeoutExpired, ValueError):
         return None
     parts = out.stdout.split() if out.returncode == 0 else []
-    if len(parts) == 2:
-        return parts[0], parts[1]
-    if len(parts) == 3:
-        ref = parts[0] if parts[2].casefold() == repo.casefold() else f"{parts[2]}:{parts[0]}"
-        return ref, parts[1]
-    return None
+    if len(parts) != 3:
+        return None
+    ref = parts[0] if parts[2].casefold() == repo.casefold() else f"{parts[2]}:{parts[0]}"
+    return ref, parts[1]
 
 
-def _arm_problem(number, repo: str, root: Path, profile: Profile) -> str | None:
-    """Arming auto-merge without a pin: the pull request's head is read back and
-    must be the session's ticket branch at its head."""
+def _arm_problem(number: object, repo: str, root: Path, profile: Profile) -> str | None:
+    """Arming auto-merge: the pull request's head is read back and must be the
+    session's ticket branch at its head."""
     branch, head, problem = _own_head(root, profile)
     if problem:
         return problem
     if isinstance(number, bool) or not re.fullmatch(r"\d+", str(number if number is not None else "")):
         return "can't tell which pull request this arms auto-merge on; name its number"
-    n = int(number)
+    n = int(str(number))
     got = _pr_head(repo, n)
     if got is None:
         return (
@@ -2521,34 +2527,67 @@ def _arm_problem(number, repo: str, root: Path, profile: Profile) -> str | None:
     return None
 
 
+def _merge_words(toks: list[str]) -> tuple[set[str], list[str], str | None]:
+    """`gh pr merge`'s flags, its `--match-head-commit` values, and a word the
+    shell fills in (other than a text option's value), read as pflag reads them."""
+    flags: set[str] = set()
+    pins: list[str] = []
+    unread = None
+    i = 1
+    while i < len(toks):
+        t = toks[i]
+        i += 1
+        if _literal_heredoc(t):
+            continue
+        name, val = None, None
+        if t.startswith("--") and len(t) > 2:
+            name, eq, v = t.partition("=")
+            flags.add(name)
+            if name in _MERGE_VALUES:
+                val = v if eq else (toks[i] if i < len(toks) else "")
+                i += 0 if eq else 1
+        elif t.startswith("-") and len(t) > 1 and t != "--":
+            for k, ch in enumerate(t[1:]):
+                flags.add("-" + ch)
+                if "-" + ch in _MERGE_VALUES:
+                    name, rest = "-" + ch, t[2 + k:]
+                    val = rest.removeprefix("=") if rest else (toks[i] if i < len(toks) else "")
+                    i += 0 if rest else 1
+                    break
+        if name == "--match-head-commit":
+            pins.append(val or "")
+        elif name in _MERGE_TEXTS:
+            continue
+        if unread is None and re.search(r"[$`]", t if val is None or name == "--match-head-commit" else t + " " + val):
+            unread = t if val is None else f"{t} {val}"
+    return flags, [p for p in pins if p], unread
+
+
 def _ticket_merge_problem(toks: list[str], profile: Profile, root: Path) -> str | None:
     """A ticket session's `gh pr merge` or REST merge/arm (toks start at the gh word)."""
     group, sub = _gh_group(toks)
     if group == "pr" and sub == "merge":
-        if "--disable-auto" in toks:
-            return None
-        pins: list[str] = []
-        for j, t in enumerate(toks):
-            if t == "--match-head-commit":
-                v = toks[j + 1] if j + 1 < len(toks) else ""
-                if v and not v.startswith("-"):
-                    pins.append(v)
-            elif t.startswith("--match-head-commit="):
-                pins.append(t.split("=", 1)[1])
-        pins = [p for p in pins if p]
-        return _pin_problem("auto-merge" if "--auto" in toks else "merge", pins, root, profile)
+        flags, pins, unread = _merge_words(toks)
+        if "--disable-auto" in flags and not flags - {"--disable-auto", "-R", "--repo"}:
+            return None  # a disarm, nothing else
+        what = "arm of auto-merge" if "--auto" in flags else "merge"
+        if unread and not pins:
+            return f"write this {what} out: `{unread}` is filled in by the shell, so the guard can't tell what it does"
+        p = _pin_problem(what, pins, root, profile)
+        if p or not unread:
+            return p
+        return f"write this {what} out: `{unread}` is filled in by the shell, so the guard can't tell what it does"
     call = _api(toks)
     if not call or call.method in ("GET", "DELETE"):
         return None
     m = re.fullmatch(r"repos/([^/]+/[^/]+)/pulls/(\d+)/(merge|ccr/auto_merge)", call.path, re.I)
     if not m:
         return None
-    if m.group(3) == "merge":
-        pins = [v for v in (_field(call, "sha"),) if v]
+    if m.group(3).lower() == "merge":
+        if call.files or call.stdin:
+            return "the guard reads a merge's pin only from its `-f sha=<sha>` field: send the merge without an `--input` body or `@file` fields"
+        pins = [f.split("=", 1)[1] for f in call.fields if f.split("=", 1)[0] == "sha"]
         return _pin_problem("merge", pins, root, profile)
-    pins = [v for k in _REST_PINS if (v := _field(call, k))]
-    if pins:
-        return _pin_problem("auto-merge", pins, root, profile)
     repo = profile.repo if m.group(1) == "{owner}/{repo}" else m.group(1)
     return _arm_problem(m.group(2), repo, root, profile)
 
@@ -2556,12 +2595,18 @@ def _ticket_merge_problem(toks: list[str], profile: Profile, root: Path) -> str 
 def _ticket_mcp_merge_problem(name: str, inp: dict, profile: Profile, root: Path) -> str | None:
     if name not in ("merge_pull_request", "enable_pr_auto_merge"):
         return None
-    pins = [str(inp[k]) for k in _MCP_PINS if inp.get(k) not in (None, "")]
-    if name == "merge_pull_request" or pins:
-        return _pin_problem("merge" if name == "merge_pull_request" else "auto-merge", pins, root, profile)
     owner, rname = inp.get("owner"), inp.get("repo")
-    repo = f"{owner}/{rname}" if isinstance(owner, str) and isinstance(rname, str) and owner and rname else profile.repo
-    return _arm_problem(inp.get("pullNumber"), repo, root, profile)
+    repo = f"{owner}/{rname}" if owner or rname else profile.repo
+    if repo.casefold() != profile.repo.casefold():
+        return f"ticket sessions work only in {profile.repo}; `{name}` names `{repo}`"
+    if name == "enable_pr_auto_merge":
+        return _arm_problem(inp.get("pullNumber"), profile.repo, root, profile)
+    # `expectedHeadSha` is the pin the tool sends; a `sha` given as well must match too.
+    pin = inp.get("expectedHeadSha")
+    pins = [str(pin)] if pin not in (None, "") else []
+    if pins and inp.get("sha") not in (None, ""):
+        pins.append(str(inp["sha"]))
+    return _pin_problem("merge", pins, root, profile)
 
 
 # ---------- deploys ----------
@@ -5229,7 +5274,7 @@ def check_bash(
                 return _deny(role, p)
             p = _ticket_merge_problem(toks, profile, root) if role == "ticket" else None
             if p:
-                return Decision("deny", p)
+                return _deny(role, p)
         p = _api_problem(seg.words, profile, role, seg.cwd, command, read) if seg.words and Path(seg.words[0]).name == "curl" else None
         if p:
             return _deny(role, p)
