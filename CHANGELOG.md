@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**`merge-check --fetch` works in a cloud session** (#165, a follow-up to #81 found by #85).
+
+- **Review threads:** when GraphQL is refused (a Claude Code cloud session's proxy refuses it), `--fetch` reads the session route `pulls/<n>/ccr/review_threads`, every page, and gives it to `merge-check` in GraphQL's shape. That route is a bare list with no count, so it counts as whole only when every review comment of the pull request (`pulls/<n>/comments`, every page, as many as the PR's `review_comments`) sits in one of its threads; otherwise the threads stay "couldn't read".
+- **Permissions:** when the session's proxy refuses `collaborators/<login>/permission` ("not permitted through this proxy"), the token's own login (`gh api user`) gets the token's own permission on the repository (`repos/<repo>`'s `permissions`). Anyone else counts as without write access, since nothing the session can read shows theirs (`author_association` doesn't). A reviewer whose change request still stands, as `merge-check` reads the reviews, isn't dropped that way: permissions then stay "couldn't read", naming them.
+- GraphQL and the collaborator route are still tried first, a file given still wins, and any other failure (GitHub's own 403s included) is "couldn't read" as before. The `merge-check` skill says so. Tests: `tests/test_merge_check_cloud.py`.
+- **Fixed:** reviewers in a `--reviews` file in GraphQL's shape now have their permissions fetched too. Before, they were left out, so their change request counted as from someone without write access.
+- **For projects updating:** nothing to do.
+
 **A run's size in one choice: Light, Normal or Thorough** (#119, part of a session budget and a light review, #42).
 
 - **The presets** bundle the levers the kit controls: sessions at once, sessions in all, retries per ticket, review rounds and the UI explorer. Light is 1, 10, 0, one round and no explorer; Normal is the profile's own numbers (40 sessions in all); Thorough is 3, 60, 1, at least 3 rounds (more when the profile has more) and the explorer where the project has one. The end time is always asked; the check-in interval stays the profile's.
