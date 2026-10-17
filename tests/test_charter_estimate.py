@@ -151,6 +151,11 @@ def test_past_runs_never_give_less_than_one_session_a_ticket_and_say_minutes(tmp
     assert est["sessions"] == 4
     assert est["hours"] == 1  # 2 waves of half an hour, rounded to the hour
     assert est["basis"] == "from your last 2 runs: about 1 session and 30 minutes a ticket"
+    # Just under an hour is said as an hour, not "60 minutes".
+    almost = {"1": _ticket(minutes=59) | {"merged_at": "2026-10-16T10:59:59Z"}}
+    runs = _runs(tmp_path, [_issue(140, almost), _issue(141, almost)])
+    est, _ = _estimate(env, _charter(tmp_path, env), "--tickets", "4", "--runs", runs)
+    assert est["basis"].endswith("and 1 hour a ticket")
 
 
 def test_at_most_five_runs_the_most_recent_and_none_that_merged_nothing(tmp_path, env):
@@ -269,7 +274,6 @@ def test_text_and_json_agree(tmp_path, env):
 def test_a_malformed_past_body_is_skipped_with_a_note(tmp_path, env):
     good = [_issue(140, RUN_A), _issue(150, RUN_B)]
     bad = [
-        _issue(141, body="# Run\n\nno state here"),
         _issue(142, body="<!-- workflow-state:begin -->\n```json\n{not json\n```\n<!-- workflow-state:end -->"),
         _issue(143, body=_raw({"1": {"status": "merged", "attempts": "two"}})),
         _issue(144, body=_raw({"1": {"status": "lost"}})),
@@ -280,9 +284,26 @@ def test_a_malformed_past_body_is_skipped_with_a_note(tmp_path, env):
     ]
     est, err = _estimate(env, _charter(tmp_path, env), "--tickets", "7", "--runs", _runs(tmp_path, good + bad))
     assert est["runs_used"] == 2 and est["sessions"] == 11
-    for n in (141, 142, 143, 144, 145, 146, 147):
+    for n in (142, 143, 144, 146, 147):
         assert f"#{n} skipped" in err
-    assert len(est["notes"]) == 7  # #148's labels aren't names: not a run issue
+    # #145's empty body has no run state, like an abandoned kick-off; #148's labels aren't names.
+    assert len(est["notes"]) == 5
+    assert "state init" not in err  # the repair advice is for the run in progress
+
+
+def test_an_abandoned_kick_off_is_not_a_run_and_not_a_fault(tmp_path, env):
+    abandoned = _issue(141, body="# Run: 2026-10-01-x\n\nThe run never started.")
+    runs = _runs(tmp_path, [_issue(140, RUN_A), abandoned, _issue(150, RUN_B)])
+    est, err = _estimate(env, _charter(tmp_path, env), "--tickets", "7", "--runs", runs)
+    assert est["runs_used"] == 2 and err == "" and est["notes"] == []
+
+
+@pytest.mark.parametrize("shape", ["mcp", "search", "slurp"])
+def test_wrapped_and_paged_lists_of_runs(tmp_path, env, shape):
+    issues = [_issue(140, RUN_A), _issue(150, RUN_B)]
+    data = {"mcp": {"issues": issues, "pageInfo": {}, "totalCount": 2}, "search": {"total_count": 2, "items": issues}, "slurp": [issues[:1], issues[1:]]}[shape]
+    est, _ = _estimate(env, _charter(tmp_path, env), "--tickets", "7", "--runs", _runs(tmp_path, data))
+    assert est["runs_used"] == 2
     # Not even a list of issues: a clean error, not a crash.
     p = _cli("charter", "estimate", _charter(tmp_path, env), "--tickets", "7", "--runs", _runs(tmp_path, "nope"), env=env)
     assert p.returncode == 1 and "Traceback" not in p.stderr
@@ -327,8 +348,11 @@ def test_bad_inputs_are_clean_errors(tmp_path, env):
     c["review"] = {"rounds": "3", "explorer": True}
     f = tmp_path / "odd.json"
     f.write_text(json.dumps(c))
-    est, err = _estimate(env, str(f), "--tickets", "2", "--security", "1")
-    assert est["warnings"] == [] and "review isn't well formed" in err
+    for review in ({"rounds": "3", "explorer": True}, {"rounds": 1}, "light", None, {"rounds": 0, "explorer": True}):
+        c["review"] = review
+        f.write_text(json.dumps(c))
+        est, err = _estimate(env, str(f), "--tickets", "2", "--security", "1")
+        assert est["warnings"] == [] and "isn't well formed" in err, review
 
 
 def test_never_money(tmp_path, env):
@@ -431,6 +455,8 @@ def test_the_conductor_keeps_the_estimate_for_amendments_and_resumes():
     assert "`estimate` (the contents of `estimate.json`)" in text
     amend = next(l for l in text.splitlines() if l.startswith("4. Reply to confirm what changed"))
     assert "run the estimate again" in amend and "the state's `estimate`" in amend
+    assert "`--now` the charter's `approved.at`" in amend
+    assert "sort=updated&per_page=30" in text
     assert "`estimate.json`, `runs.json`" in text
 
 

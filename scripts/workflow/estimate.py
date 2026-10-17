@@ -52,7 +52,7 @@ def _num(v: float) -> str:
 
 def _duration(h: float) -> str:
     """0.75 -> "45 minutes", 1.5 -> "1.5 hours"."""
-    if h < 1:
+    if round(h * 60) < 60:
         return presets_mod.plural(max(1, round(h * 60)), "minute", "minutes")
     return f"{_num(h)} {'hour' if _num(h) == '1' else 'hours'}"
 
@@ -79,9 +79,11 @@ def _run_of(issue: dict) -> tuple[dict | None, str | None]:
     try:
         s = state_mod.get(body or "")
     except state_mod.StateError as e:
-        return None, f"{who} skipped: its run state can't be read ({e})"
+        # Without the repair advice: that is for the run in progress, not a past one.
+        why = str(e).replace(f"; {state_mod.RECOVER}", "").replace(f": {state_mod.RECOVER}", "")
+        return None, f"{who} skipped: its run state can't be read ({why})"
     if s is None:
-        return None, f"{who} skipped: its body has no run state"
+        return None, None  # no run state: a kick-off abandoned before the go, never a run
     tickets = s.get("tickets") if isinstance(s, dict) else None
     if not isinstance(tickets, dict):
         return None, f"{who} skipped: its run state has no tickets"
@@ -107,7 +109,7 @@ def _run_of(issue: dict) -> tuple[dict | None, str | None]:
                 hours.append((mt - st).total_seconds() / 3600)
     if not merged:
         return None, None  # merged nothing: not counted, and nothing wrong with it
-    return {"number": n, "attempts": attempts, "started": started, "hours": hours}, None
+    return {"who": who, "attempts": attempts, "started": started, "hours": hours}, None
 
 
 def _closed_at(issue: dict) -> datetime:
@@ -125,7 +127,11 @@ def past_runs(issues: Any) -> tuple[list[dict], list[str]]:
     """The five most recent closed `workflow:run` issues with a merged ticket,
     newest first, and the notes on the ones skipped."""
     if isinstance(issues, dict):
-        issues = [issues]
+        # The GitHub MCP tools wrap a list ({"issues": […]}), as search does ({"items": […]}).
+        wrapped = [issues[k] for k in ("issues", "items") if isinstance(issues.get(k), list)]
+        issues = wrapped[0] if wrapped else [issues]
+    if isinstance(issues, list) and any(isinstance(x, list) for x in issues):
+        issues = [y for x in issues for y in (x if isinstance(x, list) else [x])]  # `gh api --paginate --slurp`'s pages
     if not isinstance(issues, list):
         raise EstimateError("the past runs must be a JSON list of issues, as the GitHub API returns them")
     candidates = [
@@ -161,10 +167,14 @@ def _limits(c: Any) -> dict:
 
 
 def _review(c: dict, profile: Any) -> dict | None:
-    """The run's review, or None when the charter's `review` isn't well formed
-    (an unvalidated charter): then nothing is said about it."""
-    rv = presets_mod.review_of(c, profile)
-    return rv if _int(rv.get("rounds")) and isinstance(rv.get("explorer"), bool) else None
+    """The run's review, or None when the charter's `review` or `preset` isn't
+    well formed (an unvalidated charter): then nothing is said about it."""
+    r = c.get("review")
+    if "review" in c and not (isinstance(r, dict) and _int(r.get("rounds")) and 1 <= r["rounds"] <= 10 and isinstance(r.get("explorer"), bool)):
+        return None
+    if "preset" in c and c["preset"] not in presets_mod.PRESETS:
+        return None
+    return presets_mod.review_of(c, profile)
 
 
 def _review_words(rv: dict) -> str:
@@ -203,7 +213,7 @@ def estimate(
         runs_used = len(runs)
     else:
         if len(runs) == 1:
-            notes.append(f"only 1 past run merged anything (#{runs[0]['number']}): the defaults until there are {MIN_RUNS}")
+            notes.append(f"only 1 past run merged anything ({runs[0]['who']}): the defaults until there are {MIN_RUNS}")
         per_ticket, hours_a_ticket = float(1 + retries), 1.0
         sessions = tickets * (1 + retries)
         basis = DEFAULT_BASIS
@@ -246,7 +256,7 @@ def estimate(
         warnings.append(f"{have} sessions in all covers {covers}; {wanted} needs {need}.")
     rv = _review(c, profile) if security else None
     if security and rv is None:
-        notes.append("the charter's review isn't well formed, so it wasn't compared with the project's default")
+        notes.append("the charter's review or preset isn't well formed, so the review wasn't compared with the project's default")
     if rv is not None:
         usual = presets_mod.numbers("normal", profile)["review"]
         if rv["rounds"] < usual["rounds"] or (presets_mod.runs_explorer(usual) and not presets_mod.runs_explorer(rv)):
