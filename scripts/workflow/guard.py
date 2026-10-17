@@ -473,10 +473,11 @@ def _brace_list(text: str) -> bool:
     return b >= 0 and text.find("}", b) >= 0
 
 
-def _unbacktick(body: str) -> str:
+def _unbacktick(body: str, in_dquotes: bool = False) -> str:
     """A backtick substitution's text as the shell then runs it: inside backticks
-    `\\$`, `\\\\` and `\\`` lose their backslash first."""
-    return re.sub(r"\\([$`\\])", r"\1", body)
+    `\\$`, `\\\\` and `\\`` lose their backslash first, and `\\"` too
+    when the backticks are inside double quotes."""
+    return re.sub(r'\\([$`\\"])' if in_dquotes else r"\\([$`\\])", r"\1", body)
 
 
 @dataclass
@@ -597,10 +598,10 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
         hoist(toks)
         return j + 1
 
-    def backtick(start: int) -> int:
+    def backtick(start: int, in_dquotes: bool = False) -> int:
         j = _backtick_end(s, start)
         word.append(s[start : j + 1])
-        hoist(_lex(_unbacktick(s[start + 1 : j]))[0])
+        hoist(_lex(_unbacktick(s[start + 1 : j], in_dquotes))[0])
         return j + 1
 
     def read_heredocs(pos: int) -> int:
@@ -688,7 +689,7 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
                     i = substitution(i, i + 2)
                     continue
                 if ch == "`":
-                    i = backtick(i)
+                    i = backtick(i, in_dquotes=True)
                     continue
                 if ch == "$" and re.match(r"\$(?:@|\{!|\{[^}]*\[@\])", s[i : i + 256]):
                     unquoted.append("\0")  # "$@", "${A[@]}", "${!p@}": several words, quoted or not
@@ -1086,13 +1087,14 @@ def _segments_of(toks: list, root: Path, cwd: str | None, depth: int) -> list[Se
     return segs
 
 
-def _reread(text: str, root: Path, cwd: str | None, depth: int) -> list[Seg]:
+def _reread(text: str, root: Path, cwd: str | None, depth: int, words: list[str] | None = None) -> list[Seg]:
     """The commands in text another shell runs. When the outer shell may have
-    expanded it first (a `$`, a backtick or a backslash in it), the quoting the
-    lexer sees isn't the one that runs: the words lose their marks (`Word`),
-    so what reads them falls back to their text."""
+    expanded it first (a `$`, a backtick or a backslash in it, or one of the
+    outer `words` it came from expands: a brace list or glob can open a quote),
+    the quoting the lexer sees isn't the one that runs: the words lose their
+    marks (`Word`), so what reads them falls back to their text."""
     segs = segments(text, root, cwd, depth + 1)
-    if re.search(r"[$`\\]", text):
+    if re.search(r"[$`\\]", text) or any(getattr(w, "splits", True) for w in words or []):
         for sg in segs:
             sg.words = [str(w) for w in sg.words]
     return segs
@@ -1105,15 +1107,15 @@ def _nested(seg: Seg, root: Path, depth: int) -> list[Seg]:
     out: list[Seg] = []
     name = Path(toks[0]).name
     if re.search(r"\s", toks[0]):  # a whole command as one word (`watch 'git push'`)
-        out += _reread(toks[0], root, seg.cwd, depth)
+        out += _reread(toks[0], root, seg.cwd, depth, toks[:1])
     if name in _DASH_C:
         inner = _shell_c(toks)
         if inner is not None:
-            out += _reread(inner, root, seg.cwd, depth)
+            out += _reread(inner, root, seg.cwd, depth, toks)
     if name in _SHELLS and seg.heredoc and _shell_reads_stdin(toks):
         out += _reread(seg.heredoc, root, seg.cwd, depth)
     if name == "eval" and len(toks) > 1:
-        out += _reread(" ".join(toks[1:]), root, seg.cwd, depth)
+        out += _reread(" ".join(toks[1:]), root, seg.cwd, depth, toks[1:])
     if _INTERP.match(name):
         for lit in re.findall(r"""['"]([^'"]*\b(?:git|gh)\b[^'"]*)['"]""", _inline_code(toks)):
             out += _reread(lit, root, seg.cwd, depth)

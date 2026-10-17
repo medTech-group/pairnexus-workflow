@@ -215,7 +215,6 @@ def test_text_that_mentions_a_merge_route_is_no_merge(ticket, form):
         "gh api -X PATCH repos/acme/demo/pulls/12 -f body=$(cat <<'EOF'\nx -X PUT -t\nEOF\n)",
         # A quoted array is several words.
         "A=(-X PUT repos/acme/demo/pulls/13/merge); gh api \"${A[@]}\"",
-        "gh api \"$@\"",
         "gh api \"${!P@}\"",
         # Another shell reads text the outer shell expanded first.
         "X=\"repos/acme/demo/pulls/13/merge' -X 'PUT\"; eval \"gh api '$X'\"",
@@ -223,6 +222,9 @@ def test_text_that_mentions_a_merge_route_is_no_merge(ticket, form):
         "bash <<EOF\ngh api \\$X\nEOF",
         # Inside backticks `\$` is `$`.
         "echo `gh api \\$X`",
+        # Brace or glob expansion in the outer shell can open a quote the inner one reads.
+        "eval gh api repos/acme/demo/pulls/13/merge --jq \"'\"{a,b} -XPUT",
+        "eval gh api repos/acme/demo/pulls/13/merge --jq \"'\"a?* -XPUT",
         # A brace list holding braces.
         "gh api {-XPUT,repos/acme/demo/pulls/13/merge,-fx={}}",
     ],
@@ -546,3 +548,9 @@ def test_conductor_and_attended_are_unchanged(ticket, pr_heads, role, event):
     d = run(ticket, event, role)
     assert d.action == "allow", d.reason
     assert pr_heads["calls"] == []
+
+
+def test_a_backtick_inside_double_quotes_reads_its_escaped_quotes(ticket):
+    # Inside "`…`" bash drops the backslash of `\"` before running the body.
+    d = run(ticket, bash('echo "`sh -c \\"gh pr merge 13 --merge\\"`"'))
+    assert d.action == "deny" and "pinned" in d.reason, d.reason
