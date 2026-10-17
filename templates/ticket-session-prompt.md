@@ -26,7 +26,7 @@ Follow the `build-ticket` skill from start to finish. First, with the Write tool
 {{commands.suites}}
 
 - **Tests first** at the spec's seams. They are already agreed, so never stop to ask about them.
-- **Review:** the `review-panel` skill, in rounds until clean, at most {{run.review_rounds}}.
+- **Review:** the `review-panel` skill, in rounds until clean, at most {{run.review_rounds}}. UI explorer: {{ui.explorer}} (the run's choice: with `none`, no explorer, whatever the profile's `ui.explorer` says).
 - **Check-ins:** while CI runs, subscribe to the PR's activity and schedule a check-in with `send_later` about every {{run.check_in_minutes}} minutes. End that turn with `WORKFLOW-STATUS: waiting`.
 
 ### Merging

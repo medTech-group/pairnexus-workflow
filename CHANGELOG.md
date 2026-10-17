@@ -10,7 +10,14 @@
 - **The one page** (`charter markdown`, `charter splice`) says the size and the review: "**Normal**, changed: 3 sessions at once", and "no UI explorer (the project has none)" where so. `charter reuse` keeps `preset` and `review`; `charter diff` shows changes to both.
 - **The profile:** `run.preset`, `normal` when absent; anything else fails `profile check`. It is only the charter's recommended answer: attended builds never read it.
 - The numbers live in one place, `scripts/workflow/presets.py`. Docs: `docs/charter.md` §2 and §5, `docs/profile.md`. Tests: `tests/test_charter_presets.py`.
-- **For projects updating:** nothing to do. A charter written before this, with no `preset` or `review`, stays valid and reads as Normal (the profile's review rounds and UI explorer), so a run in progress keeps working. Ticket sessions still take their rounds and explorer from the profile until #120.
+- **For projects updating:** nothing to do. A charter written before this, with no `preset` or `review`, stays valid and reads as Normal (the profile's review rounds and UI explorer), so a run in progress keeps working. Ticket sessions take their rounds and explorer from the charter (#120, below).
+
+**Ticket sessions take review rounds and the UI explorer from the approved charter** (#120, part of a session budget and a light review, #42).
+
+- **The briefing** (`workflow render`) now reads the review from the charter, through `presets.review_of`: the charter's `review`, else its preset's numbers, else the profile's `run.review_rounds` and `ui.explorer` for a charter written before presets. Its review line names the explorer too: "UI explorer: browser", or `none` when `review.explorer` is false.
+- **Rounds of 1** brief as "at most 1 (the light review)", the phrase the review panel's and build-ticket's light-review rule keys on, so a Light run's sessions take the light review.
+- Docs: `docs/charter.md` §1 and §4. Tests: `tests/test_briefing_review.py`.
+- **For projects updating:** nothing to do. A charter with no `preset` or `review` briefs exactly the profile's rounds and explorer, as before; the briefing gains the explorer on its review line.
 
 **The light review, offered second: "Build it with a light review", and "Review it now" as a light review** (#122, part of a session budget and a light review, #42).
 

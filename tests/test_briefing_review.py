@@ -1,0 +1,107 @@
+"""The ticket session's briefing takes its review rounds and UI explorer from
+the approved charter (#120), rendered through the CLI as
+`tests/test_charter_state_render.py` renders it (#42's seam 2)."""
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from workflow import charter
+
+KIT = Path(__file__).resolve().parents[1]
+CLI = KIT / "scripts/workflow.py"
+TEMPLATE = KIT / "templates/ticket-session-prompt.md"
+SLOTS = {"alongside": "none", "read_first": "none", "owner_decisions": "none", "briefing": "none", "wake_trigger": "trig_01abc"}
+
+
+def _project(tmp_path, explorer="browser", rounds=4):
+    (tmp_path / ".claude/workflow").mkdir(parents=True)
+    (tmp_path / ".claude/workflow/profile.toml").write_text(
+        f'[project]\nname = "demo"\nrepo = "acme/demo"\nowner = "owner-login"\n\n'
+        f'[run]\nreview_rounds = {rounds}\n\n[ui]\nexplorer = "{explorer}"\n'
+    )
+    (tmp_path / "ticket.json").write_text(json.dumps({"number": 7, "title": "Readings tab"}))
+    (tmp_path / "slots.json").write_text(json.dumps(SLOTS))
+
+
+def _cli(tmp_path, *args):
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)}
+    return subprocess.run([sys.executable, str(CLI), *args], capture_output=True, text=True, cwd=tmp_path, env=env)
+
+
+def _brief(tmp_path, c):
+    (tmp_path / "charter.json").write_text(json.dumps(c))
+    p = _cli(
+        tmp_path, "render", "--template", str(TEMPLATE), "--ticket", "ticket.json", "--charter", "charter.json",
+        "--slots", "slots.json", "--tracking", "11", "--out", "briefing.md",
+    )
+    assert p.returncode == 0, p.stderr
+    v = _cli(tmp_path, "briefing", "verify", "--file", "briefing.md")
+    assert v.returncode == 0 and v.stdout.endswith(" intact\n"), v.stdout
+    return (tmp_path / "briefing.md").read_text()
+
+
+def _charter(**review):
+    c = charter.defaults()
+    c["limits"]["ends_at"] = "2099-10-13T03:30:00Z"
+    c["approved"] = {"by": "owner", "at": "2026-10-12T11:55:00Z", "source": "chat"}
+    if review:
+        c["review"] = review
+    return c
+
+
+def _review_line(text):
+    return next(l for l in text.splitlines() if l.startswith("- **Review:**"))
+
+
+def test_rounds_and_explorer_come_from_the_charter(tmp_path):
+    _project(tmp_path)
+    line = _review_line(_brief(tmp_path, _charter(rounds=2, explorer=True)))
+    assert "at most 2." in line and "UI explorer: browser" in line
+
+
+def test_explorer_off_briefs_none(tmp_path):
+    _project(tmp_path)
+    line = _review_line(_brief(tmp_path, _charter(rounds=5, explorer=False)))
+    assert "at most 5." in line and "UI explorer: none" in line and "browser" not in line
+
+
+def test_older_charter_takes_the_profiles(tmp_path):
+    _project(tmp_path)
+    c = _charter()
+    del c["preset"], c["review"]
+    line = _review_line(_brief(tmp_path, c))
+    assert "at most 4." in line and "UI explorer: browser" in line
+
+
+def test_older_charter_without_a_profile_explorer(tmp_path):
+    _project(tmp_path, explorer="none", rounds=3)
+    c = _charter()
+    del c["preset"], c["review"]
+    line = _review_line(_brief(tmp_path, c))
+    assert "at most 3." in line and "UI explorer: none" in line
+
+
+def test_preset_without_review_takes_the_presets(tmp_path):
+    _project(tmp_path, rounds=2)
+    c = _charter()
+    c["preset"] = "thorough"
+    del c["review"]
+    line = _review_line(_brief(tmp_path, c))
+    assert "at most 3." in line and "UI explorer: browser" in line
+
+
+@pytest.mark.parametrize("with_review", [True, False])
+def test_light_charter_briefs_one_round(tmp_path, with_review):
+    """#121's skills key on "when the briefing's review rounds are 1"."""
+    _project(tmp_path)
+    c = _charter(rounds=1, explorer=False)
+    c["preset"] = "light"
+    if not with_review:
+        del c["review"]
+    line = _review_line(_brief(tmp_path, c))
+    assert "at most 1 (the light review)." in line and "UI explorer: none" in line
