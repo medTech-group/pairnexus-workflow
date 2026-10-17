@@ -236,9 +236,9 @@ def test_put_cant_drop_removed_protection_either(tmp_path):
         sf.write_text(json.dumps(s))
         p = _cli("state", "put", "--body", str(b), "--state", str(sf), env=env)
         assert p.returncode == 1 and "can't be dropped" in p.stderr and "new run" in p.stderr
-        assert b.read_text() == before
+        assert p.stdout == ""
     s = state.get(before)
     del s["charter"]
     sf.write_text(json.dumps(s))
     p = _cli("state", "put", "--body", str(b), "--state", str(sf), env=env)
-    assert p.returncode == 1 and "can't be dropped" in p.stderr
+    assert p.returncode == 1 and "can't be dropped" in p.stderr and p.stdout == ""
