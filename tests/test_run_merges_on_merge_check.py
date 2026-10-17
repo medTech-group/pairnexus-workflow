@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 from workflow import charter
+from changelog_notes import since_0110
 
 KIT = Path(__file__).resolve().parents[1]
 CLI = KIT / "scripts/workflow.py"
@@ -242,5 +243,5 @@ def test_charter_doc_names_the_command():
 
 def test_changelog_notes_under_unreleased():
     text = _read(CHANGELOG)
-    unreleased = _section(text, "## Unreleased", "\n## 0.")
+    unreleased = since_0110(text)
     assert "merge-check" in unreleased and "#85" in unreleased

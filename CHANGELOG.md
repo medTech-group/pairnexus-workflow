@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.1.11
+
+**Solo mode, a guard that fails closed, `workflow merge-check`, light reviews and presets, and the preview reader.** Everything built by the unattended runs 2026-10-16-weekend (#130) and 2026-10-17-followup (#174): the build tickets of specs #32, #33, #35, #37 to #39, #41 and #42 that could start, and the infra fixes they found. Each change's own note is below.
+
+- **For projects updating to 0.1.11:**
+  - a profile with `run.review_rounds = 1` now gets the light review shape in a run (see #121 below);
+  - the update adds `.github/pull_request_template.md`, or the "In plain words" headings at the top of yours (see #83);
+  - the update writes the new hook matcher and hook commands into `.claude/settings.json` (see #55 and #56);
+  - the update asks the project's experience default once if the profile has none (see #49);
+  - a run under way keeps its vendored skills until the update (see #85);
+  - nothing else: every other change below needs nothing from an updating project.
+
 **`workflow preview`: a pull request's try-it link and its state, from one command** (#113, part of #41).
 
 - **`workflow preview --comments F --checks F --sha SHA`**, or **`--fetch <PR>`** to read the same three through `gh api` (REST routes only, every page; a file given wins), answers `state` (`built`, `building`, `failed` or `none`), `url` and `commit`, in plain words or with `--json`. The JSON is what `workflow merge-check --preview F` takes. It changes nothing and posts nothing; a missing input exits 2 naming it, one it can't read exits 1 saying why.

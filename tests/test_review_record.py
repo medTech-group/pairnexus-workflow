@@ -6,6 +6,7 @@ import pytest
 
 from conftest import KIT
 from workflow import cli, reviews
+from changelog_notes import since_0110
 
 SHA = "3f2a9c0b7de14a2c9e8f5d6b1a0c3e2f4d5b6a7c"
 OTHER = "0123456789abcdef0123456789abcdef01234567"
@@ -417,5 +418,5 @@ def test_the_flow_says_each_round_and_pass_posts_its_record():
 
 def test_the_changelog_notes_it_under_unreleased():
     text = _text("CHANGELOG.md")
-    unreleased = text.split("## Unreleased", 1)[1].split("\n## ", 1)[0]
+    unreleased = since_0110(text)
     assert "#79" in unreleased and "review-record" in unreleased

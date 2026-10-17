@@ -3,6 +3,7 @@ a Claude Code update that breaks the guard or a hook (#97)."""
 
 import re
 from pathlib import Path
+from changelog_notes import since_0110
 
 KIT = Path(__file__).resolve().parents[1]
 
@@ -97,7 +98,7 @@ def test_security_keeps_its_5_working_day_acknowledgement():
 
 
 def test_changelog_notes_are_under_unreleased():
-    unreleased = _section(_text("CHANGELOG.md"), "## Unreleased")
+    unreleased = since_0110(_text("CHANGELOG.md"))
     assert "#97" in unreleased
     assert "claude-code-break.md" in unreleased
 

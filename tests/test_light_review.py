@@ -4,6 +4,7 @@ kit-release tests read skills (#42's seam 4)."""
 import re
 
 from conftest import KIT
+from changelog_notes import since_0110
 
 
 def _read(rel: str) -> str:
@@ -125,7 +126,7 @@ def test_the_done_checklists_are_unchanged():
 
 def test_changelog_notes_under_unreleased_and_no_version_bump():
     log = _read("CHANGELOG.md")
-    unreleased = log.split("## Unreleased", 1)[1].split("\n## ", 1)[0]
+    unreleased = since_0110(log)
     assert "#121" in unreleased and "light review" in unreleased.lower()
     # Updating projects with one review round are told what changes.
     assert "a profile with `run.review_rounds = 1` now gets the light shape" in unreleased
