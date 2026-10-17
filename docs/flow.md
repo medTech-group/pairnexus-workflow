@@ -62,7 +62,7 @@ A pull request merges only when all of these hold on its current head:
 1. **Every required check is green** (`ci.required_checks`). A check the run's charter waives counts only if its log shows it was **killed, not failed** (the profile's `ci.killed_markers`: exit 143, runner shutdown, cancelled, never started). A real test failure always blocks. Waivers need `merge.mode: session`, since GitHub's auto-merge can't tell killed from failed. `workflow merge-check` applies them from `--charter` and `--check-logs`, never in an attended session.
 2. **The full suite passed locally on that exact commit**, posted on the PR by `workflow evidence --base-ref origin/<base>`: the command, SHA, counts, duration, and no fewer tests than the base branch. Required when a check is waived or the profile says `ci.none`; recommended always. `workflow merge-check` then reads the report's first line for the head, from an account with write access. When the base branch's own suite doesn't pass, the report says the count wasn't compared; the PR may still merge, and the conductor opens an infra ticket for the base.
 3. **The branch is level with the base branch.** Whoever merges second merges the base in and runs everything again.
-4. **The reviews are clean**, and any commit after the last round had its Correctness pass.
+4. **The reviews are clean**, and any commit after the last round had its Correctness pass. A round that wasn't clean needs another round, unless it was the last allowed one (§3 step 3): then a clean Correctness pass on the head lifts its findings, and no further round is added.
 
 This section is the merge rule's one source; skills and briefings point here rather than restate it.
 
