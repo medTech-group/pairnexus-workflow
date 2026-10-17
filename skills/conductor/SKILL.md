@@ -68,7 +68,7 @@ Collect every problem for the kick-off, each with its fix.
 - The base branch's CI is green. Note its duration as `ci_minutes_at_start`.
 
 **Capacity**
-- You can't read the account's usage directly. If this session, or a session you started, has reported a usage warning, say so in the kick-off. Each ticket session runs the review panel for up to `run.review_rounds` rounds, so a run's usage grows with `max_sessions`.
+- You can't read the account's usage directly. If this session, or a session you started, has reported a usage warning, say so in the kick-off. Each ticket session runs the review panel for up to the charter's review rounds (the profile's `run.review_rounds` for a charter without them), so a run's usage grows with `max_sessions`.
 
 **The last run**
 - The most recent issue labelled `workflow:run`.

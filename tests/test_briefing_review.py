@@ -105,3 +105,25 @@ def test_light_charter_briefs_one_round(tmp_path, with_review):
         del c["review"]
     line = _review_line(_brief(tmp_path, c))
     assert "at most 1 (the light review)." in line and "UI explorer: none" in line
+
+
+def test_light_review_runs_no_explorer_even_when_the_charter_says_so(tmp_path):
+    """The light review runs no explorer (`review-panel` §6), so one round briefs `none`."""
+    _project(tmp_path)
+    line = _review_line(_brief(tmp_path, _charter(rounds=1, explorer=True)))
+    assert "at most 1 (the light review)." in line and "UI explorer: none" in line
+
+
+def test_explorer_on_without_a_profile_explorer_briefs_none(tmp_path):
+    _project(tmp_path, explorer="none")
+    line = _review_line(_brief(tmp_path, _charter(rounds=2, explorer=True)))
+    assert "at most 2." in line and "UI explorer: none" in line
+
+
+def test_the_skills_take_the_briefings_rounds_and_explorer():
+    """A ticket session follows these: they must not send it back to the profile."""
+    for path in ("skills/review-panel/SKILL.md", "skills/build-ticket/SKILL.md", "docs/flow.md"):
+        text = (KIT / path).read_text()
+        assert "at most the briefing's review rounds in a ticket session, else the profile's `run.review_rounds`" in text, path
+        assert "at most the profile's `run.review_rounds`" not in text, path
+    assert "the briefing's UI explorer in a ticket session, else the profile's `ui.explorer`" in (KIT / "skills/review-panel/SKILL.md").read_text()

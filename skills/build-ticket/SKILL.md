@@ -54,7 +54,7 @@ Skip this if the briefing says the conductor has claimed it. Otherwise, before a
 ## 3. Review it
 
 Follow the `review-panel` skill on the diff against the base branch:
-- rounds until one comes back clean, at most the profile's `run.review_rounds`;
+- rounds until one comes back clean, at most the briefing's review rounds in a ticket session, else the profile's `run.review_rounds`;
 - verify each finding, then fix it with a test or answer it with a reason;
 - rerun the typecheck and the affected tests after each round;
 - after the last round, any further commit gets a short Correctness pass.

@@ -15,8 +15,9 @@
 **Ticket sessions take review rounds and the UI explorer from the approved charter** (#120, part of a session budget and a light review, #42).
 
 - **The briefing** (`workflow render`) now reads the review from the charter, through `presets.review_of`: the charter's `review`, else its preset's numbers, else the profile's `run.review_rounds` and `ui.explorer` for a charter written before presets. Its review line names the explorer too: "UI explorer: browser", or `none` when `review.explorer` is false.
-- **Rounds of 1** brief as "at most 1 (the light review)", the phrase the review panel's and build-ticket's light-review rule keys on, so a Light run's sessions take the light review.
-- Docs: `docs/charter.md` §1 and §4. Tests: `tests/test_briefing_review.py`.
+- **Rounds of 1** brief as "at most 1 (the light review)" and the explorer as `none`, so the light-review rule (the briefing's review rounds at 1) applies without a line that contradicts it.
+- **The skills say so:** `review-panel` and `build-ticket` take the rounds and explorer from the briefing in a ticket session, else from the profile; `docs/flow.md` §3 and the conductor's capacity line too.
+- Docs: `docs/charter.md` §1 and §4, `docs/flow.md` §3. Tests: `tests/test_briefing_review.py`.
 - **For projects updating:** nothing to do. A charter with no `preset` or `review` briefs exactly the profile's rounds and explorer, as before; the briefing gains the explorer on its review line.
 
 **The light review, offered second: "Build it with a light review", and "Review it now" as a light review** (#122, part of a session budget and a light review, #42).

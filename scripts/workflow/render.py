@@ -112,7 +112,7 @@ def _bullets(items: list[str]) -> str:
     return "\n".join(f"- {x}" for x in items) if items else "- none"
 
 
-def _rounds(n) -> str:
+def _rounds(n: int) -> str:
     """The review's rounds; 1 is the light review (`review-panel` §6)."""
     return "1 (the light review)" if n == 1 else str(n)
 
@@ -120,6 +120,8 @@ def _rounds(n) -> str:
 def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking: int, by_hand: int | None) -> dict:
     merge = charter.get("merge") or {}
     review = presets_mod.review_of(charter, profile)
+    # One round is the light review, which runs no explorer (`review-panel` §6).
+    explorer = review["explorer"] is True and review["rounds"] != 1
     waived = merge.get("waived_checks") or []
     v = {
         "ticket.number": str(ticket["number"]),
@@ -142,7 +144,7 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
         "commands.typecheck": _per_package(profile, "typecheck", _code),
         "commands.test_file": _per_package(profile, "test_file", _test_file),
         "commands.suites": _bullets([_suite_line(s) for s in profile.suites]),
-        "ui.explorer": profile.explorer if review["explorer"] else "none",
+        "ui.explorer": profile.explorer if explorer else "none",
     }
     for k in REQUIRED_SLOTS:
         v[k] = slots.get(k, "")
