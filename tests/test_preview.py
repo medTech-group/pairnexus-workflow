@@ -748,3 +748,8 @@ def test_a_bare_url_inside_html_tags_is_read(tmp_path, capsys):
 def test_a_url_inside_a_tag_isnt_the_link(tmp_path, capsys, cell):
     out, code, err = preview(tmp_path, capsys, [bot(row(links=cell))], checks(cf_run()))
     assert code == 1 and "Preview URL cell" in err
+
+
+def test_a_markdown_autolink_is_read(tmp_path, capsys):
+    got, _, _ = preview(tmp_path, capsys, [bot(row(links=f"<{BRANCH_URL}>"))], checks(cf_run()))
+    assert got == answer("built", BRANCH_URL)

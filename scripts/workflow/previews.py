@@ -198,7 +198,8 @@ def _link(cell: str) -> str | None:
     "Preview URL" beside a commit's or deployment's), else its only link."""
     links = [(text, url) for text, url in _MD_LINK.findall(cell)] + [(text, url) for url, text in _HTML_LINK.findall(cell)]
     if not links and "](" not in cell and "<a" not in cell.lower():  # a link it couldn't parse isn't guessed at
-        plain = re.sub(r"<[^>]+>", " ", cell)  # a URL inside a tag (an image's src) isn't the link
+        plain = re.sub(r"<(https?://[^\s<>]+)>", r" \1 ", cell)  # an autolink <https://…> is a link
+        plain = re.sub(r"<[^>]+>", " ", plain)  # a URL inside a tag (an image's src) isn't
         bare = _BARE.findall(plain)
         rest = _BARE.sub(" ", plain)
         if rest.strip(" -—–") or any(u[-1] in ".,;:!?" for u in bare):
