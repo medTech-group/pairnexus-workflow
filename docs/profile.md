@@ -113,12 +113,13 @@ An unknown key is an error, so a typo can't quietly turn previews off. In a prof
 | `max_parallel` | Ticket sessions at once (1–16) | `2` |
 | `max_retries` | Retries per ticket before `needs-human` (0–5) | `1` |
 | `review_rounds` | Review panel rounds at most (1–10) | `3` |
+| `preset` | A run's size, `light`, `normal` or `thorough` (`charter.md` §2): only the charter's recommended answer; Normal is the numbers above. Attended builds never read it. Anything else fails `profile check` | `normal` |
 | `ticket_environment` | The claude.ai environment ticket sessions run in, by name: no credentials, `WORKFLOW_ROLE=ticket` | empty (a warning) |
 | `conductor_environment` | The conductor's environment, by name: `WORKFLOW_ROLE=conductor` | empty (a warning) |
 | `environment_setup` | The environments' setup script: machine tools the cloud image lacks only, never reading the repository. Usually empty | empty |
 | `permission_mode` | Ticket sessions' mode: one that never prompts. `auto`; `bypassPermissions` in a sandbox; `dontAsk` or `acceptEdits` only with allow rules (`acceptEdits` still asks before shell commands). No more permissive than the conductor session's | `auto` |
 
-The run's limits default from here; each run's charter can change them (`charter.md`).
+The run's limits and review default from here, through `preset`; each run's charter can change them (`charter.md`).
 
 ## Environment variables
 

@@ -9,6 +9,8 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import presets as presets_mod
+
 PROFILE_PATH = Path(".claude/workflow/profile.toml")
 
 EXPLORERS = {"browser", "api", "cli", "none"}
@@ -61,6 +63,7 @@ ALLOWED: dict[str, set[str] | None] = {
         "conductor_environment",
         "environment_setup",
         "permission_mode",
+        "preset",
     },
 }
 PREVIEW_PROVIDERS = ("cloudflare",)
@@ -191,6 +194,8 @@ class Profile:
     conductor_environment: str = ""
     environment_setup: str = ""
     permission_mode: str = "auto"
+    # The run charter's recommended preset (presets.py); attended builds never read it.
+    preset: str = "normal"
 
 
 def project_root(start: Path | None = None) -> Path:
@@ -325,7 +330,7 @@ def parse(data: dict, root: Path) -> Profile:
     ci = data.get("ci") or {}
     ui = data.get("ui") or {}
     explorer = ui.get("explorer", "none")
-    if explorer not in EXPLORERS:
+    if not isinstance(explorer, str) or explorer not in EXPLORERS:
         raise ProfileError(f"ui.explorer must be one of {sorted(EXPLORERS)}")
     guard = data.get("guard") or {}
     sens = data.get("sensitive") or {}
@@ -353,6 +358,11 @@ def parse(data: dict, root: Path) -> Profile:
     pmode = str(run.get("permission_mode") or "auto")
     if pmode not in PERMISSION_MODES:
         raise ProfileError(f"run.permission_mode must be one of {sorted(PERMISSION_MODES)} (a mode that prompts would stall an unattended session)")
+    preset = run.get("preset", presets_mod.DEFAULT)
+    if not (isinstance(preset, str) and preset in presets_mod.PRESETS):
+        names = ", ".join(presets_mod.PRESETS[:-1]) + f" or {presets_mod.PRESETS[-1]}"
+        shown = repr(preset) if len(repr(preset)) <= 40 else repr(preset)[:39] + "…"
+        raise ProfileError(f"run.preset must be {names}, not {shown}; leave it out for {presets_mod.DEFAULT}")
     guided = proj.get("guided_start", True)
     if not isinstance(guided, bool):
         raise ProfileError("project.guided_start must be true or false")
@@ -414,6 +424,7 @@ def parse(data: dict, root: Path) -> Profile:
         conductor_environment=str(run.get("conductor_environment") or ""),
         environment_setup=str(run.get("environment_setup") or ""),
         permission_mode=pmode,
+        preset=preset,
     )
 
 
@@ -630,5 +641,6 @@ def summary(profile: Profile) -> dict:
         "ticket_environment": profile.ticket_environment or None,
         "conductor_environment": profile.conductor_environment or None,
         "permission_mode": profile.permission_mode,
+        "preset": profile.preset,
         "previews": {"provider": profile.previews.provider, "on": profile.previews.on, "access": profile.previews.access},
     }

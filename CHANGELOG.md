@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+**A run's size in one choice: Light, Normal or Thorough** (#119, part of a session budget and a light review, #42).
+
+- **The presets** bundle the levers the kit controls: sessions at once, sessions in all, retries per ticket, review rounds and the UI explorer. Light is 1, 10, 0, one round and no explorer; Normal is the profile's own numbers (40 sessions in all); Thorough is 3, 60, 1, at least 3 rounds (more when the profile has more) and the explorer where the project has one. The end time is always asked; the check-in interval stays the profile's.
+- **The charter** gains `preset` (`light`, `normal` or `thorough`) and a `review` section (`rounds` 1–10, `explorer` true or false; unknown keys refused). The check against the profile refuses `review.explorer = true` when `ui.explorer` is `none`.
+- **`charter questions`** offers the presets first under the limits question (`options`, the profile's `run.preset` first and `recommended`, each preset's numbers in `presets`); **`charter defaults`** starts from `run.preset`. Solo mode's merge rule (#50) stands beside them.
+- **The one page** (`charter markdown`, `charter splice`) says the size and the review: "**Normal**, changed: 3 sessions at once", and "no UI explorer (the project has none)" where so. `charter reuse` keeps `preset` and `review`; `charter diff` shows changes to both.
+- **The profile:** `run.preset`, `normal` when absent; anything else fails `profile check`. It is only the charter's recommended answer: attended builds never read it.
+- The numbers live in one place, `scripts/workflow/presets.py`. Docs: `docs/charter.md` §2 and §5, `docs/profile.md`. Tests: `tests/test_charter_presets.py`.
+- **For projects updating:** nothing to do. A charter written before this, with no `preset` or `review`, stays valid and reads as Normal (the profile's review rounds and UI explorer), so a run in progress keeps working. Ticket sessions still take their rounds and explorer from the profile until #120.
+
 **The light review, offered second: "Build it with a light review", and "Review it now" as a light review** (#122, part of a session budget and a light review, #42).
 
 - **`next` and the guided start** offer "Build it with a light review" wherever they offer to build a ticket, as the second choice after the full build: never first, never "(Recommended)", never chosen for the person. `next` asks before claiming, only in an attended session, and not when the person already said how ("build #12", "build #12 with a light review", "quick build #12"); a ticket session asks nothing.

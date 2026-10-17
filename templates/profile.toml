@@ -166,6 +166,9 @@ check_in_minutes = 20
 max_parallel = 2
 max_retries = 1
 review_rounds = 3
+# A run's size, the charter's recommended answer: light, normal (the numbers
+# above) or thorough (docs/charter.md). Attended builds never read it.
+preset = "normal"
 # The claude.ai environments, by name (docs/enforcement.md section 2).
 ticket_environment = ""                 # no credentials; WORKFLOW_ROLE=ticket
 conductor_environment = ""              # WORKFLOW_ROLE=conductor; release credentials only if wanted
