@@ -16,6 +16,7 @@
     workflow comments --file F [--owner LOGIN] [--since-id N]
     workflow merge-check --pr F --files F --commits F --checks F --rulesets F --threads F --reviews F --comments F --permissions F --compare F [--preview F] [--asker LOGIN] [--review-rounds N] [--json]
     workflow merge-check --fetch N [any of the files above] [--charter F --check-logs DIR] [--asker LOGIN] [--review-rounds N] [--json]
+    workflow preview --comments F --checks F --sha SHA [--json] | --fetch N [any of those] [--json]
     workflow briefing verify --file F
     workflow pr-template [--existing FILE]      (prints the file to write; exits 3 for a folder of templates)
     workflow adopt --owner LOGIN --repo OWNER/NAME --name NAME [--project DIR]      (a copy of the starter made yours)
@@ -55,6 +56,7 @@ from . import guard as guard_mod
 from . import issues as issues_mod
 from . import merge as merge_mod
 from . import posts as posts_mod
+from . import previews as previews_mod
 from . import pr_template as pr_template_mod
 from . import protection as protection_mod
 from . import render as render_mod
@@ -631,14 +633,13 @@ def _review_rounds(v: str) -> int:
     return int(v)
 
 
-def cmd_merge_check(a) -> int:
-    """Whether the pull request may merge (flow §4), from the files given, and
-    with --fetch the rest through `gh api`. Changes nothing, posts nothing, and
-    exits 0 whatever it finds: anything it can't read is a reason of its own,
-    never "ready"."""
+def _json_inputs(a, names, raw=()) -> dict:
+    """Each of `names` given as a file (or - for standard input, once): its
+    JSON, several values in a row read as a list, `(value, None)`; or
+    `(None, why)` when it can't be read. The `raw` names keep their text."""
     inputs: dict = {}
     stdin_for = None
-    for name in [*merge_mod.INPUTS, "charter"]:
+    for name in names:
         path = getattr(a, name, None)
         if path is None:
             continue
@@ -651,7 +652,7 @@ def cmd_merge_check(a) -> int:
             if path == "-" and sys.stdin is None:
                 raise ValueError("standard input (-) is closed")
             text = _read(path).removeprefix("\ufeff")
-            if name == "charter":  # JSON, or the tracking issue's body: merge.charter_from reads it
+            if name in raw:
                 inputs[name] = (text, None)
                 continue
             values = posts_mod.decode_values(text)
@@ -664,6 +665,15 @@ def cmd_merge_check(a) -> int:
             inputs[name] = (None, f"{path} isn't UTF-8 text")
         except ValueError as e:  # a closed standard input
             inputs[name] = (None, str(e) if path == "-" else f"can't read {path}")
+    return inputs
+
+
+def cmd_merge_check(a) -> int:
+    """Whether the pull request may merge (flow §4), from the files given, and
+    with --fetch the rest through `gh api`. Changes nothing, posts nothing, and
+    exits 0 whatever it finds: anything it can't read is a reason of its own,
+    never "ready"."""
+    inputs = _json_inputs(a, [*merge_mod.INPUTS, "charter"], raw=("charter",))  # the charter: JSON, or the tracking issue's body, as merge.charter_from reads it
     prof, profile_error = None, None
     try:
         prof = load()  # its protected paths and required checks are rules: none found is a reason
@@ -696,6 +706,60 @@ def cmd_merge_check(a) -> int:
     level = resolve_experience(root, prof.experience if prof else None).wording_level
     res = merge_mod.evaluate(inputs, prof, profile_error, asker=a.asker, level=level, charter_input=charter, logs=logs, role=role, review_rounds=a.review_rounds)
     _out(res.as_dict() if a.json else merge_mod.text(res))
+    return 0
+
+
+def _sha(v: str) -> str:
+    if not previews_mod.is_sha(v):
+        raise argparse.ArgumentTypeError(f"'{reviews_mod._shown(v, 50)}' isn't a commit's SHA (7 to 40 hex characters): give the pull request's head commit")
+    return v.lower()
+
+
+def cmd_preview(a) -> int:
+    """`preview`: whether the pull request's try-it link is ready for its head
+    commit (#41's reader), from the files given, and with --fetch the rest
+    through `gh api`. Changes nothing, posts nothing. Exits 0 with an answer,
+    1 when an input can't be read, 2 when one is missing."""
+    inputs = _json_inputs(a, ("comments", "checks"))
+    if a.sha is not None:
+        inputs["sha"] = (a.sha, None)
+    give = "give --comments F (the pull request's issue comments), --checks F (its head commit's check runs), as JSON from the GitHub API, and --sha SHA (its head commit)"
+
+    def unread() -> bool:
+        said = [(n, why) for n, (_, why) in inputs.items() if why is not None]
+        for n, why in said:
+            print(f"workflow preview: couldn't read --{n}: {why}", file=sys.stderr)
+        return bool(said)
+
+    if unread():  # before asking gh for the rest
+        return 1
+    missing = [n for n in fetch_mod.PREVIEW_INPUTS if n not in inputs]
+    if a.fetch is not None and missing:
+        try:
+            prof = load(required=False)
+        except ProfileError as e:
+            prof, why = None, f"the profile can't be read ({e})"
+        except (OSError, UnicodeDecodeError) as e:
+            prof, why = None, f"{PROFILE_PATH} can't be read ({getattr(e, 'strerror', None) or e})"
+        else:
+            why = f"there's no profile ({PROFILE_PATH})"
+        if prof is None:
+            print(f"workflow preview: --fetch needs the profile's project.repo, and {why}: {give}", file=sys.stderr)
+            return 2
+        inputs.update(fetch_mod.preview_inputs(prof.repo, a.fetch, inputs))
+        if unread():
+            return 1
+        missing = []
+    if missing:
+        print(f"workflow preview: missing {', '.join('--' + n for n in missing)}: {give}, or --fetch <PR> to read them with gh", file=sys.stderr)
+        return 2
+    sha = inputs["sha"][0]
+    try:
+        got = previews_mod.read(inputs["comments"][0], inputs["checks"][0], sha)
+    except previews_mod.PreviewError as e:
+        print(f"workflow preview: couldn't read --{e.name}: {e}", file=sys.stderr)
+        return 1
+    _out(got.as_dict() if a.json else previews_mod.text(got, sha))
     return 0
 
 
@@ -1236,6 +1300,16 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--review-rounds", metavar="N", type=_review_rounds, help="the review rounds allowed, 1 to 10 (default: the profile's run.review_rounds): after the last one, a clean Correctness pass on the head lifts its findings; a run passes the briefing's")
     s.add_argument("--json", action="store_true", help="the decision, its reasons and notes, and each check's name and state, as JSON")
     s.set_defaults(fn=cmd_merge_check)
+
+    s = sub.add_parser(
+        "preview", allow_abbrev=False, help="whether a pull request's try-it link is ready for its head commit: state, url and commit, from JSON files or --fetch; changes nothing, posts nothing"
+    )
+    s.add_argument("--comments", metavar="F", help="the pull request's issue comments, as JSON from the GitHub API or the MCP tools, every page; a file, or - for standard input")
+    s.add_argument("--checks", metavar="F", help="the head commit's check runs, as JSON from the GitHub API (GET repos/<repo>/commits/<sha>/check-runs), every page; a file, or -")
+    s.add_argument("--sha", metavar="SHA", type=_sha, help="the pull request's head commit")
+    s.add_argument("--fetch", metavar="N", type=_pr_number, help="read every input not given for pull request N, through `gh api` (the profile's project.repo); a file given wins")
+    s.add_argument("--json", action="store_true", help="state, url and commit as JSON: what `workflow merge-check --preview` takes")
+    s.set_defaults(fn=cmd_preview)
 
     s = sub.add_parser("briefing", help="check a ticket session's copy of its briefing against its `Briefing <hash>` line")
     s.add_argument("action", choices=["verify"])
