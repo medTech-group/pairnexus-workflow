@@ -118,7 +118,7 @@ def validate(s: Any) -> list[str]:
     est = s.get("estimate")
     if est is not None and not (isinstance(est, dict) and isinstance(est.get("line"), str) and isinstance(est.get("basis"), str)):
         p.append("estimate must be `workflow charter estimate --json`'s output or null")
-    if "status" in s and s["status"] not in RUN_STATUSES:
+    if "status" in s and not (isinstance(s["status"], str) and s["status"] in RUN_STATUSES):
         p.append(f"status must be one of {sorted(RUN_STATUSES)}")
     for i, e in enumerate(s.get("ledger") or []):
         if not isinstance(e, dict) or not e.get("what") or not e.get("at") or not e.get("grant"):

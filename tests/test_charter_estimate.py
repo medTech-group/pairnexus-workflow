@@ -435,6 +435,18 @@ def test_splice_carries_the_estimate_and_a_bad_one_is_refused(tmp_path, env):
     assert "  - a" not in page and "**Estimate:**" in page
 
 
+def test_a_status_that_isnt_text_is_a_problem_not_a_crash():
+    assert state.validate({"version": 1, "tickets": {"1": {"status": ["merged"]}}})
+    assert state.validate({"version": 1, "tickets": {}, "status": ["stopping"]})
+
+
+def test_runs_nested_too_deep_are_a_clean_error(tmp_path, env):
+    f = tmp_path / "deep.json"
+    f.write_text("[" * 900 + "]" * 900)
+    p = _cli("charter", "estimate", _charter(tmp_path, env), "--tickets", "2", "--runs", str(f), env=env)
+    assert "Traceback" not in p.stderr
+
+
 def test_the_run_state_keeps_the_estimate():
     s = {"version": 1, "tickets": {}, "estimate": {"line": "About 4 ticket sessions", "basis": "assuming about an hour a session"}}
     assert state.validate(s) == []

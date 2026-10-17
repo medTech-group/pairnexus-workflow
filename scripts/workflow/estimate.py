@@ -71,8 +71,7 @@ def _labels(issue: dict) -> set[str]:
 
 def _run_of(issue: dict) -> tuple[dict | None, str | None]:
     """A past run's figures from its tracking issue, or a note saying why it was skipped."""
-    n = issue.get("number")
-    who = f"#{n}" if _int(n) else "a run issue"
+    who = f"#{issue['number']}"  # past_runs passes only issues with a number
     body = issue.get("body")
     if body is not None and not isinstance(body, str):
         return None, f"{who} skipped: its body isn't text"
@@ -149,10 +148,12 @@ def past_runs(issues: Any) -> tuple[list[dict], list[str]]:
         and _closed(x)
         and ("labels" not in x or RUN_LABEL in _labels(x))
     ]
-    candidates.sort(key=lambda x: (_closed_at(x), x.get("number") if _int(x.get("number")) else 0), reverse=True)
+    candidates.sort(key=lambda x: (_closed_at(x), x["number"]), reverse=True)
     runs: list[dict] = []
     notes: list[str] = [
-        f"an entry that isn't an issue was skipped ({x['message']})" if isinstance(x, dict) and isinstance(x.get("message"), str) else "an entry that isn't an issue was skipped"
+        f"an entry that isn't an issue was skipped ({' '.join(x['message'].split())[:200]})"
+        if isinstance(x, dict) and isinstance(x.get("message"), str)
+        else "an entry that isn't an issue was skipped"
         for x in issues
         if not (isinstance(x, dict) and _int(x.get("number")))
     ]

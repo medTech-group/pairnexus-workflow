@@ -475,7 +475,7 @@ def _charter_estimate(a) -> int:
                 raise ValueError("--now must be an ISO time with its zone, e.g. 2026-10-13T03:30:00Z")
         security = sorted(issues_mod.parse_numbers(a.security))
         est = estimate_mod.estimate(c, _plan_size(a.tickets, c), _json(a.runs) if a.runs else None, security, _page_profile(), now)
-    except (ValueError, OSError) as e:  # an EstimateError, a bad --tickets, a file missing or not JSON
+    except (ValueError, OSError, RecursionError) as e:  # an EstimateError, a bad --tickets, a file missing, not JSON or nested too deep
         print(f"workflow charter estimate: {e}", file=sys.stderr)
         return 1
     for n in est["notes"]:
