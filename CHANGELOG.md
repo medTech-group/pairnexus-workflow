@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+**The light review: "build #12 with a light review"** (#121, part of a session budget and a light review, #42).
+
+- **Asked for** as "build #12 with a light review", or "quick build #12" ("light review" is the name; "quick build" is only understood, and isn't the guided start's "quick ticket"). It is never chosen for the person, in attended or unattended work.
+- **The shape** (`review-panel` §6): round 1 runs the full panel (Standards, Spec, Correctness, and the security review where it applies) without the UI explorer; if it isn't clean, the fixes get Correctness-only rounds until one is clean, at most 2 more. Each posts its review record unchanged: round 1 as `--kind round` without `explorer`, each Correctness-only round as `--kind round --reviewers correctness`. Anything still open goes to the owner in the PR body.
+- **In a run,** when the briefing's review rounds are 1, ticket sessions use the same shape: one round means one full-panel round.
+- **The PR body** (`build-ticket`) says "Light review: one round, no UI explorer", adding "plus N Correctness rounds for the fixes" when there were some, above the findings table.
+- **The merge rule is unchanged:** CI green, the review record, and the owner's review of kit and CI files all stand. `review-panel`'s findings table is now §7.
+- Docs: `docs/flow.md` §3. Tests: `tests/test_light_review.py`.
+- **For projects updating:** a profile with `run.review_rounds = 1` now gets the light shape in a run: round 1 without the UI explorer, then up to 2 Correctness-only rounds for its fixes. To keep the explorer in a run's ticket sessions, set `run.review_rounds` to 2 or more.
+
 **The `merge-check` skill: "is #12 ready to merge?", and "Merge it now"** (#84, part of judging a PR without reading code, #39).
 
 - **Asked** "is #12 ready to merge?", "can I merge this?" or "is my change ready?", Claude gathers the pull request's details (`workflow merge-check --fetch` where `gh api` works, else the GitHub MCP tools into files outside the checkout), with the asker's login, runs `workflow merge-check --json`, and answers in the chat, worded for the person's experience, the most important reason first. It posts nothing on GitHub.

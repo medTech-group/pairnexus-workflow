@@ -51,6 +51,8 @@ Follow the `build-ticket` skill, one ticket at a time. When the person typed `im
 4. **Pull request** to the base branch: "In plain words" first (what changes for you, how to try it, what could go wrong), then `Closes #<n>`, what was built, how it was tested, the findings table, the decisions taken.
 5. **Green and merge** under the merge rule (below), or leave it for the owner in attended work.
 
+**A light review,** asked for as "build #12 with a light review" (or "quick build #12"), and used when the briefing's review rounds are 1: one full-panel round without the explorer, then Correctness-only rounds for its fixes, at most 2 more, each posting its record (`review-panel`, "The light review"). It is never chosen for the person, and the merge rule stands unchanged.
+
 **Checklist:** blockers closed and spec read; each acceptance criterion met with its test; typecheck and full suite pass; review rounds until clean; every finding fixed or answered; PR opened with the findings table; merged under the rule (or left for the owner); notes for the next tickets posted.
 
 ## 4. The merge rule
