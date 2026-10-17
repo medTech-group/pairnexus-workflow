@@ -424,3 +424,32 @@ def test_the_limits_questions_default_is_normals():
     q = next(q for q in charter.QUESTIONS if q["key"] == "limits")
     want = presets.numbers("normal")["limits"]
     assert {k: q["default"][k] for k in want} == want
+
+
+def test_without_a_profile_thorough_claims_no_changed_rounds(tmp_path):
+    env = _profile(tmp_path, 'preset = "thorough"\nreview_rounds = 5\n')
+    c = _defaults(env)
+    assert c["review"]["rounds"] == 5
+    p = _cli("charter", "markdown", _file(tmp_path, c), env={"CLAUDE_PROJECT_DIR": str(tmp_path / "none")})
+    assert "**Size:** **Thorough**." in p.stdout
+    c["limits"]["max_parallel"] = 4
+    p = _cli("charter", "markdown", _file(tmp_path, c), env={"CLAUDE_PROJECT_DIR": str(tmp_path / "none")})
+    assert "**Size:** **Thorough**, changed: 4 sessions at once." in p.stdout
+
+
+@pytest.mark.parametrize("broken", [b'[ui]\nexplorer = ["browser"]\n', b'[ui]\nnotes = "\xff"\n'])
+def test_markdown_renders_with_a_profile_that_fails_to_load_oddly(tmp_path, broken):
+    env = _profile(tmp_path)
+    c = _defaults(env)
+    (tmp_path / ".claude/workflow/profile.toml").write_bytes(b'[project]\nname="d"\nrepo="a/d"\n' + broken)
+    p = _cli("charter", "markdown", _file(tmp_path, c), env=env)
+    assert p.returncode == 0, p.stderr
+    assert "**Size:** **Normal**" in p.stdout
+
+
+def test_review_error_says_what_absent_means(tmp_path):
+    env = _profile(tmp_path)
+    c = _defaults(env)
+    c["review"] = []
+    p = _validate(tmp_path, env, c)
+    assert "or absent (its preset's review; with no preset, the profile's)" in p.stderr

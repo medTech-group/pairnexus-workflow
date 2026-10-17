@@ -14,6 +14,7 @@ always off.
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
 PRESETS = ("light", "normal", "thorough")
@@ -30,7 +31,7 @@ def _run(profile: Any, key: str) -> int:
         return v
     from .profile import Profile  # here, not at the top: profile.py imports this module
 
-    return Profile.__dataclass_fields__[key].default
+    return next(f.default for f in dataclasses.fields(Profile) if f.name == key)
 
 
 def has_explorer(profile: Any) -> bool:
@@ -65,7 +66,7 @@ def plural(v: int, one: str, many: str) -> str:
     return f"{v} {one if v == 1 else many}"
 
 
-def _explorer_words(on: bool, profile: Any) -> str:
+def _explorer_phrase(on: bool, profile: Any) -> str:
     if on:
         return "UI explorer on"
     return NO_EXPLORER if profile is not None and not has_explorer(profile) else "UI explorer off"
@@ -78,7 +79,7 @@ def words(name: str, profile: Any = None) -> str:
     return (
         f"{plural(lim['max_parallel'], 'session', 'sessions')} at once, {lim['max_sessions']} in all, "
         f"{plural(lim['max_retries'], 'retry', 'retries')} per ticket; "
-        f"up to {plural(rev['rounds'], 'review round', 'review rounds')}; {_explorer_words(rev['explorer'], profile)}"
+        f"up to {plural(rev['rounds'], 'review round', 'review rounds')}; {_explorer_phrase(rev['explorer'], profile)}"
     )
 
 
@@ -108,8 +109,8 @@ def review_of(c: dict, profile: Any = None) -> dict:
 def changes(c: dict, profile: Any = None) -> list[str]:
     """What the charter changed from its preset's numbers, in words ("3
     sessions at once"); empty when it matches, or has no preset. Without a
-    profile, only what doesn't depend on it: nothing for Normal, and not the
-    explorer."""
+    profile, only what doesn't depend on it: nothing for Normal, not
+    Thorough's rounds, and not the explorer."""
     if not isinstance(c, dict) or c.get("preset") not in PRESETS:
         return []
     if profile is None and c["preset"] == "normal":
@@ -126,7 +127,8 @@ def changes(c: dict, profile: Any = None) -> list[str]:
             out.append(plural(lim[key], one, many))
     rev = c.get("review")
     if isinstance(rev, dict):
-        if "rounds" in rev and rev["rounds"] != want["review"]["rounds"]:
+        known = profile is not None or c["preset"] != "thorough"
+        if known and "rounds" in rev and rev["rounds"] != want["review"]["rounds"]:
             out.append(plural(rev["rounds"], "review round", "review rounds"))
         if profile is not None and "explorer" in rev and rev["explorer"] != want["review"]["explorer"]:
             out.append(f"the UI explorer {'on' if rev['explorer'] else 'off'}")
@@ -135,4 +137,4 @@ def changes(c: dict, profile: Any = None) -> list[str]:
 
 def explorer_words(c: dict, profile: Any = None) -> str:
     """The review's explorer for the one page: on, off, or the project has none."""
-    return _explorer_words(bool(review_of(c, profile)["explorer"]), profile)
+    return _explorer_phrase(bool(review_of(c, profile)["explorer"]), profile)

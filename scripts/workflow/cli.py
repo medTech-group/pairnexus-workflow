@@ -447,7 +447,7 @@ def _page_profile():
     read: a broken profile never stops the page from rendering."""
     try:
         return load(required=False)
-    except ProfileError:
+    except (ProfileError, OSError, ValueError, TypeError):
         return None
 
 

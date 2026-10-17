@@ -413,7 +413,7 @@ def validate(c: Any, require_approval: bool = False, now: datetime | None = None
     if "review" in c:
         rv = c["review"]
         if not isinstance(rv, dict):
-            p.append("review must be an object with rounds and explorer, or absent (the profile's review)")
+            p.append("review must be an object with rounds and explorer, or absent (its preset's review; with no preset, the profile's)")
         else:
             if not _pos_int(rv.get("rounds"), 1, 10):
                 p.append("review.rounds must be a whole number from 1 to 10")
@@ -554,7 +554,7 @@ def _size_lines(c: dict, profile: Any) -> list[str]:
     else:
         size = "Normal (no preset in the charter)"
     rv = presets_mod.review_of(c, profile)
-    rounds = f"{rv['rounds']} round" + ("" if rv["rounds"] == 1 else "s")
+    rounds = presets_mod.plural(rv["rounds"], "round", "rounds")
     return [
         f"- **Size:** {size}.",
         f"- **Review:** up to {rounds} per ticket; {presets_mod.explorer_words(c, profile)}.",
