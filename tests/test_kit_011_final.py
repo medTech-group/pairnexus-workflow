@@ -9,6 +9,7 @@ import time
 
 import pytest
 
+from conftest import pinned
 from workflow import posts, render
 from workflow.guard import decide
 from workflow.issues import protected_named
@@ -171,7 +172,8 @@ def test_ticket_sessions_use_no_graphql(profile, tmp_path):
         d = act(profile, tmp_path, f"gh api graphql -f query='{q}'", role="ticket")
         assert d.action == "deny" and "enable_pr_auto_merge" in d.reason, q
     # The same calls through the MCP tools and REST stay open to them.
-    assert act(profile, tmp_path, "gh api -X PUT repos/acme/demo/pulls/3/merge -f merge_method=merge", role="ticket").action == "allow"
+    merge = pinned("gh api -X PUT repos/acme/demo/pulls/3/merge -f merge_method=merge -f sha={sha}", tmp_path)  # pinned (#87)
+    assert act(profile, tmp_path, merge, role="ticket").action == "allow"
 
 
 CONDUCTOR_HIDDEN = {
@@ -350,10 +352,11 @@ def test_ticket_gh_may_name_this_repository(profile, tmp_path):
         "gh pr list -R git@github.com:acme/demo.git",
         f"gh pr comment 3 --body 'see https://github.com/other/repo/issues/5 {M}'",
         "curl -d @github-payload.json https://hooks.example.com/x",
-        "gh pr merge https://github.com/acme/demo/pull/5 --merge",
+        "gh pr merge https://github.com/acme/demo/pull/5 --merge --match-head-commit {sha}",
     ],
 )
 def test_ticket_text_that_only_mentions_these_is_fine(cmd, profile, tmp_path):
+    cmd = pinned(cmd, tmp_path)  # a ticket session's merge is pinned to its branch's head (#87)
     d = act(profile, tmp_path, cmd, role="ticket")
     assert d.action == "allow", (cmd, d.reason)
 

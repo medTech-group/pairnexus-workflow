@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**A ticket session merges only its own pull request** (#87, found by #36).
+
+- **The guard** refuses a ticket session's merge unless it is pinned to the head commit of the session's checked-out ticket branch, in the field GitHub checks: `gh pr merge <n> --match-head-commit <sha>` (with `--auto` too), the REST merge's `-f sha=<sha>`, or `merge_pull_request`'s `expectedHeadSha`. The refusal names the fix: pin it to `git rev-parse HEAD`, and `git pull` first if the pull request's head was updated on GitHub. Every pin given must match. A REST merge with an `--input` body is refused, and so is a merge, or any ticket-session `gh api` call (a read included), with a word the shell expands into other words outside quotes (a variable, substitution, glob, brace list or leading tilde, or a quoted array) or fed by `xargs`: the guard's lexer now marks such words, so quoted text is fine. Before, any pull request could be merged once its required checks were green, another ticket's included, before its own review rounds.
+- **`enable_pr_auto_merge` and `PUT pulls/<n>/ccr/auto_merge`** take no pin GitHub is known to check, so the guard reads the pull request's head with `gh api` and allows the arm only when it is the session's ticket branch, in this repository, at its local head; when it can't be read, the arm is refused, naming the pinned `gh pr merge --auto` and the conductor. Ticket sessions may now use the `ccr/auto_merge` route, which cloud sessions need, since `gh pr merge --auto` goes through GraphQL there. Disarming needs no pin.
+- Conductor and attended sessions are unchanged. The merge steps in `build-ticket`, `merge-check` and `conductor` already pin to the head `merge-check` checked. `docs/enforcement.md` §4 says how a session's own pull request is told. Tests: `tests/test_guard_own_merge.py`.
+- **For projects updating:** nothing to do.
+
 **`merge-check`: a clean Correctness pass after the last allowed review round lifts that round's findings** (#170, decided for run 2026-10-16-weekend's open question; part of #39).
 
 - **`workflow merge-check`** follows flow §3 and §4.4: a review round that wasn't clean still answers `review_not_clean` (run another round) unless it was the last allowed one (its number at least the allowed rounds); then a later clean Correctness pass on the head lifts it, a not-clean one answers `pass_not_clean`, and with none it answers `review_not_clean` saying to fix the findings and run a Correctness pass on the head. No fourth round is ever asked for. Before, a last round with findings blocked for good, even after a clean pass on the head: #76's PR #177 had to be merged by hand.

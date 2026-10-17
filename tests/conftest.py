@@ -50,6 +50,19 @@ def git(cwd, *args):
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=True).stdout
 
 
+def ticket_checkout(root, branch="claude/build-1"):
+    """Make `root` a git checkout on a ticket branch with one commit, and return
+    its head: a ticket session's merge is pinned to it (#87)."""
+    git(root, "init", "-q", "-b", branch)
+    git(root, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "x")
+    return git(root, "rev-parse", "HEAD").strip()
+
+
+def pinned(cmd, root):
+    """`cmd` with `{sha}` filled in by a ticket checkout at `root`."""
+    return cmd.replace("{sha}", ticket_checkout(root)) if "{sha}" in cmd else cmd
+
+
 @pytest.fixture
 def repo(tmp_path):
     """A git repo with a profile, on a ticket branch."""
