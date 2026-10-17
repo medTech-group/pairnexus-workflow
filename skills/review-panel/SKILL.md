@@ -49,7 +49,7 @@ Give each reviewer the round number. From round 2, give each `previous.md`, so i
 1. Check each finding against the code. A reviewer can be wrong.
 2. Fix every real one, with a test for each bug.
 3. Record each that isn't a problem, with the reason.
-4. Run `git status`: it must show nothing a reviewer made. Discard anything stray and say so. If the guard refuses the discard (a protected file), finish in a clean copy, and say so in the PR body: `git worktree add --detach <a directory outside the repo> HEAD`, commit there, and push with `git push origin HEAD:<branch>`. Do everything after it there: later fixes, the tests, `commit.txt`, the diff and the next rounds.
+4. Run `git status`: it must show nothing a reviewer made. Discard anything stray and say so. If the guard refuses the discard (a protected file), finish in a clean copy, and say so in the PR body: `git worktree add --detach <a directory outside the repo> HEAD`, commit there, and push with `git push origin HEAD:<branch>`. Do everything after it there: later fixes, the tests, `commit.txt`, the diff and the next rounds. Give the reviewers the clean copy's absolute path as the repo, and the explorer as the session's checkout.
 5. Rerun the typecheck and the affected tests.
 6. Post the round's review record (section 4).
 
