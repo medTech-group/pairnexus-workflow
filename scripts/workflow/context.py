@@ -105,14 +105,21 @@ FLOW_HEAD = "This request is part of the project's workflow. Follow its flow ste
 FLOW_BUDGET = 8_500
 
 
+_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+
+
 def _sections(text: str) -> list[str]:
     """`text` cut before each `## ` heading outside a code block: the opening
-    (before the first heading), then one piece per section."""
-    out, cur, fenced = [], [], False
+    (before the first heading), then one piece per section. A block closes
+    only on a fence of its own kind, at least as long, with nothing after it."""
+    out, cur, fence = [], [], ""
     for line in text.splitlines(keepends=True):
-        if line.lstrip().startswith("```"):
-            fenced = not fenced
-        if line.startswith("## ") and not fenced and cur:
+        m = _FENCE.match(line.rstrip("\r\n"))
+        if m and not fence and not (m.group(1)[0] == "`" and "`" in m.group(2)):
+            fence = m.group(1)
+        elif m and fence and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) and not m.group(2).strip():
+            fence = ""
+        elif line.startswith("## ") and not fence and cur:
             out.append("".join(cur))
             cur = []
         cur.append(line)
@@ -123,32 +130,31 @@ def _sections(text: str) -> list[str]:
 
 def _name(section: str, file: Path) -> str:
     first = section.splitlines()[0].lstrip("#").strip()
+    if len(first) > 80:
+        first = first[:79].rstrip() + "…"
     return f'"{first}" ({file.name})'
 
 
 def first_flow(files: list[Path]) -> str:
     """The first flow context: a short, fixed instruction with the flow's paths,
-    then each section that fits under FLOW_BUDGET, whole and in order. Claude
-    Code saves a string over its limit to a file and shows Claude its first
-    2,000 characters, so the instruction comes first and the whole stays under
-    it: the sections left out are named, to be read from the file."""
+    then the flow's sections from its start, each whole, as far as they fit
+    under FLOW_BUDGET. Claude Code saves a string over its limit to a file and
+    shows Claude its first 2,000 characters, so the instruction comes first,
+    the whole stays under it, and the instruction names where the text below
+    stops. A file that can't be read leaves only the instruction."""
     names = ", ".join(str(f) for f in files)
-    pieces = [(f, s) for f in files for s in _sections(f.read_text(encoding="utf-8"))]
     head = f"{FLOW_HEAD} Read it now, all of it, before acting: {names}."
-    # The longest the instruction can get, every section named as left out.
-    room = FLOW_BUDGET - len(head) - len(" Left out below, to read there: .") - sum(len(_name(s, f)) + 2 for f, s in pieces)
-    given, left = [], []
-    for f, s in pieces:
-        if len(s) + 2 <= room:
-            given.append(s)
-            room -= len(s) + 2
-        else:
-            left.append(_name(s, f))
-    if left:
-        head += f" Left out below, to read there: {'; '.join(left)}."
-    else:
-        head += " All of it is below."
-    return "\n\n".join([head, *given])
+    try:
+        pieces = [(f, s) for f in files for s in _sections(f.read_text(encoding="utf-8"))]
+    except (OSError, UnicodeDecodeError):
+        return head
+    given: list[str] = []
+    for n, (f, s) in enumerate(pieces):
+        stop = f" Only its start fits below. It stops before {_name(s, f)}: read that section and everything after it there."
+        if len(head) + len(stop) + sum(len(g) + 2 for g in given) + len(s) + 2 > FLOW_BUDGET:
+            return "\n\n".join([head + stop, *given])
+        given.append(s)
+    return "\n\n".join([f"{FLOW_HEAD} All of it is below (from {names}).", *given])
 
 
 def context_for(prompt: str, session_id: str, files: list[Path]) -> str | None:
@@ -157,15 +163,16 @@ def context_for(prompt: str, session_id: str, files: list[Path]) -> str | None:
     marker = _marker("flow", session_id)
     names = ", ".join(str(f) for f in files)
     if marker.exists():
-        return f"Follow the workflow's flow ({names}) for this request, step by step, and end with its checklist. If all of it is no longer in your context, read it again first."
+        return f"Follow the workflow's flow ({names}) for this request, step by step, and end with its checklist. Unless all of it is still in your context, read it again first."
+    ctx = first_flow(files)  # read before the marker is set
     try:
         marker.touch()
     except OSError:
         pass
-    return first_flow(files)
+    return ctx
 
 
-def is_whole_flow(ctx: str | None) -> bool:
+def is_first_flow(ctx: str | None) -> bool:
     """Whether `context_for` gave the first flow context, not the one-line reminder."""
     return bool(ctx and ctx.startswith(FLOW_HEAD))
 
@@ -199,8 +206,8 @@ def first_glossary_prompt(session_id: str) -> bool:
 
 def with_glossary(ctx: str | None, path: Path | None) -> str | None:
     """`ctx` with the glossary and its rule beside it. The glossary goes in
-    whole when it all stays under Claude Code's limit; beside the whole flow,
-    or when it wouldn't fit, only the rule and its path with "read it now",
+    whole when it all stays under Claude Code's limit; beside the first flow
+    context, or when it wouldn't fit, only the rule and its path with "read it now",
     put first so it stays within the 2,000 characters Claude sees of a longer
     string. An empty or unreadable glossary adds nothing."""
     if path is None:
@@ -212,7 +219,7 @@ def with_glossary(ctx: str | None, path: Path | None) -> str | None:
     if not text:
         return ctx
     rule = GLOSSARY_RULE.format(where=path)
-    if not is_whole_flow(ctx):
+    if not is_first_flow(ctx):
         whole = f"{ctx}\n\n{rule}\n\n{text}" if ctx else f"{rule}\n\n{text}"
         if len(whole) < CONTEXT_LIMIT:
             return whole

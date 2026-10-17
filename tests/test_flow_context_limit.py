@@ -11,7 +11,7 @@ import pytest
 
 from conftest import KIT
 from test_hooks_cli import run_hook
-from workflow.context import CONTEXT_LIMIT as LIMIT
+from workflow.context import CONTEXT_LIMIT as LIMIT, FLOW_BUDGET
 
 FLOW = (KIT / "docs/flow.md").read_text(encoding="utf-8")
 SHOWN = 2_000  # what Claude sees of a string over the limit
@@ -41,9 +41,9 @@ def _add_addendum(repo, text):
     p.write_text(p.read_text().replace('repo = "acme/demo"', 'repo = "acme/demo"\nflow_addendum = "docs/our-flow.md"'))
 
 
-def test_the_kit_s_own_flow_is_longer_than_the_limit():
+def test_the_kit_s_own_flow_is_too_long_to_add_whole():
     # what makes this ticket real: if it ever fits, the tests below still hold
-    assert len(FLOW) > LIMIT - 4_000
+    assert len(FLOW) > FLOW_BUDGET
 
 
 @pytest.mark.parametrize("env", [{}, {"WORKFLOW_EXPERIENCE": "developer"}], ids=["with the glossary", "developer"])
@@ -52,8 +52,10 @@ def test_the_kit_s_flow_stays_under_the_limit(repo, env):
     assert ctx and len(ctx) < LIMIT
     shown = ctx[:SHOWN]
     # the instruction comes first, where Claude sees it whatever happens
-    assert "read" in shown.lower() and "all of it" in shown and str(KIT / "docs/flow.md") in shown
+    assert "read it now, all of it" in shown.lower() and str(KIT / "docs/flow.md") in shown
     assert "Follow the flow below" not in ctx  # never claims the whole flow is below when it isn't
+    if not env:
+        assert "the first time you use it in this session" in shown  # the glossary's rule, beside it
 
 
 def test_a_vendored_flow_stays_under_the_limit(repo):
@@ -62,25 +64,22 @@ def test_a_vendored_flow_stays_under_the_limit(repo):
     assert len(ctx) < LIMIT and str(repo / ".claude/workflow/flow.md") in ctx[:SHOWN]
 
 
-def test_sections_that_fit_come_whole_and_the_rest_are_named(repo):
+def test_the_start_comes_whole_and_where_it_stops_is_named(repo):
     ctx = _ctx(repo, "implement #5", env={"WORKFLOW_EXPERIENCE": "developer"})
+    instruction, body = ctx.split("\n\n", 1)
     sections = re.split(r"(?m)^(?=## )", FLOW)
-    given = [s for s in sections[1:] if s.strip() in ctx]
-    assert given, "at least one section fits"
-    for s in sections[1:]:
-        heading = s.splitlines()[0][3:].strip()
-        assert s.strip() in ctx or heading in ctx, f"{heading!r} neither given nor named"
-    # a section is given whole or not at all
-    for heading in _headings(ctx):
-        whole = next(s for s in sections if s.startswith(f"## {heading}\n"))
-        assert whole.strip() in ctx
+    given = [s for s in sections if s.strip() in body]
+    assert len(given) >= 2 and given == sections[: len(given)], "a run of whole sections from the start"
+    stop = sections[len(given)].splitlines()[0][3:].strip()
+    assert f'stops before "{stop}" (flow.md)' in instruction
+    assert body == "\n\n".join(s.strip() for s in given)
 
 
 def test_a_long_addendum_stays_under_the_limit(repo):
     _add_addendum(repo, "# Our flow\n\n## Our rules\n\n" + "Always ask the shop's owner first.\n" * 600)
     ctx = _ctx(repo, "build #12")
     assert len(ctx) < LIMIT
-    assert str(repo / "docs/our-flow.md") in ctx[:SHOWN] and "Our rules" in ctx
+    assert str(repo / "docs/our-flow.md") in ctx[:SHOWN]
     assert "Always ask the shop's owner first." not in ctx
 
 
@@ -88,20 +87,41 @@ def test_a_long_flow_and_a_long_addendum_under_the_limit(repo):
     (repo / ".claude/workflow/flow.md").write_text(FLOW + "\n\n## Padding\n\n" + "More words.\n" * 2_000)
     _add_addendum(repo, "# Our flow\n\n" + "A long opening.\n" * 2_000)
     ctx = _ctx(repo, "work the doctor map")
-    assert len(ctx) < LIMIT and "Padding" in ctx
+    assert len(ctx) < LIMIT and 'stops before "' in ctx
+
+
+def test_an_addendum_of_many_sections_stays_under_the_limit(repo):
+    _add_addendum(repo, "# Our flow\n\n" + "".join(f"## Rule {i}\n\n{'Ask the owner. ' * 40}\n\n" for i in range(600)))
+    ctx = _ctx(repo, "implement #5")
+    assert len(ctx) < LIMIT and str(repo / "docs/our-flow.md") in ctx[:SHOWN]
+
+
+def test_a_huge_heading_stays_under_the_limit(repo):
+    (repo / ".claude/workflow/flow.md").write_text("# The flow\n\n## 1. Build\n\nTests first.\n")
+    _add_addendum(repo, "# Our flow\n\n## " + "Rules " * 2_000 + "\n\nAsk first.\n")
+    ctx = _ctx(repo, "implement #5")
+    assert len(ctx) < LIMIT and str(repo / "docs/our-flow.md") in ctx[:SHOWN]
+    assert "Tests first." in ctx and 'stops before "Rules Rules' in ctx and "…\" (our-flow.md)" in ctx
+
+
+def test_the_budget_is_used(repo):
+    # sections fill up to the budget: not reserved for names that are never written
+    (repo / ".claude/workflow/flow.md").write_text("# The flow\n\n" + "".join(f"## {i}\n\n{'x' * 900}\n\n" for i in range(20)))
+    ctx = _ctx(repo, "implement #5", env={"WORKFLOW_EXPERIENCE": "developer"})
+    assert FLOW_BUDGET - 1_000 < len(ctx) <= FLOW_BUDGET
 
 
 def test_a_short_addendum_comes_beside_the_flow(repo):
     (repo / ".claude/workflow/flow.md").write_text("# The flow\n\n## 1. Build\n\nTests first.\n")
     _add_addendum(repo, "# Our flow\n\n## Our rules\n\nThe notes app ships on Fridays.\n")
     ctx = _ctx(repo, "implement #5", env={"WORKFLOW_EXPERIENCE": "developer"})
-    assert "Tests first." in ctx and "The notes app ships on Fridays." in ctx and "left out" not in ctx
+    assert "Tests first." in ctx and "The notes app ships on Fridays." in ctx and "All of it is below" in ctx
 
 
 def test_a_short_flow_comes_whole(repo):
     (repo / ".claude/workflow/flow.md").write_text("# The flow\n\n## 1. Build\n\nTests first.\n")
     ctx = _ctx(repo, "implement #5", env={"WORKFLOW_EXPERIENCE": "developer"})
-    assert "Tests first." in ctx and "left out" not in ctx
+    assert "Tests first." in ctx and "All of it is below" in ctx and "not included" not in ctx.lower()
 
 
 def test_a_heading_inside_a_code_block_is_not_a_section(repo):
@@ -109,6 +129,23 @@ def test_a_heading_inside_a_code_block_is_not_a_section(repo):
     (repo / ".claude/workflow/flow.md").write_text(flow)
     ctx = _ctx(repo, "implement #5", env={"WORKFLOW_EXPERIENCE": "developer"})
     assert "## 1. Build\n\n```\n## not a heading\n```\n\nTests first." in ctx
+
+
+def test_fences_of_each_kind(repo):
+    flow = (
+        "# The flow\n\n## 1. Build\n\n~~~\n## not a heading\n```\n## nor this\n~~~\n\n"
+        "````\n```\n## nor this one\n````\n\n```x``` is inline, not a fence\n\n## 2. Merge\n\nGreen first.\n"
+    )
+    (repo / ".claude/workflow/flow.md").write_text(flow)
+    ctx = _ctx(repo, "implement #5", env={"WORKFLOW_EXPERIENCE": "developer"})
+    assert flow.strip().split("# The flow\n\n")[1].replace("\n\n## 2. Merge", "\n\n## 2. Merge") in ctx
+
+
+def test_an_unreadable_flow_leaves_the_instruction_and_never_fails(repo):
+    (repo / ".claude/workflow/flow.md").write_bytes(b"# The flow\n\xff\xfe broken\n")
+    s = uuid.uuid4().hex
+    ctx = _ctx(repo, "implement #5", session=s, env={"WORKFLOW_EXPERIENCE": "developer"})
+    assert "read it now, all of it" in ctx.lower() and str(repo / ".claude/workflow/flow.md") in ctx
 
 
 def test_the_reminder_after_the_first_is_short(repo):
