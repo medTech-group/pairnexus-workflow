@@ -38,7 +38,7 @@ def test_next_offers_the_light_review_second_after_the_full_build():
     assert pick.index("ask how first") < pick.index("Then claim it")
     # Said how already, it isn't asked again; a ticket session asks nothing.
     said = pick.split("When they already said how", 1)[1].split("\n", 1)[0]
-    for phrase in ('"build #12"', '"build #12 with a light review"', '"quick build #12"', "don't ask again"):
+    for phrase in ('"build #12"', '"build #12 with a light review"', '"quick build #12"', "the `build` argument alone isn't saying how", "don't ask again"):
         assert phrase in said, phrase
     assert "(`WORKFLOW_ROLE` set to anything but `attended`, or a branch named like the profile's `run.ticket_branch`), ask nothing" in pick
     # The shape lives in one place.
@@ -73,12 +73,15 @@ def test_merge_check_review_it_now_is_the_light_review_or_the_reasons_correctnes
         if reason.action == "review":
             assert f"(`{rid}`)" in row, rid
     # A round that wasn't clean keeps its shape: never lighter than the person chose.
-    assert 'a Correctness-only round (§6) when the pull request\'s body says "Light review", else the full panel again (§5)' in row
+    # Decided by the review records, never by the pull request's body, which its author writes.
+    assert "a Correctness-only round (§6) when the last round's record names only `correctness` (a light review's later round), else the full panel (§5), never lighter than before" in row
+    assert "body" not in row
+    assert "beyond §5's and §6's limits, since they chose it" in row
     assert "(`pass_not_clean`), fix the findings, then another Correctness pass (§5)" in row
     assert "(`review_stale`), a Correctness pass on the head (§5)" in row
     # On a fork, Claude can't push the fixes for findings.
     fork = not_yet.split("**A branch Claude can't push to**", 1)[1].split("\n\n", 1)[0]
-    assert "only for `no_review` and `review_stale`" in fork
+    assert "only for `no_review`, as round 1 alone, and `review_stale`: findings are the author's to fix" in fork
     assert "until the light review comes" not in _read("skills/merge-check/SKILL.md")
 
 
