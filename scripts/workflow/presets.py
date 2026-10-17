@@ -4,8 +4,7 @@ Each preset bundles the levers the kit controls: the charter's
 `limits.max_parallel`, `limits.max_sessions` and `limits.max_retries`, and its
 `review.rounds` and `review.explorer`. The end time and the check-in interval
 aren't part of a preset. This is the one place the presets' numbers live: the
-charter's questions, defaults, validation and one page read them, and so does
-the estimate.
+charter's questions, defaults, validation and one page read them.
 
 `profile` is a loaded profile (`profile.load`), or None for the profile's
 defaults. Normal is the profile's own numbers; "has an explorer" means the
@@ -21,15 +20,17 @@ PRESETS = ("light", "normal", "thorough")
 DEFAULT = "normal"
 LABELS = {"light": "Light", "normal": "Normal", "thorough": "Thorough"}
 
-# The profile's [run] defaults, for Normal without a profile.
-_PROFILE_DEFAULTS = {"max_parallel": 2, "max_retries": 1, "review_rounds": 3}
-
 NO_EXPLORER = "no UI explorer (the project has none)"
 
 
 def _run(profile: Any, key: str) -> int:
+    """The profile's [run] number, or its default without a profile."""
     v = getattr(profile, key, None)
-    return v if isinstance(v, int) and not isinstance(v, bool) else _PROFILE_DEFAULTS[key]
+    if isinstance(v, int) and not isinstance(v, bool):
+        return v
+    from .profile import Profile  # here, not at the top: profile.py imports this module
+
+    return Profile.__dataclass_fields__[key].default
 
 
 def has_explorer(profile: Any) -> bool:
@@ -42,21 +43,25 @@ def numbers(name: str, profile: Any = None) -> dict:
     max_sessions, max_retries}, "review": {rounds, explorer}}`."""
     if name not in PRESETS:
         raise ValueError(f"unknown preset {name!r}; one of {', '.join(PRESETS)}")
-    rounds = _run(profile, "review_rounds")
-    explorer = has_explorer(profile)
-    if name == "light":
-        limits, review = (1, 10, 0), (1, False)
-    elif name == "normal":
-        limits, review = (_run(profile, "max_parallel"), 40, _run(profile, "max_retries")), (rounds, explorer)
-    else:
-        limits, review = (3, 60, 1), (max(3, rounds), explorer)
+    rounds, explorer = _run(profile, "review_rounds"), has_explorer(profile)
     return {
-        "limits": dict(zip(("max_parallel", "max_sessions", "max_retries"), limits)),
-        "review": {"rounds": review[0], "explorer": review[1]},
-    }
+        "light": {
+            "limits": {"max_parallel": 1, "max_sessions": 10, "max_retries": 0},
+            "review": {"rounds": 1, "explorer": False},
+        },
+        "normal": {
+            "limits": {"max_parallel": _run(profile, "max_parallel"), "max_sessions": 40, "max_retries": _run(profile, "max_retries")},
+            "review": {"rounds": rounds, "explorer": explorer},
+        },
+        "thorough": {
+            "limits": {"max_parallel": 3, "max_sessions": 60, "max_retries": 1},
+            "review": {"rounds": max(3, rounds), "explorer": explorer},
+        },
+    }[name]
 
 
-def _n(v: int, one: str, many: str) -> str:
+def plural(v: int, one: str, many: str) -> str:
+    """ "1 retry", "0 retries"."""
     return f"{v} {one if v == 1 else many}"
 
 
@@ -71,9 +76,9 @@ def words(name: str, profile: Any = None) -> str:
     p = numbers(name, profile)
     lim, rev = p["limits"], p["review"]
     return (
-        f"{lim['max_parallel']} at once, {lim['max_sessions']} sessions in all, "
-        f"{_n(lim['max_retries'], 'retry', 'retries')} per ticket; "
-        f"up to {_n(rev['rounds'], 'review round', 'review rounds')}; {_explorer_words(rev['explorer'], profile)}"
+        f"{plural(lim['max_parallel'], 'session', 'sessions')} at once, {lim['max_sessions']} in all, "
+        f"{plural(lim['max_retries'], 'retry', 'retries')} per ticket; "
+        f"up to {plural(rev['rounds'], 'review round', 'review rounds')}; {_explorer_words(rev['explorer'], profile)}"
     )
 
 
@@ -88,26 +93,26 @@ def recommended(profile: Any = None) -> str:
     return v if v in PRESETS else DEFAULT
 
 
-def preset_of(c: dict) -> str:
-    """The charter's preset; Normal for one written before presets."""
-    v = c.get("preset") if isinstance(c, dict) else None
-    return v if v in PRESETS else DEFAULT
-
-
 def review_of(c: dict, profile: Any = None) -> dict:
     """The review a run takes from its charter, `{rounds, explorer}`: the
-    charter's `review`, or, for a charter written before presets, the
-    profile's rounds and explorer, as before."""
+    charter's `review`; without one, its preset's; and for a charter written
+    before presets, the profile's rounds and explorer, as before."""
     r = c.get("review") if isinstance(c, dict) else None
     if isinstance(r, dict) and "rounds" in r and "explorer" in r:
         return {"rounds": r["rounds"], "explorer": r["explorer"]}
+    if isinstance(c, dict) and c.get("preset") in PRESETS:
+        return numbers(c["preset"], profile)["review"]
     return {"rounds": _run(profile, "review_rounds"), "explorer": has_explorer(profile)}
 
 
 def changes(c: dict, profile: Any = None) -> list[str]:
     """What the charter changed from its preset's numbers, in words ("3
-    sessions at once"); empty when it matches, or has no preset."""
+    sessions at once"); empty when it matches, or has no preset. Without a
+    profile, only what doesn't depend on it: nothing for Normal, and not the
+    explorer."""
     if not isinstance(c, dict) or c.get("preset") not in PRESETS:
+        return []
+    if profile is None and c["preset"] == "normal":
         return []
     want = numbers(c["preset"], profile)
     lim = c.get("limits") if isinstance(c.get("limits"), dict) else {}
@@ -118,12 +123,12 @@ def changes(c: dict, profile: Any = None) -> list[str]:
         ("max_retries", "retry per ticket", "retries per ticket"),
     ):
         if key in lim and lim[key] != want["limits"][key]:
-            out.append(_n(lim[key], one, many))
+            out.append(plural(lim[key], one, many))
     rev = c.get("review")
     if isinstance(rev, dict):
         if "rounds" in rev and rev["rounds"] != want["review"]["rounds"]:
-            out.append(_n(rev["rounds"], "review round", "review rounds"))
-        if "explorer" in rev and rev["explorer"] != want["review"]["explorer"]:
+            out.append(plural(rev["rounds"], "review round", "review rounds"))
+        if profile is not None and "explorer" in rev and rev["explorer"] != want["review"]["explorer"]:
             out.append(f"the UI explorer {'on' if rev['explorer'] else 'off'}")
     return out
 

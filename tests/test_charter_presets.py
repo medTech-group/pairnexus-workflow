@@ -1,4 +1,4 @@
-"""#119: a run's size in one tap (#42). Seam 1, the charter through the CLI:
+"""#119: a run's size in one choice (#42). Seam 1, the charter through the CLI:
 the presets in `questions` and `defaults`, their numbers with the profile's,
 `markdown` saying what changed, `reuse` and `diff`, validation and the check
 against the profile, and older charters reading as Normal. Seam 4, the profile:
@@ -293,14 +293,13 @@ def test_a_charter_without_preset_or_review_reads_as_normal(tmp_path):
     env = _profile(tmp_path, 'preset = "light"\nreview_rounds = 2\n', explorer="browser")
     c = _older(env)
     md = _cli("charter", "markdown", _file(tmp_path, c), env=env).stdout
-    assert "**Size:** Normal (chosen before presets" in md
+    assert "**Size:** Normal (no preset in the charter)." in md
     assert "up to 2 rounds" in md and "UI explorer on" in md
     assert "changed" not in md
     # The review a run takes from it: the profile's rounds and explorer, as before.
     from workflow import profile as profile_mod
 
     prof = profile_mod.load(tmp_path)
-    assert presets.preset_of(c) == "normal"
     assert presets.review_of(c, prof) == {"rounds": 2, "explorer": True}
 
 
@@ -368,3 +367,60 @@ def test_a_running_runs_charter_from_before_presets_keeps_working(tmp_path):
     body.write_text("# Run\n")
     p = _cli("state", "put", "--body", str(body), "--state", str(st), env=env)
     assert p.returncode == 0, p.stderr
+
+
+def test_a_preset_without_review_reviews_as_its_preset(tmp_path):
+    # The page and the run never read a Light charter as Normal's review.
+    from workflow import profile as profile_mod
+
+    env = _profile(tmp_path, explorer="browser")
+    c = _defaults(env)
+    c["preset"] = "light"
+    c["limits"].update(max_parallel=1, max_sessions=10, max_retries=0)
+    del c["review"]
+    assert _validate(tmp_path, env, c).returncode == 0
+    md = _cli("charter", "markdown", _file(tmp_path, c), env=env).stdout
+    assert "**Size:** **Light**." in md and "up to 1 round per ticket; UI explorer off." in md
+    assert presets.review_of(c, profile_mod.load(tmp_path)) == {"rounds": 1, "explorer": False}
+
+
+def test_a_review_without_a_preset_shows_the_charters_review(tmp_path):
+    env = _profile(tmp_path, explorer="browser")
+    c = _older(env)
+    c["review"] = {"rounds": 2, "explorer": False}
+    md = _cli("charter", "markdown", _file(tmp_path, c), env=env).stdout
+    assert "**Size:** Normal (no preset in the charter)." in md and "up to 2 rounds per ticket; UI explorer off." in md
+
+
+def test_light_says_no_retries_in_plain_words(tmp_path):
+    env = _profile(tmp_path, 'preset = "light"\n')
+    md = _cli("charter", "markdown", _file(tmp_path, _defaults(env)), env=env).stdout
+    assert "0 retries per ticket, then `needs-human`" in md and "0 retry " not in md
+
+
+def test_markdown_and_splice_still_render_with_a_broken_profile(tmp_path):
+    env = _profile(tmp_path)
+    c = _defaults(env)
+    (tmp_path / ".claude/workflow/profile.toml").write_text('[project]\nname="d"\nrepo="a/d"\n[run]\npreset="huge"\n')
+    p = _cli("charter", "markdown", _file(tmp_path, c), env=env)
+    assert p.returncode == 0, p.stderr
+    assert "**Size:** **Normal**" in p.stdout
+    body = tmp_path / "b.md"
+    body.write_text(f"{charter.SECTION_BEGIN}\n{charter.SECTION_END}\n")
+    p = _cli("charter", "splice", "--body", str(body), "--charter", _file(tmp_path, c), env=env)
+    assert p.returncode == 0, p.stderr
+
+
+def test_without_a_profile_normal_claims_no_changes(tmp_path):
+    # Normal's numbers are the profile's: with none to compare, nothing is called changed.
+    env = _profile(tmp_path, "max_parallel = 4\n")
+    c = _defaults(env)
+    p = _cli("charter", "markdown", _file(tmp_path, c), env={"CLAUDE_PROJECT_DIR": str(tmp_path / "none")})
+    assert p.returncode == 0, p.stderr
+    assert "**Size:** **Normal**." in p.stdout
+
+
+def test_the_limits_questions_default_is_normals():
+    q = next(q for q in charter.QUESTIONS if q["key"] == "limits")
+    want = presets.numbers("normal")["limits"]
+    assert {k: q["default"][k] for k in want} == want

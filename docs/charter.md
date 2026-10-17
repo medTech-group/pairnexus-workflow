@@ -105,7 +105,7 @@ When a previous charter exists, start from `workflow charter reuse old.json` (it
 }
 ```
 
-`preset`: `light`, `normal` or `thorough`, the one chosen. `review`: `rounds`, the review panel's rounds at most, and `explorer`, whether the UI explorer runs. A charter written before presets has neither: it stays valid and reads as Normal, the profile's `run.review_rounds` and UI explorer, as before (`presets.review_of`).
+`preset`: `light`, `normal` or `thorough`, the one chosen. `review`: `rounds`, the review panel's rounds at most, and `explorer`, whether the UI explorer runs. A charter written before presets has neither: it stays valid and reads as Normal, the profile's `run.review_rounds` and UI explorer, as before. A `preset` without `review` reviews as its preset's numbers. `presets.review_of` gives the review a charter means.
 
 `merge.mode`: `auto-merge` (GitHub merges once the ruleset's checks pass; no waivers), `session` (the ticket session, or the conductor, merges under the merge rule), `owner` (nothing merges unattended). `release.when`: `never`, `end`, `each-merge`. Validation (`workflow charter validate`) also requires:
 - `ends_at` in the future and after the approval;

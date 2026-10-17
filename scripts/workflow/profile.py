@@ -360,7 +360,9 @@ def parse(data: dict, root: Path) -> Profile:
         raise ProfileError(f"run.permission_mode must be one of {sorted(PERMISSION_MODES)} (a mode that prompts would stall an unattended session)")
     preset = run.get("preset", presets_mod.DEFAULT)
     if not (isinstance(preset, str) and preset in presets_mod.PRESETS):
-        raise ProfileError(f"run.preset must be light, normal or thorough, not {repr(preset)[:40]}; leave it out for normal")
+        names = ", ".join(presets_mod.PRESETS[:-1]) + f" or {presets_mod.PRESETS[-1]}"
+        shown = repr(preset) if len(repr(preset)) <= 40 else repr(preset)[:39] + "…"
+        raise ProfileError(f"run.preset must be {names}, not {shown}; leave it out for {presets_mod.DEFAULT}")
     guided = proj.get("guided_start", True)
     if not isinstance(guided, bool):
         raise ProfileError("project.guided_start must be true or false")

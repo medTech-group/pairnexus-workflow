@@ -108,7 +108,7 @@ QUESTIONS: list[dict[str, Any]] = [
         "note": "limits.ends_at must be given by the owner: an ISO time with its zone, e.g. 2026-10-13T03:30:00Z. "
         "Choosing a preset sets preset, limits (but ends_at and check_in_minutes) and review from presets[name].",
         "options": list(presets_mod.PRESETS),
-        "default": {"ends_at": None, "max_parallel": 2, "max_sessions": 40, "max_retries": 1, "check_in_minutes": 20},
+        "default": {"ends_at": None, **presets_mod.numbers(presets_mod.DEFAULT)["limits"], "check_in_minutes": 20},
     },
     {
         "key": "merge",
@@ -552,7 +552,7 @@ def _size_lines(c: dict, profile: Any) -> list[str]:
         changed = presets_mod.changes(c, profile)
         size = f"**{presets_mod.LABELS[c['preset']]}**" + (f", changed: {', '.join(changed)}" if changed else "")
     else:
-        size = "Normal (chosen before presets: the profile's review rounds and UI explorer)"
+        size = "Normal (no preset in the charter)"
     rv = presets_mod.review_of(c, profile)
     rounds = f"{rv['rounds']} round" + ("" if rv["rounds"] == 1 else "s")
     return [
@@ -571,8 +571,8 @@ def to_markdown(c: dict, plan: list[tuple[int, str | None]] | None = None, profi
         "## Run charter",
         "",
         f"- **Scope:** {tickets}; excluded: {excl}; tickets unblocked during the run: {_yn(s['follow_unblocked'])}.",
-        f"- **Limits:** ends {lim['ends_at']}; {lim['max_parallel']} sessions at once, {lim['max_sessions']} in all; "
-        f"{lim['max_retries']} retry per ticket, then `needs-human`; check-ins every {lim['check_in_minutes']} minutes.",
+        f"- **Limits:** ends {lim['ends_at']}; {presets_mod.plural(lim['max_parallel'], 'session', 'sessions')} at once, {lim['max_sessions']} in all; "
+        f"{presets_mod.plural(lim['max_retries'], 'retry', 'retries')} per ticket, then `needs-human`; check-ins every {lim['check_in_minutes']} minutes.",
         *_size_lines(c, profile),
         f"- **Merging:** {m['mode']}"
         + (f"; checks that may be waived when killed (not failed): {', '.join(m['waived_checks'])}" if m.get("waived_checks") else "; no CI waivers")

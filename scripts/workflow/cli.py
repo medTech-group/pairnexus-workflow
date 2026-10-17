@@ -402,7 +402,7 @@ def cmd_charter(a) -> int:
             print("The charter has problems:\n- " + "\n- ".join(problems), file=sys.stderr)
             return 1
         if prof is None:
-            print("note: no profile found: release steps and waived checks weren't checked, nor the merge mode or the owner", file=sys.stderr)
+            print("note: no profile found: release steps and waived checks weren't checked, nor the merge mode, the review's explorer or the owner", file=sys.stderr)
         print("ok")
         return 0
     if a.action == "markdown":
@@ -416,7 +416,7 @@ def cmd_charter(a) -> int:
         except ValueError as e:
             print(f"workflow: {e}", file=sys.stderr)
             return 2
-        print(charter_mod.to_markdown(c, plan, load(required=False)))
+        print(charter_mod.to_markdown(c, plan, _page_profile()))
         return 0
     if a.action == "splice":
         c = _json(a.charter)
@@ -426,7 +426,7 @@ def cmd_charter(a) -> int:
             return 1
         try:
             plan = charter_mod.parse_tickets(a.tickets) if a.tickets else None
-            new = charter_mod.splice(_read(a.body), charter_mod.to_markdown(c, plan, load(required=False)))
+            new = charter_mod.splice(_read(a.body), charter_mod.to_markdown(c, plan, _page_profile()))
         except ValueError as e:
             print(f"workflow charter splice: {e}", file=sys.stderr)
             return 1
@@ -440,6 +440,15 @@ def cmd_charter(a) -> int:
             print(line)
         return 0
     return 2
+
+
+def _page_profile():
+    """The profile for the one page's size and review, or None when it can't be
+    read: a broken profile never stops the page from rendering."""
+    try:
+        return load(required=False)
+    except ProfileError:
+        return None
 
 
 def _protected(a) -> bool | None:
