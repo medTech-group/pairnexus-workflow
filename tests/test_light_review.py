@@ -108,7 +108,7 @@ def test_review_panel_uses_the_light_shape_when_the_briefings_review_rounds_are_
 
 def test_it_never_changes_the_merge_rule():
     light = _light()
-    assert "never changes the merge rule" in light
+    assert "never changes the merge rule (flow §4)" in light
 
 
 def test_flow_section_3_mentions_the_light_review():
