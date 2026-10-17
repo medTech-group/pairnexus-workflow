@@ -2582,8 +2582,32 @@ def _gh_merge_problem(seg: Seg, toks: list[str], profile: Profile, root: Path) -
     return _pin_problem(what, pins, root, profile)
 
 
+def _split_api_word(seg: Seg, toks: list[str]) -> str | None:
+    """Why a ticket session's `gh api` write may run another call than it reads
+    as: xargs feeds it words, or the shell may split a word into new arguments
+    (a variable or substitution, a tilde or a brace list: a merge path can hide
+    in the value of `-f`, `-t` or `-H`), or a heredoc's text names a merge route.
+    A glob can't make a path, so a `?` in text is fine."""
+    if seg.fed:
+        return "xargs gives it more words"
+    for t in toks[1:]:
+        key = re.match(r"[\w.\[\]-]+=", t)  # a field's value: `body=$(cat <<'EOF' …)`
+        if _literal_heredoc(t) or (key and _literal_heredoc(t[key.end():])):
+            if re.search(r"(?i)pulls/\S*/(merge|ccr/auto_merge)", t):
+                return "a heredoc's text names a merge route, and unquoted it becomes words of the command"
+        elif re.search(r"[$`]|(?:^|[=:])~|\{[^{}]*(,|\.\.)[^{}]*\}", t):
+            return f"the shell may split `{t}` into more words"
+    return None
+
+
 def _rest_merge_problem(seg: Seg, toks: list[str], call: _ApiCall, profile: Profile, root: Path) -> str | None:
     """A ticket session's `gh api` write to a pull request's merge or arm route."""
+    split = _split_api_word(seg, toks)
+    if split:
+        return (
+            f"write this API call out with its text in a quoted heredoc or a `-F body=@file` field: {split}, "
+            "so the guard can't tell which route it calls (a merge must be its own, pinned)"
+        )
     m = re.fullmatch(r"repos/([^/]+/[^/]+)/pulls/(\d+)/(merge|ccr/auto_merge)", call.path, re.I)
     # The path word as written: one the shell fills in (`pulls/9?/merge`) reads as another path.
     path_words = [t for t in toks[1:] if re.match(r"(?:https?://[^/\s]+/(?:api/v3/)?)?/?repos/", t)]

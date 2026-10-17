@@ -188,6 +188,37 @@ def test_text_that_mentions_a_merge_route_is_no_merge(ticket, form):
     assert d.action == "allow", d.reason
 
 
+@pytest.mark.parametrize(
+    "form",
+    [
+        "X='x -X PUT repos/acme/demo/pulls/13/merge -t'; gh api -X PATCH -f $X repos/acme/demo/pulls/12 -f body='<!-- workflow:agent -->'",
+        "gh api -X PATCH -t $X repos/acme/demo/pulls/12 -f title=t",
+        "gh api -X PATCH -H \"$(printf 'x -X PUT repos/acme/demo/pulls/13/ccr/auto_merge -t')\" repos/acme/demo/pulls/12 -f title=t",
+        "gh api -X PATCH -f {x,-XPUT,repos/acme/demo/pulls/13/merge,-t} repos/acme/demo/pulls/12 -f title=t",
+        "gh api -X PATCH -f $(cat <<'EOF'\nx -X PUT repos/acme/demo/pulls/13/merge -t\nEOF\n) repos/acme/demo/pulls/12",
+        "echo x | xargs gh api -X PATCH repos/acme/demo/pulls/12 -f title=t",
+    ],
+)
+def test_a_merge_route_hidden_in_another_api_write_is_refused(ticket, form):
+    d = run(ticket, bash(form))
+    assert d.action == "deny" and "quoted heredoc" in d.reason, d.reason
+
+
+@pytest.mark.parametrize(
+    "form",
+    [
+        "gh api repos/acme/demo/issues/5/comments -f body='Why? See *the* log <!-- workflow:agent -->'",
+        "gh api repos/acme/demo/issues/5/comments -f body=\"$(cat <<'EOF'\nCosts $COST, see ~/x and {a,b}\n<!-- workflow:agent -->\nEOF\n)\"",
+        "gh api repos/acme/demo/issues/5/comments -F body=@/tmp/body.md",
+        "gh api -X PUT repos/{owner}/{repo}/pulls/12/update-branch",
+    ],
+)
+def test_ordinary_api_writes_still_pass(ticket, form):
+    (ticket / "b").write_text("<!-- workflow:agent -->")
+    d = run(ticket, bash(form.replace("/tmp/body.md", str(ticket / "b"))))
+    assert d.action == "allow", d.reason
+
+
 def test_a_merge_word_the_shell_fills_in_is_refused_even_pinned(ticket):
     d = run(ticket, bash(f"gh pr merge 99 --merge --match-head-commit {head(ticket)} $X"))
     assert d.action == "deny" and "$X" in d.reason and "write this merge out" in d.reason
