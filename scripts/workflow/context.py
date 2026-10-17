@@ -91,10 +91,10 @@ def start_for(prompt: str, session_id: str) -> str | None:
 def flow_files(project: Path, kit_root: Path, addendum: str = "") -> list[Path]:
     out = []
     for cand in (project / ".claude/workflow/flow.md", kit_root / "docs/flow.md"):
-        if cand.exists():
+        if cand.is_file():
             out.append(cand)
             break
-    if addendum and (project / addendum).exists():
+    if addendum and (project / addendum).is_file():
         out.append(project / addendum)
     return out
 
@@ -145,7 +145,7 @@ def first_flow(files: list[Path]) -> str:
     names = ", ".join(str(f) for f in files)
     head = f"{FLOW_HEAD} Read it now, all of it, before acting: {names}."
     try:
-        pieces = [(f, s) for f in files for s in _sections(f.read_text(encoding="utf-8"))]
+        pieces = [(f, s) for f in files for s in _sections(f.read_text(encoding="utf-8-sig"))]
     except (OSError, UnicodeDecodeError):
         return head
     given: list[str] = []
@@ -224,4 +224,6 @@ def with_glossary(ctx: str | None, path: Path | None) -> str | None:
         if len(whole) < CONTEXT_LIMIT:
             return whole
     by_path = f"{rule} It isn't included here: read it now."
+    if ctx and len(by_path) + 2 + len(ctx) >= CONTEXT_LIMIT and is_first_flow(ctx):
+        ctx = ctx.split("\n\n", 1)[0]  # long paths: keep the flow's instruction, which names them
     return f"{by_path}\n\n{ctx}" if ctx else by_path

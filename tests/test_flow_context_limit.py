@@ -153,3 +153,34 @@ def test_the_reminder_after_the_first_is_short(repo):
     _ctx(repo, "implement #5", session=s)
     again = _ctx(repo, "implement #6", session=s)
     assert again and len(again) < 1_000 and "read it again" in again
+
+
+def test_long_paths_never_pass_the_limit(tmp_path):
+    from workflow import context
+
+    deep = tmp_path.joinpath(*["d" * 200] * 17)
+    deep.mkdir(parents=True)
+    flow = deep / "flow.md"
+    flow.write_text(FLOW)
+    glossary = deep / "glossary.md"
+    glossary.write_text("# Glossary\n\n### Pull request\n\nA proposed change.\n")
+    ctx = context.with_glossary(context.first_flow([flow]), glossary)
+    assert len(ctx) < LIMIT and "read it now, all of it" in ctx.lower() and str(flow) in ctx
+
+
+def test_a_byte_order_mark_is_left_out(repo):
+    (repo / ".claude/workflow/flow.md").write_bytes("\ufeff# The flow\n\n## 1. Build\n\nTests first.\n".encode("utf-8"))
+    ctx = _ctx(repo, "implement #5", env={"WORKFLOW_EXPERIENCE": "developer"})
+    assert "\ufeff" not in ctx and "# The flow" in ctx
+
+
+def test_a_directory_is_not_a_flow_file(repo):
+    (repo / "docs/our-flow.md").mkdir(parents=True)
+    _add_addendum_path_only(repo)
+    ctx = _ctx(repo, "implement #5", env={"WORKFLOW_EXPERIENCE": "developer"})
+    assert ctx and "our-flow.md" not in ctx
+
+
+def _add_addendum_path_only(repo):
+    p = repo / ".claude/workflow/profile.toml"
+    p.write_text(p.read_text().replace('repo = "acme/demo"', 'repo = "acme/demo"\nflow_addendum = "docs/our-flow.md"'))
