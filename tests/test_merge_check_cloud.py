@@ -374,7 +374,7 @@ def test_reviews_merge_check_cant_read_leave_the_other_authors_permissions_fetch
     gh = fake_gh.install(tmp_path, monkeypatch, routes())
     got, _ = run(project, capsys, {"reviews": [{"user": {"login": "dev"}, "state": 3, "submitted_at": "2026-10-16T09:00:00Z"}]}, "--fetch", "12")
     assert list(couldnt_read(got)) == ["reviews"], got["reasons"]
-    assert f"{REPO}/collaborators/owner/permission" in gh.paths()
+    assert {f"{REPO}/collaborators/owner/permission", f"{REPO}/collaborators/dev/permission"} <= set(gh.paths())
 
 
 def test_reviews_merge_check_cant_read_leave_a_refused_permission_couldnt_read(project, capsys, tmp_path, monkeypatch):

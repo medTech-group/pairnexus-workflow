@@ -299,8 +299,9 @@ def merge_inputs(repo: str, number: int, have: dict, names, asker: str | None = 
             items = comments_from(comments)
         except CommentsError as e:
             raise GhError(f"not fetched: the comments couldn't be read ({e})") from None
+        unread = None
         try:
-            revs, asked, unread = *_reviews_read(reviews, pr), None  # in any shape merge-check takes, so no reviewer is left out
+            revs, asked = _reviews_read(reviews, pr)  # in any shape merge-check takes, so no reviewer is left out
         except GhError as bad:  # merge-check says so for --reviews; the authors it can see still get theirs
             revs, asked, unread = [(_login(x), "") for x in _items(reviews) if isinstance(x, dict)], set(), bad
         for who in [_login(x) for x in items] + [login for login, _ in revs] + [(asker or "").strip().lstrip("@")]:
