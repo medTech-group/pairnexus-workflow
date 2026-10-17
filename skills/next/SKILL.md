@@ -52,7 +52,7 @@ Say which one you picked and why, in one line. For a build ticket, ask how first
 - **Build it now (Recommended)**: the full review panel;
 - **Build it with a light review**: one review round, for a small change (`review-panel` §6, "The light review").
 
-The light review is always second, never recommended, and never chosen for them. When they already said how ("build #12", "build #12 with a light review", "quick build #12"), don't ask again: build it as they said. In a ticket session (`WORKFLOW_ROLE=ticket`, or a branch named like the profile's `run.ticket_branch`), ask nothing: build as the briefing says.
+The light review is always second, never recommended, and never chosen for them. When they already said how ("build #12", "build #12 with a light review", "quick build #12"), don't ask again: build it as they said. In a ticket or conductor session (`WORKFLOW_ROLE` set to anything but `attended`, or a branch named like the profile's `run.ticket_branch`), ask nothing: build as the briefing says.
 
 ## 3. Nothing ready
 

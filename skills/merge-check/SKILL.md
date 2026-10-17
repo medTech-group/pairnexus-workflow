@@ -85,7 +85,7 @@ Give each reason in plain words with what to do: its `message`, then its `fix`. 
 
 | `action` | The choice | What it does |
 |---|---|---|
-| `review` | **"Review it now"** | Follow the `review-panel` skill on the pull request's branch, posting its records (#79), as the reason's `fix` says: with no review yet (`no_review`), its light review (§6, "The light review"); after a round or pass that wasn't clean (`review_not_clean`, `pass_not_clean`), fix the findings, then the next Correctness-only round or pass; with changes after the last clean round (`review_stale`), a Correctness pass on the head (§5). Then check again. |
+| `review` | **"Review it now"** | Follow the `review-panel` skill on the pull request's branch, posting its records (#79), by the reason. With no review yet (`no_review`), its light review (§6, "The light review"); say so in the choice: "one round, with no walk-through of the screens". After a round that wasn't clean (`review_not_clean`), fix the findings, then another round (`--kind round`) in the same shape: a Correctness-only round (§6) when the pull request's body says "Light review", else the full panel again (§5). After a pass that wasn't clean (`pass_not_clean`), fix the findings, then another Correctness pass (§5). With changes after the last clean round (`review_stale`), a Correctness pass on the head (§5). Then check again. |
 | `update_branch` | **"Bring it up to date"** | On the pull request's branch, `git fetch origin <base> && git merge origin/<base>`, then push. Never rebase or force-push. Check again once CI has run on the new commit. |
 | `resolve_conflict` | **"Resolve the conflict"** | Merge `<base>` into the pull request's branch, resolve each conflict keeping both sides' intent, run the tests (the profile's commands), push, and check again. Never rebase or force-push. |
 | `fix_checks` | **"Ask Claude to fix it"** | Find the failed check's cause (its log; `diagnosing-bugs` when it's unclear), fix it on the pull request's branch, push, and check again. |
@@ -94,7 +94,7 @@ Give each reason in plain words with what to do: its `message`, then its `fix`. 
 
 **Waiting.** A reason with no action (checks still running, GitHub still checking, the try-it link still building) says when to ask again.
 
-**A branch Claude can't push to** (a fork's, without edits from maintainers allowed): don't offer the three fixes that push. Say the pull request's author updates it, and offer "Review it now" and "Not now" only.
+**A branch Claude can't push to** (a fork's, without edits from maintainers allowed): don't offer the three fixes that push. Say the pull request's author updates it, and offer "Review it now" (only for `no_review` and `review_stale`: other findings are the author's to fix) and "Not now" only.
 
 "Check again" means this skill again from step 1, with fresh inputs.
 

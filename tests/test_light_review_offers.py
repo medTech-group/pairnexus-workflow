@@ -40,7 +40,7 @@ def test_next_offers_the_light_review_second_after_the_full_build():
     said = pick.split("When they already said how", 1)[1].split("\n", 1)[0]
     for phrase in ('"build #12"', '"build #12 with a light review"', '"quick build #12"', "don't ask again"):
         assert phrase in said, phrase
-    assert "In a ticket session (`WORKFLOW_ROLE=ticket`" in pick and "ask nothing" in pick
+    assert "(`WORKFLOW_ROLE` set to anything but `attended`, or a branch named like the profile's `run.ticket_branch`), ask nothing" in pick
     # The shape lives in one place.
     assert '`review-panel` §6, "The light review"' in pick
     _never_recommended(_read("skills/next/SKILL.md"))
@@ -64,11 +64,21 @@ def test_merge_check_review_it_now_is_the_light_review_or_the_reasons_correctnes
     not_yet = _section("skills/merge-check/SKILL.md", '## 3. "Not yet"', "\n## 4.")
     row = next(line for line in not_yet.splitlines() if line.startswith('| `review` | **"Review it now"** |'))
     assert "light review" in row
-    assert '(`no_review`), its light review (§6, "The light review")' in row
+    assert '(`no_review`), its light review (§6, "The light review"); say so in the choice' in row
     assert "posting its records" in row
-    # A round or pass that wasn't clean, or newer changes, get what the reason's fix names.
-    assert "(`review_not_clean`, `pass_not_clean`), fix the findings, then the next Correctness-only round or pass" in row
+    # Every reason the command sends here has its step.
+    from workflow.merge import REASONS
+
+    for rid, reason in REASONS.items():
+        if reason.action == "review":
+            assert f"(`{rid}`)" in row, rid
+    # A round that wasn't clean keeps its shape: never lighter than the person chose.
+    assert 'a Correctness-only round (§6) when the pull request\'s body says "Light review", else the full panel again (§5)' in row
+    assert "(`pass_not_clean`), fix the findings, then another Correctness pass (§5)" in row
     assert "(`review_stale`), a Correctness pass on the head (§5)" in row
+    # On a fork, Claude can't push the fixes for findings.
+    fork = not_yet.split("**A branch Claude can't push to**", 1)[1].split("\n\n", 1)[0]
+    assert "only for `no_review` and `review_stale`" in fork
     assert "until the light review comes" not in _read("skills/merge-check/SKILL.md")
 
 
