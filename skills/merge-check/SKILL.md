@@ -21,7 +21,7 @@ Below, `#12` stands for the pull request asked about, and `<base>` for its base 
 
 **Choices** use the `AskUserQuestion` tool, the recommended option first, with "Not now" last; without it (a headless session), the same choices as a numbered list.
 
-**Wording.** Word everything for the person's experience: `WF status --json` gives it as `experience.wording_level` (*new to building* or *developer*, #43). The command words its reasons for the same level.
+**Wording.** Word everything for the person's experience: `WF status --json` gives it as `experience.wording_level` (`new` for *new to building*, or `developer`, #43). The command words its reasons for the same level.
 
 ## Never in a ticket or conductor session
 

@@ -116,8 +116,9 @@ def merge_inputs(repo: str, number: int, have: dict, names, asker: str | None = 
     """`merge-check`'s inputs `names`, fetched for pull request `number` of
     `repo` (owner/name). `have` holds the inputs already given as files: those
     win, and the head commit, base branch and authors are read from them when
-    given there. `asker` (a login) has their permission fetched too: with no
-    `project.owner`, it says whether they count as the owner."""
+    given there. `asker` (a login) has their permission fetched too: the CLI
+    passes it only when the profile names no `project.owner`, where it says
+    whether they count as the owner."""
     out: dict = {}
     names = [n for n in names if n not in have]
     if not names:
