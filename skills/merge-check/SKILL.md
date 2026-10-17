@@ -45,6 +45,8 @@ WF merge-check --fetch 12 --asker <login> --json
 
 It fetches everything but the preview: where the project has a preview reader, add `--preview F` with its answer, or there is no try-it link.
 
+In a cloud session, whose proxy refuses GraphQL and `collaborators/<login>/permission`, it reads the threads from the session's own route (whole only when every review comment sits in one of them) and the token's own permission from `repos/<repo>`. Anyone else counts as without write access, unless they requested changes: then permissions stay "couldn't read", so give `--permissions` as a file.
+
 **Without it,** gather each input with the GitHub MCP tools, as GitHub's API returns it, every page, and write each one as JSON to its own file in a new directory **outside the checkout** (the session's scratchpad, or `mktemp -d`), never in the repository:
 
 | Flag | What, as GitHub returns it |

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**`merge-check --fetch` works in a cloud session** (#165, a follow-up to #81 found by #85).
+
+- **Review threads:** when GraphQL is refused (a Claude Code cloud session's proxy refuses it), `--fetch` reads the session route `pulls/<n>/ccr/review_threads`, every page, and gives it to `merge-check` in GraphQL's shape. That route is a bare list with no count, so it counts as whole only when every review comment of the pull request (`pulls/<n>/comments`, every page, as many as the PR's `review_comments`) sits in one of its threads; otherwise the threads stay "couldn't read".
+- **Permissions:** when `collaborators/<login>/permission` is refused (HTTP 403), the token's own login (`gh api user`) gets the token's own permission on the repository (`repos/<repo>`'s `permissions`). Anyone else counts as without write access, since nothing the session can read shows theirs (`author_association` doesn't). A reviewer whose latest review requests changes isn't dropped that way: permissions then stay "couldn't read", naming them.
+- GraphQL and the collaborator route are still tried first, a file given still wins, and any other failure is "couldn't read" as before. The `merge-check` skill says so. Tests: `tests/test_merge_check_cloud.py`.
+- **For projects updating:** nothing to do.
+
 **The light review, offered second: "Build it with a light review", and "Review it now" as a light review** (#122, part of a session budget and a light review, #42).
 
 - **`next` and the guided start** offer "Build it with a light review" wherever they offer to build a ticket, as the second choice after the full build: never first, never "(Recommended)", never chosen for the person. `next` asks before claiming, only in an attended session, and not when the person already said how ("build #12", "build #12 with a light review", "quick build #12"); a ticket session asks nothing.
