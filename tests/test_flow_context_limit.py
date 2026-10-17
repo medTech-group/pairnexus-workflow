@@ -113,6 +113,33 @@ def test_the_budget_is_used(repo):
     assert FLOW_BUDGET - 1_000 < len(ctx) <= FLOW_BUDGET
 
 
+def test_the_budget_counts_the_name_where_the_text_stops(tmp_path):
+    # short and long headings in turn: the check must use the name the text would stop before
+    from workflow import context
+
+    long = "L" * 80
+    flow = "# The flow\n\n" + "".join(f"## {'s' if i % 2 else long}{i}\n\n{'x' * 700}\n\n" for i in range(30))
+    path = tmp_path / "flow.md"
+    for pad in range(0, 1_700):  # move the cut across a whole cycle of short and long names
+        path.write_text(flow.replace("# The flow", "# The flow" + "y" * pad, 1))
+        ctx = context.first_flow([path])
+        assert len(ctx) <= FLOW_BUDGET and "stops before" in ctx, pad
+
+
+def test_a_flow_that_fits_whole_is_never_cut(repo):
+    room = FLOW_BUDGET - 400
+    flow = "# The flow\n\n" + "x" * room + "\n\n## Done\n\nShip it.\n"
+    (repo / ".claude/workflow/flow.md").write_text(flow)
+    ctx = _ctx(repo, "implement #5", env={"WORKFLOW_EXPERIENCE": "developer"})
+    assert "All of it is below" in ctx and "Ship it." in ctx and len(ctx) <= FLOW_BUDGET
+
+
+def test_an_opening_too_long_for_the_budget_leaves_the_instruction_alone(repo):
+    (repo / ".claude/workflow/flow.md").write_text("# The flow\n\n" + "x" * 9_000 + "\n\n## 1. Build\n\nTests first.\n")
+    ctx = _ctx(repo, "implement #5", env={"WORKFLOW_EXPERIENCE": "developer"})
+    assert "read it now, all of it" in ctx.lower() and "below" not in ctx and "\n" not in ctx
+
+
 def test_a_short_addendum_comes_beside_the_flow(repo):
     (repo / ".claude/workflow/flow.md").write_text("# The flow\n\n## 1. Build\n\nTests first.\n")
     _add_addendum(repo, "# Our flow\n\n## Our rules\n\nThe notes app ships on Fridays.\n")
@@ -170,6 +197,7 @@ def test_long_paths_never_pass_the_limit(tmp_path, sections):
     flow = tmp_path / "flow.md"
     flow.write_text("# The flow\n\n" + "".join(f"## {i}\n\n{'x' * 200}\n\n" for i in range(sections)))
     ctx = context.first_flow([flow])
+    assert ("All of it is below" in ctx) == (sections == 30)
     ctx = ctx.replace(str(flow), long * 20)  # paths as long as a deep checkout's, without making one
     out = context.with_glossary(ctx, glossary)
     assert len(out) < LIMIT

@@ -151,17 +151,20 @@ def first_flow(files: list[Path]) -> str:
         pieces = [(f, s) for f in files for s in _sections(f.read_text(encoding="utf-8-sig"))]
     except (OSError, UnicodeDecodeError):
         return head
+    whole = f"{FLOW_HEAD}{_WHOLE}{names})."
+    if len(whole) + sum(len(p) + 2 for _, p in pieces) <= FLOW_BUDGET:
+        return "\n\n".join([whole, *(p for _, p in pieces)])
     body = 0  # the length of the first k sections, joined
     for k, (f, s) in enumerate(pieces):
         nxt = pieces[k + 1] if k + 1 < len(pieces) else None
         grown = body + len(s) + 2
-        # what the text would be with this section too, under the name of the next
-        whole = len(f"{FLOW_HEAD}{_WHOLE}{names}).") if nxt is None else len(head) + len(_stop(*nxt))
-        if whole + grown > FLOW_BUDGET:
-            given = [p for _, p in pieces[:k]]
-            return "\n\n".join([head + _stop(f, s), *given])
+        # what the text would be with this section too, stopping before the next
+        if nxt is None or len(head) + len(_stop(*nxt)) + grown > FLOW_BUDGET:
+            if k == 0:
+                return head  # not even the opening fits: nothing below
+            return "\n\n".join([head + _stop(f, s), *(p for _, p in pieces[:k])])
         body = grown
-    return "\n\n".join([f"{FLOW_HEAD}{_WHOLE}{names}).", *(p for _, p in pieces)])
+    return head
 
 
 def _stop(f: Path, s: str) -> str:
