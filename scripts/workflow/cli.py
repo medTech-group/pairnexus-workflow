@@ -16,6 +16,7 @@
     workflow comments --file F [--owner LOGIN] [--since-id N]
     workflow merge-check --pr F --files F --commits F --checks F --rulesets F --threads F --reviews F --comments F --permissions F --compare F [--preview F] [--asker LOGIN] [--review-rounds N] [--json]
     workflow merge-check --fetch N [any of the files above] [--charter F --check-logs DIR] [--asker LOGIN] [--review-rounds N] [--json]
+    workflow preview --comments F --checks F --sha SHA [--json] | --fetch N [any of those] [--json]
     workflow briefing verify --file F
     workflow pr-template [--existing FILE]      (prints the file to write; exits 3 for a folder of templates)
     workflow adopt --owner LOGIN --repo OWNER/NAME --name NAME [--project DIR]      (a copy of the starter made yours)
@@ -55,6 +56,7 @@ from . import guard as guard_mod
 from . import issues as issues_mod
 from . import merge as merge_mod
 from . import posts as posts_mod
+from . import previews as previews_mod
 from . import pr_template as pr_template_mod
 from . import protection as protection_mod
 from . import render as render_mod
@@ -699,6 +701,69 @@ def cmd_merge_check(a) -> int:
     return 0
 
 
+def _sha(v: str) -> str:
+    if not previews_mod.is_sha(v):
+        raise argparse.ArgumentTypeError(f"'{reviews_mod._shown(v, 50)}' isn't a commit's SHA (7 to 40 hex characters): give the pull request's head commit")
+    return v.lower()
+
+
+def cmd_preview(a) -> int:
+    """`preview`: whether the pull request's try-it link is ready for its head
+    commit (#41's reader), from the files given, and with --fetch the rest
+    through `gh api`. Changes nothing, posts nothing. Exits 0 with an answer,
+    1 when an input can't be read, 2 when one is missing."""
+    inputs: dict = {}
+    if a.sha is not None:
+        inputs["sha"] = (a.sha, None)
+    for name in ("comments", "checks"):
+        path = getattr(a, name)
+        if path is None:
+            continue
+        try:
+            values = posts_mod.decode_values(_read(path).removeprefix("\ufeff"))
+            inputs[name] = (values[0], None) if len(values) == 1 else (values, None) if values else (None, f"{path} is empty")
+        except OSError as e:
+            inputs[name] = (None, f"can't open {path}: {e.strerror or e}")
+        except posts_mod.CommentsError as e:
+            inputs[name] = (None, f"{path} isn't JSON ({e})")
+        except UnicodeDecodeError:
+            inputs[name] = (None, f"{path} isn't UTF-8 text")
+    give = "give --comments F (the pull request's issue comments), --checks F (its head commit's check runs), as JSON from the GitHub API, and --sha SHA (its head commit)"
+    missing = [n for n in fetch_mod.PREVIEW_INPUTS if n not in inputs]
+    if a.fetch is not None and missing:
+        try:
+            prof = load(required=False)
+        except ProfileError as e:
+            prof, why = None, f"the profile can't be read ({e})"
+        else:
+            why = f"there's no profile ({PROFILE_PATH})"
+        if prof is None:
+            print(f"workflow preview: --fetch needs the profile's project.repo, and {why}: {give}", file=sys.stderr)
+            return 2
+        inputs.update(fetch_mod.preview_inputs(prof.repo, a.fetch, inputs))
+        missing = [n for n in fetch_mod.PREVIEW_INPUTS if n not in inputs]
+    if missing:
+        print(f"workflow preview: missing {', '.join('--' + n for n in missing)}: {give}, or --fetch <PR> to read them with gh", file=sys.stderr)
+        return 2
+    unread = [(n, why) for n, (_, why) in inputs.items() if why is not None]
+    for n, why in unread:
+        print(f"workflow preview: couldn't read --{n}: {why}", file=sys.stderr)
+    if unread:
+        return 1
+    sha = inputs["sha"][0]
+    if not previews_mod.is_sha(sha):  # a head fetched from the pull request
+        print(f"workflow preview: couldn't read --sha: the pull request's head isn't a commit's SHA; give --sha", file=sys.stderr)
+        return 1
+    sha = sha.lower()
+    try:
+        got = previews_mod.read(inputs["comments"][0], inputs["checks"][0], sha)
+    except previews_mod.PreviewError as e:
+        print(f"workflow preview: couldn't read --{e.name}: {e}", file=sys.stderr)
+        return 1
+    _out(got.as_dict() if a.json else previews_mod.text(got, sha))
+    return 0
+
+
 def cmd_briefing(a) -> int:
     """`briefing verify`: the session's copy of its briefing against its last line."""
     stated, got = render_mod.seal_of(_read(a.file))
@@ -1236,6 +1301,16 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--review-rounds", metavar="N", type=_review_rounds, help="the review rounds allowed, 1 to 10 (default: the profile's run.review_rounds): after the last one, a clean Correctness pass on the head lifts its findings; a run passes the briefing's")
     s.add_argument("--json", action="store_true", help="the decision, its reasons and notes, and each check's name and state, as JSON")
     s.set_defaults(fn=cmd_merge_check)
+
+    s = sub.add_parser(
+        "preview", allow_abbrev=False, help="whether a pull request's try-it link is ready for its head commit: state, url and commit, from JSON files or --fetch; changes nothing, posts nothing"
+    )
+    s.add_argument("--comments", metavar="F", help="the pull request's issue comments, as JSON from the GitHub API or the MCP tools, every page; a file, or - for standard input")
+    s.add_argument("--checks", metavar="F", help="the head commit's check runs, as JSON from the GitHub API (GET repos/<repo>/commits/<sha>/check-runs), every page; a file, or -")
+    s.add_argument("--sha", metavar="SHA", type=_sha, help="the pull request's head commit")
+    s.add_argument("--fetch", metavar="N", type=_pr_number, help="read every input not given for pull request N, through `gh api` (the profile's project.repo); a file given wins")
+    s.add_argument("--json", action="store_true", help="state, url and commit as JSON: what `workflow merge-check --preview` takes")
+    s.set_defaults(fn=cmd_preview)
 
     s = sub.add_parser("briefing", help="check a ticket session's copy of its briefing against its `Briefing <hash>` line")
     s.add_argument("action", choices=["verify"])

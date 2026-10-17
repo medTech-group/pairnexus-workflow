@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**`workflow preview`: a pull request's try-it link and its state, from one command** (#113, part of #41).
+
+- **`workflow preview --comments F --checks F --sha SHA`**, or **`--fetch <PR>`** to read the same three through `gh api` (REST routes only, every page; a file given wins), answers `state` (`built`, `building`, `failed` or `none`), `url` and `commit`, in plain words or with `--json`. The JSON is what `workflow merge-check --preview F` takes. It changes nothing and posts nothing; a missing input exits 2 naming it, one it can't read exits 1 saying why.
+- **The rules:** the `Workers Builds: <worker>` check runs on the head commit, from the `cloudflare-workers-and-pages` app, decide the state (another app's check with a similar name is ignored; a re-run counts by its latest result). The link comes from the Cloudflare bot's comment, read as it stands, and only when its row for the head commit says the deployment succeeded: the Branch Preview URL (or the Preview URL beside a Deployment URL). A link for an older commit is `building`, never `built`; no bot comment and no check is `none`. A bot comment with no table the reader knows is refused, so a change in Cloudflare's format shows up.
+- **Not gated here:** whether a project reads previews (`[previews] on`) is for its callers (#117). Tests: `tests/test_preview.py`, with fixtures in `tests/fixtures/cloudflare/` in the shape Cloudflare's documentation gives the bot's comment and check runs; checking against a real recording is a by-hand check (#173). The README's command list and `docs/install.md` name it.
+- **For projects updating:** nothing to do.
+
 **`merge-check`: a clean Correctness pass after the last allowed review round lifts that round's findings** (#170, decided for run 2026-10-16-weekend's open question; part of #39).
 
 - **`workflow merge-check`** follows flow §3 and §4.4: a review round that wasn't clean still answers `review_not_clean` (run another round) unless it was the last allowed one (its number at least the allowed rounds); then a later clean Correctness pass on the head lifts it, a not-clean one answers `pass_not_clean`, and with none it answers `review_not_clean` saying to fix the findings and run a Correctness pass on the head. No fourth round is ever asked for. Before, a last round with findings blocked for good, even after a clean pass on the head: #76's PR #177 had to be merged by hand.
