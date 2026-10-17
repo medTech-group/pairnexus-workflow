@@ -208,7 +208,7 @@ For each item, read the flow's section for its path and follow it, skipping noth
 2. Publish by editing the item's issue into the ticket: replace its body, drop the marker, and add `ready-for-agent`. The item's issue becomes the ticket.
 3. Ask:
    - **Build it now (Recommended)**: load `build-ticket` with the Skill tool, on a fresh branch;
-   - **Build it with a light review**: the same, asking `build-ticket` for a light review (`review-panel` §6, "The light review"). "One review round, for a small change." Second, and never the recommendation;
+   - **Build it with a light review**: the same, asking `build-ticket` for a light review (`review-panel` §6, "The light review"): one review round, for a small change;
    - **Leave it ready for later**: `/next` or a run picks it up;
    - **Next item**.
 

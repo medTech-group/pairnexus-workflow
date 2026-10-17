@@ -98,19 +98,19 @@ A plan for work too big or unclear for one [spec](#spec), decided one question a
 
 ### Review panel
 
-Claude reviewers who each read a change from one side (does it work, does it follow the rules) before its [pull request](#pull-request-pr) opens, each round leaving its record there. A light review is one round without the walk-through, for small changes, never chosen for you.
+Claude reviewers who each read a change from one side (does it work, does it follow the rules) before its [pull request](#pull-request-pr) opens, each round leaving its record there. A light review is one round with no walk-through of the screens, for small changes, never chosen for you.
 
 **Why it matters to you:** mistakes are caught before you see the change.
 
 ### Solo mode
 
-How a project starts while GitHub doesn't protect [`main`](#main) yet: the [profile](#profile) says `ruleset = false`, and the kit sends Claude's changes through a [pull request](#pull-request-pr).
+How a project starts while GitHub doesn't protect [`main`](#main) yet: the [profile](#profile) says `ruleset = false`, and the kit refuses Claude's changes straight to `main`.
 
 **Why it matters to you:** you can start on GitHub's free plan, and Claude's changes reach `main` only when you [merge](#merge).
 
 ### Protect `main`
 
-GitHub's own protection, ending [solo mode](#solo-mode): a ruleset (GitHub's rules for a [branch](#branch)) sends every change to [`main`](#main) through a [pull request](#pull-request-pr), and "Require these checks", once CI has run, stops a [merge](#merge) while [checks](#checks-ci) fail. With `gh` and admin rights, Claude does it; else it guides your clicks.
+GitHub's own protection, ending [solo mode](#solo-mode): a ruleset (GitHub's rules for a [branch](#branch)) sends every change to [`main`](#main) through a [pull request](#pull-request-pr), and "Require these checks", once CI has run, stops a [merge](#merge) while [checks](#checks-ci) fail. On your computer, with `gh` and admin rights, Claude does it; elsewhere it guides your clicks.
 
 **Why it matters to you:** GitHub itself then stops a mistake reaching `main`.
 
