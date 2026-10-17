@@ -105,12 +105,12 @@ Then subscribe to its activity. Schedule a check-in about every `run.check_in_mi
 
 - **A required check is red:** find the cause (use `diagnosing-bugs` when it's unclear) and push a fix. "Flake" isn't a cause: a test that fails by chance gets fixed so it can't.
 - **The base branch moved:** `git fetch origin <base> && git merge origin/<base>`, resolve any conflicts keeping both sides' intent, rerun the tests, and push. Never rebase or force-push.
-- **A required check that never starts** because its workflow is path-filtered (the profile's `ci.path_filtered`): in `session` mode it counts as passed once the evidence is posted; in `auto-merge` mode GitHub waits for it, so comment that the PR needs the owner to merge and end `waiting`.
+- **A required check that never starts** because its workflow is path-filtered (the profile's `ci.path_filtered`): `WF merge-check` counts it as not started, so it never says `ready`, and in `auto-merge` mode GitHub would wait for it forever. Comment that the PR needs the owner to merge and end `waiting`.
 - **A check the charter waives:** it counts as passed only when its log shows a killed marker (the profile's `ci.killed_markers`) rather than a test failure, and only with the evidence below.
 - **Still red after three fix attempts:**
   1. label the ticket `needs-human`, and remove `workflow:in-progress` and `ready-for-agent` (keep its other labels);
   2. comment on it and on the tracking issue with exactly what fails and why;
-  3. wake the conductor (step 6.6);
+  3. wake the conductor (step 6.7);
   4. end with `WORKFLOW-STATUS: needs-human`.
 
 ## 6. Post the evidence and merge
@@ -119,18 +119,26 @@ Then subscribe to its activity. Schedule a check-in about every `run.check_in_mi
 2. **Run the evidence:** `WF evidence --base-ref origin/<base>`, after a `git fetch`.
    - It runs the suites in shards, resumes after a container restart, refuses a dirty tree, and runs the base branch's suites in a temporary worktree to compare counts.
    - Post its report on the PR.
-3. **Merge** when the merge rule holds (flow §4). What you do depends on the briefing's mode:
+3. **Ask the merge rule.** In a run, run `WF merge-check --fetch <PR> --json --charter tracking.md` before you merge or arm auto-merge, with the body of the tracking issue the briefing names saved to `tracking.md` (`gh api repos/<repo>/issues/<tracking> --jq .body > tracking.md`): the same command a person's `merge-check` runs, so a run and a person never disagree on "ready".
+   - For a check the charter waives, add `--check-logs DIR` with its log, named by its check run's id on the head (a `waiver_not_taken` note names the file it wants).
+   - Where `gh` can't read an input, a "couldn't read" reason names it: give it as a file (`--pr F`, `--checks F`, …) and run it again. Never pass `--asker`: you post as the owner.
+   - It always exits 0, so read its JSON's `decision`. **`ready` is the only yes**:
+     - `not_yet`: never merge. Act on its `reasons[]` (each one's `fix`): a red check (step 5), an open review thread, a branch behind the base (update it), then ask again at the next check-in.
+     - `owner_review`: the change touches a protected path (the JSON's `files`). Never merge it or arm auto-merge: comment on the PR and on the tracking issue that the owner reviews and merges it ("#<n> changes a protected path (<files>): yours to review and merge"), and end with `WORKFLOW-STATUS: waiting`.
+     - `ready`: merge by the briefing's mode, below, pinned to the head it checked (the JSON's `head`).
+4. **Merge** on `ready`. What you do depends on the briefing's mode:
 
    | Mode | What you do |
    |---|---|
-   | `auto-merge` | First post your notes for the next tickets (step 4) on the tracking issue, then enable auto-merge with a merge commit (`enable_pr_auto_merge`, or `gh pr merge <n> --auto --merge`). Stay with it: at each check-in, if the PR is behind the base (`mergeable_state` behind), update it (`gh api -X PUT repos/<repo>/pulls/<n>/update-branch`) and end the turn `waiting`, until GitHub has merged it. **If GitHub refuses to enable auto-merge because the PR is already mergeable** (clean: "Pull request is in clean status"), check the merge rule (flow §4) again at that moment, on the current head; if it holds, merge it yourself with a merge commit (`merge_pull_request` with `merge_method: merge`, or `gh api -X PUT repos/<repo>/pulls/<n>/merge -f merge_method=merge`) |
-   | `session` | Merge it yourself with a merge commit |
-   | `owner`, or attended work | Say it's ready, and leave it |
+   | `auto-merge` | First post your notes for the next tickets (step 5) on the tracking issue, then enable auto-merge with a merge commit (`enable_pr_auto_merge`, or `gh pr merge <n> --auto --merge`). Stay with it: at each check-in, if the PR is behind the base (`mergeable_state` behind), update it (`gh api -X PUT repos/<repo>/pulls/<n>/update-branch`) and end the turn `waiting`, until GitHub has merged it. **If GitHub refuses to enable auto-merge because the PR is already mergeable** (clean: "Pull request is in clean status"), run the same `WF merge-check` again at that moment; on `ready`, merge it yourself with a merge commit pinned to its `head` (`gh pr merge <n> --merge --match-head-commit <sha>`, or `merge_pull_request` with `merge_method: merge` and `sha`), and on anything else act on it as step 3 says |
+   | `session` | Merge it yourself with a merge commit pinned to its `head`: `gh pr merge <n> --merge --match-head-commit <sha>`, or `merge_pull_request` with `merge_method: merge` and `sha` |
+   | `owner` | Say it's ready, and leave it |
+   | Attended work | Say it's ready, and leave it: the owner merges. Point them at the `merge-check` skill: "is #N ready to merge?" |
 
    If your permission settings refuse the merge, don't work around it. Comment that it's green and ready, and end with `WORKFLOW-STATUS: waiting`.
-4. **Once it has merged,** tell the tracking issue: "#<n> merged in #<PR>", then notes for the next tickets. Tag each note with its area and the tickets it's for ("For #201, area readings: …"): what you added that later tickets build on, decisions to know, and pitfalls.
-5. **The claim label.** Whenever your ticket ends (merged, `needs-human`, or stopped), always remove `workflow:in-progress`; on `needs-human` also remove `ready-for-agent`. Keep the ticket's other labels. The conductor removes leftovers at its next check-in, but don't leave it to.
-6. **Wake the conductor.** When the ticket ends, call `fire_trigger` with the briefing's wake routine id and exactly one of these lines: "#<n> merged in #<PR>", "#<n> needs-human" or "#<n> stopped". The conductor then checks in at once instead of at its next scheduled time. Skip this when the briefing's wake routine says `none`, or in attended work.
+5. **Once it has merged,** tell the tracking issue: "#<n> merged in #<PR>", then notes for the next tickets. Tag each note with its area and the tickets it's for ("For #201, area readings: …"): what you added that later tickets build on, decisions to know, and pitfalls.
+6. **The claim label.** Whenever your ticket ends (merged, `needs-human`, or stopped), always remove `workflow:in-progress`; on `needs-human` also remove `ready-for-agent`. Keep the ticket's other labels. The conductor removes leftovers at its next check-in, but don't leave it to.
+7. **Wake the conductor.** When the ticket ends, call `fire_trigger` with the briefing's wake routine id and exactly one of these lines: "#<n> merged in #<PR>", "#<n> needs-human" or "#<n> stopped". The conductor then checks in at once instead of at its next scheduled time. Skip this when the briefing's wake routine says `none`, or in attended work.
    - `fire_trigger` is a deferred tool (in a cloud session, `mcp__claude-code-remote__fire_trigger`; the server's part of the name can differ): load it first with ToolSearch, searching for `fire_trigger` rather than selecting an exact name.
    - If it isn't available, or the call errors, say so in the ticket's final note ("Couldn't wake the conductor: <why>") and carry on: try it once, never retry it in a loop. The conductor sees the ending at its next check-in anyway, so the wake never holds up the ticket or your `WORKFLOW-STATUS` line.
 
