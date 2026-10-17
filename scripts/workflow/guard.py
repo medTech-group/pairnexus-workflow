@@ -2456,16 +2456,14 @@ def _own_head(root: Path, profile: Profile) -> tuple[str | None, str | None, str
     return branch, head.lower(), None
 
 
-def _pin_problem(what: str, pins: list[str], root: Path, profile: Profile, shell: bool = True) -> str | None:
+def _pin_problem(what: str, pins: list[str], root: Path, profile: Profile) -> str | None:
     """A ticket session's merge `pins` (every head commit it names) must each be
-    its ticket branch's head. `shell`: they come from a command line."""
+    its ticket branch's head."""
     if not pins:
         return f"a ticket session merges only its own pull request, so this {what} must be pinned to its ticket branch's head: add {_PIN_HOW}"
     for pin in pins:
-        if shell and re.search(r"[$`]", pin):
-            return f"name the commit this {what} is pinned to literally; `{pin}` is filled in by the shell, so the guard can't check it (`git rev-parse HEAD` prints it)"
         if not _SHA.fullmatch(pin):
-            return f"pin this {what} to the full commit sha (`git rev-parse HEAD`), not `{pin}`"
+            return f"pin this {what} to the full commit sha that `git rev-parse HEAD` prints, not " + (f"`{pin}`" if pin else "an empty one")
     branch, head, problem = _own_head(root, profile)
     if problem:
         return problem
@@ -2560,41 +2558,61 @@ def _merge_words(toks: list[str]) -> tuple[set[str], list[str]]:
 def _unread_merge_word(seg: Seg, toks: list[str]) -> str | None:
     """Why the guard can't read a ticket session's merge or arm as the shell
     runs it: xargs feeds it words, or a word (a heredoc's or text value's too:
-    the lexer drops quoting) holds an expansion, a glob or a brace list."""
+    the lexer drops quoting) holds an expansion, a tilde, a glob or a brace list."""
     if seg.fed:
         return "xargs gives it more words"
     for t in toks[1:]:
-        if re.search(r"[$`*?\[]", t) or re.search(r"\{[^{}]*(,|\.\.)[^{}]*\}", t):
-            return f"`{t}` is filled in by the shell"
+        if re.search(r"[$`~*?\[]", t) or re.search(r"\{[^{}]*(,|\.\.)[^{}]*\}", t):
+            return f"the shell may change `{t}`"
     return None
 
 
-def _ticket_merge_problem(seg: Seg, toks: list[str], profile: Profile, root: Path) -> str | None:
-    """A ticket session's `gh pr merge` or REST merge/arm (toks start at the gh word)."""
-    group, sub = _gh_group(toks)
-    call = None if group == "pr" else _api(toks)
-    m = call and call.method not in ("GET", "DELETE") and re.fullmatch(r"repos/([^/]+/[^/]+)/pulls/(\d+)/(merge|ccr/auto_merge)", call.path, re.I)
-    if not (group == "pr" and sub == "merge") and not m:
-        # A merge path the shell fills in (`pulls/9?/merge`) reads as another path.
-        loose = call and call.method not in ("GET", "DELETE") and any(re.search(r"(?i)pulls/[^/\s]*/(merge|ccr/auto_merge)", t) for t in toks)
-        unread = _unread_merge_word(seg, toks) if loose else None
-        return f"write this merge out in full: {unread}, so the guard can't tell which pull request it merges" if unread else None
-    flags, pins = _merge_words(toks) if group == "pr" else (set(), [])
-    what = "arm of auto-merge" if "--auto" in flags or (m and m.group(3).lower() != "merge") else "merge"
+def _gh_merge_problem(seg: Seg, toks: list[str], profile: Profile, root: Path) -> str | None:
+    """A ticket session's `gh pr merge` (toks start at the gh word)."""
+    flags, pins = _merge_words(toks)
+    what = "arm of auto-merge" if "--auto" in flags else "merge"
     unread = _unread_merge_word(seg, toks)  # before the disarm: `--disable-auto $X` may arm
     if unread:
-        return f"write this {what} out in full, with no subject or body: {unread}, so the guard can't tell which pull request it merges or what it is pinned to"
-    if group == "pr" and "--disable-auto" in flags and not flags - {"--disable-auto", "-R", "--repo"}:
+        return (
+            f"write this {what} out in full, with no subject or body and the commit pinned as the sha `git rev-parse HEAD` prints: "
+            f"{unread}, so the guard can't tell which pull request it merges or what it is pinned to"
+        )
+    if "--disable-auto" in flags and not flags - {"--disable-auto", "-R", "--repo"}:
         return None  # a disarm, nothing else
-    if group == "pr":
-        return _pin_problem(what, pins, root, profile)
-    if m.group(3).lower() == "merge":
+    return _pin_problem(what, pins, root, profile)
+
+
+def _rest_merge_problem(seg: Seg, toks: list[str], call: _ApiCall, profile: Profile, root: Path) -> str | None:
+    """A ticket session's `gh api` write to a pull request's merge or arm route."""
+    m = re.fullmatch(r"repos/([^/]+/[^/]+)/pulls/(\d+)/(merge|ccr/auto_merge)", call.path, re.I)
+    # The path word as written: one the shell fills in (`pulls/9?/merge`) reads as another path.
+    path_words = [t for t in toks[1:] if re.match(r"(?:https?://[^/\s]+/(?:api/v3/)?)?/?repos/", t)]
+    if not m and not any(re.search(r"(?i)pulls/[^/\s]*/(merge|ccr/auto_merge)", t) for t in path_words):
+        return None
+    what = "arm of auto-merge" if m and m.group(3).lower() != "merge" else "merge"
+    unread = _unread_merge_word(seg, toks)
+    if unread:
+        return f"write this {what} out in full: {unread}, so the guard can't tell which pull request it is for or what it is pinned to"
+    if not m:
+        return None
+    if what == "merge":
         if call.files or call.stdin:
             return "the guard reads a merge's pin only from its `-f sha=<sha>` field: send the merge without an `--input` body or `@file` fields"
         pins = [f.split("=", 1)[1] for f in call.fields if f.split("=", 1)[0] == "sha"]
         return _pin_problem("merge", pins, root, profile)
     repo = profile.repo if m.group(1) == "{owner}/{repo}" else m.group(1)
     return _arm_problem(m.group(2), repo, root, profile)
+
+
+def _ticket_merge_problem(seg: Seg, toks: list[str], profile: Profile, root: Path) -> str | None:
+    """A ticket session's `gh pr merge` or REST merge/arm (toks start at the gh word)."""
+    group, sub = _gh_group(toks)
+    if group == "pr" and sub == "merge":
+        return _gh_merge_problem(seg, toks, profile, root)
+    call = _api(toks)
+    if call and call.method not in ("GET", "DELETE"):
+        return _rest_merge_problem(seg, toks, call, profile, root)
+    return None
 
 
 def _ticket_mcp_merge_problem(name: str, inp: dict, profile: Profile, root: Path) -> str | None:
@@ -2609,8 +2627,10 @@ def _ticket_mcp_merge_problem(name: str, inp: dict, profile: Profile, root: Path
     given = [inp.get("expectedHeadSha")]
     if given[0] not in (None, "") and inp.get("sha") not in (None, ""):
         given.append(inp["sha"])
-    pins = [p if isinstance(p, str) else "(not a string)" for p in given if p not in (None, "")]
-    return _pin_problem("merge", pins, root, profile, shell=False)
+    pins = [p for p in given if p not in (None, "")]
+    if not all(isinstance(p, str) for p in pins):
+        return "pin this merge with `expectedHeadSha` given as text: the full commit sha that `git rev-parse HEAD` prints"
+    return _pin_problem("merge", pins, root, profile)
 
 
 # ---------- deploys ----------

@@ -176,6 +176,18 @@ def test_gh_pr_merge_is_read_as_pflag_reads_it(ticket, form):
     assert "--match-head-commit" in d.reason
 
 
+@pytest.mark.parametrize(
+    "form",
+    [
+        "gh api repos/acme/demo/issues/5/comments -f body='Why did pulls/12/merge fail? <!-- workflow:agent -->'",
+        "gh api -X PATCH repos/acme/demo/pulls/5 -f body='See [x](https://github.com/acme/demo/pulls/12/merge) <!-- workflow:agent -->'",
+    ],
+)
+def test_text_that_mentions_a_merge_route_is_no_merge(ticket, form):
+    d = run(ticket, bash(form))
+    assert d.action == "allow", d.reason
+
+
 def test_a_merge_word_the_shell_fills_in_is_refused_even_pinned(ticket):
     d = run(ticket, bash(f"gh pr merge 99 --merge --match-head-commit {head(ticket)} $X"))
     assert d.action == "deny" and "$X" in d.reason and "write this merge out" in d.reason
@@ -195,7 +207,7 @@ def test_a_merge_in_another_repository_is_refused(ticket, name):
 
 def test_a_pin_the_shell_fills_in_is_refused(ticket):
     d = run(ticket, bash('gh pr merge 12 --merge --match-head-commit "$(git rev-parse HEAD)"'))
-    assert d.action == "deny" and "write this merge out" in d.reason
+    assert d.action == "deny" and "write this merge out" in d.reason and "the sha `git rev-parse HEAD` prints" in d.reason
     d = run(ticket, mcp("merge_pull_request", pullNumber=12, expectedHeadSha="$(git rev-parse HEAD)"))
     assert d.action == "deny" and "full commit sha" in d.reason  # no shell fills in an MCP tool's input
 
@@ -216,6 +228,14 @@ def test_a_pin_the_shell_fills_in_is_refused(ticket):
         "printf '99 --match-head-commit=' | xargs gh pr merge --merge --match-head-commit {sha}",
         "echo '-f sha=x' | xargs gh api -X PUT repos/acme/demo/pulls/99/merge -f sha={sha}",
         "echo 12 | xargs -I N gh api -X PUT repos/acme/demo/pulls/N/ccr/auto_merge",
+        "echo -f | xargs gh api -X PUT repos/acme/demo/pulls/12/ccr/auto_merge",
+        # A tilde is filled in from $HOME, $OLDPWD or $PWD, which the command may set first.
+        "HOME=13; OLDPWD=--match-head-commit=x; gh pr merge ~ --merge --match-head-commit {sha} ~-",
+        "HOME=--match-head-commit=x; gh pr merge 12 -m --match-head-commit {sha} ~",
+        "PWD=--merge; gh pr merge 12 --match-head-commit {sha} ~+",
+        "HOME=--disable-auto=false; OLDPWD=--merge; gh pr merge 13 --disable-auto ~ ~-",
+        "HOME=sha=x; gh api -X PUT repos/acme/demo/pulls/12/merge -f sha={sha} -f ~",
+        "gh api -X PUT repos/acme/demo/pulls/12/ccr/auto_merge -f ~",
     ],
 )
 def test_a_merge_the_shell_could_add_words_to_is_refused(ticket, pr_heads, form):
@@ -269,7 +289,7 @@ def test_an_mcp_merge_naming_another_repository_reads_plainly(ticket, inp):
 
 def test_a_pin_that_isnt_text_reads_plainly(ticket):
     d = run(ticket, mcp("merge_pull_request", pullNumber=3, expectedHeadSha={"a": "b"}))
-    assert d.action == "deny" and "not a string" in d.reason and "{" not in d.reason
+    assert d.action == "deny" and "given as text" in d.reason and "{" not in d.reason
 
 
 def test_the_pin_is_one_more_commit_behind_after_a_new_commit(ticket):
