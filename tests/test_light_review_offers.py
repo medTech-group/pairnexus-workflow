@@ -74,9 +74,10 @@ def test_merge_check_review_it_now_is_the_light_review_or_the_reasons_correctnes
             assert f"(`{rid}`)" in row, rid
     # A round that wasn't clean keeps its shape: never lighter than the person chose.
     # Decided by the review records, never by the pull request's body, which its author writes.
-    assert "a Correctness-only round (§6) when the last round's record names only `correctness` (a light review's later round), else the full panel (§5), never lighter than before" in row
+    assert "a Correctness-only round (§6) when the round the reason counts" in row
+    assert "a record from an account with write access, for a commit in the pull request; never another comment) names only `correctness` (a light review's later round), else the full panel (§5), never lighter than before" in row
     assert "body" not in row
-    assert "beyond §5's and §6's limits, since they chose it" in row
+    assert "`no_review` runs §6 in full; each other choice is one more round or pass, beyond §5's and §6's limits, since they chose it" in row
     assert "(`pass_not_clean`), fix the findings, then another Correctness pass (§5)" in row
     assert "(`review_stale`), a Correctness pass on the head (§5)" in row
     # On a fork, Claude can't push the fixes for findings.
