@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**`workflow state patch` checks a charter change against the profile** (#171, found by #50).
+
+- **`state patch` and `state put`** run the checks `workflow charter validate` runs against the profile on disk whenever the charter in the state changes: auto-merge in solo mode or with no `ci.required_checks` (#50), release steps, waived checks, the explorer and the owner. A change that fails is refused with the same message and the state is left unchanged, so a mid-run patch can't set `merge.mode = "auto-merge"` where the kick-off couldn't. Before, only the conductor's amendment step caught it, by running `charter validate` first.
+- A patch that doesn't change the charter (`tickets`, `status`, …) is written as before, with no new checks and no network calls; so is any write when there is no profile. The conductor skill's amendment step and `docs/charter.md` §4 say so. Tests: `tests/test_state_charter_profile.py`.
+- **For projects updating:** nothing to do.
+
 **An estimate before a run, in sessions and hours** (#123, part of a session budget and a light review, #42).
 
 - **`workflow charter estimate charter.json --tickets N`** says roughly what a run will use, never in money: "About 14 ticket sessions over roughly 7 hours (7 tickets, up to 1 retry each), plus the conductor's check-ins". With no past runs it is the worst case (every retry used) at an hour a session; given `--runs` (past `workflow:run` issues, as the GitHub API returns them) with two or more that merged something, it uses the five most recent runs' sessions per ticket (never above the retries the charter allows) and wall time per merged ticket. The approved estimate is kept in the run state as `estimate`, for later splices. A body whose run state can't be read is skipped with a note.

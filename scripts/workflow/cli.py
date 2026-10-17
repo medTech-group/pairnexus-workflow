@@ -506,6 +506,20 @@ def _against_profile(c: dict, prof, who: bool = True, protected: bool | None = N
     return charter_mod.against_profile(c, prof, who=who, protected=protected)
 
 
+def _charter_change_problems(old, new) -> list[str]:
+    """A put or patch that changes the charter: the checks `charter validate`
+    runs against the profile on disk (solo mode, required checks, release steps,
+    the owner…). A state whose charter is unchanged, or with no profile, isn't
+    checked; a charter that is itself unsound is left to `state.put` to refuse."""
+    c = new.get("charter") if isinstance(new, dict) else None
+    if not isinstance(c, dict) or (isinstance(old, dict) and old.get("charter") == c):
+        return []
+    if charter_mod.validate(c):
+        return []
+    prof = load(required=False)
+    return _against_profile(c, prof) if prof is not None else []
+
+
 def cmd_state(a) -> int:
     if a.action == "init":
         c = _json(a.charter)
@@ -538,12 +552,21 @@ def cmd_state(a) -> int:
         _out(s)
         return 0
     if a.action == "put":
-        new = state_mod.put(body, _json(a.state))
+        try:
+            cur = state_mod.get(body)
+        except state_mod.StateError:  # a broken block: `put` may still replace it
+            cur = None
+        s = _json(a.state)
     else:  # patch
         cur = state_mod.get(body)
         if cur is None:
             raise SystemExit("no state block to patch; use `state put` first")
-        new = state_mod.put(body, state_mod.patch(cur, _json(a.patch)))
+        s = state_mod.patch(cur, _json(a.patch))
+    problems = _charter_change_problems(cur, s)
+    if problems:
+        print("workflow state: refusing to write the state. The charter has problems:\n- " + "\n- ".join(problems), file=sys.stderr)
+        return 1
+    new = state_mod.put(body, s)
     if a.out:
         Path(a.out).write_text(new, encoding="utf-8")
     else:
