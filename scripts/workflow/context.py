@@ -103,6 +103,9 @@ FLOW_HEAD = "This request is part of the project's workflow. Follow its flow ste
 # What the first flow context may take of Claude Code's limit (CONTEXT_LIMIT,
 # below): the rest is room for the glossary's rule and path put in front of it.
 FLOW_BUDGET = 8_500
+_READ = " Read it now, all of it, before acting: "
+_WHOLE = " All of it is below (from "
+_STOPS = " Only its start fits below. It stops before "
 
 
 _FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
@@ -143,18 +146,36 @@ def first_flow(files: list[Path]) -> str:
     the whole stays under it, and the instruction names where the text below
     stops. A file that can't be read leaves only the instruction."""
     names = ", ".join(str(f) for f in files)
-    head = f"{FLOW_HEAD} Read it now, all of it, before acting: {names}."
+    head = f"{FLOW_HEAD}{_READ}{names}."
     try:
         pieces = [(f, s) for f in files for s in _sections(f.read_text(encoding="utf-8-sig"))]
     except (OSError, UnicodeDecodeError):
         return head
-    given: list[str] = []
-    for f, s in pieces:
-        stop = f" Only its start fits below. It stops before {_name(s, f)}: read that section and everything after it there."
-        if len(head) + len(stop) + sum(len(g) + 2 for g in given) + len(s) + 2 > FLOW_BUDGET:
-            return "\n\n".join([head + stop, *given])
-        given.append(s)
-    return "\n\n".join([f"{FLOW_HEAD} All of it is below (from {names}).", *given])
+    body = 0  # the length of the first k sections, joined
+    for k, (f, s) in enumerate(pieces):
+        nxt = pieces[k + 1] if k + 1 < len(pieces) else None
+        grown = body + len(s) + 2
+        # what the text would be with this section too, under the name of the next
+        whole = len(f"{FLOW_HEAD}{_WHOLE}{names}).") if nxt is None else len(head) + len(_stop(*nxt))
+        if whole + grown > FLOW_BUDGET:
+            given = [p for _, p in pieces[:k]]
+            return "\n\n".join([head + _stop(f, s), *given])
+        body = grown
+    return "\n\n".join([f"{FLOW_HEAD}{_WHOLE}{names}).", *(p for _, p in pieces)])
+
+
+def _stop(f: Path, s: str) -> str:
+    return f"{_STOPS}{_name(s, f)}: read that section and everything after it there."
+
+
+def flow_instruction(ctx: str) -> str:
+    """The first flow context cut to its instruction: follow the flow and read
+    it now, all of it, at its paths, with nothing said about text below."""
+    first = ctx.split("\n\n", 1)[0].split(_STOPS.split(" It stops")[0], 1)[0]
+    lead = f"{FLOW_HEAD}{_WHOLE}"
+    if first.startswith(lead) and first.endswith(")."):
+        first = f"{FLOW_HEAD}{_READ}{first[len(lead):-2]}."
+    return first
 
 
 def context_for(prompt: str, session_id: str, files: list[Path]) -> str | None:
@@ -225,5 +246,5 @@ def with_glossary(ctx: str | None, path: Path | None) -> str | None:
             return whole
     by_path = f"{rule} It isn't included here: read it now."
     if ctx and len(by_path) + 2 + len(ctx) >= CONTEXT_LIMIT and is_first_flow(ctx):
-        ctx = ctx.split("\n\n", 1)[0]  # long paths: keep the flow's instruction, which names them
+        ctx = flow_instruction(ctx)  # long paths: keep the flow's instruction, which names them
     return f"{by_path}\n\n{ctx}" if ctx else by_path

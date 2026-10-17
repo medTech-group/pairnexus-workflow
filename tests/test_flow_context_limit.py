@@ -135,12 +135,15 @@ def test_a_heading_inside_a_code_block_is_not_a_section(repo):
 
 def test_fences_of_each_kind(repo):
     flow = (
-        "# The flow\n\n## 1. Build\n\n~~~\n## not a heading\n```\n## nor this\n~~~\n\n"
-        "````\n```\n## nor this one\n````\n\n```x``` is inline, not a fence\n\n## 2. Merge\n\nGreen first.\n"
+        "# The flow\n\n## 1. Build\n\n~~~\n## not a heading\n```\n## nor this\n~~~\n"
+        "````\n```\n## nor this one\n````\n```\n```x\n## nor this, after a fence with words\n```\n"
+        "```x``` is inline, not a fence\n## 2. Merge\n\nGreen first.\n"
     )
     (repo / ".claude/workflow/flow.md").write_text(flow)
     ctx = _ctx(repo, "implement #5", env={"WORKFLOW_EXPERIENCE": "developer"})
-    assert flow.strip().split("# The flow\n\n")[1] in ctx
+    body = ctx.split("\n\n", 1)[1]
+    # only "## 2. Merge" starts a section: the join adds a blank line before it alone
+    assert body == flow.strip().replace("not a fence\n## 2. Merge", "not a fence\n\n## 2. Merge")
 
 
 def test_an_unreadable_flow_leaves_the_instruction_and_never_fails(repo):
@@ -157,17 +160,21 @@ def test_the_reminder_after_the_first_is_short(repo):
     assert again and len(again) < 1_000 and "read it again" in again
 
 
-def test_long_paths_never_pass_the_limit(tmp_path):
+@pytest.mark.parametrize("sections", [30, 60], ids=["all of it fits", "only its start fits"])
+def test_long_paths_never_pass_the_limit(tmp_path, sections):
     from workflow import context
 
-    deep = tmp_path.joinpath(*["d" * 200] * 17)
-    deep.mkdir(parents=True)
-    flow = deep / "flow.md"
-    flow.write_text(FLOW)
-    glossary = deep / "glossary.md"
+    glossary = tmp_path / "glossary.md"
     glossary.write_text("# Glossary\n\n### Pull request\n\nA proposed change.\n")
-    ctx = context.with_glossary(context.first_flow([flow]), glossary)
-    assert len(ctx) < LIMIT and "read it now, all of it" in ctx.lower() and str(flow) in ctx
+    long = "/" + "d" * 200
+    flow = tmp_path / "flow.md"
+    flow.write_text("# The flow\n\n" + "".join(f"## {i}\n\n{'x' * 200}\n\n" for i in range(sections)))
+    ctx = context.first_flow([flow])
+    ctx = ctx.replace(str(flow), long * 20)  # paths as long as a deep checkout's, without making one
+    out = context.with_glossary(ctx, glossary)
+    assert len(out) < LIMIT
+    assert "read it now, all of it" in out.lower() and long * 20 in out
+    assert "below" not in out.split("read it now.", 1)[1].lower()  # nothing claimed below that isn't there
 
 
 def test_a_byte_order_mark_is_left_out(repo):
