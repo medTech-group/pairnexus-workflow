@@ -150,10 +150,17 @@ def test_normal_with_one_profile_round_offers_no_explorer(profile):
     assert presets.words("thorough", profile).endswith("UI explorer on")
 
 
-def test_changelog_and_docs():
+def test_changelog_notes_120_without_bumping_version():
     text = (KIT / "CHANGELOG.md").read_text()
     unreleased = text.split("## Unreleased", 1)[1].split("\n## ", 1)[0]
     assert "(#120," in unreleased
     released = text.split("\n## ")[2].split()[0].lstrip("v")
     assert (KIT / "VERSION").read_text().strip() == released
     assert "presets.review_of" in (KIT / "docs/charter.md").read_text().split("## 4.", 1)[1].split("\n## ", 1)[0]
+
+
+def test_the_one_page_never_offers_an_explorer_the_project_lacks(tmp_path):
+    _project(tmp_path, explorer="none")
+    (tmp_path / "charter.json").write_text(json.dumps(_charter(rounds=2, explorer=True)))
+    p = _cli(tmp_path, "charter", "markdown", "charter.json")
+    assert "up to 2 rounds per ticket; no UI explorer (the project has none)." in p.stdout

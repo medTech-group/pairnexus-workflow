@@ -74,11 +74,13 @@ def runs_explorer(review: dict) -> bool:
 
 
 def _explorer_phrase(review: dict, profile: Any) -> str:
+    if profile is not None and not has_explorer(profile):
+        return NO_EXPLORER
     if runs_explorer(review):
         return "UI explorer on"
     if review.get("explorer") is True:
         return LIGHT_NO_EXPLORER
-    return NO_EXPLORER if profile is not None and not has_explorer(profile) else "UI explorer off"
+    return "UI explorer off"
 
 
 def words(name: str, profile: Any = None) -> str:
