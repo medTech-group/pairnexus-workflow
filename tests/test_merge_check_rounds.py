@@ -6,6 +6,9 @@ The allowed rounds come from `--review-rounds`, else the profile's
 one still needs another round; no fourth round is ever asked for.
 """
 
+import re
+from pathlib import Path
+
 import pytest
 
 from test_merge_check import EARLIER, HEAD, check, comment, ids, inputs, project, rec  # noqa: F401 (project is a fixture)
@@ -200,3 +203,61 @@ def test_review_reasons_carry_the_counted_rounds_reviewers(project, capsys):
     got, _ = check(project, capsys, data)
     [r] = review_reasons(got)
     assert r["reviewers"] == ["correctness"] and r["round"] == 1
+
+
+# ---------- the skills, docs and briefing pass the rounds ----------
+
+KIT = Path(__file__).resolve().parents[1]
+
+
+def _read(rel):
+    return (KIT / rel).read_text(encoding="utf-8")
+
+
+def test_build_ticket_and_the_conductor_pass_the_review_rounds():
+    build = _read("skills/build-ticket/SKILL.md")
+    assert "--charter .workflow/tracking.md --review-rounds <N>`, with `<N>` the briefing's review rounds" in build
+    assert "a Correctness pass on the head when it is `pass`, after the last allowed round, never a further round" in build
+    conductor = _read("skills/conductor/SKILL.md")
+    assert "--charter .workflow/run/tracking.md --review-rounds <N>`, with `<N>` the charter's review rounds" in conductor
+    assert "--review-rounds <the charter's review rounds>" in _read("docs/charter.md")
+
+
+def test_the_merge_check_skill_runs_a_pass_for_next_pass():
+    skill = _read("skills/merge-check/SKILL.md")
+    assert "When its `next` is `pass` (that round was the last allowed one, by the profile's `run.review_rounds`), fix the findings, then a Correctness pass on the head (§5) instead" in skill
+    assert "- `review_rounds`: the review rounds allowed it used" in skill
+
+
+def test_the_flow_says_the_last_round_is_lifted_by_a_clean_pass():
+    flow = _read("docs/flow.md")
+    item = next(ln for ln in flow.splitlines() if ln.startswith("4. **The reviews are clean**"))
+    assert "unless it was the last allowed one (§3 step 3): then a clean Correctness pass on the head lifts its findings, and no further round is added" in item
+
+
+def test_the_briefing_passes_its_review_rounds():
+    from workflow import presets, render
+    from workflow.profile import parse
+
+    import conftest
+
+    prof = parse(conftest.BASE_PROFILE, KIT)
+    template = _read("templates/ticket-session-prompt.md")
+    assert "--review-rounds {{review.rounds}}" in template
+    for n in (1, 4):
+        charter = {"review": {"rounds": n, "explorer": "none"}}
+        v = render.values(prof, {"number": 7, "title": "t"}, charter, {}, 9, None)
+        assert v["review.rounds"] == str(n)
+        assert presets.review_of(charter, prof)["rounds"] == n
+
+
+def test_the_changelog_has_the_note_and_version_is_unchanged():
+    unreleased = _read("CHANGELOG.md").split("## Unreleased", 1)[1].split("\n## ", 1)[0]
+    assert "(#170" in unreleased and "--review-rounds N" in unreleased
+
+
+def test_the_rendered_briefings_merge_check_names_the_rounds(tmp_path):
+    from test_run_merges_on_merge_check import _render
+
+    merging = _render(tmp_path, "auto-merge", [])
+    assert re.search(r"merge-check --fetch <PR> --json --charter \.workflow/tracking\.md --review-rounds \d+`", merging), merging
