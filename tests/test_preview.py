@@ -675,11 +675,16 @@ def test_an_older_comment_supplies_a_worker_the_newest_lacks(tmp_path, capsys):
     assert got == answer("built", "https://notes-page-demo-api.example-account.workers.dev")
 
 
-def test_an_unchecked_workers_failed_row_is_failed(tmp_path, capsys):
-    # Build watch paths kept demo-api from rebuilding: its preview on this branch is still the broken one.
+def test_an_unchecked_workers_older_failed_row_counts_neither_way(tmp_path, capsys):
+    # The checks on the head decide: a Worker with no check there (build watch paths kept it from
+    # rebuilding, or it was renamed, or its check hasn't started) can't be told apart.
     rows = (row(worker="demo-notes"), row("❌ Deployment failed", worker="demo-api", sha=OLDER, links=""))
     got, _, _ = preview(tmp_path, capsys, [bot(*rows)], checks(cf_run(worker="demo-notes")))
-    assert got == answer("failed")
+    assert got == answer("built", BRANCH_URL)
+    # Each Worker with a comment of its own: the same.
+    split = [bot(rows[1], cid=501, updated="2026-10-16T09:00:00Z"), bot(rows[0], cid=502, updated="2026-10-16T10:30:00Z")]
+    got, _, _ = preview(tmp_path, capsys, split, checks(cf_run(worker="demo-notes")))
+    assert got == answer("built", BRANCH_URL)
 
 
 def test_an_earlier_failed_row_before_the_heads_build_starts_is_building(tmp_path, capsys):
@@ -726,12 +731,20 @@ def test_a_fresh_push_with_one_workers_check_still_starting_is_building(tmp_path
     assert got == answer("building")
 
 
-def test_an_unchecked_workers_failed_row_counts_when_the_others_were_skipped(tmp_path, capsys):
+def test_a_fresh_push_with_one_workers_check_done_and_the_others_not_started(tmp_path, capsys):
     rows = (row(worker="a-web", sha=OLDER), row("❌ Deployment failed", worker="b-api", sha=OLDER, links=""))
+    got, _, _ = preview(tmp_path, capsys, [bot(*rows)], checks(cf_run(worker="a-web")))
+    assert got == answer("building", None, OLDER)
     got, _, _ = preview(tmp_path, capsys, [bot(*rows)], checks(cf_run("skipped", worker="a-web")))
-    assert got == answer("failed")
+    assert got == answer("none", None, HEAD)
 
 
 def test_a_bare_url_inside_html_tags_is_read(tmp_path, capsys):
     got, _, _ = preview(tmp_path, capsys, [bot(row(links=f"<code>{BRANCH_URL}</code>"))], checks(cf_run()))
     assert got == answer("built", BRANCH_URL)
+
+
+@pytest.mark.parametrize("cell", ['<img src="https://x.example/qr.png">', '<span title="https://x.example/a"></span>'])
+def test_a_url_inside_a_tag_isnt_the_link(tmp_path, capsys, cell):
+    out, code, err = preview(tmp_path, capsys, [bot(row(links=cell))], checks(cf_run()))
+    assert code == 1 and "Preview URL cell" in err
