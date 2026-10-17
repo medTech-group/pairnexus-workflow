@@ -95,10 +95,12 @@ A shorter review for a small, low-risk ticket, asked for as "build #12 with a li
   ```
   WF review-record --kind round --round <n> --commit <sha> --reviewers correctness --clean > /tmp/review-<ticket>-r<n>/record.md
   ```
+
+  (`--not-clean` when it found something to fix.) The 2 is fixed, whatever `run.review_rounds` says: with the briefing's review rounds at 1, these rounds come on top of its "at most 1".
 - **Post each record** as section 4 says. A later commit after the last round still gets its Correctness pass (section 5).
 - **Anything still open** after them goes to the owner in the PR body, never silently.
 
-**In a run:** when the briefing's review rounds are 1 (the Light preset), ticket sessions use this same shape, so one round means one full-panel round, without the explorer, in attended and unattended work alike. Otherwise it is never chosen for the person: only they ask for it.
+**In a run:** when the briefing's review rounds are 1, ticket sessions use this same shape, so one round means one full-panel round, without the explorer, in attended and unattended work alike. There the owner chose it, by giving the run one review round; it is never chosen for the person.
 
 ## 7. The findings table (for the PR body)
 

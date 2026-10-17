@@ -10,7 +10,7 @@
 - **The PR body** (`build-ticket`) says "Light review: one round, no UI explorer", adding "plus N Correctness rounds for the fixes" when there were some, above the findings table.
 - **The merge rule is unchanged:** CI green, the review record, and the owner's review of kit and CI files all stand. `review-panel`'s findings table is now §7.
 - Docs: `docs/flow.md` §3. Tests: `tests/test_light_review.py`.
-- **For projects updating:** nothing to do.
+- **For projects updating:** a profile with `run.review_rounds = 1` now gets the light shape in a run: round 1 without the UI explorer, then up to 2 Correctness-only rounds for its fixes. To keep the explorer in a run's ticket sessions, set `run.review_rounds` to 2 or more.
 
 **The `merge-check` skill: "is #12 ready to merge?", and "Merge it now"** (#84, part of judging a PR without reading code, #39).
 

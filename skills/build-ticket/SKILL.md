@@ -59,7 +59,7 @@ Follow the `review-panel` skill on the diff against the base branch:
 - rerun the typecheck and the affected tests after each round;
 - after the last round, any further commit gets a short Correctness pass.
 
-**A light review,** when the person asks for one: "build #12 with a light review", or "quick build #12". "Light review" is its name; "quick build" is only understood. It is not the guided start's "quick ticket", which files a small ticket. Follow `review-panel`'s light review: one full-panel round without the UI explorer, then Correctness-only rounds for its fixes, at most 2 more, each posting its record. A ticket session uses that shape when its briefing's review rounds are 1. A light review is never chosen for the person, in attended or unattended work, and it never changes the merge rule.
+**A light review,** when the person asks for one: "build #12 with a light review", or "quick build #12". "Light review" is its name; "quick build" is only understood. It is not the guided start's "quick ticket", which files a small ticket. Follow `review-panel`'s light review (section 6), which gives its shape. A ticket session uses that shape when its briefing's review rounds are 1, the Correctness-only rounds coming on top of the briefing's "at most 1". A light review is never chosen for the person, in attended or unattended work, and it never changes the merge rule.
 
 ## 4. Open the pull request
 
