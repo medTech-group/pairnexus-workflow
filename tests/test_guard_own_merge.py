@@ -213,6 +213,18 @@ def test_text_that_mentions_a_merge_route_is_no_merge(ticket, form):
         "gh api repos/acme/demo/pulls/13/merge $(cat <<'EOF'\n-XPUT\nEOF\n)",
         "gh api $(cat <<'EOF'\n-X PUT repos/acme/demo/pull[s]/13/merge\nEOF\n)",
         "gh api -X PATCH repos/acme/demo/pulls/12 -f body=$(cat <<'EOF'\nx -X PUT -t\nEOF\n)",
+        # A quoted array is several words.
+        "A=(-X PUT repos/acme/demo/pulls/13/merge); gh api \"${A[@]}\"",
+        "gh api \"$@\"",
+        "gh api \"${!P@}\"",
+        # Another shell reads text the outer shell expanded first.
+        "X=\"repos/acme/demo/pulls/13/merge' -X 'PUT\"; eval \"gh api '$X'\"",
+        "bash -c \"gh api '$X'\"",
+        "bash <<EOF\ngh api \\$X\nEOF",
+        # Inside backticks `\$` is `$`.
+        "echo `gh api \\$X`",
+        # A brace list holding braces.
+        "gh api {-XPUT,repos/acme/demo/pulls/13/merge,-fx={}}",
     ],
 )
 def test_a_merge_route_hidden_in_another_api_write_is_refused(ticket, form):
@@ -294,6 +306,9 @@ def test_a_pin_the_shell_fills_in_is_refused(ticket):
         "gh pr merge --merge --match-head-commit {sha} -t $(printf 'x 99 --match-head-commit=')",
         "gh pr merge 99 --merge --match-head-commit {sha} *",
         "gh pr merge 99 --merge --match-head-commit {sha} --subject $T",
+        "A=(99 --match-head-commit x); gh pr merge --merge --match-head-commit {sha} \"${A[@]}\"",
+        "eval \"gh pr merge --merge --match-head-commit {sha} --subject '$X'\"",
+        "gh pr merge --merge --match-head-commit {sha} {99,--match-head-commit=x={}}",
         "gh pr merge 99 --merge --match-head-commit {sha} -b `cat b.txt`",
         "gh api -X PUT repos/acme/demo/pulls/99/merge -f sha={sha} {-f,sha=x}",
         "gh api -X PUT repos/acme/demo/pulls/99/merge -f sha={sha} $(printf -- '-f sha=X')",

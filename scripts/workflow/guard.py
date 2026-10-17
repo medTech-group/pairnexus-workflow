@@ -460,7 +460,23 @@ class Word(str):
     splits: bool = False
 
 
-_UNQUOTED_SPLITS = re.compile(r"[$*?\[]|\{[^{}]*(,|\.\.)[^{}]*\}|^~|[=:]~")
+_UNQUOTED_SPLITS = re.compile(r"[$*?\[]|^~|[=:]~")
+
+
+def _brace_list(text: str) -> bool:
+    """`text` may hold a brace list the shell expands: a `{`, then a `,` or `..`,
+    then a `}` (braces inside it included: `{-XPUT,x={}}`). Read in one pass."""
+    a = text.find("{")
+    if a < 0:
+        return False
+    b = min((k for k in (text.find(",", a), text.find("..", a)) if k >= 0), default=-1)
+    return b >= 0 and text.find("}", b) >= 0
+
+
+def _unbacktick(body: str) -> str:
+    """A backtick substitution's text as the shell then runs it: inside backticks
+    `\\$`, `\\\\` and `\\`` lose their backslash first."""
+    return re.sub(r"\\([$`\\])", r"\1", body)
 
 
 @dataclass
@@ -538,7 +554,7 @@ def _expansions(text: str) -> list[list]:
             continue
         if c == "`":
             j = _backtick_end(text, i)
-            out.append(_lex(text[i + 1 : j].replace("\\`", "`"))[0])
+            out.append(_lex(_unbacktick(text[i + 1 : j]))[0])
             i = j + 1
             continue
         i += 1
@@ -565,7 +581,7 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
         if in_word:
             w = Word("".join(word))
             bare = "".join(unquoted)
-            w.splits = "\0" in bare or bool(_UNQUOTED_SPLITS.search(bare))
+            w.splits = "\0" in bare or bool(_UNQUOTED_SPLITS.search(bare)) or _brace_list(bare)
             out.append(w)
         word, in_word, quoted, unquoted = [], False, False, []
 
@@ -584,7 +600,7 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
     def backtick(start: int) -> int:
         j = _backtick_end(s, start)
         word.append(s[start : j + 1])
-        hoist(_lex(s[start + 1 : j].replace("\\`", "`"))[0])
+        hoist(_lex(_unbacktick(s[start + 1 : j]))[0])
         return j + 1
 
     def read_heredocs(pos: int) -> int:
@@ -674,6 +690,8 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
                 if ch == "`":
                     i = backtick(i)
                     continue
+                if ch == "$" and re.match(r"\$(?:@|\{!|\{[^}]*\[@\])", s[i : i + 256]):
+                    unquoted.append("\0")  # "$@", "${A[@]}", "${!p@}": several words, quoted or not
                 word.append(ch)
                 i += 1
             i += 1
@@ -1068,6 +1086,18 @@ def _segments_of(toks: list, root: Path, cwd: str | None, depth: int) -> list[Se
     return segs
 
 
+def _reread(text: str, root: Path, cwd: str | None, depth: int) -> list[Seg]:
+    """The commands in text another shell runs. When the outer shell may have
+    expanded it first (a `$`, a backtick or a backslash in it), the quoting the
+    lexer sees isn't the one that runs: the words lose their marks (`Word`),
+    so what reads them falls back to their text."""
+    segs = segments(text, root, cwd, depth + 1)
+    if re.search(r"[$`\\]", text):
+        for sg in segs:
+            sg.words = [str(w) for w in sg.words]
+    return segs
+
+
 def _nested(seg: Seg, root: Path, depth: int) -> list[Seg]:
     toks = seg.words
     if not toks or depth >= 4:
@@ -1075,18 +1105,18 @@ def _nested(seg: Seg, root: Path, depth: int) -> list[Seg]:
     out: list[Seg] = []
     name = Path(toks[0]).name
     if re.search(r"\s", toks[0]):  # a whole command as one word (`watch 'git push'`)
-        out += segments(toks[0], root, seg.cwd, depth + 1)
+        out += _reread(toks[0], root, seg.cwd, depth)
     if name in _DASH_C:
         inner = _shell_c(toks)
         if inner is not None:
-            out += segments(inner, root, seg.cwd, depth + 1)
+            out += _reread(inner, root, seg.cwd, depth)
     if name in _SHELLS and seg.heredoc and _shell_reads_stdin(toks):
-        out += segments(seg.heredoc, root, seg.cwd, depth + 1)
+        out += _reread(seg.heredoc, root, seg.cwd, depth)
     if name == "eval" and len(toks) > 1:
-        out += segments(" ".join(toks[1:]), root, seg.cwd, depth + 1)
+        out += _reread(" ".join(toks[1:]), root, seg.cwd, depth)
     if _INTERP.match(name):
         for lit in re.findall(r"""['"]([^'"]*\b(?:git|gh)\b[^'"]*)['"]""", _inline_code(toks)):
-            out += segments(lit, root, seg.cwd, depth + 1)
+            out += _reread(lit, root, seg.cwd, depth)
     if name == "find":
         k = 0
         while k < len(toks):
@@ -2584,7 +2614,7 @@ def _unread_merge_word(seg: Seg, toks: list[str]) -> str | None:
         if isinstance(t, Word):
             if t.splits:
                 return f"the shell may change `{t}`"
-        elif re.search(r"[$`~*?\[]", t) or re.search(r"\{[^{}]*(,|\.\.)[^{}]*\}", t):
+        elif re.search(r"[$`~*?\[]", t) or _brace_list(t):
             return f"the shell may change `{t}`"  # a word the lexer didn't read: whatever it holds
     return None
 
@@ -2618,7 +2648,7 @@ def _split_api_word(seg: Seg, toks: list[str]) -> str | None:
                 return f"the shell may split `{t}` into other words"
         elif _literal_heredoc(t) or ((key := re.match(r"[\w.\[\]-]+=", t)) and _literal_heredoc(t[key.end():])):
             continue
-        elif re.search(r"[$`*?\[]|(?:^|[=:])~|\{[^{}]*(,|\.\.)[^{}]*\}", t):
+        elif re.search(r"[$`*?\[]|(?:^|[=:])~", t) or _brace_list(t):
             return f"the shell may split `{t}` into other words"
     return None
 
