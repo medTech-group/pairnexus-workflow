@@ -32,7 +32,7 @@ The reviewers read these files. The Correctness reviewer can't run git or reach 
 
 For an auth, upload, payment or API change, also run the `security-review` skill on the branch.
 
-**Explorer.** The `ui-explorer` agent, when the profile's `ui.explorer` isn't `none` and the change touches a screen, an endpoint or a command. Give it:
+**Explorer.** The `ui-explorer` agent, when the explorer isn't `none` (the briefing's UI explorer in a ticket session, else the profile's `ui.explorer`) and the change touches a screen, an endpoint or a command. Give it:
 - the profile's `[ui]` settings;
 - `ticket.md`;
 - the screens, endpoints or commands the change touches;
@@ -74,7 +74,7 @@ No pull request yet (the first rounds of `build-ticket` run before it opens)? Ke
 
 ## 5. When to stop
 
-Repeat on the new diff until a round finds nothing to fix, at most the profile's `run.review_rounds`. For a light review, or when the briefing's review rounds are 1, follow the light review (section 6) instead.
+Repeat on the new diff until a round finds nothing to fix, at most the briefing's review rounds in a ticket session, else the profile's `run.review_rounds`. For a light review, or when the briefing's review rounds are 1, follow the light review (section 6) instead.
 
 - Anything still open after the last round goes to the owner in the PR body, never silently.
 - Any commit after the last round gets a Correctness pass on just those commits before merging. Before it starts, `mkdir -p /tmp/review-<ticket>-pass<k>` (its scratch directory, `k` counting the passes from 1) and write `git rev-parse HEAD` to `commit.txt` there: the commit it covers, never one made after. Then post its record (section 4).

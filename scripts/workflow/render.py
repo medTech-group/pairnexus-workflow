@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import re
 
+from . import presets as presets_mod
 from .profile import Profile
 
 PLACEHOLDER = re.compile(r"\{\{\s*([A-Za-z0-9_.]+)\s*\}\}")
@@ -111,8 +112,14 @@ def _bullets(items: list[str]) -> str:
     return "\n".join(f"- {x}" for x in items) if items else "- none"
 
 
+def _rounds(n: int) -> str:
+    """The review's rounds; 1 is the light review (`review-panel` §6)."""
+    return "1 (the light review)" if n == 1 else str(n)
+
+
 def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking: int, by_hand: int | None) -> dict:
     merge = charter.get("merge") or {}
+    review = presets_mod.review_of(charter, profile)
     waived = merge.get("waived_checks") or []
     v = {
         "ticket.number": str(ticket["number"]),
@@ -127,7 +134,7 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
         "by_hand.issue": f"#{by_hand}" if by_hand else "none yet: add by-hand checks to the tracking issue",
         "merge.mode": merge.get("mode", "auto-merge"),
         "merge.waived": ", ".join(waived) if waived else "none: every required check must be green",
-        "run.review_rounds": str(profile.review_rounds),
+        "run.review_rounds": _rounds(review["rounds"]),
         "run.check_in_minutes": str((charter.get("limits") or {}).get("check_in_minutes", profile.check_in_minutes)),
         "open_decisions": "take the choice most consistent with the spec, ADRs and the project's rules, and record it in the PR body"
         if charter.get("open_decisions", "decide-and-record") == "decide-and-record"
@@ -135,7 +142,7 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
         "commands.typecheck": _per_package(profile, "typecheck", _code),
         "commands.test_file": _per_package(profile, "test_file", _test_file),
         "commands.suites": _bullets([_suite_line(s) for s in profile.suites]),
-        "ui.explorer": profile.explorer,
+        "ui.explorer": profile.explorer if presets_mod.runs_explorer(review) else "none",
     }
     for k in REQUIRED_SLOTS:
         v[k] = slots.get(k, "")
