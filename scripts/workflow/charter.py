@@ -71,6 +71,18 @@ def removed_protection_accepted(c: Any) -> bool:
     return isinstance(gaps, list) and any(isinstance(g, str) and _REMOVED_PROTECTION_LINE.search(g) for g in gaps)
 
 
+def dropped_removed_protection(old: Any, new: Any) -> str | None:
+    """The problem when a change drops the old charter's record of removed
+    protection (`new` cleared counts), else None. The record lasts until the run
+    ends: auto-merge needs a new run, whose kick-off reads protection back."""
+    if removed_protection_accepted(old) and not removed_protection_accepted(new):
+        return (
+            "accepted_gaps: the `removed protection:` line can't be dropped during the run; the charter carries "
+            "the read-back's verdict until the run ends (auto-merge needs a new run, whose kick-off reads protection back)"
+        )
+    return None
+
+
 def _auto_merge_risk(why: str, solo: bool) -> str:
     """What auto-merge would do, for `why` (a solo_reason when `solo`)."""
     if solo:
