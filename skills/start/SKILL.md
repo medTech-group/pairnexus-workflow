@@ -11,6 +11,7 @@ Guide the person from "what are we working on?" to work done, one choice at a ti
 
 **Every question is a choice to click.** Use the `AskUserQuestion` tool:
 - **Options:** 2 to 4. Your recommended option comes first, its label ending "(Recommended)", with one line saying why. "Other" is always added for their own words, so never add a "something else" option.
+- **Building a ticket:** **Build it with a light review** is always the second choice, after the full build: never first, never "(Recommended)", never chosen for them.
 - **Questions:** up to 4 in one call, when they don't depend on each other. More than 4 means several calls.
 - **No tool:** where `AskUserQuestion` isn't available (a headless `-p` session), ask the same choices as a numbered list.
 
@@ -207,6 +208,7 @@ For each item, read the flow's section for its path and follow it, skipping noth
 2. Publish by editing the item's issue into the ticket: replace its body, drop the marker, and add `ready-for-agent`. The item's issue becomes the ticket.
 3. Ask:
    - **Build it now (Recommended)**: load `build-ticket` with the Skill tool, on a fresh branch;
+   - **Build it with a light review**: the same, asking `build-ticket` for a light review (`review-panel` §6, "The light review"). "One review round, for a small change." Second, and never the recommendation;
    - **Leave it ready for later**: `/next` or a run picks it up;
    - **Next item**.
 

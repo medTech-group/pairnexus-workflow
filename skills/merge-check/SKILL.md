@@ -85,7 +85,7 @@ Give each reason in plain words with what to do: its `message`, then its `fix`. 
 
 | `action` | The choice | What it does |
 |---|---|---|
-| `review` | **"Review it now"** | Follow the `review-panel` skill on the pull request's branch, posting its records (#79). It runs the full panel until the light review comes to attended sessions (#42). Then check again. |
+| `review` | **"Review it now"** | Follow the `review-panel` skill's light review (`review-panel` §6, "The light review") on the pull request's branch, posting its records (#79). Then check again. |
 | `update_branch` | **"Bring it up to date"** | On the pull request's branch, `git fetch origin <base> && git merge origin/<base>`, then push. Never rebase or force-push. Check again once CI has run on the new commit. |
 | `resolve_conflict` | **"Resolve the conflict"** | Merge `<base>` into the pull request's branch, resolve each conflict keeping both sides' intent, run the tests (the profile's commands), push, and check again. Never rebase or force-push. |
 | `fix_checks` | **"Ask Claude to fix it"** | Find the failed check's cause (its log; `diagnosing-bugs` when it's unclear), fix it on the pull request's branch, push, and check again. |

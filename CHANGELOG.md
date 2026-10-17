@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**The light review, offered second: "Build it with a light review", and "Review it now" as a light review** (#122, part of a session budget and a light review, #42).
+
+- **`next` and the guided start** offer "Build it with a light review" wherever they offer to build a ticket, as the second choice after the full build: never first, never "(Recommended)", never chosen for the person. `next` asks only in an attended session, and not when the person already asked for it by name; a ticket session asks nothing.
+- **The `merge-check` skill's "Review it now"** now runs the light review (`review-panel` §6) instead of the full panel.
+- **The glossary's "Review panel" entry** says what a light review is: one round without the walk-through, for small changes, never chosen for you. Other entries are trimmed a little to keep it under 6,000 characters. The README's guided-start example lists the new choice.
+- Tests: `tests/test_light_review_offers.py`.
+- **For projects updating:** nothing to do.
+
 **The light review: "build #12 with a light review"** (#121, part of a session budget and a light review, #42).
 
 - **Asked for** as "build #12 with a light review", or "quick build #12" ("light review" is the name; "quick build" is only understood, and isn't the guided start's "quick ticket"). It is never chosen for the person, in attended or unattended work.
