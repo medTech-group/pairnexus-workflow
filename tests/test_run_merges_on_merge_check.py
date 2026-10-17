@@ -24,6 +24,12 @@ CHANGELOG = KIT / "CHANGELOG.md"
 
 COMMAND = re.compile(r"`WF merge-check --fetch <(?:PR|pr|n)> --json --charter \.workflow/[^`]+`")
 # Each way of merging pins the head merge-check checked.
+# When a path-filtered check that never started goes to the owner.
+PATH_FILTERED_WHEN = (
+    "only once every other required check has finished and the evidence is posted: `WF merge-check`'s only reason left is "
+    "`checks_pending`, for checks that are all in `ci.path_filtered` and `missing` in its `checks[]`"
+)
+DISARM = "`disable_pr_auto_merge`, or `gh pr merge <n> --disable-auto`"
 PINS = ("--match-head-commit <sha>", "-f sha=<sha>", "`expectedHeadSha`")
 
 
@@ -89,11 +95,12 @@ def test_conductor_sends_owner_review_to_for_owner_with_the_files():
 def test_conductor_never_merges_on_not_yet():
     rows = _check_in_rows()
     not_yet = _row(rows, "`not_yet`")
-    assert not_yet.split("|")[2].strip().startswith("Never merge it or arm auto-merge.")
+    assert not_yet.split("|")[2].strip().startswith("Never merge it or arm auto-merge, and if auto-merge is armed on it, disarm it")
     assert "update_branch" in not_yet and "A reason with no `action`" in not_yet
-    assert "The path-filtered row below wins over this one." in not_yet
+    assert "The path-filtered row below wins over this one once its condition holds." in not_yet
     path_filtered = _row(rows, "A required check never started")
     assert "never says `ready`" in path_filtered and "settled for \"Done\"" in path_filtered
+    assert PATH_FILTERED_WHEN in path_filtered and "until then, the `not_yet` row applies" in path_filtered
 
 
 def test_conductor_no_longer_restates_the_rule_or_lists_files():
@@ -130,11 +137,15 @@ def test_build_ticket_runs_merge_check_with_the_charter_before_merging():
     assert "the tracking issue the briefing names saved there (`gh api repos/<repo>/issues/<tracking> --jq .body > .workflow/tracking.md`" in step
     assert "--check-logs .workflow/check-logs" in step
     assert "**`ready` is the only yes**" in step
-    assert "- `not_yet`: never merge or arm auto-merge." in step
+    assert "- `not_yet`: never merge or arm auto-merge, and if auto-merge is armed, disarm it (" + DISARM + ")" in step
+    assert "`review_stale`: a Correctness pass on the new commits" in step
+    assert "right before you merge, arm auto-merge or say it's ready, run `WF merge-check --fetch <PR> --json" in step
     session = next(ln for ln in step.splitlines() if ln.startswith("   | `session` |"))
     assert all(pin in session for pin in PINS), session
     auto = next(ln for ln in step.splitlines() if ln.startswith("   | `auto-merge` |"))
-    assert "--auto --merge --match-head-commit <sha>" in auto and "arm it again only on the new head's `ready`" in auto
+    assert "--auto --merge --match-head-commit <sha>" in auto
+    assert "Before any push of yours while it is armed (a fix, the base merged in, an update of the branch), disarm it (" + DISARM + ")" in auto
+    assert "on `ready` with auto-merge not armed (whoever disarmed it), arm it again, pinned to the new `head`" in auto
     clean = auto[auto.index("already mergeable"):]
     assert "run the same `WF merge-check` again at that moment; on `ready`" in clean
     assert all(pin in clean for pin in PINS)
@@ -143,15 +154,18 @@ def test_build_ticket_runs_merge_check_with_the_charter_before_merging():
     assert "wake the conductor (step 6.7)" in _read(BUILD_TICKET) and "7. **Wake the conductor.**" in _read(BUILD_TICKET)
     assert "a red check (§5)" in step
     assert "in `session` mode it counts as passed once the evidence is posted" not in _read(BUILD_TICKET)
+    green = _section(_read(BUILD_TICKET), "## 5. Get it green", "## 6.")
+    assert PATH_FILTERED_WHEN in green and "Until then, step 6.3's `not_yet` applies." in green
+    assert "- **The base branch moved:** if auto-merge is armed, disarm it first (" + DISARM + ")" in green
 
 
 def test_build_ticket_handles_owner_review_and_attended_work():
     step = _merge_step()
-    assert "`owner_review`" in step
-    i = step.index("`owner_review`")
-    assert "owner" in step[i:i + 300] and "waiting" in step[i:i + 300]
+    owner_review = next(ln for ln in step.splitlines() if ln.strip().startswith("- `owner_review`:"))
+    assert "Never merge it or arm auto-merge: comment on the PR and on the tracking issue that the owner reviews and merges it" in owner_review
+    assert "end with `WORKFLOW-STATUS: waiting`" in owner_review
     assert "is #N ready to merge?" in step
-    attended = step[step.index("3. **Ask the merge rule.**"):].split("\n")[0]
+    attended = step[step.index("3. **Run `WF merge-check`.**"):].split("\n")[0]
     assert "In attended work, skip this and step 4: say the PR is ready and leave it" in attended
 
 
@@ -197,7 +211,9 @@ def test_briefing_names_merge_check_and_the_charter(tmp_path):
     merging = _render(tmp_path, "session", ["Backend tests"])
     assert "merge-check --fetch <PR> --json --charter .workflow/tracking.md" in merging
     assert "the body of the tracking issue #232 saved to `.workflow/tracking.md`" in merging
-    assert "`ready`" in merging
+    assert "`ready` is the only yes. On `not_yet`, never merge or arm auto-merge (disarm it if it's armed)" in merging
+    assert "merge it yourself with a merge commit pinned to the head it checked" in merging
+    assert "disarm auto-merge before any push while it's armed" in merging
     assert "Merge mode: **session**" in merging and "Backend tests" in merging
     assert "--check-logs" in merging
     assert "evidence --base-ref origin/main" in merging

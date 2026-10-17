@@ -31,7 +31,13 @@ Follow the `build-ticket` skill from start to finish. First, with the Write tool
 
 ### Merging
 
-Merge mode: **{{merge.mode}}**. Waived CI checks: {{merge.waived}}. Post the evidence from `python3 .claude/workflow/bin/workflow.py evidence --base-ref origin/{{project.base_branch}}`. Then, right before you merge or arm auto-merge, ask `workflow merge-check` with the run's charter: `python3 .claude/workflow/bin/workflow.py merge-check --fetch <PR> --json --charter .workflow/tracking.md`, with the body of the tracking issue #{{tracking.issue}} saved to `.workflow/tracking.md` (and `--check-logs .workflow/check-logs` for a waived check's log). `ready` is the only yes: on `not_yet` act on its reasons and never merge; on `owner_review` comment on the PR and on #{{tracking.issue}} that the owner reviews and merges it, and end with `WORKFLOW-STATUS: waiting`. On `ready`, merge as build-ticket §6 describes for this mode, pinned to the head it checked; in `auto-merge` mode, if GitHub refuses to enable auto-merge because the PR is already mergeable (clean), run `merge-check` again at that moment and, on `ready`, merge it yourself with a merge commit. If your permission settings refuse the merge (or enabling auto-merge), comment on the PR and on #{{tracking.issue}} that it is green and ready, and end with `WORKFLOW-STATUS: waiting`; the conductor merges it or enables auto-merge.
+Merge mode: **{{merge.mode}}**. Waived CI checks: {{merge.waived}}. As build-ticket §6 describes for this mode:
+
+- Post the evidence from `python3 .claude/workflow/bin/workflow.py evidence --base-ref origin/{{project.base_branch}}`.
+- Right before you merge, arm auto-merge or say it's ready, run `workflow merge-check` with the run's charter: `python3 .claude/workflow/bin/workflow.py merge-check --fetch <PR> --json --charter .workflow/tracking.md`, with the body of the tracking issue #{{tracking.issue}} saved to `.workflow/tracking.md` (and `--check-logs .workflow/check-logs` for a waived check's log).
+- `ready` is the only yes. On `not_yet`, never merge or arm auto-merge (disarm it if it's armed), and act on its reasons. On `owner_review`, comment on the PR and on #{{tracking.issue}} that the owner reviews and merges it, and end with `WORKFLOW-STATUS: waiting`.
+- On `ready`, merge pinned to the head it checked. In `auto-merge` mode, disarm auto-merge before any push while it's armed. If GitHub refuses to arm auto-merge because the PR is already mergeable (clean), run `merge-check` again at that moment and, on `ready`, merge it yourself with a merge commit pinned to the head it checked.
+- If your permission settings refuse the merge (or arming auto-merge), comment on the PR and on #{{tracking.issue}} that it is green and ready, and end with `WORKFLOW-STATUS: waiting`; the conductor merges it or arms auto-merge.
 
 ### Rules
 
