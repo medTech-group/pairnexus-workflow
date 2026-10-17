@@ -70,12 +70,11 @@ def test_the_explorer_states_the_scratch_project_rule():
     # A command with no --project is tried with the variable pointed at the scratch project.
     assert "`cd <scratch> && CLAUDE_PROJECT_DIR=<scratch> <the command>`" in text
     assert "before you start and again when you finish" in text
-    assert "Call the CLI by its absolute path in the session's checkout" in text
+    assert "Call the CLI with `python3 -B` (so it writes no bytecode) by its absolute path in the session's checkout (or in the clean copy, when the review panel gives you one)" in text
     assert "delete it when you finish" in text
     assert "`git -C <scratch> remote remove origin`" in text
     assert "with literal absolute paths" in text
-    # A list of names misses a file rewritten in place.
-    assert "`find <checkout> -newer <stamp> -not -path '*/.git/*'`" in text
+    assert "each into a file in your temporary directory, and `diff` the two" in text
     assert "with the command that made it, and never try to undo it" in text
 
 
@@ -91,4 +90,4 @@ def test_a_discard_the_guard_refuses_finishes_in_a_clean_copy():
     assert "`git worktree add --detach <a directory outside the repo> HEAD`" in after
     assert "`git push origin HEAD:<branch>`" in after
     assert "Do everything after it there: later fixes, the tests, `commit.txt`, the diff and the next rounds" in after
-    assert "Give the reviewers the clean copy's absolute path as the repo, and the explorer as the session's checkout" in after
+    assert "the explorer runs the CLI from it, and checks both it and the session's checkout" in after
