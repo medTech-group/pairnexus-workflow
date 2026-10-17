@@ -4,7 +4,8 @@
 
 **The review panel's explorer runs commands that write files only on a scratch project** (#172, found by #106).
 
-- **`review-panel` and the `ui-explorer` agent:** a command under review that writes files (`workflow adopt`, `workflow pr-template`, the set-up and upgrade paths, anything taking `--project`) runs only against an absolute path to a scratch project, in a fresh temporary directory or a `git worktree`, never the session's checkout. The explorer runs `git status --porcelain` in the real checkout before and after, and reports any change as a finding instead of undoing it, since the guard can refuse the undo of a protected file.
+- **`review-panel` and the `ui-explorer` agent:** a command under review that writes files (`workflow adopt`, `workflow vendor`, `workflow repair`, the set-up step that saves `workflow pr-template`'s output, anything taking `--project` or `--out`) runs only against an absolute path to a scratch project, never the session's checkout: a fresh temporary directory, or a detached `git worktree` outside the repo. The explorer gives `--project` that path on every call, since a left-out `--project` means `$CLAUDE_PROJECT_DIR` or the checkout it is in, and tries a command without one as `cd <scratch> && CLAUDE_PROJECT_DIR=<scratch> …`. It runs `git status --porcelain` in the session's checkout before and after, and reports any difference as a finding instead of undoing it, since the guard can refuse the undo of a protected file.
+- **If the guard refuses a discard** after a round (a protected file), the session finishes in a clean `git worktree` of the branch and says so in the PR body.
 - Tests read both texts (`tests/test_review_scratch_project.py`).
 - **For projects updating:** nothing to do.
 
