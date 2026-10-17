@@ -431,10 +431,18 @@ def test_without_a_profile_thorough_claims_no_changed_rounds(tmp_path):
     c = _defaults(env)
     assert c["review"]["rounds"] == 5
     p = _cli("charter", "markdown", _file(tmp_path, c), env={"CLAUDE_PROJECT_DIR": str(tmp_path / "none")})
+    assert p.returncode == 0, p.stderr
     assert "**Size:** **Thorough**." in p.stdout
     c["limits"]["max_parallel"] = 4
     p = _cli("charter", "markdown", _file(tmp_path, c), env={"CLAUDE_PROJECT_DIR": str(tmp_path / "none")})
+    assert p.returncode == 0, p.stderr
     assert "**Size:** **Thorough**, changed: 4 sessions at once." in p.stdout
+    # Fewer than 3 is a change whatever the profile says.
+    c["limits"]["max_parallel"] = 3
+    c["review"]["rounds"] = 2
+    p = _cli("charter", "markdown", _file(tmp_path, c), env={"CLAUDE_PROJECT_DIR": str(tmp_path / "none")})
+    assert p.returncode == 0, p.stderr
+    assert "**Size:** **Thorough**, changed: 2 review rounds." in p.stdout
 
 
 @pytest.mark.parametrize("broken", [b'[ui]\nexplorer = ["browser"]\n', b'[ui]\nnotes = "\xff"\n'])
@@ -453,3 +461,19 @@ def test_review_error_says_what_absent_means(tmp_path):
     c["review"] = []
     p = _validate(tmp_path, env, c)
     assert "or absent (its preset's review; with no preset, the profile's)" in p.stderr
+
+
+def test_profile_check_refuses_an_explorer_that_isnt_a_name(tmp_path):
+    env = _profile(tmp_path)
+    (tmp_path / ".claude/workflow/profile.toml").write_text('[project]\nname="d"\nrepo="a/d"\n[ui]\nexplorer = ["browser"]\n')
+    p = _cli("profile", "check", env=env)
+    assert p.returncode == 1 and "ui.explorer must be one of" in p.stderr and "Traceback" not in p.stderr
+
+
+def test_without_a_profile_lights_explorer_on_is_still_a_change(tmp_path):
+    env = _profile(tmp_path, 'preset = "light"\n', explorer="browser")
+    c = _defaults(env)
+    c["review"]["explorer"] = True
+    p = _cli("charter", "markdown", _file(tmp_path, c), env={"CLAUDE_PROJECT_DIR": str(tmp_path / "none")})
+    assert p.returncode == 0, p.stderr
+    assert "**Size:** **Light**, changed: the UI explorer on." in p.stdout

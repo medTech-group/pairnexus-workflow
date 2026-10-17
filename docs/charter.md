@@ -47,7 +47,7 @@ solo mode: nothing on GitHub stops a mistake reaching main; the kit's "never mer
 | Key | Question | Recommended default |
 |---|---|---|
 | `scope` | Which tickets? Any to exclude? Also tickets unblocked during the run? | Every ready ticket; yes |
-| `limits` | How big a run: Light, Normal or Thorough (sets `limits` and `review`)? When does the run end? Check-in cadence? | The profile's `run.preset` (Normal: 2 at once, 40 in all, 1 retry then `needs-human`, the profile's rounds and explorer); the owner's end time; 20 minutes |
+| `limits` | How big a run: Light, Normal or Thorough (sets `limits` and `review`)? When does the run end? Check-in cadence? | The profile's `run.preset` (Normal: the profile's `run.max_parallel` at once, 40 in all, its `run.max_retries` then `needs-human`, its rounds and explorer); the owner's end time; 20 minutes |
 | `merge` | Merge automatically when a ticket passes the merge rule? Which checks may be waived when killed (not failed)? | GitHub auto-merge (`session` with no CI, no required checks or in solo mode; `owner` when the ruleset requires approvals); none waived. A waiver needs mode `session`, and the check taken out of the ruleset's required checks for the run, which pre-flight then shows as a gap to accept |
 | `release` | Deploy and build after merges? Never, each merge, or once at the end? Which of the profile's release steps? | Once at the end, the first release step, with its smoke test; never when the profile has none |
 | `outward` | Any change outside the repo (cloud, secrets, accounts, DNS, payments)? Which, exactly? | None: listed as owner tasks |

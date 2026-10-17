@@ -330,7 +330,7 @@ def parse(data: dict, root: Path) -> Profile:
     ci = data.get("ci") or {}
     ui = data.get("ui") or {}
     explorer = ui.get("explorer", "none")
-    if explorer not in EXPLORERS:
+    if not isinstance(explorer, str) or explorer not in EXPLORERS:
         raise ProfileError(f"ui.explorer must be one of {sorted(EXPLORERS)}")
     guard = data.get("guard") or {}
     sens = data.get("sensitive") or {}

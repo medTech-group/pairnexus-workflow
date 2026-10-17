@@ -110,7 +110,7 @@ def changes(c: dict, profile: Any = None) -> list[str]:
     """What the charter changed from its preset's numbers, in words ("3
     sessions at once"); empty when it matches, or has no preset. Without a
     profile, only what doesn't depend on it: nothing for Normal, not
-    Thorough's rounds, and not the explorer."""
+    Thorough's rounds of 3 or more, and Light's explorer only."""
     if not isinstance(c, dict) or c.get("preset") not in PRESETS:
         return []
     if profile is None and c["preset"] == "normal":
@@ -127,10 +127,12 @@ def changes(c: dict, profile: Any = None) -> list[str]:
             out.append(plural(lim[key], one, many))
     rev = c.get("review")
     if isinstance(rev, dict):
-        known = profile is not None or c["preset"] != "thorough"
+        # Thorough's rounds are the profile's when more than 3: fewer is a change whatever the profile.
+        known = profile is not None or c["preset"] != "thorough" or rev.get("rounds", 3) < 3
         if known and "rounds" in rev and rev["rounds"] != want["review"]["rounds"]:
             out.append(plural(rev["rounds"], "review round", "review rounds"))
-        if profile is not None and "explorer" in rev and rev["explorer"] != want["review"]["explorer"]:
+        # Light's explorer is always off; the others' follow the profile.
+        if (profile is not None or c["preset"] == "light") and "explorer" in rev and rev["explorer"] != want["review"]["explorer"]:
             out.append(f"the UI explorer {'on' if rev['explorer'] else 'off'}")
     return out
 

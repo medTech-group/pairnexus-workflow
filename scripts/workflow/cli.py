@@ -447,7 +447,7 @@ def _page_profile():
     read: a broken profile never stops the page from rendering."""
     try:
         return load(required=False)
-    except (ProfileError, OSError, ValueError, TypeError):
+    except (ValueError, OSError):  # ProfileError is a ValueError; so is a file that isn't UTF-8
         return None
 
 
