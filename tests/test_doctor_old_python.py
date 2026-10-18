@@ -335,11 +335,13 @@ def test_output_that_cant_be_written_exits_as_strict_says(tmp_path, args, code):
 
 def test_no_stderr_either_never_raises(tmp_path, monkeypatch):
     dup2 = []
-    monkeypatch.setattr(os, "dup2", lambda *a: dup2.append(a))
-    monkeypatch.setattr(sys, "stderr", None)
-    with contextlib.redirect_stdout(_Closed()):
-        assert _old_python.main(["doctor", "--bogus"], stdin_text="", env={}, version="3.9.6", cwd=tmp_path) == 2
-        assert _old_python.main(["doctor"], stdin_text="", env={}, version="3.9.6", cwd=tmp_path) == 0
+    with monkeypatch.context() as m:  # undone before pytest's own capture moves descriptors again
+        m.setattr(os, "dup2", lambda *a: dup2.append(a))
+        m.setattr(sys, "stderr", None)
+        with contextlib.redirect_stdout(_Closed()):
+            bogus = _old_python.main(["doctor", "--bogus"], stdin_text="", env={}, version="3.9.6", cwd=tmp_path)
+            plain = _old_python.main(["doctor"], stdin_text="", env={}, version="3.9.6", cwd=tmp_path)
+    assert (bogus, plain) == (2, 0)
     assert dup2 == []  # no stream has nothing to flush: no descriptor is touched
 
 
