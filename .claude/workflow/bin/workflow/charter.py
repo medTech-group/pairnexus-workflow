@@ -15,6 +15,11 @@ exactly what was approved; with follow_unblocked true the scope stays as
 given and tickets unblocked during the run join it. A plan's tickets must be in
 the scope and not excluded.
 
+`preset` (optional) is the run's size, `light`, `normal` or `thorough`, and
+`review` (optional) its review: `rounds` and `explorer`. The presets' numbers
+are in presets.py. A charter written before presets has neither, and reads as
+Normal: the profile's review rounds and UI explorer.
+
 Every amendment is `{at, by, change, source}`: when, who (the owner's login),
 what changed, and the comment URL or quoted words it came from.
 """
@@ -22,13 +27,82 @@ what changed, and the comment URL or quoted words it came from.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
+
+from . import presets as presets_mod
 
 MERGE_MODES = {"auto-merge", "session", "owner"}
 RELEASE_WHEN = {"never", "end", "each-merge"}
 OPEN_DECISIONS = {"decide-and-record", "set-aside"}
 NOTIFY = {"issue", "push"}
+
+# The solo-mode gap the owner accepts at the kick-off, word for word, as it goes
+# in `accepted_gaps`. Removed protection records it after REMOVED_PROTECTION.
+# The run report finds a solo-mode run by these two prefixes.
+SOLO_GAP = (
+    "solo mode: nothing on GitHub stops a mistake reaching {base}; "
+    'the kit\'s "never merge while CI is red" check is the only one'
+)
+REMOVED_PROTECTION = "removed protection: "
+# A line that starts with it, whatever its case and spacing, on any line of the entry.
+_REMOVED_PROTECTION_LINE = re.compile(r"^\s*removed\s+protection\s*:", re.I | re.M)
+
+
+def solo_reason(ruleset: bool | None, protected: bool | None = None) -> str | None:
+    """Why the run counts as solo mode, in words, or None when it doesn't.
+    Solo mode is the profile's `project.ruleset = false`, or `true` while the
+    read-back (`workflow protection`) found the base branch unprotected (removed
+    protection: `protected` false). With `ruleset` left out, nothing changes."""
+    if ruleset is False:
+        return "solo mode (project.ruleset is false)"
+    if ruleset is True and protected is False:
+        return "removed protection (project.ruleset is true, but the read-back didn't find the base branch protected)"
+    return None
+
+
+def removed_protection_accepted(c: Any) -> bool:
+    """The charter records removed protection: an `accepted_gaps` line that
+    starts with `removed protection:`, whatever its case and spacing (a line
+    typed again in an amendment still counts). It carries the read-back's
+    verdict to every later check of the charter."""
+    gaps = c.get("accepted_gaps") if isinstance(c, dict) else None
+    return isinstance(gaps, list) and any(isinstance(g, str) and _REMOVED_PROTECTION_LINE.search(g) for g in gaps)
+
+
+def dropped_removed_protection(old: Any, new: Any) -> str | None:
+    """The problem when a change drops the old charter's record of removed
+    protection (`new` cleared counts), else None. The record lasts until the run
+    ends: auto-merge needs a new run, whose kick-off reads protection back."""
+    if removed_protection_accepted(old) and not removed_protection_accepted(new):
+        return (
+            "accepted_gaps: the `removed protection:` line can't be dropped during the run; the charter carries "
+            "the read-back's verdict until the run ends (auto-merge needs a new run, whose kick-off reads protection back)"
+        )
+    return None
+
+
+def _auto_merge_risk(why: str, solo: bool) -> str:
+    """What auto-merge would do, for `why` (a solo_reason when `solo`)."""
+    if solo:
+        return f"{why}, so nothing on GitHub reliably requires checks and auto-merge could merge at once"
+    return f"{why}, so auto-merge would merge at once with nothing checked"
+
+
+def _no_auto_merge_reason(profile: Any, protected: bool | None) -> str | None:
+    """Why auto-merge isn't safe for this profile, in words (`_auto_merge_risk`), or None."""
+    if profile is None:
+        return None
+    solo = solo_reason(getattr(profile, "ruleset", None), protected)
+    if solo:
+        return _auto_merge_risk(solo, True)
+    if getattr(profile, "ci_none", False):
+        return _auto_merge_risk("ci.none is true", False)
+    if not getattr(profile, "required_checks", None):
+        return _auto_merge_risk("the profile has no ci.required_checks", False)
+    return None
+
 
 # The kick-off questions, in the order asked, with their recommended defaults.
 QUESTIONS: list[dict[str, Any]] = [
@@ -39,15 +113,19 @@ QUESTIONS: list[dict[str, Any]] = [
     },
     {
         "key": "limits",
-        "ask": "When does the run end (ends_at; required: there is no default end time)? How many sessions at once "
-        "(max_parallel), how many in all (max_sessions), how many retries per ticket (max_retries), and how often "
-        "to check in (check_in_minutes)?",
-        "note": "limits.ends_at must be given by the owner: an ISO time with its zone, e.g. 2026-10-13T03:30:00Z",
-        "default": {"ends_at": None, "max_parallel": 2, "max_sessions": 40, "max_retries": 1, "check_in_minutes": 20},
+        "ask": "How big a run: Light, Normal or Thorough (each sets sessions at once (max_parallel), in all "
+        "(max_sessions), retries per ticket (max_retries), review rounds and the UI explorer; any one number can then "
+        "be changed)? When does the run end (ends_at; required: there is no default end time)? How often to check in "
+        "(check_in_minutes)?",
+        "note": "limits.ends_at must be given by the owner: an ISO time with its zone, e.g. 2026-10-13T03:30:00Z. "
+        "Choosing a preset sets preset, limits (but ends_at and check_in_minutes) and review from presets[name].",
+        "options": list(presets_mod.PRESETS),
+        "default": {"ends_at": None, **presets_mod.numbers(presets_mod.DEFAULT)["limits"], "check_in_minutes": 20},
     },
     {
         "key": "merge",
         "ask": "Merge automatically when a ticket passes the merge rule? Which CI checks, if any, may be waived when killed (not failed)?",
+        "options": ["auto-merge", "session", "owner"],
         "default": {"mode": "auto-merge", "waived_checks": []},
     },
     {
@@ -83,13 +161,16 @@ QUESTIONS: list[dict[str, Any]] = [
 ]
 
 
-def defaults(release_steps: list[str] | None = None, profile: Any = None) -> dict:
+def defaults(release_steps: list[str] | None = None, profile: Any = None, protected: bool | None = None) -> dict:
     """The recommended answers, fitted to the profile when given. Releases default
     to "never" without release steps, else to "end" with the first. The limits'
-    max_parallel, max_retries and check_in_minutes come from the profile's [run].
+    sizes start from the profile's run.preset (`presets`): it sets `preset`, `review`
+    and the limits' max_parallel, max_sessions and max_retries; check_in_minutes
+    comes from the profile's [run].
     Merging defaults to "session" when the profile has no CI (ci.none) or no
-    required checks, since auto-merge would merge with nothing checked.
-    limits.ends_at stays null: the owner gives it."""
+    required checks, or in solo mode (`solo_reason`, with `protected` the
+    read-back's verdict when known), since auto-merge would merge with nothing
+    checked. limits.ends_at stays null: the owner gives it."""
     if release_steps is None and profile is not None:
         release_steps = [st["name"] for st in getattr(profile, "release_steps", []) or []]
     out: dict[str, Any] = {"version": 1}
@@ -101,15 +182,19 @@ def defaults(release_steps: list[str] | None = None, profile: Any = None) -> dic
     else:
         out["release"]["when"] = "never"
         out["release"]["steps"] = []
+    name = presets_mod.recommended(profile)
+    size = presets_mod.numbers(name, profile)
+    out["preset"] = name
+    out["limits"].update(size["limits"])
+    out["review"] = size["review"]
     if profile is not None:
         lim = out["limits"]
-        for k in ("max_parallel", "max_retries", "check_in_minutes"):
-            v = getattr(profile, k, None)
-            if isinstance(v, int) and not isinstance(v, bool):
-                lim[k] = v
+        v = getattr(profile, "check_in_minutes", None)
+        if isinstance(v, int) and not isinstance(v, bool):
+            lim["check_in_minutes"] = v
         lim["check_in_minutes"] = min(max(lim["check_in_minutes"], 5), 240)
         lim["max_sessions"] = max(lim["max_sessions"], lim["max_parallel"])
-        if getattr(profile, "ci_none", False) or not getattr(profile, "required_checks", None):
+        if _no_auto_merge_reason(profile, protected):
             out["merge"]["mode"] = "session"
     out["accepted_gaps"] = []
     out["approved"] = None
@@ -117,12 +202,29 @@ def defaults(release_steps: list[str] | None = None, profile: Any = None) -> dic
     return out
 
 
-def questions(release_steps: list[str] | None = None, profile: Any = None) -> list[dict]:
-    """The kick-off questions with defaults fitted to the profile, as `defaults` gives them."""
-    d = defaults(release_steps, profile)
+def questions(release_steps: list[str] | None = None, profile: Any = None, protected: bool | None = None) -> list[dict]:
+    """The kick-off questions with defaults fitted to the profile, as `defaults`
+    gives them. The limits question offers the presets first, the profile's
+    run.preset first and `recommended`, with each one's numbers in `presets`.
+    Where auto-merge would merge with nothing checked (solo mode, no CI, no
+    required checks), the merge question doesn't offer it, and its note says
+    why."""
+    d = defaults(release_steps, profile, protected)
     out = json.loads(json.dumps(QUESTIONS))
+    why = _no_auto_merge_reason(profile, protected)
     for q in out:
         q["default"] = d[q["key"]]
+        if q["key"] == "limits":
+            rec = d["preset"]
+            q["options"] = [rec] + [o for o in q["options"] if o != rec]
+            q["recommended"] = rec
+            q["presets"] = presets_mod.table(profile)
+        if q["key"] == "merge" and why:
+            q["options"] = [o for o in q["options"] if o != "auto-merge"]
+            q["note"] = (
+                f"Not offering auto-merge: {why}. Use session (the session merges under the merge rule) or owner "
+                "(you merge each PR yourself)."
+            )
     return out
 
 
@@ -196,7 +298,7 @@ APPROVAL_SKEW = timedelta(minutes=10)
 # Every key a charter may hold, so a typo ("max_paralel") is refused rather than ignored.
 KEYS = {
     "version", "scope", "limits", "merge", "release", "outward", "conductor_fixes", "open_decisions",
-    "stop_run_on", "notify", "accepted_gaps", "approved", "amendments", "plan",
+    "stop_run_on", "notify", "accepted_gaps", "approved", "amendments", "plan", "preset", "review",
 }
 SUBKEYS = {
     "scope": {"tickets", "exclude", "follow_unblocked"},
@@ -206,6 +308,7 @@ SUBKEYS = {
     "outward": {"allowed"},
     "notify": {"failures", "final_report"},
     "approved": {"by", "at", "source"},
+    "review": {"rounds", "explorer"},
 }
 AMENDMENT_KEYS = {"at", "by", "change", "source"}
 
@@ -317,6 +420,17 @@ def validate(c: Any, require_approval: bool = False, now: datetime | None = None
                 p.append(f"limits.ends_at ({lim['ends_at']}) must be after approved.at ({a['at']})")
     elif require_approval:
         p.append("the charter has not been approved: the owner's go is needed, with its source")
+    if "preset" in c and not _one_of(c["preset"], set(presets_mod.PRESETS)):
+        p.append(f"preset must be one of {', '.join(presets_mod.PRESETS)}, or absent (read as normal)")
+    if "review" in c:
+        rv = c["review"]
+        if not isinstance(rv, dict):
+            p.append("review must be an object with rounds and explorer, or absent (its preset's review; with no preset, the profile's)")
+        else:
+            if not _pos_int(rv.get("rounds"), 1, 10):
+                p.append("review.rounds must be a whole number from 1 to 10")
+            if not isinstance(rv.get("explorer"), bool):
+                p.append("review.explorer must be true or false")
     p += validate_amendments(c.get("amendments", []))
     plan = c.get("plan")
     if plan is not None:
@@ -364,10 +478,16 @@ def check_against_profile(
     required_checks: list[str],
     ci_none: bool = False,
     owner: str = "",
+    ruleset: bool | None = None,
+    protected: bool | None = None,
+    explorer: bool | None = None,
 ) -> list[str]:
     """The charter against the profile: release steps and waived checks it names,
-    auto-merge with nothing checked, and (with `owner`, the profile's
-    project.owner) who approved it."""
+    auto-merge with nothing checked or in solo mode (`ruleset`, the profile's
+    project.ruleset, and `protected`, the read-back's verdict when known, else
+    the charter's own record of removed protection), the review's explorer
+    (`explorer`, whether the profile has one, when known), and (with `owner`,
+    the profile's project.owner) who approved it."""
     p: list[str] = []
     if not isinstance(c, dict):
         return p
@@ -386,15 +506,38 @@ def check_against_profile(
     for w in strs(m.get("waived_checks")):
         if w not in required_checks:
             p.append(f"waived check {w!r} is not one of the profile's ci.required_checks {required_checks}")
-    if m.get("mode") == "auto-merge" and (ci_none or not required_checks):
+    if protected is None and removed_protection_accepted(c):
+        protected = False
+    solo = solo_reason(ruleset, protected)
+    if m.get("mode") == "auto-merge" and solo:
+        p.append(f"merge.mode auto-merge: {_auto_merge_risk(solo, True)}; use session")
+    elif m.get("mode") == "auto-merge" and (ci_none or not required_checks):
         why = "ci.none is true" if ci_none else "the profile has no ci.required_checks"
-        p.append(f"merge.mode auto-merge: {why}, so auto-merge would merge at once with nothing checked; use session")
+        p.append(f"merge.mode auto-merge: {_auto_merge_risk(why, False)}; use session")
+    if explorer is False and obj("review").get("explorer") is True:
+        p.append("review.explorer is true, but the profile's ui.explorer is none: the project has no UI explorer; set it false")
     a = c.get("approved")
     if owner and isinstance(a, dict) and isinstance(a.get("by"), str):
         if _login(a["by"]) != _login(owner):
             p.append(f"approved.by ({a['by']}) isn't the profile's project.owner ({owner}): only the owner approves a run")
     p += validate_amendments(c.get("amendments", []), owner, structure=False)
     return p
+
+
+def against_profile(c: dict, profile: Any, who: bool = True, protected: bool | None = None) -> list[str]:
+    """`check_against_profile` with the profile's own fields: its release steps,
+    required checks, `ci.none`, owner (with `who`), `project.ruleset` and
+    whether it has a UI explorer."""
+    return check_against_profile(
+        c,
+        [st["name"] for st in profile.release_steps],
+        profile.required_checks,
+        ci_none=profile.ci_none,
+        owner=profile.owner if who else "",
+        ruleset=profile.ruleset,
+        protected=protected,
+        explorer=presets_mod.has_explorer(profile),
+    )
 
 
 def _yn(b) -> str:
@@ -414,7 +557,37 @@ def parse_tickets(spec: str) -> list[tuple[int, str | None]]:
     return out
 
 
-def to_markdown(c: dict, plan: list[tuple[int, str | None]] | None = None) -> str:
+def _estimate_lines(est: Any) -> list[str]:
+    """The one page's "**Estimate:**" line from `charter estimate --json`, with
+    its basis and, under it, its warnings."""
+    if not (isinstance(est, dict) and isinstance(est.get("line"), str) and isinstance(est.get("basis"), str)):
+        raise ValueError("the estimate must be `workflow charter estimate --json`'s output")
+    warnings = [w for w in est["warnings"] if isinstance(w, str)] if isinstance(est.get("warnings"), list) else []
+    return [f"- **Estimate:** {est['line']}; {est['basis']}.", *[f"  - {w}" for w in warnings]]
+
+
+def _size_lines(c: dict, profile: Any, estimate: Any = None) -> list[str]:
+    """The one page's size and review: the preset and what changed from it
+    ("**Normal**, changed: 3 sessions at once"), and the review it gives; and,
+    when given, the estimate the owner saw."""
+    if c.get("preset") in presets_mod.PRESETS:
+        changed = presets_mod.changes(c, profile)
+        size = f"**{presets_mod.LABELS[c['preset']]}**" + (f", changed: {', '.join(changed)}" if changed else "")
+    else:
+        size = "Normal (no preset in the charter)"
+    rv = presets_mod.review_of(c, profile)
+    rounds = presets_mod.plural(rv["rounds"], "round", "rounds")
+    return [
+        f"- **Size:** {size}.",
+        f"- **Review:** up to {rounds} per ticket; {presets_mod.explorer_words(c, profile)}.",
+        *(_estimate_lines(estimate) if estimate is not None else []),
+    ]
+
+
+def to_markdown(c: dict, plan: list[tuple[int, str | None]] | None = None, profile: Any = None, estimate: Any = None) -> str:
+    """The one page. `profile` gives the preset's numbers to compare with
+    (Normal's are the profile's) and whether the project has a UI explorer;
+    `estimate`, `charter estimate --json`'s output, adds the "**Estimate:**" line."""
     s, lim, m, r, o, n = c["scope"], c["limits"], c["merge"], c["release"], c["outward"], c["notify"]
     tickets = "every ready ticket" if s["tickets"] == "all-ready" else ", ".join(f"#{t}" for t in s["tickets"])
     excl = ", ".join(f"#{t}" for t in s.get("exclude") or []) or "none"
@@ -422,8 +595,9 @@ def to_markdown(c: dict, plan: list[tuple[int, str | None]] | None = None) -> st
         "## Run charter",
         "",
         f"- **Scope:** {tickets}; excluded: {excl}; tickets unblocked during the run: {_yn(s['follow_unblocked'])}.",
-        f"- **Limits:** ends {lim['ends_at']}; {lim['max_parallel']} sessions at once, {lim['max_sessions']} in all; "
-        f"{lim['max_retries']} retry per ticket, then `needs-human`; check-ins every {lim['check_in_minutes']} minutes.",
+        f"- **Limits:** ends {lim['ends_at']}; {presets_mod.plural(lim['max_parallel'], 'session', 'sessions')} at once, {lim['max_sessions']} in all; "
+        f"{presets_mod.plural(lim['max_retries'], 'retry', 'retries')} per ticket, then `needs-human`; check-ins every {lim['check_in_minutes']} minutes.",
+        *_size_lines(c, profile, estimate),
         f"- **Merging:** {m['mode']}"
         + (f"; checks that may be waived when killed (not failed): {', '.join(m['waived_checks'])}" if m.get("waived_checks") else "; no CI waivers")
         + ".",
@@ -490,7 +664,7 @@ def diff(old: dict, new: dict) -> list[str]:
     old = old if isinstance(old, dict) else {}
     new = new if isinstance(new, dict) else {}
     out = []
-    for k in [q["key"] for q in QUESTIONS] + ["plan", "accepted_gaps", "amendments", "approved"]:
+    for k in [q["key"] for q in QUESTIONS] + ["preset", "review", "plan", "accepted_gaps", "amendments", "approved"]:
         empty = [] if k in ("accepted_gaps", "amendments") else None
         if old.get(k, empty) != new.get(k, empty):
             out.append(f"{k}: {json.dumps(old.get(k))} -> {json.dumps(new.get(k))}")
