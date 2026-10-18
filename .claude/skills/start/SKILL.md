@@ -1,6 +1,6 @@
 ---
 name: start
-description: The guided start - ask what we're working on with clickable choices, split a request into items, propose a path for each (a quick ticket, finding a bug's cause, a spec, a map), record the plan as issues, and offer every next step as a choice, so the person never has to remember a command. Use at the first message of an attended session, on /start, or when the person isn't sure what to do next.
+description: The guided start - ask what we're working on with clickable choices, split a request into items, propose a path for each (a quick ticket, finding a bug's cause, a spec, a map), record the plan as issues, and offer every next step as a choice, so the person never has to remember a command. Use at the first message of an attended session, on /start, or when the person isn't sure what to do next, and when they say "explain less" or "explain more".
 ---
 
 # Start: what are we working on?
@@ -11,6 +11,7 @@ Guide the person from "what are we working on?" to work done, one choice at a ti
 
 **Every question is a choice to click.** Use the `AskUserQuestion` tool:
 - **Options:** 2 to 4. Your recommended option comes first, its label ending "(Recommended)", with one line saying why. "Other" is always added for their own words, so never add a "something else" option.
+- **Building a ticket:** **Build it with a light review** is always the second choice, after the full build: never first, never "(Recommended)", never chosen for them.
 - **Questions:** up to 4 in one call, when they don't depend on each other. More than 4 means several calls.
 - **No tool:** where `AskUserQuestion` isn't available (a headless `-p` session), ask the same choices as a numbered list.
 
@@ -32,6 +33,31 @@ Ask in plain text only when the answer can't be a choice ("Tell me what you have
 - Links inside a `SKILL.md` are relative to its own directory.
 
 **Only in attended sessions.** In a ticket or conductor session (`WORKFLOW_ROLE`) there is no menu: those sessions work from a briefing or a charter.
+
+## Before anything: how much they know
+
+The kit words things and paces itself for each person's experience: *new to building* or *developer*. It changes nothing else.
+
+**Is it known?** At a session's first message (not a resumed one), run `WF status --json` before reading the message. Ask only when its `experience.source` is `"unknown"`: no `WORKFLOW_EXPERIENCE`, no local file and no project default. Otherwise word things for its `experience.wording_level` and go on to step 0.
+
+**Never in a ticket or conductor session** (`WORKFLOW_ROLE` set to anything but `attended`, or a branch named like the profile's `run.ticket_branch`): they never ask, whatever status says, and word things for its `wording_level`. **Nor when the kit isn't set up here** (status's `set_up` is false): set-up asks the experience question, so it would come twice.
+
+**Ask it** as the very first question of the session, before step 0's work or any other question, with `AskUserQuestion`: "How much do you know about building software?" (header "Experience"). It describes the person, so no option is recommended:
+- *New to building*: "Explain the words and go one step at a time."
+- *Developer*: "Keep it short: git, pull requests and CI are familiar."
+
+Then go on to step 0, with their first message. With the profile's `guided_start = false`, this question comes only with `/start`.
+
+**Skipping counts as new.** If they skip it, dismiss it or answer with something else (their request, say), record `new`, and take what they wrote as their first message.
+
+**Record the answer:**
+- Write it to `.workflow/experience` in the project: one line, `new` or `developer`. That is the file `workflow status` reads as the local file. Never stage or commit it.
+- **Check first** that the file stays out of the repository: `git check-ignore -q .workflow/experience` must succeed, and nothing that isn't a plain file may sit at that path (a link, say). If either check fails, don't write it: keep the level in this conversation for this session.
+- **A cloud session** (`CLAUDE_CODE_REMOTE` is `true`) starts from a fresh clone, so the file lasts for this session only. **Say once**, in one line, how to keep it: "To be asked only once, add `WORKFLOW_EXPERIENCE=<level>` to this cloud environment's variables on claude.ai."
+
+**"Explain less" or "explain more",** at any point in the session, changes the level: "explain less" to `developer`, "explain more" to `new`. It is recorded the same way, and confirmed in one line ("Got it: I'll keep it short."). When `experience.source` is `"environment"`, the file can't override it: keep the new level for this session, and say once that `WORKFLOW_EXPERIENCE` (on the cloud environment, or in their shell) changes it for good. Then carry on where you were: don't restart the guided start.
+
+**Tell yourself the new level** whenever you record one, answer or change alike, in one line: "From now on: <level>." With *developer* (the first question's answer, or "explain less"), stop explaining the glossary's words for the rest of the session. After "explain more", read the glossary again (`.claude/workflow/docs/glossary.md` vendored, or `docs/glossary.md` beside `skills/` in the plugin), if it is there, and from then on explain each of its words in the glossary's wording, in one or two sentences, the first time you use it in this session, and never again in this session. A word you used without explaining it (while at *developer*) still counts as unexplained. Never explain them in what you write on GitHub (pull request descriptions, comments, reports).
 
 ## 0. Read the first message
 
@@ -66,6 +92,8 @@ It reports:
 
 Tell the person what matters in two to four lines, for example: "PR #297 is waiting for your merge. Two items from last time aren't started: #301 refill reminders (spec), #302 the Save button (quick ticket). One ticket is ready: #262." Leave out what doesn't matter.
 
+**In solo mode** (status says `Solo mode: yes`), one of those lines says so, with what it means for them: "This project is in solo mode: nothing on GitHub protects `<base branch>` yet, so the kit refuses any change straight to it, and all work goes through pull requests." Name the profile's base branch. Don't offer "Protect `main`" here: it is offered when they ask, and in a refusal.
+
 **If the kit isn't set up here** (only possible with the plugin, since otherwise this skill isn't there), ask "This project isn't set up for the workflow kit yet". The options:
 - **Set it up (Recommended):** follow the kit's `setup-workflow` skill. It is user-only, so read its `SKILL.md`.
 - **Work without the kit for now.**
@@ -76,6 +104,7 @@ Tell the person what matters in two to four lines, for example: "PR #297 is wait
 |---|---|---|
 | **Update the workflow kit to <version> (Recommended)** | A newer kit release is out, no run is in progress, and no update pull request is open (status's `kit_update_pr`; else offer "Carry on: the kit update PR #n"). It comes first, before a brand-new project's map | "A pull request for you to merge, with what's new; then we carry on." |
 | **Carry on: <the thing>** | Something is under way (the table below): name the most pressing one | What it is and what happens next |
+| **Check whether #N is ready to merge** | Status lists an open PR: one for each it lists, as room allows, leaving out one already offered as "Carry on" | "Ready, or not yet and why; nothing merges until you choose." |
 | **Something new, or a change to what's there** | Always | "Tell me in your own words; several things at once is fine." |
 | **Fix something that's broken** | Unless four better options fill the list | "Describe what goes wrong; I'll find the cause." |
 | **Sort the new issues (N)** | Status lists issues to sort | "One by one: ready to build, needs more info, or won't do." |
@@ -86,7 +115,7 @@ Tell the person what matters in two to four lines, for example: "PR #297 is wait
 
 | Under way | What to do |
 |---|---|
-| A PR waiting for them | Give its link, what it does and its checks. Ask **Review it with me (Recommended)**, **I'll merge it myself** or **Later**. |
+| A PR waiting for them | Give its link, what it does and its checks. Ask **Check whether it's ready to merge (Recommended)**, which loads `merge-check` for it, **Review it with me**, **I'll merge it myself** or **Later**. |
 | Work claimed (`workflow:in-progress`), no run in progress | An earlier session stopped part-way. Read the issue's comments and look for its branch (an open PR that closes it, or a branch naming its number). Ask **Carry on from there (Recommended)**, then follow `build-ticket` on that branch, or **Release it**, which removes the label so `/next` can take it. |
 | A planned item | Read its body and comments. A `path=spec` item may have an interview's decisions in a comment: carry on the interview from them, or go to the spec if nothing is left open. Then step 4 for its path. |
 | An open spec with no tickets | `to-tickets` for it (step 4, "Spec", step 3) |
@@ -94,6 +123,7 @@ Tell the person what matters in two to four lines, for example: "PR #297 is wait
 
 **What the other options lead to:**
 - **Update the workflow kit:** in plugin mode (no `.claude/workflow/lock.json`), tell them to type `/plugin update pairnexus-workflow@pairnexus`. Vendored: read the project's `.claude/skills/update-workflow/SKILL.md` (user-only, so read it) for where the kit lives and how to clone the new release outside the project, then read **that release's** `$KIT/skills/update-workflow/SKILL.md` and follow it. It ends with a pull request for them to merge. Then ask "What are we working on?" again, without this option. With a run in progress, don't offer it: a run stays on the version it started with.
+- **Check whether #N is ready to merge:** load `merge-check` with the Skill tool, for that PR. Only when they pick it: never run the check on its own.
 - **New, a change, or a fix:** ask in plain text, "Tell me what you have in mind: as much or as little as you like." Then step 2.
 - **Sort the new issues:** step 5.
 - **A brand-new project or a large effort:** step 2, with the path already chosen: a map.
@@ -178,6 +208,7 @@ For each item, read the flow's section for its path and follow it, skipping noth
 2. Publish by editing the item's issue into the ticket: replace its body, drop the marker, and add `ready-for-agent`. The item's issue becomes the ticket.
 3. Ask:
    - **Build it now (Recommended)**: load `build-ticket` with the Skill tool, on a fresh branch;
+   - **Build it with a light review**: the same, asking `build-ticket` for a light review (`review-panel` §6, "The light review"): one review round, for a small change;
    - **Leave it ready for later**: `/next` or a run picks it up;
    - **Next item**.
 
@@ -286,6 +317,7 @@ They can change course at any point. Take it as said, and confirm in one line:
 
 - **Decisions are theirs, facts are yours.** Never answer a decision for them; never ask them what you can look up.
 - **Merging is theirs** in attended work (flow §4).
+- **The level changes wording and pacing in this conversation only,** never what the kit allows. What you write on GitHub (issues, comments, PR descriptions, run reports) is the same for every level, plain summary first.
 - **Where this runs:** a local session, or a cloud session in the Default environment, on a branch not named like `run.ticket_branch`. Elsewhere the session is part of a run, and the guided start never shows:
   - in the ticket environment (`WORKFLOW_ROLE=ticket`), or on a `claude/build-*` branch: the guard holds it to a ticket session's rules, pushes go only to ticket branches, and every turn must end with a status line;
   - in the conductor environment (`WORKFLOW_ROLE=conductor`): the conductor's rules, with no status line.

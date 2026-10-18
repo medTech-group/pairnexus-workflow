@@ -9,6 +9,8 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import presets as presets_mod
+
 PROFILE_PATH = Path(".claude/workflow/profile.toml")
 
 EXPLORERS = {"browser", "api", "cli", "none"}
@@ -41,12 +43,13 @@ class ProfileError(ValueError):
 # Every key the profile may hold, so a typo ("required_check", "[area]") fails
 # instead of being quietly ignored. None: any key (area names).
 ALLOWED: dict[str, set[str] | None] = {
-    "project": {"name", "repo", "base_branch", "rules", "flow_addendum", "owner", "guided_start"},
+    "project": {"name", "repo", "base_branch", "rules", "flow_addendum", "owner", "guided_start", "ruleset", "experience"},
     "commands": {"setup", "setup_check", "typecheck", "test_file", "suite", "package"},
     "ci": {"required_checks", "killed_markers", "none", "path_filtered"},
     "ui": {"explorer", "start", "sizes", "notes"},
     "guard": {"protected_paths", "deploy_commands", "test_paths", "allow_new_skips"},
     "sensitive": {"description", "patterns"},
+    "previews": {"provider", "on", "access"},
     "areas": None,
     "repair": {"commands"},
     "release": {"steps"},
@@ -60,13 +63,21 @@ ALLOWED: dict[str, set[str] | None] = {
         "conductor_environment",
         "environment_setup",
         "permission_mode",
+        "preset",
     },
 }
+PREVIEW_PROVIDERS = ("cloudflare",)
 PERMISSION_MODES = {"auto", "acceptEdits", "bypassPermissions", "dontAsk"}
 SUITE_KEYS = {"name", "run", "files", "group", "passed", "failed", "skipped", "errors", "total", "cwd"}
 PACKAGE_KEYS = {"name", "path", "typecheck", "test_file", "cwd"}
 RELEASE_STEP_KEYS = {"name", "run", "smoke"}
 OWNER = re.compile(r"^[A-Za-z0-9-]+$")
+# How much the people working here know: `project.experience`, the
+# WORKFLOW_EXPERIENCE variable and the local file (resolve_experience).
+EXPERIENCE_LEVELS = ("new", "developer")
+EXPERIENCE_ENV = "WORKFLOW_EXPERIENCE"
+EXPERIENCE_FILE = Path(".workflow/experience")  # untracked: .workflow/ is in .gitignore
+_EXPERIENCE_FILE_MAX = 200  # bytes: one short line
 
 
 def _unknown(keys, allowed: set[str], where: str) -> None:
@@ -108,6 +119,35 @@ class Package:
 
 
 @dataclass
+class Previews:
+    """`[previews]`: whether pull requests get try-it links. An absent section
+    is previews off. `access` is the owner's word that Cloudflare Access guards
+    the preview URLs; the kit can't check it."""
+
+    provider: str = "cloudflare"
+    on: bool = False
+    access: bool = False
+
+
+def _previews(raw: dict, sensitive: bool) -> Previews:
+    provider = raw.get("provider", "cloudflare")
+    if provider not in PREVIEW_PROVIDERS:
+        names = " or ".join(f'"{x}"' for x in PREVIEW_PROVIDERS)
+        raise ProfileError(f"previews.provider must be {names}, not {repr(provider)[:40]}")
+    on, access = raw.get("on", False), raw.get("access", False)
+    for k, v in (("on", on), ("access", access)):
+        if not isinstance(v, bool):
+            raise ProfileError(f"previews.{k} must be true or false, not {repr(v)[:40]}")
+    p = Previews(provider=provider, on=on, access=access)
+    if p.on and not p.access and sensitive:
+        raise ProfileError(
+            "previews.on is true but previews.access isn't: this project has [sensitive] patterns, so its "
+            "previews must sit behind Cloudflare Access (set access = true once you've confirmed it), or not be made (on = false)"
+        )
+    return p
+
+
+@dataclass
 class Profile:
     root: Path
     name: str
@@ -117,6 +157,10 @@ class Profile:
     rules: list[str] = field(default_factory=list)
     flow_addendum: str = ""
     guided_start: bool = True
+    # False is solo mode; None (absent) is as before solo mode existed.
+    ruleset: bool | None = None
+    # The project's default: "new" or "developer"; "" (absent): no default.
+    experience: str = ""
     setup: str = ""
     setup_check: str = ""
     typecheck: str = ""
@@ -137,6 +181,7 @@ class Profile:
     allow_new_skips: bool = False
     sensitive_description: str = ""
     sensitive_patterns: list[str] = field(default_factory=list)
+    previews: Previews = field(default_factory=Previews)
     areas: dict[str, list[str]] = field(default_factory=dict)
     repair: list[str] = field(default_factory=list)
     release_steps: list[dict] = field(default_factory=list)
@@ -149,6 +194,8 @@ class Profile:
     conductor_environment: str = ""
     environment_setup: str = ""
     permission_mode: str = "auto"
+    # The run charter's recommended preset (presets.py); attended builds never read it.
+    preset: str = "normal"
 
 
 def project_root(start: Path | None = None) -> Path:
@@ -283,7 +330,7 @@ def parse(data: dict, root: Path) -> Profile:
     ci = data.get("ci") or {}
     ui = data.get("ui") or {}
     explorer = ui.get("explorer", "none")
-    if explorer not in EXPLORERS:
+    if not isinstance(explorer, str) or explorer not in EXPLORERS:
         raise ProfileError(f"ui.explorer must be one of {sorted(EXPLORERS)}")
     guard = data.get("guard") or {}
     sens = data.get("sensitive") or {}
@@ -293,6 +340,7 @@ def parse(data: dict, root: Path) -> Profile:
             re.compile(p)
         except re.error as e:
             raise ProfileError(f"sensitive.patterns: {p!r} is not a valid regex ({e})")
+    previews = _previews(data.get("previews") or {}, bool(patterns))
     areas_raw = data.get("areas") or {}
     areas = {k: _strs(v, f"areas.{k}") for k, v in areas_raw.items()}
     rel = data.get("release") or {}
@@ -310,9 +358,21 @@ def parse(data: dict, root: Path) -> Profile:
     pmode = str(run.get("permission_mode") or "auto")
     if pmode not in PERMISSION_MODES:
         raise ProfileError(f"run.permission_mode must be one of {sorted(PERMISSION_MODES)} (a mode that prompts would stall an unattended session)")
+    preset = run.get("preset", presets_mod.DEFAULT)
+    if not (isinstance(preset, str) and preset in presets_mod.PRESETS):
+        names = ", ".join(presets_mod.PRESETS[:-1]) + f" or {presets_mod.PRESETS[-1]}"
+        shown = repr(preset) if len(repr(preset)) <= 40 else repr(preset)[:39] + "…"
+        raise ProfileError(f"run.preset must be {names}, not {shown}; leave it out for {presets_mod.DEFAULT}")
     guided = proj.get("guided_start", True)
     if not isinstance(guided, bool):
         raise ProfileError("project.guided_start must be true or false")
+    ruleset = proj.get("ruleset")
+    if ruleset is not None and not isinstance(ruleset, bool):
+        raise ProfileError(f"project.ruleset must be true or false (false is solo mode), not {repr(ruleset)[:40]}; leave it out for no solo mode")
+    experience = proj.get("experience")
+    if experience is not None and experience not in EXPERIENCE_LEVELS:
+        levels = " or ".join(f'"{x}"' for x in EXPERIENCE_LEVELS)
+        raise ProfileError(f"project.experience must be {levels}, not {repr(experience)[:40]}; leave it out for no project default")
     allow = guard.get("allow_new_skips", False)
     if not isinstance(allow, bool):
         raise ProfileError("guard.allow_new_skips must be true or false")
@@ -325,6 +385,8 @@ def parse(data: dict, root: Path) -> Profile:
         rules=_strs(proj.get("rules"), "project.rules"),
         flow_addendum=str(proj.get("flow_addendum") or ""),
         guided_start=guided,
+        ruleset=ruleset,
+        experience=experience or "",
         setup=str(cmds.get("setup") or ""),
         setup_check=str(cmds.get("setup_check") or ""),
         typecheck=str(cmds.get("typecheck") or ""),
@@ -349,6 +411,7 @@ def parse(data: dict, root: Path) -> Profile:
         allow_new_skips=allow,
         sensitive_description=str(sens.get("description") or ""),
         sensitive_patterns=patterns,
+        previews=previews,
         areas=areas,
         repair=_strs((data.get("repair") or {}).get("commands"), "repair.commands"),
         release_steps=list(steps),
@@ -361,7 +424,93 @@ def parse(data: dict, root: Path) -> Profile:
         conductor_environment=str(run.get("conductor_environment") or ""),
         environment_setup=str(run.get("environment_setup") or ""),
         permission_mode=pmode,
+        preset=preset,
     )
+
+
+@dataclass
+class Experience:
+    """How much the person knows, and where that came from.
+
+    `level` is "new", "developer" or None (unknown); `source` is "environment",
+    "local file", "profile" or "unknown". `warnings` name values skipped on the
+    way. Wording uses `wording_level`: unknown counts as new to building."""
+
+    level: str | None
+    source: str
+    warnings: list[str] = field(default_factory=list)
+
+    @property
+    def wording_level(self) -> str:
+        """The level wording follows: unknown counts as new to building."""
+        return self.level or "new"
+
+
+_LEVELS_WORDS = " or ".join(EXPERIENCE_LEVELS)
+
+
+def _level(value) -> str | None:
+    if not isinstance(value, str):
+        return None
+    v = value.strip().lstrip("\ufeff").strip().lower()  # a byte-order mark too
+    return v if v in EXPERIENCE_LEVELS else None
+
+
+def _read_experience_file(root) -> tuple[str | None, str]:
+    """(the level, why it was skipped) from the local file: (None, "") when
+    there is no file to read. Never raises. A skipped file's text is never
+    shown, since the path might lead anywhere (a symlink to a secret)."""
+    try:
+        path = Path(root) / EXPERIENCE_FILE
+        if path.is_dir():
+            return None, "it is a directory"
+        if not path.is_file():
+            return None, ""
+        with path.open("rb") as f:
+            data = f.read(_EXPERIENCE_FILE_MAX + 1)
+    except (OSError, ValueError, TypeError):
+        return None, ""
+    if len(data) > _EXPERIENCE_FILE_MAX:
+        return None, "it is longer than one short line"
+    try:
+        lines = data.decode("utf-8").strip().splitlines()
+    except UnicodeDecodeError:
+        return None, "it isn't UTF-8 text"
+    if not lines:
+        return None, "it is empty"
+    if len(lines) > 1:
+        return None, "it holds more than one line"
+    lvl = _level(lines[0])
+    return (lvl, "") if lvl else (None, f"it holds neither {_LEVELS_WORDS}")
+
+
+def resolve_experience(root: Path | None, profile_value=None, environ=None) -> Experience:
+    """The person's experience. First match wins: WORKFLOW_EXPERIENCE in the
+    environment, the untracked .workflow/experience file, the profile's
+    project.experience, else unknown. An unrecognised environment or file
+    value is skipped with a warning, which never repeats the value. The guard
+    tickets call it from a hook, so it never raises, whatever it is given."""
+    env = os.environ if environ is None else environ
+    warnings: list[str] = []
+    try:
+        raw = env.get(EXPERIENCE_ENV)
+    except Exception:  # the guard may hand it any mapping
+        raw = None
+    if isinstance(raw, str) and raw.strip():
+        lvl = _level(raw)
+        if lvl:
+            return Experience(lvl, "environment", warnings)
+        warnings.append(f"ignored {EXPERIENCE_ENV}: it holds neither {_LEVELS_WORDS}")
+    if root is not None:
+        lvl, why = _read_experience_file(root)
+        if lvl:
+            return Experience(lvl, "local file", warnings)
+        if why:
+            warnings.append(f"ignored {EXPERIENCE_FILE.as_posix()}: {why} (write {_LEVELS_WORDS})")
+    lvl = profile_value if profile_value in EXPERIENCE_LEVELS else None
+    if lvl:
+        return Experience(lvl, "profile", warnings)
+    return Experience(None, "unknown", warnings)
 
 
 def load(root: Path | None = None, required: bool = True) -> Profile | None:
@@ -465,6 +614,8 @@ def summary(profile: Profile) -> dict:
         "repo": profile.repo,
         "owner": profile.owner or None,
         "base_branch": profile.base_branch,
+        "ruleset": profile.ruleset,
+        "experience": profile.experience or None,
         "rules": profile.rules,
         "typecheck": profile.typecheck or None,
         "test_file": profile.test_file or None,
@@ -490,4 +641,6 @@ def summary(profile: Profile) -> dict:
         "ticket_environment": profile.ticket_environment or None,
         "conductor_environment": profile.conductor_environment or None,
         "permission_mode": profile.permission_mode,
+        "preset": profile.preset,
+        "previews": {"provider": profile.previews.provider, "on": profile.previews.on, "access": profile.previews.access},
     }
