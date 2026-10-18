@@ -257,9 +257,9 @@ def _kickoff():
 
 
 def test_projects_without_ruleset_keep_todays_checks():
+    # Since #64 the ruleset's checks are doctor's lines, raised as safety gaps.
     pre = _preflight()
-    assert "It must be `enforcement: active`, cover the default branch, and block force pushes and deletion." in pre
-    assert "With `ruleset` left out, nothing here changes" in pre
+    assert "With `ruleset` left out, nothing is solo mode: doctor's ruleset lines are safety gaps like any other." in pre
 
 
 def test_an_unreadable_read_back_is_unconfirmed_not_removed():
@@ -270,8 +270,9 @@ def test_an_unreadable_read_back_is_unconfirmed_not_removed():
 def test_preflight_treats_both_cases_as_solo_mode():
     pre = _preflight()
     assert "ruleset = false" in pre
-    assert "ruleset = true" in pre and "WF protection" in pre and "--repo" in pre and "--json" in pre
-    assert '"protected": false' in pre
+    # Since #64 removed protection is doctor's mismatch line, from the read-back it runs.
+    assert "ruleset = true" in pre and "WF doctor" in pre and "--repo" in pre and "--json" in pre
+    assert "mismatch line" in pre and "`restore_protection`" in pre
     assert "solo mode" in pre.lower()
 
 
