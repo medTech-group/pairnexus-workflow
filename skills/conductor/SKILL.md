@@ -32,31 +32,60 @@ Read first: the flow, `DOCS/charter.md`, `DOCS/enforcement.md` and the profile.
 
 ### 1. Pre-flight: find things out, ask nothing yet
 
-Collect every problem for the kick-off, each with its fix.
+Collect every problem for the kick-off, each with its fix. The set-up is `WF doctor`'s to check: the same report the owner gets by hand (`DOCS/enforcement.md` §5), so a run checks exactly what they would. The rest is what only this session can check.
 
 **This session**
 - `echo $WORKFLOW_ROLE` prints `conductor`.
 - `get_session` (no id): `session_context.permission_mode` must not prompt for tools. If the field isn't there, ask the owner in the kick-off which mode this session runs in.
 - A child session can't have a more permissive mode than yours, so the profile's `run.permission_mode` must be no more permissive than your own.
-
-**The project**
-- `WF profile check`: no errors. Warnings go to the kick-off.
-- The base branch's ruleset: `gh api repos/<repo>/rulesets`, then each one by id. It must be `enforcement: active`, cover the default branch, and block force pushes and deletion. The required checks must equal the profile's `ci.required_checks`.
-- **Solo mode.** Read `project.ruleset` from `WF status --json` (`solo_mode`: `true` when it says `false`, `null` when it's left out). The run is in solo mode when either:
-  - the profile says `ruleset = false`; or
-  - the profile says `ruleset = true` while the read-back says `"protected": false` (removed protection). For the read-back, save the full rulesets (each fetched by its id, not the list's summaries) as one JSON list in `rulesets.json`, the repository (`gh api repos/<repo>`) in `repo.json`, and run `WF protection --rulesets rulesets.json --repo repo.json --json`. Always give `--repo`. Exit code 2 means the input was wrong: fix it and run it again, rather than parse it or count it as unprotected.
-
-  A read-back that runs (exit code 0) but can't read everything counts as unprotected. When its only problems are that a bypass list or a setting "can't be read" (it needs admin access), say the protection can't be confirmed from this session, not that it was removed; it still counts as unprotected.
-
-  With `ruleset` left out, nothing here changes: the ruleset checks above raise their gaps as before, with no read-back. In solo mode, the checks on the ruleset itself give way to one safety gap, the solo-mode gap (kick-off step 1). The run then never uses GitHub auto-merge: nothing on GitHub reliably requires checks, so auto-merge could merge at once, without waiting for checks.
-- The required-checks rule also requires branches to be up to date (`strict_required_status_checks_policy: true`). If it's off, raise it as a safety gap: "Fix it first / Go ahead without it". Accepted, it goes in `accepted_gaps`. Nothing else changes: every merge (yours, or a PR whose auto-merge you enable) runs on `WF merge-check`, which never says `ready` for a branch that isn't level with the base (flow §4.3).
-- "Require review from Code Owners" is off while sessions post as the owner (`DOCS/enforcement.md` §1): on, a PR touching a CODEOWNERS path could never merge. Say so if it's on.
-- **Required approvals.** The ruleset's pull-request rule: `required_approving_review_count`. Above 0, no PR a session opens can merge without a person's approval (sessions post as the owner, and an author can't approve their own PR). Say so in the kick-off, and make **owner** the recommended answer to the merge question (`merge.mode: owner`: runs stop at "ready for review"). If the owner picks another mode anyway, every PR waits on an approval until the end time.
-- CODEOWNERS covers `.claude/` and `.github/workflows/`.
 - `WF version --fresh`: when a newer kit release is out, the kick-off asks **Update first** (end here; an attended session makes the update pull request for the owner to merge, then a new run starts) or **Run on <this version>**. A run never updates mid-run, and its ticket sessions stay on the version it started with.
 
+**The set-up: `WF doctor`**
+
+Gather the files doctor takes into `.workflow/` (git ignores it), each `gh api` route written out in full, with no shell variables in it:
+- **The rulesets:** list them with `gh api --paginate 'repos/<repo>/rulesets?includes_parents=true&per_page=100'`, then fetch each one by its id (`gh api repos/<repo>/rulesets/<id>`), and save the full rulesets (not the list's summaries) as one JSON list in `.workflow/rulesets.json`. When GitHub refuses the list because rulesets need a paid plan (a private repository on GitHub Free: "Upgrade to GitHub Pro or make this repository public"), save `[]`: no ruleset, so the base branch reads as unprotected. Doctor can't see that refusal in the file, so keep it for the kick-off (step 1, "A paid-plan refusal").
+- **The repository's settings:** `gh api repos/<repo> > .workflow/repo.json`.
+- **The environments:** `list_environments`, every page until `has_more` is false, saved as one JSON list of its pages in `.workflow/environments.json`.
+- **The runs:** the issues labelled `workflow:run`, open and closed: `gh api 'repos/<repo>/issues?labels=workflow:run&state=all&sort=created&direction=desc&per_page=30' > .workflow/run-issues.json` (or the GitHub MCP tools, all pages in one JSON list).
+- **This session's Claude Code version:** `claude --version`, as it prints it.
+
+Then run doctor once, with all of them:
+
+```bash
+WF doctor --json --rulesets .workflow/rulesets.json --repo .workflow/repo.json --environments .workflow/environments.json --runs .workflow/run-issues.json --claude-version "<what claude --version printed>" > .workflow/doctor.json
+```
+
+It changes nothing and exits 0. Exit code 2 means the command was wrong: fix it and run it again. Before reading the report, redo any fetch that went wrong, once:
+- a file you gathered that holds an error rather than GitHub's or Claude's answer (a failed `gh api` saves GitHub's error body, such as `{"message": "Not Found", …}`, into the file), or that is missing or empty;
+- a file a `cant_check` line names, or whose answer it says isn't in the shape GitHub or Claude gives it, or whose fix says to fetch it again.
+
+Fetch each such file again and run doctor again. Whatever its lines say after that is the report: a line still `cant_check` stays a safety gap. Output that isn't its JSON (a traceback, another exit code) is never a clean report: run it again once, and if it still fails, raise "the set-up couldn't be checked" as a safety gap, and read solo mode from the profile's `project.ruleset` itself (below). Each of its `lines` has a `group`, an `id`, a `status` (`gap`, `cant_check`, `note` or `fine`), a `message`, a `fix` and an `offer` (the `upgrade-setup` offer that fixes it, or null), worded for the owner. Read them so:
+
+- **Every `gap` and every `cant_check` line is a safety gap** for the kick-off (step 1), shown with its message and its fix. Between them they cover:
+  - the ruleset (`github.ruleset`, with the `ruleset = true` mismatch, which doctor lists first) and each missing protection (`github.protection.*`);
+  - the required checks against `ci.required_checks` (`github.required_checks`) and "up to date" (`github.up_to_date`, the ruleset's `strict_required_status_checks_policy`);
+  - Code Owners review (`github.code_owner_review`: on, while sessions post as the owner, a PR touching a CODEOWNERS path could never merge; `DOCS/enforcement.md` §1), linear history and the merge settings;
+  - CODEOWNERS (`github.codeowners`: `/.claude/` and `/.github/workflows/`);
+  - `profile check` (`kit.profile`), the kit's copy and hooks, Python and Claude Code's version (`computer.claude_code`), and the environments (`cloud.environments`).
+
+  A `cant_check` line is worded as what can't be confirmed from this session, not as something removed or missing. Doctor's advice never loosens a run: the ticket environment, the work and the last run (below) are checked whatever doctor's lines say.
+- **Notes** go to the kick-off's findings as they are, asked nothing: the profile's warnings (`kit.profile`), the environments' contents (`cloud.contents`, which the owner confirms in the kick-off), and the like. Two notes change the kick-off, below.
+- **Required approvals.** `github.approvals` as a note means the ruleset needs approvals above 0: no PR a session opens can merge without a person's approval (sessions post as the owner, and an author can't approve their own PR). Say so in the kick-off, and make **owner** the recommended answer to the merge question (`merge.mode: owner`: runs stop at "ready for review"). If the owner picks another mode anyway, every PR waits on an approval until the end time. A `github.approvals` line that is `cant_check` makes **owner** the recommended answer too: an approval may be needed.
+- **Solo mode** is read from doctor's lines, so there is one place that decides. The run is in solo mode when either:
+  - **chosen:** `kit.ruleset` is doctor's solo-mode note (status `note`, offer `protect_main`): the profile says `ruleset = false`;
+  - **removed protection:** `github.ruleset` is doctor's mismatch line, a `gap` offering `restore_protection`: the profile says `ruleset = true` (`kit.ruleset` is `fine`) while GitHub doesn't protect the base branch.
+
+  With `ruleset = true`, each of these counts as removed protection too:
+  - a `github.ruleset` line that is still `cant_check` after the fetches above are redone (such as a bypass list only an admin can read);
+  - no `github.ruleset` line;
+  - a doctor run that never gave its JSON (then the profile's `project.ruleset` says which: `false` is chosen solo mode, `true` removed protection).
+
+  For these, say the protection can't be confirmed from this session, not that it was removed.
+
+  With `ruleset` left out, nothing is solo mode: doctor's ruleset lines are safety gaps like any other. In solo mode, doctor's lines on the ruleset itself (`github.ruleset`, `github.protection.*`, `github.required_checks`, `github.up_to_date`) and on auto-merge (`github.auto_merge`, a setting the run never uses) give way to one safety gap, the solo-mode gap (kick-off step 1); for removed protection, the `github.protection.*` lines say what is missing. The run then never uses GitHub auto-merge: nothing on GitHub reliably requires checks, so auto-merge could merge at once, without waiting for checks.
+
 **The ticket sessions' environment**
-- `list_environments`: find the one named `run.ticket_environment` and keep its id. None of that name is a blocking problem: the run can't start until the owner creates it or the profile names the right one. It is still required in solo mode.
+- From the same `list_environments` pages, find the active one named `run.ticket_environment` (its `state` absent, empty, or `active` in any case, as doctor counts it) and keep its id. One of that name that isn't active counts as none. Two active ones of that name are a blocking problem too: the owner renames one, so that the environment they confirm holds no credentials is the one ticket sessions start in. None of that name is a blocking problem, whatever doctor's `cloud.environments` line says (one line covers both environments, and its JSON doesn't say which is missing): the run stops before the kick-off's questions, and can't start until the owner creates it or the profile names the right one. It is still required in solo mode.
   - When the profile names no environment (`run.ticket_environment` empty), offer "Set up unattended runs": the `upgrade-setup` skill with the offer `set_up_unattended_runs`.
   - Either way, give the clicks by hand too: `DOCS/enforcement.md` §2 and https://github.com/medTech-group/pairnexus-workflow#step-5-create-the-two-claude-environments.
   - Never start ticket sessions in another environment.
@@ -72,20 +101,25 @@ Collect every problem for the kick-off, each with its fix.
 - In the kick-off this line stays as it is, with the run's estimate beside it (step 2): this one says what usage has been reported, the estimate what the run will use.
 
 **The last run**
-- The most recent issue labelled `workflow:run`.
+- The most recent issue labelled `workflow:run`, from `.workflow/run-issues.json`.
 - Its state's charter, saved as `old.json`: `WF state get --body old-body.md`, then take `.charter`.
 
 ### 2. The kick-off
 
 With `AskUserQuestion`, at most four questions to a round, recommended answers first.
 
-1. **The findings.** Show the pre-flight's problems first. For each safety gap, ask "Fix it first / Go ahead without it"; each gap accepted goes in `accepted_gaps`.
+1. **The findings.** Show the pre-flight's problems first: this session's own (its role, its permission mode, the base branch's CI and the rest above), then doctor's safety gaps, most serious first as doctor lists them, then doctor's notes. For each safety gap, ask "Fix it first / Go ahead without it"; each gap accepted goes in `accepted_gaps`, in words (for doctor's, its words with its line's id in front: `github.up_to_date: <message>`).
+   - **Fix it first:** follow the line's fix (through the `upgrade-setup` skill when its `offer` names one), then gather the files again and run doctor again. The gap is closed when its line is neither a `gap` nor `cant_check`. If it still is, ask again: **Go ahead without it** (into `accepted_gaps`) or **Don't start the run** (end here; nothing has been created yet).
+   - **A paid-plan refusal** (GitHub refused the rulesets list because rulesets need a paid plan, pre-flight): say it beside the solo-mode gap, or, with `ruleset` left out, beside `github.ruleset`'s gap and `github.required_checks`'s (whose fix needs a ruleset too): rulesets on a private repository need a paid GitHub plan (Team or above), or the repository made public. Until then **Protect `main`**, **Restore protection** and those gaps' **Fix it first** can't work, so recommend going ahead: **Go ahead** for the solo-mode gap, **Go ahead without it** for the ruleset's gaps.
+   - **"Up to date" accepted** changes nothing else: every merge in the run (yours, or a PR whose auto-merge you enable) runs on `WF merge-check`, which never says `ready` for a branch that isn't level with the base (flow §4.3).
    - **The solo-mode gap** is stated plainly, in these words, with the profile's base branch in place of `main` where it isn't `main`:
 
      > This run is in solo mode: nothing on GitHub stops a mistake reaching `main`, and the kit's "never merge while CI is red" check is the only one: `workflow merge-check`, which every merge in the run goes through.
 
-     For removed protection, say first that the profile says `main` is protected but GitHub doesn't protect it, with what the read-back found missing (or that it can't be confirmed from here). Then ask:
-     - **Protect `main`** (recommended; for removed protection, **Restore protection**): follow the `upgrade-setup` skill with the offer `protect_main` (or `restore_protection`), then look at the read-back that path ends with. `"protected": true` closes the gap, whatever the profile says. If it still isn't protected (Not now, a message for an admin, a click missed), ask again: **Go ahead** or **Don't start the run** (end here; nothing has been created yet).
+     When doctor's `github.ruleset` note says GitHub already protects `main`, show that note before these words, which then say how the run treats `main`.
+
+     For removed protection, say first that the profile says `main` is protected but GitHub doesn't protect it, with what doctor found missing (its mismatch line and `github.protection.*` lines), or that it can't be confirmed from here. Then ask:
+     - **Protect `main`** (recommended, except after a paid-plan refusal, above; for removed protection, **Restore protection**): follow the `upgrade-setup` skill with the offer `protect_main` (or `restore_protection`), then look at the read-back that path ends with. `"protected": true` closes the gap, whatever the profile says; run doctor again for the other lines. If it still isn't protected (Not now, a message for an admin, a click missed), ask again: **Go ahead** or **Don't start the run** (end here; nothing has been created yet).
      - **Go ahead**: add exactly this line to `accepted_gaps`, with the base branch's name in place of `main`:
 
        ```
