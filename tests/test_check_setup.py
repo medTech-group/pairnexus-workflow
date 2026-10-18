@@ -120,10 +120,12 @@ def test_a_paid_plan_refusal_is_left_to_doctors_own_read():
 
 
 def test_a_file_doctor_could_not_use_is_fetched_again_once():
-    failed = _section(_text(), "When doctor doesn't give its JSON", "###")
+    failed = _section(_text(), "When something goes wrong", "###")
     assert "Exit code 2" in failed and "more than one file" in failed
     assert "is a `cant_check` line" in failed and "Fetch such a file again once" in failed
     assert "look at each file yourself" in failed
+    # A runs file doctor can't use leaves the Cloud line a note whose status isn't known.
+    assert "**The runs file is the exception.**" in failed and "whether it is a note or a gap isn't known" in failed
 
 
 def test_without_a_profile_it_gathers_nothing():
@@ -176,7 +178,8 @@ def test_the_report_is_shown_by_experience_most_serious_first():
     assert "most serious first" in show
     # Doctor groups its lines; the skill shows them by status, keeping doctor's order within each.
     assert "keeping doctor's order within each status" in show
-    assert "`WORKFLOW_EXPERIENCE=" in show
+    # The session's own level changes only what Claude adds: setting the variable would change kit.experience.
+    assert "Don't set `WORKFLOW_EXPERIENCE` for the run" in show
     for status in ("`gap`", "`cant_check`", "`note`", "`fine`"):
         assert status in show, status
 
@@ -218,7 +221,8 @@ def test_only_a_gap_recommends_its_upgrade_and_never_after_a_paid_plan_refusal()
     offers = _section(_text(), "The offers")
     assert "recommended option only on a `gap` line" in offers
     assert "without \"(Recommended)\"" in offers
-    assert "not after a paid-plan refusal" in offers and "a paid GitHub plan or a public repository" in offers
+    assert "not for `protect_main` or `restore_protection` after a paid-plan refusal" in offers
+    assert "a paid GitHub plan or a public repository" in offers
 
 
 def test_an_offer_it_does_not_know_is_named_as_text():
@@ -249,7 +253,10 @@ def test_start_offers_it_on_a_local_gap_from_status():
     # The gaps are named from the JSON's messages, worded for the person; the text line has only ids.
     assert "`local_gaps`' messages in `WF status --json`" in look
     assert "`check-setup`" in look
-    assert "then it is the recommended option" in look
+    # One recommended option only: a kit update stays first, and a brand-new project's map gives way.
+    assert "then it is the recommended option and first" in look
+    assert "this comes second, without \"(Recommended)\"" in look
+    assert "unless **Check the set-up** is recommended: then second" in look
 
 
 def test_start_offers_it_once_a_session_in_solo_mode():

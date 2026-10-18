@@ -52,18 +52,21 @@ WF doctor --json
 
 Without `gh` signed in, its GitHub lines say they can't be checked from here and how to check them. The environments can only be checked from a cloud session: say so beside the report, once ("To check the two cloud environments, ask a cloud session on this repository to check the set-up."). That line is `cant_check` here, never fine.
 
-### When doctor doesn't give its JSON
+### When something goes wrong
 
 - **Exit code 2:** the command was wrong (a flag doctor doesn't take, or `-` given for more than one file). Fix it and run it again.
 - **A file doctor couldn't use** is not an exit code: it is a `cant_check` line, which names a missing or empty file, or says its answer isn't in the shape GitHub gives. Doctor doesn't always see GitHub's error body for what it is (in `--repo`, `{"message": …}` reads as settings only an admin can see), so look at each file yourself before running doctor, as above. Fetch such a file again once and run doctor again; whatever its lines say after that is the report.
+- **The runs file is the exception.** When it can't be used, `cloud.environments` stays a `note` (unattended runs not set up yet), and its message says whether a run has been made couldn't be read. Fetch it again once too. If the message still says so, show that line with the `cant_check` lines: whether it is a note or a gap isn't known.
 - **An old `python3`** (older than Python 3.11) still gets doctor's JSON, as its short report: `python3`'s version as a gap with its fix (`computer.python3`), and every other line `cant_check` until `python3` is 3.11 or newer. Show it like any report: the fix to `python3` comes first, and nothing else is fine yet.
 - **Anything else** (a traceback, another exit code): run it again once. If it still fails, say the set-up couldn't be checked, with the error's last line. That is never a clean report.
 
 ## 2. Show the report
 
-Doctor's JSON has `wording` (`new` or `developer`, the person's level as the kit resolves it), `counts`, and `lines`, each with a `group`, an `id`, a `status`, a `message`, a `fix` and an `offer`. The messages and fixes are already worded for the person: show them as they are, and word what you add around them for `wording`. When this session's level differs from the one the kit resolves (the person said "explain less" or "explain more" and it couldn't be recorded), run doctor with `WORKFLOW_EXPERIENCE=<this session's level>` in front of the command, so its words match:
+Doctor's JSON has `wording` (`new` or `developer`, the person's level as the kit resolves it), `counts`, and `lines`, each with a `group`, an `id`, a `status`, a `message`, a `fix` and an `offer`. The messages and fixes are already worded for the person: show them as they are, and word what you add around them for `wording`:
 - *new to building*: plain sentences, one line per problem with its fix, no ids, no jargon;
 - *developer*: short; the line's `id` beside each problem.
+
+When this session's level differs from `wording` (the person said "explain less" or "explain more" and it couldn't be recorded), word what you add for this session's level, and keep doctor's messages and fixes as they are. Don't set `WORKFLOW_EXPERIENCE` for the run: doctor would report it as the person's own setting, and its `kit.experience` line would change.
 
 Doctor's `lines` come grouped (Your computer, The kit, GitHub, …), the group with the most serious line first. Show them by status instead, the most serious first, keeping doctor's order within each status (so removed protection, which doctor lists first, still comes first):
 1. **`gap`** lines first: each with its message and its fix.
@@ -77,7 +80,7 @@ Show the `cloud.contents` note with the others, never summarised away: nothing c
 
 ## 3. The offers
 
-Each line with an `offer` is an upgrade one tap away. Offer each one the report names as a choice with `AskUserQuestion`, once, after the report: the question names the line's problem in a few words, and the options are the upgrade and **Not now**. The upgrade is the recommended option only on a `gap` line, and not after a paid-plan refusal: a `note` is a state chosen on purpose (solo mode, unattended runs not set up yet), so its upgrade is offered without "(Recommended)". When the ruleset line says rulesets need a paid plan, say beside the choice that the upgrade needs a paid GitHub plan or a public repository. Up to 4 questions in one call; an offer two lines share is asked once. Without the tool (a headless session), ask the same choices as a numbered list.
+Each line with an `offer` is an upgrade one tap away. Offer each one the report names as a choice with `AskUserQuestion`, once, after the report: the question names the line's problem in a few words, and the options are the upgrade and **Not now**. The upgrade is the recommended option only on a `gap` line, and not for `protect_main` or `restore_protection` after a paid-plan refusal: a `note` is a state chosen on purpose (solo mode, unattended runs not set up yet), so its upgrade is offered without "(Recommended)". When the ruleset line says rulesets need a paid plan, say beside the choice that the upgrade needs a paid GitHub plan or a public repository. Up to 4 questions in one call; an offer two lines share is asked once. Without the tool (a headless session), ask the same choices as a numbered list.
 
 | `offer` | The choice | On yes |
 |---|---|---|
