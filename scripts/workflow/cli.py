@@ -228,9 +228,17 @@ def cmd_status(a) -> int:
     return 0
 
 
+def _given_file(path: str | None) -> Path | str | None:
+    """A file given to doctor: absolute, as the current directory has it;
+    `-` (standard input) and an empty path as they are."""
+    return path if path in (None, "", "-") else Path(path).absolute()
+
+
 def cmd_doctor(a) -> int:
     """What's set up and what isn't, each line with its fix (#34). Exits 0,
     or with --strict 1 on a gap or a line it couldn't check."""
+    if a.rulesets == "-" and a.repo == "-":
+        raise SystemExit("workflow doctor: only one of --rulesets and --repo can be standard input (-)")
     root = project_root()
     prof, error = None, None
     try:
@@ -252,8 +260,8 @@ def cmd_doctor(a) -> int:
                 profile_error=error,
                 experience=resolve_experience(root, prof.experience if prof else None),
                 claude_version=a.claude_version,
-                rulesets_file=Path(a.rulesets).absolute() if a.rulesets is not None else None,
-                repo_file=Path(a.repo).absolute() if a.repo is not None else None,
+                rulesets_file=_given_file(a.rulesets),
+                repo_file=_given_file(a.repo),
             )
         )
     except KeyboardInterrupt:  # Ctrl-C: a quiet stop (what it ran is already killed)
@@ -1251,8 +1259,8 @@ def main(argv: list[str] | None = None) -> int:
 
     s = sub.add_parser("doctor", help="what's set up and what isn't, each line with a one-sentence fix; changes nothing, exits 0 (--strict: 1 on a gap or a line it couldn't check)")
     s.add_argument("--claude-version", metavar="VERSION", help="Claude Code's version, as `claude --version` prints it (wins over running it)")
-    s.add_argument("--rulesets", metavar="F", help="the repository's rulesets, each in full (GET repos/<repo>/rulesets/<id>), as `workflow protection` takes them; else read with `gh api`")
-    s.add_argument("--repo", metavar="F", help="the repository's settings (GET repos/<repo>): the merge settings and default branch; else read with `gh api`")
+    s.add_argument("--rulesets", metavar="F", help="the repository's rulesets, each in full (GET repos/<repo>/rulesets/<id>), as `workflow protection` takes them (or -); else read with `gh api`")
+    s.add_argument("--repo", metavar="F", help="the repository's settings (GET repos/<repo>): the merge settings and default branch (or -); else read with `gh api`")
     s.add_argument("--json", action="store_true", help="every line's group, id, status, message, fix and offer, for skills")
     s.add_argument("--strict", action="store_true", help="exit 1 when any line is a gap or can't be checked; notes never fail it")
     s.set_defaults(fn=cmd_doctor)

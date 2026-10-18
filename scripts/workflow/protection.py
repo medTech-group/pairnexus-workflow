@@ -38,9 +38,9 @@ NEEDED = {
 }
 CHECKS_NOTE = "checks not required yet"
 # The kinds of what `missing` lists: no rulesets at all; a ruleset that doesn't
-# take in the base branch, or can't be told to; one that isn't active; a bypass
-# list; and the rules in NEEDED.
-KINDS = ("no_rulesets", "not_on_base", "unsure", "not_active", "bypass", *NEEDED)
+# take in the base branch, or can't be told to; one that is turned off, or only
+# evaluates; a bypass list, or one that can't be read; and the rules in NEEDED.
+KINDS = ("no_rulesets", "not_on_base", "unsure", "not_active", "evaluate", "bypass", "bypass_unread", *NEEDED)
 # The merge settings: the key in GET repos/<repo>, its name in --json, its words.
 MERGE = (
     ("allow_merge_commit", "merge_commits", "merge commits"),
@@ -287,7 +287,7 @@ def check(rulesets, base: str, settings=None, base_if_unknown: bool = False) -> 
         if off_target and off_target.startswith("doesn't target"):
             ignored.append(("not_on_base", f"{name} {off_target}"))
         elif rs["enforcement"] == "evaluate":
-            ignored.append(("not_active", f"{name} is evaluate only: it reports but doesn't block"))
+            ignored.append(("evaluate", f"{name} is evaluate only: it reports but doesn't block"))
         elif rs["enforcement"] != "active":
             ignored.append(("not_active", f"{name} is not active (enforcement {quote(rs['enforcement'])})"))
         elif off_target:
@@ -299,7 +299,7 @@ def check(rulesets, base: str, settings=None, base_if_unknown: bool = False) -> 
     problems: list[tuple[str, str]] = []
     for name, rs in effective:
         if "bypass_actors" not in rs:
-            problems.append(("bypass", f"{name}: its bypass list can't be read (it needs admin access), so nobody can tell who may skip its rules"))
+            problems.append(("bypass_unread", f"{name}: its bypass list can't be read (it needs admin access), so nobody can tell who may skip its rules"))
         elif rs["bypass_actors"]:
             n = len(rs["bypass_actors"])
             problems.append(("bypass", f"{name} has a bypass list ({n} {'actor' if n == 1 else 'actors'}): they can skip its rules; empty it"))
