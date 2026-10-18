@@ -24,6 +24,10 @@ counts, the text, the JSON and `--strict` follow without change. A line
 that needs GitHub's answers reads them through `_github(i)`, once for every
 line; the Cloud lines read the environments through `_environments(i)` and
 whether a run has been made through `_runs(i)`, the same way.
+
+**`workflow status`** runs only `LOCAL_CHECKS` (#62), through `report`, and
+shows their gaps: a check added there must read nothing but this computer
+and the checkout.
 """
 
 from __future__ import annotations
@@ -2137,6 +2141,12 @@ def check_environment_contents(i: Inputs) -> list[Line]:
 CHECKS = [check_python, check_claude_code, check_profile, check_install, check_vendor, check_experience, check_ruleset,
           check_protection, check_required_checks, check_ruleset_rules, check_merge_settings, check_codeowners,
           check_environments, check_environment_contents]
+# The checks that read only this computer and the checkout: no `gh`, no
+# network, and nothing a session hands in. `workflow status` runs these (#62),
+# so the guided start can tell, with no network call, whether to offer "check
+# the set-up". Claude Code's version and CODEOWNERS are local too, but #34
+# doesn't name them for `status`.
+LOCAL_CHECKS = [check_python, check_profile, check_install, check_vendor, check_ruleset]
 
 
 # ---------- the report ----------
@@ -2201,9 +2211,10 @@ def _failed(i: Inputs, check, e: Exception) -> Line:
     ))
 
 
-def report(i: Inputs) -> Report:
+def report(i: Inputs, checks: list | None = None) -> Report:
+    """Every check's lines, or only those of `checks` (`LOCAL_CHECKS`)."""
     lines: list[Line] = []
-    for check in CHECKS:
+    for check in CHECKS if checks is None else checks:
         try:
             lines += check(i)
         except Exception as e:  # advice never ends in a traceback

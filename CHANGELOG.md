@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+**`workflow status` reports doctor's local gaps, with no network calls** (#62, part of #34).
+
+- **The checks** are doctor's own local ones, run as doctor runs them: `python3` on the PATH, the hooks (with Claude Code's settings and the plugin), `profile check`, `vendor verify` and the `ruleset` setting. They read only this computer and the checkout: without `--fetch`, `status` still runs no `gh` and makes no network call. `--fetch` reads issues, pull requests and the latest release as before, and never runs doctor's GitHub or Cloud checks.
+- **Text:** one line after `Experience:`, `Local gaps: none`, or `Local gaps: 2 (computer.python3, kit.hooks): ...` naming each gap by doctor's id, the most serious first.
+- **`--json`:** `local_gaps`, the gap lines in doctor's shape (group, id, status, message, fix, offer, worded by the person's experience), and `local_gap`, `true` or `false`. A note or a line doctor can't check isn't a gap: solo mode (`ruleset = false`) and no `ruleset` setting are notes, which `Solo mode:` already reports.
+- **A profile with an error** is now reported, not a failure of `status`: `Kit: set up, but its profile has an error (kit.profile)`, `Solo mode: unknown`, the gap `kit.profile` saying what's wrong, and in `--json` `profile_error: true` (`set_up` stays `true`). `--fetch` then reads no issues and says why.
+- Everything else in `status`'s text and JSON is unchanged. Tests: `tests/test_status_local_gaps.py`.
+- **For projects updating:** nothing to do.
+
 **`workflow doctor`: the Cloud lines (the two environments)** (#60, part of #34).
 
 - **The environments** the profile names (`run.ticket_environment`, `run.conductor_environment`) come from `--environments FILE`: the account's environments as `list_environments` returns them (`{"environments": [...], "has_more": false}`, the list alone, or a list of its pages), or `-` for standard input. Only a cloud session can list them, so there is no other source. With no file the line is `can't check`, saying only a cloud session can check them ("ask a cloud session to check the set-up").

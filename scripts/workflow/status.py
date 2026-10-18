@@ -59,10 +59,20 @@ class Status:
     waiting: list[Item] = field(default_factory=list)
     to_triage: list[Item] = field(default_factory=list)
     kit_update_pr: int | None = None
+    # Doctor's local gaps (#62): its lines for its local checks that are gaps,
+    # in its JSON shape; None when they weren't checked. `profile_error`: the
+    # profile is there but can't be used (its gap is kit.profile).
+    local_gaps: list[dict] | None = None
+    profile_error: bool = False
+
+    @property
+    def local_gap(self) -> bool | None:
+        return None if self.local_gaps is None else bool(self.local_gaps)
 
     def as_dict(self) -> dict:
         d = asdict(self)
         d["experience"]["wording_level"] = self.experience.wording_level
+        d["local_gap"] = self.local_gap
         return d
 
 
@@ -112,9 +122,11 @@ def snapshot(
     protected: list[str] | None = None,
     ruleset: bool | None = None,
     experience: Experience | None = None,
+    local_gaps: list[dict] | None = None,
+    profile_error: bool = False,
 ) -> Status:
     files = own_files(root)
-    st = Status(set_up=set_up, brand_new=files == 0, own_files=files)
+    st = Status(set_up=set_up, brand_new=files == 0, own_files=files, local_gaps=local_gaps, profile_error=profile_error)
     st.solo_mode = None if ruleset is None else not ruleset
     if experience is not None:
         st.experience = experience
@@ -194,13 +206,32 @@ def experience_lines(exp: Experience) -> list[str]:
     return [first, *(f"warning: {w}" for w in exp.warnings)]
 
 
+def local_gaps_line(st: Status) -> list[str]:
+    """One line naming doctor's local gaps by their ids, most serious first."""
+    if st.local_gaps is None:
+        return []
+    if not st.local_gaps:
+        return ["Local gaps: none"]
+    ids = ", ".join(g["id"] for g in st.local_gaps)
+    return [f"Local gaps: {len(st.local_gaps)} ({ids}): `workflow doctor` says how to fix each"]
+
+
 def text(st: Status) -> str:
+    if st.profile_error:
+        kit = "set up, but its profile has an error (kit.profile)"
+    else:
+        kit = "set up" if st.set_up else "NOT set up here (no .claude/workflow/profile.toml)"
+    if st.profile_error:
+        solo = "unknown (the profile has an error)"
+    else:
+        solo = "not set (as before)" if st.solo_mode is None else "yes" if st.solo_mode else "no"
     lines = [
-        "Kit: " + ("set up" if st.set_up else "NOT set up here (no .claude/workflow/profile.toml)"),
+        "Kit: " + kit,
         "Project: "
         + ("brand new (no code of its own yet)" if st.brand_new else "unknown (not a git checkout)" if st.own_files < 0 else f"{st.own_files} files of its own"),
-        "Solo mode: " + ("not set (as before)" if st.solo_mode is None else "yes" if st.solo_mode else "no"),
+        "Solo mode: " + solo,
         *experience_lines(st.experience),
+        *local_gaps_line(st),
     ]
     if not st.issues_read:
         lines.append("Issues: not read (pass --fetch, or --issues and --prs files)")
