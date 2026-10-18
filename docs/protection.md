@@ -6,7 +6,7 @@ The rule for "protected" lives here, and these call it rather than repeat it (so
 - the "Protect `main`" upgrade (`skills/upgrade-setup`), to read back the clicks;
 - set-up, to choose `ruleset = true` or `false`;
 - the conductor's pre-flight, to spot protection that was removed;
-- `workflow doctor` (#34), whose `--rulesets` and `--repo` files will take this command's input format.
+- `workflow doctor` (#34, #59), whose `--rulesets` and `--repo` files take this command's input format, and which reads the same JSON with `gh api` when they aren't given.
 
 ## Running it
 

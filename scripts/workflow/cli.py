@@ -2,7 +2,7 @@
 
     workflow profile check
     workflow status [--issues F --prs F | --fetch] [--json]
-    workflow doctor [--claude-version VERSION] [--json] [--strict]      (what's set up and what isn't; changes nothing)
+    workflow doctor [--claude-version VERSION] [--rulesets F] [--repo F] [--json] [--strict]      (what's set up and what isn't; changes nothing)
     workflow protection --rulesets F [--repo F] [--base BRANCH] [--json]
     workflow protection --protect --repo F [--base BRANCH] [--check NAME ...] [--json]
     workflow protection --require-checks F --check NAME [--check NAME ...] [--json]
@@ -252,6 +252,8 @@ def cmd_doctor(a) -> int:
                 profile_error=error,
                 experience=resolve_experience(root, prof.experience if prof else None),
                 claude_version=a.claude_version,
+                rulesets_file=Path(a.rulesets).absolute() if a.rulesets is not None else None,
+                repo_file=Path(a.repo).absolute() if a.repo is not None else None,
             )
         )
     except KeyboardInterrupt:  # Ctrl-C: a quiet stop (what it ran is already killed)
@@ -1249,6 +1251,8 @@ def main(argv: list[str] | None = None) -> int:
 
     s = sub.add_parser("doctor", help="what's set up and what isn't, each line with a one-sentence fix; changes nothing, exits 0 (--strict: 1 on a gap or a line it couldn't check)")
     s.add_argument("--claude-version", metavar="VERSION", help="Claude Code's version, as `claude --version` prints it (wins over running it)")
+    s.add_argument("--rulesets", metavar="F", help="the repository's rulesets, each in full (GET repos/<repo>/rulesets/<id>), as `workflow protection` takes them; else read with `gh api`")
+    s.add_argument("--repo", metavar="F", help="the repository's settings (GET repos/<repo>): the merge settings and default branch; else read with `gh api`")
     s.add_argument("--json", action="store_true", help="every line's group, id, status, message, fix and offer, for skills")
     s.add_argument("--strict", action="store_true", help="exit 1 when any line is a gap or can't be checked; notes never fail it")
     s.set_defaults(fn=cmd_doctor)
