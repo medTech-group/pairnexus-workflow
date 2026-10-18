@@ -37,11 +37,14 @@ def _env(tmp_path, root, path=None, env=None):
     return e
 
 
-def _run(tmp_path, root, *args, path=None, env=None):
-    """`workflow status` from the project's own copy of the CLI when it has
-    one, as a session runs it, else from the kit's source (plugin mode)."""
-    copy = root / ".claude/workflow/bin/workflow.py"
-    return subprocess.run([sys.executable, "-B", str(copy if copy.is_file() else CLI), "status", *args], cwd=root if root.is_dir() else tmp_path,
+def _run(tmp_path, root, *args, path=None, env=None, own=False):
+    """`workflow status` from the kit's source, or with `own` from the
+    project's own copy of the CLI, as a session runs it. Only the hooks line
+    needs the copy (doctor compares the hooks only from it), and the source
+    starts in half the time, since its bytecode is already cached: CI runs
+    the whole suite close to its time limit."""
+    cli_ = root / ".claude/workflow/bin/workflow.py" if own else CLI
+    return subprocess.run([sys.executable, "-B", str(cli_), "status", *args], cwd=root if root.is_dir() else tmp_path,
                           env=_env(tmp_path, root, path, env), capture_output=True, text=True)
 
 
@@ -89,7 +92,7 @@ def _old_python(tmp_path):
 def _hand_edited_hooks(tmp_path):
     settings = vendor.merge_hooks({})
     settings["hooks"]["PreToolUse"][0]["hooks"][0]["timeout"] = 15
-    return _project(tmp_path, settings=settings), {}
+    return _project(tmp_path, settings=settings), {"own": True}
 
 
 def _profile_error(tmp_path):
@@ -139,7 +142,7 @@ def test_the_gap_lines_are_doctors_own(tmp_path):
     """The same line doctor gives for the same checkout: reused, not copied."""
     root, kw = _old_python(tmp_path)
     mine = _json(tmp_path, root, **kw)["local_gaps"]
-    assert mine == [_lines(_report(tmp_path, root, **kw))["computer.python3"]]
+    assert mine == [_lines(_report(tmp_path, root, cli=CLI, **kw))["computer.python3"]]
 
 
 def test_every_gap_is_named_most_serious_first(tmp_path):
@@ -147,10 +150,10 @@ def test_every_gap_is_named_most_serious_first(tmp_path):
     del settings["hooks"]["SessionStart"]
     root = _project(tmp_path, settings=settings, lock_files={".claude/skills/gone/SKILL.md": "0" * 64})
     path = _bin(tmp_path, python=None, gh=False)
-    r = _json(tmp_path, root, path=path)
+    r = _json(tmp_path, root, path=path, own=True)
     ids = [ln["id"] for ln in r["local_gaps"]]
     assert ids == ["computer.python3", "kit.hooks", "kit.vendor"]
-    assert _gap_line(_status(tmp_path, root, path=path)).startswith("Local gaps: 3 (computer.python3, kit.hooks, kit.vendor)")
+    assert _gap_line(_status(tmp_path, root, path=path, own=True)).startswith("Local gaps: 3 (computer.python3, kit.hooks, kit.vendor)")
 
 
 def test_the_gap_lines_are_worded_for_the_persons_experience(tmp_path):
@@ -315,7 +318,7 @@ def test_ctrl_c_stops_status_quietly_with_nothing_left_running(tmp_path):
     marker = tmp_path / "child.pid"
     _fake(path, "python3", f"{shutil.which('sleep')} 30 & echo $! > {marker}; wait")
     # SIGINT as a terminal sends it, even where pytest was started ignoring it.
-    p = subprocess.Popen([sys.executable, "-B", str(root / ".claude/workflow/bin/workflow.py"), "status"], cwd=root,
+    p = subprocess.Popen([sys.executable, "-B", str(CLI), "status"], cwd=root,
                          env=_env(tmp_path, root, path), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                          preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
     for _ in range(100):
