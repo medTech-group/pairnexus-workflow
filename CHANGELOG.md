@@ -19,6 +19,15 @@
 - Everything else in `status`'s text and JSON is unchanged. Tests: `tests/test_status_local_gaps.py`.
 - **For projects updating:** nothing to do.
 
+**`workflow doctor` on an old `python3`: a short report** (#61, part of #34).
+
+- **On a `python3` older than 3.11** (macOS's own is 3.9), `workflow doctor` gives a short report from the kit's old-Python path (Python 3.7 syntax, the standard library only) instead of saying what it needs and exiting 1. `python3`'s version (the Python running it) is a gap with its fix; every other line the full doctor gives when nothing is wrong (Claude Code's version, the kit, GitHub, Cloud) is `can't check` "until `python3` is 3.11 or newer", with the full doctor's ids and groups (`kit.hooks` and `kit.vendor` in a vendored project, `kit.plugin` in plugin mode), so a skill reading `--json` sees the same lines.
+- **`--json`** gives the full doctor's shape (`experience`, `wording`, `counts`, `strict_ok`, `lines`, each line's group, id, status, message, fix and offer). It exits 0, and 1 with `--strict`. It takes the full doctor's flags as the full doctor parses them (`argparse`, so a refused argument exits 2, as in the full doctor); the files and the version a session hands in (`--rulesets`, `--repo`, `--environments`, `--runs`, `--claude-version`) are taken and not read. It never raises: a report that fails still gives the `python3` gap, and output that can't be written (a closed pipe) still exits as `--strict` says.
+- **Wording** follows `WORKFLOW_EXPERIENCE`, else `.workflow/experience`, read as the full doctor reads them; the profile's default needs `tomllib`, so it isn't read there, and unknown reads as new to building; the JSON's `experience.default` is always `null` there.
+- A test on the supported Python compares its lines with the full doctor's on the same checkout, and every line id `doctor.py` names, so a line added later is added to the short report too (`_DOCTOR_LINES` in `scripts/workflow/_old_python.py`), or listed as one said only when something is wrong.
+- Docs: `docs/enforcement.md` ("When something is wrong"), the README's "When something goes wrong". Tests: `tests/test_doctor_old_python.py`, on a real Python 3.9 in CI.
+- **For projects updating:** nothing to do.
+
 **`workflow doctor`: the Cloud lines (the two environments)** (#60, part of #34).
 
 - **The environments** the profile names (`run.ticket_environment`, `run.conductor_environment`) come from `--environments FILE`: the account's environments as `list_environments` returns them (`{"environments": [...], "has_more": false}`, the list alone, or a list of its pages), or `-` for standard input. Only a cloud session can list them, so there is no other source. With no file the line is `can't check`, saying only a cloud session can check them ("ask a cloud session to check the set-up").
