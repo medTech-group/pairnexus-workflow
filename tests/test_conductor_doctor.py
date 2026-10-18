@@ -134,16 +134,33 @@ def test_solo_mode_and_removed_protection_are_read_from_doctors_lines():
 
 def test_a_cant_check_ruleset_with_ruleset_true_counts_as_removed_protection():
     solo = _section(_doctor_block(), r"^- \*\*Solo mode\*\*", r"^- \*\*|\Z")
-    removed = _section(solo, r"^\s*- \*\*removed protection:\*\*", r"\n")
-    assert "`cant_check`" in removed and "counts as removed protection too" in removed
-    assert "never gave its JSON" in removed and "no `github.ruleset` line" in removed
-    assert "can't be confirmed from this session, not that it was removed" in removed
+    also = _section(solo, r"^\s*With `ruleset = true`, each of these counts as removed protection too:", r"^\s*With `ruleset` left out")
+    assert "`cant_check`" in also and "no `github.ruleset` line" in also and "never gave its JSON" in also
+    assert "can't be confirmed from this session, not that it was removed" in also
+    # Without doctor's JSON, the profile itself says which kind of solo mode.
+    assert "`project.ruleset` says which: `false` is chosen solo mode, `true` removed protection" in also
 
 
 def test_a_file_that_couldnt_be_read_is_fetched_again_before_the_report_is_read():
     block = _doctor_block()
-    assert "fetch that file again and run doctor again, before reading anything from the report" in block
-    assert "count the run as removed protection whenever the profile says `ruleset = true`" in block
+    redo = _section(block, r"Before reading the report, redo any fetch that went wrong, once:", r"^Fetch each such file again")
+    assert "error body" in redo and "missing or empty" in redo and "fix says to fetch it again" in redo
+    assert "Fetch each such file again and run doctor again. Whatever its lines say after that is the report" in block
+    assert "run it again once, and if it still fails" in block
+
+
+def test_a_gap_still_open_after_fix_it_first_asks_go_ahead_or_dont_start():
+    fix_first = _section(_kickoff(), r"^\s*- \*\*Fix it first:\*\*", r"\n")
+    assert "**Go ahead without it**" in fix_first and "**Don't start the run**" in fix_first
+
+
+def test_the_findings_show_this_sessions_own_problems_too():
+    findings = _section(_kickoff(), r"^1\. \*\*The findings\.\*\*", r"\n")
+    assert "this session's own" in findings and "doctor's safety gaps" in findings
+
+
+def test_approvals_that_cant_be_read_recommend_owner_too():
+    assert "A `github.approvals` line that is `cant_check` makes **owner** the recommended answer too" in _doctor_block()
 
 
 def test_auto_merge_gives_way_in_solo_mode():
@@ -175,6 +192,7 @@ def test_a_missing_ticket_environment_still_stops_the_run_whatever_doctor_says()
     assert "`list_environments`" in env and "keep its id" in env
     # Only an active one counts, as doctor counts it.
     assert "the active one named `run.ticket_environment`" in env and "isn't active counts as none" in env
+    assert "Two active ones of that name are a blocking problem too" in env
     assert "whatever doctor's `cloud.environments` line says" in env
     assert "before the kick-off's questions" in env
     assert "blocking problem" in env
