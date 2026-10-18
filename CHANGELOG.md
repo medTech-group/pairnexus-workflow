@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+**The conductor's pre-flight runs `workflow doctor`** (#64, part of #34).
+
+- **One check of the set-up:** the pre-flight gathers the files doctor takes into `.workflow/` (the rulesets, each fetched in full; the repository's settings; `list_environments`' pages; the `workflow:run` issues, open and closed; this session's `claude --version`) and runs `workflow doctor --json` with them, so a run checks exactly what the owner would check by hand.
+- **Doctor's gaps, and its lines it can't check, are the kick-off's safety gaps,** each with its fix, asked "Fix it first / Go ahead without it" as before; an accepted one goes in `accepted_gaps` in doctor's words, its line's id in front. "Fix it first" follows the line's fix (the `upgrade-setup` offer it names, if any) and runs doctor again. Notes are shown as they are; `github.approvals` above 0 still makes **owner** the recommended merge answer.
+- **Replaced, not kept beside doctor:** the pre-flight's own steps for the ruleset, the required checks and "up to date", Code Owners review, required approvals, CODEOWNERS and `profile check`, and its `workflow status --json` / `workflow protection` read-back for solo mode.
+- **Solo mode and removed protection** (#50) are read from doctor's lines: `kit.ruleset`'s solo-mode note (`ruleset = false`), or `github.ruleset`'s mismatch line offering `restore_protection` (`ruleset = true`, the base branch unprotected). With `ruleset = true`, a `github.ruleset` line doctor can't check counts as removed protection too, worded as unconfirmed. The kick-off's "Protect `main`" / "Restore protection" / "Go ahead" is unchanged.
+- **Still the conductor's own:** `WORKFLOW_ROLE`, the permission mode against the profile's, `version --fresh`, `ready --fetch` and the protected-path notes, leftovers, the base branch's CI and the last run (now read from the same `workflow:run` issues). A missing ticket environment still stops the run before the kick-off's questions, whatever doctor's Cloud line says, and the conductor still keeps its id from `list_environments`.
+- Docs: `skills/conductor/SKILL.md`, `docs/enforcement.md` §5, the README (Step 6, "Run the backlog unattended"), `docs/charter.md`, `docs/protection.md`. Tests: `tests/test_conductor_doctor.py`; two of `tests/test_charter_solo.py`'s pre-flight tests now read the doctor wording.
+- **For projects updating:** nothing to do.
+
 **`workflow doctor` on an old `python3`: a short report** (#61, part of #34).
 
 - **On a `python3` older than 3.11** (macOS's own is 3.9), `workflow doctor` gives a short report from the kit's old-Python path (Python 3.7 syntax, the standard library only) instead of saying what it needs and exiting 1. `python3`'s version (the Python running it) is a gap with its fix; every other line the full doctor gives when nothing is wrong (Claude Code's version, the kit, GitHub, Cloud) is `can't check` "until `python3` is 3.11 or newer", with the full doctor's ids and groups (`kit.hooks` and `kit.vendor` in a vendored project, `kit.plugin` in plugin mode), so a skill reading `--json` sees the same lines.

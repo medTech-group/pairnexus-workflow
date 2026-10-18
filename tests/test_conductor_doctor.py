@@ -1,0 +1,179 @@
+"""#64: the conductor's pre-flight runs `workflow doctor` (#34). Seam 4: the
+skill's wording and the docs, read from the files as the kit-release tests do."""
+
+import re
+from pathlib import Path
+
+from workflow import doctor
+
+KIT = Path(__file__).resolve().parents[1]
+CONDUCTOR = KIT / "skills/conductor/SKILL.md"
+
+
+def _conductor():
+    return CONDUCTOR.read_text(encoding="utf-8")
+
+
+def _section(text, start, end):
+    m = re.search(start + r".*?(?=" + end + ")", text, re.M | re.S)
+    assert m, f"no section {start!r}"
+    return m.group(0)
+
+
+def _preflight():
+    return _section(_conductor(), r"^### 1\. Pre-flight", r"^### 2\.")
+
+
+def _kickoff():
+    return _section(_conductor(), r"^### 2\. The kick-off", r"^## ")
+
+
+def _doctor_block():
+    return _section(_preflight(), r"^\*\*The set-up: `WF doctor`\*\*", r"^\*\*The ticket sessions' environment\*\*")
+
+
+# ---------- doctor runs with the files the pre-flight gathers ----------
+
+
+def test_preflight_runs_doctor_json_with_every_file():
+    block = _doctor_block()
+    m = re.search(r"^WF doctor --json .*$", block, re.M)
+    assert m, "no doctor command line"
+    cmd = m.group(0)
+    for flag in ("--rulesets", "--repo", "--environments", "--runs", "--claude-version"):
+        assert flag in cmd, flag
+
+
+def test_each_file_says_where_it_comes_from():
+    block = _doctor_block()
+    # The rulesets in full, each by its id, not the list's summaries.
+    assert "gh api repos/<repo>/rulesets" in block and "by its id" in block
+    assert "gh api repos/<repo>" in block
+    assert "`list_environments`" in block and "has_more" in block
+    assert "workflow:run" in block and "state=all" in block
+    assert "claude --version" in block
+
+
+def test_the_flags_doctor_is_given_are_the_flags_it_takes():
+    usage = (KIT / "scripts/workflow/cli.py").read_text(encoding="utf-8")
+    cmd = re.search(r"^WF doctor --json .*$", _doctor_block(), re.M).group(0)
+    cmd = re.sub(r'"<[^"]*>"', "", cmd)  # a placeholder such as "<what claude --version printed>"
+    for flag in re.findall(r"--[a-z-]+", cmd):
+        assert f'"{flag}"' in usage, flag
+
+
+def test_doctors_gaps_and_cant_checks_become_the_kickoffs_safety_gaps():
+    block = _doctor_block()
+    assert "`gap`" in block and "`cant_check`" in block and "safety gap" in block
+    assert "Fix it first / Go ahead without it" in block or "Fix it first / Go ahead without it" in _kickoff()
+    assert "`accepted_gaps`" in _kickoff()
+    for status in doctor.STATUSES:
+        assert f"`{status}`" in block, status
+
+
+def test_the_safety_gaps_cover_what_the_ticket_names():
+    block = _doctor_block()
+    for line_id in ("github.ruleset", "github.required_checks", "github.up_to_date", "github.code_owner_review",
+                    "github.codeowners", "kit.profile"):
+        assert f"`{line_id}`" in block, line_id
+    assert "`ruleset = true` mismatch" in block
+
+
+def test_the_line_ids_the_skill_names_are_doctors():
+    src = (KIT / "scripts/workflow/doctor.py").read_text(encoding="utf-8")
+    named = set(re.findall(r"`((?:computer|kit|github|cloud)\.[a-z_.*]+)`", _conductor()))
+    assert named
+    for line_id in named:
+        if line_id.endswith(".*"):
+            assert f'"{line_id[:-1]}' in src, line_id
+        else:
+            assert f'"{line_id}"' in src, line_id
+
+
+def test_the_offers_the_skill_reads_are_doctors():
+    block = _doctor_block()
+    for offer in ("protect_main", "restore_protection"):
+        assert offer in doctor.OFFERS and f"`{offer}`" in block, offer
+
+
+def test_approvals_above_zero_still_recommend_owner():
+    block = _doctor_block()
+    assert "`github.approvals`" in block
+    assert "**owner** the recommended answer" in block
+
+
+# ---------- what the pre-flight no longer does itself ----------
+
+
+def test_preflight_no_longer_lists_the_ruleset_codeowners_or_required_checks_steps():
+    pre = _preflight()
+    assert "It must be `enforcement: active`" not in pre
+    assert "The required checks must equal the profile's `ci.required_checks`" not in pre
+    assert "CODEOWNERS covers `.claude/` and `.github/workflows/`" not in pre
+    assert "`WF profile check`: no errors" not in pre
+    assert "WF protection" not in pre
+    assert "WF status --json" not in pre
+    assert "required_approving_review_count" not in pre
+
+
+# ---------- solo mode and removed protection, from doctor's lines (#50) ----------
+
+
+def test_solo_mode_and_removed_protection_are_read_from_doctors_lines():
+    block = _doctor_block()
+    solo = _section(block, r"^- \*\*Solo mode\*\*", r"^- \*\*|\Z")
+    assert "`kit.ruleset`" in solo and "solo-mode note" in solo and "`protect_main`" in solo
+    assert "`github.ruleset`" in solo and "`restore_protection`" in solo and "mismatch line" in solo
+    assert "ruleset = false" in solo and "ruleset = true" in solo
+    assert "one place that decides" in solo
+
+
+def test_the_kickoff_still_offers_protecting_restoring_or_going_ahead():
+    kick = _kickoff()
+    assert "`protect_main`" in kick and "`restore_protection`" in kick
+    assert "**Go ahead**" in kick
+    assert "doctor" in kick
+
+
+# ---------- what stays the conductor's own ----------
+
+
+def test_the_session_only_checks_are_still_listed():
+    pre = _preflight()
+    for phrase in ("echo $WORKFLOW_ROLE", "`get_session`", "`run.permission_mode`", "`WF version --fresh`",
+                   "`WF ready --fetch`", "names protected path", "Leftovers", "The base branch's CI is green",
+                   "**The last run**"):
+        assert phrase in pre, phrase
+
+
+def test_a_missing_ticket_environment_still_stops_the_run_whatever_doctor_says():
+    pre = _preflight()
+    env = _section(pre, r"^\*\*The ticket sessions' environment\*\*", r"^\*\*The work\*\*")
+    assert "`list_environments`" in env and "keep its id" in env
+    assert "whatever doctor's `cloud.environments` line says" in env
+    assert "before the kick-off's questions" in env
+    assert "blocking problem" in env
+
+
+# ---------- the docs and the changelog ----------
+
+
+def test_enforcement_doc_says_the_conductor_runs_doctor():
+    text = (KIT / "docs/enforcement.md").read_text(encoding="utf-8")
+    sec = _section(text, r"^## 5\. Checking the set-up", r"^## |\Z")
+    assert "The conductor repeats items 1, 3 and 4" not in sec
+    assert re.search(r"conductor runs `workflow doctor", sec)
+
+
+def test_readme_step_6_says_the_conductor_runs_doctor():
+    text = (KIT / "README.md").read_text(encoding="utf-8")
+    sec = _section(text, r"^### Step 6\. Check it", r"^### ")
+    assert "The conductor checks the ruleset, CODEOWNERS and the ticket environment again" not in sec
+    assert re.search(r"conductor runs `workflow doctor`", sec)
+    assert "A missing ticket environment stops it" in sec
+
+
+def test_changelog_notes_the_change_under_unreleased():
+    text = (KIT / "CHANGELOG.md").read_text(encoding="utf-8")
+    unreleased = _section(text, r"^## Unreleased", r"^## \d")
+    assert "(#64" in unreleased

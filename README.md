@@ -203,7 +203,7 @@ Claude follows the kit's checklist (`.claude/workflow/docs/enforcement.md`, sect
 
 It can't see what an environment holds, so it asks you to confirm the ticket environment has no secrets.
 
-The conductor checks the ruleset, CODEOWNERS and the ticket environment again at the start of every run. A missing ticket environment stops it. Any other gap it shows you, to fix first or to accept for that run.
+At the start of every run the conductor runs `workflow doctor`, the same check, again. A missing ticket environment stops it. Any other gap it shows you, to fix first or to accept for that run.
 
 ### Using it
 
@@ -365,7 +365,7 @@ Infra tickets (`workflow:infra`) come first, then by number.
 
    > Run the backlog unattended.
 
-3. The conductor checks the set-up (the ruleset, CODEOWNERS, the ticket environment, the kit's version), then asks you the charter's questions in one sitting: which tickets, until when, how many at once (2 by default), what it may merge and release, and the like ([docs/charter.md](docs/charter.md)).
+3. The conductor checks the set-up with `workflow doctor` (the ruleset, CODEOWNERS, the environments, the kit), then the ticket environment and the kit's version, then asks you the charter's questions in one sitting: which tickets, until when, how many at once (2 by default), what it may merge and release, and the like ([docs/charter.md](docs/charter.md)).
 4. It opens a **tracking issue** for the run (label `workflow:run`), with an issue for any by-hand checks linked from it, shows you the charter there, and waits for your one "go" (in the chat, or as a comment on the issue). If you don't go ahead, it closes both issues.
 5. From then on it runs without you; you can close the browser:
    - it starts a ticket session for each ready ticket in the ticket environment, as many at once as you allowed and at most one per area;
