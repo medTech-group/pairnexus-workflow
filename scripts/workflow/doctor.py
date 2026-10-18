@@ -226,11 +226,15 @@ def _dotted(v) -> str:
     return ".".join(str(x) for x in v)
 
 
+def _printable(text: str) -> str:
+    """Text with what can't be printed (a control character, half a
+    surrogate pair, an invisible one) escaped as `\\uXXXX`."""
+    return "".join(ch if ch.isprintable() else f"\\u{ord(ch):04x}" for ch in text)
+
+
 def _shown(value: str, most: int = 40) -> str:
-    """A value someone gave, safe on one line in a code span: what can't be
-    printed (a control character, half a surrogate pair) escaped."""
-    v = " ".join(value.replace("`", "'").split())
-    v = "".join(ch if ch.isprintable() else f"\\u{ord(ch):04x}" for ch in v)
+    """A value someone gave, safe on one line in a code span."""
+    v = _printable(" ".join(value.replace("`", "'").split()))
     return v if len(v) <= most else v[:most] + "…"
 
 
@@ -1019,8 +1023,6 @@ def _again(give: str = GIVE_FILES) -> Words:
         "Run the check again in a while; if it says the same, ask a cloud session to check the set-up.",
         f"Rerun, or give {give}.",
     )
-
-
 
 
 def _scrubbed(i: Inputs, text: str) -> str:
@@ -1873,7 +1875,7 @@ def _read_environments(i: Inputs) -> _Answer:
     if got.why:
         return got
     value = got.value
-    pages = value if isinstance(value, list) and value and all(isinstance(x, dict) and "environments" in x for x in value) else [value]
+    pages = value if isinstance(value, list) and value and all(isinstance(x, dict) and "environments" in x and "name" not in x for x in value) else [value]
     entries, more = [], None
     for page in pages:
         if isinstance(page, dict):
@@ -1882,14 +1884,14 @@ def _read_environments(i: Inputs) -> _Answer:
             entries = None
             break
         entries += page
-    if entries is None or not all(isinstance(e, dict) and isinstance(e.get("name"), str) for e in entries):
+    if entries is None or not all(isinstance(e, dict) and isinstance(e.get("name"), str) and isinstance(e.get("state"), (str, type(None))) for e in entries):
         return _Answer(why=Words(
             "the --environments file isn't a list of your environments in the shape Claude gets it",
-            "--environments isn't list_environments' JSON (an environments list, each with a name, and has_more true or false)",
+            "--environments isn't list_environments' JSON (an environments list, each with a name and any state a string, and has_more true or false)",
         ), fix=fix)
     states: dict[str, str] = {}
     for e in entries:
-        state = e.get("state") if isinstance(e.get("state"), str) else ""
+        state = e.get("state") or ""
         if not _active(states.get(e["name"])):  # listed twice: an active one counts
             states[e["name"]] = state
     return _Answer(_Listed(states, more is True))
@@ -1936,11 +1938,12 @@ def _read_runs(i: Inputs) -> _Answer:
     issues = estimate_mod._flatten(got.value) if isinstance(got.value, (list, dict)) else None
     if issues is None:
         shape = "it isn't a list of issues"
-    elif not all(isinstance(x, dict) and (_number(x) is not None or isinstance(x.get("labels"), list)) for x in issues):
-        shape = "an entry isn't an issue"
     else:
-        runs = [x for x in issues if "pull_request" not in x and ("labels" not in x or RUN_LABEL in _label_names(x))]
-        return _Answer([_number(x) for x in runs])
+        found = [x for x in issues if isinstance(x, dict) and (_number(x) is not None or isinstance(x.get("labels"), list))]
+        runs = [x for x in found if "pull_request" not in x and ("labels" not in x or RUN_LABEL in _label_names(x))]
+        if runs or len(found) == len(issues):  # a run is a run, whatever else the file holds
+            return _Answer([_number(x) for x in runs])
+        shape = "an entry isn't an issue"
     return _Answer(why=Words(f"{source.new} can't be read: {shape}", f"{source.developer}: {shape}"), fix=Words(
         f"Ask Claude to fetch the issues labelled `{RUN_LABEL}` from GitHub again, as GitHub gives them.",
         f"Give {GIVE_RUNS}: a list of issues, as the GitHub API returns them.",
@@ -1954,8 +1957,7 @@ def _named(name: str) -> str:
     if name == name.strip() and "`" not in name and name.isprintable():
         shown = name
     else:
-        dumped = json.dumps(name, ensure_ascii=False).replace("`", "\\u0060")
-        shown = "".join(ch if ch.isprintable() else f"\\u{ord(ch):04x}" for ch in dumped)
+        shown = _printable(json.dumps(name, ensure_ascii=False).replace("`", "\\u0060"))
     return f"`{shown if len(shown) <= 80 else shown[:39] + '…' + shown[-40:]}`"
 
 
@@ -2040,12 +2042,19 @@ def check_environments(i: Inputs) -> list[Line]:
         shown = [_named(r.name) for r in unseen]
         names = " and ".join(shown)
         listed_not = f"doesn't list {shown[0]}" if one else f"lists neither {shown[0]} nor {shown[1]}"
+        # The other one may already be missing for certain (not named, or not active).
+        known = [_missing(envs, r, set())[0] for r in missing if r not in unseen]
+        also = Words(f" Already missing: {known[0].new}.", f"; {known[0].developer}") if known else NONE
+        fix_also = Words(
+            f" Ask Claude to \"{SET_UP_RUNS}\" for the missing one.",
+            f" Fix the other first ({known[0].developer}).",
+        ) if known else NONE
         return [Line(g, id_, "cant_check", Words(
-            f"Can't tell whether {names} {'is' if one else 'are'} there: the list of your environments given to the check isn't complete.",
-            f"--environments says has_more, and {listed_not}.",
+            f"Can't tell whether {names} {'is' if one else 'are'} there: the list of your environments given to the check isn't complete.{also.new}",
+            f"--environments says has_more, and {listed_not}{also.developer}.",
         ), Words(
-            "Ask a cloud session to check the set-up again, with every environment listed.",
-            "Give every page of list_environments in --environments (a list of the pages).",
+            f"Ask a cloud session to check the set-up again, with every environment listed.{fix_also.new}",
+            f"Give every page of list_environments in --environments (a list of the pages).{fix_also.developer}",
         ))]
     taken = {r.name for r in roles}
     whys = [_missing(envs, r, taken) for r in missing]
@@ -2061,26 +2070,26 @@ def check_environments(i: Inputs) -> list[Line]:
         there, = [r for r in roles if r not in missing]
         return [Line(g, id_, "gap", Words(
             f"Unattended runs need two cloud environments, and only {_named(there.name)} is ready: {whys[0][0].new}.",
-            f"Half set up: {whys[0][0].developer}; {_named(there.name)} is listed.",
+            f"Half set up: {whys[0][0].developer}; {_named(there.name)} is listed and active.",
         ), fix, offer="set_up_unattended_runs")]
     new, dev = "; ".join(w.new for w, _ in whys), "; ".join(w.developer for w, _ in whys)
     runs = _runs(i)
     if runs.why is None and runs.value:
         refs = _refs(runs.value)
-        many = len(runs.value) > 1
+        many = len(refs) > 1 if refs else len(runs.value) > 1
         return [Line(g, id_, "gap", Words(
             f"A run has already been made ({_listing(refs) or f'an issue is labelled `{RUN_LABEL}`'}), but neither cloud environment for unattended runs is ready, "
             f"so the next run can't start: {new}.",
-            f"{'Issues' if many else 'An issue'} labelled {RUN_LABEL} {'exist' if many else 'exists'}{f' ({_listing(refs)})' if refs else ''}, but neither environment is usable: {dev}.",
+            f"{'Issues' if many else 'An issue'} labelled {RUN_LABEL} {'exist' if many else 'exists'}{f' ({_listing(refs)})' if refs else ''}, but neither environment is listed and active: {dev}.",
         ), fix, offer="set_up_unattended_runs")]
     retype = Words(
         " If a name above is a typo, it corrects that too.",
-        " Correct a misspelt name in the profile first.",
+        " If a name above is a typo, correct it in the profile first.",
     ) if typo else NONE
     if runs.why is None:
         return [Line(g, id_, "note", Words(
             f"Unattended runs aren't set up yet, which is fine until you want Claude to work through tickets on its own. Neither of their two cloud environments is ready: {new}.",
-            f"Unattended runs not set up: no issue is labelled {RUN_LABEL}, and neither environment is usable: {dev}.",
+            f"Unattended runs not set up: no issue is labelled {RUN_LABEL}, and neither environment is listed and active: {dev}.",
         ), Words(
             f"When you want unattended runs, ask Claude to \"{SET_UP_RUNS}\".{retype.new}",
             f"Run upgrade-setup's \"{SET_UP_RUNS}\" when you want runs.{retype.developer}",
@@ -2088,7 +2097,7 @@ def check_environments(i: Inputs) -> list[Line]:
     return [Line(g, id_, "note", Words(
         f"Unattended runs don't look set up yet. Neither of their two cloud environments is ready: {new}. "
         f"If you've already made a run, this is a gap; whether one has been made couldn't be read ({_relative(i, runs.why.new)}).",
-        f"Neither environment is usable: {dev}. A gap if a run has been made, which couldn't be read "
+        f"Neither environment is listed and active: {dev}. A gap if a run has been made, which couldn't be read "
         f"({RUN_LABEL} issues: {_relative(i, runs.why.developer)}).",
     ), Words(
         f"If you've never made a run, nothing to do until you want one: then ask Claude to \"{SET_UP_RUNS}\".{retype.new} To check for a run: {runs.fix.new}",
@@ -2101,8 +2110,9 @@ def check_environment_contents(i: Inputs) -> list[Line]:
     """Always there: nothing can read what an environment holds (#27), so the
     owner confirms it by hand."""
     g, id_ = "Cloud", "cloud.contents"
-    t, c = (_named(r.name) if r.name else None for r in _roles(i)) if i.profile is not None else (None, None)
-    if t and t == c:
+    names = [r.name for r in _roles(i)] if i.profile is not None else ["", ""]
+    t, c = (_named(n) if n else None for n in names)
+    if t and names[0] == names[1]:
         both = Words(t, t)  # one named for both: the environments line says it needs two
         t = c = None
     elif t and c:

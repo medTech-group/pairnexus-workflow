@@ -602,3 +602,52 @@ def test_a_typo_with_no_run_made_says_to_correct_it(tmp_path):
     root = _project(tmp_path, profile=NAMED)
     ln = _environments_line(tmp_path, root, *_runs_file(tmp_path, []), envs=_envs("workflow-tickt", "workflow-condutor"), path=_no_gh(tmp_path))
     assert ln["status"] == "note" and "typo" in ln["fix"], ln
+
+
+# Round 3 of the review
+
+
+def test_an_incomplete_list_still_says_what_is_already_missing(tmp_path):
+    profile = _prof("ruleset = true\n").replace('ticket_environment = "t"\n', "")
+    root = _project(tmp_path, profile=profile)
+    for env in (NEW, DEV):
+        ln = _environments_line(tmp_path, root, envs=_envs("Default", has_more=True), env=env)
+        assert ln["status"] == "cant_check" and "run.ticket_environment" in ln["message"], ln
+
+
+@pytest.mark.parametrize("state", [0, {"value": "archived"}, ["active"]])
+def test_a_state_that_isnt_text_is_the_wrong_shape(tmp_path, state):
+    envs = _envs("t", "c")
+    envs["environments"][1]["state"] = state
+    ln = _environments_line(tmp_path, _project(tmp_path), envs=envs)
+    assert ln["status"] == "cant_check" and "shape" in ln["message"], ln
+
+
+def test_a_null_state_is_no_state(tmp_path):
+    envs = _envs("t", "c")
+    envs["environments"][1]["state"] = None
+    assert _environments_line(tmp_path, _project(tmp_path), envs=envs)["status"] == "fine"
+
+
+def test_one_run_listed_twice_is_worded_as_one(tmp_path):
+    ln = _environments_line(tmp_path, _project(tmp_path), *_runs_file(tmp_path, [[RUN_ISSUE], [RUN_ISSUE]]), envs=_envs(), path=_no_gh(tmp_path), env=DEV)
+    assert "An issue labelled workflow:run exists (#185)" in ln["message"], ln
+
+
+def test_a_run_beside_an_entry_that_isnt_an_issue_still_counts(tmp_path):
+    runs = [[RUN_ISSUE], {"message": "Bad credentials"}]
+    ln = _environments_line(tmp_path, _project(tmp_path), *_runs_file(tmp_path, runs), envs=_envs(), path=_no_gh(tmp_path))
+    assert ln["status"] == "gap" and "#185" in ln["message"], ln
+
+
+def test_entries_that_happen_to_have_an_environments_key_arent_pages(tmp_path):
+    entries = [{"name": "t", "environments": []}, {"name": "c", "environments": []}]
+    ln = _environments_line(tmp_path, _project(tmp_path), *_env_file(tmp_path, json.dumps(entries)), envs=None)
+    assert ln["status"] == "fine", ln
+
+
+def test_two_long_names_alike_in_their_ends_are_both_named_in_the_note(tmp_path):
+    a, b = "a" * 30 + "x" * 30 + "-env-" + "z" * 30, "a" * 30 + "y" * 30 + "-env-" + "z" * 30
+    profile = NAMED.replace("workflow-ticket", a).replace("workflow-conductor", b)
+    ln = _cloud(tmp_path, _project(tmp_path, profile=profile), envs=None, env=DEV)["cloud.contents"]
+    assert ln["fix"].count("`") == 4, ln  # each named once in the fix
