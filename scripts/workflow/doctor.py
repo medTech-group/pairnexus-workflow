@@ -1921,7 +1921,7 @@ def _number(issue: dict) -> int | None:
 def _read_runs(i: Inputs) -> _Answer:
     """The runs, as `charter estimate --runs` reads them: a list of issues,
     the GitHub MCP tools' wrapped list or search's, or pages of any of them.
-    An issue is an object with a number or labels; one without labels counts
+    An issue is an object with a number or a list of labels; one without labels counts
     (it was fetched by its label), a pull request doesn't."""
     if i.runs_file is not None:
         got = _given(i, i.runs_file, "--runs", Words(
@@ -1939,7 +1939,8 @@ def _read_runs(i: Inputs) -> _Answer:
     if issues is None:
         shape = "it isn't a list of issues"
     else:
-        found = [x for x in issues if isinstance(x, dict) and (_number(x) is not None or isinstance(x.get("labels"), list))]
+        found = [x for x in issues if isinstance(x, dict) and isinstance(x.get("labels", []), list)
+                 and (_number(x) is not None or "labels" in x)]
         runs = [x for x in found if "pull_request" not in x and ("labels" not in x or RUN_LABEL in _label_names(x))]
         if runs or len(found) == len(issues):  # a run is a run, whatever else the file holds
             return _Answer([_number(x) for x in runs])
@@ -2061,10 +2062,10 @@ def check_environments(i: Inputs) -> list[Line]:
     typo = any(t for _, t in whys)
     one = len(missing) == 1
     fix = Words(
-        f"Ask Claude to \"{SET_UP_RUNS}\": it walks you through making {'the missing environment' if one else 'the two environments'} in claude.ai, "
+        f"Ask Claude to \"{SET_UP_RUNS}\": it walks you through setting up {'the missing environment' if one else 'the two environments'} in claude.ai, "
         f"or putting {'its' if one else 'their'} exact {'name' if one else 'names'} in the kit's profile.",
         f"Create {'it' if one else 'them'} (claude.ai/code, the environment menu; docs/enforcement.md §2), or set "
-        f"{' and '.join(r.key for r in missing)} to the exact {'name' if one else 'names'} listed; upgrade-setup's \"{SET_UP_RUNS}\" guides both.",
+        f"{' and '.join(r.key for r in missing)} to {'its' if one else 'their'} exact {'name' if one else 'names'}; upgrade-setup's \"{SET_UP_RUNS}\" guides {'it' if one else 'both'}.",
     )
     if one:
         there, = [r for r in roles if r not in missing]

@@ -590,7 +590,7 @@ def test_one_environment_for_both_roles_is_named_once_in_the_note(tmp_path):
 def test_one_run_is_worded_as_one(tmp_path):
     ln = _environments_line(tmp_path, _project(tmp_path), *_runs_file(tmp_path, [RUN_ISSUE]), envs=_envs(), path=_no_gh(tmp_path), env=DEV)
     assert "An issue labelled workflow:run exists (#185)" in ln["message"], ln
-    assert "to the exact names listed" in ln["fix"], ln
+    assert "to their exact names" in ln["fix"] and "guides both" in ln["fix"], ln
 
 
 def test_neither_listed_in_an_incomplete_list_says_neither(tmp_path):
@@ -651,3 +651,15 @@ def test_two_long_names_alike_in_their_ends_are_both_named_in_the_note(tmp_path)
     profile = NAMED.replace("workflow-ticket", a).replace("workflow-conductor", b)
     ln = _cloud(tmp_path, _project(tmp_path, profile=profile), envs=None, env=DEV)["cloud.contents"]
     assert ln["fix"].count("`") == 4, ln  # each named once in the fix
+
+
+@pytest.mark.parametrize("labels", [{"nodes": [{"name": "workflow:run"}]}, "workflow:run"])
+def test_labels_that_arent_a_list_cant_be_read(tmp_path, labels):
+    runs = [{"number": 51, "labels": labels}]
+    ln = _environments_line(tmp_path, _project(tmp_path), *_runs_file(tmp_path, runs), envs=_envs(), path=_no_gh(tmp_path), env=DEV)
+    assert ln["status"] == "note" and "an entry isn't an issue" in ln["message"], ln
+
+
+def test_one_missing_has_a_fix_for_one(tmp_path):
+    ln = _environments_line(tmp_path, _project(tmp_path), envs=_envs("t"), env=DEV)
+    assert "guides it" in ln["fix"] and "guides both" not in ln["fix"], ln
