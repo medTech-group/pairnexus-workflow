@@ -16,6 +16,7 @@ import pytest
 from workflow import modes
 from workflow.guard import decide
 from workflow.profile import load
+from changelog_notes import since_0110
 
 KIT = Path(__file__).resolve().parents[1]
 CLI = KIT / "scripts/workflow.py"
@@ -300,7 +301,7 @@ def test_readme_row_covers_the_refusal_in_a_mode_that_never_asks():
 
 def test_changelog_notes_the_change_under_unreleased():
     text = (KIT / "CHANGELOG.md").read_text()
-    unreleased = text.split("## Unreleased", 1)[1].split("\n## ", 1)[0]
+    unreleased = since_0110(text)
     assert "#52" in unreleased
 
 

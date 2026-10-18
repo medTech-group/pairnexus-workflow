@@ -14,6 +14,7 @@ from conftest import KIT
 from workflow import vendor
 from workflow.guard import decide
 from workflow.profile import load
+from changelog_notes import since_0110
 
 SKILL = KIT / "skills/merge-check/SKILL.md"
 SHA = "3f2a9c01b7de" + "0" * 28
@@ -263,7 +264,7 @@ def test_the_readme_says_to_ask_before_you_merge_a_ticket_you_built_with_claude(
 
 def test_the_changelog_notes_it_under_unreleased():
     log = (KIT / "CHANGELOG.md").read_text(encoding="utf-8")
-    unreleased = log.split("## Unreleased", 1)[1].split("\n## ", 1)[0]
+    unreleased = since_0110(log)
     assert "`merge-check` skill" in unreleased and "(#84" in unreleased
 
 

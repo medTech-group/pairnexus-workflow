@@ -5,6 +5,7 @@ kit-release tests read skills (#42's seam 4)."""
 import re
 
 from conftest import KIT
+from changelog_notes import since_0110
 
 LIGHT = "**Build it with a light review**"
 
@@ -105,7 +106,7 @@ def test_the_readme_lists_the_light_review_among_the_build_choices():
 
 def test_changelog_notes_under_unreleased_and_no_version_bump():
     log = _read("CHANGELOG.md")
-    unreleased = log.split("## Unreleased", 1)[1].split("\n## ", 1)[0]
+    unreleased = since_0110(log)
     assert "#122" in unreleased and '"Build it with a light review"' in unreleased
     released = re.findall(r"^## (\d+\.\d+\.\d+)$", log, re.M)
     assert _read("VERSION").strip() == released[0]

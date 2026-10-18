@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from workflow import charter
+from changelog_notes import since_0110
 
 KIT = Path(__file__).resolve().parents[1]
 CLI = KIT / "scripts/workflow.py"
@@ -152,7 +153,7 @@ def test_normal_with_one_profile_round_offers_no_explorer(profile):
 
 def test_changelog_notes_120_without_bumping_version():
     text = (KIT / "CHANGELOG.md").read_text()
-    unreleased = text.split("## Unreleased", 1)[1].split("\n## ", 1)[0]
+    unreleased = since_0110(text)
     assert "(#120," in unreleased
     released = text.split("\n## ")[2].split()[0].lstrip("v")
     assert (KIT / "VERSION").read_text().strip() == released

@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from test_merge_check import EARLIER, HEAD, check, comment, ids, inputs, project, rec  # noqa: F401 (project is a fixture)
+from changelog_notes import since_0110
 
 
 def rounds_in_profile(project, n):
@@ -295,7 +296,7 @@ def test_the_briefing_passes_its_review_rounds():
 
 
 def test_the_changelog_has_the_note():
-    unreleased = _read("CHANGELOG.md").split("## Unreleased", 1)[1].split("\n## ", 1)[0]
+    unreleased = since_0110(_read("CHANGELOG.md"))
     assert "(#170" in unreleased and "--review-rounds N" in unreleased
 
 

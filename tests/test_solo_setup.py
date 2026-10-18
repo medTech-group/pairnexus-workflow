@@ -7,6 +7,7 @@ import tomllib
 
 from conftest import KIT
 from workflow.profile import parse
+from changelog_notes import since_0110
 
 SETUP = KIT / "skills/setup-workflow/SKILL.md"
 UPGRADE = KIT / "skills/upgrade-setup/SKILL.md"
@@ -230,7 +231,7 @@ def test_install_md_matches_the_solo_setup():
 
 def test_the_changelog_notes_say_existing_projects_dont_change():
     log = (KIT / "CHANGELOG.md").read_text()
-    unreleased = log[log.index("## Unreleased"):log.index("\n## ", log.index("## Unreleased") + 1)]
+    unreleased = since_0110(log)
     m = re.search(r"\*\*The solo set-up[^\n]*\(#48[^\n]*\n(.*?)(?=\n\*\*|\Z)", unreleased, re.S)
     assert m, "no #48 entry under ## Unreleased"
     assert "**For projects updating:**" in m.group(1) and "set up already" in m.group(1)

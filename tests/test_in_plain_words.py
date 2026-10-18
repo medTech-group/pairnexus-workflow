@@ -4,6 +4,7 @@ read as the kit-release tests read skills (#39's seam 3)."""
 import re
 
 from conftest import KIT
+from changelog_notes import since_0110
 
 HEADINGS = ["## In plain words", "**What changes for you**", "**How to try it**", "**What could go wrong**"]
 
@@ -121,6 +122,6 @@ def test_the_vendored_pr_skill_is_left_as_it_is():
 
 def test_the_changelog_notes_it_under_unreleased():
     text = _read("CHANGELOG.md")
-    unreleased = text.split("## Unreleased", 1)[1].split("\n## ", 1)[0]
+    unreleased = since_0110(text)
     assert "(#82" in unreleased
     assert "In plain words" in unreleased
