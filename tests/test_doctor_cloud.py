@@ -136,6 +136,7 @@ def test_one_found_is_a_gap_naming_the_other(tmp_path, listed, missing, present)
         ln = _environments_line(tmp_path, root, envs=_envs(*listed), path=_no_gh(tmp_path), env=env)
         assert ln["status"] == "gap", ln
         assert f"`{missing}`" in ln["message"], ln
+        assert f"`{present}`" in ln["message"], ln
         assert ln["offer"] == "set_up_unattended_runs"
         assert ln["fix"]
 
@@ -421,8 +422,6 @@ def test_the_help_names_the_files():
     assert "--environments" in p.stdout and "--runs" in p.stdout
 
 
-
-
 # Round 1 of the review
 
 
@@ -513,3 +512,93 @@ def test_the_runs_read_shares_githubs_time_budget(tmp_path):
     ln = _environments_line(tmp_path, _project(tmp_path), envs=_envs(), path=path)
     assert time.monotonic() - start < 80
     assert ln["status"] == "note" and "If you've already made a run" in ln["message"], ln
+
+
+# Round 2 of the review
+
+
+@pytest.mark.parametrize("text", ['{"message": "Not Found", "documentation_url": "https://docs.github.com/rest", "status": "404"}', "{}", "[{}]",
+                                  '{"issues": "x"}'])
+def test_an_answer_that_holds_no_issues_isnt_a_run(tmp_path, text):
+    ln = _environments_line(tmp_path, _project(tmp_path), *_runs_file(tmp_path, text), envs=_envs(), path=_no_gh(tmp_path), env=DEV)
+    assert ln["status"] == "note" and "an entry isn't an issue" in ln["message"], ln
+
+
+def test_gh_answering_in_the_wrong_shape_says_how_to_tell(tmp_path):
+    ln = _environments_line(tmp_path, _project(tmp_path), envs=_envs(), path=_gh_runs(tmp_path, "x"), env=DEV)
+    assert ln["status"] == "note" and "it isn't a list of issues" in ln["message"], ln
+    assert not ln["fix"].rstrip().endswith(":") and "--runs" in ln["fix"], ln
+
+
+@pytest.mark.parametrize("hidden", ["\\u200b", "\\u00a0", "\\u202e", "\\u007f", "\\u009b"])
+def test_a_character_that_cant_be_seen_is_shown_escaped(tmp_path, hidden):
+    root = _project(tmp_path, profile=NAMED)
+    args = _env_file(tmp_path, '{"environments": [{"name": "workflow-ticket%s"}, {"name": "workflow-conductor"}]}' % hidden)
+    p = _doctor(tmp_path, root, *args, environments=None, path=_no_gh(tmp_path), env={**NEW, "PYTHONIOENCODING": "utf-8"})
+    assert p.returncode == 0, p.stderr
+    assert json.loads('"%s"' % hidden) not in p.stdout and hidden in p.stdout, p.stdout
+
+
+def test_a_path_that_cant_be_printed_is_shown_escaped(tmp_path):
+    root = _project(tmp_path)
+    p = _doctor(tmp_path, root, "--environments", str(tmp_path / "a\x1bb.json"), environments=None, path=_no_gh(tmp_path))
+    assert p.returncode == 0, p.stderr
+    assert "\x1b" not in p.stdout and "\\u001b" in p.stdout, p.stdout
+
+
+def test_a_github_value_that_cant_be_printed_is_shown_escaped(tmp_path):
+    # A check name with an escape sequence, in the profile and missing from the ruleset.
+    from test_doctor_github import _files
+
+    profile = _prof("ruleset = true\n", '[ci]\nrequired_checks = ["tests\\u001b[2J"]\n')
+    root = _project(tmp_path, profile=profile)
+    p = _doctor(tmp_path, root, *_files(tmp_path), path=_no_gh(tmp_path))
+    assert p.returncode == 0, p.stderr
+    assert "\x1b" not in p.stdout and "tests\\u001b[2J" in p.stdout, p.stdout
+
+
+def test_a_state_in_capitals_is_active(tmp_path):
+    envs = _envs("t", "c")
+    envs["environments"][0]["state"], envs["environments"][1]["state"] = "ACTIVE", "Active"
+    assert _environments_line(tmp_path, _project(tmp_path), envs=envs)["status"] == "fine"
+
+
+def test_an_inactive_environment_isnt_said_to_be_there(tmp_path):
+    envs = _envs("t", "c")
+    envs["environments"][0]["state"] = "archived"
+    ln = _environments_line(tmp_path, _project(tmp_path), envs=envs, env=NEW)
+    assert ln["status"] == "gap" and "only `c` is ready" in ln["message"] and "is listed but not active" in ln["message"], ln
+    assert "is there" not in ln["message"], ln
+
+
+def test_the_pages_of_list_environments_are_read_together(tmp_path):
+    root = _project(tmp_path)
+    pages = [_envs("t", has_more=True), _envs("c")]
+    assert _environments_line(tmp_path, root, *_env_file(tmp_path, json.dumps(pages)), envs=None)["status"] == "fine"
+    pages = [_envs("Default", has_more=True), _envs("t", has_more=True)]
+    assert _environments_line(tmp_path, root, *_env_file(tmp_path, json.dumps(pages)), envs=None)["status"] == "cant_check"
+
+
+def test_one_environment_for_both_roles_is_named_once_in_the_note(tmp_path):
+    profile = _prof("ruleset = true\n").replace('conductor_environment = "c"', 'conductor_environment = "t"')
+    root = _project(tmp_path, profile=profile)
+    for env in (NEW, DEV):
+        ln = _cloud(tmp_path, root, envs=None, env=env)["cloud.contents"]
+        assert ln["message"].count("`t`") == 1 and ln["fix"].count("`t`") == 0, ln
+
+
+def test_one_run_is_worded_as_one(tmp_path):
+    ln = _environments_line(tmp_path, _project(tmp_path), *_runs_file(tmp_path, [RUN_ISSUE]), envs=_envs(), path=_no_gh(tmp_path), env=DEV)
+    assert "An issue labelled workflow:run exists (#185)" in ln["message"], ln
+    assert "to the exact names listed" in ln["fix"], ln
+
+
+def test_neither_listed_in_an_incomplete_list_says_neither(tmp_path):
+    ln = _environments_line(tmp_path, _project(tmp_path), envs=_envs("Default", has_more=True), env=DEV)
+    assert "lists neither `t` nor `c`" in ln["message"], ln
+
+
+def test_a_typo_with_no_run_made_says_to_correct_it(tmp_path):
+    root = _project(tmp_path, profile=NAMED)
+    ln = _environments_line(tmp_path, root, *_runs_file(tmp_path, []), envs=_envs("workflow-tickt", "workflow-condutor"), path=_no_gh(tmp_path))
+    assert ln["status"] == "note" and "typo" in ln["fix"], ln
