@@ -103,7 +103,7 @@ Everything else takes the template's default, or what exploring found: the comma
 
 **7. `.gitignore` gets `.workflow/` and `__pycache__/`.** `vendor install` adds them in vendored mode; check they're there. In plugin mode, add them yourself. Either way, before committing, check that nothing under `.workflow/` (the read-back's files) is staged.
 
-**8. A "Workflow" section in `CLAUDE.md`.** It points at `.claude/workflow/flow.md` and the profile, says a session starts with the guided start (the `start` skill: "What are we working on?", or `/start`), and replaces any older flow description. The project's own rules stay where they are.
+**8. A "Workflow" section in `CLAUDE.md`.** It points at `.claude/workflow/flow.md` and the profile, says a session starts with the guided start (the `start` skill: "What are we working on?", or `/start`), says in a line that when the guard's hook times out and blocks a command, Claude says so and offers to split or simplify it, and replaces any older flow description. The project's own rules stay where they are.
 
 **9. Labels,** created through the API (`gh api repos/<repo>/labels -f name=… -f color=…`) unless they already exist:
 - `ready-for-agent`, `ready-for-human`, `needs-human`, `owner-task`, `needs-triage`, `needs-info`, `wontfix`, `spec`;

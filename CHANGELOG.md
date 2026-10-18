@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+**The guard's hook blocks on failure: `onFailure: "block"` and a 30-second timeout** (#57, part of guard robustness, #33).
+
+- **The guard's PreToolUse entry,** in a vendored project's settings and in the plugin's hooks file (`hooks/hooks.json`), carries `"onFailure": "block"`: a guard hook that times out, can't start or prints output Claude Code can't read blocks the tool in every role, attended sessions included, instead of letting it run. Claude Code discards a timed-out hook's output, so a timeout blocks even where the guard would have allowed the command. It needs Claude Code v2.1.295 or later; an older version ignores the field and keeps the hooks (checked on 2.1.294, #54). An attended session's guard command always exits 0 (#56), so only a real failure blocks.
+- **Its timeout goes from 15 to 30 seconds,** so an ordinary command on a large tree or a slow laptop isn't blocked for being slow. The guard's own time budget goes from 12 to 25 seconds with it, so it still refuses with its own reason (or takes the can't-decide fallback in an attended session) before the timeout cuts it off.
+- **The Stop gate, the prompt hook and the session-start hook keep the default (`continue`)** and their timeouts: blocking a Stop on failure would loop, and blocking a prompt would lose it.
+- **When a timeout blocks a command,** Claude says so and offers to split or simplify it: set-up's "Workflow" section in `CLAUDE.md` says so in a line, and `update-workflow` adds the line to a project's section that lacks it.
+- Docs: `docs/enforcement.md`'s "When something is wrong" and the oldest Claude Code these protections need (v2.1.295); the README's "When something goes wrong". Tests: `tests/test_guard_on_failure.py`.
+- **For projects updating:** the update rewrites the guard's hook entry in `.claude/settings.json` (`onFailure`, the timeout, the matcher), keeping the project's own hooks, and the update's pull request says so, so the owner reviews it like any other change. Use Claude Code v2.1.295 or later for the timeout and can't-start protection.
+
 ## 0.1.11
 
 **Solo mode, a guard that fails closed, `workflow merge-check`, light reviews and presets, and the preview reader.** Everything built by the unattended runs 2026-10-16-weekend (#130) and 2026-10-17-followup (#174): the build tickets of specs #32, #33, #35, #37 to #39, #41 and #42 that could start, and the infra fixes they found. Each change's own note is below.

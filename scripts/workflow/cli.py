@@ -939,10 +939,13 @@ def _role_label(role: str) -> str:
     return f"{role} session (WORKFLOW_ROLE={odd!r} isn't a role, so treated as ticket)" if odd else f"{role} session"
 
 
-# The guard's time budget, under the hook's 15-second timeout: a guard still
-# deciding when it runs out is refused in ticket and conductor sessions, since a
-# hook that outlasts its timeout doesn't block.
-GUARD_BUDGET = 12.0
+# The guard's time budget, 5 seconds under the hook's 30-second timeout: a guard
+# still deciding when it runs out is refused in ticket and conductor sessions
+# with its own reason, and takes the can't-decide fallback in an attended one,
+# with time left to read the event again. A hook that outlasts its timeout
+# blocks too (`onFailure: "block"`, #57), but only on Claude Code 2.1.295 or
+# later, and with no reason given.
+GUARD_BUDGET = float(vendor_mod.GUARD_TIMEOUT - 5)
 
 
 class _OverBudget(BaseException):
