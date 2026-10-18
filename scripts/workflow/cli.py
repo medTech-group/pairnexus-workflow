@@ -2,6 +2,7 @@
 
     workflow profile check
     workflow status [--issues F --prs F | --fetch] [--json]
+    workflow doctor [--claude-version VERSION] [--json] [--strict]      (what's set up and what isn't; changes nothing)
     workflow protection --rulesets F [--repo F] [--base BRANCH] [--json]
     workflow protection --protect --repo F [--base BRANCH] [--check NAME ...] [--json]
     workflow protection --require-checks F --check NAME [--check NAME ...] [--json]
@@ -47,6 +48,7 @@ _STARTED = time.monotonic()  # the guard's time budget counts from here, before 
 from . import adopt as adopt_mod
 from . import charter as charter_mod
 from . import context as context_mod
+from . import doctor as doctor_mod
 from . import estimate as estimate_mod
 from . import evidence as evidence_mod
 from . import fetch as fetch_mod
@@ -223,6 +225,31 @@ def cmd_status(a) -> int:
         print(status_mod.text(st))
         print(_kit_line(kit))
     return 0
+
+
+def cmd_doctor(a) -> int:
+    """What's set up and what isn't, each line with its fix (#34). Exits 0,
+    or with --strict 1 on a gap or a line it couldn't check."""
+    root = project_root()
+    prof, error = None, None
+    try:
+        prof = load(root, required=False)
+    except ProfileError as e:
+        error = str(e)
+    except OSError as e:
+        error = f"{PROFILE_PATH} can't be read: {e}"
+    r = doctor_mod.report(
+        doctor_mod.Inputs(
+            root=root,
+            kit_root=KIT_ROOT,
+            profile=prof,
+            profile_error=error,
+            experience=resolve_experience(root, prof.experience if prof else None),
+            claude_version=a.claude_version,
+        )
+    )
+    _out(r.as_dict() if a.json else doctor_mod.text(r))
+    return 1 if a.strict and not r.strict_ok() else 0
 
 
 def _no_constant(name: str):
@@ -1210,6 +1237,12 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--fetch", action="store_true")
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_status)
+
+    s = sub.add_parser("doctor", help="what's set up and what isn't, each line with a one-sentence fix; changes nothing, exits 0 (--strict: 1 on a gap or a line it couldn't check)")
+    s.add_argument("--claude-version", metavar="VERSION", help="Claude Code's version, as `claude --version` prints it (wins over running it)")
+    s.add_argument("--json", action="store_true", help="every line's group, id, status, message, fix and offer, for skills")
+    s.add_argument("--strict", action="store_true", help="exit 1 when any line is a gap or can't be checked; notes never fail it")
+    s.set_defaults(fn=cmd_doctor)
 
     s = sub.add_parser("protection", help="whether the base branch is protected, read back from GitHub's JSON, or the requests to protect it; changes nothing, sends nothing")
     mode = s.add_mutually_exclusive_group()

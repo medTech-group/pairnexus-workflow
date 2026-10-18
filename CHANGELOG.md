@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+**`workflow doctor`: one report of what's set up and what isn't, with the Your computer and The kit lines** (#58, part of #34).
+
+- **`workflow doctor`** prints one line per check, grouped (Your computer, The kit; GitHub and Cloud come with #59 and #60), the most serious first. Each line is `fine`, a `gap`, a `note` (a state chosen on purpose) or `can't check` with how to check it, with a one-sentence fix, and sometimes an upgrade Claude can offer (`protect_main`). `--json` gives every line's group, id, status, message, fix and offer, for skills. It exits 0 always; with `--strict`, 1 when any line is a gap or can't be checked (notes never fail it). It never changes anything, in vendored or plugin mode alike.
+- **Wording by experience:** every message and fix has a *new to building* and a *developer* wording, chosen as `workflow status` resolves the experience (unknown reads as new). What is checked, and each line's status, never depend on it.
+- **Your computer:** `python3` on the PATH, the one the hooks run, is 3.11 or newer; Claude Code is 2.1.295 or newer (`--claude-version`, else `claude --version`), since an older one lets a command run when the guard's hook fails or times out. A version it can't read is `can't check`.
+- **The kit:** a vendored project's hooks in `.claude/settings.json` are this kit version's own entries (a hand edit or a stale update is a gap); in plugin mode the plugin is enabled; both on is a gap naming which to turn off. `profile check`'s errors are gaps and its warnings notes; `vendor verify` (vendored only) catches missing or hand-changed files. It reports the experience with its source, and `project.ruleset`: `false` is a note offering "Protect `main`", absent is "not set (as before)", a note.
+- Docs: the README's command list, `docs/install.md` (plugin mode, and "Check it"). Tests: `tests/test_doctor.py`.
+- **For projects updating:** nothing to do.
+
 **The guard's hook blocks on failure: `onFailure: "block"` and a 30-second timeout** (#57, part of guard robustness, #33).
 
 - **The guard's PreToolUse entry,** in a vendored project's settings and in the plugin's hooks file (`hooks/hooks.json`), carries `"onFailure": "block"`: a guard hook that times out, can't start or prints output Claude Code can't read blocks the tool in every role, attended sessions included, instead of letting it run. Claude Code discards a timed-out hook's output, so a timeout blocks even where the guard would have allowed the command. It needs Claude Code v2.1.295 or later; an older version ignores the field and keeps the hooks (checked on 2.1.294, #54). An attended session's guard command always exits 0 (#56), so only a real failure blocks.
