@@ -334,10 +334,13 @@ def test_output_that_cant_be_written_exits_as_strict_says(tmp_path, args, code):
 
 
 def test_no_stderr_either_never_raises(tmp_path, monkeypatch):
+    dup2 = []
+    monkeypatch.setattr(os, "dup2", lambda *a: dup2.append(a))
     monkeypatch.setattr(sys, "stderr", None)
     with contextlib.redirect_stdout(_Closed()):
         assert _old_python.main(["doctor", "--bogus"], stdin_text="", env={}, version="3.9.6", cwd=tmp_path) == 2
         assert _old_python.main(["doctor"], stdin_text="", env={}, version="3.9.6", cwd=tmp_path) == 0
+    assert dup2 == []  # no stream has nothing to flush: no descriptor is touched
 
 
 @pytest.mark.parametrize("where", ["missing", "file", "empty"])
@@ -391,6 +394,10 @@ _AS_OLD = (
 )
 
 
+# A child that waits on standard input, or never ends, fails its test rather than the run.
+_BOUNDED = {"stdin": subprocess.DEVNULL, "timeout": 60}
+
+
 def _old_entry_point():
     """The command that runs the entry point on an old Python, and the
     version it reports."""
@@ -411,7 +418,7 @@ def test_doctor_on_a_real_python_3_9(tmp_path):
         for level, wording, source in (("developer", "developer", "environment"), ("new", "new", "environment"),
                                        ("", "developer", "local file")):
             env = {"PATH": os.environ["PATH"], "CLAUDE_PROJECT_DIR": str(root), "WORKFLOW_EXPERIENCE": level}
-            p = subprocess.run([*py, str(cli), "doctor", "--json"], capture_output=True, text=True, env=env, cwd=root)
+            p = subprocess.run([*py, str(cli), "doctor", "--json"], capture_output=True, text=True, env=env, cwd=root, **_BOUNDED)
             assert p.returncode == 0, p.stderr
             r = json.loads(p.stdout)
             first = r["lines"][0]
@@ -419,44 +426,42 @@ def test_doctor_on_a_real_python_3_9(tmp_path):
             assert all(ln["status"] == "cant_check" and UNTIL in ln["message"] for ln in r["lines"][1:])
             assert (r["wording"], r["experience"]["source"]) == (wording, source)
             assert _pairs(r) == _pairs(_old_report(root))
-        p = subprocess.run([*py, str(cli), "doctor", "--strict"], capture_output=True, text=True, env=env, cwd=root)
+        p = subprocess.run([*py, str(cli), "doctor", "--strict"], capture_output=True, text=True, env=env, cwd=root, **_BOUNDED)
         assert p.returncode == STRICT_FAIL and "[gap]" in p.stdout and UNTIL in " ".join(p.stdout.split()), p.stderr
-        p = subprocess.run([*py, str(cli), "doctor"], capture_output=True, text=True, env=env, cwd=root)
+        p = subprocess.run([*py, str(cli), "doctor"], capture_output=True, text=True, env=env, cwd=root, **_BOUNDED)
         assert p.returncode == 0 and p.stdout.startswith("Workflow doctor: 1 gap, "), p.stderr
-        p = subprocess.run([*py, str(cli), "doctor", "--help"], capture_output=True, text=True, env=env, cwd=root)
+        p = subprocess.run([*py, str(cli), "doctor", "--help"], capture_output=True, text=True, env=env, cwd=root, **_BOUNDED)
         assert p.returncode == 0 and "--strict" in p.stdout, p.stderr
-        p = subprocess.run([*py, str(cli), "doctor", "--json", "--bogus"], capture_output=True, text=True, env=env, cwd=root)
+        p = subprocess.run([*py, str(cli), "doctor", "--json", "--bogus"], capture_output=True, text=True, env=env, cwd=root, **_BOUNDED)
         assert (p.returncode, p.stdout) == (2, "") and "unrecognized arguments: --bogus" in p.stderr
     assert not list(root.rglob("__pycache__"))
 
 
-@pytest.mark.parametrize("args,code", [((), 0), (("--json",), 0), (("--strict",), STRICT_FAIL), (("--help",), 0)])
-def test_a_closed_stdout_on_an_old_python_exits_as_strict_says(tmp_path, args, code):
-    """The reader of its stdout gone before it starts: nothing left to flush
-    at exit, which would exit 120."""
+def _with_a_closed_pipe(tmp_path, args, stream):
+    """The old-Python entry point with `stream` ("stdout" or "stderr") a pipe
+    whose reader is gone before it starts, the other one captured."""
     py, _ = _old_entry_point()
     root = _project(tmp_path)
     r, w = os.pipe()
     os.close(r)
     try:
-        p = subprocess.run([*py, str(CLI), "doctor", *args], stdout=w, stderr=subprocess.PIPE, text=True,
-                           env={"PATH": os.environ["PATH"], "CLAUDE_PROJECT_DIR": str(root)}, cwd=root)
+        return subprocess.run([*py, str(CLI), "doctor", *args], text=True, cwd=root, **_BOUNDED,
+                              env={"PATH": os.environ["PATH"], "CLAUDE_PROJECT_DIR": str(root)},
+                              **{stream: w, ("stderr" if stream == "stdout" else "stdout"): subprocess.PIPE})
     finally:
         os.close(w)
+
+
+@pytest.mark.parametrize("args,code", [((), 0), (("--json",), 0), (("--strict",), STRICT_FAIL), (("--help",), 0)])
+def test_a_closed_stdout_on_an_old_python_exits_as_strict_says(tmp_path, args, code):
+    """Nothing left to flush at exit, which would exit 120."""
+    p = _with_a_closed_pipe(tmp_path, args, "stdout")
     assert p.returncode == code, p.stderr
     assert "Exception ignored" not in p.stderr and "Traceback" not in p.stderr
 
 
 def test_a_closed_stderr_on_an_old_python_still_refuses_with_2(tmp_path):
-    py, _ = _old_entry_point()
-    root = _project(tmp_path)
-    r, w = os.pipe()
-    os.close(r)
-    try:
-        p = subprocess.run([*py, str(CLI), "doctor", "--json", "--bogus"], stdout=subprocess.PIPE, stderr=w, text=True,
-                           env={"PATH": os.environ["PATH"], "CLAUDE_PROJECT_DIR": str(root)}, cwd=root)
-    finally:
-        os.close(w)
+    p = _with_a_closed_pipe(tmp_path, ("--json", "--bogus"), "stderr")
     assert (p.returncode, p.stdout) == (2, "")
 
 

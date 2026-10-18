@@ -276,7 +276,7 @@ def _doctor(args, env, version, cwd):
         print(json.dumps(r, indent=2) if a.json else _doctor_text(r, min(100, shutil.get_terminal_size((100, 24)).columns)))
         sys.stdout.flush()
     except Exception as e:  # a closed pipe, a full disk
-        _drop(sys.stdout, 1)
+        _drop(sys.stdout)
         _say("workflow doctor: couldn't write the report ({})\n".format(type(e).__name__))
     return 1 if a.strict and not r["strict_ok"] else 0
 
@@ -286,22 +286,25 @@ def _say(text):
         sys.stderr.write(text)
         sys.stderr.flush()
     except Exception:  # no stderr either
-        _drop(sys.stderr, 2)
+        _drop(sys.stderr)
 
 
 def _flush():
     try:
         sys.stdout.flush()
     except Exception:
-        _drop(sys.stdout, 1)
+        _drop(sys.stdout)
 
 
-def _drop(stream, fd):
+def _drop(stream):
     """Point a stream that can't be written at the null device, so the
-    unwritten rest isn't flushed again at exit (which would exit 120)."""
+    unwritten rest isn't flushed again at exit (which would exit 120). No
+    stream (its descriptor was closed at start) has nothing to flush."""
+    if stream is None:
+        return
     try:
         null = os.open(os.devnull, os.O_WRONLY)
-        os.dup2(null, stream.fileno() if stream is not None else fd)
+        os.dup2(null, stream.fileno())
         os.close(null)
     except Exception:  # an in-memory stream, or no file descriptors left
         pass
