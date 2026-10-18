@@ -975,7 +975,9 @@ class _GitHub:
     unseen: _Answer | None = None  # protected, but for bypass lists only an admin can read
     plan: bool = False  # GitHub said rulesets need a paid plan: read as no rulesets
     # Without the default branch, the readings differ but neither protects the
-    # base branch: the ruleset line still says so; the rest can't be checked.
+    # base branch: the ruleset line still says so. The other lines can't be
+    # checked, unless neither reading puts a ruleset on it (then `report` is
+    # set, and they read as with none).
     unprotected_either: bool = False
     merge: dict | None = None
     merge_why: _Answer | None = None
@@ -1270,7 +1272,9 @@ def check_protection(i: Inputs) -> list[Line]:
     profile's `project.ruleset`; each missing protection its own gap."""
     g, id_ = "GitHub", "github.ruleset"
     gh = _github(i)
-    if gh is not None and gh.report_why is not None and gh.unprotected_either:
+    if gh is not None and gh.report_why is not None and gh.unprotected_either and (i.profile.ruleset is not False or gh.report is not None):
+        # In solo mode only with no ruleset on the base branch either way: a
+        # ruleset with holes that may be on it isn't a choice to note.
         return [_unprotected_either(i, gh)]
     rep, wait = _report(i, id_, Words("whether the main branch is protected on GitHub", "The base branch's protection"))
     if wait:
@@ -1325,7 +1329,7 @@ def check_protection(i: Inputs) -> list[Line]:
         offer = restore
     else:  # `ruleset` absent, or solo mode with a ruleset on the base branch that has holes
         main = Line(g, id_, "gap", Words(
-            f"GitHub doesn't protect `{base}` ({plain}), so {_consequence(found)}.{plan.new}",
+            f"GitHub doesn't protect `{base}` ({plain}), so {_consequence(rep, found)}.{plan.new}",
             f"`workflow protection`: `{base}` isn't protected: {listed}.{plan.developer}",
         ), Words(
             f"Ask Claude to \"{protect}\".{plan_fix.new}",
@@ -1368,10 +1372,10 @@ def _unprotected_either(i: Inputs, gh: _GitHub) -> Line:
     ), offer="protect_main")
 
 
-def _consequence(found: list[tuple[str, str]]) -> str:
+def _consequence(rep: protection_mod.Report, found: list[tuple[str, str]]) -> str:
     """What could happen to the base branch, from what is missing."""
     kinds = {k for k, _ in found}
-    if kinds & {"no_rulesets", "not_on_base", "unsure", "not_active", "evaluate"}:
+    if not rep.effective:
         return "a change could reach it without a pull request, or its history could be lost"
     out = []
     if "pull_request" in kinds:

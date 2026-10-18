@@ -759,10 +759,14 @@ def test_removed_protection_whichever_branch_is_the_default_is_still_the_gap_lis
     assert _lines(r)["github.up_to_date"]["status"] == "cant_check"
 
 
-@pytest.mark.parametrize("profile, status, offer", [(SOLO, "note", "protect_main"), (_prof(""), "gap", "protect_main")])
-def test_unprotected_whichever_branch_is_the_default_in_solo_mode_and_with_ruleset_absent(tmp_path, profile, status, offer):
-    lines = _github(tmp_path, _project(tmp_path, profile=profile), rulesets=[_without(_rs(), "deletion")], settings=None, path=_bin(tmp_path, gh=False))
-    assert (lines["github.ruleset"]["status"], lines["github.ruleset"]["offer"]) == (status, offer)
+@pytest.mark.parametrize("profile, ruleset, status, offer", [
+    (SOLO, _without(_rs(), "deletion"), "cant_check", None),  # a ruleset with holes, maybe on main: no choice to note
+    (SOLO, _rs(enforcement="disabled"), "note", "protect_main"),  # none in force on main either way
+    (_prof(""), _without(_rs(), "deletion"), "gap", "protect_main"),
+])
+def test_unprotected_whichever_branch_is_the_default_in_solo_mode_and_with_ruleset_absent(tmp_path, profile, ruleset, status, offer):
+    lines = _github(tmp_path, _project(tmp_path, profile=profile), rulesets=[ruleset], settings=None, path=_bin(tmp_path, gh=False))
+    assert (lines["github.ruleset"]["status"], lines["github.ruleset"]["offer"]) == (status, offer), lines["github.ruleset"]
 
 
 def test_a_ruleset_naming_main_without_the_settings_reads_its_gaps_as_they_are(tmp_path):
@@ -859,6 +863,9 @@ def test_no_connection_says_gh_couldnt_reach_github(tmp_path):
 def test_the_main_lines_consequence_follows_what_is_missing(tmp_path):
     ln = _github(tmp_path, _project(tmp_path, profile=_prof("")), rulesets=[_without(_rs(), "deletion")])["github.ruleset"]
     assert "history could be lost" in ln["message"] and "without a pull request" not in ln["message"], ln
+    bypass = _rs(bypass_actors=[{"actor_id": 1, "actor_type": "Team", "bypass_mode": "always"}])
+    ln = _github(tmp_path / "b", _project(tmp_path / "b", profile=_prof("")), rulesets=[bypass, _rs(id=102, enforcement="disabled")])["github.ruleset"]
+    assert "skip its rules" in ln["message"] and "without a pull request" not in ln["message"], ln
 
 
 def test_solo_mode_with_no_ruleset_in_force_either_way_passes_strict(tmp_path):
