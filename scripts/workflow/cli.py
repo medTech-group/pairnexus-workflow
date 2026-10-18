@@ -198,7 +198,7 @@ def cmd_status(a) -> int:
     """Where the project stands, for the guided start (`skills/start`), with
     doctor's local gaps (#62): its local checks only, so no network call."""
     root = project_root()
-    prof, error = _doctor_profile(root)
+    prof, error = _read_profile(root)
     issues = prs = None
     if a.fetch:
         if error:
@@ -212,10 +212,14 @@ def cmd_status(a) -> int:
             raise SystemExit("give both --issues and --prs (JSON files, as the GitHub API returns them), or --fetch")
         issues, prs = _json(a.issues), _json(a.prs)
     experience = resolve_experience(root, prof.experience if prof else None)
-    local = doctor_mod.report(
-        doctor_mod.Inputs(root=root, kit_root=KIT_ROOT, profile=prof, profile_error=error, experience=experience),
-        doctor_mod.LOCAL_CHECKS,
-    )
+    try:
+        local = doctor_mod.report(
+            doctor_mod.Inputs(root=root, kit_root=KIT_ROOT, profile=prof, profile_error=error, experience=experience, gaps_only=True),
+            doctor_mod.LOCAL_CHECKS,
+        )
+    except KeyboardInterrupt:  # Ctrl-C while `python3` runs: a quiet stop, as doctor's
+        print("workflow status: stopped", file=sys.stderr)
+        return 130
     st = status_mod.snapshot(
         root,
         prof is not None or error is not None,
@@ -244,7 +248,7 @@ def _given_file(path: str | None) -> Path | str | None:
     return path if path in (None, "", "-") else Path(path).absolute()
 
 
-def _doctor_profile(root: Path):
+def _read_profile(root: Path):
     """(the profile, None), or (None, `profile check`'s error) for one that
     can't be used, as doctor reads it; (None, None) with no profile."""
     try:
@@ -266,7 +270,7 @@ def cmd_doctor(a) -> int:
         print("workflow doctor: only one of --rulesets, --repo, --environments and --runs can be standard input (-)", file=sys.stderr)
         return 2
     root = project_root()
-    prof, error = _doctor_profile(root)
+    prof, error = _read_profile(root)
     try:
         r = doctor_mod.report(
             doctor_mod.Inputs(

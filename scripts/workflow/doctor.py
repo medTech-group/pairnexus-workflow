@@ -143,6 +143,10 @@ class Inputs:
     # and --runs (the `workflow:run` issues, which win over `gh api`).
     environments_file: Path | str | None = None
     runs_file: Path | str | None = None
+    # Only gaps are wanted (`workflow status`, #62): what can only be a note or
+    # fine, and costs time, is left out (`profile check`'s warnings walk the
+    # tree for their globs).
+    gaps_only: bool = False
     _github: _GitHub | None = field(default=None, repr=False)  # what the GitHub lines read, read once
     _environments: _Answer | None = field(default=None, repr=False)  # the environments listed, read once
     _runs: _Answer | None = field(default=None, repr=False)  # the `workflow:run` issues, read once
@@ -744,6 +748,8 @@ def check_profile(i: Inputs) -> list[Line]:
             "Ask Claude to set the workflow up for this project.",
             "Run the setup-workflow skill.",
         ))]
+    if i.gaps_only:
+        return []  # its warnings are notes
     warnings = [_relative(i, w) for w in profile_mod.check(i.profile)]
     if warnings:
         n = len(warnings)

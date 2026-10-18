@@ -206,24 +206,23 @@ def experience_lines(exp: Experience) -> list[str]:
     return [first, *(f"warning: {w}" for w in exp.warnings)]
 
 
-def local_gaps_line(st: Status) -> list[str]:
-    """One line naming doctor's local gaps by their ids, most serious first."""
+def local_gap_lines(st: Status) -> list[str]:
+    """One line naming doctor's local gaps by their ids, most serious first
+    (none when they weren't checked)."""
     if st.local_gaps is None:
         return []
     if not st.local_gaps:
         return ["Local gaps: none"]
+    n = len(st.local_gaps)
     ids = ", ".join(g["id"] for g in st.local_gaps)
-    return [f"Local gaps: {len(st.local_gaps)} ({ids}): `workflow doctor` says how to fix each"]
+    return [f"Local gaps: {n} ({ids}): `workflow doctor` says how to fix {'it' if n == 1 else 'each'}"]
 
 
 def text(st: Status) -> str:
     if st.profile_error:
-        kit = "set up, but its profile has an error (kit.profile)"
+        kit, solo = "set up, but its profile has an error (kit.profile)", "unknown (the profile has an error)"
     else:
         kit = "set up" if st.set_up else "NOT set up here (no .claude/workflow/profile.toml)"
-    if st.profile_error:
-        solo = "unknown (the profile has an error)"
-    else:
         solo = "not set (as before)" if st.solo_mode is None else "yes" if st.solo_mode else "no"
     lines = [
         "Kit: " + kit,
@@ -231,7 +230,7 @@ def text(st: Status) -> str:
         + ("brand new (no code of its own yet)" if st.brand_new else "unknown (not a git checkout)" if st.own_files < 0 else f"{st.own_files} files of its own"),
         "Solo mode: " + solo,
         *experience_lines(st.experience),
-        *local_gaps_line(st),
+        *local_gap_lines(st),
     ]
     if not st.issues_read:
         lines.append("Issues: not read (pass --fetch, or --issues and --prs files)")
