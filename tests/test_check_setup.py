@@ -4,12 +4,10 @@ files as the kit-release tests do, and the skill shipping as the others do."""
 
 import json
 import re
-import subprocess
-import sys
 
 from changelog_notes import since_0110
 from conftest import KIT
-from workflow import doctor, vendor
+from workflow import doctor, status, vendor
 
 SKILL = KIT / "skills/check-setup/SKILL.md"
 START = KIT / "skills/start/SKILL.md"
@@ -65,9 +63,7 @@ def test_it_ships_in_the_plugin():
 
 
 def test_it_changes_nothing_itself():
-    text = _text()
-    assert "changes nothing" in text
-    assert "never changes" in text.lower() or "It changes nothing itself" in text
+    assert "**It changes nothing itself.**" in _text()
 
 
 def test_it_never_runs_in_a_ticket_or_conductor_session():
@@ -75,6 +71,8 @@ def test_it_never_runs_in_a_ticket_or_conductor_session():
     assert "`WORKFLOW_ROLE`" in text
     assert "ticket" in text and "conductor" in text
     assert "pre-flight runs doctor itself" in text
+    # A ticket session is known by its branch too, as the guided start and the guard know it.
+    assert "`run.ticket_branch`" in text
 
 
 # ---------- gathering, in a cloud session ----------
@@ -112,6 +110,24 @@ def test_a_file_it_could_not_gather_is_left_out_never_made_up():
     cloud = _section(_text(), "In a cloud session", "###")
     assert "leave its flag out" in cloud
     assert "never write a file you made up" in cloud.lower()
+
+
+def test_a_paid_plan_refusal_is_left_to_doctors_own_read():
+    # Doctor sees the refusal only on its own `gh` read, so no `[]` file is saved for it.
+    cloud = _section(_text(), "In a cloud session", "###")
+    assert "rulesets need a paid plan" in cloud
+    assert "leave `--rulesets` out" in cloud and "save `[]`" not in cloud
+
+
+def test_a_file_doctor_could_not_use_is_fetched_again_once():
+    failed = _section(_text(), "When doctor doesn't give its JSON", "###")
+    assert "Exit code 2" in failed and "more than one file" in failed
+    assert "a `cant_check` line naming the file" in failed and "Fetch that file again once" in failed
+
+
+def test_without_a_profile_it_gathers_nothing():
+    text = _text()
+    assert "`profile_error`" in text and "gather nothing" in text and "`kit.profile`" in text
 
 
 def test_the_flags_the_skill_gives_doctor_are_the_flags_it_takes():
@@ -157,6 +173,9 @@ def test_the_report_is_shown_by_experience_most_serious_first():
     assert "`wording`" in show
     assert "*new to building*" in show and "*developer*" in show
     assert "most serious first" in show
+    # Doctor groups its lines; the skill shows them by status, keeping doctor's order within each.
+    assert "keeping doctor's order within each status" in show
+    assert "`WORKFLOW_EXPERIENCE=" in show
     for status in ("`gap`", "`cant_check`", "`note`", "`fine`"):
         assert status in show, status
 
@@ -189,6 +208,8 @@ def test_it_hands_doctors_offers_over_to_the_upgrade_skill():
         # The upgrade skill knows the offer by the same name.
         assert f"**`{offer}`**" in _text(UPGRADE), offer
     assert "`upgrade-setup`" in offers
+    # The person has just chosen, so the upgrade doesn't ask its own opening choice again.
+    assert offers.count("opening choice") == 3
     assert "Protect `main`" in offers and "Set up unattended runs" in offers
 
 
@@ -200,7 +221,7 @@ def test_an_offer_it_does_not_know_is_named_as_text():
 
 def test_the_line_ids_the_skill_names_are_doctors():
     src = (KIT / "scripts/workflow/doctor.py").read_text(encoding="utf-8")
-    ids = set(re.findall(r"`((?:computer|kit|github|cloud|previews)\.[a-z_.]+)`", _text()))
+    ids = set(re.findall(r"`((?:computer|kit|github|cloud|previews)\.[a-z0-9_.]+)`", _text()))
     assert ids, "no line ids named"
     for line_id in ids:
         assert f'"{line_id}"' in src or f"'{line_id}'" in src, line_id
@@ -216,15 +237,18 @@ def _look():
 def test_start_offers_it_on_a_local_gap_from_status():
     look = _look()
     assert "**Check the set-up**" in look
-    assert "`local_gap`" in look or "`Local gaps:" in look
+    assert "`local_gap` is `true`" in look and "`Local gaps: N" in look
+    # The gaps are named from the JSON's messages, worded for the person; the text line has only ids.
+    assert "`local_gaps`' messages in `WF status --json`" in look
     assert "`check-setup`" in look
+    assert "then it is the recommended option" in look
 
 
 def test_start_offers_it_once_a_session_in_solo_mode():
     look = _look()
-    solo = _section(_text(START), "1. Look around")
-    assert "once a session" in look
-    assert "Solo mode: yes" in solo
+    assert "**In solo mode, once a session,**" in look
+    assert "don't offer it again for solo mode" in look
+    assert "Solo mode: yes" in look
     # The solo-mode line still never offers "Protect `main`" itself (#49).
     assert "Don't offer \"Protect `main`\" here" in look
 
@@ -235,7 +259,8 @@ def test_start_says_never_at_every_session_start():
 
 def test_start_offers_set_up_not_check_the_set_up_before_the_kit_is_set_up():
     look = _look()
-    assert "`set_up`" in look
+    assert "Read status's `set_up` first" in look
+    assert "offer setting the kit up (below), not this" in look
 
 
 def test_start_leads_an_old_python_to_doctors_short_report():
@@ -244,12 +269,9 @@ def test_start_leads_an_old_python_to_doctors_short_report():
 
 
 def test_status_json_has_the_fields_start_reads():
-    # One run of the kit's own `status`, with no --fetch: no network.
-    out = subprocess.run([sys.executable, "-B", str(KIT / "scripts/workflow.py"), "status", "--json"],
-                         cwd=KIT, capture_output=True, text=True, timeout=60)
-    assert out.returncode == 0, out.stderr
-    st = json.loads(out.stdout)
-    for field in ("local_gap", "local_gaps", "set_up", "solo_mode"):
+    # In-process: `tests/test_status_local_gaps.py` runs the command itself.
+    st = status.Status(set_up=True, brand_new=False, own_files=1, local_gaps=[]).as_dict()
+    for field in ("local_gap", "local_gaps", "set_up", "solo_mode", "profile_error"):
         assert field in st, field
 
 
@@ -280,6 +302,9 @@ def test_readme_step_6_leads_with_check_the_set_up_and_keeps_the_checklist():
     assert "`check-setup`" in sec
     assert "section 5" in sec and "reference" in sec
     assert "`skills/check-setup`" in text
+    assert "with `gh` signed in" in sec
+    # The guided start's list of options names it too.
+    assert "- **Check the set-up** (recommended), when its quick look finds a problem" in text
 
 
 def test_install_doc_points_at_check_the_set_up():

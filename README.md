@@ -196,7 +196,7 @@ Ask in a **cloud** session on the repository, since only cloud sessions can list
 
 > Check the set-up.
 
-Claude's `check-setup` skill gathers the rulesets and the merge settings through GitHub's API, the two environments, the `workflow:run` issues and its Claude Code version, runs `workflow doctor` with them, and shows you the report. For each upgrade the report names ("Protect `main`", "Restore protection", "Set up unattended runs") it asks whether to do it now, with "Not now". In a local session it checks everything but the environments, and says those need a cloud session. The guided start offers it when its quick look finds a problem, and once a session in solo mode.
+Claude's `check-setup` skill gathers the rulesets and the merge settings through GitHub's API, the two environments, the `workflow:run` issues and its Claude Code version, runs `workflow doctor` with them, and shows you the report. For each upgrade the report names ("Protect `main`", "Restore protection", "Set up unattended runs") it asks whether to do it now, with "Not now". In a local session, with `gh` signed in, it checks everything but the environments, and says those need a cloud session. The guided start offers it when its quick look finds a problem, and once a session in solo mode.
 
 The kit's checklist (`.claude/workflow/docs/enforcement.md`, section 5) is what doctor checks, kept there as the reference for checking by hand:
 - the ruleset, through GitHub's API: active, on the base branch, no bypass, deletions and force pushes blocked, required approvals, every required check present, "up to date" ticked, Code Owners off, linear history off;
@@ -261,6 +261,7 @@ Not the ticket or conductor environment, and not a `claude/build-…` branch. Th
 
 Then it asks **What are we working on?**, with up to four of these:
 - **Update the workflow kit to 0.1.x (Recommended)**, first, when a newer release is out and no run is in progress ([Keeping it up to date](#keeping-it-up-to-date));
+- **Check the set-up** (recommended), when its quick look finds a problem on your computer or in the kit's copy; or, not recommended, once a session in solo mode ([Step 6](#step-6-check-it));
 - **Carry on:** the most pressing item: your PR, work an earlier session claimed but didn't finish (carry on from its branch, or **Release it**), a planned item, a spec with no tickets yet, a map decision, or a ready ticket;
 - **Something new, or a change to what's there**;
 - **Fix something that's broken**;
