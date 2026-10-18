@@ -4,6 +4,7 @@ fake `python3` and `claude` on the PATH."""
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 
@@ -38,6 +39,7 @@ def _bin(tmp_path, python="3.12.1", claude="2.1.300 (Claude Code)"):
     d.mkdir(exist_ok=True)
     for name, out in (("python3", python), ("claude", claude)):
         if out is None:
+            (d / name).unlink(missing_ok=True)
             continue
         _fake(d, name, f"exit {out}" if isinstance(out, int) else f"echo '{out}'")
     return d
@@ -51,6 +53,12 @@ def _project(tmp_path, profile=_prof('experience = "new"\nruleset = true\n'), ve
     if vendored:
         lock = {"kit_version": "0.1.11", "files": lock_files or {}, "mattpocock_skills": "vendored"}
         (root / ".claude/workflow/lock.json").write_text(json.dumps(lock))
+        # The project's own copy of the CLI, as `vendor install` puts it: the
+        # hooks are compared with the entries of the kit that runs doctor.
+        bin_dir = root / ".claude/workflow/bin"
+        bin_dir.mkdir()
+        shutil.copy(CLI, bin_dir / "workflow.py")
+        shutil.copytree(KIT / "scripts/workflow", bin_dir / "workflow", ignore=shutil.ignore_patterns("__pycache__"))
     if settings is None:
         settings = vendor.merge_hooks({}) if vendored else {}
     (root / ".claude/settings.json").write_text(json.dumps(settings, indent=2))
@@ -59,12 +67,16 @@ def _project(tmp_path, profile=_prof('experience = "new"\nruleset = true\n'), ve
     return root
 
 
-def _doctor(tmp_path, root, *args, path=None, env=None, home=None):
+def _doctor(tmp_path, root, *args, path=None, env=None, home=None, cli=None):
+    """Doctor run from the project's own copy of the CLI when it has one,
+    else from the kit's source (plugin mode, or `cli`)."""
     home = home or tmp_path / "home"
     home.mkdir(exist_ok=True)
-    e = {k: v for k, v in os.environ.items() if k not in ("WORKFLOW_EXPERIENCE", "CLAUDE_CONFIG_DIR")}
+    e = {k: v for k, v in os.environ.items() if k not in ("WORKFLOW_EXPERIENCE", "CLAUDE_CONFIG_DIR", "COLUMNS")}
     e.update({"CLAUDE_PROJECT_DIR": str(root), "HOME": str(home), "PATH": str(path or _bin(tmp_path)), **(env or {})})
-    return subprocess.run([sys.executable, "-B", str(CLI), "doctor", *args], cwd=root, env=e, capture_output=True, text=True)
+    copy = root / ".claude/workflow/bin/workflow.py"
+    cli = cli or (copy if copy.is_file() else CLI)
+    return subprocess.run([sys.executable, "-B", str(cli), "doctor", *args], cwd=root, env=e, capture_output=True, text=True)
 
 
 def _report(tmp_path, root, *args, **kw):
@@ -83,11 +95,23 @@ def _line(tmp_path, root, id_, *args, **kw):
     return lines[id_]
 
 
+def _entries(out):
+    """The text report's lines, each with its wrapped continuation and fix
+    joined into one string."""
+    entries = []
+    for ln in out.splitlines():
+        if ln.startswith("  ["):
+            entries.append(ln.strip())
+        elif ln.startswith("    ") and entries:
+            entries[-1] += " " + ln.strip()
+    return entries
+
+
 def _text_has(tmp_path, root, status_word, needle, *args, **kw):
-    """The text report shows `needle` on a line marked with `status_word`."""
+    """The text report shows `needle` in a line marked with `status_word`."""
     p = _doctor(tmp_path, root, *args, **kw)
     assert p.returncode == 0, p.stderr
-    assert any(status_word in ln and needle in ln for ln in p.stdout.splitlines()), p.stdout
+    assert any(e.startswith(status_word) and needle in e for e in _entries(p.stdout)), p.stdout
 
 
 # The report's shape
@@ -286,7 +310,11 @@ def test_the_projects_own_hooks_beside_the_kits_are_fine(tmp_path):
 def test_unreadable_settings_are_a_gap(tmp_path):
     root = _project(tmp_path)
     (root / ".claude/settings.json").write_text("{not json")
-    assert _line(tmp_path, root, "kit.hooks")["status"] == "gap"
+    lines = _lines(_report(tmp_path, root))
+    assert lines["kit.settings"]["status"] == "gap" and ".claude/settings.json" in lines["kit.settings"]["message"]
+    # Said once: the lines that need the file wait on it.
+    assert lines["kit.hooks"]["status"] == "cant_check"
+    assert lines["kit.vendor"]["status"] == "cant_check"
 
 
 def test_plugin_mode_enabled_in_the_projects_settings_is_fine(tmp_path):
@@ -542,3 +570,205 @@ def test_the_changelog_has_a_note_under_unreleased():
 def test_the_cli_docstring_lists_doctor():
     p = subprocess.run([sys.executable, "-B", str(CLI), "--help"], capture_output=True, text=True)
     assert "workflow doctor" in p.stdout
+
+
+# Round 1 of the review: what broke or misled
+
+
+def test_a_real_python3_on_the_path_is_read(tmp_path):
+    """The fakes print a fixed string; this one runs doctor's own program."""
+    path = _bin(tmp_path, python=None)
+    (path / "python3").symlink_to(sys.executable)
+    root = _project(tmp_path)
+    ln = _line(tmp_path, root, "computer.python3", path=path)
+    want = "%d.%d.%d" % tuple(sys.version_info[:3])
+    assert ln["status"] == "fine" and want in ln["message"]
+
+
+def test_a_notice_before_claudes_version_isnt_taken_for_it(tmp_path):
+    root = _project(tmp_path)
+    path = _bin(tmp_path, claude=None)
+    _fake(path, "claude", "echo 'node v18.19.0 is deprecated'; echo '2.1.200 (Claude Code)'")
+    ln = _line(tmp_path, root, "computer.claude_code", path=path)
+    assert ln["status"] == "gap" and "2.1.200" in ln["message"]
+
+
+def test_a_blank_claude_version_falls_back_to_the_command(tmp_path):
+    root = _project(tmp_path)
+    ln = _line(tmp_path, root, "computer.claude_code", "--claude-version", " ", path=_bin(tmp_path, claude="2.1.300 (Claude Code)"))
+    assert ln["status"] == "fine" and "2.1.300" in ln["message"]
+
+
+def test_an_odd_claude_version_is_shown_safely(tmp_path):
+    root = _project(tmp_path)
+    ln = _line(tmp_path, root, "computer.claude_code", "--claude-version", "a`b\nc" + "x" * 80, path=_bin(tmp_path, claude=None),
+               env={"WORKFLOW_EXPERIENCE": "developer"})
+    assert ln["status"] == "cant_check"
+    assert "\n" not in ln["message"] and "a'b c" in ln["message"] and "…" in ln["message"]
+
+
+@pytest.mark.parametrize("name", [".claude/settings.json", ".claude/workflow/lock.json", ".claude/workflow/profile.toml"])
+@pytest.mark.parametrize("bad", ["utf16", "directory"])
+def test_an_unreadable_file_is_a_line_never_a_traceback(tmp_path, name, bad):
+    root = _project(tmp_path)
+    f = root / name
+    if bad == "utf16":
+        f.write_bytes(f.read_text().encode("utf-16"))
+    else:
+        f.unlink()
+        f.mkdir()
+    for args in ((), ("--json",)):
+        p = _doctor(tmp_path, root, *args)
+        assert p.returncode == 0, p.stderr
+        assert "Traceback" not in p.stderr
+    r = _report(tmp_path, root)
+    assert r["counts"]["gap"] >= 1
+    want = {".claude/settings.json": "kit.settings", ".claude/workflow/lock.json": "kit.vendor", ".claude/workflow/profile.toml": "kit.profile"}[name]
+    assert _lines(r)[want]["status"] == "gap"
+    assert _doctor(tmp_path, root, "--strict").returncode == 1
+
+
+def test_hooks_of_the_wrong_shape_are_a_gap(tmp_path):
+    settings = vendor.merge_hooks({})
+    settings["hooks"]["Notification"] = 5
+    settings["hooks"]["Stop"] = [{"hooks": True}]
+    root = _project(tmp_path, settings=settings)
+    ln = _line(tmp_path, root, "kit.hooks")
+    assert ln["status"] == "gap" and "status gate" in ln["message"]
+
+
+def test_a_kit_hook_sharing_an_entry_with_the_projects_hook_is_named(tmp_path):
+    settings = vendor.merge_hooks({})
+    settings["hooks"]["Stop"][0]["hooks"].append({"type": "command", "command": "echo mine"})
+    root = _project(tmp_path, settings=settings)
+    ln = _line(tmp_path, root, "kit.hooks")
+    assert ln["status"] == "gap" and "shares an entry" in ln["message"]
+
+
+@pytest.mark.parametrize("where", ["project", "local", "user"])
+def test_disable_all_hooks_is_a_gap(tmp_path, where):
+    settings = vendor.merge_hooks({})
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    if where == "project":
+        settings["disableAllHooks"] = True
+    root = _project(tmp_path, settings=settings, local={"disableAllHooks": True} if where == "local" else None)
+    if where == "user":
+        (home / ".claude/settings.json").write_text(json.dumps({"disableAllHooks": True}))
+    lines = _lines(_report(tmp_path, root, home=home))
+    assert lines["kit.hooks_off"]["status"] == "gap"
+    assert "disableAllHooks" in lines["kit.hooks_off"]["fix"]
+
+
+def test_plugin_mode_with_unreadable_settings_says_so_not_install_it(tmp_path):
+    root = _project(tmp_path, vendored=False)
+    (root / ".claude/settings.json").write_text("[]")
+    lines = _lines(_report(tmp_path, root))
+    assert lines["kit.settings"]["status"] == "gap"
+    assert lines["kit.plugin"]["status"] == "cant_check"
+    assert "install" not in lines["kit.plugin"]["fix"]
+
+
+def test_an_unreadable_user_settings_file_is_reported(tmp_path):
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude/settings.json").write_text("{")
+    root = _project(tmp_path)
+    ln = _line(tmp_path, root, "kit.settings", home=home)
+    assert ln["status"] == "gap" and "~/.claude/settings.json" in ln["message"]
+
+
+def test_claude_config_dir_is_named_as_it_is(tmp_path):
+    conf = tmp_path / "conf"
+    conf.mkdir()
+    (conf / "settings.json").write_text(json.dumps({"enabledPlugins": {vendor.PLUGIN_KEY: True}}))
+    root = _project(tmp_path, vendored=False)
+    ln = _line(tmp_path, root, "kit.plugin", env={"CLAUDE_CONFIG_DIR": str(conf), "WORKFLOW_EXPERIENCE": "developer"})
+    assert ln["status"] == "fine" and str(conf / "settings.json") in ln["message"]
+
+
+def test_another_kits_entries_cant_judge_a_vendored_copys_hooks(tmp_path):
+    """Doctor from a different kit (a checkout of the kit, the plugin) can't
+    tell a stale update from its own newer entries: it says so."""
+    settings = vendor.merge_hooks({})
+    settings["hooks"]["PreToolUse"][0]["hooks"][0]["timeout"] = 15
+    root = _project(tmp_path, settings=settings)
+    p = _doctor(tmp_path, root, "--json", cli=CLI)
+    ln = _lines(json.loads(p.stdout))["kit.hooks"]
+    assert ln["status"] == "cant_check"
+    assert ".claude/workflow/bin/workflow.py doctor" in ln["fix"]
+    # Matching entries are fine whichever kit compares them.
+    root2 = _project(tmp_path / "two")
+    assert _lines(json.loads(_doctor(tmp_path, root2, "--json", cli=CLI).stdout))["kit.hooks"]["status"] == "fine"
+
+
+def test_matt_pocock_skills_not_vendored_is_a_note_and_declined_is_fine(tmp_path):
+    root = _project(tmp_path)
+    lock = json.loads((root / ".claude/workflow/lock.json").read_text())
+    lock["mattpocock_skills"] = "not_vendored"
+    (root / ".claude/workflow/lock.json").write_text(json.dumps(lock))
+    ln = _line(tmp_path, root, "kit.vendor")
+    assert ln["status"] == "note" and ln["fix"]
+    lock["mattpocock_skills"] = "declined"
+    (root / ".claude/workflow/lock.json").write_text(json.dumps(lock))
+    assert _line(tmp_path, root, "kit.vendor")["status"] == "fine"
+
+
+def test_text_shows_fine_and_cant_check_lines(tmp_path):
+    root = _project(tmp_path)
+    _text_has(tmp_path, root, "[fine]", "hooks")
+    _text_has(tmp_path, root, "[fine]", "2.1.300")
+    _text_has(tmp_path, root, "[can't check]", "Claude Code", path=_bin(tmp_path, claude=None))
+    _text_has(tmp_path, root, "[gap]", "2.1.200", "--claude-version", "2.1.200")
+
+
+def test_text_wraps_to_a_narrow_terminal(tmp_path):
+    root, path = _every_status_project(tmp_path)
+    p = _doctor(tmp_path, root, path=path, env={"COLUMNS": "40"})
+    assert p.returncode == 0
+    # Only a word longer than the width (a path, a command) may run over.
+    for ln in p.stdout.splitlines():
+        assert len(ln) <= 40 or max(len(w) for w in ln.split()) > 25, ln
+
+
+def test_a_notes_next_step_isnt_called_a_fix(tmp_path):
+    root = _project(tmp_path, profile=_prof("ruleset = false\n"))
+    p = _doctor(tmp_path, root)
+    e = next(x for x in _entries(p.stdout) if x.startswith("[note]") and "Solo mode" in x)
+    assert "Next:" in e and "Fix:" not in e
+
+
+def _more_states(tmp_path):
+    """Projects whose lines take the states `_every_status_project` doesn't."""
+    yield _project(tmp_path / "a", vendored=False, settings={"enabledPlugins": {vendor.PLUGIN_KEY: True}}, profile=_prof("")), None
+    yield _project(tmp_path / "b", vendored=False, profile=_prof('ruleset = "yes"\n')), _bin(tmp_path / "b", python=1, claude="2.1.100")
+    root = _project(tmp_path / "c")
+    (root / ".claude/settings.json").write_text("[]")
+    yield root, None
+    yield _project(tmp_path / "d", profile=None), _bin(tmp_path / "d", python=None)
+
+
+def test_every_other_state_is_worded_both_ways_too(tmp_path):
+    seen = set()
+    for root, path in _more_states(tmp_path):
+        n = _lines(_report(tmp_path, root, path=path, env={"WORKFLOW_EXPERIENCE": "new"}))
+        d = _lines(_report(tmp_path, root, path=path, env={"WORKFLOW_EXPERIENCE": "developer"}))
+        assert set(n) == set(d)
+        for id_ in n:
+            if id_ == "kit.experience":
+                continue
+            seen.add((id_, n[id_]["status"]))
+            assert n[id_]["status"] == d[id_]["status"], id_
+            assert n[id_]["message"] != d[id_]["message"], (id_, n[id_]["message"])
+            if n[id_]["fix"] or d[id_]["fix"]:
+                assert n[id_]["fix"] != d[id_]["fix"], id_
+    for want in (("kit.plugin", "fine"), ("kit.plugin", "gap"), ("kit.ruleset", "note"), ("computer.python3", "cant_check"),
+                 ("kit.settings", "gap"), ("kit.hooks", "cant_check"), ("kit.profile", "gap"), ("kit.ruleset", "cant_check"),
+                 ("computer.python3", "gap"), ("computer.claude_code", "gap")):
+        assert want in seen, want
+
+
+def test_error_lines_leave_out_the_checkouts_path(tmp_path):
+    root = _project(tmp_path, profile="[project\n")
+    ln = _line(tmp_path, root, "kit.profile")
+    assert ln["status"] == "gap" and str(root) not in ln["message"]

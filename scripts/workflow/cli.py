@@ -36,6 +36,7 @@ import json
 import contextlib
 import os
 import re
+import shutil
 import signal
 import time
 import subprocess
@@ -236,8 +237,10 @@ def cmd_doctor(a) -> int:
         prof = load(root, required=False)
     except ProfileError as e:
         error = str(e)
-    except OSError as e:
-        error = f"{PROFILE_PATH} can't be read: {e}"
+    except UnicodeDecodeError:
+        error = f"{PROFILE_PATH} isn't UTF-8 text"
+    except (OSError, ValueError) as e:
+        error = f"{PROFILE_PATH} can't be read ({type(e).__name__})"
     r = doctor_mod.report(
         doctor_mod.Inputs(
             root=root,
@@ -248,7 +251,7 @@ def cmd_doctor(a) -> int:
             claude_version=a.claude_version,
         )
     )
-    _out(r.as_dict() if a.json else doctor_mod.text(r))
+    _out(r.as_dict() if a.json else doctor_mod.text(r, min(100, shutil.get_terminal_size((100, 24)).columns)))
     return 1 if a.strict and not r.strict_ok() else 0
 
 
