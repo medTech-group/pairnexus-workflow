@@ -7,8 +7,10 @@ picks one wording by experience (#16: what is checked, and each status, never
 depend on it), puts the most serious line first and groups the rest.
 
 Doctor never changes anything (#27): it reads files and runs `python3` and
-`claude --version`, nothing else. A check that fails unexpectedly becomes a
-`cant_check` line, never a traceback: doctor is advice, and exits 0.
+`claude --version`, nothing else. It reads files only through `_read_json`
+and `_hash_file`, which never raise and never wait on a pipe, and a check
+that fails unexpectedly becomes a `cant_check` line, never a traceback:
+doctor is advice, and exits 0.
 
 **Adding a group or a check** (the GitHub, Cloud and Previews tickets): write
 a function `def check_x(i: Inputs) -> list[Line]`, decorate it with
@@ -20,6 +22,7 @@ counts, the text, the JSON and `--strict` follow without change.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -51,14 +54,15 @@ PYTHON_MIN = (3, 11)
 CLAUDE_CODE_MIN = (2, 1, 295)
 RUN_TIMEOUT = 10  # seconds, for `python3` and `claude --version`
 # A version at the start of a line, so a wrapper's notice ("node v18.19.0")
-# before it isn't taken for it.
-_VERSION = re.compile(r"^\s*v?([0-9]+)\.([0-9]+)\.([0-9]+)", re.M)
+# before it isn't taken for it. A pre-release ("-beta.1") comes before its version.
+_VERSION = re.compile(r"^\s*v?([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z.-]+)?", re.M)
 # What each of the kit's hooks is called in a report.
 HOOK_NAMES = {"PreToolUse": "the guard", "Stop": "the status gate", "UserPromptSubmit": "the flow context", "SessionStart": "the session start"}
 SETTINGS = vendor_mod.SETTINGS.as_posix()
 SETTINGS_LOCAL = vendor_mod.SETTINGS_LOCAL.as_posix()
 PROFILE = profile_mod.PROFILE_PATH.as_posix()
 LOCK = vendor_mod.LOCK.as_posix()
+COPY_CLI = vendor_mod.HOOK_TAG  # the vendored copy's CLI
 
 
 @dataclass(frozen=True)
@@ -74,6 +78,10 @@ class Words:
 
 
 NONE = Words("", "")
+# The fix of a line that waits on another one.
+SETTINGS_FIRST = Words("First make Claude Code's settings readable (see the settings line).", "Needs kit.settings fixed first.")
+PROFILE_FIRST = Words("First correct the kit's profile (see the profile line).", "Needs kit.profile fixed first.")
+SET_UP_FIRST = Words("First set the kit up (see the profile line).", "Needs the kit set up first (kit.profile).")
 
 
 @dataclass
@@ -123,39 +131,65 @@ class Inputs:
         return (self.profile.experience if self.profile else None) or None
 
 
-def _run(i: Inputs, argv: list[str]) -> tuple[str | None, bool]:
-    """(a command's standard output, whether it timed out); the output is
-    None when the command is missing, fails or hangs. No shell, no input; on
-    a timeout its whole process group is killed, so nothing is left running."""
+@dataclass
+class Ran:
+    """A command's result: `out` when it ran and printed UTF-8; else `state`
+    says why not: missing, failed (a non-zero exit), timeout or unreadable."""
+
+    state: str
+    out: str | None = None
+
+
+def _run(i: Inputs, argv: list[str]) -> Ran:
+    """Run a command with no shell and no input. Its whole process group is
+    killed whenever doctor stops waiting (a timeout, Ctrl-C), so nothing it
+    started is left running."""
     exe = shutil.which(argv[0], path=i.path)
     if not exe:
-        return None, False
+        return Ran("missing")
     try:
         p = subprocess.Popen([exe, *argv[1:]], cwd=i.root if i.root.is_dir() else None, env=i.environ,
                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                              start_new_session=True)
     except (OSError, ValueError):
-        return None, False
+        return Ran("failed")
+    timed_out = False
     try:
         out, _ = p.communicate(timeout=RUN_TIMEOUT)
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(p.pid, signal.SIGKILL)
-        except OSError:
-            p.kill()
-        p.communicate()
-        return None, True
+        timed_out = True
+    finally:
+        if p.returncode is None:  # still running: a timeout, or doctor itself interrupted
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except OSError:
+                p.kill()
+            try:
+                p.communicate(timeout=1)  # a detached grandchild may hold the pipe: don't wait on it
+            except subprocess.TimeoutExpired:
+                pass
+            if p.stdout:
+                p.stdout.close()
+    if timed_out:
+        return Ran("timeout")
     if p.returncode:
-        return None, False
+        return Ran("failed")
     try:
-        return out.decode("utf-8"), False
+        return Ran("ok", out.decode("utf-8"))
     except UnicodeDecodeError:
-        return None, False
+        return Ran("unreadable")
 
 
-def _version(text: str | None) -> tuple[int, int, int] | None:
+def _version(text: str | None) -> tuple[tuple[int, int, int], str] | None:
+    """(major, minor, patch) and any pre-release suffix, from the first line
+    that starts with a version."""
     m = _VERSION.search(text or "")
-    return (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
+    return ((int(m.group(1)), int(m.group(2)), int(m.group(3))), m.group(4) or "") if m else None
+
+
+def _older(found: tuple[tuple[int, int, int], str], need: tuple[int, int, int]) -> bool:
+    v, pre = found
+    return v < need or (v == need and bool(pre))
 
 
 def _dotted(v) -> str:
@@ -168,15 +202,27 @@ def _shown(value: str, most: int = 40) -> str:
     return v if len(v) <= most else v[:most] + "…"
 
 
+def _file(root: Path, rel: str | Path) -> tuple[Path, str | None]:
+    """A path in the checkout, and why it can't be read as a regular file
+    (None when it can, or is missing). A pipe or a directory is never opened."""
+    path = Path(rel) if Path(rel).is_absolute() else root / rel
+    try:
+        if path.exists() and not path.is_file():
+            return path, "it isn't a file"
+    except OSError as e:
+        return path, f"it can't be read ({type(e).__name__})"
+    return path, None
+
+
 def _read_json(root: Path, rel: str | Path) -> tuple[dict, str | None]:
     """A JSON object file's contents, and why it can't be read: ({}, None)
     when it is missing. Never raises, and never blocks on a pipe."""
-    path = Path(rel) if Path(rel).is_absolute() else root / rel
+    path, err = _file(root, rel)
+    if err:
+        return {}, err
     try:
         if not path.exists():
             return {}, None
-        if not path.is_file():
-            return {}, "it isn't a file"
         data = json.loads(path.read_text(encoding="utf-8"))
     except UnicodeDecodeError:
         return {}, "it isn't UTF-8 text"
@@ -187,6 +233,22 @@ def _read_json(root: Path, rel: str | Path) -> tuple[dict, str | None]:
     if not isinstance(data, dict):
         return {}, "it doesn't hold a JSON object"
     return data, None
+
+
+def _hash_file(path: Path) -> str | None:
+    """A regular file's SHA-256, as the lock records it; None when it isn't
+    one or can't be read."""
+    try:
+        if not path.is_file():
+            return None
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _relative(i: Inputs, text: str) -> str:
+    """A message with the checkout's own path left out."""
+    return text.replace(str(i.root) + os.sep, "").replace(str(i.root), ".")
 
 
 def _check(group: str, id_: str):
@@ -205,22 +267,29 @@ def _check(group: str, id_: str):
 
 @_check("Your computer", "computer.python3")
 def check_python(i: Inputs) -> list[Line]:
-    """`python3` on the PATH, the one the hooks run, not the Python running doctor."""
+    """`python3` on the PATH, the one the hooks run, not the Python running
+    doctor, run as the hooks run it (`-B`, the environment as it is)."""
     g, id_ = "Your computer", "computer.python3"
     need = _dotted(PYTHON_MIN)
     install = Words(
         f"Install Python {need} or newer (from python.org, or `brew install python` on a Mac), then open a new terminal and start a new Claude session.",
         f"Put Python {need}+ first on the PATH as `python3`, then start a new session.",
     )
-    if not shutil.which("python3", path=i.path):
+    ran = _run(i, ["python3", "-B", "-c", "import sys; print('%d.%d.%d' % tuple(sys.version_info[:3]))"])
+    if ran.state == "missing":
         return [Line(g, id_, "gap", Words(
             "Python (`python3`) isn't installed, or your computer can't find it, so the kit's hooks can't run.",
             f"No `python3` on the PATH: the kit's hooks can't run it (they need {need}+).",
         ), install)]
-    out, timed_out = _run(i, ["python3", "-I", "-c", "import sys; print('%d.%d.%d' % tuple(sys.version_info[:3]))"])
-    v = _version(out)
-    if v is None:
-        why = Words(f"it didn't answer within {RUN_TIMEOUT} seconds", f"timed out after {RUN_TIMEOUT} s") if timed_out else Words("it didn't answer", "failed, or printed no version")
+    if ran.state == "failed":
+        return [Line(g, id_, "gap", Words(
+            "Python (`python3`) is there but doesn't run, so the kit's hooks fall back to a simpler mode.",
+            f"`python3` on the PATH exits with an error: the hooks run their fallback (a stub, a shim with no version, a broken PYTHONHOME?).",
+        ), install)]
+    found = _version(ran.out)
+    if found is None:
+        why = Words(f"it didn't answer within {RUN_TIMEOUT} seconds", f"timed out after {RUN_TIMEOUT} s") if ran.state == "timeout" else Words(
+            "its answer had no version in it", "printed no version")
         return [Line(g, id_, "cant_check", Words(
             f"Couldn't tell which version of Python (`python3`) your computer has: {why.new}.",
             f"`python3` on the PATH {why.developer}.",
@@ -228,6 +297,7 @@ def check_python(i: Inputs) -> list[Line]:
             f"Run `python3 --version` in a terminal: it should say {need} or newer.",
             f"Check `python3 --version` ({need}+ needed) and that it runs.",
         ))]
+    v = found[0]
     if v[:2] < PYTHON_MIN:
         return [Line(g, id_, "gap", Words(
             f"Your computer's Python (`python3`) is version {_dotted(v)}, but the kit needs {need} or newer, so its hooks fall back to a simpler mode.",
@@ -246,16 +316,12 @@ def check_claude_code(i: Inputs) -> list[Line]:
     g, id_ = "Your computer", "computer.claude_code"
     need = _dotted(CLAUDE_CODE_MIN)
     given = bool(i.claude_version and i.claude_version.strip())
-    timed_out = False
-    if given:
-        v = _version(i.claude_version)
-    else:
-        out, timed_out = _run(i, ["claude", "--version"])
-        v = _version(out)
-    if v is None:
+    ran = None if given else _run(i, ["claude", "--version"])
+    found = _version(i.claude_version if given else ran.out)
+    if found is None:
         if given:
             where = f"`--claude-version {_shown(i.claude_version)}` holds no version"
-        elif timed_out:
+        elif ran.state == "timeout":
             where = f"no `--claude-version`, and `claude --version` timed out after {RUN_TIMEOUT} s"
         else:
             where = "no `--claude-version`, and `claude --version` gave none"
@@ -266,17 +332,18 @@ def check_claude_code(i: Inputs) -> list[Line]:
             f"Type `/status` in Claude Code, or run `claude --version` in a terminal: the version should be {need} or newer.",
             f"Run `claude --version` ({need}+ needed), or pass `--claude-version`.",
         ))]
-    if v < CLAUDE_CODE_MIN:
+    shown = _dotted(found[0]) + found[1]
+    if _older(found, CLAUDE_CODE_MIN):
         return [Line(g, id_, "gap", Words(
-            f"Claude Code is version {_dotted(v)}, older than {need}: if the kit's guard ever fails or takes too long, this version lets the step run instead of stopping it.",
-            f"Claude Code {_dotted(v)} is older than {need}: a guard hook that fails or times out won't block (`onFailure: \"block\"` is ignored).",
+            f"Claude Code is version {shown}, older than {need}: if the kit's guard ever fails or takes too long, this version lets the step run instead of stopping it.",
+            f"Claude Code {shown} is older than {need}: a guard hook that fails or times out won't block (`onFailure: \"block\"` is ignored).",
         ), Words(
             "Update Claude Code (run `claude update` in a terminal, or update the desktop app), then start a new session.",
             f"Run `claude update` ({need}+), then restart the session.",
         ))]
     return [Line(g, id_, "fine", Words(
-        f"Claude Code is new enough (version {_dotted(v)}).",
-        f"Claude Code {_dotted(v)} ({need}+ needed).",
+        f"Claude Code is new enough (version {shown}).",
+        f"Claude Code {shown} ({need}+ needed).",
     ))]
 
 
@@ -312,26 +379,40 @@ class _Settings:
     def unreadable(self) -> list[tuple[str, str]]:
         return [(name, err) for name, _, err in self.files if err]
 
-    def plugin(self) -> tuple[bool, str | None]:
-        """Whether the kit's plugin is enabled, and which file says so: the
-        most specific file naming it wins (local, then project, then user)."""
-        on, where = False, None
+    def _winner(self, read) -> tuple[object, str | None]:
+        """The most specific file's value (local, then project, then user):
+        `read(contents)` gives a file's value, or None when it sets none."""
+        value, where = None, None
         for name, data, _ in self.files:
-            plugins = data.get("enabledPlugins")
-            if isinstance(plugins, dict) and vendor_mod.PLUGIN_KEY in plugins:
-                on, where = bool(plugins[vendor_mod.PLUGIN_KEY]), name
-        return on, where
+            v = read(data)
+            if v is not None:
+                value, where = v, name
+        return value, where
 
-    def hooks_off(self) -> list[str]:
-        """The files with `disableAllHooks` on: Claude Code then runs no hook."""
-        return [name for name, data, _ in self.files if data.get("disableAllHooks")]
+    def plugin(self) -> tuple[bool, str | None]:
+        """Whether the kit's plugin is enabled, and which file says so."""
+        def read(data):
+            plugins = data.get("enabledPlugins")
+            return plugins.get(vendor_mod.PLUGIN_KEY) if isinstance(plugins, dict) else None
+
+        on, where = self._winner(read)
+        return bool(on), where
+
+    def hooks_off(self) -> str | None:
+        """The file whose `disableAllHooks: true` is in force: Claude Code
+        then runs no hook. None when hooks run."""
+        on, where = self._winner(lambda d: d.get("disableAllHooks") if isinstance(d.get("disableAllHooks"), bool) else None)
+        return where if on is True else None
 
 
 def _settings(i: Inputs) -> _Settings:
     user_name, user_path = _user_settings(i)
-    files = [(user_name, *(_read_json(i.root, user_path) if user_path else ({}, None)))]
-    for rel in (SETTINGS, SETTINGS_LOCAL):
-        files.append((rel, *_read_json(i.root, rel)))
+    files = []
+    for name, path in ((user_name, user_path), (SETTINGS, SETTINGS), (SETTINGS_LOCAL, SETTINGS_LOCAL)):
+        data, err = _read_json(i.root, path) if path else ({}, None)
+        if not err and "enabledPlugins" in data and not isinstance(data["enabledPlugins"], dict):
+            data, err = {}, "its enabledPlugins isn't an object"
+        files.append((name, data, err))
     return _Settings(files)
 
 
@@ -343,24 +424,32 @@ def _is_kit(h) -> bool:
     return isinstance(h, dict) and vendor_mod._is_kit_hook(h)
 
 
+def _kit_entries(settings: dict) -> dict[str, list]:
+    """The settings' hook entries that run the kit, by event."""
+    hooks = settings.get("hooks") if isinstance(settings.get("hooks"), dict) else {}
+    out = {}
+    for event, entries in hooks.items():
+        kit = [e for e in _list(entries) if isinstance(e, dict) and any(_is_kit(h) for h in _list(e.get("hooks")))]
+        if kit:
+            out[event] = kit
+    return out
+
+
 def _hook_differences(settings: dict) -> list[str]:
     """How the kit's hooks in the settings differ from this kit version's own
     entries, as `vendor update` writes them: one phrase each."""
-    hooks = settings.get("hooks") if isinstance(settings.get("hooks"), dict) else {}
+    kit = _kit_entries(settings)
     out = []
-    for event in [*vendor_mod.KIT_HOOKS, *sorted(set(hooks) - set(vendor_mod.KIT_HOOKS))]:
-        entries = [e for e in _list(hooks.get(event)) if isinstance(e, dict)]
-        kit = [e for e in entries if any(_is_kit(h) for h in _list(e.get("hooks")))]
-        want = vendor_mod.KIT_HOOKS.get(event)
+    for event in [*vendor_mod.KIT_HOOKS, *sorted(set(kit) - set(vendor_mod.KIT_HOOKS))]:
+        mine, want = kit.get(event, []), vendor_mod.KIT_HOOKS.get(event)
         name = HOOK_NAMES.get(event, f"a hook on {event} that runs the kit")
         if want is None:
-            if kit:
-                out.append(f"{name} isn't one this version writes")
-        elif not kit:
+            out.append(f"{name} isn't one this version writes")
+        elif not mine:
             out.append(f"{name} ({event}) is missing")
-        elif any(not all(_is_kit(h) for h in _list(e.get("hooks"))) for e in kit):
+        elif any(not all(_is_kit(h) for h in _list(e.get("hooks"))) for e in mine):
             out.append(f"{name} ({event}) shares an entry with other hooks")
-        elif kit != want:
+        elif mine != want:
             out.append(f"{name} ({event}) differs")
     return out
 
@@ -372,21 +461,37 @@ def _running_copy(i: Inputs) -> bool:
     return here == copy or copy in here.parents
 
 
+def _lock_version(i: Inputs) -> str:
+    v = _read_json(i.root, LOCK)[0].get("kit_version")
+    return v.strip() if updates_mod.parse(v) else "unknown"
+
+
 def _kit_version(i: Inputs) -> str:
     """The version of the kit running doctor: the lock's for the project's
     vendored copy, else the kit's own VERSION (a checkout of it, the plugin)."""
     if _running_copy(i):
-        return updates_mod.installed(i.root, i.kit_root) or "unknown"
+        return _lock_version(i)
+    path, err = _file(i.kit_root, "VERSION")
     try:
-        v = (i.kit_root / "VERSION").read_text(encoding="utf-8").strip()
+        v = None if err else path.read_text(encoding="utf-8").strip()
     except (OSError, ValueError):
-        return "unknown"
+        v = None
     return v if updates_mod.parse(v) else "unknown"
+
+
+def _copy_has_doctor(i: Inputs) -> bool:
+    """Whether the project's vendored copy of the CLI knows `doctor` (copies
+    vendored before it shipped don't)."""
+    path, err = _file(i.root, ".claude/workflow/bin/workflow/cli.py")
+    try:
+        return not err and path.is_file() and 'add_parser("doctor"' in path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
 
 
 @_check("The kit", "kit.hooks")
 def check_install(i: Inputs) -> list[Line]:
-    """Claude Code's settings files are readable and run hooks at all; then,
+    """Claude Code's settings files read and run hooks at all; then,
     vendored, the hooks are this version's own entries; in plugin mode the
     plugin is enabled; both on is a gap naming which to turn off."""
     g = "The kit"
@@ -395,25 +500,27 @@ def check_install(i: Inputs) -> list[Line]:
     bad = s.unreadable()
     if bad:
         listed = "; ".join(f"{name}: {why}" for name, why in bad)
+        one = len(bad) == 1
         lines.append(Line(g, "kit.settings", "gap", Words(
-            f"Claude Code can't read its settings ({listed}), so the kit's hooks may not run.",
-            f"Unreadable Claude Code settings: {listed}.",
+            f"Claude Code can't read {'a settings file' if one else 'some settings files'} ({listed}), so it starts without {'it' if one else 'them'}, and the kit's hooks or plugin set there don't run.",
+            f"Unreadable Claude Code settings ({listed}): Claude Code skips {'it' if one else 'them'}.",
         ), Words(
-            "Ask Claude to fix the file so it is valid JSON (saved as UTF-8), then start a new session.",
-            "Make each a UTF-8 JSON object, then restart the session.",
+            f"Ask Claude to correct {'the file' if one else 'the files'} (valid JSON, saved as UTF-8), then start a new session.",
+            f"Make {'it' if one else 'each'} a UTF-8 JSON object (enabledPlugins an object), then restart the session.",
         )))
     off = s.hooks_off()
     if off:
         lines.append(Line(g, "kit.hooks_off", "gap", Words(
-            f"Every hook is turned off ({', '.join(off)} sets `disableAllHooks`), so the kit's guard doesn't run at all.",
-            f"`disableAllHooks` is on in {', '.join(off)}: no hook runs, the guard included.",
+            f"Every hook is turned off ({off} sets `disableAllHooks`), so the kit's guard doesn't run at all.",
+            f"`disableAllHooks` is true in {off}: no hook runs, the guard included.",
         ), Words(
-            f"Remove `\"disableAllHooks\": true` from {', '.join(off)}, then start a new session.",
-            f"Drop `disableAllHooks` from {', '.join(off)}.",
+            f"Ask Claude to remove `\"disableAllHooks\": true` from {off}, then start a new session.",
+            f"Drop `disableAllHooks` from {off}.",
         )))
     on, where = s.plugin()
+    project_data, project_err = s.project()
     if i.vendored:
-        lines += _vendored_hooks(i, s)
+        lines += _vendored_hooks(i, project_data, project_err)
         if on:
             local = where if where in (SETTINGS, SETTINGS_LOCAL) else SETTINGS_LOCAL
             key = f'`"enabledPlugins": {{"{vendor_mod.PLUGIN_KEY}": false}}`'
@@ -421,11 +528,30 @@ def check_install(i: Inputs) -> list[Line]:
                 f"The kit is on twice here: copied into this project and installed as a plugin (turned on in {where}), so its hooks run twice.",
                 f"Both modes are on: the kit is vendored and the {vendor_mod.PLUGIN_KEY} plugin is enabled ({where}); the hooks run twice.",
             ), Words(
-                f"Turn the plugin off for this project and keep the copy, which unattended runs need: put {key} in {local}.",
+                f"Ask Claude to turn the plugin off for this project in {local}, and keep the copy, which unattended runs need.",
                 f"Turn off the plugin, keep the vendored copy (runs need it): set {key} in {local}.",
             )))
         return lines
+    # Plugin mode: no lock. A copy or kit hooks left without one is the
+    # vendored mode with its record lost, not a project to install the plugin in.
+    left = _file(i.root, COPY_CLI)[0].is_file() or bool(_kit_entries(project_data))
+    if left:
+        lines.append(Line(g, "kit.vendor", "gap", Words(
+            f"This project has the kit's copy or its hooks, but the record of that copy ({LOCK}) is gone, so the copy can't be checked or updated.",
+            f"Vendored files or kit hooks present, but no {LOCK}.",
+        ), Words(
+            f"Ask Claude to put back {LOCK} from git, or, to use the plugin instead, to remove the copy and its hooks.",
+            f"Restore {LOCK} (`git log -- {LOCK}`), or remove .claude/workflow and the kit's hook entries for plugin mode.",
+        )))
     if on:
+        if left:
+            return lines + [Line(g, "kit.plugin", "gap", Words(
+                f"The kit's plugin is on (in {where}) beside what's left of a copy of the kit, so its hooks may run twice.",
+                f"Plugin enabled ({where}) and kit hooks or a copy left in the project: the hooks run twice.",
+            ), Words(
+                "Ask Claude to keep one: the copy (put back its record) or the plugin (remove the copy and its hooks).",
+                "Pick one mode: restore the lock and disable the plugin, or remove the copy and its hooks.",
+            ))]
         return lines + [Line(g, "kit.plugin", "fine", Words(
             "The kit's plugin is turned on for this project.",
             f"Plugin mode: {vendor_mod.PLUGIN_KEY} is enabled ({where}).",
@@ -434,52 +560,62 @@ def check_install(i: Inputs) -> list[Line]:
         return lines + [Line(g, "kit.plugin", "cant_check", Words(
             "Can't tell whether the kit's plugin is turned on until Claude Code's settings can be read.",
             "Plugin mode: whether the plugin is enabled can't be told until the settings read.",
+        ), SETTINGS_FIRST)]
+    if left:
+        return lines
+    if where:  # named, and turned off there
+        return lines + [Line(g, "kit.plugin", "gap", Words(
+            f"The kit's plugin is turned off for this project (in {where}), so its hooks don't run here.",
+            f"Plugin mode, but {where} sets {vendor_mod.PLUGIN_KEY} to false.",
         ), Words(
-            "Fix the settings file first (see the settings line).",
-            "Fix the unreadable settings first (kit.settings).",
+            f"Ask Claude to remove the plugin's `false` from {where}, then start a new session.",
+            f"Drop the `{vendor_mod.PLUGIN_KEY}: false` from {where}.",
         ))]
-    where_off = f" (turned off in {where})" if where else ""
     return lines + [Line(g, "kit.plugin", "gap", Words(
-        f"The kit's plugin isn't turned on for this project{where_off}, and there's no copy of the kit in it, so its hooks don't run here.",
-        f"Plugin mode (no {LOCK}), but {vendor_mod.PLUGIN_KEY} isn't enabled" + (f": {where} turns it off." if where else " in the user's or the project's settings."),
+        "The kit's plugin isn't turned on for this project, and there's no copy of the kit in it, so its hooks don't run here.",
+        f"Plugin mode (no {LOCK}), but {vendor_mod.PLUGIN_KEY} isn't enabled in the user's or the project's settings.",
     ), Words(
         f"In Claude Code, type `/plugin install {vendor_mod.PLUGIN_KEY}` (or turn it on in `/plugin`), then start a new session.",
         f"`/plugin install {vendor_mod.PLUGIN_KEY}`, or enable it in `enabledPlugins`.",
     ))]
 
 
-def _vendored_hooks(i: Inputs, s: _Settings) -> list[Line]:
+def _vendored_hooks(i: Inputs, data: dict, err: str | None) -> list[Line]:
     g, id_ = "The kit", "kit.hooks"
-    data, err = s.project()
     if err:
         return [Line(g, id_, "cant_check", Words(
             f"Can't check the kit's hooks until Claude Code's settings file ({SETTINGS}) can be read.",
             f"Kit hooks unchecked: {SETTINGS} doesn't read.",
-        ), Words(
-            "Fix the settings file first (see the settings line).",
-            "Fix the settings first (kit.settings).",
-        ))]
-    diffs = _hook_differences(data)
+        ), SETTINGS_FIRST)]
     version = _kit_version(i)
+    exists = _file(i.root, SETTINGS)[0].exists()
+    if not exists:
+        diffs = [f"{SETTINGS} is missing"]
+        listed = diffs[0]
+    else:
+        diffs = _hook_differences(data)
+        listed = "; ".join(diffs)
     if not diffs:
         return [Line(g, id_, "fine", Words(
             "The kit's hooks are in place, as this version of the kit writes them.",
             f"Kit hooks in {SETTINGS} match kit {version}'s entries.",
         ))]
-    listed = "; ".join(diffs)
-    if not _running_copy(i):
+    if exists and not _running_copy(i):
         # Another kit's entries (a checkout of the kit, the plugin): only the
         # project's own copy knows the entries its version writes.
-        copy = updates_mod.installed(i.root, i.kit_root) or "unknown"
+        own = Words(
+            f"Run the check with the project's own copy: `python3 -B {COPY_CLI} doctor`.",
+            f"Run the vendored copy's doctor: `python3 -B {COPY_CLI} doctor`.",
+        ) if _copy_has_doctor(i) else Words(
+            "This project's copy of the kit is older than doctor: ask Claude to update the workflow kit, then run the check again.",
+            "The vendored copy predates `doctor`: update it (`update-workflow`), then run its doctor.",
+        )
         return [Line(g, id_, "cant_check", Words(
-            f"The kit's hooks differ from those of the kit running this check ({listed}), but that isn't this project's own copy of the kit, so it can't say which is right.",
-            f"Kit hooks compared with kit {version} (running doctor), not this project's copy ({copy}): {listed}.",
-        ), Words(
-            "Run the check with the project's own copy: `python3 -B .claude/workflow/bin/workflow.py doctor`.",
-            "Run the vendored copy's doctor: `python3 -B .claude/workflow/bin/workflow.py doctor`.",
-        ))]
+            f"The kit's hooks differ from those of the kit running this check ({listed}), but that isn't this project's own copy, so it can't say which is right.",
+            f"Kit hooks compared with the entries of the kit at {i.kit_root} ({version}), not this project's copy ({_lock_version(i)}): {listed}.",
+        ), own)]
     return [Line(g, id_, "gap", Words(
-        f"The kit's hooks in {SETTINGS} aren't the ones this version of the kit writes ({listed}), so some of its checks may not run as they should.",
+        f"The kit's hooks in Claude Code's settings ({SETTINGS}) aren't the ones this version of the kit writes ({listed}): a missing hook doesn't run, and a changed one doesn't run as this version expects.",
         f"Kit hooks in {SETTINGS} differ from kit {version}'s entries: {listed}.",
     ), Words(
         "Ask Claude to update the workflow kit: the update writes the kit's hooks again.",
@@ -487,23 +623,26 @@ def _vendored_hooks(i: Inputs, s: _Settings) -> list[Line]:
     ))]
 
 
-def _relative(i: Inputs, text: str) -> str:
-    """An error message with the checkout's own path left out."""
-    return text.replace(str(i.root) + os.sep, "").replace(str(i.root), ".")
-
-
 @_check("The kit", "kit.profile")
 def check_profile(i: Inputs) -> list[Line]:
     """`profile check`: its errors are gaps, its warnings notes."""
     g, id_ = "The kit", "kit.profile"
-    if i.profile_error:
-        err = _relative(i, i.profile_error)
+    if not i.root.is_dir():
         return [Line(g, id_, "gap", Words(
-            f"The kit's profile ({PROFILE}, its settings for this project) has a mistake, so the kit can't use it: {err}",
-            f"`profile check` fails: {err}",
+            f"The project's folder ({i.root}) isn't there, so there's nothing to check in it.",
+            f"The project directory {i.root} doesn't exist (CLAUDE_PROJECT_DIR, or the current directory).",
         ), Words(
-            f"Ask Claude to fix {PROFILE}, then run this again.",
-            f"Fix {PROFILE} (`workflow profile check` says what's wrong).",
+            "Open the project's folder and run the check from there.",
+            "Run doctor from the checkout, or set CLAUDE_PROJECT_DIR to it.",
+        ))]
+    if i.profile_error:
+        err = _relative(i, i.profile_error).rstrip(".")
+        return [Line(g, id_, "gap", Words(
+            f"The kit's profile ({PROFILE}, its settings for this project) has a mistake, so the kit can't use it: {err}.",
+            f"`profile check` fails: {err}.",
+        ), Words(
+            f"Ask Claude to correct {PROFILE}, then run this again.",
+            f"Correct {PROFILE} (`workflow profile check` says what's wrong).",
         ))]
     if i.profile is None:
         return [Line(g, id_, "gap", Words(
@@ -513,15 +652,15 @@ def check_profile(i: Inputs) -> list[Line]:
             "Ask Claude to set the workflow up for this project.",
             "Run the setup-workflow skill.",
         ))]
-    warnings = profile_mod.check(i.profile)
+    warnings = [_relative(i, w) for w in profile_mod.check(i.profile)]
     if warnings:
-        listed = "; ".join(warnings)
+        n = len(warnings)
         return [Line(g, id_, "note", Words(
-            f"The kit's profile works, with {len(warnings)} thing{'s' if len(warnings) > 1 else ''} to tidy: {listed}.",
-            f"`profile check` warns: {listed}.",
+            f"The kit's profile works, with {n} thing{'s' if n > 1 else ''} to tidy that {'don' if n > 1 else 'doesn'}'t stop it.",
+            f"`profile check` warns: {'; '.join(warnings)}.",
         ), Words(
-            f"None of these stops the kit; ask Claude to fix them in {PROFILE} when you can.",
-            f"Fix them in {PROFILE} when convenient.",
+            "When you have a moment, ask Claude to run `workflow profile check` and tidy what it lists.",
+            f"Tidy them in {PROFILE} when convenient.",
         ))]
     return [Line(g, id_, "fine", Words(
         f"The kit's profile ({PROFILE}) is in order.",
@@ -529,10 +668,35 @@ def check_profile(i: Inputs) -> list[Line]:
     ))]
 
 
+def _copy_problems(i: Inputs, lock: dict) -> list[str]:
+    """`vendor verify`'s file part, read as doctor reads files: the files the
+    lock lists that are missing, changed (not kept on purpose) or in
+    conflict. The hooks and the plugin are `check_install`'s."""
+    keeps = lock.get("kept") if isinstance(lock.get("kept"), dict) else {}
+    missing, changed = [], []
+    for dst, h in lock["files"].items():
+        path = i.root / dst
+        try:
+            there = path.exists()
+        except OSError:
+            there = True
+        if not there:
+            missing.append(dst)
+            continue
+        cur = _hash_file(path)
+        if cur != h and (cur is None or keeps.get(dst) != cur):
+            changed.append(dst)
+    conflicts = sorted(lock.get("conflicts") or {}) if isinstance(lock.get("conflicts"), (dict, list)) else []
+    out = []
+    for what, paths in (("missing", missing), ("changed by hand", changed), ("with an update's conflict to settle", conflicts)):
+        if paths:
+            out.append(f"{what}: {', '.join(paths[:5])}" + (f" and {len(paths) - 5} more" if len(paths) > 5 else ""))
+    return out
+
+
 @_check("The kit", "kit.vendor")
 def check_vendor(i: Inputs) -> list[Line]:
-    """`vendor verify`, vendored only: the copy is as the kit wrote it. The
-    hooks and the plugin are `check_install`'s."""
+    """`vendor verify`, vendored only: the copy is as the kit wrote it."""
     if not i.vendored:
         return []
     g, id_ = "The kit", "kit.vendor"
@@ -547,29 +711,7 @@ def check_vendor(i: Inputs) -> list[Line]:
             f"Ask Claude to put back {LOCK} from the last kit update.",
             f"Restore {LOCK} from git (`git log -- {LOCK}`).",
         ))]
-    if _read_json(i.root, SETTINGS)[1]:
-        return [Line(g, id_, "cant_check", Words(
-            "Can't check the kit's copy until Claude Code's settings file can be read.",
-            f"`vendor verify` needs {SETTINGS} to read.",
-        ), Words(
-            "Fix the settings file first (see the settings line).",
-            "Fix the settings first (kit.settings).",
-        ))]
-    try:
-        r = vendor_mod.verify(i.root)
-    except (vendor_mod.VendorError, OSError, ValueError, AttributeError, TypeError) as e:
-        why = _relative(i, str(e) or type(e).__name__)
-        return [Line(g, id_, "gap", Words(
-            f"The kit's copy in this project can't be checked: {why}.",
-            f"`vendor verify` fails: {why}.",
-        ), Words(
-            "Ask Claude to update the workflow kit, which writes its copy again.",
-            "Rerun `vendor update` (the update-workflow skill).",
-        ))]
-    problems = []
-    for key, what in (("missing", "missing"), ("changed", "changed by hand"), ("conflicts", "with an update's conflict to settle")):
-        if r[key]:
-            problems.append(f"{what}: {', '.join(r[key][:5])}" + (f" and {len(r[key]) - 5} more" if len(r[key]) > 5 else ""))
+    problems = _copy_problems(i, lock)
     if problems:
         listed = "; ".join(problems)
         return [Line(g, id_, "gap", Words(
@@ -579,32 +721,38 @@ def check_vendor(i: Inputs) -> list[Line]:
             "Ask Claude to look at the changed files: an update of the kit puts its own files back, and a change you meant to keep can be recorded.",
             "`vendor update` (update-workflow) restores the copy; `vendor resolve --keep <file>` records a deliberate edit, `vendor resolve <file>` a settled conflict.",
         ))]
-    if r["mattpocock"] == "not_vendored":
+    mp = lock.get("mattpocock_skills") or ("vendored" if lock.get("mattpocock_sha") else "not_vendored")
+    if mp == "not_vendored":
         return [Line(g, id_, "note", Words(
             "The kit's copy is as the kit wrote it, but without Matt Pocock's skills, which building and reviewing tickets use.",
-            "`vendor verify` passes, but Matt Pocock's skills aren't vendored (`--strict` fails on this).",
+            "`vendor verify` passes, but Matt Pocock's skills aren't vendored (`vendor verify --strict` fails on this).",
         ), Words(
             "Ask Claude to update the workflow kit with Matt Pocock's skills, or to record that you go without them.",
             "`vendor update --mattpocock <checkout>`, or `--no-mattpocock` to decline them on purpose.",
         ))]
     return [Line(g, id_, "fine", Words(
         "The kit's copy in this project is as the kit wrote it.",
-        f"`vendor verify` passes (kit {r['version'] or 'unknown'}).",
+        f"`vendor verify` passes (kit {_lock_version(i)}).",
     ))]
 
 
 _SOURCE_WORDS = {
     "environment": Words(f"set in the environment variable {EXPERIENCE_ENV}", f"from {EXPERIENCE_ENV}"),
     "local file": Words(f"set on this computer in {EXPERIENCE_FILE.as_posix()}", f"from {EXPERIENCE_FILE.as_posix()}"),
-    "profile": Words("the project's default, project.experience", "from project.experience"),
+    "profile": Words("the project's default level", "from project.experience"),
 }
 _LEVEL_WORDS = {"new": "someone new to building", "developer": "a developer"}
 _DEFAULT_WORDS = {"new": "new to building", "developer": "developer"}
 
 
-def _skipped_names(exp: Experience) -> list[str]:
-    """The settings `resolve_experience` skipped ("ignored <name>: why")."""
-    return [w.split(":", 1)[0].removeprefix("ignored ").strip() for w in exp.warnings]
+def _skipped(exp: Experience) -> list[tuple[str, str]]:
+    """The settings `resolve_experience` skipped, from its "ignored <name>:
+    why" warnings: (name, why)."""
+    out = []
+    for w in exp.warnings:
+        name, _, why = w.partition(":")
+        out.append((name.removeprefix("ignored ").strip(), why.strip()))
+    return out
 
 
 @_check("The kit", "kit.experience")
@@ -614,31 +762,31 @@ def check_experience(i: Inputs) -> list[Line]:
     g, id_ = "The kit", "kit.experience"
     exp, default = i.experience, i.default
     if i.profile_error:
-        d = Words(" The project's default can't be read until its profile is fixed.", " project default: unreadable (profile error).")
+        d = Words(" The project's default can't be read until its profile is corrected.", "; project default: unreadable (profile error)")
     elif default:
-        d = Words(f" The project's default level is {_DEFAULT_WORDS[default]}.", f" project default: {default}.")
+        d = Words(f" The project's default level is {_DEFAULT_WORDS[default]}.", f"; project default: {default}")
     else:
-        d = Words(" The project has no default level.", " no project default.")
+        d = Words(" The project has no default level.", "; no project default")
     if exp.source == "profile":
         d = NONE  # the level is the default: said once
-    skipped = Words(
-        f" Skipped {' and '.join(_skipped_names(exp))}: it should say `new` or `developer`." if exp.warnings else "",
-        f" Skipped: {'; '.join(exp.warnings)}." if exp.warnings else "",
-    )
-    skipped_fix = Words("Put `new` or `developer` in the skipped setting, or remove it.", "Set the skipped value to `new` or `developer`, or unset it.")
+    skipped = _skipped(exp)
+    names = " and ".join(n for n, _ in skipped)
+    sk = Words(f" Skipped {names}: it should say `new` or `developer`." if skipped else "",
+               "".join(f"; skipped {n} ({why})" for n, why in skipped))
+    sk_fix = Words(f"Put `new` or `developer` in {names}, or remove it.", f"Set {names} to `new` or `developer`, or unset it.")
     if exp.level:
         src = _SOURCE_WORDS[exp.source]
         msg = Words(
-            f"Claude words things for {_LEVEL_WORDS[exp.level]} ({src.new}).{d.new}{skipped.new}",
-            f"Experience: {exp.level} ({src.developer})" + (f";{d.developer}" if d.developer else ".") + skipped.developer,
+            f"Claude words things for {_LEVEL_WORDS[exp.level]} ({src.new}).{d.new}{sk.new}",
+            f"Experience: {exp.level} ({src.developer}){d.developer}{sk.developer}.",
         )
-        return [Line(g, id_, "note", msg, skipped_fix)] if exp.warnings else [Line(g, id_, "fine", msg)]
+        return [Line(g, id_, "note", msg, sk_fix)] if skipped else [Line(g, id_, "fine", msg)]
     return [Line(g, id_, "note", Words(
-        f"Nobody has said how much you know about building software, so Claude explains things as for someone new to it.{d.new}{skipped.new}",
-        f"Experience: unknown (worded as new);{d.developer}{skipped.developer}",
+        f"Nobody has said how much you know about building software, so Claude explains things as for someone new to it.{d.new}{sk.new}",
+        f"Experience: unknown (worded as new){d.developer}{sk.developer}.",
     ), Words(
         "Start a Claude session and answer its first question, how much you know; or ask Claude to set the project's default."
-        + (" " + skipped_fix.new if exp.warnings else ""),
+        + (" " + sk_fix.new if skipped else ""),
         f"Set {EXPERIENCE_ENV}, {EXPERIENCE_FILE.as_posix()} or project.experience to `new` or `developer`.",
     ))]
 
@@ -649,12 +797,10 @@ def check_ruleset(i: Inputs) -> list[Line]:
     check it against GitHub."""
     g, id_ = "The kit", "kit.ruleset"
     if i.profile is None:
-        first = Words("Fix the kit's profile first (see the profile line).", "Fix the profile first (kit.profile).") if i.profile_error else Words(
-            "Set the kit up first (see the profile line).", "Set the kit up first (kit.profile).")
         return [Line(g, id_, "cant_check", Words(
             "Can't tell whether the project means its main branch to be protected until the kit's profile can be read.",
             "project.ruleset unknown: no readable profile.",
-        ), first)]
+        ), PROFILE_FIRST if i.profile_error else SET_UP_FIRST)]
     base = i.profile.base_branch
     upgrade = OFFERS["protect_main"]
     if i.profile.ruleset is True:
@@ -679,8 +825,9 @@ def check_ruleset(i: Inputs) -> list[Line]:
     ))]
 
 
-# Every check, in the order its lines show when they are equally serious.
-CHECKS = [check_python, check_claude_code, check_install, check_profile, check_vendor, check_experience, check_ruleset]
+# Every check, in the order its lines show when they are equally serious: the
+# profile first, since setting the kit up comes before anything it then checks.
+CHECKS = [check_python, check_claude_code, check_profile, check_install, check_vendor, check_experience, check_ruleset]
 
 
 # ---------- the report ----------
@@ -689,7 +836,7 @@ CHECKS = [check_python, check_claude_code, check_install, check_profile, check_v
 @dataclass
 class Report:
     lines: list[Line]
-    level: str  # the wording: "new" or "developer"
+    wording: str  # "new" or "developer"
     experience: Experience
     default: str | None  # the profile's project.experience
 
@@ -704,10 +851,10 @@ class Report:
     def as_dict(self) -> dict:
         return {
             "experience": {"level": self.experience.level, "source": self.experience.source, "default": self.default},
-            "wording": self.level,
+            "wording": self.wording,
             "counts": self.counts(),
             "strict_ok": self.strict_ok(),
-            "lines": [ln.as_dict(self.level) for ln in self.lines],
+            "lines": [ln.as_dict(self.wording) for ln in self.lines],
         }
 
 
@@ -728,8 +875,8 @@ def order(lines: list[Line]) -> list[Line]:
     return [ln for g in names for ln in groups[g]]
 
 
-def _failed(check, e: Exception) -> Line:
-    why = f"{type(e).__name__}: {e}"[:200]
+def _failed(i: Inputs, check, e: Exception) -> Line:
+    why = _relative(i, f"{type(e).__name__}: {e}")[:200]
     return Line(check.group, check.id, "cant_check", Words(
         f"This check couldn't run ({why}).",
         f"Check {check.__name__} raised {why}.",
@@ -745,7 +892,7 @@ def report(i: Inputs) -> Report:
         try:
             lines += check(i)
         except Exception as e:  # advice never ends in a traceback
-            lines.append(_failed(check, e))
+            lines.append(_failed(i, check, e))
     for ln in lines:
         assert ln.status in STATUSES and ln.group in GROUPS and (ln.offer is None or ln.offer in OFFERS), ln
     return Report(order(lines), i.experience.wording_level, i.experience, i.default)
@@ -755,23 +902,25 @@ def _plural(n: int, status: str) -> str:
     return f"{n} {LABELS[status]}" + ("s" if n != 1 and status in ("gap", "note") else "")
 
 
+def _wrap(text: str, width: int, first: str, rest: str) -> list[str]:
+    return textwrap.wrap(text, width, initial_indent=first, subsequent_indent=rest, break_long_words=False, break_on_hyphens=False)
+
+
 def text(r: Report, width: int = 100) -> str:
     """Grouped lines, each wrapped to `width` with its fix indented below it.
     A note's fix is what to do if you want to change it: "Next", not "Fix"."""
     c = r.counts()
     width = max(40, width)
-    out = textwrap.wrap("Workflow doctor: " + ", ".join(_plural(c[s], s) for s in STATUSES if c[s] or s == "gap"), width)
+    out = _wrap("Workflow doctor: " + ", ".join(_plural(c[s], s) for s in STATUSES if c[s] or s == "gap"), width, "", "")
     group = None
     for ln in r.lines:
         if ln.group != group:
             group = ln.group
             out += ["", group]
-        mark = f"  [{LABELS[ln.status]}] "
-        out += textwrap.wrap(ln.message.pick(r.level), width, initial_indent=mark, subsequent_indent=" " * 6, break_long_words=False, break_on_hyphens=False)
-        fix = ln.fix.pick(r.level)
+        out += _wrap(ln.message.pick(r.wording), width, f"  [{LABELS[ln.status]}] ", " " * 6)
+        fix = ln.fix.pick(r.wording)
         if fix:
-            label = "Next: " if ln.status in ("note", "fine") else "Fix: "
-            out += textwrap.wrap(fix, width, initial_indent=" " * 6 + label, subsequent_indent=" " * 8, break_long_words=False, break_on_hyphens=False)
+            out += _wrap(fix, width, " " * 6 + ("Next: " if ln.status in ("note", "fine") else "Fix: "), " " * 8)
         if ln.offer:
             out.append(f"      Claude can offer: {OFFERS[ln.offer]}")
     return "\n".join(out)

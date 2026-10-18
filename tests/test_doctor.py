@@ -224,12 +224,19 @@ def test_no_python3_on_the_path_is_a_gap(tmp_path):
     assert ln["status"] == "gap" and ln["fix"]
 
 
-@pytest.mark.parametrize("python", [1, "not a version"])
-def test_a_python3_whose_version_cant_be_read_is_cant_check(tmp_path, python):
+def test_a_python3_whose_version_cant_be_read_is_cant_check(tmp_path):
     root = _project(tmp_path)
-    ln = _line(tmp_path, root, "computer.python3", path=_bin(tmp_path, python=python))
+    ln = _line(tmp_path, root, "computer.python3", path=_bin(tmp_path, python="not a version"))
     assert ln["status"] == "cant_check"
     assert "python3 --version" in ln["fix"]
+
+
+def test_a_python3_that_doesnt_run_is_a_gap(tmp_path):
+    """A stub or a broken shim: `command -v python3` finds it, so the hooks
+    run it, it fails, and they take their fallback."""
+    root = _project(tmp_path)
+    ln = _line(tmp_path, root, "computer.python3", path=_bin(tmp_path, python=1))
+    assert ln["status"] == "gap" and ln["fix"]
 
 
 # Your computer: Claude Code
@@ -314,7 +321,7 @@ def test_unreadable_settings_are_a_gap(tmp_path):
     assert lines["kit.settings"]["status"] == "gap" and ".claude/settings.json" in lines["kit.settings"]["message"]
     # Said once: the lines that need the file wait on it.
     assert lines["kit.hooks"]["status"] == "cant_check"
-    assert lines["kit.vendor"]["status"] == "cant_check"
+    assert lines["kit.vendor"]["status"] == "fine"  # the copy's files don't depend on it
 
 
 def test_plugin_mode_enabled_in_the_projects_settings_is_fine(tmp_path):
@@ -383,9 +390,12 @@ def test_profile_check_errors_are_gaps(tmp_path):
 
 def test_profile_check_warnings_are_notes(tmp_path):
     root = _project(tmp_path, profile=_prof(tail='[areas]\nweb = ["web/**"]\n'))
-    ln = _line(tmp_path, root, "kit.profile")
+    ln = _line(tmp_path, root, "kit.profile", env={"WORKFLOW_EXPERIENCE": "developer"})
     assert ln["status"] == "note" and "areas.web" in ln["message"]
-    _text_has(tmp_path, root, "[note]", "areas.web")
+    _text_has(tmp_path, root, "[note]", "areas.web", env={"WORKFLOW_EXPERIENCE": "developer"})
+    # New to building: the count, and how to see the list.
+    new = _line(tmp_path, root, "kit.profile")
+    assert new["status"] == "note" and "profile check" in new["fix"]
 
 
 def test_a_clean_profile_is_fine(tmp_path):
@@ -728,7 +738,8 @@ def test_text_wraps_to_a_narrow_terminal(tmp_path):
     assert p.returncode == 0
     # Only a word longer than the width (a path, a command) may run over.
     for ln in p.stdout.splitlines():
-        assert len(ln) <= 40 or max(len(w) for w in ln.split()) > 25, ln
+        # Over the width only with a word that can't fit on any line of its own.
+        assert len(ln) <= 40 or any(len(w) > 40 - 8 for w in ln.split()), ln
 
 
 def test_a_notes_next_step_isnt_called_a_fix(tmp_path):
@@ -741,7 +752,8 @@ def test_a_notes_next_step_isnt_called_a_fix(tmp_path):
 def _more_states(tmp_path):
     """Projects whose lines take the states `_every_status_project` doesn't."""
     yield _project(tmp_path / "a", vendored=False, settings={"enabledPlugins": {vendor.PLUGIN_KEY: True}}, profile=_prof("")), None
-    yield _project(tmp_path / "b", vendored=False, profile=_prof('ruleset = "yes"\n')), _bin(tmp_path / "b", python=1, claude="2.1.100")
+    yield _project(tmp_path / "b", vendored=False, profile=_prof('ruleset = "yes"\n')), _bin(tmp_path / "b", python="no", claude="2.1.100")
+    yield _project(tmp_path / "e", vendored=False, profile=_prof("")), _bin(tmp_path / "e", python=1)
     root = _project(tmp_path / "c")
     (root / ".claude/settings.json").write_text("[]")
     yield root, None
@@ -772,3 +784,146 @@ def test_error_lines_leave_out_the_checkouts_path(tmp_path):
     root = _project(tmp_path, profile="[project\n")
     ln = _line(tmp_path, root, "kit.profile")
     assert ln["status"] == "gap" and str(root) not in ln["message"]
+
+
+# Round 2 of the review
+
+
+def test_a_broken_local_settings_file_is_one_gap(tmp_path):
+    root = _project(tmp_path)
+    (root / ".claude/settings.local.json").write_text("{bad")
+    lines = _lines(_report(tmp_path, root))
+    assert lines["kit.settings"]["status"] == "gap" and ".claude/settings.local.json" in lines["kit.settings"]["message"]
+    assert lines["kit.vendor"]["status"] == "fine" and lines["kit.hooks"]["status"] == "fine"
+    assert [ln["id"] for ln in _report(tmp_path, root)["lines"] if ln["status"] == "gap"] == ["kit.settings"]
+
+
+@pytest.mark.parametrize("name, value", [(".claude/settings.json", ["x"]), (".claude/settings.local.json", "yes")])
+def test_enabled_plugins_of_the_wrong_shape_is_a_settings_gap_in_plain_words(tmp_path, name, value):
+    root = _project(tmp_path)
+    data = json.loads((root / name).read_text()) if (root / name).exists() else {}
+    data["enabledPlugins"] = value
+    (root / name).write_text(json.dumps(data))
+    r = _report(tmp_path, root)
+    lines = _lines(r)
+    assert lines["kit.settings"]["status"] == "gap" and "enabledPlugins" in lines["kit.settings"]["message"]
+    assert not any("object has no attribute" in ln["message"] for ln in r["lines"])
+
+
+@pytest.mark.parametrize("name", [".claude/settings.local.json", ".claude/workflow/profile.toml", ".claude/workflow/flow.md", ".claude/workflow/lock.json"])
+def test_a_pipe_never_blocks_doctor(tmp_path, name):
+    root = _project(tmp_path, lock_files={".claude/workflow/flow.md": "0" * 64})
+    f = root / name
+    f.unlink(missing_ok=True)
+    os.mkfifo(f)
+    p = subprocess.run([sys.executable, "-B", str(root / ".claude/workflow/bin/workflow.py"), "doctor", "--json"], cwd=root,
+                       env={**os.environ, "CLAUDE_PROJECT_DIR": str(root), "HOME": str(tmp_path), "PATH": str(_bin(tmp_path))},
+                       capture_output=True, text=True, timeout=60)
+    assert p.returncode == 0, p.stderr
+    assert json.loads(p.stdout)["counts"]["gap"] >= 1
+
+
+def test_a_copy_left_without_its_lock_isnt_told_to_install_the_plugin(tmp_path):
+    root = _project(tmp_path)
+    (root / ".claude/workflow/lock.json").unlink()
+    lines = _lines(_report(tmp_path, root))
+    assert lines["kit.vendor"]["status"] == "gap" and "lock.json" in lines["kit.vendor"]["fix"]
+    assert "kit.plugin" not in lines or "install" not in lines["kit.plugin"]["fix"]
+    # With the plugin on as well: both on.
+    settings = json.loads((root / ".claude/settings.json").read_text())
+    settings["enabledPlugins"] = {vendor.PLUGIN_KEY: True}
+    (root / ".claude/settings.json").write_text(json.dumps(settings))
+    assert _line(tmp_path, root, "kit.plugin")["status"] == "gap"
+
+
+def test_a_copy_older_than_doctor_is_told_to_update_not_to_run_its_doctor(tmp_path):
+    settings = vendor.merge_hooks({})
+    settings["hooks"]["Stop"][0]["hooks"][0]["timeout"] = 99
+    root = _project(tmp_path, settings=settings)
+    cli = root / ".claude/workflow/bin/workflow/cli.py"
+    cli.write_text(cli.read_text().replace('add_parser("doctor"', 'add_parser("not-yet"'))
+    ln = _lines(json.loads(_doctor(tmp_path, root, "--json", cli=CLI).stdout))["kit.hooks"]
+    assert ln["status"] == "cant_check" and "update" in ln["fix"] and "doctor`" not in ln["fix"]
+
+
+def test_the_plugin_turned_off_locally_is_told_where(tmp_path):
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude/settings.json").write_text(json.dumps({"enabledPlugins": {vendor.PLUGIN_KEY: True}}))
+    root = _project(tmp_path, vendored=False, local={"enabledPlugins": {vendor.PLUGIN_KEY: False}})
+    ln = _line(tmp_path, root, "kit.plugin", home=home)
+    assert ln["status"] == "gap" and ".claude/settings.local.json" in ln["fix"] and "install" not in ln["fix"]
+
+
+def test_disable_all_hooks_follows_the_most_specific_file_and_wants_true(tmp_path):
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude/settings.json").write_text(json.dumps({"disableAllHooks": True}))
+    root = _project(tmp_path, local={"disableAllHooks": False})
+    assert "kit.hooks_off" not in _lines(_report(tmp_path, root, home=home))
+    root2 = _project(tmp_path / "two", local={"disableAllHooks": "no"})
+    assert "kit.hooks_off" not in _lines(_report(tmp_path, root2, home=tmp_path / "two" / "home"))
+
+
+def test_a_pre_release_of_the_minimum_is_older_than_it(tmp_path):
+    root = _project(tmp_path)
+    assert _line(tmp_path, root, "computer.claude_code", "--claude-version", "2.1.295-beta.1")["status"] == "gap"
+    assert _line(tmp_path, root, "computer.claude_code", "--claude-version", "2.1.296-beta.1")["status"] == "fine"
+
+
+def test_a_project_folder_that_isnt_there_says_so(tmp_path):
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path / "nowhere"), "HOME": str(tmp_path), "PATH": str(_bin(tmp_path))}
+    p = subprocess.run([sys.executable, "-B", str(CLI), "doctor", "--json"], cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr
+    lines = _lines(json.loads(p.stdout))
+    assert lines["kit.profile"]["status"] == "gap" and "nowhere" in lines["kit.profile"]["message"]
+
+
+def test_an_empty_folder_says_set_the_kit_up_first(tmp_path):
+    root = tmp_path / "empty"
+    root.mkdir()
+    r = _report(tmp_path, root)
+    assert r["lines"][0]["id"] == "kit.profile"
+
+
+# In-process: what the CLI can't reach without waiting ten seconds
+
+
+def _inputs(tmp_path, **kw):
+    from workflow import doctor
+    from workflow.profile import Experience
+
+    return doctor.Inputs(root=tmp_path, kit_root=KIT, profile=None, profile_error=None, experience=Experience(None, "unknown"), **kw)
+
+
+def test_a_hung_command_is_stopped_with_what_it_started(tmp_path, monkeypatch):
+    from workflow import doctor
+
+    monkeypatch.setattr(doctor, "RUN_TIMEOUT", 1)
+    path = _bin(tmp_path, python=None, claude=None)
+    marker = tmp_path / "child.pid"
+    _fake(path, "claude", f"/bin/sleep 30 & echo $! > {marker}; wait")
+    i = _inputs(tmp_path, environ={"PATH": str(path), "HOME": str(tmp_path)})
+    ln = doctor.check_claude_code(i)[0]
+    assert ln.status == "cant_check" and "timed out" in ln.message.developer
+    child = int(marker.read_text())
+    with pytest.raises(ProcessLookupError):
+        for _ in range(50):
+            os.kill(child, 0)
+            import time
+
+            time.sleep(0.1)
+
+
+def test_a_check_that_raises_is_cant_check_without_the_checkouts_path(tmp_path, monkeypatch):
+    from workflow import doctor
+
+    def boom(i):
+        raise PermissionError(f"[Errno 13] Permission denied: '{i.root}/secret/dir'")
+
+    boom = doctor._check("The kit", "kit.boom")(boom)
+    monkeypatch.setattr(doctor, "CHECKS", [boom])
+    r = doctor.report(_inputs(tmp_path))
+    (ln,) = r.lines
+    assert (ln.id, ln.status) == ("kit.boom", "cant_check")
+    assert str(tmp_path) not in ln.message.new and "secret/dir" in ln.message.new

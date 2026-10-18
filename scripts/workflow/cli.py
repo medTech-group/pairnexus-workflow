@@ -234,6 +234,8 @@ def cmd_doctor(a) -> int:
     root = project_root()
     prof, error = None, None
     try:
+        if (root / PROFILE_PATH).exists() and not (root / PROFILE_PATH).is_file():
+            raise ProfileError(f"{PROFILE_PATH} isn't a file")  # a directory, or a pipe that would block the read
         prof = load(root, required=False)
     except ProfileError as e:
         error = str(e)
