@@ -860,9 +860,11 @@ def _more_states(tmp_path):
 
 def test_every_other_state_is_worded_both_ways_too(tmp_path):
     seen = set()
-    for root, path in _more_states(tmp_path):
-        n = _lines(_report(tmp_path, root, path=path, env={"WORKFLOW_EXPERIENCE": "new"}))
-        d = _lines(_report(tmp_path, root, path=path, env={"WORKFLOW_EXPERIENCE": "developer"}))
+    calls = [(root, (), {"path": path, "env": {"WORKFLOW_EXPERIENCE": experience}})
+             for root, path in _more_states(tmp_path) for experience in ("new", "developer")]
+    reports = iter(_each_at_once(tmp_path, _report, calls))
+    for n, d in zip(reports, reports):
+        n, d = _lines(n), _lines(d)
         assert set(n) == set(d)
         for id_ in n:
             if id_ == "kit.experience":

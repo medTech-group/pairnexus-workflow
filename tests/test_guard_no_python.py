@@ -7,6 +7,7 @@ run by the current Python, as #53's tests do), missing, and failing (a stub
 exiting non-zero). Then what set-up installs (seam 3) and the docs (seam 4).
 """
 
+import functools
 import json
 import os
 import re
@@ -17,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import copy_kit_package
+from conftest import at_once, copy_kit_package
 from workflow import fallback, modes, vendor
 
 KIT = Path(__file__).resolve().parents[1]
@@ -124,16 +125,12 @@ def _decision(p):
 @pytest.mark.parametrize("kind", KINDS)
 def test_attended_push_and_merge_are_asked_or_refused(tmp_path, layout, kind):
     s = Setup(tmp_path, layout, kind)
-    for command in (PUSH, MERGE):
-        for mode in ASKING:
-            assert _decision(s.run("guard", _bash(command, mode))) == "ask", (command, mode)
-        for mode in NEVER_ASKING:
-            assert _decision(s.run("guard", _bash(command, mode))) == "deny", (command, mode)
-    for tool in MCP_TOOLS:
-        for mode in ASKING:
-            assert _decision(s.run("guard", _mcp(tool, mode))) == "ask", (tool, mode)
-        for mode in NEVER_ASKING:
-            assert _decision(s.run("guard", _mcp(tool, mode))) == "deny", (tool, mode)
+    cases = [(what, mode, want, event(what, mode))
+             for what, event in [(c, _bash) for c in (PUSH, MERGE)] + [(t, _mcp) for t in MCP_TOOLS]
+             for modes_, want in ((ASKING, "ask"), (NEVER_ASKING, "deny")) for mode in modes_]
+    runs = at_once(functools.partial(s.run, "guard", ev) for *_, ev in cases)
+    for (what, mode, want, _), p in zip(cases, runs):
+        assert _decision(p) == want, (what, mode)
 
 
 @pytest.mark.parametrize("layout", LAYOUTS)
