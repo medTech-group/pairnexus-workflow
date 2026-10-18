@@ -1921,8 +1921,9 @@ def _number(issue: dict) -> int | None:
 def _read_runs(i: Inputs) -> _Answer:
     """The runs, as `charter estimate --runs` reads them: a list of issues,
     the GitHub MCP tools' wrapped list or search's, or pages of any of them.
-    An issue is an object with a number or a list of labels; one without labels counts
-    (it was fetched by its label), a pull request doesn't."""
+    An issue is an object with a number or labels, whose labels, if given,
+    are a list; one without labels counts (it was fetched by its label), a
+    pull request doesn't."""
     if i.runs_file is not None:
         got = _given(i, i.runs_file, "--runs", Words(
             f"Ask Claude to fetch the issues labelled `{RUN_LABEL}` from GitHub again, or leave out --runs to read them with `gh`.",

@@ -647,7 +647,8 @@ def test_entries_that_happen_to_have_an_environments_key_arent_pages(tmp_path):
 
 
 def test_two_long_names_alike_in_their_ends_are_both_named_in_the_note(tmp_path):
-    a, b = "a" * 30 + "x" * 30 + "-env-" + "z" * 30, "a" * 30 + "y" * 30 + "-env-" + "z" * 30
+    # They differ only where a long name is cut, so both are shown alike.
+    a, b = "a" * 40 + "x" * 10 + "z" * 40, "a" * 40 + "y" * 10 + "z" * 40
     profile = NAMED.replace("workflow-ticket", a).replace("workflow-conductor", b)
     ln = _cloud(tmp_path, _project(tmp_path, profile=profile), envs=None, env=DEV)["cloud.contents"]
     assert ln["fix"].count("`") == 4, ln  # each named once in the fix
@@ -663,3 +664,14 @@ def test_labels_that_arent_a_list_cant_be_read(tmp_path, labels):
 def test_one_missing_has_a_fix_for_one(tmp_path):
     ln = _environments_line(tmp_path, _project(tmp_path), envs=_envs("t"), env=DEV)
     assert "guides it" in ln["fix"] and "guides both" not in ln["fix"], ln
+
+
+def test_an_incomplete_list_names_an_inactive_one_as_already_missing(tmp_path):
+    envs = _envs("t", has_more=True)
+    envs["environments"][0]["state"] = "archived"
+    root = _project(tmp_path)
+    new = _environments_line(tmp_path, root, envs=envs, env=NEW)
+    dev = _environments_line(tmp_path, root, envs=envs, env=DEV)
+    for ln in (new, dev):
+        assert ln["status"] == "cant_check" and "not active" in ln["message"] and "`c`" in ln["message"], ln
+    assert "for the missing one" in new["fix"] and "Fix the other first" in dev["fix"], (new, dev)
