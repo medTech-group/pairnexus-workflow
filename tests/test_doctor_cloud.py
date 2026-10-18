@@ -4,7 +4,6 @@ environment holds. Seam 1 of #34: the CLI, with recorded environment JSON
 (`--environments`, as `list_environments` returns it), recorded issue JSON
 (`--runs`, as the GitHub API returns it) and a fake `gh` on the PATH."""
 
-import copy
 import json
 import os
 import subprocess
@@ -30,7 +29,7 @@ def _envs(*names, has_more=False):
                               "created_at": "2026-10-01T09:00:00Z"} for k, n in enumerate(names)], "has_more": has_more}
 
 
-def _runs(tmp_path, issues):
+def _runs_file(tmp_path, issues):
     """A `--runs` file, outside the checkout."""
     d = tmp_path / "runs-input"
     d.mkdir(parents=True, exist_ok=True)
@@ -44,7 +43,7 @@ def _cloud(tmp_path, root, *args, envs=ENVIRONMENTS, **kw):
     return {ln["id"]: ln for ln in r["lines"] if ln["group"] == "Cloud"}
 
 
-def _main(tmp_path, root, *args, **kw):
+def _environments_line(tmp_path, root, *args, **kw):
     return _cloud(tmp_path, root, *args, **kw)["cloud.environments"]
 
 
@@ -64,7 +63,7 @@ def _gh_runs(tmp_path, issues, **kw):
 
 
 def test_both_environments_found_is_fine(tmp_path):
-    ln = _main(tmp_path, _project(tmp_path))
+    ln = _environments_line(tmp_path, _project(tmp_path))
     assert (ln["status"], ln["fix"], ln["offer"]) == ("fine", "", None), ln
     assert "`t`" in ln["message"] and "`c`" in ln["message"], ln
 
@@ -95,7 +94,7 @@ def test_both_found_never_reads_whether_a_run_was_made(tmp_path):
 def test_neither_found_with_no_run_made_is_a_note_offering_set_up_unattended_runs(tmp_path):
     root = _project(tmp_path)
     for env in (NEW, DEV):
-        ln = _main(tmp_path, root, *_runs(tmp_path, [OTHER_ISSUE]), envs=_envs("Default"), path=_no_gh(tmp_path), env=env)
+        ln = _environments_line(tmp_path, root, *_runs_file(tmp_path, [OTHER_ISSUE]), envs=_envs("Default"), path=_no_gh(tmp_path), env=env)
         assert (ln["status"], ln["offer"]) == ("note", "set_up_unattended_runs"), ln
         assert "already made a run" not in ln["message"] and "gap" not in ln["message"], ln
         assert ln["fix"]
@@ -103,10 +102,10 @@ def test_neither_found_with_no_run_made_is_a_note_offering_set_up_unattended_run
 
 def test_neither_found_with_runs_unknown_is_the_same_note_with_the_already_made_a_run_wording(tmp_path):
     root = _project(tmp_path)
-    ln = _main(tmp_path, root, envs=_envs("Default"), path=_no_gh(tmp_path), env=NEW)
+    ln = _environments_line(tmp_path, root, envs=_envs("Default"), path=_no_gh(tmp_path), env=NEW)
     assert (ln["status"], ln["offer"]) == ("note", "set_up_unattended_runs"), ln
     assert "If you've already made a run, this is a gap" in ln["message"], ln
-    dev = _main(tmp_path, root, envs=_envs("Default"), path=_no_gh(tmp_path), env=DEV)
+    dev = _environments_line(tmp_path, root, envs=_envs("Default"), path=_no_gh(tmp_path), env=DEV)
     assert (dev["status"], dev["offer"]) == ("note", "set_up_unattended_runs"), dev
     assert "gap" in dev["message"] and "workflow:run" in dev["message"], dev
 
@@ -115,15 +114,15 @@ def test_runs_unknown_says_why(tmp_path):
     root = _project(tmp_path)
     signed_out = _bin(tmp_path)
     fake_gh.write(signed_out, gh_routes(), signed_in=False)
-    ln = _main(tmp_path, root, envs=_envs(), path=signed_out, env=DEV)
+    ln = _environments_line(tmp_path, root, envs=_envs(), path=signed_out, env=DEV)
     assert ln["status"] == "note" and "signed in" in ln["message"], ln
     assert "--runs" in ln["fix"], ln
-    ln = _main(tmp_path, root, envs=_envs(), path=_no_gh(tmp_path), env=DEV)
+    ln = _environments_line(tmp_path, root, envs=_envs(), path=_no_gh(tmp_path), env=DEV)
     assert "no `gh`" in ln["message"] and "--runs" in ln["message"], ln
 
 
 def test_an_empty_list_of_environments_is_neither_found(tmp_path):
-    ln = _main(tmp_path, _project(tmp_path), *_runs(tmp_path, []), envs=_envs())
+    ln = _environments_line(tmp_path, _project(tmp_path), *_runs_file(tmp_path, []), envs=_envs())
     assert (ln["status"], ln["offer"]) == ("note", "set_up_unattended_runs"), ln
 
 
@@ -134,7 +133,7 @@ def test_an_empty_list_of_environments_is_neither_found(tmp_path):
 def test_one_found_is_a_gap_naming_the_other(tmp_path, listed, missing, present):
     root = _project(tmp_path)
     for env in (NEW, DEV):
-        ln = _main(tmp_path, root, envs=_envs(*listed), path=_no_gh(tmp_path), env=env)
+        ln = _environments_line(tmp_path, root, envs=_envs(*listed), path=_no_gh(tmp_path), env=env)
         assert ln["status"] == "gap", ln
         assert f"`{missing}`" in ln["message"], ln
         assert ln["offer"] == "set_up_unattended_runs"
@@ -143,7 +142,7 @@ def test_one_found_is_a_gap_naming_the_other(tmp_path, listed, missing, present)
 
 def test_one_found_doesnt_wait_on_whether_a_run_was_made(tmp_path):
     path = _bin(tmp_path)
-    ln = _main(tmp_path, _project(tmp_path), envs=_envs("t"), path=path)
+    ln = _environments_line(tmp_path, _project(tmp_path), envs=_envs("t"), path=path)
     assert ln["status"] == "gap"
     assert not [p for p in fake_gh.FakeGh(path).paths() if "issues" in p]
 
@@ -151,7 +150,7 @@ def test_one_found_doesnt_wait_on_whether_a_run_was_made(tmp_path):
 def test_neither_found_once_a_run_has_been_made_is_a_gap_naming_both(tmp_path):
     root = _project(tmp_path)
     for env in (NEW, DEV):
-        ln = _main(tmp_path, root, *_runs(tmp_path, [OTHER_ISSUE, RUN_ISSUE]), envs=_envs("Default"), path=_no_gh(tmp_path), env=env)
+        ln = _environments_line(tmp_path, root, *_runs_file(tmp_path, [OTHER_ISSUE, RUN_ISSUE]), envs=_envs("Default"), path=_no_gh(tmp_path), env=env)
         assert ln["status"] == "gap", ln
         assert "`t`" in ln["message"] and "`c`" in ln["message"], ln
         assert "#185" in ln["message"], ln
@@ -160,7 +159,7 @@ def test_neither_found_once_a_run_has_been_made_is_a_gap_naming_both(tmp_path):
 def test_a_run_made_is_read_with_gh_when_no_file_is_given(tmp_path):
     root = _project(tmp_path)
     path = _gh_runs(tmp_path, [RUN_ISSUE])
-    ln = _main(tmp_path, root, envs=_envs("Default"), path=path)
+    ln = _environments_line(tmp_path, root, envs=_envs("Default"), path=path)
     assert ln["status"] == "gap" and "#185" in ln["message"], ln
     gh = fake_gh.FakeGh(path)
     asked = [p for p in gh.paths() if p.startswith("repos/acme/demo/issues")]
@@ -171,37 +170,41 @@ def test_a_run_made_is_read_with_gh_when_no_file_is_given(tmp_path):
 
 
 def test_no_run_read_with_gh_is_the_note(tmp_path):
-    ln = _main(tmp_path, _project(tmp_path), envs=_envs("Default"), path=_gh_runs(tmp_path, []))
+    ln = _environments_line(tmp_path, _project(tmp_path), envs=_envs("Default"), path=_gh_runs(tmp_path, []))
     assert (ln["status"], ln["offer"]) == ("note", "set_up_unattended_runs") and "already made a run" not in ln["message"], ln
 
 
 def test_the_runs_file_wins_over_gh(tmp_path):
     root = _project(tmp_path)
-    ln = _main(tmp_path, root, *_runs(tmp_path, []), envs=_envs(), path=_gh_runs(tmp_path, [RUN_ISSUE]))
+    ln = _environments_line(tmp_path, root, *_runs_file(tmp_path, []), envs=_envs(), path=_gh_runs(tmp_path, [RUN_ISSUE]))
     assert ln["status"] == "note", ln
-    ln = _main(tmp_path, root, *_runs(tmp_path, [RUN_ISSUE]), envs=_envs(), path=_gh_runs(tmp_path, []))
+    ln = _environments_line(tmp_path, root, *_runs_file(tmp_path, [RUN_ISSUE]), envs=_envs(), path=_gh_runs(tmp_path, []))
     assert ln["status"] == "gap", ln
 
 
 @pytest.mark.parametrize("issues", [
     [[OTHER_ISSUE], [RUN_ISSUE]],  # pages, as `gh api --paginate --slurp` prints them
+    {"issues": [RUN_ISSUE], "pageInfo": {"hasNextPage": False}},  # the GitHub MCP tools' list
+    {"total_count": 1, "items": [RUN_ISSUE]},  # search's
+    [{"number": 185, "title": "Run 2026-10-18"}],  # fetched by its label, without the labels
     [{**RUN_ISSUE, "labels": ["workflow:run"]}],  # labels as names
     [{**RUN_ISSUE, "labels": [{"name": "Workflow:Run"}]}],  # GitHub's labels are matched without case
 ])
 def test_the_runs_file_takes_issues_as_the_github_api_returns_them(tmp_path, issues):
-    ln = _main(tmp_path, _project(tmp_path), *_runs(tmp_path, issues), envs=_envs(), path=_no_gh(tmp_path))
+    ln = _environments_line(tmp_path, _project(tmp_path), *_runs_file(tmp_path, issues), envs=_envs(), path=_no_gh(tmp_path))
     assert ln["status"] == "gap", ln
 
 
 def test_a_pull_request_labelled_workflow_run_isnt_a_run(tmp_path):
     pr = {**RUN_ISSUE, "pull_request": {"url": "https://api.github.com/repos/acme/demo/pulls/185"}}
-    ln = _main(tmp_path, _project(tmp_path), *_runs(tmp_path, [pr]), envs=_envs(), path=_no_gh(tmp_path))
+    ln = _environments_line(tmp_path, _project(tmp_path), *_runs_file(tmp_path, [pr]), envs=_envs(), path=_no_gh(tmp_path))
     assert ln["status"] == "note" and "already made a run" not in ln["message"], ln
 
 
-@pytest.mark.parametrize("text, why", [("{not json", "valid JSON"), ('{"number": 1}', "list"), ("[1, 2]", "issue")])
+@pytest.mark.parametrize("text, why", [("{not json", "runs.json: it isn't valid JSON"), ('"runs"', "--runs: it isn't a list of issues"),
+                                       ("[1, 2]", "--runs: an entry isn't an issue")])
 def test_a_runs_file_that_cant_be_read_is_runs_unknown_saying_why(tmp_path, text, why):
-    ln = _main(tmp_path, _project(tmp_path), *_runs(tmp_path, text), envs=_envs(), path=_no_gh(tmp_path), env=DEV)
+    ln = _environments_line(tmp_path, _project(tmp_path), *_runs_file(tmp_path, text), envs=_envs(), path=_no_gh(tmp_path), env=DEV)
     assert ln["status"] == "note" and why in ln["message"], ln
     assert "--runs" in ln["message"]
 
@@ -211,20 +214,20 @@ def test_a_runs_file_that_cant_be_read_is_runs_unknown_saying_why(tmp_path, text
 
 def test_a_name_that_differs_only_by_a_typo_is_not_found(tmp_path):
     root = _project(tmp_path, profile=NAMED)
-    ln = _main(tmp_path, root, envs=_envs("workflow-tickt", "workflow-conductor"), path=_no_gh(tmp_path))
+    ln = _environments_line(tmp_path, root, envs=_envs("workflow-tickt", "workflow-conductor"), path=_no_gh(tmp_path))
     assert ln["status"] == "gap", ln
     assert "`workflow-ticket`" in ln["message"] and "`workflow-tickt`" in ln["message"], ln
 
 
 @pytest.mark.parametrize("listed", [("Workflow-Ticket", "workflow-conductor"), ("workflow-ticket ", "workflow-conductor")])
 def test_a_name_that_differs_by_case_or_a_space_is_not_found(tmp_path, listed):
-    ln = _main(tmp_path, _project(tmp_path, profile=NAMED), envs=_envs(*listed), path=_no_gh(tmp_path))
+    ln = _environments_line(tmp_path, _project(tmp_path, profile=NAMED), envs=_envs(*listed), path=_no_gh(tmp_path))
     assert ln["status"] == "gap" and "`workflow-ticket`" in ln["message"], ln
 
 
 def test_neither_found_with_typos_still_names_the_close_ones(tmp_path):
     root = _project(tmp_path, profile=NAMED)
-    ln = _main(tmp_path, root, *_runs(tmp_path, []), envs=_envs("workflow-tickt", "workflow-condutor"), path=_no_gh(tmp_path))
+    ln = _environments_line(tmp_path, root, *_runs_file(tmp_path, []), envs=_envs("workflow-tickt", "workflow-condutor"), path=_no_gh(tmp_path))
     assert ln["status"] == "note" and "`workflow-tickt`" in ln["message"] and "`workflow-condutor`" in ln["message"], ln
 
 
@@ -234,7 +237,7 @@ def test_neither_found_with_typos_still_names_the_close_ones(tmp_path):
 def test_no_environments_file_is_cant_check_saying_only_a_cloud_session_can(tmp_path):
     root = _project(tmp_path)
     for env in (NEW, DEV):
-        ln = _main(tmp_path, root, envs=None, env=env)
+        ln = _environments_line(tmp_path, root, envs=None, env=env)
         assert (ln["status"], ln["offer"]) == ("cant_check", None), ln
         assert "cloud session" in ln["message"], ln
         assert "cloud session to check the set-up" in ln["fix"], ln
@@ -242,7 +245,7 @@ def test_no_environments_file_is_cant_check_saying_only_a_cloud_session_can(tmp_
 
 def test_no_environments_file_never_asks_gh(tmp_path):
     path = _bin(tmp_path)
-    _main(tmp_path, _project(tmp_path), envs=None, path=path)
+    _environments_line(tmp_path, _project(tmp_path), envs=None, path=path)
     assert not [p for p in fake_gh.FakeGh(path).paths() if "issues" in p or "environment" in p]
 
 
@@ -260,26 +263,26 @@ def _env_file(tmp_path, text):
     ('{"environments": "t"}', "list_environments"),
 ])
 def test_an_environments_file_that_cant_be_read_is_cant_check_saying_why(tmp_path, text, why):
-    ln = _main(tmp_path, _project(tmp_path), *_env_file(tmp_path, text), envs=None, env=DEV)
+    ln = _environments_line(tmp_path, _project(tmp_path), *_env_file(tmp_path, text), envs=None, env=DEV)
     assert ln["status"] == "cant_check" and why in ln["message"], ln
     assert "--environments" in ln["fix"], ln
 
 
 def test_a_missing_environments_file_is_cant_check(tmp_path):
-    ln = _main(tmp_path, _project(tmp_path), "--environments", str(tmp_path / "nowhere.json"), envs=None)
+    ln = _environments_line(tmp_path, _project(tmp_path), "--environments", str(tmp_path / "nowhere.json"), envs=None)
     assert ln["status"] == "cant_check" and "isn't there" in ln["message"], ln
 
 
 def test_the_environments_as_a_bare_list_are_read_too(tmp_path):
-    ln = _main(tmp_path, _project(tmp_path), *_env_file(tmp_path, json.dumps(_envs("t", "c")["environments"])), envs=None)
+    ln = _environments_line(tmp_path, _project(tmp_path), *_env_file(tmp_path, json.dumps(_envs("t", "c")["environments"])), envs=None)
     assert ln["status"] == "fine", ln
 
 
 def test_a_list_with_more_to_come_cant_tell_a_missing_one(tmp_path):
     root = _project(tmp_path)
-    ln = _main(tmp_path, root, envs=_envs("t", has_more=True), path=_no_gh(tmp_path))
+    ln = _environments_line(tmp_path, root, envs=_envs("t", has_more=True), path=_no_gh(tmp_path))
     assert ln["status"] == "cant_check" and "`c`" in ln["message"], ln
-    assert _main(tmp_path, root, envs=_envs("t", "c", has_more=True))["status"] == "fine"
+    assert _environments_line(tmp_path, root, envs=_envs("t", "c", has_more=True))["status"] == "fine"
 
 
 def test_environments_from_standard_input(tmp_path):
@@ -304,13 +307,13 @@ def test_only_one_file_can_be_standard_input(tmp_path):
 
 def test_an_environment_the_profile_doesnt_name_is_a_gap_saying_so(tmp_path):
     profile = _prof("ruleset = true\n").replace('conductor_environment = "c"\n', "")
-    ln = _main(tmp_path, _project(tmp_path, profile=profile), envs=_envs("t", "c"), env=DEV)
+    ln = _environments_line(tmp_path, _project(tmp_path, profile=profile), envs=_envs("t", "c"), env=DEV)
     assert ln["status"] == "gap" and "run.conductor_environment" in ln["message"], ln
 
 
 def test_neither_named_nor_listed_with_no_run_is_the_note(tmp_path):
     profile = _prof("ruleset = true\n").replace('ticket_environment = "t"\n', "").replace('conductor_environment = "c"\n', "")
-    ln = _main(tmp_path, _project(tmp_path, profile=profile), *_runs(tmp_path, []), envs=_envs("Default"))
+    ln = _environments_line(tmp_path, _project(tmp_path, profile=profile), *_runs_file(tmp_path, []), envs=_envs("Default"))
     assert (ln["status"], ln["offer"]) == ("note", "set_up_unattended_runs"), ln
 
 
@@ -326,14 +329,14 @@ def test_no_profile_waits_on_it(tmp_path):
 def _states(tmp_path):
     """Projects and inputs whose Cloud lines take every status between them."""
     yield _project(tmp_path / "a"), [], ENVIRONMENTS, None
-    yield _project(tmp_path / "b"), _runs(tmp_path / "b", []), _envs("Default"), _no_gh(tmp_path / "b")
+    yield _project(tmp_path / "b"), _runs_file(tmp_path / "b", []), _envs("Default"), _no_gh(tmp_path / "b")
     yield _project(tmp_path / "c"), [], _envs(), _no_gh(tmp_path / "c")
     yield _project(tmp_path / "d"), [], _envs("t"), _no_gh(tmp_path / "d")
-    yield _project(tmp_path / "e"), _runs(tmp_path / "e", [RUN_ISSUE]), _envs(), _no_gh(tmp_path / "e")
+    yield _project(tmp_path / "e"), _runs_file(tmp_path / "e", [RUN_ISSUE]), _envs(), _no_gh(tmp_path / "e")
     yield _project(tmp_path / "f"), [], None, None
     yield _project(tmp_path / "g", profile=None), [], ENVIRONMENTS, None
     yield _project(tmp_path / "h"), [], _envs("t", has_more=True), None
-    yield _project(tmp_path / "i", profile=NAMED), _runs(tmp_path / "i", "[1]"), _envs("workflow-tickt"), _no_gh(tmp_path / "i")
+    yield _project(tmp_path / "i", profile=NAMED), _runs_file(tmp_path / "i", "[1]"), _envs("workflow-tickt"), _no_gh(tmp_path / "i")
     yield _project(tmp_path / "j"), _env_file(tmp_path / "j", "{nope"), None, None
 
 
@@ -378,10 +381,13 @@ def test_strict_passes_on_the_notes_and_fails_on_the_gaps_and_cant_check(tmp_pat
     ok = _no_gh(tmp_path)
     fake_gh.write(ok, gh_routes())
     assert _doctor(tmp_path, root, "--strict", path=ok).returncode == 0  # both found, and the contents note
-    assert _doctor(tmp_path, root, "--strict", *_runs(tmp_path, []), environments=_envs("Default"), path=ok).returncode == 0
-    assert _doctor(tmp_path, root, "--strict", environments=_envs("Default"), path=_gh_runs(tmp_path / "unknown", [])).returncode == 0
+    assert _doctor(tmp_path, root, "--strict", *_runs_file(tmp_path, []), environments=_envs("Default"), path=ok).returncode == 0
+    # Runs unknown: this `gh` reads the GitHub lines but has no answer for the issues.
+    unknown = _environments_line(tmp_path, root, envs=_envs("Default"), path=ok)
+    assert unknown["status"] == "note" and "If you've already made a run" in unknown["message"], unknown
+    assert _doctor(tmp_path, root, "--strict", environments=_envs("Default"), path=ok).returncode == 0
     assert _doctor(tmp_path, root, "--strict", environments=_envs("t"), path=ok).returncode == 1
-    assert _doctor(tmp_path, root, "--strict", *_runs(tmp_path, [RUN_ISSUE]), environments=_envs(), path=ok).returncode == 1
+    assert _doctor(tmp_path, root, "--strict", *_runs_file(tmp_path, [RUN_ISSUE]), environments=_envs(), path=ok).returncode == 1
     assert _doctor(tmp_path, root, "--strict", environments=None, path=ok).returncode == 1
 
 
@@ -415,6 +421,95 @@ def test_the_help_names_the_files():
     assert "--environments" in p.stdout and "--runs" in p.stdout
 
 
-def test_the_environments_fixture_is_list_environments_shape():
-    # The default every doctor test gets: both of the profile's environments.
-    assert {e["name"] for e in copy.deepcopy(ENVIRONMENTS)["environments"]} >= {"t", "c"}
+
+
+# Round 1 of the review
+
+
+def test_one_environment_named_for_both_roles_is_a_gap(tmp_path):
+    profile = _prof("ruleset = true\n").replace('conductor_environment = "c"', 'conductor_environment = "t"')
+    root = _project(tmp_path, profile=profile)
+    for env in (NEW, DEV):
+        ln = _environments_line(tmp_path, root, envs=_envs("t"), env=env)
+        assert (ln["status"], ln["offer"]) == ("gap", "set_up_unattended_runs"), ln
+        assert "WORKFLOW_ROLE=ticket" in ln["message"] and "WORKFLOW_ROLE=conductor" in ln["message"], ln
+    assert _environments_line(tmp_path, root, envs=None)["status"] == "gap"  # the profile alone says so
+
+
+def test_an_incomplete_list_with_one_name_unset_cant_tell_the_other(tmp_path):
+    profile = _prof("ruleset = true\n").replace('ticket_environment = "t"\n', "")
+    ln = _environments_line(tmp_path, _project(tmp_path, profile=profile), *_runs_file(tmp_path, []), envs=_envs("Default", has_more=True))
+    assert ln["status"] == "cant_check" and "`c`" in ln["message"], ln
+
+
+@pytest.mark.parametrize("more", ["true", 1, None])
+def test_has_more_that_isnt_true_or_false_is_the_wrong_shape(tmp_path, more):
+    envs = {**_envs("t"), "has_more": more}
+    ln = _environments_line(tmp_path, _project(tmp_path), envs=envs, path=_no_gh(tmp_path))
+    if more is None:
+        assert ln["status"] == "gap", ln  # null: as if absent
+    else:
+        assert ln["status"] == "cant_check" and "shape" in ln["message"], ln
+
+
+def test_an_environment_that_isnt_active_isnt_found(tmp_path):
+    envs = _envs("t", "c")
+    envs["environments"][1]["state"] = "archived"
+    root = _project(tmp_path)
+    for env in (NEW, DEV):
+        ln = _environments_line(tmp_path, root, envs=envs, path=_no_gh(tmp_path), env=env)
+        assert ln["status"] == "gap" and "`c`" in ln["message"] and "`archived`" in ln["message"] and "active" in ln["message"], ln
+
+
+def test_an_environment_listed_twice_counts_when_one_is_active(tmp_path):
+    envs = _envs("t", "c", "c")
+    envs["environments"][1]["state"] = "archived"
+    assert _environments_line(tmp_path, _project(tmp_path), envs=envs)["status"] == "fine"
+
+
+def test_names_are_shown_exactly(tmp_path):
+    long_ = "x" * 45
+    profile = NAMED.replace("workflow-ticket", long_ + "-ticket").replace("workflow-conductor", long_ + "-conductor")
+    ln = _environments_line(tmp_path, _project(tmp_path, profile=profile), envs=_envs(long_ + "-ticket", long_ + "-conductorZ"), path=_no_gh(tmp_path))
+    assert ln["status"] == "gap" and "-conductor`" in ln["message"] and "-conductorZ`" in ln["message"], ln
+    root = _project(tmp_path / "s", profile=NAMED)
+    ln = _environments_line(tmp_path / "s", root, envs=_envs("workflow-ticket ", "work`flow-conductor"), path=_no_gh(tmp_path / "s"))
+    assert '`"workflow-ticket "`' in ln["message"] and "work\\u0060flow-conductor" in ln["message"], ln
+
+
+def test_a_control_character_or_half_a_surrogate_pair_never_reaches_the_terminal(tmp_path):
+    root = _project(tmp_path, profile=NAMED)
+    envs = '{"environments": [{"name": "\\u001b[2Jworkflow-ticket"}, {"name": "workflow-conductor\\ud800"}]}'
+    args = _env_file(tmp_path, envs)
+    p = _doctor(tmp_path, root, *args, environments=None, path=_no_gh(tmp_path), env={**NEW, "PYTHONIOENCODING": "utf-8"})
+    assert p.returncode == 0, p.stderr
+    assert "\x1b" not in p.stdout and "\\u001b" in p.stdout and "\\ud800" in p.stdout, p.stdout
+
+
+def test_an_empty_file_says_it_is_empty(tmp_path):
+    ln = _environments_line(tmp_path, _project(tmp_path), *_env_file(tmp_path, ""), envs=None)
+    assert ln["status"] == "cant_check" and "it is empty" in ln["message"], ln
+
+
+def test_a_run_shown_twice_is_named_once(tmp_path):
+    ln = _environments_line(tmp_path, _project(tmp_path), *_runs_file(tmp_path, [[RUN_ISSUE], [RUN_ISSUE]]), envs=_envs(), path=_no_gh(tmp_path))
+    assert ln["message"].count("#185") == 1, ln
+
+
+def test_a_run_without_a_number_is_worded_once(tmp_path):
+    ln = _environments_line(tmp_path, _project(tmp_path), *_runs_file(tmp_path, [{"labels": ["workflow:run"]}]), envs=_envs(), path=_no_gh(tmp_path), env=DEV)
+    assert ln["status"] == "gap" and ln["message"].count("labelled") == 1, ln
+
+
+def test_the_runs_read_shares_githubs_time_budget(tmp_path):
+    """A `gh` that never answers: the GitHub lines and the runs read wait
+    60 seconds in all, not 60 and then 30 more."""
+    import time
+
+    path = _no_gh(tmp_path)
+    (path / "gh").write_text("#!/bin/sh\nexec sleep 300\n")
+    (path / "gh").chmod(0o755)
+    start = time.monotonic()
+    ln = _environments_line(tmp_path, _project(tmp_path), envs=_envs(), path=path)
+    assert time.monotonic() - start < 80
+    assert ln["status"] == "note" and "If you've already made a run" in ln["message"], ln

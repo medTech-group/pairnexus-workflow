@@ -41,7 +41,9 @@ import textwrap
 import time
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
+from typing import NamedTuple
 
+from . import estimate as estimate_mod
 from . import posts as posts_mod
 from . import profile as profile_mod
 from . import protection as protection_mod
@@ -140,6 +142,7 @@ class Inputs:
     _github: _GitHub | None = field(default=None, repr=False)  # what the GitHub lines read, read once
     _environments: _Answer | None = field(default=None, repr=False)  # the environments listed, read once
     _runs: _Answer | None = field(default=None, repr=False)  # the `workflow:run` issues, read once
+    _gh_until: float | None = field(default=None, repr=False)  # when doctor stops waiting on GitHub (`_gh_deadline`)
 
     @property
     def vendored(self) -> bool:
@@ -224,8 +227,10 @@ def _dotted(v) -> str:
 
 
 def _shown(value: str, most: int = 40) -> str:
-    """A value someone gave, safe on one line in a code span."""
+    """A value someone gave, safe on one line in a code span: what can't be
+    printed (a control character, half a surrogate pair) escaped."""
     v = " ".join(value.replace("`", "'").split())
+    v = "".join(ch if ch.isprintable() else f"\\u{ord(ch):04x}" for ch in v)
     return v if len(v) <= most else v[:most] + "…"
 
 
@@ -260,6 +265,8 @@ def _read_text(root: Path, rel: str | Path) -> tuple[str | None, str | None]:
 
 def _parse_json(text: str, loads=json.loads):
     """JSON text's value, and why it can't be read."""
+    if not text.strip():
+        return None, "it is empty"
     try:
         return loads(text.removeprefix("\ufeff")), None
     except json.JSONDecodeError as e:
@@ -1045,7 +1052,7 @@ def _gh(i: Inputs, path: str, deadline: float, flag: str, paginate: bool = False
     if ran.state == "failed" and _SIGNED_OUT.search(ran.err):
         return _Answer(why=Words("`gh` isn't signed in to GitHub", f"`gh api` isn't signed in ({err})"), fix=_sign_in(False, give))
     repo = i.profile.repo
-    if ran.state == "failed" and "HTTP 404" in ran.err and shown in (f"repos/{repo}", f"repos/{repo}/rulesets", f"repos/{repo}/issues"):
+    if ran.state == "failed" and "HTTP 404" in ran.err and shown in (f"repos/{repo}", f"repos/{repo}/rulesets"):
         return _Answer(why=Words(f"GitHub has no repository `{repo}` that your `gh` can see", f"`gh api {shown}` failed: {err}"), fix=Words(
             f"Check the repository's name in the kit's profile (`project.repo` in {PROFILE}) and that your GitHub account can see it; or ask a cloud session to check the set-up.",
             f"Check project.repo ({repo}) and gh's access to it, or give {give}.",
@@ -1162,6 +1169,14 @@ def _bypass_seen(rulesets):
     return [[seen(r) for r in x] if isinstance(x, list) else seen(x) for x in rulesets]
 
 
+def _gh_deadline(i: Inputs) -> float:
+    """When doctor stops waiting on GitHub: `GH_BUDGET` after its first
+    read, for all of them (the GitHub lines' and the runs')."""
+    if i._gh_until is None:
+        i._gh_until = time.monotonic() + GH_BUDGET
+    return i._gh_until
+
+
 def _github(i: Inputs) -> _GitHub | None:
     """GitHub's answers and the read-back, once for every line; None with no
     readable profile (the lines then wait on it)."""
@@ -1170,7 +1185,7 @@ def _github(i: Inputs) -> _GitHub | None:
     if i._github is not None:
         return i._github
     base = i.profile.base_branch
-    deadline = time.monotonic() + GH_BUDGET
+    deadline = _gh_deadline(i)
     gh = i._github = _GitHub()
     settings = _given(i, i.repo_file, "--repo") if i.repo_file is not None else _gh(i, f"repos/{i.profile.repo}", deadline, "--repo")
     accepted = None  # the settings the read-back took
@@ -1795,26 +1810,44 @@ def check_codeowners(i: Inputs) -> list[Line]:
 # `list_environments` returns them: only a cloud session can list them, so they
 # only ever come from a file. When neither is listed, whether a run has been
 # made (an issue labelled `workflow:run`) says whether that is a choice or a
-# gap: from --runs, else `gh api` as the GitHub lines read GitHub. Then always
-# the note that nothing can read what an environment holds.
+# gap: from --runs, read as `charter estimate --runs` reads it, else `gh api`
+# as the GitHub lines read GitHub, within the same time budget. Then always the
+# note that nothing can read what an environment holds.
 
-RUN_LABEL = "workflow:run"
+RUN_LABEL = estimate_mod.RUN_LABEL
 # The file doctor takes instead of `gh` for the runs, as a developer's fix names it.
 GIVE_RUNS = f"--runs (GET repos/<repo>/issues?labels={RUN_LABEL}&state=all)"
 SET_UP_RUNS = OFFERS["set_up_unattended_runs"]
 # How close a listed name must be to the profile's to be named as a likely typo.
 CLOSE = 0.8
-# What each environment is for, and its profile key.
-ROLES = (("ticket", "run.ticket_environment", "ticket sessions"), ("conductor", "run.conductor_environment", "the conductor"))
+
+
+class _Role(NamedTuple):
+    """An environment the profile names: its key, what it's for, and its
+    name (empty when the profile doesn't name it)."""
+
+    key: str
+    purpose: str
+    name: str
+
+
+def _roles(i: Inputs) -> tuple[_Role, _Role]:
+    p = i.profile
+    return (_Role("run.ticket_environment", "ticket sessions", p.ticket_environment),
+            _Role("run.conductor_environment", "the conductor", p.conductor_environment))
 
 
 @dataclass
 class _Listed:
-    """The environments' names as given, and whether the list goes on
-    (`has_more`), so a name not in it may still be there."""
+    """The environments given: each one's state by name ("" when its entry
+    has none), and whether the list goes on (`has_more`), so a name not in it
+    may still be there."""
 
-    names: list[str]
+    states: dict[str, str]
     partial: bool
+
+    def active(self, name: str) -> bool:
+        return self.states.get(name) in ("", "active")
 
 
 def _environments(i: Inputs) -> _Answer | None:
@@ -1828,6 +1861,8 @@ def _environments(i: Inputs) -> _Answer | None:
 
 
 def _read_environments(i: Inputs) -> _Answer:
+    """--environments as `list_environments` returns it (`{"environments":
+    […], "has_more": …}`), or the list alone."""
     fix = Words(
         "Ask a cloud session to check the set-up again: it lists your environments for the check.",
         "Give --environments as list_environments returns it ({\"environments\": [{\"name\": …}, …], \"has_more\": false}).",
@@ -1835,16 +1870,21 @@ def _read_environments(i: Inputs) -> _Answer:
     got = _given(i, i.environments_file, "--environments", fix, "the environments")
     if got.why:
         return got
-    value, partial = got.value, False
+    value, more = got.value, None
     if isinstance(value, dict):
-        partial = value.get("has_more") is True
-        value = value.get("environments")
-    if not isinstance(value, list) or not all(isinstance(e, dict) and isinstance(e.get("name"), str) for e in value):
+        value, more = value.get("environments"), value.get("has_more")
+    entries_ok = isinstance(value, list) and all(isinstance(e, dict) and isinstance(e.get("name"), str) for e in value)
+    if not entries_ok or not isinstance(more, (bool, type(None))):
         return _Answer(why=Words(
             "the --environments file isn't in the shape list_environments gives",
-            "--environments isn't list_environments' JSON (an environments list, each with a name)",
+            "--environments isn't list_environments' JSON (an environments list, each with a name, and has_more true or false)",
         ), fix=fix)
-    return _Answer(_Listed([e["name"] for e in value], partial))
+    states: dict[str, str] = {}
+    for e in value:
+        state = e.get("state") if isinstance(e.get("state"), str) else ""
+        if e["name"] not in states or state in ("", "active"):  # listed twice: an active one counts
+            states[e["name"]] = state
+    return _Answer(_Listed(states, more is True))
 
 
 def _runs(i: Inputs) -> _Answer:
@@ -1864,29 +1904,39 @@ def _label_names(issue: dict) -> set[str]:
 
 
 def _read_runs(i: Inputs) -> _Answer:
+    """The runs, as `charter estimate --runs` reads them: a list of issues,
+    the GitHub MCP tools' wrapped list or search's, or pages of any of them.
+    An issue without labels counts (it was fetched by its label); a pull
+    request doesn't."""
+    fix = Words(
+        f"Ask Claude to fetch the issues labelled `{RUN_LABEL}` from GitHub again, or leave out --runs to read them with `gh`.",
+        f"Give {GIVE_RUNS}, as the GitHub API returns them, or leave it out to use `gh api`.",
+    )
     if i.runs_file is not None:
-        got = _given(i, i.runs_file, "--runs", Words(
-            "Ask Claude to fetch the issues labelled `workflow:run` from GitHub again, or leave out --runs to read them with `gh`.",
-            f"Give {GIVE_RUNS}, or leave it out to use `gh api`.",
-        ), "the issues")
+        got = _given(i, i.runs_file, "--runs", fix, "the issues")
         source = Words("the --runs file", "--runs")
     else:
         path = f"repos/{i.profile.repo}/issues?labels={RUN_LABEL}&state=all&per_page=100"
-        got = _gh(i, path, time.monotonic() + GH_BUDGET, "--runs", give=GIVE_RUNS)
+        got = _gh(i, path, _gh_deadline(i), "--runs", give=GIVE_RUNS)
         source = Words("GitHub's answer to `gh`", f"`gh api repos/{i.profile.repo}/issues`")
+        fix = got.fix
     if got.why:
         return got
-    # As the GitHub API returns them: a list of issues, or of pages of them.
-    value = got.value
-    flat = [x for page in value for x in (page if isinstance(page, list) else [page])] if isinstance(value, list) else None
-    shape = "it isn't a list of issues" if flat is None else "an entry isn't an issue" if not all(isinstance(x, dict) for x in flat) else None
+    issues = estimate_mod._flatten(got.value) if isinstance(got.value, (list, dict)) else None
+    shape = "it isn't a list of issues" if issues is None else None if all(isinstance(x, dict) for x in issues) else "an entry isn't an issue"
     if shape:
-        return _Answer(why=Words(f"{source.new} can't be read: {shape}", f"{source.developer}: {shape}"), fix=got.fix if i.runs_file is None else Words(
-            "Ask Claude to fetch the issues labelled `workflow:run` from GitHub again, as GitHub gives them.",
-            f"Give {GIVE_RUNS}: a list of issues, as the GitHub API returns them.",
-        ))
-    # The issues list holds pull requests too: a run is an issue.
-    return _Answer([x.get("number") for x in flat if "pull_request" not in x and RUN_LABEL in _label_names(x)])
+        return _Answer(why=Words(f"{source.new} can't be read: {shape}", f"{source.developer}: {shape}"), fix=fix)
+    runs = [x for x in issues if "pull_request" not in x and ("labels" not in x or RUN_LABEL in _label_names(x))]
+    return _Answer([x.get("number") for x in runs])
+
+
+def _named(name: str) -> str:
+    """An environment's name in a code span, exactly: one with a backtick,
+    a space at either end, or a character that can't be shown plainly is
+    shown as a JSON string; a long one keeps its end, where names differ."""
+    plain = name == name.strip() and "`" not in name and name.isprintable()
+    shown = name if plain else protection_mod.printable(json.dumps(name, ensure_ascii=False)).replace("`", "\\u0060")
+    return f"`{shown if len(shown) <= 80 else shown[:39] + '…' + shown[-40:]}`"
 
 
 def _close(name: str, names: list[str], taken: set[str]) -> str | None:
@@ -1896,41 +1946,52 @@ def _close(name: str, names: list[str], taken: set[str]) -> str | None:
     return best[1] if best[0] >= CLOSE else None
 
 
-def _roles(i: Inputs) -> list[tuple[str, str, str, str]]:
-    """Each environment the profile names: (role, key, what it's for, name)."""
-    return [(role, key, purpose, getattr(i.profile, key.removeprefix("run."))) for role, key, purpose in ROLES]
-
-
-def _absent(i: Inputs, listed: _Listed, missing: list[tuple[str, str, str, str]]) -> Words:
-    """The environments not listed, each with what it's for and any likely
-    typo among the names listed."""
-    taken = {name for _, _, _, name in _roles(i)}
-    new, dev = [], []
-    for _, key, purpose, name in missing:
-        if not name:
-            new.append(f"the one for {purpose}, which the kit's profile doesn't name (`{key}`)")
-            dev.append(f"{key} is empty")
-            continue
-        close = _close(name, listed.names, taken)
-        new.append(f"`{_shown(name)}` for {purpose}" + (f" (there is a `{_shown(close)}`: a typo?)" if close else ""))
-        dev.append(f"{key} `{_shown(name)}` isn't listed" + (f" (closest: `{_shown(close)}`)" if close else ""))
-    return Words(" and ".join(new), "; ".join(dev))
+def _missing(listed: _Listed, role: _Role, taken: set[str]) -> Words:
+    """Why one of the profile's environments isn't found, as a clause."""
+    if not role.name:
+        return Words(f"the kit's profile doesn't name the one for {role.purpose} (`{role.key}` is empty)", f"{role.key} is empty")
+    n = _named(role.name)
+    state = listed.states.get(role.name)
+    if state is not None:
+        return Words(f"{n}, for {role.purpose}, is there but isn't active (its state is {_named(state)})", f"{role.key} {n} is {_named(state)}, not active")
+    close = _close(role.name, list(listed.states), taken)
+    return Words(
+        f"{n}, for {role.purpose}, isn't among your environments" + (f" (the list has {_named(close)}, which may be a typo for it)" if close else ""),
+        f"{role.key} {n} isn't listed" + (f" (closest: {_named(close)})" if close else ""),
+    )
 
 
 def _refs(numbers: list) -> str:
-    shown = [f"#{n}" for n in numbers if isinstance(n, int) and not isinstance(n, bool)]
-    return ", ".join(shown[:3]) + (f" and {len(shown) - 3} more" if len(shown) > 3 else "") if shown else f"an issue labelled `{RUN_LABEL}`"
+    """The runs' issue numbers, each once: the first three and how many more."""
+    shown = list(dict.fromkeys(f"#{n}" for n in numbers if isinstance(n, int) and not isinstance(n, bool)))
+    return ", ".join(shown[:3]) + (f" and {len(shown) - 3} more" if len(shown) > 3 else "")
 
 
 @_check("Cloud", "cloud.environments")
 def check_environments(i: Inputs) -> list[Line]:
-    """Both of the profile's environments listed, by their exact names: fine.
-    Neither, while no run has been made, is a note offering "Set up unattended
-    runs"; one missing, or either once a run has been made, a gap."""
+    """Both of the profile's environments listed and active, by their exact
+    names: fine. Neither, while no run has been made, is a note offering "Set
+    up unattended runs"; one missing, either once a run has been made, or one
+    environment named for both, a gap."""
     g, id_ = "Cloud", "cloud.environments"
-    what = Words("the cloud environments unattended runs use", "The environments")
     if i.profile is None:
-        return [_waits(i, id_, what, None, group=g)]
+        return [Line(g, id_, "cant_check", Words(
+            "Can't check the cloud environments unattended runs use until the kit's profile, which names them, "
+            + ("can be read." if i.profile_error else "is set up."),
+            "Environments unchecked: no readable profile (run.ticket_environment, run.conductor_environment).",
+        ), PROFILE_FIRST if i.profile_error else SET_UP_FIRST)]
+    roles = _roles(i)
+    ticket, conductor = roles
+    if ticket.name and ticket.name == conductor.name:
+        n = _named(ticket.name)
+        return [Line(g, id_, "gap", Words(
+            f"The kit's profile names one environment, {n}, for both ticket sessions and the conductor, but they need one each: "
+            "ticket sessions run with no secrets and `WORKFLOW_ROLE=ticket`, the conductor with `WORKFLOW_ROLE=conductor`.",
+            f"run.ticket_environment and run.conductor_environment are both {n}: one environment can't set WORKFLOW_ROLE=ticket and WORKFLOW_ROLE=conductor.",
+        ), Words(
+            f"Ask Claude to \"{SET_UP_RUNS}\": it walks you through making a second environment and naming each in the kit's profile.",
+            f"Give each role its own environment and name (docs/enforcement.md §2); upgrade-setup's \"{SET_UP_RUNS}\" guides it.",
+        ), offer="set_up_unattended_runs")]
     listed = _environments(i)
     if listed is None:
         return [Line(g, id_, "cant_check", Words(
@@ -1941,56 +2002,61 @@ def check_environments(i: Inputs) -> list[Line]:
             "From a cloud session, give --environments (list_environments' JSON); or ask a cloud session to check the set-up.",
         ))]
     if listed.why:
-        return [_waits(i, id_, what, listed, group=g)]
+        return [_waits(i, id_, Words("the cloud environments unattended runs use", "Environments"), listed, group=g)]
     envs = listed.value
-    roles = _roles(i)
-    missing = [r for r in roles if not (r[3] and r[3] in envs.names)]
+    missing = [r for r in roles if not (r.name and envs.active(r.name))]
     if not missing:
-        (_, _, _, t), (_, _, _, c) = roles
         return [Line(g, id_, "fine", Words(
-            f"Both cloud environments unattended runs use are there: `{_shown(t)}` for ticket sessions and `{_shown(c)}` for the conductor.",
-            f"run.ticket_environment `{_shown(t)}` and run.conductor_environment `{_shown(c)}` are both listed.",
+            f"Both cloud environments unattended runs use are there: {_named(ticket.name)} for ticket sessions and {_named(conductor.name)} for the conductor.",
+            f"run.ticket_environment {_named(ticket.name)} and run.conductor_environment {_named(conductor.name)} are both listed and active.",
         ))]
-    absent = _absent(i, envs, missing)
-    if envs.partial and all(name for *_, name in missing):
+    unseen = [r for r in missing if r.name and r.name not in envs.states]
+    if envs.partial and unseen:
+        one = len(unseen) == 1
+        names = " and ".join(_named(r.name) for r in unseen)
         return [Line(g, id_, "cant_check", Words(
-            f"Can't tell whether {absent.new} {'is' if len(missing) == 1 else 'are'} there: the list of your environments given to the check isn't complete.",
-            f"--environments says has_more, and doesn't list them: {absent.developer}.",
+            f"Can't tell whether {names} {'is' if one else 'are'} there: the list of your environments given to the check isn't complete.",
+            f"--environments says has_more, and doesn't list {names}.",
         ), Words(
             "Ask a cloud session to check the set-up again, with every environment listed.",
             "Give every page of list_environments in --environments.",
         ))]
+    taken = {r.name for r in roles}
+    why = [_missing(envs, r, taken) for r in missing]
     one = len(missing) == 1
     fix = Words(
         f"Ask Claude to \"{SET_UP_RUNS}\": it walks you through making {'the missing environment' if one else 'the two environments'} in claude.ai, "
-        f"or correcting {'its name' if one else 'their names'} in the kit's profile if {'it is' if one else 'they are'} spelled differently.",
+        f"or putting {'its' if one else 'their'} exact {'name' if one else 'names'} in the kit's profile.",
         f"Create {'it' if one else 'them'} (claude.ai/code, the environment menu; docs/enforcement.md §2), or set "
-        f"{' and '.join(key for _, key, _, _ in missing)} to the exact name listed; upgrade-setup's \"{SET_UP_RUNS}\" guides both.",
+        f"{' and '.join(r.key for r in missing)} to the exact name listed; upgrade-setup's \"{SET_UP_RUNS}\" guides both.",
     )
     if one:
-        (_, _, _, there), = [r for r in roles if r not in missing]
+        there, = [r for r in roles if r not in missing]
         return [Line(g, id_, "gap", Words(
-            f"Unattended runs need two cloud environments, and only one of them is there: {absent.new} isn't among your environments.",
-            f"Half set up: {absent.developer}; `{_shown(there)}` is.",
+            f"Unattended runs need two cloud environments, and only {_named(there.name)} is there: {why[0].new}.",
+            f"Half set up: {why[0].developer}; {_named(there.name)} is listed.",
         ), fix, offer="set_up_unattended_runs")]
+    new, dev = "; ".join(w.new for w in why), "; ".join(w.developer for w in why)
     runs = _runs(i)
     if runs.why is None and runs.value:
+        refs = _refs(runs.value)
         return [Line(g, id_, "gap", Words(
-            f"A run has already been made ({_refs(runs.value)}), but neither cloud environment unattended runs use is there, so the next run can't start. Missing: {absent.new}.",
-            f"A run has been made ({_refs(runs.value)}, labelled {RUN_LABEL}), but neither environment is listed: {absent.developer}.",
+            f"A run has already been made ({refs or f'an issue is labelled `{RUN_LABEL}`'}), but neither cloud environment unattended runs use is there, "
+            f"so the next run can't start: {new}.",
+            f"Issues labelled {RUN_LABEL} exist{f' ({refs})' if refs else ''}, but neither environment is usable: {dev}.",
         ), fix, offer="set_up_unattended_runs")]
     if runs.why is None:
         return [Line(g, id_, "note", Words(
-            f"Unattended runs aren't set up yet, which is fine until you want Claude to work through tickets on its own. Neither of their two cloud environments is there: {absent.new}.",
-            f"Unattended runs not set up: no issue is labelled {RUN_LABEL}, and neither environment is listed: {absent.developer}.",
+            f"Unattended runs aren't set up yet, which is fine until you want Claude to work through tickets on its own. Neither of their two cloud environments is there: {new}.",
+            f"Unattended runs not set up: no issue is labelled {RUN_LABEL}, and neither environment is usable: {dev}.",
         ), Words(
             f"When you want unattended runs, ask Claude to \"{SET_UP_RUNS}\".",
             f"Run upgrade-setup's \"{SET_UP_RUNS}\" when you want runs.",
         ), offer="set_up_unattended_runs")]
     return [Line(g, id_, "note", Words(
-        f"Unattended runs don't look set up yet. Neither of their two cloud environments is there: {absent.new}. "
+        f"Unattended runs don't look set up yet. Neither of their two cloud environments is there: {new}. "
         f"If you've already made a run, this is a gap; whether one has been made couldn't be read ({_relative(i, runs.why.new)}).",
-        f"Neither environment is listed: {absent.developer}. A gap if a run has been made, which couldn't be read "
+        f"Neither environment is usable: {dev}. A gap if a run has been made, which couldn't be read "
         f"({RUN_LABEL} issues: {_relative(i, runs.why.developer)}).",
     ), Words(
         f"If you've never made a run, nothing to do until you want one: then ask Claude to \"{SET_UP_RUNS}\". To check for a run: {runs.fix.new}",
@@ -2003,8 +2069,7 @@ def check_environment_contents(i: Inputs) -> list[Line]:
     """Always there: nothing can read what an environment holds (#27), so the
     owner confirms it by hand."""
     g, id_ = "Cloud", "cloud.contents"
-    names = [name for *_, name in _roles(i)] if i.profile is not None else ["", ""]
-    t, c = (f"`{_shown(n)}`" if n else None for n in names)
+    t, c = (_named(r.name) if r.name else None for r in _roles(i)) if i.profile is not None else (None, None)
     both = Words(f"{t} or {c}", f"{t} and {c}") if t and c else Words("the ticket and conductor environments", "the ticket and conductor environments")
     return [Line(g, id_, "note", Words(
         f"Nothing can read what a cloud environment holds, so no check can look inside {both.new}.",
