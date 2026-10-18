@@ -50,6 +50,7 @@ HOOK_TAG = ".claude/workflow/bin/workflow.py"
 PLUGIN_KEY = "pairnexus-workflow@pairnexus"
 MP_PLUGIN = "mattpocock-skills"
 MP_NOTICE = Path(".claude/skills/LICENSE-mattpocock-skills")
+GUARD_TIMEOUT = 30  # seconds; the CLI's GUARD_BUDGET stays under it
 GUARD_MATCHER = "Bash|Monitor|PowerShell|Edit|Write|MultiEdit|NotebookEdit|mcp__.*[Gg]it[Hh]ub.*"
 SKIP_DOCS = {"flow.md", "proposal.md", "spike.md"}
 IGNORE_LINE = ".workflow/"
@@ -221,16 +222,24 @@ def hook_command(sub: str, plugin: bool = False) -> str:
     )
 
 
-def _hook(sub: str, matcher: str | None = None, timeout: int = 30, plugin: bool = False) -> dict:
-    entry: dict = {"hooks": [{"type": "command", "command": hook_command(sub, plugin), "timeout": timeout}]}
+def _hook(sub: str, matcher: str | None = None, timeout: int = 30, plugin: bool = False, block: bool = False) -> dict:
+    hook: dict = {"type": "command", "command": hook_command(sub, plugin), "timeout": timeout}
+    if block:
+        hook["onFailure"] = "block"
+    entry: dict = {"hooks": [hook]}
     if matcher:
         entry["matcher"] = matcher
     return entry
 
 
 def _kit_hooks(plugin: bool = False) -> dict:
+    """The guard blocks the tool when its hook times out, can't start or prints
+    invalid output (`onFailure`, Claude Code 2.1.295 or later; older versions
+    ignore the field, #54), with 30 seconds for a large tree or a slow laptop
+    (#57). The other hooks keep the default, `continue`: blocking a Stop on
+    failure would loop, and blocking a prompt would lose it."""
     return {
-        "PreToolUse": [_hook("guard", GUARD_MATCHER, 15, plugin)],
+        "PreToolUse": [_hook("guard", GUARD_MATCHER, GUARD_TIMEOUT, plugin, block=True)],
         "Stop": [_hook("gate", None, 15, plugin)],
         "UserPromptSubmit": [_hook("context", None, 10, plugin)],
         "SessionStart": [_hook("repair", "startup|resume", 600, plugin)],
