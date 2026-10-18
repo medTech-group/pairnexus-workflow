@@ -55,7 +55,7 @@ Without `gh` signed in, its GitHub lines say they can't be checked from here and
 ### When doctor doesn't give its JSON
 
 - **Exit code 2:** the command was wrong (a flag doctor doesn't take, or `-` given for more than one file). Fix it and run it again.
-- **A file doctor couldn't use** is not an exit code: it is a `cant_check` line naming the file (missing, empty, GitHub's error body, or not in the shape GitHub gives). Fetch that file again once and run doctor again; whatever its lines say after that is the report.
+- **A file doctor couldn't use** is not an exit code: it is a `cant_check` line, which names a missing or empty file, or says its answer isn't in the shape GitHub gives. Doctor doesn't always see GitHub's error body for what it is (in `--repo`, `{"message": …}` reads as settings only an admin can see), so look at each file yourself before running doctor, as above. Fetch such a file again once and run doctor again; whatever its lines say after that is the report.
 - **An old `python3`** (older than Python 3.11) still gets doctor's JSON, as its short report: `python3`'s version as a gap with its fix (`computer.python3`), and every other line `cant_check` until `python3` is 3.11 or newer. Show it like any report: the fix to `python3` comes first, and nothing else is fine yet.
 - **Anything else** (a traceback, another exit code): run it again once. If it still fails, say the set-up couldn't be checked, with the error's last line. That is never a clean report.
 
@@ -77,7 +77,7 @@ Show the `cloud.contents` note with the others, never summarised away: nothing c
 
 ## 3. The offers
 
-Each line with an `offer` is an upgrade one tap away. Offer each one the report names as a choice with `AskUserQuestion`, once, after the report: the question names the line's problem in a few words, and the options are the upgrade (recommended) and **Not now**. Up to 4 questions in one call; an offer two lines share is asked once. Without the tool (a headless session), ask the same choices as a numbered list.
+Each line with an `offer` is an upgrade one tap away. Offer each one the report names as a choice with `AskUserQuestion`, once, after the report: the question names the line's problem in a few words, and the options are the upgrade and **Not now**. The upgrade is the recommended option only on a `gap` line, and not after a paid-plan refusal: a `note` is a state chosen on purpose (solo mode, unattended runs not set up yet), so its upgrade is offered without "(Recommended)". When the ruleset line says rulesets need a paid plan, say beside the choice that the upgrade needs a paid GitHub plan or a public repository. Up to 4 questions in one call; an offer two lines share is asked once. Without the tool (a headless session), ask the same choices as a numbered list.
 
 | `offer` | The choice | On yes |
 |---|---|---|

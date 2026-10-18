@@ -122,7 +122,8 @@ def test_a_paid_plan_refusal_is_left_to_doctors_own_read():
 def test_a_file_doctor_could_not_use_is_fetched_again_once():
     failed = _section(_text(), "When doctor doesn't give its JSON", "###")
     assert "Exit code 2" in failed and "more than one file" in failed
-    assert "a `cant_check` line naming the file" in failed and "Fetch that file again once" in failed
+    assert "is a `cant_check` line" in failed and "Fetch such a file again once" in failed
+    assert "look at each file yourself" in failed
 
 
 def test_without_a_profile_it_gathers_nothing():
@@ -211,6 +212,13 @@ def test_it_hands_doctors_offers_over_to_the_upgrade_skill():
     # The person has just chosen, so the upgrade doesn't ask its own opening choice again.
     assert offers.count("opening choice") == 3
     assert "Protect `main`" in offers and "Set up unattended runs" in offers
+
+
+def test_only_a_gap_recommends_its_upgrade_and_never_after_a_paid_plan_refusal():
+    offers = _section(_text(), "The offers")
+    assert "recommended option only on a `gap` line" in offers
+    assert "without \"(Recommended)\"" in offers
+    assert "not after a paid-plan refusal" in offers and "a paid GitHub plan or a public repository" in offers
 
 
 def test_an_offer_it_does_not_know_is_named_as_text():
