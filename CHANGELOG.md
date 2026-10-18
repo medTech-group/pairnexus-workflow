@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+**`workflow status` reports doctor's local gaps, with no network calls** (#62, part of #34).
+
+- **The checks** are doctor's own local ones, run as doctor runs them:
+  - `python3` on the PATH;
+  - the hooks, with Claude Code's settings and the plugin;
+  - `profile check`'s errors. Its warnings are notes, and their globs can be slow, so `status` skips them;
+  - `vendor verify`;
+  - the `ruleset` setting.
+- **No network:** the checks read only this computer and the checkout. Without `--fetch`, `status` still runs no `gh`. `--fetch` reads issues, pull requests and the latest release as before. It never runs doctor's GitHub or Cloud checks.
+- **Not set up:** a project with no profile has the gap `kit.profile`, as in doctor, beside `Kit: NOT set up here`.
+- **Text:** one line after the experience lines. It is `Local gaps: none`, or names each gap by doctor's id, the most serious first: `Local gaps: 2 (computer.python3, kit.hooks): ...`.
+- **`--json`:** `local_gaps`, the gap lines in doctor's shape (group, id, status, message, fix, offer, worded by the person's experience), and `local_gap`, `true` or `false`. A note or a line doctor can't check isn't a gap. Solo mode (`ruleset = false`) and no `ruleset` setting are notes, which `Solo mode:` already reports.
+- **A profile with an error** no longer stops `status`. It says `Kit: set up, but its profile has an error (kit.profile)` and `Solo mode: unknown`, and the gap `kit.profile` says what's wrong. In `--json`, `profile_error` is `true` and `set_up` stays `true`. `--fetch` then reads no issues and says why.
+- **Ctrl-C** while `status` runs `python3` stops it quietly (exit 130).
+- Everything else in `status`'s text and JSON is unchanged. Tests: `tests/test_status_local_gaps.py`.
+- **For projects updating:** nothing to do.
+
 **`workflow doctor` on an old `python3`: a short report** (#61, part of #34).
 
 - **On a `python3` older than 3.11** (macOS's own is 3.9), `workflow doctor` gives a short report from the kit's old-Python path (Python 3.7 syntax, the standard library only) instead of saying what it needs and exiting 1. `python3`'s version (the Python running it) is a gap with its fix; every other line the full doctor gives when nothing is wrong (Claude Code's version, the kit, GitHub, Cloud) is `can't check` "until `python3` is 3.11 or newer", with the full doctor's ids and groups (`kit.hooks` and `kit.vendor` in a vendored project, `kit.plugin` in plugin mode), so a skill reading `--json` sees the same lines.

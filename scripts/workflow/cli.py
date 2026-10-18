@@ -195,12 +195,15 @@ def cmd_ready(a) -> int:
 
 
 def cmd_status(a) -> int:
-    """Where the project stands, for the guided start (`skills/start`)."""
-    prof = load(required=False)
-    root = prof.root if prof else project_root()
+    """Where the project stands, for the guided start (`skills/start`), with
+    doctor's local gaps (#62): its local checks only, so no network call."""
+    root = project_root()
+    prof, error = _read_profile(root)
     issues = prs = None
     if a.fetch:
-        if not prof:
+        if error:
+            print("workflow status: the kit's profile has an error, so issues weren't read (see kit.profile)", file=sys.stderr)
+        elif not prof:
             print("workflow status: the kit isn't set up here, so issues weren't read (--fetch needs the profile's project.repo)", file=sys.stderr)
         else:
             issues, prs = _fetch(prof.repo, "issues"), _fetch(prof.repo, "pulls")
@@ -208,16 +211,27 @@ def cmd_status(a) -> int:
         if not a.issues or not a.prs:
             raise SystemExit("give both --issues and --prs (JSON files, as the GitHub API returns them), or --fetch")
         issues, prs = _json(a.issues), _json(a.prs)
+    experience = resolve_experience(root, prof.experience if prof else None)
+    try:
+        local = doctor_mod.report(
+            doctor_mod.Inputs(root=root, kit_root=KIT_ROOT, profile=prof, profile_error=error, experience=experience, gaps_only=True),
+            doctor_mod.LOCAL_CHECKS,
+        )
+    except KeyboardInterrupt:  # Ctrl-C while `python3` runs: a quiet stop, as doctor's
+        print("workflow status: stopped", file=sys.stderr)
+        return 130
     st = status_mod.snapshot(
         root,
-        prof is not None,
+        prof is not None or error is not None,
         issues,
         prs,
         repo=prof.repo if prof else None,
         areas=list(prof.areas) if prof else None,
         protected=list(prof.protected_paths) if prof else None,
         ruleset=prof.ruleset if prof else None,
-        experience=resolve_experience(root, prof.experience if prof else None),
+        experience=experience,
+        local_gaps=[ln.as_dict(local.wording) for ln in local.lines if ln.status == "gap"],
+        profile_error=error is not None,
     )
     kit = updates_mod.check(root, KIT_ROOT) if a.fetch else {"installed": updates_mod.installed(root, KIT_ROOT)}
     if a.json:
@@ -234,6 +248,21 @@ def _given_file(path: str | None) -> Path | str | None:
     return path if path in (None, "", "-") else Path(path).absolute()
 
 
+def _read_profile(root: Path):
+    """(the profile, None), or (None, `profile check`'s error) for one that
+    can't be used, as doctor reads it; (None, None) with no profile."""
+    try:
+        if (root / PROFILE_PATH).exists() and not (root / PROFILE_PATH).is_file():
+            raise ProfileError(f"{PROFILE_PATH} isn't a file")  # a directory, or a pipe that would block the read
+        return load(root, required=False), None
+    except ProfileError as e:
+        return None, str(e)
+    except UnicodeDecodeError:
+        return None, f"{PROFILE_PATH} isn't UTF-8 text"
+    except (OSError, ValueError) as e:
+        return None, f"{PROFILE_PATH} can't be read ({type(e).__name__})"
+
+
 def cmd_doctor(a) -> int:
     """What's set up and what isn't, each line with its fix (#34). Exits 0,
     or with --strict 1 on a gap or a line it couldn't check."""
@@ -241,17 +270,7 @@ def cmd_doctor(a) -> int:
         print("workflow doctor: only one of --rulesets, --repo, --environments and --runs can be standard input (-)", file=sys.stderr)
         return 2
     root = project_root()
-    prof, error = None, None
-    try:
-        if (root / PROFILE_PATH).exists() and not (root / PROFILE_PATH).is_file():
-            raise ProfileError(f"{PROFILE_PATH} isn't a file")  # a directory, or a pipe that would block the read
-        prof = load(root, required=False)
-    except ProfileError as e:
-        error = str(e)
-    except UnicodeDecodeError:
-        error = f"{PROFILE_PATH} isn't UTF-8 text"
-    except (OSError, ValueError) as e:
-        error = f"{PROFILE_PATH} can't be read ({type(e).__name__})"
+    prof, error = _read_profile(root)
     try:
         r = doctor_mod.report(
             doctor_mod.Inputs(
