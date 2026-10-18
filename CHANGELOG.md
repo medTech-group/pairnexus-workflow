@@ -7,12 +7,12 @@
 - **The checks** are doctor's own local ones, run as doctor runs them:
   - `python3` on the PATH;
   - the hooks, with Claude Code's settings and the plugin;
-  - `profile check` (its errors only: its warnings are notes, so `status` skips them and the time their globs take);
+  - `profile check`'s errors. Its warnings are notes, and their globs can be slow, so `status` skips them;
   - `vendor verify`;
   - the `ruleset` setting.
 - **No network:** the checks read only this computer and the checkout. Without `--fetch`, `status` still runs no `gh`. `--fetch` reads issues, pull requests and the latest release as before. It never runs doctor's GitHub or Cloud checks.
 - **Not set up:** a project with no profile has the gap `kit.profile`, as in doctor, beside `Kit: NOT set up here`.
-- **Text:** one line after `Experience:`. It is `Local gaps: none`, or names each gap by doctor's id, the most serious first: `Local gaps: 2 (computer.python3, kit.hooks): ...`.
+- **Text:** one line after the experience lines. It is `Local gaps: none`, or names each gap by doctor's id, the most serious first: `Local gaps: 2 (computer.python3, kit.hooks): ...`.
 - **`--json`:** `local_gaps`, the gap lines in doctor's shape (group, id, status, message, fix, offer, worded by the person's experience), and `local_gap`, `true` or `false`. A note or a line doctor can't check isn't a gap. Solo mode (`ruleset = false`) and no `ruleset` setting are notes, which `Solo mode:` already reports.
 - **A profile with an error** no longer stops `status`. It says `Kit: set up, but its profile has an error (kit.profile)` and `Solo mode: unknown`, and the gap `kit.profile` says what's wrong. In `--json`, `profile_error` is `true` and `set_up` stays `true`. `--fetch` then reads no issues and says why.
 - **Ctrl-C** while `status` runs `python3` stops it quietly (exit 130).

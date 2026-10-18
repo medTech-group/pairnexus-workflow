@@ -143,9 +143,10 @@ class Inputs:
     # and --runs (the `workflow:run` issues, which win over `gh api`).
     environments_file: Path | str | None = None
     runs_file: Path | str | None = None
-    # Only gaps are wanted (`workflow status`, #62): what can only be a note or
-    # fine, and costs time, is left out (`profile check`'s warnings walk the
-    # tree for their globs).
+    # Only gaps are wanted (`workflow status`, #62, which keeps the gap lines
+    # itself): a check may leave out what can only be a note or fine and
+    # costs time. `check_profile` skips `profile check`'s warnings, whose globs
+    # walk the tree.
     gaps_only: bool = False
     _github: _GitHub | None = field(default=None, repr=False)  # what the GitHub lines read, read once
     _environments: _Answer | None = field(default=None, repr=False)  # the environments listed, read once

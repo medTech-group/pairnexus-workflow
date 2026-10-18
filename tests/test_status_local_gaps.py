@@ -251,12 +251,13 @@ def test_the_text_only_adds_one_line(tmp_path):
     assert [ln.split(":")[0] for ln in out] == ["Kit", "Project", "Solo mode", "Experience", "Local gaps", "Issues", "Kit version"]
 
 
-def test_the_changelog_notes_it_under_unreleased():
-    text = (KIT / "CHANGELOG.md").read_text()
-    start = text.index("## Unreleased\n")
-    notes = text[start:text.index("\n## ", start + 1)]
-    assert "#62" in notes and "local gap" in notes
-    assert not (KIT / "VERSION").read_text().strip() in notes  # no VERSION bump under Unreleased
+def test_the_changelog_notes_it_under_unreleased_without_a_version_bump():
+    log = (KIT / "CHANGELOG.md").read_text()
+    start = log.index("## Unreleased\n")
+    end = log.index("\n## ", start + 1)
+    assert "#62" in log[start:end] and "local gap" in log[start:end]
+    released = log[end + 4:].split("\n", 1)[0].strip()
+    assert (KIT / "VERSION").read_text().strip() == released
 
 
 # What a project without the kit, or without its folder, gets
@@ -291,6 +292,8 @@ def test_status_skips_profile_checks_warnings(tmp_path, monkeypatch, capsys):
     """Its warnings are only ever notes, and their globs can walk a whole
     tree: `status` asks for gaps only, so it never runs them; doctor does."""
     root = _project(tmp_path)
+    for k in ("WORKFLOW_EXPERIENCE", "CLAUDE_CONFIG_DIR"):
+        monkeypatch.delenv(k, raising=False)
     for k, v in _env(tmp_path, root).items():
         monkeypatch.setenv(k, v)
     calls = []
@@ -311,8 +314,10 @@ def test_ctrl_c_stops_status_quietly_with_nothing_left_running(tmp_path):
     path = _bin(tmp_path, python=None, gh=False)
     marker = tmp_path / "child.pid"
     _fake(path, "python3", f"{shutil.which('sleep')} 30 & echo $! > {marker}; wait")
+    # SIGINT as a terminal sends it, even where pytest was started ignoring it.
     p = subprocess.Popen([sys.executable, "-B", str(root / ".claude/workflow/bin/workflow.py"), "status"], cwd=root,
-                         env=_env(tmp_path, root, path), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                         env=_env(tmp_path, root, path), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                         preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
     for _ in range(100):
         if marker.exists() and marker.read_text().strip():
             break
