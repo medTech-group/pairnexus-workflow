@@ -101,7 +101,11 @@ def _compiled_kit_package() -> Path:
     top = Path(tempfile.mkdtemp(prefix="kit-package-"))
     atexit.register(shutil.rmtree, top, True)
     _copy_source(top / "workflow")
-    assert compileall.compile_dir(top / "workflow", quiet=1, invalidation_mode=py_compile.PycInvalidationMode.CHECKED_HASH)
+    prefix, sys.pycache_prefix = sys.pycache_prefix, None  # in `__pycache__` beside each file, even with PYTHONPYCACHEPREFIX set
+    try:
+        assert compileall.compile_dir(top / "workflow", quiet=1, invalidation_mode=py_compile.PycInvalidationMode.CHECKED_HASH)
+    finally:
+        sys.pycache_prefix = prefix
     return top / "workflow"
 
 
@@ -131,5 +135,6 @@ def at_once(calls):
     and the calls not yet started then aren't made."""
     calls = list(calls)
     cpus = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count() or 2
-    with ThreadPoolExecutor(max_workers=max(1, min(len(calls), max(2, min(cpus, 8))))) as pool:
+    workers = max(1, min(len(calls), max(2, min(cpus, 8))))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
         return list(pool.map(lambda call: call(), calls))
