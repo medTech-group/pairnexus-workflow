@@ -47,15 +47,17 @@ def test_preflight_runs_doctor_json_with_every_file():
 def test_each_file_says_where_it_comes_from():
     block = _doctor_block()
     # The rulesets in full, each by its id, not the list's summaries.
-    assert "gh api repos/<repo>/rulesets" in block and "by its id" in block
-    assert "gh api repos/<repo>" in block
+    assert "gh api --paginate 'repos/<repo>/rulesets?" in block and "by its id" in block
+    assert "gh api repos/<repo> > .workflow/repo.json" in block
     assert "`list_environments`" in block and "has_more" in block
     assert "workflow:run" in block and "state=all" in block
     assert "claude --version" in block
 
 
 def test_the_flags_doctor_is_given_are_the_flags_it_takes():
-    usage = (KIT / "scripts/workflow/cli.py").read_text(encoding="utf-8")
+    cli = (KIT / "scripts/workflow/cli.py").read_text(encoding="utf-8")
+    # Doctor's own parser only: other subcommands take --repo and --runs too.
+    usage = _section(cli, r'^\s*s = sub\.add_parser\("doctor"', r"^\s*s\.set_defaults\(fn=cmd_doctor\)")
     cmd = re.search(r"^WF doctor --json .*$", _doctor_block(), re.M).group(0)
     cmd = re.sub(r'"<[^"]*>"', "", cmd)  # a placeholder such as "<what claude --version printed>"
     for flag in re.findall(r"--[a-z-]+", cmd):
@@ -65,8 +67,10 @@ def test_the_flags_doctor_is_given_are_the_flags_it_takes():
 def test_doctors_gaps_and_cant_checks_become_the_kickoffs_safety_gaps():
     block = _doctor_block()
     assert "`gap`" in block and "`cant_check`" in block and "safety gap" in block
-    assert "Fix it first / Go ahead without it" in block or "Fix it first / Go ahead without it" in _kickoff()
-    assert "`accepted_gaps`" in _kickoff()
+    kick = _kickoff()
+    assert "Fix it first / Go ahead without it" in kick and "`accepted_gaps`" in kick
+    fix_first = _section(kick, r"^\s*- \*\*Fix it first:\*\*", r"\n")
+    assert "run doctor again" in fix_first and "neither a `gap` nor `cant_check`" in fix_first
     for status in doctor.STATUSES:
         assert f"`{status}`" in block, status
 
@@ -128,6 +132,25 @@ def test_solo_mode_and_removed_protection_are_read_from_doctors_lines():
     assert "one place that decides" in solo
 
 
+def test_a_cant_check_ruleset_with_ruleset_true_counts_as_removed_protection():
+    solo = _section(_doctor_block(), r"^- \*\*Solo mode\*\*", r"^- \*\*|\Z")
+    removed = _section(solo, r"^\s*- \*\*removed protection:\*\*", r"\n")
+    assert "`cant_check`" in removed and "counts as removed protection too" in removed
+    assert "never gave its JSON" in removed and "no `github.ruleset` line" in removed
+    assert "can't be confirmed from this session, not that it was removed" in removed
+
+
+def test_a_file_that_couldnt_be_read_is_fetched_again_before_the_report_is_read():
+    block = _doctor_block()
+    assert "fetch that file again and run doctor again, before reading anything from the report" in block
+    assert "count the run as removed protection whenever the profile says `ruleset = true`" in block
+
+
+def test_auto_merge_gives_way_in_solo_mode():
+    solo = _section(_doctor_block(), r"^- \*\*Solo mode\*\*", r"^- \*\*|\Z")
+    assert "`github.auto_merge`" in solo and "give way to one safety gap" in solo
+
+
 def test_the_kickoff_still_offers_protecting_restoring_or_going_ahead():
     kick = _kickoff()
     assert "`protect_main`" in kick and "`restore_protection`" in kick
@@ -150,6 +173,8 @@ def test_a_missing_ticket_environment_still_stops_the_run_whatever_doctor_says()
     pre = _preflight()
     env = _section(pre, r"^\*\*The ticket sessions' environment\*\*", r"^\*\*The work\*\*")
     assert "`list_environments`" in env and "keep its id" in env
+    # Only an active one counts, as doctor counts it.
+    assert "the active one named `run.ticket_environment`" in env and "isn't active counts as none" in env
     assert "whatever doctor's `cloud.environments` line says" in env
     assert "before the kick-off's questions" in env
     assert "blocking problem" in env
