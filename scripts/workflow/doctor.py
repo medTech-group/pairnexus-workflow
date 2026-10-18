@@ -278,13 +278,13 @@ def check_python(i: Inputs) -> list[Line]:
     ran = _run(i, ["python3", "-B", "-c", "import sys; print('%d.%d.%d' % tuple(sys.version_info[:3]))"])
     if ran.state == "missing":
         return [Line(g, id_, "gap", Words(
-            "Python (`python3`) isn't installed, or your computer can't find it, so the kit's hooks can't run.",
-            f"No `python3` on the PATH: the kit's hooks can't run it (they need {need}+).",
+            "Python (`python3`) isn't installed, or your computer can't find it, so the kit's hooks fall back to a simpler mode.",
+            f"No `python3` on the PATH: the hooks run their fallback (they need {need}+).",
         ), install)]
     if ran.state == "failed":
         return [Line(g, id_, "gap", Words(
             "Python (`python3`) is there but doesn't run, so the kit's hooks fall back to a simpler mode.",
-            f"`python3` on the PATH exits with an error: the hooks run their fallback (a stub, a shim with no version, a broken PYTHONHOME?).",
+            "`python3` on the PATH exits with an error: the hooks run their fallback.",
         ), install)]
     found = _version(ran.out)
     if found is None:
@@ -323,6 +323,8 @@ def check_claude_code(i: Inputs) -> list[Line]:
             where = f"`--claude-version {_shown(i.claude_version)}` holds no version"
         elif ran.state == "timeout":
             where = f"no `--claude-version`, and `claude --version` timed out after {RUN_TIMEOUT} s"
+        elif ran.state == "missing":
+            where = "no `--claude-version`, and `claude` isn't on the PATH"
         else:
             where = "no `--claude-version`, and `claude --version` gave none"
         return [Line(g, id_, "cant_check", Words(
@@ -393,7 +395,8 @@ class _Settings:
         """Whether the kit's plugin is enabled, and which file says so."""
         def read(data):
             plugins = data.get("enabledPlugins")
-            return plugins.get(vendor_mod.PLUGIN_KEY) if isinstance(plugins, dict) else None
+            v = plugins.get(vendor_mod.PLUGIN_KEY) if isinstance(plugins, dict) else None
+            return v if isinstance(v, bool) else None  # as Claude Code reads it: true or false
 
         on, where = self._winner(read)
         return bool(on), where
@@ -479,6 +482,18 @@ def _kit_version(i: Inputs) -> str:
     return v if updates_mod.parse(v) else "unknown"
 
 
+def _kit_name(version: str) -> str:
+    return "this kit" if version == "unknown" else f"kit {version}"
+
+
+def _home(i: Inputs, path: Path) -> str:
+    """A path with the home directory as `~`, so a report posted on GitHub
+    never carries a username."""
+    home = i.environ.get("HOME")
+    p = str(path)
+    return "~" + p[len(home):] if home and home != "/" and (p == home or p.startswith(home.rstrip(os.sep) + os.sep)) else p
+
+
 def _copy_has_doctor(i: Inputs) -> bool:
     """Whether the project's vendored copy of the CLI knows `doctor` (copies
     vendored before it shipped don't)."""
@@ -495,6 +510,8 @@ def check_install(i: Inputs) -> list[Line]:
     vendored, the hooks are this version's own entries; in plugin mode the
     plugin is enabled; both on is a gap naming which to turn off."""
     g = "The kit"
+    if not i.root.is_dir():
+        return []  # kit.profile says the folder isn't there
     s = _settings(i)
     lines: list[Line] = []
     bad = s.unreadable()
@@ -546,7 +563,7 @@ def check_install(i: Inputs) -> list[Line]:
     if on:
         if left:
             return lines + [Line(g, "kit.plugin", "gap", Words(
-                f"The kit's plugin is on (in {where}) beside what's left of a copy of the kit, so its hooks may run twice.",
+                f"The kit's plugin is on (in {where}) beside what's left of a copy of the kit, so its hooks run twice.",
                 f"Plugin enabled ({where}) and kit hooks or a copy left in the project: the hooks run twice.",
             ), Words(
                 "Ask Claude to keep one: the copy (put back its record) or the plugin (remove the copy and its hooks).",
@@ -598,7 +615,7 @@ def _vendored_hooks(i: Inputs, data: dict, err: str | None) -> list[Line]:
     if not diffs:
         return [Line(g, id_, "fine", Words(
             "The kit's hooks are in place, as this version of the kit writes them.",
-            f"Kit hooks in {SETTINGS} match kit {version}'s entries.",
+            f"Kit hooks in {SETTINGS} match {_kit_name(version)}'s entries.",
         ))]
     if exists and not _running_copy(i):
         # Another kit's entries (a checkout of the kit, the plugin): only the
@@ -607,18 +624,20 @@ def _vendored_hooks(i: Inputs, data: dict, err: str | None) -> list[Line]:
             f"Run the check with the project's own copy: `python3 -B {COPY_CLI} doctor`.",
             f"Run the vendored copy's doctor: `python3 -B {COPY_CLI} doctor`.",
         ) if _copy_has_doctor(i) else Words(
-            "This project's copy of the kit is older than doctor: ask Claude to update the workflow kit, then run the check again.",
+            "This project's copy of the kit is older than this check: ask Claude to update the workflow kit, then run the check again.",
             "The vendored copy predates `doctor`: update it (`update-workflow`), then run its doctor.",
         )
+        mine, theirs = version, _lock_version(i)
+        versions = f" ({mine}; the copy is {theirs})" if mine != theirs else ""
         return [Line(g, id_, "cant_check", Words(
             f"The kit's hooks differ from those of the kit running this check ({listed}), but that isn't this project's own copy, so it can't say which is right.",
-            f"Kit hooks compared with the entries of the kit at {i.kit_root} ({version}), not this project's copy ({_lock_version(i)}): {listed}.",
+            f"Kit hooks compared with the entries of the kit at {_home(i, i.kit_root)}{versions}, not this project's copy: {listed}.",
         ), own)]
     return [Line(g, id_, "gap", Words(
-        f"The kit's hooks in Claude Code's settings ({SETTINGS}) aren't the ones this version of the kit writes ({listed}): a missing hook doesn't run, and a changed one doesn't run as this version expects.",
-        f"Kit hooks in {SETTINGS} differ from kit {version}'s entries: {listed}.",
+        f"The kit's hooks in Claude Code's settings ({SETTINGS}) aren't the ones this version of the kit writes ({listed}), so they don't run as this version of the kit expects.",
+        f"Kit hooks in {SETTINGS} differ from {_kit_name(version)}'s entries: {listed}.",
     ), Words(
-        "Ask Claude to update the workflow kit: the update writes the kit's hooks again.",
+        "Ask Claude to update the workflow kit: the update writes the kit's hooks again, and removes any other hook that runs the kit.",
         "Rerun the kit's update (`update-workflow`, which runs `vendor update`) to rewrite its entries; it also drops any project hook whose command calls the kit's CLI.",
     ))]
 
@@ -673,9 +692,21 @@ def _copy_problems(i: Inputs, lock: dict) -> list[str]:
     lock lists that are missing, changed (not kept on purpose) or in
     conflict. The hooks and the plugin are `check_install`'s."""
     keeps = lock.get("kept") if isinstance(lock.get("kept"), dict) else {}
-    missing, changed = [], []
+    raw = lock.get("conflicts")
+    conflicts = sorted(str(c) for c in raw) if isinstance(raw, (dict, list)) else []
+    root = i.root.resolve()
+    missing, changed, outside = [], [], []
     for dst, h in lock["files"].items():
+        if dst in conflicts:
+            continue  # said once, as a conflict
         path = i.root / dst
+        try:
+            inside = path.resolve() == root or root in path.resolve().parents
+        except (OSError, RuntimeError):
+            inside = False
+        if not inside:
+            outside.append(str(dst))
+            continue
         try:
             there = path.exists()
         except OSError:
@@ -686,9 +717,9 @@ def _copy_problems(i: Inputs, lock: dict) -> list[str]:
         cur = _hash_file(path)
         if cur != h and (cur is None or keeps.get(dst) != cur):
             changed.append(dst)
-    conflicts = sorted(lock.get("conflicts") or {}) if isinstance(lock.get("conflicts"), (dict, list)) else []
     out = []
-    for what, paths in (("missing", missing), ("changed by hand", changed), ("with an update's conflict to settle", conflicts)):
+    for what, paths in (("missing", missing), ("changed by hand", changed), ("with an update's conflict to settle", conflicts),
+                        ("outside the project", outside)):
         if paths:
             out.append(f"{what}: {', '.join(paths[:5])}" + (f" and {len(paths) - 5} more" if len(paths) > 5 else ""))
     return out
@@ -732,7 +763,7 @@ def check_vendor(i: Inputs) -> list[Line]:
         ))]
     return [Line(g, id_, "fine", Words(
         "The kit's copy in this project is as the kit wrote it.",
-        f"`vendor verify` passes (kit {_lock_version(i)}).",
+        f"`vendor verify` passes ({_kit_name(_lock_version(i))}).",
     ))]
 
 
@@ -771,9 +802,11 @@ def check_experience(i: Inputs) -> list[Line]:
         d = NONE  # the level is the default: said once
     skipped = _skipped(exp)
     names = " and ".join(n for n, _ in skipped)
-    sk = Words(f" Skipped {names}: it should say `new` or `developer`." if skipped else "",
+    many = len(skipped) > 1
+    sk = Words(f" Skipped {names}: {'each' if many else 'it'} should say `new` or `developer`." if skipped else "",
                "".join(f"; skipped {n} ({why})" for n, why in skipped))
-    sk_fix = Words(f"Put `new` or `developer` in {names}, or remove it.", f"Set {names} to `new` or `developer`, or unset it.")
+    sk_fix = Words(f"Put `new` or `developer` in {names}, or remove {'them' if many else 'it'}.",
+                   f"Set {names} to `new` or `developer`, or unset {'them' if many else 'it'}.")
     if exp.level:
         src = _SOURCE_WORDS[exp.source]
         msg = Words(

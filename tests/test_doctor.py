@@ -36,7 +36,7 @@ def _bin(tmp_path, python="3.12.1", claude="2.1.300 (Claude Code)"):
     """A PATH with only a fake `python3` and `claude` on it: None leaves one
     out; a string is what it prints; an int is its exit code, printing nothing."""
     d = tmp_path / "bin"
-    d.mkdir(exist_ok=True)
+    d.mkdir(parents=True, exist_ok=True)
     for name, out in (("python3", python), ("claude", claude)):
         if out is None:
             (d / name).unlink(missing_ok=True)
@@ -550,9 +550,11 @@ def test_nothing_in_the_checkout_changes_after_a_run(tmp_path):
     root, path = _every_status_project(tmp_path)
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     before = _snapshot(root)
+    healthy = _bin(tmp_path / "ok")
     for args in ((), ("--json",), ("--strict",), ("--json", "--strict", "--claude-version", "2.1.300")):
         _doctor(tmp_path, root, *args, path=path)
-        _doctor(tmp_path, root, *args)
+        _doctor(tmp_path, root, *args, path=healthy)
+    assert _report(tmp_path, root, path=path)["counts"]["cant_check"] >= 1  # the every-status fakes still there
     assert _snapshot(root) == before
 
 
@@ -902,17 +904,32 @@ def test_a_hung_command_is_stopped_with_what_it_started(tmp_path, monkeypatch):
     monkeypatch.setattr(doctor, "RUN_TIMEOUT", 1)
     path = _bin(tmp_path, python=None, claude=None)
     marker = tmp_path / "child.pid"
-    _fake(path, "claude", f"/bin/sleep 30 & echo $! > {marker}; wait")
+    _fake(path, "claude", f"{shutil.which('sleep')} 30 & echo $! > {marker}; wait")
     i = _inputs(tmp_path, environ={"PATH": str(path), "HOME": str(tmp_path)})
     ln = doctor.check_claude_code(i)[0]
     assert ln.status == "cant_check" and "timed out" in ln.message.developer
     child = int(marker.read_text())
-    with pytest.raises(ProcessLookupError):
-        for _ in range(50):
-            os.kill(child, 0)
-            import time
+    assert _gone(child), "the hung command's child is still running"
 
-            time.sleep(0.1)
+
+def _gone(pid, seconds=5.0):
+    """The process has ended: no such pid, or a zombie nobody has reaped yet
+    (a container's PID 1 may never reap orphans)."""
+    import time
+
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        try:
+            if open(f"/proc/{pid}/stat").read().rsplit(")", 1)[1].split()[0] == "Z":
+                return True
+        except (OSError, IndexError):
+            pass
+        time.sleep(0.1)
+    return False
 
 
 def test_a_check_that_raises_is_cant_check_without_the_checkouts_path(tmp_path, monkeypatch):
@@ -927,3 +944,71 @@ def test_a_check_that_raises_is_cant_check_without_the_checkouts_path(tmp_path, 
     (ln,) = r.lines
     assert (ln.id, ln.status) == ("kit.boom", "cant_check")
     assert str(tmp_path) not in ln.message.new and "secret/dir" in ln.message.new
+
+
+# Round 3 of the review
+
+
+def test_a_missing_project_folder_is_one_gap(tmp_path):
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude/settings.json").write_text(json.dumps({"enabledPlugins": {vendor.PLUGIN_KEY: True}}))
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path / "nowhere"), "HOME": str(home), "PATH": str(_bin(tmp_path))}
+    env.pop("WORKFLOW_EXPERIENCE", None)
+    p = subprocess.run([sys.executable, "-B", str(CLI), "doctor", "--json"], cwd=tmp_path, env=env, capture_output=True, text=True)
+    lines = _lines(json.loads(p.stdout))
+    assert "kit.plugin" not in lines  # never "fine" for a folder that isn't there
+    assert [i for i, ln in lines.items() if ln["status"] == "gap"] == ["kit.profile"]
+
+
+def test_a_plugin_value_that_isnt_true_or_false_is_ignored(tmp_path):
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude/settings.json").write_text(json.dumps({"enabledPlugins": {vendor.PLUGIN_KEY: True}}))
+    root = _project(tmp_path, vendored=False, local={"enabledPlugins": {vendor.PLUGIN_KEY: "false"}})
+    ln = _line(tmp_path, root, "kit.plugin", home=home, env={"WORKFLOW_EXPERIENCE": "developer"})
+    assert ln["status"] == "fine" and "~/.claude/settings.json" in ln["message"]
+
+
+def test_a_conflict_is_listed_once(tmp_path):
+    root = _project(tmp_path, lock_files={".claude/skills/x/SKILL.md": "0" * 64})
+    lock = json.loads((root / ".claude/workflow/lock.json").read_text())
+    lock["conflicts"] = {".claude/skills/x/SKILL.md": "1" * 64}
+    (root / ".claude/workflow/lock.json").write_text(json.dumps(lock))
+    (root / ".claude/skills/x").mkdir(parents=True)
+    (root / ".claude/skills/x/SKILL.md").write_text("mine")
+    ln = _line(tmp_path, root, "kit.vendor")
+    assert ln["status"] == "gap" and ln["message"].count(".claude/skills/x/SKILL.md") == 1 and "conflict" in ln["message"]
+
+
+@pytest.mark.parametrize("lock_extra", [{"conflicts": [1, "a"]}, {"files": {"../outside.txt": "0" * 64}}])
+def test_odd_lock_contents_are_a_gap_not_a_kit_bug(tmp_path, lock_extra):
+    root = _project(tmp_path)
+    lock = json.loads((root / ".claude/workflow/lock.json").read_text())
+    lock.update(lock_extra)
+    (root / ".claude/workflow/lock.json").write_text(json.dumps(lock))
+    ln = _line(tmp_path, root, "kit.vendor")
+    assert ln["status"] == "gap" and "bug" not in ln["message"]
+
+
+def test_another_kits_path_is_shown_from_home(tmp_path):
+    settings = vendor.merge_hooks({})
+    settings["hooks"]["Stop"][0]["hooks"][0]["timeout"] = 99
+    root = _project(tmp_path, settings=settings)
+    p = _doctor(tmp_path, root, "--json", cli=CLI, home=KIT.parent, env={"WORKFLOW_EXPERIENCE": "developer"})
+    msg = _lines(json.loads(p.stdout))["kit.hooks"]["message"]
+    assert "~/" + KIT.name in msg and str(KIT.parent) not in msg
+
+
+def test_two_skipped_experience_values_are_spoken_of_as_two(tmp_path):
+    root = _project(tmp_path)
+    (root / ".workflow").mkdir()
+    (root / ".workflow/experience").write_text("guru\n")
+    ln = _line(tmp_path, root, "kit.experience", env={"WORKFLOW_EXPERIENCE": "expert"})
+    assert "each should say" in ln["message"] and "remove them" in ln["fix"]
+
+
+def test_claude_not_on_the_path_says_so(tmp_path):
+    root = _project(tmp_path)
+    ln = _line(tmp_path, root, "computer.claude_code", path=_bin(tmp_path, claude=None), env={"WORKFLOW_EXPERIENCE": "developer"})
+    assert "isn't on the PATH" in ln["message"]

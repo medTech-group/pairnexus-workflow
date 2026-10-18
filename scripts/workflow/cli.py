@@ -243,16 +243,20 @@ def cmd_doctor(a) -> int:
         error = f"{PROFILE_PATH} isn't UTF-8 text"
     except (OSError, ValueError) as e:
         error = f"{PROFILE_PATH} can't be read ({type(e).__name__})"
-    r = doctor_mod.report(
-        doctor_mod.Inputs(
-            root=root,
-            kit_root=KIT_ROOT,
-            profile=prof,
-            profile_error=error,
-            experience=resolve_experience(root, prof.experience if prof else None),
-            claude_version=a.claude_version,
+    try:
+        r = doctor_mod.report(
+            doctor_mod.Inputs(
+                root=root,
+                kit_root=KIT_ROOT,
+                profile=prof,
+                profile_error=error,
+                experience=resolve_experience(root, prof.experience if prof else None),
+                claude_version=a.claude_version,
+            )
         )
-    )
+    except KeyboardInterrupt:  # Ctrl-C: a quiet stop (what it ran is already killed)
+        print("workflow doctor: stopped", file=sys.stderr)
+        return 130
     _out(r.as_dict() if a.json else doctor_mod.text(r, min(100, shutil.get_terminal_size((100, 24)).columns)))
     return 1 if a.strict and not r.strict_ok() else 0
 
