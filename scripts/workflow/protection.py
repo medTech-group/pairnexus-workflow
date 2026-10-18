@@ -58,6 +58,24 @@ GLOB = set("*?[{\\")
 NOT_IN_A_BRANCH = set(" ~^:?*[\\") | {chr(c) for c in range(0x20)} | {"\x7f", "\x85", "\u2028", "\u2029"}
 
 
+def _no_constant(name: str):
+    raise ValueError(f"{name} isn't JSON")
+
+
+def _finite(text: str) -> float:
+    """A JSON number as a float; one too large for a float (1e400) isn't taken as Infinity."""
+    v = float(text)
+    if v in (float("inf"), float("-inf")):
+        raise ValueError(f"the number {text[:20]} is too large")
+    return v
+
+
+def loads(text: str):
+    """GitHub's JSON as this command reads it: a byte-order mark left out,
+    and `NaN`, `Infinity` and numbers too large for a float refused (ValueError)."""
+    return json.loads(text.removeprefix("\ufeff"), parse_constant=_no_constant, parse_float=_finite)
+
+
 def quote(s: str) -> str:
     """Text from the input, as a JSON string: no character of it can start a line.
 

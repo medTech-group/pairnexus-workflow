@@ -271,18 +271,6 @@ def cmd_doctor(a) -> int:
     return 1 if a.strict and not r.strict_ok() else 0
 
 
-def _no_constant(name: str):
-    raise ValueError(f"{name} isn't JSON")
-
-
-def _finite(text: str) -> float:
-    """A JSON number as a float; one too large for a float (1e400) isn't taken as Infinity."""
-    v = float(text)
-    if v in (float("inf"), float("-inf")):
-        raise ValueError(f"the number {text[:20]} is too large")
-    return v
-
-
 def cmd_protection(a) -> int:
     """The base branch's protection, from GitHub's JSON: the read-back, the
     requests to protect it or require checks, or the checks that ran. Builds and
@@ -294,7 +282,7 @@ def cmd_protection(a) -> int:
         if path == "-" and sys.stdin is None:
             raise protection_mod.ProtectionError(f"the {what} file is standard input (-), and standard input is closed")
         try:
-            return json.loads(_read(path).removeprefix("\ufeff"), parse_constant=_no_constant, parse_float=_finite)
+            return protection_mod.loads(_read(path))
         except OSError as e:
             raise protection_mod.ProtectionError(f"can't read the {what} file {path}: {e.strerror or e}") from e
         except (ValueError, RecursionError) as e:  # ValueError: bad JSON, NaN, bad UTF-8, a number too long

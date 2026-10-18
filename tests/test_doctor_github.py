@@ -278,7 +278,7 @@ def test_solo_mode_with_a_partial_ruleset_still_reads_its_rules(tmp_path):
     rs["rules"].append({"type": "required_linear_history"})
     _rule(rs, "pull_request")["parameters"]["require_code_owner_review"] = True
     lines = _github(tmp_path, _project(tmp_path, profile=SOLO), rulesets=[rs])
-    assert lines["github.ruleset"]["status"] == "note"
+    assert lines["github.ruleset"]["status"] == "gap"  # a ruleset with holes, not no ruleset as chosen
     assert lines["github.linear_history"]["status"] == "gap" and lines["github.code_owner_review"]["status"] == "gap"
 
 
@@ -624,6 +624,112 @@ def test_no_profile_makes_the_github_lines_wait_on_it(tmp_path):
     assert lines["github.ruleset"]["status"] == "cant_check"
     assert "profile" in lines["github.ruleset"]["fix"]
     assert lines["github.codeowners"]["status"] == "fine"
+
+
+# Round 2 of the review
+
+
+def test_a_ruleset_excluding_the_default_branch_without_the_settings_cant_tell(tmp_path):
+    every = _rs(id=106, name="Everything else", conditions={"ref_name": {"include": ["~ALL"], "exclude": ["~DEFAULT_BRANCH"]}})
+    every["rules"] = [{"type": "deletion"}]
+    r = _report(tmp_path, _protected(tmp_path), *_files(tmp_path, rulesets=[every, RULESET], settings=None), path=_bin(tmp_path, gh=False))
+    ln = _lines(r)["github.ruleset"]
+    assert (ln["status"], ln["offer"]) == ("cant_check", None), ln
+    assert r["lines"][0]["id"] != "github.ruleset" or r["lines"][0]["status"] != "gap"
+
+
+def test_a_pattern_ruleset_beside_an_unread_bypass_list_is_only_the_bypass_unknown(tmp_path):
+    kit = _rs()
+    del kit["bypass_actors"]
+    release = _rs(id=107, name="Release", conditions={"ref_name": {"include": ["refs/heads/release/*"], "exclude": []}})
+    lines = _github(tmp_path, _protected(tmp_path), rulesets=[kit, release])
+    assert lines["github.ruleset"]["status"] == "cant_check" and "admin" in lines["github.ruleset"]["message"], lines["github.ruleset"]
+    assert lines["github.required_checks"]["status"] == "fine" and lines["github.up_to_date"]["status"] == "fine"
+
+
+def test_a_pattern_ruleset_isnt_blamed_beside_one_on_main(tmp_path):
+    release = _rs(id=107, name="Release", conditions={"ref_name": {"include": ["refs/heads/release/*"], "exclude": []}})
+    lines = _github(tmp_path, _protected(tmp_path), rulesets=[_without(_rs(), "deletion"), release])
+    assert lines["github.protection.deletions"]["status"] == "gap" and "github.protection.base" not in lines
+
+
+def test_solo_mode_with_a_bypass_list_only_an_admin_can_read_is_a_note(tmp_path):
+    rs = _rs()
+    del rs["bypass_actors"]
+    root = _project(tmp_path, profile=SOLO)
+    ln = _github(tmp_path, root, rulesets=[rs])["github.ruleset"]
+    assert (ln["status"], ln["offer"]) == ("note", "protect_main"), ln
+    assert _doctor(tmp_path, root, *_files(tmp_path, rulesets=[rs]), "--strict").returncode == 0
+
+
+def test_solo_mode_with_a_ruleset_that_has_holes_names_each_one(tmp_path):
+    rs = _without(_rs(bypass_actors=[{"actor_id": 5}]), "deletion")
+    lines = _github(tmp_path, _project(tmp_path, profile=SOLO), rulesets=[rs])
+    assert (lines["github.ruleset"]["status"], lines["github.ruleset"]["offer"]) == ("gap", "protect_main")
+    assert lines["github.protection.bypass"]["status"] == "gap" and lines["github.protection.deletions"]["status"] == "gap"
+
+
+def test_solo_mode_with_no_ruleset_and_checks_listed_is_a_note(tmp_path):
+    root = _project(tmp_path, profile=_prof("ruleset = false\n", CHECKS))
+    ln = _github(tmp_path, root, rulesets=[])["github.required_checks"]
+    assert ln["status"] == "note" and "`tests`" in ln["message"]
+
+
+@pytest.mark.parametrize("text", ["/.claude/ @me\n/.github/workflows/ @me\n**/*.md\n", "/.claude/ @me\n/.github/workflows/ @me\n/*/settings.json\n",
+                                  "/.claude/ @me\n/.github/workflows/ @me\n/.git*/workflows/\n"])
+def test_a_later_ownerless_rule_with_a_wildcard_before_the_folder_takes_files_back(tmp_path, text):
+    ln = _github(tmp_path, _protected(tmp_path, codeowners=text))["github.codeowners"]
+    assert ln["status"] == "gap", ln
+
+
+def test_a_later_ownerless_rule_elsewhere_takes_nothing_back(tmp_path):
+    text = CODEOWNERS + "/docs/drafts/\n/.claudex/\n"
+    assert _github(tmp_path, _protected(tmp_path, codeowners=text))["github.codeowners"]["status"] == "fine"
+
+
+def test_a_404_on_one_ruleset_isnt_blamed_on_the_repository(tmp_path):
+    routes = gh_routes()
+    del routes["repos/acme/demo/rulesets/101"]  # deleted between the list and the GET
+    ln = _lines(_report(tmp_path, _protected(tmp_path), path=_bin(tmp_path, gh=routes)))["github.ruleset"]
+    assert ln["status"] == "cant_check" and "project.repo" not in ln["fix"], ln
+
+
+def test_the_budget_for_all_of_githubs_reads_stops_the_rest(tmp_path, monkeypatch):
+    import shutil
+    import time
+
+    from conftest import KIT
+    from test_doctor import _fake
+    from workflow import doctor
+    from workflow.profile import Experience, load
+
+    monkeypatch.setattr(doctor, "GH_BUDGET", 1)
+    root = _protected(tmp_path)
+    path = _bin(tmp_path, gh=False)
+    _fake(path, "gh", f"{shutil.which('sleep')} 30")
+    i = doctor.Inputs(root=root, kit_root=KIT, profile=load(root), profile_error=None, experience=Experience(None, "unknown"),
+                      environ={"PATH": str(path), "HOME": str(tmp_path)})
+    start = time.monotonic()
+    lines = {ln.id: ln for ln in doctor.report(i).lines}
+    assert time.monotonic() - start < 10
+    assert "within 1 s" in lines["github.merge_commits"].message.developer, lines["github.merge_commits"].message.developer
+    assert "took over 1 s" in lines["github.ruleset"].message.developer, lines["github.ruleset"].message.developer
+
+
+def test_both_files_from_standard_input_are_refused(tmp_path):
+    p = _doctor(tmp_path, _protected(tmp_path), "--rulesets", "-", "--repo", "-")
+    assert p.returncode != 0 and "only one" in p.stderr
+
+
+def test_an_empty_rulesets_path_says_so(tmp_path):
+    ln = _lines(_report(tmp_path, _protected(tmp_path), "--rulesets", "", *_files(tmp_path, rulesets=None)))["github.ruleset"]
+    assert ln["status"] == "cant_check" and "no path" in ln["message"]
+
+
+def test_nan_in_a_rulesets_file_is_refused_as_workflow_protection_refuses_it(tmp_path):
+    raw = json.dumps([RULESET]).replace('"id": 101', '"id": NaN')
+    ln = _github(tmp_path, _protected(tmp_path), rulesets=raw)["github.ruleset"]
+    assert ln["status"] == "cant_check" and "NaN" in ln["message"], ln
 
 
 # Wording, and changing nothing
