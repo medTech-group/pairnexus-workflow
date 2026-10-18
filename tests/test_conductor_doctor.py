@@ -63,7 +63,9 @@ def test_a_paid_plan_refusal_is_said_in_the_kickoff_and_going_ahead_recommended(
     refusal = _section(kick, r"^\s*- \*\*A paid-plan refusal\*\*", r"\n")
     assert "need a paid GitHub plan (Team or above)" in refusal
     assert "beside the solo-mode gap" in refusal and "`github.ruleset`'s gap" in refusal
-    assert "**Go ahead** for the solo-mode gap" in refusal and "**Go ahead without it** for the ruleset's gap" in refusal
+    # With `ruleset` left out, "Require these checks" needs a ruleset as well.
+    assert "`github.required_checks`'s" in refusal
+    assert "**Go ahead** for the solo-mode gap" in refusal and "**Go ahead without it** for the ruleset's gaps" in refusal
     assert "**Protect `main`** (recommended, except after a paid-plan refusal" in kick
 
 
