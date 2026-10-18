@@ -51,6 +51,8 @@ def test_each_file_says_where_it_comes_from():
     assert "gh api repos/<repo> > .workflow/repo.json" in block
     # A private repository on GitHub Free: the list is refused, and no ruleset is saved.
     assert "rulesets need a paid plan" in block and "save `[]`" in block
+    # Doctor can't see the refusal in `[]`, so the conductor says it and doesn't steer to Protect.
+    assert "need a paid GitHub plan (Team or above)" in block and "**Go ahead** is the recommended answer" in block
     assert "`list_environments`" in block and "has_more" in block
     assert "workflow:run" in block and "state=all" in block
     assert "claude --version" in block

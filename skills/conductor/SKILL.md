@@ -43,7 +43,7 @@ Collect every problem for the kick-off, each with its fix. The set-up is `WF doc
 **The set-up: `WF doctor`**
 
 Gather the files doctor takes into `.workflow/` (git ignores it), each `gh api` route written out in full, with no shell variables in it:
-- **The rulesets:** list them with `gh api --paginate 'repos/<repo>/rulesets?includes_parents=true&per_page=100'`, then fetch each one by its id (`gh api repos/<repo>/rulesets/<id>`), and save the full rulesets (not the list's summaries) as one JSON list in `.workflow/rulesets.json`. When GitHub refuses the list because rulesets need a paid plan (a private repository on GitHub Free: "Upgrade to GitHub Pro or make this repository public"), save `[]`: no ruleset, so the base branch reads as unprotected.
+- **The rulesets:** list them with `gh api --paginate 'repos/<repo>/rulesets?includes_parents=true&per_page=100'`, then fetch each one by its id (`gh api repos/<repo>/rulesets/<id>`), and save the full rulesets (not the list's summaries) as one JSON list in `.workflow/rulesets.json`. When GitHub refuses the list because rulesets need a paid plan (a private repository on GitHub Free: "Upgrade to GitHub Pro or make this repository public"), save `[]`: no ruleset, so the base branch reads as unprotected. Doctor can't see that refusal in the file, so say it yourself beside the ruleset's gap in the kick-off: rulesets on a private repository need a paid GitHub plan (Team or above), or the repository made public. Until then **Protect `main`** and **Restore protection** can't work, so don't recommend them: **Go ahead** is the recommended answer.
 - **The repository's settings:** `gh api repos/<repo> > .workflow/repo.json`.
 - **The environments:** `list_environments`, every page until `has_more` is false, saved as one JSON list of its pages in `.workflow/environments.json`.
 - **The runs:** the issues labelled `workflow:run`, open and closed: `gh api 'repos/<repo>/issues?labels=workflow:run&state=all&sort=created&direction=desc&per_page=30' > .workflow/run-issues.json` (or the GitHub MCP tools, all pages in one JSON list).
@@ -115,7 +115,7 @@ With `AskUserQuestion`, at most four questions to a round, recommended answers f
 
      > This run is in solo mode: nothing on GitHub stops a mistake reaching `main`, and the kit's "never merge while CI is red" check is the only one: `workflow merge-check`, which every merge in the run goes through.
 
-     When doctor's `github.ruleset` note says GitHub already protects `main`, show that note before these words.
+     When doctor's `github.ruleset` note says GitHub already protects `main`, show that note before these words, which then say how the run treats `main`.
 
      For removed protection, say first that the profile says `main` is protected but GitHub doesn't protect it, with what doctor found missing (its mismatch line and `github.protection.*` lines), or that it can't be confirmed from here. Then ask:
      - **Protect `main`** (recommended; for removed protection, **Restore protection**): follow the `upgrade-setup` skill with the offer `protect_main` (or `restore_protection`), then look at the read-back that path ends with. `"protected": true` closes the gap, whatever the profile says; run doctor again for the other lines. If it still isn't protected (Not now, a message for an admin, a click missed), ask again: **Go ahead** or **Don't start the run** (end here; nothing has been created yet).
