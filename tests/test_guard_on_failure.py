@@ -21,13 +21,26 @@ from workflow import cli, vendor
 KIT = Path(__file__).resolve().parents[1]
 OTHERS = {"Stop": 15, "UserPromptSubmit": 10, "SessionStart": 600}
 
-# The guard's entry as 0.1.8 wrote it into a project's settings.
+# The guard's entry exactly as 0.1.8 (3c1ce3e) wrote it into a project's settings.
 GUARD_018 = {
     "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*[Gg]it[Hh]ub.*",
     "hooks": [{
         "type": "command",
-        "command": 'F="$CLAUDE_PROJECT_DIR/.claude/workflow/bin/workflow.py"; '
-                   'if [ -f "$F" ] && command -v python3 >/dev/null 2>&1; then exec python3 -B "$F" hook guard; fi; exit 0',
+        "command": (
+            "F=\"$CLAUDE_PROJECT_DIR/.claude/workflow/bin/workflow.py\"; if [ -f \"$F\" ] && command -v python3 >/dev"
+            "/null 2>&1; then exec python3 -B \"$F\" hook guard; fi; R=$(printf '%s' \"${WORKFLOW_ROLE:-}\" | tr -d '"
+            "[:space:]' | tr '[:upper:]' '[:lower:]'); if [ -z \"$R\" ] || [ \"$R\" = attended ]; then exit 0; fi; if"
+            " [ -f \"$F\" ]; then printf '%s\\n' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDec"
+            "ision\":\"deny\",\"permissionDecisionReason\":\"Refused: there is no python3 on the PATH, so the workflow "
+            "kit cannot check anything; install Python 3.11 or newer and start a new session.\"}}'; exit 0; fi; if"
+            " command -v python3 >/dev/null 2>&1 && python3 -c 'import json,sys;e=json.load(sys.stdin);i=e.get(\"t"
+            "ool_input\") or {};c=i.get(\"command\") if e.get(\"tool_name\")==\"Bash\" and isinstance(i,dict) else None;"
+            "sys.exit(0 if isinstance(c,str) and \" \".join(c.split()) in (\"git checkout -- .claude/workflow\", \"git"
+            " restore .claude/workflow\") else 1)' 2>/dev/null; then exit 0; fi; printf '%s\\n' '{\"hookSpecificOutp"
+            "ut\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"the workfl"
+            "ow kit is missing from this checkout (.claude/workflow/bin/workflow.py); restore it with: git checko"
+            "ut -- .claude/workflow\"}}'"
+        ),
         "timeout": 15,
     }],
 }
@@ -69,8 +82,8 @@ def test_the_other_hooks_keep_the_default_and_their_timeouts(where):
 
 def test_the_guards_budget_stays_under_its_timeout():
     # The guard refuses with its own reason before Claude Code's timeout cuts it off.
-    assert cli.GUARD_BUDGET == 27
-    assert cli.GUARD_BUDGET < vendor.KIT_HOOKS["PreToolUse"][0]["hooks"][0]["timeout"]
+    assert cli.GUARD_BUDGET == 25
+    assert vendor.GUARD_TIMEOUT - cli.GUARD_BUDGET >= 5
 
 
 def test_vendor_update_rewrites_a_0_1_8_guard_entry_and_keeps_the_projects_hooks(tmp_path):
@@ -124,8 +137,19 @@ ATTENDED_EVENTS = (
 @pytest.mark.parametrize("solo", [False, True])
 def test_every_attended_case_of_the_installed_guard_exits_0(tmp_path, layout, kind, solo):
     s = Installed(tmp_path, layout, "missing" if kind == "working" else kind, solo=solo)
-    if kind == "working":  # the real python3, so the CLI decides
+    if kind == "working":  # the real python3, a valid profile and a git checkout, so guard.decide runs
         s.env["PATH"] = str(Path(shutil.which("python3")).parent) + ":" + s.env["PATH"]
+        (s.proj / ".claude/workflow").mkdir(parents=True, exist_ok=True)
+        ruleset = "ruleset = false\n" if solo else ""
+        (s.proj / ".claude/workflow/profile.toml").write_text(
+            f'[project]\nname = "x"\nrepo = "o/r"\nbase_branch = "main"\n{ruleset}')
+        subprocess.run(["git", "init", "-q", "-b", "feature", str(s.proj)], check=True)
+        profile = subprocess.run([shutil.which("python3"), str(KIT / "scripts/workflow.py"), "profile", "check"],
+                                 cwd=s.proj, capture_output=True, text=True, env={**s.env, "PATH": s.env["PATH"]})
+        assert profile.returncode == 0, profile.stdout + profile.stderr
+        p = s.run("guard", _bash(PUSH, "default"))
+        assert _decision(p) == ("deny" if solo else "ask")
+        assert "isn't working" not in p.stdout  # the CLI decided, not the fallback
     for event in ATTENDED_EVENTS:
         for role in ("attended", ""):
             p = s.run("guard", event, WORKFLOW_ROLE=role)
@@ -141,7 +165,7 @@ def test_enforcement_md_names_the_minimum_version_and_the_timeout():
     assert "2.1.295" in doc
     assert '"onFailure": "block"' in doc
     assert "30-second timeout" in doc and "15-second" not in doc
-    assert "27 seconds" in doc
+    assert "25 seconds" in doc and "exits non-zero" in doc
 
 
 def test_the_readme_covers_a_command_blocked_by_the_guards_timeout():
@@ -169,4 +193,5 @@ def test_the_changelog_notes_it_under_unreleased_without_a_version_bump():
     log = (KIT / "CHANGELOG.md").read_text()
     unreleased = log[log.index("## Unreleased"):log.index("\n## ", log.index("## Unreleased") + 1)]
     assert "#57" in unreleased and "guard's hook entry" in unreleased
-    assert (KIT / "VERSION").read_text().strip() == "0.1.11"
+    released = log[log.index("\n## ", log.index("## Unreleased") + 1) + 4:].split("\n", 1)[0].strip()
+    assert (KIT / "VERSION").read_text().strip() == released

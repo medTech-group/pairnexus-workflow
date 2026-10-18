@@ -50,7 +50,7 @@ HOOK_TAG = ".claude/workflow/bin/workflow.py"
 PLUGIN_KEY = "pairnexus-workflow@pairnexus"
 MP_PLUGIN = "mattpocock-skills"
 MP_NOTICE = Path(".claude/skills/LICENSE-mattpocock-skills")
-GUARD_TIMEOUT = 30  # seconds; the CLI's GUARD_BUDGET stays under it
+GUARD_TIMEOUT = 30  # seconds; the CLI's GUARD_BUDGET is 5 under it
 GUARD_MATCHER = "Bash|Monitor|PowerShell|Edit|Write|MultiEdit|NotebookEdit|mcp__.*[Gg]it[Hh]ub.*"
 SKIP_DOCS = {"flow.md", "proposal.md", "spike.md"}
 IGNORE_LINE = ".workflow/"
@@ -155,8 +155,8 @@ def hook_command(sub: str, plugin: bool = False) -> str:
       exits 0 silently (python3 on a missing file exits 2, which on PreToolUse
       would block every tool, unexplained).
     With the CLI there but `python3` missing or failing (a stub, a shim with no
-    version, a broken checkout: a non-zero exit, which Claude Code reads as a
-    non-blocking error, so the tool would run), the guard denies every tool to
+    version, a broken checkout: a non-zero exit, which the hook command
+    catches, since with `onFailure: "block"` it would block the tool, #57), the guard denies every tool to
     a ticket or conductor session (WORKFLOW_ROLE, or with it unset a branch
     matching the profile's run.ticket_branch), and an attended session gets
     the can't-decide fallback without Python (`fallback.sh`, #56): a push or a
@@ -222,10 +222,11 @@ def hook_command(sub: str, plugin: bool = False) -> str:
     )
 
 
-def _hook(sub: str, matcher: str | None = None, timeout: int = 30, plugin: bool = False, block: bool = False) -> dict:
+def _hook(sub: str, matcher: str | None = None, timeout: int = 30, plugin: bool = False,
+          on_failure: str | None = None) -> dict:
     hook: dict = {"type": "command", "command": hook_command(sub, plugin), "timeout": timeout}
-    if block:
-        hook["onFailure"] = "block"
+    if on_failure:
+        hook["onFailure"] = on_failure
     entry: dict = {"hooks": [hook]}
     if matcher:
         entry["matcher"] = matcher
@@ -239,7 +240,7 @@ def _kit_hooks(plugin: bool = False) -> dict:
     (#57). The other hooks keep the default, `continue`: blocking a Stop on
     failure would loop, and blocking a prompt would lose it."""
     return {
-        "PreToolUse": [_hook("guard", GUARD_MATCHER, GUARD_TIMEOUT, plugin, block=True)],
+        "PreToolUse": [_hook("guard", GUARD_MATCHER, GUARD_TIMEOUT, plugin, on_failure="block")],
         "Stop": [_hook("gate", None, 15, plugin)],
         "UserPromptSubmit": [_hook("context", None, 10, plugin)],
         "SessionStart": [_hook("repair", "startup|resume", 600, plugin)],
