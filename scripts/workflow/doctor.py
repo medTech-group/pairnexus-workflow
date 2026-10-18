@@ -31,7 +31,7 @@ import signal
 import subprocess
 import textwrap
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from . import profile as profile_mod
 from . import updates as updates_mod
@@ -251,6 +251,17 @@ def _relative(i: Inputs, text: str) -> str:
     return text.replace(str(i.root) + os.sep, "").replace(str(i.root), ".")
 
 
+def _home(i: Inputs, path: Path) -> str:
+    """A path with the home directory as `~`, so a report posted on GitHub
+    never carries a username."""
+    home = (i.environ.get("HOME") or "").rstrip(os.sep)
+    p = str(path)
+    for h in dict.fromkeys((home, os.path.realpath(home) if home else "")):  # as given, and through any symlink
+        if h and h != os.sep and (p == h or p.startswith(h + os.sep)):
+            return "~" + p[len(h):]
+    return p
+
+
 def _check(group: str, id_: str):
     """Mark a check with its group and the id of its main line, for the
     `cant_check` line it becomes if it raises."""
@@ -357,7 +368,7 @@ def _user_settings(i: Inputs) -> tuple[str, Path | None]:
     when there is no home directory to find it in)."""
     if i.environ.get("CLAUDE_CONFIG_DIR"):
         p = Path(i.environ["CLAUDE_CONFIG_DIR"]) / "settings.json"
-        return str(p), p
+        return _home(i, p), p
     home = i.environ.get("HOME")
     if not home:
         try:
@@ -484,14 +495,6 @@ def _kit_version(i: Inputs) -> str:
 
 def _kit_name(version: str) -> str:
     return "this kit" if version == "unknown" else f"kit {version}"
-
-
-def _home(i: Inputs, path: Path) -> str:
-    """A path with the home directory as `~`, so a report posted on GitHub
-    never carries a username."""
-    home = i.environ.get("HOME")
-    p = str(path)
-    return "~" + p[len(home):] if home and home != "/" and (p == home or p.startswith(home.rstrip(os.sep) + os.sep)) else p
 
 
 def _copy_has_doctor(i: Inputs) -> bool:
@@ -648,8 +651,8 @@ def check_profile(i: Inputs) -> list[Line]:
     g, id_ = "The kit", "kit.profile"
     if not i.root.is_dir():
         return [Line(g, id_, "gap", Words(
-            f"The project's folder ({i.root}) isn't there, so there's nothing to check in it.",
-            f"The project directory {i.root} doesn't exist (CLAUDE_PROJECT_DIR, or the current directory).",
+            f"The project's folder ({_home(i, i.root)}) isn't there, so there's nothing to check in it.",
+            f"The project directory {_home(i, i.root)} doesn't exist (CLAUDE_PROJECT_DIR, or the current directory).",
         ), Words(
             "Open the project's folder and run the check from there.",
             "Run doctor from the checkout, or set CLAUDE_PROJECT_DIR to it.",
@@ -694,19 +697,15 @@ def _copy_problems(i: Inputs, lock: dict) -> list[str]:
     keeps = lock.get("kept") if isinstance(lock.get("kept"), dict) else {}
     raw = lock.get("conflicts")
     conflicts = sorted(str(c) for c in raw) if isinstance(raw, (dict, list)) else []
-    root = i.root.resolve()
     missing, changed, outside = [], [], []
     for dst, h in lock["files"].items():
         if dst in conflicts:
             continue  # said once, as a conflict
-        path = i.root / dst
-        try:
-            inside = path.resolve() == root or root in path.resolve().parents
-        except (OSError, RuntimeError):
-            inside = False
-        if not inside:
+        rel = PurePosixPath(str(dst))
+        if rel.is_absolute() or ".." in rel.parts:  # the lock's path itself: a symlinked folder inside is fine
             outside.append(str(dst))
             continue
+        path = i.root / rel
         try:
             there = path.exists()
         except OSError:

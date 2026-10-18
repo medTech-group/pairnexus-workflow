@@ -981,23 +981,47 @@ def test_a_conflict_is_listed_once(tmp_path):
     assert ln["status"] == "gap" and ln["message"].count(".claude/skills/x/SKILL.md") == 1 and "conflict" in ln["message"]
 
 
-@pytest.mark.parametrize("lock_extra", [{"conflicts": [1, "a"]}, {"files": {"../outside.txt": "0" * 64}}])
-def test_odd_lock_contents_are_a_gap_not_a_kit_bug(tmp_path, lock_extra):
+def test_odd_conflicts_in_the_lock_are_a_gap_not_a_kit_bug(tmp_path):
     root = _project(tmp_path)
     lock = json.loads((root / ".claude/workflow/lock.json").read_text())
-    lock.update(lock_extra)
+    lock["conflicts"] = [1, "a"]
     (root / ".claude/workflow/lock.json").write_text(json.dumps(lock))
     ln = _line(tmp_path, root, "kit.vendor")
     assert ln["status"] == "gap" and "bug" not in ln["message"]
 
 
-def test_another_kits_path_is_shown_from_home(tmp_path):
+@pytest.mark.parametrize("dst", ["../outside.txt", "/etc/hostname"])
+def test_a_lock_path_outside_the_project_is_named_not_read(tmp_path, dst):
+    (tmp_path / "outside.txt").write_text("there")
+    root = _project(tmp_path, lock_files={dst: "0" * 64})
+    ln = _line(tmp_path, root, "kit.vendor")
+    assert ln["status"] == "gap" and "outside the project" in ln["message"]
+
+
+def test_a_symlinked_folder_in_the_copy_is_inside_the_project(tmp_path):
+    shared = tmp_path / "shared/x"
+    shared.mkdir(parents=True)
+    (shared / "SKILL.md").write_text("kit's")
+    import hashlib
+
+    root = _project(tmp_path, lock_files={".claude/skills/x/SKILL.md": hashlib.sha256(b"kit's").hexdigest()})
+    (root / ".claude/skills").symlink_to(tmp_path / "shared")
+    assert _line(tmp_path, root, "kit.vendor")["status"] == "fine"
+
+
+@pytest.mark.parametrize("slash", ["", "/"])
+def test_another_kits_path_is_shown_from_home(tmp_path, slash):
     settings = vendor.merge_hooks({})
     settings["hooks"]["Stop"][0]["hooks"][0]["timeout"] = 99
     root = _project(tmp_path, settings=settings)
-    p = _doctor(tmp_path, root, "--json", cli=CLI, home=KIT.parent, env={"WORKFLOW_EXPERIENCE": "developer"})
+    home = tmp_path / "home"
+    kit = home / "kit"
+    shutil.copytree(KIT / "scripts", kit / "scripts", ignore=shutil.ignore_patterns("__pycache__"))
+    shutil.copy(KIT / "VERSION", kit / "VERSION")
+    p = _doctor(tmp_path, root, "--json", cli=kit / "scripts/workflow.py", home=home,
+                env={"WORKFLOW_EXPERIENCE": "developer", "HOME": str(home) + slash})
     msg = _lines(json.loads(p.stdout))["kit.hooks"]["message"]
-    assert "~/" + KIT.name in msg and str(KIT.parent) not in msg
+    assert "~/kit" in msg and str(home) not in msg
 
 
 def test_two_skipped_experience_values_are_spoken_of_as_two(tmp_path):
@@ -1012,3 +1036,34 @@ def test_claude_not_on_the_path_says_so(tmp_path):
     root = _project(tmp_path)
     ln = _line(tmp_path, root, "computer.claude_code", path=_bin(tmp_path, claude=None), env={"WORKFLOW_EXPERIENCE": "developer"})
     assert "isn't on the PATH" in ln["message"]
+
+
+# The Correctness pass after round 3
+
+
+def test_ctrl_c_stops_quietly_with_nothing_left_running(tmp_path):
+    import signal
+    import time
+
+    root = _project(tmp_path)
+    path = _bin(tmp_path, claude=None)
+    marker = tmp_path / "child.pid"
+    _fake(path, "claude", f"{shutil.which('sleep')} 30 & echo $! > {marker}; wait")
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(root), "HOME": str(tmp_path), "PATH": str(path)}
+    p = subprocess.Popen([sys.executable, "-B", str(root / ".claude/workflow/bin/workflow.py"), "doctor"], cwd=root, env=env,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    for _ in range(100):
+        if marker.exists() and marker.read_text().strip():
+            break
+        time.sleep(0.1)
+    p.send_signal(signal.SIGINT)
+    out, err = p.communicate(timeout=20)
+    assert p.returncode == 130 and "workflow doctor: stopped" in err and "Traceback" not in err
+    assert _gone(int(marker.read_text()))
+
+
+def test_a_missing_folder_under_home_is_shown_from_home(tmp_path):
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path / "nowhere"), "HOME": str(tmp_path), "PATH": str(_bin(tmp_path))}
+    p = subprocess.run([sys.executable, "-B", str(CLI), "doctor", "--json"], cwd=tmp_path, env=env, capture_output=True, text=True)
+    msg = _lines(json.loads(p.stdout))["kit.profile"]["message"]
+    assert "~/nowhere" in msg and str(tmp_path) not in msg
