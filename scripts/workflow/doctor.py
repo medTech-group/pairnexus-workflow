@@ -24,6 +24,10 @@ counts, the text, the JSON and `--strict` follow without change. A line
 that needs GitHub's answers reads them through `_github(i)`, once for every
 line; the Cloud lines read the environments through `_environments(i)` and
 whether a run has been made through `_runs(i)`, the same way.
+
+**`workflow status`** runs only `LOCAL_CHECKS` (#62), through `report`, and
+shows their gaps: a check added there must read nothing but this computer
+and the checkout.
 """
 
 from __future__ import annotations
@@ -139,6 +143,11 @@ class Inputs:
     # and --runs (the `workflow:run` issues, which win over `gh api`).
     environments_file: Path | str | None = None
     runs_file: Path | str | None = None
+    # Only gaps are wanted (`workflow status`, #62, which keeps the gap lines
+    # itself): a check may leave out what can only be a note or fine and
+    # costs time. `check_profile` skips `profile check`'s warnings, whose globs
+    # walk the tree.
+    gaps_only: bool = False
     _github: _GitHub | None = field(default=None, repr=False)  # what the GitHub lines read, read once
     _environments: _Answer | None = field(default=None, repr=False)  # the environments listed, read once
     _runs: _Answer | None = field(default=None, repr=False)  # the `workflow:run` issues, read once
@@ -740,6 +749,8 @@ def check_profile(i: Inputs) -> list[Line]:
             "Ask Claude to set the workflow up for this project.",
             "Run the setup-workflow skill.",
         ))]
+    if i.gaps_only:
+        return []  # its warnings are notes
     warnings = [_relative(i, w) for w in profile_mod.check(i.profile)]
     if warnings:
         n = len(warnings)
@@ -2137,6 +2148,12 @@ def check_environment_contents(i: Inputs) -> list[Line]:
 CHECKS = [check_python, check_claude_code, check_profile, check_install, check_vendor, check_experience, check_ruleset,
           check_protection, check_required_checks, check_ruleset_rules, check_merge_settings, check_codeowners,
           check_environments, check_environment_contents]
+# The checks that read only this computer and the checkout: no `gh`, no
+# network, and nothing a session hands in. `workflow status` runs these (#62),
+# so the guided start can tell, with no network call, whether to offer "check
+# the set-up". Claude Code's version and CODEOWNERS are local too, but #34
+# doesn't name them for `status`.
+LOCAL_CHECKS = [check_python, check_profile, check_install, check_vendor, check_ruleset]
 
 
 # ---------- the report ----------
@@ -2201,9 +2218,10 @@ def _failed(i: Inputs, check, e: Exception) -> Line:
     ))
 
 
-def report(i: Inputs) -> Report:
+def report(i: Inputs, checks: list | None = None) -> Report:
+    """Every check's lines, or only those of `checks` (`LOCAL_CHECKS`)."""
     lines: list[Line] = []
-    for check in CHECKS:
+    for check in CHECKS if checks is None else checks:
         try:
             lines += check(i)
         except Exception as e:  # advice never ends in a traceback

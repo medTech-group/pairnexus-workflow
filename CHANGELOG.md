@@ -10,6 +10,22 @@
 - **Solo mode and removed protection** (#50) are read from doctor's lines: `kit.ruleset`'s solo-mode note (`ruleset = false`), or `github.ruleset`'s mismatch line offering `restore_protection` (`ruleset = true`, the base branch unprotected). With `ruleset = true`, three more cases count as removed protection, worded as unconfirmed: a `github.ruleset` line still `cant_check`, no such line, and a doctor run that never gave its JSON (then the profile's `project.ruleset` decides). A gathered file that holds an error, or that a line says can't be read, is fetched again once before the report is read. In solo mode, doctor's ruleset lines and `github.auto_merge` give way to the one solo-mode gap. The kick-off's "Protect `main`" / "Restore protection" / "Go ahead" is unchanged.
 - **Still the conductor's own:** `WORKFLOW_ROLE`, the permission mode against the profile's, `version --fresh`, `ready --fetch` and the protected-path notes, leftovers, the base branch's CI and the last run (now read from the same `workflow:run` issues). A missing ticket environment still stops the run before the kick-off's questions, whatever doctor's Cloud line says, and the conductor still keeps its id from `list_environments`; one of that name that isn't active counts as missing, as doctor counts it, and two active ones stop the run too. A gap still open after "Fix it first" asks "Go ahead without it" or "Don't start the run"; a `github.approvals` line that can't be checked also recommends **owner**.
 - Docs: `skills/conductor/SKILL.md`, `docs/enforcement.md` §5, the README (Step 6, "Run the backlog unattended"), `docs/charter.md`, `docs/protection.md`. Tests: `tests/test_conductor_doctor.py`; two of `tests/test_charter_solo.py`'s pre-flight tests now read the doctor wording.
+
+**`workflow status` reports doctor's local gaps, with no network calls** (#62, part of #34).
+
+- **The checks** are doctor's own local ones, run as doctor runs them:
+  - `python3` on the PATH;
+  - the hooks, with Claude Code's settings and the plugin;
+  - `profile check`'s errors. Its warnings are notes, and their globs can be slow, so `status` skips them;
+  - `vendor verify`;
+  - the `ruleset` setting.
+- **No network:** the checks read only this computer and the checkout. Without `--fetch`, `status` still runs no `gh`. `--fetch` reads issues, pull requests and the latest release as before. It never runs doctor's GitHub or Cloud checks.
+- **Not set up:** a project with no profile has the gap `kit.profile`, as in doctor, beside `Kit: NOT set up here`.
+- **Text:** one line after the experience lines. It is `Local gaps: none`, or names each gap by doctor's id, the most serious first: `Local gaps: 2 (computer.python3, kit.hooks): ...`.
+- **`--json`:** `local_gaps`, the gap lines in doctor's shape (group, id, status, message, fix, offer, worded by the person's experience), and `local_gap`, `true` or `false`. A note or a line doctor can't check isn't a gap. Solo mode (`ruleset = false`) and no `ruleset` setting are notes, which `Solo mode:` already reports.
+- **A profile with an error** no longer stops `status`. It says `Kit: set up, but its profile has an error (kit.profile)` and `Solo mode: unknown`, and the gap `kit.profile` says what's wrong. In `--json`, `profile_error` is `true` and `set_up` stays `true`. `--fetch` then reads no issues and says why.
+- **Ctrl-C** while `status` runs `python3` stops it quietly (exit 130).
+- Everything else in `status`'s text and JSON is unchanged. Tests: `tests/test_status_local_gaps.py`.
 - **For projects updating:** nothing to do.
 
 **`workflow doctor` on an old `python3`: a short report** (#61, part of #34).
