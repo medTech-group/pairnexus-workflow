@@ -49,6 +49,8 @@ def test_each_file_says_where_it_comes_from():
     # The rulesets in full, each by its id, not the list's summaries.
     assert "gh api --paginate 'repos/<repo>/rulesets?" in block and "by its id" in block
     assert "gh api repos/<repo> > .workflow/repo.json" in block
+    # A private repository on GitHub Free: the list is refused, and no ruleset is saved.
+    assert "rulesets need a paid plan" in block and "save `[]`" in block
     assert "`list_environments`" in block and "has_more" in block
     assert "workflow:run" in block and "state=all" in block
     assert "claude --version" in block
