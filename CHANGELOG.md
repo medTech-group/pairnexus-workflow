@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+**"Check the set-up": the `check-setup` skill, and the guided start's offer of it** (#63, part of #34).
+
+- **The skill** (`skills/check-setup`, a kit skill Claude may load itself; not `doctor`, which Claude Code already has as `/doctor`) runs `workflow doctor --json` and shows its report, worded by the person's experience, the most serious first. It changes nothing itself.
+  - **In a cloud session** it gathers what only a session can see into a directory outside the checkout: the rulesets, each fetched in full; the repository's settings; `list_environments`, every page; the `workflow:run` issues, open and closed; and `claude --version`. It hands them to doctor as `--rulesets`, `--repo`, `--environments`, `--runs` and `--claude-version`. A file it can't fill with GitHub's own answer is left out, so doctor says that line can't be checked.
+  - **In a local session** it runs doctor with what `gh` gives, and says the environments can only be checked from a cloud session.
+  - **It never says "fine"** while a line can't be checked, and an old `python3` gets doctor's short report.
+  - **The offers:** each offer the report names is a choice with "Not now": `protect_main` and `restore_protection` hand over to `upgrade-setup`'s "Protect `main`", `set_up_unattended_runs` to its "Set up unattended runs". Any other offer is named as text.
+- **The guided start** (`start`) offers "Check the set-up" when `workflow status` reports a local gap (after reading `set_up`: before set-up it offers setting the kit up instead), on an old `python3`, and once a session in solo mode. Never at every session start, and never in ticket or conductor sessions.
+- Docs: `docs/enforcement.md` §5 and the README's "Step 6. Check it" lead with "check the set-up" or `workflow doctor`, the manual checklist kept underneath as the reference; the README's parts table; `docs/install.md`. Tests: `tests/test_check_setup.py`.
+- **For projects updating:** nothing to do. The update brings the new skill.
+
 **The conductor's pre-flight runs `workflow doctor`** (#64, part of #34).
 
 - **One check of the set-up:** the pre-flight gathers the files doctor takes into `.workflow/` (the rulesets, each fetched in full; the repository's settings; `list_environments`' pages; the `workflow:run` issues, open and closed; this session's `claude --version`) and runs `workflow doctor --json` with them, so a run checks exactly what the owner would check by hand.

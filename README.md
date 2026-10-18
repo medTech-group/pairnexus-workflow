@@ -190,11 +190,15 @@ The setup script runs before the repository is there, so it must never read the 
 
 ### Step 6. Check it
 
-In a **cloud** session on the repository (only cloud sessions can list your environments), ask:
+Ask Claude to **check the set-up**, or run `workflow doctor` in your terminal (`python3 -B .claude/workflow/bin/workflow.py doctor`). Either gives one report of what's set up and what isn't, each line with its fix, the most serious first, and changes nothing.
 
-> Check the workflow set-up: the ruleset, the merge settings and the two environments.
+Ask in a **cloud** session on the repository, since only cloud sessions can list your environments:
 
-Claude follows the kit's checklist (`.claude/workflow/docs/enforcement.md`, section 5) and checks:
+> Check the set-up.
+
+Claude's `check-setup` skill gathers the rulesets and the merge settings through GitHub's API, the two environments, the `workflow:run` issues and its Claude Code version, runs `workflow doctor` with them, and shows you the report. For each upgrade the report names ("Protect `main`", "Restore protection", "Set up unattended runs") it asks whether to do it now, with "Not now". In a local session it checks everything but the environments, and says those need a cloud session. The guided start offers it when its quick look finds a problem, and once a session in solo mode.
+
+The kit's checklist (`.claude/workflow/docs/enforcement.md`, section 5) is what doctor checks, kept there as the reference for checking by hand:
 - the ruleset, through GitHub's API: active, on the base branch, no bypass, deletions and force pushes blocked, required approvals, every required check present, "up to date" ticked, Code Owners off, linear history off;
 - that auto-merge and merge commits are allowed;
 - CODEOWNERS;
@@ -702,6 +706,7 @@ How to report each:
 | `skills/conductor` | The unattended run: charter, sessions, check-ins, merges, release, stop |
 | `skills/run-report` | The end-of-run report for the owner |
 | `skills/merge-check` | "Is #12 ready to merge?": the merge rule's answer in plain words, posting nothing, with the fixes as choices and "Merge it now" when it's ready |
+| `skills/check-setup` | "Check the set-up": `workflow doctor`'s report, with what only a session can see (the rulesets, the environments) handed to it, and each upgrade it names offered with "Not now"; changes nothing |
 | `skills/upgrade-setup` | The upgrades from solo mode: "Protect `main`", guided click by click, read back, then the pull request that leaves solo mode |
 | `skills/update-workflow` | Update a project's vendored copy |
 | `agents/` | The read-only Correctness reviewer and the UI explorer |
