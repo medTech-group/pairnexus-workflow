@@ -971,13 +971,16 @@ class _GitHub:
     report_why: _Answer | None = None
     unseen: _Answer | None = None  # protected, but for bypass lists only an admin can read
     plan: bool = False  # GitHub said rulesets need a paid plan: read as no rulesets
+    # Without the default branch, the readings differ but neither protects the
+    # base branch: the ruleset line still says so; the rest can't be checked.
+    unprotected_either: bool = False
     merge: dict | None = None
     merge_why: _Answer | None = None
 
 
 ADMIN = Words(
     "Ask the repository's admin to run this check, or to look at the ruleset's bypass list in Settings → Rules.",
-    "Rerun with an admin's `gh`, or pass --rulesets from an admin's GET repos/<repo>/rulesets/<id>.",
+    "Rerun with an admin's `gh`, or give --rulesets from an admin's GET repos/<repo>/rulesets/<id>.",
 )
 
 
@@ -1023,7 +1026,7 @@ def _gh(i: Inputs, path: str, deadline: float, flag: str, paginate: bool = False
     if ran.state == "failed" and "HTTP 404" in ran.err and shown in (f"repos/{repo}", f"repos/{repo}/rulesets"):
         return _Answer(why=Words(f"GitHub has no repository `{repo}` that your `gh` can see", f"`gh api {shown}` failed: {err}"), fix=Words(
             f"Check the repository's name in the kit's profile (`project.repo` in {PROFILE}) and that your GitHub account can see it; or ask a cloud session to check the set-up.",
-            f"Check project.repo ({repo}) and gh's access to it, or give --rulesets and --repo files.",
+            f"Check project.repo ({repo}) and gh's access to it, or give {GIVE_FILES}.",
         ))
     if ran.state == "failed" and "HTTP 403" in ran.err:
         return _Answer(why=Words(f"GitHub refused to show it to your `gh`: {err}", f"`gh api {shown}` was refused: {err}"), fix=Words(
@@ -1154,17 +1157,23 @@ def _github(i: Inputs) -> _GitHub | None:
     if rulesets.why:
         gh.report_why = rulesets
         return gh
-    known = accepted is not None and accepted.get("default_branch") is not None
+    # The settings the rulesets are read with: the accepted ones, or, when
+    # only their merge settings are wrong, their default branch alone.
+    raw = settings.value.get("default_branch") if isinstance(settings.value, dict) else None
+    placed = accepted if accepted is not None else {"default_branch": raw} if isinstance(raw, str) else None
+    known = placed is not None and placed.get("default_branch") is not None
+    seen = _bypass_seen(rulesets.value)
     try:
         if known:
-            rep = protection_mod.check(rulesets.value, base, accepted)
+            rep = protection_mod.check(rulesets.value, base, placed)
         else:
             # The default branch unknown: read it as the base branch and as
             # another. When the two readings differ, every ruleset line rests
             # on what can't be seen; when they agree, either is the answer.
-            either = [{**(accepted or {}), "default_branch": d} for d in (base, f"{base}-not")]
-            rep, other = (protection_mod.check(rulesets.value, base, s_) for s_ in either)
-            accepted = either[0]
+            either = [{**(placed or {}), "default_branch": d} for d in (base, f"{base}-not")]
+            rep, other = (protection_mod.check(rulesets.value, base, settings_) for settings_ in either)
+            gh.unprotected_either = not any(protection_mod.check(seen, base, settings_).protected for settings_ in either)
+            placed = either[0]
     except protection_mod.ProtectionError as e:
         gh.report_why = _not_github(e, "GitHub's rulesets")
         return gh
@@ -1172,7 +1181,7 @@ def _github(i: Inputs) -> _GitHub | None:
         no_default = settings.why is None
         gh.report_why = _Answer(why=Words(
             "a ruleset applies to GitHub's default branch, and "
-            + ("the repository's settings don't say which branch that is" if no_default else f"the repository's settings couldn't be read ({settings.why.new})")
+            + ("the repository's settings don't say which branch that is" if no_default else f"the repository's settings couldn't be read: {settings.why.new}")
             + f", so it can't tell whether that is `{base}`",
             "a ruleset targets ~DEFAULT_BRANCH, and " + ("the settings have no default_branch" if no_default else settings.why.developer),
         ), fix=settings.fix if settings.why else Words(
@@ -1185,7 +1194,7 @@ def _github(i: Inputs) -> _GitHub | None:
     # reads as protected. When it would read protected with unread bypass
     # lists as empty, "not protected" is only an unknown: never removed
     # protection.
-    if not rep.protected and protection_mod.check(_bypass_seen(rulesets.value), base, accepted).protected:
+    if not rep.protected and protection_mod.check(seen, base, placed).protected:
         gh.unseen = _Answer(why=Words(
             "who may skip its ruleset's rules can be seen only by the repository's admins",
             "; ".join(m for k, m in zip(rep.kinds, rep.missing) if k == "bypass_unread"),
@@ -1195,7 +1204,8 @@ def _github(i: Inputs) -> _GitHub | None:
 
 def _substance(rep: protection_mod.Report) -> tuple:
     """What the lines read from a read-back: two readings alike in this give
-    the same lines."""
+    the same lines (`check` keeps the caller's rulesets, so they compare by
+    identity)."""
     return rep.protected, rep.kinds, rep.required_checks, [id(rs) for rs in rep.effective]
 
 
@@ -1243,6 +1253,9 @@ def check_protection(i: Inputs) -> list[Line]:
     """Whether the base branch is protected, by the read-back, against the
     profile's `project.ruleset`; each missing protection its own gap."""
     g, id_ = "GitHub", "github.ruleset"
+    gh = _github(i)
+    if gh is not None and gh.report is None and gh.unprotected_either:
+        return [_unprotected_either(i, gh)]
     rep, wait = _report(i, id_, Words("whether the main branch is protected on GitHub", "The base branch's protection"))
     if wait:
         return [wait]
@@ -1306,6 +1319,39 @@ def check_protection(i: Inputs) -> list[Line]:
     return [main] + _missing_lines(found, base, offer)
 
 
+def _unprotected_either(i: Inputs, gh: _GitHub) -> Line:
+    """The ruleset line when the default branch is unknown but the base
+    branch is unprotected whichever it is: what is missing can't be told, but
+    that something is can."""
+    g, id_ = "GitHub", "github.ruleset"
+    base, ruleset = i.profile.base_branch, i.profile.ruleset
+    protect, restore = OFFERS["protect_main"], OFFERS["restore_protection"]
+    unknown = gh.report_why
+    if ruleset is False:
+        return Line(g, id_, "note", Words(
+            f"Solo mode: GitHub doesn't protect `{base}`, whichever branch is its default, chosen on purpose.",
+            f"Solo mode (project.ruleset = false): `{base}` unprotected under either reading of ~DEFAULT_BRANCH ({unknown.why.developer}).",
+        ), Words(
+            f"When you want GitHub to protect `{base}` too, ask Claude to \"{protect}\".",
+            f"Run upgrade-setup's \"{protect}\" for the ruleset.",
+        ), offer="protect_main")
+    if ruleset is True:
+        return Line(g, id_, "gap", Words(
+            f"The kit's profile says GitHub protects `{base}`, but it doesn't any more, whichever branch is GitHub's default: protection that was removed or weakened is never trusted. What is missing can't be told: {unknown.why.new}.",
+            f"Removed protection: project.ruleset = true, but `{base}` is unprotected under either reading of ~DEFAULT_BRANCH ({unknown.why.developer}).",
+        ), Words(
+            f"Ask Claude to \"{restore}\": it puts the ruleset back.",
+            f"Run upgrade-setup's \"{restore}\" (`restore_protection`); give --repo to see what is missing.",
+        ), offer="restore_protection")
+    return Line(g, id_, "gap", Words(
+        f"GitHub doesn't protect `{base}`, whichever branch is its default. What is missing can't be told: {unknown.why.new}.",
+        f"`{base}` is unprotected under either reading of ~DEFAULT_BRANCH ({unknown.why.developer}).",
+    ), Words(
+        f"Ask Claude to \"{protect}\".",
+        f"Run upgrade-setup's \"{protect}\"; give --repo to see what is missing.",
+    ), offer="protect_main")
+
+
 def _found(rep: protection_mod.Report) -> list[tuple[str, str]]:
     """What the read-back found missing, by kind. A ruleset on other branches
     (or one that may be) is left out while another one covers the base
@@ -1331,7 +1377,8 @@ def _protection_words(id_: str, kinds: list[str], base: str) -> tuple[str, str]:
     if id_ == "github.protection.bypass":
         if "bypass" in kinds:
             return f"People or apps on a ruleset's bypass list can skip its rules on `{base}`.", "Empty the ruleset's bypass list."
-        return (f"Who may skip the ruleset's rules on `{base}` can't be seen (that needs admin access on GitHub), so it can't count as protecting it.", "")
+        return (f"Who may skip the ruleset's rules on `{base}` can't be seen (that needs admin access on GitHub), so it can't count as protecting it.",
+                ADMIN.developer)
     rule, words = {
         "github.protection.deletions": ("deletion", f"`{base}` can be deleted on GitHub: no active ruleset stops it."),
         "github.protection.force_pushes": ("non_fast_forward", f"Someone could force push to `{base}`, rewriting its history: no active ruleset stops it."),
@@ -1525,7 +1572,7 @@ def check_merge_settings(i: Inputs) -> list[Line]:
                 f"{key} isn't in the repository's settings (it needs admin access).",
             ), Words(
                 "Ask the repository's admin to run this check, or to look in Settings → General → Pull Requests.",
-                "Rerun with an admin's `gh`, or pass --repo from an admin's GET repos/<repo>.",
+                "Rerun with an admin's `gh`, or give --repo from an admin's GET repos/<repo>.",
             )))
         elif v:
             lines.append(Line(g, id_, "fine", Words(

@@ -750,6 +750,36 @@ def test_a_real_gap_without_the_settings_isnt_stated_beside_unknowns(tmp_path):
     assert lines["github.required_checks"]["status"] == "cant_check"
 
 
+def test_removed_protection_whichever_branch_is_the_default_is_still_the_gap_listed_first(tmp_path):
+    root = _protected(tmp_path)
+    r = _report(tmp_path, root, *_files(tmp_path, rulesets=[_without(_rs(), "deletion")], settings=None), path=_bin(tmp_path, gh=False))
+    first = r["lines"][0]
+    assert (first["id"], first["status"], first["offer"]) == ("github.ruleset", "gap", "restore_protection"), first
+    assert "whichever" in first["message"]
+    assert _lines(r)["github.up_to_date"]["status"] == "cant_check"
+
+
+@pytest.mark.parametrize("profile, status, offer", [(SOLO, "note", "protect_main"), (_prof(""), "gap", "protect_main")])
+def test_unprotected_whichever_branch_is_the_default_in_solo_mode_and_with_ruleset_absent(tmp_path, profile, status, offer):
+    lines = _github(tmp_path, _project(tmp_path, profile=profile), rulesets=[_without(_rs(), "deletion")], settings=None, path=_bin(tmp_path, gh=False))
+    assert (lines["github.ruleset"]["status"], lines["github.ruleset"]["offer"]) == (status, offer)
+
+
+def test_a_ruleset_naming_main_without_the_settings_reads_its_gaps_as_they_are(tmp_path):
+    main = _without(_rs(conditions={"ref_name": {"include": ["refs/heads/main"], "exclude": []}}), "deletion")
+    r = _report(tmp_path, _protected(tmp_path), *_files(tmp_path, rulesets=[main], settings=None), path=_bin(tmp_path, gh=False))
+    lines = _lines(r)
+    assert r["lines"][0]["id"] == "github.ruleset" and lines["github.ruleset"]["offer"] == "restore_protection"
+    assert lines["github.protection.deletions"]["status"] == "gap" and "github.protection.force_pushes" not in lines
+
+
+def test_settings_with_a_default_branch_but_wrong_merge_settings_still_place_the_rulesets(tmp_path):
+    settings = {**SETTINGS, "allow_merge_commit": "yes"}
+    lines = _github(tmp_path, _protected(tmp_path), settings=settings)
+    assert lines["github.ruleset"]["status"] == "fine"
+    assert lines["github.merge_commits"]["status"] == "cant_check"
+
+
 def test_rulesets_naming_main_need_no_settings(tmp_path):
     main = _rs(conditions={"ref_name": {"include": ["refs/heads/main"], "exclude": []}})
     lines = _github(tmp_path, _protected(tmp_path), rulesets=[main], settings=None, path=_bin(tmp_path, gh=False))
