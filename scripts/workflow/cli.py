@@ -2,7 +2,7 @@
 
     workflow profile check
     workflow status [--issues F --prs F | --fetch] [--json]
-    workflow doctor [--claude-version VERSION] [--rulesets F] [--repo F] [--json] [--strict]      (what's set up and what isn't; changes nothing)
+    workflow doctor [--claude-version VERSION] [--rulesets F] [--repo F] [--environments F] [--runs F] [--json] [--strict]      (what's set up and what isn't; changes nothing)
     workflow protection --rulesets F [--repo F] [--base BRANCH] [--json]
     workflow protection --protect --repo F [--base BRANCH] [--check NAME ...] [--json]
     workflow protection --require-checks F --check NAME [--check NAME ...] [--json]
@@ -237,8 +237,8 @@ def _given_file(path: str | None) -> Path | str | None:
 def cmd_doctor(a) -> int:
     """What's set up and what isn't, each line with its fix (#34). Exits 0,
     or with --strict 1 on a gap or a line it couldn't check."""
-    if a.rulesets == "-" and a.repo == "-":
-        print("workflow doctor: only one of --rulesets and --repo can be standard input (-)", file=sys.stderr)
+    if [a.rulesets, a.repo, a.environments, a.runs].count("-") > 1:
+        print("workflow doctor: only one of --rulesets, --repo, --environments and --runs can be standard input (-)", file=sys.stderr)
         return 2
     root = project_root()
     prof, error = None, None
@@ -263,6 +263,8 @@ def cmd_doctor(a) -> int:
                 claude_version=a.claude_version,
                 rulesets_file=_given_file(a.rulesets),
                 repo_file=_given_file(a.repo),
+                environments_file=_given_file(a.environments),
+                runs_file=_given_file(a.runs),
             )
         )
     except KeyboardInterrupt:  # Ctrl-C: a quiet stop (what it ran is already killed)
@@ -1250,6 +1252,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--claude-version", metavar="VERSION", help="Claude Code's version, as `claude --version` prints it (wins over running it)")
     s.add_argument("--rulesets", metavar="F", help="the repository's rulesets, each in full (GET repos/<repo>/rulesets/<id>), as `workflow protection` takes them (or -); else read with `gh api`")
     s.add_argument("--repo", metavar="F", help="the repository's settings (GET repos/<repo>): the merge settings and default branch (or -); else read with `gh api`")
+    s.add_argument("--environments", metavar="F", help="the account's environments, as list_environments returns them (or -); only a cloud session can list them, so without it the Cloud line can't be checked")
+    s.add_argument("--runs", metavar="F", help="the issues labelled workflow:run, as the GitHub API returns them (or -), for whether a run has been made; else read with `gh api`")
     s.add_argument("--json", action="store_true", help="every line's group, id, status, message, fix and offer, for skills")
     s.add_argument("--strict", action="store_true", help="exit 1 when any line is a gap or can't be checked; notes never fail it")
     s.set_defaults(fn=cmd_doctor)

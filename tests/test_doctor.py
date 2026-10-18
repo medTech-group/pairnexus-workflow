@@ -1,7 +1,9 @@
 """#58: `workflow doctor`, its report, and the Your computer and The kit
 groups. Seam 1 of #34: the CLI, with a temporary checkout and profile, and a
-fake `python3` and `claude` on the PATH, and a fake `gh` that answers for a
-protected repository (the GitHub group's own tests are test_doctor_github.py)."""
+fake `python3` and `claude` on the PATH, a fake `gh` that answers for a
+protected repository (the GitHub group's own tests are test_doctor_github.py),
+and an environments file with both of the profile's (the Cloud group's are
+test_doctor_cloud.py)."""
 
 import json
 import os
@@ -57,6 +59,16 @@ RULESET = {
 }
 SETTINGS = {"full_name": "acme/demo", "default_branch": "main", "allow_merge_commit": True, "allow_auto_merge": True, "allow_squash_merge": True}
 CODEOWNERS = "/.claude/ @someone\n/.github/workflows/ @someone\n"
+# The account's environments as `list_environments` returns them, with both of
+# the ones RUN names, made up.
+ENVIRONMENTS = {
+    "environments": [
+        {"environment_id": "env_01ticket", "name": "t", "description": "", "state": "active", "kind": "anthropic_cloud", "created_at": "2026-10-01T09:00:00Z"},
+        {"environment_id": "env_01conductor", "name": "c", "description": "", "state": "active", "kind": "anthropic_cloud", "created_at": "2026-10-01T09:01:00Z"},
+        {"environment_id": "env_01default", "name": "Default", "description": "", "state": "active", "kind": "anthropic_cloud", "created_at": "2026-09-01T09:00:00Z"},
+    ],
+    "has_more": False,
+}
 
 
 def gh_routes(rulesets=(RULESET,), settings=SETTINGS, repo="acme/demo"):
@@ -114,9 +126,16 @@ def _project(tmp_path, profile=_prof('experience = "new"\nruleset = true\n'), ve
     return root
 
 
-def _doctor(tmp_path, root, *args, path=None, env=None, home=None, cli=None):
+def _doctor(tmp_path, root, *args, path=None, env=None, home=None, cli=None, environments=ENVIRONMENTS):
     """Doctor run from the project's own copy of the CLI when it has one,
-    else from the kit's source (plugin mode, or `cli`)."""
+    else from the kit's source (plugin mode, or `cli`). `environments` is
+    given as `--environments`, outside the checkout, unless the arguments give
+    their own or it is None."""
+    if environments is not None and "--environments" not in args:
+        d = tmp_path / "cloud-input"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "environments.json").write_text(json.dumps(environments))
+        args = (*args, "--environments", str(d / "environments.json"))
     home = home or tmp_path / "home"
     home.mkdir(exist_ok=True)
     e = {k: v for k, v in os.environ.items() if k not in ("WORKFLOW_EXPERIENCE", "CLAUDE_CONFIG_DIR", "COLUMNS")}
@@ -170,7 +189,7 @@ def test_a_healthy_vendored_project_is_fine_throughout(tmp_path):
     for ln in r["lines"]:
         assert set(ln) == {"group", "id", "status", "message", "fix", "offer"}
         assert ln["status"] in STATUSES
-        assert ln["group"] in ("Your computer", "The kit", "GitHub")
+        assert ln["group"] in ("Your computer", "The kit", "GitHub", "Cloud")
         assert ln["message"]
     lines = _lines(r)
     for id_ in ("computer.python3", "computer.claude_code", "kit.hooks", "kit.profile", "kit.vendor", "kit.ruleset"):

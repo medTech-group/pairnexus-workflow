@@ -7,10 +7,11 @@ picks one wording by experience (#16: what is checked, and each status, never
 depend on it), puts the most serious line first and groups the rest.
 
 Doctor never changes anything (#27): it reads files and runs `python3`,
-`claude --version` and `gh api` (GETs only, for the GitHub lines when no
-file is given), nothing else. It reads files only through `_read_text` (and
-`_read_value`, `_read_json` on it), `_file` and `_hash_file`, which never
-raise and never wait on a pipe; only `--rulesets -` or `--repo -` reads
+`claude --version` and `gh api` (GETs only, for the GitHub lines and whether
+a run has been made, when no file is given), nothing else. It reads files
+only through `_read_text` (and `_read_value`, `_read_json` on it), `_file`
+and `_hash_file`, which never raise and never wait on a pipe; only a file
+given as `-` (`--rulesets`, `--repo`, `--environments` or `--runs`) reads
 standard input, as asked. A check that fails unexpectedly becomes a
 `cant_check` line, never a traceback: doctor is advice, and exits 0.
 
@@ -21,11 +22,13 @@ raises), add it to `CHECKS`, and put anything it reads on `Inputs` (filled in
 by `cli.cmd_doctor`). The groups are in `GROUPS` already; the order, the
 counts, the text, the JSON and `--strict` follow without change. A line
 that needs GitHub's answers reads them through `_github(i)`, once for every
-line (the Cloud lines, #60, would read the environments the same way).
+line; the Cloud lines read the environments through `_environments(i)` and
+whether a run has been made through `_runs(i)`, the same way.
 """
 
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 import os
@@ -38,7 +41,9 @@ import textwrap
 import time
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
+from typing import NamedTuple
 
+from . import estimate as estimate_mod
 from . import posts as posts_mod
 from . import profile as profile_mod
 from . import protection as protection_mod
@@ -130,7 +135,14 @@ class Inputs:
     # which win over `gh api`.
     rulesets_file: Path | str | None = None
     repo_file: Path | str | None = None
+    # --environments (as `list_environments` returns them: only ever a file)
+    # and --runs (the `workflow:run` issues, which win over `gh api`).
+    environments_file: Path | str | None = None
+    runs_file: Path | str | None = None
     _github: _GitHub | None = field(default=None, repr=False)  # what the GitHub lines read, read once
+    _environments: _Answer | None = field(default=None, repr=False)  # the environments listed, read once
+    _runs: _Answer | None = field(default=None, repr=False)  # the `workflow:run` issues, read once
+    _gh_until: float | None = field(default=None, repr=False)  # when doctor stops waiting on GitHub (`_gh_deadline`)
 
     @property
     def vendored(self) -> bool:
@@ -214,9 +226,15 @@ def _dotted(v) -> str:
     return ".".join(str(x) for x in v)
 
 
+def _printable(text: str) -> str:
+    """Text with what can't be printed (a control character, half a
+    surrogate pair, an invisible one) escaped as `\\uXXXX`."""
+    return "".join(ch if ch.isprintable() else f"\\u{ord(ch):04x}" for ch in text)
+
+
 def _shown(value: str, most: int = 40) -> str:
     """A value someone gave, safe on one line in a code span."""
-    v = " ".join(value.replace("`", "'").split())
+    v = _printable(" ".join(value.replace("`", "'").split()))
     return v if len(v) <= most else v[:most] + "…"
 
 
@@ -251,6 +269,8 @@ def _read_text(root: Path, rel: str | Path) -> tuple[str | None, str | None]:
 
 def _parse_json(text: str, loads=json.loads):
     """JSON text's value, and why it can't be read."""
+    if not text.strip():
+        return None, "it is empty"
     try:
         return loads(text.removeprefix("\ufeff")), None
     except json.JSONDecodeError as e:
@@ -989,19 +1009,20 @@ ADMIN = Words(
 )
 
 
-def _sign_in(missing: bool) -> Words:
+def _sign_in(missing: bool, give: str = GIVE_FILES) -> Words:
     return Words(
         ("Install GitHub's command-line tool (`gh`, from cli.github.com) and sign in with `gh auth login`"
          if missing else "Sign in with `gh` (run `gh auth login` in a terminal)") + ", or ask a cloud session to check the set-up.",
         ("Install gh and run `gh auth login`" if missing else "Run `gh auth login`")
-        + f", or give {GIVE_FILES}; or ask a cloud session to check the set-up.",
+        + f", or give {give}; or ask a cloud session to check the set-up.",
     )
 
 
-AGAIN = Words(
-    "Run the check again in a while; if it says the same, ask a cloud session to check the set-up.",
-    f"Rerun, or give {GIVE_FILES}.",
-)
+def _again(give: str = GIVE_FILES) -> Words:
+    return Words(
+        "Run the check again in a while; if it says the same, ask a cloud session to check the set-up.",
+        f"Rerun, or give {give}.",
+    )
 
 
 def _scrubbed(i: Inputs, text: str) -> str:
@@ -1013,47 +1034,49 @@ def _scrubbed(i: Inputs, text: str) -> str:
     return _shown(_relative(i, text), 120)
 
 
-def _gh(i: Inputs, path: str, deadline: float, flag: str, paginate: bool = False) -> _Answer:
+def _gh(i: Inputs, path: str, deadline: float, flag: str, paginate: bool = False, give: str = GIVE_FILES) -> _Answer:
     """`gh api <path>`'s JSON (with `paginate`, the pages as a list), read
-    with a GET and nothing else, within what is left of `GH_BUDGET`."""
+    with a GET and nothing else, within what is left of `GH_BUDGET`. A
+    developer's fix names `give`, the files to give instead."""
     left = deadline - time.monotonic()
     shown = path.split("?")[0]
+    again = _again(give)
     if left <= 0:
-        return _Answer(why=Words(f"GitHub didn't answer within {GH_BUDGET} seconds", f"GitHub's reads took over {GH_BUDGET} s, before `gh api {shown}`"), fix=AGAIN)
+        return _Answer(why=Words(f"GitHub didn't answer within {GH_BUDGET} seconds", f"GitHub's reads took over {GH_BUDGET} s, before `gh api {shown}`"), fix=again)
     timeout = min(GH_TIMEOUT, left)
     ran = _run(i, ["gh", "api", *(["--paginate"] if paginate else []), path], timeout=timeout, stderr=True)
     offline = _OFFLINE.search(ran.err)
     lines = ran.err.splitlines()
     err = _scrubbed(i, next((ln for ln in lines if _OFFLINE.search(ln)), "") if offline else (lines[-1] if lines else ""))
     if ran.state == "missing":
-        return _Answer(why=Words("GitHub's command-line tool (`gh`) isn't installed here", f"no `gh` on the PATH, and no {flag} file"), fix=_sign_in(True))
+        return _Answer(why=Words("GitHub's command-line tool (`gh`) isn't installed here", f"no `gh` on the PATH, and no {flag} file"), fix=_sign_in(True, give))
     if ran.state == "failed" and _SIGNED_OUT.search(ran.err):
-        return _Answer(why=Words("`gh` isn't signed in to GitHub", f"`gh api` isn't signed in ({err})"), fix=_sign_in(False))
+        return _Answer(why=Words("`gh` isn't signed in to GitHub", f"`gh api` isn't signed in ({err})"), fix=_sign_in(False, give))
     repo = i.profile.repo
     if ran.state == "failed" and "HTTP 404" in ran.err and shown in (f"repos/{repo}", f"repos/{repo}/rulesets"):
         return _Answer(why=Words(f"GitHub has no repository `{repo}` that your `gh` can see", f"`gh api {shown}` failed: {err}"), fix=Words(
             f"Check the repository's name in the kit's profile (`project.repo` in {PROFILE}) and that your GitHub account can see it; or ask a cloud session to check the set-up.",
-            f"Check project.repo ({repo}) and gh's access to it, or give {GIVE_FILES}.",
+            f"Check project.repo ({repo}) and gh's access to it, or give {give}.",
         ))
     if ran.state == "failed" and offline:
         return _Answer(why=Words(f"`gh` couldn't reach GitHub ({err})", f"`gh api {shown}` couldn't connect: {err}"), fix=Words(
             "Check your internet connection (or the proxy), then run the check again; or ask a cloud session to check the set-up.",
-            f"Check the network or proxy and rerun, or give {GIVE_FILES}.",
+            f"Check the network or proxy and rerun, or give {give}.",
         ))
     if ran.state == "failed" and _RATE_LIMIT.search(ran.err):
-        return _Answer(why=Words(f"GitHub asked `gh` to slow down ({err})", f"`gh api {shown}` was rate limited: {err}"), fix=AGAIN)
+        return _Answer(why=Words(f"GitHub asked `gh` to slow down ({err})", f"`gh api {shown}` was rate limited: {err}"), fix=again)
     if ran.state == "failed" and "HTTP 403" in ran.err:
         return _Answer(why=Words(f"GitHub refused to show it to your `gh`: {err}", f"`gh api {shown}` was refused: {err}"), fix=Words(
             "Your GitHub account may not be allowed to read this: ask the repository's admin to run the check, or ask a cloud session to check the set-up.",
-            f"gh's token lacks access (HTTP 403): use an admin's gh, or give {GIVE_FILES}.",
+            f"gh's token lacks access (HTTP 403): use an admin's gh, or give {give}.",
         ))
     if ran.state == "timeout":
         budget = "" if timeout >= GH_TIMEOUT else f", the rest of the {GH_BUDGET} s for all of GitHub's reads"
         n = round(timeout)
-        return _Answer(why=Words(f"GitHub didn't answer within {n} second{'' if n == 1 else 's'}{budget}", f"`gh api {shown}` timed out after {timeout:.0f} s{budget}"), fix=AGAIN)
+        return _Answer(why=Words(f"GitHub didn't answer within {n} second{'' if n == 1 else 's'}{budget}", f"`gh api {shown}` timed out after {timeout:.0f} s{budget}"), fix=again)
     if ran.state != "ok":
         said = err if ran.state == "failed" else "its answer isn't UTF-8 text"
-        return _Answer(why=Words(f"GitHub answered `gh` with an error: {said}", f"`gh api {shown}` failed: {said}"), fix=AGAIN)
+        return _Answer(why=Words(f"GitHub answered `gh` with an error: {said}", f"`gh api {shown}` failed: {said}"), fix=again)
     try:
         values = posts_mod.decode_values(ran.out)
     except posts_mod.CommentsError as e:
@@ -1061,14 +1084,15 @@ def _gh(i: Inputs, path: str, deadline: float, flag: str, paginate: bool = False
     else:
         bad = None if values else "it printed nothing"
     if bad:
-        return _Answer(why=Words("GitHub's answer to `gh` couldn't be read", f"`gh api {shown}`'s output isn't JSON ({bad})"), fix=AGAIN)
+        return _Answer(why=Words("GitHub's answer to `gh` couldn't be read", f"`gh api {shown}`'s output isn't JSON ({bad})"), fix=again)
     return _Answer(values if paginate else values[0])
 
 
-def _given(i: Inputs, given: Path | str, flag: str) -> _Answer:
+def _given(i: Inputs, given: Path | str, flag: str, fix: Words | None = None, what: str = "GitHub's answer") -> _Answer:
     """A file given on the command line (`-`: standard input), read as doctor
-    reads files."""
-    fix = Words(
+    reads files: `what` it should hold, and the `fix` when it can't be read
+    (by default, the GitHub files')."""
+    fix = fix or Words(
         f"Ask Claude to fetch it from GitHub again (as `workflow protection` takes it), or leave out {flag} to read GitHub with `gh`.",
         f"Give {flag} as `workflow protection` takes it, or leave it out to use `gh api`.",
     )
@@ -1076,23 +1100,23 @@ def _given(i: Inputs, given: Path | str, flag: str) -> _Answer:
         return _Answer(why=Words(f"the {flag} file was given no path", f"{flag} was given no path"), fix=fix)
     elif given == "-":
         shown = "standard input"
-        value, err = _stdin()
+        value, err = _stdin(what)
     else:
-        shown = _home(i, Path(given))
+        shown = _shown(_home(i, Path(given)), 120)
         value, err = _read_value(i.root, given, protection_mod.loads)
         if err is None and value is None:
-            err = "it holds null, not GitHub's answer" if _file(i.root, given)[0].exists() else "it isn't there"
+            err = f"it holds null, not {what}" if _file(i.root, given)[0].exists() else "it isn't there"
     if err:
         return _Answer(why=Words(f"the {flag} file ({shown}): {err}", f"{flag} {shown}: {err}"), fix=fix)
     return _Answer(value)
 
 
-def _stdin():
+def _stdin(what: str = "GitHub's answer"):
     """Standard input's JSON, read as UTF-8, as `workflow protection` reads
     it; never waited on at a terminal."""
     try:
         if sys.stdin is None or sys.stdin.isatty():
-            return None, "standard input is a terminal or closed, not GitHub's answer"
+            return None, f"standard input is a terminal or closed, not {what}"
         text = sys.stdin.buffer.read().decode("utf-8")
         if not text.strip():
             return None, "standard input was empty"
@@ -1117,7 +1141,7 @@ def _rulesets(i: Inputs, deadline: float) -> tuple[_Answer, bool]:
     flat = [x for page in listed.value for x in (page if isinstance(page, list) else [page])]
     ids = [x.get("id") if isinstance(x, dict) else None for x in flat]
     if not all(isinstance(n, int) and not isinstance(n, bool) for n in ids):
-        return _Answer(why=Words("GitHub's list of rulesets couldn't be read", "`gh api`'s list of rulesets has an entry without an id"), fix=AGAIN), False
+        return _Answer(why=Words("GitHub's list of rulesets couldn't be read", "`gh api`'s list of rulesets has an entry without an id"), fix=_again()), False
     full = []
     for n in ids:
         one = _gh(i, f"repos/{repo}/rulesets/{n}", deadline, "--rulesets")
@@ -1146,6 +1170,14 @@ def _bypass_seen(rulesets):
     return [[seen(r) for r in x] if isinstance(x, list) else seen(x) for x in rulesets]
 
 
+def _gh_deadline(i: Inputs) -> float:
+    """When doctor stops waiting on GitHub: `GH_BUDGET` after its first
+    read, for all of them (the GitHub lines' and the runs')."""
+    if i._gh_until is None:
+        i._gh_until = time.monotonic() + GH_BUDGET
+    return i._gh_until
+
+
 def _github(i: Inputs) -> _GitHub | None:
     """GitHub's answers and the read-back, once for every line; None with no
     readable profile (the lines then wait on it)."""
@@ -1154,7 +1186,7 @@ def _github(i: Inputs) -> _GitHub | None:
     if i._github is not None:
         return i._github
     base = i.profile.base_branch
-    deadline = time.monotonic() + GH_BUDGET
+    deadline = _gh_deadline(i)
     gh = i._github = _GitHub()
     settings = _given(i, i.repo_file, "--repo") if i.repo_file is not None else _gh(i, f"repos/{i.profile.repo}", deadline, "--repo")
     accepted = None  # the settings the read-back took
@@ -1227,16 +1259,16 @@ def _substance(rep: protection_mod.Report) -> tuple:
     return rep.protected, rep.kinds, rep.required_checks, [id(rs) for rs in rep.effective]
 
 
-def _waits(i: Inputs, id_: str, what: Words, answer: _Answer | None) -> Line:
-    """A line that can't be checked: GitHub's answer couldn't be read, or
-    (`answer` None) the profile couldn't."""
+def _waits(i: Inputs, id_: str, what: Words, answer: _Answer | None, group: str = "GitHub") -> Line:
+    """A line that can't be checked: GitHub's answer (or what else it reads)
+    couldn't be read, or (`answer` None) the profile couldn't."""
     if answer is None:
         why = Words("the kit's profile can't be read", "the profile doesn't read (project.repo, project.base_branch)") if i.profile_error else Words(
             "the kit isn't set up here yet (it has no profile)", "no profile (project.repo, project.base_branch)")
         fix = PROFILE_FIRST if i.profile_error else SET_UP_FIRST
     else:
         why, fix = answer.why, answer.fix
-    return Line("GitHub", id_, "cant_check", Words(f"Can't check {what.new}: {_relative(i, why.new)}.", f"{what.developer} unchecked: {_relative(i, why.developer)}."), fix)
+    return Line(group, id_, "cant_check", Words(f"Can't check {what.new}: {_relative(i, why.new)}.", f"{what.developer} unchecked: {_relative(i, why.developer)}."), fix)
 
 
 def _report(i: Inputs, id_: str, what: Words) -> tuple[protection_mod.Report | None, Line | None]:
@@ -1772,10 +1804,339 @@ def check_codeowners(i: Inputs) -> list[Line]:
         f"{where} owns {owned}.",
     ))]
 
+
+# ---------- Cloud ----------
+#
+# The two environments the profile names (#60), from --environments, as
+# `list_environments` returns them: only a cloud session can list them, so they
+# only ever come from a file. When neither is listed, whether a run has been
+# made (an issue labelled `workflow:run`) says whether that is a choice or a
+# gap: from --runs, read as `charter estimate --runs` reads it, else `gh api`
+# as the GitHub lines read GitHub, within the same time budget. Then always the
+# note that nothing can read what an environment holds.
+
+RUN_LABEL = estimate_mod.RUN_LABEL
+# The file doctor takes instead of `gh` for the runs, as a developer's fix names it.
+GIVE_RUNS = f"--runs (GET repos/<repo>/issues?labels={RUN_LABEL}&state=all)"
+SET_UP_RUNS = OFFERS["set_up_unattended_runs"]
+# How alike a listed name must be to the profile's to be named as a likely typo.
+TYPO_LIKENESS = 0.8
+
+
+class _Role(NamedTuple):
+    """An environment the profile names: its key, what it's for, and its
+    name (empty when the profile doesn't name it)."""
+
+    key: str
+    purpose: str
+    name: str
+
+
+def _roles(i: Inputs) -> tuple[_Role, _Role]:
+    p = i.profile
+    return (_Role("run.ticket_environment", "ticket sessions", p.ticket_environment),
+            _Role("run.conductor_environment", "the conductor", p.conductor_environment))
+
+
+def _active(state: str | None) -> bool:
+    """An environment's state, as listed, that counts: none given, or active."""
+    return state is not None and state.casefold() in ("", "active")
+
+
+@dataclass
+class _Listed:
+    """The environments given: each one's state by name ("" when its entry
+    has none), and whether the list goes on (`has_more`), so a name not in it
+    may still be there."""
+
+    states: dict[str, str]
+    partial: bool
+
+
+def _environments(i: Inputs) -> _Answer | None:
+    """The environments listed in --environments, read once; None when no
+    file was given."""
+    if i.environments_file is None:
+        return None
+    if i._environments is None:
+        i._environments = _read_environments(i)
+    return i._environments
+
+
+def _read_environments(i: Inputs) -> _Answer:
+    """--environments as `list_environments` returns it (`{"environments":
+    […], "has_more": …}`), the list alone, or a list of its pages (the
+    last page's `has_more` says whether the list goes on)."""
+    fix = Words(
+        "Ask a cloud session to check the set-up again: it lists your environments for the check.",
+        "Give --environments as list_environments returns it ({\"environments\": [{\"name\": …}, …], \"has_more\": false}), or a list of its pages.",
+    )
+    got = _given(i, i.environments_file, "--environments", fix, "the environments")
+    if got.why:
+        return got
+    value = got.value
+    pages = value if isinstance(value, list) and value and all(isinstance(x, dict) and "environments" in x and "name" not in x for x in value) else [value]
+    entries, more = [], None
+    for page in pages:
+        if isinstance(page, dict):
+            page, more = page.get("environments"), page.get("has_more")
+        if not isinstance(page, list) or not isinstance(more, (bool, type(None))):
+            entries = None
+            break
+        entries += page
+    if entries is None or not all(isinstance(e, dict) and isinstance(e.get("name"), str) and isinstance(e.get("state"), (str, type(None))) for e in entries):
+        return _Answer(why=Words(
+            "the --environments file isn't a list of your environments in the shape Claude gets it",
+            "--environments isn't list_environments' JSON (an environments list, each with a name and any state a string, and has_more true or false)",
+        ), fix=fix)
+    states: dict[str, str] = {}
+    for e in entries:
+        state = e.get("state") or ""
+        if not _active(states.get(e["name"])):  # listed twice: an active one counts
+            states[e["name"]] = state
+    return _Answer(_Listed(states, more is True))
+
+
+def _runs(i: Inputs) -> _Answer:
+    """The `workflow:run` issues' numbers (an empty list: no run made yet),
+    from --runs, else `gh api`; read once."""
+    if i._runs is None:
+        i._runs = _read_runs(i)
+    return i._runs
+
+
+def _label_names(issue: dict) -> set[str]:
+    """An issue's labels, casefolded, as GitHub matches them: objects with a
+    name, or names."""
+    labels = issue.get("labels")
+    names = [x.get("name") if isinstance(x, dict) else x for x in labels] if isinstance(labels, list) else []
+    return {x.casefold() for x in names if isinstance(x, str)}
+
+
+def _number(issue: dict) -> int | None:
+    n = issue.get("number")
+    return n if isinstance(n, int) and not isinstance(n, bool) else None
+
+
+def _read_runs(i: Inputs) -> _Answer:
+    """The runs, as `charter estimate --runs` reads them: a list of issues,
+    the GitHub MCP tools' wrapped list or search's, or pages of any of them.
+    An issue is an object with a number or labels, whose labels, if given,
+    are a list; one without labels counts (it was fetched by its label), a
+    pull request doesn't."""
+    if i.runs_file is not None:
+        got = _given(i, i.runs_file, "--runs", Words(
+            f"Ask Claude to fetch the issues labelled `{RUN_LABEL}` from GitHub again, or leave out --runs to read them with `gh`.",
+            f"Give {GIVE_RUNS}, as the GitHub API returns them, or leave it out to use `gh api`.",
+        ), "the issues")
+        source = Words("the --runs file", "--runs")
+    else:
+        path = f"repos/{i.profile.repo}/issues?labels={RUN_LABEL}&state=all&per_page=100"
+        got = _gh(i, path, _gh_deadline(i), "--runs", give=GIVE_RUNS)
+        source = Words("GitHub's answer to `gh`", f"`gh api repos/{i.profile.repo}/issues`")
+    if got.why:
+        return got
+    issues = estimate_mod._flatten(got.value) if isinstance(got.value, (list, dict)) else None
+    if issues is None:
+        shape = "it isn't a list of issues"
+    else:
+        found = [x for x in issues if isinstance(x, dict) and isinstance(x.get("labels", []), list)
+                 and (_number(x) is not None or "labels" in x)]
+        runs = [x for x in found if "pull_request" not in x and ("labels" not in x or RUN_LABEL in _label_names(x))]
+        if runs or len(found) == len(issues):  # a run is a run, whatever else the file holds
+            return _Answer([_number(x) for x in runs])
+        shape = "an entry isn't an issue"
+    return _Answer(why=Words(f"{source.new} can't be read: {shape}", f"{source.developer}: {shape}"), fix=Words(
+        f"Ask Claude to fetch the issues labelled `{RUN_LABEL}` from GitHub again, as GitHub gives them.",
+        f"Give {GIVE_RUNS}: a list of issues, as the GitHub API returns them.",
+    ) if i.runs_file is not None else _again(GIVE_RUNS))
+
+
+def _named(name: str) -> str:
+    """An environment's name in a code span, exactly: one with a backtick,
+    a space at either end, or a character that can't be shown plainly is
+    shown as a JSON string; a long one keeps its end, where names differ."""
+    if name == name.strip() and "`" not in name and name.isprintable():
+        shown = name
+    else:
+        shown = _printable(json.dumps(name, ensure_ascii=False).replace("`", "\\u0060"))
+    return f"`{shown if len(shown) <= 80 else shown[:39] + '…' + shown[-40:]}`"
+
+
+def _close(name: str, names: list[str], taken: set[str]) -> str | None:
+    """The listed name most like `name` (a likely typo), if one is close."""
+    scored = [(difflib.SequenceMatcher(None, name.casefold(), n.casefold()).ratio(), n) for n in names if n not in taken]
+    best = max(scored, default=(0.0, None))
+    return best[1] if best[0] >= TYPO_LIKENESS else None
+
+
+def _missing(listed: _Listed, role: _Role, taken: set[str]) -> tuple[Words, bool]:
+    """Why one of the profile's environments isn't found, as a clause, and
+    whether a listed name may be it misspelled."""
+    if not role.name:
+        return Words(f"the kit's profile doesn't name the one for {role.purpose} (`{role.key}` isn't set)", f"{role.key} isn't set"), False
+    n = _named(role.name)
+    state = listed.states.get(role.name)
+    if state is not None:
+        return Words(f"{n}, for {role.purpose}, is listed but not active (its state is {_named(state)})", f"{role.key} {n} is {_named(state)}, not active"), False
+    close = _close(role.name, list(listed.states), taken)
+    return Words(
+        f"{n}, for {role.purpose}, isn't among your environments" + (f" (the list has {_named(close)}, which may be a typo for it)" if close else ""),
+        f"{role.key} {n} isn't listed" + (f" (closest: {_named(close)})" if close else ""),
+    ), close is not None
+
+
+def _refs(numbers: list) -> list[str]:
+    """The runs' issue numbers, each once."""
+    return list(dict.fromkeys(f"#{n}" for n in numbers if n is not None))
+
+
+def _listing(refs: list[str]) -> str:
+    return ", ".join(refs[:3]) + (f" and {len(refs) - 3} more" if len(refs) > 3 else "")
+
+
+@_check("Cloud", "cloud.environments")
+def check_environments(i: Inputs) -> list[Line]:
+    """Both of the profile's environments listed and active, by their exact
+    names: fine. Neither, while no run has been made, is a note offering "Set
+    up unattended runs"; one missing, either once a run has been made, or one
+    environment named for both, a gap."""
+    g, id_ = "Cloud", "cloud.environments"
+    if i.profile is None:
+        return [Line(g, id_, "cant_check", Words(
+            "Can't check the cloud environments for unattended runs until the kit's profile, which names them, "
+            + ("can be read." if i.profile_error else "is set up."),
+            "Environments unchecked: no readable profile (run.ticket_environment, run.conductor_environment).",
+        ), PROFILE_FIRST if i.profile_error else SET_UP_FIRST)]
+    roles = _roles(i)
+    ticket, conductor = roles
+    if ticket.name and ticket.name == conductor.name:
+        n = _named(ticket.name)
+        return [Line(g, id_, "gap", Words(
+            f"The kit's profile names one environment, {n}, for both ticket sessions and the conductor, but they need one each: "
+            "ticket sessions run with no secrets and `WORKFLOW_ROLE=ticket`, the conductor with `WORKFLOW_ROLE=conductor`.",
+            f"run.ticket_environment and run.conductor_environment are both {n}: one environment can't set WORKFLOW_ROLE=ticket and WORKFLOW_ROLE=conductor.",
+        ), Words(
+            f"Ask Claude to \"{SET_UP_RUNS}\": it walks you through making a second environment and naming each in the kit's profile.",
+            f"Give each role its own environment and name (docs/enforcement.md §2); upgrade-setup's \"{SET_UP_RUNS}\" guides it.",
+        ), offer="set_up_unattended_runs")]
+    listed = _environments(i)
+    if listed is None:
+        return [Line(g, id_, "cant_check", Words(
+            "Can't check the two cloud environments for unattended runs from here: only a cloud session can list them.",
+            "Environments unchecked: no --environments (only a cloud session can list them, with list_environments).",
+        ), Words(
+            "Ask a cloud session to check the set-up.",
+            "From a cloud session, give --environments (list_environments' JSON); or ask a cloud session to check the set-up.",
+        ))]
+    if listed.why:
+        return [_waits(i, id_, Words("the cloud environments for unattended runs", "Environments"), listed, group=g)]
+    envs = listed.value
+    missing = [r for r in roles if not (r.name and _active(envs.states.get(r.name)))]
+    if not missing:
+        return [Line(g, id_, "fine", Words(
+            f"Both cloud environments for unattended runs are ready: {_named(ticket.name)} for ticket sessions and {_named(conductor.name)} for the conductor.",
+            f"run.ticket_environment {_named(ticket.name)} and run.conductor_environment {_named(conductor.name)} are both listed and active.",
+        ))]
+    unseen = [r for r in missing if r.name and r.name not in envs.states]
+    if envs.partial and unseen:
+        one = len(unseen) == 1
+        shown = [_named(r.name) for r in unseen]
+        names = " and ".join(shown)
+        listed_not = f"doesn't list {shown[0]}" if one else f"lists neither {shown[0]} nor {shown[1]}"
+        # The other one may already be missing for certain (not named, or not active).
+        known = [_missing(envs, r, set())[0] for r in missing if r not in unseen]
+        also = Words(f" Already missing: {known[0].new}.", f"; {known[0].developer}") if known else NONE
+        fix_also = Words(
+            f" Ask Claude to \"{SET_UP_RUNS}\" for the missing one.",
+            f" Fix the other first ({known[0].developer}).",
+        ) if known else NONE
+        return [Line(g, id_, "cant_check", Words(
+            f"Can't tell whether {names} {'is' if one else 'are'} there: the list of your environments given to the check isn't complete.{also.new}",
+            f"--environments says has_more, and {listed_not}{also.developer}.",
+        ), Words(
+            f"Ask a cloud session to check the set-up again, with every environment listed.{fix_also.new}",
+            f"Give every page of list_environments in --environments (a list of the pages).{fix_also.developer}",
+        ))]
+    taken = {r.name for r in roles}
+    whys = [_missing(envs, r, taken) for r in missing]
+    typo = any(t for _, t in whys)
+    one = len(missing) == 1
+    fix = Words(
+        f"Ask Claude to \"{SET_UP_RUNS}\": it walks you through setting up {'the missing environment' if one else 'the two environments'} in claude.ai, "
+        f"or putting {'its' if one else 'their'} exact {'name' if one else 'names'} in the kit's profile.",
+        f"Create {'it' if one else 'them'} (claude.ai/code, the environment menu; docs/enforcement.md §2), or set "
+        f"{' and '.join(r.key for r in missing)} to {'its' if one else 'their'} exact {'name' if one else 'names'}; upgrade-setup's \"{SET_UP_RUNS}\" guides {'it' if one else 'both'}.",
+    )
+    if one:
+        there, = [r for r in roles if r not in missing]
+        return [Line(g, id_, "gap", Words(
+            f"Unattended runs need two cloud environments, and only {_named(there.name)} is ready: {whys[0][0].new}.",
+            f"Half set up: {whys[0][0].developer}; {_named(there.name)} is listed and active.",
+        ), fix, offer="set_up_unattended_runs")]
+    new, dev = "; ".join(w.new for w, _ in whys), "; ".join(w.developer for w, _ in whys)
+    runs = _runs(i)
+    if runs.why is None and runs.value:
+        refs = _refs(runs.value)
+        many = len(refs) > 1 if refs else len(runs.value) > 1
+        return [Line(g, id_, "gap", Words(
+            f"A run has already been made ({_listing(refs) or f'an issue is labelled `{RUN_LABEL}`'}), but neither cloud environment for unattended runs is ready, "
+            f"so the next run can't start: {new}.",
+            f"{'Issues' if many else 'An issue'} labelled {RUN_LABEL} {'exist' if many else 'exists'}{f' ({_listing(refs)})' if refs else ''}, but neither environment is listed and active: {dev}.",
+        ), fix, offer="set_up_unattended_runs")]
+    retype = Words(
+        " If a name above is a typo, it corrects that too.",
+        " If a name above is a typo, correct it in the profile first.",
+    ) if typo else NONE
+    if runs.why is None:
+        return [Line(g, id_, "note", Words(
+            f"Unattended runs aren't set up yet, which is fine until you want Claude to work through tickets on its own. Neither of their two cloud environments is ready: {new}.",
+            f"Unattended runs not set up: no issue is labelled {RUN_LABEL}, and neither environment is listed and active: {dev}.",
+        ), Words(
+            f"When you want unattended runs, ask Claude to \"{SET_UP_RUNS}\".{retype.new}",
+            f"Run upgrade-setup's \"{SET_UP_RUNS}\" when you want runs.{retype.developer}",
+        ), offer="set_up_unattended_runs")]
+    return [Line(g, id_, "note", Words(
+        f"Unattended runs don't look set up yet. Neither of their two cloud environments is ready: {new}. "
+        f"If you've already made a run, this is a gap; whether one has been made couldn't be read ({_relative(i, runs.why.new)}).",
+        f"Neither environment is listed and active: {dev}. A gap if a run has been made, which couldn't be read "
+        f"({RUN_LABEL} issues: {_relative(i, runs.why.developer)}).",
+    ), Words(
+        f"If you've never made a run, nothing to do until you want one: then ask Claude to \"{SET_UP_RUNS}\".{retype.new} To check for a run: {runs.fix.new}",
+        f"No run made: upgrade-setup's \"{SET_UP_RUNS}\" when wanted.{retype.developer} To tell: {runs.fix.developer}",
+    ), offer="set_up_unattended_runs")]
+
+
+@_check("Cloud", "cloud.contents")
+def check_environment_contents(i: Inputs) -> list[Line]:
+    """Always there: nothing can read what an environment holds (#27), so the
+    owner confirms it by hand."""
+    g, id_ = "Cloud", "cloud.contents"
+    names = [r.name for r in _roles(i)] if i.profile is not None else ["", ""]
+    t, c = (_named(n) if n else None for n in names)
+    if t and names[0] == names[1]:
+        both = Words(t, t)  # one named for both: the environments line says it needs two
+        t = c = None
+    elif t and c:
+        both = Words(f"{t} or {c}", f"{t} and {c}")
+    else:
+        both = Words("the ticket and conductor environments", "the ticket and conductor environments")
+    return [Line(g, id_, "note", Words(
+        f"Nothing can read what a cloud environment holds, so no check can look inside {both.new}.",
+        f"Contents of {both.developer} unchecked: nothing can read an environment's variables or secrets.",
+    ), Words(
+        f"Look for yourself in claude.ai (the environment menu, then Edit): the ticket environment{f' ({t})' if t else ''} should hold no keys or other secrets "
+        f"and set `WORKFLOW_ROLE=ticket`; the conductor's{f' ({c})' if c else ''} sets `WORKFLOW_ROLE=conductor`.",
+        f"Confirm by hand: {t or 'the ticket environment'}: no secrets, WORKFLOW_ROLE=ticket; {c or 'the conductor environment'}: "
+        "WORKFLOW_ROLE=conductor (docs/enforcement.md §2).",
+    ))]
+
+
 # Every check, in the order its lines show when they are equally serious: the
 # profile first, since setting the kit up comes before anything it then checks.
 CHECKS = [check_python, check_claude_code, check_profile, check_install, check_vendor, check_experience, check_ruleset,
-          check_protection, check_required_checks, check_ruleset_rules, check_merge_settings, check_codeowners]
+          check_protection, check_required_checks, check_ruleset_rules, check_merge_settings, check_codeowners,
+          check_environments, check_environment_contents]
 
 
 # ---------- the report ----------
