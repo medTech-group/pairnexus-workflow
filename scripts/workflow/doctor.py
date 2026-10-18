@@ -6,18 +6,22 @@ both wordings, and optionally an offer (an upgrade #32 builds). The report
 picks one wording by experience (#16: what is checked, and each status, never
 depend on it), puts the most serious line first and groups the rest.
 
-Doctor never changes anything (#27): it reads files and runs `python3` and
-`claude --version`, nothing else. It reads files only through `_read_json`
-and `_hash_file`, which never raise and never wait on a pipe, and a check
-that fails unexpectedly becomes a `cant_check` line, never a traceback:
-doctor is advice, and exits 0.
+Doctor never changes anything (#27): it reads files and runs `python3`,
+`claude --version` and `gh api` (GETs only, for the GitHub lines when no
+file is given), nothing else. It reads files only through `_read_text` (and
+`_read_value`, `_read_json` on it), `_file` and `_hash_file`, which never
+raise and never wait on a pipe; only `--rulesets -` or `--repo -` reads
+standard input, as asked. A check that fails unexpectedly becomes a
+`cant_check` line, never a traceback: doctor is advice, and exits 0.
 
 **Adding a group or a check** (the GitHub, Cloud and Previews tickets): write
 a function `def check_x(i: Inputs) -> list[Line]`, decorate it with
 `@_check(<group>, <id of its main line>)` (the line it falls back to if it
 raises), add it to `CHECKS`, and put anything it reads on `Inputs` (filled in
 by `cli.cmd_doctor`). The groups are in `GROUPS` already; the order, the
-counts, the text, the JSON and `--strict` follow without change.
+counts, the text, the JSON and `--strict` follow without change. A line
+that needs GitHub's answers reads them through `_github(i)`, once for every
+line (the Cloud lines, #60, would read the environments the same way).
 """
 
 from __future__ import annotations
@@ -29,13 +33,18 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import textwrap
+import time
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
+from . import posts as posts_mod
 from . import profile as profile_mod
+from . import protection as protection_mod
 from . import updates as updates_mod
 from . import vendor as vendor_mod
+from .adopt import CODEOWNERS_PATHS
 from .profile import EXPERIENCE_ENV, EXPERIENCE_FILE, Experience, Profile
 
 # In the order a report shows them when nothing is wrong.
@@ -107,7 +116,8 @@ class Line:
 @dataclass
 class Inputs:
     """What doctor reads: the checkout, the kit running it, and what a
-    session hands it. Nothing here is fetched over the network."""
+    session hands it. GitHub's answers come from the files given, else from
+    `gh api` when the GitHub lines first ask (`_github`), never otherwise."""
 
     root: Path
     kit_root: Path
@@ -116,6 +126,11 @@ class Inputs:
     experience: Experience
     claude_version: str | None = None  # --claude-version, which wins over `claude --version`
     environ: dict = field(default_factory=lambda: dict(os.environ))
+    # --rulesets and --repo: GitHub's answers as files (`-`: standard input),
+    # which win over `gh api`.
+    rulesets_file: Path | str | None = None
+    repo_file: Path | str | None = None
+    _github: _GitHub | None = field(default=None, repr=False)  # what the GitHub lines read, read once
 
     @property
     def vendored(self) -> bool:
@@ -138,9 +153,10 @@ class Ran:
 
     state: str
     out: str | None = None
+    err: str = ""  # the last lines it printed on stderr, when asked for
 
 
-def _run(i: Inputs, argv: list[str]) -> Ran:
+def _run(i: Inputs, argv: list[str], timeout: float | None = None, stderr: bool = False) -> Ran:
     """Run a command with no shell and no input. Its whole process group is
     killed whenever doctor stops waiting (a timeout, Ctrl-C), so nothing it
     started is left running."""
@@ -149,13 +165,13 @@ def _run(i: Inputs, argv: list[str]) -> Ran:
         return Ran("missing")
     try:
         p = subprocess.Popen([exe, *argv[1:]], cwd=i.root if i.root.is_dir() else None, env=i.environ,
-                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE if stderr else subprocess.DEVNULL,
                              start_new_session=True)
     except (OSError, ValueError):
-        return Ran("failed")
-    timed_out = False
+        return Ran("failed", err="it couldn't be started")
+    timed_out, err = False, b""
     try:
-        out, _ = p.communicate(timeout=RUN_TIMEOUT)
+        out, err = p.communicate(timeout=RUN_TIMEOUT if timeout is None else timeout)
     except subprocess.TimeoutExpired:
         timed_out = True
     finally:
@@ -168,12 +184,14 @@ def _run(i: Inputs, argv: list[str]) -> Ran:
                 p.communicate(timeout=1)  # a detached grandchild may hold the pipe: don't wait on it
             except subprocess.TimeoutExpired:
                 pass
-            if p.stdout:
-                p.stdout.close()
+            for f in (p.stdout, p.stderr):
+                if f:
+                    f.close()
     if timed_out:
         return Ran("timeout")
     if p.returncode:
-        return Ran("failed")
+        said = (err or b"").decode("utf-8", "replace").strip().splitlines()
+        return Ran("failed", err="\n".join(said[-3:])[:600] if said else f"exit {p.returncode}")
     try:
         return Ran("ok", out.decode("utf-8"))
     except UnicodeDecodeError:
@@ -214,22 +232,50 @@ def _file(root: Path, rel: str | Path) -> tuple[Path, str | None]:
     return path, None
 
 
+def _read_text(root: Path, rel: str | Path) -> tuple[str | None, str | None]:
+    """A text file's contents (a byte-order mark left out), and why it can't
+    be read: (None, None) when it is missing. Never raises, and never blocks
+    on a pipe."""
+    path, err = _file(root, rel)
+    if err:
+        return None, err
+    try:
+        if not path.exists():
+            return None, None
+        return path.read_text(encoding="utf-8").removeprefix("\ufeff"), None
+    except UnicodeDecodeError:
+        return None, "it isn't UTF-8 text"
+    except (OSError, ValueError) as e:
+        return None, f"it can't be read ({type(e).__name__})"
+
+
+def _parse_json(text: str, loads=json.loads):
+    """JSON text's value, and why it can't be read."""
+    try:
+        return loads(text.removeprefix("\ufeff")), None
+    except json.JSONDecodeError as e:
+        return None, f"it isn't valid JSON ({e.msg}, line {e.lineno})"
+    except RecursionError:
+        return None, "it is nested too deeply to read"
+    except ValueError as e:
+        return None, f"it can't be read ({type(e).__name__}: {_shown(str(e), 60)})"
+
+
+def _read_value(root: Path, rel: str | Path, loads=json.loads):
+    """A JSON file's value, and why it can't be read: (None, None) when it is
+    missing. Never raises, and never blocks on a pipe."""
+    text, err = _read_text(root, rel)
+    if err or text is None:
+        return None, err
+    return _parse_json(text, loads)
+
+
 def _read_json(root: Path, rel: str | Path) -> tuple[dict, str | None]:
     """A JSON object file's contents, and why it can't be read: ({}, None)
     when it is missing. Never raises, and never blocks on a pipe."""
-    path, err = _file(root, rel)
-    if err:
+    data, err = _read_value(root, rel)
+    if err or data is None:
         return {}, err
-    try:
-        if not path.exists():
-            return {}, None
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except UnicodeDecodeError:
-        return {}, "it isn't UTF-8 text"
-    except json.JSONDecodeError as e:
-        return {}, f"it isn't valid JSON ({e.msg}, line {e.lineno})"
-    except (OSError, ValueError) as e:
-        return {}, f"it can't be read ({type(e).__name__})"
     if not isinstance(data, dict):
         return {}, "it doesn't hold a JSON object"
     return data, None
@@ -857,9 +903,879 @@ def check_ruleset(i: Inputs) -> list[Line]:
     ))]
 
 
+# ---------- GitHub ----------
+#
+# The ruleset, the merge settings and CODEOWNERS (#59). Whether the base branch
+# is protected is `workflow protection`'s read-back (`protection.check`), called
+# as it is; these lines only word what it found and read the other rules of
+# the rulesets it counted. GitHub's answers come from --rulesets and --repo
+# when given, else from `gh api` (only GETs), read once for every line.
+
+GH_TIMEOUT = 30  # seconds, for one `gh api` call
+GH_BUDGET = 60  # seconds, for all of them
+# What CODEOWNERS should cover (docs/enforcement.md §3).
+OWNED = ("/.claude/", "/.github/workflows/")
+# How `gh` says it isn't signed in, and how GitHub says rulesets need a paid
+# plan (a private repository on GitHub Free).
+_SIGNED_OUT = re.compile(r"gh auth login|GH_TOKEN|not logged in|authentication required|HTTP 401", re.I)
+_PLAN = re.compile(r"upgrade to github|make this repository public", re.I)
+# How `gh` says it couldn't reach GitHub, and how GitHub says to wait.
+_OFFLINE = re.compile(r"error connecting to|proxyconnect|connection refused|no such host|dial tcp|i/o timeout|check your internet connection|TLS handshake", re.I)
+_RATE_LIMIT = re.compile(r"rate limit|wait a few minutes|HTTP 429", re.I)
+# The files doctor takes instead of `gh`, as a developer's fix names them.
+GIVE_FILES = "--rulesets and --repo files (GET repos/<repo>/rulesets/<id> each in full, GET repos/<repo>)"
+# The upgrade that requires the checks (#38; #69 offers it on the required checks' line).
+REQUIRE_CHECKS = "Require these checks"
+# A CODEOWNERS owner: @login, @org/team, or an email address.
+_OWNER = re.compile(r"@[A-Za-z0-9](?:[A-Za-z0-9_-]*)(?:/[A-Za-z0-9._-]+)?|[^@\s]+@[^@\s]+\.[^@\s]+")
+
+
+@dataclass(frozen=True)
+class _Kind:
+    """A kind of missing protection the read-back reports: its line's id
+    (None: the main line says it), and a few plain words for the main line."""
+
+    line: str | None
+    short: str
+
+
+KINDS = {
+    "no_rulesets": _Kind(None, "it has no ruleset"),
+    "not_on_base": _Kind("github.protection.base", "no ruleset covers it"),
+    "unsure": _Kind("github.protection.base", "a ruleset may not cover it"),
+    "not_active": _Kind("github.protection.active", "a ruleset is turned off"),
+    "evaluate": _Kind("github.protection.active", "a ruleset only reports"),
+    "bypass": _Kind("github.protection.bypass", "someone may skip its rules"),
+    "bypass_unread": _Kind("github.protection.bypass", "who may skip its rules can't be seen"),
+    "deletion": _Kind("github.protection.deletions", "it can be deleted"),
+    "non_fast_forward": _Kind("github.protection.force_pushes", "it can be force-pushed"),
+    "pull_request": _Kind("github.protection.pull_requests", "pull requests aren't required"),
+}
+assert set(KINDS) == set(protection_mod.KINDS)
+
+
+@dataclass
+class _Answer:
+    """One of GitHub's answers: its value, or why it couldn't be read (in
+    both wordings) and how to read it."""
+
+    value: object = None
+    why: Words | None = None
+    fix: Words = NONE
+
+
+@dataclass
+class _GitHub:
+    """What the GitHub lines read: the read-back (or why not), whether its
+    "not protected" rests on what this account can't see, and the merge
+    settings (or why not)."""
+
+    report: protection_mod.Report | None = None
+    report_why: _Answer | None = None
+    unseen: _Answer | None = None  # protected, but for bypass lists only an admin can read
+    plan: bool = False  # GitHub said rulesets need a paid plan: read as no rulesets
+    # Without the default branch, the readings differ but neither protects the
+    # base branch: the ruleset line still says so. The other lines can't be
+    # checked, unless neither reading puts a ruleset on it (then `report` is
+    # set, and they read as with none).
+    unprotected_either: bool = False
+    merge: dict | None = None
+    merge_why: _Answer | None = None
+
+
+ADMIN = Words(
+    "Ask the repository's admin to run this check, or to look at the ruleset's bypass list in Settings → Rules.",
+    "Rerun with an admin's `gh`, or give --rulesets from an admin's GET repos/<repo>/rulesets/<id>.",
+)
+
+
+def _sign_in(missing: bool) -> Words:
+    return Words(
+        ("Install GitHub's command-line tool (`gh`, from cli.github.com) and sign in with `gh auth login`"
+         if missing else "Sign in with `gh` (run `gh auth login` in a terminal)") + ", or ask a cloud session to check the set-up.",
+        ("Install gh and run `gh auth login`" if missing else "Run `gh auth login`")
+        + f", or give {GIVE_FILES}; or ask a cloud session to check the set-up.",
+    )
+
+
+AGAIN = Words(
+    "Run the check again in a while; if it says the same, ask a cloud session to check the set-up.",
+    f"Rerun, or give {GIVE_FILES}.",
+)
+
+
+def _scrubbed(i: Inputs, text: str) -> str:
+    """Text from `gh`, on one line, with the home directory as `~`."""
+    home = (i.environ.get("HOME") or "").rstrip(os.sep)
+    for h in dict.fromkeys((home, os.path.realpath(home) if home else "")):
+        if h and h != os.sep:
+            text = text.replace(h + os.sep, "~" + os.sep)
+    return _shown(_relative(i, text), 120)
+
+
+def _gh(i: Inputs, path: str, deadline: float, flag: str, paginate: bool = False) -> _Answer:
+    """`gh api <path>`'s JSON (with `paginate`, the pages as a list), read
+    with a GET and nothing else, within what is left of `GH_BUDGET`."""
+    left = deadline - time.monotonic()
+    shown = path.split("?")[0]
+    if left <= 0:
+        return _Answer(why=Words(f"GitHub didn't answer within {GH_BUDGET} seconds", f"GitHub's reads took over {GH_BUDGET} s, before `gh api {shown}`"), fix=AGAIN)
+    timeout = min(GH_TIMEOUT, left)
+    ran = _run(i, ["gh", "api", *(["--paginate"] if paginate else []), path], timeout=timeout, stderr=True)
+    offline = _OFFLINE.search(ran.err)
+    lines = ran.err.splitlines()
+    err = _scrubbed(i, next((ln for ln in lines if _OFFLINE.search(ln)), "") if offline else (lines[-1] if lines else ""))
+    if ran.state == "missing":
+        return _Answer(why=Words("GitHub's command-line tool (`gh`) isn't installed here", f"no `gh` on the PATH, and no {flag} file"), fix=_sign_in(True))
+    if ran.state == "failed" and _SIGNED_OUT.search(ran.err):
+        return _Answer(why=Words("`gh` isn't signed in to GitHub", f"`gh api` isn't signed in ({err})"), fix=_sign_in(False))
+    repo = i.profile.repo
+    if ran.state == "failed" and "HTTP 404" in ran.err and shown in (f"repos/{repo}", f"repos/{repo}/rulesets"):
+        return _Answer(why=Words(f"GitHub has no repository `{repo}` that your `gh` can see", f"`gh api {shown}` failed: {err}"), fix=Words(
+            f"Check the repository's name in the kit's profile (`project.repo` in {PROFILE}) and that your GitHub account can see it; or ask a cloud session to check the set-up.",
+            f"Check project.repo ({repo}) and gh's access to it, or give {GIVE_FILES}.",
+        ))
+    if ran.state == "failed" and offline:
+        return _Answer(why=Words(f"`gh` couldn't reach GitHub ({err})", f"`gh api {shown}` couldn't connect: {err}"), fix=Words(
+            "Check your internet connection (or the proxy), then run the check again; or ask a cloud session to check the set-up.",
+            f"Check the network or proxy and rerun, or give {GIVE_FILES}.",
+        ))
+    if ran.state == "failed" and _RATE_LIMIT.search(ran.err):
+        return _Answer(why=Words(f"GitHub asked `gh` to slow down ({err})", f"`gh api {shown}` was rate limited: {err}"), fix=AGAIN)
+    if ran.state == "failed" and "HTTP 403" in ran.err:
+        return _Answer(why=Words(f"GitHub refused to show it to your `gh`: {err}", f"`gh api {shown}` was refused: {err}"), fix=Words(
+            "Your GitHub account may not be allowed to read this: ask the repository's admin to run the check, or ask a cloud session to check the set-up.",
+            f"gh's token lacks access (HTTP 403): use an admin's gh, or give {GIVE_FILES}.",
+        ))
+    if ran.state == "timeout":
+        budget = "" if timeout >= GH_TIMEOUT else f", the rest of the {GH_BUDGET} s for all of GitHub's reads"
+        n = round(timeout)
+        return _Answer(why=Words(f"GitHub didn't answer within {n} second{'' if n == 1 else 's'}{budget}", f"`gh api {shown}` timed out after {timeout:.0f} s{budget}"), fix=AGAIN)
+    if ran.state != "ok":
+        said = err if ran.state == "failed" else "its answer isn't UTF-8 text"
+        return _Answer(why=Words(f"GitHub answered `gh` with an error: {said}", f"`gh api {shown}` failed: {said}"), fix=AGAIN)
+    try:
+        values = posts_mod.decode_values(ran.out)
+    except posts_mod.CommentsError as e:
+        values, bad = [], str(e)
+    else:
+        bad = None if values else "it printed nothing"
+    if bad:
+        return _Answer(why=Words("GitHub's answer to `gh` couldn't be read", f"`gh api {shown}`'s output isn't JSON ({bad})"), fix=AGAIN)
+    return _Answer(values if paginate else values[0])
+
+
+def _given(i: Inputs, given: Path | str, flag: str) -> _Answer:
+    """A file given on the command line (`-`: standard input), read as doctor
+    reads files."""
+    fix = Words(
+        f"Ask Claude to fetch it from GitHub again (as `workflow protection` takes it), or leave out {flag} to read GitHub with `gh`.",
+        f"Give {flag} as `workflow protection` takes it, or leave it out to use `gh api`.",
+    )
+    if given == "":
+        return _Answer(why=Words(f"the {flag} file was given no path", f"{flag} was given no path"), fix=fix)
+    elif given == "-":
+        shown = "standard input"
+        value, err = _stdin()
+    else:
+        shown = _home(i, Path(given))
+        value, err = _read_value(i.root, given, protection_mod.loads)
+        if err is None and value is None:
+            err = "it holds null, not GitHub's answer" if _file(i.root, given)[0].exists() else "it isn't there"
+    if err:
+        return _Answer(why=Words(f"the {flag} file ({shown}): {err}", f"{flag} {shown}: {err}"), fix=fix)
+    return _Answer(value)
+
+
+def _stdin():
+    """Standard input's JSON, read as UTF-8, as `workflow protection` reads
+    it; never waited on at a terminal."""
+    try:
+        if sys.stdin is None or sys.stdin.isatty():
+            return None, "standard input is a terminal or closed, not GitHub's answer"
+        text = sys.stdin.buffer.read().decode("utf-8")
+        if not text.strip():
+            return None, "standard input was empty"
+    except UnicodeDecodeError:
+        return None, "it isn't UTF-8 text"
+    except (OSError, ValueError, AttributeError) as e:
+        return None, f"standard input can't be read ({type(e).__name__})"
+    return _parse_json(text, protection_mod.loads)
+
+
+def _rulesets(i: Inputs, deadline: float) -> tuple[_Answer, bool]:
+    """The rulesets, each in full: from --rulesets, else the list (pages of
+    summaries) and then each one through `gh api`. And whether GitHub said
+    rulesets need a paid plan, read as none."""
+    if i.rulesets_file is not None:
+        return _given(i, i.rulesets_file, "--rulesets"), False
+    repo = i.profile.repo
+    listed = _gh(i, f"repos/{repo}/rulesets?includes_parents=true&per_page=100", deadline, "--rulesets", paginate=True)
+    if listed.why:
+        plan = _PLAN.search(listed.why.developer) is not None
+        return (_Answer([]) if plan else listed), plan
+    flat = [x for page in listed.value for x in (page if isinstance(page, list) else [page])]
+    ids = [x.get("id") if isinstance(x, dict) else None for x in flat]
+    if not all(isinstance(n, int) and not isinstance(n, bool) for n in ids):
+        return _Answer(why=Words("GitHub's list of rulesets couldn't be read", "`gh api`'s list of rulesets has an entry without an id"), fix=AGAIN), False
+    full = []
+    for n in ids:
+        one = _gh(i, f"repos/{repo}/rulesets/{n}", deadline, "--rulesets")
+        if one.why:
+            return one, False
+        full.append(one.value)
+    return _Answer(full), False
+
+
+def _not_github(e: Exception, what: str) -> _Answer:
+    rulesets = "rulesets" in what
+    return _Answer(why=Words(f"{what} aren't in the shape GitHub gives them", _upper(str(e))), fix=Words(
+        f"Ask Claude to fetch {what} from GitHub again" + (", each ruleset in full" if rulesets else "") + ", as `workflow protection` takes them.",
+        f"Give {GIVE_FILES}, as `workflow protection` takes them.",
+    ))
+
+
+def _bypass_seen(rulesets):
+    """The rulesets with a bypass list that couldn't be read taken as empty,
+    as the kit sets it (pages of rulesets as they are)."""
+    def seen(rs):
+        return {**rs, "bypass_actors": []} if isinstance(rs, dict) and "bypass_actors" not in rs else rs
+
+    if not isinstance(rulesets, list):
+        return rulesets
+    return [[seen(r) for r in x] if isinstance(x, list) else seen(x) for x in rulesets]
+
+
+def _github(i: Inputs) -> _GitHub | None:
+    """GitHub's answers and the read-back, once for every line; None with no
+    readable profile (the lines then wait on it)."""
+    if i.profile is None:
+        return None
+    if i._github is not None:
+        return i._github
+    base = i.profile.base_branch
+    deadline = time.monotonic() + GH_BUDGET
+    gh = i._github = _GitHub()
+    settings = _given(i, i.repo_file, "--repo") if i.repo_file is not None else _gh(i, f"repos/{i.profile.repo}", deadline, "--repo")
+    accepted = None  # the settings the read-back took
+    if settings.why:
+        gh.merge_why = settings
+    else:
+        try:
+            # The read-back of no rulesets: its merge settings, the settings checked as it checks them.
+            gh.merge = protection_mod.check([], base, settings.value).merge
+            accepted = settings.value
+        except protection_mod.ProtectionError as e:
+            gh.merge_why = _not_github(e, "the repository's settings")
+    rulesets, gh.plan = _rulesets(i, deadline)
+    if rulesets.why:
+        gh.report_why = rulesets
+        return gh
+    # The settings the rulesets are read with: the accepted ones, or, when
+    # only their merge settings are wrong, their default branch alone.
+    raw = settings.value.get("default_branch") if isinstance(settings.value, dict) else None
+    placed = accepted if accepted is not None else {"default_branch": raw} if isinstance(raw, str) else None
+    known = placed is not None and placed.get("default_branch") is not None
+    seen = _bypass_seen(rulesets.value)
+    try:
+        if known:
+            rep = protection_mod.check(rulesets.value, base, placed)
+        else:
+            # The default branch unknown: read it as the base branch and as
+            # another. When the two readings differ, every ruleset line rests
+            # on what can't be seen; when they agree, either is the answer.
+            either = [{**(placed or {}), "default_branch": d} for d in (base, f"{base}-not")]
+            rep, other = (protection_mod.check(rulesets.value, base, settings_) for settings_ in either)
+            gh.unprotected_either = not any(protection_mod.check(seen, base, settings_).protected for settings_ in either)
+            placed = either[0]
+    except protection_mod.ProtectionError as e:
+        gh.report_why = _not_github(e, "GitHub's rulesets")
+        return gh
+    differ = not known and _substance(rep) != _substance(other)
+    if differ:
+        no_default = settings.why is None
+        gh.report_why = _Answer(why=Words(
+            "a ruleset applies to GitHub's default branch, and "
+            + ("the repository's settings don't say which branch that is" if no_default else f"the repository's settings couldn't be read: {settings.why.new}")
+            + f", so it can't tell whether that is `{base}`",
+            "a ruleset targets ~DEFAULT_BRANCH, and " + ("the settings have no default_branch" if no_default else settings.why.developer),
+        ), fix=settings.fix if settings.why else Words(
+            "Ask Claude to fetch the repository's settings from GitHub in full, with its default branch.",
+            "Give --repo with default_branch (GET repos/<repo>).",
+        ))
+        if rep.effective or other.effective:
+            return gh
+        # Neither reading puts a ruleset on the base branch: the lines that
+        # read its rules read the same in both, so they read this one.
+    gh.report = rep
+    # What the read-back can't see counts as missing there, so an unknown never
+    # reads as protected. When it would read protected with unread bypass
+    # lists as empty, "not protected" is only an unknown: never removed
+    # protection.
+    if not rep.protected and protection_mod.check(seen, base, placed).protected:
+        gh.unseen = _Answer(why=Words(
+            "who may skip its ruleset's rules can be seen only by the repository's admins",
+            "; ".join(m for k, m in zip(rep.kinds, rep.missing) if k == "bypass_unread"),
+        ), fix=ADMIN)
+    return gh
+
+
+def _substance(rep: protection_mod.Report) -> tuple:
+    """What the lines read from a read-back: two readings alike in this give
+    the same lines (`check` keeps the caller's rulesets, so they compare by
+    identity)."""
+    return rep.protected, rep.kinds, rep.required_checks, [id(rs) for rs in rep.effective]
+
+
+def _waits(i: Inputs, id_: str, what: Words, answer: _Answer | None) -> Line:
+    """A line that can't be checked: GitHub's answer couldn't be read, or
+    (`answer` None) the profile couldn't."""
+    if answer is None:
+        why = Words("the kit's profile can't be read", "the profile doesn't read (project.repo, project.base_branch)") if i.profile_error else Words(
+            "the kit isn't set up here yet (it has no profile)", "no profile (project.repo, project.base_branch)")
+        fix = PROFILE_FIRST if i.profile_error else SET_UP_FIRST
+    else:
+        why, fix = answer.why, answer.fix
+    return Line("GitHub", id_, "cant_check", Words(f"Can't check {what.new}: {_relative(i, why.new)}.", f"{what.developer} unchecked: {_relative(i, why.developer)}."), fix)
+
+
+def _report(i: Inputs, id_: str, what: Words) -> tuple[protection_mod.Report | None, Line | None]:
+    """The read-back, or the line saying it can't be checked."""
+    gh = _github(i)
+    if gh is None or gh.report is None:
+        return None, _waits(i, id_, what, gh.report_why if gh else None)
+    return gh.report, None
+
+
+def _rules(rep: protection_mod.Report, type_: str) -> list[dict]:
+    """The rules of this type in the active rulesets on the base branch,
+    each one's parameters (an object, empty when it has none)."""
+    return [r.get("parameters") or {} for rs in rep.effective for r in rs["rules"] if r["type"] == type_]
+
+
+def _count(count: int, one: str, many: str) -> str:
+    """`one` for one, else the number and `many`."""
+    return one if count == 1 else f"{count} {many}"
+
+
+def _upper(text: str) -> str:
+    return text[:1].upper() + text[1:]
+
+
+def _plan_words(gh: _GitHub) -> Words:
+    return Words(" GitHub said rulesets on a private repository need a paid plan.", " (GitHub: rulesets need a paid plan on this private repository.)") if gh.plan else NONE
+
+
+@_check("GitHub", "github.ruleset")
+def check_protection(i: Inputs) -> list[Line]:
+    """Whether the base branch is protected, by the read-back, against the
+    profile's `project.ruleset`; each missing protection its own gap."""
+    g, id_ = "GitHub", "github.ruleset"
+    gh = _github(i)
+    if gh is not None and gh.report_why is not None and gh.unprotected_either and (i.profile.ruleset is not False or gh.report is not None):
+        # In solo mode only with no ruleset on the base branch either way: a
+        # ruleset with holes that may be on it isn't a choice to note.
+        return [_unprotected_either(i, gh)]
+    rep, wait = _report(i, id_, Words("whether the main branch is protected on GitHub", "The base branch's protection"))
+    if wait:
+        return [wait]
+    gh, base, ruleset = _github(i), i.profile.base_branch, i.profile.ruleset
+    protect, restore = OFFERS["protect_main"], OFFERS["restore_protection"]
+    if gh.unseen and ruleset is False:
+        return [Line(g, id_, "note", Words(
+            f"Solo mode: whether GitHub protects `{base}` can't be seen ({gh.unseen.why.new}); either way is fine in solo mode.",
+            f"Solo mode (project.ruleset = false); protection of `{base}` unknown: {gh.unseen.why.developer}.",
+        ), Words(
+            f"When you want GitHub to protect `{base}`, ask Claude to \"{protect}\".",
+            f"Run upgrade-setup's \"{protect}\" to leave solo mode.",
+        ), offer="protect_main")]
+    if gh.unseen:
+        return [_waits(i, id_, Words(f"whether GitHub protects `{base}`", f"`{base}`'s protection"), gh.unseen)]
+    plan = _plan_words(gh)
+    plan_fix = Words(" Rulesets on a private repository need a paid GitHub plan (Team or above), or the repository made public.",
+                     " Needs a paid plan for a private repository, or a public one.") if gh.plan else NONE
+    if rep.protected:
+        if ruleset is False:
+            return [Line(g, id_, "note", Words(
+                f"GitHub protects `{base}` with a ruleset, though the kit's profile still says solo mode.",
+                f"`{base}` is protected, but project.ruleset = false (solo mode).",
+            ), Words(
+                f"Ask Claude to \"{protect}\": it sees the protection and opens the pull request that leaves solo mode.",
+                f"Run upgrade-setup's \"{protect}\": the read-back finds it protected and its pull request sets project.ruleset = true.",
+            ), offer="protect_main")]
+        return [Line(g, id_, "fine", Words(
+            f"GitHub protects `{base}`: changes reach it only through pull requests, and it can't be deleted or force-pushed.",
+            f"`workflow protection`: `{base}` is protected (deletions restricted, force pushes blocked, pull requests required, no bypass list).",
+        ))]
+    found = _found(rep)
+    plain = ", ".join(dict.fromkeys(KINDS[k].short for k, _ in found))
+    listed = "; ".join(m for _, m in found)
+    if ruleset is False and not rep.effective:
+        return [Line(g, id_, "note", Words(
+            f"Solo mode: GitHub doesn't protect `{base}` ({plain}), chosen on purpose; while you work with Claude, the kit's guard keeps changes off `{base}`.{plan.new}",
+            f"Solo mode (project.ruleset = false): `{base}` isn't protected, as expected: {listed}.{plan.developer}",
+        ), Words(
+            f"When you want GitHub to protect `{base}` too, ask Claude to \"{protect}\".{plan_fix.new}",
+            f"Run upgrade-setup's \"{protect}\" for the ruleset.{plan_fix.developer}",
+        ), offer="protect_main")]
+    if ruleset is True:
+        main = Line(g, id_, "gap", Words(
+            f"The kit's profile says GitHub protects `{base}`, but it doesn't any more ({plain}): protection that was removed or weakened is never trusted.{plan.new}",
+            f"Removed protection: project.ruleset = true, but the read-back finds `{base}` unprotected: {listed}.{plan.developer}",
+        ), Words(
+            f"Ask Claude to \"{restore}\": it puts the ruleset back.{plan_fix.new}",
+            f"Run upgrade-setup's \"{restore}\" (`restore_protection`), then read it back with `workflow protection`.{plan_fix.developer}",
+        ), offer="restore_protection")
+        offer = restore
+    else:  # `ruleset` absent, or solo mode with a ruleset on the base branch that has holes
+        main = Line(g, id_, "gap", Words(
+            f"GitHub doesn't protect `{base}` ({plain}), so {_consequence(rep, found)}.{plan.new}",
+            f"`workflow protection`: `{base}` isn't protected: {listed}.{plan.developer}",
+        ), Words(
+            f"Ask Claude to \"{protect}\".{plan_fix.new}",
+            f"Run upgrade-setup's \"{protect}\", or set the ruleset up by hand (docs/enforcement.md §1).{plan_fix.developer}",
+        ), offer="protect_main")
+        offer = protect
+    return [main] + _missing_lines(found, base, offer)
+
+
+def _unprotected_either(i: Inputs, gh: _GitHub) -> Line:
+    """The ruleset line when the default branch is unknown but the base
+    branch is unprotected whichever it is: what is missing can't be told, but
+    that something is can."""
+    g, id_ = "GitHub", "github.ruleset"
+    base, ruleset = i.profile.base_branch, i.profile.ruleset
+    protect, restore = OFFERS["protect_main"], OFFERS["restore_protection"]
+    unknown = gh.report_why
+    if ruleset is False:
+        return Line(g, id_, "note", Words(
+            f"Solo mode: GitHub doesn't protect `{base}`, whichever branch is its default, chosen on purpose.",
+            f"Solo mode (project.ruleset = false): `{base}` unprotected under either reading of ~DEFAULT_BRANCH ({unknown.why.developer}).",
+        ), Words(
+            f"When you want GitHub to protect `{base}` too, ask Claude to \"{protect}\".",
+            f"Run upgrade-setup's \"{protect}\" for the ruleset.",
+        ), offer="protect_main")
+    if ruleset is True:
+        return Line(g, id_, "gap", Words(
+            f"The kit's profile says GitHub protects `{base}`, but it doesn't any more, whichever branch is GitHub's default: protection that was removed or weakened is never trusted. What is missing can't be told: {unknown.why.new}.",
+            f"Removed protection: project.ruleset = true, but `{base}` is unprotected under either reading of ~DEFAULT_BRANCH ({unknown.why.developer}).",
+        ), Words(
+            f"Ask Claude to \"{restore}\": it puts the ruleset back.",
+            f"Run upgrade-setup's \"{restore}\" (`restore_protection`); give --repo to see what is missing.",
+        ), offer="restore_protection")
+    return Line(g, id_, "gap", Words(
+        f"GitHub doesn't protect `{base}`, whichever branch is its default. What is missing can't be told: {unknown.why.new}.",
+        f"`{base}` is unprotected under either reading of ~DEFAULT_BRANCH ({unknown.why.developer}).",
+    ), Words(
+        f"Ask Claude to \"{protect}\".",
+        f"Run upgrade-setup's \"{protect}\"; give --repo to see what is missing.",
+    ), offer="protect_main")
+
+
+def _consequence(rep: protection_mod.Report, found: list[tuple[str, str]]) -> str:
+    """What could happen to the base branch, from what is missing."""
+    kinds = {k for k, _ in found}
+    if not rep.effective:
+        return "a change could reach it without a pull request, or its history could be lost"
+    out = []
+    if "pull_request" in kinds:
+        out.append("a change could reach it without a pull request")
+    if kinds & {"deletion", "non_fast_forward"}:
+        out.append("its history could be lost")
+    if kinds & {"bypass", "bypass_unread"}:
+        out.append("someone could skip its rules")
+    return ", or ".join(out) or "it isn't protected"
+
+
+def _found(rep: protection_mod.Report) -> list[tuple[str, str]]:
+    """What the read-back found missing, by kind. A ruleset on other branches
+    (or one that may be) is left out while another one covers the base
+    branch: it is someone's other ruleset, not this one's problem."""
+    found = list(zip(rep.kinds, rep.missing))
+    return [(k, m) for k, m in found if not (k in ("not_on_base", "unsure") and rep.effective)]
+
+
+def _protection_words(id_: str, kinds: list[str], base: str) -> tuple[str, str]:
+    """A missing protection's line in plain words, and a developer's fix."""
+    n = len(kinds)
+    if id_ == "github.protection.active":
+        off, evaluating = kinds.count("not_active"), kinds.count("evaluate")
+        parts = ([f"{_count(off, 'a ruleset', 'rulesets')} that would protect `{base}` {'is' if off == 1 else 'are'} turned off"] if off else []) + (
+            [f"{_count(evaluating, 'a ruleset', 'rulesets')} only {'reports' if evaluating == 1 else 'report'}, without blocking anything"] if evaluating else [])
+        return _upper("; ".join(parts)) + ".", "Set the ruleset's enforcement to active."
+    if id_ == "github.protection.base":
+        if "unsure" in kinds:
+            return (f"{_upper(_count(n, 'a ruleset', 'rulesets'))} on GitHub may not cover `{base}`: {'its' if n == 1 else 'their'} branch pattern can't be matched here, so no ruleset is known to protect it.",
+                    f"Name `{base}` in the ruleset (`~DEFAULT_BRANCH` or `refs/heads/{base}`) rather than by a pattern.")
+        return (f"{_upper(_count(n, 'a ruleset', 'rulesets'))} on GitHub {'doesn' if n == 1 else 'don'}'t cover `{base}`: it applies to other branches or tags, so no ruleset protects it.",
+                f"Make the ruleset include `~DEFAULT_BRANCH` or `refs/heads/{base}`, and not exclude it.")
+    if id_ == "github.protection.bypass":
+        if "bypass" in kinds:
+            return f"People or apps on a ruleset's bypass list can skip its rules on `{base}`.", "Empty the ruleset's bypass list."
+        return (f"Who may skip the ruleset's rules on `{base}` can't be seen (that needs admin access on GitHub), so it can't count as protecting it.",
+                ADMIN.developer)
+    rule, words = {
+        "github.protection.deletions": ("deletion", f"`{base}` can be deleted on GitHub: no active ruleset stops it."),
+        "github.protection.force_pushes": ("non_fast_forward", f"Someone could force push to `{base}`, rewriting its history: no active ruleset stops it."),
+        "github.protection.pull_requests": ("pull_request", f"Changes can reach `{base}` without a pull request: no active ruleset requires one."),
+    }[id_]
+    return words, f"Add a `{rule}` rule to an active ruleset on `{base}`."
+
+
+def _missing_lines(found: list[tuple[str, str]], base: str, offer: str) -> list[Line]:
+    """Each kind of missing protection the read-back found, as its own gap,
+    in plain words and with the read-back's own words for a developer."""
+    by_line: dict[str, list[tuple[str, str]]] = {}
+    for kind, words in found:
+        if KINDS[kind].line:
+            by_line.setdefault(KINDS[kind].line, []).append((kind, words))
+    out = []
+    for id_, items in by_line.items():
+        kinds = [k for k, _ in items]
+        new, dev_fix = _protection_words(id_, kinds, base)
+        unread = set(kinds) == {"bypass_unread"}
+        out.append(Line("GitHub", id_, "cant_check" if unread else "gap", Words(new, _upper("; ".join(w for _, w in items)) + "."),
+                        ADMIN if unread else Words(f"Ask Claude to \"{offer}\": it puts this right.", dev_fix)))
+    return out
+
+
+def _solo_unprotected(rep: protection_mod.Report, i: Inputs) -> bool:
+    """Solo mode with no ruleset on the base branch at all, as chosen."""
+    return i.profile.ruleset is False and not rep.protected and not rep.effective
+
+
+@_check("GitHub", "github.required_checks")
+def check_required_checks(i: Inputs) -> list[Line]:
+    """The profile's `ci.required_checks` that the ruleset doesn't require.
+    A check it requires that the profile doesn't list isn't a line here (#38's
+    tickets add that note, and #69 the `require_checks` offer on this line)."""
+    g, id_ = "GitHub", "github.required_checks"
+    if i.profile is None:
+        return [_waits(i, id_, Words("which checks GitHub requires", "Required checks"), None)]
+    base, listed = i.profile.base_branch, list(i.profile.required_checks)
+    upgrade = REQUIRE_CHECKS
+    if not listed:
+        return [Line(g, id_, "note", Words(
+            f"Checks not required yet: the kit's profile lists no checks that must pass before a pull request merges into `{base}`.",
+            "ci.required_checks is empty: checks not required yet.",
+        ), Words(
+            f"Once your project's checks have run on `{base}`, ask Claude to \"{upgrade}\".",
+            f"After CI has run on `{base}`, run upgrade-setup's \"{upgrade}\".",
+        ))]
+    rep, wait = _report(i, id_, Words("whether GitHub requires the checks the kit's profile lists", "ci.required_checks against the ruleset"))
+    if wait:
+        return [wait]
+    names = ", ".join(f"`{_shown(c)}`" for c in listed)
+    if _solo_unprotected(rep, i):
+        return [Line(g, id_, "note", Words(
+            f"Solo mode: GitHub doesn't require the checks the kit's profile lists ({names}), since nothing protects `{base}` there yet.",
+            f"Solo mode: no ruleset on `{base}` requires ci.required_checks ({names}).",
+        ), Words(
+            f"They're required when you ask Claude to \"{OFFERS['protect_main']}\".",
+            f"\"{OFFERS['protect_main']}\" adds them to the ruleset it creates.",
+        ))]
+    missing = [c for c in listed if c not in rep.required_checks]
+    if missing:
+        shown = ", ".join(f"`{_shown(c)}`" for c in missing)
+        return [Line(g, id_, "gap", Words(
+            f"GitHub doesn't require {'this check' if len(missing) == 1 else 'these checks'} the kit's profile lists to pass before a pull request merges: {shown}.",
+            f"ci.required_checks not required by any active ruleset on `{base}`: {shown}.",
+        ), Words(
+            f"Ask Claude to \"{upgrade}\", once {'it has' if len(missing) == 1 else 'they have'} run on `{base}`.",
+            f"Run upgrade-setup's \"{upgrade}\" (adds them to the ruleset with \"up to date\" on).",
+        ))]
+    return [Line(g, id_, "fine", Words(
+        f"GitHub requires the checks the kit's profile lists to pass before a pull request merges ({names}).",
+        f"Every ci.required_checks name is required on `{base}` ({names}).",
+    ))]
+
+
+@_check("GitHub", "github.up_to_date")
+def check_ruleset_rules(i: Inputs) -> list[Line]:
+    """The ruleset's other rules the kit cares about: "up to date",
+    approvals, Code Owners review and linear history (docs/enforcement.md §1),
+    read from the active rulesets on the base branch. With none, the ruleset
+    line has said so, and these have nothing to read."""
+    g = "GitHub"
+    whats = {
+        "github.up_to_date": Words("whether pull requests must be up to date with the main branch", "\"Require branches to be up to date\""),
+        "github.approvals": Words("how many approvals GitHub requires", "Required approvals"),
+        "github.code_owner_review": Words("whether GitHub requires a review from the code owners", "\"Require review from Code Owners\""),
+        "github.linear_history": Words("whether GitHub requires a straight-line history", "The linear-history rule"),
+    }
+    reads = [_report(i, id_, what) for id_, what in whats.items()]
+    if reads[0][1]:
+        return [wait for _, wait in reads]
+    rep = reads[0][0]
+    if not rep.effective:
+        return []
+    base = i.profile.base_branch
+    lines = []
+    strict = [p.get("strict_required_status_checks_policy") is True for p in _rules(rep, "required_status_checks")]
+    if not strict and not i.profile.required_checks:
+        lines.append(Line(g, "github.up_to_date", "note", Words(
+            f"\"Require branches to be up to date\" comes with the required checks, and none are required on `{base}` yet.",
+            f"No required_status_checks rule on `{base}` (ci.required_checks is empty), so no strict_required_status_checks_policy.",
+        ), Words(
+            f"It's turned on with the checks, when you ask Claude to \"{REQUIRE_CHECKS}\".",
+            f"\"{REQUIRE_CHECKS}\" adds the rule with strict_required_status_checks_policy = true.",
+        )))
+    elif not any(strict):
+        lines.append(Line(g, "github.up_to_date", "gap", Words(
+            f"GitHub lets a pull request merge without being up to date with `{base}`, so two changes that each pass alone can break `{base}` together.",
+            f"strict_required_status_checks_policy isn't true on `{base}` (\"Require branches to be up to date\" off"
+            + (", and no required_status_checks rule)." if not strict else ")."),
+        ), Words(
+            f"Ask Claude to turn on \"Require branches to be up to date\" in the ruleset (\"{REQUIRE_CHECKS}\" does it).",
+            "Set strict_required_status_checks_policy = true in the ruleset's required_status_checks rule.",
+        )))
+    else:
+        lines.append(Line(g, "github.up_to_date", "fine", Words(
+            f"Pull requests must be up to date with `{base}` before they merge.",
+            f"strict_required_status_checks_policy is true on `{base}`.",
+        )))
+    prs = _rules(rep, "pull_request")
+    counts = [p.get("required_approving_review_count") for p in prs if "required_approving_review_count" in p]
+    unread = [c for c in counts if not isinstance(c, int) or isinstance(c, bool) or c < 0]
+    most = max((c for c in counts if c not in unread), default=0)
+    if unread:
+        lines.append(Line(g, "github.approvals", "cant_check", Words(
+            f"Can't tell how many approvals GitHub requires on `{base}`: the ruleset's number can't be read.",
+            f"required_approving_review_count on `{base}` isn't a count: {_shown(json.dumps(unread[0]))}.",
+        ), Words(
+            "Ask Claude to fetch the ruleset from GitHub again, in full.",
+            "Pass the ruleset as GitHub returns it (GET repos/<repo>/rulesets/<id>).",
+        )))
+    elif most > 0:
+        lines.append(Line(g, "github.approvals", "note", Words(
+            f"GitHub needs {_count(most, 'an approving review', 'approving reviews')} before a pull request merges into `{base}`, so unattended runs will stop at \"ready for review\" and wait for you.",
+            f"required_approving_review_count = {most} on `{base}`: unattended runs stop at \"ready for review\" (merge.mode owner).",
+        ), Words(
+            "That's your choice; to let runs merge on their own, ask Claude to set the ruleset's required approvals to 0.",
+            "Keep it, or set required_approving_review_count to 0 so runs can merge.",
+        )))
+    else:
+        lines.append(Line(g, "github.approvals", "fine", Words(
+            "GitHub doesn't need an approving review before a pull request merges, so unattended runs can merge.",
+            f"required_approving_review_count is 0 on `{base}`.",
+        )))
+    if any(p.get("require_code_owner_review") is True for p in prs):
+        lines.append(Line(g, "github.code_owner_review", "gap", Words(
+            "GitHub requires a review from the code owners, but Claude's sessions post as you, and GitHub never lets you approve your own pull request, so one that touches the kit could never merge.",
+            "require_code_owner_review is true while sessions post as the owner: an owner-authored PR touching a CODEOWNERS path can't merge.",
+        ), Words(
+            "Ask Claude to turn off \"Require review from Code Owners\" in the ruleset; CODEOWNERS still asks for your review.",
+            "Set require_code_owner_review = false (docs/enforcement.md §1); turn it on only when agents have their own GitHub identity.",
+        )))
+    else:
+        lines.append(Line(g, "github.code_owner_review", "fine", Words(
+            "GitHub doesn't require the code owners' review, so pull requests Claude opens as you can merge.",
+            "require_code_owner_review is off.",
+        )))
+    if _rules(rep, "required_linear_history"):
+        lines.append(Line(g, "github.linear_history", "gap", Words(
+            f"GitHub requires a straight-line history on `{base}` (\"Require linear history\"), which refuses the merge commits the kit merges with.",
+            f"A required_linear_history rule is active on `{base}`: merge commits are refused.",
+        ), Words(
+            "Ask Claude to turn off \"Require linear history\" in the ruleset.",
+            "Remove the required_linear_history rule.",
+        )))
+    else:
+        lines.append(Line(g, "github.linear_history", "fine", Words(
+            f"GitHub accepts merge commits on `{base}` (no \"Require linear history\").",
+            "No required_linear_history rule.",
+        )))
+    return lines
+
+
+@_check("GitHub", "github.merge_commits")
+def check_merge_settings(i: Inputs) -> list[Line]:
+    """Merge commits and auto-merge allowed, from the repository's settings.
+    Auto-merge off is a note in solo mode, whose runs never use it (#50)."""
+    g = "GitHub"
+    gh = _github(i)
+    whats = (("github.merge_commits", "allow_merge_commit", Words("whether GitHub allows merge commits", "allow_merge_commit")),
+             ("github.auto_merge", "allow_auto_merge", Words("whether GitHub allows auto-merge", "allow_auto_merge")))
+    if gh is None or gh.merge is None:
+        return [_waits(i, id_, what, gh.merge_why if gh else None) for id_, _, what in whats]
+    lines = []
+    for (id_, key, what), name in zip(whats, ("merge_commits", "auto_merge")):
+        v = gh.merge[name]
+        if v is None:
+            lines.append(Line(g, id_, "cant_check", Words(
+                f"Can't check {what.new}: GitHub shows that setting only to the repository's admins.",
+                f"{key} isn't in the repository's settings (it needs admin access).",
+            ), Words(
+                "Ask the repository's admin to run this check, or to look in Settings → General → Pull Requests.",
+                "Rerun with an admin's `gh`, or give --repo from an admin's GET repos/<repo>.",
+            )))
+        elif v:
+            lines.append(Line(g, id_, "fine", Words(
+                "GitHub allows merge commits, which the kit merges with." if name == "merge_commits" else "GitHub allows auto-merge, which unattended runs can use.",
+                f"{key} is true.",
+            )))
+        elif name == "merge_commits":
+            lines.append(Line(g, id_, "gap", Words(
+                "GitHub doesn't allow merge commits, which is how the kit merges pull requests.",
+                "allow_merge_commit is false: sessions and the conductor merge with a merge commit.",
+            ), Words(
+                "Ask Claude to turn on \"Allow merge commits\" (Settings → General → Pull Requests).",
+                "Set allow_merge_commit = true (PATCH repos/<repo>, or upgrade-setup's \"Protect `main`\").",
+            )))
+        else:
+            solo = i.profile.ruleset is False
+            lines.append(Line(g, id_, "note" if solo else "gap", Words(
+                "GitHub doesn't allow auto-merge" + (", which solo mode's runs never use." if solo else ", which unattended runs merge with in their auto-merge mode."),
+                "allow_auto_merge is false" + (" (solo mode: runs never use auto-merge)." if solo else ": a run's merge.mode auto-merge can't arm it."),
+            ), Words(
+                ("When you leave solo mode, ask" if solo else "Ask") + " Claude to turn on \"Allow auto-merge\" (Settings → General → Pull Requests).",
+                "Set allow_auto_merge = true" + (" when leaving solo mode." if solo else " (PATCH repos/<repo>, or upgrade-setup's \"Protect `main`\")."),
+            )))
+    return lines
+
+
+@dataclass
+class _Rule:
+    """A CODEOWNERS rule: what it matches (None: it can't be read), whether
+    it names an owner, and the part of its path before any wildcard, from
+    the root (None: it matches at any depth)."""
+
+    match: re.Pattern | None
+    owned: bool
+    prefix: str | None
+
+
+def _anchored(pat: str) -> bool:
+    """A slash at its start or in its middle ties a pattern to the root."""
+    body = pat.rstrip("/")
+    return body.startswith("/") or "/" in body
+
+
+def _prefix(pat: str) -> str | None:
+    """The part of a pattern's path before any wildcard, from the root; None
+    when it matches at any depth."""
+    if not _anchored(pat):
+        return None
+    body = pat.lstrip("/")
+    cut = min((body.index(c) for c in "*?\\" if c in body), default=len(body))
+    return body[:cut]
+
+
+def _codeowners_pattern(pat: str) -> re.Pattern | None:
+    """A CODEOWNERS pattern as a regex over a file's path, as GitHub reads it
+    (gitignore's rules, except that a last part with a `*` in it, `docs/*`,
+    takes only the files directly there): None when it can't be read."""
+    dir_only = pat.endswith("/")
+    anchored = _anchored(pat)
+    body = pat.rstrip("/").lstrip("/")
+    if not body:
+        return None
+    last = body.rsplit("/", 1)[-1]
+    files_only = not dir_only and last != "**" and any(c in last for c in "*?")
+    out, k = "", 0
+    while k < len(body):
+        if body.startswith("**/", k):
+            out, k = out + "(?:.*/)?", k + 3
+        elif body.startswith("**", k):
+            out, k = out + ".*", k + 2
+        elif body[k] == "*":
+            out, k = out + "[^/]*", k + 1
+        elif body[k] == "?":
+            out, k = out + "[^/]", k + 1
+        elif body[k] == "\\" and k + 1 < len(body):
+            out, k = out + re.escape(body[k + 1]), k + 2
+        else:
+            out, k = out + re.escape(body[k]), k + 1
+    # The pattern names the path itself (not for a directory-only pattern) or
+    # a directory above it, whose files it then covers.
+    tail = "" if files_only else "/.*" if dir_only else "(?:/.*)?"
+    return re.compile(("" if anchored else "(?:.*/)?") + out + tail)
+
+
+def _codeowners_rules(text: str) -> list[_Rule]:
+    """Each rule, in order. Only `@login`, `@org/team` and email addresses
+    count as owners."""
+    rules = []
+    for raw in text.splitlines():
+        tokens = re.findall(r"(?:\\.|[^\s\\])+", raw.strip())
+        if not tokens or tokens[0].startswith("#"):
+            continue
+        owners = []
+        for t in tokens[1:]:
+            if t.startswith("#"):
+                break
+            owners.append(t)
+        rules.append(_Rule(_codeowners_pattern(tokens[0]), any(_OWNER.fullmatch(o) for o in owners), _prefix(tokens[0])))
+    return rules
+
+
+def _covers(rules: list[_Rule], folder: str) -> bool:
+    """Whether every file under `folder` (`/.claude/`) has an owner: the last
+    rule matching any file there names one, and no later rule that names
+    nobody could match some file there."""
+    inside = folder.strip("/")
+    last = None
+    for k, r in enumerate(rules):
+        if r.match is not None and all(r.match.fullmatch(f"{inside}/{p}") for p in ("doctor-probe", "doctor-probe/doctor-probe")):
+            last = k
+    if last is None or not rules[last].owned:
+        return False
+    for r in rules[last + 1:]:
+        if r.owned or r.match is None:
+            continue
+        # A later rule naming nobody, whose path could lead into the folder
+        # (any depth, a wildcard before it, or inside it), takes files back.
+        if r.prefix is None or (inside + "/").startswith(r.prefix) or r.prefix.startswith(inside + "/"):
+            return False
+    return True
+
+
+@_check("GitHub", "github.codeowners")
+def check_codeowners(i: Inputs) -> list[Line]:
+    """CODEOWNERS, read from the checkout (the first of the places GitHub
+    looks), names an owner for the kit and CI: every file under `/.claude/`
+    and `/.github/workflows/`."""
+    g, id_ = "GitHub", "github.codeowners"
+    if not i.root.is_dir():
+        return []  # kit.profile says the folder isn't there
+    where, text, err = None, None, None
+    for rel in CODEOWNERS_PATHS:
+        text, err = _read_text(i.root, rel)
+        if text is not None or err:
+            where = rel
+            break
+    owned = ", ".join(f"`{p}`" for p in OWNED)
+    fix = Words(
+        f"Ask Claude to add {owned} with your GitHub name to CODEOWNERS (docs/enforcement.md §3 has the lines); it's a change you review and merge.",
+        f"Add `/.claude/ @<owner>` and `/.github/workflows/ @<owner>` to {where or '.github/CODEOWNERS'} (docs/enforcement.md §3).",
+    )
+    if where is None:
+        return [Line(g, id_, "gap", Words(
+            f"There's no CODEOWNERS file, so GitHub doesn't ask you to review changes to the kit and CI ({owned}).",
+            f"No CODEOWNERS ({', '.join(CODEOWNERS_PATHS)}): {owned} unowned.",
+        ), fix)]
+    if err:
+        return [Line(g, id_, "gap", Words(
+            f"GitHub's CODEOWNERS file ({where}) can't be read ({err}), so it can't ask you to review changes to the kit and CI.",
+            f"{where}: {err}.",
+        ), fix)]
+    rules = _codeowners_rules(text)
+    missing = [p for p in OWNED if not _covers(rules, p)]
+    if missing:
+        shown = ", ".join(f"`{p}`" for p in missing)
+        return [Line(g, id_, "gap", Words(
+            f"CODEOWNERS ({where}) doesn't name an owner for all of {shown}, so GitHub doesn't ask you to review every change there.",
+            f"{where} leaves part or all of {shown} without an owner (the last matching rule names none, or a later ownerless rule takes some back).",
+        ), fix)]
+    return [Line(g, id_, "fine", Words(
+        f"CODEOWNERS ({where}) asks you to review changes to the kit and CI ({owned}).",
+        f"{where} owns {owned}.",
+    ))]
+
 # Every check, in the order its lines show when they are equally serious: the
 # profile first, since setting the kit up comes before anything it then checks.
-CHECKS = [check_python, check_claude_code, check_profile, check_install, check_vendor, check_experience, check_ruleset]
+CHECKS = [check_python, check_claude_code, check_profile, check_install, check_vendor, check_experience, check_ruleset,
+          check_protection, check_required_checks, check_ruleset_rules, check_merge_settings, check_codeowners]
 
 
 # ---------- the report ----------
@@ -894,16 +1810,22 @@ def _rank(status: str) -> int:
     return STATUSES.index(status)
 
 
+def _removed_protection(ln: Line) -> bool:
+    """Removed protection (#26): never trusted, so listed before every other line."""
+    return ln.status == "gap" and ln.offer == "restore_protection"
+
+
 def order(lines: list[Line]) -> list[Line]:
     """Grouped, the group with the most serious line first (ties in `GROUPS`
     order), and within a group the most serious line first (ties in check
-    order). So the most serious line of all comes first."""
+    order). So the most serious line of all comes first, and removed
+    protection before anything else."""
     groups: dict[str, list[Line]] = {}
     for ln in lines:
         groups.setdefault(ln.group, []).append(ln)
     for g in groups.values():
-        g.sort(key=lambda ln: _rank(ln.status))  # stable: check order within a status
-    names = sorted(groups, key=lambda g: (min(_rank(ln.status) for ln in groups[g]), GROUPS.index(g)))
+        g.sort(key=lambda ln: (not _removed_protection(ln), _rank(ln.status)))  # stable: check order within a status
+    names = sorted(groups, key=lambda g: (not any(_removed_protection(ln) for ln in groups[g]), min(_rank(ln.status) for ln in groups[g]), GROUPS.index(g)))
     return [ln for g in names for ln in groups[g]]
 
 
@@ -954,5 +1876,5 @@ def text(r: Report, width: int = 100) -> str:
         if fix:
             out += _wrap(fix, width, " " * 6 + ("Next: " if ln.status in ("note", "fine") else "Fix: "), " " * 8)
         if ln.offer:
-            out.append(f"      Claude can offer: {OFFERS[ln.offer]}")
+            out += _wrap(f"Claude can offer: {OFFERS[ln.offer]}", width, " " * 6, " " * 8)
     return "\n".join(out)

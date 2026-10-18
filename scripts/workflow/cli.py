@@ -2,7 +2,7 @@
 
     workflow profile check
     workflow status [--issues F --prs F | --fetch] [--json]
-    workflow doctor [--claude-version VERSION] [--json] [--strict]      (what's set up and what isn't; changes nothing)
+    workflow doctor [--claude-version VERSION] [--rulesets F] [--repo F] [--json] [--strict]      (what's set up and what isn't; changes nothing)
     workflow protection --rulesets F [--repo F] [--base BRANCH] [--json]
     workflow protection --protect --repo F [--base BRANCH] [--check NAME ...] [--json]
     workflow protection --require-checks F --check NAME [--check NAME ...] [--json]
@@ -228,9 +228,18 @@ def cmd_status(a) -> int:
     return 0
 
 
+def _given_file(path: str | None) -> Path | str | None:
+    """A file given to doctor: absolute, as the current directory has it;
+    `-` (standard input) and an empty path as they are."""
+    return path if path in (None, "", "-") else Path(path).absolute()
+
+
 def cmd_doctor(a) -> int:
     """What's set up and what isn't, each line with its fix (#34). Exits 0,
     or with --strict 1 on a gap or a line it couldn't check."""
+    if a.rulesets == "-" and a.repo == "-":
+        print("workflow doctor: only one of --rulesets and --repo can be standard input (-)", file=sys.stderr)
+        return 2
     root = project_root()
     prof, error = None, None
     try:
@@ -252,6 +261,8 @@ def cmd_doctor(a) -> int:
                 profile_error=error,
                 experience=resolve_experience(root, prof.experience if prof else None),
                 claude_version=a.claude_version,
+                rulesets_file=_given_file(a.rulesets),
+                repo_file=_given_file(a.repo),
             )
         )
     except KeyboardInterrupt:  # Ctrl-C: a quiet stop (what it ran is already killed)
@@ -259,18 +270,6 @@ def cmd_doctor(a) -> int:
         return 130
     _out(r.as_dict() if a.json else doctor_mod.text(r, min(100, shutil.get_terminal_size((100, 24)).columns)))
     return 1 if a.strict and not r.strict_ok() else 0
-
-
-def _no_constant(name: str):
-    raise ValueError(f"{name} isn't JSON")
-
-
-def _finite(text: str) -> float:
-    """A JSON number as a float; one too large for a float (1e400) isn't taken as Infinity."""
-    v = float(text)
-    if v in (float("inf"), float("-inf")):
-        raise ValueError(f"the number {text[:20]} is too large")
-    return v
 
 
 def cmd_protection(a) -> int:
@@ -284,7 +283,7 @@ def cmd_protection(a) -> int:
         if path == "-" and sys.stdin is None:
             raise protection_mod.ProtectionError(f"the {what} file is standard input (-), and standard input is closed")
         try:
-            return json.loads(_read(path).removeprefix("\ufeff"), parse_constant=_no_constant, parse_float=_finite)
+            return protection_mod.loads(_read(path))
         except OSError as e:
             raise protection_mod.ProtectionError(f"can't read the {what} file {path}: {e.strerror or e}") from e
         except (ValueError, RecursionError) as e:  # ValueError: bad JSON, NaN, bad UTF-8, a number too long
@@ -1249,6 +1248,8 @@ def main(argv: list[str] | None = None) -> int:
 
     s = sub.add_parser("doctor", help="what's set up and what isn't, each line with a one-sentence fix; changes nothing, exits 0 (--strict: 1 on a gap or a line it couldn't check)")
     s.add_argument("--claude-version", metavar="VERSION", help="Claude Code's version, as `claude --version` prints it (wins over running it)")
+    s.add_argument("--rulesets", metavar="F", help="the repository's rulesets, each in full (GET repos/<repo>/rulesets/<id>), as `workflow protection` takes them (or -); else read with `gh api`")
+    s.add_argument("--repo", metavar="F", help="the repository's settings (GET repos/<repo>): the merge settings and default branch (or -); else read with `gh api`")
     s.add_argument("--json", action="store_true", help="every line's group, id, status, message, fix and offer, for skills")
     s.add_argument("--strict", action="store_true", help="exit 1 when any line is a gap or can't be checked; notes never fail it")
     s.set_defaults(fn=cmd_doctor)

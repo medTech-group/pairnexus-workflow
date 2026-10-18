@@ -134,13 +134,20 @@ class FakeGh:
 
 def install(tmp_path: Path, monkeypatch, routes: dict, slurp: bool = True, signed_in: bool = True) -> FakeGh:
     """Write the fake `gh` into a fresh directory and put it first on PATH."""
-    bin_dir = tmp_path / "fake-gh-bin"
-    bin_dir.mkdir()
+    gh = write(tmp_path / "fake-gh-bin", routes, slurp, signed_in)
+    monkeypatch.setenv("PATH", f"{gh.bin}{os.pathsep}{os.environ.get('PATH', '')}")
+    return gh
+
+
+def write(bin_dir: Path, routes: dict, slurp: bool = True, signed_in: bool = True) -> FakeGh:
+    """Write the fake `gh` into `bin_dir` (made if need be), for a test that
+    builds its own PATH (doctor's, #59)."""
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    (bin_dir / "calls.jsonl").unlink(missing_ok=True)
     (bin_dir / "fake-gh.json").write_text(json.dumps({"routes": routes, "slurp": slurp, "signed_in": signed_in, "with_value": sorted(WITH_VALUE)}))
     gh = bin_dir / "gh"
     gh.write_text(SCRIPT.format(python=sys.executable))
     gh.chmod(gh.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
     return FakeGh(bin_dir)
 
 

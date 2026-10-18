@@ -1,6 +1,7 @@
 """#58: `workflow doctor`, its report, and the Your computer and The kit
 groups. Seam 1 of #34: the CLI, with a temporary checkout and profile, and a
-fake `python3` and `claude` on the PATH."""
+fake `python3` and `claude` on the PATH, and a fake `gh` that answers for a
+protected repository (the GitHub group's own tests are test_doctor_github.py)."""
 
 import json
 import os
@@ -10,6 +11,7 @@ import sys
 
 import pytest
 
+import fake_gh
 from changelog_notes import since_0110
 from conftest import KIT
 from workflow import vendor
@@ -32,9 +34,46 @@ def _fake(bin_dir, name, body):
     p.chmod(0o755)
 
 
-def _bin(tmp_path, python="3.12.1", claude="2.1.300 (Claude Code)"):
-    """A PATH with only a fake `python3` and `claude` on it: None leaves one
-    out; a string is what it prints; an int is its exit code, printing nothing."""
+# GitHub's answers for a repository whose base branch is protected as the kit
+# sets it up (GET repos/<repo>/rulesets/<id>, GET repos/<repo>), made up.
+RULESET = {
+    "id": 101,
+    "name": "Protect main",
+    "target": "branch",
+    "source_type": "Repository",
+    "source": "acme/demo",
+    "enforcement": "active",
+    "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
+    "bypass_actors": [],
+    "rules": [
+        {"type": "deletion"},
+        {"type": "non_fast_forward"},
+        {"type": "pull_request", "parameters": {"required_approving_review_count": 0, "dismiss_stale_reviews_on_push": False,
+                                                "require_code_owner_review": False, "require_last_push_approval": False,
+                                                "required_review_thread_resolution": False}},
+        {"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": True,
+                                                          "required_status_checks": [{"context": "tests"}]}},
+    ],
+}
+SETTINGS = {"full_name": "acme/demo", "default_branch": "main", "allow_merge_commit": True, "allow_auto_merge": True, "allow_squash_merge": True}
+CODEOWNERS = "/.claude/ @someone\n/.github/workflows/ @someone\n"
+
+
+def gh_routes(rulesets=(RULESET,), settings=SETTINGS, repo="acme/demo"):
+    """The fake `gh`'s answers: the rulesets' summaries, each in full, and the
+    repository's settings."""
+    routes = {f"repos/{repo}/rulesets": fake_gh.pages([{k: rs[k] for k in ("id", "name") if k in rs} for rs in rulesets])}
+    routes.update({f"repos/{repo}/rulesets/{rs['id']}": rs for rs in rulesets})
+    if settings is not None:
+        routes[f"repos/{repo}"] = settings
+    return routes
+
+
+def _bin(tmp_path, python="3.12.1", claude="2.1.300 (Claude Code)", gh=None):
+    """A PATH with only a fake `python3`, `claude` and `gh` on it: None leaves
+    `python3` or `claude` out; a string is what it prints; an int is its exit
+    code, printing nothing. `gh` answers for a protected repository unless
+    given its routes, or False to leave it out."""
     d = tmp_path / "bin"
     d.mkdir(parents=True, exist_ok=True)
     for name, out in (("python3", python), ("claude", claude)):
@@ -42,12 +81,20 @@ def _bin(tmp_path, python="3.12.1", claude="2.1.300 (Claude Code)"):
             (d / name).unlink(missing_ok=True)
             continue
         _fake(d, name, f"exit {out}" if isinstance(out, int) else f"echo '{out}'")
+    if gh is False:
+        (d / "gh").unlink(missing_ok=True)
+    else:
+        fake_gh.write(d, gh_routes() if gh is None else gh)
     return d
 
 
-def _project(tmp_path, profile=_prof('experience = "new"\nruleset = true\n'), vendored=True, settings=None, local=None, lock_files=None):
+def _project(tmp_path, profile=_prof('experience = "new"\nruleset = true\n'), vendored=True, settings=None, local=None, lock_files=None,
+             codeowners=CODEOWNERS):
     root = tmp_path / "proj"
     (root / ".claude/workflow").mkdir(parents=True)
+    if codeowners is not None:
+        (root / ".github").mkdir()
+        (root / ".github/CODEOWNERS").write_text(codeowners)
     if profile is not None:
         (root / ".claude/workflow/profile.toml").write_text(profile)
     if vendored:
@@ -123,7 +170,7 @@ def test_a_healthy_vendored_project_is_fine_throughout(tmp_path):
     for ln in r["lines"]:
         assert set(ln) == {"group", "id", "status", "message", "fix", "offer"}
         assert ln["status"] in STATUSES
-        assert ln["group"] in ("Your computer", "The kit")
+        assert ln["group"] in ("Your computer", "The kit", "GitHub")
         assert ln["message"]
     lines = _lines(r)
     for id_ in ("computer.python3", "computer.claude_code", "kit.hooks", "kit.profile", "kit.vendor", "kit.ruleset"):
