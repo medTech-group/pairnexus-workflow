@@ -51,11 +51,20 @@ def test_each_file_says_where_it_comes_from():
     assert "gh api repos/<repo> > .workflow/repo.json" in block
     # A private repository on GitHub Free: the list is refused, and no ruleset is saved.
     assert "rulesets need a paid plan" in block and "save `[]`" in block
-    # Doctor can't see the refusal in `[]`, so the conductor says it and doesn't steer to Protect.
-    assert "need a paid GitHub plan (Team or above)" in block and "**Go ahead** is the recommended answer" in block
+    assert "keep it for the kick-off" in block
     assert "`list_environments`" in block and "has_more" in block
     assert "workflow:run" in block and "state=all" in block
     assert "claude --version" in block
+
+
+def test_a_paid_plan_refusal_is_said_in_the_kickoff_and_going_ahead_recommended():
+    # Doctor can't see the refusal in `[]`, so the conductor says it and doesn't steer to Protect.
+    kick = _kickoff()
+    refusal = _section(kick, r"^\s*- \*\*A paid-plan refusal\*\*", r"\n")
+    assert "need a paid GitHub plan (Team or above)" in refusal
+    assert "beside the solo-mode gap" in refusal and "`github.ruleset`'s gap" in refusal
+    assert "**Go ahead** for the solo-mode gap" in refusal and "**Go ahead without it** for the ruleset's gap" in refusal
+    assert "**Protect `main`** (recommended, except after a paid-plan refusal" in kick
 
 
 def test_the_flags_doctor_is_given_are_the_flags_it_takes():
