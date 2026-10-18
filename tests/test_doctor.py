@@ -154,7 +154,8 @@ def _each_at_once(tmp_path, run, calls):
     """`run` (`_doctor` or `_report`) for each (root, args, keywords) in
     `calls`, at the same time (#193), the results in order. Each call is given
     a folder of its own outside every checkout as its `tmp_path`, so no two
-    share an input file, a fake PATH or a home."""
+    share the input files, fake PATH or home `_doctor` makes there. A `path`
+    the caller gives is shared by the calls given it."""
     jobs, top = [], Path(tempfile.mkdtemp(prefix="at-once-", dir=tmp_path))
     for k, (root, args, kw) in enumerate(calls):
         work = top / str(k)

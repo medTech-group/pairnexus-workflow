@@ -6,7 +6,12 @@
 
 - **A fresh copy of the CLI** in a test's project (`tests/test_doctor.py`'s `_project`, `tests/test_guard_no_python.py`'s `_kit_at`) now has its bytecode beside it, compiled once per test run (`copy_kit_package` in `tests/conftest.py`). Under `-B`, a copy with no bytecode compiled every module on every run, about half of each run's time. The bytecode is checked against each file's source hash, so a test that changes a copied file still runs that file's new source (`tests/test_test_helpers.py`).
 - **Copies with no bytecode, where it matters:** `compiled=False` gives the copy as before. Doctor's "nothing in the checkout changes" tests (#58, #59, #60) use it, so bytecode written by a run would still show, and so does `test_doctor_on_a_real_python_3_9`, which checks that no `__pycache__` is written.
-- **Tests that start the CLI many times** now make those runs 2 to 8 at a time, one per CPU (`at_once` in `tests/conftest.py`). `_each_at_once` in `tests/test_doctor.py` gives each doctor run a folder of its own for its input files, fake `PATH` and home. Every run is still made and its result checked as before: doctor's "nothing in the checkout changes" tests, its wording tests (the GitHub and Cloud lines, and the kit's other states), the Cloud contents note test, the installed guard's attended cases (#57), and the guard's attended push and merge without a working `python3` (#56).
+- **Tests that run the CLI many times** now make those runs 2 to 8 at a time, one per CPU (`at_once` in `tests/conftest.py`). `_each_at_once` in `tests/test_doctor.py` gives each doctor run a folder of its own for its input files, fake `PATH` and home. Every run is still made, and its result checked as before. The tests:
+  - doctor's "nothing in the checkout changes" tests;
+  - doctor's wording tests: the GitHub lines, the Cloud lines and the kit's other states;
+  - the Cloud contents note test;
+  - the installed guard's attended cases (#57);
+  - the guard's attended push and merge without a working `python3` (#56).
 - **For projects updating:** nothing to do.
 
 **`workflow status` reports doctor's local gaps, with no network calls** (#62, part of #34).

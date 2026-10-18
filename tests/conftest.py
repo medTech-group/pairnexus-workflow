@@ -100,7 +100,7 @@ def _compiled_kit_package() -> Path:
     test run, outside every test's folder."""
     top = Path(tempfile.mkdtemp(prefix="kit-package-"))
     atexit.register(shutil.rmtree, top, True)
-    shutil.copytree(KIT / "scripts/workflow", top / "workflow", ignore=shutil.ignore_patterns("__pycache__"))
+    _copy_source(top / "workflow")
     assert compileall.compile_dir(top / "workflow", quiet=1, invalidation_mode=py_compile.PycInvalidationMode.CHECKED_HASH)
     return top / "workflow"
 
@@ -115,13 +115,17 @@ def copy_kit_package(dest, compiled=True):
     if compiled:
         shutil.copytree(_compiled_kit_package(), dest)
     else:
-        shutil.copytree(KIT / "scripts/workflow", dest, ignore=shutil.ignore_patterns("__pycache__"))
+        _copy_source(dest)
+
+
+def _copy_source(dest):
+    shutil.copytree(KIT / "scripts/workflow", dest, ignore=shutil.ignore_patterns("__pycache__"))
 
 
 def at_once(calls):
     """Each call's result, in order, with 2 to 8 calls made at the same time
-    (one per CPU, #193): for a test that starts the CLI many times, each start
-    a real process of its own that would otherwise wait for the one before.
+    (one per CPU, #193): for a test that runs the CLI many times, each run a
+    process of its own that would otherwise wait for the one before.
     The caller checks the results as it checked them one by one. A call that
     raises raises here (the first in order, if several do), as the loop did,
     and the calls not yet started then aren't made."""

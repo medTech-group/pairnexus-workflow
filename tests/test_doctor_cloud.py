@@ -4,6 +4,7 @@ environment holds. Seam 1 of #34: the CLI, with recorded environment JSON
 (`--environments`, as `list_environments` returns it), recorded issue JSON
 (`--runs`, as the GitHub API returns it) and a fake `gh` on the PATH."""
 
+import functools
 import json
 import os
 import subprocess
@@ -13,7 +14,7 @@ import pytest
 
 import fake_gh
 from changelog_notes import since_0110
-from test_doctor import CLI, ENVIRONMENTS, _bin, _doctor, _each_at_once, _lines, _prof, _project, _report, _snapshot, _unchanged_after_doctor, gh_routes
+from test_doctor import CLI, ENVIRONMENTS, _bin, _doctor, _each_at_once, _lines, _prof, _project, _report, _unchanged_after_doctor, gh_routes
 
 NAMED = _prof("ruleset = true\n").replace('ticket_environment = "t"', 'ticket_environment = "workflow-ticket"').replace(
     'conductor_environment = "c"', 'conductor_environment = "workflow-conductor"')
@@ -328,17 +329,19 @@ def test_no_profile_waits_on_it(tmp_path):
 
 
 def _states(tmp_path, compiled=True):
-    """Projects and inputs whose Cloud lines take every status between them."""
-    yield _project(tmp_path / "a", compiled=compiled), [], ENVIRONMENTS, None
-    yield _project(tmp_path / "b", compiled=compiled), _runs_file(tmp_path / "b", []), _envs("Default"), _no_gh(tmp_path / "b")
-    yield _project(tmp_path / "c", compiled=compiled), [], _envs(), _no_gh(tmp_path / "c")
-    yield _project(tmp_path / "d", compiled=compiled), [], _envs("t"), _no_gh(tmp_path / "d")
-    yield _project(tmp_path / "e", compiled=compiled), _runs_file(tmp_path / "e", [RUN_ISSUE]), _envs(), _no_gh(tmp_path / "e")
-    yield _project(tmp_path / "f", compiled=compiled), [], None, None
-    yield _project(tmp_path / "g", profile=None, compiled=compiled), [], ENVIRONMENTS, None
-    yield _project(tmp_path / "h", compiled=compiled), [], _envs("t", has_more=True), None
-    yield _project(tmp_path / "i", profile=NAMED, compiled=compiled), _runs_file(tmp_path / "i", "[1]"), _envs("workflow-tickt"), _no_gh(tmp_path / "i")
-    yield _project(tmp_path / "j", compiled=compiled), _env_file(tmp_path / "j", "{nope"), None, None
+    """Projects and inputs whose Cloud lines take every status between them,
+    each project's copy of the CLI with its bytecode unless `compiled` is false."""
+    project = functools.partial(_project, compiled=compiled)
+    yield project(tmp_path / "a"), [], ENVIRONMENTS, None
+    yield project(tmp_path / "b"), _runs_file(tmp_path / "b", []), _envs("Default"), _no_gh(tmp_path / "b")
+    yield project(tmp_path / "c"), [], _envs(), _no_gh(tmp_path / "c")
+    yield project(tmp_path / "d"), [], _envs("t"), _no_gh(tmp_path / "d")
+    yield project(tmp_path / "e"), _runs_file(tmp_path / "e", [RUN_ISSUE]), _envs(), _no_gh(tmp_path / "e")
+    yield project(tmp_path / "f"), [], None, None
+    yield project(tmp_path / "g", profile=None), [], ENVIRONMENTS, None
+    yield project(tmp_path / "h"), [], _envs("t", has_more=True), None
+    yield project(tmp_path / "i", profile=NAMED), _runs_file(tmp_path / "i", "[1]"), _envs("workflow-tickt"), _no_gh(tmp_path / "i")
+    yield project(tmp_path / "j"), _env_file(tmp_path / "j", "{nope"), None, None
 
 
 def test_the_note_that_nothing_can_read_what_an_environment_holds_is_always_there(tmp_path):

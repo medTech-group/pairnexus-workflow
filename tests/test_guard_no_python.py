@@ -125,10 +125,13 @@ def _decision(p):
 @pytest.mark.parametrize("kind", KINDS)
 def test_attended_push_and_merge_are_asked_or_refused(tmp_path, layout, kind):
     s = Setup(tmp_path, layout, kind)
-    cases = [(what, mode, want, event(what, mode))
-             for what, event in [(c, _bash) for c in (PUSH, MERGE)] + [(t, _mcp) for t in MCP_TOOLS]
-             for modes_, want in ((ASKING, "ask"), (NEVER_ASKING, "deny")) for mode in modes_]
-    runs = at_once(functools.partial(s.run, "guard", ev) for *_, ev in cases)
+    cases = []  # (what, mode, the decision wanted, the event)
+    for what, event in [(command, _bash) for command in (PUSH, MERGE)] + [(tool, _mcp) for tool in MCP_TOOLS]:
+        for mode in ASKING:
+            cases.append((what, mode, "ask", event(what, mode)))
+        for mode in NEVER_ASKING:
+            cases.append((what, mode, "deny", event(what, mode)))
+    runs = at_once(functools.partial(s.run, "guard", case[3]) for case in cases)
     for (what, mode, want, _), p in zip(cases, runs):
         assert _decision(p) == want, (what, mode)
 

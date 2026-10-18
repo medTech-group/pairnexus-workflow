@@ -4,6 +4,7 @@ ruleset and repository JSON given as `--rulesets`/`--repo` files or answered by
 a fake `gh` on the PATH (as the `--fetch` tests fake it)."""
 
 import copy
+import functools
 import json
 import subprocess
 
@@ -22,7 +23,6 @@ from test_doctor import (
     _prof,
     _project,
     _report,
-    _snapshot,
     _unchanged_after_doctor,
     gh_routes,
 )
@@ -885,7 +885,10 @@ def test_solo_mode_with_no_ruleset_in_force_either_way_passes_strict(tmp_path):
 
 
 def _states(tmp_path, compiled=True):
-    """Projects and inputs whose GitHub lines take every status between them."""
+    """Projects and inputs whose GitHub lines take every status between them,
+    each project's copy of the CLI with its bytecode unless `compiled` is false."""
+    project = functools.partial(_project, compiled=compiled)
+    protected = functools.partial(_protected, compiled=compiled)
     rs = _rs(bypass_actors=[{"actor_id": 5}], enforcement="active")
     rs = _without(rs, "deletion")
     rs = _without(rs, "non_fast_forward")
@@ -895,29 +898,28 @@ def _states(tmp_path, compiled=True):
     _rule(rs, "required_status_checks")["parameters"]["strict_required_status_checks_policy"] = False
     off = _rs(id=102, name="Off", enforcement="disabled")
     elsewhere = _rs(id=103, name="Elsewhere", conditions={"ref_name": {"include": ["refs/heads/x"], "exclude": []}})
-    yield _protected(tmp_path / "a", profile=_prof("ruleset = true\n", '[ci]\nrequired_checks = ["tests", "lint"]\n'), codeowners="/.claude/ @a\n",
-                     compiled=compiled), \
+    yield protected(tmp_path / "a", profile=_prof("ruleset = true\n", '[ci]\nrequired_checks = ["tests", "lint"]\n'), codeowners="/.claude/ @a\n"), \
         _files(tmp_path / "a", rulesets=[rs, off, elsewhere], settings={**SETTINGS, "allow_merge_commit": False, "allow_auto_merge": False}), None
-    yield _project(tmp_path / "b", profile=SOLO, codeowners=None, compiled=compiled), _files(tmp_path / "b", rulesets=[], settings={**SETTINGS, "allow_auto_merge": False}), None
-    yield _project(tmp_path / "c", profile=_prof(""), compiled=compiled), _files(tmp_path / "c", rulesets=[], settings={"full_name": "acme/demo", "default_branch": "main"}), None
-    yield _protected(tmp_path / "d", compiled=compiled), [], _bin(tmp_path / "d", gh=False)
-    yield _project(tmp_path / "e", compiled=compiled), _files(tmp_path / "e"), None
-    yield _project(tmp_path / "f", profile=SOLO, compiled=compiled), _files(tmp_path / "f"), None
-    yield _project(tmp_path / "g", profile=None, compiled=compiled), [], None
-    yield _protected(tmp_path / "h", compiled=compiled), _files(tmp_path / "h", rulesets=[_without(_rs(), "required_status_checks")]), None
-    yield _protected(tmp_path / "i", compiled=compiled), _files(tmp_path / "i"), None
-    yield _protected(tmp_path / "j", compiled=compiled), _files(tmp_path / "j", rulesets=[_without(_rs(), "pull_request")]), None
-    yield _project(tmp_path / "k", compiled=compiled), _files(tmp_path / "k", rulesets=[_without(_rs(), "required_status_checks")]), None
+    yield project(tmp_path / "b", profile=SOLO, codeowners=None), _files(tmp_path / "b", rulesets=[], settings={**SETTINGS, "allow_auto_merge": False}), None
+    yield project(tmp_path / "c", profile=_prof("")), _files(tmp_path / "c", rulesets=[], settings={"full_name": "acme/demo", "default_branch": "main"}), None
+    yield protected(tmp_path / "d"), [], _bin(tmp_path / "d", gh=False)
+    yield project(tmp_path / "e"), _files(tmp_path / "e"), None
+    yield project(tmp_path / "f", profile=SOLO), _files(tmp_path / "f"), None
+    yield project(tmp_path / "g", profile=None), [], None
+    yield protected(tmp_path / "h"), _files(tmp_path / "h", rulesets=[_without(_rs(), "required_status_checks")]), None
+    yield protected(tmp_path / "i"), _files(tmp_path / "i"), None
+    yield protected(tmp_path / "j"), _files(tmp_path / "j", rulesets=[_without(_rs(), "pull_request")]), None
+    yield project(tmp_path / "k"), _files(tmp_path / "k", rulesets=[_without(_rs(), "required_status_checks")]), None
     unread = _rs()
     del unread["bypass_actors"]
     _rule(unread, "pull_request")["parameters"]["required_approving_review_count"] = "2"
-    yield _protected(tmp_path / "l", compiled=compiled), _files(tmp_path / "l", rulesets=[unread]), None
-    yield _protected(tmp_path / "m", compiled=compiled), _files(tmp_path / "m", settings=None), _bin(tmp_path / "m", gh=False)
+    yield protected(tmp_path / "l"), _files(tmp_path / "l", rulesets=[unread]), None
+    yield protected(tmp_path / "m"), _files(tmp_path / "m", settings=None), _bin(tmp_path / "m", gh=False)
     nobypass = _without(_rs(), "deletion")
     del nobypass["bypass_actors"]
     elsewhere_only = _rs(id=105, name="Release", conditions={"ref_name": {"include": ["refs/heads/release"], "exclude": []}})
-    yield _protected(tmp_path / "o", compiled=compiled), _files(tmp_path / "o", rulesets=[elsewhere_only]), None
-    yield _protected(tmp_path / "n", compiled=compiled), _files(tmp_path / "n", rulesets=[nobypass, _rs(id=104, name="Trial", enforcement="evaluate")]), None
+    yield protected(tmp_path / "o"), _files(tmp_path / "o", rulesets=[elsewhere_only]), None
+    yield protected(tmp_path / "n"), _files(tmp_path / "n", rulesets=[nobypass, _rs(id=104, name="Trial", enforcement="evaluate")]), None
 
 
 def test_each_github_wording_for_new_and_developer_with_the_same_statuses(tmp_path):
