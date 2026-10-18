@@ -924,7 +924,7 @@ GIVE_FILES = "--rulesets and --repo files (GET repos/<repo>/rulesets/<id> each i
 # The upgrade that requires the checks (#38; #69 offers it on the required checks' line).
 REQUIRE_CHECKS = "Require these checks"
 # A CODEOWNERS owner: @login, @org/team, or an email address.
-_OWNER = re.compile(r"@[A-Za-z0-9](?:[A-Za-z0-9-]*)(?:/[A-Za-z0-9._-]+)?|[^@\s]+@[^@\s]+\.[^@\s]+")
+_OWNER = re.compile(r"@[A-Za-z0-9](?:[A-Za-z0-9_-]*)(?:/[A-Za-z0-9._-]+)?|[^@\s]+@[^@\s]+\.[^@\s]+")
 
 
 @dataclass(frozen=True)
@@ -975,6 +975,12 @@ class _GitHub:
     merge_why: _Answer | None = None
 
 
+ADMIN = Words(
+    "Ask the repository's admin to run this check, or to look at the ruleset's bypass list in Settings → Rules.",
+    "Rerun with an admin's `gh`, or pass --rulesets from an admin's GET repos/<repo>/rulesets/<id>.",
+)
+
+
 def _sign_in(missing: bool) -> Words:
     return Words(
         ("Install GitHub's command-line tool (`gh`, from cli.github.com) and sign in with `gh auth login`"
@@ -999,7 +1005,7 @@ def _scrubbed(i: Inputs, text: str) -> str:
     return _shown(_relative(i, text), 120)
 
 
-def _gh(i: Inputs, path: str, deadline: float, paginate: bool = False) -> _Answer:
+def _gh(i: Inputs, path: str, deadline: float, flag: str, paginate: bool = False) -> _Answer:
     """`gh api <path>`'s JSON (with `paginate`, the pages as a list), read
     with a GET and nothing else, within what is left of `GH_BUDGET`."""
     left = deadline - time.monotonic()
@@ -1010,7 +1016,7 @@ def _gh(i: Inputs, path: str, deadline: float, paginate: bool = False) -> _Answe
     ran = _run(i, ["gh", "api", *(["--paginate"] if paginate else []), path], timeout=timeout, stderr=True)
     err = _scrubbed(i, ran.err)
     if ran.state == "missing":
-        return _Answer(why=Words("GitHub's command-line tool (`gh`) isn't installed here", "no `gh` on the PATH, and no file given"), fix=_sign_in(True))
+        return _Answer(why=Words("GitHub's command-line tool (`gh`) isn't installed here", f"no `gh` on the PATH, and no {flag} file"), fix=_sign_in(True))
     if ran.state == "failed" and _SIGNED_OUT.search(ran.err):
         return _Answer(why=Words("`gh` isn't signed in to GitHub", f"`gh api` isn't signed in ({err})"), fix=_sign_in(False))
     repo = i.profile.repo
@@ -1019,9 +1025,18 @@ def _gh(i: Inputs, path: str, deadline: float, paginate: bool = False) -> _Answe
             f"Check the repository's name in the kit's profile (`project.repo` in {PROFILE}) and that your GitHub account can see it; or ask a cloud session to check the set-up.",
             f"Check project.repo ({repo}) and gh's access to it, or give --rulesets and --repo files.",
         ))
+    if ran.state == "failed" and "HTTP 403" in ran.err:
+        return _Answer(why=Words(f"GitHub refused to show it to your `gh`: {err}", f"`gh api {shown}` was refused: {err}"), fix=Words(
+            "Your GitHub account may not be allowed to read this: ask the repository's admin to run the check, or ask a cloud session to check the set-up.",
+            f"gh's token lacks access (HTTP 403): use an admin's gh, or give {GIVE_FILES}.",
+        ))
+    if ran.state == "timeout":
+        budget = "" if timeout >= GH_TIMEOUT else f", the rest of the {GH_BUDGET} s for all of GitHub's reads"
+        n = round(timeout)
+        return _Answer(why=Words(f"GitHub didn't answer within {n} second{'' if n == 1 else 's'}{budget}", f"`gh api {shown}` timed out after {timeout:.0f} s{budget}"), fix=AGAIN)
     if ran.state != "ok":
-        said = {"failed": err, "timeout": f"no answer within {timeout:.0f} s", "unreadable": "its answer isn't UTF-8 text"}[ran.state]
-        return _Answer(why=Words(f"GitHub didn't answer `gh` ({said})", f"`gh api {shown}` failed: {said}"), fix=AGAIN)
+        said = err if ran.state == "failed" else "its answer isn't UTF-8 text"
+        return _Answer(why=Words(f"GitHub answered `gh` with an error: {said}", f"`gh api {shown}` failed: {said}"), fix=AGAIN)
     try:
         values = posts_mod.decode_values(ran.out)
     except posts_mod.CommentsError as e:
@@ -1041,7 +1056,7 @@ def _given(i: Inputs, given: Path | str, flag: str) -> _Answer:
         f"Give {flag} as `workflow protection` takes it, or leave it out to use `gh api`.",
     )
     if given == "":
-        shown, value, err = "", None, "it was given no path"
+        return _Answer(why=Words(f"the {flag} file was given no path", f"{flag} was given no path"), fix=fix)
     elif given == "-":
         shown = "standard input"
         value, err = _stdin()
@@ -1062,6 +1077,8 @@ def _stdin():
         if sys.stdin is None or sys.stdin.isatty():
             return None, "standard input is a terminal or closed, not GitHub's answer"
         text = sys.stdin.buffer.read().decode("utf-8")
+        if not text.strip():
+            return None, "standard input was empty"
     except UnicodeDecodeError:
         return None, "it isn't UTF-8 text"
     except (OSError, ValueError, AttributeError) as e:
@@ -1076,7 +1093,7 @@ def _rulesets(i: Inputs, deadline: float) -> tuple[_Answer, bool]:
     if i.rulesets_file is not None:
         return _given(i, i.rulesets_file, "--rulesets"), False
     repo = i.profile.repo
-    listed = _gh(i, f"repos/{repo}/rulesets?includes_parents=true&per_page=100", deadline, paginate=True)
+    listed = _gh(i, f"repos/{repo}/rulesets?includes_parents=true&per_page=100", deadline, "--rulesets", paginate=True)
     if listed.why:
         plan = _PLAN.search(listed.why.developer) is not None
         return (_Answer([]) if plan else listed), plan
@@ -1086,7 +1103,7 @@ def _rulesets(i: Inputs, deadline: float) -> tuple[_Answer, bool]:
         return _Answer(why=Words("GitHub's list of rulesets couldn't be read", "`gh api`'s list of rulesets has an entry without an id"), fix=AGAIN), False
     full = []
     for n in ids:
-        one = _gh(i, f"repos/{repo}/rulesets/{n}", deadline)
+        one = _gh(i, f"repos/{repo}/rulesets/{n}", deadline, "--rulesets")
         if one.why:
             return one, False
         full.append(one.value)
@@ -1094,8 +1111,9 @@ def _rulesets(i: Inputs, deadline: float) -> tuple[_Answer, bool]:
 
 
 def _not_github(e: Exception, what: str) -> _Answer:
-    return _Answer(why=Words(f"{what} aren't in the shape the kit reads ({e})", _upper(str(e))), fix=Words(
-        f"Ask Claude to fetch {what} from GitHub again, each ruleset in full, as `workflow protection` takes them.",
+    rulesets = "rulesets" in what
+    return _Answer(why=Words(f"{what} aren't in the shape GitHub gives them", _upper(str(e))), fix=Words(
+        f"Ask Claude to fetch {what} from GitHub again" + (", each ruleset in full" if rulesets else "") + ", as `workflow protection` takes them.",
         f"Give {GIVE_FILES}, as `workflow protection` takes them.",
     ))
 
@@ -1121,7 +1139,7 @@ def _github(i: Inputs) -> _GitHub | None:
     base = i.profile.base_branch
     deadline = time.monotonic() + GH_BUDGET
     gh = i._github = _GitHub()
-    settings = _given(i, i.repo_file, "--repo") if i.repo_file is not None else _gh(i, f"repos/{i.profile.repo}", deadline)
+    settings = _given(i, i.repo_file, "--repo") if i.repo_file is not None else _gh(i, f"repos/{i.profile.repo}", deadline, "--repo")
     accepted = None  # the settings the read-back took
     if settings.why:
         gh.merge_why = settings
@@ -1136,42 +1154,49 @@ def _github(i: Inputs) -> _GitHub | None:
     if rulesets.why:
         gh.report_why = rulesets
         return gh
+    known = accepted is not None and accepted.get("default_branch") is not None
     try:
-        rep = protection_mod.check(rulesets.value, base, accepted)
+        if known:
+            rep = protection_mod.check(rulesets.value, base, accepted)
+        else:
+            # The default branch unknown: read it as the base branch and as
+            # another. When the two readings differ, every ruleset line rests
+            # on what can't be seen; when they agree, either is the answer.
+            either = [{**(accepted or {}), "default_branch": d} for d in (base, f"{base}-not")]
+            rep, other = (protection_mod.check(rulesets.value, base, s_) for s_ in either)
+            accepted = either[0]
     except protection_mod.ProtectionError as e:
         gh.report_why = _not_github(e, "GitHub's rulesets")
         return gh
-    gh.report = rep
-    # What the read-back can't see counts as missing there, so an unknown never
-    # reads as protected. When it would read protected with unread bypass
-    # lists as empty, or with the default branch known either way (it is the
-    # base branch, or isn't), "not protected" is only an unknown: never
-    # removed protection.
-    if rep.protected:
-        return gh
-    seen = _bypass_seen(rulesets.value)
-    if protection_mod.check(seen, base, accepted).protected:
-        gh.unseen = _Answer(why=Words(
-            "who may skip its ruleset's rules can be seen only by the repository's admins",
-            "; ".join(m for k, m in zip(rep.kinds, rep.missing) if k == "bypass_unread"),
-        ), fix=Words(
-            "Ask the repository's admin to run this check, or to look at the ruleset's bypass list in Settings → Rules.",
-            "Rerun with an admin's `gh`, or pass --rulesets from an admin's GET repos/<repo>/rulesets/<id>.",
-        ))
-        return gh
-    if accepted is not None and accepted.get("default_branch") is not None:
-        return gh
-    either = [{**(accepted or {}), "default_branch": default} for default in (base, f"{base}-not")]
-    if any(protection_mod.check(seen, base, known).protected for known in either):
-        gh.report, gh.report_why = None, _Answer(why=Words(
-            f"a ruleset applies to GitHub's default branch, and without the repository's settings it can't tell whether that is `{base}`"
-            + (f" ({settings.why.new})" if settings.why else ""),
-            "; ".join(m for k, m in zip(rep.kinds, rep.missing) if k == "unsure") + (f" ({settings.why.developer})" if settings.why else ""),
+    if not known and _substance(rep) != _substance(other):
+        no_default = settings.why is None
+        gh.report_why = _Answer(why=Words(
+            "a ruleset applies to GitHub's default branch, and "
+            + ("the repository's settings don't say which branch that is" if no_default else f"the repository's settings couldn't be read ({settings.why.new})")
+            + f", so it can't tell whether that is `{base}`",
+            "a ruleset targets ~DEFAULT_BRANCH, and " + ("the settings have no default_branch" if no_default else settings.why.developer),
         ), fix=settings.fix if settings.why else Words(
             "Ask Claude to fetch the repository's settings from GitHub in full, with its default branch.",
             "Give --repo with default_branch (GET repos/<repo>).",
         ))
+        return gh
+    gh.report = rep
+    # What the read-back can't see counts as missing there, so an unknown never
+    # reads as protected. When it would read protected with unread bypass
+    # lists as empty, "not protected" is only an unknown: never removed
+    # protection.
+    if not rep.protected and protection_mod.check(_bypass_seen(rulesets.value), base, accepted).protected:
+        gh.unseen = _Answer(why=Words(
+            "who may skip its ruleset's rules can be seen only by the repository's admins",
+            "; ".join(m for k, m in zip(rep.kinds, rep.missing) if k == "bypass_unread"),
+        ), fix=ADMIN)
     return gh
+
+
+def _substance(rep: protection_mod.Report) -> tuple:
+    """What the lines read from a read-back: two readings alike in this give
+    the same lines."""
+    return rep.protected, rep.kinds, rep.required_checks, [id(rs) for rs in rep.effective]
 
 
 def _waits(i: Inputs, id_: str, what: Words, answer: _Answer | None) -> Line:
@@ -1298,14 +1323,15 @@ def _protection_words(id_: str, kinds: list[str], base: str) -> tuple[str, str]:
             [f"{_count(evaluating, 'a ruleset', 'rulesets')} only {'reports' if evaluating == 1 else 'report'}, without blocking anything"] if evaluating else [])
         return _upper("; ".join(parts)) + ".", "Set the ruleset's enforcement to active."
     if id_ == "github.protection.base":
-        how = ", as far as GitHub's answer shows" if "unsure" in kinds else ": it applies to other branches or tags"
-        return (f"{_upper(_count(n, 'a ruleset', 'rulesets'))} on GitHub {'doesn' if n == 1 else 'don'}'t cover `{base}`{how}, so no ruleset protects it.",
-                f"Make the ruleset include `~DEFAULT_BRANCH` or `refs/heads/{base}`, and not exclude it (give --repo for `~DEFAULT_BRANCH`).")
+        if "unsure" in kinds:
+            return (f"{_upper(_count(n, 'a ruleset', 'rulesets'))} on GitHub may not cover `{base}`: {'its' if n == 1 else 'their'} branch pattern can't be matched here, so no ruleset is known to protect it.",
+                    f"Name `{base}` in the ruleset (`~DEFAULT_BRANCH` or `refs/heads/{base}`) rather than by a pattern.")
+        return (f"{_upper(_count(n, 'a ruleset', 'rulesets'))} on GitHub {'doesn' if n == 1 else 'don'}'t cover `{base}`: it applies to other branches or tags, so no ruleset protects it.",
+                f"Make the ruleset include `~DEFAULT_BRANCH` or `refs/heads/{base}`, and not exclude it.")
     if id_ == "github.protection.bypass":
         if "bypass" in kinds:
             return f"People or apps on a ruleset's bypass list can skip its rules on `{base}`.", "Empty the ruleset's bypass list."
-        return (f"Who may skip the ruleset's rules on `{base}` can't be seen (that needs admin access on GitHub), so it can't count as protecting it.",
-                "Read the bypass list as an admin (it needs admin access), and empty it.")
+        return (f"Who may skip the ruleset's rules on `{base}` can't be seen (that needs admin access on GitHub), so it can't count as protecting it.", "")
     rule, words = {
         "github.protection.deletions": ("deletion", f"`{base}` can be deleted on GitHub: no active ruleset stops it."),
         "github.protection.force_pushes": ("non_fast_forward", f"Someone could force push to `{base}`, rewriting its history: no active ruleset stops it."),
@@ -1323,9 +1349,11 @@ def _missing_lines(found: list[tuple[str, str]], base: str, offer: str) -> list[
             by_line.setdefault(KINDS[kind].line, []).append((kind, words))
     out = []
     for id_, items in by_line.items():
-        new, dev_fix = _protection_words(id_, [k for k, _ in items], base)
-        out.append(Line("GitHub", id_, "gap", Words(new, _upper("; ".join(w for _, w in items)) + "."),
-                        Words(f"Ask Claude to \"{offer}\": it puts this right.", dev_fix)))
+        kinds = [k for k, _ in items]
+        new, dev_fix = _protection_words(id_, kinds, base)
+        unread = set(kinds) == {"bypass_unread"}
+        out.append(Line("GitHub", id_, "cant_check" if unread else "gap", Words(new, _upper("; ".join(w for _, w in items)) + "."),
+                        ADMIN if unread else Words(f"Ask Claude to \"{offer}\": it puts this right.", dev_fix)))
     return out
 
 
@@ -1766,5 +1794,5 @@ def text(r: Report, width: int = 100) -> str:
         if fix:
             out += _wrap(fix, width, " " * 6 + ("Next: " if ln.status in ("note", "fine") else "Fix: "), " " * 8)
         if ln.offer:
-            out.append(f"      Claude can offer: {OFFERS[ln.offer]}")
+            out += _wrap(f"Claude can offer: {OFFERS[ln.offer]}", width, " " * 6, " " * 8)
     return "\n".join(out)

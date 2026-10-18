@@ -176,13 +176,15 @@ def test_each_missing_protection_is_its_own_gap_in_plain_words(tmp_path, ruleset
     assert lines["github.ruleset"]["status"] == "gap"
 
 
-def test_a_bypass_list_that_cant_be_read_is_a_gap_beside_another_missing_protection(tmp_path):
+def test_a_bypass_list_that_cant_be_read_beside_a_real_gap_is_cant_check_with_the_admin_fix(tmp_path):
     rs = _without(_rs(), "deletion")
     del rs["bypass_actors"]
     root = _protected(tmp_path)
     lines = _github(tmp_path, root, rulesets=[rs], env={"WORKFLOW_EXPERIENCE": "developer"})
-    assert lines["github.protection.bypass"]["status"] == "gap" and "admin" in lines["github.protection.bypass"]["message"]
-    assert lines["github.ruleset"]["offer"] == "restore_protection"
+    ln = lines["github.protection.bypass"]
+    assert ln["status"] == "cant_check" and "admin" in ln["message"] and "admin" in ln["fix"], ln
+    assert lines["github.protection.deletions"]["status"] == "gap"
+    assert lines["github.ruleset"]["offer"] == "restore_protection"  # deletions allowed, whatever the bypass list holds
 
 
 def test_a_bypass_list_only_an_admin_can_read_is_cant_check_never_removed_protection(tmp_path):
@@ -712,7 +714,8 @@ def test_the_budget_for_all_of_githubs_reads_stops_the_rest(tmp_path, monkeypatc
     start = time.monotonic()
     lines = {ln.id: ln for ln in doctor.report(i).lines}
     assert time.monotonic() - start < 10
-    assert "within 1 s" in lines["github.merge_commits"].message.developer, lines["github.merge_commits"].message.developer
+    assert "after 1 s" in lines["github.merge_commits"].message.developer, lines["github.merge_commits"].message.developer
+    assert "within 1 second," in lines["github.merge_commits"].message.new, lines["github.merge_commits"].message.new
     assert "took over 1 s" in lines["github.ruleset"].message.developer, lines["github.ruleset"].message.developer
 
 
@@ -730,6 +733,74 @@ def test_nan_in_a_rulesets_file_is_refused_as_workflow_protection_refuses_it(tmp
     raw = json.dumps([RULESET]).replace('"id": 101', '"id": NaN')
     ln = _github(tmp_path, _protected(tmp_path), rulesets=raw)["github.ruleset"]
     assert ln["status"] == "cant_check" and "NaN" in ln["message"], ln
+
+
+def test_a_default_branch_ruleset_beside_one_on_main_without_the_settings_cant_tell_the_rules(tmp_path):
+    main = _rs(conditions={"ref_name": {"include": ["refs/heads/main"], "exclude": []}})
+    extras = _rs(id=108, name="Default", rules=[{"type": "required_linear_history"},
+                                                {"type": "pull_request", "parameters": {"require_code_owner_review": True, "required_approving_review_count": 2}}])
+    lines = _github(tmp_path, _protected(tmp_path), rulesets=[main, extras], settings=None, path=_bin(tmp_path, gh=False))
+    for id_ in ("github.linear_history", "github.code_owner_review", "github.approvals", "github.ruleset"):
+        assert lines[id_]["status"] == "cant_check", lines[id_]
+
+
+def test_a_real_gap_without_the_settings_isnt_stated_beside_unknowns(tmp_path):
+    lines = _github(tmp_path, _protected(tmp_path), rulesets=[_without(_rs(), "deletion")], settings=None, path=_bin(tmp_path, gh=False))
+    assert "github.protection.force_pushes" not in lines and "github.protection.pull_requests" not in lines
+    assert lines["github.required_checks"]["status"] == "cant_check"
+
+
+def test_rulesets_naming_main_need_no_settings(tmp_path):
+    main = _rs(conditions={"ref_name": {"include": ["refs/heads/main"], "exclude": []}})
+    lines = _github(tmp_path, _protected(tmp_path), rulesets=[main], settings=None, path=_bin(tmp_path, gh=False))
+    assert lines["github.ruleset"]["status"] == "fine" and lines["github.linear_history"]["status"] == "fine"
+
+
+def test_settings_without_a_default_branch_say_so_in_plain_words(tmp_path):
+    settings = {k: v for k, v in SETTINGS.items() if k != "default_branch"}
+    ln = _github(tmp_path, _protected(tmp_path), settings=settings)["github.ruleset"]
+    assert "don't say which branch" in ln["message"], ln
+
+
+def test_a_403_says_refused_and_isnt_run_again(tmp_path):
+    import fake_gh
+
+    routes = gh_routes()
+    routes["repos/acme/demo/rulesets"] = fake_gh.reply(exit=1, stderr="gh: Resource not accessible by integration (HTTP 403)")
+    ln = _lines(_report(tmp_path, _protected(tmp_path), path=_bin(tmp_path, gh=routes)))["github.ruleset"]
+    assert "refused" in ln["message"] and "again" not in ln["fix"], ln
+
+
+def test_a_settings_file_of_the_wrong_shape_has_a_settings_fix(tmp_path):
+    ln = _github(tmp_path, _protected(tmp_path), settings="[]")["github.merge_commits"]
+    assert ln["status"] == "cant_check" and "ruleset" not in ln["fix"], ln
+
+
+def test_the_usage_refusal_exits_2(tmp_path):
+    assert _doctor(tmp_path, _protected(tmp_path), "--rulesets", "-", "--repo", "-").returncode == 2
+
+
+def test_the_offer_wraps_on_a_narrow_terminal(tmp_path):
+    p = _doctor(tmp_path, _protected(tmp_path), *_files(tmp_path, rulesets=[]), env={"COLUMNS": "40"})
+    assert all(len(ln) <= 40 or any(len(w) > 32 for w in ln.split()) for ln in p.stdout.splitlines()), p.stdout
+    assert "Claude can offer: Restore protection" in " ".join(p.stdout.split())
+
+
+def test_empty_standard_input_says_so(tmp_path):
+    import os
+    import sys
+
+    from test_doctor import CLI
+
+    root = _protected(tmp_path)
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(root), "HOME": str(tmp_path), "PATH": str(_bin(tmp_path, gh=False))}
+    p = subprocess.run([sys.executable, "-B", str(CLI), "doctor", "--json", "--rulesets", "-"], cwd=root, env=env, input="", capture_output=True, text=True)
+    assert "standard input was empty" in _lines(json.loads(p.stdout))["github.ruleset"]["message"]
+
+
+def test_an_enterprise_login_with_an_underscore_is_an_owner(tmp_path):
+    text = "/.claude/ @octocat_acme\n/.github/workflows/ @octocat_acme\n"
+    assert _github(tmp_path, _protected(tmp_path, codeowners=text))["github.codeowners"]["status"] == "fine"
 
 
 # Wording, and changing nothing

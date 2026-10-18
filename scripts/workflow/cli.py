@@ -238,7 +238,8 @@ def cmd_doctor(a) -> int:
     """What's set up and what isn't, each line with its fix (#34). Exits 0,
     or with --strict 1 on a gap or a line it couldn't check."""
     if a.rulesets == "-" and a.repo == "-":
-        raise SystemExit("workflow doctor: only one of --rulesets and --repo can be standard input (-)")
+        print("workflow doctor: only one of --rulesets and --repo can be standard input (-)", file=sys.stderr)
+        return 2
     root = project_root()
     prof, error = None, None
     try:
