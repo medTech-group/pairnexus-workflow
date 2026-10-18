@@ -115,16 +115,14 @@ def _project(tmp_path, profile=_prof('experience = "new"\nruleset = true\n'), ve
     if vendored:
         lock = {"kit_version": "0.1.11", "files": lock_files or {}, "mattpocock_skills": "vendored"}
         (root / ".claude/workflow/lock.json").write_text(json.dumps(lock))
-        # The project's own copy of the CLI, as `vendor install` puts it: the
-        # hooks are compared with the entries of the kit that runs doctor.
-        # `compiled` puts its bytecode beside it, so a run doesn't compile it.
+        # The project's own copy of the CLI, with the files `vendor install`
+        # puts there: the hooks are compared with the entries of the kit that
+        # runs doctor. With `compiled`, its bytecode is there too (which
+        # `vendor install` never copies), so a run doesn't compile it.
         bin_dir = root / ".claude/workflow/bin"
         bin_dir.mkdir()
         shutil.copy(CLI, bin_dir / "workflow.py")
-        if compiled:
-            copy_kit_package(bin_dir / "workflow")
-        else:
-            shutil.copytree(KIT / "scripts/workflow", bin_dir / "workflow", ignore=shutil.ignore_patterns("__pycache__"))
+        copy_kit_package(bin_dir / "workflow", compiled=compiled)
     if settings is None:
         settings = vendor.merge_hooks({}) if vendored else {}
     (root / ".claude/settings.json").write_text(json.dumps(settings, indent=2))
@@ -569,7 +567,7 @@ def test_no_ruleset_is_not_set_as_before_a_note(tmp_path):
 # Wording by experience
 
 
-def _every_status_project(tmp_path):
+def _every_status_project(tmp_path, compiled=True):
     """A project where the kit's and the computer's lines take every status."""
     settings = vendor.merge_hooks({"enabledPlugins": {vendor.PLUGIN_KEY: True}})
     settings["hooks"]["Stop"][0]["hooks"][0]["timeout"] = 99
@@ -578,6 +576,7 @@ def _every_status_project(tmp_path):
         profile=_prof("ruleset = false\n", '[areas]\nweb = ["web/**"]\n'),
         settings=settings,
         lock_files={".claude/skills/gone/SKILL.md": "0" * 64},
+        compiled=compiled,
     )
     return root, _bin(tmp_path, python="3.9.6", claude=None)
 
@@ -632,14 +631,25 @@ def _snapshot(root):
     return out
 
 
+def _unchanged_after_doctor(tmp_path, calls):
+    """Run doctor for each (root, args, keywords) in `calls` at once, and
+    check that no checkout among them changed: every snapshot is taken before
+    the first run."""
+    roots = list(dict.fromkeys(root for root, _, _ in calls))
+    before = {root: _snapshot(root) for root in roots}
+    _each_at_once(tmp_path, _doctor, calls)
+    for root in roots:
+        assert _snapshot(root) == before[root], root
+
+
 def test_nothing_in_the_checkout_changes_after_a_run(tmp_path):
-    root, path = _every_status_project(tmp_path)
+    root, path = _every_status_project(tmp_path, compiled=False)  # so bytecode written would show
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     before = _snapshot(root)
     healthy = _bin(tmp_path / "ok")
-    _each_at_once(tmp_path, _doctor, [(root, args, {"path": bin_})
+    _each_at_once(tmp_path, _doctor, [(root, args, {"path": fake_path})
                                       for args in ((), ("--json",), ("--strict",), ("--json", "--strict", "--claude-version", "2.1.300"))
-                                      for bin_ in (path, healthy)])
+                                      for fake_path in (path, healthy)])
     assert _report(tmp_path, root, path=path)["counts"]["cant_check"] >= 1  # the every-status fakes still there
     assert _snapshot(root) == before
 
