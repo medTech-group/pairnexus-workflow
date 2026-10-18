@@ -12,6 +12,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 
 import pytest
 
@@ -34,6 +35,12 @@ ONLY_WHEN_WRONG = {
     "github.protection.active", "github.protection.base", "github.protection.bypass",  # each missing protection
     "github.protection.deletions", "github.protection.force_pushes", "github.protection.pull_requests",
 }
+
+
+@pytest.fixture(autouse=True)
+def _wide(monkeypatch):
+    """The in-process report wraps to COLUMNS (else the real terminal's width)."""
+    monkeypatch.setenv("COLUMNS", "100")
 
 
 def _old(root, *args, env=None, version="3.9.6"):
@@ -137,6 +144,8 @@ def test_the_files_a_session_hands_in_are_taken_and_ignored(tmp_path):
     (("--bogus",), "--bogus"),
     (("extra",), "extra"),
     (("--rulesets",), "--rulesets"),
+    (("--claude-version", "--strict"), "--claude-version"),
+    (("--rulesets", "--json"), "--rulesets"),
     (("--repo", "-", "--runs", "-"), "only one of"),
     (("--repo=-", "--environments", "-"), "only one of"),
 ])
@@ -144,6 +153,19 @@ def test_arguments_the_full_doctor_refuses_exit_2(tmp_path, args, needle):
     root = _project(tmp_path)
     code, out, err = _old(root, *args)
     assert code == 2 and out == "" and needle in err
+
+
+@pytest.mark.parametrize("args,code,as_json", [
+    (("--jso",), 0, True),
+    (("--str",), STRICT_FAIL, False),
+    (("--rulesets", "-", "--rulesets", "-"), 0, False),  # the last value counts: one standard input
+    (("--repo", "-", "--repo", "x", "--runs", "-"), 0, False),
+])
+def test_arguments_the_full_doctor_takes_are_taken(tmp_path, args, code, as_json):
+    root = _project(tmp_path)
+    got, out, err = _old(root, *args)
+    assert got == code, err
+    assert out.startswith("{") if as_json else out.startswith("Workflow doctor: ")
 
 
 @pytest.mark.parametrize("flag", ["-h", "--help"])
@@ -159,7 +181,7 @@ def test_help_says_its_the_short_report(tmp_path, flag):
     ({}, None, "unknown"),
     ({"WORKFLOW_EXPERIENCE": "developer"}, "developer", "environment"),
     ({"WORKFLOW_EXPERIENCE": " New "}, "new", "environment"),
-    ({"WORKFLOW_EXPERIENCE": "﻿developer"}, "developer", "environment"),
+    ({"WORKFLOW_EXPERIENCE": "\ufeffdeveloper"}, "developer", "environment"),
     ({"WORKFLOW_EXPERIENCE": "expert"}, None, "unknown"),
     ({"WORKFLOW_EXPERIENCE": "  "}, None, "unknown"),
 ])
@@ -192,16 +214,16 @@ def test_an_unreadable_local_file_reads_as_unknown(tmp_path, body):
     assert (r["experience"]["level"], r["experience"]["source"], r["wording"]) == (None, "unknown", "new")
 
 
-def test_the_local_file_is_read_as_the_full_doctor_reads_it(tmp_path):
-    for k, body in enumerate(("developer\n", " new \n", "﻿developer", "expert\n", "x" * 300, "")):
-        root = _project(tmp_path / str(k))
-        (root / ".workflow").mkdir()
-        (root / ".workflow/experience").write_text(body)
-        full = _report(tmp_path, root)["experience"]
-        old = _old_report(root)["experience"]
-        if full["source"] == "profile":  # the full doctor goes on to the profile's default
-            full = {"level": None, "source": "unknown"}
-        assert (old["level"], old["source"]) == (full["level"], full["source"]), body
+@pytest.mark.parametrize("body", ["developer\n", " new \n", "\ufeffdeveloper", "DEVELOPER\r\n", "expert\n", "x" * 300, ""])
+def test_the_local_file_is_read_as_the_full_doctor_reads_it(tmp_path, body):
+    root = _project(tmp_path)
+    (root / ".workflow").mkdir()
+    (root / ".workflow/experience").write_bytes(body.encode("utf-8"))
+    full = _report(tmp_path, root)["experience"]
+    old = _old_report(root)["experience"]
+    if full["source"] == "profile":  # the full doctor goes on to the profile's default
+        full = {"level": None, "source": "unknown"}
+    assert (old["level"], old["source"]) == (full["level"], full["source"])
 
 
 def test_the_profiles_default_isnt_read_on_old_python(tmp_path):
@@ -268,13 +290,52 @@ def test_the_groups_and_statuses_are_the_full_doctors():
 # It never raises, and changes nothing
 
 
-def test_it_never_raises(tmp_path, monkeypatch):
-    def boom(*a, **k):
-        raise RuntimeError("boom")
+def _boom(*a, **k):
+    raise RuntimeError("boom")
 
-    monkeypatch.setattr(_old_python, "_doctor_report", boom)
-    code, out, err = _old(_project(tmp_path))
-    assert code == 1 and out == "" and "3.11" in err
+
+def test_a_report_that_fails_still_gives_the_gap(tmp_path, monkeypatch):
+    monkeypatch.setattr(_old_python, "_doctor_root", _boom)
+    r = _old_report(_project(tmp_path))
+    assert r["lines"][0]["id"] == "computer.python3" and r["lines"][0]["status"] == "gap"
+    assert {ln["status"] for ln in r["lines"][1:]} == {"cant_check"}
+    assert _old(_project(tmp_path / "s"), "--strict")[0] == STRICT_FAIL
+
+
+def test_a_deleted_current_folder_still_gives_the_report(tmp_path, monkeypatch):
+    def gone():
+        raise FileNotFoundError(2, "No such file or directory")
+
+    monkeypatch.setattr(os, "getcwd", gone)
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = _old_python.main(["doctor", "--json"], stdin_text="", env={}, version="3.9.6")
+    assert code == 0, err.getvalue()
+    assert json.loads(out.getvalue())["lines"][0]["id"] == "computer.python3"
+
+
+class _Closed(io.StringIO):
+    """A stdout whose reader has gone."""
+
+    def write(self, text):
+        raise BrokenPipeError(32, "Broken pipe")
+
+
+@pytest.mark.parametrize("args,code", [((), 0), (("--json",), 0), (("--strict",), STRICT_FAIL)])
+def test_output_that_cant_be_written_exits_as_strict_says(tmp_path, args, code):
+    err = io.StringIO()
+    env = {"CLAUDE_PROJECT_DIR": str(_project(tmp_path))}
+    with contextlib.redirect_stdout(_Closed()), contextlib.redirect_stderr(err):
+        got = _old_python.main(["doctor", *args], stdin_text="", env=env, version="3.9.6")
+    assert got == code
+    assert "couldn't write the report" in err.getvalue() and "needs Python" not in err.getvalue()
+
+
+def test_no_stderr_either_never_raises(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "stderr", None)
+    with contextlib.redirect_stdout(_Closed()):
+        assert _old_python.main(["doctor", "--bogus"], stdin_text="", env={}, version="3.9.6", cwd=tmp_path) == 2
+        assert _old_python.main(["doctor"], stdin_text="", env={}, version="3.9.6", cwd=tmp_path) == 0
 
 
 @pytest.mark.parametrize("where", ["missing", "file", "empty"])
@@ -291,7 +352,12 @@ def test_an_odd_project_folder_still_gives_the_report(tmp_path, where):
 def test_the_experience_file_as_a_pipe_or_a_directory_reads_as_unknown(tmp_path):
     root = _project(tmp_path)
     (root / ".workflow").mkdir()
-    os.mkfifo(str(root / ".workflow/experience"))  # never opened: it would wait
+    os.mkfifo(str(root / ".workflow/experience"))  # nobody writes to it: a blocking read would wait for ever
+    got = []
+    t = threading.Thread(target=lambda: got.append(_old_python._experience(str(root), {})), daemon=True)
+    t.start()
+    t.join(10)
+    assert got == [(None, "unknown")], "reading .workflow/experience as a pipe waited"
     assert _old_report(root)["experience"]["source"] == "unknown"
     (root / ".workflow/experience").unlink()
     (root / ".workflow/experience").mkdir()
@@ -336,17 +402,21 @@ def _old_entry_point():
 def test_doctor_on_a_real_python_3_9(tmp_path):
     py, version = _old_entry_point()
     root = _project(tmp_path)
-    env = {"PATH": os.environ["PATH"], "CLAUDE_PROJECT_DIR": str(root), "WORKFLOW_EXPERIENCE": "developer"}
+    (root / ".workflow").mkdir()
+    (root / ".workflow/experience").write_text("developer\n")
     copy = root / ".claude/workflow/bin/workflow.py"
     for cli in (CLI, copy):
-        p = subprocess.run([*py, str(cli), "doctor", "--json"], capture_output=True, text=True, env=env, cwd=root)
-        assert p.returncode == 0, p.stderr
-        r = json.loads(p.stdout)
-        first = r["lines"][0]
-        assert (first["id"], first["status"]) == ("computer.python3", "gap") and version in first["message"]
-        assert all(ln["status"] == "cant_check" and UNTIL in ln["message"] for ln in r["lines"][1:])
-        assert r["wording"] == "developer" and r["experience"]["source"] == "environment"
-        assert _pairs(r) == _pairs(_old_report(root))
+        for level, wording, source in (("developer", "developer", "environment"), ("new", "new", "environment"),
+                                       ("", "developer", "local file")):
+            env = {"PATH": os.environ["PATH"], "CLAUDE_PROJECT_DIR": str(root), "WORKFLOW_EXPERIENCE": level}
+            p = subprocess.run([*py, str(cli), "doctor", "--json"], capture_output=True, text=True, env=env, cwd=root)
+            assert p.returncode == 0, p.stderr
+            r = json.loads(p.stdout)
+            first = r["lines"][0]
+            assert (first["id"], first["status"]) == ("computer.python3", "gap") and version in first["message"]
+            assert all(ln["status"] == "cant_check" and UNTIL in ln["message"] for ln in r["lines"][1:])
+            assert (r["wording"], r["experience"]["source"]) == (wording, source)
+            assert _pairs(r) == _pairs(_old_report(root))
         p = subprocess.run([*py, str(cli), "doctor", "--strict"], capture_output=True, text=True, env=env, cwd=root)
         assert p.returncode == STRICT_FAIL and "[gap]" in p.stdout and UNTIL in " ".join(p.stdout.split()), p.stderr
         p = subprocess.run([*py, str(cli), "doctor"], capture_output=True, text=True, env=env, cwd=root)
