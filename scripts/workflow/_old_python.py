@@ -206,6 +206,8 @@ _DOCTOR_LINES = (
     ("Cloud", "cloud.environments", None, _Words("the two cloud environments for unattended runs", "The cloud environments")),
     ("Cloud", "cloud.contents", None, _Words("what the cloud environments hold", "Environment contents")),
 )
+# The files a session hands the full doctor: taken here, and not read.
+_DOCTOR_FILES = ("rulesets", "repo", "environments", "runs")
 _EXPERIENCE_LEVELS = ("new", "developer")
 _EXPERIENCE_FILE_MAX = 200  # bytes, as profile.py reads it
 
@@ -219,9 +221,23 @@ class _Refused(Exception):
 
 
 class _Parser(argparse.ArgumentParser):
+    """Its writes guarded as 3.11's are, and its exits returned."""
+
+    def _print_message(self, message, file=None):
+        try:
+            (file or sys.stderr).write(message)
+        except (AttributeError, OSError):
+            pass
+
+    def error(self, message):
+        if sys.stderr is not None:  # else print_usage falls back to stdout, the report's
+            self.print_usage(sys.stderr)
+        self.exit(2, "{}: error: {}\n".format(self.prog, message))
+
     def exit(self, status=0, message=None):
         if message:
             _say(message)
+        _flush()
         raise _Refused(status)
 
 
@@ -231,8 +247,8 @@ def _doctor_parser():
         "What's set up and what isn't; changes nothing. With python3 older than {0} it gives a short report: "
         "python3 as a gap, and every other line as can't check until python3 is {0} or newer.").format(NEEDS))
     p.add_argument("--claude-version", metavar="VERSION", help="Claude Code's version (not read until python3 is {}+)".format(NEEDS))
-    for flag in ("--rulesets", "--repo", "--environments", "--runs"):
-        p.add_argument(flag, metavar="F", help="as the full doctor takes it (not read until python3 is {}+)".format(NEEDS))
+    for flag in _DOCTOR_FILES:
+        p.add_argument("--" + flag, metavar="F", help="as the full doctor takes it (not read until python3 is {}+)".format(NEEDS))
     p.add_argument("--json", action="store_true", help="every line's group, id, status, message, fix and offer, for skills")
     p.add_argument("--strict", action="store_true", help="exit 1 when any line is a gap or can't be checked (here, always)")
     return p
@@ -247,19 +263,20 @@ def _doctor(args, env, version, cwd):
         a = _doctor_parser().parse_args(args)
     except _Refused as e:
         return e.code
-    except Exception:
-        a = argparse.Namespace(json="--json" in args, strict="--strict" in args, rulesets=None, repo=None, environments=None, runs=None)
-    if [a.rulesets, a.repo, a.environments, a.runs].count("-") > 1:
+    except Exception:  # argparse itself failing: the flags as plainly given
+        a = argparse.Namespace(json="--json" in args, strict="--strict" in args, **dict.fromkeys(_DOCTOR_FILES))
+    if [getattr(a, f) for f in _DOCTOR_FILES].count("-") > 1:
         _say("workflow doctor: only one of --rulesets, --repo, --environments and --runs can be standard input (-)\n")
         return 2
     try:
         r = _doctor_report(_doctor_root(env, cwd), env, version)
     except Exception:  # advice never ends in a traceback
-        r = _doctor_report(None, {}, version)  # reads nothing
+        r = _doctor_report(None, env, version)  # reads no file
     try:
         print(json.dumps(r, indent=2) if a.json else _doctor_text(r, min(100, shutil.get_terminal_size((100, 24)).columns)))
         sys.stdout.flush()
     except Exception as e:  # a closed pipe, a full disk
+        _drop(sys.stdout, 1)
         _say("workflow doctor: couldn't write the report ({})\n".format(type(e).__name__))
     return 1 if a.strict and not r["strict_ok"] else 0
 
@@ -267,7 +284,26 @@ def _doctor(args, env, version, cwd):
 def _say(text):
     try:
         sys.stderr.write(text)
+        sys.stderr.flush()
     except Exception:  # no stderr either
+        _drop(sys.stderr, 2)
+
+
+def _flush():
+    try:
+        sys.stdout.flush()
+    except Exception:
+        _drop(sys.stdout, 1)
+
+
+def _drop(stream, fd):
+    """Point a stream that can't be written at the null device, so the
+    unwritten rest isn't flushed again at exit (which would exit 120)."""
+    try:
+        null = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(null, stream.fileno() if stream is not None else fd)
+        os.close(null)
+    except Exception:  # an in-memory stream, or no file descriptors left
         pass
 
 
@@ -348,7 +384,8 @@ def _doctor_order(lines):
 
 def _doctor_report(root, env, version):
     """The report as the full doctor's `--json` gives it. With no root it
-    reads nothing: experience unknown, and the vendored mode's lines."""
+    reads no file: experience from the environment alone, and the vendored
+    mode's lines."""
     level, source = _experience(root, env)
     wording = level or "new"
     plugin = bool(root) and not os.path.exists(os.path.join(root, ".claude", "workflow", "lock.json"))

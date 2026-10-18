@@ -309,9 +309,11 @@ def test_a_deleted_current_folder_still_gives_the_report(tmp_path, monkeypatch):
     monkeypatch.setattr(os, "getcwd", gone)
     out, err = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        code = _old_python.main(["doctor", "--json"], stdin_text="", env={}, version="3.9.6")
+        code = _old_python.main(["doctor", "--json"], stdin_text="", env={"WORKFLOW_EXPERIENCE": "developer"}, version="3.9.6")
     assert code == 0, err.getvalue()
-    assert json.loads(out.getvalue())["lines"][0]["id"] == "computer.python3"
+    r = json.loads(out.getvalue())
+    assert r["lines"][0]["id"] == "computer.python3"
+    assert (r["wording"], r["experience"]["source"]) == ("developer", "environment")  # still read
 
 
 class _Closed(io.StringIO):
@@ -421,7 +423,41 @@ def test_doctor_on_a_real_python_3_9(tmp_path):
         assert p.returncode == STRICT_FAIL and "[gap]" in p.stdout and UNTIL in " ".join(p.stdout.split()), p.stderr
         p = subprocess.run([*py, str(cli), "doctor"], capture_output=True, text=True, env=env, cwd=root)
         assert p.returncode == 0 and p.stdout.startswith("Workflow doctor: 1 gap, "), p.stderr
+        p = subprocess.run([*py, str(cli), "doctor", "--help"], capture_output=True, text=True, env=env, cwd=root)
+        assert p.returncode == 0 and "--strict" in p.stdout, p.stderr
+        p = subprocess.run([*py, str(cli), "doctor", "--json", "--bogus"], capture_output=True, text=True, env=env, cwd=root)
+        assert (p.returncode, p.stdout) == (2, "") and "unrecognized arguments: --bogus" in p.stderr
     assert not list(root.rglob("__pycache__"))
+
+
+@pytest.mark.parametrize("args,code", [((), 0), (("--json",), 0), (("--strict",), STRICT_FAIL), (("--help",), 0)])
+def test_a_closed_stdout_on_an_old_python_exits_as_strict_says(tmp_path, args, code):
+    """The reader of its stdout gone before it starts: nothing left to flush
+    at exit, which would exit 120."""
+    py, _ = _old_entry_point()
+    root = _project(tmp_path)
+    r, w = os.pipe()
+    os.close(r)
+    try:
+        p = subprocess.run([*py, str(CLI), "doctor", *args], stdout=w, stderr=subprocess.PIPE, text=True,
+                           env={"PATH": os.environ["PATH"], "CLAUDE_PROJECT_DIR": str(root)}, cwd=root)
+    finally:
+        os.close(w)
+    assert p.returncode == code, p.stderr
+    assert "Exception ignored" not in p.stderr and "Traceback" not in p.stderr
+
+
+def test_a_closed_stderr_on_an_old_python_still_refuses_with_2(tmp_path):
+    py, _ = _old_entry_point()
+    root = _project(tmp_path)
+    r, w = os.pipe()
+    os.close(r)
+    try:
+        p = subprocess.run([*py, str(CLI), "doctor", "--json", "--bogus"], stdout=subprocess.PIPE, stderr=w, text=True,
+                           env={"PATH": os.environ["PATH"], "CLAUDE_PROJECT_DIR": str(root)}, cwd=root)
+    finally:
+        os.close(w)
+    assert (p.returncode, p.stdout) == (2, "")
 
 
 # Docs and the changelog
