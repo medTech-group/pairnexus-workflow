@@ -153,7 +153,7 @@ class Ran:
 
     state: str
     out: str | None = None
-    err: str = ""  # the last line it printed on stderr, when asked for
+    err: str = ""  # the last lines it printed on stderr, when asked for
 
 
 def _run(i: Inputs, argv: list[str], timeout: float | None = None, stderr: bool = False) -> Ran:
@@ -191,7 +191,7 @@ def _run(i: Inputs, argv: list[str], timeout: float | None = None, stderr: bool 
         return Ran("timeout")
     if p.returncode:
         said = (err or b"").decode("utf-8", "replace").strip().splitlines()
-        return Ran("failed", err=said[-1][:300] if said else f"exit {p.returncode}")
+        return Ran("failed", err="\n".join(said[-3:])[:600] if said else f"exit {p.returncode}")
     try:
         return Ran("ok", out.decode("utf-8"))
     except UnicodeDecodeError:
@@ -919,6 +919,9 @@ OWNED = ("/.claude/", "/.github/workflows/")
 # plan (a private repository on GitHub Free).
 _SIGNED_OUT = re.compile(r"gh auth login|GH_TOKEN|not logged in|authentication required|HTTP 401", re.I)
 _PLAN = re.compile(r"upgrade to github|make this repository public", re.I)
+# How `gh` says it couldn't reach GitHub, and how GitHub says to wait.
+_OFFLINE = re.compile(r"error connecting to|proxyconnect|connection refused|no such host|dial tcp|i/o timeout|check your internet connection|TLS handshake", re.I)
+_RATE_LIMIT = re.compile(r"rate limit|wait a few minutes|HTTP 429", re.I)
 # The files doctor takes instead of `gh`, as a developer's fix names them.
 GIVE_FILES = "--rulesets and --repo files (GET repos/<repo>/rulesets/<id> each in full, GET repos/<repo>)"
 # The upgrade that requires the checks (#38; #69 offers it on the required checks' line).
@@ -1017,7 +1020,9 @@ def _gh(i: Inputs, path: str, deadline: float, flag: str, paginate: bool = False
         return _Answer(why=Words(f"GitHub didn't answer within {GH_BUDGET} seconds", f"GitHub's reads took over {GH_BUDGET} s, before `gh api {shown}`"), fix=AGAIN)
     timeout = min(GH_TIMEOUT, left)
     ran = _run(i, ["gh", "api", *(["--paginate"] if paginate else []), path], timeout=timeout, stderr=True)
-    err = _scrubbed(i, ran.err)
+    offline = _OFFLINE.search(ran.err)
+    lines = ran.err.splitlines()
+    err = _scrubbed(i, next((ln for ln in lines if _OFFLINE.search(ln)), "") if offline else (lines[-1] if lines else ""))
     if ran.state == "missing":
         return _Answer(why=Words("GitHub's command-line tool (`gh`) isn't installed here", f"no `gh` on the PATH, and no {flag} file"), fix=_sign_in(True))
     if ran.state == "failed" and _SIGNED_OUT.search(ran.err):
@@ -1028,6 +1033,13 @@ def _gh(i: Inputs, path: str, deadline: float, flag: str, paginate: bool = False
             f"Check the repository's name in the kit's profile (`project.repo` in {PROFILE}) and that your GitHub account can see it; or ask a cloud session to check the set-up.",
             f"Check project.repo ({repo}) and gh's access to it, or give {GIVE_FILES}.",
         ))
+    if ran.state == "failed" and offline:
+        return _Answer(why=Words(f"`gh` couldn't reach GitHub ({err})", f"`gh api {shown}` couldn't connect: {err}"), fix=Words(
+            "Check your internet connection (or the proxy), then run the check again; or ask a cloud session to check the set-up.",
+            f"Check the network or proxy and rerun, or give {GIVE_FILES}.",
+        ))
+    if ran.state == "failed" and _RATE_LIMIT.search(ran.err):
+        return _Answer(why=Words(f"GitHub asked `gh` to slow down ({err})", f"`gh api {shown}` was rate limited: {err}"), fix=AGAIN)
     if ran.state == "failed" and "HTTP 403" in ran.err:
         return _Answer(why=Words(f"GitHub refused to show it to your `gh`: {err}", f"`gh api {shown}` was refused: {err}"), fix=Words(
             "Your GitHub account may not be allowed to read this: ask the repository's admin to run the check, or ask a cloud session to check the set-up.",
@@ -1177,7 +1189,8 @@ def _github(i: Inputs) -> _GitHub | None:
     except protection_mod.ProtectionError as e:
         gh.report_why = _not_github(e, "GitHub's rulesets")
         return gh
-    if not known and _substance(rep) != _substance(other):
+    differ = not known and _substance(rep) != _substance(other)
+    if differ:
         no_default = settings.why is None
         gh.report_why = _Answer(why=Words(
             "a ruleset applies to GitHub's default branch, and "
@@ -1188,7 +1201,10 @@ def _github(i: Inputs) -> _GitHub | None:
             "Ask Claude to fetch the repository's settings from GitHub in full, with its default branch.",
             "Give --repo with default_branch (GET repos/<repo>).",
         ))
-        return gh
+        if rep.effective or other.effective:
+            return gh
+        # Neither reading puts a ruleset on the base branch: the lines that
+        # read its rules read the same in both, so they read this one.
     gh.report = rep
     # What the read-back can't see counts as missing there, so an unknown never
     # reads as protected. When it would read protected with unread bypass
@@ -1254,7 +1270,7 @@ def check_protection(i: Inputs) -> list[Line]:
     profile's `project.ruleset`; each missing protection its own gap."""
     g, id_ = "GitHub", "github.ruleset"
     gh = _github(i)
-    if gh is not None and gh.report is None and gh.unprotected_either:
+    if gh is not None and gh.report_why is not None and gh.unprotected_either:
         return [_unprotected_either(i, gh)]
     rep, wait = _report(i, id_, Words("whether the main branch is protected on GitHub", "The base branch's protection"))
     if wait:
@@ -1309,7 +1325,7 @@ def check_protection(i: Inputs) -> list[Line]:
         offer = restore
     else:  # `ruleset` absent, or solo mode with a ruleset on the base branch that has holes
         main = Line(g, id_, "gap", Words(
-            f"GitHub doesn't protect `{base}` ({plain}), so a change could reach it without a pull request, or its history could be lost.{plan.new}",
+            f"GitHub doesn't protect `{base}` ({plain}), so {_consequence(found)}.{plan.new}",
             f"`workflow protection`: `{base}` isn't protected: {listed}.{plan.developer}",
         ), Words(
             f"Ask Claude to \"{protect}\".{plan_fix.new}",
@@ -1350,6 +1366,21 @@ def _unprotected_either(i: Inputs, gh: _GitHub) -> Line:
         f"Ask Claude to \"{protect}\".",
         f"Run upgrade-setup's \"{protect}\"; give --repo to see what is missing.",
     ), offer="protect_main")
+
+
+def _consequence(found: list[tuple[str, str]]) -> str:
+    """What could happen to the base branch, from what is missing."""
+    kinds = {k for k, _ in found}
+    if kinds & {"no_rulesets", "not_on_base", "unsure", "not_active", "evaluate"}:
+        return "a change could reach it without a pull request, or its history could be lost"
+    out = []
+    if "pull_request" in kinds:
+        out.append("a change could reach it without a pull request")
+    if kinds & {"deletion", "non_fast_forward"}:
+        out.append("its history could be lost")
+    if kinds & {"bypass", "bypass_unread"}:
+        out.append("someone could skip its rules")
+    return ", or ".join(out) or "it isn't protected"
 
 
 def _found(rep: protection_mod.Report) -> list[tuple[str, str]]:

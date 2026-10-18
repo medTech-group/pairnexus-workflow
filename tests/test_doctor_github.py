@@ -833,6 +833,45 @@ def test_an_enterprise_login_with_an_underscore_is_an_owner(tmp_path):
     assert _github(tmp_path, _protected(tmp_path, codeowners=text))["github.codeowners"]["status"] == "fine"
 
 
+
+@pytest.mark.parametrize("stderr", ["gh: API rate limit exceeded for user ID 1. (HTTP 403)",
+                                    "gh: You have exceeded a secondary rate limit. Please wait a few minutes before you try again. (HTTP 403)"])
+def test_a_rate_limit_is_run_again_later_not_an_admins_job(tmp_path, stderr):
+    import fake_gh
+
+    routes = gh_routes()
+    routes["repos/acme/demo/rulesets"] = fake_gh.reply(exit=1, stderr=stderr)
+    ln = _lines(_report(tmp_path, _protected(tmp_path), path=_bin(tmp_path, gh=routes)))["github.ruleset"]
+    assert "again" in ln["fix"] and "admin" not in ln["fix"], ln
+
+
+def test_no_connection_says_gh_couldnt_reach_github(tmp_path):
+    import fake_gh
+
+    routes = gh_routes()
+    offline = fake_gh.reply(exit=1, stderr="error connecting to api.github.com\ncheck your internet connection or https://githubstatus.com")
+    routes["repos/acme/demo/rulesets"] = routes["repos/acme/demo"] = offline
+    lines = _lines(_report(tmp_path, _protected(tmp_path), path=_bin(tmp_path, gh=routes), env={"WORKFLOW_EXPERIENCE": "developer"}))
+    ln = lines["github.ruleset"]
+    assert "couldn't connect" in ln["message"] and "error connecting to api.github.com" in ln["message"], ln
+
+
+def test_the_main_lines_consequence_follows_what_is_missing(tmp_path):
+    ln = _github(tmp_path, _project(tmp_path, profile=_prof("")), rulesets=[_without(_rs(), "deletion")])["github.ruleset"]
+    assert "history could be lost" in ln["message"] and "without a pull request" not in ln["message"], ln
+
+
+def test_solo_mode_with_no_ruleset_in_force_either_way_passes_strict(tmp_path):
+    root = _project(tmp_path, profile=SOLO)
+    settings = {k: v for k, v in SETTINGS.items() if k != "default_branch"}
+    files = _files(tmp_path, rulesets=[_rs(enforcement="disabled")], settings=settings)
+    lines = _lines(_report(tmp_path, root, *files))
+    assert lines["github.ruleset"]["status"] == "note"
+    for id_ in ("github.up_to_date", "github.approvals", "github.code_owner_review", "github.linear_history"):
+        assert id_ not in lines, lines[id_]
+    assert _doctor(tmp_path, root, *files, "--strict").returncode == 0
+
+
 # Wording, and changing nothing
 
 
