@@ -16,6 +16,7 @@ from test_doctor import (
     SETTINGS,
     _bin,
     _doctor,
+    _each_at_once,
     _entries,
     _lines,
     _prof,
@@ -919,9 +920,11 @@ def _states(tmp_path):
 
 def test_each_github_wording_for_new_and_developer_with_the_same_statuses(tmp_path):
     seen = set()
-    for root, args, path in _states(tmp_path):
-        n = _lines(_report(tmp_path, root, *args, path=path, env={"WORKFLOW_EXPERIENCE": "new"}))
-        d = _lines(_report(tmp_path, root, *args, path=path, env={"WORKFLOW_EXPERIENCE": "developer"}))
+    calls = [(root, args, {"path": path, "env": {"WORKFLOW_EXPERIENCE": level}})
+             for root, args, path in _states(tmp_path) for level in ("new", "developer")]
+    reports = iter(_each_at_once(tmp_path, _report, calls))
+    for n, d in zip(reports, reports):
+        n, d = _lines(n), _lines(d)
         assert set(n) == set(d)
         for id_ in n:
             if not id_.startswith("github."):
@@ -947,13 +950,16 @@ def test_each_github_wording_for_new_and_developer_with_the_same_statuses(tmp_pa
 
 
 def test_nothing_in_the_checkout_changes_after_a_run(tmp_path):
-    for root, args, path in _states(tmp_path):
+    states, calls = list(_states(tmp_path)), []
+    for root, args, path in states:
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
-        before = _snapshot(root)
         for extra in ((), ("--json",), ("--strict",)):
-            _doctor(tmp_path, root, *args, *extra, path=path)
-            _doctor(tmp_path, root, *extra)  # through the fake gh
-        assert _snapshot(root) == before, root
+            calls.append((root, (*args, *extra), {"path": path}))
+            calls.append((root, extra, {}))  # through the fake gh
+    before = {root: _snapshot(root) for root, _, _ in states}
+    _each_at_once(tmp_path, _doctor, calls)
+    for root, _, _ in states:
+        assert _snapshot(root) == before[root], root
 
 
 # Docs

@@ -412,7 +412,7 @@ def _old_entry_point():
 
 def test_doctor_on_a_real_python_3_9(tmp_path):
     py, version = _old_entry_point()
-    root = _project(tmp_path)
+    root = _project(tmp_path, compiled=False)  # no bytecode, so the end shows none was written
     (root / ".workflow").mkdir()
     (root / ".workflow/experience").write_text("developer\n")
     copy = root / ".claude/workflow/bin/workflow.py"

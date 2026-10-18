@@ -5,17 +5,20 @@ protected repository (the GitHub group's own tests are test_doctor_github.py),
 and an environments file with both of the profile's (the Cloud group's are
 test_doctor_cloud.py)."""
 
+import functools
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
+from pathlib import Path
 
 import pytest
 
 import fake_gh
 from changelog_notes import since_0110
-from conftest import KIT
+from conftest import KIT, at_once, copy_kit_package
 from workflow import vendor
 
 CLI = KIT / "scripts/workflow.py"
@@ -101,7 +104,7 @@ def _bin(tmp_path, python="3.12.1", claude="2.1.300 (Claude Code)", gh=None):
 
 
 def _project(tmp_path, profile=_prof('experience = "new"\nruleset = true\n'), vendored=True, settings=None, local=None, lock_files=None,
-             codeowners=CODEOWNERS):
+             codeowners=CODEOWNERS, compiled=True):
     root = tmp_path / "proj"
     (root / ".claude/workflow").mkdir(parents=True)
     if codeowners is not None:
@@ -114,10 +117,14 @@ def _project(tmp_path, profile=_prof('experience = "new"\nruleset = true\n'), ve
         (root / ".claude/workflow/lock.json").write_text(json.dumps(lock))
         # The project's own copy of the CLI, as `vendor install` puts it: the
         # hooks are compared with the entries of the kit that runs doctor.
+        # `compiled` puts its bytecode beside it, so a run doesn't compile it.
         bin_dir = root / ".claude/workflow/bin"
         bin_dir.mkdir()
         shutil.copy(CLI, bin_dir / "workflow.py")
-        shutil.copytree(KIT / "scripts/workflow", bin_dir / "workflow", ignore=shutil.ignore_patterns("__pycache__"))
+        if compiled:
+            copy_kit_package(bin_dir / "workflow")
+        else:
+            shutil.copytree(KIT / "scripts/workflow", bin_dir / "workflow", ignore=shutil.ignore_patterns("__pycache__"))
     if settings is None:
         settings = vendor.merge_hooks({}) if vendored else {}
     (root / ".claude/settings.json").write_text(json.dumps(settings, indent=2))
@@ -143,6 +150,19 @@ def _doctor(tmp_path, root, *args, path=None, env=None, home=None, cli=None, env
     copy = root / ".claude/workflow/bin/workflow.py"
     cli = cli or (copy if copy.is_file() else CLI)
     return subprocess.run([sys.executable, "-B", str(cli), "doctor", *args], cwd=root, env=e, capture_output=True, text=True)
+
+
+def _each_at_once(tmp_path, run, calls):
+    """`run` (`_doctor` or `_report`) for each (root, args, keywords) in
+    `calls`, at the same time (#193), the results in order. Each call is given
+    a folder of its own outside every checkout as its `tmp_path`, so no two
+    share an input file, a fake PATH or a home."""
+    jobs, top = [], Path(tempfile.mkdtemp(prefix="at-once-", dir=tmp_path))
+    for k, (root, args, kw) in enumerate(calls):
+        work = top / str(k)
+        work.mkdir()
+        jobs.append(functools.partial(run, work, root, *args, **kw))
+    return at_once(jobs)
 
 
 def _report(tmp_path, root, *args, **kw):
@@ -617,9 +637,9 @@ def test_nothing_in_the_checkout_changes_after_a_run(tmp_path):
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     before = _snapshot(root)
     healthy = _bin(tmp_path / "ok")
-    for args in ((), ("--json",), ("--strict",), ("--json", "--strict", "--claude-version", "2.1.300")):
-        _doctor(tmp_path, root, *args, path=path)
-        _doctor(tmp_path, root, *args, path=healthy)
+    _each_at_once(tmp_path, _doctor, [(root, args, {"path": bin_})
+                                      for args in ((), ("--json",), ("--strict",), ("--json", "--strict", "--claude-version", "2.1.300"))
+                                      for bin_ in (path, healthy)])
     assert _report(tmp_path, root, path=path)["counts"]["cant_check"] >= 1  # the every-status fakes still there
     assert _snapshot(root) == before
 

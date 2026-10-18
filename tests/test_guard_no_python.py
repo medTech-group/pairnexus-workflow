@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from conftest import copy_kit_package
 from workflow import fallback, modes, vendor
 
 KIT = Path(__file__).resolve().parents[1]
@@ -83,7 +84,7 @@ def _path(tmp_path, kind):
 
 def _kit_at(cli: Path):
     cli.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(KIT / "scripts/workflow", cli.with_suffix(""), ignore=shutil.ignore_patterns("__pycache__"))
+    copy_kit_package(cli.with_suffix(""))
     shutil.copy(KIT / "scripts/workflow.py", cli)
 
 

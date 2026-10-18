@@ -1,7 +1,13 @@
+import atexit
+import compileall
 import os
 import json
+import py_compile
+import shutil
 import subprocess
 import sys
+import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -85,3 +91,33 @@ patterns = ['\\bMRN-\\d{6}\\b']
     git(tmp_path, "add", ".")
     git(tmp_path, "commit", "-qm", "init")
     return tmp_path
+
+
+_COMPILED: list[Path] = []
+
+
+def copy_kit_package(dest):
+    """Copy the kit's `scripts/workflow` package to `dest` as `vendor install`
+    copies it, with its bytecode beside it (#193). A fresh copy run with `-B`
+    compiles every module on every run, about 0.2 s of each; this compiles it
+    once per test run. The bytecode is checked against each file's source hash,
+    so a copy whose source a test changes still runs that source."""
+    if not _COMPILED:
+        top = Path(tempfile.mkdtemp(prefix="kit-package-"))
+        atexit.register(shutil.rmtree, top, True)
+        shutil.copytree(KIT / "scripts/workflow", top / "workflow", ignore=shutil.ignore_patterns("__pycache__"))
+        assert compileall.compile_dir(top / "workflow", quiet=1, invalidation_mode=py_compile.PycInvalidationMode.CHECKED_HASH)
+        _COMPILED.append(top / "workflow")
+    shutil.copytree(_COMPILED[0], dest)
+
+
+def at_once(calls):
+    """Each call's result, in order, with the calls made at the same time
+    (#193): for a test that starts the CLI many times, each start a real
+    process of its own that would otherwise wait for the one before. Every call
+    is made; the caller checks the results as it checked them one by one, and
+    the first call to raise raises here."""
+    calls = list(calls)
+    cpus = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count() or 2
+    with ThreadPoolExecutor(max_workers=max(1, min(len(calls), cpus))) as pool:
+        return list(pool.map(lambda call: call(), calls))

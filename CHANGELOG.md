@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**The slowest tests run faster, so CI stays inside its time limit** (#193). The kit's own tests only: nothing that ships changes.
+
+- **A fresh copy of the CLI** in a test's project (`tests/test_doctor.py`'s `_project`, `tests/test_guard_no_python.py`'s `_kit_at`) now has its bytecode beside it, compiled once per test run (`copy_kit_package` in `tests/conftest.py`). Run with `-B`, a copy without it compiled every module each run, about half of each run's time. The bytecode is checked against each file's source hash, so a test that changes a copied file still runs its own source. `test_doctor_on_a_real_python_3_9` keeps a copy without it (`compiled=False`), since it checks that no `__pycache__` is written.
+- **Tests that start the CLI many times** now start those runs at the same time (`at_once` in `tests/conftest.py`, and `_each_at_once` in `tests/test_doctor.py`, which gives each run a folder of its own for its input files, fake `PATH` and home). Every run still happens and its result is checked as before: doctor's "nothing in the checkout changes" tests (#58, #59, #60), its wording tests for the GitHub and Cloud lines, the Cloud contents note test, and the installed guard's attended cases (#57).
+- **For projects updating:** nothing to do.
+
 **`workflow status` reports doctor's local gaps, with no network calls** (#62, part of #34).
 
 - **The checks** are doctor's own local ones, run as doctor runs them:
