@@ -2,15 +2,11 @@
 
 **[New to building? Start here](docs/quickstart.md)**
 
-A Claude Code kit for building software from a spec, attended or unattended:
+A Claude Code kit for building software in your own project. You describe what you want; Claude plans it, builds it in small reviewed pieces and merges what passes.
 
-**plan → spec → build tickets → one session per ticket → review panel → merge**
+You start with attended work: you're there, and Claude asks what to do next with choices to click, so you don't need to remember its commands. Start a session and say what you're working on ([Using it](#using-it)). Claude working while you're away, in unattended runs, is something you can add later ([Unattended](#unattended)).
 
-You don't need to remember its commands: start a session and say what you're working on, and Claude asks what to do next with choices to click ([Using it](#using-it)).
-
-For unattended runs, a **conductor** asks the owner a few questions once (the **run charter**). It then builds every ready ticket in parallel sessions, merges what passes, releases if allowed, and reports. Mid-run it waits on you only for your own tasks and for questions it asked you.
-
-It packages what worked over the pair-drop weekend run of 9–12 Oct 2026 (about 50 tickets), with fixes for what didn't. pair-drop, PAIR's own project, is set up with it.
+For developers, the flow in short: **plan → spec → build tickets → one session per ticket → review panel → merge**
 
 > [!NOTE]
 > **Status: beta.** One project has used it so far.
@@ -25,7 +21,7 @@ It packages what worked over the pair-drop weekend run of 9–12 Oct 2026 (about
 - [Planning new work](#planning-new-work-what-happens-underneath): the interview, specs, tickets, maps, and [every Matt Pocock skill](#every-matt-pocock-skill-in-a-project)
 - [Keeping it up to date](#keeping-it-up-to-date) and [as a plugin](#as-a-plugin-on-your-own-computer)
 - [When something goes wrong](#when-something-goes-wrong), [Good to know](#good-to-know) and [Support](#support)
-- [What's in it](#whats-in-it), [Development](#development), [Forking the kit](#forking-the-kit)
+- [What's in it](#whats-in-it), [Development](#development), [Forking the kit](#forking-the-kit), [Where it came from](#where-it-came-from)
 - Reference: [the flow](docs/flow.md), [the run charter](docs/charter.md), [the profile](docs/profile.md), [enforcement](docs/enforcement.md), [install modes](docs/install.md), [what's verified](docs/spike.md)
 
 ## Getting started
@@ -172,7 +168,7 @@ The names come from the profile's `run.ticket_environment` and `run.conductor_en
 The setup script runs before the repository is there, so it must never read the repository's files: one that does fails, and no session in that environment can start. The cloud image already has Python, Node.js, Java, Go, Rust, Ruby, PHP, Docker, PostgreSQL and Redis, so most projects need no setup script at all, whatever their stack:
 - a Python API, or a Node.js app with or without a frontend: **blank**; the kit installs its packages;
 - a project with no dependencies: **blank**, and `commands.setup` is empty too;
-- a Flutter app: a script that downloads Flutter (pair-drop's is in its `docs/operations/workflow-setup.md`).
+- a Flutter app: a script that downloads Flutter.
 
 **Why the names must match.** The repository can't hold an environment's id, because ids belong to your Claude account. So the profile holds the names instead. At the start of a run, the conductor lists your environments, takes the one named `run.ticket_environment`, and starts every ticket session in it. If no environment has that name, the run stops before starting anything and says so. The name matters because of what that environment holds:
 - **no credentials**;
@@ -366,6 +362,8 @@ You merge the pull request.
 Infra tickets (`workflow:infra`) come first, then by number.
 
 #### Unattended
+
+In an unattended run, a **conductor** asks the owner a few questions once (the **run charter**). It then builds every ready ticket in parallel sessions, merges what passes, releases if allowed, and reports. Mid-run it waits on you only for your own tasks and for questions it asked you.
 
 1. Start a cloud session on the repository (desktop app: **Cloud**; or claude.ai/code). Choose the **conductor environment**, and in the permission mode selector (beside the send button in the desktop app) choose **Auto**. A mode that asks before using tools would stall the run, and ticket sessions can't run in a more permissive mode than the conductor's.
 2. Say:
@@ -756,6 +754,10 @@ A fork can run its own releases, with its own projects following it rather than 
 A test (`tests/test_kit_017.py`) counts where shipped files still name the upstream; it follows `KIT_REPO`, so it passes once the constant points at the fork.
 
 Turn on GitHub Actions in the fork, bump the version and let the `release` workflow publish. Its first run also publishes a release for each version the fork inherited (at the upstream's tags); the newest, yours, is marked latest. A project already vendored from this repository keeps following it until it's updated from the fork: clone the fork's release and follow its `update-workflow` skill once.
+
+## Where it came from
+
+The kit packages what worked over the pair-drop weekend run of 9–12 Oct 2026, about 50 tickets, with fixes for what didn't. pair-drop is PAIR's own project, and is set up with the kit. [docs/spike.md](docs/spike.md) records what has been verified since, and [docs/proposal.md](docs/proposal.md) is PAIR's original proposal.
 
 ## Licence
 
