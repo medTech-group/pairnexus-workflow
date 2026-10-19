@@ -12,6 +12,18 @@
 - Docs: `skills/conductor/SKILL.md`, `skills/upgrade-setup/SKILL.md`, `docs/enforcement.md` §5. Tests: `tests/test_conductor_doctor.py`, which also runs the pre-flight's own commands into doctor.
 - **For projects updating:** nothing to do.
 
+**"Check the set-up" hands doctor the base branch's checks and offers "Require these checks"** (#70, part of #38).
+
+- **Two more files, in a cloud session:**
+  - `--checks`: the base branch's latest commit's check runs and statuses, every page, read with `gh api`. The skill's own one-line command puts them side by side in one JSON list. The skill looks at the file before passing it, since doctor is silent about a wrong one. Without `gh api` it leaves the flag out: the GitHub MCP tools list no commit's check runs.
+  - `--prs`: the open pull requests, in full with `head.repo` (`gh api`, or `list_pull_requests` with every field).
+  - The skill says once that the checks that ran couldn't be read from this session, and to check the set-up again where `gh` is signed in. It says so only when the flag is left out, `github.ruleset` is fine and `github.required_checks` has no offer.
+  - In a local session doctor reads both with `gh`, as before.
+- **The offer:** `require_checks` is a choice with "Not now", handing over to `upgrade-setup`'s "Require these checks", whose checks screen asks which checks to require. When `protect_main` or `restore_protection` is offered too, protecting comes first.
+- **The note naming the open profile pull request** (`github.profile_checks`) is shown as doctor words it, never as something to fix now. The skill still changes nothing itself, and never says "fine" while a line couldn't be checked.
+- Docs: `docs/enforcement.md` §5 and the README's "Step 6. Check it". Tests: `tests/test_check_setup.py`.
+- **For projects updating:** nothing to do. The update brings the skill's new steps.
+
 **The evidence runs only the suites a pull request's files need** (`commands.select_suites`; asked for by medTech-group/pair-drop#485).
 
 - **The setting:** `commands.select_suites`, a command the project writes. It reads the pull request's changed paths on stdin, one a line (`git diff --name-only --no-renames <base>...HEAD`, so a rename is both its paths), and prints the suites they need, one a line, or `none` when none is needed. No suite may then be named `none`.
@@ -36,7 +48,7 @@
 - **The `require_checks` offer** ("Require these checks", beside `protect_main`, `restore_protection` and `set_up_unattended_runs`) is made on `github.required_checks` when checks ran on the base branch that the ruleset doesn't require, naming each with its result: on the "checks not required yet" note, on the gap naming checks the profile lists that the ruleset doesn't require, and, when the profile and the ruleset agree, on a note naming the check that ran and neither lists (one added to CI later). The try-it link's `Workers Builds: <worker>` check is never counted. It is never made in solo mode, nor while the base branch isn't protected (`protect_main` or `restore_protection` come first), nor when the check runs can't be read: the line is then as before.
 - **A check the ruleset requires that the profile doesn't list** is a new line, `github.profile_checks`, given only then: a note naming the open pull request that carries `<!-- workflow:required-checks -->` (the profile catches up when it merges), a gap naming the checks with none open (add them to `ci.required_checks` in a pull request, since the merge rule and the conductor read the profile), or "can't check" when the pull requests can't be read. A pull request from another repository (a fork's) isn't counted, where its shape says so (GitHub's pulls list's `head.repo`, or `gh pr list`'s `isCrossRepository`). In solo mode the line is a note either way, and so are profile-listed checks the ruleset doesn't require, even with a ruleset on the base branch: "Require these checks" waits for the pull request that leaves solo mode. On an old `python3`, doctor takes the two files too.
 - Docs: `docs/enforcement.md` §5. Tests: `tests/test_doctor_require_checks.py`.
-- **For projects updating:** nothing to do. The conductor's pre-flight (#71) hands doctor the two files; `check-setup` (#70) will.
+- **For projects updating:** nothing to do. `check-setup` (#70) and the conductor's pre-flight (#71) hand doctor the two files.
 
 **The quickstart: `docs/quickstart.md`, and "New to building? Start here" at the top of the README** (#77, part of #35).
 
