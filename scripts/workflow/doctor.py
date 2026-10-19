@@ -1597,8 +1597,8 @@ def _open_prs(i: Inputs) -> _Answer:
             else:
                 answer = _Answer(why=Words(
                     "the --prs file isn't a list of pull requests, each with its number" if i.prs_file is not None else "GitHub's list of pull requests couldn't be read",
-                    "--prs: a pull request without a number" if i.prs_file is not None else "`gh api`'s pull requests: one without a number",
-                ), fix=answer.fix if i.prs_file is None else PRS_FIX)
+                    "--prs: a pull request whose number isn't a positive whole number" if i.prs_file is not None else "`gh api`'s pull requests: one whose number isn't a positive whole number",
+                ), fix=_again(GIVE_PRS) if i.prs_file is None else PRS_FIX)
         i._prs = answer
     return i._prs
 
@@ -1642,7 +1642,7 @@ def _with_offer(line: Line, ran: list[dict], base: str) -> Line:
     """The line carrying the `require_checks` offer, naming the checks that ran."""
     one = len(ran) == 1
     return Line(line.group, line.id, line.status, Words(
-        line.message.new + f" {'This check has' if one else 'These checks have'} run on `{base}` and {'isn' if one else 'aren'}'t required yet: {_ran_names(ran)}.",
+        line.message.new + f" {'A check has' if one else 'Checks have'} run on `{base}` that {'isn' if one else 'aren'}'t required yet: {_ran_names(ran)}.",
         line.message.developer + f" Ran on `{base}`, not required: {_ran_names(ran)}.",
     ), line.fix, offer="require_checks")
 
@@ -1708,7 +1708,7 @@ def check_required_checks(i: Inputs) -> list[Line]:
         # waits for the pull request that leaves solo mode (#38), so never a gap.
         shown = _check_names(missing)
         return [Line(g, id_, "note", Words(
-            f"Solo mode: GitHub doesn't require {'this check' if len(missing) == 1 else 'these checks'} the kit's profile lists yet: {shown}. {'It is' if len(missing) == 1 else 'They are'} required once `{base}` is protected and you've left solo mode.",
+            f"Solo mode: GitHub doesn't require {'this check' if len(missing) == 1 else 'these checks'} the kit's profile lists yet: {shown}. {'It' if len(missing) == 1 else 'They'} can be required once you've left solo mode.",
             f"Solo mode: ci.required_checks not required by any active ruleset on `{base}`: {shown}.",
         ), Words(
             f"Once you've left solo mode (ask Claude to \"{OFFERS['protect_main']}\"), ask Claude to \"{upgrade}\".",

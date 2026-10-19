@@ -287,6 +287,13 @@ def test_gh_answering_the_status_but_not_the_check_runs_makes_no_offer(tmp_path)
         assert (ln["status"], ln["offer"]) == ("fine", None), ln
 
 
+def test_gh_listing_a_pull_request_without_a_proper_number_is_cant_check_with_a_fix(tmp_path):
+    root = _project(tmp_path, profile=PROTECTED)
+    path = _bin(tmp_path, gh=_routes([_requiring("tests", "lint")], prs=[_pr(-3, MARKER)]))
+    ln = _github(_report(tmp_path, root, path=path))["github.profile_checks"]
+    assert ln["status"] == "cant_check" and ln["fix"], ln
+
+
 def test_a_file_wins_over_gh(tmp_path):
     root = _project(tmp_path, profile=PROTECTED)
     path = _bin(tmp_path, gh=_routes([_requiring("tests", "lint")], runs=_runs(_run("tests"), _run("from-gh", n=3)), prs=[_pr(12, MARKER)]))
