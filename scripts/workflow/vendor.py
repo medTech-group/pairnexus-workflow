@@ -52,7 +52,7 @@ MP_PLUGIN = "mattpocock-skills"
 MP_NOTICE = Path(".claude/skills/LICENSE-mattpocock-skills")
 GUARD_TIMEOUT = 30  # seconds; the CLI's GUARD_BUDGET is 5 under it
 GUARD_MATCHER = "Bash|Monitor|PowerShell|Edit|Write|MultiEdit|NotebookEdit|mcp__.*[Gg]it[Hh]ub.*"
-SKIP_DOCS = {"flow.md", "proposal.md", "spike.md"}
+SKIP_DOCS = {"flow.md", "proposal.md", "quickstart.md", "spike.md"}
 IGNORE_LINE = ".workflow/"
 IGNORE_LINES = {
     ".workflow/": {".workflow", ".workflow/", "/.workflow", "/.workflow/"},

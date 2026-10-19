@@ -28,6 +28,15 @@
 - Docs: `docs/enforcement.md` §5. Tests: `tests/test_doctor_require_checks.py`.
 - **For projects updating:** nothing to do. `check-setup` (#70) and the conductor's pre-flight (#71) will hand doctor the two files.
 
+**The quickstart: `docs/quickstart.md`, and "New to building? Start here" at the top of the README** (#77, part of #35).
+
+- **One page, ten steps, about 10 minutes** from nothing to a first merged change, in a cloud session with nothing to install. The steps: what you need, connecting Claude to GitHub, a repository of your own, a cloud session in the Default environment, the README's Step 1 set-up message (copied word for word), merging the set-up pull request, a new session and one small change, its pull request and checks, merging it (and how to undo it), then the next steps, each optional: "Protect `main`", "Check the set-up" and "Set up unattended runs".
+- **The clicks** are given for the desktop app's **Cloud** option and for claude.ai/code, and the plan, GitHub and environment facts link to Claude's and GitHub's own docs. A brand-new project's first choice in the guided start is a map, so step 7 says to pick "Something new, or a change to what's there" and then **Quick ticket**; step 6 says "Not now" to set-up's "Protect `main`" offer. The choices it names are checked against the skills that show them.
+- **Every glossary word** links to its entry in `docs/glossary.md` at its first use on the page. #41 adds try-it links to the next steps when it writes `docs/previews.md`.
+- **The README's** first line after the title is "New to building? Start here", linking the quickstart. Its Development section's list of what ships names the quickstart too.
+- **Not vendored:** the quickstart is for the kit's readers, so `vendor.plan` leaves it out (`SKIP_DOCS`), and `CONTRIBUTING.md`'s "What ships" says so. Tests: `tests/test_quickstart.py`.
+- **For projects updating:** nothing to do. Only `vendor.py`'s list of skipped docs changes.
+
 **"Check the set-up": the `check-setup` skill, and the guided start's offer of it** (#63, part of #34).
 
 - **The skill** (`skills/check-setup`, a kit skill Claude may load itself; not `doctor`, which Claude Code already has as `/doctor`) runs `workflow doctor --json` and shows its report, worded by the person's experience, the most serious first. It changes nothing itself.

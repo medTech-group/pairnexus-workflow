@@ -23,7 +23,7 @@ Every hook and script is tested with JSON fixtures, including attempts to get pa
 
 **What ships.** Projects receive what `vendor.plan` (`scripts/workflow/vendor.py`) copies:
 - `skills/`, `agents/`, `scripts/` and `templates/`;
-- `docs/`, except `proposal.md` and `spike.md`;
+- `docs/`, except `proposal.md`, `spike.md` and `quickstart.md` (the quickstart is for the kit's readers, not a project's sessions);
 - `LICENSE`;
 - the hook set.
 
