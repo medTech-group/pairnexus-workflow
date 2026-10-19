@@ -121,6 +121,8 @@ Then subscribe to its activity. Schedule a check-in about every `run.check_in_mi
 1. **Push everything,** and make sure the branch is level with the base branch.
 2. **Run the evidence:** `WF evidence --base-ref origin/<base>`, after a `git fetch`.
    - It runs the suites in shards, resumes after a container restart, refuses a dirty tree, and runs the base branch's suites in a temporary worktree to compare counts.
+   - With the profile's `commands.select_suites`, it runs only the suites the branch's changed files need, and says which it left out, or why it ran them all.
+   - **When a required check was waived,** add `--all`: there the report is the proof, and `WF merge-check` counts only the full suite's.
    - Post its report on the PR.
 3. **Run `WF merge-check`.** In attended work, skip this and step 4: say the PR is ready and leave it, since the owner merges. Point them at the `merge-check` skill ("is #N ready to merge?"), or `WF merge-check --fetch <n>`. In a run, right before each of these (merging, arming auto-merge, saying it's ready), run `WF merge-check --fetch <PR> --json --charter .workflow/tracking.md --review-rounds <N>`, with `<N>` the briefing's review rounds and the body of the tracking issue the briefing names saved there (`gh api repos/<repo>/issues/<tracking> --jq .body > .workflow/tracking.md`; git ignores `.workflow/`, so the evidence still sees a clean tree). It is the same command a person's `merge-check` runs, so a run and a person never disagree on "ready".
    - For a check the charter waives, add `--check-logs .workflow/check-logs` with its log in that directory, named by its check run's id on the head (a `waiver_not_taken` note names the file it wants).

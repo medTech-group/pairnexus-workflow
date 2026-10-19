@@ -21,7 +21,8 @@
     workflow briefing verify --file F
     workflow pr-template [--existing FILE]      (prints the file to write; exits 3 for a folder of templates)
     workflow adopt --owner LOGIN --repo OWNER/NAME --name NAME [--project DIR]      (a copy of the starter made yours)
-    workflow evidence [--suite NAME ...] [--base-count N | --base-ref BRANCH] [--fresh] [--allow-dirty]
+    workflow evidence [--suite NAME ... | --all] [--base-count N | --base-ref BRANCH] [--fresh] [--allow-dirty]
+        (with --base-ref and commands.select_suites, only the suites the changed files need)
     workflow repair
     workflow vendor install|update [--kit DIR] [--mattpocock DIR | --no-mattpocock] [--project DIR] [--adopt] [--strict-pin]
         (--kit defaults to the checkout this CLI runs from: give it when running a project's vendored copy)
@@ -900,19 +901,30 @@ def cmd_evidence(a) -> int:
     if a.base_count is not None and a.base_ref:
         print("workflow: give --base-count or --base-ref, not both", file=sys.stderr)
         return 2
+    if a.all and a.suite:
+        print("workflow: give --all or --suite, not both", file=sys.stderr)
+        return 2
     # A bad ref fails before anything runs.
     base_sha = evidence_mod.resolve_ref(root, a.base_ref) if a.base_ref else None
     dirty = evidence_mod.dirty_paths(root) if a.allow_dirty else []
-    sha, results = evidence_mod.collect(prof, root, only=a.suite, fresh=a.fresh, allow_dirty=a.allow_dirty)
+    selection = evidence_mod.Selection(None)
+    if base_sha and not a.suite and not a.all:
+        selection = evidence_mod.select(prof, root, a.base_ref, base_sha)
+    only = a.suite or selection.names
+    if only == []:  # no suite needed: nothing runs here or on the base
+        sha, results = evidence_mod.checked_head(root, a.allow_dirty), []
+    else:
+        sha, results = evidence_mod.collect(prof, root, only=only, fresh=a.fresh, allow_dirty=a.allow_dirty)
     base_count, label, problem, notes = a.base_count, "", "", []
-    if a.base_ref:
-        b = evidence_mod.base_count_from_ref(prof, root, a.base_ref, only=a.suite, fresh=a.fresh, sha=base_sha)
+    if a.base_ref and only != []:
+        b = evidence_mod.base_count_from_ref(prof, root, a.base_ref, only=only, fresh=a.fresh, sha=base_sha)
         base_count, notes = b.count, b.notes
         label = f"`{a.base_ref}` at `{b.sha[:12]}`"
         if b.problem:
             problem = f"no usable base count from {a.base_ref}: {b.problem}"
     ok, md = evidence_mod.report(
-        sha, prof, results, base_count, dirty=dirty, base_label=label, base_problem=problem, base_notes=notes
+        sha, prof, results, base_count, dirty=dirty, base_label=label, base_problem=problem, base_notes=notes,
+        selection=selection,
     )
     print(md)
     return 0 if ok else 1
@@ -1414,6 +1426,7 @@ def main(argv: list[str] | None = None) -> int:
 
     s = sub.add_parser("evidence")
     s.add_argument("--suite", action="append")
+    s.add_argument("--all", action="store_true", help="every suite, whatever commands.select_suites says the files need")
     s.add_argument("--base-count", type=int)
     s.add_argument("--base-ref", help="run the same suites on a worktree of this branch for the base count")
     s.add_argument("--fresh", action="store_true")
