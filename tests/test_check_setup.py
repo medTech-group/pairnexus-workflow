@@ -435,7 +435,9 @@ def test_checks_not_handed_to_doctor_are_said_once_only_where_doctor_would_offer
     # Doctor makes no offer and says nothing when the checks can't be read. It would
     # offer only with the base branch protected and not in solo mode: `github.ruleset` fine.
     text = _text()
-    assert "weren't handed to doctor from this session. If some aren't required yet, \"Require these checks\" isn't offered here." in text
+    assert "couldn't be read from this session, so if some aren't required yet, \"Require these checks\" can't be offered here." in text
+    # With the next step, as upgrade-setup gives it when it can't read the checks.
+    assert "To see them, ask again where `gh` is signed in." in text
     assert "- you left `--checks` out;\n- `github.ruleset` is `fine`;\n- `github.required_checks` has no `offer`;" in text
     assert "Otherwise say nothing about it." in text
 

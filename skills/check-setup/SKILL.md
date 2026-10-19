@@ -68,7 +68,7 @@ Without `--checks`, doctor reads the checks with `gh` itself, where it can. When
 
 say once beside the report:
 
-> The checks that ran on `<base>` weren't handed to doctor from this session. If some aren't required yet, "Require these checks" isn't offered here.
+> Which checks have run on `<base>` couldn't be read from this session, so if some aren't required yet, "Require these checks" can't be offered here. To see them, ask again where `gh` is signed in.
 
 Otherwise say nothing about it.
 
