@@ -94,6 +94,13 @@ Tell the person what matters in two to four lines, for example: "PR #297 is wait
 
 **In solo mode** (status says `Solo mode: yes`), one of those lines says so, with what it means for them: "This project is in solo mode: nothing on GitHub protects `<base branch>` yet, so the kit refuses any change straight to it, and all work goes through pull requests." Name the profile's base branch. Don't offer "Protect `main`" here: it is offered when they ask, and in a refusal.
 
+**"Check the set-up"** (the `check-setup` skill) is offered only at these moments, never at every session start:
+- **On a local gap.** Read status's `set_up` first: when it is false, the gap is the missing profile, so offer setting the kit up (below), not this. Otherwise, when status reports a local gap (the line `Local gaps: N (…)`; in `--json`, `local_gap` is `true`, with the lines in `local_gaps`), one of your lines names the gaps in a few words, from `local_gaps`' messages in `WF status --json` (the run at the session's first message has them; else run it), which are already worded for the person: the text line gives only their ids. Then offer **Check the set-up** in "What are we working on?".
+- **In solo mode, once a session,** beside the solo-mode line above: offer **Check the set-up** in "What are we working on?". Once it has been offered in this session, whatever they picked, don't offer it again for solo mode.
+- **On an old `python3`.** When `WF status` stops with "workflow needs Python 3.11", that is not "no gap": `status` can't run on an older `python3`. Say `python3` is older than the kit needs, and offer **Check the set-up**: doctor still runs there, with its short report and the fix.
+
+Only the local look counts here: `status` makes no network call for it, and the guided start never runs `workflow doctor` itself. Never in a ticket or conductor session (above, "Only in attended sessions").
+
 **If the kit isn't set up here** (only possible with the plugin, since otherwise this skill isn't there), ask "This project isn't set up for the workflow kit yet". The options:
 - **Set it up (Recommended):** follow the kit's `setup-workflow` skill. It is user-only, so read its `SKILL.md`.
 - **Work without the kit for now.**
@@ -104,11 +111,12 @@ Tell the person what matters in two to four lines, for example: "PR #297 is wait
 |---|---|---|
 | **Update the workflow kit to <version> (Recommended)** | A newer kit release is out, no run is in progress, and no update pull request is open (status's `kit_update_pr`; else offer "Carry on: the kit update PR #n"). It comes first, before a brand-new project's map | "A pull request for you to merge, with what's new; then we carry on." |
 | **Carry on: <the thing>** | Something is under way (the table below): name the most pressing one | What it is and what happens next |
+| **Check the set-up** | Status reports a local gap, or `python3` is too old for it: then it is the recommended option and first, ahead of a brand-new project's map; when a kit update is offered, the update stays first and recommended, and this comes second, without "(Recommended)". Or once a session in solo mode, as above, not recommended | "What's set up and what isn't, each with its fix; it changes nothing." |
 | **Check whether #N is ready to merge** | Status lists an open PR: one for each it lists, as room allows, leaving out one already offered as "Carry on" | "Ready, or not yet and why; nothing merges until you choose." |
 | **Something new, or a change to what's there** | Always | "Tell me in your own words; several things at once is fine." |
 | **Fix something that's broken** | Unless four better options fill the list | "Describe what goes wrong; I'll find the cause." |
 | **Sort the new issues (N)** | Status lists issues to sort | "One by one: ready to build, needs more info, or won't do." |
-| **A brand-new project or a large effort** | The project is brand new (then first and recommended), or they mentioned something big | "Chart it as a map of decisions first." |
+| **A brand-new project or a large effort** | The project is brand new (then first and recommended, unless a kit update or a local gap's **Check the set-up** is offered: then after them, without "(Recommended)"), or they mentioned something big | "Chart it as a map of decisions first." |
 | **Run the ready tickets unattended (N)** | Tickets are ready and no run is in progress | "Built in parallel sessions while you're away." |
 
 **Carrying on.** What "Carry on" does depends on what is under way:
@@ -123,6 +131,7 @@ Tell the person what matters in two to four lines, for example: "PR #297 is wait
 
 **What the other options lead to:**
 - **Update the workflow kit:** in plugin mode (no `.claude/workflow/lock.json`), tell them to type `/plugin update pairnexus-workflow@pairnexus`. Vendored: read the project's `.claude/skills/update-workflow/SKILL.md` (user-only, so read it) for where the kit lives and how to clone the new release outside the project, then read **that release's** `$KIT/skills/update-workflow/SKILL.md` and follow it. It ends with a pull request for them to merge. Then ask "What are we working on?" again, without this option. With a run in progress, don't offer it: a run stays on the version it started with.
+- **Check the set-up:** load `check-setup` with the Skill tool. It shows the report and offers the upgrades it names, each with "Not now". Then ask "What are we working on?" again, without this option.
 - **Check whether #N is ready to merge:** load `merge-check` with the Skill tool, for that PR. Only when they pick it: never run the check on its own.
 - **New, a change, or a fix:** ask in plain text, "Tell me what you have in mind: as much or as little as you like." Then step 2.
 - **Sort the new issues:** step 5.
