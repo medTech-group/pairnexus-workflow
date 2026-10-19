@@ -14,6 +14,24 @@
 - Docs: `docs/enforcement.md` §5. Tests: `tests/test_check_setup.py`.
 - **For projects updating:** nothing to do. The update brings the skill's new steps.
 
+**The evidence runs only the suites a pull request's files need** (`commands.select_suites`; asked for by medTech-group/pair-drop#485).
+
+- **The setting:** `commands.select_suites`, a command the project writes. It reads the pull request's changed paths on stdin, one a line (`git diff --name-only --no-renames <base>...HEAD`, so a rename is both its paths), and prints the suites they need, one a line, or `none` when none is needed. No suite may then be named `none`.
+- **It runs as the base branch has it:** in a temporary worktree of the base (without `commands.setup`), so a branch never changes the rules it's judged by, nor anything they import.
+- **What runs:** `workflow evidence --base-ref origin/<base_branch>` runs those suites, and any suite one of whose test files (its `files`) was added, changed or deleted. It runs them on the branch and on the base worktree, so the counts compare the same suites. With none needed, nothing runs and the report passes, comparing nothing.
+- **Every suite runs, as before,** when:
+  - the setting is unset, or the profile says `ci.none` (the report is then the only proof);
+  - the base ref isn't `origin/<base_branch>` as fetched (a ref inside the branch would list only part of its changes);
+  - the changed files can't be listed (no merge base, a path that isn't UTF-8 or holds a line break) or none changed;
+  - a change is under `.github/workflows/` or `.claude/workflow/`, or to a file the command names;
+  - the command exits non-zero, takes over 2 minutes, prints nothing (a crashed pipeline can exit 0) or names a suite the profile hasn't.
+
+  The report then says why. `--all` runs every suite whatever the setting says. `--suite` and `--base-count` make no selection.
+- **The report:** the suites run and those not needed, with the command. Its first line reads `**Local suites its files need on `<sha>`**: passed` whenever a suite didn't run, with `--suite` too.
+- **`workflow merge-check`:** where it needs the evidence (`ci.none`, or a waived check), only a full-suite report counts. A scoped one is a note, like a dirty one. `build-ticket` runs the evidence with `--all` when a check was waived.
+- Docs: `docs/profile.md`, `templates/profile.toml`, `docs/flow.md` §4, `skills/build-ticket/SKILL.md` step 6. Tests: `tests/test_evidence_select.py`, `tests/test_merge_check_evidence.py`.
+- **For projects updating:** nothing to do. To use it, set `commands.select_suites` in the profile (a pull request the owner merges).
+
 **`workflow doctor` offers "Require these checks", and names the open profile pull request** (#69, part of #38).
 
 - **Two new files, each winning over `gh`:** `--checks`, the base branch's latest commit's check runs and statuses in one file (GET `repos/<repo>/commits/<ref>/check-runs` and `.../status`, or `.../statuses`, every page, side by side): the checks that ran, read as `workflow protection --checks-ran` reads them from its two files; and `--prs`, the open pull requests, as `workflow ready --prs` takes them. Without them doctor reads both with `gh api` (GETs only, within the GitHub lines' 60 seconds), and only when a line needs them. Either can be `-`, but only one of doctor's files can be standard input.

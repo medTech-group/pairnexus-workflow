@@ -43,7 +43,7 @@ from typing import Callable
 
 from . import charter as charter_mod
 from . import protection, reviews, state
-from .evidence import read_headline
+from .evidence import is_full, read_headline
 from .guard import matches
 from .posts import CommentsError, _login, _number, comments_from, decode_values
 from .profile import DEFAULT_PROTECTED, Suite
@@ -871,7 +871,8 @@ def _evidence(ctx: Context, add) -> None:
     head, `workflow evidence`'s report for the head is on the pull request: the
     latest comment, from an account with write access, whose first line is the
     report's headline for the head (a short SHA of 7 or more counts) says
-    passed, not on a dirty tree. Recommended always, required only there."""
+    passed, not on a dirty tree, for the full suite (not only the suites the
+    files need). Recommended always, required only there."""
     ctx.read_profile()
     prof = ctx.profile
     if prof and prof.ci_none:
@@ -885,17 +886,19 @@ def _evidence(ctx: Context, add) -> None:
     found, latest = 0, None
     for c in ctx.comments():
         body = (c.get("body") or "").lstrip("\ufeff")
-        line = read_headline(body.split("\n", 1)[0].rstrip("\r")) if body else None
+        first = body.split("\n", 1)[0].rstrip("\r") if body else ""
+        line = read_headline(first) if body else None
         if line is None:
             continue
         found += 1
         sha, passed, dirty = line
         if head.startswith(sha) and _may_review(_login(c), perms):
-            latest = passed and not dirty
+            # Here the report is the proof, so only the full suite's counts.
+            latest = passed and not dirty and is_full(first)
     if not latest:
         add("evidence_missing", why=why)
         if found:
-            _note(ctx, "evidence_ignored", f"Left out {_plural(found, 'evidence report')}: none is the latest passing report for the head from an account with write access (one that says FAILED, names another commit, says \"on a dirty tree\", or comes from another account doesn't count).")
+            _note(ctx, "evidence_ignored", f"Left out {_plural(found, 'evidence report')}: none is the latest passing report for the head from an account with write access (one that says FAILED, names another commit, says \"on a dirty tree\", ran only the suites its files need, or comes from another account doesn't count).")
 
 
 def _up_to_date(ctx: Context, add) -> None:
