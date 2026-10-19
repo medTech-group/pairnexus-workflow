@@ -47,16 +47,35 @@ Gather the files doctor takes into `.workflow/` (git ignores it), each `gh api` 
 - **The repository's settings:** `gh api repos/<repo> > .workflow/repo.json`.
 - **The environments:** `list_environments`, every page until `has_more` is false, saved as one JSON list of its pages in `.workflow/environments.json`.
 - **The runs:** the issues labelled `workflow:run`, open and closed: `gh api 'repos/<repo>/issues?labels=workflow:run&state=all&sort=created&direction=desc&per_page=30' > .workflow/run-issues.json` (or the GitHub MCP tools, all pages in one JSON list).
+- **The checks that ran on the base branch** (the profile's `project.base_branch`, `<base>` below, percent-encoded in a route except for its `/`, as doctor does), for doctor's "Require these checks" offer (`require_checks`): its latest commit's check runs and statuses, every page, in one file.
+  1. `gh api --paginate --slurp 'repos/<repo>/commits/<base>/status?per_page=100' > .workflow/status.json`. It is a list of pages, and the first page's `sha` is the commit: `python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))[0]["sha"])' .workflow/status.json`. Write it out in full in the next command (`<sha>`), so both reads are of the same commit even if `<base>` moves in between.
+  2. `gh api --paginate --slurp 'repos/<repo>/commits/<sha>/check-runs?per_page=100' > .workflow/check-runs.json`.
+  3. Put the two side by side in one JSON list, as doctor's `--checks` takes them:
+
+     ```bash
+     python3 -c 'import json, sys; json.dump([json.load(open(f)) for f in sys.argv[1:]], sys.stdout)' .workflow/check-runs.json .workflow/status.json > .workflow/checks.json
+     ```
+
+  The GitHub MCP tools have no list of a commit's check runs, so without `gh api` here, leave `--checks` out.
+
+  **Look at `checks.json` before you pass it: a wrong one is silent.** Doctor then makes no offer, and no line says why. Check that:
+  - it holds GitHub's own pages, never an error body (`{"message": …}`, alone or inside a page list);
+  - each check run keeps its `app` with its `slug` (without it doctor can't tell the try-it link's check apart, and reads nothing);
+  - the check runs across the pages, and the statuses across theirs, each add up to their `total_count` (fewer read as unreadable);
+  - the status's `sha` is the commit the check runs were fetched for (each run's `head_sha`).
+
+  Each command above must exit 0: a failed `gh api` still writes GitHub's error body into its file, and a failed command still leaves the file its redirect made. If one fails, or `checks.json` fails one of these checks, run the steps again once from step 1; if that fails too, leave `--checks` out. Either way, note that you left it out: the kick-off says so (step 1, "The `require_checks` offer").
+- **The open pull requests,** for doctor's note on a pull request that adds GitHub's required checks to the profile: `gh api --paginate --slurp 'repos/<repo>/pulls?state=open&per_page=100' > .workflow/prs.json`, or the GitHub MCP tools' `list_pull_requests` with `state` open, every page, with every field (no `fields` subset), saved as one JSON list of its pages. Each pull request is in full, with its `body` and its `head.repo`: a marked pull request counts only when it comes from this repository, and one without `head.repo` counts by its body alone. Never a minimal or summarised list: if the MCP tools' pull requests have no `head.repo.full_name`, leave `--prs` out. Unless the profile says `ruleset = false`, pull requests that can't be read (an unusable `prs.json`, or none given where doctor's own `gh` read fails) leave `github.profile_checks` `cant_check` wherever GitHub requires a check the profile doesn't list: a safety gap like any other.
 - **This session's Claude Code version:** `claude --version`, as it prints it.
 
 Then run doctor once, with all of them:
 
 ```bash
-WF doctor --json --rulesets .workflow/rulesets.json --repo .workflow/repo.json --environments .workflow/environments.json --runs .workflow/run-issues.json --claude-version "<what claude --version printed>" > .workflow/doctor.json
+WF doctor --json --rulesets .workflow/rulesets.json --repo .workflow/repo.json --environments .workflow/environments.json --runs .workflow/run-issues.json --checks .workflow/checks.json --prs .workflow/prs.json --claude-version "<what claude --version printed>" > .workflow/doctor.json
 ```
 
 It changes nothing and exits 0. Exit code 2 means the command was wrong: fix it and run it again. Before reading the report, redo any fetch that went wrong, once:
-- a file you gathered that holds an error rather than GitHub's or Claude's answer (a failed `gh api` saves GitHub's error body, such as `{"message": "Not Found", …}`, into the file), or that is missing or empty;
+- a file you gathered that holds an error rather than GitHub's or Claude's answer (a failed `gh api` saves GitHub's error body, such as `{"message": "Not Found", …}`, into the file), or that is missing or empty, `prs.json` among them (`checks.json` has its own checks and its one redo above, since doctor never names it: once you've left `--checks` out, don't fetch it again);
 - a file a `cant_check` line names, or whose answer it says isn't in the shape GitHub or Claude gives it, or whose fix says to fetch it again.
 
 Fetch each such file again and run doctor again. Whatever its lines say after that is the report: a line still `cant_check` stays a safety gap. Output that isn't its JSON (a traceback, another exit code) is never a clean report: run it again once, and if it still fails, raise "the set-up couldn't be checked" as a safety gap, and read solo mode from the profile's `project.ruleset` itself (below). Each of its `lines` has a `group`, an `id`, a `status` (`gap`, `cant_check`, `note` or `fine`), a `message`, a `fix` and an `offer` (the `upgrade-setup` offer that fixes it, or null), worded for the owner. Read them so:
@@ -69,7 +88,9 @@ Fetch each such file again and run doctor again. Whatever its lines say after th
   - `profile check` (`kit.profile`), the kit's copy and hooks, Python and Claude Code's version (`computer.claude_code`), and the environments (`cloud.environments`).
 
   A `cant_check` line is worded as what can't be confirmed from this session, not as something removed or missing. Doctor's advice never loosens a run: the ticket environment, the work and the last run (below) are checked whatever doctor's lines say.
-- **Notes** go to the kick-off's findings as they are, asked nothing: the profile's warnings (`kit.profile`), the environments' contents (`cloud.contents`, which the owner confirms in the kick-off), and the like. Two notes change the kick-off, below.
+- **Notes** go to the kick-off's findings as they are, asked nothing: the profile's warnings (`kit.profile`), the environments' contents (`cloud.contents`, which the owner confirms in the kick-off), and the like. Four lines change the kick-off, below.
+- **The `require_checks` offer** is on `github.required_checks`, a `note` or a `gap`, when checks ran on the base branch that the ruleset doesn't require. It becomes its own kick-off choice (step 1, "The `require_checks` offer").
+- **The open profile pull request.** When GitHub requires checks the profile doesn't list and an open pull request adds them to the profile, `github.profile_checks` is a `note` naming that pull request: the run goes ahead, and the note is shown with the others, never a safety gap. The conductor never merges the profile's pull request: it changes a protected path (the profile), so it is the owner's. Without such a pull request the same line is a `gap`, a safety gap as any other. Its **Fix it first** is done in an attended session too, as "Require these checks" is (step 1, "The `require_checks` offer"): the profile's pull request, which doctor counts only when it carries `<!-- workflow:required-checks -->`, is opened there, never in the kick-off.
 - **Required approvals.** `github.approvals` as a note means the ruleset needs approvals above 0: no PR a session opens can merge without a person's approval (sessions post as the owner, and an author can't approve their own PR). Say so in the kick-off, and make **owner** the recommended answer to the merge question (`merge.mode: owner`: runs stop at "ready for review"). If the owner picks another mode anyway, every PR waits on an approval until the end time. A `github.approvals` line that is `cant_check` makes **owner** the recommended answer too: an approval may be needed.
 - **Solo mode** is read from doctor's lines, so there is one place that decides. The run is in solo mode when either:
   - **chosen:** `kit.ruleset` is doctor's solo-mode note (status `note`, offer `protect_main`): the profile says `ruleset = false`;
@@ -109,8 +130,19 @@ Fetch each such file again and run doctor again. Whatever its lines say after th
 With `AskUserQuestion`, at most four questions to a round, recommended answers first.
 
 1. **The findings.** Show the pre-flight's problems first: this session's own (its role, its permission mode, the base branch's CI and the rest above), then doctor's safety gaps, most serious first as doctor lists them, then doctor's notes. For each safety gap, ask "Fix it first / Go ahead without it"; each gap accepted goes in `accepted_gaps`, in words (for doctor's, its words with its line's id in front: `github.up_to_date: <message>`).
-   - **Fix it first:** follow the line's fix (through the `upgrade-setup` skill when its `offer` names one), then gather the files again and run doctor again. The gap is closed when its line is neither a `gap` nor `cant_check`. If it still is, ask again: **Go ahead without it** (into `accepted_gaps`) or **Don't start the run** (end here; nothing has been created yet).
+   - **Fix it first:** follow the line's fix (through the `upgrade-setup` skill when its `offer` names one, except "Require these checks", below), then gather the files again and run doctor again. The gap is closed when its line is neither a `gap` nor `cant_check`. If it still is, ask again: **Go ahead without it** (into `accepted_gaps`) or **Don't start the run** (end here; nothing has been created yet).
    - **A paid-plan refusal** (GitHub refused the rulesets list because rulesets need a paid plan, pre-flight): say it beside the solo-mode gap, or, with `ruleset` left out, beside `github.ruleset`'s gap and `github.required_checks`'s (whose fix needs a ruleset too): rulesets on a private repository need a paid GitHub plan (Team or above), or the repository made public. Until then **Protect `main`**, **Restore protection** and those gaps' **Fix it first** can't work, so recommend going ahead: **Go ahead** for the solo-mode gap, **Go ahead without it** for the ruleset's gaps.
+   - **The `require_checks` offer** (`github.required_checks` offering `require_checks`, a `note` or a `gap`): ask it in place of **Fix it first / Go ahead without it**. The conductor never changes the ruleset itself, nor guides it in its kick-off: "Require these checks" is done in an attended session. Show the line's message, which names the checks that ran on the base branch and aren't required yet (at most 10, then "and N more"), then ask:
+     - **Require these checks first**: the conductor names the checks that ran, from that message, and says to ask Claude to "require the checks" in an attended session (the `upgrade-setup` skill's "Require these checks", which reads the checks again and has the owner tick which to require). Then end here; nothing has been created yet. The next run's pre-flight reads the ruleset again.
+     - **Go ahead without them**: when the line is a `gap`, add it to `accepted_gaps` in doctor's words (`github.required_checks: <message>`); a note needs no record. With no checks in the profile's `ci.required_checks`, the charter's defaults already pick `session` and the merge question leaves out `auto-merge` (step 2).
+
+     Two more gaps are fixed in an attended session, so their **Fix it first** ends here the same way; they are asked **Fix it first / Go ahead without it** as usual:
+     - a `github.required_checks` gap with no `offer` whose fix still asks for "Require these checks" (the checks it names haven't run, or couldn't be read), while `github.ruleset` is `fine`: say to ask Claude to "require the checks" in an attended session once they have run. While the base branch isn't protected, the ruleset's own gap comes first (`github.ruleset`'s gap with `ruleset` left out, the solo-mode gap, or the paid-plan refusal, above), and doctor is run again after it. While that gap is accepted or still open, this gap's **Fix it first** can't work, so recommend **Go ahead without it**;
+     - `github.profile_checks`' gap (checks GitHub requires that the profile doesn't list, with no pull request adding them): say to ask Claude in an attended session to add them to the profile's `ci.required_checks` in a pull request, as doctor's fix says (on the branch `workflow/required-checks`, carrying `<!-- workflow:required-checks -->`, as `upgrade-setup`'s "The profile's pull request" opens it).
+
+     When you left `--checks` out (pre-flight), `github.ruleset` is `fine` and `github.required_checks` has no `offer`, say once beside the findings, a note, not a safety gap:
+
+     > Which checks have run on `<base>` couldn't be read from this session, so if some aren't required yet, "Require these checks" can't be offered here. To see them, ask Claude to check the set-up again where GitHub's command-line tool (`gh`) is signed in.
    - **"Up to date" accepted** changes nothing else: every merge in the run (yours, or a PR whose auto-merge you enable) runs on `WF merge-check`, which never says `ready` for a branch that isn't level with the base (flow §4.3).
    - **The solo-mode gap** is stated plainly, in these words, with the profile's base branch in place of `main` where it isn't `main`:
 
