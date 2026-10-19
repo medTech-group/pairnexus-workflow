@@ -127,6 +127,7 @@ def test_a_file_doctor_could_not_use_is_fetched_again_once():
     # A runs file doctor can't use leaves the Cloud line a note whose status isn't known.
     assert "**Runs that couldn't be read are the exception.**" in failed and "whether it is a note or a gap isn't known" in failed.lower()
     assert "counts as a line that couldn't be checked" in failed
+    assert "only when neither environment is ready" in failed and "Only when its message says so" in failed
     show = _section(_text(), "Show the report")
     assert "no runs line that couldn't be read is the set-up fine" in show
 
