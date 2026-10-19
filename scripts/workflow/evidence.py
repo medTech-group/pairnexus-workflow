@@ -6,16 +6,19 @@ commit, keeping each shard's result and full output on disk under
 shards. The report names the command, head SHA, counts, duration and each
 suite's output tail, the likely cause of a failure, and compares the count
 with the base branch's (given, or run on a worktree of the base), which also
-catches skipped tests.
+catches skipped tests. With `commands.select_suites` and a base ref, only the
+suites a PR's changed files need run, on both (`select`).
 """
 
 from __future__ import annotations
 
 import dataclasses
+import fnmatch
 import glob
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import time
@@ -46,16 +49,34 @@ PYTEST = re.compile(r"(?<![\w-])pytest\b")
 
 # The report's first line, which `workflow merge-check` reads back (flow §4.2).
 DIRTY = ", on a dirty tree: NOT A PROOF OF THE COMMIT"
-_HEADLINE = re.compile(r"\*\*Local full suite on `([0-9a-fA-F]{7,40})`\*\*: (passed|FAILED)(" + re.escape(DIRTY) + ")?")
+FULL = "full suite"
+SCOPED = "suites its files need"
+_HEADLINE = re.compile(
+    rf"\*\*Local (?:{FULL}|{SCOPED}) on `([0-9a-fA-F]{{7,40}})`\*\*: (passed|FAILED)(" + re.escape(DIRTY) + ")?"
+)
+
+# A change under these runs every suite: they can change what the selection runs.
+DECIDES = (".github/workflows/", ".claude/workflow/")
+SELECT_TIMEOUT = 120
+# What commands.select_suites prints when no suite is needed (printing nothing runs every suite).
+NONE_NEEDED = "none"
 
 
 class EvidenceError(RuntimeError):
     pass
 
 
-def headline(sha: str, ok: bool, dirty: bool = False) -> str:
-    """The report's first line: `**Local full suite on `<sha>`**: passed`."""
-    return f"**Local full suite on `{sha}`**: {'passed' if ok else 'FAILED'}{DIRTY if dirty else ''}"
+def headline(sha: str, ok: bool, dirty: bool = False, scoped: bool = False) -> str:
+    """The report's first line: `**Local full suite on `<sha>`**: passed`, or
+    `**Local suites its files need on `<sha>`**: passed` when some suites
+    weren't needed (`select`)."""
+    return f"**Local {SCOPED if scoped else FULL} on `{sha}`**: {'passed' if ok else 'FAILED'}{DIRTY if dirty else ''}"
+
+
+def is_full(line: str) -> bool:
+    """Whether a report's first line is the full suite's, not only the suites
+    a pull request's files need."""
+    return (line or "").strip().startswith(f"**Local {FULL} on ")
 
 
 def read_headline(line: str) -> tuple[str, bool, bool] | None:
@@ -118,6 +139,13 @@ def dirty_paths(root: Path) -> list[str]:
     if out.returncode:
         raise EvidenceError("not a git checkout")
     return [l[3:] for l in out.stdout.splitlines() if l[3:] and not l[3:].startswith(".workflow/")]
+
+
+def checked_head(root: Path, allow_dirty: bool = False) -> str:
+    """HEAD, after the same check `collect` makes, for a run with no suite to run."""
+    if not allow_dirty:
+        require_clean(root)
+    return head_sha(root)
 
 
 def require_clean(root: Path) -> None:
@@ -349,6 +377,154 @@ def resolve_ref(root: Path, ref: str) -> str:
 
 
 @dataclass
+class Selection:
+    """Which suites a PR's changed files need. `names` None: every suite, with
+    `why` (empty when the profile has no `commands.select_suites`)."""
+
+    names: list[str] | None
+    why: str = ""
+    command: str = ""
+    against: str = ""
+    skipped: list[str] = field(default_factory=list)
+
+
+def changed_paths(root: Path, base_sha: str) -> list[str]:
+    """The paths changed since the merge base with `base_sha`; a rename is its
+    old path and its new one."""
+    p = subprocess.run(["git", "diff", "--name-only", "--no-renames", "-z", f"{base_sha}...HEAD"], cwd=root, capture_output=True)
+    if p.returncode:
+        raise EvidenceError((p.stderr.decode(errors="replace").strip() or f"git diff exited {p.returncode}")[:300])
+    try:
+        paths = [x for x in p.stdout.decode("utf-8").split("\0") if x]
+    except UnicodeDecodeError:
+        raise EvidenceError("a changed path isn't UTF-8")
+    if any("\n" in x or "\r" in x for x in paths):
+        raise EvidenceError("a changed path has a line break in it")
+    return paths
+
+
+def _tests_of(suite: Suite, path: str) -> bool:
+    """Whether `path` is (or was) one of the suite's test files, by its `files`
+    globs; `fnmatch` lets `*` cross folders, so it errs towards running it."""
+    for pat in [x.strip() for x in suite.files.split(",") if x.strip()]:
+        if fnmatch.fnmatchcase(path, pat) or fnmatch.fnmatchcase(path, pat.replace("**/", "")):
+            return True
+    return False
+
+
+def _base_branch_sha(root: Path, branch: str) -> str:
+    p = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{branch}^{{commit}}"], cwd=root, capture_output=True, text=True
+    )
+    return p.stdout.strip() if p.returncode == 0 else ""
+
+
+def _run_selector(cmd: str, root: Path, base_sha: str, paths: list[str]) -> subprocess.CompletedProcess:
+    """The command as the base branch has it: run in a worktree of `base_sha`
+    (no `commands.setup`), so nothing the branch changes decides what runs."""
+    wt = root / ".workflow" / f"select-{base_sha}"
+
+    def remove() -> None:
+        subprocess.run(["git", "worktree", "remove", "--force", str(wt)], cwd=root, capture_output=True)
+        shutil.rmtree(wt, ignore_errors=True)
+        subprocess.run(["git", "worktree", "prune"], cwd=root, capture_output=True)
+
+    if wt.exists():
+        remove()
+    wt.parent.mkdir(parents=True, exist_ok=True)
+    add = subprocess.run(["git", "worktree", "add", "--detach", str(wt), base_sha], cwd=root, capture_output=True, text=True)
+    if add.returncode:
+        raise OSError(f"couldn't add a worktree of the base ({add.stderr.strip()[:200]})")
+    try:
+        return subprocess.run(
+            cmd, shell=True, cwd=wt, input="".join(f"{x}\n" for x in paths), capture_output=True, text=True, timeout=SELECT_TIMEOUT
+        )
+    finally:
+        remove()
+
+
+def select(profile: Profile, root: Path, ref: str, base_sha: str) -> Selection:
+    """The suites the files changed since `ref` need, by the profile's
+    `commands.select_suites`, run as the base branch has it (`_run_selector`):
+    given the paths one a line on stdin, it prints a suite's name a line, or
+    `none` when no suite is needed. A suite one of whose test files changed
+    always runs. Every suite runs when the setting is unset, the profile says
+    `ci.none`, `ref` isn't `origin/<base_branch>`, the paths can't be listed or
+    none changed, a path is one that decides (`DECIDES`, or a file the command
+    names), or the command fails, times out, prints nothing or names a suite
+    the profile hasn't."""
+    cmd = profile.select_suites
+    if not cmd or not profile.suites:
+        return Selection(None)
+
+    def every(why: str) -> Selection:
+        return Selection(None, why=why, command=cmd, against=ref)
+
+    if profile.ci_none:
+        return every("the profile says `ci.none`, so this report is the only proof of the commit")
+    base = profile.base_branch
+    if base_sha != _base_branch_sha(root, base):
+        return every(f"`{ref}` isn't `origin/{base}` as fetched here, so the files changed since it may not be all the branch's")
+    try:
+        paths = changed_paths(root, base_sha)
+    except EvidenceError as e:
+        return every(f"couldn't list the files changed since `{ref}` ({e})")
+    if not paths:
+        return every(f"no file changed since `{ref}`")
+    try:
+        named = {w.removeprefix("./") for w in shlex.split(cmd)}
+    except ValueError:
+        named = set()
+    for path in paths:
+        if any(path.startswith(d) if d.endswith("/") else path == d for d in DECIDES):
+            return every(f"`{path}` changed, and a change there can change what runs")
+        if path in named:
+            return every(f"`{path}`, which commands.select_suites runs, changed")
+    try:
+        p = _run_selector(cmd, root, base_sha, paths)
+    except subprocess.TimeoutExpired:
+        return every(f"`{cmd}` didn't finish in {SELECT_TIMEOUT} seconds")
+    except OSError as e:
+        return every(f"couldn't run `{cmd}` ({getattr(e, 'strerror', None) or e})")
+    if p.returncode:
+        tail = " ".join((p.stderr or p.stdout).strip().splitlines()[-2:])[:200]
+        return every(f"`{cmd}` exited {p.returncode}" + (f": {tail}" if tail else ""))
+    names = list(dict.fromkeys(x.strip() for x in p.stdout.splitlines() if x.strip()))
+    if not names:
+        return every(f"`{cmd}` printed no suite (it prints `{NONE_NEEDED}` when none is needed)")
+    if names == [NONE_NEEDED]:
+        names = []
+    known = [s.name for s in profile.suites]
+    unknown = [n for n in names if n not in known]
+    if unknown:
+        return every(f"`{cmd}` named {unknown[0][:60]!r}, which isn't a suite of the profile")
+    names += [s.name for s in profile.suites if any(_tests_of(s, x) for x in paths)]
+    return Selection(
+        [n for n in known if n in names], command=cmd, against=ref, skipped=[n for n in known if n not in names]
+    )
+
+
+def _and(names: list[str]) -> str:
+    if not names:
+        return "no suite"
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def _selection_line(sel: Selection) -> str:
+    if sel.names is None:
+        return f"- **Every suite ran:** {sel.why}." if sel.why else ""
+    given = f"the files changed since `{sel.against}`"
+    if not sel.names:
+        return f"- **No suite needed** for {given} (`{sel.command}`): {_and(sel.skipped)} didn't run."
+    if not sel.skipped:
+        return f"- Every suite was needed for {given} (`{sel.command}`)."
+    return (
+        f"- **Only the suites this PR's files need** (`{sel.command}`, given {given}): "
+        f"ran {', '.join(sel.names)}; not needed: {', '.join(sel.skipped)}."
+    )
+
+
+@dataclass
 class BaseCount:
     """The base branch's count. `problem` is set when there is no usable count:
     the base run errored or a shard failed, so nothing can be compared."""
@@ -428,12 +604,14 @@ def report(
     base_label: str = "",
     base_problem: str = "",
     base_notes: list[str] | None = None,
+    selection: Selection | None = None,
 ) -> tuple[bool, str]:
     """The evidence as Markdown, and whether it passes. `base_problem` (no usable
     base count, e.g. "no usable base count from main: …") doesn't fail it: the
     commit's own result stands, and the report says plainly that the count
     wasn't compared, so a base branch with its own failure doesn't block every
-    PR (the conductor opens an infra ticket for it instead)."""
+    PR (the conductor opens an infra ticket for it instead). `selection` says
+    which suites the PR's files needed; with none needed, nothing is compared."""
     by_suite: dict[str, list[ShardResult]] = {}
     for r in results:
         by_suite.setdefault(r.suite, []).append(r)
@@ -448,6 +626,9 @@ def report(
             f"{', …' if len(dirty) > 5 else ''}). Use it to try a profile, never for the merge rule.",
             "",
         ]
+    sel = selection or Selection(None)
+    if _selection_line(sel):
+        lines.append(_selection_line(sel))
     for s in profile.suites:
         rs = by_suite.get(s.name)
         if not rs:
@@ -470,7 +651,9 @@ def report(
         tail = _short_tail(rs[-1].tail)
         if tail:
             lines += ["  ```", *("  " + x for x in tail.splitlines()), "  ```"]
-    if base_problem:
+    if sel.names == []:
+        pass  # nothing ran, so there is nothing to compare
+    elif base_problem:
         lines.append(
             f"- **Not compared with the base branch:** {base_problem}. This shows the commit's own tests pass, "
             "not that none were removed or skipped; fix the base branch's suite (an infra ticket)."
@@ -501,7 +684,8 @@ def report(
         if r.log:
             lines += ["", f"Full output: `{r.log}`"]
         lines.append("</details>")
-    lines[0] = headline(sha, ok, bool(dirty))
+    scoped = {r.suite for r in results} != {s.name for s in profile.suites}
+    lines[0] = headline(sha, ok, bool(dirty), scoped=scoped)
     # The session posts this report on its PR: an agent's post, so it carries the marker.
     lines += ["", AGENT_MARKER]
     return ok, "\n".join(lines)
