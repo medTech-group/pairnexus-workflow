@@ -172,6 +172,24 @@ def test_the_check_the_set_up_line_names_the_skill():
     assert "`check-setup`" in line
 
 
+# The choices steps 6 and 7 tell the reader to pick, and the skill that shows each.
+CHOICES = {
+    "skills/setup-workflow/SKILL.md": ["Not now"],
+    "skills/start/SKILL.md": [
+        "A brand-new project or a large effort",
+        "Something new, or a change to what's there",
+        "Quick ticket",
+    ],
+}
+
+
+@pytest.mark.parametrize("skill,label", [(k, l) for k, ls in CHOICES.items() for l in ls])
+def test_the_choices_it_names_are_the_skills_own(skill, label):
+    # A skill that renames a choice would send the reader to one that isn't there.
+    assert f"**{label}**" in _text()
+    assert f"**{label}**" in (KIT / skill).read_text(encoding="utf-8"), f"{skill} has no {label!r}"
+
+
 def _readme_step1_message() -> str:
     step1 = _readme().split("### Step 1.", 1)[1].split("\n### ", 1)[0]
     quotes = _blockquotes(step1.split("Send this message", 1)[1])
