@@ -351,6 +351,7 @@ def test_readme_step_6_leads_with_check_the_set_up_and_keeps_the_checklist():
     assert "with `gh` signed in" in sec
     # The guided start's list of options names it too.
     assert "- **Check the set-up** (recommended, unless a kit update is), when its quick look finds a problem" in text
+    assert "(recommended when the project has no code yet, unless a kit update or **Check the set-up** is)" in text
 
 
 def test_install_doc_points_at_check_the_set_up():

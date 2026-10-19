@@ -266,7 +266,7 @@ Then it asks **What are we working on?**, with up to four of these:
 - **Something new, or a change to what's there**;
 - **Fix something that's broken**;
 - **Sort the new issues**;
-- **A brand-new project or a large effort** (recommended when the project has no code yet);
+- **A brand-new project or a large effort** (recommended when the project has no code yet, unless a kit update or **Check the set-up** is);
 - **Run the ready tickets unattended**: a run can't start from this session, so Claude tells you how to start one ([Unattended](#unattended)).
 
 "Other" is always there, for your own words.
