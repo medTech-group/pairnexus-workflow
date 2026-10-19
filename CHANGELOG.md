@@ -11,7 +11,7 @@
   - In a local session doctor reads both with `gh`, as before.
 - **The offer:** `require_checks` is a choice with "Not now", handing over to `upgrade-setup`'s "Require these checks", whose checks screen asks which checks to require. When `protect_main` or `restore_protection` is offered too, protecting comes first.
 - **The note naming the open profile pull request** (`github.profile_checks`) is shown as doctor words it, never as something to fix now. The skill still changes nothing itself, and never says "fine" while a line couldn't be checked.
-- Docs: `docs/enforcement.md` §5. Tests: `tests/test_check_setup.py`.
+- Docs: `docs/enforcement.md` §5 and the README's "Step 6. Check it". Tests: `tests/test_check_setup.py`.
 - **For projects updating:** nothing to do. The update brings the skill's new steps.
 
 **The evidence runs only the suites a pull request's files need** (`commands.select_suites`; asked for by medTech-group/pair-drop#485).

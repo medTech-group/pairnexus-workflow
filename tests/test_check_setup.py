@@ -524,10 +524,11 @@ def test_the_description_names_the_checks_and_still_says_it_changes_nothing():
     assert "Changes nothing itself." in head
 
 
-def test_enforcement_section_5_names_the_checks_and_require_these_checks():
-    sec = _section(_text(KIT / "docs/enforcement.md"), "5. Checking the set-up")
-    assert "the base branch's latest check runs and statuses and the open pull requests" in sec
-    assert "\"Require these checks\"" in sec
+def test_enforcement_section_5_and_readme_step_6_name_the_checks_and_require_these_checks():
+    for sec in (_section(_text(KIT / "docs/enforcement.md"), "5. Checking the set-up"),
+                _section(_text(KIT / "README.md"), "Step 6. Check it", "###")):
+        assert "the base branch's latest check runs and statuses and the open pull requests" in sec
+        assert "\"Require these checks\"" in sec
 
 
 def test_changelog_notes_70_under_unreleased():
