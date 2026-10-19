@@ -6,9 +6,9 @@
 
 - **One page, ten steps, about 10 minutes** from nothing to a first merged change, in a cloud session with nothing to install: what you need, connecting Claude to GitHub, a repository of your own, a cloud session in the Default environment, the README's Step 1 set-up message (copied word for word), merging the set-up pull request, a new session and one small change, its pull request and checks, merging it (and how to undo it), then the next steps, each optional: "Protect `main`", "Check the set-up" and "Set up unattended runs". The clicks are given for the desktop app's **Cloud** option and for claude.ai/code, and the plan, GitHub and environment facts link to Claude's and GitHub's own docs.
 - **Every glossary word** links to its entry in `docs/glossary.md` at its first use on the page. Try-it links join the next steps once `docs/previews.md` exists (#41).
-- **The README's** first line after the title is "New to building? Start here", linking the quickstart. Nothing else in it changes.
+- **The README's** first line after the title is "New to building? Start here", linking the quickstart. Its Development section's list of what ships names the quickstart too.
 - **Not vendored:** the quickstart is for the kit's readers, so `vendor.plan` leaves it out (`SKIP_DOCS`), and `CONTRIBUTING.md`'s "What ships" says so. Tests: `tests/test_quickstart.py`.
-- **For projects updating:** nothing to do. Nothing that ships changes.
+- **For projects updating:** nothing to do. Only `vendor.py`'s list of skipped docs changes.
 
 **"Check the set-up": the `check-setup` skill, and the guided start's offer of it** (#63, part of #34).
 

@@ -29,9 +29,15 @@ def _steps() -> list[str]:
 
 
 def _anchors(text: str) -> set[str]:
-    """GitHub's anchors for a file's headings, leaving out fenced code blocks."""
+    """GitHub's anchors for a file's headings, those in blockquotes included
+    (the README's callout has one), leaving out fenced code blocks."""
     text = re.sub(r"^```.*?^```", "", text, flags=re.M | re.S)
-    return {_slug(t) for t in re.findall(r"^#{1,6} (.+?)[ \t]*$", text, re.M)}
+    return {_slug(t) for t in re.findall(r"^(?:>[ \t]*)?#{1,6} (.+?)[ \t]*$", text, re.M)}
+
+
+def _mention(anchor: str, text: str) -> re.Match | None:
+    """The first use of a glossary word; `main` is matched by its case."""
+    return re.search(MENTIONS[anchor], text, re.I if anchor != "main" else 0)
 
 
 def _blockquotes(text: str) -> list[str]:
@@ -44,8 +50,10 @@ def test_the_quickstart_has_at_most_ten_numbered_steps_in_order():
     numbers = [int(n) for n in re.findall(r"^(\d+)\. ", _text(), re.M)]
     assert 1 <= len(numbers) <= 10
     assert numbers == list(range(1, len(numbers) + 1))
-    # Sub-steps are bullets, so a numbered line is always a step.
+    # Sub-steps are bullets, so a numbered line is always a step, and every
+    # step is numbered the same way.
     assert not re.search(r"^[ \t]+\d+\. ", _text(), re.M)
+    assert not re.search(r"^[ \t]*\d+\) ", _text(), re.M)
 
 
 def test_it_opens_with_how_long_it_takes_and_what_you_will_have():
@@ -63,8 +71,8 @@ def test_it_gives_the_clicks_for_the_desktop_app_and_the_browser():
 
 def _plain_with_links(text: str) -> tuple[str, list[tuple[int, int, str]]]:
     """The text with each link reduced to its words, and where each link's
-    words sit with its target. Headings are left out: they hold no links."""
-    body = "\n".join(l for l in text.splitlines() if not l.startswith("#"))
+    words sit with its target."""
+    body = text
     plain, spans, at = [], [], 0
     for m in LINK.finditer(body):
         plain.append(body[at:m.start()])
@@ -79,7 +87,7 @@ def _plain_with_links(text: str) -> tuple[str, list[tuple[int, int, str]]]:
 @pytest.mark.parametrize("anchor", [a for w in PARTS.values() for a in w.values()])
 def test_each_glossary_word_links_to_its_entry_at_its_first_use(anchor):
     plain, spans = _plain_with_links(_text())
-    m = re.search(MENTIONS[anchor], plain, re.I if anchor != "main" else 0)
+    m = _mention(anchor, plain)
     if not m:
         return
     target = f"glossary.md#{anchor}"
@@ -95,7 +103,7 @@ def test_it_uses_the_glossary_words_a_first_change_meets():
     for anchor in ("repository", "main", "pull-request-pr", "checks-ci", "merge", "revert",
                    "cloud-session", "guided-start", "solo-mode", "protect-main",
                    "unattended-run", "check-the-set-up"):
-        assert re.search(MENTIONS[anchor], plain, re.I if anchor != "main" else 0), anchor
+        assert _mention(anchor, plain), anchor
 
 
 def test_every_link_and_anchor_resolves_to_a_file_or_heading_that_exists():
@@ -125,8 +133,11 @@ def test_it_links_the_glossary_entries_and_readme_sections_it_names():
 
 
 def test_its_facts_link_claudes_and_githubs_own_docs():
+    # Steps 1, 2 and 4: the plans, the GitHub connection, the Default environment.
+    steps = _steps()
+    for n in (1, 2, 4):
+        assert "](https://code.claude.com/docs/" in steps[n - 1], f"step {n}"
     links = {t for _, t in LINK.findall(_text())}
-    assert any(l.startswith("https://code.claude.com/docs/") for l in links)
     assert "https://github.com/apps/claude" in links or any(
         l.startswith("https://github.com/apps/claude/") for l in links)
     assert "https://github.com/new" in links
@@ -148,9 +159,9 @@ def test_the_next_steps_name_the_three_upgrades_each_optional():
 
 def test_the_protect_main_line_matches_the_readme():
     line = next(l for l in _next_steps() if "Protect `main`" in l)
-    assert "`gh`" in line
+    assert "with `gh` signed in" in line and "does it for you" in line
     assert "cloud session" in line and "guided clicks" in line
-    assert "checks" in line and "once CI has run" in line
+    assert "checks" in line and "once ci has run" in line.lower()
     readme = _readme().split("### Protect `main`", 1)[1].split("\n### ", 1)[0]
     assert "with `gh` signed in" in readme and "guided clicks" in readme.lower()
     assert "Checks are required once CI has run" in readme
@@ -159,12 +170,6 @@ def test_the_protect_main_line_matches_the_readme():
 def test_the_check_the_set_up_line_names_the_skill():
     line = next(l for l in _next_steps() if "check the set-up" in l.lower())
     assert "`check-setup`" in line
-
-
-def test_try_it_links_wait_for_their_own_page():
-    # #41 writes `docs/previews.md` and adds its line here, with its own test.
-    links = [t for _, t in LINK.findall(_text())]
-    assert not any("previews.md" in l for l in links) or (KIT / "docs/previews.md").is_file()
 
 
 def _readme_step1_message() -> str:
