@@ -9,7 +9,7 @@ import subprocess
 from changelog_notes import since_0110
 from conftest import KIT
 from test_doctor import RULESET, _each_at_once, _lines, _project, _report
-from test_doctor_require_checks import MARKER, PROTECTED, _combined, _given, _pr, _requiring, _run, _runs
+from test_doctor_require_checks import MARKER, PROTECTED, SHA, _combined, _given, _pr, _requiring, _run, _runs, _status
 from workflow import doctor, status, vendor
 
 SKILL = KIT / "skills/check-setup/SKILL.md"
@@ -36,6 +36,13 @@ def _section(text, title, level="##"):
 def _doctor_lines():
     """Every `WF doctor ...` command line the skill gives."""
     return re.findall(r"^WF doctor .*$", _text(), re.M)
+
+
+def _skill_command(pattern):
+    """The one line of the skill matching `pattern`."""
+    found = re.findall(pattern, _text(), re.M)
+    assert len(found) == 1, found
+    return found[0]
 
 
 # ---------- the skill: its name, and where it runs ----------
@@ -391,6 +398,13 @@ def test_the_checks_file_is_looked_at_before_doctor_since_a_wrong_one_is_silent(
     assert "`total_count`" in cloud
     assert "`head_sha`" in cloud and "`sha`" in cloud
     assert "`{\"message\": …}`" in cloud
+    # Each step's exit code, since a failed one still leaves a file behind.
+    assert "Each of the three commands must exit 0" in cloud
+    # The commit is the first page's `sha`, as `--slurp` writes it.
+    assert "[0][\"sha\"]" in cloud
+    # And a checks file doctor couldn't use is the exception to "a `cant_check` line".
+    failed = _section(_text(), "When something goes wrong", "###")
+    assert "`--checks` is the exception" in failed and "can read `fine`" in failed
 
 
 def test_a_cloud_session_gathers_the_open_pull_requests_in_full():
@@ -416,18 +430,16 @@ def test_a_local_session_leaves_the_checks_and_pull_requests_to_doctors_own_gh()
     assert "--checks" not in local_cmd and "--prs" not in local_cmd
 
 
-def test_checks_it_could_not_read_are_said_once_beside_the_report():
-    # Doctor makes no offer and says nothing when the checks can't be read.
+def test_checks_not_handed_to_doctor_are_said_once_only_where_doctor_would_offer():
+    # Doctor makes no offer and says nothing when the checks can't be read. It would
+    # offer only with the base branch protected and not in solo mode: `github.ruleset` fine.
     text = _text()
-    assert "couldn't be read from here, so \"Require these checks\" can't be offered from this session" in text
-    assert "`github.required_checks`" in text
-
-
-def _skill_command(pattern):
-    """The one line of the skill matching `pattern`."""
-    found = re.findall(pattern, _text(), re.M)
-    assert len(found) == 1, found
-    return found[0]
+    assert "weren't handed to doctor from this session, so if some aren't required yet, \"Require these checks\" isn't offered here" in text
+    assert "when you left `--checks` out, `github.ruleset` is `fine` and `github.required_checks` has no `offer`" in text
+    assert "Otherwise say nothing about it." in text
+    # What the rule rests on: doctor's offer needs the very state in which `github.ruleset` is fine.
+    src = (KIT / "scripts/workflow/doctor.py").read_text(encoding="utf-8")
+    assert "if i.profile.ruleset is False or not rep.protected:\n        return []" in src
 
 
 def test_the_skills_own_checks_file_gives_doctor_the_offer_and_the_open_pull_request(tmp_path):
@@ -436,8 +448,12 @@ def test_the_skills_own_checks_file_gives_doctor_the_offer_and_the_open_pull_req
     combine = _skill_command(r"^\s*(python3 -c .*> <dir>/checks\.json)$")
     d = tmp_path / "gathered"
     d.mkdir()
-    (d / "status.json").write_text(json.dumps([_combined()]))
+    (d / "status.json").write_text(json.dumps([_combined(_status("deploy"))]))
     (d / "check-runs.json").write_text(json.dumps([_runs(_run("tests"), _run("lint", n=2))]))
+    # The commit the check runs are fetched for, read from the status file by the skill's command.
+    sha = re.search(r"`(python3 -c [^`]*\[0\]\[\"sha\"\][^`]*)`", _text()).group(1)
+    p = subprocess.run(["bash", "-c", sha.replace("<dir>", str(d))], capture_output=True, text=True)
+    assert (p.returncode, p.stdout.strip()) == (0, SHA), p.stderr
     p = subprocess.run(["bash", "-c", combine.replace("<dir>", str(d))], capture_output=True, text=True)
     assert p.returncode == 0, p.stderr
     checks = json.loads((d / "checks.json").read_text())
@@ -448,7 +464,8 @@ def test_the_skills_own_checks_file_gives_doctor_the_offer_and_the_open_pull_req
     ]
     a, b = (_lines(r) for r in _each_at_once(tmp_path, _report, calls))
     assert a["github.required_checks"]["offer"] == "require_checks", a["github.required_checks"]
-    assert "`lint`" in a["github.required_checks"]["message"]
+    # A check run and a status, so both files reached doctor.
+    assert "`lint`" in a["github.required_checks"]["message"] and "`deploy`" in a["github.required_checks"]["message"]
     assert b["github.profile_checks"]["status"] == "note" and "#7" in b["github.profile_checks"]["message"], b["github.profile_checks"]
 
 
@@ -459,20 +476,18 @@ def test_it_offers_require_checks_handing_over_to_require_these_checks():
     assert "`upgrade-setup`" in row and "\"Require these checks\"" in row
     assert "require_checks" in doctor.OFFERS and doctor.OFFERS["require_checks"] == "Require these checks"
     assert "**`require_checks`**" in _text(UPGRADE) and "# Require these checks" in _text(UPGRADE)
-    # Its checks screen is where the person ticks the checks: the hand-over doesn't tick any.
-    assert "checks screen" in row
-    # Named in the table, so no longer named as text.
-    assert "Any other offer" in offers
+    # From its start: its checks screen is where the person ticks the checks.
+    assert "from its start" in row and "checks screen" in row
 
 
 def test_protecting_comes_before_require_checks():
     offers = _section(_text(), "The offers")
-    rows = [ln for ln in offers.splitlines() if ln.startswith("| `")]
-    order = [re.match(r"\| `([a-z_]+)`", ln).group(1) for ln in rows]
-    assert order.index("protect_main") < order.index("require_checks")
-    assert order.index("restore_protection") < order.index("require_checks")
-    assert "**Protecting comes first.**" in offers
-    assert "`protect_main` or `restore_protection`" in offers
+    first = offers[offers.index("**Protecting comes first.**"):].split("\n\n")[0]
+    assert "`protect_main` or `restore_protection` as well as `require_checks`" in first
+    assert "ask the protecting one first" in first
+    assert "finish \"Protect `main`\" before starting \"Require these checks\"" in first
+    # Said as it is: today's doctor never offers both.
+    assert "never offers both in one report" in first
 
 
 def test_the_open_profile_pull_request_note_is_shown_as_doctor_words_it():
@@ -482,11 +497,7 @@ def test_the_open_profile_pull_request_note_is_shown_as_doctor_words_it():
     assert "never as something to fix now" in show
 
 
-def test_it_still_changes_nothing_and_never_says_fine_for_an_unchecked_line():
-    text = _text()
-    assert "**It changes nothing itself.**" in text
-    assert "Never say \"fine\"" in _section(text, "Show the report")
-    # The description says what it gathers now, and still that it changes nothing.
+def test_the_description_names_the_checks_and_still_says_it_changes_nothing():
     head = _head()
     assert "check runs" in head and "open pull requests" in head
     assert "Changes nothing itself." in head
@@ -494,7 +505,7 @@ def test_it_still_changes_nothing_and_never_says_fine_for_an_unchecked_line():
 
 def test_enforcement_section_5_names_the_checks_and_require_these_checks():
     sec = _section(_text(KIT / "docs/enforcement.md"), "5. Checking the set-up")
-    assert "the base branch's latest check runs and the open pull requests" in sec
+    assert "the base branch's latest check runs and statuses and the open pull requests" in sec
     assert "\"Require these checks\"" in sec
 
 
