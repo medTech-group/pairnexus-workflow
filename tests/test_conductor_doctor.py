@@ -333,6 +333,11 @@ def test_a_required_checks_gap_without_the_offer_is_also_sent_to_an_attended_ses
     assert "while `github.ruleset` is `fine`" in no_offer and '"require the checks" in an attended session once they have run' in no_offer
     # While the base branch isn't protected, protecting it comes first (it adds the listed checks).
     assert "the ruleset's own gap comes first" in no_offer and "paid-plan refusal" in no_offer
+    assert "`github.ruleset`'s gap with `ruleset` left out" in no_offer
+    # Without protection, this gap can't be fixed in the kick-off: going ahead is recommended.
+    assert "While that gap is accepted or still open, this gap's **Fix it first** can't work, so recommend **Go ahead without it**" in no_offer
+    fix_first = _section(_kickoff(), r"^\s*- \*\*Fix it first:\*\*", r"\n")
+    assert 'except "Require these checks", below' in fix_first
 
 
 def test_the_profile_checks_gap_is_fixed_in_an_attended_session_too():
@@ -340,8 +345,6 @@ def test_the_profile_checks_gap_is_fixed_in_an_attended_session_too():
     gap = _section(rest, r"- `github.profile_checks`' gap", r"\n|\Z")
     assert "in an attended session" in gap and "`ci.required_checks`" in gap
     assert "`workflow/required-checks`" in gap and f"`{MARKER}`" in gap
-    fix_first = _section(_kickoff(), r"^\s*- \*\*Fix it first:\*\*", r"\n")
-    assert 'except "Require these checks", below' in fix_first
 
 
 def test_upgrade_setup_agrees_that_the_conductor_never_requires_the_checks():
