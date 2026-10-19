@@ -95,7 +95,7 @@ def test_the_offer_is_made_on_each_of_its_three_lines_in_json(tmp_path):
     assert (a["status"], a["offer"]) == ("note", "require_checks"), a
     assert "checks not required yet" in a["message"].lower() and "`tests`" in a["message"] and "`lint`" in a["message"], a
     assert (b["status"], b["offer"]) == ("gap", "require_checks"), b
-    assert "`lint`" in b["message"], b
+    assert "`lint`" in b["message"] and "once it has run" not in b["fix"] and "tick" in b["fix"], b
     assert (c["status"], c["offer"]) == ("note", "require_checks"), c
     assert "`lint`" in c["message"] and "Require these checks" in c["fix"], c
 
@@ -112,14 +112,21 @@ def test_the_gap_keeps_its_own_fix_when_the_check_it_names_never_ran(tmp_path):
     root = _project(tmp_path, profile=_prof("ruleset = true\n", TWO))
     ln = _github(_report(tmp_path, root, *_given(tmp_path, [_runs(_run("tests"), _run("docs", n=2))])))["github.required_checks"]
     assert (ln["status"], ln["offer"]) == ("gap", "require_checks") and "`docs`" in ln["message"], ln
-    assert "once it has run" in ln["fix"], ln
+    assert "`lint` can be ticked once it has run" in ln["fix"], ln
 
 
 def test_check_runs_and_statuses_in_one_object_are_both_read(tmp_path):
-    root = _project(tmp_path, profile=PROTECTED)
-    checks = {"check_runs": [_run("tests")], "statuses": [_status("ci/legacy")]}
-    ln = _github(_report(tmp_path, root, *_given(tmp_path, checks)))["github.required_checks"]
-    assert ln["offer"] == "require_checks" and "`ci/legacy`" in ln["message"], ln
+    many = [_run(f"job {n:02}", n=n) for n in range(1, 13)]
+    calls = [(_project(tmp_path / k, profile=PROTECTED), _given(tmp_path / k, checks), {}) for k, checks in (
+        ("a", {"check_runs": [_run("tests")], "statuses": [_status("ci/legacy")]}),
+        # Its total_count says a page of check runs is missing: the checks that ran can't be read.
+        ("b", {"total_count": 3, "check_runs": [_run("tests"), _run("lint", n=2)], "statuses": []}),
+        ("c", [_runs(_run("tests"), *many)]),
+    )]
+    a, b, c = (_github(r)["github.required_checks"] for r in _each_at_once(tmp_path, _report, calls))
+    assert a["offer"] == "require_checks" and "`ci/legacy`" in a["message"], a
+    assert (b["status"], b["offer"]) == ("fine", None), b
+    assert c["offer"] == "require_checks" and "`job 10`" in c["message"] and "`job 11`" not in c["message"] and "and 2 more" in c["message"], c
 
 
 def test_statuses_count_as_checks_that_ran(tmp_path):
@@ -228,6 +235,13 @@ def test_only_this_repositorys_open_pull_requests_count_each_once(tmp_path):
     assert own["status"] == "note" and "#32" in own["message"], own
     assert twice["status"] == "note" and "pull request #33 adds" in twice["message"], twice
     assert bad["status"] == "cant_check" and "workflow ready --prs" in bad["fix"], bad
+
+
+def test_a_prs_file_nested_too_deeply_is_cant_check_on_that_line_alone(tmp_path):
+    root = _project(tmp_path, profile=PROTECTED)
+    lines = _github(_report(tmp_path, root, *_given(tmp_path, prs="[" * 3000 + "]" * 3000, rulesets=[_requiring("tests", "lint")])))
+    assert lines["github.profile_checks"]["status"] == "cant_check", lines["github.profile_checks"]
+    assert lines["github.required_checks"]["status"] == "fine", lines["github.required_checks"]
 
 
 def test_in_solo_mode_an_open_marked_pull_request_is_named(tmp_path):

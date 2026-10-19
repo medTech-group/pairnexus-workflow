@@ -1529,7 +1529,7 @@ def _split_checks(value) -> tuple[list, list]:
                 go(x, depth + 1)
         elif isinstance(v, dict) and "check_runs" in v and "statuses" in v:
             # Both side by side in one object: each read as its own.
-            runs.append({"check_runs": v["check_runs"]})
+            runs.append({k: v[k] for k in ("check_runs", "total_count") if k in v})
             combined.append({"statuses": v["statuses"]})
         elif isinstance(v, dict) and "check_runs" in v:
             runs.append(v)
@@ -1591,13 +1591,16 @@ def _open_prs(i: Inputs) -> _Answer:
         else:
             answer = _gh(i, f"repos/{i.profile.repo}/pulls?state=open&per_page=100", _gh_deadline(i), "--prs", paginate=True, give=GIVE_PRS)
         if not answer.why:
-            prs = estimate_mod._flatten(answer.value)
+            try:
+                prs = estimate_mod._flatten(answer.value)
+            except RecursionError:  # nested deeper than any list of pages
+                prs = [None]
             if all(isinstance(pr, dict) and isinstance(pr.get("number"), int) and not isinstance(pr.get("number"), bool) and pr["number"] > 0 for pr in prs):
                 answer = _Answer(prs)
             else:
                 answer = _Answer(why=Words(
-                    "the --prs file isn't a list of pull requests, each with its number" if i.prs_file is not None else "GitHub's list of pull requests couldn't be read",
-                    "--prs: a pull request whose number isn't a positive whole number" if i.prs_file is not None else "`gh api`'s pull requests: one whose number isn't a positive whole number",
+                    "the --prs file isn't a list of pull requests, each with a positive whole number" if i.prs_file is not None else "GitHub's list of pull requests couldn't be read",
+                    "--prs isn't a list of pull requests, each with a positive whole number" if i.prs_file is not None else "`gh api`'s pull requests aren't a list of pull requests, each with a positive whole number",
                 ), fix=_again(GIVE_PRS) if i.prs_file is None else PRS_FIX)
         i._prs = answer
     return i._prs
@@ -1608,7 +1611,7 @@ def _marked(prs: list[dict], repo: str) -> list[int]:
     once. One whose head is in another repository (a fork's, or a deleted
     one's), where its shape says so, isn't counted: anyone can open one."""
     def own(pr: dict) -> bool:
-        if pr.get("isCrossRepository") is not False and "isCrossRepository" in pr:  # `gh pr list --json`'s
+        if "isCrossRepository" in pr and pr["isCrossRepository"] is not False:  # `gh pr list --json`'s
             return False
         head = pr.get("head")
         if not isinstance(head, dict) or "repo" not in head:
@@ -1621,11 +1624,20 @@ def _marked(prs: list[dict], repo: str) -> list[int]:
 
 
 def _check_names(names) -> str:
-    return ", ".join(f"`{_shown(c)}`" for c in names)
+    return _most(f"`{_shown(c)}`" for c in names)
 
 
 def _ran_names(ran: list[dict]) -> str:
-    return ", ".join(f"`{_shown(c['name'])}` ({c['result']})" for c in ran)
+    return _most(f"`{_shown(c['name'])}` ({c['result']})" for c in ran)
+
+
+MOST_NAMES = 10  # check names a line lists; the rest are counted
+
+
+def _most(shown) -> str:
+    shown = list(shown)
+    more = len(shown) - MOST_NAMES
+    return ", ".join(shown[:MOST_NAMES]) + (f" and {more} more" if more > 0 else "")
 
 
 def _offerable(i: Inputs, rep: protection_mod.Report) -> list[dict]:
@@ -1645,6 +1657,24 @@ def _with_offer(line: Line, ran: list[dict], base: str) -> Line:
         line.message.new + f" {'A check has' if one else 'Checks have'} run on `{base}` that {'isn' if one else 'aren'}'t required yet: {_ran_names(ran)}.",
         line.message.developer + f" Ran on `{base}`, not required: {_ran_names(ran)}.",
     ), line.fix, offer="require_checks")
+
+
+def _gap_fix(base: str, missing: list[str], ran: list[dict]) -> Words:
+    """The fix of the gap naming listed checks the ruleset doesn't require:
+    the offer's when they all ran; else they can be ticked once they have."""
+    waiting = [c for c in missing if c not in {r["name"] for r in ran}]
+    if not waiting:
+        return _offer_fix(base)
+    one, shown = len(waiting) == 1, _check_names(waiting)
+    if ran:
+        return Words(
+            f"Ask Claude to \"{REQUIRE_CHECKS}\" for the checks that have run; {shown} can be ticked once {'it has' if one else 'they have'} run on `{base}`.",
+            f"Run upgrade-setup's \"{REQUIRE_CHECKS}\" for what ran; {shown} can be added once {'it has' if one else 'they have'} run on `{base}`.",
+        )
+    return Words(
+        f"Ask Claude to \"{REQUIRE_CHECKS}\", once {'it has' if one else 'they have'} run on `{base}`.",
+        f"Run upgrade-setup's \"{REQUIRE_CHECKS}\" once {shown} {'has' if one else 'have'} run (adds {'it' if one else 'them'} to the ruleset with \"up to date\" on).",
+    )
 
 
 def _offer_fix(base: str) -> Words:
@@ -1682,8 +1712,8 @@ def check_required_checks(i: Inputs) -> list[Line]:
                 f"The kit's profile lists no checks that must pass before a pull request merges into `{base}`, though GitHub requires some (see the line on the profile's checks).",
                 "ci.required_checks is empty, though the ruleset requires checks (github.profile_checks).",
             ), Words(
-                "Add the checks GitHub requires to the kit's profile first (see the line on the profile's checks).",
-                "Add the ruleset's required checks to ci.required_checks first (github.profile_checks).",
+                "Add the checks GitHub requires to the kit's profile " + ("once you've left solo mode" if i.profile.ruleset is False else "first") + " (see the line on the profile's checks).",
+                "Add the ruleset's required checks to ci.required_checks " + ("after leaving solo mode" if i.profile.ruleset is False else "first") + " (github.profile_checks).",
             ))
         ran = _offerable(i, rep)
         if ran:
@@ -1719,10 +1749,7 @@ def check_required_checks(i: Inputs) -> list[Line]:
         line = Line(g, id_, "gap", Words(
             f"GitHub doesn't require {'this check' if len(missing) == 1 else 'these checks'} the kit's profile lists to pass before a pull request merges: {shown}.",
             f"ci.required_checks not required by any active ruleset on `{base}`: {shown}.",
-        ), _offer_fix(base) if {c["name"] for c in ran} & set(missing) else Words(
-            f"Ask Claude to \"{upgrade}\", once {'it has' if len(missing) == 1 else 'they have'} run on `{base}`.",
-            f"Run upgrade-setup's \"{upgrade}\" (adds {'it' if len(missing) == 1 else 'them'} to the ruleset with \"up to date\" on).",
-        ))
+        ), _gap_fix(base, missing, ran))
     elif ran:
         # The profile and the ruleset agree, but a check added to CI later has run.
         line = Line(g, id_, "note", Words(
@@ -1763,7 +1790,7 @@ def _profile_checks(i: Inputs, rep: protection_mod.Report) -> list[Line]:
             f"Solo mode: required on `{base}` but not in ci.required_checks: {names}.",
         ), Words(
             f"Once you've left solo mode (ask Claude to \"{protect}\"), ask Claude to add {them} to the kit's profile (`ci.required_checks` in {PROFILE}) in a pull request.",
-            f"After \"{protect}\"'s pull request merges, add {them} to ci.required_checks in a pull request, unless it did.",
+            f"After \"{protect}\"'s pull request merges, add {them} to ci.required_checks in a pull request, unless that pull request already did.",
         ))]
     if prs.why:
         return [Line(g, id_, "cant_check", Words(
