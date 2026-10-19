@@ -235,3 +235,89 @@ def test_changelog_notes_the_change_under_unreleased():
     text = (KIT / "CHANGELOG.md").read_text(encoding="utf-8")
     unreleased = _section(text, r"^## Unreleased", r"^## \d")
     assert "(#64" in unreleased
+
+
+# ---------- #71: the check runs, the open pull requests and "Require these checks" ----------
+
+
+def _require_checks_bullet():
+    return _section(_kickoff(), r"^ {3}- \*\*The `require_checks` offer\*\*", r"^ {3}- \*\*(?!The `require_checks`)|^ {3}Also:|^\d\. ")
+
+
+def test_preflight_gathers_the_base_branchs_check_runs_and_statuses_into_one_file():
+    block = _doctor_block()
+    checks = _section(block, r"^- \*\*The checks that ran on the base branch\*\*", r"^- \*\*The open pull requests")
+    # The latest commit's statuses first, every page: their `sha` is the commit the check runs are read for.
+    assert "gh api --paginate --slurp 'repos/<repo>/commits/<base>/status?per_page=100' > .workflow/status.json" in checks
+    assert "gh api --paginate --slurp 'repos/<repo>/commits/<sha>/check-runs?per_page=100' > .workflow/check-runs.json" in checks
+    # Side by side in one JSON list, as doctor's --checks takes them.
+    assert "one JSON list" in checks and "> .workflow/checks.json" in checks
+    # A wrong checks file is silent, so the conductor looks at it first.
+    assert "a wrong one is silent" in checks
+    assert "`app`" in checks and "`slug`" in checks and "`total_count`" in checks
+    assert "error body" in checks and "`head_sha`" in checks
+
+
+def test_without_the_checks_the_offer_cant_be_made_and_the_kickoff_says_so():
+    checks = _section(_doctor_block(), r"^- \*\*The checks that ran on the base branch\*\*", r"^- \*\*The open pull requests")
+    assert "leave `--checks` out" in checks
+    kick = _require_checks_bullet()
+    assert "couldn't be read from this session" in kick and "a note, not a safety gap" in kick
+
+
+def test_preflight_gathers_the_open_pull_requests_in_full():
+    block = _doctor_block()
+    prs = _section(block, r"^- \*\*The open pull requests", r"^- \*\*This session's Claude Code version")
+    assert "gh api --paginate --slurp 'repos/<repo>/pulls?state=open&per_page=100' > .workflow/prs.json" in prs
+    assert "`head.repo`" in prs and "in full" in prs
+    # Left out, or unreadable, the profile's line can't be checked: a safety gap like any other.
+    assert "`github.profile_checks`" in prs and "`cant_check`" in prs
+
+
+def test_doctor_is_given_the_checks_and_the_pull_requests():
+    cmd = re.search(r"^WF doctor --json .*$", _doctor_block(), re.M).group(0)
+    assert "--checks .workflow/checks.json" in cmd and "--prs .workflow/prs.json" in cmd
+
+
+def test_the_redo_rule_covers_the_two_new_files():
+    redo = _section(_doctor_block(), r"Before reading the report, redo any fetch that went wrong, once:", r"^Fetch each such file again")
+    assert "`checks.json`" in redo and "`prs.json`" in redo
+
+
+def test_the_kickoff_offers_require_these_checks_first_or_go_ahead_without_them():
+    kick = _require_checks_bullet()
+    assert "`require_checks`" in kick and "`github.required_checks`" in kick
+    assert "require_checks" in doctor.OFFERS
+    assert "**Require these checks first**" in kick and "**Go ahead without them**" in kick
+    # Done in an attended session, where Claude is asked to "require the checks" (#68); the kick-off stops there.
+    assert "names the checks that ran" in kick
+    assert '"require the checks"' in kick and "attended session" in kick
+    assert "end here" in kick and "nothing has been created yet" in kick
+
+
+def test_going_ahead_records_a_gap_but_not_a_note():
+    kick = _require_checks_bullet()
+    assert "`accepted_gaps`" in kick and "`github.required_checks: <message>`" in kick
+    assert "a note needs no record" in kick
+    # It replaces the gap's usual question: "Fix it first" can't work from a conductor session.
+    assert "in place of **Fix it first / Go ahead without it**" in kick
+
+
+def test_the_conductor_never_changes_the_ruleset_or_merges_the_profile_pull_request():
+    text = _conductor()
+    assert "The conductor never changes the ruleset itself" in text
+    assert "never merges the profile's pull request" in text
+
+
+def test_the_open_profile_pull_requests_note_stays_a_note():
+    block = _doctor_block()
+    note = _section(block, r"^- \*\*The open profile pull request\.\*\*", r"^- \*\*|^\*\*")
+    assert "`github.profile_checks`" in note and "`note`" in note
+    assert "never a safety gap" in note and "the run goes ahead" in note
+    assert "never merges the profile's pull request" in note and "protected path" in note
+
+
+def test_changelog_notes_71_under_unreleased():
+    text = (KIT / "CHANGELOG.md").read_text(encoding="utf-8")
+    unreleased = _section(text, r"^## Unreleased", r"^## \d")
+    assert "(#71, part of #38)" in unreleased

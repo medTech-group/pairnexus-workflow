@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+**The conductor's pre-flight hands doctor the base branch's checks and offers "Require these checks" at kick-off** (#71, part of #38).
+
+- **Two more files in `.workflow/`:**
+  - `checks.json`: the base branch's latest commit's check runs and statuses, every page, side by side in one JSON list, for `--checks`. The conductor looks at the file before passing it, since doctor is silent about a wrong one, fetches it again once if it's wrong, and else leaves the flag out.
+  - `prs.json`: the open pull requests, in full with `head.repo`, for `--prs`.
+- **The offer:** `github.required_checks` offering `require_checks` (a note or a gap) is asked "Require these checks first" or "Go ahead without them", in place of "Fix it first / Go ahead without it". The conductor never changes the ruleset itself, so "Require these checks first" names the checks that ran, says to ask Claude to "require the checks" in an attended session (`upgrade-setup`), and ends the kick-off there, before anything is created. "Go ahead without them" puts a gap in `accepted_gaps`; a note needs no record. When the checks couldn't be read, the kick-off says so once, as a note.
+- **The note naming the open profile pull request** (`github.profile_checks`) stays a note: the run goes ahead, and the conductor never merges that pull request (the profile is a protected path, so it's the owner's). With `ruleset = true`, a `--prs` that couldn't be read leaves that line `cant_check`, a safety gap.
+- Docs: `skills/conductor/SKILL.md`. Tests: `tests/test_conductor_doctor.py`.
+- **For projects updating:** nothing to do.
+
 **The evidence runs only the suites a pull request's files need** (`commands.select_suites`; asked for by medTech-group/pair-drop#485).
 
 - **The setting:** `commands.select_suites`, a command the project writes. It reads the pull request's changed paths on stdin, one a line (`git diff --name-only --no-renames <base>...HEAD`, so a rename is both its paths), and prints the suites they need, one a line, or `none` when none is needed. No suite may then be named `none`.
