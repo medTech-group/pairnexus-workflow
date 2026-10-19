@@ -29,10 +29,14 @@ def markers(project, markers=MARKERS):
     path.write_text(path.read_text() + f"killed_markers = {json.dumps(markers)}\n")
 
 
-def report(sha=HEAD, ok=True, dirty=False):
-    """The report `workflow evidence` writes, from its own writer."""
+def report(sha=HEAD, ok=True, dirty=False, scoped=False):
+    """The report `workflow evidence` writes, from its own writer; `scoped`: a
+    second suite the files didn't need, which didn't run."""
+    suites = [{"name": "unit", "run": "python3 -m pytest {files} -q", "files": "tests/test_*.py"}]
+    if scoped:
+        suites.append({"name": "web", "run": "npx jest {files}", "files": "web/*.test.js"})
     prof = parse({"project": {"name": "demo", "repo": "acme/demo", "rules": ["CLAUDE.md"]},
-                  "commands": {"suite": [{"name": "unit", "run": "python3 -m pytest {files} -q", "files": "tests/test_*.py"}]}}, Path("."))
+                  "commands": {"suite": suites}}, Path("."))
     shard = evidence.ShardResult("unit", 0, ["tests/test_a.py"], 0 if ok else 1, 10, 0 if ok else 1, 0, 0, 1.0, "10 passed in 0.1s")
     _, md = evidence.report(sha, prof, [shard], 10, dirty=["notes.txt"] if dirty else None)
     return md
@@ -79,6 +83,10 @@ def test_the_headline_is_the_one_evidence_writes_and_reads_back():
     assert evidence.read_headline(report(ok=False).splitlines()[0]) == (HEAD, False, False)
     assert evidence.read_headline(report(dirty=True).splitlines()[0]) == (HEAD, True, True)
     assert evidence.read_headline("Local full suite on HEAD: passed") is None
+    scoped = report(scoped=True).splitlines()[0]
+    assert scoped == f"**Local suites its files need on `{HEAD}`**: passed"
+    assert evidence.read_headline(scoped) == (HEAD, True, False) and not evidence.is_full(scoped)
+    assert evidence.is_full(first)
 
 
 def test_under_ci_none_a_passing_report_for_the_head_is_ready(project, capsys):
@@ -92,7 +100,7 @@ def test_a_short_sha_matching_the_head_counts(project, capsys):
     assert got["decision"] == "ready", got["reasons"]
 
 
-@pytest.mark.parametrize("case", ["none", "failed", "earlier", "dirty", "no write access", "not the first line", "too short"])
+@pytest.mark.parametrize("case", ["none", "failed", "earlier", "dirty", "scoped", "no write access", "not the first line", "too short"])
 def test_a_missing_or_unusable_report_is_not_yet_with_the_fix(project, capsys, monkeypatch, case):
     monkeypatch.setenv("WORKFLOW_EXPERIENCE", "developer")
     data = ci_none(project)
@@ -102,6 +110,8 @@ def test_a_missing_or_unusable_report_is_not_yet_with_the_fix(project, capsys, m
         with_report(data, report(sha=EARLIER))
     elif case == "dirty":
         with_report(data, report(dirty=True))
+    elif case == "scoped":  # only the suites its files need: here the report is the proof, so the full suite
+        with_report(data, report(scoped=True))
     elif case == "no write access":
         with_report(data, author="stranger")
     elif case == "not the first line":
@@ -116,7 +126,7 @@ def test_a_missing_or_unusable_report_is_not_yet_with_the_fix(project, capsys, m
     assert r["wording"]["new"]["message"] == "Not yet: the tests' results haven't been posted for this commit."
     assert r["fix"] == FIX
     # A report read but not counted is a note; a line that isn't a report's headline isn't one.
-    assert ("evidence_ignored" in note_ids(got)) == (case in ("failed", "earlier", "dirty", "no write access"))
+    assert ("evidence_ignored" in note_ids(got)) == (case in ("failed", "earlier", "dirty", "scoped", "no write access"))
 
 
 def test_the_latest_report_for_the_head_decides(project, capsys):

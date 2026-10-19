@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+**The evidence runs only the suites a pull request's files need** (`commands.select_suites`; asked for by medTech-group/pair-drop#485).
+
+- **The setting:** `commands.select_suites`, a command the project writes. It reads the pull request's changed paths on stdin, one a line (`git diff --name-only --no-renames <base>...HEAD`, so a rename is both its paths), and prints the suites they need, one a line, or `none` when none is needed. No suite may then be named `none`.
+- **It runs as the base branch has it:** in a temporary worktree of the base (without `commands.setup`), so a branch never changes the rules it's judged by, nor anything they import.
+- **What runs:** `workflow evidence --base-ref origin/<base_branch>` runs those suites, and any suite one of whose test files (its `files`) was added, changed or deleted. It runs them on the branch and on the base worktree, so the counts compare the same suites. With none needed, nothing runs and the report passes, comparing nothing.
+- **Every suite runs, as before,** when:
+  - the setting is unset, or the profile says `ci.none` (the report is then the only proof);
+  - the base ref isn't `origin/<base_branch>` as fetched (a ref inside the branch would list only part of its changes);
+  - the changed files can't be listed (no merge base, a path that isn't UTF-8 or holds a line break) or none changed;
+  - a change is under `.github/workflows/` or `.claude/workflow/`, or to a file the command names;
+  - the command exits non-zero, takes over 2 minutes, prints nothing (a crashed pipeline can exit 0) or names a suite the profile hasn't.
+
+  The report then says why. `--all` runs every suite whatever the setting says. `--suite` and `--base-count` make no selection.
+- **The report:** the suites run and those not needed, with the command. Its first line reads `**Local suites its files need on `<sha>`**: passed` whenever a suite didn't run, with `--suite` too.
+- **`workflow merge-check`:** where it needs the evidence (`ci.none`, or a waived check), only a full-suite report counts. A scoped one is a note, like a dirty one. `build-ticket` runs the evidence with `--all` when a check was waived.
+- Docs: `docs/profile.md`, `templates/profile.toml`, `docs/flow.md` §4, `skills/build-ticket/SKILL.md` step 6. Tests: `tests/test_evidence_select.py`, `tests/test_merge_check_evidence.py`.
+- **For projects updating:** nothing to do. To use it, set `commands.select_suites` in the profile (a pull request the owner merges).
+
 **"Check the set-up": the `check-setup` skill, and the guided start's offer of it** (#63, part of #34).
 
 - **The skill** (`skills/check-setup`, a kit skill Claude may load itself; not `doctor`, which Claude Code already has as `/doctor`) runs `workflow doctor --json` and shows its report, worded by the person's experience, the most serious first. It changes nothing itself.
