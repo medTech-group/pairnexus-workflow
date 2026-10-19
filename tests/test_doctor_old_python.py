@@ -18,7 +18,7 @@ import pytest
 
 from changelog_notes import since_0110
 from conftest import KIT
-from test_doctor import _bin, _project, _report
+from test_doctor import HEALTHY, _bin, _project, _report
 from test_kit_018 import _old_python_binary
 from workflow import _old_python, doctor, vendor
 
@@ -34,6 +34,7 @@ ONLY_WHEN_WRONG = {
     "kit.hooks_off",  # disableAllHooks
     "github.protection.active", "github.protection.base", "github.protection.bypass",  # each missing protection
     "github.protection.deletions", "github.protection.force_pushes", "github.protection.pull_requests",
+    "github.profile_checks",  # a check the ruleset requires that the profile doesn't list (#69)
 }
 
 
@@ -262,7 +263,7 @@ def test_the_ids_and_groups_match_the_full_doctors(tmp_path, vendored, gh):
     """The full doctor on the same checkout, with GitHub answering (every
     line fine) or not (`gh` missing): the same groups and ids, in vendored and
     plugin mode."""
-    root = _project(tmp_path, vendored=vendored, settings=None if vendored else PLUGIN_ON)
+    root = _project(tmp_path, profile=HEALTHY, vendored=vendored, settings=None if vendored else PLUGIN_ON)
     full = _report(tmp_path, root, path=_bin(tmp_path, gh=gh))
     assert _pairs(_old_report(root)) == _pairs(full)
 

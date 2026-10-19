@@ -317,7 +317,7 @@ def test_checks_the_profile_lists_that_the_ruleset_doesnt_require_are_a_gap_nami
     assert ln["status"] == "gap" and "lint" in ln["message"] and "`tests`" not in ln["message"]
 
 
-def test_a_check_the_ruleset_requires_but_the_profile_doesnt_list_isnt_a_line_here(tmp_path):
+def test_a_check_the_ruleset_requires_but_the_profile_doesnt_list_isnt_on_the_required_checks_line(tmp_path):
     root = _protected(tmp_path)
     rs = _rs()
     _rule(rs, "required_status_checks")["parameters"]["required_status_checks"].append({"context": "extra"})
