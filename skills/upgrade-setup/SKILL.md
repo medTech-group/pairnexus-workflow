@@ -29,7 +29,7 @@ The read-back needs GitHub's own JSON: the repository (`GET repos/<repo>`, with 
 
 **Choices** use the `AskUserQuestion` tool, the recommended option first; without it (a headless session), the same choices as a numbered list.
 
-**Only in attended sessions.** When `WORKFLOW_ROLE` is `ticket`, don't run it or offer it: there's nobody to click. Say in the ticket's report that the base branch isn't protected, and carry on. The conductor runs it only at its kick-off, with the owner there.
+**Only in attended sessions.** When `WORKFLOW_ROLE` is `ticket`, don't run it or offer it: there's nobody to click. Say in the ticket's report that the base branch isn't protected, and carry on. The conductor runs it only at its kick-off, with the owner there, and never runs "Require these checks": its kick-off sends the owner to an attended session for that (the `conductor` skill).
 
 ## When it's offered
 
@@ -323,7 +323,7 @@ When `solo_mode` is `true` (`ruleset = false`), nothing is changed and no rulese
 
 ## Which way, for the checks
 
-The same four conditions as "Which way", read the same way. All four, and a repository's own ruleset chosen in "Which ruleset": the update with `gh`. A cloud session, a conductor session, `gh` missing or signed out, or an admin claimed with "I'm an admin: go on": the clicks. Not an admin: the message for the owner.
+The same four conditions as "Which way", read the same way. All four, and a repository's own ruleset chosen in "Which ruleset": the update with `gh`. A cloud session, `gh` missing or signed out, or an admin claimed with "I'm an admin: go on": the clicks. A conductor session never gets here ("Only in attended sessions"). Not an admin: the message for the owner.
 
 ## The checks screen
 

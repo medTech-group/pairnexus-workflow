@@ -1,9 +1,16 @@
 """#64: the conductor's pre-flight runs `workflow doctor` (#34). Seam 4: the
 skill's wording and the docs, read from the files as the kit-release tests do."""
 
+import json
 import re
+import subprocess
+import sys
 from pathlib import Path
 
+from changelog_notes import since_0110
+from test_doctor import _project, _report
+from test_doctor_github import _files
+from test_doctor_require_checks import MARKER, PROTECTED, SHA, _combined, _pr, _requiring, _run, _status
 from workflow import doctor
 
 KIT = Path(__file__).resolve().parents[1]
@@ -232,12 +239,18 @@ def test_readme_step_6_says_the_conductor_runs_doctor():
 
 
 def test_changelog_notes_the_change_under_unreleased():
-    text = (KIT / "CHANGELOG.md").read_text(encoding="utf-8")
-    unreleased = _section(text, r"^## Unreleased", r"^## \d")
-    assert "(#64" in unreleased
+    assert "(#64" in since_0110()
 
 
 # ---------- #71: the check runs, the open pull requests and "Require these checks" ----------
+
+
+def _checks_bullet():
+    return _section(_doctor_block(), r"^- \*\*The checks that ran on the base branch\*\*", r"^- \*\*The open pull requests")
+
+
+def _prs_bullet():
+    return _section(_doctor_block(), r"^- \*\*The open pull requests", r"^- \*\*This session's Claude Code version")
 
 
 def _require_checks_bullet():
@@ -246,7 +259,7 @@ def _require_checks_bullet():
 
 def test_preflight_gathers_the_base_branchs_check_runs_and_statuses_into_one_file():
     block = _doctor_block()
-    checks = _section(block, r"^- \*\*The checks that ran on the base branch\*\*", r"^- \*\*The open pull requests")
+    checks = _checks_bullet()
     # The latest commit's statuses first, every page: their `sha` is the commit the check runs are read for.
     assert "gh api --paginate --slurp 'repos/<repo>/commits/<base>/status?per_page=100' > .workflow/status.json" in checks
     assert "gh api --paginate --slurp 'repos/<repo>/commits/<sha>/check-runs?per_page=100' > .workflow/check-runs.json" in checks
@@ -259,7 +272,7 @@ def test_preflight_gathers_the_base_branchs_check_runs_and_statuses_into_one_fil
 
 
 def test_without_the_checks_the_offer_cant_be_made_and_the_kickoff_says_so():
-    checks = _section(_doctor_block(), r"^- \*\*The checks that ran on the base branch\*\*", r"^- \*\*The open pull requests")
+    checks = _checks_bullet()
     assert "leave `--checks` out" in checks
     kick = _require_checks_bullet()
     assert "couldn't be read from this session" in kick and "a note, not a safety gap" in kick
@@ -267,11 +280,15 @@ def test_without_the_checks_the_offer_cant_be_made_and_the_kickoff_says_so():
 
 def test_preflight_gathers_the_open_pull_requests_in_full():
     block = _doctor_block()
-    prs = _section(block, r"^- \*\*The open pull requests", r"^- \*\*This session's Claude Code version")
+    prs = _prs_bullet()
     assert "gh api --paginate --slurp 'repos/<repo>/pulls?state=open&per_page=100' > .workflow/prs.json" in prs
     assert "`head.repo`" in prs and "in full" in prs
-    # Left out, or unreadable, the profile's line can't be checked: a safety gap like any other.
+    # Pull requests that can't be read leave the profile's line unchecked: a safety gap like any other.
+    # Left out, doctor reads them with `gh` itself; with `ruleset` left out it is `cant_check` too.
     assert "`github.profile_checks`" in prs and "`cant_check`" in prs
+    assert "Unless the profile says `ruleset = false`" in prs and "doctor's own `gh` read fails" in prs
+    # The MCP tools' pull requests count only with `head.repo`: a fork's marked one is never the repository's own.
+    assert "no `head.repo.full_name`, leave `--prs` out" in prs
 
 
 def test_doctor_is_given_the_checks_and_the_pull_requests():
@@ -282,6 +299,8 @@ def test_doctor_is_given_the_checks_and_the_pull_requests():
 def test_the_redo_rule_covers_the_two_new_files():
     redo = _section(_doctor_block(), r"Before reading the report, redo any fetch that went wrong, once:", r"^Fetch each such file again")
     assert "`checks.json`" in redo and "`prs.json`" in redo
+    # The checks file has its own one redo: once left out, it isn't fetched a third time.
+    assert "once you've left `--checks` out, don't fetch it again" in redo
 
 
 def test_the_kickoff_offers_require_these_checks_first_or_go_ahead_without_them():
@@ -303,6 +322,29 @@ def test_going_ahead_records_a_gap_but_not_a_note():
     assert "in place of **Fix it first / Go ahead without it**" in kick
 
 
+def test_a_required_checks_gap_without_the_offer_is_also_sent_to_an_attended_session():
+    # The checks it names haven't run (or couldn't be read): its fix still asks for "Require these checks".
+    kick = _require_checks_bullet()
+    rest = _section(kick, r"A `github.required_checks` gap with no `offer`", r"\n\n")
+    assert "**Fix it first / Go ahead without it** as usual" in rest
+    assert '"require the checks" in an attended session once they have run, and end here' in rest
+    fix_first = _section(_kickoff(), r"^\s*- \*\*Fix it first:\*\*", r"\n")
+    assert 'except "Require these checks", below' in fix_first
+
+
+def test_upgrade_setup_agrees_that_the_conductor_never_requires_the_checks():
+    text = (KIT / "skills/upgrade-setup/SKILL.md").read_text(encoding="utf-8")
+    assert 'never runs "Require these checks": its kick-off sends the owner to an attended session' in text
+    which = _section(text, r"^## Which way, for the checks", r"^## ")
+    assert "A cloud session, a conductor session," not in which
+    assert "A conductor session never gets here" in which
+
+
+def test_the_note_when_the_checks_couldnt_be_read_is_given_in_words():
+    kick = _require_checks_bullet()
+    assert "> Which checks have run on `<base>` couldn't be read from this session, so if some aren't required yet" in kick
+
+
 def test_the_conductor_never_changes_the_ruleset_or_merges_the_profile_pull_request():
     text = _conductor()
     assert "The conductor never changes the ruleset itself" in text
@@ -315,9 +357,35 @@ def test_the_open_profile_pull_requests_note_stays_a_note():
     assert "`github.profile_checks`" in note and "`note`" in note
     assert "never a safety gap" in note and "the run goes ahead" in note
     assert "never merges the profile's pull request" in note and "protected path" in note
+    # Doctor counts only a marked pull request, so one the conductor opens for the gap carries the marker.
+    assert f"carries `{MARKER}` in its body" in note
 
 
 def test_changelog_notes_71_under_unreleased():
-    text = (KIT / "CHANGELOG.md").read_text(encoding="utf-8")
-    unreleased = _section(text, r"^## Unreleased", r"^## \d")
-    assert "(#71, part of #38)" in unreleased
+    assert "(#71, part of #38)" in since_0110()
+
+
+def test_the_skills_own_commands_make_files_doctor_reads(tmp_path):
+    """The pre-flight's one-liners, run as written on `gh api --paginate --slurp`'s
+    pages, give doctor a --checks it reads (the offer) and a --prs it reads (the note)."""
+    work = tmp_path / ".workflow"
+    work.mkdir()
+    (work / "status.json").write_text(json.dumps([_combined(_status("deploy/preview"))]))
+    (work / "check-runs.json").write_text(json.dumps([
+        {"total_count": 2, "check_runs": [_run("tests")]}, {"total_count": 2, "check_runs": [_run("lint", n=2)]}]))
+    own = {"ref": "add-checks", "repo": {"full_name": "acme/demo"}}
+    (work / "prs.json").write_text(json.dumps([[{**_pr(12, f"Requires `build`.\n\n{MARKER}\n"), "head": own}]]))
+    one_liners = re.findall(r"python3 -c '[^']*' \.workflow/[^`\n]*", _checks_bullet())
+    assert len(one_liners) == 2, one_liners
+    first, merge = (c.replace("python3", sys.executable, 1) for c in one_liners)
+    got = subprocess.run(first, shell=True, cwd=tmp_path, capture_output=True, text=True, check=True).stdout.strip()
+    assert got == SHA
+    subprocess.run(merge, shell=True, cwd=tmp_path, check=True)
+    root = _project(tmp_path / "p", profile=PROTECTED)
+    args = _files(tmp_path / "p", [_requiring("tests", "build")]) + ["--checks", str(work / "checks.json"), "--prs", str(work / "prs.json")]
+    lines = {ln["id"]: ln for ln in _report(tmp_path / "p", root, *args)["lines"]}
+    offer = lines["github.required_checks"]
+    assert (offer["status"], offer["offer"]) == ("note", "require_checks"), offer
+    assert "`lint`" in offer["message"] and "`deploy/preview`" in offer["message"], offer
+    note = lines["github.profile_checks"]
+    assert note["status"] == "note" and "#12" in note["message"], note
