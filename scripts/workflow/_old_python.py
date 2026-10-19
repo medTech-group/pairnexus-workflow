@@ -207,7 +207,7 @@ _DOCTOR_LINES = (
     ("Cloud", "cloud.contents", None, _Words("what the cloud environments hold", "Environment contents")),
 )
 # The files a session hands the full doctor: taken here, and not read.
-_DOCTOR_FILES = ("rulesets", "repo", "environments", "runs")
+_DOCTOR_FILES = ("rulesets", "repo", "environments", "runs", "checks", "prs")
 _EXPERIENCE_LEVELS = ("new", "developer")
 _EXPERIENCE_FILE_MAX = 200  # bytes, as profile.py reads it
 
@@ -266,7 +266,7 @@ def _doctor(args, env, version, cwd):
     except Exception:  # argparse itself failing: the flags as plainly given
         a = argparse.Namespace(json="--json" in args, strict="--strict" in args, **dict.fromkeys(_DOCTOR_FILES))
     if [getattr(a, f) for f in _DOCTOR_FILES].count("-") > 1:
-        _say("workflow doctor: only one of --rulesets, --repo, --environments and --runs can be standard input (-)\n")
+        _say("workflow doctor: only one of --rulesets, --repo, --environments, --runs, --checks and --prs can be standard input (-)\n")
         return 2
     try:
         r = _doctor_report(_doctor_root(env, cwd), env, version)
