@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**"Check the set-up" hands doctor the base branch's checks and offers "Require these checks"** (#70, part of #38).
+
+- **Two more files, in a cloud session:** `check-setup` gathers the base branch's latest commit's statuses and check runs (every page, with `gh api`; the commit named by the status's `sha`), puts them side by side in one JSON list with its own one-line command, and hands it to `workflow doctor --json` as `--checks`; and the open pull requests, in full with `head.repo` (`gh api`, or `list_pull_requests` with every field), as `--prs`. It looks at the checks file before passing it, since doctor is silent about a wrong one, and leaves `--checks` out where no tool here gives it (the GitHub MCP tools list no commit's check runs). When doctor then couldn't read the checks either, it says once beside the report that "Require these checks" can't be offered from this session. In a local session doctor reads both with `gh`, as before.
+- **The offer:** `require_checks` is a choice with "Not now", handing over to `upgrade-setup`'s "Require these checks", whose checks screen asks which checks to require. When `protect_main` or `restore_protection` is offered too, protecting comes first.
+- **The note naming the open profile pull request** (`github.profile_checks`) is shown as doctor words it, never as something to fix now. The skill still changes nothing itself, and never says "fine" while a line couldn't be checked.
+- Docs: `docs/enforcement.md` §5. Tests: `tests/test_check_setup.py`.
+- **For projects updating:** nothing to do. The update brings the skill's new steps.
+
 **`workflow doctor` offers "Require these checks", and names the open profile pull request** (#69, part of #38).
 
 - **Two new files, each winning over `gh`:** `--checks`, the base branch's latest commit's check runs and statuses in one file (GET `repos/<repo>/commits/<ref>/check-runs` and `.../status`, or `.../statuses`, every page, side by side): the checks that ran, read as `workflow protection --checks-ran` reads them from its two files; and `--prs`, the open pull requests, as `workflow ready --prs` takes them. Without them doctor reads both with `gh api` (GETs only, within the GitHub lines' 60 seconds), and only when a line needs them. Either can be `-`, but only one of doctor's files can be standard input.

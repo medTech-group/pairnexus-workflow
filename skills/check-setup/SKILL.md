@@ -1,6 +1,6 @@
 ---
 name: check-setup
-description: Check the set-up - gather what only a Claude session can see (the rulesets and repository settings through the GitHub tools, the cloud environments, the workflow:run issues, Claude Code's version), hand it to `workflow doctor --json` as files, show the report worded by the person's experience with the most serious first, and offer each upgrade it names as a choice with "Not now". Changes nothing itself. Use when the person asks to "check the set-up" (or "check the workflow set-up", "is my project set up properly?"), or picks it where the guided start offers it.
+description: Check the set-up - gather what only a Claude session can see (the rulesets and repository settings through the GitHub tools, the base branch's latest check runs and statuses, the open pull requests, the cloud environments, the workflow:run issues, Claude Code's version), hand it to `workflow doctor --json` as files, show the report worded by the person's experience with the most serious first, and offer each upgrade it names as a choice with "Not now". Changes nothing itself. Use when the person asks to "check the set-up" (or "check the workflow set-up", "is my project set up properly?"), or picks it where the guided start offers it.
 ---
 
 # Check the set-up
@@ -32,6 +32,17 @@ Gather:
 - **The repository's settings:** `gh api repos/<repo> > <dir>/repo.json`.
 - **The environments:** `list_environments`, every page until `has_more` is false, saved as one JSON list of its pages in `<dir>/environments.json`.
 - **The runs:** the issues labelled `workflow:run`, open and closed: `gh api 'repos/<repo>/issues?labels=workflow:run&state=all&per_page=100' > <dir>/run-issues.json`, or the GitHub MCP tools (`list_issues` with that label, every state). One page is enough: doctor only asks whether a run has been made.
+- **The checks that ran on the base branch** (the profile's `project.base_branch`, `<base>` below), for doctor's "Require these checks" offer: its latest commit's statuses and check runs, every page, in one file.
+  1. `gh api --paginate --slurp 'repos/<repo>/commits/<base>/status?per_page=100' > <dir>/status.json`. Its `sha` is the commit: write it out in full in the next command (`<sha>`), so both reads are of the same commit even if `<base>` moves in between.
+  2. `gh api --paginate --slurp 'repos/<repo>/commits/<sha>/check-runs?per_page=100' > <dir>/check-runs.json`.
+  3. Put the two side by side in one JSON list, as doctor's `--checks` takes them:
+
+     ```bash
+     python3 -c 'import json, sys; json.dump([json.load(open(f)) for f in sys.argv[1:]], sys.stdout)' <dir>/check-runs.json <dir>/status.json > <dir>/checks.json
+     ```
+
+  The GitHub MCP tools have no list of a commit's check runs, so without `gh api` here, leave `--checks` out. **Look at `checks.json` before you pass it: a wrong one is silent.** Doctor then makes no offer, and no line says why. It holds GitHub's own pages, never an error body (`{"message": …}`); each check run keeps its `app` with its `slug` (without it doctor can't tell the try-it link's check apart, and reads nothing); the check runs across the pages add up to their `total_count` (fewer read as unreadable); and the status's `sha` is the commit the check runs were fetched for (each run's `head_sha`).
+- **The open pull requests,** for doctor's note on a pull request that adds GitHub's required checks to the profile: `gh api --paginate --slurp 'repos/<repo>/pulls?state=open&per_page=100' > <dir>/prs.json`, or the GitHub MCP tools' `list_pull_requests` with `state` open, every page, with every field (no `fields` subset), saved as one JSON list of its pages. Each pull request is in full, with its `body` and its `head.repo`: a marked pull request counts only when it comes from this repository, and one without `head.repo` counts by its body alone. Never a minimal or summarised list.
 - **Claude Code's version:** `claude --version`, as it prints it.
 
 Use `gh api` where it works in this session; else the GitHub MCP tools, where one returns GitHub's own JSON for it. Doctor reads GitHub's JSON as it is, so a file you can't fill with GitHub's own answer (no tool here gives it, or the fetch failed twice) is not written: leave its flag out. Doctor then reads it with `gh` itself where it can, else says that line can't be checked, with how to check it (the runs are the exception: see "When something goes wrong"). Never write a file you made up or pieced together from summaries. A failed `gh api` saves GitHub's error body (`{"message": "Not Found", …}`) into the file: fetch it again once, and leave the flag out if it fails again.
@@ -39,12 +50,14 @@ Use `gh api` where it works in this session; else the GitHub MCP tools, where on
 Then run doctor once, with every file you have:
 
 ```bash
-WF doctor --json --rulesets <dir>/rulesets.json --repo <dir>/repo.json --environments <dir>/environments.json --runs <dir>/run-issues.json --claude-version "<what claude --version printed>"
+WF doctor --json --rulesets <dir>/rulesets.json --repo <dir>/repo.json --environments <dir>/environments.json --runs <dir>/run-issues.json --checks <dir>/checks.json --prs <dir>/prs.json --claude-version "<what claude --version printed>"
 ```
+
+Without `--checks`, doctor reads the checks with `gh` itself, where it can. When neither could read them, doctor makes no "Require these checks" offer and says nothing about it. So when you left `--checks` out and the report's `github.required_checks` line has no `offer`, say once beside the report that which checks ran on `<base>` couldn't be read from here, so "Require these checks" can't be offered from this session, and to ask again where `gh` is signed in.
 
 ### In a local session
 
-Doctor reads the rulesets and the repository's settings with `gh` itself, where `gh` is installed and signed in, and Claude Code's version with `claude --version`. So run it as it is:
+Doctor reads the rulesets, the repository's settings, the base branch's latest check runs and statuses, and the open pull requests with `gh` itself, where `gh` is installed and signed in, and Claude Code's version with `claude --version`. So run it as it is:
 
 ```bash
 WF doctor --json
@@ -76,6 +89,8 @@ Doctor's `lines` come grouped (Your computer, The kit, GitHub, …), the group w
 
 Open with one line from `counts`: "2 problems to fix, 1 line I couldn't check, 3 notes." **Never say "fine"** (or "all set", "everything is in order") about the set-up while any line is `cant_check`: say what was checked is fine and name what couldn't be checked. Only with no `gap`, no `cant_check` and no runs line that couldn't be read is the set-up fine.
 
+**The note naming the open profile pull request.** When GitHub requires checks the profile doesn't list and an open pull request adds them, `github.profile_checks` is a `note` naming that pull request. Show it as doctor words it, its message and its fix, with the other notes, never as something to fix now: the profile catches up when that pull request merges. It carries no offer. Without such a pull request the same line is a `gap`, shown as any gap.
+
 Show the `cloud.contents` note with the others, never summarised away: nothing can read what an environment holds, so the person confirms the ticket environment has no secrets. In a local session, add once the line that the environments need a cloud session.
 
 ## 3. The offers
@@ -87,6 +102,9 @@ Each line with an `offer` is an upgrade one tap away. Offer each one the report 
 | `protect_main` | **Protect `main`** (the profile's base branch by name) | Load the `upgrade-setup` skill with the Skill tool, for "Protect `main`" (its offer `protect_main`), skipping its opening choice: the person has just chosen |
 | `restore_protection` | **Restore protection** | Load `upgrade-setup` for "Protect `main`" with the offer `restore_protection`: the same path, without the pull request that leaves solo mode, and without its opening choice |
 | `set_up_unattended_runs` | **Set up unattended runs** | Load `upgrade-setup` for "Set up unattended runs" (its offer `set_up_unattended_runs`), skipping its opening choice |
+| `require_checks` | **Require these checks** | Load `upgrade-setup` for "Require these checks" (its offer `require_checks`). It goes on to its checks screen, where the person ticks the checks to require |
+
+**Protecting comes first.** When the report offers `protect_main` or `restore_protection` as well as `require_checks`, ask the protecting one first, and on yes to both, finish "Protect `main`" before starting "Require these checks": checks are only added to a protected base branch. Doctor offers `require_checks` only once the base branch is protected, so the two seldom come together.
 
 **Not now** ends that offer for now: nothing is changed, and the next check still names it.
 
