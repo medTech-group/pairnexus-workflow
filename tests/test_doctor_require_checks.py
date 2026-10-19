@@ -140,6 +140,20 @@ def test_the_offer_isnt_made_in_solo_mode_unprotected_all_required_or_for_the_cl
     assert "Workers Builds" not in f["message"]
 
 
+def test_solo_mode_with_a_ruleset_that_doesnt_require_a_listed_check_is_a_note_never_a_gap(tmp_path):
+    # "Protect `main`" made the ruleset before CI ran; the pull request leaving solo mode is still open.
+    ran = [_runs(_run("tests"), _run("lint", n=2))]
+    profile = _prof("ruleset = false\n", TWO)
+    calls = [(_project(tmp_path / k, profile=profile), _given(tmp_path / k, ran, rulesets=rulesets), {})
+             for k, rulesets in (("a", [RULESET]), ("b", [_without(_rs(), "deletion")]))]
+    for r in _each_at_once(tmp_path, _report, calls):
+        ln = _github(r)["github.required_checks"]
+        assert (ln["status"], ln["offer"]) == ("note", None) and "`lint`" in ln["message"] and "solo mode" in ln["message"].lower(), ln
+        assert "Protect `main`" in ln["fix"], ln
+    root = _project(tmp_path / "s", profile=profile)
+    assert _doctor(tmp_path / "s", root, *_given(tmp_path / "s", ran), "--strict").returncode == 0
+
+
 def test_solo_mode_with_checks_listed_and_no_ruleset_is_a_note_and_passes_strict(tmp_path):
     root = _project(tmp_path, profile=_prof("ruleset = false\n", CHECKS))
     args = _given(tmp_path, [_runs(_run("tests"))], rulesets=[], settings={**SETTINGS, "allow_auto_merge": False})
@@ -162,6 +176,7 @@ def test_a_check_the_ruleset_requires_but_the_profile_doesnt_list(tmp_path):
     ]
     a, b, c, d = (_github(r) for r in _each_at_once(tmp_path, _report, calls))
     note, gap, unread, bad = (x["github.profile_checks"] for x in (a, b, c, d))
+    assert "`tests`" not in note["message"] and "pull request #12 adds" in note["message"], note
     assert note["status"] == "note" and "#12" in note["message"] and "#7" not in note["message"] and "`lint`" in note["message"], note
     assert gap["status"] == "gap" and "`lint`" in gap["message"] and "`tests`" not in gap["message"], gap
     assert "ci.required_checks" in gap["fix"] and "pull request" in gap["fix"], gap
@@ -177,6 +192,41 @@ def test_in_solo_mode_it_is_a_note_for_the_pull_request_leaving_it(tmp_path):
     ln = _github(_report(tmp_path, root, *args, path=_bin(tmp_path, gh=False)))["github.profile_checks"]
     assert ln["status"] == "note" and "`lint`" in ln["message"] and "Protect `main`" in ln["fix"], ln
     assert _doctor(tmp_path, root, *args, "--strict", path=_bin(tmp_path, gh=False)).returncode == 0
+
+
+def test_only_this_repositorys_open_pull_requests_count_each_once(tmp_path):
+    def head(repo):
+        return {"ref": "x", "repo": None if repo is None else {"full_name": repo}}
+
+    rulesets = [_requiring("tests", "lint")]
+    cases = {
+        "fork": [{**_pr(30, MARKER), "head": head("stranger/demo")}],
+        "deleted": [{**_pr(31, MARKER), "head": head(None)}],
+        "own": [{**_pr(32, MARKER), "head": head("Acme/Demo")}],
+        "twice": [[_pr(33, MARKER)], [_pr(33, MARKER)]],  # pages that overlap
+        "bad": [_pr(-3, MARKER)],
+    }
+    calls = [(_project(tmp_path / k, profile=PROTECTED), _given(tmp_path / k, prs=prs, rulesets=rulesets), {}) for k, prs in cases.items()]
+    fork, deleted, own, twice, bad = (_github(r)["github.profile_checks"] for r in _each_at_once(tmp_path, _report, calls))
+    assert fork["status"] == deleted["status"] == "gap", (fork, deleted)
+    assert own["status"] == "note" and "#32" in own["message"], own
+    assert twice["status"] == "note" and "pull request #33 adds" in twice["message"], twice
+    assert bad["status"] == "cant_check" and "workflow ready --prs" in bad["fix"], bad
+
+
+def test_in_solo_mode_an_open_marked_pull_request_is_named(tmp_path):
+    root = _project(tmp_path, profile=_prof("ruleset = false\n", CHECKS))
+    args = _given(tmp_path, prs=[_pr(40, MARKER)], rulesets=[_requiring("tests", "lint")])
+    ln = _github(_report(tmp_path, root, *args))["github.profile_checks"]
+    assert ln["status"] == "note" and "#40" in ln["message"], ln
+
+
+def test_with_the_profile_listing_none_while_github_requires_some_it_doesnt_say_not_required(tmp_path):
+    root = _project(tmp_path)
+    lines = _github(_report(tmp_path, root, *_given(tmp_path, prs=[])))
+    ln = lines["github.required_checks"]
+    assert ln["status"] == "note" and "not required yet" not in ln["message"].lower() and "GitHub requires some" in ln["message"], ln
+    assert lines["github.profile_checks"]["status"] == "gap" and "`tests`" in lines["github.profile_checks"]["message"]
 
 
 def test_with_the_profile_listing_every_required_check_there_is_no_such_line(tmp_path):
@@ -209,6 +259,17 @@ def test_gh_is_read_for_the_checks_and_the_pull_requests_only_with_gets(tmp_path
         assert args[0] == "api" and not {"-X", "--method", "-f", "-F", "--field", "--raw-field", "--input"} & set(args), args
 
 
+def test_gh_answering_the_status_but_not_the_check_runs_makes_no_offer(tmp_path):
+    routes = _routes([RULESET], runs=_runs(_run("tests"), _run("lint", n=2)))
+    routes[f"repos/acme/demo/commits/{SHA}/check-runs"] = fake_gh.reply(exit=1, stderr="gh: Server Error (HTTP 502)")
+    nosha = _routes([RULESET], runs=_runs(_run("lint", n=2)))
+    nosha["repos/acme/demo/commits/main/status"] = fake_gh.pages({"state": "pending", "statuses": [], "total_count": 0})
+    calls = [(_project(tmp_path / k, profile=PROTECTED), (), {"path": _bin(tmp_path / k, gh=r)}) for k, r in (("a", routes), ("b", nosha))]
+    for r in _each_at_once(tmp_path, _report, calls):
+        ln = _github(r)["github.required_checks"]
+        assert (ln["status"], ln["offer"]) == ("fine", None), ln
+
+
 def test_a_file_wins_over_gh(tmp_path):
     root = _project(tmp_path, profile=PROTECTED)
     path = _bin(tmp_path, gh=_routes([_requiring("tests", "lint")], runs=_runs(_run("tests"), _run("from-gh", n=3)), prs=[_pr(12, MARKER)]))
@@ -232,9 +293,13 @@ def test_without_a_file_or_gh_no_offer_and_59s_lines_are_unchanged(tmp_path):
         calls += [(root, files, {"path": _bin(tmp_path / f"{k}-none", gh=False)}), (root, unreadable, {"path": _bin(tmp_path / f"{k}-none", gh=False)}),
                   (root, files, {"path": _bin(tmp_path / f"{k}-404")})]  # the fake gh has no checks: GitHub's 404
     reports = iter(_each_at_once(tmp_path, _report, calls))
-    for none, unreadable, missing in zip(reports, reports, reports):
+    # #59's lines: fine, the gap naming `lint`, and "checks not required yet".
+    expected = [("fine", "GitHub requires the checks the kit's profile lists to pass before a pull request merges (`tests`)."),
+                ("gap", "GitHub doesn't require this check the kit's profile lists to pass before a pull request merges: `lint`."),
+                ("note", "Checks not required yet: the kit's profile lists no checks that must pass before a pull request merges into `main`.")]
+    for (status, message), none, unreadable, missing in zip(expected, reports, reports, reports):
         want = _github(none)["github.required_checks"]
-        assert want["offer"] is None, want
+        assert (want["status"], want["message"], want["offer"]) == (status, message, None), want
         assert _github(unreadable)["github.required_checks"] == want == _github(missing)["github.required_checks"]
 
 
@@ -279,6 +344,8 @@ def _states(tmp_path, compiled=True):
     yield _project(tmp_path / "e", profile=PROTECTED, compiled=compiled), _given(tmp_path / "e", ran, [], rulesets=two)
     yield _project(tmp_path / "f", profile=PROTECTED, compiled=compiled), _given(tmp_path / "f", ran, "[", rulesets=two)
     yield _project(tmp_path / "g", profile=_prof("ruleset = false\n", CHECKS), compiled=compiled), _given(tmp_path / "g", ran, rulesets=two)
+    yield _project(tmp_path / "h", profile=_prof("ruleset = false\n", TWO), compiled=compiled), _given(tmp_path / "h", ran)
+    yield _project(tmp_path / "i", compiled=compiled), _given(tmp_path / "i", ran, [])
 
 
 def test_each_new_wording_for_new_and_developer_with_the_same_statuses(tmp_path):

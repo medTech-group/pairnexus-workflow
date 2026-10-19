@@ -7,14 +7,13 @@ picks one wording by experience (#16: what is checked, and each status, never
 depend on it), puts the most serious line first and groups the rest.
 
 Doctor never changes anything (#27): it reads files and runs `python3`,
-`claude --version` and `gh api` (GETs only, for the GitHub lines, the base
-branch's checks, the open pull requests and whether a run has been made, when
-no file is given), nothing else. It reads files
-only through `_read_text` (and `_read_value`, `_read_json` on it), `_file`
-and `_hash_file`, which never raise and never wait on a pipe; only a file
-given as `-` (`--rulesets`, `--repo`, `--environments`, `--runs`, `--checks`
-or `--prs`) reads
-standard input, as asked. A check that fails unexpectedly becomes a
+`claude --version` and `gh api` (GETs only, when no file is given: for the
+GitHub lines, the checks that ran on the base branch, the open pull requests
+and whether a run has been made), nothing else. It reads files only through
+`_read_text` (and `_read_value`, `_read_json` on it), `_file` and
+`_hash_file`, which never raise and never wait on a pipe; only a file given as
+`-` (`--rulesets`, `--repo`, `--environments`, `--runs`, `--checks` or
+`--prs`) reads standard input, as asked. A check that fails unexpectedly becomes a
 `cant_check` line, never a traceback: doctor is advice, and exits 0.
 
 **Adding a group or a check** (the GitHub, Cloud and Previews tickets): write
@@ -24,8 +23,10 @@ raises), add it to `CHECKS`, and put anything it reads on `Inputs` (filled in
 by `cli.cmd_doctor`). The groups are in `GROUPS` already; the order, the
 counts, the text, the JSON and `--strict` follow without change. A line
 that needs GitHub's answers reads them through `_github(i)`, once for every
-line; the Cloud lines read the environments through `_environments(i)` and
-whether a run has been made through `_runs(i)`, the same way.
+line; the required checks' line reads the checks that ran through
+`_checks_ran(i, rep)` and the open pull requests through `_open_prs(i)`, and
+the Cloud lines read the environments through `_environments(i)` and whether
+a run has been made through `_runs(i)`, the same way.
 
 **`workflow status`** runs only `LOCAL_CHECKS` (#62), through `report`, and
 shows their gaps: a check added there must read nothing but this computer
@@ -147,8 +148,9 @@ class Inputs:
     # and --runs (the `workflow:run` issues, which win over `gh api`).
     environments_file: Path | str | None = None
     runs_file: Path | str | None = None
-    # --checks (the base branch's latest commit's check runs and statuses) and
-    # --prs (the open pull requests), which win over `gh api` (#69).
+    # --checks (the checks that ran on the base branch's latest commit: its
+    # check runs and statuses) and --prs (the open pull requests), which win
+    # over `gh api` (#69).
     checks_file: Path | str | None = None
     prs_file: Path | str | None = None
     # Only gaps are wanted (`workflow status`, #62, which keeps the gap lines
@@ -159,7 +161,7 @@ class Inputs:
     _github: _GitHub | None = field(default=None, repr=False)  # what the GitHub lines read, read once
     _environments: _Answer | None = field(default=None, repr=False)  # the environments listed, read once
     _runs: _Answer | None = field(default=None, repr=False)  # the `workflow:run` issues, read once
-    _checks: _Answer | None = field(default=None, repr=False)  # the base branch's checks, read once
+    _checks: _Answer | None = field(default=None, repr=False)  # the checks that ran on the base branch, read once
     _prs: _Answer | None = field(default=None, repr=False)  # the open pull requests, read once
     _gh_until: float | None = field(default=None, repr=False)  # when doctor stops waiting on GitHub (`_gh_deadline`)
 
@@ -1497,13 +1499,18 @@ def _solo_unprotected(rep: protection_mod.Report, i: Inputs) -> bool:
     return i.profile.ruleset is False and not rep.protected and not rep.effective
 
 
-# The base branch's checks and the open pull requests (#69): read only when
-# the required checks' line needs them, from --checks and --prs when given,
-# else with `gh api` (GETs only) within the GitHub lines' budget.
-GIVE_CHECKS = "--checks (GET repos/<repo>/commits/<base>/status and .../check-runs, every page)"
+# The checks that ran on the base branch and the open pull requests (#69):
+# read only when the required checks' line needs them, from --checks and --prs
+# when given, else with `gh api` (GETs only) within the GitHub lines' budget.
+GIVE_CHECKS = "--checks (GET repos/<repo>/commits/<base>/check-runs and .../status, every page, in one file)"
 GIVE_PRS = "--prs (GET repos/<repo>/pulls?state=open, every page)"
+PRS_FIX = Words(
+    "Ask Claude to fetch the open pull requests from GitHub again, as `workflow ready --prs` takes them, or leave out --prs to read GitHub with `gh`.",
+    "Give --prs as `workflow ready --prs` takes it (GET repos/<repo>/pulls?state=open), or leave it out to use `gh api`.",
+)
 # What the pull requests that add required checks to the profile carry in their
-# body (upgrade-setup's flip pull request and its profile pull request).
+# body (upgrade-setup's pull request that leaves solo mode, and its profile pull
+# request).
 REQUIRED_CHECKS_MARKER = "<!-- workflow:required-checks -->"
 
 
@@ -1575,35 +1582,35 @@ def _open_prs(i: Inputs) -> _Answer:
     (as `workflow ready --prs` takes them), else `gh api`."""
     if i._prs is None:
         if i.prs_file is not None:
-            answer = _given(i, i.prs_file, "--prs", what="pull requests", fix=Words(
-                "Ask Claude to fetch the open pull requests from GitHub again, as `workflow ready --prs` takes them, or leave out --prs to read GitHub with `gh`.",
-                "Give --prs as `workflow ready --prs` takes it (GET repos/<repo>/pulls?state=open), or leave it out to use `gh api`.",
-            ))
+            answer = _given(i, i.prs_file, "--prs", what="pull requests", fix=PRS_FIX)
         else:
             answer = _gh(i, f"repos/{i.profile.repo}/pulls?state=open&per_page=100", _gh_deadline(i), "--prs", paginate=True, give=GIVE_PRS)
         if not answer.why:
-            prs, todo = [], [answer.value]
-            while todo:
-                v = todo.pop(0)
-                if isinstance(v, list):
-                    todo[:0] = v
-                else:
-                    prs.append(v)
-            if all(isinstance(pr, dict) and isinstance(pr.get("number"), int) and not isinstance(pr.get("number"), bool) for pr in prs):
+            prs = estimate_mod._flatten(answer.value)
+            if all(isinstance(pr, dict) and isinstance(pr.get("number"), int) and not isinstance(pr.get("number"), bool) and pr["number"] > 0 for pr in prs):
                 answer = _Answer(prs)
             else:
                 answer = _Answer(why=Words(
                     "the --prs file isn't a list of pull requests, each with its number" if i.prs_file is not None else "GitHub's list of pull requests couldn't be read",
                     "--prs: a pull request without a number" if i.prs_file is not None else "`gh api`'s pull requests: one without a number",
-                ), fix=answer.fix if i.prs_file is None else _given(i, "", "--prs").fix)
+                ), fix=answer.fix if i.prs_file is None else PRS_FIX)
         i._prs = answer
     return i._prs
 
 
-def _marked(prs: list[dict]) -> list[int]:
-    """The open pull requests that carry the required-checks marker."""
-    return [pr["number"] for pr in prs
-            if str(pr.get("state") or "open").lower() == "open" and REQUIRED_CHECKS_MARKER in str(pr.get("body") or "")]
+def _marked(prs: list[dict], repo: str) -> list[int]:
+    """The open pull requests that carry the required-checks marker, each
+    once. One whose head is in another repository (a fork's, or a deleted
+    one's) isn't counted: anyone can open one."""
+    def own(pr: dict) -> bool:
+        head = pr.get("head")
+        if not isinstance(head, dict) or "repo" not in head:
+            return True  # a shape without it (the MCP tools'): the body is all there is
+        full = head["repo"].get("full_name") if isinstance(head["repo"], dict) else None
+        return isinstance(full, str) and full.casefold() == repo.casefold()
+
+    return list(dict.fromkeys(pr["number"] for pr in prs
+                              if str(pr.get("state") or "open").lower() == "open" and REQUIRED_CHECKS_MARKER in str(pr.get("body") or "") and own(pr)))
 
 
 def _names(names) -> str:
@@ -1663,6 +1670,11 @@ def check_required_checks(i: Inputs) -> list[Line]:
         ))
         if rep is None:
             return [line]
+        if rep.required_checks:  # GitHub requires some: the profile's line (github.profile_checks) says which
+            line = Line(g, id_, "note", Words(
+                f"The kit's profile lists no checks that must pass before a pull request merges into `{base}`, though GitHub requires some (see the line on the profile's checks).",
+                "ci.required_checks is empty, though the ruleset requires checks (github.profile_checks).",
+            ), line.fix)
         ran = _offerable(i, rep)
         if ran:
             line = _with_offer(Line(g, id_, "note", line.message, _offer_fix(base)), ran, base)
@@ -1678,17 +1690,28 @@ def check_required_checks(i: Inputs) -> list[Line]:
         ), Words(
             f"They're required when you ask Claude to \"{OFFERS['protect_main']}\".",
             f"\"{OFFERS['protect_main']}\" adds them to the ruleset it creates.",
-        ))]
+        ))] + _profile_checks(i, rep)
     ran = _offerable(i, rep)
     missing = [c for c in listed if c not in rep.required_checks]
+    if missing and i.profile.ruleset is False:
+        # Solo mode with a ruleset on the base branch: "Require these checks"
+        # waits for the pull request that leaves solo mode (#38), so never a gap.
+        shown = _names(missing)
+        return [Line(g, id_, "note", Words(
+            f"Solo mode: GitHub doesn't require {'this check' if len(missing) == 1 else 'these checks'} the kit's profile lists yet: {shown}. {'It is' if len(missing) == 1 else 'They are'} required once `{base}` is protected and you've left solo mode.",
+            f"Solo mode: ci.required_checks not required by any active ruleset on `{base}`: {shown}.",
+        ), Words(
+            f"Once you've left solo mode (ask Claude to \"{OFFERS['protect_main']}\"), ask Claude to \"{upgrade}\".",
+            f"Leave solo mode (\"{OFFERS['protect_main']}\"), then run upgrade-setup's \"{upgrade}\".",
+        ))] + _profile_checks(i, rep)
     if missing:
         shown = _names(missing)
         line = Line(g, id_, "gap", Words(
             f"GitHub doesn't require {'this check' if len(missing) == 1 else 'these checks'} the kit's profile lists to pass before a pull request merges: {shown}.",
             f"ci.required_checks not required by any active ruleset on `{base}`: {shown}.",
-        ), Words(
+        ), _offer_fix(base) if ran else Words(
             f"Ask Claude to \"{upgrade}\", once {'it has' if len(missing) == 1 else 'they have'} run on `{base}`.",
-            f"Run upgrade-setup's \"{upgrade}\" (adds them to the ruleset with \"up to date\" on).",
+            f"Run upgrade-setup's \"{upgrade}\" (adds {'it' if len(missing) == 1 else 'them'} to the ruleset with \"up to date\" on).",
         ))
     elif ran:
         # The profile and the ruleset agree, but a check added to CI later has run.
@@ -1708,8 +1731,9 @@ def _profile_checks(i: Inputs, rep: protection_mod.Report) -> list[Line]:
     """The checks the ruleset requires that the profile doesn't list: a note
     while an open pull request carrying the marker adds them, else a gap
     (the merge rule and the conductor read the profile); `cant_check` when
-    the pull requests can't be read. In solo mode a note: the pull request
-    that leaves it lists them. No line when the profile lists them all."""
+    the pull requests can't be read. In solo mode a note either way: the
+    pull request that leaves it lists them. No line when the profile lists
+    them all."""
     g, id_ = "GitHub", "github.profile_checks"
     base, listed = i.profile.base_branch, set(i.profile.required_checks)
     unlisted = [c for c in rep.required_checks if c not in listed]
@@ -1717,8 +1741,12 @@ def _profile_checks(i: Inputs, rep: protection_mod.Report) -> list[Line]:
         return []
     one, names = len(unlisted) == 1, _names(unlisted)
     them = "it" if one else "them"
-    if i.profile.ruleset is False:
-        # Solo mode: the pull request that leaves it lists them (upgrade-setup's "Protect `main`").
+    solo = i.profile.ruleset is False
+    prs = _open_prs(i)
+    marked = [] if prs.why else _marked(prs.value, i.profile.repo)
+    if solo and not marked:
+        # Solo mode, never a gap: the pull request that leaves it lists them
+        # (upgrade-setup's "Protect `main`").
         protect = OFFERS["protect_main"]
         return [Line(g, id_, "note", Words(
             f"Solo mode: GitHub requires {'a check' if one else 'checks'} the kit's profile doesn't list ({names}).",
@@ -1727,13 +1755,11 @@ def _profile_checks(i: Inputs, rep: protection_mod.Report) -> list[Line]:
             f"When you ask Claude to \"{protect}\", its pull request adds {them} to the kit's profile.",
             f"\"{protect}\"'s pull request adds {them} to ci.required_checks.",
         ))]
-    prs = _open_prs(i)
     if prs.why:
         return [Line(g, id_, "cant_check", Words(
             f"GitHub requires {'a check' if one else 'checks'} the kit's profile doesn't list ({names}), and whether a pull request is adding {them} to the profile can't be checked: {_relative(i, prs.why.new)}.",
             f"Required on `{base}` but not in ci.required_checks: {names}; open pull requests unchecked: {_relative(i, prs.why.developer)}.",
         ), prs.fix)]
-    marked = _marked(prs.value)
     if marked:
         refs, many = _listing(_refs(marked)), len(marked) > 1
         prs_word = f"pull request{'s' if many else ''} {refs}"
@@ -1749,7 +1775,7 @@ def _profile_checks(i: Inputs, rep: protection_mod.Report) -> list[Line]:
         f"Required on `{base}` but not in ci.required_checks: {names} (the merge rule and the conductor read the profile).",
     ), Words(
         f"Ask Claude to add {them} to the kit's profile (`ci.required_checks` in {PROFILE}) in a pull request.",
-        f"Add {'it' if one else 'them'} to ci.required_checks in a pull request.",
+        f"Add {them} to ci.required_checks in a pull request.",
     ))]
 
 
