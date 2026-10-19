@@ -46,10 +46,10 @@ Gather:
   **Look at `checks.json` before you pass it: a wrong one is silent.** Doctor then makes no offer, and no line says why. Check that:
   - it holds GitHub's own pages, never an error body (`{"message": …}`, alone or inside a page list);
   - each check run keeps its `app` with its `slug` (without it doctor can't tell the try-it link's check apart, and reads nothing);
-  - the check runs across the pages add up to their `total_count` (fewer read as unreadable);
+  - the check runs across the pages, and the statuses across theirs, each add up to their `total_count` (fewer read as unreadable);
   - the status's `sha` is the commit the check runs were fetched for (each run's `head_sha`).
 
-  Each of the three commands must exit 0: a failed `gh api` still writes GitHub's error body into its file, and a failed redirect leaves an empty file. If a command fails, or the file fails one of these checks, fetch it again once; if it fails again, leave `--checks` out.
+  Each command above must exit 0: a failed `gh api` still writes GitHub's error body into its file, and a failed command still leaves the file its redirect made. If one fails, or `checks.json` fails one of these checks, run the steps again once from step 1; if that fails too, leave `--checks` out.
 - **The open pull requests,** for doctor's note on a pull request that adds GitHub's required checks to the profile: `gh api --paginate --slurp 'repos/<repo>/pulls?state=open&per_page=100' > <dir>/prs.json`, or the GitHub MCP tools' `list_pull_requests` with `state` open, every page, with every field (no `fields` subset), saved as one JSON list of its pages. Each pull request is in full, with its `body` and its `head.repo`: a marked pull request counts only when it comes from this repository, and one without `head.repo` counts by its body alone. Never a minimal or summarised list.
 - **Claude Code's version:** `claude --version`, as it prints it.
 
@@ -61,7 +61,16 @@ Then run doctor once, with every file you have:
 WF doctor --json --rulesets <dir>/rulesets.json --repo <dir>/repo.json --environments <dir>/environments.json --runs <dir>/run-issues.json --checks <dir>/checks.json --prs <dir>/prs.json --claude-version "<what claude --version printed>"
 ```
 
-Without `--checks`, doctor reads the checks with `gh` itself, where it can. When it can't, it makes no "Require these checks" offer and no line says so. Doctor would make the offer only when the report's `github.ruleset` line is `fine` (the base branch protected, not in solo mode). So when you left `--checks` out, `github.ruleset` is `fine` and `github.required_checks` has no `offer`, say once beside the report: the checks that ran on `<base>` weren't handed to doctor from this session, so if some aren't required yet, "Require these checks" isn't offered here. Otherwise say nothing about it.
+Without `--checks`, doctor reads the checks with `gh` itself, where it can. When it can't, it makes no "Require these checks" offer and no line says so. Doctor would make the offer only when the report's `github.ruleset` line is `fine` (the base branch protected, not in solo mode). So when all of these hold:
+- you left `--checks` out;
+- `github.ruleset` is `fine`;
+- `github.required_checks` has no `offer`;
+
+say once beside the report:
+
+> The checks that ran on `<base>` weren't handed to doctor from this session. If some aren't required yet, "Require these checks" isn't offered here.
+
+Otherwise say nothing about it.
 
 ### In a local session
 

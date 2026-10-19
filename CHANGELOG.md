@@ -5,9 +5,9 @@
 **"Check the set-up" hands doctor the base branch's checks and offers "Require these checks"** (#70, part of #38).
 
 - **Two more files, in a cloud session:**
-  - `--checks`: the base branch's latest commit's check runs and statuses, every page, read with `gh api` for the commit the status names, and put side by side in one JSON list by the skill's own one-line command. The skill looks at the file before passing it, since doctor is silent about a wrong one. Without `gh api` it leaves the flag out: the GitHub MCP tools list no commit's check runs.
+  - `--checks`: the base branch's latest commit's check runs and statuses, every page, read with `gh api`. The skill's own one-line command puts them side by side in one JSON list. The skill looks at the file before passing it, since doctor is silent about a wrong one. Without `gh api` it leaves the flag out: the GitHub MCP tools list no commit's check runs.
   - `--prs`: the open pull requests, in full with `head.repo` (`gh api`, or `list_pull_requests` with every field).
-  - With the flag left out, the base branch protected and no offer in the report, the skill says once that the checks weren't handed to doctor from this session.
+  - With the flag left out, the base branch protected outside solo mode (`github.ruleset` fine) and no offer on `github.required_checks`, the skill says once that the checks weren't handed to doctor from this session.
   - In a local session doctor reads both with `gh`, as before.
 - **The offer:** `require_checks` is a choice with "Not now", handing over to `upgrade-setup`'s "Require these checks", whose checks screen asks which checks to require. When `protect_main` or `restore_protection` is offered too, protecting comes first.
 - **The note naming the open profile pull request** (`github.profile_checks`) is shown as doctor words it, never as something to fix now. The skill still changes nothing itself, and never says "fine" while a line couldn't be checked.

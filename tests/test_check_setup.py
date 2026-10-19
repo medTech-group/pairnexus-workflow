@@ -8,7 +8,8 @@ import subprocess
 
 from changelog_notes import since_0110
 from conftest import KIT
-from test_doctor import RULESET, _each_at_once, _lines, _project, _report
+from test_doctor import RULESET, _each_at_once, _lines, _prof, _project, _report
+from test_doctor_github import CHECKS
 from test_doctor_require_checks import MARKER, PROTECTED, SHA, _combined, _given, _pr, _requiring, _run, _runs, _status
 from workflow import doctor, status, vendor
 
@@ -399,7 +400,7 @@ def test_the_checks_file_is_looked_at_before_doctor_since_a_wrong_one_is_silent(
     assert "`head_sha`" in cloud and "`sha`" in cloud
     assert "`{\"message\": …}`" in cloud
     # Each step's exit code, since a failed one still leaves a file behind.
-    assert "Each of the three commands must exit 0" in cloud
+    assert "Each command above must exit 0" in cloud and "run the steps again once from step 1" in cloud
     # The commit is the first page's `sha`, as `--slurp` writes it.
     assert "[0][\"sha\"]" in cloud
     # And a checks file doctor couldn't use is the exception to "a `cant_check` line".
@@ -434,12 +435,28 @@ def test_checks_not_handed_to_doctor_are_said_once_only_where_doctor_would_offer
     # Doctor makes no offer and says nothing when the checks can't be read. It would
     # offer only with the base branch protected and not in solo mode: `github.ruleset` fine.
     text = _text()
-    assert "weren't handed to doctor from this session, so if some aren't required yet, \"Require these checks\" isn't offered here" in text
-    assert "when you left `--checks` out, `github.ruleset` is `fine` and `github.required_checks` has no `offer`" in text
+    assert "weren't handed to doctor from this session. If some aren't required yet, \"Require these checks\" isn't offered here." in text
+    assert "- you left `--checks` out;\n- `github.ruleset` is `fine`;\n- `github.required_checks` has no `offer`;" in text
     assert "Otherwise say nothing about it." in text
-    # What the rule rests on: doctor's offer needs the very state in which `github.ruleset` is fine.
-    src = (KIT / "scripts/workflow/doctor.py").read_text(encoding="utf-8")
-    assert "if i.profile.ruleset is False or not rep.protected:\n        return []" in src
+
+
+def test_doctor_offers_require_checks_exactly_where_github_ruleset_is_fine(tmp_path):
+    # What the skill's rule rests on, through the CLI: a check that ran and isn't
+    # required is offered when the base branch is protected outside solo mode, and only then.
+    ran = [_runs(_run("tests"), _run("lint", n=2))]
+    states = {
+        "protected": (PROTECTED, [RULESET]),
+        "ruleset left out": (_prof('experience = "new"\n', CHECKS), [RULESET]),
+        "solo mode, protected": (_prof('experience = "new"\nruleset = false\n', CHECKS), [RULESET]),
+        "unprotected": (PROTECTED, []),
+    }
+    calls = [(_project(tmp_path / str(k), profile=prof), _given(tmp_path / str(k), checks=ran, rulesets=rulesets), {})
+             for k, (prof, rulesets) in enumerate(states.values())]
+    for name, report in zip(states, _each_at_once(tmp_path, _report, calls)):
+        lines = _lines(report)
+        fine = lines["github.ruleset"]["status"] == "fine"
+        assert (lines["github.required_checks"]["offer"] == "require_checks") == fine, (name, lines["github.ruleset"], lines["github.required_checks"])
+        assert fine == (name in ("protected", "ruleset left out")), (name, lines["github.ruleset"])
 
 
 def test_the_skills_own_checks_file_gives_doctor_the_offer_and_the_open_pull_request(tmp_path):
@@ -451,8 +468,8 @@ def test_the_skills_own_checks_file_gives_doctor_the_offer_and_the_open_pull_req
     (d / "status.json").write_text(json.dumps([_combined(_status("deploy"))]))
     (d / "check-runs.json").write_text(json.dumps([_runs(_run("tests"), _run("lint", n=2))]))
     # The commit the check runs are fetched for, read from the status file by the skill's command.
-    sha = re.search(r"`(python3 -c [^`]*\[0\]\[\"sha\"\][^`]*)`", _text()).group(1)
-    p = subprocess.run(["bash", "-c", sha.replace("<dir>", str(d))], capture_output=True, text=True)
+    read_sha = re.search(r"`(python3 -c [^`]*\[0\]\[\"sha\"\][^`]*)`", _text()).group(1)
+    p = subprocess.run(["bash", "-c", read_sha.replace("<dir>", str(d))], capture_output=True, text=True)
     assert (p.returncode, p.stdout.strip()) == (0, SHA), p.stderr
     p = subprocess.run(["bash", "-c", combine.replace("<dir>", str(d))], capture_output=True, text=True)
     assert p.returncode == 0, p.stderr
@@ -510,5 +527,9 @@ def test_enforcement_section_5_names_the_checks_and_require_these_checks():
 
 
 def test_changelog_notes_70_under_unreleased():
+    # #70's own entry, from its title to the next entry's.
     notes = since_0110()
-    assert "(#70" in notes and "`check-setup`" in notes and "`--checks`" in notes and "`--prs`" in notes
+    entry = notes[notes.rindex("\n**", 0, notes.index("(#70")):]
+    entry = entry[:entry.index("\n**", 1)]
+    assert "\"Require these checks\"" in entry and "`--checks`" in entry and "`--prs`" in entry
+    assert "`github.profile_checks`" in entry
