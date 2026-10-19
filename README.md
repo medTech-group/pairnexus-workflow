@@ -1,5 +1,7 @@
 # pairnexus-workflow
 
+**[New to building? Start here](docs/quickstart.md)**
+
 A Claude Code kit for building software from a spec, attended or unattended:
 
 **plan → spec → build tickets → one session per ticket → review panel → merge**
