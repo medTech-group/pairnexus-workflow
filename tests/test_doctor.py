@@ -5,17 +5,20 @@ protected repository (the GitHub group's own tests are test_doctor_github.py),
 and an environments file with both of the profile's (the Cloud group's are
 test_doctor_cloud.py)."""
 
+import functools
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
+from pathlib import Path
 
 import pytest
 
 import fake_gh
 from changelog_notes import since_0110
-from conftest import KIT
+from conftest import KIT, at_once, copy_kit_package
 from workflow import vendor
 
 CLI = KIT / "scripts/workflow.py"
@@ -101,7 +104,7 @@ def _bin(tmp_path, python="3.12.1", claude="2.1.300 (Claude Code)", gh=None):
 
 
 def _project(tmp_path, profile=_prof('experience = "new"\nruleset = true\n'), vendored=True, settings=None, local=None, lock_files=None,
-             codeowners=CODEOWNERS):
+             codeowners=CODEOWNERS, compiled=True):
     root = tmp_path / "proj"
     (root / ".claude/workflow").mkdir(parents=True)
     if codeowners is not None:
@@ -112,12 +115,14 @@ def _project(tmp_path, profile=_prof('experience = "new"\nruleset = true\n'), ve
     if vendored:
         lock = {"kit_version": "0.1.11", "files": lock_files or {}, "mattpocock_skills": "vendored"}
         (root / ".claude/workflow/lock.json").write_text(json.dumps(lock))
-        # The project's own copy of the CLI, as `vendor install` puts it: the
-        # hooks are compared with the entries of the kit that runs doctor.
+        # The project's own copy of the CLI, with the files `vendor install`
+        # puts there: the hooks are compared with the entries of the kit that
+        # runs doctor. With `compiled`, its bytecode is there too (which
+        # `vendor install` never copies), so a run doesn't compile it.
         bin_dir = root / ".claude/workflow/bin"
         bin_dir.mkdir()
         shutil.copy(CLI, bin_dir / "workflow.py")
-        shutil.copytree(KIT / "scripts/workflow", bin_dir / "workflow", ignore=shutil.ignore_patterns("__pycache__"))
+        copy_kit_package(bin_dir / "workflow", compiled=compiled)
     if settings is None:
         settings = vendor.merge_hooks({}) if vendored else {}
     (root / ".claude/settings.json").write_text(json.dumps(settings, indent=2))
@@ -143,6 +148,20 @@ def _doctor(tmp_path, root, *args, path=None, env=None, home=None, cli=None, env
     copy = root / ".claude/workflow/bin/workflow.py"
     cli = cli or (copy if copy.is_file() else CLI)
     return subprocess.run([sys.executable, "-B", str(cli), "doctor", *args], cwd=root, env=e, capture_output=True, text=True)
+
+
+def _each_at_once(tmp_path, run, calls):
+    """`run` (`_doctor` or `_report`) for each (root, args, keywords) in
+    `calls`, at the same time (#193), the results in order. Each call is given
+    a folder of its own outside every checkout as its `tmp_path`, so no two
+    share the input files, fake PATH or home `_doctor` makes there. A `path`
+    the caller gives is shared by the calls given it."""
+    jobs, top = [], Path(tempfile.mkdtemp(prefix="at-once-", dir=tmp_path))
+    for k, (root, args, kw) in enumerate(calls):
+        work = top / str(k)
+        work.mkdir()
+        jobs.append(functools.partial(run, work, root, *args, **kw))
+    return at_once(jobs)
 
 
 def _report(tmp_path, root, *args, **kw):
@@ -549,7 +568,7 @@ def test_no_ruleset_is_not_set_as_before_a_note(tmp_path):
 # Wording by experience
 
 
-def _every_status_project(tmp_path):
+def _every_status_project(tmp_path, compiled=True):
     """A project where the kit's and the computer's lines take every status."""
     settings = vendor.merge_hooks({"enabledPlugins": {vendor.PLUGIN_KEY: True}})
     settings["hooks"]["Stop"][0]["hooks"][0]["timeout"] = 99
@@ -558,6 +577,7 @@ def _every_status_project(tmp_path):
         profile=_prof("ruleset = false\n", '[areas]\nweb = ["web/**"]\n'),
         settings=settings,
         lock_files={".claude/skills/gone/SKILL.md": "0" * 64},
+        compiled=compiled,
     )
     return root, _bin(tmp_path, python="3.9.6", claude=None)
 
@@ -612,14 +632,25 @@ def _snapshot(root):
     return out
 
 
+def _unchanged_after_doctor(tmp_path, calls):
+    """Run doctor for each (root, args, keywords) in `calls` at once, and
+    check that no checkout among them changed: every snapshot is taken before
+    the first run."""
+    roots = list(dict.fromkeys(root for root, _, _ in calls))
+    before = {root: _snapshot(root) for root in roots}
+    _each_at_once(tmp_path, _doctor, calls)
+    for root in roots:
+        assert _snapshot(root) == before[root], root
+
+
 def test_nothing_in_the_checkout_changes_after_a_run(tmp_path):
-    root, path = _every_status_project(tmp_path)
+    root, path = _every_status_project(tmp_path, compiled=False)  # so bytecode written would show
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     before = _snapshot(root)
     healthy = _bin(tmp_path / "ok")
-    for args in ((), ("--json",), ("--strict",), ("--json", "--strict", "--claude-version", "2.1.300")):
-        _doctor(tmp_path, root, *args, path=path)
-        _doctor(tmp_path, root, *args, path=healthy)
+    _each_at_once(tmp_path, _doctor, [(root, args, {"path": fake_path})
+                                      for args in ((), ("--json",), ("--strict",), ("--json", "--strict", "--claude-version", "2.1.300"))
+                                      for fake_path in (path, healthy)])
     assert _report(tmp_path, root, path=path)["counts"]["cant_check"] >= 1  # the every-status fakes still there
     assert _snapshot(root) == before
 
@@ -830,9 +861,11 @@ def _more_states(tmp_path):
 
 def test_every_other_state_is_worded_both_ways_too(tmp_path):
     seen = set()
-    for root, path in _more_states(tmp_path):
-        n = _lines(_report(tmp_path, root, path=path, env={"WORKFLOW_EXPERIENCE": "new"}))
-        d = _lines(_report(tmp_path, root, path=path, env={"WORKFLOW_EXPERIENCE": "developer"}))
+    calls = [(root, (), {"path": path, "env": {"WORKFLOW_EXPERIENCE": experience}})
+             for root, path in _more_states(tmp_path) for experience in ("new", "developer")]
+    reports = iter(_each_at_once(tmp_path, _report, calls))
+    for n, d in zip(reports, reports):
+        n, d = _lines(n), _lines(d)
         assert set(n) == set(d)
         for id_ in n:
             if id_ == "kit.experience":

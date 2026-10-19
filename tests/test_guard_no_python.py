@@ -7,6 +7,7 @@ run by the current Python, as #53's tests do), missing, and failing (a stub
 exiting non-zero). Then what set-up installs (seam 3) and the docs (seam 4).
 """
 
+import functools
 import json
 import os
 import re
@@ -17,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from conftest import at_once, copy_kit_package
 from workflow import fallback, modes, vendor
 
 KIT = Path(__file__).resolve().parents[1]
@@ -83,7 +85,7 @@ def _path(tmp_path, kind):
 
 def _kit_at(cli: Path):
     cli.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(KIT / "scripts/workflow", cli.with_suffix(""), ignore=shutil.ignore_patterns("__pycache__"))
+    copy_kit_package(cli.with_suffix(""))
     shutil.copy(KIT / "scripts/workflow.py", cli)
 
 
@@ -123,16 +125,15 @@ def _decision(p):
 @pytest.mark.parametrize("kind", KINDS)
 def test_attended_push_and_merge_are_asked_or_refused(tmp_path, layout, kind):
     s = Setup(tmp_path, layout, kind)
-    for command in (PUSH, MERGE):
+    cases = []  # (what, mode, the decision wanted, the event)
+    for what, event in [(command, _bash) for command in (PUSH, MERGE)] + [(tool, _mcp) for tool in MCP_TOOLS]:
         for mode in ASKING:
-            assert _decision(s.run("guard", _bash(command, mode))) == "ask", (command, mode)
+            cases.append((what, mode, "ask", event(what, mode)))
         for mode in NEVER_ASKING:
-            assert _decision(s.run("guard", _bash(command, mode))) == "deny", (command, mode)
-    for tool in MCP_TOOLS:
-        for mode in ASKING:
-            assert _decision(s.run("guard", _mcp(tool, mode))) == "ask", (tool, mode)
-        for mode in NEVER_ASKING:
-            assert _decision(s.run("guard", _mcp(tool, mode))) == "deny", (tool, mode)
+            cases.append((what, mode, "deny", event(what, mode)))
+    runs = at_once(functools.partial(s.run, "guard", case[3]) for case in cases)
+    for (what, mode, want, _), p in zip(cases, runs):
+        assert _decision(p) == want, (what, mode)
 
 
 @pytest.mark.parametrize("layout", LAYOUTS)

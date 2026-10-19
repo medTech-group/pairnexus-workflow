@@ -7,6 +7,7 @@ installs and what `vendor update` rewrites (seam 3), the hook end to end with
 the entry as installed (seam 2), and the docs and skills (seam 4).
 """
 
+import functools
 import json
 import shutil
 import subprocess
@@ -14,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from conftest import at_once
 from test_guard_no_python import (KINDS, LAYOUTS, MCP_TOOLS, MERGE, PUSH, Setup, _bash,
                                   _decision, _mcp)
 from workflow import cli, vendor
@@ -150,11 +152,11 @@ def test_every_attended_case_of_the_installed_guard_exits_0(tmp_path, layout, ki
         p = s.run("guard", _bash(PUSH, "default"))
         assert _decision(p) == ("deny" if solo else "ask")
         assert "isn't working" not in p.stdout  # the CLI decided, not the fallback
-    for event in ATTENDED_EVENTS:
-        for role in ("attended", ""):
-            p = s.run("guard", event, WORKFLOW_ROLE=role)
-            _decision(p)  # exits 0, and any output is a decision with its reason
-            assert p.returncode == 0, (event, role, p.stderr)
+    cases = [(event, role) for event in ATTENDED_EVENTS for role in ("attended", "")]
+    runs = at_once(functools.partial(s.run, "guard", event, WORKFLOW_ROLE=role) for event, role in cases)
+    for (event, role), p in zip(cases, runs):
+        _decision(p)  # exits 0, and any output is a decision with its reason
+        assert p.returncode == 0, (event, role, p.stderr)
 
 
 # ---------- docs and skills (seam 4) ----------

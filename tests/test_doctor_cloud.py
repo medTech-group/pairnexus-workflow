@@ -4,6 +4,7 @@ environment holds. Seam 1 of #34: the CLI, with recorded environment JSON
 (`--environments`, as `list_environments` returns it), recorded issue JSON
 (`--runs`, as the GitHub API returns it) and a fake `gh` on the PATH."""
 
+import functools
 import json
 import os
 import subprocess
@@ -13,7 +14,7 @@ import pytest
 
 import fake_gh
 from changelog_notes import since_0110
-from test_doctor import CLI, ENVIRONMENTS, _bin, _doctor, _lines, _prof, _project, _report, _snapshot, gh_routes
+from test_doctor import CLI, ENVIRONMENTS, _bin, _doctor, _each_at_once, _lines, _prof, _project, _report, _unchanged_after_doctor, gh_routes
 
 NAMED = _prof("ruleset = true\n").replace('ticket_environment = "t"', 'ticket_environment = "workflow-ticket"').replace(
     'conductor_environment = "c"', 'conductor_environment = "workflow-conductor"')
@@ -327,30 +328,32 @@ def test_no_profile_waits_on_it(tmp_path):
 # The note: nothing can read what an environment holds
 
 
-def _states(tmp_path):
-    """Projects and inputs whose Cloud lines take every status between them."""
-    yield _project(tmp_path / "a"), [], ENVIRONMENTS, None
-    yield _project(tmp_path / "b"), _runs_file(tmp_path / "b", []), _envs("Default"), _no_gh(tmp_path / "b")
-    yield _project(tmp_path / "c"), [], _envs(), _no_gh(tmp_path / "c")
-    yield _project(tmp_path / "d"), [], _envs("t"), _no_gh(tmp_path / "d")
-    yield _project(tmp_path / "e"), _runs_file(tmp_path / "e", [RUN_ISSUE]), _envs(), _no_gh(tmp_path / "e")
-    yield _project(tmp_path / "f"), [], None, None
-    yield _project(tmp_path / "g", profile=None), [], ENVIRONMENTS, None
-    yield _project(tmp_path / "h"), [], _envs("t", has_more=True), None
-    yield _project(tmp_path / "i", profile=NAMED), _runs_file(tmp_path / "i", "[1]"), _envs("workflow-tickt"), _no_gh(tmp_path / "i")
-    yield _project(tmp_path / "j"), _env_file(tmp_path / "j", "{nope"), None, None
+def _states(tmp_path, compiled=True):
+    """Projects and inputs whose Cloud lines take every status between them,
+    each project's copy of the CLI with its bytecode unless `compiled` is false."""
+    project = functools.partial(_project, compiled=compiled)
+    yield project(tmp_path / "a"), [], ENVIRONMENTS, None
+    yield project(tmp_path / "b"), _runs_file(tmp_path / "b", []), _envs("Default"), _no_gh(tmp_path / "b")
+    yield project(tmp_path / "c"), [], _envs(), _no_gh(tmp_path / "c")
+    yield project(tmp_path / "d"), [], _envs("t"), _no_gh(tmp_path / "d")
+    yield project(tmp_path / "e"), _runs_file(tmp_path / "e", [RUN_ISSUE]), _envs(), _no_gh(tmp_path / "e")
+    yield project(tmp_path / "f"), [], None, None
+    yield project(tmp_path / "g", profile=None), [], ENVIRONMENTS, None
+    yield project(tmp_path / "h"), [], _envs("t", has_more=True), None
+    yield project(tmp_path / "i", profile=NAMED), _runs_file(tmp_path / "i", "[1]"), _envs("workflow-tickt"), _no_gh(tmp_path / "i")
+    yield project(tmp_path / "j"), _env_file(tmp_path / "j", "{nope"), None, None
 
 
 def test_the_note_that_nothing_can_read_what_an_environment_holds_is_always_there(tmp_path):
-    for root, args, envs, path in _states(tmp_path):
-        for env in (NEW, DEV):
-            r = _report(tmp_path, root, *args, environments=envs, path=path, env=env)
-            ln = _lines(r)["cloud.contents"]
-            assert (ln["status"], ln["group"], ln["offer"]) == ("note", "Cloud", None), ln
-            assert "WORKFLOW_ROLE=ticket" in ln["message"] + ln["fix"] and "WORKFLOW_ROLE=conductor" in ln["message"] + ln["fix"], ln
-            assert "secret" in ln["message"] + ln["fix"], ln
-            cloud = [x["id"] for x in r["lines"] if x["group"] == "Cloud"]
-            assert sorted(cloud) == ["cloud.contents", "cloud.environments"], cloud
+    calls = [(root, args, {"environments": envs, "path": path, "env": env})
+             for root, args, envs, path in _states(tmp_path) for env in (NEW, DEV)]
+    for r in _each_at_once(tmp_path, _report, calls):
+        ln = _lines(r)["cloud.contents"]
+        assert (ln["status"], ln["group"], ln["offer"]) == ("note", "Cloud", None), ln
+        assert "WORKFLOW_ROLE=ticket" in ln["message"] + ln["fix"] and "WORKFLOW_ROLE=conductor" in ln["message"] + ln["fix"], ln
+        assert "secret" in ln["message"] + ln["fix"], ln
+        cloud = [x["id"] for x in r["lines"] if x["group"] == "Cloud"]
+        assert sorted(cloud) == ["cloud.contents", "cloud.environments"], cloud
 
 
 def test_the_note_names_the_profiles_environments(tmp_path):
@@ -363,9 +366,11 @@ def test_the_note_names_the_profiles_environments(tmp_path):
 
 def test_each_cloud_wording_for_new_and_developer_with_the_same_statuses(tmp_path):
     seen = set()
-    for root, args, envs, path in _states(tmp_path):
-        n = _lines(_report(tmp_path, root, *args, environments=envs, path=path, env=NEW))
-        d = _lines(_report(tmp_path, root, *args, environments=envs, path=path, env=DEV))
+    calls = [(root, args, {"environments": envs, "path": path, "env": env})
+             for root, args, envs, path in _states(tmp_path) for env in (NEW, DEV)]
+    reports = iter(_each_at_once(tmp_path, _report, calls))
+    for n, d in zip(reports, reports):
+        n, d = _lines(n), _lines(d)
         for id_ in ("cloud.environments", "cloud.contents"):
             seen.add((id_, n[id_]["status"]))
             assert (n[id_]["status"], n[id_]["offer"]) == (d[id_]["status"], d[id_]["offer"]), id_
@@ -399,13 +404,13 @@ def test_the_cloud_gap_sorts_before_its_note(tmp_path):
 
 
 def test_nothing_in_the_checkout_changes_after_a_run(tmp_path):
-    for root, args, envs, path in _states(tmp_path):
+    calls = []
+    for root, args, envs, path in _states(tmp_path, compiled=False):  # so bytecode written would show
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
-        before = _snapshot(root)
         for extra in ((), ("--json",), ("--strict",)):
-            _doctor(tmp_path, root, *args, *extra, environments=envs, path=path)
-            _doctor(tmp_path, root, *extra, environments=_envs("Default"))  # whether a run was made, through the fake gh
-        assert _snapshot(root) == before, root
+            calls.append((root, (*args, *extra), {"environments": envs, "path": path}))
+            calls.append((root, extra, {"environments": _envs("Default")}))  # whether a run was made, through the fake gh
+    _unchanged_after_doctor(tmp_path, calls)
 
 
 # Docs
