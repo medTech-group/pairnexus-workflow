@@ -116,7 +116,7 @@ Only the local look counts here: `status` makes no network call for it, and the 
 | **Something new, or a change to what's there** | Always | "Tell me in your own words; several things at once is fine." |
 | **Fix something that's broken** | Unless four better options fill the list | "Describe what goes wrong; I'll find the cause." |
 | **Sort the new issues (N)** | Status lists issues to sort | "One by one: ready to build, needs more info, or won't do." |
-| **A brand-new project or a large effort** | The project is brand new (then first and recommended, unless **Check the set-up** is recommended: then second), or they mentioned something big | "Chart it as a map of decisions first." |
+| **A brand-new project or a large effort** | The project is brand new (then first and recommended, unless a kit update or a local gap's **Check the set-up** is offered: then after them, without "(Recommended)"), or they mentioned something big | "Chart it as a map of decisions first." |
 | **Run the ready tickets unattended (N)** | Tickets are ready and no run is in progress | "Built in parallel sessions while you're away." |
 
 **Carrying on.** What "Carry on" does depends on what is under way:

@@ -125,7 +125,37 @@ def test_a_file_doctor_could_not_use_is_fetched_again_once():
     assert "is a `cant_check` line" in failed and "Fetch such a file again once" in failed
     assert "look at each file yourself" in failed
     # A runs file doctor can't use leaves the Cloud line a note whose status isn't known.
-    assert "**The runs file is the exception.**" in failed and "whether it is a note or a gap isn't known" in failed
+    assert "**Runs that couldn't be read are the exception.**" in failed and "whether it is a note or a gap isn't known" in failed.lower()
+    assert "counts as a line that couldn't be checked" in failed
+    show = _section(_text(), "Show the report")
+    assert "no runs line that couldn't be read is the set-up fine" in show
+
+
+def _doctor_inputs(tmp_path, **kw):
+    from workflow.cli import _read_profile
+    from workflow.profile import resolve_experience
+    prof, error = _read_profile(KIT)
+    assert prof and not error
+    environ = kw.pop("environ", {"PATH": str(tmp_path / "no-bin")})  # no `gh`: nothing reaches GitHub
+    return doctor.Inputs(root=KIT, kit_root=KIT, profile=prof, profile_error=None,
+                         experience=resolve_experience(tmp_path, None, environ=environ), environ=environ, **kw)
+
+
+def test_doctor_leaves_unread_runs_a_note_as_the_skill_says(tmp_path):
+    # What the skill's exception rests on: neither environment found and the runs
+    # unreadable give a note, not cant_check, saying the runs couldn't be read.
+    envs = tmp_path / "environments.json"
+    envs.write_text(json.dumps([{"environments": [{"name": "other", "state": "active"}], "has_more": False}]))
+    i = _doctor_inputs(tmp_path, environments_file=envs, runs_file=tmp_path / "missing.json")
+    ln, = [ln for ln in doctor.report(i, [doctor.check_environments]).lines if ln.id == "cloud.environments"]
+    assert ln.status == "note" and "couldn't be read" in ln.message.new
+
+
+def test_doctor_reports_workflow_experience_as_the_persons_setting(tmp_path):
+    # Why the skill never sets WORKFLOW_EXPERIENCE for the run: kit.experience would name it.
+    i = _doctor_inputs(tmp_path, environ={"PATH": str(tmp_path / "no-bin"), "WORKFLOW_EXPERIENCE": "developer"})
+    ln, = doctor.report(i, [doctor.check_experience]).lines
+    assert "WORKFLOW_EXPERIENCE" in ln.message.new + ln.message.developer
 
 
 def test_without_a_profile_it_gathers_nothing():
@@ -221,7 +251,7 @@ def test_only_a_gap_recommends_its_upgrade_and_never_after_a_paid_plan_refusal()
     offers = _section(_text(), "The offers")
     assert "recommended option only on a `gap` line" in offers
     assert "without \"(Recommended)\"" in offers
-    assert "not for `protect_main` or `restore_protection` after a paid-plan refusal" in offers
+    assert "After a paid-plan refusal, `protect_main` and `restore_protection` aren't recommended either" in offers
     assert "a paid GitHub plan or a public repository" in offers
 
 
@@ -256,7 +286,7 @@ def test_start_offers_it_on_a_local_gap_from_status():
     # One recommended option only: a kit update stays first, and a brand-new project's map gives way.
     assert "then it is the recommended option and first" in look
     assert "this comes second, without \"(Recommended)\"" in look
-    assert "unless **Check the set-up** is recommended: then second" in look
+    assert "unless a kit update or a local gap's **Check the set-up** is offered: then after them" in look
 
 
 def test_start_offers_it_once_a_session_in_solo_mode():
@@ -319,7 +349,7 @@ def test_readme_step_6_leads_with_check_the_set_up_and_keeps_the_checklist():
     assert "`skills/check-setup`" in text
     assert "with `gh` signed in" in sec
     # The guided start's list of options names it too.
-    assert "- **Check the set-up** (recommended), when its quick look finds a problem" in text
+    assert "- **Check the set-up** (recommended, unless a kit update is), when its quick look finds a problem" in text
 
 
 def test_install_doc_points_at_check_the_set_up():

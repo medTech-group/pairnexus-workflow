@@ -261,7 +261,7 @@ Not the ticket or conductor environment, and not a `claude/build-…` branch. Th
 
 Then it asks **What are we working on?**, with up to four of these:
 - **Update the workflow kit to 0.1.x (Recommended)**, first, when a newer release is out and no run is in progress ([Keeping it up to date](#keeping-it-up-to-date));
-- **Check the set-up** (recommended), when its quick look finds a problem on your computer or in the kit's copy; or, not recommended, once a session in solo mode ([Step 6](#step-6-check-it));
+- **Check the set-up** (recommended, unless a kit update is), when its quick look finds a problem on your computer or in the kit's copy; or, not recommended, once a session in solo mode ([Step 6](#step-6-check-it));
 - **Carry on:** the most pressing item: your PR, work an earlier session claimed but didn't finish (carry on from its branch, or **Release it**), a planned item, a spec with no tickets yet, a map decision, or a ready ticket;
 - **Something new, or a change to what's there**;
 - **Fix something that's broken**;
