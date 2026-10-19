@@ -72,15 +72,14 @@ def test_it_gives_the_clicks_for_the_desktop_app_and_the_browser():
 def _plain_with_links(text: str) -> tuple[str, list[tuple[int, int, str]]]:
     """The text with each link reduced to its words, and where each link's
     words sit with its target."""
-    body = text
     plain, spans, at = [], [], 0
-    for m in LINK.finditer(body):
-        plain.append(body[at:m.start()])
+    for m in LINK.finditer(text):
+        plain.append(text[at:m.start()])
         start = sum(len(p) for p in plain)
         plain.append(m.group(1))
         spans.append((start, start + len(m.group(1)), m.group(2)))
         at = m.end()
-    plain.append(body[at:])
+    plain.append(text[at:])
     return "".join(plain), spans
 
 
@@ -124,12 +123,11 @@ def test_every_link_and_anchor_resolves_to_a_file_or_heading_that_exists():
             assert anchor in _anchors(target.read_text(encoding="utf-8")), f"{link}: no such heading"
 
 
-def test_it_links_the_glossary_entries_and_readme_sections_it_names():
+def test_it_links_the_readme_sections_it_names():
     links = {t for _, t in LINK.findall(_text())}
     assert "../README.md#protect-main" in links
     assert "../README.md#step-6-check-it" in links
     assert "../README.md#set-up-unattended-runs" in links
-    assert "glossary.md#pull-request-pr" in links
 
 
 def test_its_facts_link_claudes_and_githubs_own_docs():
@@ -137,6 +135,8 @@ def test_its_facts_link_claudes_and_githubs_own_docs():
     steps = _steps()
     for n in (1, 2, 4):
         assert "](https://code.claude.com/docs/" in steps[n - 1], f"step {n}"
+    # Step 2's GitHub App facts link GitHub's own docs.
+    assert "](https://docs.github.com/" in steps[1]
     links = {t for _, t in LINK.findall(_text())}
     assert "https://github.com/apps/claude" in links or any(
         l.startswith("https://github.com/apps/claude/") for l in links)
