@@ -1,7 +1,7 @@
 # Spike: what has been verified, and what hasn't
 
 > [!NOTE]
-> **Background.** This is the kit's record of what has been verified, including PAIR's own runs and the demo repository's (`medTech-group/pairnexus-workflow-sandbox`).
+> **Background.** This is the kit's record of what has been verified, including PAIR's own runs and the demo repository's (the sandbox, `medTech-group/pairnexus-workflow-sandbox`).
 
 The kit relies on Claude Code and GitHub behaving as their docs say. This file records what has actually been tried, so nothing rests on an assumption by accident. Update it whenever one of these is checked again.
 

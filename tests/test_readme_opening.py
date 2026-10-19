@@ -69,7 +69,7 @@ def test_the_opening_names_attended_work_before_unattended_runs():
     assert "conductor" in opening
 
 
-def test_the_opening_keeps_the_guided_start_and_the_arrow_chain():
+def test_the_opening_keeps_the_guided_start_and_the_flow_in_short():
     opening = _plain(_opening())
     assert "choices to click" in opening
     assert "plan → spec → build tickets → one session per ticket → review panel → merge" in opening
@@ -78,6 +78,7 @@ def test_the_opening_keeps_the_guided_start_and_the_arrow_chain():
 
 def test_the_conductor_paragraph_moved_to_unattended():
     readme = _text()
+    assert "\n#### Unattended\n" in readme, "no '#### Unattended'"
     unattended = readme.split("\n#### Unattended\n", 1)[1].split("\n1. ", 1)[0]
     words = _plain(unattended)
     assert "a conductor asks the owner a few questions once (the run charter)" in words
@@ -109,7 +110,7 @@ def test_no_other_part_of_the_readme_names_pair_drop():
 def test_the_history_docs_open_with_their_background_notes():
     spike = _opening_note("docs/spike.md")
     assert "the kit's record of what has been verified" in spike
-    assert "PAIR's own runs" in spike and "the demo repository's" in spike
+    assert "PAIR's own runs" in spike and "the demo repository's (the sandbox" in spike
     proposal = _opening_note("docs/proposal.md")
     assert "PAIR's original proposal" in proposal
     assert "Historical design record, kept as written." in proposal
