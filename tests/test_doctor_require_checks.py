@@ -107,6 +107,21 @@ def test_the_offer_shows_in_text(tmp_path):
     assert any(e.startswith("[note]") and "`lint`" in e and "Claude can offer: Require these checks" in e for e in _entries(p.stdout)), p.stdout
 
 
+def test_the_gap_keeps_its_own_fix_when_the_check_it_names_never_ran(tmp_path):
+    # `lint` is listed but never ran, so it can't be ticked; `docs` ran and is offered.
+    root = _project(tmp_path, profile=_prof("ruleset = true\n", TWO))
+    ln = _github(_report(tmp_path, root, *_given(tmp_path, [_runs(_run("tests"), _run("docs", n=2))])))["github.required_checks"]
+    assert (ln["status"], ln["offer"]) == ("gap", "require_checks") and "`docs`" in ln["message"], ln
+    assert "once it has run" in ln["fix"], ln
+
+
+def test_check_runs_and_statuses_in_one_object_are_both_read(tmp_path):
+    root = _project(tmp_path, profile=PROTECTED)
+    checks = {"check_runs": [_run("tests")], "statuses": [_status("ci/legacy")]}
+    ln = _github(_report(tmp_path, root, *_given(tmp_path, checks)))["github.required_checks"]
+    assert ln["offer"] == "require_checks" and "`ci/legacy`" in ln["message"], ln
+
+
 def test_statuses_count_as_checks_that_ran(tmp_path):
     root = _project(tmp_path, profile=PROTECTED)
     checks = [_runs(_run("tests")), _combined(_status("ci/legacy", "pending"))]
@@ -205,10 +220,11 @@ def test_only_this_repositorys_open_pull_requests_count_each_once(tmp_path):
         "own": [{**_pr(32, MARKER), "head": head("Acme/Demo")}],
         "twice": [[_pr(33, MARKER)], [_pr(33, MARKER)]],  # pages that overlap
         "bad": [_pr(-3, MARKER)],
+        "cross": [{**_pr(34, MARKER), "isCrossRepository": True}],  # `gh pr list --json`'s shape
     }
     calls = [(_project(tmp_path / k, profile=PROTECTED), _given(tmp_path / k, prs=prs, rulesets=rulesets), {}) for k, prs in cases.items()]
-    fork, deleted, own, twice, bad = (_github(r)["github.profile_checks"] for r in _each_at_once(tmp_path, _report, calls))
-    assert fork["status"] == deleted["status"] == "gap", (fork, deleted)
+    fork, deleted, own, twice, bad, cross = (_github(r)["github.profile_checks"] for r in _each_at_once(tmp_path, _report, calls))
+    assert fork["status"] == deleted["status"] == cross["status"] == "gap", (fork, deleted, cross)
     assert own["status"] == "note" and "#32" in own["message"], own
     assert twice["status"] == "note" and "pull request #33 adds" in twice["message"], twice
     assert bad["status"] == "cant_check" and "workflow ready --prs" in bad["fix"], bad
@@ -226,6 +242,7 @@ def test_with_the_profile_listing_none_while_github_requires_some_it_doesnt_say_
     lines = _github(_report(tmp_path, root, *_given(tmp_path, prs=[])))
     ln = lines["github.required_checks"]
     assert ln["status"] == "note" and "not required yet" not in ln["message"].lower() and "GitHub requires some" in ln["message"], ln
+    assert "profile" in ln["fix"] and "Require these checks" not in ln["fix"], ln
     assert lines["github.profile_checks"]["status"] == "gap" and "`tests`" in lines["github.profile_checks"]["message"]
 
 

@@ -1527,6 +1527,10 @@ def _split_checks(value) -> tuple[list, list]:
         if isinstance(v, list):
             for x in v:
                 go(x, depth + 1)
+        elif isinstance(v, dict) and "check_runs" in v and "statuses" in v:
+            # Both side by side in one object: each read as its own.
+            runs.append({"check_runs": v["check_runs"]})
+            combined.append({"statuses": v["statuses"]})
         elif isinstance(v, dict) and "check_runs" in v:
             runs.append(v)
         elif isinstance(v, dict) and "statuses" in v:
@@ -1602,11 +1606,13 @@ def _open_prs(i: Inputs) -> _Answer:
 def _marked(prs: list[dict], repo: str) -> list[int]:
     """The open pull requests that carry the required-checks marker, each
     once. One whose head is in another repository (a fork's, or a deleted
-    one's) isn't counted: anyone can open one."""
+    one's), where its shape says so, isn't counted: anyone can open one."""
     def own(pr: dict) -> bool:
+        if pr.get("isCrossRepository") is not False and "isCrossRepository" in pr:  # `gh pr list --json`'s
+            return False
         head = pr.get("head")
         if not isinstance(head, dict) or "repo" not in head:
-            return True  # a shape without it (the MCP tools'): the body is all there is
+            return True  # a shape that doesn't say (search's, the issues list's): the body is all there is
         full = head["repo"].get("full_name") if isinstance(head["repo"], dict) else None
         return isinstance(full, str) and issues_mod._same_repo(full, repo)
 
@@ -1675,7 +1681,10 @@ def check_required_checks(i: Inputs) -> list[Line]:
             line = Line(g, id_, "note", Words(
                 f"The kit's profile lists no checks that must pass before a pull request merges into `{base}`, though GitHub requires some (see the line on the profile's checks).",
                 "ci.required_checks is empty, though the ruleset requires checks (github.profile_checks).",
-            ), line.fix)
+            ), Words(
+                "Add the checks GitHub requires to the kit's profile first (see the line on the profile's checks).",
+                "Add the ruleset's required checks to ci.required_checks first (github.profile_checks).",
+            ))
         ran = _offerable(i, rep)
         if ran:
             line = _with_offer(Line(g, id_, "note", line.message, _offer_fix(base)), ran, base)
@@ -1710,7 +1719,7 @@ def check_required_checks(i: Inputs) -> list[Line]:
         line = Line(g, id_, "gap", Words(
             f"GitHub doesn't require {'this check' if len(missing) == 1 else 'these checks'} the kit's profile lists to pass before a pull request merges: {shown}.",
             f"ci.required_checks not required by any active ruleset on `{base}`: {shown}.",
-        ), _offer_fix(base) if ran else Words(
+        ), _offer_fix(base) if {c["name"] for c in ran} & set(missing) else Words(
             f"Ask Claude to \"{upgrade}\", once {'it has' if len(missing) == 1 else 'they have'} run on `{base}`.",
             f"Run upgrade-setup's \"{upgrade}\" (adds {'it' if len(missing) == 1 else 'them'} to the ruleset with \"up to date\" on).",
         ))
@@ -1733,8 +1742,8 @@ def _profile_checks(i: Inputs, rep: protection_mod.Report) -> list[Line]:
     while an open pull request carrying the marker adds them, else a gap
     (the merge rule and the conductor read the profile); `cant_check` when
     the pull requests can't be read. In solo mode a note either way: the
-    pull request that leaves it lists them. No line when the profile lists
-    them all."""
+    profile catches up once it has been left. No line when the profile
+    lists them all."""
     g, id_ = "GitHub", "github.profile_checks"
     base, listed = i.profile.base_branch, set(i.profile.required_checks)
     unlisted = [c for c in rep.required_checks if c not in listed]
@@ -1746,15 +1755,15 @@ def _profile_checks(i: Inputs, rep: protection_mod.Report) -> list[Line]:
     prs = _open_prs(i)
     marked = [] if prs.why else _marked(prs.value, i.profile.repo)
     if solo and not marked:
-        # Solo mode, never a gap: the pull request that leaves it lists them
-        # (upgrade-setup's "Protect `main`").
+        # Solo mode, never a gap: the profile catches up once it has been
+        # left (the pull request that leaves it lists only the checks ticked).
         protect = OFFERS["protect_main"]
         return [Line(g, id_, "note", Words(
             f"Solo mode: GitHub requires {'a check' if one else 'checks'} the kit's profile doesn't list ({names}).",
             f"Solo mode: required on `{base}` but not in ci.required_checks: {names}.",
         ), Words(
-            f"When you ask Claude to \"{protect}\", its pull request adds {them} to the kit's profile.",
-            f"\"{protect}\"'s pull request adds {them} to ci.required_checks.",
+            f"Once you've left solo mode (ask Claude to \"{protect}\"), ask Claude to add {them} to the kit's profile (`ci.required_checks` in {PROFILE}) in a pull request.",
+            f"After \"{protect}\"'s pull request merges, add {them} to ci.required_checks in a pull request, unless it did.",
         ))]
     if prs.why:
         return [Line(g, id_, "cant_check", Words(
