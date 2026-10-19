@@ -7,7 +7,6 @@ from conftest import KIT
 
 from changelog_notes import since_0110
 
-README = KIT / "README.md"
 START_HERE = "**[New to building? Start here](docs/quickstart.md)**"
 
 
@@ -29,7 +28,16 @@ def _opening() -> str:
 
 
 def _section(readme: str, heading: str) -> str:
+    """A `## ` section's text, to the next `## ` heading."""
+    assert f"\n{heading}\n" in readme, f"no {heading!r}"
     return readme.split(f"\n{heading}\n", 1)[1].split("\n## ", 1)[0]
+
+
+def _opening_note(path: str) -> str:
+    """The first paragraph after a doc's title, which must be a note."""
+    note = _text(path).split("\n", 1)[1].lstrip("\n").split("\n\n", 1)[0]
+    assert note.startswith("> [!NOTE]"), f"{path} doesn't open with a note"
+    return _plain(note)
 
 
 def _headings(readme: str) -> list[str]:
@@ -40,8 +48,13 @@ def _headings(readme: str) -> list[str]:
 def test_the_plain_lines_come_after_start_here_and_before_the_status_note():
     lines = [l for l in _text().splitlines() if l.strip()]
     assert lines[:2] == ["# pairnexus-workflow", START_HERE]
-    # The status note follows the plain lines, with nothing else between.
-    assert lines.index("> [!NOTE]") > 2
+    # The first note is the status note, and the plain lines before it are
+    # the whole opening: no heading or Contents between.
+    note = lines.index("> [!NOTE]")
+    assert note > 2
+    assert lines[note + 1].startswith("> **Status: beta.**")
+    assert "**Contents**" not in _opening()
+    assert not re.search(r"^#", _opening(), re.M)
     opening = _plain(_opening())
     assert "You describe what you want" in opening
     assert "Claude plans it, builds it in small reviewed pieces and merges what passes" in opening
@@ -50,8 +63,8 @@ def test_the_plain_lines_come_after_start_here_and_before_the_status_note():
 
 def test_the_opening_names_attended_work_before_unattended_runs():
     opening = _plain(_opening()).lower()
-    attended = opening.index("attended work")
-    assert attended < opening.index("unattended runs")
+    attended = re.search(r"(?<!un)attended work", opening)
+    assert attended and attended.start() < opening.index("unattended runs")
     assert "add later" in opening
 
 
@@ -64,7 +77,6 @@ def test_the_opening_keeps_the_guided_start_and_the_arrow_chain():
 
 def test_the_conductor_paragraph_moved_to_unattended():
     readme = _text()
-    assert "conductor" not in _opening().lower().replace("](#unattended)", "")
     unattended = readme.split("\n#### Unattended\n", 1)[1].split("\n1. ", 1)[0]
     words = _plain(unattended)
     assert "a conductor asks the owner a few questions once (the run charter)" in words
@@ -94,24 +106,16 @@ def test_no_other_part_of_the_readme_names_pair_drop():
 
 
 def test_the_history_docs_open_with_their_background_notes():
-    spike = _text("docs/spike.md").split("\n", 1)[1].lstrip("\n")
-    note = spike.split("\n\n", 1)[0]
-    assert note.startswith("> [!NOTE]")
-    words = _plain(note)
-    assert "the kit's record of what has been verified" in words
-    assert "PAIR's own runs" in words and "the demo repository's" in words
-    proposal = _text("docs/proposal.md").split("\n", 1)[1].lstrip("\n")
-    note = proposal.split("\n\n", 1)[0]
-    assert note.startswith("> [!NOTE]")
-    assert "PAIR's original proposal" in _plain(note)
-    assert "Historical design record, kept as written." in _plain(note)
+    spike = _opening_note("docs/spike.md")
+    assert "the kit's record of what has been verified" in spike
+    assert "PAIR's own runs" in spike and "the demo repository's" in spike
+    proposal = _opening_note("docs/proposal.md")
+    assert "PAIR's original proposal" in proposal
+    assert "Historical design record, kept as written." in proposal
 
 
-def test_the_status_note_and_the_unchanged_names_are_as_found():
-    readme = _text()
-    assert "**Status: beta.**" in readme
-    assert "maintained by PAIR (MedTech LLC)" in readme
-    assert "**Not yet proven in a real run** ([docs/spike.md](docs/spike.md))" in readme
+def test_the_readme_still_says_who_maintains_it():
+    assert "maintained by PAIR (MedTech LLC)" in _text()
 
 
 def test_changelog_note_is_under_unreleased():

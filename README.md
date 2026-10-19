@@ -757,7 +757,7 @@ Turn on GitHub Actions in the fork, bump the version and let the `release` workf
 
 ## Where it came from
 
-The kit packages what worked over the pair-drop weekend run of 9–12 Oct 2026, about 50 tickets, with fixes for what didn't. pair-drop is PAIR's own project, and is set up with the kit. [docs/spike.md](docs/spike.md) records what has been verified since, and [docs/proposal.md](docs/proposal.md) is PAIR's original proposal.
+The kit packages what worked over the pair-drop weekend run of 9–12 Oct 2026, about 50 tickets, with fixes for what didn't. pair-drop is PAIR's own project, and is set up with the kit. [docs/spike.md](docs/spike.md) records what has been verified, and what hasn't, and [docs/proposal.md](docs/proposal.md) is PAIR's original proposal.
 
 ## Licence
 
