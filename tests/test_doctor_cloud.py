@@ -14,7 +14,7 @@ import pytest
 
 import fake_gh
 from changelog_notes import since_0110
-from test_doctor import CLI, ENVIRONMENTS, _bin, _doctor, _each_at_once, _lines, _prof, _project, _report, _unchanged_after_doctor, gh_routes
+from test_doctor import CLI, ENVIRONMENTS, HEALTHY, _bin, _doctor, _each_at_once, _lines, _prof, _project, _report, _unchanged_after_doctor, gh_routes
 
 NAMED = _prof("ruleset = true\n").replace('ticket_environment = "t"', 'ticket_environment = "workflow-ticket"').replace(
     'conductor_environment = "c"', 'conductor_environment = "workflow-conductor"')
@@ -383,7 +383,7 @@ def test_each_cloud_wording_for_new_and_developer_with_the_same_statuses(tmp_pat
 
 
 def test_strict_passes_on_the_notes_and_fails_on_the_gaps_and_cant_check(tmp_path):
-    root = _project(tmp_path)
+    root = _project(tmp_path, profile=HEALTHY)
     ok = _no_gh(tmp_path)
     fake_gh.write(ok, gh_routes())
     assert _doctor(tmp_path, root, "--strict", path=ok).returncode == 0  # both found, and the contents note

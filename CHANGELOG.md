@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**`workflow doctor` offers "Require these checks", and names the open profile pull request** (#69, part of #38).
+
+- **Two new files, each winning over `gh`:** `--checks`, the base branch's latest commit's check runs and statuses in one file (GET `repos/<repo>/commits/<ref>/check-runs` and `.../status`, or `.../statuses`, every page, side by side), read as `workflow protection --checks-ran` reads them; and `--prs`, the open pull requests, as `workflow ready --prs` takes them. Without them doctor reads both with `gh api` (GETs only, within the GitHub lines' 60 seconds), and only when a line needs them. Either can be `-`, but only one of doctor's files can be standard input.
+- **The `require_checks` offer** ("Require these checks", beside `protect_main`, `restore_protection` and `set_up_unattended_runs`) is made on `github.required_checks` when checks ran on the base branch that the ruleset doesn't require, naming each with its result: on the "checks not required yet" note, on the gap naming checks the profile lists that the ruleset doesn't require, and, when the profile and the ruleset agree, on a note naming the check that ran and neither lists (one added to CI later). The try-it link's `Workers Builds: <worker>` check is never counted. It is never made in solo mode, nor while the base branch isn't protected (`protect_main` or `restore_protection` come first), nor when the check runs can't be read: the line is then as before.
+- **A check the ruleset requires that the profile doesn't list** is a new line, `github.profile_checks`, given only then: a note naming the open pull request that carries `<!-- workflow:required-checks -->` (the profile catches up when it merges), a gap naming the checks with none open (add them to `ci.required_checks` in a pull request, since the merge rule and the conductor read the profile), or "can't check" when the pull requests can't be read. On an old `python3`, doctor takes the two files too.
+- Docs: `docs/enforcement.md` §5. Tests: `tests/test_doctor_require_checks.py`.
+- **For projects updating:** nothing to do. `check-setup` (#70) and the conductor's pre-flight (#71) will hand doctor the two files.
+
 **The slowest tests run faster, so CI stays inside its time limit** (#193). The kit's own tests only: nothing that ships changes.
 
 - **A fresh copy of the CLI** in a test's project (`tests/test_doctor.py`'s `_project`, `tests/test_guard_no_python.py`'s `_kit_at`) now has its bytecode beside it, compiled once per test run (`copy_kit_package` in `tests/conftest.py`). Under `-B`, a copy with no bytecode compiled every module on every run, about half of each run's time. The bytecode is checked against each file's source hash, so a test that changes a copied file still runs that file's new source (`tests/test_test_helpers.py`).

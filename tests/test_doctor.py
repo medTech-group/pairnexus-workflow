@@ -62,6 +62,8 @@ RULESET = {
 }
 SETTINGS = {"full_name": "acme/demo", "default_branch": "main", "allow_merge_commit": True, "allow_auto_merge": True, "allow_squash_merge": True}
 CODEOWNERS = "/.claude/ @someone\n/.github/workflows/ @someone\n"
+# A profile set up as RULESET protects: ruleset = true, listing the check it requires.
+HEALTHY = _prof('experience = "new"\nruleset = true\n', '[ci]\nrequired_checks = ["tests"]\n')
 # The account's environments as `list_environments` returns them, with both of
 # the ones RUN names, made up.
 ENVIRONMENTS = {
@@ -203,7 +205,7 @@ def _text_has(tmp_path, root, status_word, needle, *args, **kw):
 
 
 def test_a_healthy_vendored_project_is_fine_throughout(tmp_path):
-    root = _project(tmp_path)
+    root = _project(tmp_path, profile=HEALTHY)
     r = _report(tmp_path, root)
     for ln in r["lines"]:
         assert set(ln) == {"group", "id", "status", "message", "fix", "offer"}

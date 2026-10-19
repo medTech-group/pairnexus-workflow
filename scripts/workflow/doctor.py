@@ -7,11 +7,13 @@ picks one wording by experience (#16: what is checked, and each status, never
 depend on it), puts the most serious line first and groups the rest.
 
 Doctor never changes anything (#27): it reads files and runs `python3`,
-`claude --version` and `gh api` (GETs only, for the GitHub lines and whether
-a run has been made, when no file is given), nothing else. It reads files
+`claude --version` and `gh api` (GETs only, for the GitHub lines, the base
+branch's checks, the open pull requests and whether a run has been made, when
+no file is given), nothing else. It reads files
 only through `_read_text` (and `_read_value`, `_read_json` on it), `_file`
 and `_hash_file`, which never raise and never wait on a pipe; only a file
-given as `-` (`--rulesets`, `--repo`, `--environments` or `--runs`) reads
+given as `-` (`--rulesets`, `--repo`, `--environments`, `--runs`, `--checks`
+or `--prs`) reads
 standard input, as asked. A check that fails unexpectedly becomes a
 `cant_check` line, never a traceback: doctor is advice, and exits 0.
 
@@ -43,6 +45,7 @@ import subprocess
 import sys
 import textwrap
 import time
+import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import NamedTuple
@@ -64,7 +67,8 @@ STATUSES = ("gap", "cant_check", "note", "fine")
 LABELS = {"gap": "gap", "cant_check": "can't check", "note": "note", "fine": "fine"}
 # The upgrades a line may offer, by the names #47 and #48 use (the glossary's
 # names: "Protect `main`" is the upgrade's name whatever the base branch).
-OFFERS = {"protect_main": "Protect `main`", "restore_protection": "Restore protection", "set_up_unattended_runs": "Set up unattended runs"}
+OFFERS = {"protect_main": "Protect `main`", "restore_protection": "Restore protection", "set_up_unattended_runs": "Set up unattended runs",
+          "require_checks": "Require these checks"}
 
 PYTHON_MIN = (3, 11)
 # The oldest Claude Code that honours the guard's `onFailure: "block"` (#57,
@@ -143,6 +147,10 @@ class Inputs:
     # and --runs (the `workflow:run` issues, which win over `gh api`).
     environments_file: Path | str | None = None
     runs_file: Path | str | None = None
+    # --checks (the base branch's latest commit's check runs and statuses) and
+    # --prs (the open pull requests), which win over `gh api` (#69).
+    checks_file: Path | str | None = None
+    prs_file: Path | str | None = None
     # Only gaps are wanted (`workflow status`, #62, which keeps the gap lines
     # itself): a check may leave out what can only be a note or fine and
     # costs time. `check_profile` skips `profile check`'s warnings, whose globs
@@ -151,6 +159,8 @@ class Inputs:
     _github: _GitHub | None = field(default=None, repr=False)  # what the GitHub lines read, read once
     _environments: _Answer | None = field(default=None, repr=False)  # the environments listed, read once
     _runs: _Answer | None = field(default=None, repr=False)  # the `workflow:run` issues, read once
+    _checks: _Answer | None = field(default=None, repr=False)  # the base branch's checks, read once
+    _prs: _Answer | None = field(default=None, repr=False)  # the open pull requests, read once
     _gh_until: float | None = field(default=None, repr=False)  # when doctor stops waiting on GitHub (`_gh_deadline`)
 
     @property
@@ -955,8 +965,8 @@ _OFFLINE = re.compile(r"error connecting to|proxyconnect|connection refused|no s
 _RATE_LIMIT = re.compile(r"rate limit|wait a few minutes|HTTP 429", re.I)
 # The files doctor takes instead of `gh`, as a developer's fix names them.
 GIVE_FILES = "--rulesets and --repo files (GET repos/<repo>/rulesets/<id> each in full, GET repos/<repo>)"
-# The upgrade that requires the checks (#38; #69 offers it on the required checks' line).
-REQUIRE_CHECKS = "Require these checks"
+# The upgrade that requires the checks (#38), offered on the required checks' line (#69).
+REQUIRE_CHECKS = OFFERS["require_checks"]
 # A CODEOWNERS owner: @login, @org/team, or an email address.
 _OWNER = re.compile(r"@[A-Za-z0-9](?:[A-Za-z0-9_-]*)(?:/[A-Za-z0-9._-]+)?|[^@\s]+@[^@\s]+\.[^@\s]+")
 
@@ -1487,28 +1497,180 @@ def _solo_unprotected(rep: protection_mod.Report, i: Inputs) -> bool:
     return i.profile.ruleset is False and not rep.protected and not rep.effective
 
 
+# The base branch's checks and the open pull requests (#69): read only when
+# the required checks' line needs them, from --checks and --prs when given,
+# else with `gh api` (GETs only) within the GitHub lines' budget.
+GIVE_CHECKS = "--checks (GET repos/<repo>/commits/<base>/status and .../check-runs, every page)"
+GIVE_PRS = "--prs (GET repos/<repo>/pulls?state=open, every page)"
+# What the pull requests that add required checks to the profile carry in their
+# body (upgrade-setup's flip pull request and its profile pull request).
+REQUIRED_CHECKS_MARKER = "<!-- workflow:required-checks -->"
+
+
+def _split_checks(value) -> tuple[list, list]:
+    """(check-run pages, combined-status pages) from what --checks holds:
+    GET .../check-runs answers, GET .../status answers and statuses
+    (GET .../statuses), as pages or one list, in any order."""
+    runs, combined, plain = [], [], []
+
+    def go(v, depth: int) -> None:
+        if depth > 6:
+            raise protection_mod.ProtectionError("it is nested deeper than GitHub nests check runs")
+        if isinstance(v, list):
+            for x in v:
+                go(x, depth + 1)
+        elif isinstance(v, dict) and "check_runs" in v:
+            runs.append(v)
+        elif isinstance(v, dict) and "statuses" in v:
+            combined.append(v)
+        elif isinstance(v, dict) and "context" in v:
+            plain.append(v)
+        else:
+            raise protection_mod.ProtectionError("it isn't check runs or statuses, as GitHub gives them")
+
+    go(value, 0)
+    if plain:
+        combined.append({"statuses": plain})
+    return runs, combined
+
+
+def _read_checks(i: Inputs) -> _Answer:
+    """The base branch's latest commit's statuses, then that commit's check
+    runs, with `gh api`: (check-run pages, combined-status pages)."""
+    repo, deadline = i.profile.repo, _gh_deadline(i)
+    ref = urllib.parse.quote(i.profile.base_branch, safe="/")
+    status = _gh(i, f"repos/{repo}/commits/{ref}/status?per_page=100", deadline, "--checks", paginate=True, give=GIVE_CHECKS)
+    if status.why:
+        return status
+    sha = next((x.get("sha") for x in status.value if isinstance(x, dict) and isinstance(x.get("sha"), str)), None)
+    if sha is None or not re.fullmatch(r"[0-9a-fA-F]{40}", sha):
+        return _Answer(why=Words("GitHub's answer didn't name the commit", "GET .../status has no sha"), fix=_again(GIVE_CHECKS))
+    runs = _gh(i, f"repos/{repo}/commits/{sha}/check-runs?per_page=100", deadline, "--checks", paginate=True, give=GIVE_CHECKS)
+    return runs if runs.why else _Answer((runs.value, status.value))
+
+
+def _checks_ran(i: Inputs, rep: protection_mod.Report) -> list[dict] | None:
+    """The checks that ran on the base branch's latest commit that the
+    ruleset doesn't require (#66's "checks that ran", so never the try-it
+    link's), each with its result; None when they can't be read."""
+    if i._checks is None:
+        if i.checks_file is not None:
+            given = _given(i, i.checks_file, "--checks", what="check runs")
+            try:
+                i._checks = given if given.why else _Answer(_split_checks(given.value))
+            except protection_mod.ProtectionError as e:
+                i._checks = _Answer(why=Words(f"the --checks file: {e}", f"--checks: {e}"))
+        else:
+            i._checks = _read_checks(i)
+    if i._checks.why:
+        return None
+    try:
+        return protection_mod.checks_ran(*i._checks.value, rep.required_checks)
+    except protection_mod.ProtectionError:
+        return None
+
+
+def _open_prs(i: Inputs) -> _Answer:
+    """The open pull requests, each with a number and its body, from --prs
+    (as `workflow ready --prs` takes them), else `gh api`."""
+    if i._prs is None:
+        if i.prs_file is not None:
+            answer = _given(i, i.prs_file, "--prs", what="pull requests", fix=Words(
+                "Ask Claude to fetch the open pull requests from GitHub again, as `workflow ready --prs` takes them, or leave out --prs to read GitHub with `gh`.",
+                "Give --prs as `workflow ready --prs` takes it (GET repos/<repo>/pulls?state=open), or leave it out to use `gh api`.",
+            ))
+        else:
+            answer = _gh(i, f"repos/{i.profile.repo}/pulls?state=open&per_page=100", _gh_deadline(i), "--prs", paginate=True, give=GIVE_PRS)
+        if not answer.why:
+            prs, todo = [], [answer.value]
+            while todo:
+                v = todo.pop(0)
+                if isinstance(v, list):
+                    todo[:0] = v
+                else:
+                    prs.append(v)
+            if all(isinstance(pr, dict) and isinstance(pr.get("number"), int) and not isinstance(pr.get("number"), bool) for pr in prs):
+                answer = _Answer(prs)
+            else:
+                answer = _Answer(why=Words(
+                    "the --prs file isn't a list of pull requests, each with its number" if i.prs_file is not None else "GitHub's list of pull requests couldn't be read",
+                    "--prs: a pull request without a number" if i.prs_file is not None else "`gh api`'s pull requests: one without a number",
+                ), fix=answer.fix if i.prs_file is None else _given(i, "", "--prs").fix)
+        i._prs = answer
+    return i._prs
+
+
+def _marked(prs: list[dict]) -> list[int]:
+    """The open pull requests that carry the required-checks marker."""
+    return [pr["number"] for pr in prs
+            if str(pr.get("state") or "open").lower() == "open" and REQUIRED_CHECKS_MARKER in str(pr.get("body") or "")]
+
+
+def _names(names) -> str:
+    return ", ".join(f"`{_shown(c)}`" for c in names)
+
+
+def _ran_names(ran: list[dict]) -> str:
+    return ", ".join(f"`{_shown(c['name'])}` ({c['result']})" for c in ran)
+
+
+def _offerable(i: Inputs, rep: protection_mod.Report) -> list[dict]:
+    """The checks to offer to require: those that ran on the base branch and
+    the ruleset doesn't require. Never in solo mode (the flip pull request
+    comes first), nor while the base branch isn't protected (`protect_main`
+    or `restore_protection` come first), nor when they can't be read."""
+    if i.profile.ruleset is False or not rep.protected:
+        return []
+    return _checks_ran(i, rep) or []
+
+
+def _with_offer(line: Line, ran: list[dict], base: str) -> Line:
+    """The line carrying the `require_checks` offer, naming the checks that ran."""
+    one = len(ran) == 1
+    return Line(line.group, line.id, line.status, Words(
+        line.message.new + f" {'This check has' if one else 'These checks have'} run on `{base}` and {'isn' if one else 'aren'}'t required yet: {_ran_names(ran)}.",
+        line.message.developer + f" Ran on `{base}`, not required: {_ran_names(ran)}.",
+    ), line.fix, offer="require_checks")
+
+
+def _offer_fix(base: str) -> Words:
+    return Words(
+        f"Ask Claude to \"{REQUIRE_CHECKS}\": it shows the checks that ran on `{base}` for you to tick.",
+        f"Run upgrade-setup's \"{REQUIRE_CHECKS}\" (`require_checks`): the ticked checks go in the ruleset, with \"up to date\" on, and in ci.required_checks.",
+    )
+
+
 @_check("GitHub", "github.required_checks")
 def check_required_checks(i: Inputs) -> list[Line]:
-    """The profile's `ci.required_checks` that the ruleset doesn't require.
-    A check it requires that the profile doesn't list isn't a line here (#38's
-    tickets add that note, and #69 the `require_checks` offer on this line)."""
+    """The profile's `ci.required_checks` against the ruleset, with the
+    `require_checks` offer when checks ran on the base branch that the ruleset
+    doesn't require (#69); and the checks the ruleset requires that the
+    profile doesn't list (`github.profile_checks`)."""
     g, id_ = "GitHub", "github.required_checks"
     if i.profile is None:
         return [_waits(i, id_, Words("which checks GitHub requires", "Required checks"), None)]
     base, listed = i.profile.base_branch, list(i.profile.required_checks)
     upgrade = REQUIRE_CHECKS
     if not listed:
-        return [Line(g, id_, "note", Words(
+        gh = _github(i)
+        rep = gh.report if gh else None
+        line = Line(g, id_, "note", Words(
             f"Checks not required yet: the kit's profile lists no checks that must pass before a pull request merges into `{base}`.",
             "ci.required_checks is empty: checks not required yet.",
         ), Words(
             f"Once your project's checks have run on `{base}`, ask Claude to \"{upgrade}\".",
             f"After CI has run on `{base}`, run upgrade-setup's \"{upgrade}\".",
-        ))]
+        ))
+        if rep is None:
+            return [line]
+        ran = _offerable(i, rep)
+        if ran:
+            line = _with_offer(Line(g, id_, "note", line.message, _offer_fix(base)), ran, base)
+        return [line] + _profile_checks(i, rep)
     rep, wait = _report(i, id_, Words("whether GitHub requires the checks the kit's profile lists", "ci.required_checks against the ruleset"))
     if wait:
         return [wait]
-    names = ", ".join(f"`{_shown(c)}`" for c in listed)
+    names = _names(listed)
     if _solo_unprotected(rep, i):
         return [Line(g, id_, "note", Words(
             f"Solo mode: GitHub doesn't require the checks the kit's profile lists ({names}), since nothing protects `{base}` there yet.",
@@ -1517,19 +1679,77 @@ def check_required_checks(i: Inputs) -> list[Line]:
             f"They're required when you ask Claude to \"{OFFERS['protect_main']}\".",
             f"\"{OFFERS['protect_main']}\" adds them to the ruleset it creates.",
         ))]
+    ran = _offerable(i, rep)
     missing = [c for c in listed if c not in rep.required_checks]
     if missing:
-        shown = ", ".join(f"`{_shown(c)}`" for c in missing)
-        return [Line(g, id_, "gap", Words(
+        shown = _names(missing)
+        line = Line(g, id_, "gap", Words(
             f"GitHub doesn't require {'this check' if len(missing) == 1 else 'these checks'} the kit's profile lists to pass before a pull request merges: {shown}.",
             f"ci.required_checks not required by any active ruleset on `{base}`: {shown}.",
         ), Words(
             f"Ask Claude to \"{upgrade}\", once {'it has' if len(missing) == 1 else 'they have'} run on `{base}`.",
             f"Run upgrade-setup's \"{upgrade}\" (adds them to the ruleset with \"up to date\" on).",
+        ))
+    elif ran:
+        # The profile and the ruleset agree, but a check added to CI later has run.
+        line = Line(g, id_, "note", Words(
+            f"GitHub requires the checks the kit's profile lists ({names}), but neither lists every check that runs on `{base}`.",
+            f"Every ci.required_checks name is required on `{base}` ({names}); not every check that ran is.",
+        ), _offer_fix(base))
+    else:
+        line = Line(g, id_, "fine", Words(
+            f"GitHub requires the checks the kit's profile lists to pass before a pull request merges ({names}).",
+            f"Every ci.required_checks name is required on `{base}` ({names}).",
+        ))
+    return [_with_offer(line, ran, base) if ran else line] + _profile_checks(i, rep)
+
+
+def _profile_checks(i: Inputs, rep: protection_mod.Report) -> list[Line]:
+    """The checks the ruleset requires that the profile doesn't list: a note
+    while an open pull request carrying the marker adds them, else a gap
+    (the merge rule and the conductor read the profile); `cant_check` when
+    the pull requests can't be read. In solo mode a note: the pull request
+    that leaves it lists them. No line when the profile lists them all."""
+    g, id_ = "GitHub", "github.profile_checks"
+    base, listed = i.profile.base_branch, set(i.profile.required_checks)
+    unlisted = [c for c in rep.required_checks if c not in listed]
+    if not unlisted:
+        return []
+    one, names = len(unlisted) == 1, _names(unlisted)
+    them = "it" if one else "them"
+    if i.profile.ruleset is False:
+        # Solo mode: the pull request that leaves it lists them (upgrade-setup's "Protect `main`").
+        protect = OFFERS["protect_main"]
+        return [Line(g, id_, "note", Words(
+            f"Solo mode: GitHub requires {'a check' if one else 'checks'} the kit's profile doesn't list ({names}).",
+            f"Solo mode: required on `{base}` but not in ci.required_checks: {names}.",
+        ), Words(
+            f"When you ask Claude to \"{protect}\", its pull request adds {them} to the kit's profile.",
+            f"\"{protect}\"'s pull request adds {them} to ci.required_checks.",
         ))]
-    return [Line(g, id_, "fine", Words(
-        f"GitHub requires the checks the kit's profile lists to pass before a pull request merges ({names}).",
-        f"Every ci.required_checks name is required on `{base}` ({names}).",
+    prs = _open_prs(i)
+    if prs.why:
+        return [Line(g, id_, "cant_check", Words(
+            f"GitHub requires {'a check' if one else 'checks'} the kit's profile doesn't list ({names}), and whether a pull request is adding {them} to the profile can't be checked: {_relative(i, prs.why.new)}.",
+            f"Required on `{base}` but not in ci.required_checks: {names}; open pull requests unchecked: {_relative(i, prs.why.developer)}.",
+        ), prs.fix)]
+    marked = _marked(prs.value)
+    if marked:
+        refs, many = _listing(_refs(marked)), len(marked) > 1
+        prs_word = f"pull request{'s' if many else ''} {refs}"
+        return [Line(g, id_, "note", Words(
+            f"GitHub requires {'a check' if one else 'checks'} the kit's profile doesn't list yet ({names}): {prs_word} {'add' if many else 'adds'} {them}, so the profile catches up when {'one' if many else 'it'} merges.",
+            f"Required on `{base}` but not in ci.required_checks yet: {names}; open {refs} ({REQUIRED_CHECKS_MARKER}) {'update' if many else 'updates'} the profile.",
+        ), Words(
+            f"Review and merge {prs_word}.",
+            f"Merge {refs}.",
+        ))]
+    return [Line(g, id_, "gap", Words(
+        f"GitHub requires {'a check' if one else 'checks'} to pass that the kit's profile doesn't list ({names}). The kit reads the required checks from its profile, so the two should agree.",
+        f"Required on `{base}` but not in ci.required_checks: {names} (the merge rule and the conductor read the profile).",
+    ), Words(
+        f"Ask Claude to add {them} to the kit's profile (`ci.required_checks` in {PROFILE}) in a pull request.",
+        f"Add {'it' if one else 'them'} to ci.required_checks in a pull request.",
     ))]
 
 
