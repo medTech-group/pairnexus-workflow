@@ -66,6 +66,7 @@ def test_the_opening_names_attended_work_before_unattended_runs():
     attended = re.search(r"(?<!un)attended work", opening)
     assert attended and attended.start() < opening.index("unattended runs")
     assert "add later" in opening
+    assert "conductor" in opening
 
 
 def test_the_opening_keeps_the_guided_start_and_the_arrow_chain():
