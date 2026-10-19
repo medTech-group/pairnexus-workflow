@@ -52,6 +52,7 @@ from pathlib import Path, PurePosixPath
 from typing import NamedTuple
 
 from . import estimate as estimate_mod
+from . import issues as issues_mod
 from . import posts as posts_mod
 from . import profile as profile_mod
 from . import protection as protection_mod
@@ -1607,13 +1608,13 @@ def _marked(prs: list[dict], repo: str) -> list[int]:
         if not isinstance(head, dict) or "repo" not in head:
             return True  # a shape without it (the MCP tools'): the body is all there is
         full = head["repo"].get("full_name") if isinstance(head["repo"], dict) else None
-        return isinstance(full, str) and full.casefold() == repo.casefold()
+        return isinstance(full, str) and issues_mod._same_repo(full, repo)
 
     return list(dict.fromkeys(pr["number"] for pr in prs
                               if str(pr.get("state") or "open").lower() == "open" and REQUIRED_CHECKS_MARKER in str(pr.get("body") or "") and own(pr)))
 
 
-def _names(names) -> str:
+def _check_names(names) -> str:
     return ", ".join(f"`{_shown(c)}`" for c in names)
 
 
@@ -1623,8 +1624,8 @@ def _ran_names(ran: list[dict]) -> str:
 
 def _offerable(i: Inputs, rep: protection_mod.Report) -> list[dict]:
     """The checks to offer to require: those that ran on the base branch and
-    the ruleset doesn't require. Never in solo mode (the flip pull request
-    comes first), nor while the base branch isn't protected (`protect_main`
+    the ruleset doesn't require. Never in solo mode (the pull request that
+    leaves it comes first), nor while the base branch isn't protected (`protect_main`
     or `restore_protection` come first), nor when they can't be read."""
     if i.profile.ruleset is False or not rep.protected:
         return []
@@ -1682,7 +1683,7 @@ def check_required_checks(i: Inputs) -> list[Line]:
     rep, wait = _report(i, id_, Words("whether GitHub requires the checks the kit's profile lists", "ci.required_checks against the ruleset"))
     if wait:
         return [wait]
-    names = _names(listed)
+    names = _check_names(listed)
     if _solo_unprotected(rep, i):
         return [Line(g, id_, "note", Words(
             f"Solo mode: GitHub doesn't require the checks the kit's profile lists ({names}), since nothing protects `{base}` there yet.",
@@ -1696,7 +1697,7 @@ def check_required_checks(i: Inputs) -> list[Line]:
     if missing and i.profile.ruleset is False:
         # Solo mode with a ruleset on the base branch: "Require these checks"
         # waits for the pull request that leaves solo mode (#38), so never a gap.
-        shown = _names(missing)
+        shown = _check_names(missing)
         return [Line(g, id_, "note", Words(
             f"Solo mode: GitHub doesn't require {'this check' if len(missing) == 1 else 'these checks'} the kit's profile lists yet: {shown}. {'It is' if len(missing) == 1 else 'They are'} required once `{base}` is protected and you've left solo mode.",
             f"Solo mode: ci.required_checks not required by any active ruleset on `{base}`: {shown}.",
@@ -1705,7 +1706,7 @@ def check_required_checks(i: Inputs) -> list[Line]:
             f"Leave solo mode (\"{OFFERS['protect_main']}\"), then run upgrade-setup's \"{upgrade}\".",
         ))] + _profile_checks(i, rep)
     if missing:
-        shown = _names(missing)
+        shown = _check_names(missing)
         line = Line(g, id_, "gap", Words(
             f"GitHub doesn't require {'this check' if len(missing) == 1 else 'these checks'} the kit's profile lists to pass before a pull request merges: {shown}.",
             f"ci.required_checks not required by any active ruleset on `{base}`: {shown}.",
@@ -1739,7 +1740,7 @@ def _profile_checks(i: Inputs, rep: protection_mod.Report) -> list[Line]:
     unlisted = [c for c in rep.required_checks if c not in listed]
     if not unlisted:
         return []
-    one, names = len(unlisted) == 1, _names(unlisted)
+    one, names = len(unlisted) == 1, _check_names(unlisted)
     them = "it" if one else "them"
     solo = i.profile.ruleset is False
     prs = _open_prs(i)
