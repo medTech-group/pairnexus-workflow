@@ -382,6 +382,8 @@ def test_a_cloud_session_gathers_the_base_branchs_checks_every_page_in_one_file(
     cloud = _section(_text(), "In a cloud session", "###")
     # The latest commit's statuses, then that commit's check runs, every page.
     assert "'repos/<repo>/commits/<base>/status?per_page=100'" in cloud
+    # The branch goes into the route as doctor's own read puts it.
+    assert "percent-encoded in a route except for its `/`" in cloud
     assert "'repos/<repo>/commits/<sha>/check-runs?per_page=100'" in cloud
     assert cloud.count("gh api --paginate --slurp") >= 3
     assert "every page" in cloud
@@ -437,7 +439,7 @@ def test_checks_not_handed_to_doctor_are_said_once_only_where_doctor_would_offer
     text = _text()
     assert "couldn't be read from this session, so if some aren't required yet, \"Require these checks\" can't be offered here." in text
     # With the next step, as upgrade-setup gives it when it can't read the checks.
-    assert "To see them, ask again where `gh` is signed in." in text
+    assert "To see them, ask Claude to check the set-up again where GitHub's command-line tool (`gh`) is signed in." in text
     assert "- you left `--checks` out;\n- `github.ruleset` is `fine`;\n- `github.required_checks` has no `offer`;" in text
     assert "Otherwise say nothing about it." in text
 
@@ -531,7 +533,7 @@ def test_enforcement_section_5_names_the_checks_and_require_these_checks():
 def test_changelog_notes_70_under_unreleased():
     # #70's own entry, from its title to the next entry's.
     notes = since_0110()
-    entry = notes[notes.rindex("\n**", 0, notes.index("(#70")):]
-    entry = entry[:entry.index("\n**", 1)]
+    entry = notes[re.search(r"^\*\*.*\(#70[,)]", notes, re.M).start():]
+    entry = entry[:entry.index("\n**")]
     assert "\"Require these checks\"" in entry and "`--checks`" in entry and "`--prs`" in entry
     assert "`github.profile_checks`" in entry

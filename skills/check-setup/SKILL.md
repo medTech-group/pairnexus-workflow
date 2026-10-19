@@ -32,7 +32,7 @@ Gather:
 - **The repository's settings:** `gh api repos/<repo> > <dir>/repo.json`.
 - **The environments:** `list_environments`, every page until `has_more` is false, saved as one JSON list of its pages in `<dir>/environments.json`.
 - **The runs:** the issues labelled `workflow:run`, open and closed: `gh api 'repos/<repo>/issues?labels=workflow:run&state=all&per_page=100' > <dir>/run-issues.json`, or the GitHub MCP tools (`list_issues` with that label, every state). One page is enough: doctor only asks whether a run has been made.
-- **The checks that ran on the base branch** (the profile's `project.base_branch`, `<base>` below), for doctor's "Require these checks" offer: its latest commit's check runs and statuses, every page, in one file.
+- **The checks that ran on the base branch** (the profile's `project.base_branch`, `<base>` below, percent-encoded in a route except for its `/`, as doctor does), for doctor's "Require these checks" offer: its latest commit's check runs and statuses, every page, in one file.
   1. `gh api --paginate --slurp 'repos/<repo>/commits/<base>/status?per_page=100' > <dir>/status.json`. It is a list of pages, and the first page's `sha` is the commit: `python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))[0]["sha"])' <dir>/status.json`. Write it out in full in the next command (`<sha>`), so both reads are of the same commit even if `<base>` moves in between.
   2. `gh api --paginate --slurp 'repos/<repo>/commits/<sha>/check-runs?per_page=100' > <dir>/check-runs.json`.
   3. Put the two side by side in one JSON list, as doctor's `--checks` takes them:
@@ -61,14 +61,14 @@ Then run doctor once, with every file you have:
 WF doctor --json --rulesets <dir>/rulesets.json --repo <dir>/repo.json --environments <dir>/environments.json --runs <dir>/run-issues.json --checks <dir>/checks.json --prs <dir>/prs.json --claude-version "<what claude --version printed>"
 ```
 
-Without `--checks`, doctor reads the checks with `gh` itself, where it can. When it can't, it makes no "Require these checks" offer and no line says so. Doctor would make the offer only when the report's `github.ruleset` line is `fine` (the base branch protected, not in solo mode). So when all of these hold:
+Without `--checks`, doctor reads the checks with `gh` itself, where it can. When it can't, it makes no "Require these checks" offer and no line says so. Doctor makes the offer only when the report's `github.ruleset` line is `fine` (the base branch protected, not in solo mode). So when all of these hold:
 - you left `--checks` out;
 - `github.ruleset` is `fine`;
 - `github.required_checks` has no `offer`;
 
 say once beside the report:
 
-> Which checks have run on `<base>` couldn't be read from this session, so if some aren't required yet, "Require these checks" can't be offered here. To see them, ask again where `gh` is signed in.
+> Which checks have run on `<base>` couldn't be read from this session, so if some aren't required yet, "Require these checks" can't be offered here. To see them, ask Claude to check the set-up again where GitHub's command-line tool (`gh`) is signed in.
 
 Otherwise say nothing about it.
 
