@@ -4,9 +4,13 @@ files as the kit-release tests do, and the skill shipping as the others do."""
 
 import json
 import re
+import subprocess
 
 from changelog_notes import since_0110
 from conftest import KIT
+from test_doctor import RULESET, _each_at_once, _lines, _prof, _project, _report
+from test_doctor_github import CHECKS
+from test_doctor_require_checks import MARKER, PROTECTED, SHA, _combined, _given, _pr, _requiring, _run, _runs, _status
 from workflow import doctor, status, vendor
 
 SKILL = KIT / "skills/check-setup/SKILL.md"
@@ -33,6 +37,13 @@ def _section(text, title, level="##"):
 def _doctor_lines():
     """Every `WF doctor ...` command line the skill gives."""
     return re.findall(r"^WF doctor .*$", _text(), re.M)
+
+
+def _skill_command(pattern):
+    """The one line of the skill matching `pattern`."""
+    found = re.findall(pattern, _text(), re.M)
+    assert len(found) == 1, found
+    return found[0]
 
 
 # ---------- the skill: its name, and where it runs ----------
@@ -362,3 +373,168 @@ def test_changelog_notes_it_under_unreleased():
     # Read from "## Unreleased" down, so the note still counts once a release moves it.
     notes = since_0110()
     assert "(#63" in notes and "`check-setup`" in notes
+
+
+# ---------- #70: the base branch's checks and the open pull requests ----------
+
+
+def test_a_cloud_session_gathers_the_base_branchs_checks_every_page_in_one_file():
+    cloud = _section(_text(), "In a cloud session", "###")
+    # The latest commit's statuses, then that commit's check runs, every page.
+    assert "'repos/<repo>/commits/<base>/status?per_page=100'" in cloud
+    # The branch goes into the route as doctor's own read puts it.
+    assert "percent-encoded in a route except for its `/`" in cloud
+    assert "'repos/<repo>/commits/<sha>/check-runs?per_page=100'" in cloud
+    assert cloud.count("gh api --paginate --slurp") >= 3
+    assert "every page" in cloud
+    # Side by side in one JSON list, as doctor's --checks takes them.
+    assert "side by side in one JSON list" in cloud
+    # No MCP tool lists a commit's check runs: without `gh api`, the flag is left out.
+    assert "leave `--checks` out" in cloud
+
+
+def test_the_checks_file_is_looked_at_before_doctor_since_a_wrong_one_is_silent():
+    cloud = _section(_text(), "In a cloud session", "###")
+    assert "a wrong one is silent" in cloud
+    # What makes it wrong without a word from doctor.
+    assert "`app`" in cloud and "`slug`" in cloud
+    assert "`total_count`" in cloud
+    assert "`head_sha`" in cloud and "`sha`" in cloud
+    assert "`{\"message\": …}`" in cloud
+    # Each step's exit code, since a failed one still leaves a file behind.
+    assert "Each command above must exit 0" in cloud and "run the steps again once from step 1" in cloud
+    # The commit is the first page's `sha`, as `--slurp` writes it.
+    assert "[0][\"sha\"]" in cloud
+    # And a checks file doctor couldn't use is the exception to "a `cant_check` line".
+    failed = _section(_text(), "When something goes wrong", "###")
+    assert "`--checks` is the exception" in failed and "can read `fine`" in failed
+
+
+def test_a_cloud_session_gathers_the_open_pull_requests_in_full():
+    cloud = _section(_text(), "In a cloud session", "###")
+    assert "'repos/<repo>/pulls?state=open&per_page=100'" in cloud
+    # Through the MCP tools too, but in full: a marked pull request counts only from this repository.
+    assert "`list_pull_requests`" in cloud and "no `fields` subset" in cloud
+    assert "`head.repo`" in cloud and "`body`" in cloud
+    assert "never a minimal or summarised list" in cloud.lower()
+
+
+def test_the_cloud_command_hands_doctor_the_checks_and_the_open_pull_requests():
+    cmd, = [c for c in _doctor_lines() if "--environments" in c]
+    assert "--checks <dir>/checks.json" in cmd
+    assert "--prs <dir>/prs.json" in cmd
+
+
+def test_a_local_session_leaves_the_checks_and_pull_requests_to_doctors_own_gh():
+    local = _section(_text(), "In a local session", "###")
+    assert "the base branch's latest check runs and statuses, and the open pull requests" in local
+    # The local command gives neither file.
+    local_cmd, = [c for c in _doctor_lines() if "--environments" not in c]
+    assert "--checks" not in local_cmd and "--prs" not in local_cmd
+
+
+def test_checks_not_handed_to_doctor_are_said_once_only_where_doctor_would_offer():
+    # Doctor makes no offer and says nothing when the checks can't be read. It would
+    # offer only with the base branch protected and not in solo mode: `github.ruleset` fine.
+    text = _text()
+    assert "couldn't be read from this session, so if some aren't required yet, \"Require these checks\" can't be offered here." in text
+    # With the next step, as upgrade-setup gives it when it can't read the checks.
+    assert "To see them, ask Claude to check the set-up again where GitHub's command-line tool (`gh`) is signed in." in text
+    assert "- you left `--checks` out;\n- `github.ruleset` is `fine`;\n- `github.required_checks` has no `offer`;" in text
+    assert "Otherwise say nothing about it." in text
+
+
+def test_doctor_offers_require_checks_exactly_where_github_ruleset_is_fine(tmp_path):
+    # What the skill's rule rests on, through the CLI: a check that ran and isn't
+    # required is offered when the base branch is protected outside solo mode, and only then.
+    ran = [_runs(_run("tests"), _run("lint", n=2))]
+    states = {
+        "protected": (PROTECTED, [RULESET]),
+        "ruleset left out": (_prof('experience = "new"\n', CHECKS), [RULESET]),
+        "solo mode, protected": (_prof('experience = "new"\nruleset = false\n', CHECKS), [RULESET]),
+        "unprotected": (PROTECTED, []),
+    }
+    calls = [(_project(tmp_path / str(k), profile=prof), _given(tmp_path / str(k), checks=ran, rulesets=rulesets), {})
+             for k, (prof, rulesets) in enumerate(states.values())]
+    for name, report in zip(states, _each_at_once(tmp_path, _report, calls)):
+        lines = _lines(report)
+        fine = lines["github.ruleset"]["status"] == "fine"
+        assert (lines["github.required_checks"]["offer"] == "require_checks") == fine, (name, lines["github.ruleset"], lines["github.required_checks"])
+        assert fine == (name in ("protected", "ruleset left out")), (name, lines["github.ruleset"])
+
+
+def test_the_skills_own_checks_file_gives_doctor_the_offer_and_the_open_pull_request(tmp_path):
+    # Seam: the skill's commands make files doctor reads. The pages as `gh api --paginate --slurp`
+    # writes them, put side by side by the skill's own command line.
+    combine = _skill_command(r"^\s*(python3 -c .*> <dir>/checks\.json)$")
+    d = tmp_path / "gathered"
+    d.mkdir()
+    (d / "status.json").write_text(json.dumps([_combined(_status("deploy"))]))
+    (d / "check-runs.json").write_text(json.dumps([_runs(_run("tests"), _run("lint", n=2))]))
+    # The commit the check runs are fetched for, read from the status file by the skill's command.
+    read_sha = re.search(r"`(python3 -c [^`]*\[0\]\[\"sha\"\][^`]*)`", _text()).group(1)
+    p = subprocess.run(["bash", "-c", read_sha.replace("<dir>", str(d))], capture_output=True, text=True)
+    assert (p.returncode, p.stdout.strip()) == (0, SHA), p.stderr
+    p = subprocess.run(["bash", "-c", combine.replace("<dir>", str(d))], capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr
+    checks = json.loads((d / "checks.json").read_text())
+    own = {**_pr(7, MARKER), "head": {"ref": "x", "repo": {"full_name": "acme/demo"}}}
+    calls = [
+        (_project(tmp_path / "a", profile=PROTECTED), _given(tmp_path / "a", checks=checks, rulesets=[RULESET]), {}),
+        (_project(tmp_path / "b", profile=PROTECTED), _given(tmp_path / "b", prs=[[own]], rulesets=[_requiring("tests", "lint")]), {}),
+    ]
+    a, b = (_lines(r) for r in _each_at_once(tmp_path, _report, calls))
+    assert a["github.required_checks"]["offer"] == "require_checks", a["github.required_checks"]
+    # A check run and a status, so both files reached doctor.
+    assert "`lint`" in a["github.required_checks"]["message"] and "`deploy`" in a["github.required_checks"]["message"]
+    assert b["github.profile_checks"]["status"] == "note" and "#7" in b["github.profile_checks"]["message"], b["github.profile_checks"]
+
+
+def test_it_offers_require_checks_handing_over_to_require_these_checks():
+    offers = _section(_text(), "The offers")
+    row, = [ln for ln in offers.splitlines() if ln.startswith("| `require_checks`")]
+    assert "**Require these checks**" in row
+    assert "`upgrade-setup`" in row and "\"Require these checks\"" in row
+    assert "require_checks" in doctor.OFFERS and doctor.OFFERS["require_checks"] == "Require these checks"
+    assert "**`require_checks`**" in _text(UPGRADE) and "# Require these checks" in _text(UPGRADE)
+    # From its start: its checks screen is where the person ticks the checks.
+    assert "from its start" in row and "checks screen" in row
+
+
+def test_protecting_comes_before_require_checks():
+    offers = _section(_text(), "The offers")
+    first = offers[offers.index("**Protecting comes first.**"):].split("\n\n")[0]
+    assert "`protect_main` or `restore_protection` as well as `require_checks`" in first
+    assert "ask the protecting one first" in first
+    assert "finish \"Protect `main`\" before starting \"Require these checks\"" in first
+    # Said as it is: today's doctor never offers both.
+    assert "never offers both in one report" in first
+
+
+def test_the_open_profile_pull_request_note_is_shown_as_doctor_words_it():
+    show = _section(_text(), "Show the report")
+    assert "`github.profile_checks`" in show
+    assert "as doctor words it" in show
+    assert "never as something to fix now" in show
+
+
+def test_the_description_names_the_checks_and_still_says_it_changes_nothing():
+    head = _head()
+    assert "check runs" in head and "open pull requests" in head
+    assert "Changes nothing itself." in head
+
+
+def test_enforcement_section_5_and_readme_step_6_name_the_checks_and_require_these_checks():
+    for sec in (_section(_text(KIT / "docs/enforcement.md"), "5. Checking the set-up"),
+                _section(_text(KIT / "README.md"), "Step 6. Check it", "###")):
+        assert "the base branch's latest check runs and statuses and the open pull requests" in sec
+        assert "\"Require these checks\"" in sec
+
+
+def test_changelog_notes_70_under_unreleased():
+    # #70's own entry, from its title to the next entry's.
+    notes = since_0110()
+    entry = notes[re.search(r"^\*\*.*\(#70[,)]", notes, re.M).start():]
+    entry = entry[:entry.index("\n**")]
+    assert "\"Require these checks\"" in entry and "`--checks`" in entry and "`--prs`" in entry
+    assert "`github.profile_checks`" in entry

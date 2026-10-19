@@ -198,7 +198,7 @@ Ask in a **cloud** session on the repository, since only cloud sessions can list
 
 > Check the set-up.
 
-Claude's `check-setup` skill gathers the rulesets and the merge settings through GitHub's API, the two environments, the `workflow:run` issues and its Claude Code version, runs `workflow doctor` with them, and shows you the report. For each upgrade the report names ("Protect `main`", "Restore protection", "Set up unattended runs") it asks whether to do it now, with "Not now". In a local session, with `gh` signed in, it checks everything but the environments, and says those need a cloud session. The guided start offers it when its quick look finds a problem, and once a session in solo mode.
+Claude's `check-setup` skill gathers the rulesets and the merge settings through GitHub's API, the base branch's latest check runs and statuses and the open pull requests, the two environments, the `workflow:run` issues and its Claude Code version, runs `workflow doctor` with them, and shows you the report. For each upgrade the report names ("Protect `main`", "Restore protection", "Set up unattended runs", "Require these checks") it asks whether to do it now, with "Not now". In a local session, with `gh` signed in, it checks everything but the environments, and says those need a cloud session. The guided start offers it when its quick look finds a problem, and once a session in solo mode.
 
 The kit's checklist (`.claude/workflow/docs/enforcement.md`, section 5) is what doctor checks, kept there as the reference for checking by hand:
 - the ruleset, through GitHub's API: active, on the base branch, no bypass, deletions and force pushes blocked, required approvals, every required check present, "up to date" ticked, Code Owners off, linear history off;
