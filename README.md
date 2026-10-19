@@ -1,5 +1,7 @@
 # pairnexus-workflow
 
+**[New to building? Start here](docs/quickstart.md)**
+
 A Claude Code kit for building software from a spec, attended or unattended:
 
 **plan → spec → build tickets → one session per ticket → review panel → merge**
@@ -731,7 +733,7 @@ python3 -m pytest tests -q          # Python 3.11+, pytest
 
 Every hook and script is tested with JSON fixtures, including attempts to get past the guard.
 
-Releases are semver: every change to shipped files bumps `VERSION`, `.claude-plugin/plugin.json` and adds a `CHANGELOG.md` entry, with a "For projects updating" list when a project must do something. **Shipped** means what `vendor.plan` copies into a project: `skills/`, `agents/`, `scripts/`, `templates/`, `docs/` (except `proposal.md` and `spike.md`; `flow.md` goes to `.claude/workflow/flow.md`), `LICENSE`, and the hook set in `vendor.py`. README, CHANGELOG, `tests/` and `.github/` aren't. A shipped change merged without a bump reaches no vendored project until the next one, but plugin users get it at once: the plugin follows `main`.
+Releases are semver: every change to shipped files bumps `VERSION`, `.claude-plugin/plugin.json` and adds a `CHANGELOG.md` entry, with a "For projects updating" list when a project must do something. **Shipped** means what `vendor.plan` copies into a project: `skills/`, `agents/`, `scripts/`, `templates/`, `docs/` (except `proposal.md`, `spike.md` and `quickstart.md`; `flow.md` goes to `.claude/workflow/flow.md`), `LICENSE`, and the hook set in `vendor.py`. README, CHANGELOG, `tests/` and `.github/` aren't. A shipped change merged without a bump reaches no vendored project until the next one, but plugin users get it at once: the plugin follows `main`.
 
 CI checks that `VERSION`, `plugin.json` and the CHANGELOG agree; nothing checks that a change came with its bump. **Don't tag by hand:** the `release` workflow tags and publishes each version when its bump lands on `main` (`.github/scripts/release.py`). Projects pin a release, and update with `update-workflow`.
 
