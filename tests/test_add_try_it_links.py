@@ -276,7 +276,7 @@ def test_access_is_the_owners_word_and_the_kit_says_it_cant_check_it():
     end = _sec("Where try-it links end")
     assert 'adding "Preview URLs stay off until Access is on." once the dashboard and the base branch\'s config both say off' in end
     assert '"Merge #<pr> to keep them off." while the pull request that sets `preview_urls = false` waits' in end
-    assert "after **Not now** on screen 7, that screen's line instead" in _sec("Before step 2")
+    assert "after **Not now** or **I can't turn it on** on screen 7, that screen's line instead" in _sec("Before step 2")
     # As the page says: the small pull request sets it back when the config says otherwise.
     assert 'open the small pull request of "Before step 2" for it' in seven
 
