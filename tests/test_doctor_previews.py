@@ -157,6 +157,13 @@ def test_sensitive_patterns_with_on_and_access_not_true_is_a_gap(tmp_path):
         assert _lines(r)["kit.profile"]["status"] == "gap"
 
 
+def test_a_profile_refused_for_access_with_no_wrangler_config_still_says_so(tmp_path):
+    root = _with(tmp_path, "no-config", HEALTHY + SENSITIVE + "[previews]\non = true\n")
+    p = _previews(_report(tmp_path, root))
+    assert p["previews.access"]["status"] == "gap", p
+    assert "previews.setup" not in p  # nothing to wait on the profile for: no Wrangler config
+
+
 def test_a_profile_refused_for_another_reason_first_shows_no_access_gap(tmp_path):
     # `profile check` names the first mistake it finds; the Access line repeats only that refusal.
     root = _with(tmp_path, "other", HEALTHY + '[ui]\nexplorer = "nope"\n' + SENSITIVE + "[previews]\non = true\n", {"wrangler.toml": WITH_BLOCK})
@@ -294,8 +301,11 @@ def test_old_pythons_short_report_names_the_previews_line_only_with_a_wrangler_c
     with_config = _with(tmp_path, "with", HEALTHY, {"wrangler.toml": NO_BLOCK}, page=False)
     jsonc = _with(tmp_path, "jsonc", HEALTHY, {"wrangler.jsonc": JSONC}, page=False)
     section = _with(tmp_path, "section", ON, page=False)
+    inline = _with(tmp_path, "inline", HEALTHY + "previews = { on = false }\n", page=False)
+    dangling = _with(tmp_path, "dangling", HEALTHY, page=False)
+    (dangling / "wrangler.toml").symlink_to(dangling / "nowhere.toml")
     plain = _with(tmp_path, "plain", HEALTHY, page=False)
-    for root in (with_config, jsonc, section):
+    for root in (with_config, jsonc, section, inline, dangling):
         line = {ln["id"]: ln for ln in _old_report(root)["lines"]}["previews.setup"]
         assert line["group"] == "Previews" and line["status"] == "cant_check", line
     assert "previews.setup" not in {ln["id"] for ln in _old_report(plain)["lines"]}

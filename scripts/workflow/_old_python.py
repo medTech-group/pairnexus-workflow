@@ -186,7 +186,8 @@ class _Words(collections.namedtuple("_Words", "new developer")):
 # group, its id, the install mode it is given in (None: both; in the other
 # mode the full doctor gives it only when something is wrong; "wrangler": only
 # in a project with a Wrangler config at its root or a `[previews]` section in
-# its profile, as the full doctor gives it), and what it checks.
+# its profile, read as text, so roughly as the full doctor gives it), and what
+# it checks.
 _DOCTOR_LINES = (
     ("Your computer", "computer.claude_code", None, _Words("which version of Claude Code you have", "Claude Code's version")),
     ("The kit", "kit.profile", None, _Words("the kit's profile (.claude/workflow/profile.toml)", "`profile check`")),
@@ -211,7 +212,8 @@ _DOCTOR_LINES = (
 # The Wrangler configs whose presence gives the Previews line ("wrangler"
 # above): doctor's WRANGLER_TOML and WRANGLER_JSON, which this module can't import.
 _WRANGLER_CONFIGS = ("wrangler.toml", "wrangler.json", "wrangler.jsonc")
-_PREVIEWS_SECTION = re.compile(r"^[ \t]*\[[ \t]*previews[ \t]*\]", re.M)
+# A `[previews]` table, or `previews = {…}` / `previews.on = …` (dotted keys).
+_PREVIEWS_SECTION = re.compile(r"^[ \t]*(\[[ \t]*\"?previews\"?[ \t]*[\].]|\"?previews\"?[ \t]*[.=])", re.M)
 # The files a session hands the full doctor: taken here, and not read.
 _DOCTOR_FILES = ("rulesets", "repo", "environments", "runs", "checks", "prs")
 _EXPERIENCE_LEVELS = ("new", "developer")
@@ -411,7 +413,7 @@ def _doctor_report(root, env, version):
     wording = level or "new"
     plugin = bool(root) and not os.path.exists(os.path.join(root, ".claude", "workflow", "lock.json"))
     mode = "plugin" if plugin else "vendored"
-    wrangler = bool(root) and (any(os.path.exists(os.path.join(root, n)) for n in _WRANGLER_CONFIGS) or _has_previews(root))
+    wrangler = bool(root) and (any(os.path.lexists(os.path.join(root, n)) for n in _WRANGLER_CONFIGS) or _has_previews(root))
     until = "until `python3` is {} or newer".format(NEEDS)
     lines = [_doctor_line("Your computer", "computer.python3", "gap", _Words(
         "The Python running this check (`python3`) is version {}, but the kit needs {} or newer, so its hooks fall back to a "

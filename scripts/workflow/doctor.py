@@ -2464,7 +2464,7 @@ def _access_gap(page: str) -> Line:
         "[sensitive] patterns with previews.on = true and access not true (Cloudflare Access unconfirmed): `profile check` refuses the profile.",
     ), Words(
         f"Turn on Cloudflare Access for the try-it links ({page}, step 7), then ask Claude to set `access = true` in the profile's "
-        "`[previews]` section. Without Access, turn Preview URLs off in Cloudflare's dashboard and ask Claude to keep "
+        "`[previews]` section. Without Access, turn Preview URLs off in Cloudflare's dashboard and ask Claude to set (or keep) "
         "`preview_urls = false` in the Wrangler config and set `on = false` in the profile: `on = false` alone leaves the links public.",
         f"Put Cloudflare Access on the preview URLs ({page}, step 7) and set `access = true`. Without Access: Preview URLs off in the "
         "dashboard, `preview_urls = false` in the Wrangler config, and `on = false` (the profile alone changes nothing on Cloudflare).",
@@ -2530,7 +2530,7 @@ def _previews_block(i: Inputs, page: str, configs: list[str]) -> Line:
         return Line(g, id_, "gap", Words(
             f"{on}, but there's no Wrangler config (`{WRANGLER_TOML}`) at the project's root with the `[previews]` block "
             "Cloudflare's preview builds need.",
-            f"on = true, but there's no {WRANGLER_TOML}, wrangler.json or wrangler.jsonc at the root, so no `[previews]` block.",
+            f"on = true, but there's no {', '.join((WRANGLER_TOML, *WRANGLER_JSON))} at the root, so no `[previews]` block.",
         ), Words(
             f"Ask Claude to add a `{WRANGLER_TOML}` ending in an empty `[previews]` block, in a pull request: {page} shows it (step 6). "
             f"Without it, each preview build fails with \"{NO_BLOCK}\".",
