@@ -115,8 +115,8 @@ def test_the_opening_choice_is_worded_by_experience_with_do_it_now_and_not_now()
     assert "*New to building*" in first and "*A developer*" in first
     assert "**Do it now** (recommended) and **Not now**" in first
     assert "same steps" in first
-    # Handed over from check-setup, the person has just chosen.
-    assert "skip this choice" in first
+    # Handed over from check-setup, the person has just chosen, but still hears about Access.
+    assert "skip this choice, but with sensitive data still say its Access sentence before screen 1" in first
     # With sensitive data, Access (and its possible payment method) is said up front.
     assert "Cloudflare Access, which may ask for a payment method" in first
 
@@ -169,8 +169,10 @@ def test_each_screen_waits_for_done_and_a_step_already_done_shows_as_done():
     assert "shown as done" in done and "**Continue**" in done
     # What can be read: Cloudflare's app on the repository, a built preview, the config.
     assert "`cloudflare-workers-and-pages`" in done
-    assert "`built`" in done and "steps 1 to 5" in done
-    assert "Wrangler config" in done and "step 6" in done
+    assert "`built`" in done and "screens 1 to 5" in done
+    assert "Wrangler config" in done and "screen 6" in done
+    # A public link now doesn't skip "no live site": that still comes first.
+    assert '"Before step 2" still comes first when the base branch\'s config needs it, then screen 7' in done
     # The MCP tools read a pull request's check runs, never a commit's.
     assert "have no list of a commit's check runs" in done
 
@@ -186,8 +188,12 @@ def test_sensitive_data_is_read_from_the_profile_file_itself():
     need = _sec("What it needs")
     assert "from `.claude/workflow/profile.toml` itself (`WF profile check` doesn't print them)" in need
     assert "the template's secret-key patterns included" in need
-    # A profile refused for Access goes to screen 7.
+    # A profile refused for Access goes to screen 7, then turns the links on as doctor's fix says.
     assert "previews.on is true but previews.access isn't" in need and profile.ACCESS_REFUSED.startswith("previews.on is true")
+    assert "and `preview_urls = true` in the Wrangler config when it says otherwise, as doctor's fix says" in need
+    # Whether the section is there is read from the file: `profile check` prints the same without one.
+    assert "whether the section is there at all, read from `profile.toml` itself" in need
+    assert "run `WF doctor --json`" in need
     # Beside a JSON config, Cloudflare reads the JSON one.
     assert "Cloudflare reads the JSON one" in need
 
@@ -205,7 +211,12 @@ def test_no_live_site_from_the_first_connect():
     # Read whether or not the repository is connected: a live site now is said plainly.
     assert "whether or not the repository is connected" in need
     assert "live on the internet now" in need and "public now" in need
-    assert "a `workers_dev = true` or `preview_urls = true` line changed rather than a second one added" in need
+    assert "placed and changed as the proof pull request's step 3 says" in need
+    # The page's "do step 6 first, with those values": the Wrangler lines, `preview_urls = false` with sensitive data.
+    assert 'the page\'s "do step 6 first, with those values", so the Wrangler lines, with `preview_urls = false` in place of `true`' in need
+    # Connected and public: Preview URLs off first, since the small PR's branch builds a preview too.
+    assert need.index("the person first turns **Preview URLs** off in the dashboard") < need.index("**The small pull request,**")
+    assert "merging it deploys the base branch" in need
 
 
 def test_a_sensitive_project_gets_access_straight_after_step_5_before_any_pull_request():
@@ -289,6 +300,7 @@ def test_the_proof_pull_request_carries_the_wrangler_changes_step_6_needs():
     assert "whichever of the Wrangler lines is missing" in pr
     assert "`workers_dev = true` becomes `false`, `preview_urls = false` becomes `true`" in pr
     assert "above its first line that starts with `[`" in pr and "at its end" in pr
+    assert "Only the top-level settings count: a `workers_dev` under an `[env.…]` table is another environment's" in pr
     # A JSON config: doctor's line says it can't check it.
     assert "JSON config" in pr and "`cant_check`" in pr
 
@@ -314,7 +326,8 @@ def test_it_reads_its_own_preview_with_workflow_preview_and_reports_the_link_onc
     assert "**When a build fails**" in states["failed"] and "`#when-a-build-fails`" in states["failed"]
     # The log is behind a Cloudflare sign-in: the person reads it out.
     assert "ask the person to open it" in states["failed"] and "paste its error line" in states["failed"]
-    assert "step 5" in states["none"] and "skipped" in states["none"]
+    assert "screen 5" in states["none"] and "skipped" in states["none"]
+    assert "push a new commit to the proof pull request's branch" in states["none"]
 
 
 def test_an_old_build_command_gets_a_fresh_branch_not_a_retry():
@@ -331,6 +344,7 @@ def test_it_ends_with_one_line_for_each_outcome():
     end = _sec("Where try-it links end")
     assert "Not now" in end and "Nothing was changed." in end
     assert "Merge #<n> when you're ready" in end
+    assert "built nothing to try" in end
     assert "no previews" in end.lower()
 
 
