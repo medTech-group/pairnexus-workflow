@@ -84,8 +84,9 @@ RULES = {
 _FENCE = re.compile(r" {0,3}(`{3,}|~{3,})")
 _HEADING = re.compile(r" {0,3}(#{1,6}) \S")
 _SETEXT = re.compile(r" {0,3}(=+|-+)\s*$")
-# A line that can't be a setext heading's text: a list item, a quote or a table row.
-_NOT_SETEXT = re.compile(r" {0,3}(?:[-*+]|\d{1,9}[.)])(?:\s|$)|\s*[>|]")
+# A line that can't be a setext heading's text: a list item (at any depth), a
+# quote, a table row, or HTML (a `---` under an HTML comment is a rule).
+_NOT_SETEXT = re.compile(r"\s*(?:(?:[-*+]|\d{1,9}[.)])(?:\s|$)|[>|<])")
 
 
 def _text(rel: str) -> str:
@@ -181,7 +182,8 @@ def test_a_word_anywhere_else_fails_naming_the_file_and_the_rule():
         "## Where it came from\n\n~~~\n```\n## Not a heading\n~~~\n\n```python\n```js\n## Nor this\n```  \n\npair-drop\n\n"
         "```x` is text, so this is a heading:\n\n## Licence\n\npair-drop\n\n"
         "## Where it came from\n\n*Licence*\n---\n\npair-drop\n\n"
-        "## Where it came from\n\n- a list item\n---\n\npair-drop\n"
+        "## Where it came from\n\n- a list item\n---\n\n+ x\n---\n\n1. x\n---\n\n> x\n---\n\n| a |\n---\n\n"
+        "    - nested\n---\n\n<!-- note -->\n---\n\npair-drop\n"
     )
     profile = ("## `[sensitive]`\n\n| `description` | patients' names |\n\n## Other\n\n"
                "| `description` | Patients |\n\npatient_id, isPatient, FHIRPatient, MYPATIENT\n")
