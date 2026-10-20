@@ -54,7 +54,7 @@ Undoing a [merged](#merge) change with a new [pull request](#pull-request-pr) th
 
 ### Preview link
 
-A link on a [pull request](#pull-request-pr) that opens a working copy of the change to try before you [merge](#merge).
+A link on a [pull request](#pull-request-pr) that opens a working copy of the change to try before you [merge](#merge). "Add try-it links" turns them on.
 
 **Why it matters to you:** you see the change for yourself, not only its code.
 
@@ -74,7 +74,7 @@ How a session begins: Claude asks "What are we working on?" with choices to clic
 
 ### Experience level
 
-Your answer to "How much do you know about building software?": *New to building* or *Developer*. Say "explain less" or "explain more" to change it; the [profile](#profile) can set a default (`experience`).
+Your answer to "How much do you know about building software?": *New to building* or *Developer*. Say "explain less" or "explain more" to change it; the [profile](#profile) can set a default.
 
 **Why it matters to you:** it changes how much Claude explains, never what is allowed.
 
@@ -86,7 +86,7 @@ One small piece of work, as a GitHub issue: what to build, and how to tell it's 
 
 ### Spec
 
-A bigger feature written down, with its decisions and tests, before it is split into [tickets](#ticket).
+A bigger feature written down, with its decisions and tests, before it's split into [tickets](#ticket).
 
 **Why it matters to you:** you agree what gets built before any code is written.
 
@@ -128,7 +128,7 @@ The Claude session that runs an [unattended run](#unattended-run): it hands out 
 
 ### Profile
 
-The kit's settings for your project, in `.claude/workflow/profile.toml`: which is [`main`](#main), how to run the tests, [solo mode](#solo-mode) and the default [experience level](#experience-level).
+Your project's kit settings, in `.claude/workflow/profile.toml`: which is [`main`](#main), how to run the tests, [solo mode](#solo-mode) and the default [experience level](#experience-level).
 
 **Why it matters to you:** Claude reads it instead of guessing.
 

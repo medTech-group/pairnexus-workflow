@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**"Add try-it links to your pull requests": `docs/previews.md`, and the quickstart's fourth next step** (#114, part of #41).
+
+- **The page:** how to get a try-it link (a preview link) on every pull request from Cloudflare Workers Builds, with no live site, in plain words with each glossary word linked at its first use. Seven numbered steps: a Cloudflare account; connecting only this repository through Cloudflare's GitHub app; an empty Build command on Production and on "Previews Base", naming the trap (a branch built before the fix keeps the old command, so push a fresh branch rather than retry); a new build token; preview URLs on, since they're off by default; the Wrangler config's `[previews]` block with `workers_dev = false` and `preview_urls = true`; and, for a project with sensitive data, Cloudflare Access, confirmed by the owner, since the kit can't check it. Then "When a build fails" (each build-log message with its fix) and "What to expect" (a comment and a check, about four minutes to start, made-up data only).
+- **The D1 step** isn't there yet: `docs/spike.md` doesn't record the starter's D1 trial (#104), so #104's record pull request adds it.
+- **The quickstart's next steps** gain a fourth, marked optional: "Add try-it links", linking the page. **The glossary's "preview link" entry** says "Add try-it links" turns them on; three entries lose a few words, so the file stays under 6,000 characters. `docs/profile.md`'s `[previews]` section links the page.
+- **Vendored:** the page ships in `.claude/workflow/docs/`, so it links only the docs that ship beside it. Tests: `tests/test_previews_doc.py`.
+- **For projects updating:** nothing to do.
+
 **The README opens on your own project, and PAIR's story moves to "Where it came from"** (#98, part of #37).
 
 - **The opening,** after "New to building? Start here": what the kit does for your project in plain words (you describe what you want; Claude plans it, builds it in small reviewed pieces and merges what passes), attended work first and unattended runs as something you can add later, then the flow in short, for developers. The status note follows as it was.
