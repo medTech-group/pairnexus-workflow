@@ -2,7 +2,11 @@
 file (#41's seam 3), with the quickstart's next step and the glossary's
 "preview link" entry that point to it."""
 
+import json
+import os
 import re
+import subprocess
+import sys
 import tomllib
 
 import pytest
@@ -126,6 +130,8 @@ def test_no_live_site_from_the_first_connect():
     # Connecting deploys `main`, so `workers_dev = false` is merged before step 2.
     before = _words(_body().split("\n## The steps\n", 1)[0])
     assert "Before step 2:" in before and "`workers_dev = false`" in before and "step 6 first" in before
+    # A sensitive project's first pull request keeps preview links off until Access is on.
+    assert "With sensitive data, write `preview_urls = false` in that first pull request" in before
 
 
 def test_a_sensitive_project_turns_access_on_before_any_preview_is_built():
@@ -138,11 +144,14 @@ def test_the_upgrade_the_page_follows_is_marked_to_come_until_it_lands():
     upgrade = (KIT / "skills/upgrade-setup/SKILL.md").read_text(encoding="utf-8")
     named = _text().count('"Add try-it links" upgrade')
     marked = _text().count('"Add try-it links" upgrade (to come)')
+    profile = (KIT / "docs/profile.md").read_text(encoding="utf-8").split("\n## `[previews]`\n", 1)[1].split("\n## ", 1)[0]
     assert named >= 2
     if "Add try-it links" not in upgrade:
-        assert marked == named
+        # Every mention of the upgrade is marked, and nothing else is.
+        assert marked == named == _text().count("(to come)")
+        assert "to come" in profile
     else:
-        assert "(to come)" not in _text(), "the upgrade has landed: drop its \"(to come)\""
+        assert "to come" not in _text() + profile, "the upgrade has landed: drop its \"(to come)\""
 
 
 def test_step_7_is_cloudflare_access_for_sensitive_data_confirmed_by_the_owner():
@@ -154,8 +163,11 @@ def test_step_7_is_cloudflare_access_for_sensitive_data_confirmed_by_the_owner()
     assert "can't check Access itself" in step
     assert "`access = true`" in step
     assert "Without Access" in step and "no previews" in step
-    # Without Access, previews are turned off again: Cloudflare would go on making public links.
-    assert "turn **Preview URLs** off again" in _steps()[6]
+    # Without Access, preview links stay off, in the config as well as the
+    # dashboard: each deploy of `main` sets them from the config.
+    assert "keep `preview_urls = false` in the Wrangler config" in _steps()[6]
+    assert "turn **Preview URLs** off in the dashboard" in _steps()[6]
+    assert "Each deploy of `main` sets **Preview URLs** from this line" in _steps()[5]
 
 
 @pytest.mark.parametrize("says,fix", [
@@ -302,14 +314,23 @@ def test_merge_checks_note_offers_no_page_where_previews_are_on(project, capsys)
     assert "previews.md" not in _no_previews_note(project, capsys)
 
 
-def test_a_vendored_merge_check_finds_the_vendored_page(tmp_path):
-    # PREVIEWS_DOC is found from merge.py's own place: in a vendored project
-    # that place must lead to the vendored page, named by its project path.
-    vendor.install(KIT, tmp_path, None, no_mattpocock=True)
-    merge_py = tmp_path / ".claude/workflow/bin/workflow/merge.py"
-    assert "parents[2] / \"docs/previews.md\"" in merge_py.read_text(encoding="utf-8")
-    page = merge_py.resolve().parents[2] / "docs/previews.md"
-    assert page == (tmp_path / ".claude/workflow/docs/previews.md").resolve() and page.is_file()
+def test_a_vendored_merge_check_names_the_vendored_page(project):
+    # The project's own copy of the CLI finds the page from where it sits.
+    vendor.install(KIT, project, None, no_mattpocock=True)
+    d = project.parent / "in"
+    d.mkdir()
+    args = []
+    for name, value in inputs().items():
+        (d / f"{name}.json").write_text(json.dumps(value))
+        args += [f"--{name}", str(d / f"{name}.json")]
+    run = subprocess.run(
+        [sys.executable, "-B", str(project / ".claude/workflow/bin/workflow.py"), "merge-check", *args, "--json"],
+        capture_output=True, text=True, cwd=project, env={**os.environ, "CLAUDE_PROJECT_DIR": str(project)},
+    )
+    got = json.loads(run.stdout)
+    assert got["decision"] == "ready", run.stderr
+    [n] = [n for n in got["notes"] if n["id"] == "no_previews"]
+    assert n["message"].endswith(" `.claude/workflow/docs/previews.md` says how to add try-it links.")
 
 
 def test_merge_checks_note_offers_no_page_without_one(project, capsys, monkeypatch):

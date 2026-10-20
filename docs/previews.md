@@ -4,7 +4,7 @@
 
 These are the steps of the "Add try-it links" upgrade (to come), written out to follow on your own. Your project needs a Wrangler config, the file (`wrangler.toml`, or `wrangler.json` or `wrangler.jsonc`) that tells Cloudflare how to run your app on Cloudflare Workers.
 
-**Before step 2:** if your Wrangler config doesn't say `workers_dev = false` yet, do step 6 first and [merge](glossary.md#merge) its pull request. Connecting a [repository](glossary.md#repository) makes Cloudflare deploy (put online) its [`main`](glossary.md#main) too, and without that setting the deploy is public at once.
+**Before step 2:** if your Wrangler config doesn't say `workers_dev = false` yet, do step 6 first and [merge](glossary.md#merge) its pull request. Connecting a [repository](glossary.md#repository) makes Cloudflare deploy (put online) its [`main`](glossary.md#main) too, and without that setting the deploy is public at once. With sensitive data, write `preview_urls = false` in that first pull request, and change it to `true` only once step 7 is done.
 
 ## The steps
 
@@ -18,9 +18,9 @@ These are the steps of the "Add try-it links" upgrade (to come), written out to 
 4. **A new build token:** where the build settings ask for an API token (the key Cloudflare's builds sign in with), choose **Create new token**. An old or reused token fails with "Configured API token unavailable".
 
 5. **Preview URLs on:** they are off by default. In your Worker's **Settings**, under **Domains & Routes**, enable **Preview URLs**. While they are off, Cloudflare still builds each branch but says "Builds for Preview branches will run, but they will not create Preview URLs until you enable them", and no link arrives.
-   - **With sensitive data,** do step 7 straight after this one, before any pull request is pushed: until Access is on, each preview is public.
+   - **With sensitive data,** do step 7 straight after this one, before any pull request is pushed: until Access is on, each preview is public. Keep `preview_urls = false` in the Wrangler config until then (step 6).
 
-6. **The Wrangler config: a `[previews]` block, and no live site.** Ask Claude to add these to your `wrangler.toml` in a pull request:
+6. **The Wrangler config: a `[previews]` block, and no live site.** Ask Claude to add or change these in your `wrangler.toml`, in a pull request:
 
    ```toml
    workers_dev = false
@@ -29,12 +29,12 @@ These are the steps of the "Add try-it links" upgrade (to come), written out to 
    [previews]
    ```
 
-   - `workers_dev = false` keeps your Worker's own public address off. Connecting a repository makes Cloudflare deploy `main` too, and this keeps that deploy off the internet, so there is no live site.
-   - `preview_urls = true` keeps the preview links on.
+   - `workers_dev = false` keeps your Worker's own public address off. Connecting a repository makes Cloudflare deploy `main` too, and this keeps that deploy off the internet, so there is no live site. If your config has `routes` or a custom domain, your project already has a live site, and connecting deploys `main` to it.
+   - `preview_urls = true` keeps the preview links on. Each deploy of `main` sets **Preview URLs** from this line, whatever the dashboard says; with sensitive data it stays `false` until step 7 is done.
    - `[previews]` can stay empty, but must be there: Cloudflare's preview build needs it.
-   - The two settings go near the top of the file, above its first line that starts with `[`, and `[previews]` goes at its end. A setting below a line in square brackets belongs to that block, so `[previews]` at the top would take in the rest of the file. In a `wrangler.json` or `wrangler.jsonc` file, the same settings are `"workers_dev": false`, `"preview_urls": true` and `"previews": {}`.
+   - The two settings go near the top of the file, above its first line that starts with `[`, and `[previews]` goes at its end. A setting below a line in square brackets belongs to that block, so `[previews]` at the top would take in the settings below it. In a `wrangler.json` or `wrangler.jsonc` file, the same settings are `"workers_dev": false`, `"preview_urls": true` and `"previews": {}`.
 
-7. **For a project with sensitive data** (phone numbers or payment details, say): Cloudflare Access on the preview links, or no previews. A preview link is public: anyone with it can open it. In your Worker's **Domains & Routes**, the **Preview URLs** row says "Anyone with this URL can visit", beside an **Enable Access** link. Click it, and allow only the people who should see previews, such as your own email address. Cloudflare may ask for a payment method to turn Access on, even on its free plan. Then tell Claude you have turned Access on. The kit can't check Access itself: it relies on your word, which the "Add try-it links" upgrade (to come) records as `access = true` in your [profile](glossary.md#profile). Without Access, a project with sensitive data gets no previews: if you can't turn Access on, turn **Preview URLs** off again (step 5), since Cloudflare keeps making public links while they are on.
+7. **For a project with sensitive data** (phone numbers or payment details, say): Cloudflare Access on the preview links, or no previews. A preview link is public: anyone with it can open it. In your Worker's **Domains & Routes**, the **Preview URLs** row says "Anyone with this URL can visit", beside an **Enable Access** link. Click it, and allow only the people who should see previews, such as your own email address. Cloudflare may ask for a payment method to turn Access on, even on its free plan. Then tell Claude you have turned Access on. The kit can't check Access itself: it relies on your word, which the "Add try-it links" upgrade (to come) records as `access = true` in your [profile](glossary.md#profile). Without Access, a project with sensitive data gets no previews: if you can't turn Access on, keep `preview_urls = false` in the Wrangler config (ask Claude to change it back in a pull request if it says `true`), and turn **Preview URLs** off in the dashboard (step 5): Cloudflare makes a public link for each branch while they are on.
 
 **Then the kit:** your profile's [`[previews]`](profile.md#previews) section tells every session that previews are on (`on = true`). The "Add try-it links" upgrade (to come) adds that section in a pull request of its own, never by hand, and shows it working on that pull request's own link.
 
@@ -46,7 +46,7 @@ Open the build's log from the **View logs** link in Cloudflare's comment on the 
 |---|---|---|
 | "The name in your wrangler.toml file … must match the name of your Worker", though the names match | The Build command isn't empty, so the preview ran a deploy of the live site | Step 3: empty it on Production and Previews Base, then push a fresh branch |
 | "Configured API token unavailable" | The build uses an old token | Step 4: **Create new token**, then push a new [commit](glossary.md#commit) to build again |
-| "missing a `previews` block" | The Wrangler config has no `[previews]` | Step 6: add it in a pull request |
+| "missing a `previews` block" | The Wrangler config has no `[previews]` | Step 6: add it in a pull request, then ask Claude to bring the failing pull request up to date with `main` |
 | An error from `pip install .` | Your project has a `pyproject.toml`, so Cloudflare installs it as a Python package before building, and that failed | Ask Claude to fix what the error names, in a pull request |
 
 If a build passes but no link arrives, preview URLs are off: step 5.
