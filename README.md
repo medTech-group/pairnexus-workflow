@@ -59,7 +59,7 @@ Claude first explores the repository: its tests, CI and check names, deploy scri
 | New to building, or a developer? | How much the people working here know, as the project's default. It changes only how the kit words things, never what it allows. Each person can still say their own. |
 | Vendored or plugin? | **Vendored.** The kit is copied into the repository, so cloud sessions and, later, unattended runs get it. The plugin is for attended work on your own computer only ([As a plugin](#as-a-plugin-on-your-own-computer)). |
 | Your GitHub login | The person whose words count as approval: you. |
-| Sensitive data | What must never appear in an issue, comment or PR, such as patients' names or phone numbers. |
+| Sensitive data | What must never appear in an issue, comment or PR, such as phone numbers, payment details, children's names or patients' names. |
 | Explorer | How reviewers try a change from outside: **browser** (a web app; Playwright), **api**, **cli**, or **none**. |
 | Deploy commands | Asked only when it found deploy scripts: which commands deploy. Sessions are refused them, or an attended session asks you first. |
 
@@ -241,7 +241,7 @@ Not the ticket or conductor environment, and not a `claude/build-…` branch. Th
 | You type | Claude |
 |---|---|
 | Something clear: a question, "build #262", "rename the Save button to Done" | Does it. No menu. A code change goes on its own branch with a pull request for you to merge; if it turns out bigger than it looked, Claude offers a quick ticket instead. |
-| Work to plan, one thing or several: "add refill reminders, and the reminders screen needs changing because testers found it confusing" | Splits it into items and proposes a path for each (below) |
+| Work to plan, one thing or several: "add booking reminders, and the booking page needs changing because testers found it confusing" | Splits it into items and proposes a path for each (below) |
 | Anything vaguer: "hi", "let's work on the app", or `/start` | Looks at the project and asks "What are we working on?" |
 | A command, such as `/next` or `/grill-me` | Runs that command, with no menu |
 
@@ -290,18 +290,18 @@ When you say go, each item is filed as a GitHub issue in your words, ending with
 
 **An example.** You type:
 
-> I tested the app. Patients should get a reminder to refill a medicine before it runs out. And the reminders screen confuses people: they don't see which medicines are due.
+> I tested the booking page. Customers should get a reminder the day before their booking. And the page confuses people: they don't see which times are free.
 
 Claude replies with two items and asks about each:
 
-- *"Refill reminders: which way?"*
-  - **Spec (Recommended):** "how many days ahead, worked out from what, and for which medicines: decisions to make";
+- *"Booking reminders: which way?"*
+  - **Spec (Recommended):** "how long before, sent how, and for which bookings: decisions to make";
   - **Map**.
-- *"Reminders screen doesn't show what's due: which way?"*
-  - **Quick ticket (Recommended):** "the screen has the medicines already; it's how they're shown";
+- *"Booking page doesn't show what's free: which way?"*
+  - **Quick ticket (Recommended):** "the page has the free times already; it's how they're shown";
   - **Spec**.
 
-Then *"Go with this plan? 1. Reminders screen (quick ticket) 2. Refill reminders (spec)"*. You click **Go**. It files #301 and #302, writes the reminders ticket, shows it to you, publishes it on your click, and asks **Build it now**, **Build it with a light review** (one review round, for a small change; never the recommendation), **Leave it ready for later** or **Next item**.
+Then *"Go with this plan? 1. Booking page (quick ticket) 2. Booking reminders (spec)"*. You click **Go**. It files #301 and #302, writes the booking page ticket, shows it to you, publishes it on your click, and asks **Build it now**, **Build it with a light review** (one review round, for a small change; never the recommendation), **Leave it ready for later** or **Next item**.
 
 **At every handover, a choice:**
 
@@ -429,13 +429,13 @@ Keep steps 1 to 3 in **one session** where you can, so the spec and the tickets 
 
 **1. `/grill-with-docs`: the interview.** Type the command and the idea in a sentence or two:
 
-> /grill-with-docs Patients should get a reminder to refill a medicine before it runs out.
+> /grill-with-docs In our notes app, people should get a reminder for a note they've given a date.
 
 Claude interviews you in **rounds**:
 - Each round asks every question that can be answered now: the ones that don't wait on another open answer. Each comes with Claude's recommended answer. Typed as a command, the questions are numbered and worded so that "yes" accepts the recommendation; the guided start asks them as choices to click, recommendation first.
 - Answer the whole round in one message. For example:
 
-  > Q1 yes. Q2 no: only medicines they take every day. Q3 yes, but 5 days ahead, not 3. Q4 I don't know, what do you suggest?
+  > Q1 yes. Q2 no: only notes they've starred. Q3 yes, but on the morning of the date, not the day before. Q4 I don't know, what do you suggest?
 
 - Your answers open the next round. It goes on until no decision is left unasked; then Claude checks you agree it has understood, and does nothing more until you say so.
 - **Facts are Claude's job, decisions are yours.** Anything it can find out (how the code works now, what a library allows) it looks up itself, often in the background, rather than asking you.
@@ -488,9 +488,9 @@ When the work is too big for one session, or too unclear to spec yet, chart it f
 
 **Chart the map** (one session):
 
-> /wayfinder A clinic queue app: patients join from their phone, staff call them in.
+> /wayfinder A small shop online: customers order from their phone, staff pack and post the orders.
 
-1. Claude interviews you about the **destination**: what reaching the end looks like. It can be several items, each needing its own spec (for example "patients join the queue" and "staff call them in").
+1. Claude interviews you about the **destination**: what reaching the end looks like. It can be several items, each needing its own spec (for example "customers order from their phone" and "staff pack the orders").
 2. A second, wider round finds the open questions across the whole effort and the first steps that can be taken now. If it finds nothing unclear, no map is needed: it stops and asks how you want to go on (usually straight to a spec).
 3. It creates the map issue with these sections:
    - **Destination**;
@@ -550,7 +550,7 @@ Several decisions that don't block each other can be worked in parallel sessions
 
   When it has answered the question, the answer goes into the decisions, and the prototype is kept on a branch for reference.
 - **`/research <question>`**: a background agent reads the primary sources (official docs, source code, specs) and leaves a Markdown file in the repository, citing each claim. You keep talking meanwhile; its findings feed the interview. It is kept on a `research/…` branch, linked from the issue it answers, and never merged.
-- **`/to-questionnaire`**: when someone else holds the answer (a clinician, a vendor, legal). It asks you only who it's for and what you need back, then writes them a questionnaire to fill in, most important question first. It writes `to-questionnaire-<slug>.md` in the repository's root; you send it yourself. In a cloud session, ask Claude to print it before the session ends: the file is gone with the machine.
+- **`/to-questionnaire`**: when someone else holds the answer (an accountant, a supplier, legal). It asks you only who it's for and what you need back, then writes them a questionnaire to fill in, most important question first. It writes `to-questionnaire-<slug>.md` in the repository's root; you send it yourself. In a cloud session, ask Claude to print it before the session ends: the file is gone with the machine.
 - **`/wait-what`**: Claude's last message didn't make sense. It says it again, plainly, with the context you were missing.
 - **`/handoff`**: writes the conversation so far to a file another session can pick up.
   - It saves to the machine's temporary directory, not the repository.

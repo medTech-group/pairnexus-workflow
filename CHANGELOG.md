@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**Everyday examples, and the names test** (#99, part of #37).
+
+- **The README's walkthroughs** use everyday projects: the guided start's table row and example (a booking page and its reminders), the interview (`/grill-with-docs`, a notes app's dated notes), the map (`/wayfinder`, a small shop online) and `/to-questionnaire`'s who-it's-for (an accountant, a supplier, legal). The guided start skill's example is "#301 booking reminders".
+- **Sensitive data:** patients' names stay as one example among phone numbers, payment details and children's names, in the README's set-up table, `docs/profile.md`'s `[sensitive]` row and `templates/profile.md`'s example.
+- **`templates/profile.toml`'s area example** names a notes app's paths (`notes = ["server/notes.py", "app/lib/notes/**"]`).
+- **The names test** (`tests/test_example_names.py`) reads every file a project receives (`vendor.plan`), plus the README and `docs/quickstart.md`, and allows pair-drop only in the README's "Where it came from", patient data only in those three sensitive-data examples, and the removed health examples nowhere. A failure names the file, line and rule. `CONTRIBUTING.md`'s "Writing" says so.
+- **For projects updating:** nothing to do.
+
 **"Add try-it links to your pull requests": `docs/previews.md`, and the quickstart's fourth next step** (#114, part of #41).
 
 - **The page:** how to get a try-it link (a preview link) on every pull request from Cloudflare Workers Builds, with no live site, in plain words with each glossary word linked at its first use. Merging the no-live-site setting comes before connecting, since connecting deploys `main` at once. Seven numbered steps: a Cloudflare account; connecting only this repository through Cloudflare's GitHub app; an empty Build command on Production and on "Previews Base", naming the trap (a branch built before the fix keeps the old command, so push a fresh branch rather than retry); a new build token; preview URLs on, since they're off by default; the Wrangler config's `[previews]` block with `workers_dev = false` and `preview_urls = true`; and, for a project with sensitive data, Cloudflare Access, confirmed by the owner, since the kit can't check it; until Access is on (or if it can't be), `preview_urls = false` keeps the links off, since each deploy of `main` sets them from the Wrangler config. Then "When a build fails" (each build-log message with its fix) and "What to expect" (a comment and a check, about four minutes to start, made-up data only).

@@ -90,7 +90,7 @@ It reports:
 - what waits on a person (owner tasks, `needs-human`, `needs-info`);
 - new issues to sort (`needs-triage`, or no label).
 
-Tell the person what matters in two to four lines, for example: "PR #297 is waiting for your merge. Two items from last time aren't started: #301 refill reminders (spec), #302 the Save button (quick ticket). One ticket is ready: #262." Leave out what doesn't matter.
+Tell the person what matters in two to four lines, for example: "PR #297 is waiting for your merge. Two items from last time aren't started: #301 booking reminders (spec), #302 the Save button (quick ticket). One ticket is ready: #262." Leave out what doesn't matter.
 
 **In solo mode** (status says `Solo mode: yes`), one of those lines says so, with what it means for them: "This project is in solo mode: nothing on GitHub protects `<base branch>` yet, so the kit refuses any change straight to it, and all work goes through pull requests." Name the profile's base branch. Don't offer "Protect `main`" here: it is offered when they ask, and in a refusal.
 
