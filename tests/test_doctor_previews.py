@@ -304,14 +304,18 @@ def test_old_pythons_short_report_names_the_previews_line_only_with_a_wrangler_c
     with_config = _with(tmp_path, "with", HEALTHY, {"wrangler.toml": NO_BLOCK}, page=False)
     jsonc = _with(tmp_path, "jsonc", HEALTHY, {"wrangler.jsonc": JSONC}, page=False)
     section = _with(tmp_path, "section", ON, page=False)
-    inline = _with(tmp_path, "inline", HEALTHY + "previews = { on = false }\n", page=False)
+    inline = _with(tmp_path, "inline", "previews = { on = false }\n" + HEALTHY, page=False)  # above the first table
     dangling = _with(tmp_path, "dangling", HEALTHY, page=False)
     (dangling / "wrangler.toml").symlink_to(dangling / "nowhere.toml")
+    quoted = _with(tmp_path, "quoted", HEALTHY + "['previews']\non = false\n", page=False)
     plain = _with(tmp_path, "plain", HEALTHY, page=False)
-    for root in (with_config, jsonc, section, inline, dangling):
+    # An area named `previews` is a key of [areas], not a section (as in the kit's own profile).
+    area = _with(tmp_path, "area", HEALTHY + "[areas]\npreviews = []\n", page=False)
+    for root in (with_config, jsonc, section, inline, dangling, quoted):
         line = {ln["id"]: ln for ln in _old_report(root)["lines"]}["previews.setup"]
         assert line["group"] == "Previews" and line["status"] == "cant_check", line
-    assert "previews.setup" not in {ln["id"] for ln in _old_report(plain)["lines"]}
+    for root in (plain, area):
+        assert "previews.setup" not in {ln["id"] for ln in _old_report(root)["lines"]}, root
 
 
 # ---------- docs ----------

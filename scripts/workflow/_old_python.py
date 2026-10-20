@@ -212,8 +212,11 @@ _DOCTOR_LINES = (
 # The Wrangler configs whose presence gives the Previews line ("wrangler"
 # above): doctor's WRANGLER_TOML and WRANGLER_JSON, which this module can't import.
 _WRANGLER_CONFIGS = ("wrangler.toml", "wrangler.json", "wrangler.jsonc")
-# A `[previews]` table, or `previews = {…}` / `previews.on = …` (dotted keys).
-_PREVIEWS_SECTION = re.compile(r"^[ \t]*(\[[ \t]*\"?previews\"?[ \t]*[\].]|\"?previews\"?[ \t]*[.=])", re.M)
+# A `[previews]` table anywhere, or, above the first table, `previews = {…}` or
+# `previews.on = …` (below it, a `previews` key is another table's, an area's).
+_PREVIEWS_TABLE = re.compile(r"^[ \t]*\[[ \t]*[\"']?previews[\"']?[ \t]*[\].]", re.M)
+_PREVIEWS_KEY = re.compile(r"^[ \t]*[\"']?previews[\"']?[ \t]*[.=]", re.M)
+_FIRST_TABLE = re.compile(r"^[ \t]*\[", re.M)
 # The files a session hands the full doctor: taken here, and not read.
 _DOCTOR_FILES = ("rulesets", "repo", "environments", "runs", "checks", "prs")
 _EXPERIENCE_LEVELS = ("new", "developer")
@@ -383,9 +386,11 @@ def _has_previews(root):
         return False
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
-            return bool(_PREVIEWS_SECTION.search(f.read()))
+            text = f.read()
     except (OSError, ValueError):
         return False
+    first = _FIRST_TABLE.search(text)
+    return bool(_PREVIEWS_TABLE.search(text) or _PREVIEWS_KEY.search(text[:first.start()] if first else text))
 
 
 def _doctor_line(group, id_, status, message, fix, wording):
