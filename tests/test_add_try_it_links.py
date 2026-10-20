@@ -267,8 +267,16 @@ def test_access_is_the_owners_word_and_the_kit_says_it_cant_check_it():
     assert "doesn't say `preview_urls = false` (a config with no `preview_urls` line doesn't), the small pull request of \"Before step 2\" for it" in seven
     assert "with a `workflow/no-previews` pull request open, the \"No previews\" line naming it" in seven
     assert "each branch pushed gets a public link until they do" in seven
+    # One pull request for the line: an open one of this path is named, never doubled.
+    assert "when an open pull request of this path already sets it (such as `workflow/no-previews`), name that one rather than opening another" in seven
+    # In order: the dashboard off, then the config, then the stop.
+    not_now = seven[seven.index("- **Not now**"):]
+    at = [not_now.index(p) for p in ("turns **Preview URLs** off in the dashboard", "the small pull request of \"Before step 2\"", "Then the path stops")]
+    assert at == sorted(at)
     end = _sec("Where try-it links end")
     assert 'adding "Preview URLs stay off until Access is on." once the dashboard and the base branch\'s config both say off' in end
+    assert '"Merge #<pr> to keep them off." while the pull request that sets `preview_urls = false` waits' in end
+    assert "after **Not now** on screen 7, that screen's line instead" in _sec("Before step 2")
     # As the page says: the small pull request sets it back when the config says otherwise.
     assert 'open the small pull request of "Before step 2" for it' in seven
 
