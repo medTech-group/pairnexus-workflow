@@ -172,7 +172,7 @@ def test_each_screen_waits_for_done_and_a_step_already_done_shows_as_done():
     assert "`built`" in done and "screens 1 to 5" in done
     assert "Wrangler config" in done and "screen 6" in done
     # A public link now doesn't skip "no live site": that still comes first.
-    assert '"Before step 2" still comes first when the base branch\'s config needs it, then screen 7' in done
+    assert '"Before step 2" still comes first when the base branch\'s config needs it, then screen 5 again when Preview URLs were turned off for it, and screen 7' in done
     # The MCP tools read a pull request's check runs, never a commit's.
     assert "have no list of a commit's check runs" in done
 
@@ -198,6 +198,9 @@ def test_sensitive_data_is_read_from_the_profile_file_itself():
     # Refused and no Access: the page's order, never `on = false` alone.
     assert "Preview URLs off in the dashboard first, then one pull request setting `on = false` and `preview_urls = false`" in need
     assert "`on = false` alone leaves the links public" in need
+    assert "The owner merges it (a protected path), and the path ends with the \"No previews\" line" in need
+    # On already, but links off: a stale `access = true` never turns them back on without screen 7.
+    assert "ask screen 7 first, never turning them on from the profile's old `access = true`" in need
     # Beside a JSON config, Cloudflare reads the JSON one.
     assert "Cloudflare reads the JSON one" in need
 
@@ -221,6 +224,8 @@ def test_no_live_site_from_the_first_connect():
     # Connected and public: Preview URLs off first, since the small PR's branch builds a preview too.
     assert need.index("the person first turns **Preview URLs** off in the dashboard") < need.index("**The small pull request,**")
     assert "merging it deploys the base branch" in need
+    assert "it keeps the app off the internet (and, with sensitive data, its preview links too)" in need
+    assert "When they won't merge it now, stop there" in need
     # Preview URLs turned off for it: screen 5 is asked again, never left "done".
     assert "Screen 5 is then no longer done: it is asked again after the small pull request merges, just before screen 7" in need
 
