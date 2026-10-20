@@ -46,9 +46,12 @@ class Place(NamedTuple):
 
 
 def _name(first: str, rest: str) -> re.Pattern:
-    """A name in any case, also inside identifiers (`patient_id`, `isPatient`),
-    but not inside other words ("impatient", "repair drops")."""
-    return re.compile(rf"(?:(?<![A-Za-z])(?i:{first})|(?<=[a-z]){first.upper()})(?i:{rest})\w*")
+    """A name in any case, also inside identifiers (`patient_id`, `isPatient`,
+    `FHIRPatient`), but not inside other words ("impatient", "repair drops").
+    Run together in capitals, a name can't be told from a word (`MYPATIENT`,
+    `IMPATIENT`), so neither is matched."""
+    upper = first.upper()
+    return re.compile(rf"(?:(?<![A-Za-z])(?i:{first})|(?<=[a-z]){upper}|(?<=[A-Z]){upper}(?=[a-z]))(?i:{rest})\w*")
 
 
 PAIR_DROP = "pair-drop is named only in the README's \"Where it came from\""
@@ -81,6 +84,8 @@ RULES = {
 _FENCE = re.compile(r" {0,3}(`{3,}|~{3,})")
 _HEADING = re.compile(r" {0,3}(#{1,6}) \S")
 _SETEXT = re.compile(r" {0,3}(=+|-+)\s*$")
+# A line that can't be a setext heading's text: a list item, a quote or a table row.
+_NOT_SETEXT = re.compile(r" {0,3}(?:[-*+]|\d{1,9}[.)])(?:\s|$)|\s*[>|]")
 
 
 def _text(rel: str) -> str:
@@ -107,14 +112,16 @@ def _lines(text: str):
         heading = None
         if f := _FENCE.match(line):
             if not fence:
-                fence = f.group(1)
+                # a backtick fence's info string has no backtick: "```x` and `y`" is text
+                if not (f.group(1)[0] == "`" and "`" in line[f.end():]):
+                    fence = f.group(1)
             elif f.group(1)[0] == fence[0] and len(f.group(1)) >= len(fence) and not line[f.end():].strip():
                 fence = ""
         elif fence:
             pass
         elif m := _HEADING.match(line):
             heading = len(m.group(1)), line.strip()
-        elif (line.strip() and not line.lstrip().startswith(("|", "-", "*", ">", "<"))
+        elif (line.strip() and not _NOT_SETEXT.match(line)
               and i + 1 < len(lines) and (u := _SETEXT.match(lines[i + 1]))):
             level = 1 if u.group(1)[0] == "=" else 2
             heading = level, f"{'#' * level} {line.strip()}"
@@ -164,15 +171,20 @@ def test_each_allowed_place_exists_and_holds_its_word():
 
 def test_a_word_anywhere_else_fails_naming_the_file_and_the_rule():
     # A "#" line inside a code fence isn't a heading, so it doesn't end the
-    # section; a setext heading does, and so does an indented one.
+    # section; a setext heading does, and so does an indented one. A fence
+    # closes only on its own character, at least as long, with nothing after.
     readme = (
         "# Kit\n\n## Using it\n\nOur Clinicians' app, with autoRefill.\n\n"
         "## Where it came from\n\n````\n```\n# not a heading\n````\n\npair-drop's run, PairDrop.\n\n"
         "Licence\n-------\n\npair_drop, usePairDrop\n\n```\nrefill\n```\n\nImpatient? The repair drops nothing.\n\n"
-        "## Where it came from\n\n  ## Thanks\n\npairdrop\n"
+        "## Where it came from\n\n  ## Thanks\n\npairdrop\n\n"
+        "## Where it came from\n\n~~~\n```\n## Not a heading\n~~~\n\n```python\n```js\n## Nor this\n```  \n\npair-drop\n\n"
+        "```x` is text, so this is a heading:\n\n## Licence\n\npair-drop\n\n"
+        "## Where it came from\n\n*Licence*\n---\n\npair-drop\n\n"
+        "## Where it came from\n\n- a list item\n---\n\npair-drop\n"
     )
     profile = ("## `[sensitive]`\n\n| `description` | patients' names |\n\n## Other\n\n"
-               "| `description` | Patients |\n\npatient_id, isPatient\n")
+               "| `description` | Patients |\n\npatient_id, isPatient, FHIRPatient, MYPATIENT\n")
     found = _misplaced({"README.md": readme, "docs/profile.md": profile, "docs/x.md": "From pair‑drop.\n"})
     assert found == [
         f'README.md:5: "Clinicians": {HEALTH}',
@@ -181,8 +193,11 @@ def test_a_word_anywhere_else_fails_naming_the_file_and_the_rule():
         f'README.md:19: "PairDrop": {PAIR_DROP}',
         f'README.md:22: "refill": {HEALTH}',
         f'README.md:31: "pairdrop": {PAIR_DROP}',
+        f'README.md:51: "pair-drop": {PAIR_DROP}',
+        f'README.md:58: "pair-drop": {PAIR_DROP}',
         f'docs/profile.md:7: "Patients": {PATIENT}',
         f'docs/profile.md:9: "patient_id": {PATIENT}',
+        f'docs/profile.md:9: "Patient": {PATIENT}',
         f'docs/profile.md:9: "Patient": {PATIENT}',
         f'docs/x.md:1: "pair‑drop": {PAIR_DROP}',
     ]
