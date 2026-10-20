@@ -8,10 +8,11 @@ import tomllib
 import pytest
 from conftest import KIT
 from test_glossary import PARTS, _slug
+from test_merge_check import check, inputs, project  # noqa: F401 (project is a fixture)
 from test_quickstart import LINK, _anchors, _mention, _next_steps, _plain_with_links
 
 from changelog_notes import since_0110
-from workflow import vendor
+from workflow import merge, vendor
 
 PAGE = KIT / "docs/previews.md"
 TITLE = "# Add try-it links to your pull requests"
@@ -41,8 +42,10 @@ def _section(heading: str) -> str:
 
 
 def _steps() -> list[str]:
-    """The numbered steps, each from its number to the next step or heading."""
-    return [m.group(2) for m in re.finditer(r"^(\d+)\. (.*?)(?=^\d+\. |^#|\Z)", _section("The steps"), re.M | re.S)]
+    """The numbered steps, each from its number to the next step, or for the
+    last one to the paragraph after the steps."""
+    steps = _section("The steps").split("\n**Then the kit:**", 1)[0]
+    return [m.group(2) for m in re.finditer(r"^(\d+)\. (.*?)(?=^\d+\. |\Z)", steps, re.M | re.S)]
 
 
 def _words(text: str) -> str:
@@ -117,10 +120,28 @@ def test_step_6s_wrangler_config_reads_as_toml_with_no_live_site():
     assert config["previews"] == {}
 
 
+def test_no_live_site_from_the_first_connect():
+    # Connecting deploys `main`, so `workers_dev = false` is merged before step 2.
+    before = _words(_body().split("\n## The steps\n", 1)[0])
+    assert "Before step 2:" in before and "`workers_dev = false`" in before and "step 6 first" in before
+
+
+def test_a_sensitive_project_turns_access_on_before_any_preview_is_built():
+    step = _words(_steps()[4])
+    assert "With sensitive data," in step and "step 7" in step and "before any pull request is pushed" in step
+
+
+def test_the_upgrade_the_page_follows_is_marked_to_come_until_it_lands():
+    # #116 builds "Add try-it links"; until then the page says it is to come.
+    upgrade = (KIT / "skills/upgrade-setup/SKILL.md").read_text(encoding="utf-8")
+    if "Add try-it links" not in upgrade:
+        assert _text().count('"Add try-it links" upgrade (to come)') == 2
+
+
 def test_step_7_is_cloudflare_access_for_sensitive_data_confirmed_by_the_owner():
     step = _words(_steps()[6])
     assert "Cloudflare Access" in step and "sensitive data" in step
-    # #37's rule for examples: phone numbers or payment details.
+    # The ticket's example of sensitive data (#37's rule: everyday examples).
     assert "phone numbers" in step and "payment details" in step
     # The kit can't check Access itself, and relies on the owner's word.
     assert "can't check Access itself" in step
@@ -237,3 +258,43 @@ def test_the_changelog_has_a_note_for_it():
     notes = since_0110()
     assert "`docs/previews.md`" in notes
     assert "Add try-it links to your pull requests" in notes
+
+
+# ---------- merge-check's "no try-it link" note points to the page ----------
+
+
+def _no_previews_note(project, capsys):
+    got, _ = check(project, capsys, inputs())
+    assert got["decision"] == "ready"
+    [n] = [n for n in got["notes"] if n["id"] == "no_previews"]
+    return n["message"]
+
+
+def test_merge_checks_note_names_the_kits_page_from_the_kits_source(project, capsys):
+    # Run from the kit itself (the plugin, or this repository), the page is the kit's.
+    assert merge.PREVIEWS_DOC == PAGE
+    assert _no_previews_note(project, capsys).endswith(" The kit's `docs/previews.md` says how to add try-it links.")
+
+
+def test_merge_checks_note_names_the_vendored_copy_in_a_project(project, capsys, monkeypatch):
+    # Vendored, merge.py sits in .claude/workflow/bin/workflow, and the page in
+    # .claude/workflow/docs: a project's own `docs/` isn't where it is.
+    page = project / ".claude/workflow/docs/previews.md"
+    page.parent.mkdir(parents=True)
+    page.write_text("# Add try-it links to your pull requests\n")
+    monkeypatch.setattr(merge, "PREVIEWS_DOC", page)
+    assert _no_previews_note(project, capsys).endswith(" `.claude/workflow/docs/previews.md` says how to add try-it links.")
+
+
+def test_merge_checks_note_offers_no_page_where_previews_are_on(project, capsys):
+    # With previews on, a missing link isn't one to add: the note says only that there's none.
+    with (project / ".claude/workflow/profile.toml").open("a") as f:
+        f.write("\n[previews]\non = true\naccess = true\n")
+    note = _no_previews_note(project, capsys)
+    assert "no try-it link for this project" in note
+    assert "previews.md" not in note
+
+
+def test_merge_checks_note_offers_no_page_without_one(project, capsys, monkeypatch):
+    monkeypatch.setattr(merge, "PREVIEWS_DOC", project / "nowhere/previews.md")
+    assert "previews.md" not in _no_previews_note(project, capsys)
