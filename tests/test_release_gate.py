@@ -371,6 +371,9 @@ def test_the_script_that_judges_comes_from_the_base_branch_not_the_pr():
     assert 'python3 -I "$DATA/release_gate.py"' in wf
     # The PR's own copy only while the base has no release gate at all, and never an empty script.
     assert 'raw .github/workflows/release-gate.yml "$base"' in wf
+    refusal = wf.split('if [ -s "$DATA/base-workflow.yml" ]; then\n', 1)[1].split("fi\n", 1)[0]
+    assert "the base branch has the release gate's workflow but not its script" in refusal
+    assert "exit 1" in refusal
     assert "the release gate's script couldn't be found" in wf
     assert 'repos/$REPO/branches/$base' in wf
 

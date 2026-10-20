@@ -47,7 +47,7 @@ A change to shipped files also:
 
 Never twice in a row: the check refuses a skip when the previous version's entry, in the base branch's CHANGELOG, skipped too.
 
-A change to the check's own workflow or script is reviewed as CI config. The check runs the base branch's copy of the script, so a change to the script takes effect once it has merged; a change to the workflow takes effect on its own pull request.
+A change to the check's own workflow or script is reviewed as CI config. The check runs the base branch's copy of the script, so a change to the script takes effect once it has merged; a change to the workflow takes effect on its own pull request. To move the script, merge a copy at its new path first, then point the workflow at it in a second pull request.
 
 **The kit's home.** Shipped files don't name this repository outright: they read `workflow version --repo` (`KIT_REPO` in `scripts/workflow/updates.py`), so forks work. A test lists the few places that still do.
 
