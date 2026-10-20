@@ -114,6 +114,8 @@ def test_step_6_gives_the_previews_block_and_no_live_site():
     assert "`[previews]`" in step
     assert "`workers_dev = false`" in step and "`preview_urls = true`" in step
     assert "no live site" in _words(step).lower()
+    # A project with routes or a custom domain already has a live site.
+    assert "If your config has `routes` or a custom domain, your project already has a live site" in _words(step)
 
 
 def test_step_6s_wrangler_config_reads_as_toml_with_no_live_site():
@@ -130,13 +132,16 @@ def test_no_live_site_from_the_first_connect():
     # Connecting deploys `main`, so `workers_dev = false` is merged before step 2.
     before = _words(_body().split("\n## The steps\n", 1)[0])
     assert "Before step 2:" in before and "`workers_dev = false`" in before and "step 6 first" in before
-    # A sensitive project's first pull request keeps preview links off until Access is on.
-    assert "With sensitive data, write `preview_urls = false` in that first pull request" in before
+    # A sensitive project's config keeps preview links off before it connects,
+    # whatever else it already has: each deploy of `main` sets them from it.
+    assert "for a project with sensitive data, `preview_urls = false`" in before
+    assert "each deploy sets the Worker's public address and preview links from the config" in before
 
 
 def test_a_sensitive_project_turns_access_on_before_any_preview_is_built():
     step = _words(_steps()[4])
     assert "With sensitive data," in step and "step 7" in step and "before any pull request is pushed" in step
+    assert "`preview_urls = false` stays until step 7 is done" in step
 
 
 def test_the_upgrade_the_page_follows_is_marked_to_come_until_it_lands():
@@ -165,8 +170,11 @@ def test_step_7_is_cloudflare_access_for_sensitive_data_confirmed_by_the_owner()
     assert "Without Access" in step and "no previews" in step
     # Without Access, preview links stay off, in the config as well as the
     # dashboard: each deploy of `main` sets them from the config.
-    assert "keep `preview_urls = false` in the Wrangler config" in _steps()[6]
-    assert "turn **Preview URLs** off in the dashboard" in _steps()[6]
+    step7 = _steps()[6]
+    # With Access on, the links are turned on in the config too.
+    assert "ask it to change `preview_urls` to `true` in a pull request" in step7
+    # Without it: the dashboard first, so the pull request's own build makes no public link.
+    assert step7.index("turn **Preview URLs** off in the dashboard") < step7.index("keep `preview_urls = false` in the Wrangler config")
     assert "Each deploy of `main` sets **Preview URLs** from this line" in _steps()[5]
 
 
@@ -179,6 +187,9 @@ def test_each_build_log_failure_has_its_fix_beside_it(says, fix):
     rows = [r for r in _section("When a build fails").splitlines() if r.startswith("|") and says in r]
     assert len(rows) == 1, says
     assert fix in rows[0]
+    if fix == "Step 6":
+        # Adding it to `main` doesn't fix the pull request that failed until it is brought up to date.
+        assert "bring the failing pull request up to date with `main`" in rows[0]
 
 
 def test_what_to_expect_says_where_the_link_arrives_how_long_and_made_up_data_only():
@@ -327,6 +338,7 @@ def test_a_vendored_merge_check_names_the_vendored_page(project):
         [sys.executable, "-B", str(project / ".claude/workflow/bin/workflow.py"), "merge-check", *args, "--json"],
         capture_output=True, text=True, cwd=project, env={**os.environ, "CLAUDE_PROJECT_DIR": str(project)},
     )
+    assert run.returncode == 0 and run.stdout, run.stderr
     got = json.loads(run.stdout)
     assert got["decision"] == "ready", run.stderr
     [n] = [n for n in got["notes"] if n["id"] == "no_previews"]
