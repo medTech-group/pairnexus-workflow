@@ -977,12 +977,22 @@ def _people(ctx: Context, add) -> None:
         add("changes_requested", who=_who(asked))
 
 
+def _previews_doc() -> str:
+    """Where the reader finds the page on adding try-it links: a vendored
+    project's copy by its path from the project's root, else the kit's own."""
+    workflow = PREVIEWS_DOC.parents[1]
+    if workflow.name == "workflow" and workflow.parent.name == ".claude":
+        return "`.claude/workflow/docs/previews.md`"
+    return "The kit's `docs/previews.md`"
+
+
 def _preview(ctx: Context, add) -> None:
     """#30: where the project has previews, the head commit's built."""
     head = ctx.pr().head
     state, url, commit = ctx.preview_status()
     if state == "none":
-        how = " `docs/previews.md` says how to add them." if PREVIEWS_DOC.exists() else ""
+        prof = ctx.profile
+        how = "" if (prof and prof.previews.on) or not PREVIEWS_DOC.exists() else f" {_previews_doc()} says how to add try-it links."
         _note(ctx, "no_previews", f"There's no try-it link for this project: check the change another way, as the PR's \"How to try it\" says.{how}")
         return
     for_head = commit is not None and len(commit) >= 7 and head.startswith(commit.lower())
