@@ -1,6 +1,6 @@
 """The "release gate" check (#88, #36's seam 1): its decision, `.github/scripts/release_gate.py`,
-run on recorded JSON as the release script's tests run it, asserting only on its output and exit
-code; and its workflow, `.github/workflows/release-gate.yml`, read as `release.yml` is read."""
+run as a command on recorded JSON, asserting only on its output and exit code; and its workflow,
+`.github/workflows/release-gate.yml`, read as `release.yml` is read."""
 
 from __future__ import annotations
 
@@ -8,9 +8,9 @@ import json
 import re
 import subprocess
 import sys
-from pathlib import Path
 
-KIT = Path(__file__).resolve().parent.parent
+from conftest import KIT
+
 SCRIPT = KIT / ".github/scripts/release_gate.py"
 WORKFLOW = KIT / ".github/workflows/release-gate.yml"
 
@@ -42,11 +42,12 @@ def _report(verdict, sha=HEAD, **kw):
 
 
 def _run(tmp_path, *, files=("VERSION", "CHANGELOG.md"), comments=(), permissions=None, labels=(),
-         body="The 0.2.0 release.", changelog=CHANGELOG, head_version="0.2.0\n", base_version="0.1.9\n",
-         omit=()):
+         body="The 0.2.0 release.", changelog=CHANGELOG, changelog_base=None, head_version="0.2.0\n",
+         base_version="0.1.9\n", changed_files=None, omit=()):
     data = {
         "pr": {"number": 7, "head": {"sha": HEAD}, "body": body, "labels": [{"name": n} for n in labels],
-               "html_url": "https://github.com/o/r/pull/7"},
+               "html_url": "https://github.com/o/r/pull/7",
+               "changed_files": len(files) if changed_files is None else changed_files},
         # As `gh api --paginate --slurp` gives them: a list of pages.
         "files": [[{"filename": f} for f in files]],
         "comments": [list(comments)],
@@ -59,11 +60,13 @@ def _run(tmp_path, *, files=("VERSION", "CHANGELOG.md"), comments=(), permission
         path = tmp_path / f"{name}.json"
         path.write_text(json.dumps(value))
         args += [f"--{name}", str(path)]
-    for name, text in (("changelog", changelog), ("version-head", head_version), ("version-base", base_version)):
+    texts = (("changelog", changelog), ("changelog-base", changelog if changelog_base is None else changelog_base),
+             ("version-head", head_version), ("version-base", base_version))
+    for name, text in texts:
         if name in omit:
             continue
         path = tmp_path / name
-        path.write_text(text)
+        path.write_bytes(text.encode())
         args += [f"--{name}", str(path)]
     p = subprocess.run(args, capture_output=True, text=True, cwd=tmp_path)
     return p.returncode, p.stdout.strip()
@@ -85,7 +88,7 @@ def _fails(result):
 
 def test_a_pr_not_changing_version_passes_without_comments_or_permissions(tmp_path):
     out = _passes(_run(tmp_path, files=("README.md", "skills/start/SKILL.md"),
-                       omit=("comments", "permissions", "changelog", "version-head", "version-base")))
+                       omit=("comments", "permissions", "changelog", "changelog-base", "version-head", "version-base")))
     assert "VERSION" in out
 
 
@@ -113,7 +116,7 @@ def test_a_pass_for_the_head_commit_passes(tmp_path):
 
 def test_no_report_fails_saying_so(tmp_path):
     out = _fails(_run(tmp_path, comments=[_comment("Looks good to me.")]))
-    assert "no release gate report" in out
+    assert "no gate report" in out
 
 
 def test_a_pass_for_an_older_commit_fails_naming_it(tmp_path):
@@ -151,19 +154,19 @@ def test_a_newer_report_for_another_commit_doesnt_hide_the_heads_pass(tmp_path):
 def test_a_pass_without_the_marker_is_ignored(tmp_path):
     c = _comment(f"release-gate: pass {HEAD}\n")
     out = _fails(_run(tmp_path, comments=[c]))
-    assert "no release gate report" in out
+    assert "no gate report" in out
 
 
 def test_a_pass_from_read_or_triage_permission_is_ignored(tmp_path):
     for perm in ("read", "triage", "none"):
         out = _fails(_run(tmp_path, comments=[_report("pass", login="stranger")],
                           permissions={"stranger": perm}))
-        assert "no release gate report" in out, perm
+        assert "no gate report" in out, perm
 
 
 def test_a_pass_from_an_author_missing_from_the_permissions_is_ignored(tmp_path):
     out = _fails(_run(tmp_path, comments=[_report("pass", login="stranger")]))
-    assert "no release gate report" in out
+    assert "no gate report" in out
 
 
 def test_write_maintain_and_admin_count_and_logins_ignore_case(tmp_path):
@@ -182,7 +185,22 @@ def test_a_short_sha_or_a_malformed_line_isnt_a_gate_line(tmp_path):
     for line in (f"release-gate: pass {HEAD[:7]}", f"release-gate: pass {HEAD}0", f"release-gate: passed {HEAD}",
                  f"release-gate pass {HEAD}", f"release-gate: pass {'g' * 40}", f"see release-gate: pass {HEAD}"):
         out = _fails(_run(tmp_path, comments=[_comment(f"{MARK}\n{line}\n")]))
-        assert "no release gate report" in out, line
+        assert "no gate report" in out, line
+
+
+def test_a_gate_line_with_windows_line_ends_counts(tmp_path):
+    crlf = _comment(f"{MARK}\r\nrelease-gate: fail {HEAD}\r\n", n=2, at="2026-10-20T11:00:00Z")
+    out = _fails(_run(tmp_path, comments=[_report("pass", n=1), crlf]))
+    assert f"{LINK}2" in out
+
+
+def test_comments_posted_at_the_same_time_go_by_id(tmp_path):
+    _fails(_run(tmp_path, comments=[_report("fail", n=9), _report("pass", n=3)]))
+
+
+def test_a_pr_whose_files_couldnt_all_be_read_fails(tmp_path):
+    out = _fails(_run(tmp_path, files=("README.md",), changed_files=3001, omit=("comments", "permissions")))
+    assert "1 of 3001" in out
 
 
 # ---------- skipping the gate ----------
@@ -224,6 +242,35 @@ def test_a_skip_when_the_last_release_skipped_fails_saying_so(tmp_path):
     assert "0.1.9" in out and "last release skipped" in out
 
 
+def test_bold_skip_lines_count(tmp_path):
+    body = "**Gate skipped because** the sandbox is down.\n"
+    log = CHANGELOG.replace("- New things.", "- New things.\n- **Release gate skipped because** the guard broke.")
+    _passes(_run(tmp_path, labels=["release-gate-skipped"], body=body, changelog=log))
+
+
+def test_the_last_releases_skip_is_read_from_the_base_not_the_head(tmp_path):
+    base = CHANGELOG.replace("- Old things.", "- Old things.\n- Release gate skipped because of last week's outage.")
+    out = _fails(_run(tmp_path, labels=["release-gate-skipped"], body=SKIP_BODY, changelog=SKIP_LOG,
+                      changelog_base=base))
+    assert "last release skipped" in out
+
+
+def test_a_skip_when_the_base_has_no_entry_for_its_version_fails(tmp_path):
+    out = _fails(_run(tmp_path, labels=["release-gate-skipped"], body=SKIP_BODY, changelog=SKIP_LOG,
+                      changelog_base="# Changelog\n"))
+    assert "no 0.1.9 entry" in out
+
+
+def test_the_first_release_may_skip(tmp_path):
+    _passes(_run(tmp_path, labels=["release-gate-skipped"], body=SKIP_BODY, changelog=SKIP_LOG,
+                 changelog_base="", base_version=""))
+
+
+def test_a_failed_skip_keeps_the_reports_reason(tmp_path):
+    out = _fails(_run(tmp_path, labels=["release-gate-skipped"], comments=[_report("fail", n=4)]))
+    assert f"{LINK}4" in out and "the skip is missing" in out
+
+
 def test_a_pass_for_the_head_commit_passes_whatever_the_skip_says(tmp_path):
     _passes(_run(tmp_path, labels=["release-gate-skipped"], comments=[_report("pass")]))
 
@@ -236,6 +283,8 @@ def test_every_fail_gives_its_reason(tmp_path):
         _run(tmp_path, labels=["release-gate-skipped"]),
         _run(tmp_path, omit=("permissions",)),
     ]
+    cases.append(_run(tmp_path, labels=["release-gate-skipped"], body=SKIP_BODY, changelog=SKIP_LOG,
+                      changelog_base=SKIP_LOG.replace("- Old things.", "- Old things.\n- Release gate skipped because x.")))
     reasons = {_fails(c) for c in cases}
     assert len(reasons) == len(cases)
 
@@ -257,7 +306,7 @@ def _wf():
 
 def test_the_job_is_named_release_gate_and_runs_on_the_pull_request_events():
     wf = _wf()
-    assert re.search(r"^\s+name: release gate$", wf, re.M)
+    assert "\n  gate:\n    name: release gate\n" in wf
     assert "pull_request:" in wf and "pull_request_target" not in wf
     assert "types: [opened, synchronize, reopened, edited, labeled, unlabeled]" in wf
 
@@ -281,7 +330,7 @@ def test_least_permissions():
 def test_it_reads_the_pr_from_the_api_when_it_runs_and_runs_the_script():
     wf = _wf()
     for api in ("pulls/$PR", "pulls/$PR/files", "issues/$PR/comments", "collaborators/", "/permission",
-                "contents/CHANGELOG.md", "contents/VERSION"):
+                "contents/$1?ref=$2", 'raw CHANGELOG.md "$HEAD"', 'raw VERSION "$HEAD"'):
         assert api in wf, api
     assert ".github/scripts/release_gate.py" in wf
     # Nothing about the pull request comes from the event's payload but its number.
@@ -295,3 +344,24 @@ def test_a_pr_not_changing_version_skips_the_comments_and_permissions():
     # The step that reads comments and permissions runs only for a release PR.
     reads = wf.split("issues/$PR/comments")[0].rsplit("- name:", 1)[1]
     assert "if: steps." in reads
+
+
+def test_the_script_that_judges_comes_from_the_base_branch_not_the_pr():
+    wf = _wf()
+    assert "actions/checkout" not in wf  # the PR's code is never checked out
+    assert 'raw .github/scripts/release_gate.py "$base"' in wf
+    assert 'python3 -I "$DATA/release_gate.py"' in wf
+
+
+def test_only_a_missing_file_reads_as_empty():
+    wf = _wf()
+    assert 'grep -q "HTTP 404"' in wf and "return 1" in wf and "|| :" not in wf
+    assert 'raw CHANGELOG.md "$BASE"' in wf and 'raw VERSION "$BASE"' in wf
+
+
+def test_reruns_for_one_pr_go_one_at_a_time():
+    rerun = _wf().split("\n  rerun:\n")[1]
+    assert "concurrency:" in rerun and "github.event.issue.number" in rerun
+    timeout = int(re.search(r"timeout-minutes: (\d+)", rerun).group(1))
+    waits = re.search(r"seq (\d+)\).*?sleep (\d+)", rerun, re.S)
+    assert int(waits.group(1)) * int(waits.group(2)) < timeout * 60
