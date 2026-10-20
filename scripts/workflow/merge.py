@@ -148,8 +148,8 @@ REASONS = {
         # #117: the preview isn't GitHub's data but #41's reader's answer, and an
         # empty file is how a reader that failed leaves it.
         "preview": {
-            "new": ("Not yet: couldn't read the try-it link.", "Ask Claude to read the try-it link again, then ask again."),
-            "developer": ("Not yet: couldn't read the try-it link ({why}).", "Run `workflow preview --fetch {number} --json` (without gh: `workflow preview --comments F --checks F --sha <head> --json`), read what it printed, and give its answer as --preview."),
+            "new": ("Not yet: couldn't read the try-it link.", "Ask Claude to read the try-it link again, then ask again. If it still can't, the kit may need updating to read Cloudflare's comment."),
+            "developer": ("Not yet: couldn't read the try-it link ({why}).", "Run `workflow preview --fetch {number} --json` (without gh: `workflow preview --comments F --checks F --sha <head> --json`), read what it printed, and give its answer as --preview. If the reader itself can't read Cloudflare's comment or check, the kit needs updating: report it."),
         },
     }),
     # The profile isn't fetched: its own wording, still the id `couldnt_read`.

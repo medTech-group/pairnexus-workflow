@@ -770,6 +770,9 @@ def cmd_merge_check(a) -> int:
     return 0
 
 
+_PREVIEW_NAMES = {"comments": "comments", "checks": "check runs", "sha": "head commit"}
+
+
 def _fetched_preview(repo: str, number: int, inputs: dict) -> tuple:
     """#117: with previews on, `merge-check --fetch` reads the try-it link
     itself when no --preview is given, through #41's reader, so a check that
@@ -777,7 +780,10 @@ def _fetched_preview(repo: str, number: int, inputs: dict) -> tuple:
     what merge-check already read (the head, the comments, the check runs)
     and fetches only the rest. Its answer as merge-check's `(value, None)`,
     or `(None, why)`."""
-    have = {n: inputs[n] for n in ("comments", "checks") if n in inputs and inputs[n][1] is None}
+    unread = [n for n in ("comments", "checks") if n in inputs and inputs[n][1] is not None]
+    if unread:  # already merge-check's own reasons: neither fetched again nor read
+        return None, f"its {' and '.join(_PREVIEW_NAMES[n] for n in unread)} couldn't be read, as said above"
+    have = {n: inputs[n] for n in ("comments", "checks") if n in inputs}
     try:  # the head as merge-check reads it, in any shape its --pr takes
         have["sha"] = (merge_mod._pr(inputs["pr"][0]).head, None) if inputs.get("pr", (None, None))[0] is not None else None
     except merge_mod.Unreadable:
@@ -786,7 +792,7 @@ def _fetched_preview(repo: str, number: int, inputs: dict) -> tuple:
         del have["sha"]
     got = {**have, **fetch_mod.preview_inputs(repo, number, have)}
     # Each fetch error without the hint `preview_inputs` adds: its flags are `workflow preview`'s.
-    why = [f"its {n}: {e.removesuffix(', ' + fetch_mod._give(n))}" for n, (_, e) in got.items() if e is not None]
+    why = [f"its {_PREVIEW_NAMES[n]}: {e.removesuffix(', ' + fetch_mod._give(n))}" for n, (_, e) in got.items() if e is not None]
     if why:
         return None, "--fetch couldn't fetch " + "; ".join(why)
     try:

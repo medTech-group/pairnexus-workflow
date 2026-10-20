@@ -160,7 +160,8 @@ def test_a_preview_file_the_reader_left_empty_is_not_yet(project, capsys):
     # The fix is the reader's, not GitHub's.
     assert r["wording"]["developer"]["fix"] == (
         "Run `workflow preview --fetch 12 --json` (without gh: `workflow preview --comments F --checks F --sha <head> --json`), "
-        "read what it printed, and give its answer as --preview."
+        "read what it printed, and give its answer as --preview. If the reader itself can't read Cloudflare's comment or check, "
+        "the kit needs updating: report it."
     )
     assert r["wording"]["new"]["message"] == "Not yet: couldn't read the try-it link."
 
@@ -217,13 +218,14 @@ def test_fetch_with_previews_on_and_the_comments_unreadable_is_not_yet(project, 
     _previews_on(project)
     r = _fetch_routes([bot(row())], [cf_run()])
     r[f"{REPO}/issues/12/comments"] = fake_gh.reply(exit=1, stderr="gh: Server Error (HTTP 502)")
-    fake_gh.install(tmp_path, monkeypatch, r)
+    gh = fake_gh.install(tmp_path, monkeypatch, r)
     got, _ = run(project, capsys, {}, "--fetch", "12")
     assert got["decision"] == "not_yet"
     [r] = [x for x in got["reasons"] if x["id"] == "couldnt_read" and x["input"] == "preview"]
     message = r["wording"]["developer"]["message"]
-    assert "--fetch couldn't fetch its comments:" in message and "--sha" not in message and "as a file" not in message
-    assert "--comments F --checks F --sha <head>" in r["wording"]["developer"]["fix"]  # the files route, without gh
+    assert "its comments couldn't be read, as said above" in message and "as a file" not in message
+    # The failed route is asked once, for merge-check's own comments, never again for the preview.
+    assert [p.split("?")[0] for p in gh.paths()].count(f"{REPO}/issues/12/comments") == 1
 
 
 def test_fetch_with_previews_on_and_no_gh_names_no_other_commands_flags(project, capsys, tmp_path, monkeypatch):
@@ -232,8 +234,10 @@ def test_fetch_with_previews_on_and_no_gh_names_no_other_commands_flags(project,
     got, _ = run(project, capsys, {"pr": inputs()["pr"]}, "--fetch", "12")
     [r] = [x for x in got["reasons"] if x["id"] == "couldnt_read" and x["input"] == "preview"]
     message = r["wording"]["developer"]["message"]
-    assert "--fetch couldn't fetch its comments: gh (the GitHub CLI) isn't installed here" in message
+    # merge-check's own reasons already say gh isn't there: the preview's says so once, naming no flag.
+    assert "its comments and check runs couldn't be read, as said above" in message
     assert "as a file" not in message and "--sha" not in message
+    assert "--comments F --checks F --sha <head>" in r["wording"]["developer"]["fix"]  # the files route, without gh
 
 
 def test_fetch_reuses_the_comments_and_head_merge_check_read(project, capsys, tmp_path, monkeypatch):
@@ -247,6 +251,16 @@ def test_fetch_reuses_the_comments_and_head_merge_check_read(project, capsys, tm
     assert [x["id"] for x in got["reasons"]] == ["preview_failed"]
     paths = [p.split("?")[0] for p in gh.paths()]
     assert paths.count(f"{REPO}/pulls/12") == 1 and f"{REPO}/issues/12/comments" not in paths
+
+
+def test_fetch_never_refetches_a_comments_file_it_couldnt_read(project, capsys, tmp_path, monkeypatch):
+    _previews_on(project)
+    gh = fake_gh.install(tmp_path, monkeypatch, _fetch_routes([bot(row())], [cf_run()]))
+    got, _ = run(project, capsys, {}, "--fetch", "12", files={"comments": "{not json"})
+    assert got["decision"] == "not_yet"
+    [r] = [x for x in got["reasons"] if x["id"] == "couldnt_read" and x["input"] == "preview"]
+    assert "comments couldn't be read" in r["wording"]["developer"]["message"]
+    assert f"{REPO}/issues/12/comments" not in [p.split("?")[0] for p in gh.paths()]
 
 
 def test_fetch_reads_the_head_from_a_gh_pr_view_file(project, capsys, tmp_path, monkeypatch):
