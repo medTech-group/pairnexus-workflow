@@ -184,8 +184,10 @@ class _Words(collections.namedtuple("_Words", "new developer")):
 
 # Every line but `computer.python3`, in the full doctor's check order: its
 # group, its id, the install mode it is given in (None: both; in the other
-# mode the full doctor gives it only when something is wrong), and what it
-# checks.
+# mode the full doctor gives it only when something is wrong; "wrangler": only
+# in a project with a Wrangler config at its root or a `[previews]` section in
+# its profile, read as text, so roughly as the full doctor gives it), and what
+# it checks.
 _DOCTOR_LINES = (
     ("Your computer", "computer.claude_code", None, _Words("which version of Claude Code you have", "Claude Code's version")),
     ("The kit", "kit.profile", None, _Words("the kit's profile (.claude/workflow/profile.toml)", "`profile check`")),
@@ -205,7 +207,16 @@ _DOCTOR_LINES = (
     ("GitHub", "github.codeowners", None, _Words("whether CODEOWNERS asks you to review changes to the kit and CI", "CODEOWNERS for /.claude/ and /.github/workflows/")),
     ("Cloud", "cloud.environments", None, _Words("the two cloud environments for unattended runs", "The cloud environments")),
     ("Cloud", "cloud.contents", None, _Words("what the cloud environments hold", "Environment contents")),
+    ("Previews", "previews.setup", "wrangler", _Words("the project's try-it links", "Previews")),
 )
+# The Wrangler configs whose presence gives the Previews line ("wrangler"
+# above): doctor's WRANGLER_TOML and WRANGLER_JSON, which this module can't import.
+_WRANGLER_CONFIGS = ("wrangler.toml", "wrangler.json", "wrangler.jsonc")
+# A `[previews]` table anywhere, or, above the first table, `previews = {…}` or
+# `previews.on = …` (below it, a `previews` key is another table's, an area's).
+_PREVIEWS_TABLE = re.compile(r"^[ \t]*\[[ \t]*[\"']?previews[\"']?[ \t]*[\].]", re.M)
+_PREVIEWS_KEY = re.compile(r"^[ \t]*[\"']?previews[\"']?[ \t]*[.=]", re.M)
+_FIRST_TABLE = re.compile(r"^[ \t]*\[", re.M)
 # The files a session hands the full doctor: taken here, and not read.
 _DOCTOR_FILES = ("rulesets", "repo", "environments", "runs", "checks", "prs")
 _EXPERIENCE_LEVELS = ("new", "developer")
@@ -368,6 +379,20 @@ def _experience(root, env):
     return (lvl, "local file") if lvl else (None, "unknown")
 
 
+def _has_previews(root):
+    """The profile has a `[previews]` section, read as text: tomllib needs 3.11."""
+    path = os.path.join(root, ".claude", "workflow", "profile.toml")
+    if not os.path.isfile(path):
+        return False
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except (OSError, ValueError):
+        return False
+    first = _FIRST_TABLE.search(text)
+    return bool(_PREVIEWS_TABLE.search(text) or _PREVIEWS_KEY.search(text[:first.start()] if first else text))
+
+
 def _doctor_line(group, id_, status, message, fix, wording):
     return {"group": group, "id": id_, "status": status, "message": message.pick(wording), "fix": fix.pick(wording), "offer": None}
 
@@ -393,6 +418,7 @@ def _doctor_report(root, env, version):
     wording = level or "new"
     plugin = bool(root) and not os.path.exists(os.path.join(root, ".claude", "workflow", "lock.json"))
     mode = "plugin" if plugin else "vendored"
+    wrangler = bool(root) and (any(os.path.lexists(os.path.join(root, n)) for n in _WRANGLER_CONFIGS) or _has_previews(root))
     until = "until `python3` is {} or newer".format(NEEDS)
     lines = [_doctor_line("Your computer", "computer.python3", "gap", _Words(
         "The Python running this check (`python3`) is version {}, but the kit needs {} or newer, so its hooks fall back to a "
@@ -404,7 +430,7 @@ def _doctor_report(root, env, version):
         "Put Python {}+ first on the PATH as `python3`, start a new session, then rerun doctor with it.".format(NEEDS),
     ), wording)]
     for group, id_, only_in, what in _DOCTOR_LINES:
-        if only_in in (None, mode):
+        if only_in in (None, mode) or (only_in == "wrangler" and wrangler):
             lines.append(_doctor_line(group, id_, "cant_check", _Words(
                 "Can't check {} {}.".format(what.new, until),
                 "{} unchecked {}.".format(what.developer, until),

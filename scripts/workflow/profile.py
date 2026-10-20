@@ -127,9 +127,15 @@ class Previews:
     provider: str = "cloudflare"
     on: bool = False
     access: bool = False
+    section: bool = False  # the profile has a [previews] section: off by choice, not never set up
 
 
-def _previews(raw: dict, sensitive: bool) -> Previews:
+# How `profile check`'s error begins for a sensitive project's previews
+# without Access, which doctor's Previews line repeats in plain words.
+ACCESS_REFUSED = "previews.on is true but previews.access isn't"
+
+
+def _previews(raw: dict, sensitive: bool, section: bool) -> Previews:
     provider = raw.get("provider", "cloudflare")
     if provider not in PREVIEW_PROVIDERS:
         names = " or ".join(f'"{x}"' for x in PREVIEW_PROVIDERS)
@@ -138,10 +144,10 @@ def _previews(raw: dict, sensitive: bool) -> Previews:
     for k, v in (("on", on), ("access", access)):
         if not isinstance(v, bool):
             raise ProfileError(f"previews.{k} must be true or false, not {repr(v)[:40]}")
-    p = Previews(provider=provider, on=on, access=access)
+    p = Previews(provider=provider, on=on, access=access, section=section)
     if p.on and not p.access and sensitive:
         raise ProfileError(
-            "previews.on is true but previews.access isn't: this project has [sensitive] patterns, so its "
+            f"{ACCESS_REFUSED}: this project has [sensitive] patterns, so its "
             "previews must sit behind Cloudflare Access (set access = true once you've confirmed it), or not be made (on = false)"
         )
     return p
@@ -347,7 +353,7 @@ def parse(data: dict, root: Path) -> Profile:
             re.compile(p)
         except re.error as e:
             raise ProfileError(f"sensitive.patterns: {p!r} is not a valid regex ({e})")
-    previews = _previews(data.get("previews") or {}, bool(patterns))
+    previews = _previews(data.get("previews") or {}, bool(patterns), "previews" in data)
     areas_raw = data.get("areas") or {}
     areas = {k: _strs(v, f"areas.{k}") for k, v in areas_raw.items()}
     rel = data.get("release") or {}

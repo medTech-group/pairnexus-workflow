@@ -127,6 +127,8 @@ Each line with an `offer` is an upgrade one tap away. Offer each one the report 
 
 **Any other offer** doctor names that isn't in the table (a later kit adds them) is named as text, not offered as a choice: "Doctor also suggests `<offer>`: <the line's fix>." Start only the upgrades in the table.
 
+`add_try_it_links` (**Add try-it links**, on the Previews line) is such an offer until `upgrade-setup` has that upgrade (#116): name it as text, with the line's fix, which links the page that gives the steps.
+
 A line without an offer has only its fix: say it, and do it only if the person asks, as a separate request.
 
 After the offers (or when there are none), the check is done. When the person fixes something, offer to check the set-up again.
