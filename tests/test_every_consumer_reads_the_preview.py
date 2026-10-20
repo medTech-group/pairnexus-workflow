@@ -263,13 +263,26 @@ def test_fetch_never_refetches_a_comments_file_it_couldnt_read(project, capsys, 
     assert f"{REPO}/issues/12/comments" not in [p.split("?")[0] for p in gh.paths()]
 
 
+def test_fetch_never_reads_the_preview_from_a_comments_file_in_the_wrong_shape(project, capsys, tmp_path, monkeypatch):
+    # JSON, but not comments as GitHub gives them: merge-check's own reason says so, once.
+    _previews_on(project)
+    fake_gh.install(tmp_path, monkeypatch, _fetch_routes([bot(row())], [cf_run()]))
+    got, _ = run(project, capsys, {"comments": [{"id": 1}]}, "--fetch", "12")
+    [r] = [x for x in got["reasons"] if x["id"] == "couldnt_read" and x["input"] == "preview"]
+    assert "its comments couldn't be read, as said above" in r["wording"]["developer"]["message"]
+    assert "comments" in [x["input"] for x in got["reasons"] if x["id"] == "couldnt_read"]
+
+
 def test_fetch_reads_the_head_from_a_gh_pr_view_file(project, capsys, tmp_path, monkeypatch):
     # `gh pr view --json`'s headRefOid, as merge-check's --pr takes it: no fetch of the head.
     _previews_on(project)
-    view = {"number": 12, "headRefOid": HEAD, "baseRefName": "main", "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN", "isDraft": False, "state": "OPEN"}
+    data = with_report(inputs())
+    view = {"number": 12, "headRefOid": HEAD, "baseRefName": "main", "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN", "isDraft": False,
+            "state": "OPEN", "changedFiles": 1, "comments": data["pr"]["comments"], "commits": 2}
     gh = fake_gh.install(tmp_path, monkeypatch, _fetch_routes([bot(row())], [cf_run()]))
-    run(project, capsys, {"pr": view}, "--fetch", "12")
+    got, _ = run(project, capsys, {"pr": view}, "--fetch", "12")
     assert f"{REPO}/pulls/12" not in [p.split("?")[0] for p in gh.paths()]
+    assert got["preview"] == {"state": "built", "url": got["preview"]["url"]} and got["preview"]["url"].startswith("https://")
 
 
 def test_fetch_with_previews_off_reads_no_preview(project, capsys, tmp_path, monkeypatch):

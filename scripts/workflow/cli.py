@@ -780,7 +780,13 @@ def _fetched_preview(repo: str, number: int, inputs: dict) -> tuple:
     what merge-check already read (the head, the comments, the check runs)
     and fetches only the rest. Its answer as merge-check's `(value, None)`,
     or `(None, why)`."""
-    unread = [n for n in ("comments", "checks") if n in inputs and inputs[n][1] is not None]
+    ctx = merge_mod.Context(inputs, None, None)
+    unread = []
+    for n, read in (("comments", ctx.comments), ("checks", ctx.checks_ran)):
+        try:
+            read()  # as merge-check reads it: a file it can't open, or one in the wrong shape
+        except merge_mod.Unreadable:
+            unread.append(n)
     if unread:  # already merge-check's own reasons: neither fetched again nor read
         return None, f"its {' and '.join(_PREVIEW_NAMES[n] for n in unread)} couldn't be read, as said above"
     have = {n: inputs[n] for n in ("comments", "checks") if n in inputs}
