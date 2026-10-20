@@ -2453,7 +2453,7 @@ def _previews_page(i: Inputs) -> str:
 
 def _wrangler_configs(i: Inputs) -> list[str]:
     """The Wrangler configs at the checkout's root, the JSON ones first."""
-    return [n for n in (*WRANGLER_JSON, WRANGLER_TOML) if _file(i.root, n)[0].exists()]
+    return [n for n in (*WRANGLER_JSON, WRANGLER_TOML) if os.path.lexists(_file(i.root, n)[0])]  # a broken link counts, to be named
 
 
 def _access_gap(page: str) -> Line:
@@ -2464,8 +2464,10 @@ def _access_gap(page: str) -> Line:
         "[sensitive] patterns with previews.on = true and access not true (Cloudflare Access unconfirmed): `profile check` refuses the profile.",
     ), Words(
         f"Turn on Cloudflare Access for the try-it links ({page}, step 7), then ask Claude to set `access = true` in the profile's "
-        "`[previews]` section. Without Access, ask it to set `on = false` instead.",
-        f"Put Cloudflare Access on the preview URLs ({page}, step 7) and set `access = true`, or set `on = false`.",
+        "`[previews]` section. Without Access, turn Preview URLs off in Cloudflare's dashboard and ask Claude to keep "
+        "`preview_urls = false` in the Wrangler config and set `on = false` in the profile: `on = false` alone leaves the links public.",
+        f"Put Cloudflare Access on the preview URLs ({page}, step 7) and set `access = true`. Without Access: Preview URLs off in the "
+        "dashboard, `preview_urls = false` in the Wrangler config, and `on = false` (the profile alone changes nothing on Cloudflare).",
     ))
 
 
@@ -2486,7 +2488,7 @@ def check_previews(i: Inputs) -> list[Line]:
         if configs:
             lines.append(Line(g, id_, "cant_check", Words(
                 "Can't check try-it links until the kit's profile " + ("can be read." if i.profile_error else "is set up."),
-                "Previews unchecked: no readable profile ([previews]).",
+                "Previews unchecked: " + ("the profile doesn't read" if i.profile_error else "no profile") + " ([previews]).",
             ), PROFILE_FIRST if i.profile_error else SET_UP_FIRST))
         return lines
     p = i.profile.previews
@@ -2497,7 +2499,7 @@ def check_previews(i: Inputs) -> list[Line]:
                 "`[previews]` doesn't say `on = true`: previews off.",
             ), Words(
                 f"To turn them on, follow {page}.",
-                f"{page}, then `on = true`.",
+                f"Follow {page}, then set `on = true`.",
             ))]
         if not configs:
             return []
@@ -2538,7 +2540,7 @@ def _previews_block(i: Inputs, page: str, configs: list[str]) -> Line:
     if json_ones:
         name = json_ones[0]
         return Line(g, id_, "cant_check", Words(
-            f"Can't check `{name}` for the `[previews]` block try-it links need: the check reads only a `{WRANGLER_TOML}`, "
+            f"Can't check `{name}` for the `\"previews\"` setting try-it links need: the check reads only a `{WRANGLER_TOML}`, "
             "and only when there's no JSON Wrangler config beside it.",
             f"`{name}` not read: only a {WRANGLER_TOML} with no JSON config beside it is.",
         ), Words(
@@ -2547,23 +2549,27 @@ def _previews_block(i: Inputs, page: str, configs: list[str]) -> Line:
             f"Check `{name}` has a top-level `\"previews\"` object (`\"previews\": {{}}`); {page}, step 6.",
         ))
     text, err = _read_text(i.root, WRANGLER_TOML)
-    data = None
+    data, detail = None, ""
     if text is not None:
         try:
             data = tomllib.loads(text)
         except tomllib.TOMLDecodeError as e:
-            err = f"it isn't TOML ({e})"
+            err, detail = "it isn't valid TOML", f" ({e})"
         except RecursionError:
-            err = "it isn't TOML (nested too deeply)"
+            err, detail = "it isn't valid TOML", " (nested too deeply)"
     if data is None:
-        why = err or "it can't be read"
-        return Line(g, id_, "cant_check", Words(
-            f"Can't check `{WRANGLER_TOML}` for the `[previews]` block try-it links need: {why}.",
-            f"{WRANGLER_TOML} unreadable: {why}.",
-        ), Words(
+        why = err or "it links to a file that isn't there"  # listed, but missing: a broken link
+        fix = Words(
             f"Ask Claude to correct `{WRANGLER_TOML}` so it reads as TOML, then run this again ({page}, step 6, shows the block).",
             f"Make {WRANGLER_TOML} valid TOML, with `[previews]` ({page}, step 6).",
-        ))
+        ) if detail else Words(
+            f"Ask Claude to look at what `{WRANGLER_TOML}` is: it should be a text file Cloudflare can read ({page}, step 6).",
+            f"Make {WRANGLER_TOML} a readable regular file ({page}, step 6).",
+        )
+        return Line(g, id_, "cant_check", Words(
+            f"Can't check `{WRANGLER_TOML}` for the `[previews]` block try-it links need: {why}.",
+            f"{WRANGLER_TOML} unreadable: {why}{detail}.",
+        ), fix)
     block = data.get("previews")
     if isinstance(block, dict):
         return Line(g, id_, "fine", Words(

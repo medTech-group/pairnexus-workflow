@@ -104,12 +104,21 @@ def test_a_previews_key_that_isnt_a_block_is_a_gap(tmp_path):
     assert line["status"] == "gap", line
 
 
-def test_a_wrangler_toml_that_isnt_toml_cant_be_checked(tmp_path):
-    root = _with(tmp_path, "bad", ON, {"wrangler.toml": 'name = "notes\n[previews\n'})
-    for r in _both(tmp_path, root):
+def test_a_wrangler_toml_that_isnt_toml_or_isnt_a_file_cant_be_checked(tmp_path):
+    bad = _with(tmp_path, "bad", ON, {"wrangler.toml": 'name = "notes\n[previews\n'})
+    folder = _with(tmp_path, "folder", ON)
+    (folder / "wrangler.toml").mkdir()
+    dangling = _with(tmp_path, "dangling", ON)
+    (dangling / "wrangler.toml").symlink_to(dangling / "nowhere.toml")
+    calls = [(root, (), env) for root in (bad, folder, dangling) for env in (NEW, DEV)]
+    for (root, _, env), r in zip(calls, _reports(tmp_path, calls)):
         line = _previews(r)["previews.setup"]
-        assert line["status"] == "cant_check", line
+        assert line["status"] == "cant_check", (root, line)
         assert "wrangler.toml" in line["message"] and line["fix"]
+        # Only a file that isn't TOML is told to read as TOML.
+        assert ("TOML" in line["fix"]) == (root == bad), (root, line)
+        if env == NEW:
+            assert "line " not in line["message"]  # the parser's detail is the developer's
 
 
 # ---------- `wrangler.json` and `wrangler.jsonc` ----------
@@ -142,6 +151,8 @@ def test_sensitive_patterns_with_on_and_access_not_true_is_a_gap(tmp_path):
         assert line["status"] == "gap", line
         assert "Access" in line["message"] and "`access = true`" in line["message"] + line["fix"]
         assert "docs/previews.md" in line["fix"] and "step 7" in line["fix"]
+        # Without Access, the profile alone changes nothing on Cloudflare: the links go off there too.
+        assert "`preview_urls = false`" in line["fix"] and "Preview URLs off" in line["fix"]
         # `profile check` refuses that profile too, and says so on its own line.
         assert _lines(r)["kit.profile"]["status"] == "gap"
 
