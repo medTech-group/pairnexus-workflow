@@ -74,6 +74,8 @@ def test_the_opening_keeps_the_guided_start_and_the_flow_in_short():
     assert "choices to click" in opening
     assert "plan → spec → build tickets → one session per ticket → review panel → merge" in opening
     assert "](#using-it)" in _opening()
+    # "Add later" points at how to add it.
+    assert "](#set-up-unattended-runs)" in _opening()
 
 
 def test_the_conductor_paragraph_moved_to_unattended():

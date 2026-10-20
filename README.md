@@ -4,7 +4,7 @@
 
 A Claude Code kit for building software in your own project. You describe what you want; Claude plans it, builds it in small reviewed pieces and merges what passes.
 
-You start with attended work: you're there, and Claude asks what to do next with choices to click, so you don't need to remember its commands. Start a session and say what you're working on ([Using it](#using-it)). Claude working while you're away (unattended runs, led by the conductor) is something you can add later ([Unattended](#unattended)).
+You start with attended work: you're there, and Claude asks what to do next with choices to click, so you don't need to remember its commands. Start a session and say what you're working on ([Using it](#using-it)). Claude working while you're away (unattended runs, led by the conductor) is something you can add later ([Set up unattended runs](#set-up-unattended-runs)).
 
 For developers, the flow in short: **plan → spec → build tickets → one session per ticket → review panel → merge**
 
