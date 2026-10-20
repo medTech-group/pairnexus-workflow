@@ -57,4 +57,4 @@ If a build passes but no link arrives, preview URLs are off: step 5.
 - **The first build can take about four minutes to start.** Until the check for the latest commit is green, the link still shows the version before it.
 - **A failed build** shows as a red check, and its row in the comment says the deployment failed: see "When a build fails".
 - **Previews hold only made-up data.** Preview links are public unless step 7's Access guards them, so never put real people's details in a preview.
-- **The try-it link's check is never a required one:** GitHub doesn't hold a merge for it.
+- **The try-it link's check is never a required one:** GitHub doesn't hold a merge for it. But once previews are on, the kit's `merge-check` says "Not yet" while the link is still building, or when it didn't build.

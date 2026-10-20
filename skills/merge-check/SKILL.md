@@ -43,7 +43,18 @@ The check answers in the chat only. It posts nothing on GitHub: no comment, no r
 WF merge-check --fetch 12 --asker <login> --json
 ```
 
-It allows the profile's `run.review_rounds`, so a person needs no `--review-rounds`; for a pull request a run built, add `--review-rounds` with the charter's, as its briefing gave them, to get the run's answer, and for one whose body says "Light review:" (build-ticket's line), `--review-rounds 1`. It fetches everything but the preview: where the project has a preview reader, add `--preview F` with its answer, or there is no try-it link.
+It allows the profile's `run.review_rounds`, so a person needs no `--review-rounds`; for a pull request a run built, add `--review-rounds` with the charter's, as its briefing gave them, to get the run's answer, and for one whose body says "Light review:" (build-ticket's line), `--review-rounds 1`. It fetches everything, the try-it link too when previews are on (below). Without `--fetch`, and only with previews on, add `--preview F` with its answer, or there is no try-it link.
+
+**The try-it link.** Only when the profile says `[previews] on = true`, read it for the pull request's head with the kit's preview reader, into a new directory **outside the checkout** (`<dir>`), and give that file to the command:
+
+```
+WF preview --fetch 12 --json > <dir>/preview.json
+WF merge-check --fetch 12 --preview <dir>/preview.json --asker <login> --json
+```
+
+Without `gh api`, give the reader files instead: `WF preview --comments F --checks F --sha <head> --json > <dir>/preview.json`, with the pull request's issue comments, its head commit's check runs (the `--checks` file below does, as it is) and its head SHA. Pass that file even when the reader fails: it is then empty, and the command says it couldn't read the preview ("Not yet"), so a try-it link that can't be read never reads as "Ready". Say what the reader printed, too. With previews on, `--fetch` reads the link itself when no `--preview` is given, so the answer is the same either way; reading it first lets you show what the reader said.
+
+With previews off (no `[previews]` section, or `on = false`), run no reader and pass no `--preview`: the answer then carries a note that there's no try-it link for this project, which never blocks and names `docs/previews.md`, the page on adding them.
 
 In a cloud session, whose proxy refuses GraphQL and `collaborators/<login>/permission`, it reads the threads from the session's own route (whole only when every review comment sits in one of them) and the token's own permission from `repos/<repo>`. Anyone else counts as without write access, unless they requested changes: then permissions stay "couldn't read", so give `--permissions` as a file.
 
@@ -61,12 +72,12 @@ In a cloud session, whose proxy refuses GraphQL and `collaborators/<login>/permi
 | `--comments` | its comments (the issue's comments), every page |
 | `--permissions` | `collaborators/<login>/permission` for each author of a comment or review, and for the asker (with no `project.owner`, an admin counts as the owner) |
 | `--compare` | `compare/<base>...<head SHA>` |
-| `--preview` | only where the project has a preview reader: its state, url and commit |
+| `--preview` | only with `[previews] on = true`: `WF preview --json`'s answer for the head (its state, url and commit), as above |
 
 Then run:
 
 ```
-WF merge-check --pr F --files F --commits F --checks F --rulesets F --threads F --reviews F --comments F --permissions F --compare F --asker <login> --json
+WF merge-check --pr F --files F --commits F --checks F --rulesets F --threads F --reviews F --comments F --permissions F --compare F [--preview F] --asker <login> --json
 ```
 
 An input you couldn't get as GitHub returns it is left out. The command then says it couldn't read it, and that is the answer ("Not yet"): it is never `ready` with an input missing.
@@ -95,6 +106,8 @@ Give each reason in plain words with what to do: its `message`, then its `fix`. 
 | `fix_checks` | **"Ask Claude to fix it"** | Find the failed check's cause (its log; `diagnosing-bugs` when it's unclear), fix it on the pull request's branch, push, and check again. |
 
 **A person's question.** An unresolved review thread or "changes requested" isn't Claude's to settle: say who asked what, and that they answer it on GitHub. Nothing is resolved, dismissed or re-requested for them.
+
+**A try-it link that didn't build** (`preview_failed`) has no action of its own. Say its message and fix, then offer **"Ask Claude to fix it"** as for `fix_checks`, with the Cloudflare check's log as the failure: find its message in "When a build fails" in `docs/previews.md` (`.claude/workflow/docs/previews.md` vendored, the kit's own as a plugin), and fix it on the pull request's branch when the fix is in the code. When the fix is a Cloudflare setting, say which of `docs/previews.md`'s steps the owner redoes instead.
 
 **Waiting.** A reason with no action (checks still running, GitHub still checking, the try-it link still building) says when to ask again.
 

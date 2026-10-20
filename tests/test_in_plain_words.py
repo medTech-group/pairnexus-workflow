@@ -61,10 +61,11 @@ def test_how_to_try_it_names_its_three_cases():
     assert '"Nothing to try: this change is behind the scenes"' in how
     # The cases are tried in that order.
     assert how.index("the try-it link") < how.index("where the link will appear") < how.index("another way")
-    # No project has preview links yet, so the note points at the last case, never "will appear".
-    note = how.split("so for now", 1)[1]
-    assert "another way" in note and '"Nothing to try"' in note
-    assert "will appear" not in note
+    # #117: with previews on, the PR opens with "will appear"; off, the note points at the last case.
+    on, off = how.split("With previews off", 1)
+    assert "`[previews] on = true`" in on and "second case" in on and "`built`" in on
+    assert "another way" in off and '"Nothing to try"' in off
+    assert "will appear" not in off
 
 
 def test_the_guidance_names_each_part_by_its_exact_heading():
