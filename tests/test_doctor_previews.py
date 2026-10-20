@@ -11,7 +11,7 @@ from changelog_notes import since_0110
 from conftest import KIT
 from test_doctor import HEALTHY, _doctor, _each_at_once, _entries, _lines, _project, _report, _unchanged_after_doctor
 from test_doctor_old_python import _old_report
-from workflow import doctor
+from workflow import doctor, profile, vendor
 
 NEW = {"WORKFLOW_EXPERIENCE": "new"}
 DEV = {"WORKFLOW_EXPERIENCE": "developer"}
@@ -65,10 +65,11 @@ def test_on_with_no_previews_block_in_wrangler_toml_is_a_gap_and_with_it_fine(tm
         assert "`[previews]`" in line["message"] and "wrangler.toml" in line["message"]
         # The fix names the page and the failure Cloudflare shows without the block.
         assert "`.claude/workflow/docs/previews.md`" in line["fix"] and "step 6" in line["fix"]
-        assert "missing a `previews` block" in line["message"] + line["fix"]
+        assert "missing a `previews` block" in line["fix"]
         assert line["offer"] is None
         assert r["strict_ok"] is False
-    assert new["lines"] != dev["lines"]  # worded by experience
+    for key in ("message", "fix"):  # worded by experience
+        assert _previews(new)["previews.setup"][key] != _previews(dev)["previews.setup"][key]
     for r in (ok_new, ok_dev):
         line = _previews(r)["previews.setup"]
         assert line["status"] == "fine", line
@@ -93,8 +94,8 @@ def test_on_with_no_wrangler_config_at_all_is_a_gap(tmp_path):
     for r in _both(tmp_path, root):
         line = _previews(r)["previews.setup"]
         assert line["status"] == "gap", line
-        assert "wrangler.toml" in line["message"]
-        assert "docs/previews.md" in line["fix"]
+        assert "wrangler.toml" in line["message"] and "root" in line["message"]
+        assert "docs/previews.md" in line["fix"] and "missing a `previews` block" in line["fix"]
 
 
 def test_a_previews_key_that_isnt_a_block_is_a_gap(tmp_path):
@@ -145,6 +146,15 @@ def test_sensitive_patterns_with_on_and_access_not_true_is_a_gap(tmp_path):
         assert _lines(r)["kit.profile"]["status"] == "gap"
 
 
+def test_a_profile_refused_for_another_reason_first_shows_no_access_gap(tmp_path):
+    # `profile check` names the first mistake it finds; the Access line repeats only that refusal.
+    root = _with(tmp_path, "other", HEALTHY + '[ui]\nexplorer = "nope"\n' + SENSITIVE + "[previews]\non = true\n", {"wrangler.toml": WITH_BLOCK})
+    r = _report(tmp_path, root)
+    assert "ui.explorer" in _lines(r)["kit.profile"]["message"]
+    assert "previews.access" not in _previews(r)
+    assert _previews(r)["previews.setup"]["status"] == "cant_check"
+
+
 def test_sensitive_patterns_with_on_and_access_true_relies_on_the_owners_word(tmp_path):
     root = _with(tmp_path, "access", HEALTHY + SENSITIVE + "[previews]\non = true\naccess = true\n", {"wrangler.toml": WITH_BLOCK})
     for r in _both(tmp_path, root):
@@ -187,14 +197,29 @@ def test_the_offer_shows_in_the_text_report(tmp_path):
     assert any(e.startswith("[note]") and "Next:" in e and "Claude can offer: Add try-it links" in e for e in _entries(p.stdout)), p.stdout
 
 
-def test_previews_turned_off_in_the_profile_is_a_note(tmp_path):
-    root = _with(tmp_path, "off", OFF, {"wrangler.toml": NO_BLOCK})
-    for r in _both(tmp_path, root, "--strict"):
+def test_previews_turned_off_in_the_profile_is_a_note_with_no_offer(tmp_path):
+    # Turned off on purpose (a sensitive project without Access, say): never a nag.
+    off = _with(tmp_path, "off", OFF, {"wrangler.toml": NO_BLOCK})
+    empty = _with(tmp_path, "empty", HEALTHY + "[previews]\n")
+    calls = [(root, ("--strict",), env) for root in (off, empty) for env in (NEW, DEV)]
+    for r in _reports(tmp_path, calls):
         line = _previews(r)["previews.setup"]
         assert line["status"] == "note", line
-        assert "`on = false`" in line["message"]
-        assert line["offer"] == "add_try_it_links"
+        assert "`on = true`" in line["message"] and "`on = false`" not in line["message"]
+        assert line["offer"] is None
+        assert "docs/previews.md" in line["fix"]
         assert r["strict_ok"] is True
+
+
+def test_the_profile_tells_previews_never_set_up_from_turned_off(tmp_path):
+    def previews(text):
+        (tmp_path / ".claude/workflow").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".claude/workflow/profile.toml").write_text(text)
+        return profile.load(tmp_path).previews
+
+    assert previews(HEALTHY).section is False
+    assert previews(HEALTHY + "[previews]\n").section is True
+    assert previews(OFF).section is True and previews(OFF).on is False
 
 
 def test_the_offer_is_the_add_try_it_links_upgrade():
@@ -206,8 +231,8 @@ def test_the_offer_is_the_add_try_it_links_upgrade():
 
 def test_no_wrangler_config_and_no_section_shows_no_previews_line(tmp_path):
     root = _with(tmp_path, "plain", HEALTHY)
-    r, p = _each_at_once(tmp_path, _report, [(root, (), {"env": NEW})]) + _each_at_once(tmp_path, _doctor, [(root, (), {"env": NEW})])
-    assert _previews(r) == {}
+    j, p = _each_at_once(tmp_path, _doctor, [(root, ("--json",), {"env": NEW}), (root, (), {"env": NEW})])
+    assert _previews(json.loads(j.stdout)) == {}
     assert "Previews" not in p.stdout.splitlines()
 
 
@@ -224,14 +249,17 @@ def test_the_fixes_link_the_page_and_the_link_resolves(tmp_path):
     vendored = _with(tmp_path, "vendored", ON, {"wrangler.toml": NO_BLOCK})
     plugin = _with(tmp_path, "plugin", ON, {"wrangler.toml": NO_BLOCK}, vendored=False)
     v_new, v_dev, p_new, p_dev = _reports(tmp_path, [(vendored, (), NEW), (vendored, (), DEV), (plugin, (), NEW), (plugin, (), DEV)])
+    # Vendored: the page's path from the project's root, where `vendor install` puts it.
+    files = vendor.plan(KIT, None)
     for r in (v_new, v_dev):
         fix = _previews(r)["previews.setup"]["fix"]
         rel = re.search(r"`([^`]*previews\.md)`", fix).group(1)
         assert rel == ".claude/workflow/docs/previews.md"
-        assert (vendored / rel).is_file()
+        assert files[rel] == PAGE and (vendored / rel).is_file()
+    # The plugin: the kit's own page, by its full path.
     for r in (p_new, p_dev):
         fix = _previews(r)["previews.setup"]["fix"]
-        assert "the kit's `docs/previews.md`" in fix
+        assert f"the kit's `docs/previews.md` (`{PAGE}`)" in fix
         assert PAGE.is_file()
     # The step and the section the fixes send the reader to are on the page.
     text = PAGE.read_text(encoding="utf-8")
@@ -251,11 +279,12 @@ def test_nothing_in_the_checkout_changes(tmp_path):
 # ---------- old Python's short report ----------
 
 
-def test_old_pythons_short_report_names_the_previews_line_only_with_a_wrangler_config(tmp_path):
+def test_old_pythons_short_report_names_the_previews_line_only_with_a_wrangler_config_or_a_section(tmp_path):
     with_config = _with(tmp_path, "with", HEALTHY, {"wrangler.toml": NO_BLOCK}, page=False)
     jsonc = _with(tmp_path, "jsonc", HEALTHY, {"wrangler.jsonc": JSONC}, page=False)
+    section = _with(tmp_path, "section", ON, page=False)
     plain = _with(tmp_path, "plain", HEALTHY, page=False)
-    for root in (with_config, jsonc):
+    for root in (with_config, jsonc, section):
         line = {ln["id"]: ln for ln in _old_report(root)["lines"]}["previews.setup"]
         assert line["group"] == "Previews" and line["status"] == "cant_check", line
     assert "previews.setup" not in {ln["id"] for ln in _old_report(plain)["lines"]}

@@ -130,7 +130,12 @@ class Previews:
     section: bool = False  # the profile has a [previews] section: off by choice, not never set up
 
 
-def _previews(raw: dict, sensitive: bool, section: bool = False) -> Previews:
+# How `profile check`'s error begins for a sensitive project's previews
+# without Access, which doctor's Previews line repeats in plain words.
+ACCESS_REFUSED = "previews.on is true but previews.access isn't"
+
+
+def _previews(raw: dict, sensitive: bool, section: bool) -> Previews:
     provider = raw.get("provider", "cloudflare")
     if provider not in PREVIEW_PROVIDERS:
         names = " or ".join(f'"{x}"' for x in PREVIEW_PROVIDERS)
@@ -142,7 +147,7 @@ def _previews(raw: dict, sensitive: bool, section: bool = False) -> Previews:
     p = Previews(provider=provider, on=on, access=access, section=section)
     if p.on and not p.access and sensitive:
         raise ProfileError(
-            "previews.on is true but previews.access isn't: this project has [sensitive] patterns, so its "
+            f"{ACCESS_REFUSED}: this project has [sensitive] patterns, so its "
             "previews must sit behind Cloudflare Access (set access = true once you've confirmed it), or not be made (on = false)"
         )
     return p
