@@ -115,6 +115,8 @@ def test_step_6_gives_the_previews_block_and_no_live_site():
 def test_step_6s_wrangler_config_reads_as_toml_with_no_live_site():
     [block] = re.findall(r"```toml\n(.*?)```", _steps()[5], re.S)
     config = tomllib.loads(re.sub(r"^ {3}", "", block, flags=re.M))
+    # The settings above the first block, `[previews]` at the end, as the step says.
+    assert "`[previews]` goes at its end" in _steps()[5]
     assert config["workers_dev"] is False
     assert config["preview_urls"] is True
     assert config["previews"] == {}
@@ -134,8 +136,13 @@ def test_a_sensitive_project_turns_access_on_before_any_preview_is_built():
 def test_the_upgrade_the_page_follows_is_marked_to_come_until_it_lands():
     # #116 builds "Add try-it links"; until then the page says it is to come.
     upgrade = (KIT / "skills/upgrade-setup/SKILL.md").read_text(encoding="utf-8")
+    named = _text().count('"Add try-it links" upgrade')
+    marked = _text().count('"Add try-it links" upgrade (to come)')
+    assert named >= 2
     if "Add try-it links" not in upgrade:
-        assert _text().count('"Add try-it links" upgrade (to come)') == 2
+        assert marked == named
+    else:
+        assert "(to come)" not in _text(), "the upgrade has landed: drop its \"(to come)\""
 
 
 def test_step_7_is_cloudflare_access_for_sensitive_data_confirmed_by_the_owner():
@@ -147,6 +154,8 @@ def test_step_7_is_cloudflare_access_for_sensitive_data_confirmed_by_the_owner()
     assert "can't check Access itself" in step
     assert "`access = true`" in step
     assert "Without Access" in step and "no previews" in step
+    # Without Access, previews are turned off again: Cloudflare would go on making public links.
+    assert "turn **Preview URLs** off again" in _steps()[6]
 
 
 @pytest.mark.parametrize("says,fix", [
@@ -290,9 +299,17 @@ def test_merge_checks_note_offers_no_page_where_previews_are_on(project, capsys)
     # With previews on, a missing link isn't one to add: the note says only that there's none.
     with (project / ".claude/workflow/profile.toml").open("a") as f:
         f.write("\n[previews]\non = true\naccess = true\n")
-    note = _no_previews_note(project, capsys)
-    assert "no try-it link for this project" in note
-    assert "previews.md" not in note
+    assert "previews.md" not in _no_previews_note(project, capsys)
+
+
+def test_a_vendored_merge_check_finds_the_vendored_page(tmp_path):
+    # PREVIEWS_DOC is found from merge.py's own place: in a vendored project
+    # that place must lead to the vendored page, named by its project path.
+    vendor.install(KIT, tmp_path, None, no_mattpocock=True)
+    merge_py = tmp_path / ".claude/workflow/bin/workflow/merge.py"
+    assert "parents[2] / \"docs/previews.md\"" in merge_py.read_text(encoding="utf-8")
+    page = merge_py.resolve().parents[2] / "docs/previews.md"
+    assert page == (tmp_path / ".claude/workflow/docs/previews.md").resolve() and page.is_file()
 
 
 def test_merge_checks_note_offers_no_page_without_one(project, capsys, monkeypatch):
