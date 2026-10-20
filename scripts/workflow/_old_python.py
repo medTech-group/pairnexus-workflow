@@ -184,8 +184,8 @@ class _Words(collections.namedtuple("_Words", "new developer")):
 
 # Every line but `computer.python3`, in the full doctor's check order: its
 # group, its id, the install mode it is given in (None: both; in the other
-# mode the full doctor gives it only when something is wrong), and what it
-# checks.
+# mode the full doctor gives it only when something is wrong; "wrangler": only
+# in a project with a Wrangler config at its root), and what it checks.
 _DOCTOR_LINES = (
     ("Your computer", "computer.claude_code", None, _Words("which version of Claude Code you have", "Claude Code's version")),
     ("The kit", "kit.profile", None, _Words("the kit's profile (.claude/workflow/profile.toml)", "`profile check`")),
@@ -205,7 +205,10 @@ _DOCTOR_LINES = (
     ("GitHub", "github.codeowners", None, _Words("whether CODEOWNERS asks you to review changes to the kit and CI", "CODEOWNERS for /.claude/ and /.github/workflows/")),
     ("Cloud", "cloud.environments", None, _Words("the two cloud environments for unattended runs", "The cloud environments")),
     ("Cloud", "cloud.contents", None, _Words("what the cloud environments hold", "Environment contents")),
+    ("Previews", "previews.setup", "wrangler", _Words("the project's try-it links", "Previews")),
 )
+# The Wrangler configs whose presence gives the Previews line ("wrangler" above).
+_WRANGLER_CONFIGS = ("wrangler.toml", "wrangler.json", "wrangler.jsonc")
 # The files a session hands the full doctor: taken here, and not read.
 _DOCTOR_FILES = ("rulesets", "repo", "environments", "runs", "checks", "prs")
 _EXPERIENCE_LEVELS = ("new", "developer")
@@ -393,6 +396,7 @@ def _doctor_report(root, env, version):
     wording = level or "new"
     plugin = bool(root) and not os.path.exists(os.path.join(root, ".claude", "workflow", "lock.json"))
     mode = "plugin" if plugin else "vendored"
+    wrangler = bool(root) and any(os.path.exists(os.path.join(root, n)) for n in _WRANGLER_CONFIGS)
     until = "until `python3` is {} or newer".format(NEEDS)
     lines = [_doctor_line("Your computer", "computer.python3", "gap", _Words(
         "The Python running this check (`python3`) is version {}, but the kit needs {} or newer, so its hooks fall back to a "
@@ -404,7 +408,7 @@ def _doctor_report(root, env, version):
         "Put Python {}+ first on the PATH as `python3`, start a new session, then rerun doctor with it.".format(NEEDS),
     ), wording)]
     for group, id_, only_in, what in _DOCTOR_LINES:
-        if only_in in (None, mode):
+        if only_in in (None, mode) or (only_in == "wrangler" and wrangler):
             lines.append(_doctor_line(group, id_, "cant_check", _Words(
                 "Can't check {} {}.".format(what.new, until),
                 "{} unchecked {}.".format(what.developer, until),
