@@ -196,11 +196,19 @@ def test_sensitive_data_is_read_from_the_profile_file_itself():
     # `on = true` already: the Wrangler config is read itself, since doctor can't check a JSON one.
     assert "read the Wrangler config from the checkout (doctor's `previews.setup` line can't check a JSON one)" in need
     # Refused and no Access: the page's order, never `on = false` alone.
-    assert "Preview URLs off in the dashboard first, then one pull request setting `on = false` and `preview_urls = false`" in need
+    assert "Preview URLs off in the dashboard first, then one pull request (from `workflow/no-previews`) setting `on = false`" in need
+    assert "and setting `preview_urls = false` in the Wrangler config when it says otherwise" in need
     assert "`on = false` alone leaves the links public" in need
     assert "The owner merges it (a protected path), and the path ends with the \"No previews\" line" in need
     # On already, but links off: a stale `access = true` never turns them back on without screen 7.
-    assert "ask screen 7 first, never turning them on from the profile's old `access = true`" in need
+    assert "With sensitive data and a `preview_urls` that isn't `true`" in need
+    assert "ask screen 5 (Preview URLs on) and then screen 7 first, never turning them on from the profile's old `access = true`" in need
+    assert "on **I can't turn it on** take the route below for a refused profile" in need
+    # Asked before any Wrangler-lines pull request could turn the links on.
+    assert need.index("and then screen 7 first") < need.index("When it lacks any of the Wrangler lines")
+    # No Access: the record says so, and its own branch keeps a second run from opening another.
+    assert "taking out any `access = true` (the owner has just said Access isn't on)" in need
+    assert "`workflow/no-previews`" in need.split("**An open pull request of this path**")[1]
     # Beside a JSON config, Cloudflare reads the JSON one.
     assert "Cloudflare reads the JSON one" in need
 
@@ -357,6 +365,7 @@ def test_it_ends_with_one_line_for_each_outcome():
     assert "Merge #<n> when you're ready" in end
     assert "built nothing to try" in end
     assert "no previews" in end.lower()
+    assert "or the refused profile's `on = false` one" in end
 
 
 # ---------- check-setup hands the offer over ----------
