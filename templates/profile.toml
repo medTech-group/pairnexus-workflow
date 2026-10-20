@@ -157,7 +157,7 @@ patterns = ['(?i)aws_secret_access_key\s*[:=]', '-----BEGIN [A-Z ]*PRIVATE KEY--
 # Areas ("lanes"): tickets carry `Area: <name>`; the conductor runs at most one
 # session per area unless the run state records an override. Globs are hints.
 [areas]
-# messages = ["backend/messages.py", "flutter/lib/features/sharing/**"]
+# notes = ["server/notes.py", "app/lib/notes/**"]
 
 [repair]
 # Re-runnable environment repair: SessionStart, `workflow repair`, and before

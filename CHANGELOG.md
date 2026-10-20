@@ -13,6 +13,14 @@
 - Docs: `docs/charter.md`'s merge section says runs pass the preview when previews are on; `docs/previews.md`'s "What to expect" says the merge check says "Not yet" while the link builds or after it fails. Tests: `tests/test_every_consumer_reads_the_preview.py`.
 - **For projects updating:** nothing to do. With previews off, nothing changes.
 
+**Everyday examples, and the names test** (#99, part of #37).
+
+- **The README's walkthroughs** use everyday projects: the guided start's table row and example (a booking page and its reminders), the interview (`/grill-with-docs`, a notes app's dated notes), the map (`/wayfinder`, a small shop online) and `/to-questionnaire`'s who-it's-for (an accountant, a supplier, legal). The guided start skill's example matches: "#301 the booking page (quick ticket), #302 booking reminders (spec)".
+- **Sensitive data:** patients' names stay as one example among phone numbers, payment details and children's names, in the README's set-up table, `docs/profile.md`'s `[sensitive]` row and `templates/profile.md`'s example.
+- **`templates/profile.toml`'s area example** names a notes app's paths (`notes = ["server/notes.py", "app/lib/notes/**"]`).
+- **The names test** (`tests/test_example_names.py`) reads every file a project receives (`vendor.plan`), plus the README and `docs/quickstart.md`, and allows pair-drop only in the README's "Where it came from", patient data only in those three sensitive-data examples, and the removed health examples nowhere. pair-drop and patient are matched in any case and inside identifiers (`patient_id`, `isPatient`, `FHIRPatient`), not inside other words ("impatient"); the health words anywhere. A failure names the file, line and rule. `CONTRIBUTING.md`'s "Writing" says so.
+- **For projects updating:** nothing to do.
+
 **`workflow doctor`'s Previews group, and the `add_try_it_links` offer** (#115, part of #41).
 
 - **The Previews group,** read from the checkout, worded by experience like every line: with the profile's `[previews] on = true`, `previews.setup` is a gap when the Wrangler config (`wrangler.toml` at the project's root, read as TOML) has no `[previews]` block, or there's no Wrangler config there at all; its fix links `docs/previews.md` (step 6: by its path from the project's root when the kit is in the checkout, as in a vendored project, and by the kit's full path otherwise) and names the "missing a `previews` block" failure Cloudflare shows. With the block, it's fine. A `wrangler.json` or `wrangler.jsonc` is "can't check", with a fix naming the `"previews"` key to look for; a `wrangler.toml` that isn't TOML is too.

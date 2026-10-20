@@ -81,7 +81,7 @@ In the environment and the file, case and spaces around the value don't matter (
 
 | Key | What it is |
 |---|---|
-| `description` | In words, what must never appear in an issue, comment, PR or notification (patients' names, phone numbers) |
+| `description` | In words, what must never appear in an issue, comment, PR or notification (phone numbers, payment details, children's names, patients' names) |
 | `patterns` | Regexes checked against every GitHub post, in every role; a match is refused. Anchor them so ordinary words don't match |
 
 ## `[previews]`

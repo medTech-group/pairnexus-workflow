@@ -40,7 +40,10 @@ A change to shipped files also:
 **Writing.** The skills, docs and README are read by people and by Claude:
 - plain words and short sentences;
 - the same name for the same thing everywhere;
-- say what happens, not what might.
+- say what happens, not what might;
+- everyday examples, so readers see their own project: a notes app, a shop, a booking page.
+
+**Names in their places.** pair-drop, PAIR's own project, is named only in the README's "Where it came from"; patient data appears only as one sensitive-data example among others (phone numbers, payment details, children's names). The names test, `tests/test_example_names.py`, lists the allowed places and reads every file a project receives, plus the README and the quickstart; a new place is a deliberate change to that list. History (`CHANGELOG.md`, `docs/spike.md`, `docs/proposal.md`) keeps its names.
 
 Keep a skill's instructions where they act, not in a separate essay.
 
