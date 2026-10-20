@@ -45,7 +45,7 @@ WF merge-check --fetch 12 --asker <login> --json
 
 It allows the profile's `run.review_rounds`, so a person needs no `--review-rounds`; for a pull request a run built, add `--review-rounds` with the charter's, as its briefing gave them, to get the run's answer, and for one whose body says "Light review:" (build-ticket's line), `--review-rounds 1`. It fetches everything but the preview: with previews on, add `--preview F` with its answer, or there is no try-it link.
 
-**The try-it link.** Only when the profile's `[previews]` section says `on = true` (`[previews] on = true`), read it for the pull request's head with the kit's preview reader, into a new directory **outside the checkout** (`<dir>`), and give that file to the command:
+**The try-it link.** Only when the profile says `[previews] on = true`, read it for the pull request's head with the kit's preview reader, into a new directory **outside the checkout** (`<dir>`), and give that file to the command:
 
 ```
 WF preview --fetch 12 --json > <dir>/preview.json
@@ -107,7 +107,7 @@ Give each reason in plain words with what to do: its `message`, then its `fix`. 
 
 **A person's question.** An unresolved review thread or "changes requested" isn't Claude's to settle: say who asked what, and that they answer it on GitHub. Nothing is resolved, dismissed or re-requested for them.
 
-**A try-it link that didn't build** (`preview_failed`) has no action of its own. Say its message and fix, then offer **"Ask Claude to fix it"** as for `fix_checks`, with the Cloudflare check's log as the failure: find its message in the previews page's "When a build fails", and fix it on the pull request's branch when the fix is in the code. When the fix is a Cloudflare setting, say which of the page's steps the owner redoes instead.
+**A try-it link that didn't build** (`preview_failed`) has no action of its own. Say its message and fix, then offer **"Ask Claude to fix it"** as for `fix_checks`, with the Cloudflare check's log as the failure: find its message in "When a build fails" in `docs/previews.md`, and fix it on the pull request's branch when the fix is in the code. When the fix is a Cloudflare setting, say which of `docs/previews.md`'s steps the owner redoes instead.
 
 **Waiting.** A reason with no action (checks still running, GitHub still checking, the try-it link still building) says when to ask again.
 

@@ -189,7 +189,9 @@ def test_fetch_with_previews_on_and_an_unreadable_bot_comment_is_not_yet(project
     fake_gh.install(tmp_path, monkeypatch, _fetch_routes([broken], [cf_run()]))
     got, _ = run(project, capsys, {}, "--fetch", "12")
     [r] = got["reasons"]
-    assert r["id"] == "couldnt_read" and r["input"] == "preview" and "try-it link couldn't be read" in r["message"]
+    assert r["id"] == "couldnt_read" and r["input"] == "preview"
+    assert "--fetch read it with `workflow preview`, which said:" in r["wording"]["developer"]["message"]
+    assert r["message"].count("couldn't read") == 1
 
 
 def test_fetch_with_previews_off_reads_no_preview(project, capsys, tmp_path, monkeypatch):
@@ -221,8 +223,8 @@ def test_the_merge_check_skill_reads_the_preview_only_with_previews_on():
     assert "never blocks" in gather and "`docs/previews.md`" in gather
     # A reader that can't read leaves the file empty: merge-check says so, never "ready".
     assert "empty" in gather
-    row = next(ln for ln in gather.splitlines() if ln.startswith("| `--preview`"))
-    assert ON in row
+    flag = next(ln for ln in gather.splitlines() if ln.startswith("| `--preview`"))
+    assert ON in flag
     # --fetch reads it itself with previews on, so the answer is the same either way.
     assert "`--fetch` reads the link itself" in gather
     not_yet = _section(_read(MERGE_CHECK), '## 3. "Not yet"', '## 4. "Ready"')
@@ -326,4 +328,5 @@ def test_the_previews_page_says_merge_check_waits_for_the_link():
 
 @pytest.mark.parametrize("word", ["#117", "workflow preview", "--preview"])
 def test_the_changelog_notes_it_under_unreleased(word):
+    # Only the unreleased notes: 0.1.11's (#113's) already name `workflow preview`.
     assert word in since_0110().split("## 0.1.11", 1)[0]

@@ -778,11 +778,11 @@ def _fetched_preview(repo: str, number: int) -> tuple:
     got = fetch_mod.preview_inputs(repo, number, {})
     why = [f"{n}: {e}" for n, (_, e) in got.items() if e is not None]
     if why:
-        return None, "the try-it link couldn't be read (" + "; ".join(why) + ")"
+        return None, "--fetch read it with `workflow preview`, which got no " + "; no ".join(why)
     try:
         return previews_mod.read(got["comments"][0], got["checks"][0], got["sha"][0]).as_dict(), None
     except previews_mod.PreviewError as e:
-        return None, f"the try-it link couldn't be read ({e.name}: {e})"
+        return None, f"--fetch read it with `workflow preview`, which said: {e.name}: {e}"
 
 
 def _sha(v: str) -> str:
