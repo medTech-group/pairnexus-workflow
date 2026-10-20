@@ -273,6 +273,15 @@ def test_fetch_never_reads_the_preview_from_a_comments_file_in_the_wrong_shape(p
     assert "comments" in [x["input"] for x in got["reasons"] if x["id"] == "couldnt_read"]
 
 
+def test_fetch_reads_the_preview_for_the_fetched_pull_request_not_another_pr_file(project, capsys, tmp_path, monkeypatch):
+    # A --pr file of #13 is refused for #12; the preview is #12's, never read against #13's comment count.
+    _previews_on(project)
+    other = dict(inputs()["pr"], number=13, comments=99)
+    fake_gh.install(tmp_path, monkeypatch, _fetch_routes([bot(row())], [cf_run()]))
+    got, _ = run(project, capsys, {"pr": other}, "--fetch", "12")
+    assert [(x["id"], x.get("input")) for x in got["reasons"]] == [("couldnt_read", "pr")]
+
+
 def test_fetch_reads_the_head_from_a_gh_pr_view_file(project, capsys, tmp_path, monkeypatch):
     # `gh pr view --json`'s headRefOid, as merge-check's --pr takes it: no fetch of the head.
     _previews_on(project)

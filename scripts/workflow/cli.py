@@ -748,8 +748,6 @@ def cmd_merge_check(a) -> int:
             inputs.update({n: (None, f"not fetched: the profile couldn't be read, so its repository isn't known: give --{n} as a file") for n in wanted if n not in inputs})
         else:
             inputs.update(fetch_mod.merge_inputs(prof.repo, a.fetch, inputs, wanted, asker=None if prof.owner else a.asker))
-            if prof.previews.on and "preview" not in inputs:
-                inputs["preview"] = _fetched_preview(prof.repo, a.fetch, inputs)
         pr = inputs.get("pr", (None, None))[0]
         pr = pr[0] if isinstance(pr, list) and len(pr) == 1 else pr
         if isinstance(pr, dict) and pr.get("number") != a.fetch:
@@ -757,6 +755,9 @@ def cmd_merge_check(a) -> int:
             # doesn't say which it is, can't go with them.
             said = f"it is #{merge_mod._clean(pr['number'])}" if pr.get("number") is not None else "it doesn't say its number"
             inputs["pr"] = (None, f"{said}, not #{a.fetch} (--fetch)")
+        if prof is not None and prof.previews.on and "preview" not in inputs:
+            # After the --pr check, so the preview reads the inputs merge-check will.
+            inputs["preview"] = _fetched_preview(prof.repo, a.fetch, inputs)
     logs: dict = {}
     if a.check_logs:
         try:
