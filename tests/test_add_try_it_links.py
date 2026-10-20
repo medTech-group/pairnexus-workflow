@@ -197,7 +197,7 @@ def test_sensitive_data_is_read_from_the_profile_file_itself():
     assert "read the Wrangler config from the checkout (doctor's `previews.setup` line can't check a JSON one)" in need
     # Refused and no Access: the page's order, never `on = false` alone.
     assert "Preview URLs off in the dashboard first, then one pull request (from `workflow/no-previews`) setting `on = false`" in need
-    assert "and setting `preview_urls = false` in the Wrangler config unless it says so already (a config with no `preview_urls` line counts" in need
+    assert "and setting `preview_urls = false` in the Wrangler config unless it says so already (a config with no `preview_urls` line doesn't say so: add the line" in need
     assert "`on = false` alone leaves the links public" in need
     assert "The owner merges it (a protected path), and the path ends with the \"No previews\" line" in need
     # On already, but links off: a stale `access = true` never turns them back on without screen 7.
@@ -211,7 +211,9 @@ def test_sensitive_data_is_read_from_the_profile_file_itself():
     opened = need[need.index("**An open pull request of this path**"):].split("\n- ", 1)[0]
     assert "`workflow/no-previews`" in opened
     # An owner who has turned Access on since isn't stuck behind it.
-    assert "for the third, ask whether Access is on now: on **Access is on**, close it with a comment saying why and go on to screen 7" in opened
+    # It stays open until screen 7 confirms Access, after screen 5 turns Preview URLs back on.
+    assert "for the third, screen 5 and then screen 7: only when screen 7's **Access is on** opens its `access = true` pull request, close the `workflow/no-previews` one" in opened
+    assert "on **Not now** or **I can't turn it on**, leave it open" in opened
     # Beside a JSON config, Cloudflare reads the JSON one.
     assert "Cloudflare reads the JSON one" in need
 
@@ -257,7 +259,8 @@ def test_access_is_the_owners_word_and_the_kit_says_it_cant_check_it():
     assert "no previews" in seven and "stops" in seven
     assert "**Preview URLs** off" in seven and "`preview_urls = false`" in seven
     # Not now, with Preview URLs on and no Access: they go off again before the path stops.
-    assert "**Not now** here, unlike other screens, first asks the person to turn **Preview URLs** off in the dashboard again" in seven
+    assert "**Not now** here, unlike other screens, first asks the person to turn **Preview URLs** off in the dashboard" in seven
+    assert "whenever they may be on, whether screen 5 turned them on or they were on already" in seven
     assert "Preview URLs stay off until Access is on." in _sec("Where try-it links end")
     # As the page says: the small pull request sets it back when the config says otherwise.
     assert 'open the small pull request of "Before step 2" for it' in seven
