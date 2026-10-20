@@ -95,6 +95,7 @@ def test_on_with_no_wrangler_config_at_all_is_a_gap(tmp_path):
         line = _previews(r)["previews.setup"]
         assert line["status"] == "gap", line
         assert "wrangler.toml" in line["message"] and "root" in line["message"]
+        assert "wrangler.json or wrangler.jsonc" in line["message"] or "(`wrangler.toml`)" in line["message"]
         assert "docs/previews.md" in line["fix"] and "missing a `previews` block" in line["fix"]
 
 
@@ -153,6 +154,8 @@ def test_sensitive_patterns_with_on_and_access_not_true_is_a_gap(tmp_path):
         assert "docs/previews.md" in line["fix"] and "step 7" in line["fix"]
         # Without Access, the profile alone changes nothing on Cloudflare: the links go off there too.
         assert "`preview_urls = false`" in line["fix"] and "Preview URLs off" in line["fix"]
+        # With Access, the links go on in the Wrangler config too (step 7).
+        assert "`preview_urls = true`" in line["fix"]
         # `profile check` refuses that profile too, and says so on its own line.
         assert _lines(r)["kit.profile"]["status"] == "gap"
 
