@@ -51,7 +51,7 @@ def test_a_failed_preview_says_the_link_didnt_build_with_the_page_as_its_fix(pro
     [r] = got["reasons"]
     new = r["wording"]["new"]
     assert new["message"] == "Not yet: the try-it link didn't build."
-    assert new["fix"] == "Ask Claude to find out why: the kit's `docs/previews.md`'s \"When a build fails\" gives the fix for each message in the build's log."
+    assert new["fix"] == "Ask Claude to find out why: \"When a build fails\" in the kit's `docs/previews.md` gives the fix for each message in the build's log."
     assert "When a build fails" in r["wording"]["developer"]["fix"]
 
 
@@ -64,7 +64,7 @@ def test_a_failed_previews_fix_names_the_vendored_page_in_a_project(project, cap
     data["preview"] = preview("failed")
     got, _ = check(project, capsys, data)
     [r] = got["reasons"]
-    assert "`.claude/workflow/docs/previews.md`'s \"When a build fails\"" in r["wording"]["new"]["fix"]
+    assert "\"When a build fails\" in `.claude/workflow/docs/previews.md`" in r["wording"]["new"]["fix"]
 
 
 def test_a_building_preview_says_still_building_and_about_four_minutes(project, capsys):
@@ -93,7 +93,8 @@ def test_with_previews_on_and_no_preview_given_the_note_says_none_was_read(proje
     [n] = [n for n in got["notes"] if n["id"] == "no_previews"]
     msg = n["message"]
     assert "no try-it link for this project" not in msg  # previews are on: there is one to read
-    assert "previews are on" in msg.lower() and "`workflow preview`" in msg and "`--preview`" in msg
+    assert "previews are on" in msg.lower() and "can't say whether the link built" in msg
+    assert "`workflow preview`" in msg and "`--preview`" in msg
     assert "previews.md" not in msg
 
 
@@ -140,6 +141,18 @@ def test_a_preview_file_the_reader_left_empty_is_not_yet(project, capsys):
     got, _ = check(project, capsys, inputs(), "--preview", str(d / "preview.json"))
     [r] = got["reasons"]
     assert r["id"] == "couldnt_read" and r["input"] == "preview" and "is empty" in r["message"]
+    # The fix is the reader's, not GitHub's.
+    assert "`workflow preview`" in r["wording"]["developer"]["fix"] and "GitHub" not in r["wording"]["developer"]["fix"]
+    assert r["wording"]["new"]["message"] == "Not yet: couldn't read the try-it link."
+
+
+def test_a_profile_that_cant_be_read_gets_no_pointer_to_add_try_it_links(project, capsys):
+    # It may be refused over Access with previews on: the profile's own reason says what to fix.
+    (project / ".claude/workflow/profile.toml").write_text("[project\n")
+    got, _ = check(project, capsys, inputs())
+    assert got["decision"] == "not_yet"
+    [n] = [n for n in got["notes"] if n["id"] == "no_previews"]
+    assert "previews.md" not in n["message"]
 
 
 # ---------- merge-check --fetch reads the preview itself with previews on ----------

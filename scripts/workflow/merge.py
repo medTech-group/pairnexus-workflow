@@ -144,6 +144,13 @@ REASONS = {
     "couldnt_read": Reason("", None, {
         "new": ("Not yet: couldn't read {what}.", "Ask Claude to fetch the pull request's details again, then ask again."),
         "developer": ("Not yet: couldn't read {what} (--{input}): {why}.", "Give --{input} as GitHub returns it, every page, then run merge-check again."),
+    }, {
+        # #117: the preview isn't GitHub's data but #41's reader's answer, and an
+        # empty file is how a reader that failed leaves it.
+        "preview": {
+            "new": ("Not yet: couldn't read the try-it link.", "Ask Claude to read the try-it link again, then ask again."),
+            "developer": ("Not yet: couldn't read {what} (--{input}): {why}.", "Run `workflow preview` for the head again, read what it printed, and give its --json answer as --preview."),
+        },
     }),
     # The profile isn't fetched: its own wording, still the id `couldnt_read`.
     "couldnt_read_profile": Reason("", None, {
@@ -221,8 +228,8 @@ REASONS = {
         "developer": ("Not yet: changes requested by {who}, not since approved or re-requested.", "Address them and re-request the review."),
     }),
     "preview_failed": Reason("preview", None, {
-        "new": ("Not yet: the try-it link didn't build.", "Ask Claude to find out why: {page}'s \"When a build fails\" gives the fix for each message in the build's log."),
-        "developer": ("Not yet: the preview build failed for {short}.", "Fix the preview build ({page}'s \"When a build fails\" matches its log to a fix) and push."),
+        "new": ("Not yet: the try-it link didn't build.", "Ask Claude to find out why: \"When a build fails\" in {page} gives the fix for each message in the build's log."),
+        "developer": ("Not yet: the preview build failed for {short}.", "Fix the preview build (\"When a build fails\" in {page} matches its log to a fix) and push."),
     }),
     "preview_building": Reason("preview", None, {
         "new": ("Not yet: the try-it link is still building.", "Ask again in a few minutes: a try-it link can take about four minutes to start building."),
@@ -1004,11 +1011,12 @@ def _preview(ctx: Context, add) -> None:
     if state == "none":
         other_way = "check the change another way, as the PR's \"How to try it\" says."
         if not on:
-            how = f" {_previews_doc()} says how to add try-it links." if PREVIEWS_DOC.exists() else ""
+            # A profile that can't be read (its own reason) may well have previews on: no pointer then.
+            how = f" {_previews_doc()} says how to add try-it links." if PREVIEWS_DOC.exists() and ctx.profile else ""
             _note(ctx, "no_previews", f"There's no try-it link for this project: {other_way}{how}")
         elif not ctx.preview_given():
-            _note(ctx, "no_previews", "Previews are on for this project, but this check read no try-it link: read it with "
-                  f"`workflow preview` for the head and give its answer as `--preview`. Until then, {other_way}")
+            _note(ctx, "no_previews", "Previews are on for this project, but this check was given no try-it link, so it can't say whether "
+                  f"the link built: check again with it (`workflow preview` reads it, given as `--preview`). Until then, {other_way}")
         elif commit is None:
             _note(ctx, "no_previews", "There's no try-it link yet: Cloudflare hasn't reported on this pull request (no comment or check). "
                   f"Its build may not have started, or Cloudflare isn't connected to the repository. Until there is one, {other_way}")
@@ -1167,7 +1175,7 @@ def evaluate(
 
     def unreadable(e: Unreadable) -> dict:
         what = "the profile" if e.name == PROFILE else INPUTS[e.name]
-        details = {**common, "input": e.name, "what": what, "why": e.why.rstrip(".")}
+        details = {**common, "input": e.name, "what": what, "why": e.why.rstrip("."), **({"case": "preview"} if e.name == "preview" else {})}
         return _reason("couldnt_read", None, level, details, "couldnt_read_profile" if e.name == PROFILE else None)
 
     failed = ctx.read_all()
