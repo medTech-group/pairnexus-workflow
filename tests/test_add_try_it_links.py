@@ -389,7 +389,7 @@ def test_it_ends_with_one_line_for_each_outcome():
     assert "Merge #<n> when you're ready" in end
     assert "built nothing to try" in end
     assert "no previews" in end.lower()
-    assert "or the refused profile's `on = false` one" in end
+    assert "or the refused profile's `on = false` one, is still open, or \"Preview URLs stay off.\" once it has merged" in end
 
 
 # ---------- check-setup hands the offer over ----------

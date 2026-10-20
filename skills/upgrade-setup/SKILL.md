@@ -520,7 +520,7 @@ Say where it stands in one line:
 - "#<n> is open, and its try-it link is still building: ask me to check it again.";
 - "#<n>'s try-it link didn't build: <the fix>.";
 - "#<n> built nothing to try: turn Preview URLs on (screen 5), and I'll push a new commit to build it again.";
-- "No previews: this project has sensitive data, and Cloudflare Access isn't on." (adding "#<n> keeps the preview links off: merge it when you're ready." when the small pull request of "Before step 2", or the refused profile's `on = false` one, was opened);
+- "No previews: this project has sensitive data, and Cloudflare Access isn't on." (adding "#<n> keeps the preview links off: merge it when you're ready." while the small pull request of "Before step 2", or the refused profile's `on = false` one, is still open, or "Preview URLs stay off." once it has merged);
 - "Merge #<n> first: it keeps your app off the internet. Then ask me to add try-it links again." after the small pull request of "Before step 2";
 - "Nothing was changed." after **Not now** at the opening choice, or "Stopped before screen <s>: ask me to add try-it links again to go on." after **Not now** later (before screen 7, adding "Preview URLs stay off until Access is on." once the dashboard and the base branch's config both say off, or "Merge #<pr> to keep them off." while the pull request that sets `preview_urls = false` waits);
 - "Try-it links need an app that runs on Cloudflare Workers: this project has no Wrangler config."
