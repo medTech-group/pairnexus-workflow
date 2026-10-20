@@ -149,7 +149,7 @@ REASONS = {
         # empty file is how a reader that failed leaves it.
         "preview": {
             "new": ("Not yet: couldn't read the try-it link.", "Ask Claude to read the try-it link again, then ask again."),
-            "developer": ("Not yet: couldn't read {what} (--{input}): {why}.", "Run `workflow preview` for the head again, read what it printed, and give its --json answer as --preview."),
+            "developer": ("Not yet: couldn't read {what} (--{input}): {why}.", "Run `workflow preview --fetch {number} --json`, read what it printed, and give its answer as --preview."),
         },
     }),
     # The profile isn't fetched: its own wording, still the id `couldnt_read`.
@@ -1018,10 +1018,10 @@ def _preview(ctx: Context, add) -> None:
             _note(ctx, "no_previews", "Previews are on for this project, but this check was given no try-it link, so it can't say whether "
                   f"the link built: check again with it (`workflow preview` reads it, given as `--preview`). Until then, {other_way}")
         elif commit is None:
-            _note(ctx, "no_previews", "There's no try-it link yet: Cloudflare hasn't reported on this pull request (no comment or check). "
+            _note(ctx, "preview_none", "There's no try-it link yet: Cloudflare hasn't reported on this pull request (no comment or check). "
                   f"Its build may not have started, or Cloudflare isn't connected to the repository. Until there is one, {other_way}")
         else:
-            _note(ctx, "no_previews", f"There's no try-it link for {_short(head)}: Cloudflare built nothing to try for it. So {other_way}")
+            _note(ctx, "preview_none", f"There's no try-it link for {_short(head)}: Cloudflare built nothing to try for it. So {other_way}")
         return
     if state == "failed" and (for_head or commit is None):
         add("preview_failed", page=_previews_doc(sentence_start=False))

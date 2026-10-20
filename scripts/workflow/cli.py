@@ -749,7 +749,7 @@ def cmd_merge_check(a) -> int:
         else:
             inputs.update(fetch_mod.merge_inputs(prof.repo, a.fetch, inputs, wanted, asker=None if prof.owner else a.asker))
             if prof.previews.on and "preview" not in inputs:
-                inputs["preview"] = _fetched_preview(prof.repo, a.fetch)
+                inputs["preview"] = _fetched_preview(prof.repo, a.fetch, inputs)
         pr = inputs.get("pr", (None, None))[0]
         pr = pr[0] if isinstance(pr, list) and len(pr) == 1 else pr
         if isinstance(pr, dict) and pr.get("number") != a.fetch:
@@ -770,12 +770,19 @@ def cmd_merge_check(a) -> int:
     return 0
 
 
-def _fetched_preview(repo: str, number: int) -> tuple:
+def _fetched_preview(repo: str, number: int, inputs: dict) -> tuple:
     """#117: with previews on, `merge-check --fetch` reads the try-it link
     itself when no --preview is given, through #41's reader, so a check that
-    left it out can't say "ready" over a link that didn't build. Its answer
-    as merge-check's `(value, None)`, or `(None, why)`."""
-    got = fetch_mod.preview_inputs(repo, number, {})
+    left it out can't say "ready" over a link that didn't build. It reuses
+    what merge-check already read (the head, the comments, the check runs)
+    and fetches only the rest. Its answer as merge-check's `(value, None)`,
+    or `(None, why)`."""
+    have = {n: inputs[n] for n in ("comments", "checks") if n in inputs and inputs[n][1] is None}
+    pr = inputs.get("pr", (None, None))[0]
+    head = pr.get("head") if isinstance(pr, dict) else None
+    if isinstance(head, dict) and previews_mod.is_sha(head.get("sha")):
+        have["sha"] = (head["sha"].lower(), None)
+    got = {**have, **fetch_mod.preview_inputs(repo, number, have)}
     why = [f"{n}: {e}" for n, (_, e) in got.items() if e is not None]
     if why:
         return None, "--fetch read it with `workflow preview`, which got no " + "; no ".join(why)

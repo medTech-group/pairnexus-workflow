@@ -90,7 +90,7 @@ def test_with_previews_on_and_no_preview_given_the_note_says_none_was_read(proje
     _previews_on(project)
     got, _ = check(project, capsys, inputs())
     assert got["decision"] == "ready"
-    [n] = [n for n in got["notes"] if n["id"] == "no_previews"]
+    [n] = [n for n in got["notes"] if n["id"] == "no_previews"]  # #114's id, pinned in test_previews_doc
     msg = n["message"]
     assert "no try-it link for this project" not in msg  # previews are on: there is one to read
     assert "previews are on" in msg.lower() and "can't say whether the link built" in msg
@@ -103,9 +103,9 @@ def test_with_previews_on_and_a_none_preview_the_note_says_cloudflare_built_noth
     data = inputs()
     data["preview"] = {"state": "none", "url": None, "commit": HEAD}
     got, _ = check(project, capsys, data)
-    assert got["decision"] == "ready" and "no_previews" in note_ids(got)
-    [n] = [n for n in got["notes"] if n["id"] == "no_previews"]
-    assert "Cloudflare" in n["message"] and HEAD[:7] in n["message"]
+    assert got["decision"] == "ready" and "no_previews" not in note_ids(got)
+    [n] = [n for n in got["notes"] if n["id"] == "preview_none"]
+    assert "Cloudflare built nothing" in n["message"] and HEAD[:7] in n["message"]
     assert "previews.md" not in n["message"]
 
 
@@ -116,7 +116,7 @@ def test_with_previews_on_and_no_report_from_cloudflare_the_note_says_so(project
     data["preview"] = {"state": "none", "url": None, "commit": None}
     got, _ = check(project, capsys, data)
     assert got["decision"] == "ready"
-    [n] = [n for n in got["notes"] if n["id"] == "no_previews"]
+    [n] = [n for n in got["notes"] if n["id"] == "preview_none"]
     assert "Cloudflare hasn't reported on this pull request" in n["message"]
     assert "isn't connected" in n["message"] and HEAD[:7] not in n["message"]
 
@@ -131,6 +131,22 @@ def test_with_previews_on_a_none_for_another_commit_is_still_building(project, c
     assert r["id"] == "preview_building" and EARLIER[:7] in r["wording"]["developer"]["message"]
 
 
+def test_with_previews_on_a_none_for_the_heads_short_sha_is_for_the_head(project, capsys):
+    _previews_on(project)
+    data = inputs()
+    data["preview"] = {"state": "none", "url": None, "commit": HEAD[:7]}
+    got, _ = check(project, capsys, data)
+    assert got["decision"] == "ready"
+    assert "Cloudflare built nothing" in next(n["message"] for n in got["notes"] if n["id"] == "preview_none")
+
+
+def test_with_previews_off_a_none_for_another_commit_is_still_only_the_note(project, capsys):
+    data = inputs()
+    data["preview"] = {"state": "none", "url": None, "commit": EARLIER}
+    got, _ = check(project, capsys, data)
+    assert got["decision"] == "ready" and "no_previews" in note_ids(got)
+
+
 def test_a_preview_file_the_reader_left_empty_is_not_yet(project, capsys):
     # The consumers write `workflow preview`'s answer to a file and always pass
     # it: a reader that failed leaves it empty, and merge-check can't read it.
@@ -142,7 +158,7 @@ def test_a_preview_file_the_reader_left_empty_is_not_yet(project, capsys):
     [r] = got["reasons"]
     assert r["id"] == "couldnt_read" and r["input"] == "preview" and "is empty" in r["message"]
     # The fix is the reader's, not GitHub's.
-    assert "`workflow preview`" in r["wording"]["developer"]["fix"] and "GitHub" not in r["wording"]["developer"]["fix"]
+    assert r["wording"]["developer"]["fix"] == "Run `workflow preview --fetch 12 --json`, read what it printed, and give its answer as --preview."
     assert r["wording"]["new"]["message"] == "Not yet: couldn't read the try-it link."
 
 
@@ -192,6 +208,27 @@ def test_fetch_with_previews_on_and_an_unreadable_bot_comment_is_not_yet(project
     assert r["id"] == "couldnt_read" and r["input"] == "preview"
     assert "--fetch read it with `workflow preview`, which said:" in r["wording"]["developer"]["message"]
     assert r["message"].count("couldn't read") == 1
+
+
+def test_fetch_with_previews_on_and_the_comments_unreadable_is_not_yet(project, capsys, tmp_path, monkeypatch):
+    _previews_on(project)
+    r = _fetch_routes([bot(row())], [cf_run()])
+    r[f"{REPO}/issues/12/comments"] = fake_gh.reply(exit=1, stderr="gh: Server Error (HTTP 502)")
+    fake_gh.install(tmp_path, monkeypatch, r)
+    got, _ = run(project, capsys, {}, "--fetch", "12")
+    assert got["decision"] == "not_yet"
+    assert "preview" in [x["input"] for x in got["reasons"] if x["id"] == "couldnt_read"]
+
+
+def test_fetch_reuses_the_comments_and_head_merge_check_read(project, capsys, tmp_path, monkeypatch):
+    # The comments come from the file given; the reader reads them, not gh's.
+    _previews_on(project)
+    data = with_report(inputs())
+    data["comments"] = data["comments"] + [bot(row("❌ Deployment failed", links=""))]
+    data["pr"]["comments"] = len(data["comments"])
+    fake_gh.install(tmp_path, monkeypatch, _fetch_routes([bot(row())], [cf_run("failure")]))
+    got, _ = run(project, capsys, {"comments": data["comments"]}, "--fetch", "12")
+    assert [x["id"] for x in got["reasons"]] == ["preview_failed"]
 
 
 def test_fetch_with_previews_off_reads_no_preview(project, capsys, tmp_path, monkeypatch):
