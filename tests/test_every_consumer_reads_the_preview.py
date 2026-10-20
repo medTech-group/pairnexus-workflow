@@ -237,14 +237,25 @@ def test_fetch_with_previews_on_and_no_gh_names_no_other_commands_flags(project,
 
 
 def test_fetch_reuses_the_comments_and_head_merge_check_read(project, capsys, tmp_path, monkeypatch):
-    # The comments come from the file given; the reader reads them, not gh's.
+    # gh's comments and check say built; only the --comments file given says the head failed.
     _previews_on(project)
     data = with_report(inputs())
     data["comments"] = data["comments"] + [bot(row("❌ Deployment failed", links=""))]
     data["pr"]["comments"] = len(data["comments"])
-    fake_gh.install(tmp_path, monkeypatch, _fetch_routes([bot(row())], [cf_run("failure")]))
+    gh = fake_gh.install(tmp_path, monkeypatch, _fetch_routes([bot(row())], [cf_run()]))
     got, _ = run(project, capsys, {"comments": data["comments"]}, "--fetch", "12")
     assert [x["id"] for x in got["reasons"]] == ["preview_failed"]
+    paths = [p.split("?")[0] for p in gh.paths()]
+    assert paths.count(f"{REPO}/pulls/12") == 1 and f"{REPO}/issues/12/comments" not in paths
+
+
+def test_fetch_reads_the_head_from_a_gh_pr_view_file(project, capsys, tmp_path, monkeypatch):
+    # `gh pr view --json`'s headRefOid, as merge-check's --pr takes it: no fetch of the head.
+    _previews_on(project)
+    view = {"number": 12, "headRefOid": HEAD, "baseRefName": "main", "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN", "isDraft": False, "state": "OPEN"}
+    gh = fake_gh.install(tmp_path, monkeypatch, _fetch_routes([bot(row())], [cf_run()]))
+    run(project, capsys, {"pr": view}, "--fetch", "12")
+    assert f"{REPO}/pulls/12" not in [p.split("?")[0] for p in gh.paths()]
 
 
 def test_fetch_with_previews_off_reads_no_preview(project, capsys, tmp_path, monkeypatch):

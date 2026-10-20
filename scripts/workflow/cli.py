@@ -778,10 +778,12 @@ def _fetched_preview(repo: str, number: int, inputs: dict) -> tuple:
     and fetches only the rest. Its answer as merge-check's `(value, None)`,
     or `(None, why)`."""
     have = {n: inputs[n] for n in ("comments", "checks") if n in inputs and inputs[n][1] is None}
-    pr = inputs.get("pr", (None, None))[0]
-    head = pr.get("head") if isinstance(pr, dict) else None
-    if isinstance(head, dict) and previews_mod.is_sha(head.get("sha")):
-        have["sha"] = (head["sha"].lower(), None)
+    try:  # the head as merge-check reads it, in any shape its --pr takes
+        have["sha"] = (merge_mod._pr(inputs["pr"][0]).head, None) if inputs.get("pr", (None, None))[0] is not None else None
+    except merge_mod.Unreadable:
+        have["sha"] = None
+    if have["sha"] is None or not previews_mod.is_sha(have["sha"][0]):
+        del have["sha"]
     got = {**have, **fetch_mod.preview_inputs(repo, number, have)}
     # Each fetch error without the hint `preview_inputs` adds: its flags are `workflow preview`'s.
     why = [f"its {n}: {e.removesuffix(', ' + fetch_mod._give(n))}" for n, (_, e) in got.items() if e is not None]

@@ -52,7 +52,7 @@ WF preview --fetch 12 --json > <dir>/preview.json
 WF merge-check --fetch 12 --preview <dir>/preview.json --asker <login> --json
 ```
 
-Without `gh api`, give the reader files instead: `WF preview --comments F --checks F --sha <head> --json > <dir>/preview.json`, with the pull request's issue comments, its head commit's check runs alone (no combined status after them) and its head SHA. Pass that file even when the reader fails: it is then empty, and the command says it couldn't read the preview ("Not yet"), so a try-it link that can't be read never reads as "Ready". Say what the reader printed, too. With previews on, `--fetch` reads the link itself when no `--preview` is given, so the answer is the same either way; reading it first lets you show what the reader said.
+Without `gh api`, give the reader files instead: `WF preview --comments F --checks F --sha <head> --json > <dir>/preview.json`, with the pull request's issue comments, its head commit's check runs (the `--checks` file below does, as it is) and its head SHA. Pass that file even when the reader fails: it is then empty, and the command says it couldn't read the preview ("Not yet"), so a try-it link that can't be read never reads as "Ready". Say what the reader printed, too. With previews on, `--fetch` reads the link itself when no `--preview` is given, so the answer is the same either way; reading it first lets you show what the reader said.
 
 With previews off (no `[previews]` section, or `on = false`), run no reader and pass no `--preview`: the answer then carries a note that there's no try-it link for this project, which never blocks and names `docs/previews.md`, the page on adding them.
 
