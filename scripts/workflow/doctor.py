@@ -46,6 +46,7 @@ import subprocess
 import sys
 import textwrap
 import time
+import tomllib
 import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -70,7 +71,7 @@ LABELS = {"gap": "gap", "cant_check": "can't check", "note": "note", "fine": "fi
 # The upgrades a line may offer, by the names #47 and #48 use (the glossary's
 # names: "Protect `main`" is the upgrade's name whatever the base branch).
 OFFERS = {"protect_main": "Protect `main`", "restore_protection": "Restore protection", "set_up_unattended_runs": "Set up unattended runs",
-          "require_checks": "Require these checks"}
+          "require_checks": "Require these checks", "add_try_it_links": "Add try-it links"}
 
 PYTHON_MIN = (3, 11)
 # The oldest Claude Code that honours the guard's `onFailure: "block"` (#57,
@@ -2425,12 +2426,173 @@ def check_environment_contents(i: Inputs) -> list[Line]:
         "WORKFLOW_ROLE=conductor (docs/enforcement.md §2).",
     ))]
 
+# ---------- Previews ----------
+#
+# Try-it links (#41): the profile's `[previews]` section beside the project's
+# Wrangler config, both read from the checkout. Only `wrangler.toml` is read,
+# as TOML, and only when no `wrangler.json` or `wrangler.jsonc` is beside it,
+# which Cloudflare could read instead: with one, the block can't be checked.
+# A project with neither a Wrangler config nor a section gets no line. What
+# Cloudflare holds (Access, Preview URLs, no live site) is #41's by-hand check.
+
+WRANGLER_TOML = "wrangler.toml"
+WRANGLER_JSON = ("wrangler.json", "wrangler.jsonc")
+NO_BLOCK = "missing a `previews` block"  # what Cloudflare's build log says without it
+
+
+def _previews_page(i: Inputs) -> str:
+    """`docs/previews.md` as the reader finds it: by its path from the
+    project's root when the kit running doctor is in the checkout (vendored,
+    or the kit's own repository), else the kit's own, by its full path."""
+    page = i.kit_root / "docs/previews.md"
+    try:
+        return f"`{page.resolve().relative_to(i.root.resolve()).as_posix()}`"
+    except (OSError, ValueError):
+        return f"the kit's `docs/previews.md` (`{_home(i, page)}`)"
+
+
+def _wrangler_configs(i: Inputs) -> list[str]:
+    """The Wrangler configs at the checkout's root, the JSON ones first."""
+    return [n for n in (*WRANGLER_JSON, WRANGLER_TOML) if os.path.lexists(_file(i.root, n)[0])]  # a broken link counts, to be named
+
+
+def _access_gap(page: str) -> Line:
+    return Line("Previews", "previews.access", "gap", Words(
+        "Your project has sensitive data and try-it links are on in the kit's profile (`on = true`), but you haven't confirmed "
+        "that Cloudflare Access guards them (`access = true`). A try-it link is public: anyone with it can open it. "
+        "The kit can't use its profile until this is settled.",
+        "[sensitive] patterns with previews.on = true and access not true (Cloudflare Access unconfirmed): `profile check` refuses the profile.",
+    ), Words(
+        f"Turn on Cloudflare Access for the try-it links ({page}, step 7), then ask Claude to set `access = true` in the profile's "
+        "`[previews]` section and `preview_urls = true` in the Wrangler config. Without Access, turn Preview URLs off in Cloudflare's dashboard and ask Claude to set (or keep) "
+        "`preview_urls = false` in the Wrangler config and set `on = false` in the profile: `on = false` alone leaves the links public.",
+        f"Put Cloudflare Access on the preview URLs ({page}, step 7), then set `access = true` and `preview_urls = true`. Without Access: Preview URLs off in the "
+        "dashboard, `preview_urls = false` in the Wrangler config, and `on = false` (the profile alone changes nothing on Cloudflare).",
+    ))
+
+
+@_check("Previews", "previews.setup")
+def check_previews(i: Inputs) -> list[Line]:
+    """With `[previews] on = true`, the Wrangler config has a `[previews]`
+    block: a gap without it, `cant_check` when only a JSON config could say.
+    With `[sensitive]` patterns, `access` is true too: a gap otherwise, as
+    `profile check` says. A Wrangler config and no section is a note offering
+    "Add try-it links"; a section not turning them on is a note with no offer
+    (chosen states are notes). Neither a config nor a section: no line."""
+    g, id_ = "Previews", "previews.setup"
+    if not i.root.is_dir():
+        return []  # kit.profile says the folder isn't there
+    page, configs = _previews_page(i), _wrangler_configs(i)
+    if i.profile is None:
+        lines = [_access_gap(page)] if (i.profile_error or "").startswith(profile_mod.ACCESS_REFUSED) else []
+        if configs:
+            lines.append(Line(g, id_, "cant_check", Words(
+                "Can't check try-it links until the kit's profile " + ("can be read." if i.profile_error else "is set up."),
+                "Previews unchecked: " + ("the profile doesn't read" if i.profile_error else "no profile") + " ([previews]).",
+            ), PROFILE_FIRST if i.profile_error else SET_UP_FIRST))
+        return lines
+    p = i.profile.previews
+    if not p.on:
+        if p.section:  # turned off on purpose: no offer, so never a nag
+            return [Line(g, id_, "note", Words(
+                "Try-it links aren't turned on in the kit's profile (its `[previews]` section doesn't say `on = true`).",
+                "`[previews]` doesn't say `on = true`: previews off.",
+            ), Words(
+                f"To turn them on, follow {page}.",
+                f"Follow {page}, then set `on = true`.",
+            ))]
+        if not configs:
+            return []
+        return [Line(g, id_, "note", Words(
+            f"Your project has a Wrangler config (`{configs[0]}`) but no try-it links yet: a working copy of each pull request's change, "
+            "to try before you merge it. That's fine until you want them.",
+            f"`{configs[0]}` found, and no `[previews]` section in the profile: previews not set up.",
+        ), Words(
+            f"When you want a try-it link on each pull request, {page} gives the steps.",
+            f"Set previews up when wanted: {page}, then `[previews] on = true`.",
+        ), offer="add_try_it_links")]
+    lines = []
+    if i.profile.sensitive_patterns:  # on = true there needs access = true, or the profile is refused
+        lines.append(Line(g, "previews.access", "fine", Words(
+            "Your project has sensitive data, and you've confirmed that Cloudflare Access guards its try-it links (`access = true`). "
+            "The kit can't check Access itself: it relies on your word.",
+            "`access = true`: the owner confirmed Cloudflare Access guards the preview URLs; the kit can't check Access itself.",
+        )))
+    return [_previews_block(i, page, configs)] + lines
+
+
+def _previews_block(i: Inputs, page: str, configs: list[str]) -> Line:
+    """`previews.setup` with `on = true`: whether the Wrangler config has
+    its `[previews]` block."""
+    g, id_ = "Previews", "previews.setup"
+    on = "Try-it links are on in the kit's profile (`on = true`)"
+    if not configs:
+        return Line(g, id_, "gap", Words(
+            f"{on}, but there's no Wrangler config (`{WRANGLER_TOML}`) at the project's root with the `[previews]` block "
+            "Cloudflare's preview builds need.",
+            f"on = true, but there's no {WRANGLER_TOML}, {' or '.join(WRANGLER_JSON)} at the root, so no `[previews]` block.",
+        ), Words(
+            f"Ask Claude to add a `{WRANGLER_TOML}` ending in an empty `[previews]` block, in a pull request: {page} shows it (step 6). "
+            f"Without it, each preview build fails with \"{NO_BLOCK}\".",
+            f"Add {WRANGLER_TOML} with `[previews]` ({page}, step 6); without it the build fails: \"{NO_BLOCK}\".",
+        ))
+    json_ones = [n for n in configs if n in WRANGLER_JSON]
+    if json_ones:
+        name = json_ones[0]
+        return Line(g, id_, "cant_check", Words(
+            f"Can't check `{name}` for the `\"previews\"` setting try-it links need: the check reads only a `{WRANGLER_TOML}`, "
+            "and only when there's no JSON Wrangler config beside it.",
+            f"`{name}` not read: only a {WRANGLER_TOML} with no JSON config beside it is.",
+        ), Words(
+            f"Look in `{name}` yourself for a `\"previews\"` key (`\"previews\": {{}}` is enough). If it's missing, ask Claude to add it "
+            f"in a pull request: {page} has it (step 6).",
+            f"Check `{name}` has a top-level `\"previews\"` object (`\"previews\": {{}}`); {page}, step 6.",
+        ))
+    text, err = _read_text(i.root, WRANGLER_TOML)
+    data, detail = None, ""
+    if text is not None:
+        try:
+            data = tomllib.loads(text)
+        except tomllib.TOMLDecodeError as e:
+            err, detail = "it isn't valid TOML", f" ({e})"
+        except RecursionError:
+            err, detail = "it isn't valid TOML", " (nested too deeply)"
+    if data is None:
+        why = err or "it links to a file that isn't there"  # listed, but missing: a broken link
+        fix = Words(
+            f"Ask Claude to correct `{WRANGLER_TOML}` so it reads as TOML, then run this again ({page}, step 6, shows the block).",
+            f"Make {WRANGLER_TOML} valid TOML, with `[previews]` ({page}, step 6).",
+        ) if detail else Words(
+            f"Ask Claude to look at what `{WRANGLER_TOML}` is: it should be a text file Cloudflare can read ({page}, step 6).",
+            f"Make {WRANGLER_TOML} a readable UTF-8 regular file ({page}, step 6).",
+        )
+        return Line(g, id_, "cant_check", Words(
+            f"Can't check `{WRANGLER_TOML}` for the `[previews]` block try-it links need: {why}.",
+            f"{WRANGLER_TOML} unreadable: {why}{detail}.",
+        ), fix)
+    block = data.get("previews")
+    if isinstance(block, dict):
+        return Line(g, id_, "fine", Words(
+            f"Try-it links are on, and `{WRANGLER_TOML}` has the `[previews]` block Cloudflare's preview builds need.",
+            f"on = true; {WRANGLER_TOML} has `[previews]`.",
+        ))
+    what = Words("has no `[previews]` block", "has no `[previews]` table") if block is None else Words(
+        "has a `previews` setting that isn't a `[previews]` block", "has `previews` as a value, not a `[previews]` table")
+    return Line(g, id_, "gap", Words(
+        f"{on}, but `{WRANGLER_TOML}` {what.new}, which Cloudflare's preview builds need.",
+        f"on = true, but {WRANGLER_TOML} {what.developer}.",
+    ), Words(
+        f"Ask Claude to add an empty `[previews]` block at the end of `{WRANGLER_TOML}`, in a pull request: {page} shows it (step 6). "
+        f"Without it, each preview build fails with \"{NO_BLOCK}\".",
+        f"Append `[previews]` to {WRANGLER_TOML} ({page}, step 6); without it the build fails: \"{NO_BLOCK}\".",
+    ))
+
 
 # Every check, in the order its lines show when they are equally serious: the
 # profile first, since setting the kit up comes before anything it then checks.
 CHECKS = [check_python, check_claude_code, check_profile, check_install, check_vendor, check_experience, check_ruleset,
           check_protection, check_required_checks, check_ruleset_rules, check_merge_settings, check_codeowners,
-          check_environments, check_environment_contents]
+          check_environments, check_environment_contents, check_previews]
 # The checks that read only this computer and the checkout: no `gh`, no
 # network, and nothing a session hands in. `workflow status` runs these (#62),
 # so the guided start can tell, with no network call, whether to offer "check

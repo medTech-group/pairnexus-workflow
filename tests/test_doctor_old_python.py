@@ -35,6 +35,8 @@ ONLY_WHEN_WRONG = {
     "github.protection.active", "github.protection.base", "github.protection.bypass",  # each missing protection
     "github.protection.deletions", "github.protection.force_pushes", "github.protection.pull_requests",
     "github.profile_checks",  # a check the ruleset requires that the profile doesn't list (#69)
+    "previews.setup",  # only with a Wrangler config or a [previews] section (#115)
+    "previews.access",  # only with [sensitive] patterns and previews on, a gap or fine; not in the short report (#115)
 }
 
 
