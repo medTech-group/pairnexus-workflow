@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**"Add try-it links": `upgrade-setup`'s fourth path** (#116, part of #41).
+
+- **The path** (offer `add_try_it_links`) takes the owner through `docs/previews.md`'s seven steps in Cloudflare one screen at a time, worded by experience, with a step already done (a repository Cloudflare already reports on, a link that already built, the Wrangler lines already there) shown as done with "Continue". With `[sensitive]` patterns, Cloudflare Access comes straight after Preview URLs, confirmed by the owner, and the path says plainly that the kit can't check it; without Access it stops, with no previews. Before connecting, the base branch's Wrangler config must keep the app off the internet (`workers_dev = false`, and `preview_urls = false` with sensitive data), in a small pull request of its own when it doesn't.
+- **The proof pull request,** from a fresh branch, sets `[previews]` (`provider = "cloudflare"`, `on = true`, `access = true` only as confirmed) with the Wrangler lines step 6 needs, reads its own preview with `workflow preview`, and reports the link once it's `built`, or the failure with its fix from "When a build fails". A preview still running the old Build command gets a fresh branch rather than a retry. The profile is a protected path, so merging it is the owner's.
+- **Offered** only from the quickstart's next steps, doctor's `add_try_it_links` offer and when asked. **`check-setup`** now hands the offer to the path, with "Not now", instead of naming it as text. Doctor's note says to ask Claude to "Add try-it links".
+- Docs: `docs/previews.md` and `docs/profile.md` no longer call the upgrade "to come"; the quickstart's bullet and the page say to ask Claude; `docs/enforcement.md` §5, the README's Step 6 and `docs/install.md` name it. Tests: `tests/test_add_try_it_links.py`.
+- **For projects updating:** nothing to do. With a Wrangler config, ask Claude to "Add try-it links" when you want them.
+
 **Everyday examples, and the names test** (#99, part of #37).
 
 - **The README's walkthroughs** use everyday projects: the guided start's table row and example (a booking page and its reminders), the interview (`/grill-with-docs`, a notes app's dated notes), the map (`/wayfinder`, a small shop online) and `/to-questionnaire`'s who-it's-for (an accountant, a supplier, legal). The guided start skill's example matches: "#301 the booking page (quick ticket), #302 booking reminders (spec)".

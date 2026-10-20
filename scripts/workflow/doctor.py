@@ -2437,6 +2437,8 @@ def check_environment_contents(i: Inputs) -> list[Line]:
 
 WRANGLER_TOML = "wrangler.toml"
 WRANGLER_JSON = ("wrangler.json", "wrangler.jsonc")
+# upgrade-setup's fourth path (#116), which the note's fix names.
+ADD_TRY_IT_LINKS = OFFERS["add_try_it_links"]
 NO_BLOCK = "missing a `previews` block"  # what Cloudflare's build log says without it
 
 
@@ -2498,7 +2500,7 @@ def check_previews(i: Inputs) -> list[Line]:
                 "Try-it links aren't turned on in the kit's profile (its `[previews]` section doesn't say `on = true`).",
                 "`[previews]` doesn't say `on = true`: previews off.",
             ), Words(
-                f"To turn them on, follow {page}.",
+                f"To turn them on, ask Claude to \"{ADD_TRY_IT_LINKS}\", or follow {page}.",
                 f"Follow {page}, then set `on = true`.",
             ))]
         if not configs:
@@ -2508,8 +2510,9 @@ def check_previews(i: Inputs) -> list[Line]:
             "to try before you merge it. That's fine until you want them.",
             f"`{configs[0]}` found, and no `[previews]` section in the profile: previews not set up.",
         ), Words(
-            f"When you want a try-it link on each pull request, {page} gives the steps.",
-            f"Set previews up when wanted: {page}, then `[previews] on = true`.",
+            f"When you want a try-it link on each pull request, ask Claude to \"{ADD_TRY_IT_LINKS}\": it takes you through the steps "
+            f"in {page} one screen at a time, then turns them on in a pull request of its own.",
+            f"Set previews up when wanted: upgrade-setup's \"{ADD_TRY_IT_LINKS}\" guides {page}, then opens the `[previews] on = true` PR.",
         ), offer="add_try_it_links")]
     lines = []
     if i.profile.sensitive_patterns:  # on = true there needs access = true, or the profile is refused

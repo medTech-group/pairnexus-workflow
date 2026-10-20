@@ -208,6 +208,7 @@ def test_a_wrangler_config_with_no_previews_section_is_a_note_offering_add_try_i
         assert line["status"] == "note", line
         assert line["offer"] == "add_try_it_links"
         assert "docs/previews.md" in line["fix"]
+        assert '"Add try-it links"' in line["fix"]  # the upgrade that takes them through it (#116)
         assert r["strict_ok"] is True
 
 
@@ -333,10 +334,11 @@ def test_enforcement_section_5_names_the_previews_group_and_the_offer():
     assert "`wrangler.toml`" in sec and "`[previews]`" in sec
 
 
-def test_check_setup_names_the_offer_as_text_until_the_upgrade_has_it():
+def test_check_setup_hands_the_offer_to_the_upgrade_now_that_it_has_it():
+    # #116 gave `upgrade-setup` the upgrade, so the offer is a row, no longer text.
     text = (KIT / "skills/check-setup/SKILL.md").read_text(encoding="utf-8")
     offers = text[text.index("## 3. The offers"):]
-    assert "`add_try_it_links`" in offers and "#116" in offers
+    assert "| `add_try_it_links` |" in offers and "#116" not in offers
     assert "add_try_it_links" in doctor.OFFERS
 
 

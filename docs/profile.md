@@ -86,7 +86,7 @@ In the environment and the file, case and spaces around the value don't matter (
 
 ## `[previews]`
 
-Try-it links: a [preview link](glossary.md#preview-link) on each pull request. The section is added by the "Add try-it links" upgrade (#41, to come) through its own pull request, never by hand and never by set-up; the starter ships without it. [Add try-it links to your pull requests](previews.md) gives the steps in Cloudflare. Left out, a project has no previews.
+Try-it links: a [preview link](glossary.md#preview-link) on each pull request. The section is added by the "Add try-it links" upgrade (the `upgrade-setup` skill) through its own pull request, never by hand and never by set-up; the starter ships without it. [Add try-it links to your pull requests](previews.md) gives the steps in Cloudflare. Left out, a project has no previews.
 
 | Key | What it is | Default |
 |---|---|---|

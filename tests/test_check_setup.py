@@ -248,15 +248,15 @@ def test_each_offer_is_a_choice_with_not_now():
 
 def test_it_hands_doctors_offers_over_to_the_upgrade_skill():
     offers = _section(_text(), "The offers")
-    for offer in ("protect_main", "restore_protection", "set_up_unattended_runs"):
+    for offer in ("protect_main", "restore_protection", "set_up_unattended_runs", "add_try_it_links"):
         assert f"`{offer}`" in offers, offer
         assert offer in doctor.OFFERS, offer
         # The upgrade skill knows the offer by the same name.
         assert f"**`{offer}`**" in _text(UPGRADE), offer
     assert "`upgrade-setup`" in offers
     # The person has just chosen, so the upgrade doesn't ask its own opening choice again.
-    assert offers.count("opening choice") == 3
-    assert "Protect `main`" in offers and "Set up unattended runs" in offers
+    assert offers.count("opening choice") == 4
+    assert "Protect `main`" in offers and "Set up unattended runs" in offers and "Add try-it links" in offers
 
 
 def test_only_a_gap_recommends_its_upgrade_and_never_after_a_paid_plan_refusal():
