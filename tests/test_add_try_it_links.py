@@ -193,7 +193,11 @@ def test_sensitive_data_is_read_from_the_profile_file_itself():
     assert "and `preview_urls = true` in the Wrangler config when it says otherwise, as doctor's fix says" in need
     # Whether the section is there is read from the file: `profile check` prints the same without one.
     assert "whether the section is there at all, read from `profile.toml` itself" in need
-    assert "run `WF doctor --json`" in need
+    # `on = true` already: the Wrangler config is read itself, since doctor can't check a JSON one.
+    assert "read the Wrangler config from the checkout (doctor's `previews.setup` line can't check a JSON one)" in need
+    # Refused and no Access: the page's order, never `on = false` alone.
+    assert "Preview URLs off in the dashboard first, then one pull request setting `on = false` and `preview_urls = false`" in need
+    assert "`on = false` alone leaves the links public" in need
     # Beside a JSON config, Cloudflare reads the JSON one.
     assert "Cloudflare reads the JSON one" in need
 
@@ -217,6 +221,8 @@ def test_no_live_site_from_the_first_connect():
     # Connected and public: Preview URLs off first, since the small PR's branch builds a preview too.
     assert need.index("the person first turns **Preview URLs** off in the dashboard") < need.index("**The small pull request,**")
     assert "merging it deploys the base branch" in need
+    # Preview URLs turned off for it: screen 5 is asked again, never left "done".
+    assert "Screen 5 is then no longer done: it is asked again after the small pull request merges, just before screen 7" in need
 
 
 def test_a_sensitive_project_gets_access_straight_after_step_5_before_any_pull_request():
