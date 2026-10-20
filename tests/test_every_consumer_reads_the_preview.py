@@ -7,10 +7,13 @@ and the briefing is rendered in-process from a profile with previews on or off.
 
 import pytest
 from conftest import KIT
+import fake_gh
 from test_merge_check import HEAD, EARLIER, check, inputs, note_ids, preview, project  # noqa: F401 (project is a fixture)
+from test_merge_check_evidence import REPO, routes, run, with_report
+from test_preview import bot, cf_run, row
 
 from changelog_notes import since_0110
-from workflow import charter, render
+from workflow import charter, merge, render
 from workflow.profile import load
 
 MERGE_CHECK = KIT / "skills/merge-check/SKILL.md"
@@ -48,8 +51,20 @@ def test_a_failed_preview_says_the_link_didnt_build_with_the_page_as_its_fix(pro
     [r] = got["reasons"]
     new = r["wording"]["new"]
     assert new["message"] == "Not yet: the try-it link didn't build."
-    assert "When a build fails" in new["fix"] and "docs/previews.md" in new["fix"]
+    assert new["fix"] == "Ask Claude to find out why: the kit's `docs/previews.md`'s \"When a build fails\" gives the fix for each message in the build's log."
     assert "When a build fails" in r["wording"]["developer"]["fix"]
+
+
+def test_a_failed_previews_fix_names_the_vendored_page_in_a_project(project, capsys, monkeypatch):
+    page = project / ".claude/workflow/docs/previews.md"
+    page.parent.mkdir(parents=True)
+    page.write_text("# Add try-it links to your pull requests\n")
+    monkeypatch.setattr(merge, "PREVIEWS_DOC", page)
+    data = inputs()
+    data["preview"] = preview("failed")
+    got, _ = check(project, capsys, data)
+    [r] = got["reasons"]
+    assert "`.claude/workflow/docs/previews.md`'s \"When a build fails\"" in r["wording"]["new"]["fix"]
 
 
 def test_a_building_preview_says_still_building_and_about_four_minutes(project, capsys):
@@ -61,14 +76,6 @@ def test_a_building_preview_says_still_building_and_about_four_minutes(project, 
     assert "still building" in r["wording"]["new"]["message"]
     assert "about four minutes" in r["wording"]["new"]["fix"]
     assert "about four minutes" in r["wording"]["developer"]["fix"]
-
-
-def test_a_built_preview_gives_the_link(project, capsys):
-    data = inputs()
-    data["preview"] = preview("built")
-    got, _ = check(project, capsys, data)
-    assert got["decision"] == "ready"
-    assert got["preview"]["url"] == "https://pr-12.demo.pages.dev"
 
 
 def test_with_previews_off_none_never_blocks_and_names_the_page(project, capsys):
@@ -101,23 +108,89 @@ def test_with_previews_on_and_a_none_preview_the_note_says_cloudflare_built_noth
     assert "previews.md" not in n["message"]
 
 
+def test_with_previews_on_and_no_report_from_cloudflare_the_note_says_so(project, capsys):
+    # The reader's `none` with no commit: no bot comment and no check at all.
+    _previews_on(project)
+    data = inputs()
+    data["preview"] = {"state": "none", "url": None, "commit": None}
+    got, _ = check(project, capsys, data)
+    assert got["decision"] == "ready"
+    [n] = [n for n in got["notes"] if n["id"] == "no_previews"]
+    assert "Cloudflare hasn't reported on this pull request" in n["message"]
+    assert "isn't connected" in n["message"] and HEAD[:7] not in n["message"]
+
+
+def test_with_previews_on_a_none_for_another_commit_is_still_building(project, capsys):
+    # A stale answer (another pull request's, or an older head's) never reads as "no link".
+    _previews_on(project)
+    data = inputs()
+    data["preview"] = {"state": "none", "url": None, "commit": EARLIER}
+    got, _ = check(project, capsys, data)
+    [r] = got["reasons"]
+    assert r["id"] == "preview_building" and EARLIER[:7] in r["wording"]["developer"]["message"]
+
+
 def test_a_preview_file_the_reader_left_empty_is_not_yet(project, capsys):
     # The consumers write `workflow preview`'s answer to a file and always pass
     # it: a reader that failed leaves it empty, and merge-check can't read it.
     _previews_on(project)
-    data = inputs()
-    data["preview"] = {}
-    got, _ = check(project, capsys, data, raw={"preview": "\n"})
-    assert got["decision"] == "not_yet"
-    assert any("preview" in r["message"] for r in got["reasons"])
-
-
-def test_a_preview_for_an_older_commit_is_still_building(project, capsys):
-    data = inputs()
-    data["preview"] = preview("built", EARLIER)
-    got, _ = check(project, capsys, data)
+    d = project.parent / "in"
+    d.mkdir(exist_ok=True)
+    (d / "preview.json").write_text("")
+    got, _ = check(project, capsys, inputs(), "--preview", str(d / "preview.json"))
     [r] = got["reasons"]
-    assert r["id"] == "preview_building"
+    assert r["id"] == "couldnt_read" and r["input"] == "preview" and "is empty" in r["message"]
+
+
+# ---------- merge-check --fetch reads the preview itself with previews on ----------
+
+
+def _fetch_routes(comments, runs):
+    data = with_report(inputs())
+    r = routes(data)
+    r[f"{REPO}/issues/12/comments"] = fake_gh.pages(data["comments"] + comments)
+    r[f"{REPO}/commits/{HEAD}/check-runs"] = fake_gh.pages({"total_count": 1 + len(runs), "check_runs": data["checks"]["check_runs"] + runs})
+    return r
+
+
+def test_fetch_with_previews_on_reads_a_failed_preview_itself(project, capsys, tmp_path, monkeypatch):
+    _previews_on(project)
+    fake_gh.install(tmp_path, monkeypatch, _fetch_routes([bot(row("❌ Deployment failed", links=""))], [cf_run("failure")]))
+    got, _ = run(project, capsys, {}, "--fetch", "12")
+    assert got["decision"] == "not_yet"
+    assert [r["id"] for r in got["reasons"]] == ["preview_failed"]
+
+
+def test_fetch_with_previews_on_reads_a_built_preview_and_gives_its_link(project, capsys, tmp_path, monkeypatch):
+    _previews_on(project)
+    fake_gh.install(tmp_path, monkeypatch, _fetch_routes([bot(row())], [cf_run()]))
+    got, _ = run(project, capsys, {}, "--fetch", "12")
+    assert got["decision"] == "ready", got["reasons"]
+    assert got["preview"]["state"] == "built" and got["preview"]["url"].startswith("https://")
+
+
+def test_fetch_with_previews_on_and_an_unreadable_bot_comment_is_not_yet(project, capsys, tmp_path, monkeypatch):
+    _previews_on(project)
+    broken = bot(row())
+    broken["body"] = "| Status | Name |\n| - | - |\n| ✅ | ? |\n"
+    fake_gh.install(tmp_path, monkeypatch, _fetch_routes([broken], [cf_run()]))
+    got, _ = run(project, capsys, {}, "--fetch", "12")
+    [r] = got["reasons"]
+    assert r["id"] == "couldnt_read" and r["input"] == "preview" and "try-it link couldn't be read" in r["message"]
+
+
+def test_fetch_with_previews_off_reads_no_preview(project, capsys, tmp_path, monkeypatch):
+    # Cloudflare's failed build is there, but with previews off nothing reads it.
+    fake_gh.install(tmp_path, monkeypatch, _fetch_routes([bot(row("❌ Deployment failed", links=""))], [cf_run("failure")]))
+    got, _ = run(project, capsys, {}, "--fetch", "12")
+    assert got["decision"] == "ready" and "no_previews" in note_ids(got)
+
+
+def test_fetch_keeps_a_preview_file_given(project, capsys, tmp_path, monkeypatch):
+    _previews_on(project)
+    fake_gh.install(tmp_path, monkeypatch, _fetch_routes([bot(row("❌ Deployment failed", links=""))], [cf_run("failure")]))
+    got, _ = run(project, capsys, {"preview": preview("built")}, "--fetch", "12")
+    assert got["decision"] == "ready", got["reasons"]
 
 
 # ---------- the merge-check skill ----------
@@ -137,6 +210,11 @@ def test_the_merge_check_skill_reads_the_preview_only_with_previews_on():
     assert "empty" in gather
     row = next(ln for ln in gather.splitlines() if ln.startswith("| `--preview`"))
     assert ON in row
+    # --fetch reads it itself with previews on, so the answer is the same either way.
+    assert "`--fetch` reads the link itself" in gather
+    not_yet = _section(_read(MERGE_CHECK), '## 3. "Not yet"', '## 4. "Ready"')
+    failed = next(p for p in not_yet.split("\n\n") if p.startswith("**A try-it link that didn't build**"))
+    assert "`preview_failed`" in failed and '**"Ask Claude to fix it"**' in failed and "When a build fails" in failed
 
 
 # ---------- the conductor and build-ticket §6 ----------
@@ -146,8 +224,9 @@ def test_the_conductors_merge_row_reads_the_preview_before_merge_check():
     rows = _section(_read(CONDUCTOR), "**4. Each ticket in flight.**", "**Stopping a stuck session safely:**")
     row = next(ln for ln in rows.splitlines() if ln.startswith("| **PR open, not merged**"))
     assert ON in row
-    read = "`WF preview --fetch <PR> --json > .workflow/run/preview.json`"
-    assert read in row and "`--preview .workflow/run/preview.json`" in row
+    read = "`WF preview --fetch <PR> --json > .workflow/run/preview-<PR>.json`"
+    assert read in row and "`--preview .workflow/run/preview-<PR>.json`" in row
+    assert "a file per pull request" in row
     assert row.index(read) < row.index("WF merge-check --fetch <PR> --json --charter")
     assert "pass no `--preview`" in row
 
@@ -161,6 +240,8 @@ def test_build_ticket_section_6_reads_the_preview_before_merge_check():
     assert "pass no `--preview`" in step3
     # A failed preview is one to fix, a building one to wait for.
     assert "`preview_failed`" in step3 and "`preview_building`" in step3
+    ready = next(ln for ln in step3.splitlines() if ln.strip().startswith("- `ready`:"))
+    assert "`preview.url`" in ready and '"How to try it"' in ready
 
 
 # ---------- build-ticket's "How to try it" ----------
@@ -182,16 +263,18 @@ def test_the_wait_for_ci_step_fills_in_the_link_once_built_and_says_a_failure_pl
     assert "`built`" in bullet and "\"How to try it\"" in bullet and "two or three things to try" in bullet
     assert "`failed`" in bullet and "didn't build" in bullet
     assert "When a build fails" in bullet  # the fix, from the page's table
+    assert "until the pull request merges" in bullet  # CI can finish before the link is built
+    # A fix no push makes (a Cloudflare setting) stops the ticket for the owner.
+    assert "Cloudflare setting" in bullet and "`needs-human`" in bullet and "tracking issue" in bullet
 
 
 # ---------- the briefing ----------
 
 
-def _briefing(tmp_path, previews):
+def _briefing(tmp_path):
     (tmp_path / ".claude/workflow").mkdir(parents=True)
-    extra = "[previews]\non = true\n" if previews else ""
     (tmp_path / ".claude/workflow/profile.toml").write_text(
-        '[project]\nname="d"\nrepo="a/d"\nowner="o"\n[ci]\nrequired_checks=["CI"]\n' + extra, encoding="utf-8"
+        '[project]\nname="d"\nrepo="a/d"\nowner="o"\n[ci]\nrequired_checks=["CI"]\n', encoding="utf-8"
     )
     c = charter.defaults([])
     c["merge"] = {"mode": "auto-merge", "waived_checks": []}
@@ -202,16 +285,16 @@ def _briefing(tmp_path, previews):
     return _section(text, "### Merging", "### Rules")
 
 
-def test_the_briefing_reads_the_preview_with_previews_on(tmp_path):
-    merging = _briefing(tmp_path, True)
-    assert "python3 .claude/workflow/bin/workflow.py preview --fetch <PR> --json > .workflow/preview.json" in merging
-    assert "--preview .workflow/preview.json" in merging
-
-
-def test_the_briefing_passes_no_preview_with_previews_off(tmp_path):
-    merging = _briefing(tmp_path, False)
-    assert "preview --fetch" not in merging
-    assert "pass no `--preview`" in merging
+def test_the_briefing_reads_the_preview_only_with_previews_on(tmp_path):
+    # The profile is read each time, so a run that turns previews on mid-way is followed.
+    merging = _briefing(tmp_path)
+    line = next(ln for ln in merging.splitlines() if ln.startswith("- **The try-it link:**"))
+    assert ON in line and "read it each time" in line
+    assert "python3 .claude/workflow/bin/workflow.py preview --fetch <PR> --json > .workflow/preview.json" in line
+    assert "--preview .workflow/preview.json" in line
+    assert "without `gh`, give the reader files, as build-ticket §5 says" in line
+    assert "With previews off, pass no `--preview`" in line
+    assert merging.index("merge-check --fetch <PR>") < merging.index("- **The try-it link:**")
 
 
 # ---------- docs and changelog ----------
@@ -222,10 +305,10 @@ def test_the_charter_doc_says_runs_pass_the_preview_when_previews_are_on():
     assert "`workflow preview --fetch <PR> --json`" in merging and "`--preview`" in merging and ON in merging
 
 
-def test_the_previews_page_says_the_merge_helper_waits_for_the_link():
+def test_the_previews_page_says_merge_check_waits_for_the_link():
     expect = _read(PREVIEWS_DOC).split("\n## What to expect\n", 1)[1].split("\n## ", 1)[0]
     line = next(ln for ln in expect.splitlines() if "never a required one" in ln)
-    assert "Not yet" in line and "still building" in line and "didn't build" in line
+    assert "`merge-check` says \"Not yet\"" in line and "still building" in line and "didn't build" in line
 
 
 @pytest.mark.parametrize("word", ["#117", "workflow preview", "--preview"])

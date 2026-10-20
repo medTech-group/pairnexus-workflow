@@ -117,19 +117,6 @@ def _rounds(n: int) -> str:
     return "1 (the light review)" if n == 1 else str(n)
 
 
-def _preview_step(profile: Profile) -> str:
-    """How the session gives `merge-check` the try-it link (#117): read with
-    `workflow preview` when the profile says `[previews] on = true`, else none."""
-    if not profile.previews.on:
-        return "Previews are off (the profile has no `[previews] on = true`), so pass no `--preview`: `merge-check`'s note about the missing try-it link never blocks."
-    return (
-        "Previews are on (`[previews] on = true`), so read the try-it link first, each time: "
-        "`python3 .claude/workflow/bin/workflow.py preview --fetch <PR> --json > .workflow/preview.json`, "
-        "and add `--preview .workflow/preview.json` to that `merge-check`. If the reader can't read it, the file is empty "
-        "and `merge-check` says it couldn't read the preview: `not_yet`."
-    )
-
-
 def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking: int, by_hand: int | None) -> dict:
     merge = charter.get("merge") or {}
     review = presets_mod.review_of(charter, profile)
@@ -147,7 +134,6 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
         "by_hand.issue": f"#{by_hand}" if by_hand else "none yet: add by-hand checks to the tracking issue",
         "merge.mode": merge.get("mode", "auto-merge"),
         "merge.waived": ", ".join(waived) if waived else "none: every required check must be green",
-        "merge.preview": _preview_step(profile),
         "run.review_rounds": _rounds(review["rounds"]),
         "review.rounds": str(review["rounds"]),  # the bare number, for merge-check's --review-rounds
         "run.check_in_minutes": str((charter.get("limits") or {}).get("check_in_minutes", profile.check_in_minutes)),

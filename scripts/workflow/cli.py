@@ -748,6 +748,8 @@ def cmd_merge_check(a) -> int:
             inputs.update({n: (None, f"not fetched: the profile couldn't be read, so its repository isn't known: give --{n} as a file") for n in wanted if n not in inputs})
         else:
             inputs.update(fetch_mod.merge_inputs(prof.repo, a.fetch, inputs, wanted, asker=None if prof.owner else a.asker))
+            if prof.previews.on and "preview" not in inputs:
+                inputs["preview"] = _fetched_preview(prof.repo, a.fetch)
         pr = inputs.get("pr", (None, None))[0]
         pr = pr[0] if isinstance(pr, list) and len(pr) == 1 else pr
         if isinstance(pr, dict) and pr.get("number") != a.fetch:
@@ -766,6 +768,21 @@ def cmd_merge_check(a) -> int:
     res = merge_mod.evaluate(inputs, prof, profile_error, asker=a.asker, level=level, charter_input=charter, logs=logs, role=role, review_rounds=a.review_rounds)
     _out(res.as_dict() if a.json else merge_mod.text(res))
     return 0
+
+
+def _fetched_preview(repo: str, number: int) -> tuple:
+    """#117: with previews on, `merge-check --fetch` reads the try-it link
+    itself when no --preview is given, through #41's reader, so a check that
+    left it out can't say "ready" over a link that didn't build. Its answer
+    as merge-check's `(value, None)`, or `(None, why)`."""
+    got = fetch_mod.preview_inputs(repo, number, {})
+    why = [f"{n}: {e}" for n, (_, e) in got.items() if e is not None]
+    if why:
+        return None, "the try-it link couldn't be read (" + "; ".join(why) + ")"
+    try:
+        return previews_mod.read(got["comments"][0], got["checks"][0], got["sha"][0]).as_dict(), None
+    except previews_mod.PreviewError as e:
+        return None, f"the try-it link couldn't be read ({e.name}: {e})"
 
 
 def _sha(v: str) -> str:
@@ -1378,7 +1395,7 @@ def main(argv: list[str] | None = None) -> int:
             "threads": "GraphQL's reviewThreads, with totalCount and pageInfo, every page",
         }.get(name, "as JSON from the GitHub API, every page")
         s.add_argument(f"--{name}", metavar="F", help=f"{what} ({source}); a file, or - for standard input")
-    s.add_argument("--fetch", metavar="N", type=_pr_number, help="fetch every input not given as a file for pull request N, through `gh api` (the profile's project.repo); a file given wins")
+    s.add_argument("--fetch", metavar="N", type=_pr_number, help="fetch every input not given as a file for pull request N, through `gh api` (the profile's project.repo), and with [previews] on = true read its try-it link (`workflow preview`); a file given wins")
     s.add_argument("--charter", metavar="F", help="the run's approved charter, as JSON, or the tracking issue's body (its run state holds it): the checks it waives (flow §4.1); ignored in an attended session")
     s.add_argument("--check-logs", metavar="DIR", help="a waived check's log, one file per check, named by its check run's id on the head (<id>, <id>.log or <id>.txt; the id is its job's), as `gh run view --log-failed --job <id>` gives its tail")
     s.add_argument("--asker", metavar="LOGIN", help="the GitHub login of whoever asks (the owner gets \"Ready once you've read\" for kit and CI files)")
