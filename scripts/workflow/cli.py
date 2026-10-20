@@ -783,14 +783,14 @@ def _fetched_preview(repo: str, number: int, inputs: dict) -> tuple:
     if isinstance(head, dict) and previews_mod.is_sha(head.get("sha")):
         have["sha"] = (head["sha"].lower(), None)
     got = {**have, **fetch_mod.preview_inputs(repo, number, have)}
-    # Each fetch error without its "give --<flag> as a file" hint: those are `workflow preview`'s flags.
-    why = [f"its {n}: {e.split(', so it ')[0]}" for n, (_, e) in got.items() if e is not None]
+    # Each fetch error without the hint `preview_inputs` adds: its flags are `workflow preview`'s.
+    why = [f"its {n}: {e.removesuffix(', ' + fetch_mod._give(n))}" for n, (_, e) in got.items() if e is not None]
     if why:
         return None, "--fetch couldn't fetch " + "; ".join(why)
     try:
         return previews_mod.read(got["comments"][0], got["checks"][0], got["sha"][0]).as_dict(), None
     except previews_mod.PreviewError as e:
-        return None, f"--fetch read it, and #41's reader said: {e}"
+        return None, f"`workflow preview` said: {e}"
 
 
 def _sha(v: str) -> str:

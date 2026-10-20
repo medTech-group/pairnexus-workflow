@@ -43,7 +43,7 @@ The check answers in the chat only. It posts nothing on GitHub: no comment, no r
 WF merge-check --fetch 12 --asker <login> --json
 ```
 
-It allows the profile's `run.review_rounds`, so a person needs no `--review-rounds`; for a pull request a run built, add `--review-rounds` with the charter's, as its briefing gave them, to get the run's answer, and for one whose body says "Light review:" (build-ticket's line), `--review-rounds 1`. It fetches everything, the try-it link too when previews are on (below). Otherwise add `--preview F` with its answer, or there is no try-it link.
+It allows the profile's `run.review_rounds`, so a person needs no `--review-rounds`; for a pull request a run built, add `--review-rounds` with the charter's, as its briefing gave them, to get the run's answer, and for one whose body says "Light review:" (build-ticket's line), `--review-rounds 1`. It fetches everything, the try-it link too when previews are on (below). Without `--fetch`, and only with previews on, add `--preview F` with its answer, or there is no try-it link.
 
 **The try-it link.** Only when the profile says `[previews] on = true`, read it for the pull request's head with the kit's preview reader, into a new directory **outside the checkout** (`<dir>`), and give that file to the command:
 

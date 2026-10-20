@@ -13,7 +13,7 @@ from test_merge_check_evidence import REPO, routes, run, with_report
 from test_preview import bot, cf_run, row
 
 from changelog_notes import since_0110
-from workflow import charter, merge, render
+from workflow import charter, fetch, merge, render
 from workflow.profile import load
 
 MERGE_CHECK = KIT / "skills/merge-check/SKILL.md"
@@ -209,7 +209,7 @@ def test_fetch_with_previews_on_and_an_unreadable_bot_comment_is_not_yet(project
     [r] = got["reasons"]
     assert r["id"] == "couldnt_read" and r["input"] == "preview"
     message = r["wording"]["developer"]["message"]
-    assert message.startswith("Not yet: couldn't read the try-it link (--fetch read it, and #41's reader said: ")
+    assert message.startswith("Not yet: couldn't read the try-it link (`workflow preview` said: ")
     assert message.count("couldn't read") == 1 and "--preview" not in message
 
 
@@ -224,6 +224,16 @@ def test_fetch_with_previews_on_and_the_comments_unreadable_is_not_yet(project, 
     message = r["wording"]["developer"]["message"]
     assert "--fetch couldn't fetch its comments:" in message and "--sha" not in message and "as a file" not in message
     assert "--comments F --checks F --sha <head>" in r["wording"]["developer"]["fix"]  # the files route, without gh
+
+
+def test_fetch_with_previews_on_and_no_gh_names_no_other_commands_flags(project, capsys, tmp_path, monkeypatch):
+    _previews_on(project)
+    monkeypatch.setattr(fetch, "available", lambda: False)
+    got, _ = run(project, capsys, {"pr": inputs()["pr"]}, "--fetch", "12")
+    [r] = [x for x in got["reasons"] if x["id"] == "couldnt_read" and x["input"] == "preview"]
+    message = r["wording"]["developer"]["message"]
+    assert "--fetch couldn't fetch its comments: gh (the GitHub CLI) isn't installed here" in message
+    assert "as a file" not in message and "--sha" not in message
 
 
 def test_fetch_reuses_the_comments_and_head_merge_check_read(project, capsys, tmp_path, monkeypatch):
@@ -270,6 +280,9 @@ def test_the_merge_check_skill_reads_the_preview_only_with_previews_on():
     assert ON in flag
     # --fetch reads it itself with previews on, so the answer is the same either way.
     assert "`--fetch` reads the link itself" in gather
+    # The files route's --preview is for previews on only, never "otherwise".
+    assert "Without `--fetch`, and only with previews on, add `--preview F`" in gather
+    assert "Otherwise add `--preview F`" not in gather
     not_yet = _section(_read(MERGE_CHECK), '## 3. "Not yet"', '## 4. "Ready"')
     failed = next(p for p in not_yet.split("\n\n") if p.startswith("**A try-it link that didn't build**"))
     assert "`preview_failed`" in failed and '**"Ask Claude to fix it"**' in failed and "When a build fails" in failed
