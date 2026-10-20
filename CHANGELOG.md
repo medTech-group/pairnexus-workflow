@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**The "release gate" check** (#88, part of #36).
+
+- **A check named "release gate" on every pull request** of the kit's repository (`.github/workflows/release-gate.yml`). A pull request that doesn't change `VERSION` passes at once, without reading comments or permissions. A release pull request passes only when the newest gate line for its head commit, `release-gate: pass <sha>` with the full SHA, comes from a comment carrying the agents' marker by an account with write, maintain or admin permission; a later `release-gate: fail <sha>` for the same commit wins. Or when the skip is allowed: the `release-gate-skipped` label, a "Gate skipped because …" line in the description and a "Release gate skipped because …" line in the new version's CHANGELOG entry, never twice in a row.
+- **The decision** is `.github/scripts/release_gate.py`, beside `release.py`, standard library only: fed JSON and text files, it prints `pass: …` or `fail: …` with the reason. It has its own reading of write access, not merge-check's, so it never imports the kit it judges.
+- **The workflow** reads the pull request, its files, comments, labels and description, each marked comment's author's permission, the CHANGELOG and `VERSION` from the API when it runs, never from the event's payload. A comment on a pull request re-runs its latest `release gate` run for the head commit. Read access for the job; `actions: write` only for the re-run.
+- Docs: `CONTRIBUTING.md`'s release section describes the check and how to skip it. Tests: `tests/test_release_gate.py`. Making it a required check is owner task #93.
+- **For projects updating:** nothing to do. The check runs only on the kit's own repository.
+
 **"Add try-it links": `upgrade-setup`'s fourth path** (#116, part of #41).
 
 - **The path** (offer `add_try_it_links`) takes the owner through `docs/previews.md`'s seven steps in Cloudflare one screen at a time, worded by experience, with a step already done (a repository Cloudflare already reports on, a link that already built, the Wrangler lines already there) shown as done with "Continue". With `[sensitive]` patterns, Cloudflare Access comes straight after Preview URLs, confirmed by the owner, and the path says plainly that the kit can't check it; without Access it stops, with no previews. The base branch's Wrangler config must keep the app off the internet (`workers_dev = false`, and `preview_urls = false` with sensitive data until Access is confirmed), in a small pull request of its own when it doesn't: before connecting, or first of all when the repository is connected already, saying plainly what is public now.

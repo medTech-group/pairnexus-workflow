@@ -1,0 +1,106 @@
+# The "release gate" check (#88): on every pull request, `release gate` passes at once when the PR
+# doesn't change VERSION; on a release PR it passes only when a maintainer's gate report says pass
+# for the PR's exact head commit, or the skip is allowed (.github/scripts/release_gate.py).
+# Everything about the PR is read from the API when the job runs, never from the event's payload,
+# since a re-run replays the original event. A comment on a PR re-runs its latest `release gate`
+# run for the head commit, so the PR keeps one check and nobody needs an empty push.
+# A change to this file or the script is reviewed as CI config.
+name: release gate
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+  issue_comment:
+    types: [created, edited, deleted]
+
+permissions: {}
+
+jobs:
+  gate:
+    name: release gate
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+      DATA: /tmp/release-gate
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Read the pull request and its files
+        id: pr
+        run: |
+          mkdir -p "$DATA"
+          gh api "repos/$REPO/pulls/$PR" > "$DATA/pr.json"
+          gh api --paginate --slurp "repos/$REPO/pulls/$PR/files?per_page=100" > "$DATA/files.json"
+          if jq -e '[.[][] | .filename, .previous_filename] | index("VERSION")' "$DATA/files.json" > /dev/null; then
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Read the comments, their authors' permissions, the CHANGELOG and VERSION
+        if: steps.pr.outputs.release == 'true'
+        run: |
+          gh api --paginate --slurp "repos/$REPO/issues/$PR/comments?per_page=100" > "$DATA/comments.json"
+          # Only marked comments can count, so only their authors are looked up. An author whose
+          # permission can't be read is left out, and counts as without write access.
+          echo '{}' > "$DATA/permissions.json"
+          jq -r '[.[][] | select(.body // "" | contains("<!-- workflow:agent -->")) | .user.login] | unique | .[]' \
+            "$DATA/comments.json" | while read -r login; do
+            if perm=$(gh api "repos/$REPO/collaborators/$login/permission" --jq .permission); then
+              jq --arg l "$login" --arg p "$perm" '. + {($l): $p}' "$DATA/permissions.json" > "$DATA/p.json"
+              mv "$DATA/p.json" "$DATA/permissions.json"
+            else
+              echo "couldn't read $login's permission: their comments don't count"
+            fi
+          done
+          head=$(jq -r .head.sha "$DATA/pr.json")
+          base=$(jq -r .base.ref "$DATA/pr.json")
+          raw=(-H "Accept: application/vnd.github.raw")
+          gh api "${raw[@]}" "repos/$REPO/contents/CHANGELOG.md?ref=$head" > "$DATA/changelog" || : > "$DATA/changelog"
+          gh api "${raw[@]}" "repos/$REPO/contents/VERSION?ref=$head" > "$DATA/version-head" || : > "$DATA/version-head"
+          gh api "${raw[@]}" "repos/$REPO/contents/VERSION?ref=$base" > "$DATA/version-base" || : > "$DATA/version-base"
+      - name: Decide
+        run: |
+          args=(--pr "$DATA/pr.json" --files "$DATA/files.json")
+          if [ -f "$DATA/comments.json" ]; then
+            for f in comments permissions; do args+=("--$f" "$DATA/$f.json"); done
+            for f in changelog version-head version-base; do args+=("--$f" "$DATA/$f"); done
+          fi
+          set +e
+          out=$(python3 .github/scripts/release_gate.py "${args[@]}")
+          code=$?
+          echo "$out"
+          echo "$out" >> "$GITHUB_STEP_SUMMARY"
+          exit $code
+
+  rerun:
+    if: github.event_name == 'issue_comment' && github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      pull-requests: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.issue.number }}
+    steps:
+      - name: Re-run the latest release gate run for the head commit
+        run: |
+          head=$(gh api "repos/$REPO/pulls/$PR" --jq .head.sha)
+          runs="repos/$REPO/actions/workflows/release-gate.yml/runs?event=pull_request&head_sha=$head&per_page=1"
+          # A run still going may have read the comments already: wait for it, then run it again.
+          for _ in $(seq 60); do
+            run=$(gh api "$runs" --jq '.workflow_runs[0] | "\(.id) \(.status)"')
+            [ -z "$run" ] || [ "$run" = "null null" ] && { echo "no release gate run for $head yet"; exit 0; }
+            [ "${run#* }" = completed ] && break
+            sleep 10
+          done
+          id=${run%% *}
+          gh api -X POST "repos/$REPO/actions/runs/$id/rerun"
+          echo "re-ran release gate run $id for $head"
