@@ -1,11 +1,11 @@
 # The "release gate" check (#88): on every pull request, `release gate` passes at once when the PR
 # doesn't change VERSION; on a release PR it passes only when a gate report from an account with
 # write access says pass for the PR's exact head commit, or the skip is allowed
-# (.github/scripts/release_gate.py, taken from the base branch, so a PR can't change the script
-# that judges it). Everything about the PR is read from the API when the job runs, never from the
+# (.github/scripts/release_gate.py, taken from the base branch, so a change to the script takes
+# effect once merged; this file itself runs as the PR has it, so it is reviewed as CI config).
+# Everything about the PR is read from the API when the job runs, never from the
 # event's payload, since a re-run replays the original event. A comment on a PR re-runs its latest
 # `release gate` run for the head commit, so the PR keeps one check and nobody needs an empty push.
-# A change to this file or the script is reviewed as CI config.
 name: release gate
 on:
   pull_request:
@@ -55,9 +55,21 @@ jobs:
             echo "head=$head"
             echo "base=$base"
           } >> "$GITHUB_OUTPUT"
-          # The base branch's script judges; the PR's own only while the base has none.
+          gh api "repos/$REPO/branches/$base" > /dev/null  # a base that can't be read fails here, not as a 404 below
+          # The base branch's script judges; the PR's own only while the base has no release gate at all.
           raw .github/scripts/release_gate.py "$base" "$DATA/release_gate.py"
-          [ -s "$DATA/release_gate.py" ] || raw .github/scripts/release_gate.py "$head" "$DATA/release_gate.py"
+          if [ ! -s "$DATA/release_gate.py" ]; then
+            raw .github/workflows/release-gate.yml "$base" "$DATA/base-workflow.yml"
+            if [ -s "$DATA/base-workflow.yml" ]; then
+              echo "fail: the base branch has the release gate's workflow but not its script" >&2
+              exit 1
+            fi
+            raw .github/scripts/release_gate.py "$head" "$DATA/release_gate.py"
+          fi
+          if [ ! -s "$DATA/release_gate.py" ]; then
+            echo "fail: the release gate's script couldn't be found" >&2
+            exit 1
+          fi
           if jq -e '[.[][] | .filename, .previous_filename] | index("VERSION")' "$DATA/files.json" > /dev/null; then
             echo "release=true" >> "$GITHUB_OUTPUT"
           fi
@@ -97,7 +109,8 @@ jobs:
           code=$?
           echo "$out"
           echo "$out" >> "$GITHUB_STEP_SUMMARY"
-          exit $code
+          # Only an exit 0 that says pass passes.
+          [ "$code" -eq 0 ] && [[ "$out" == "pass: "* ]]
 
   rerun:
     if: github.event_name == 'issue_comment' && github.event.issue.pull_request

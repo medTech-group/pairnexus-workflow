@@ -34,8 +34,8 @@ MARKER = "<!-- workflow:agent -->"
 WRITE_ACCESS = {"write", "maintain", "admin"}
 SKIP_LABEL = "release-gate-skipped"
 GATE_LINE = re.compile(r"^release-gate: (pass|fail) ([0-9a-f]{40})[ \t]*$", re.M)
-DESCRIPTION_SKIP = re.compile(r"^[ \t>*_-]*Gate skipped because[*_]*[ \t]+\S", re.M)
-CHANGELOG_SKIP = re.compile(r"^[ \t>*_-]*Release gate skipped because[*_]*[ \t]+\S", re.M)
+DESCRIPTION_SKIP = re.compile(r"^[ \t>*_-]*Gate skipped because[*_:]*[ \t]+\S", re.M)
+CHANGELOG_SKIP = re.compile(r"^[ \t>*_-]*Release gate skipped because[*_:]*[ \t]+\S", re.M)
 
 
 class Unreadable(Exception):
@@ -58,7 +58,7 @@ def _text(path: str | None, name: str) -> str | None:
     try:
         with open(path, encoding="utf-8") as f:
             return _lf(f.read())
-    except OSError as e:
+    except (OSError, ValueError) as e:
         raise Unreadable(f"couldn't read the {name} ({e})") from None
 
 

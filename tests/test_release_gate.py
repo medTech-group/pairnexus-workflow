@@ -248,6 +248,24 @@ def test_bold_skip_lines_count(tmp_path):
     _passes(_run(tmp_path, labels=["release-gate-skipped"], body=body, changelog=log))
 
 
+def test_skip_lines_with_a_colon_count(tmp_path):
+    body = "Gate skipped because: the sandbox is down.\n"
+    log = CHANGELOG.replace("- New things.", "- New things.\n- Release gate skipped because: the guard broke.")
+    _passes(_run(tmp_path, labels=["release-gate-skipped"], body=body, changelog=log))
+
+
+def test_a_changelog_that_isnt_utf8_fails_with_its_reason(tmp_path):
+    _run(tmp_path)
+    (tmp_path / "changelog").write_bytes(b"## 0.2.0\n\n- caf\xe9\n")
+    args = [sys.executable, "-I", str(SCRIPT)]
+    for name in ("pr", "files", "comments", "permissions"):
+        args += [f"--{name}", str(tmp_path / f"{name}.json")]
+    for name in ("changelog", "changelog-base", "version-head", "version-base"):
+        args += [f"--{name}", str(tmp_path / name)]
+    p = subprocess.run(args, capture_output=True, text=True)
+    assert p.returncode != 0 and p.stdout.startswith("fail: couldn't read the CHANGELOG"), p
+
+
 def test_the_last_releases_skip_is_read_from_the_base_not_the_head(tmp_path):
     base = CHANGELOG.replace("- Old things.", "- Old things.\n- Release gate skipped because of last week's outage.")
     out = _fails(_run(tmp_path, labels=["release-gate-skipped"], body=SKIP_BODY, changelog=SKIP_LOG,
@@ -351,6 +369,14 @@ def test_the_script_that_judges_comes_from_the_base_branch_not_the_pr():
     assert "actions/checkout" not in wf  # the PR's code is never checked out
     assert 'raw .github/scripts/release_gate.py "$base"' in wf
     assert 'python3 -I "$DATA/release_gate.py"' in wf
+    # The PR's own copy only while the base has no release gate at all, and never an empty script.
+    assert 'raw .github/workflows/release-gate.yml "$base"' in wf
+    assert "the release gate's script couldn't be found" in wf
+    assert 'repos/$REPO/branches/$base' in wf
+
+
+def test_only_an_exit_0_that_says_pass_passes():
+    assert '[ "$code" -eq 0 ] && [[ "$out" == "pass: "* ]]' in _wf()
 
 
 def test_only_a_missing_file_reads_as_empty():
