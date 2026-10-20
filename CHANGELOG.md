@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+**The README opens on your own project, and PAIR's story moves to "Where it came from"** (#98, part of #37).
+
+- **The opening,** after "New to building? Start here": what the kit does for your project in plain words (you describe what you want; Claude plans it, builds it in small reviewed pieces and merges what passes), attended work first and unattended runs as something you can add later, then the flow in short, for developers. The status note follows as it was.
+- **The conductor's paragraph** moved to the top of "Unattended", opening "In an unattended run" where it said "For unattended runs".
+- **"Where it came from":** a new section before "Licence", listed in Contents: the pair-drop weekend run of 9–12 Oct 2026, about 50 tickets. It is the only place in the README that names pair-drop; the Flutter line in Step 5 no longer points at pair-drop's own set-up doc.
+- **History marked as background:** `docs/spike.md` opens with a note that it is the kit's record of what has been verified, PAIR's own runs and the demo repository's included; `docs/proposal.md`'s note says it is PAIR's original proposal.
+- Tests: `tests/test_readme_opening.py`.
+- **For projects updating:** nothing to do. None of these files ships.
+
 **The conductor's pre-flight hands doctor the base branch's checks and offers "Require these checks" at kick-off** (#71, part of #38).
 
 - **Two more files in `.workflow/`:**
