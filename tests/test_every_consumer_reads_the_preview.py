@@ -158,17 +158,19 @@ def test_a_preview_file_the_reader_left_empty_is_not_yet(project, capsys):
     [r] = got["reasons"]
     assert r["id"] == "couldnt_read" and r["input"] == "preview" and "is empty" in r["message"]
     # The fix is the reader's, not GitHub's.
-    assert r["wording"]["developer"]["fix"] == "Run `workflow preview --fetch 12 --json`, read what it printed, and give its answer as --preview."
+    assert r["wording"]["developer"]["fix"] == (
+        "Run `workflow preview --fetch 12 --json` (without gh: `workflow preview --comments F --checks F --sha <head> --json`), "
+        "read what it printed, and give its answer as --preview."
+    )
     assert r["wording"]["new"]["message"] == "Not yet: couldn't read the try-it link."
 
 
-def test_a_profile_that_cant_be_read_gets_no_pointer_to_add_try_it_links(project, capsys):
+def test_a_profile_that_cant_be_read_gets_no_note_about_try_it_links(project, capsys):
     # It may be refused over Access with previews on: the profile's own reason says what to fix.
     (project / ".claude/workflow/profile.toml").write_text("[project\n")
     got, _ = check(project, capsys, inputs())
     assert got["decision"] == "not_yet"
-    [n] = [n for n in got["notes"] if n["id"] == "no_previews"]
-    assert "previews.md" not in n["message"]
+    assert not [n for n in got["notes"] if n["id"] in ("no_previews", "preview_none")]
 
 
 # ---------- merge-check --fetch reads the preview itself with previews on ----------
@@ -206,8 +208,9 @@ def test_fetch_with_previews_on_and_an_unreadable_bot_comment_is_not_yet(project
     got, _ = run(project, capsys, {}, "--fetch", "12")
     [r] = got["reasons"]
     assert r["id"] == "couldnt_read" and r["input"] == "preview"
-    assert "--fetch read it with `workflow preview`, which said:" in r["wording"]["developer"]["message"]
-    assert r["message"].count("couldn't read") == 1
+    message = r["wording"]["developer"]["message"]
+    assert message.startswith("Not yet: couldn't read the try-it link (--fetch read it, and #41's reader said: ")
+    assert message.count("couldn't read") == 1 and "--preview" not in message
 
 
 def test_fetch_with_previews_on_and_the_comments_unreadable_is_not_yet(project, capsys, tmp_path, monkeypatch):
@@ -217,7 +220,10 @@ def test_fetch_with_previews_on_and_the_comments_unreadable_is_not_yet(project, 
     fake_gh.install(tmp_path, monkeypatch, r)
     got, _ = run(project, capsys, {}, "--fetch", "12")
     assert got["decision"] == "not_yet"
-    assert "preview" in [x["input"] for x in got["reasons"] if x["id"] == "couldnt_read"]
+    [r] = [x for x in got["reasons"] if x["id"] == "couldnt_read" and x["input"] == "preview"]
+    message = r["wording"]["developer"]["message"]
+    assert "--fetch couldn't fetch its comments:" in message and "--sha" not in message and "as a file" not in message
+    assert "--comments F --checks F --sha <head>" in r["wording"]["developer"]["fix"]  # the files route, without gh
 
 
 def test_fetch_reuses_the_comments_and_head_merge_check_read(project, capsys, tmp_path, monkeypatch):

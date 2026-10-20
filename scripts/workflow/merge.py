@@ -149,7 +149,7 @@ REASONS = {
         # empty file is how a reader that failed leaves it.
         "preview": {
             "new": ("Not yet: couldn't read the try-it link.", "Ask Claude to read the try-it link again, then ask again."),
-            "developer": ("Not yet: couldn't read {what} (--{input}): {why}.", "Run `workflow preview --fetch {number} --json`, read what it printed, and give its answer as --preview."),
+            "developer": ("Not yet: couldn't read the try-it link ({why}).", "Run `workflow preview --fetch {number} --json` (without gh: `workflow preview --comments F --checks F --sha <head> --json`), read what it printed, and give its answer as --preview."),
         },
     }),
     # The profile isn't fetched: its own wording, still the id `couldnt_read`.
@@ -1010,9 +1010,10 @@ def _preview(ctx: Context, add) -> None:
         return
     if state == "none":
         other_way = "check the change another way, as the PR's \"How to try it\" says."
+        if ctx.profile is None:
+            return  # a profile that can't be read (its own reason) may well have previews on: no claim either way
         if not on:
-            # A profile that can't be read (its own reason) may well have previews on: no pointer then.
-            how = f" {_previews_doc()} says how to add try-it links." if PREVIEWS_DOC.exists() and ctx.profile else ""
+            how = f" {_previews_doc()} says how to add try-it links." if PREVIEWS_DOC.exists() else ""
             _note(ctx, "no_previews", f"There's no try-it link for this project: {other_way}{how}")
         elif not ctx.preview_given():
             _note(ctx, "no_previews", "Previews are on for this project, but this check was given no try-it link, so it can't say whether "
