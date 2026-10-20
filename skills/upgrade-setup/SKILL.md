@@ -30,7 +30,7 @@ The read-back needs GitHub's own JSON: the repository (`GET repos/<repo>`, with 
 
 **Choices** use the `AskUserQuestion` tool, the recommended option first; without it (a headless session), the same choices as a numbered list.
 
-**Only in attended sessions.** When `WORKFLOW_ROLE` is `ticket`, don't run it or offer it: there's nobody to click. For "Protect `main`", say in the ticket's report that the base branch isn't protected, and carry on. The conductor runs it only at its kick-off, with the owner there, and never runs "Require these checks" or "Add try-it links": its kick-off sends the owner to an attended session for "Require these checks" (the `conductor` skill).
+**Only in attended sessions.** When `WORKFLOW_ROLE` is `ticket`, don't run it or offer it: there's nobody to click. For "Protect `main`", say in the ticket's report that the base branch isn't protected, and carry on. The conductor runs it only at its kick-off, with the owner there, and never runs "Require these checks": its kick-off sends the owner to an attended session for that (the `conductor` skill). It never runs "Add try-it links" either.
 
 ## When it's offered
 
@@ -440,7 +440,7 @@ Both get the same steps. **Not now** ends it: nothing is changed. When `check-se
 
 Before screen 1, read what can be read, so a step already done is shown as done, with **Continue**, instead of its clicks:
 
-- **Connected:** Cloudflare's app (`cloudflare-workers-and-pages`) already reports on this repository: a check run named "Workers Builds: …" from it on the base branch's latest commit (`gh api 'repos/<repo>/commits/<base>/check-runs?per_page=100'`) or on an open pull request's head, or its bot's comment on an open pull request. The GitHub MCP tools read a pull request's head check runs and its comments, but have no list of a commit's check runs. Then screens 1 and 2 are done.
+- **Connected:** Cloudflare's app (`cloudflare-workers-and-pages`) already reports on this repository: a check run named "Workers Builds: …" from it on the base branch's latest commit (`gh api --paginate --slurp 'repos/<repo>/commits/<base>/check-runs?per_page=100' > .workflow/check-runs.json`, as the automatic path reads them) or on an open pull request's head, or its bot's comment on an open pull request. The GitHub MCP tools read a pull request's head check runs and its comments, but have no list of a commit's check runs. Then screens 1 and 2 are done.
 - **Built:** an open pull request's link reads `built` (`WF preview`, as "Its own try-it link" reads it). Then screens 1 to 5 are done: the Build command, the token and Preview URLs work. With sensitive data and no Access confirmed yet, that link is public right now: say so plainly. "Before step 2" still comes first when the base branch's config needs it, then screen 7.
 - **The Wrangler config,** read from the checkout: which of the Wrangler lines it has already, for screen 6.
 
