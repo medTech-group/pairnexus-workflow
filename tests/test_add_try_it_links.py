@@ -190,6 +190,7 @@ def test_sensitive_data_is_read_from_the_profile_file_itself():
     assert "the template's secret-key patterns included" in need
     # A profile refused for Access goes to screen 7, then turns the links on as doctor's fix says.
     assert "previews.on is true but previews.access isn't" in need and profile.ACCESS_REFUSED.startswith("previews.on is true")
+    assert "go straight to screen 7, after screen 5 when Preview URLs were turned off" in need
     assert "and `preview_urls = true` in the Wrangler config unless it says so already, as doctor's fix says" in need
     # Whether the section is there is read from the file: `profile check` prints the same without one.
     assert "whether the section is there at all, read from `profile.toml` itself" in need
@@ -259,9 +260,15 @@ def test_access_is_the_owners_word_and_the_kit_says_it_cant_check_it():
     assert "no previews" in seven and "stops" in seven
     assert "**Preview URLs** off" in seven and "`preview_urls = false`" in seven
     # Not now, with Preview URLs on and no Access: they go off again before the path stops.
-    assert "**Not now** here, unlike other screens, first asks the person to turn **Preview URLs** off in the dashboard" in seven
+    assert "first the person turns **Preview URLs** off in the dashboard (screen 5's setting)" in seven
     assert "whenever they may be on, whether screen 5 turned them on or they were on already" in seven
-    assert "Preview URLs stay off until Access is on." in _sec("Where try-it links end")
+    assert "keeps the links off just as **I can't turn it on** does" in seven and 'wait for "Done"' in seven
+    # The dashboard alone isn't enough: each deploy resets it from the config.
+    assert "doesn't say `preview_urls = false` (a config with no `preview_urls` line doesn't), the small pull request of \"Before step 2\" for it" in seven
+    assert "with a `workflow/no-previews` pull request open, the \"No previews\" line naming it" in seven
+    assert "each branch pushed gets a public link until they do" in seven
+    end = _sec("Where try-it links end")
+    assert 'adding "Preview URLs stay off until Access is on." once the dashboard and the base branch\'s config both say off' in end
     # As the page says: the small pull request sets it back when the config says otherwise.
     assert 'open the small pull request of "Before step 2" for it' in seven
 
