@@ -4,10 +4,10 @@
 
 **Everyday examples, and the names test** (#99, part of #37).
 
-- **The README's walkthroughs** use everyday projects: the guided start's table row and example (a booking page and its reminders), the interview (`/grill-with-docs`, a notes app's dated notes), the map (`/wayfinder`, a small shop online) and `/to-questionnaire`'s who-it's-for (an accountant, a supplier, legal). The guided start skill's example is "#301 booking reminders".
+- **The README's walkthroughs** use everyday projects: the guided start's table row and example (a booking page and its reminders), the interview (`/grill-with-docs`, a notes app's dated notes), the map (`/wayfinder`, a small shop online) and `/to-questionnaire`'s who-it's-for (an accountant, a supplier, legal). The guided start skill's example matches: "#301 the booking page (quick ticket), #302 booking reminders (spec)".
 - **Sensitive data:** patients' names stay as one example among phone numbers, payment details and children's names, in the README's set-up table, `docs/profile.md`'s `[sensitive]` row and `templates/profile.md`'s example.
 - **`templates/profile.toml`'s area example** names a notes app's paths (`notes = ["server/notes.py", "app/lib/notes/**"]`).
-- **The names test** (`tests/test_example_names.py`) reads every file a project receives (`vendor.plan`), plus the README and `docs/quickstart.md`, and allows pair-drop only in the README's "Where it came from", patient data only in those three sensitive-data examples, and the removed health examples nowhere. A failure names the file, line and rule. `CONTRIBUTING.md`'s "Writing" says so.
+- **The names test** (`tests/test_example_names.py`) reads every file a project receives (`vendor.plan`), plus the README and `docs/quickstart.md`, and allows pair-drop only in the README's "Where it came from", patient data only in those three sensitive-data examples, and the removed health examples nowhere. Words are matched in any case and inside identifiers (`patient_id`), not inside other words ("impatient"). A failure names the file, line and rule. `CONTRIBUTING.md`'s "Writing" says so.
 - **For projects updating:** nothing to do.
 
 **"Add try-it links to your pull requests": `docs/previews.md`, and the quickstart's fourth next step** (#114, part of #41).
