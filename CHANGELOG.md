@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+**Every consumer reads the same try-it link: `merge-check`, the conductor and "How to try it", behind `[previews] on`** (#117, part of #41).
+
+- **The gate:** only with the profile's `[previews] on = true` does anything run the preview reader. Otherwise nothing reads it, and `merge-check`'s note about the missing try-it link never blocks and names `docs/previews.md`, as before.
+- **The `merge-check` skill** reads the link for the pull request's head with `workflow preview --fetch <n> --json` (or from files, without `gh`) into a file outside the checkout, and passes it as `merge-check --preview F`. It passes that file even when the reader fails: the file is then empty and the answer is "Not yet" (it couldn't read the preview), so a link that can't be read never reads as "Ready".
+- **The conductor's merge row and `build-ticket` §6** do the same before each `merge-check` (`.workflow/run/preview.json` and `.workflow/preview.json`), and a ticket session's briefing says which applies: a new `merge.preview` value, rendered from the profile, gives the reader's command with previews on and "pass no `--preview`" with them off.
+- **`build-ticket`'s "How to try it":** with previews on, the pull request opens saying where the link will appear; while CI runs, the session reads the preview at each check-in and, once it's `built`, edits "How to try it" to give the link and two or three things to try. A `failed` one is said plainly ("The try-it link didn't build for …") with its fix, from the previews page's "When a build fails".
+- **`workflow merge-check`'s answers:** a `failed` preview's fix now points to the previews page's "When a build fails"; a `building` one says a try-it link can take about four minutes to start building. The `none` note reads by case: previews off, as before; previews on but no `--preview` given, that this check read no try-it link and how to read it (`workflow preview`); previews on and the reader's `none`, that Cloudflare built nothing to try for that commit.
+- Docs: `docs/charter.md`'s merge section says runs pass the preview when previews are on; `docs/previews.md`'s "What to expect" says the merge check says "Not yet" while the link builds or after it fails. Tests: `tests/test_every_consumer_reads_the_preview.py`.
+- **For projects updating:** nothing to do. With previews off, nothing changes.
+
 **`workflow doctor`'s Previews group, and the `add_try_it_links` offer** (#115, part of #41).
 
 - **The Previews group,** read from the checkout, worded by experience like every line: with the profile's `[previews] on = true`, `previews.setup` is a gap when the Wrangler config (`wrangler.toml` at the project's root, read as TOML) has no `[previews]` block, or there's no Wrangler config there at all; its fix links `docs/previews.md` (step 6: by its path from the project's root when the kit is in the checkout, as in a vendored project, and by the kit's full path otherwise) and names the "missing a `previews` block" failure Cloudflare shows. With the block, it's fine. A `wrangler.json` or `wrangler.jsonc` is "can't check", with a fix naming the `"previews"` key to look for; a `wrangler.toml` that isn't TOML is too.

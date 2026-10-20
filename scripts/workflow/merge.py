@@ -221,12 +221,12 @@ REASONS = {
         "developer": ("Not yet: changes requested by {who}, not since approved or re-requested.", "Address them and re-request the review."),
     }),
     "preview_failed": Reason("preview", None, {
-        "new": ("Not yet: the try-it link didn't build.", "Ask Claude to find out why."),
-        "developer": ("Not yet: the preview build failed for {short}.", "Fix the preview build and push."),
+        "new": ("Not yet: the try-it link didn't build.", "Ask Claude to find out why: {page}'s \"When a build fails\" gives the fix for each message in the build's log."),
+        "developer": ("Not yet: the preview build failed for {short}.", "Fix the preview build ({page}'s \"When a build fails\" matches its log to a fix) and push."),
     }),
     "preview_building": Reason("preview", None, {
-        "new": ("Not yet: the try-it link is still building.", "Ask again in a few minutes."),
-        "developer": ("Not yet: {what}.", "Wait for the preview of the head, then run merge-check again."),
+        "new": ("Not yet: the try-it link is still building.", "Ask again in a few minutes: a try-it link can take about four minutes to start building."),
+        "developer": ("Not yet: {what}.", "Wait for the preview of the head (Cloudflare's builds can take about four minutes to start), then run merge-check again."),
     }),
 }
 
@@ -977,13 +977,14 @@ def _people(ctx: Context, add) -> None:
         add("changes_requested", who=_who(asked))
 
 
-def _previews_doc() -> str:
+def _previews_doc(start: bool = True) -> str:
     """Where the reader finds the page on adding try-it links: a vendored
-    project's copy by its path from the project's root, else the kit's own."""
+    project's copy by its path from the project's root, else the kit's own
+    (capitalised to open a sentence, with `start`)."""
     workflow = PREVIEWS_DOC.parents[1]
     if workflow.name == "workflow" and workflow.parent.name == ".claude":
         return "`.claude/workflow/docs/previews.md`"
-    return "The kit's `docs/previews.md`"
+    return f"{'The' if start else 'the'} kit's `docs/previews.md`"
 
 
 def _preview(ctx: Context, add) -> None:
@@ -991,13 +992,20 @@ def _preview(ctx: Context, add) -> None:
     head = ctx.pr().head
     state, url, commit = ctx.preview_status()
     if state == "none":
-        prof = ctx.profile
-        how = "" if (prof and prof.previews.on) or not PREVIEWS_DOC.exists() else f" {_previews_doc()} says how to add try-it links."
-        _note(ctx, "no_previews", f"There's no try-it link for this project: check the change another way, as the PR's \"How to try it\" says.{how}")
+        other_way = "check the change another way, as the PR's \"How to try it\" says."
+        if not (ctx.profile and ctx.profile.previews.on):
+            how = f" {_previews_doc()} says how to add try-it links." if PREVIEWS_DOC.exists() else ""
+            _note(ctx, "no_previews", f"There's no try-it link for this project: {other_way}{how}")
+        elif ctx.inputs.get("preview") is None:
+            _note(ctx, "no_previews", "Previews are on for this project, but this check read no try-it link: read it with "
+                  f"`workflow preview` for the head and give its answer as `--preview`. Until then, {other_way}")
+        else:
+            which = _short(commit) if commit else _short(head)
+            _note(ctx, "no_previews", f"There's no try-it link for {which}: Cloudflare built nothing to try for it. So {other_way}")
         return
     for_head = commit is not None and len(commit) >= 7 and head.startswith(commit.lower())
     if state == "failed" and (for_head or commit is None):
-        add("preview_failed")
+        add("preview_failed", page=_previews_doc(start=False))
     elif state == "built" and for_head:
         ctx.preview = {"state": "built", "url": url}
     elif state == "building" and (for_head or commit is None):
