@@ -110,14 +110,15 @@ def test_it_reads_the_profile_and_points_at_an_open_pull_request():
 # ---------- one screen at a time, by experience ----------
 
 
-def test_the_first_screen_is_worded_by_experience_with_do_it_now_and_not_now():
-    first = _sec("The first screen")
+def test_the_opening_choice_is_worded_by_experience_with_do_it_now_and_not_now():
+    first = _sec("The opening choice")
     assert "*New to building*" in first and "*A developer*" in first
     assert "**Do it now** (recommended) and **Not now**" in first
     assert "same steps" in first
-    assert "`AskUserQuestion`" in first
     # Handed over from check-setup, the person has just chosen.
-    assert "skip this screen" in first
+    assert "skip this choice" in first
+    # With sensitive data, Access (and its possible payment method) is said up front.
+    assert "Cloudflare Access, which may ask for a payment method" in first
 
 
 def test_the_steps_are_the_pages_seven_one_screen_at_a_time():
@@ -133,12 +134,32 @@ def test_the_steps_are_the_pages_seven_one_screen_at_a_time():
         3: ["**Build command**", "**Production**", "**Previews Base**", "empty"],
         4: ["**Create new token**", "Configured API token unavailable"],
         5: ["**Preview URLs**", "off by default"],
-        6: ["`[previews]`", "`workers_dev = false`", "`preview_urls = true`", "no live site"],
+        6: ["Wrangler lines", "no live site"],
         7: ["Cloudflare Access", "**Enable Access**"],
     }
     for n, words in names.items():
         for w in words:
             assert w in screens[n], (n, w)
+    # The Wrangler lines screen 6 and the pull requests add, defined once.
+    lines = _part()[_part().index("**The Wrangler lines**"):].split("\n\n", 1)[0]
+    for w in ("`workers_dev = false`", "`preview_urls = true`", "`[previews]`", "missing a `previews` block",
+              '`"workers_dev": false`', '`"preview_urls": true`', '`"previews": {}`'):
+        assert w in lines, w
+
+
+def test_the_part_runs_in_the_pages_order():
+    part = _part()
+    at = [part.index(h) for h in ("## What it needs", "## The opening choice", "## What's done already",
+                                  "## Before step 2", "## The steps", "## The proof pull request",
+                                  "## Its own try-it link", "## A fresh branch", "## Where try-it links end")]
+    assert at == sorted(at)
+    steps = _sec("The steps")
+    assert steps.index("**Screen 5:") < steps.index("**Screen 7:")
+
+
+def test_the_token_stays_in_cloudflare_and_no_detail_reaches_the_pull_request():
+    assert "never ask for it" in _screens()[4]
+    assert "No email address, token or other detail from Cloudflare's screens goes in it" in _sec("The proof pull request")
 
 
 def test_each_screen_waits_for_done_and_a_step_already_done_shows_as_done():
@@ -150,6 +171,25 @@ def test_each_screen_waits_for_done_and_a_step_already_done_shows_as_done():
     assert "`cloudflare-workers-and-pages`" in done
     assert "`built`" in done and "steps 1 to 5" in done
     assert "Wrangler config" in done and "step 6" in done
+    # The MCP tools read a pull request's check runs, never a commit's.
+    assert "have no list of a commit's check runs" in done
+
+
+def test_access_is_never_shown_as_done_and_a_public_link_is_said():
+    done = _sec("What's done already")
+    assert "Screen 7 is never shown as done" in done
+    assert "An `access = true` already in the profile only changes its words" in done
+    assert "that link is public right now" in done
+
+
+def test_sensitive_data_is_read_from_the_profile_file_itself():
+    need = _sec("What it needs")
+    assert "from `.claude/workflow/profile.toml` itself (`WF profile check` doesn't print them)" in need
+    assert "the template's secret-key patterns included" in need
+    # A profile refused for Access goes to screen 7.
+    assert "previews.on is true but previews.access isn't" in need and profile.ACCESS_REFUSED.startswith("previews.on is true")
+    # Beside a JSON config, Cloudflare reads the JSON one.
+    assert "Cloudflare reads the JSON one" in need
 
 
 # ---------- no live site, and the sensitive-data order ----------
@@ -162,6 +202,10 @@ def test_no_live_site_from_the_first_connect():
     assert "before step 2" in need.lower() and "merge" in need
     # A config with routes or a custom domain already has a live site: said, never hidden.
     assert "`routes`" in need and "custom domain" in need
+    # Read whether or not the repository is connected: a live site now is said plainly.
+    assert "whether or not the repository is connected" in need
+    assert "live on the internet now" in need and "public now" in need
+    assert "a `workers_dev = true` or `preview_urls = true` line changed rather than a second one added" in need
 
 
 def test_a_sensitive_project_gets_access_straight_after_step_5_before_any_pull_request():
@@ -179,6 +223,8 @@ def test_access_is_the_owners_word_and_the_kit_says_it_cant_check_it():
     # Without Access: it stops, with no previews, and the steps that keep the links off.
     assert "no previews" in seven and "stops" in seven
     assert "**Preview URLs** off" in seven and "`preview_urls = false`" in seven
+    # As the page says: the small pull request sets it back when the config says otherwise.
+    assert 'open the small pull request of "Before step 2" for it' in seven
 
 
 # ---------- the proof pull request ----------
@@ -198,6 +244,18 @@ def test_the_proof_pull_request_sets_previews_on_with_cloudflare():
     assert "`access = true` line only when screen 7 was confirmed" in pr
     assert "`WF profile check` passes" in pr
     assert "fresh from the base branch" in pr and "`workflow/try-it-links`" in pr
+    assert "never a second `[previews]` table" in pr
+
+
+def test_a_section_there_already_is_changed_in_place_and_reads():
+    # "Turn them on": the profile has `[previews]` with `on = false`.
+    template, placed = _with_previews("[previews]\non = false\n")
+    assert profile.parse(tomllib.loads(placed), KIT).previews.on is False
+    turned = placed.replace("[previews]\non = false\n", _snippet())
+    assert profile.parse(tomllib.loads(turned), KIT).previews.on is True
+    # A second table, the mistake the skill rules out, doesn't read.
+    with pytest.raises(tomllib.TOMLDecodeError):
+        tomllib.loads(placed + "\n" + _snippet())
 
 
 def _with_previews(snippet):
@@ -228,11 +286,11 @@ def test_without_access_a_sensitive_profile_is_refused_so_the_kit_writes_no_on()
 
 def test_the_proof_pull_request_carries_the_wrangler_changes_step_6_needs():
     pr = _sec("The proof pull request")
-    assert "whichever of" in pr and "is missing" in pr
-    assert "`workers_dev = false`" in pr and "`preview_urls = true`" in pr and "`[previews]`" in pr
+    assert "whichever of the Wrangler lines is missing" in pr
+    assert "`workers_dev = true` becomes `false`, `preview_urls = false` becomes `true`" in pr
     assert "above its first line that starts with `[`" in pr and "at its end" in pr
-    # A JSON config gets the JSON spellings, and doctor's line says it can't check it.
-    assert '`"previews": {}`' in pr and "`cant_check`" in pr
+    # A JSON config: doctor's line says it can't check it.
+    assert "JSON config" in pr and "`cant_check`" in pr
 
 
 def test_merging_the_proof_pull_request_is_the_owners():
@@ -254,10 +312,12 @@ def test_it_reads_its_own_preview_with_workflow_preview_and_reports_the_link_onc
     assert "`url`" in states["built"] and "report" in states["built"]
     assert "read it again" in states["building"]
     assert "**When a build fails**" in states["failed"] and "`#when-a-build-fails`" in states["failed"]
-    assert "step 5" in states["none"]
+    # The log is behind a Cloudflare sign-in: the person reads it out.
+    assert "ask the person to open it" in states["failed"] and "paste its error line" in states["failed"]
+    assert "step 5" in states["none"] and "skipped" in states["none"]
 
 
-def test_trap_3_pushes_a_fresh_branch_rather_than_retry():
+def test_an_old_build_command_gets_a_fresh_branch_not_a_retry():
     trap = _sec("A fresh branch")
     assert "Previews Base" in trap
     assert "copied when a branch is first built" in trap

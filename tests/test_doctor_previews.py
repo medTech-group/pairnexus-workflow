@@ -224,12 +224,14 @@ def test_previews_turned_off_in_the_profile_is_a_note_with_no_offer(tmp_path):
     off = _with(tmp_path, "off", OFF, {"wrangler.toml": NO_BLOCK})
     empty = _with(tmp_path, "empty", HEALTHY + "[previews]\n")
     calls = [(root, ("--strict",), env) for root in (off, empty) for env in (NEW, DEV)]
-    for r in _reports(tmp_path, calls):
+    for (root, _, _), r in zip(calls, _reports(tmp_path, calls)):
         line = _previews(r)["previews.setup"]
         assert line["status"] == "note", line
         assert "`on = true`" in line["message"] and "`on = false`" not in line["message"]
         assert line["offer"] is None
         assert "docs/previews.md" in line["fix"]
+        # The upgrade (#116) is named only where it can run: beside a Wrangler config.
+        assert ('"Add try-it links"' in line["fix"]) == (root == off), (root, line["fix"])
         assert r["strict_ok"] is True
 
 

@@ -2496,13 +2496,18 @@ def check_previews(i: Inputs) -> list[Line]:
     p = i.profile.previews
     if not p.on:
         if p.section:  # turned off on purpose: no offer, so never a nag
+            # The upgrade needs a Wrangler config, so it's named only beside one.
+            fix = Words(
+                f"To turn them on, ask Claude to \"{ADD_TRY_IT_LINKS}\": it follows {page} and turns them on in a pull request of its own.",
+                f"upgrade-setup's \"{ADD_TRY_IT_LINKS}\" turns them on ({page}).",
+            ) if configs else Words(
+                f"To turn them on, follow {page}.",
+                f"Follow {page}, then set `on = true`.",
+            )
             return [Line(g, id_, "note", Words(
                 "Try-it links aren't turned on in the kit's profile (its `[previews]` section doesn't say `on = true`).",
                 "`[previews]` doesn't say `on = true`: previews off.",
-            ), Words(
-                f"To turn them on, ask Claude to \"{ADD_TRY_IT_LINKS}\", or follow {page}.",
-                f"Follow {page}, then set `on = true`.",
-            ))]
+            ), fix)]
         if not configs:
             return []
         return [Line(g, id_, "note", Words(

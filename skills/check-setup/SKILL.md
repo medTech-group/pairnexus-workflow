@@ -120,7 +120,7 @@ Each line with an `offer` is an upgrade one tap away. Offer each one the report 
 | `restore_protection` | **Restore protection** | Load `upgrade-setup` for "Protect `main`" with the offer `restore_protection`: the same path, without the pull request that leaves solo mode, and without its opening choice |
 | `set_up_unattended_runs` | **Set up unattended runs** | Load `upgrade-setup` for "Set up unattended runs" (its offer `set_up_unattended_runs`), skipping its opening choice |
 | `require_checks` | **Require these checks** | Load `upgrade-setup` for "Require these checks" (its offer `require_checks`), from its start: it has nothing to skip, and the person ticks the checks to require on its checks screen |
-| `add_try_it_links` | **Add try-it links** (on the Previews line) | Load `upgrade-setup` for "Add try-it links" (its offer `add_try_it_links`), skipping its opening choice (its first screen): the person has just chosen |
+| `add_try_it_links` | **Add try-it links** (on the Previews line) | Load `upgrade-setup` for "Add try-it links" (its offer `add_try_it_links`), skipping its opening choice |
 
 **Protecting comes first.** When the report offers `protect_main` or `restore_protection` as well as `require_checks`, ask the protecting one first, and on yes to both, finish "Protect `main`" before starting "Require these checks": checks are only added to a protected base branch. Today's doctor offers `require_checks` only once the base branch is protected, so it never offers both in one report; the order holds for any report that does.
 
