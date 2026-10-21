@@ -225,7 +225,8 @@ def test_finishing_stops_without_a_release():
     body = _finish_step("The release exists")
     assert "releases/tags/v$VERSION" in body and "not merely a tag" in body
     assert "hasn't published yet and stop" in body
-    assert "merge_commit_sha" in body  # asked for the release pull request #N
+    assert "merge_commit_sha" in body and "has no release: stop" in body  # asked for the release pull request #N
+    assert "Given neither, ask the owner which version" in _flat(_section("Finishing the gate"))
 
 
 def test_a_closed_or_missing_sandbox_pr_stops_it():
@@ -253,12 +254,18 @@ def test_any_other_changed_file_stops_it_loudly_naming_the_files():
     assert "never touch the sandbox's `main`" in body
 
 
-def test_the_description_names_the_release_then_ci_then_a_merge_commit():
+def test_the_description_names_the_release_and_keeps_its_lists():
     description = _finish_step("The description names the release")
     assert "holds release `v$VERSION`" in description and "pulls/<sandbox PR> -f title=" in description
     assert "keeps the earlier description's `kept` files and conflicts" in description
+
+
+def test_ci_is_judged_as_the_gates_first_check():
     ci = _finish_step("CI green")
     assert "section 3's first check" in ci and "leave the sandbox pull request open" in ci
+
+
+def test_the_merge_is_a_merge_commit_pinned_to_the_head():
     assert "merge_method=merge -f sha=<head>" in _finish_step("A merge commit")
 
 
@@ -266,7 +273,8 @@ def test_the_merge_is_pinned_to_the_pushed_commit_once_the_pr_shows_it():
     """The PATCH's answer can still carry the old head: CI would read as green at once and
     the pinned merge would be refused."""
     description = _finish_step("The description names the release")
-    assert 'git -C "$SANDBOX" rev-parse HEAD' in description and "prints `<head>`" in description
+    assert 'git -C "$SANDBOX" rev-parse HEAD` prints `<head>`, the pushed commit' in description
+    assert "`<head>` is then step 2's current head" in description
     assert "read the pull request's head until it is `<head>`" in description
     assert "Skip both when step 4's first command listed nothing" in description
 
@@ -277,6 +285,8 @@ def test_matt_pococks_skills_follow_the_branchs_lock():
     assert "follow the branch's lock" in body and "records a `mattpocock_sha`" in body
     assert "without `--mattpocock <checkout> --strict-pin`" in body
     assert "candidate commit the gate tried" in body
+    assert "an earlier finish pushed and then stopped" in body  # a re-run reads the candidate elsewhere
+    assert "someone pushed to the branch since step 2: stop" in body
 
 
 def test_finishing_never_touches_main_but_by_the_merge_nor_spike():
@@ -345,5 +355,6 @@ def test_spike_says_the_gate_re_proves_rows_4_and_5():
 def test_the_changelog_note_and_no_version_bump():
     text = (KIT / "CHANGELOG.md").read_text()
     assert "(#89," in since_0110(text) and "`release-gate`" in since_0110(text)
+    assert "(#90," in since_0110(text) and "finish the release gate" in since_0110(text)
     latest_release = text.split("\n## ")[2].split()[0].lstrip("v")  # the heading after "## Unreleased"
     assert (KIT / "VERSION").read_text().strip() == latest_release

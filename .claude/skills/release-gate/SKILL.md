@@ -185,7 +185,7 @@ Then tell the owner the result in one line, with the gate report's link. To see 
 
 ## 5. Finishing the gate
 
-Asked "finish the release gate" once the release has published, for the version or for the release pull request #N. A pass left the sandbox pull request open (section 4). Finishing updates its branch from the release tag, so the sandbox records the released version rather than the candidate's commit. Then it merges it.
+Asked "finish the release gate" once the release has published, for the version or for the release pull request #N. Given neither, ask the owner which version. A pass left the sandbox pull request open (section 4). Finishing updates its branch from the release tag, so the sandbox records the released version rather than the candidate's commit. Then it merges it.
 
 - It touches the sandbox's `main` only through that pull request's merge.
 - It never touches `docs/spike.md`, which changes only when a row's status does.
@@ -194,7 +194,7 @@ Asked "finish the release gate" once the release has published, for the version 
 
 Run these steps in order. A step that stops the finish says why to the owner. A stop never merges and never touches the sandbox's `main`; before step 5 it pushes nothing.
 
-1. **The release exists.** Asked for the release pull request #N, read its merge commit and `VERSION` at it. A pull request that hasn't merged has no release:
+1. **The release exists.** Asked for the release pull request #N, read its merge commit and `VERSION` at it. A pull request that hasn't merged has no release: stop, saying so.
 
    ```bash
    gh api repos/$KIT_REPO/pulls/<N> --jq '[.merged, .merge_commit_sha] | @tsv'
@@ -219,7 +219,7 @@ Run these steps in order. A step that stops the finish says why to the owner. A 
    - it is closed and merged (`merged_at` set): the gate is finished already;
    - it is closed and not merged: a failed gate closed it (section 3), or a later version's gate run did (its closing comment names the newer commit). Say which, from its last comment. The sandbox stays as it is.
 
-   Note its number (`<sandbox PR>`) and its head. Asked for the release pull request #N, its gate report's second line names the sandbox pull request too ("tried on the sandbox in …#<n>"): if the two differ, ask the owner which one.
+   Note its number (`<sandbox PR>`) and its current head. Asked for the release pull request #N, its gate report's second line names the sandbox pull request too ("tried on the sandbox in …#<n>"): if the two differ, ask the owner which one.
 3. **The update from the tag.** As the candidate was applied (section 2, step 4), with the release tag's checkout as the kit. Add the sandbox with push access (`add_repo`, `access: "push"`). Clone its branch and the tag outside the working tree:
 
    ```bash
@@ -229,7 +229,7 @@ Run these steps in order. A step that stops the finish says why to the owner. A 
    git -C "$SANDBOX" show HEAD:.claude/workflow/lock.json | jq -r '[.kit_sha, .mattpocock_sha] | @tsv'
    ```
 
-   `git -C "$SANDBOX" rev-parse HEAD` must print the pull request's head. The lock's `kit_sha` is the candidate commit the gate tried: keep it for step 5.
+   `git -C "$SANDBOX" rev-parse HEAD` must print that current head; else someone pushed to the branch since step 2: stop, saying so. The lock's `kit_sha` is the candidate commit the gate tried: keep it for step 5. When it is already the tag's commit (`git -C "$REL" rev-parse HEAD`), an earlier finish pushed and then stopped: take the candidate from the pull request's description instead.
 
    Matt Pocock's skills follow the branch's lock, as `update-workflow` does. When it records a `mattpocock_sha`, check them out at the release's pinned SHA, the one in `$REL/.claude-plugin/marketplace.json`, and run:
 
@@ -251,15 +251,14 @@ Run these steps in order. A step that stops the finish says why to the owner. A 
    The first must list `.claude/workflow/lock.json` alone, or nothing. The second must print nothing.
 
    Otherwise **stop loudly**, and name every file that differs: each file the first lists other than the lock, and the lock when the second prints anything. Name them to the owner, and in a comment on the sandbox pull request (`gh api -X POST repos/<sandbox>/issues/<sandbox PR>/comments -F body=@<comment file>`). Push nothing, leave the sandbox pull request open, and never touch the sandbox's `main`. The release differs from what the gate tried, and what follows is the owner's call.
-5. **The description names the release.** Commit and push the branch (a plain push: it builds on the pull request's head). Skip both when step 4's first command listed nothing.
+5. **The description names the release.** Commit and push the branch (a plain push: it builds on the pull request's head). Skip both when step 4's first command listed nothing: `<head>` is then step 2's current head.
 
    ```bash
    git -C "$SANDBOX" add -A && git -C "$SANDBOX" commit -m "Update the workflow kit to release v$VERSION"
    git -C "$SANDBOX" push origin release-gate/$VERSION
-   git -C "$SANDBOX" rev-parse HEAD
    ```
 
-   The last line prints `<head>`. Then rewrite the sandbox pull request's title and description:
+   Then `git -C "$SANDBOX" rev-parse HEAD` prints `<head>`, the pushed commit. Then rewrite the sandbox pull request's title and description:
 
    ```bash
    gh api repos/<sandbox>/pulls/<sandbox PR> --jq .body
