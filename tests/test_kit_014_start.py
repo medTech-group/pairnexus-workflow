@@ -154,17 +154,17 @@ def _first(repo, prompt, session=None, env=None):
 def test_first_message_of_an_attended_session_brings_the_guided_start(repo):
     session = uuid.uuid4().hex
     assert "guided start" in _first(repo, "hi", session)
-    assert _first(repo, "let's add an export", session) == ""  # only the first message
+    assert _first(repo, "let's add an export", session) == context.REMINDER  # later: the reminder only (#222)
 
 
 def test_a_flow_request_as_first_message_still_counts_as_the_first(repo):
     (repo / ".claude/workflow/flow.md").write_text("# The flow\n")
     session = uuid.uuid4().hex
     assert "The flow" in _first(repo, "build #12", session)
-    assert "guided start" not in _first(repo, "thanks, what next?", session)
+    assert _first(repo, "thanks, what next?", session) == context.REMINDER
     session = uuid.uuid4().hex
     _first(repo, "/next", session)
-    assert "guided start" not in _first(repo, "hello", session)
+    assert _first(repo, "hello", session) == context.REMINDER
 
 
 def test_a_path_is_not_a_command(repo):
@@ -173,7 +173,7 @@ def test_a_path_is_not_a_command(repo):
 
 @pytest.mark.parametrize("prompt", ["/grill-me my pitch", "/start", "/compact"])
 def test_a_command_as_first_message_skips_it(repo, prompt):
-    assert "guided start" not in _first(repo, prompt)
+    assert _first(repo, prompt) == ""  # neither the guided start nor its reminder
 
 
 def test_a_flow_request_brings_the_flow_not_the_menu(repo):

@@ -89,23 +89,25 @@ def first_prompt(session_id: str) -> bool:
     return _first_time("start", session_id)
 
 
+def _nudged(prompt: str) -> bool:
+    """Whether a prompt may bring the guided start or its reminder: not a
+    command, and not already about the flow."""
+    return not (_SLASH.match(prompt or "") or wants_flow(prompt))
+
+
 def start_for(prompt: str, session_id: str) -> str | None:
     """The guided start's nudge, at the session's first prompt only, unless the
     prompt is a command or already about the flow."""
     if not first_prompt(session_id):
         return None
-    if _SLASH.match(prompt or "") or wants_flow(prompt):
-        return None
-    return START
+    return START if _nudged(prompt) else None
 
 
 def reminder_for(prompt: str) -> str | None:
-    """The reminder, for a prompt after the first: on the same terms as the
-    guided start's nudge, and with no marker of its own, so every later prompt
-    gets it."""
-    if _SLASH.match(prompt or "") or wants_flow(prompt):
-        return None
-    return REMINDER
+    """The reminder, on the same terms as the guided start's nudge. It keeps no
+    marker: the caller asks for it only when `start_for` gave nothing, so every
+    prompt after the first gets it."""
+    return REMINDER if _nudged(prompt) else None
 
 
 def flow_files(project: Path, kit_root: Path, addendum: str = "") -> list[Path]:

@@ -245,7 +245,7 @@ Not the ticket or conductor environment, and not a `claude/build-…` branch. Th
 | Anything vaguer: "hi", "let's work on the app", or `/start` | Looks at the project and asks "What are we working on?" |
 | A command, such as `/next` or `/grill-me` | Runs that command, with no menu |
 
-**Your later messages:** each one reminds Claude, in one line, to plan new work before starting on it. "Now also add payments to checkout" is split into items and the plan agreed first, as at the first message; a question, "build #262" or one small change still goes ahead, and your answers to Claude's questions carry on. Not after a command such as `/next`, and never in an unattended run.
+**Your later messages:** each one reminds Claude, in one line, to plan new work before starting on it. "Now also add payments to checkout" is split into items and the plan agreed first, as at the first message; a question, "build #262" or one small change still goes ahead, and your answers to Claude's questions carry on. Not on a command such as `/next`, nor on a message that brings the flow ("build #262"), and never in an unattended run.
 
 `/start` brings the menu back at any time (in plugin mode, `/pairnexus-workflow:start`). To turn the first-message menu and the later messages' reminder off for a project, set `guided_start = false` in the profile's `[project]`; `/start` still works.
 

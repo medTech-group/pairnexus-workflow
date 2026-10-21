@@ -20,6 +20,7 @@ PLAN_FIRST = (
     "don't start on it: split it into items with a path for each and agree the plan first."
 )
 RESUMED = "If the conversation was already under way (a resumed session), follow the reminder below instead."
+# Agreed word for word on #220 (decision 5), so not imported from the module.
 REMINDER = (
     "Workflow: if this message asks for new work that isn't part of the plan or ticket already agreed in this "
     "session, don't start on it: split it into items with a path for each and agree the plan first (the `start` "
@@ -27,6 +28,7 @@ REMINDER = (
     "branch, with a pull request). Replies to your own questions carry on."
 )
 FEATURE = "add a dark mode toggle to the settings page"
+GLOSSARY = (KIT / "docs/glossary.md").read_text(encoding="utf-8")
 
 
 @pytest.fixture(autouse=True)
@@ -119,7 +121,7 @@ def test_the_first_message_text_says_a_resumed_session_follows_the_reminder(repo
 
 def test_new_to_building_the_first_text_and_glossary_stay_under_the_limit(repo):
     ctx = _ctx(repo, FEATURE, uuid.uuid4().hex)  # no level anywhere: counts as new
-    assert "new to building" in ctx  # the glossary's rule is beside it
+    assert "new to building" in ctx and GLOSSARY.strip() in ctx  # the rule and the whole glossary beside it
     assert len(ctx) < LIMIT
     assert REMINDER in ctx and EXCEPTIONS in ctx and RESUMED in ctx
 

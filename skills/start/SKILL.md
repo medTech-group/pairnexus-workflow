@@ -71,7 +71,7 @@ The kit's hook brings this skill at a session's first message. Read that message
 | Anything vaguer ("hi", "let's work on the app"), or `/start` | Step 1 |
 | The conversation was already under way (a resumed session) | Follow the hook's reminder (below) instead of this table: carry on with what was agreed, and plan any new work first |
 
-**Later messages.** At each later message of an attended session, the hook adds a one-line reminder: new work that isn't part of the plan or ticket already agreed in this session is split into items with a path for each and the plan agreed first (step 2); a question, a named issue or one small change with an obvious place may go ahead (on its own branch, with a pull request); replies to your own questions carry on. Never in a ticket or conductor session, with `guided_start = false`, at a slash command, or when the message already brings the flow.
+**Later messages.** At each later message of an attended session, the hook adds a one-line reminder: new work that isn't part of the plan or ticket already agreed in this session is split into items with a path for each and the plan agreed first (step 2); a question, a named issue or one small change with an obvious place may go ahead (on its own branch, with a pull request); replies to your own questions carry on. Never in a ticket or conductor session, with `guided_start = false`, at a slash command, or when the message already brings the flow's context.
 
 ## 1. Look around, then ask
 
