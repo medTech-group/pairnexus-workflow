@@ -2,6 +2,7 @@
 
     workflow profile check
     workflow status [--issues F --prs F | --fetch] [--json]
+    workflow doctor [--claude-version VERSION] [--rulesets F] [--repo F] [--environments F] [--runs F] [--checks F] [--prs F] [--json] [--strict]      (what's set up and what isn't; changes nothing)
     workflow protection --rulesets F [--repo F] [--base BRANCH] [--json]
     workflow protection --protect --repo F [--base BRANCH] [--check NAME ...] [--json]
     workflow protection --require-checks F --check NAME [--check NAME ...] [--json]
@@ -20,7 +21,8 @@
     workflow briefing verify --file F
     workflow pr-template [--existing FILE]      (prints the file to write; exits 3 for a folder of templates)
     workflow adopt --owner LOGIN --repo OWNER/NAME --name NAME [--project DIR]      (a copy of the starter made yours)
-    workflow evidence [--suite NAME ...] [--base-count N | --base-ref BRANCH] [--fresh] [--allow-dirty]
+    workflow evidence [--suite NAME ... | --all] [--base-count N | --base-ref BRANCH] [--fresh] [--allow-dirty]
+        (with --base-ref and commands.select_suites, only the suites the changed files need)
     workflow repair
     workflow vendor install|update [--kit DIR] [--mattpocock DIR | --no-mattpocock] [--project DIR] [--adopt] [--strict-pin]
         (--kit defaults to the checkout this CLI runs from: give it when running a project's vendored copy)
@@ -35,6 +37,7 @@ import json
 import contextlib
 import os
 import re
+import shutil
 import signal
 import time
 import subprocess
@@ -47,6 +50,7 @@ _STARTED = time.monotonic()  # the guard's time budget counts from here, before 
 from . import adopt as adopt_mod
 from . import charter as charter_mod
 from . import context as context_mod
+from . import doctor as doctor_mod
 from . import estimate as estimate_mod
 from . import evidence as evidence_mod
 from . import fetch as fetch_mod
@@ -192,12 +196,15 @@ def cmd_ready(a) -> int:
 
 
 def cmd_status(a) -> int:
-    """Where the project stands, for the guided start (`skills/start`)."""
-    prof = load(required=False)
-    root = prof.root if prof else project_root()
+    """Where the project stands, for the guided start (`skills/start`), with
+    doctor's local gaps (#62): its local checks only, so no network call."""
+    root = project_root()
+    prof, error = _read_profile(root)
     issues = prs = None
     if a.fetch:
-        if not prof:
+        if error:
+            print("workflow status: the kit's profile has an error, so issues weren't read (see kit.profile)", file=sys.stderr)
+        elif not prof:
             print("workflow status: the kit isn't set up here, so issues weren't read (--fetch needs the profile's project.repo)", file=sys.stderr)
         else:
             issues, prs = _fetch(prof.repo, "issues"), _fetch(prof.repo, "pulls")
@@ -205,16 +212,27 @@ def cmd_status(a) -> int:
         if not a.issues or not a.prs:
             raise SystemExit("give both --issues and --prs (JSON files, as the GitHub API returns them), or --fetch")
         issues, prs = _json(a.issues), _json(a.prs)
+    experience = resolve_experience(root, prof.experience if prof else None)
+    try:
+        local = doctor_mod.report(
+            doctor_mod.Inputs(root=root, kit_root=KIT_ROOT, profile=prof, profile_error=error, experience=experience, gaps_only=True),
+            doctor_mod.LOCAL_CHECKS,
+        )
+    except KeyboardInterrupt:  # Ctrl-C while `python3` runs: a quiet stop, as doctor's
+        print("workflow status: stopped", file=sys.stderr)
+        return 130
     st = status_mod.snapshot(
         root,
-        prof is not None,
+        prof is not None or error is not None,
         issues,
         prs,
         repo=prof.repo if prof else None,
         areas=list(prof.areas) if prof else None,
         protected=list(prof.protected_paths) if prof else None,
         ruleset=prof.ruleset if prof else None,
-        experience=resolve_experience(root, prof.experience if prof else None),
+        experience=experience,
+        local_gaps=[ln.as_dict(local.wording) for ln in local.lines if ln.status == "gap"],
+        profile_error=error is not None,
     )
     kit = updates_mod.check(root, KIT_ROOT) if a.fetch else {"installed": updates_mod.installed(root, KIT_ROOT)}
     if a.json:
@@ -225,16 +243,57 @@ def cmd_status(a) -> int:
     return 0
 
 
-def _no_constant(name: str):
-    raise ValueError(f"{name} isn't JSON")
+def _given_file(path: str | None) -> Path | str | None:
+    """A file given to doctor: absolute, as the current directory has it;
+    `-` (standard input) and an empty path as they are."""
+    return path if path in (None, "", "-") else Path(path).absolute()
 
 
-def _finite(text: str) -> float:
-    """A JSON number as a float; one too large for a float (1e400) isn't taken as Infinity."""
-    v = float(text)
-    if v in (float("inf"), float("-inf")):
-        raise ValueError(f"the number {text[:20]} is too large")
-    return v
+def _read_profile(root: Path):
+    """(the profile, None), or (None, `profile check`'s error) for one that
+    can't be used, as doctor reads it; (None, None) with no profile."""
+    try:
+        if (root / PROFILE_PATH).exists() and not (root / PROFILE_PATH).is_file():
+            raise ProfileError(f"{PROFILE_PATH} isn't a file")  # a directory, or a pipe that would block the read
+        return load(root, required=False), None
+    except ProfileError as e:
+        return None, str(e)
+    except UnicodeDecodeError:
+        return None, f"{PROFILE_PATH} isn't UTF-8 text"
+    except (OSError, ValueError) as e:
+        return None, f"{PROFILE_PATH} can't be read ({type(e).__name__})"
+
+
+def cmd_doctor(a) -> int:
+    """What's set up and what isn't, each line with its fix (#34). Exits 0,
+    or with --strict 1 on a gap or a line it couldn't check."""
+    if [a.rulesets, a.repo, a.environments, a.runs, a.checks, a.prs].count("-") > 1:
+        print("workflow doctor: only one of --rulesets, --repo, --environments, --runs, --checks and --prs can be standard input (-)", file=sys.stderr)
+        return 2
+    root = project_root()
+    prof, error = _read_profile(root)
+    try:
+        r = doctor_mod.report(
+            doctor_mod.Inputs(
+                root=root,
+                kit_root=KIT_ROOT,
+                profile=prof,
+                profile_error=error,
+                experience=resolve_experience(root, prof.experience if prof else None),
+                claude_version=a.claude_version,
+                rulesets_file=_given_file(a.rulesets),
+                repo_file=_given_file(a.repo),
+                environments_file=_given_file(a.environments),
+                runs_file=_given_file(a.runs),
+                checks_file=_given_file(a.checks),
+                prs_file=_given_file(a.prs),
+            )
+        )
+    except KeyboardInterrupt:  # Ctrl-C: a quiet stop (what it ran is already killed)
+        print("workflow doctor: stopped", file=sys.stderr)
+        return 130
+    _out(r.as_dict() if a.json else doctor_mod.text(r, min(100, shutil.get_terminal_size((100, 24)).columns)))
+    return 1 if a.strict and not r.strict_ok() else 0
 
 
 def cmd_protection(a) -> int:
@@ -248,7 +307,7 @@ def cmd_protection(a) -> int:
         if path == "-" and sys.stdin is None:
             raise protection_mod.ProtectionError(f"the {what} file is standard input (-), and standard input is closed")
         try:
-            return json.loads(_read(path).removeprefix("\ufeff"), parse_constant=_no_constant, parse_float=_finite)
+            return protection_mod.loads(_read(path))
         except OSError as e:
             raise protection_mod.ProtectionError(f"can't read the {what} file {path}: {e.strerror or e}") from e
         except (ValueError, RecursionError) as e:  # ValueError: bad JSON, NaN, bad UTF-8, a number too long
@@ -696,6 +755,9 @@ def cmd_merge_check(a) -> int:
             # doesn't say which it is, can't go with them.
             said = f"it is #{merge_mod._clean(pr['number'])}" if pr.get("number") is not None else "it doesn't say its number"
             inputs["pr"] = (None, f"{said}, not #{a.fetch} (--fetch)")
+        if prof is not None and prof.previews.on and "preview" not in inputs:
+            # After the --pr check, so the preview reads the inputs merge-check will.
+            inputs["preview"] = _fetched_preview(prof.repo, a.fetch, inputs)
     logs: dict = {}
     if a.check_logs:
         try:
@@ -707,6 +769,43 @@ def cmd_merge_check(a) -> int:
     res = merge_mod.evaluate(inputs, prof, profile_error, asker=a.asker, level=level, charter_input=charter, logs=logs, role=role, review_rounds=a.review_rounds)
     _out(res.as_dict() if a.json else merge_mod.text(res))
     return 0
+
+
+_PREVIEW_NAMES = {"comments": "comments", "checks": "check runs", "sha": "head commit"}
+
+
+def _fetched_preview(repo: str, number: int, inputs: dict) -> tuple:
+    """#117: with previews on, `merge-check --fetch` reads the try-it link
+    itself when no --preview is given, through #41's reader, so a check that
+    left it out can't say "ready" over a link that didn't build. It reuses
+    what merge-check already read (the head, the comments, the check runs)
+    and fetches only the rest. Its answer as merge-check's `(value, None)`,
+    or `(None, why)`."""
+    ctx = merge_mod.Context(inputs, None, None)
+    unread = []
+    for n, read in (("comments", ctx.comments), ("checks", ctx.checks_ran)):
+        try:
+            read()  # as merge-check reads it: a file it can't open, or one in the wrong shape
+        except merge_mod.Unreadable:
+            unread.append(n)
+    if unread:  # already merge-check's own reasons: neither fetched again nor read
+        return None, f"its {' and '.join(_PREVIEW_NAMES[n] for n in unread)} couldn't be read, as said above"
+    have = {n: inputs[n] for n in ("comments", "checks") if n in inputs}
+    try:  # the head as merge-check reads it, in any shape its --pr takes
+        have["sha"] = (merge_mod._pr(inputs["pr"][0]).head, None) if inputs.get("pr", (None, None))[0] is not None else None
+    except merge_mod.Unreadable:
+        have["sha"] = None
+    if have["sha"] is None or not previews_mod.is_sha(have["sha"][0]):
+        del have["sha"]
+    got = {**have, **fetch_mod.preview_inputs(repo, number, have)}
+    # Each fetch error without the hint `preview_inputs` adds: its flags are `workflow preview`'s.
+    why = [f"its {_PREVIEW_NAMES[n]}: {e.removesuffix(', ' + fetch_mod._give(n))}" for n, (_, e) in got.items() if e is not None]
+    if why:
+        return None, "--fetch couldn't fetch " + "; ".join(why)
+    try:
+        return previews_mod.read(got["comments"][0], got["checks"][0], got["sha"][0]).as_dict(), None
+    except previews_mod.PreviewError as e:
+        return None, f"`workflow preview` said: {e}"
 
 
 def _sha(v: str) -> str:
@@ -842,19 +941,30 @@ def cmd_evidence(a) -> int:
     if a.base_count is not None and a.base_ref:
         print("workflow: give --base-count or --base-ref, not both", file=sys.stderr)
         return 2
+    if a.all and a.suite:
+        print("workflow: give --all or --suite, not both", file=sys.stderr)
+        return 2
     # A bad ref fails before anything runs.
     base_sha = evidence_mod.resolve_ref(root, a.base_ref) if a.base_ref else None
     dirty = evidence_mod.dirty_paths(root) if a.allow_dirty else []
-    sha, results = evidence_mod.collect(prof, root, only=a.suite, fresh=a.fresh, allow_dirty=a.allow_dirty)
+    selection = evidence_mod.Selection(None)
+    if base_sha and not a.suite and not a.all:
+        selection = evidence_mod.select(prof, root, a.base_ref, base_sha)
+    only = a.suite or selection.names
+    if only == []:  # no suite needed: nothing runs here or on the base
+        sha, results = evidence_mod.checked_head(root, a.allow_dirty), []
+    else:
+        sha, results = evidence_mod.collect(prof, root, only=only, fresh=a.fresh, allow_dirty=a.allow_dirty)
     base_count, label, problem, notes = a.base_count, "", "", []
-    if a.base_ref:
-        b = evidence_mod.base_count_from_ref(prof, root, a.base_ref, only=a.suite, fresh=a.fresh, sha=base_sha)
+    if a.base_ref and only != []:
+        b = evidence_mod.base_count_from_ref(prof, root, a.base_ref, only=only, fresh=a.fresh, sha=base_sha)
         base_count, notes = b.count, b.notes
         label = f"`{a.base_ref}` at `{b.sha[:12]}`"
         if b.problem:
             problem = f"no usable base count from {a.base_ref}: {b.problem}"
     ok, md = evidence_mod.report(
-        sha, prof, results, base_count, dirty=dirty, base_label=label, base_problem=problem, base_notes=notes
+        sha, prof, results, base_count, dirty=dirty, base_label=label, base_problem=problem, base_notes=notes,
+        selection=selection,
     )
     print(md)
     return 0 if ok else 1
@@ -939,10 +1049,13 @@ def _role_label(role: str) -> str:
     return f"{role} session (WORKFLOW_ROLE={odd!r} isn't a role, so treated as ticket)" if odd else f"{role} session"
 
 
-# The guard's time budget, under the hook's 15-second timeout: a guard still
-# deciding when it runs out is refused in ticket and conductor sessions, since a
-# hook that outlasts its timeout doesn't block.
-GUARD_BUDGET = 12.0
+# The guard's time budget, 5 seconds under the hook's 30-second timeout: a guard
+# still deciding when it runs out is refused in ticket and conductor sessions
+# with its own reason, and takes the can't-decide fallback in an attended one,
+# with time left to read the event again. A hook that outlasts its timeout
+# blocks too (`onFailure: "block"`, #57), but only on Claude Code 2.1.295 or
+# later, and with no reason given.
+GUARD_BUDGET = float(vendor_mod.GUARD_TIMEOUT - 5)
 
 
 class _OverBudget(BaseException):
@@ -1208,6 +1321,18 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_status)
 
+    s = sub.add_parser("doctor", help="what's set up and what isn't, each line with a one-sentence fix; changes nothing, exits 0 (--strict: 1 on a gap or a line it couldn't check)")
+    s.add_argument("--claude-version", metavar="VERSION", help="Claude Code's version, as `claude --version` prints it (wins over running it)")
+    s.add_argument("--rulesets", metavar="F", help="the repository's rulesets, each in full (GET repos/<repo>/rulesets/<id>), as `workflow protection` takes them (or -); else read with `gh api`")
+    s.add_argument("--repo", metavar="F", help="the repository's settings (GET repos/<repo>): the merge settings and default branch (or -); else read with `gh api`")
+    s.add_argument("--environments", metavar="F", help="the account's environments, as list_environments returns them (or -); only a cloud session can list them, so without it the Cloud line can't be checked")
+    s.add_argument("--runs", metavar="F", help="the issues labelled workflow:run, as the GitHub API returns them (or -), for whether a run has been made; else read with `gh api`")
+    s.add_argument("--checks", metavar="F", help="the base branch's latest commit's check runs and statuses (GET repos/<repo>/commits/<ref>/check-runs and .../status, every page, in one file), as `workflow protection --checks-ran` reads them (or -), for the \"Require these checks\" offer; else read with `gh api`")
+    s.add_argument("--prs", metavar="F", help="the open pull requests, as `workflow ready --prs` takes them (or -), for one that adds required checks to the profile; else read with `gh api`")
+    s.add_argument("--json", action="store_true", help="every line's group, id, status, message, fix and offer, for skills")
+    s.add_argument("--strict", action="store_true", help="exit 1 when any line is a gap or can't be checked; notes never fail it")
+    s.set_defaults(fn=cmd_doctor)
+
     s = sub.add_parser("protection", help="whether the base branch is protected, read back from GitHub's JSON, or the requests to protect it; changes nothing, sends nothing")
     mode = s.add_mutually_exclusive_group()
     mode.add_argument("--protect", action="store_true", help="print the requests that protect the base branch: the ruleset to create, and the merge settings (needs --repo)")
@@ -1293,7 +1418,7 @@ def main(argv: list[str] | None = None) -> int:
             "threads": "GraphQL's reviewThreads, with totalCount and pageInfo, every page",
         }.get(name, "as JSON from the GitHub API, every page")
         s.add_argument(f"--{name}", metavar="F", help=f"{what} ({source}); a file, or - for standard input")
-    s.add_argument("--fetch", metavar="N", type=_pr_number, help="fetch every input not given as a file for pull request N, through `gh api` (the profile's project.repo); a file given wins")
+    s.add_argument("--fetch", metavar="N", type=_pr_number, help="fetch every input not given as a file for pull request N, through `gh api` (the profile's project.repo), and with [previews] on = true read its try-it link (`workflow preview`); a file given wins")
     s.add_argument("--charter", metavar="F", help="the run's approved charter, as JSON, or the tracking issue's body (its run state holds it): the checks it waives (flow §4.1); ignored in an attended session")
     s.add_argument("--check-logs", metavar="DIR", help="a waived check's log, one file per check, named by its check run's id on the head (<id>, <id>.log or <id>.txt; the id is its job's), as `gh run view --log-failed --job <id>` gives its tail")
     s.add_argument("--asker", metavar="LOGIN", help="the GitHub login of whoever asks (the owner gets \"Ready once you've read\" for kit and CI files)")
@@ -1341,6 +1466,7 @@ def main(argv: list[str] | None = None) -> int:
 
     s = sub.add_parser("evidence")
     s.add_argument("--suite", action="append")
+    s.add_argument("--all", action="store_true", help="every suite, whatever commands.select_suites says the files need")
     s.add_argument("--base-count", type=int)
     s.add_argument("--base-ref", help="run the same suites on a worktree of this branch for the base count")
     s.add_argument("--fresh", action="store_true")

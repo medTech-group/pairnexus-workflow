@@ -7,6 +7,7 @@ This repository is the pairnexus workflow kit itself, and it is built with the k
 Work here follows the kit's flow: `.claude/workflow/flow.md` (plan → spec → build tickets → one session per ticket → review panel → merge), with this project's profile in `.claude/workflow/profile.toml` and `profile.md`. Read both before acting.
 
 - A session starts with the guided start: the `start` skill asks "What are we working on?" (or type `/start`). `/next` finds a ready ticket and builds it.
+- When the guard's hook times out and blocks a command, say so and offer to split or simplify it.
 - Build tickets are the sub-issues of the specs #32 to #42. Each has an `Area:` line and a `## Blocked by` section; the planning is on the closed map #13.
 - **Two copies of the kit.** Edit the source (`scripts/`, `skills/`, `agents/`, `templates/`, `docs/`). The vendored release in `.claude/` is what sessions run under, and is changed only by the kit's update pull request. The one exception is the kit-only `release-gate` skill in `.claude/skills/release-gate/` (#89), which never ships.
 - The release rules are in `CONTRIBUTING.md`: build tickets add changelog notes under `## Unreleased` and never bump `VERSION`.

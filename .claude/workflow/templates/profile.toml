@@ -52,6 +52,18 @@ test_file = ""                          # one test file: "{file}" is replaced
 # test_file = "npx jest {file}"
 # cwd = "web"                           # optional: run there (relative to the project root)
 
+# Optional: run only the suites a pull request's changed files need, as a CI
+# that skips jobs by path would. A command that reads the changed paths on stdin
+# (one a line) and prints suite names (one a line), or "none" when none is
+# needed. It runs in a checkout of the base branch, so a branch can't change its
+# rules. `workflow evidence --base-ref origin/<base_branch>` then runs only those,
+# on the branch and the base, and any suite whose test files changed. Every suite
+# runs when it fails or prints nothing, under ci.none, or when the change is under
+# .github/workflows/ or .claude/workflow/ or to a file the command names. Where
+# the merge rule needs the evidence (a waived check), run it with --all.
+# "" (or left out): every suite, always.
+# select_suites = "python3 scripts/ci_jobs.py --suites"
+
 # The full suite, as one or more suites. Each runs in shards so a container
 # restart loses at most one shard (`workflow evidence` resumes by head SHA).
 [[commands.suite]]
@@ -145,7 +157,7 @@ patterns = ['(?i)aws_secret_access_key\s*[:=]', '-----BEGIN [A-Z ]*PRIVATE KEY--
 # Areas ("lanes"): tickets carry `Area: <name>`; the conductor runs at most one
 # session per area unless the run state records an override. Globs are hints.
 [areas]
-# messages = ["backend/messages.py", "flutter/lib/features/sharing/**"]
+# notes = ["server/notes.py", "app/lib/notes/**"]
 
 [repair]
 # Re-runnable environment repair: SessionStart, `workflow repair`, and before

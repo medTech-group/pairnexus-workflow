@@ -10,7 +10,7 @@ The list of rule documents is `project.rules` in `profile.toml` (one source; rev
 
 What counts as sensitive here, and where it must never appear (issues, comments, PR bodies, logs, notifications, screenshots kept in the repo):
 
-- <!-- e.g. Patient data: names, dates of birth, record contents. Refer to records by id only. -->
+- <!-- e.g. Personal data: phone numbers, payment details, children's names, patients' names. Refer to people and records by id only. -->
 
 The guard checks outward GitHub posts against `[sensitive].patterns` in `profile.toml`. Patterns catch only what they describe; this list is the rule.
 
