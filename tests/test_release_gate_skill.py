@@ -7,17 +7,16 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
-import sys
 
 from conftest import KIT
 
 from workflow import vendor
 from changelog_notes import since_0110
+from test_release_gate import HEAD, _comment, _run
 
 SKILL = KIT / ".claude/skills/release-gate/SKILL.md"
 SCRIPT = KIT / ".github/scripts/release_gate.py"
-SHA = "3f2a9c01b7de" + "4" * 28
+SHA = HEAD  # the head commit of test_release_gate's release pull request
 
 # The checks, in their order. Later tickets insert theirs (#91 after the first,
 # #92 after the last) without rewording these.
@@ -40,7 +39,7 @@ def _section(title):
 
 def _examples():
     """The report section's example reports, in order: the pass, then the fail."""
-    return re.findall(r"^```markdown\n(.*?)^```", _section("The report"), re.M | re.S)
+    return re.findall(r"^```markdown\n(.*?)^```", _section("The gate report"), re.M | re.S)
 
 
 # ---------- what ships (seam 2) ----------
@@ -91,9 +90,12 @@ def test_the_update_goes_through_the_candidates_update_workflow():
 
 
 def test_a_run_on_a_newer_commit_starts_afresh_and_posts_a_new_report():
-    assert "A run on a newer commit starts afresh" in _section("The sandbox branch")
-    assert "close it" in _section("The sandbox branch")
-    assert "A run on a newer commit posts a new report**; the old ones stay" in _section("The report")
+    s = _flat(_section("The sandbox branch"))
+    assert "A run on a newer commit starts afresh" in s
+    assert "Close every open sandbox pull request whose branch starts with `release-gate/`" in s
+    # Deleted whenever it exists, or a closed pull request's branch refuses the new push.
+    assert "whenever `release-gate/$VERSION` exists on the sandbox" in s and "git/refs/heads/release-gate/$VERSION" in s
+    assert "A run on a newer commit posts a new report**; the old ones stay" in _section("The gate report")
 
 
 def test_the_checks_run_in_order_as_one_numbered_list():
@@ -116,15 +118,45 @@ def test_each_check_says_what_passes_and_its_evidence():
     assert "repository rule violation" in s and "the push's output" in s
 
 
+def test_it_refuses_a_fork_a_strange_version_and_a_pr_not_changing_version():
+    s = _flat(_section("The candidate"))
+    assert ".head.repo.full_name" in s and "isn't `$KIT_REPO` (a fork)" in s
+    assert "`VERSION` isn't three numbers" in s and "doesn't change `VERSION`" in s
+
+
+def test_the_ruleset_push_never_leaves_the_throwaway_clone():
+    """No `cd`: a shell that falls back to the session's checkout would commit there and push
+    the kit's own `main`, whose ruleset would refuse it as a false pass."""
+    s = _section("The checks, in order")
+    block = s[s.index("**The ruleset's refusal.**"):]
+    block = re.search(r"```bash\n(.*?)```", block, re.S).group(1)
+    assert "cd " not in block
+    commands = [line for line in block.splitlines() if line.strip().startswith("git ")]
+    assert commands and all('git -C "$T/clone"' in c for c in commands)
+    assert "push https://github.com/<sandbox> HEAD:main" in block
+
+
+def test_the_guards_refusal_is_for_the_base_branch_and_leaves_the_head_alone():
+    s = _flat(_section("The checks, in order"))
+    assert "pushing to the base branch `main` is never allowed" in s and "doesn't count" in s
+    assert "is still at `<head>`" in s
+
+
+def test_ci_is_judged_only_once_checks_have_run():
+    s = _flat(_section("The checks, in order"))
+    assert "at least one check has run" in s and "`success`, `neutral` or `skipped`" in s
+
+
 def test_a_failed_check_stops_the_gate_and_closes_the_sandbox_pr():
     s = _flat(_section("The checks, in order"))
     assert "A failed check stops the gate" in s and "close the sandbox pull request" in s
-    r = _flat(_section("The report"))
+    assert "A failure in this section" in _section("The sandbox branch") and "failure of the first check" in _section("The sandbox branch")
+    r = _flat(_section("The gate report"))
     assert "After a fail, it is closed" in r and "After a pass, the sandbox pull request stays open" in r
 
 
 def test_the_report_has_its_table_version_marker_and_line_last():
-    r = _flat(_section("The report"))
+    r = _flat(_section("The gate report"))
     assert "(check | result | evidence)" in r and "the Claude Code version" in r
     assert "`<!-- workflow:agent -->`" in r and "machine-readable line" in r
     assert "ordinary pull request comment" in r and "never a review comment" in r
@@ -140,24 +172,8 @@ def test_the_report_has_its_table_version_marker_and_line_last():
 # ---------- the line the skill writes is the line the check reads ----------
 
 def _check(tmp_path, report):
-    data = {
-        "pr": {"number": 7, "head": {"sha": SHA}, "body": "The 0.2.0 release.", "labels": [], "changed_files": 2},
-        "files": [{"filename": "VERSION"}, {"filename": "CHANGELOG.md"}],
-        "comments": [{"id": 1, "user": {"login": "maintainer"}, "body": report,
-                      "created_at": "2026-10-21T10:00:00Z", "html_url": "https://github.com/o/r/pull/7#issuecomment-1"}],
-        "permissions": {"maintainer": "admin"},
-    }
-    args = [sys.executable, "-I", str(SCRIPT)]
-    for name, value in data.items():
-        (tmp_path / f"{name}.json").write_text(json.dumps(value))
-        args += [f"--{name}", str(tmp_path / f"{name}.json")]
-    changelog = "# Changelog\n\n## 0.2.0\n\n- New.\n\n## 0.1.9\n\n- Old.\n"
-    for name, text in (("changelog", changelog), ("changelog-base", changelog),
-                       ("version-head", "0.2.0\n"), ("version-base", "0.1.9\n")):
-        (tmp_path / name).write_text(text)
-        args += [f"--{name}", str(tmp_path / name)]
-    p = subprocess.run(args, capture_output=True, text=True)
-    return p.returncode, p.stdout.strip()
+    """#88's script on a release pull request whose one comment is `report`, by an admin."""
+    return _run(tmp_path, comments=[_comment(report)])
 
 
 def test_the_example_pass_reads_as_a_pass_for_its_commit(tmp_path):
@@ -185,16 +201,18 @@ def test_contributing_says_how_to_run_the_gate_and_that_claude_skills_never_ship
     assert "run the release gate on PR #N" in c and "about 30 minutes" in c
     assert "ticket environment" in c and "#89 says how" not in c
     assert "own `.claude/skills/` is for maintainers and never ships" in c
+    assert "kit-only `release-gate` skill" in (KIT / "CLAUDE.md").read_text()
 
 
 def test_spike_says_the_gate_re_proves_rows_4_and_5():
     s = _flat((KIT / "docs/spike.md").read_text())
     assert "re-proves rows 4 (the push) and 5 at every release" in s
+    assert "Update it whenever one of these is checked again" not in s
     assert "changes only when a row's status does" in s
 
 
 def test_the_changelog_note_and_no_version_bump():
     text = (KIT / "CHANGELOG.md").read_text()
     assert "(#89," in since_0110(text) and "`release-gate`" in since_0110(text)
-    released = text.split("\n## ")[2].split()[0].lstrip("v")
-    assert (KIT / "VERSION").read_text().strip() == released
+    latest_release = text.split("\n## ")[2].split()[0].lstrip("v")  # the heading after "## Unreleased"
+    assert (KIT / "VERSION").read_text().strip() == latest_release
