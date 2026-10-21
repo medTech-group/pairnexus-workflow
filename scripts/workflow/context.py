@@ -24,7 +24,7 @@ from pathlib import Path
 
 _NEXT = re.compile(r"(^|\s)/(?:[\w-]+:)?next\b")
 # The commands that plan, build or run under the flow bring it in on their own:
-# the kit adds rules to what they publish (flow.md sections 2 and 3).
+# the kit adds rules to what they publish (flow.md sections 2, 3 and 5).
 _COMMAND = re.compile(
     r"(^|\s)/(?:[\w-]+:)?(?:to-spec|to-tickets|wayfinder|grill-with-docs|triage|implement(?:-spec)?|conductor)(?![\w-])"
 )
@@ -32,21 +32,22 @@ _VERB = re.compile(
     r"\b(implement\w*|build\w*|work(?:ing)?|fix\w*|spec\w*|tickets?|maps?|wayfinder|grill\w*|to-spec|to-tickets|frontier|unattended)\b",
     re.I,
 )
-# Working on a named map, or asking to start, run, resume or stop a run or the
-# conductor. Only mentioning the conductor ("why did the conductor stop?",
-# "the conductor run on Friday failed") is not asking: that message gets the
-# guided start like any other. The conductor's own wake ("conductor: wake (…)")
-# still brings the flow to its session.
+# Working on a named map, or asking to start (or restart), run, resume or stop
+# a run or the conductor. Only mentioning the conductor ("why did the conductor
+# stop?", "the conductor run on Friday failed") is not asking: that message gets
+# the guided start like any other. The conductor's own wake ("conductor: wake
+# (…)") still brings the flow to its session.
 _MAP_OR_RUN = re.compile(
     r"\bwork(?:ing)?\s+(?:on\s+)?the\s+[\w -]{1,40}\bmap\b"
-    r"|\b(?:start|restart|run|resume|stop)\s+(?:an?\s+|the\s+)?(?:unattended\s+)?(?:run|conductor)\b"
+    r"|\b(?:start|restart|run|resume|stop)[^\S\n]+(?:an?[^\S\n]+|the[^\S\n]+)?(?:unattended[^\S\n]+)?(?:run|conductor)\b"
     # "run the backlog unattended", not "can sessions run unattended?"
-    r"|\b(?:start|run)\s+(?:the|this|my|our|all|every)\s+(?:[\w-]+\s+){0,3}?unattended\b"
-    # "conductor resume" at the start of a line, the verb ending the request
-    # or followed by its object: not "conductor run on Friday never woke up".
-    r"|(?:^|\n)[^\w\n]*(?:(?:ok|okay|hey|please)[^\w\n]+)?conductor[^\w\n]+(?:please\s+)?"
-    r"(?:start|restart|run|resume|stop|wake|check[- ]?in)\b"
-    r"(?=[^\S\n]*(?:$|\n|[^\w\s]|(?:the|a|an|this|it|now|please)\b))",
+    r"|\b(?:start|run)[^\S\n]+(?:the|this|my|our|all|every)[^\S\n]+(?:[\w-]+[^\S\n]+){0,3}?unattended\b"
+    # A line that is only the command: "conductor resume", "OK conductor, stop",
+    # "conductor resume #45", or the wake. Not "conductor run: hangs at #12", and
+    # not one later in a line ("Thanks. Conductor, resume").
+    r"|(?:^|\n)[^\w\n]*(?:(?:ok|okay|hey|hi|please)[^\w\n]+)?conductor[^\w\n]+(?:please[^\S\n]+)?"
+    r"(?:start|restart|run|resume|stop|wake)"
+    r"(?:[^\S\n]+(?:please|now|the[^\S\n]+run|#\d+|\d[\w-]*))?(?:[^\S\n]+\([^)\n]*\))?[^\w\n]*(?=\n|$)",
     re.I,
 )
 _REF = re.compile(r"(?<![\w/])#\d+\b|/issues/\d+")

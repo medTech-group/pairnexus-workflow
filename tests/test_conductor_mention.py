@@ -25,6 +25,20 @@ MENTIONS = [
     "Conductor run on Friday never woke up",
     "Conductor start time is wrong in the report",
     "conductor: stop button does nothing",
+    "Conductor run's log is empty",
+    "Conductor run\u2019s report skipped #12",
+    "Conductor wake-up never fired",
+    "Conductor start-up is slow",
+    "Conductor stop/start buttons do nothing",
+    "Conductor run this morning never woke up",
+    "Conductor run now takes 3 hours",
+    "the ticket sessions didn't start\nthe conductor log is attached",
+    "Conductor run: hangs after the first ticket",
+    "conductor run - it failed on Friday",
+    "conductor start, then nothing happens",
+    "Conductor stop (the button) does nothing",
+    "Conductor: run the backlog failed at #12",
+    "conductor: wake (a ticket session finished) shows up in my session, why?",
     # Running unattended asked about, not asked for.
     "can ticket sessions run unattended?",
     "the hooks don't work unattended",
@@ -50,13 +64,18 @@ ASKS = [
     "conductor, please resume",
     "Morning.\nconductor resume",
     "conductor resume #12",
+    "conductor resume 2026-10-12-run",
+    "conductor resume 45",
+    "conductor resume please",
+    "conductor stop now",
+    "Hi, conductor resume",
     "run all the open tickets unattended",
     "/conductor",
     "/pairnexus-workflow:conductor resume",
 ]
 
 # What the conductor's wake routine sends its session (skills/conductor/SKILL.md, set-up step 12).
-WAKE = "conductor: wake (a ticket session finished)\n\n#12 merged in #40"
+WAKE = "conductor: wake (a ticket session finished)"
 
 
 @pytest.fixture(autouse=True)
@@ -86,10 +105,12 @@ def test_asking_to_run_resume_or_stop_or_working_a_map_still_gets_the_flow(repo,
     assert FLOW in later and REMINDER not in later
 
 
-def test_the_conductors_wake_still_brings_the_flow_to_its_session(repo):
+@pytest.mark.parametrize("wake", [WAKE, WAKE + "\n\n#12 merged in #40"])
+def test_the_conductors_wake_still_brings_the_flow_to_its_session(repo, wake):
     env, session = {"WORKFLOW_ROLE": "conductor"}, uuid.uuid4().hex
-    assert FLOW in _ctx(repo, WAKE, session, env)
-    assert _ctx(repo, WAKE, session, env).startswith("Follow the workflow's flow")
+    assert FLOW in _ctx(repo, wake, session, env)
+    # At a later wake, the flow's one-line reminder.
+    assert _ctx(repo, wake, session, env).startswith("Follow the workflow's flow")
 
 
 def test_a_long_run_of_whitespace_after_conductor_is_quick(repo):
