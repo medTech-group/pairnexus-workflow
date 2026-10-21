@@ -94,6 +94,7 @@ def test_every_update_workflow_command_runs_on_the_sandbox():
     s = _flat(_section("The sandbox branch"))
     assert 'Every one of its commands runs on the sandbox' in s
     assert 'CLAUDE_PROJECT_DIR="$SANDBOX"' in s and 'vendor verify --project "$SANDBOX"' in s
+    assert "with `KIT` as `$CAND`" in s
     assert "every file it names (`CLAUDE.md`, `.github/…`, the profile) is the one under `$SANDBOX`" in s
 
 
@@ -163,7 +164,7 @@ def test_ci_is_judged_only_once_checks_have_run():
 def test_a_failed_check_stops_the_gate_and_closes_the_sandbox_pr():
     s = _flat(_section("The checks, in order"))
     assert "A failed check stops the gate" in s and "close the sandbox pull request" in s
-    assert "pulls/<sandbox PR> -f state=closed" in s
+    assert "issues/<sandbox PR>/comments" in s and "pulls/<sandbox PR> -f state=closed" in s
     assert "A failure in this section" in _section("The sandbox branch") and "failure of the first check" in _section("The sandbox branch")
     r = _flat(_section("The gate report"))
     assert "After a fail, it is closed" in r and "After a pass, the sandbox pull request stays open" in r

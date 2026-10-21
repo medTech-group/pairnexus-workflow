@@ -64,7 +64,7 @@ A failure in this section (the update refuses, a conflict can't be merged, the p
 
    Then, whenever `release-gate/$VERSION` exists on the sandbox (an earlier run's, its pull request open, closed or never opened), delete it, so the new branch's push isn't refused: `gh api -X DELETE repos/<sandbox>/git/refs/heads/release-gate/$VERSION`.
 3. **Branch from the sandbox's `main`:** `git -C "$SANDBOX" checkout -b release-gate/$VERSION origin/main`.
-4. **Update the sandbox to the candidate through `update-workflow`:** follow the candidate's own `$CAND/skills/update-workflow/SKILL.md`, in the sandbox clone, with `WF` as `python3 $CAND/scripts/workflow.py`, from step 1 (where it stands) on. Four differences:
+4. **Update the sandbox to the candidate through `update-workflow`:** follow the candidate's own `$CAND/skills/update-workflow/SKILL.md`, in the sandbox clone, with `KIT` as `$CAND` (so its changelog, templates and pinned SHA are the candidate's, never this session's checkout) and `WF` as `python3 $CAND/scripts/workflow.py`, from step 1 (where it stands) on. Four differences:
    - **Every one of its commands runs on the sandbox:** prefix each with `CLAUDE_PROJECT_DIR="$SANDBOX"` and give `--project "$SANDBOX"` where the command takes it (`vendor verify`, `vendor resolve`); every file it names (`CLAUDE.md`, `.github/…`, the profile) is the one under `$SANDBOX`. Without them, a command finds this session's checkout, the kit's own, and reports on it. Step 1's check is `CLAUDE_PROJECT_DIR="$SANDBOX" python3 "$SANDBOX/.claude/workflow/bin/workflow.py" vendor verify --project "$SANDBOX"`.
    - **The update is `vendor update --kit` pointing at the candidate's checkout:**
 
