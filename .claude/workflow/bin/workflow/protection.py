@@ -37,6 +37,10 @@ NEEDED = {
     "pull_request": "pull requests not required: no active ruleset on {base} requires a pull request",
 }
 CHECKS_NOTE = "checks not required yet"
+# The kinds of what `missing` lists: no rulesets at all; a ruleset that doesn't
+# take in the base branch, or can't be told to; one that is turned off, or only
+# evaluates; a bypass list, or one that can't be read; and the rules in NEEDED.
+KINDS = ("no_rulesets", "not_on_base", "unsure", "not_active", "evaluate", "bypass", "bypass_unread", *NEEDED)
 # The merge settings: the key in GET repos/<repo>, its name in --json, its words.
 MERGE = (
     ("allow_merge_commit", "merge_commits", "merge commits"),
@@ -52,6 +56,24 @@ GLOB = set("*?[{\\")
 # What a branch name can't hold (git check-ref-format), and what would make
 # the report's first line say something else.
 NOT_IN_A_BRANCH = set(" ~^:?*[\\") | {chr(c) for c in range(0x20)} | {"\x7f", "\x85", "\u2028", "\u2029"}
+
+
+def _no_constant(name: str):
+    raise ValueError(f"{name} isn't JSON")
+
+
+def _finite(text: str) -> float:
+    """A JSON number as a float; one too large for a float (1e400) isn't taken as Infinity."""
+    v = float(text)
+    if v in (float("inf"), float("-inf")):
+        raise ValueError(f"the number {text[:20]} is too large")
+    return v
+
+
+def loads(text: str):
+    """GitHub's JSON as this command reads it: a byte-order mark left out,
+    and `NaN`, `Infinity` and numbers too large for a float refused (ValueError)."""
+    return json.loads(text.removeprefix("\ufeff"), parse_constant=_no_constant, parse_float=_finite)
 
 
 def quote(s: str) -> str:
@@ -103,6 +125,11 @@ class Report:
     # Active rulesets it can't tell target the base branch, so their required
     # checks aren't in `required_checks` (merge-check won't say "Ready" then).
     unsure: list[str] = field(default_factory=list)
+    # What kind each of `missing` is, in its order (`KINDS`), for `workflow
+    # doctor` to word each one; and the active rulesets that target the base
+    # branch, whose other rules doctor reads. Neither is in --json.
+    kinds: list[str] = field(default_factory=list)
+    effective: list[dict] = field(default_factory=list)
 
     def as_dict(self) -> dict:
         return {
@@ -268,34 +295,34 @@ def check(rulesets, base: str, settings=None, base_if_unknown: bool = False) -> 
     if default is None and base_if_unknown and not excluded:
         default, settings = base, settings if settings is not None else {}
     if not rulesets:
-        return Report(base, False, [f"no rulesets: nothing on GitHub protects {base}"], [], merge)
+        return Report(base, False, [f"no rulesets: nothing on GitHub protects {base}"], [], merge, kinds=["no_rulesets"])
 
-    ignored: list[str] = []
+    ignored: list[tuple[str, str]] = []
     unsure: list[str] = []
     effective: list[tuple[str, dict]] = []
     for name, rs in zip(names, rulesets):
         off_target = _targets(rs, base, default, settings is not None)
         if off_target and off_target.startswith("doesn't target"):
-            ignored.append(f"{name} {off_target}")
+            ignored.append(("not_on_base", f"{name} {off_target}"))
         elif rs["enforcement"] == "evaluate":
-            ignored.append(f"{name} is evaluate only: it reports but doesn't block")
+            ignored.append(("evaluate", f"{name} is evaluate only: it reports but doesn't block"))
         elif rs["enforcement"] != "active":
-            ignored.append(f"{name} is not active (enforcement {quote(rs['enforcement'])})")
+            ignored.append(("not_active", f"{name} is not active (enforcement {quote(rs['enforcement'])})"))
         elif off_target:
-            ignored.append(f"{name} {off_target}")
+            ignored.append(("unsure", f"{name} {off_target}"))
             unsure.append(f"{name} {off_target}")
         else:
             effective.append((name, rs))
 
-    problems: list[str] = []
+    problems: list[tuple[str, str]] = []
     for name, rs in effective:
         if "bypass_actors" not in rs:
-            problems.append(f"{name}: its bypass list can't be read (it needs admin access), so nobody can tell who may skip its rules")
+            problems.append(("bypass_unread", f"{name}: its bypass list can't be read (it needs admin access), so nobody can tell who may skip its rules"))
         elif rs["bypass_actors"]:
             n = len(rs["bypass_actors"])
-            problems.append(f"{name} has a bypass list ({n} {'actor' if n == 1 else 'actors'}): they can skip its rules; empty it")
+            problems.append(("bypass", f"{name} has a bypass list ({n} {'actor' if n == 1 else 'actors'}): they can skip its rules; empty it"))
     have = {r["type"] for _, rs in effective for r in rs["rules"]}
-    problems += [words.format(base=base) for rule, words in NEEDED.items() if rule not in have]
+    problems += [(rule, words.format(base=base)) for rule, words in NEEDED.items() if rule not in have]
 
     checks: list[str] = []
     for _, rs in effective:
@@ -306,7 +333,8 @@ def check(rulesets, base: str, settings=None, base_if_unknown: bool = False) -> 
                         checks.append(c["context"])
 
     protected = not problems
-    return Report(base, protected, [] if protected else ignored + problems, checks, merge, unsure)
+    found = [] if protected else ignored + problems
+    return Report(base, protected, [m for _, m in found], checks, merge, unsure, [k for k, _ in found], [rs for _, rs in effective])
 
 
 def text(rep: Report) -> str:

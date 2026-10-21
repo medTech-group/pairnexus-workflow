@@ -1,6 +1,6 @@
 ---
 name: upgrade-setup
-description: Move a project from solo mode to the full set-up, one upgrade at a time. "Protect `main`" makes a ruleset and the merge settings on the base branch with `gh` after one confirmation on the owner's own computer, or guides the person click by click to them everywhere else, reads them back with `workflow protection`, and opens the pull request that leaves solo mode. "Require these checks", once CI has run on the base branch, adds the ticked checks that ran to the ruleset protecting it (with "up to date" on) and to the profile's `ci.required_checks`. "Set up unattended runs" asks the questions only runs need, guides the two cloud environments, and writes the answers to the profile in one pull request. Use when the person asks to protect main, to require the checks, or to set up unattended runs, or picks one where the kit offers it.
+description: Move a project from solo mode to the full set-up, one upgrade at a time. "Protect `main`" makes a ruleset and the merge settings on the base branch with `gh` after one confirmation on the owner's own computer, or guides the person click by click to them everywhere else, reads them back with `workflow protection`, and opens the pull request that leaves solo mode. "Require these checks", once CI has run on the base branch, adds the ticked checks that ran to the ruleset protecting it (with "up to date" on) and to the profile's `ci.required_checks`. "Set up unattended runs" asks the questions only runs need, guides the two cloud environments, and writes the answers to the profile in one pull request. "Add try-it links" takes the owner through Cloudflare one screen at a time, then opens a pull request that turns previews on in the profile and reports its own try-it link once it has built. Use when the person asks to protect main, to require the checks, to set up unattended runs or to add try-it links, or picks one where the kit offers it.
 ---
 
 # Upgrade the set-up
@@ -9,9 +9,10 @@ A project set up in solo mode (`project.ruleset = false`) works attended from th
 
 - **"Protect `main`"**: a ruleset on the base branch and the merge settings, then a pull request that sets `ruleset = true`. The first part of this file.
 - **"Set up unattended runs"**: the questions only runs need, the two cloud environments, and a pull request that writes the answers to the profile. The second part.
-- **"Require these checks"**: once CI has run on the base branch, the checks that ran, ticked, added to the ruleset protecting it and listed in the profile's `ci.required_checks`, so failing tests stop merges and the two agree. The third part, last.
+- **"Require these checks"**: once CI has run on the base branch, the checks that ran, ticked, added to the ruleset protecting it and listed in the profile's `ci.required_checks`, so failing tests stop merges and the two agree. The third part.
+- **"Add try-it links"**: a try-it link on each pull request, from Cloudflare, with no live site: the steps in Cloudflare one screen at a time, then a pull request that turns previews on and shows its own link working. The fourth part, last.
 
-"Where things are" and "When it's offered" are shared by all three.
+"Where things are" and "When it's offered" are shared by all four.
 
 Below, `main` stands for the profile's `project.base_branch`: use its real name in everything you show.
 
@@ -29,11 +30,11 @@ The read-back needs GitHub's own JSON: the repository (`GET repos/<repo>`, with 
 
 **Choices** use the `AskUserQuestion` tool, the recommended option first; without it (a headless session), the same choices as a numbered list.
 
-**Only in attended sessions.** When `WORKFLOW_ROLE` is `ticket`, don't run it or offer it: there's nobody to click. Say in the ticket's report that the base branch isn't protected, and carry on. The conductor runs it only at its kick-off, with the owner there.
+**Only in attended sessions.** When `WORKFLOW_ROLE` is `ticket`, don't run it or offer it: there's nobody to click. For "Protect `main`", say in the ticket's report that the base branch isn't protected, and carry on. The conductor runs it only at its kick-off, with the owner there, and never runs "Require these checks": its kick-off sends the owner to an attended session for that (the `conductor` skill). It never runs "Add try-it links" either.
 
 ## When it's offered
 
-Offered, never as a nag, at these moments only (`require_checks` has its own, narrower rule, below). Each comes with "Not now", and "Not now" ends it for that moment:
+Offered, never as a nag, at these moments only (`require_checks` and `add_try_it_links` have their own, narrower rules, below). Each comes with "Not now", and "Not now" ends it for that moment:
 - when the person asks ("protect main", "set up the ruleset", "set up unattended runs", "require the checks");
 - right after the set-up pull request merges, "Protect `main`" once (set-up's own offer), and both in its body as optional next steps;
 - in the guard's solo-mode refusal, once it offers "Protect `main`";
@@ -45,6 +46,7 @@ The offers have names, which `workflow doctor` and the other skills use:
 - **`restore_protection`**: the profile says `ruleset = true` but the read-back says the base branch isn't protected (the protection was removed or weakened). The same path, without the pull request that leaves solo mode: the profile is already right.
 - **`require_checks`**: CI has run on the base branch and some checks that ran aren't required yet (`WF protection --checks-ran … --json` gives a non-empty `checks`). The third path, "Require these checks". Unlike the others it is offered only through `workflow doctor`'s `require_checks` offer (which `check-setup` and the conductor's pre-flight show), or when the person asks ("require the checks", "make failing tests block merges"). Never anywhere else: not after set-up, not in the guard's refusals.
 - **`set_up_unattended_runs`**: the person wants Claude to work while nobody is watching, and the profile names no environments yet (`run.ticket_environment` empty). The second path, "Set up unattended runs".
+- **`add_try_it_links`**: the project has a Wrangler config and no `[previews]` section in the profile. The fourth path, "Add try-it links". Like `require_checks` it has its own, narrower rule: offered only from the quickstart's next steps, from `workflow doctor`'s `add_try_it_links` offer (which `check-setup` shows), and when the person asks ("add try-it links", "set up previews"). Never at session start, never as a nag, and never to a project whose `[previews]` section turned them off: doctor makes no offer there.
 
 # Protect `main`
 
@@ -323,7 +325,7 @@ When `solo_mode` is `true` (`ruleset = false`), nothing is changed and no rulese
 
 ## Which way, for the checks
 
-The same four conditions as "Which way", read the same way. All four, and a repository's own ruleset chosen in "Which ruleset": the update with `gh`. A cloud session, a conductor session, `gh` missing or signed out, or an admin claimed with "I'm an admin: go on": the clicks. Not an admin: the message for the owner.
+The same four conditions as "Which way", read the same way. All four, and a repository's own ruleset chosen in "Which ruleset": the update with `gh`. A cloud session, `gh` missing or signed out, or an admin claimed with "I'm an admin: go on": the clicks. A conductor session never gets here ("Only in attended sessions"). Not an admin: the message for the owner.
 
 ## The checks screen
 
@@ -399,3 +401,126 @@ Say where it stands in one line:
 - "<what was done>; <what's left>: the clicks for it are above." after a failure;
 - "Nothing was changed: switch the permission mode and try again." after a refusal naming the mode;
 - or, not an admin, "The message for the owner is above."
+
+# Add try-it links
+
+The fourth path (offer `add_try_it_links`). It takes a project whose app runs on Cloudflare Workers to one where each pull request gets a try-it link: a working copy of the change, to try before merging it. It follows the steps of the kit's page on try-it links, one screen at a time (screen N is the page's step N), then opens a pull request that turns previews on in the profile and reads that pull request's own link to show it working. Connecting Cloudflare this way puts no live site on the internet.
+
+**The page** is `.claude/workflow/docs/previews.md` (vendored) or the kit's `docs/previews.md` (plugin), "Add try-it links to your pull requests". Its steps (`#the-steps`) are the steps here, and its table of build-log messages (`#when-a-build-fails`) has the fix for each. Link it from the screens, so the person can read ahead.
+
+**It never signs in to Cloudflare,** connects anything or changes a Cloudflare setting: the person clicks in Cloudflare's dashboard and says "Done", and this path writes only the pull requests. What Cloudflare holds can't be read from here, except what its app reports on the repository (its check and its bot's comment on a pull request), which `WF preview` reads. Its build logs are behind a Cloudflare sign-in too: the person reads them.
+
+**The Wrangler lines** are the three settings step 6 of the page gives: `workers_dev = false` (the Worker's own public address off, so no live site), `preview_urls = true` (the preview links on: each deploy of the base branch sets **Preview URLs** from this line, whatever the dashboard says) and a `[previews]` block (even empty: without it Cloudflare's preview build fails with "missing a `previews` block"). In a `wrangler.json` or `wrangler.jsonc` they are `"workers_dev": false`, `"preview_urls": true` and `"previews": {}`.
+
+**The conductor never runs it,** and neither does a ticket session ("Only in attended sessions"): there is nobody to click.
+
+## What it needs
+
+Read these first, before any screen:
+
+- **A Wrangler config** at the project's root: `wrangler.toml`, `wrangler.json` or `wrangler.jsonc`, the file that tells Cloudflare how to run the app on Cloudflare Workers. Without one, say plainly that try-it links need an app that runs on Cloudflare Workers, and this project has none yet, then stop: nothing is changed. With a `wrangler.toml` and a JSON one beside it, Cloudflare reads the JSON one: every change below goes there, and say so.
+- **Sensitive data:** read `[sensitive]` `patterns` from `.claude/workflow/profile.toml` itself (`WF profile check` doesn't print them). The project has sensitive data when they aren't empty, the template's secret-key patterns included, so most projects do: say so when it comes up, since it means screen 7.
+- **The profile's `[previews]`:** whether the section is there at all, read from `profile.toml` itself, and its `on` and `access` through `WF profile check`, which prints them the same with or without a section:
+  - `on = true` already: say try-it links are on, and read the Wrangler config from the checkout (doctor's `previews.setup` line can't check a JSON one). With sensitive data and a `preview_urls` that isn't `true`, the links may have been turned off for want of Access: ask screen 5 (Preview URLs on) and then screen 7 first, never turning them on from the profile's old `access = true`, and on **I can't turn it on** take the route below for a refused profile. When it lacks any of the Wrangler lines, open a pull request adding only the missing Wrangler lines (as the proof pull request's step 3 does); the person merges it, since merging it deploys the base branch. Then read its link as "Its own try-it link" does. Otherwise offer to read an open pull request's link, and stop: there are no steps left.
+  - A `[previews]` section that doesn't say `on = true`: they were turned off on purpose (doctor makes no offer there, so the person asked). Say so, and ask once, with **Turn them on** and **Not now**, before going on.
+  - `WF profile check` refuses the profile because `on = true` lacks `access = true` (its error starts "previews.on is true but previews.access isn't"): go straight to screen 7, after screen 5 when Preview URLs were turned off (as with an open `workflow/no-previews` pull request, below). On **Access is on**, a pull request sets `access = true`, and `preview_urls = true` in the Wrangler config unless it says so already, as doctor's fix says; then "Its own try-it link" for it. On **I can't turn it on**, as screen 7's says: Preview URLs off in the dashboard first, then one pull request (from `workflow/no-previews`) setting `on = false`, taking out any `access = true` (the owner has just said Access isn't on), and setting `preview_urls = false` in the Wrangler config unless it says so already (a config with no `preview_urls` line doesn't say so: add the line, since its default follows `workers_dev`), since `on = false` alone leaves the links public. The owner merges it (a protected path), and the path ends with the "No previews" line, naming it.
+- **An open pull request of this path** (from `workflow/try-it-links`, `workflow/no-live-site` or `workflow/no-previews`, or any open pull request changing `[previews]` in the profile or the Wrangler lines in the config): point at it rather than opening another, and pick up where it is: "Its own try-it link" for the first, "Before step 2" for the second, and for the third, screen 5 and then screen 7: only when screen 7's **Access is on** opens its `access = true` pull request, close the `workflow/no-previews` one with a comment naming the new one; on **Not now** or **I can't turn it on**, leave it open and end with the "No previews" line naming it.
+- **The level:** `WF status --json` gives `experience.wording_level` (`new` or `developer`; `new` when unknown). It changes only the words: both levels get the same steps, the same pull request and the same link.
+
+## The opening choice
+
+One choice:
+
+- *New to building*: "Add try-it links: each pull request then gets a link that opens a working copy of the change, so you can try it before you merge it. It takes a free Cloudflare account and a few minutes of clicks, which I guide one at a time." With sensitive data, add: "Your project has sensitive data, so the links go behind Cloudflare Access, which may ask for a payment method." Then **Do it now** (recommended) and **Not now**.
+- *A developer*: the seven steps, a line each (Access among them with sensitive data), and what the pull request changes (the profile's `[previews]` section, and whichever Wrangler lines are missing), with the same **Do it now** (recommended) and **Not now**.
+
+Both get the same steps. **Not now** ends it: nothing is changed. When `check-setup` hands the offer over, the person has just chosen: skip this choice, but with sensitive data still say its Access sentence before screen 1, since doctor's note doesn't.
+
+## What's done already
+
+Before screen 1, read what can be read, so a step already done is shown as done, with **Continue**, instead of its clicks:
+
+- **Connected:** Cloudflare's app (`cloudflare-workers-and-pages`) already reports on this repository: a check run named "Workers Builds: …" from it on the base branch's latest commit (`gh api --paginate --slurp 'repos/<repo>/commits/<base>/check-runs?per_page=100' > .workflow/check-runs.json`, as the automatic path reads them) or on an open pull request's head, or its bot's comment on an open pull request. The GitHub MCP tools read a pull request's head check runs and its comments, but have no list of a commit's check runs. Then screens 1 and 2 are done.
+- **Built:** an open pull request's link reads `built` (`WF preview`, as "Its own try-it link" reads it). Then screens 1 to 5 are done: the Build command, the token and Preview URLs work. With sensitive data and no Access confirmed yet, that link is public right now: say so plainly. "Before step 2" still comes first when the base branch's config needs it, then screen 5 again when Preview URLs were turned off for it, and screen 7.
+- **The Wrangler config,** read from the checkout: which of the Wrangler lines it has already, for screen 6.
+
+A step shown as done gets one line ("Screen 2, connecting the repository: done, since Cloudflare already reports on it.") with **Continue**, and "Something's different" for a person who knows otherwise. A step that can't be read from here gets its screen, and a person who did it already says "Done". Screen 7 is never shown as done: with sensitive data it is always asked, since only the owner's answer today counts. An `access = true` already in the profile only changes its words ("You said before that Access guards the links: is it still on?").
+
+## Before step 2: no live site first
+
+The page's "Before step 2". Connecting the repository makes Cloudflare deploy the base branch at once, and each deploy sets the Worker's public address and its preview links from the base branch's Wrangler config. So the config on the base branch must say `workers_dev = false`, and, for a project with sensitive data, `preview_urls = false` until screen 7 is confirmed. Read it before screen 2, whether or not the repository is connected:
+
+- When it says so, go on.
+- When it doesn't, and the repository isn't connected yet: a small pull request first, before screen 2. When it is connected already: say plainly that the app's own address is live on the internet now (`workers_dev` isn't `false`), or that its preview links are public now (sensitive data and `preview_urls` isn't `false`), and the same small pull request comes first, before any other screen. With sensitive data, the person first turns **Preview URLs** off in the dashboard (screen 5's setting), since pushing the small pull request's branch builds one more preview, public while they are on. Screen 5 is then no longer done: it is asked again after the small pull request merges, just before screen 7.
+- **The small pull request,** fresh from the base branch (such as `workflow/no-live-site`): the page's "do step 6 first, with those values", so the Wrangler lines, with `preview_urls = false` in place of `true` for a project with sensitive data, placed and changed as the proof pull request's step 3 says. Say what it does in plain words: it keeps the app off the internet (and, with sensitive data, its preview links too). The person merges it (merging it deploys the base branch): wait for "Merged", then read the base branch's config again. When they won't merge it now, stop there, with its line in "Where try-it links end" (after **Not now** or **I can't turn it on** on screen 7, that screen's line instead).
+- A config with `routes` or a custom domain already has a live site: say so plainly, and that connecting deploys the base branch to it. Offer **Go on** and **Not now**. This path never removes a route.
+
+## The steps
+
+One screen at a time, with `AskUserQuestion`, in the page's order (`#the-steps`), each with the link it needs, worded for the person's level: *new to building*, plain sentences and the page's step to read; *a developer*, the setting's name and where it is. After each, wait for "Done" (or "Something's different", then help with what they see). A step already done is shown as done (above). Each screen has **Not now** too: it stops the path where it is, and asking again later reads what's done and picks it up there.
+
+With sensitive data, screen 7 comes straight after screen 5, before any pull request is pushed: until Access is on, each preview is public. Without sensitive data, screen 7 is left out.
+
+**Screen 1: a Cloudflare account.** Sign up at `https://dash.cloudflare.com/sign-up`. The free plan is enough.
+
+**Screen 2: connect the repository through Cloudflare's GitHub app.** In Cloudflare, **Workers & Pages**: create an application, and import a repository from GitHub. When GitHub asks where to install Cloudflare's app, choose **Only select repositories** and pick this repository alone, so Cloudflare sees nothing else.
+
+**Screen 3: an empty Build command.** In the Worker's **Settings**, under **Build**, clear the **Build command** box in the build settings for **Production** and for **Previews Base**, and save both. A new project puts `npx wrangler deploy` there, which makes each preview try to deploy the live site instead, and fail. Each branch copies "Previews Base" when it is first built ("A fresh branch", below).
+
+**Screen 4: a new build token.** Where the build settings ask for an API token, choose **Create new token**. An old or reused token fails with "Configured API token unavailable". The token stays in Cloudflare: never ask for it, and if the person pastes it here, say to delete that token and make a new one.
+
+**Screen 5: Preview URLs on.** They are off by default: in the Worker's **Settings**, under **Domains & Routes**, enable **Preview URLs**. While they are off, builds run but no link arrives.
+
+**Screen 6: the Wrangler config, and no live site.** Nothing to click: the kit adds the Wrangler lines that are missing in the proof pull request, reading the config. Say which it will add or change, and why each (from "The Wrangler lines", above). Then **Continue**.
+
+**Screen 7: Cloudflare Access, for sensitive data.** A preview link is public: anyone with it can open it. In the Worker's **Domains & Routes**, the **Preview URLs** row says "Anyone with this URL can visit", beside an **Enable Access** link: click it, and allow only the people who should see previews, such as the owner's own email address. Cloudflare may ask for a payment method, even on its free plan. Then, on the same screen and in plain words for both levels: "The kit can't check Access itself: it relies on your word, which the pull request records as `access = true` in the profile." The choices are **Access is on**, **I can't turn it on** and **Not now**:
+- **Not now** here, unlike other screens, keeps the links off just as **I can't turn it on** does, since until Access is on each branch pushed gets a public link: first the person turns **Preview URLs** off in the dashboard (screen 5's setting) whenever they may be on, whether screen 5 turned them on or they were on already (a built link, a refused profile); wait for "Done". Then, when the base branch's Wrangler config doesn't say `preview_urls = false` (a config with no `preview_urls` line doesn't), the small pull request of "Before step 2" for it, since each deploy of the base branch resets the dashboard from the config; when an open pull request of this path already sets it (such as `workflow/no-previews`), name that one rather than opening another. Then the path stops with its "Stopped before screen 7" line, or, with a `workflow/no-previews` pull request open, the "No previews" line naming it. If the person won't turn Preview URLs off, say plainly that each branch pushed gets a public link until they do, or until Access is on.
+- **Access is on** is the owner's confirmation: go on to the proof pull request, with `access = true`. Only their answer counts: never assume it from a screen they didn't confirm.
+- **I can't turn it on:** this project gets no previews: the path stops, and opens no proof pull request. What keeps the links off: turn **Preview URLs** off in the dashboard (screen 5) first, since Cloudflare makes a public link for each branch while they are on; then the Wrangler config keeps `preview_urls = false`. When it doesn't say so, open the small pull request of "Before step 2" for it, as the page says.
+
+## The proof pull request
+
+Once the steps are done (and, with sensitive data, screen 7 confirmed): one pull request that turns previews on and carries the Wrangler lines still missing.
+
+1. A branch fresh from the base branch, such as `workflow/try-it-links`, made only now, after screen 3: a branch copies "Previews Base" when it is first built, so one made earlier could keep the old Build command.
+2. In `.claude/workflow/profile.toml`, a `[previews]` table, in place of the template's commented `# [previews]` lines (the comment line above them stays), or at the end of the file when they aren't there:
+
+   ```toml
+   [previews]
+   provider = "cloudflare"
+   on = true
+   access = true
+   ```
+
+   The `access = true` line only when screen 7 was confirmed; without sensitive data, leave it out. When the profile has a `[previews]` section already, change its lines in place: never a second `[previews]` table. Change nothing else in the profile.
+3. In the Wrangler config, whichever of the Wrangler lines is missing, a line saying otherwise changed rather than a second one added (`workers_dev = true` becomes `false`, `preview_urls = false` becomes `true`), placed as the page's step 6 says: the two settings near the top, above its first line that starts with `[`, and `[previews]` at its end, since a setting below a line in square brackets belongs to that block. Only the top-level settings count: a `workers_dev` under an `[env.…]` table is another environment's. In a JSON config, say that doctor's `previews.setup` line is `cant_check` once this merges, since doctor reads only a `wrangler.toml`. Change nothing else.
+4. `WF profile check` passes. It refuses `on = true` without `access = true` in a profile with `[sensitive]` patterns, so a project with sensitive data never gets here without screen 7.
+5. Push the branch and open the pull request. Its body: what it turns on, which steps were done (and which were done already), and, with sensitive data, that the owner confirmed Cloudflare Access guards the preview links, which the kit can't check. No email address, token or other detail from Cloudflare's screens goes in it.
+
+The profile is a protected path, so merging it is the owner's. Never merge it, or enable auto-merge on it, yourself. Its own link works before it merges; once it merges, every session knows previews are on.
+
+## Its own try-it link
+
+Read the proof pull request's own preview with the kit's reader: `WF preview --fetch <n> --json` where `gh api` is signed in, or else `WF preview --comments F --checks F --sha <head> --json`, given the pull request's issue comments, its head commit's check runs and its head SHA, each as GitHub's JSON (the GitHub MCP tools give a pull request's comments and its head's check runs). First say that the first build can take about four minutes to start. The reader prints its `state`, `url` and `commit`:
+
+- **`built`**: report the link, its `url`: "#<n>'s try-it link: <url>. Open it to try this pull request's copy of your app." Then "Where try-it links end".
+- **`building`**: still building, or not started yet. Wait a minute or two and read it again, for up to about ten minutes; then say it is still building, and offer **Check again** and **Not now**.
+- **`failed`**: the build's log is behind a Cloudflare sign-in, so ask the person to open it (**View logs** in Cloudflare's comment on the pull request, or the check's **Details**) and say or paste its error line. Then say the failure in plain words with its fix, from the page's **When a build fails** (`#when-a-build-fails`). A Build command that isn't empty is "A fresh branch", below. A fix in the code goes on the proof pull request's branch.
+- **`none`**: with no `commit`, Cloudflare hasn't reported on the pull request yet: read it again as for `building`, and after about ten minutes say the repository may not be connected (screen 2). With a `commit`, Cloudflare built nothing to try for it: its build was skipped, or Preview URLs are off (screen 5). That build is done, so once Preview URLs are on, push a new commit to the proof pull request's branch (a comment line in the Wrangler config will do) and read it again.
+- **Exit 1 or 2** (an input couldn't be read, or is missing): say what the reader printed, and read it again once. When the check runs or comments still can't be read from here, say so, and ask the person to look at the pull request on GitHub for Cloudflare's comment and its **Branch Preview URL**.
+
+## A fresh branch
+
+The page's trap: "Previews Base" is copied when a branch is first built, and the branch keeps its copy. So when a preview still runs the old Build command after screen 3 (its log says the name in the Wrangler config "must match the name of your Worker", though the names match), push a fresh branch rather than retry: a retried build, or a new commit on the same branch, runs the old command again. First check screen 3 is done (the box empty on **Previews Base**). Then make a new branch from the proof pull request's head (such as `workflow/try-it-links-2`), push it, open a new pull request from it with the same body, and close the old one with a comment naming the new one. Read the new pull request's link as above.
+
+## Where try-it links end
+
+Say where it stands in one line:
+- "Try-it links work: #<n>'s is <url>. Merge #<n> when you're ready, and every pull request gets one.";
+- "#<n> is open, and its try-it link is still building: ask me to check it again.";
+- "#<n>'s try-it link didn't build: <the fix>.";
+- "#<n> built nothing to try: turn Preview URLs on (screen 5), and I'll push a new commit to build it again.";
+- "No previews: this project has sensitive data, and Cloudflare Access isn't on." (adding "#<n> keeps the preview links off: merge it when you're ready." while the small pull request of "Before step 2", or the refused profile's `on = false` one, is still open, or "Preview URLs stay off." once it has merged);
+- "Merge #<n> first: it keeps your app off the internet. Then ask me to add try-it links again." after the small pull request of "Before step 2";
+- "Nothing was changed." after **Not now** at the opening choice, or "Stopped before screen <s>: ask me to add try-it links again to go on." after **Not now** later (before screen 7, adding "Preview URLs stay off until Access is on." once the dashboard and the base branch's config both say off, or "Merge #<pr> to keep them off." while the pull request that sets `preview_urls = false` waits);
+- "Try-it links need an app that runs on Cloudflare Workers: this project has no Wrangler config."

@@ -44,7 +44,7 @@ class ProfileError(ValueError):
 # instead of being quietly ignored. None: any key (area names).
 ALLOWED: dict[str, set[str] | None] = {
     "project": {"name", "repo", "base_branch", "rules", "flow_addendum", "owner", "guided_start", "ruleset", "experience"},
-    "commands": {"setup", "setup_check", "typecheck", "test_file", "suite", "package"},
+    "commands": {"setup", "setup_check", "typecheck", "test_file", "suite", "package", "select_suites"},
     "ci": {"required_checks", "killed_markers", "none", "path_filtered"},
     "ui": {"explorer", "start", "sizes", "notes"},
     "guard": {"protected_paths", "deploy_commands", "test_paths", "allow_new_skips"},
@@ -127,9 +127,15 @@ class Previews:
     provider: str = "cloudflare"
     on: bool = False
     access: bool = False
+    section: bool = False  # the profile has a [previews] section: off by choice, not never set up
 
 
-def _previews(raw: dict, sensitive: bool) -> Previews:
+# How `profile check`'s error begins for a sensitive project's previews
+# without Access, which doctor's Previews line repeats in plain words.
+ACCESS_REFUSED = "previews.on is true but previews.access isn't"
+
+
+def _previews(raw: dict, sensitive: bool, section: bool) -> Previews:
     provider = raw.get("provider", "cloudflare")
     if provider not in PREVIEW_PROVIDERS:
         names = " or ".join(f'"{x}"' for x in PREVIEW_PROVIDERS)
@@ -138,10 +144,10 @@ def _previews(raw: dict, sensitive: bool) -> Previews:
     for k, v in (("on", on), ("access", access)):
         if not isinstance(v, bool):
             raise ProfileError(f"previews.{k} must be true or false, not {repr(v)[:40]}")
-    p = Previews(provider=provider, on=on, access=access)
+    p = Previews(provider=provider, on=on, access=access, section=section)
     if p.on and not p.access and sensitive:
         raise ProfileError(
-            "previews.on is true but previews.access isn't: this project has [sensitive] patterns, so its "
+            f"{ACCESS_REFUSED}: this project has [sensitive] patterns, so its "
             "previews must sit behind Cloudflare Access (set access = true once you've confirmed it), or not be made (on = false)"
         )
     return p
@@ -166,6 +172,8 @@ class Profile:
     typecheck: str = ""
     test_file: str = ""
     suites: list[Suite] = field(default_factory=list)
+    # Reads a PR's changed paths on stdin and prints the suites they need (evidence.select).
+    select_suites: str = ""
     packages: list[Package] = field(default_factory=list)
     required_checks: list[str] = field(default_factory=list)
     killed_markers: list[str] = field(default_factory=list)
@@ -327,6 +335,11 @@ def parse(data: dict, root: Path) -> Profile:
     names = [s.name for s in suites]
     if len(names) != len(set(names)):
         raise ProfileError("commands.suite names must be unique")
+    select_suites = cmds.get("select_suites", "")
+    if not isinstance(select_suites, str):
+        raise ProfileError("commands.select_suites must be a command, as one string")
+    if select_suites.strip() and "none" in names:
+        raise ProfileError("commands.suite: no suite may be named \"none\" with commands.select_suites, which prints none when no suite is needed")
     ci = data.get("ci") or {}
     ui = data.get("ui") or {}
     explorer = ui.get("explorer", "none")
@@ -340,7 +353,7 @@ def parse(data: dict, root: Path) -> Profile:
             re.compile(p)
         except re.error as e:
             raise ProfileError(f"sensitive.patterns: {p!r} is not a valid regex ({e})")
-    previews = _previews(data.get("previews") or {}, bool(patterns))
+    previews = _previews(data.get("previews") or {}, bool(patterns), "previews" in data)
     areas_raw = data.get("areas") or {}
     areas = {k: _strs(v, f"areas.{k}") for k, v in areas_raw.items()}
     rel = data.get("release") or {}
@@ -392,6 +405,7 @@ def parse(data: dict, root: Path) -> Profile:
         typecheck=str(cmds.get("typecheck") or ""),
         test_file=str(cmds.get("test_file") or ""),
         suites=suites,
+        select_suites=select_suites.strip(),
         packages=_packages(cmds.get("package") or []),
         required_checks=_strs(ci.get("required_checks"), "ci.required_checks"),
         killed_markers=_strs(ci.get("killed_markers"), "ci.killed_markers"),
@@ -623,6 +637,7 @@ def summary(profile: Profile) -> dict:
             {"name": s.name, "run": s.run, "files": s.files or None, "cwd": s.cwd or None, "group": s.group}
             for s in profile.suites
         ],
+        "select_suites": profile.select_suites or None,
         "packages": [
             {"name": p.name, "path": p.path, "typecheck": p.typecheck or None, "test_file": p.test_file or None, "cwd": p.cwd or None}
             for p in profile.packages

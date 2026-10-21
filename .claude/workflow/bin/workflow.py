@@ -7,7 +7,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 if sys.version_info < (3, 11):
-    # The kit needs tomllib. An old Python's hooks still fail closed (#22).
+    # The kit needs tomllib. An old Python's hooks still fail closed (#22), and
+    # `doctor` gives a short report (#61).
     from workflow import _old_python
 
     sys.exit(_old_python.main(sys.argv[1:]))
