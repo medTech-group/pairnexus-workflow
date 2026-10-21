@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**The release gate compares Claude Code's tools with the tools the guard sees** (#92, part of #36).
+
+- **A new check, "The tools comparison",** after the ruleset's refusal: the `release-gate` skill reads Claude Code's tools reference (https://code.claude.com/docs/en/tools-reference) and the list of tools the guard sees in the candidate's `docs/enforcement.md`, and notes every tool on the reference that isn't on the list.
+- **A missing tool that runs a command or a program** (as `Bash`, `Monitor` and `PowerShell` do) fails the gate, naming it: the fix is a guard change and a fix release. Any other missing tool is a note below the report's table, never a fail. A reference that can't be read fails the gate as "couldn't check".
+- **The list is the guard's:** a test reads the list in `docs/enforcement.md` and the guard's matcher, in a vendored project's settings and in the plugin's hooks file, and fails when one names a tool the other doesn't.
+- Docs: `docs/enforcement.md` says the gate runs this step; `CONTRIBUTING.md`'s list of what the gate checks. Tests: `tests/test_release_gate_skill.py`. Running it for real is owner task #94.
+- **For projects updating:** nothing to do. The skill is the kit repository's own and never ships.
+
 **The release gate runs `workflow doctor --strict` on the sandbox** (#91, part of #36).
 
 - **A new second check, "The set-up check",** after the update with CI green and before the guard's refusal: the `release-gate` skill gathers the sandbox's rulesets, repository settings, environments, `workflow:run` issues, the base branch's checks and the open pull requests by following the candidate's own `check-setup`, writes them to files outside the checkout, and runs the candidate's `workflow doctor --strict` on the sandbox branch with them and the Claude Code version the report records (read once, never a second `claude --version`).
