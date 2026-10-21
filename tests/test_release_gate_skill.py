@@ -313,7 +313,8 @@ def test_an_unreadable_reference_fails_as_couldnt_check():
 
 def test_its_evidence_is_the_link_and_the_tools_not_on_the_list():
     s = _check_item("The tools comparison")
-    assert "Evidence: the reference's link, and every tool on it that isn't on the guard's list, by name" in s
+    assert "Evidence: the reference's link; below the report's table, every tool on it that isn't on the guard's list" in s
+    assert "every tool on the guard's list that is gone from it, by name" in s
     passed, failed = _examples()
     row = re.search(r"^\| The tools comparison \| pass \| (\S+);", passed, re.M)
     assert row and row.group(1) == REFERENCE
@@ -372,7 +373,7 @@ def test_enforcement_md_says_the_gate_runs_the_step():
     doc = _flat((KIT / "docs/enforcement.md").read_text())
     line = doc[doc.index("**Release gate (item 10):**"):]
     line = line[:line.index("It reads each command")]
-    assert "the release gate runs this step at every release, as its last check" in line
+    assert "the release gate runs this step at every release, after the ruleset's refusal" in line
     assert "fails the gate" in line and "#92" in line
 
 

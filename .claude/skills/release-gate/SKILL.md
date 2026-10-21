@@ -155,7 +155,7 @@ Run them in this order. Record each one's result and its evidence as you go. **A
 
    A reference that can't be read fails it as "couldn't check", as doctor's `cant_check` does: the fetch fails, the page has no tools table, or the names read don't include `Bash`, `Edit` and `Read` (the page has moved or changed shape). Never compare with a list from memory or an older copy.
 
-   Evidence: the reference's link, and every tool on it that isn't on the guard's list, by name, below the report's table.
+   Evidence: the reference's link; below the report's table, every tool on it that isn't on the guard's list, and every tool on the guard's list that is gone from it, by name.
 
 ## 4. The gate report
 
@@ -166,7 +166,7 @@ Run them in this order. Record each one's result and its evidence as you go. **A
 - **It contains:**
   - the table (check | result | evidence), one row per check in the order above, "not run" for those a failure skipped;
   - on a failed set-up check, doctor's text output, quoted in a ```` ```text ```` block below the table, since a table cell holds one line;
-  - when the tools comparison has run, every tool on the reference that isn't on the guard's list, by name, on one line below the table: "Not on the guard's list: …" (the example shortens it), and a tool on the guard's list that is gone from the reference on the next line, when there is one: "Gone from the reference: …";
+  - when the tools comparison has run, every tool on the reference that isn't on the guard's list, by name, on one line below the table: "Not on the guard's list: …" (the example shortens it). On the next line, when there are any, the tools on the guard's list that are gone from the reference: "Gone from the reference: …";
   - the Claude Code version;
   - the agents' marker `<!-- workflow:agent -->`;
   - and, last, the machine-readable line: `release-gate: pass <full sha>` when every check passed, else `release-gate: fail <full sha>`. A line on its own, nothing before it, with `$SHA` in full: 40 lowercase characters, never a short SHA.
