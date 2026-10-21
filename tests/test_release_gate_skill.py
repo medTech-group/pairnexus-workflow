@@ -89,10 +89,22 @@ def test_the_update_goes_through_the_candidates_update_workflow():
     assert "pinned SHA" in s and "marketplace.json" in s
 
 
+def test_every_update_workflow_command_runs_on_the_sandbox():
+    """Without them, `profile check` and the rest find the session's checkout, the kit's own."""
+    s = _flat(_section("The sandbox branch"))
+    assert 'Every one of its commands runs on the sandbox' in s
+    assert 'CLAUDE_PROJECT_DIR="$SANDBOX"' in s and 'vendor verify --project "$SANDBOX"' in s
+
+
+def test_a_renamed_version_file_counts_as_a_release_pr():
+    assert ".previous_filename // empty" in _section("The candidate")
+
+
 def test_a_run_on_a_newer_commit_starts_afresh_and_posts_a_new_report():
     s = _flat(_section("The sandbox branch"))
     assert "A run on a newer commit starts afresh" in s
     assert "Close every open sandbox pull request whose branch starts with `release-gate/`" in s
+    assert "issues/<sandbox PR>/comments" in s and "pulls/<sandbox PR> -f state=closed" in s
     # Deleted whenever it exists, or a closed pull request's branch refuses the new push.
     assert "whenever `release-gate/$VERSION` exists on the sandbox" in s and "git/refs/heads/release-gate/$VERSION" in s
     assert "A run on a newer commit posts a new report**; the old ones stay" in _section("The gate report")

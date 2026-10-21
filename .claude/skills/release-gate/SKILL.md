@@ -12,7 +12,7 @@ It runs in a cloud session on the kit's repository, with the owner there to appr
 - **The kit's repository** (`KIT_REPO` below): `python3 .claude/workflow/bin/workflow.py version --repo`.
 - **The sandbox** (`<sandbox>` below): `medTech-group/pairnexus-workflow-sandbox`. It needs a ruleset on `main` and its ticket environment (its profile's `run.ticket_environment`).
 - **Values carry over by hand:** shell variables don't last from one command to the next. Note each value as you get it (`$SHA`, `$VERSION`, the `mktemp` paths, the sandbox pull request's number) and write it out in later commands.
-- **Every post carries the marker:** end each comment and pull request body with `<!-- workflow:agent -->`.
+- **Every post carries the marker** `<!-- workflow:agent -->`: at the end of each comment and pull request body, and in the gate report just before its last line, the gate line.
 - `gh pr create` and `gh pr merge` use GraphQL, which a cloud session's proxy refuses: use `gh api` (REST) for pull requests.
 - Never `sleep` while waiting: schedule a check-in (`send_later`, about 5 minutes) and carry on when it fires.
 
@@ -25,7 +25,7 @@ This skill is the kit repository's own (`.claude/skills/release-gate/`). It neve
    ```bash
    gh api repos/$KIT_REPO/pulls/<N> --jq '[.head.sha, .head.repo.full_name] | @tsv'
    gh api "repos/$KIT_REPO/contents/VERSION?ref=$SHA" --jq .content | base64 -d
-   gh api "repos/$KIT_REPO/pulls/<N>/files?per_page=100" --paginate --jq '.[].filename' | grep -x VERSION
+   gh api "repos/$KIT_REPO/pulls/<N>/files?per_page=100" --paginate --jq '.[] | .filename, .previous_filename // empty' | grep -x VERSION
    ```
 
    Stop, saying why, when:
@@ -56,12 +56,14 @@ A failure in this section (the update refuses, a conflict can't be merged, the p
 
    ```bash
    gh api "repos/<sandbox>/pulls?state=open&per_page=100" --jq '.[] | select(.head.ref | startswith("release-gate/")) | .number'
-   gh api -X PATCH repos/<sandbox>/pulls/<n> -f state=closed
+   gh api -X POST repos/<sandbox>/issues/<sandbox PR>/comments -F body=@<comment file>
+   gh api -X PATCH repos/<sandbox>/pulls/<sandbox PR> -f state=closed
    ```
 
    Then, whenever `release-gate/$VERSION` exists on the sandbox (an earlier run's, its pull request open, closed or never opened), delete it, so the new branch's push isn't refused: `gh api -X DELETE repos/<sandbox>/git/refs/heads/release-gate/$VERSION`.
 3. **Branch from the sandbox's `main`:** `git -C "$SANDBOX" checkout -b release-gate/$VERSION origin/main`.
-4. **Update the sandbox to the candidate through `update-workflow`:** follow the candidate's own `$CAND/skills/update-workflow/SKILL.md`, in the sandbox clone, with `WF` as `python3 $CAND/scripts/workflow.py`, from step 1 (where it stands) on. Three differences:
+4. **Update the sandbox to the candidate through `update-workflow`:** follow the candidate's own `$CAND/skills/update-workflow/SKILL.md`, in the sandbox clone, with `WF` as `python3 $CAND/scripts/workflow.py`, from step 1 (where it stands) on. Four differences:
+   - **Every one of its commands runs on the sandbox:** prefix each with `CLAUDE_PROJECT_DIR="$SANDBOX"` and give `--project "$SANDBOX"` where the command takes it (`vendor verify`, `vendor resolve`). Without them, a command finds this session's checkout, the kit's own, and reports on it. Step 1's check is `CLAUDE_PROJECT_DIR="$SANDBOX" python3 "$SANDBOX/.claude/workflow/bin/workflow.py" vendor verify --project "$SANDBOX"`.
    - The update is `vendor update --kit` pointing at the candidate's checkout:
 
      ```bash
@@ -81,11 +83,11 @@ A failure in this section (the update refuses, a conflict can't be merged, the p
      -f title="Release gate: kit $VERSION" -F body=@<body file> --jq '[.number, .head.sha] | @tsv'
    ```
 
-   Its description names the candidate commit (`$SHA`) and links the release pull request, then the `kept` files and the conflicts as `update-workflow` lists them, and ends with the marker. Note its number and its head (`<head>` below).
+   Its description names the candidate commit (`$SHA`) and links the release pull request, then the `kept` files and the conflicts as `update-workflow` lists them, and ends with the marker. Note its number (`<sandbox PR>` below) and its head (`<head>`).
 
 ## 3. The checks, in order
 
-Run them in this order. Record each one's result and its evidence as you go. **A failed check stops the gate:** skip the rest (they are "not run"), close the sandbox pull request (`gh api -X PATCH repos/<sandbox>/pulls/<n> -f state=closed`) with a comment naming the check that failed, and go to the report.
+Run them in this order. Record each one's result and its evidence as you go. **A failed check stops the gate:** skip the rest (they are "not run"), close the sandbox pull request with a comment naming the check that failed (the two commands in section 2, step 2), and go to the report.
 
 1. **The update with CI green.** Wait for CI on the sandbox pull request's head, `<head>` (check in every 5 minutes; give up after 30 and count it as failed). Judge it only once at least one check has run and each of the sandbox profile's `ci.required_checks` is among them. It passes when every check on the head has finished with `success`, `neutral` or `skipped`, the results GitHub counts as passing:
 
@@ -117,7 +119,7 @@ Run them in this order. Record each one's result and its evidence as you go. **A
    git -C "$T/clone" push https://github.com/<sandbox> HEAD:main
    ```
 
-   Read `main`'s head before and after. This session's guard asks before the push to `main`: the owner approves it once they see the sandbox's URL in it. It passes when GitHub answers with a repository rule violation ("push declined due to repository rule violations") and `main` is unchanged. Evidence: the push's output.
+   Read `main`'s head before and after. This session's guard asks before the push to `main`: the owner approves it after checking that the URL in it is the sandbox's. It passes when GitHub answers with a repository rule violation ("push declined due to repository rule violations") and `main` is unchanged. Evidence: the push's output.
 
 ## 4. The gate report
 

@@ -3,7 +3,7 @@
 > [!NOTE]
 > **Background.** This is the kit's record of what has been verified, including PAIR's own runs and the demo repository's (the sandbox, `medTech-group/pairnexus-workflow-sandbox`).
 
-The kit relies on Claude Code and GitHub behaving as their docs say. This file records what has actually been tried, so nothing rests on an assumption by accident. Update a row when its status changes.
+The kit relies on Claude Code and GitHub behaving as their docs say. This file records what has actually been tried, so nothing rests on an assumption by accident.
 
 The release gate (`CONTRIBUTING.md`) re-proves rows 4 (the push) and 5 at every release, on the sandbox; this file changes only when a row's status does.
 
