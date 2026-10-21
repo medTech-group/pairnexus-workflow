@@ -56,22 +56,24 @@ A failure in this section (the update refuses, a conflict can't be merged, the p
 
    ```bash
    gh api "repos/<sandbox>/pulls?state=open&per_page=100" --jq '.[] | select(.head.ref | startswith("release-gate/")) | .number'
-   gh api -X POST repos/<sandbox>/issues/<sandbox PR>/comments -F body=@<comment file>
-   gh api -X PATCH repos/<sandbox>/pulls/<sandbox PR> -f state=closed
+   gh api -X POST repos/<sandbox>/issues/<earlier PR>/comments -F body=@<comment file>
+   gh api -X PATCH repos/<sandbox>/pulls/<earlier PR> -f state=closed
    ```
+
+   `<earlier PR>` is each number the first command prints.
 
    Then, whenever `release-gate/$VERSION` exists on the sandbox (an earlier run's, its pull request open, closed or never opened), delete it, so the new branch's push isn't refused: `gh api -X DELETE repos/<sandbox>/git/refs/heads/release-gate/$VERSION`.
 3. **Branch from the sandbox's `main`:** `git -C "$SANDBOX" checkout -b release-gate/$VERSION origin/main`.
 4. **Update the sandbox to the candidate through `update-workflow`:** follow the candidate's own `$CAND/skills/update-workflow/SKILL.md`, in the sandbox clone, with `WF` as `python3 $CAND/scripts/workflow.py`, from step 1 (where it stands) on. Four differences:
-   - **Every one of its commands runs on the sandbox:** prefix each with `CLAUDE_PROJECT_DIR="$SANDBOX"` and give `--project "$SANDBOX"` where the command takes it (`vendor verify`, `vendor resolve`). Without them, a command finds this session's checkout, the kit's own, and reports on it. Step 1's check is `CLAUDE_PROJECT_DIR="$SANDBOX" python3 "$SANDBOX/.claude/workflow/bin/workflow.py" vendor verify --project "$SANDBOX"`.
-   - The update is `vendor update --kit` pointing at the candidate's checkout:
+   - **Every one of its commands runs on the sandbox:** prefix each with `CLAUDE_PROJECT_DIR="$SANDBOX"` and give `--project "$SANDBOX"` where the command takes it (`vendor verify`, `vendor resolve`); every file it names (`CLAUDE.md`, `.github/…`, the profile) is the one under `$SANDBOX`. Without them, a command finds this session's checkout, the kit's own, and reports on it. Step 1's check is `CLAUDE_PROJECT_DIR="$SANDBOX" python3 "$SANDBOX/.claude/workflow/bin/workflow.py" vendor verify --project "$SANDBOX"`.
+   - **The update is `vendor update --kit` pointing at the candidate's checkout:**
 
      ```bash
      WF vendor update --kit "$CAND" --project "$SANDBOX" --mattpocock <checkout> --strict-pin
      ```
 
    - **Matt Pocock's skills stay at the kit's pinned SHA**, the one in `$CAND/.claude-plugin/marketplace.json`: check them out at it for `--mattpocock`.
-   - Its pull request is this skill's step 5, not the one `update-workflow` describes: no "Closes" line for an update issue, which stays open.
+   - **Its pull request is this skill's step 5,** not the one `update-workflow` describes: no "Closes" line for an update issue, which stays open.
 
    Because it follows the candidate's own `update-workflow`, the sandbox pull request carries exactly what an update writes: the files set-up copied once, the changelog's "For projects updating" steps, and the rest. A question `update-workflow` asks the owner keeps the sandbox's answer when it has one; otherwise ask the owner here.
 5. **Commit, push the branch, and open the sandbox pull request** to its `main`:
@@ -87,7 +89,7 @@ A failure in this section (the update refuses, a conflict can't be merged, the p
 
 ## 3. The checks, in order
 
-Run them in this order. Record each one's result and its evidence as you go. **A failed check stops the gate:** skip the rest (they are "not run"), close the sandbox pull request with a comment naming the check that failed (the two commands in section 2, step 2), and go to the report.
+Run them in this order. Record each one's result and its evidence as you go. **A failed check stops the gate:** skip the rest (they are "not run"), close the sandbox pull request with a comment naming the check that failed (`gh api -X POST repos/<sandbox>/issues/<sandbox PR>/comments -F body=@<comment file>`, then `gh api -X PATCH repos/<sandbox>/pulls/<sandbox PR> -f state=closed`), and go to the report.
 
 1. **The update with CI green.** Wait for CI on the sandbox pull request's head, `<head>` (check in every 5 minutes; give up after 30 and count it as failed). Judge it only once at least one check has run and each of the sandbox profile's `ci.required_checks` is among them. It passes when every check on the head has finished with `success`, `neutral` or `skipped`, the results GitHub counts as passing:
 
