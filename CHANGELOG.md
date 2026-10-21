@@ -4,7 +4,7 @@
 
 **The release gate compares Claude Code's tools with the tools the guard sees** (#92, part of #36).
 
-- **A new last check, "The tools comparison,"** after the ruleset's refusal: the `release-gate` skill reads Claude Code's tools reference (https://code.claude.com/docs/en/tools-reference) and the list of tools the guard sees in the candidate's `docs/enforcement.md`, and notes every tool on the reference that isn't on the list.
+- **A new last check, "The tools comparison",** after the ruleset's refusal: the `release-gate` skill reads Claude Code's tools reference (https://code.claude.com/docs/en/tools-reference) and the list of tools the guard sees in the candidate's `docs/enforcement.md`, and notes every tool on the reference that isn't on the list.
 - **A missing tool that runs a command or a program** (as `Bash`, `Monitor` and `PowerShell` do) fails the gate, naming it: the fix is a guard change and a fix release. Any other missing tool is a note below the report's table, never a fail. A reference that can't be read fails the gate as "couldn't check".
 - **The list is the guard's:** a test reads the list in `docs/enforcement.md` and the guard's matcher, in a vendored project's settings and in the plugin's hooks file, and fails when one names a tool the other doesn't.
 - Docs: `docs/enforcement.md` says the gate runs this step; `CONTRIBUTING.md`'s list of what the gate checks. Tests: `tests/test_release_gate_skill.py`. Running it for real is owner task #94.

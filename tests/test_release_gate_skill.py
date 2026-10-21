@@ -267,10 +267,10 @@ def test_the_report_has_its_table_version_marker_and_line_last():
 REFERENCE = "https://code.claude.com/docs/en/tools-reference"
 
 
-def test_the_tools_comparison_runs_last_after_the_rulesets_refusal():
+def test_the_tools_comparison_runs_after_the_rulesets_refusal():
     names = re.findall(r"^\d+\. \*\*([^*]+?)\.\*\*", _section("The checks, in order"), re.M)
-    assert names[-1] == "The tools comparison"
-    assert names[-2] == "The ruleset's refusal"
+    # Right after the ruleset's refusal; #40's starter comes after it.
+    assert names.index("The tools comparison") == names.index("The ruleset's refusal") + 1
 
 
 def test_it_names_the_reference_and_the_guards_list():
@@ -296,6 +296,8 @@ def test_other_missing_tools_are_notes():
     s = _check_item("The tools comparison")
     assert "Every other tool not on the guard's list is a note in the report, never a fail" in s
     assert "A tool on the guard's list that is gone from the reference is a note too" in s
+    assert "It passes when no tool on the reference that isn't on the guard's list runs a command or a program" in s
+    assert '"Gone from the reference: …"' in _flat(_section("The gate report"))
     assert "Not on the guard's list: …" in _flat(_section("The gate report"))
     passed, failed = _examples()
     assert "\nNot on the guard's list: `" in passed and "Not on the guard's list" not in failed
