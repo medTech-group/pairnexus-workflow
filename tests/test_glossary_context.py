@@ -12,7 +12,7 @@ import pytest
 
 from conftest import KIT, git
 from test_hooks_cli import run_hook
-from workflow.context import CONTEXT_LIMIT as LIMIT
+from workflow.context import CONTEXT_LIMIT as LIMIT, REMINDER
 
 GLOSSARY = (KIT / "docs/glossary.md").read_text(encoding="utf-8")
 RULE = "the first time you use it in this session"
@@ -101,14 +101,15 @@ def test_never_on_a_ticket_branch(repo):
 def test_never_after_the_first_prompt(repo):
     session = uuid.uuid4().hex
     assert _whole(_ctx(repo, "hi", session))
-    assert _ctx(repo, "what is a branch?", session) == ""
-    assert _ctx(repo, "hello again", session) == ""
+    # Later prompts bring only the guided start's reminder (#222), never the glossary.
+    assert _ctx(repo, "what is a branch?", session) == REMINDER
+    assert _ctx(repo, "hello again", session) == REMINDER
 
 
 def test_never_after_a_first_prompt_that_carried_none(repo):
     session = uuid.uuid4().hex
     assert _none(_ctx(repo, "hi", session, env={"WORKFLOW_EXPERIENCE": "developer"}))
-    assert _ctx(repo, "hi", session, env={"WORKFLOW_EXPERIENCE": "new"}) == ""
+    assert _ctx(repo, "hi", session, env={"WORKFLOW_EXPERIENCE": "new"}) == REMINDER  # the reminder (#222), no glossary
 
 
 def test_never_without_a_profile(tmp_path):
