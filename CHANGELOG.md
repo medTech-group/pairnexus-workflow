@@ -4,7 +4,7 @@
 
 ## 0.1.12
 
-**`workflow doctor` and "Check the set-up", try-it links, "Require these checks", the quickstart, and the release gate.** The build tickets of specs #33 to #38 and #41 merged since 0.1.11, and the infra fixes they found. Each change's own note is below.
+**`workflow doctor` and "Check the set-up", try-it links, "Require these checks", the quickstart, and the release gate.** Everything merged since 0.1.11: the build tickets of specs #33 to #38 and #41, and the infra fixes they found. Each change's own note is below.
 
 - **For projects updating to 0.1.12:**
   - the update rewrites the guard's hook entry in `.claude/settings.json` (`onFailure`, the timeout, the matcher), keeping the project's own hooks: use Claude Code v2.1.295 or later (see #57);
