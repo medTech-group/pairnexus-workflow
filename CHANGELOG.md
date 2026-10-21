@@ -12,7 +12,7 @@
 
 **Mentioning the conductor brings the guided start, not the flow** (#223, part of #221).
 
-- **A message that only mentions the conductor** ("why did the conductor stop?", "the conductor skipped #12", "Conductor run on Friday never woke up") no longer brings the flow's text from the context hook: as a first message it gets the guided start, and later the reminder, like any other message. Nor does "can ticket sessions run unattended?".
+- **A message that only mentions the conductor** ("why did the conductor stop?", "the conductor skipped #12", "Conductor run on Friday never woke up") no longer brings the flow's text from the context hook: as a first message it gets the guided start, and later the reminder, like any other message. Nor do "can ticket sessions run unattended?" and "run the tests unattended".
 - **Asking still brings the flow:** working on a named map ("work the doctor map"), asking to start, restart, run, resume or stop a run or the conductor ("stop the run", "restart the conductor", or a line that is only "conductor resume", "OK conductor, stop" or "conductor resume #45"), the `/conductor` command, and the conductor's own wake ("conductor: wake (a ticket session finished)"). "Run the backlog unattended", the conductor skill's own example, now brings it too: it never did before.
 - Tests: `tests/test_conductor_mention.py`.
 - **For projects updating:** nothing to do.

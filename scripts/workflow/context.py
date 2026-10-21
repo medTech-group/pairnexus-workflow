@@ -40,14 +40,15 @@ _VERB = re.compile(
 _MAP_OR_RUN = re.compile(
     r"\bwork(?:ing)?\s+(?:on\s+)?the\s+[\w -]{1,40}\bmap\b"
     r"|\b(?:start|restart|run|resume|stop)[^\S\n]+(?:an?[^\S\n]+|the[^\S\n]+)?(?:unattended[^\S\n]+)?(?:run|conductor)\b"
-    # "run the backlog unattended", not "can sessions run unattended?"
-    r"|\b(?:start|run)[^\S\n]+(?:the|this|my|our|all|every)[^\S\n]+(?:[\w-]+[^\S\n]+){0,3}?unattended\b"
+    # "run the backlog unattended", not "can sessions run unattended?" or "run the tests unattended"
+    r"|\b(?:start|run)[^\S\n]+(?:the|this|my|our|all|every)[^\S\n]+(?:[\w-]+[^\S\n]+){0,3}?"
+    r"(?:backlog|tickets?|issues?|queue)[^\S\n]+unattended\b"
     # A line that is only the command: "conductor resume", "OK conductor, stop",
-    # "conductor resume #45", or the wake. Not "conductor run: hangs at #12", and
-    # not one later in a line ("Thanks. Conductor, resume").
+    # "conductor resume #45", or the wake routine's own text. Not "conductor run:
+    # hangs at #12", and not one later in a line ("Thanks. Conductor, resume").
     r"|(?:^|\n)[^\w\n]*(?:(?:ok|okay|hey|hi|please)[^\w\n]+)?conductor[^\w\n]+(?:please[^\S\n]+)?"
-    r"(?:start|restart|run|resume|stop|wake)"
-    r"(?:[^\S\n]+(?:please|now|the[^\S\n]+run|#\d+|\d[\w-]*))?(?:[^\S\n]+\([^)\n]*\))?[^\w\n]*(?=\n|$)",
+    r"(?:(?:start|restart|run|resume|stop)(?:[^\S\n]+(?:please|now|the[^\S\n]+run|#\d+|\d\w*(?:-\w+)*))?"
+    r"|wake(?:[^\S\n]+\(a ticket session finished\))?)[^\w\n]*(?=\n|$)",
     re.I,
 )
 _REF = re.compile(r"(?<![\w/])#\d+\b|/issues/\d+")

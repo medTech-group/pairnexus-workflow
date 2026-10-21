@@ -39,6 +39,12 @@ MENTIONS = [
     "Conductor stop (the button) does nothing",
     "Conductor: run the backlog failed at #12",
     "conductor: wake (a ticket session finished) shows up in my session, why?",
+    "Conductor stop (does nothing)",
+    "conductor resume (fails with a traceback)",
+    "conductor wake (never fires for me)",
+    "the session didn't start\nall tickets ran unattended",
+    "run the tests unattended",
+    "can you run the linter unattended in CI?",
     # Running unattended asked about, not asked for.
     "can ticket sessions run unattended?",
     "the hooks don't work unattended",
@@ -69,6 +75,9 @@ ASKS = [
     "conductor resume please",
     "conductor stop now",
     "Hi, conductor resume",
+    "conductor resume\nit stopped overnight",
+    "conductor stop\r\nthanks",
+    "run every ready ticket unattended",
     "run all the open tickets unattended",
     "/conductor",
     "/pairnexus-workflow:conductor resume",
@@ -98,7 +107,7 @@ def test_a_later_message_that_mentions_the_conductor_gets_the_reminder(repo, pro
 
 
 @pytest.mark.parametrize("prompt", ASKS)
-def test_asking_to_run_resume_or_stop_or_working_a_map_still_gets_the_flow(repo, prompt):
+def test_an_ask_still_gets_the_flow(repo, prompt):
     first = _ctx(repo, prompt, uuid.uuid4().hex)
     assert FLOW in first and START not in first, first[:200]
     later = _later(repo, prompt)
@@ -113,11 +122,17 @@ def test_the_conductors_wake_still_brings_the_flow_to_its_session(repo, wake):
     assert _ctx(repo, wake, session, env).startswith("Follow the workflow's flow")
 
 
-def test_a_long_run_of_whitespace_after_conductor_is_quick(repo):
-    for prompt in ("conductor" + " " * 50_000 + "x", "Conductor:" + "\n" * 50_000 + "x", "\n" * 50_000 + "x"):
+def test_long_runs_in_a_prompt_stay_quick(repo):
+    long = (
+        "conductor" + " " * 50_000 + "x",
+        "Conductor:" + "\n" * 50_000 + "x",
+        "\n" * 50_000 + "x",  # a line start at every character
+        "conductor resume 1" + "-" * 50_000 + " x",  # a run id that never ends
+    )
+    for prompt in long:
         began = time.monotonic()
         _ctx(repo, prompt, uuid.uuid4().hex, {"WORKFLOW_ROLE": "conductor"})
-        assert time.monotonic() - began < 5, repr(prompt[:12])
+        assert time.monotonic() - began < 5, repr(prompt[:20])
 
 
 def test_the_changelog_notes_it():
