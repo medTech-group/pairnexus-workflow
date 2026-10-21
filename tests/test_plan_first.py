@@ -149,6 +149,9 @@ def test_the_readme_and_the_flow_say_what_later_messages_get():
     starting = next(x for x in _text("docs/flow.md").splitlines() if x.startswith("**Starting.**"))
     assert "At each later message of an attended session" in starting and "reminder" in starting
     assert "the reminder at each later message" in _text("docs/profile.md")
+    # The template a project's own profile starts from says it too, beside the key.
+    key = _text("templates/profile.toml").split("\nguided_start = ", 1)[0].rsplit("\n\n", 1)[-1]
+    assert "at each later\n# message it is reminded to plan new work first. false turns both off" in key
 
 
 def test_the_changelog_notes_it_under_unreleased():
