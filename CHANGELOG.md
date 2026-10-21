@@ -5,7 +5,7 @@
 **The release gate runs `workflow doctor --strict` on the sandbox** (#91, part of #36).
 
 - **A new second check, "The set-up check",** after the update with CI green and before the guard's refusal: the `release-gate` skill gathers the sandbox's rulesets, repository settings, environments, `workflow:run` issues, the base branch's checks and the open pull requests by following the candidate's own `check-setup`, writes them to files outside the checkout, and runs the candidate's `workflow doctor --strict` on the sandbox branch with them and the Claude Code version the report records (read once, never a second `claude --version`).
-- **It passes on exit 0;** notes never fail it. Any other exit fails the gate like the other checks, with doctor's text output quoted below the report's table. A gate run on a Claude Code older than doctor needs fails here.
+- **It passes on exit 0;** notes never fail it, except the one saying whether a run has been made couldn't be read, which `check-setup` counts as unchecked. Any other exit fails the gate like the other checks, with doctor's text output quoted below the report's table; exit 2, a wrong command, is fixed and run again first. A gate run on a Claude Code older than doctor asks for fails here.
 - Docs: `CONTRIBUTING.md`'s list of what the gate checks. Tests: `tests/test_release_gate_skill.py`. Running it for real is owner task #94.
 - **For projects updating:** nothing to do. The skill is the kit repository's own and never ships.
 
