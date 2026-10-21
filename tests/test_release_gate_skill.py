@@ -184,6 +184,135 @@ def test_the_report_has_its_table_version_marker_and_line_last():
         assert re.search(r"release-gate: (pass|fail) <full sha>\n\Z", ex)
 
 
+# ---------- finishing the gate (#90) ----------
+
+# Its steps, in their order (#90's acceptance criteria).
+FINISH = [
+    "The release exists",
+    "The sandbox pull request",
+    "The update from the tag",
+    "Files unchanged apart from the lock's source and version",
+    "The description names the release",
+    "CI green",
+    "A merge commit",
+]
+
+
+def _finish_steps():
+    """The finishing section's numbered steps, in order: (number, name, its text up to the next step)."""
+    s = _section("Finishing the gate")
+    parts = re.split(r"^(\d+)\. \*\*([^*]+?)\.\*\*", s, flags=re.M)
+    return [(int(n), name, _flat(body)) for n, name, body in zip(parts[1::3], parts[2::3], parts[3::3])]
+
+
+def _finish_step(name):
+    return {n: body for _, n, body in _finish_steps()}[name]
+
+
+def test_finishing_is_asked_for_by_name():
+    front = _text().split("---", 2)[1]
+    assert "finish the release gate" in front
+    assert "once the release has published" in _flat(_section("Finishing the gate"))
+
+
+def test_finishing_runs_its_steps_in_order():
+    steps = _finish_steps()
+    assert [n for n, _, _ in steps] == list(range(1, len(steps) + 1))
+    assert [name for _, name, _ in steps] == FINISH
+
+
+def test_finishing_stops_without_a_release():
+    body = _finish_step("The release exists")
+    assert "releases/tags/v$VERSION" in body and "not merely a tag" in body
+    assert "hasn't published yet and stop" in body
+    assert body.index("`VERSION` isn't three numbers") < body.index("releases/tags/v$VERSION")
+    assert "merge_commit_sha" in body and "has no release: stop" in body  # asked for the release pull request #N
+    assert "Given neither, ask the owner which version" in _flat(_section("Finishing the gate"))
+
+
+def test_a_closed_or_missing_sandbox_pr_stops_it():
+    body = _finish_step("The sandbox pull request")
+    assert "state=all&head=medTech-group:release-gate/$VERSION" in body
+    assert body.index('`access: "push"`') < body.index("pulls?state=all")  # the sandbox reachable first
+    assert "there's none" in body and "closed and merged" in body and "closed and not merged" in body
+    assert "a later version's gate run did" in body and "Stop, saying why" in body
+    assert "Finish a version before running the gate for the next one" in _flat(_section("Finishing the gate"))
+
+
+def test_the_update_comes_from_the_release_tag_as_the_candidate_was_applied():
+    body = _finish_step("The update from the tag")
+    assert 'checkout --detach "v$VERSION"' in body and "outside the working tree" in body
+    assert 'vendor update --kit "$REL" --project "$SANDBOX"' in body and "--strict-pin" in body
+    assert 'CLAUDE_PROJECT_DIR="$SANDBOX"' in body
+    assert "pinned SHA" in body and "$REL/.claude-plugin/marketplace.json" in body
+
+
+def test_any_other_changed_file_stops_it_loudly_naming_the_files():
+    body = _finish_step("Files unchanged apart from the lock's source and version")
+    assert "`kit_sha`" in body and "`kit_version`" in body
+    assert 'git -C "$SANDBOX" status --porcelain' in body and "del(.kit_sha, .kit_version)" in body
+    assert "stop loudly" in body and "name every file that differs" in body
+    assert "Push nothing, leave the sandbox pull request open" in body
+    assert "never touch the sandbox's `main`" in body
+
+
+def test_the_description_names_the_release_and_keeps_its_lists():
+    description = _finish_step("The description names the release")
+    assert "holds release `v$VERSION`" in description and "pulls/<sandbox PR> -f title=" in description
+    assert "keeps the earlier description's `kept` files and conflicts" in description
+
+
+def test_ci_is_judged_as_the_gates_first_check():
+    ci = _finish_step("CI green")
+    assert "section 3's first check" in ci and "leave the sandbox pull request open" in ci
+
+
+def test_the_merge_is_a_merge_commit_pinned_to_the_head():
+    assert "merge_method=merge -f sha=<head>" in _finish_step("A merge commit")
+
+
+def test_the_merge_is_pinned_to_the_pushed_commit_once_the_pr_shows_it():
+    """The PATCH's answer can still carry the old head: CI would read as green at once and
+    the pinned merge would be refused."""
+    description = _finish_step("The description names the release")
+    assert 'git -C "$SANDBOX" rev-parse HEAD` prints `<head>`, the pushed commit' in description
+    assert "`<head>` is then step 2's current head" in description
+    assert "read the pull request's head until it is `<head>`" in description
+    assert "Skip both when step 4's first command listed nothing" in description
+    assert "after 10 minutes, stop" in description
+
+
+def test_matt_pococks_skills_follow_the_branchs_lock():
+    """A sandbox that declined them must not get them, or step 4 stops on a release that's fine."""
+    body = _finish_step("The update from the tag")
+    assert "follow the branch's lock" in body and "records a `mattpocock_sha`" in body
+    assert "without `--mattpocock <checkout> --strict-pin`" in body
+    assert "candidate commit the gate tried" in body
+    assert "an earlier finish pushed and then stopped" in body  # a re-run reads the candidate elsewhere
+    assert "someone pushed to the branch since step 2: stop" in body
+
+
+def test_finishing_never_touches_main_but_by_the_merge_nor_spike():
+    s = _flat(_section("Finishing the gate"))
+    assert "touches the sandbox's `main` only through that pull request's merge" in s
+    assert "A stop never merges and never touches the sandbox's `main`" in s
+    assert "never touches `docs/spike.md`" in s and "changes only when a row's status does" in s
+
+
+def test_the_gate_report_points_to_finishing():
+    assert "when the gate is finished (section 5)" in _flat(_section("The gate report"))
+
+
+def test_contributing_ends_the_release_section_with_finishing():
+    c = _flat((KIT / "CONTRIBUTING.md").read_text())
+    assert "finish the release gate" in c
+    # The release section's last paragraph, after running, skipping and changing the check.
+    gate = c[c.index("**Running the gate.**"):c.index("**The kit's home.**")]
+    last = gate[gate.index("**Finishing the gate"):]
+    assert "**Skipping the gate" not in last and "A change to the check's own workflow" not in last
+    assert "after the release publishes" in last and "sandbox pull request" in last
+
+
 # ---------- the line the skill writes is the line the check reads ----------
 
 def _check(tmp_path, report):
@@ -229,5 +358,6 @@ def test_spike_says_the_gate_re_proves_rows_4_and_5():
 def test_the_changelog_note_and_no_version_bump():
     text = (KIT / "CHANGELOG.md").read_text()
     assert "(#89," in since_0110(text) and "`release-gate`" in since_0110(text)
+    assert "(#90," in since_0110(text) and "finish the release gate" in since_0110(text)
     latest_release = text.split("\n## ")[2].split()[0].lstrip("v")  # the heading after "## Unreleased"
     assert (KIT / "VERSION").read_text().strip() == latest_release
