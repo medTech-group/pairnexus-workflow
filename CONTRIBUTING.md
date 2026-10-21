@@ -35,6 +35,20 @@ A change to shipped files also:
 
 **Don't tag by hand:** the `release` workflow publishes each version when its bump lands on `main`. README, CHANGELOG-only, `tests/` and `.github/` changes need no bump.
 
+**The release gate.** Every pull request gets a "release gate" check (`.github/workflows/release-gate.yml`, its decision in `.github/scripts/release_gate.py`):
+- a pull request that doesn't change `VERSION` passes at once;
+- a release pull request (one that changes `VERSION`) needs a gate report that says pass for its exact head commit: a maintainer runs the gate (#89 says how), and the gate report it posts on the pull request ends with `release-gate: pass <sha>`, the full 40-character SHA. Only a gate report carrying the agents' marker, from an account with write, maintain or admin permission, counts, and a later `release-gate: fail <sha>` for the same commit wins. Any later push means running the gate again;
+- a comment added, edited or deleted re-runs the check, so nobody needs an empty push. GitHub doesn't re-run a run more than 30 days old: then push, or change a label.
+
+**Skipping the gate for an urgent fix** needs all three:
+- the `release-gate-skipped` label;
+- a "Gate skipped because …" line in the pull request's description;
+- a "Release gate skipped because …" line in the new version's CHANGELOG entry. That entry becomes the release notes, so write the reason for project owners, in plain words: they read it to decide when to update.
+
+Never twice in a row: the check refuses a skip when the previous version's entry, in the base branch's CHANGELOG, skipped too.
+
+A change to the check's own workflow or script is reviewed as CI config. The check runs the base branch's copy of the script, so a change to the script takes effect once it has merged; a change to the workflow takes effect on its own pull request. To move the script, merge a copy at its new path first, then point the workflow at it in a second pull request.
+
 **The kit's home.** Shipped files don't name this repository outright: they read `workflow version --repo` (`KIT_REPO` in `scripts/workflow/updates.py`), so forks work. A test lists the few places that still do.
 
 **Writing.** The skills, docs and README are read by people and by Claude:
