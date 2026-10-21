@@ -69,7 +69,9 @@ The kit's hook brings this skill at a session's first message. Read that message
 | **More than one thing**, even if one of them is small ("add XYZ, and the greeting is wrong") | Step 1's look around, without the question, then step 2 with their words. Never start on one of them before the plan is agreed. |
 | One piece of work to plan: a feature, a change to how something works, something broken with no known cause | The same: step 1's look around, then step 2 |
 | Anything vaguer ("hi", "let's work on the app"), or `/start` | Step 1 |
-| The conversation was already under way (a resumed session) | Ignore the hook and carry on |
+| The conversation was already under way (a resumed session) | Follow the hook's reminder (below) instead of this table: carry on with what was agreed, and plan any new work first |
+
+**Later messages.** At each later message of an attended session, the hook adds a one-line reminder: new work that isn't part of the plan or ticket already agreed in this session is split into items with a path for each and the plan agreed first (step 2); a question, a named issue or one small change with an obvious place may go ahead (on its own branch, with a pull request); replies to your own questions carry on. Never in a ticket or conductor session, with `guided_start = false`, at a slash command, or when the message already brings the flow.
 
 ## 1. Look around, then ask
 

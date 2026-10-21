@@ -7,7 +7,9 @@ Code's limit; a one-line reminder after that.
 
 The first prompt of an attended session that isn't about the flow already, and
 isn't a command, brings the guided start instead (`skills/start`): Claude asks
-what we're working on, with choices. Anything else passes untouched.
+what we're working on, with choices. Each later prompt like it brings a
+one-line reminder to plan new work before starting on it. Anything else passes
+untouched.
 
 Beside either, the first prompt of an attended session for someone new to
 building brings the kit's glossary and the rule to explain its words once.
@@ -44,14 +46,23 @@ def wants_flow(prompt: str) -> bool:
 # Only a command name: "/home/user/app.py crashes" is a path, not a command.
 _SLASH = re.compile(r"^\s*/[\w:-]+(?=\s|$)")
 
+REMINDER = (
+    "Workflow: if this message asks for new work that isn't part of the plan or ticket already agreed in this "
+    "session, don't start on it: split it into items with a path for each and agree the plan first (the `start` "
+    "skill, step 2). A question, a named issue or one small change with an obvious place may go ahead (on its own "
+    "branch, with a pull request). Replies to your own questions carry on."
+)
+
 START = (
     "This is the first message of the session. Follow the kit's guided start, the `start` skill "
     "(`.claude/skills/start/SKILL.md`, or `pairnexus-workflow:start` as a plugin): first, when `workflow status` finds "
-    "no experience level, ask it as the skill says; then, if this message already asks for "
-    "one clear thing, just do it; if it describes work to plan, or more than one thing, don't start on any of it: "
-    "split it into items with a path for each and agree the plan first; otherwise "
-    "ask \"What are we working on?\" with choices. If the conversation was already under way before this message "
-    "(a resumed session), ignore this."
+    "no experience level, ask it as the skill says. Act on this message straight away only when it is a question, "
+    "names an issue, or asks for one small change with an obvious place (on its own branch, with a pull request). "
+    "If it asks for any other work (a feature, a change, a fix whose cause isn't known, or more than one thing), "
+    "don't start on it: split it into items with a path for each and agree the plan first. Otherwise "
+    "ask \"What are we working on?\" with choices. If the conversation was already under way (a resumed session), "
+    "follow the reminder below instead."
+    "\n\n" + REMINDER
 )
 
 
@@ -86,6 +97,15 @@ def start_for(prompt: str, session_id: str) -> str | None:
     if _SLASH.match(prompt or "") or wants_flow(prompt):
         return None
     return START
+
+
+def reminder_for(prompt: str) -> str | None:
+    """The reminder, for a prompt after the first: on the same terms as the
+    guided start's nudge, and with no marker of its own, so every later prompt
+    gets it."""
+    if _SLASH.match(prompt or "") or wants_flow(prompt):
+        return None
+    return REMINDER
 
 
 def flow_files(project: Path, kit_root: Path, addendum: str = "") -> list[Path]:

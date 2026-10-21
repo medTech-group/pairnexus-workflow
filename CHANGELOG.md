@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**Attended sessions plan new work before they code: a narrower first-message text, and a reminder at every later message** (#222, part of #221).
+
+- **The first message.** The guided start's text from the context hook now names the `start` skill's three exceptions exactly: act straight away only on a question, a named issue, or one small change with an obvious place (on its own branch, with a pull request). Any other request for work (a feature, a change, a fix whose cause isn't known, or more than one thing) is split into items and the plan agreed first. It no longer says to "just do" one clear thing.
+- **Every later message** of an attended session gets a one-line reminder: new work that isn't part of the plan or ticket already agreed in the session is split into items and agreed first; a question, a named issue or one small change may go ahead, and replies to Claude's own questions carry on. Not in ticket or conductor sessions, with `guided_start = false`, at a slash command, or when the message already brings the flow's context.
+- **A resumed session** (the first-message marker lost after a restart) follows the reminder, which comes below the first-message text, instead of ignoring it.
+- Docs: the `start` skill's step 0, the README's "What happens with your first message", the flow's "Starting" and `docs/profile.md`'s `guided_start`. Tests: `tests/test_plan_first.py`.
+- **For projects updating:** nothing to do. `guided_start = false` turns the reminder off with the menu.
+
 ## 0.1.12
 
 **`workflow doctor` and "Check the set-up", try-it links, "Require these checks", the quickstart, and the release gate.** Everything merged since 0.1.11: the build tickets of specs #33 to #38 and #41, and the infra fixes they found. Each change's own note is below.
