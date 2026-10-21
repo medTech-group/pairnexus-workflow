@@ -225,7 +225,7 @@ def test_finishing_stops_without_a_release():
     body = _finish_step("The release exists")
     assert "releases/tags/v$VERSION" in body and "not merely a tag" in body
     assert "hasn't published yet and stop" in body
-    assert "`VERSION` isn't three numbers" in body
+    assert body.index("`VERSION` isn't three numbers") < body.index("releases/tags/v$VERSION")
     assert "merge_commit_sha" in body and "has no release: stop" in body  # asked for the release pull request #N
     assert "Given neither, ask the owner which version" in _flat(_section("Finishing the gate"))
 

@@ -201,13 +201,13 @@ Run these steps in order. A step that stops the finish says why to the owner. A 
    gh api "repos/$KIT_REPO/contents/VERSION?ref=<merge sha>" --jq .content | base64 -d
    ```
 
-   Then read the release `v$VERSION`, a GitHub release, not merely a tag:
+   Stop, saying why, when `VERSION` isn't three numbers (`0.2.0`), as in section 1. Then read the release `v$VERSION`, a GitHub release, not merely a tag:
 
    ```bash
    gh api repos/$KIT_REPO/releases/tags/v$VERSION --jq .html_url
    ```
 
-   Stop, saying why, when `VERSION` isn't three numbers (`0.2.0`), as in section 1. If the release isn't there (a 404), say the release `v$VERSION` hasn't published yet and stop: finish once it has.
+   If the release isn't there (a 404), say the release `v$VERSION` hasn't published yet and stop: finish once it has.
 2. **The sandbox pull request.** Add the sandbox to the session with push access (`add_repo`, `access: "push"`). Find the gate's pull request from its branch, `release-gate/$VERSION`, newest first:
 
    ```bash
