@@ -85,7 +85,7 @@ errors = '(\d+) errors?'
 
 [ci]
 # Required checks on the base branch, as their names show on a PR.
-required_checks = ["tests (3.11)", "tests (3.12)", "tests (3.13)", "workflow kit"]
+required_checks = ["tests (3.11)", "tests (3.12)", "tests (3.13)", "workflow kit", "release gate"]
 # No CI at all? Then the local full suite (`workflow evidence`) is the merge gate,
 # and every run report says "add CI".
 none = false
