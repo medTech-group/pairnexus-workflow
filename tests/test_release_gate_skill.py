@@ -225,6 +225,7 @@ def test_finishing_stops_without_a_release():
     body = _finish_step("The release exists")
     assert "releases/tags/v$VERSION" in body and "not merely a tag" in body
     assert "hasn't published yet and stop" in body
+    assert "`VERSION` isn't three numbers" in body
     assert "merge_commit_sha" in body and "has no release: stop" in body  # asked for the release pull request #N
     assert "Given neither, ask the owner which version" in _flat(_section("Finishing the gate"))
 
@@ -232,6 +233,7 @@ def test_finishing_stops_without_a_release():
 def test_a_closed_or_missing_sandbox_pr_stops_it():
     body = _finish_step("The sandbox pull request")
     assert "state=all&head=medTech-group:release-gate/$VERSION" in body
+    assert body.index('`access: "push"`') < body.index("pulls?state=all")  # the sandbox reachable first
     assert "there's none" in body and "closed and merged" in body and "closed and not merged" in body
     assert "a later version's gate run did" in body and "Stop, saying why" in body
     assert "Finish a version before running the gate for the next one" in _flat(_section("Finishing the gate"))
@@ -277,6 +279,7 @@ def test_the_merge_is_pinned_to_the_pushed_commit_once_the_pr_shows_it():
     assert "`<head>` is then step 2's current head" in description
     assert "read the pull request's head until it is `<head>`" in description
     assert "Skip both when step 4's first command listed nothing" in description
+    assert "after 10 minutes, stop" in description
 
 
 def test_matt_pococks_skills_follow_the_branchs_lock():

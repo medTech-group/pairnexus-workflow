@@ -6,7 +6,7 @@
 
 - **Asked "finish the release gate"** once the release has published, for the version or the release pull request #N, the `release-gate` skill's new section 5 checks the GitHub release `v<version>` exists, then finds the gate's sandbox pull request from `release-gate/<version>`. Without the release, or when that pull request is missing, merged already, or closed (by a failed gate or a later version's gate run), it says so and stops.
 - **The update from the tag,** as the candidate was applied: the tag's checkout as `vendor update --kit`, Matt Pocock's skills at the pinned SHA when the branch's lock records them. Only the lock's `kit_sha` and `kit_version` may change. Any other file stops it loudly, naming the files on the sandbox pull request, which stays open, with nothing pushed and the sandbox's `main` untouched.
-- **Then** the sandbox pull request's description says it holds release `v<version>`, keeping its earlier lists, its CI goes green, and it merges with a merge commit pinned to the pushed commit. `docs/spike.md` isn't touched.
+- **Then** the sandbox pull request's description says it holds release `v<version>`, keeping its earlier lists, its CI goes green, and it merges with a merge commit pinned to its head once the pull request shows the pushed commit. `docs/spike.md` isn't touched.
 - **Finish a version before gating the next:** a gate run closes every open `release-gate/` sandbox pull request, an unfinished pass among them.
 - Docs: `CONTRIBUTING.md`'s release section ends with finishing the gate. Tests: `tests/test_release_gate_skill.py`. Doing it for real is owner task #94.
 - **For projects updating:** nothing to do. The skill is the kit repository's own and never ships.
