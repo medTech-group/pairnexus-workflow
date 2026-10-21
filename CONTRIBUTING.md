@@ -27,7 +27,9 @@ Every hook and script is tested with JSON fixtures, including attempts to get pa
 - `LICENSE`;
 - the hook set.
 
-Plugin users get the whole repository at `main`.
+Plugin users get the whole repository at `main`, and the plugin's skills are `skills/`.
+
+The repository's own `.claude/skills/` is for maintainers and never ships: it holds the vendored release this repository runs under, and the kit-only `release-gate` skill.
 
 A change to shipped files also:
 - bumps `VERSION` and `.claude-plugin/plugin.json`;
@@ -37,8 +39,10 @@ A change to shipped files also:
 
 **The release gate.** Every pull request gets a "release gate" check (`.github/workflows/release-gate.yml`, its decision in `.github/scripts/release_gate.py`):
 - a pull request that doesn't change `VERSION` passes at once;
-- a release pull request (one that changes `VERSION`) needs a gate report that says pass for its exact head commit: a maintainer runs the gate (#89 says how), and the gate report it posts on the pull request ends with `release-gate: pass <sha>`, the full 40-character SHA. Only a gate report carrying the agents' marker, from an account with write, maintain or admin permission, counts, and a later `release-gate: fail <sha>` for the same commit wins. Any later push means running the gate again;
+- a release pull request (one that changes `VERSION`) needs a gate report that says pass for its exact head commit: a maintainer runs the gate (below), and the gate report it posts on the pull request ends with `release-gate: pass <sha>`, the full 40-character SHA. Only a gate report carrying the agents' marker, from an account with write, maintain or admin permission, counts, and a later `release-gate: fail <sha>` for the same commit wins. Any later push means running the gate again;
 - a comment added, edited or deleted re-runs the check, so nobody needs an empty push. GitHub doesn't re-run a run more than 30 days old: then push, or change a label.
+
+**Running the gate.** In a cloud session on the kit's repository, ask "run the release gate on PR #N". The `release-gate` skill (`.claude/skills/release-gate/`) tries the pull request's exact commit on the sandbox, `medTech-group/pairnexus-workflow-sandbox`: an update to it on a `release-gate/<version>` branch with CI green, then a ticket session's push to `main` refused by the guard, then a push refused by the ruleset. It posts the gate report on the pull request. It takes about 30 minutes and needs the sandbox, its ruleset and its ticket environment, with the owner there to approve.
 
 **Skipping the gate for an urgent fix** needs all three:
 - the `release-gate-skipped` label;
