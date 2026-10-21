@@ -1,6 +1,6 @@
 ---
 name: release-gate
-description: Run the kit's release gate on a release pull request - try its exact commit on the sandbox (an update with CI green, `workflow doctor --strict`, the guard's refusal, the ruleset's refusal) and post one report whose last line the "release gate" check reads; once the release has published, finish it (the sandbox pull request updated from the release tag, then merged). The kit's own maintainers' skill, in a cloud session on the kit's repository. Use for "run the release gate on PR #N" and "finish the release gate".
+description: Run the kit's release gate on a release pull request - try its exact commit on the sandbox (an update with CI green, `workflow doctor --strict`, the guard's refusal, the ruleset's refusal, Claude Code's tools against the tools the guard sees) and post one report whose last line the "release gate" check reads; once the release has published, finish it (the sandbox pull request updated from the release tag, then merged). The kit's own maintainers' skill, in a cloud session on the kit's repository. Use for "run the release gate on PR #N" and "finish the release gate".
 ---
 
 # The release gate
@@ -146,6 +146,16 @@ Run them in this order. Record each one's result and its evidence as you go. **A
    ```
 
    Read `main`'s head before and after. This session's guard asks before the push to `main`: the owner approves it after checking that the URL in it is the sandbox's. It passes when GitHub answers with a repository rule violation ("push declined due to repository rule violations") and `main` is unchanged. Evidence: the push's output.
+5. **The tools comparison.** Claude Code's tools reference against the tools the guard sees, so a new tool that runs commands is caught before a release rather than after.
+   1. **Read the reference:** https://code.claude.com/docs/en/tools-reference, the documentation page listing the tools Claude can use. Fetch its Markdown with `curl -fsSL https://code.claude.com/docs/en/tools-reference.md`, and take the tool names from the first column of its tools table (`Agent`, `Bash`, `Edit`, …).
+   2. **Read the list:** the tools the guard sees, in the candidate's `$CAND/docs/enforcement.md`, the line starting "**The tools the guard sees:**". It is the release's own list, and a test keeps it the same as the guard's matcher, in a vendored project's settings and in the plugin's hooks file, so comparing with the list is comparing with the guard.
+   3. **Compare:** note every tool on the reference that isn't on the list.
+
+   It fails when a tool on the reference that isn't on the list runs a command or a program, as `Bash`, `Monitor` and `PowerShell` do: the report names each such tool. The fix is a guard change and a fix release, as #55 was. When a tool's description leaves open whether it runs one, ask the owner, and put their answer in the evidence. Every other tool not on the list is a note in the report, never a fail.
+
+   A reference that can't be read fails it as "couldn't check", as doctor's `cant_check` does: the fetch fails, the page has no tools table, or the names read don't include `Bash`, `Monitor` and `PowerShell` (the page has moved or changed shape). Never compare with a list from memory or an older copy.
+
+   Evidence: the reference's link, and the tools on it that aren't on the list, named below the report's table.
 
 ## 4. The gate report
 
@@ -156,6 +166,7 @@ Run them in this order. Record each one's result and its evidence as you go. **A
 - **It contains:**
   - the table (check | result | evidence), one row per check in the order above, "not run" for those a failure skipped;
   - on a failed set-up check, doctor's text output, quoted in a ```` ```text ```` block below the table, since a table cell holds one line;
+  - when the tools comparison has run, the tools on the reference that aren't on the guard's list, on one line below the table: "Not on the guard's list: …";
   - the Claude Code version;
   - the agents' marker `<!-- workflow:agent -->`;
   - and, last, the machine-readable line: `release-gate: pass <full sha>` when every check passed, else `release-gate: fail <full sha>`. A line on its own, nothing before it, with `$SHA` in full: 40 lowercase characters, never a short SHA.
@@ -173,6 +184,9 @@ The candidate is <full sha>, tried on the sandbox in medTech-group/pairnexus-wor
 | The set-up check | pass | `Workflow doctor: 0 gaps, 4 notes, 14 fine` |
 | The guard's refusal | pass | https://claude.ai/code/session_01ABC; `main` before and after: 9f1c2d3… |
 | The ruleset's refusal | pass | `! [remote rejected] HEAD -> main (push declined due to repository rule violations)` |
+| The tools comparison | pass | https://code.claude.com/docs/en/tools-reference; 38 tools not on the list, none that runs commands |
+
+Not on the guard's list: `Agent`, `AskUserQuestion`, `Glob`, `Grep`, `Read`, `WebFetch`, `WebSearch`, …
 
 Claude Code version: 2.1.300
 
@@ -195,6 +209,7 @@ The candidate is <full sha>, tried on the sandbox in medTech-group/pairnexus-wor
 | The set-up check | not run | |
 | The guard's refusal | not run | |
 | The ruleset's refusal | not run | |
+| The tools comparison | not run | |
 
 Claude Code version: 2.1.300
 

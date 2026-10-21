@@ -18,9 +18,9 @@ SKILL = KIT / ".claude/skills/release-gate/SKILL.md"
 SCRIPT = KIT / ".github/scripts/release_gate.py"
 SHA = HEAD  # the head commit of test_release_gate's release pull request
 
-# The checks, in their order. Later tickets insert theirs (#92 after the last)
-# without rewording these.
-CHECKS = ["The update with CI green", "The set-up check", "The guard's refusal", "The ruleset's refusal"]
+# The checks, in their order. Later tickets insert theirs without rewording these.
+CHECKS = ["The update with CI green", "The set-up check", "The guard's refusal", "The ruleset's refusal",
+          "The tools comparison"]
 
 
 def _text():
@@ -262,6 +262,117 @@ def test_the_report_has_its_table_version_marker_and_line_last():
         assert re.search(r"release-gate: (pass|fail) <full sha>\n\Z", ex)
 
 
+
+# ---------- the tools comparison (#92) ----------
+
+REFERENCE = "https://code.claude.com/docs/en/tools-reference"
+
+
+def test_the_tools_comparison_runs_last_after_the_rulesets_refusal():
+    names = re.findall(r"^\d+\. \*\*([^*]+?)\.\*\*", _section("The checks, in order"), re.M)
+    assert names[-1] == "The tools comparison"
+    assert names[-2] == "The ruleset's refusal"
+
+
+def test_it_names_the_reference_and_the_guards_list():
+    s = _check_item("The tools comparison")
+    assert REFERENCE in s and f"curl -fsSL {REFERENCE}.md" in s
+    # The candidate's own list: the guard that ships is the candidate's.
+    assert "`$CAND/docs/enforcement.md`" in s and 'the line starting "**The tools the guard sees:**"' in s
+    assert "in a vendored project's settings and in the plugin's hooks file" in s
+
+
+def test_a_missing_tool_that_runs_commands_fails_the_gate_naming_it():
+    s = _check_item("The tools comparison")
+    assert "It fails when a tool on the reference that isn't on the list runs a command or a program" in s
+    assert "the report names each such tool" in s
+    assert "a guard change and a fix release" in s
+    assert "ask the owner, and put their answer in the evidence" in s  # a description that leaves it open
+
+
+def test_other_missing_tools_are_notes():
+    s = _check_item("The tools comparison")
+    assert "Every other tool not on the list is a note in the report, never a fail" in s
+    assert "Not on the guard's list: …" in _flat(_section("The gate report"))
+    passed, failed = _examples()
+    assert "\nNot on the guard's list: `" in passed and "Not on the guard's list" not in failed
+
+
+def test_an_unreadable_reference_fails_as_couldnt_check():
+    s = _check_item("The tools comparison")
+    assert "can't be read fails it as \"couldn't check\"" in s and "`cant_check`" in s
+    assert "the fetch fails" in s and "no tools table" in s
+    assert "don't include `Bash`, `Monitor` and `PowerShell`" in s
+    assert "Never compare with a list from memory" in s
+
+
+def test_its_evidence_is_the_link_and_the_tools_not_on_the_list():
+    s = _check_item("The tools comparison")
+    assert "Evidence: the reference's link, and the tools on it that aren't on the list" in s
+    passed, failed = _examples()
+    row = re.search(r"^\| The tools comparison \| pass \| (\S+);", passed, re.M)
+    assert row and row.group(1) == REFERENCE
+    assert "| The tools comparison | not run | |" in failed
+
+
+def _guard_list():
+    """The tools the guard sees, as `docs/enforcement.md` lists them."""
+    doc = (KIT / "docs/enforcement.md").read_text()
+    (line,) = [l for l in doc.splitlines() if l.startswith("**The tools the guard sees:**")]
+    return set(re.findall(r"`([^`]+)`", line.split(". ")[0]))
+
+
+def _guard_matcher(hooks):
+    (matcher,) = [e["matcher"] for e in hooks["PreToolUse"] if "hook guard" in json.dumps(e)]
+    return matcher
+
+
+def _samples(pattern):
+    """Tool names the doc's `mcp__…github…` stands for: any text for `…`, a capital G or H or not."""
+    return [pattern.replace("github", g).replace("…", "__x__")
+            for g in ("github", "GitHub", "Github", "gitHub")]
+
+
+def _matchers(project):
+    """The guard's matcher as a vendored project's settings and the plugin's hooks file carry it."""
+    vendor.install(KIT, project, None, no_mattpocock=True)
+    settings = json.loads((project / vendor.SETTINGS).read_text())
+    plugin = json.loads((KIT / "hooks/hooks.json").read_text())
+    return {"vendored settings": _guard_matcher(settings["hooks"]), "hooks.json": _guard_matcher(plugin["hooks"])}
+
+
+def test_the_docs_list_is_the_guards_matcher_in_the_vendored_settings_and_the_plugin(tmp_path):
+    """Comparing the reference with the doc's list is then comparing it with the guard."""
+    listed = _guard_list()
+    names = {n for n in listed if "…" not in n}
+    patterns = listed - names
+    assert {"Bash", "Monitor", "PowerShell"} <= names and patterns
+    for where, matcher in _matchers(tmp_path).items():
+        alternatives = matcher.split("|")
+        plain = {a for a in alternatives if a.isalpha()}
+        regexes = [a for a in alternatives if not a.isalpha()]
+        assert plain == names, where  # a tool named on one and not the other
+        samples = [s for p in patterns for s in _samples(p)]
+        for sample in samples:  # each doc pattern is seen by the matcher
+            assert re.fullmatch(matcher, sample), (where, sample)
+        for rx in regexes:  # each of the matcher's patterns is one the doc lists
+            assert any(re.fullmatch(rx, s) for s in samples), (where, rx)
+        for other in ("Read", "WebFetch", "mcp__notion__search"):
+            assert not re.fullmatch(matcher, other), (where, other)
+
+
+def test_enforcement_md_says_the_gate_runs_the_step():
+    doc = _flat((KIT / "docs/enforcement.md").read_text())
+    line = doc[doc.index("**Release gate (item 10):**"):]
+    line = line[:line.index("It reads each command")]
+    assert "the release gate runs this step at every release, as its last check" in line
+    assert "fails the gate" in line and "#92" in line
+
+
+def test_contributing_lists_the_tools_comparison():
+    c = _flat((KIT / "CONTRIBUTING.md").read_text())
+    assert "then Claude Code's tools reference compared with the tools the guard sees (`docs/enforcement.md`)" in c
+
 # ---------- finishing the gate (#90) ----------
 
 # Its steps, in their order (#90's acceptance criteria).
@@ -439,5 +550,6 @@ def test_the_changelog_note_and_no_version_bump():
     assert "(#89," in since_0110(text) and "`release-gate`" in since_0110(text)
     assert "(#90," in since_0110(text) and "finish the release gate" in since_0110(text)
     assert "(#91," in since_0110(text) and "`workflow doctor --strict`" in since_0110(text)
+    assert "(#92," in since_0110(text) and "tools reference" in since_0110(text)
     latest_release = text.split("\n## ")[2].split()[0].lstrip("v")  # the heading after "## Unreleased"
     assert (KIT / "VERSION").read_text().strip() == latest_release
