@@ -1,6 +1,6 @@
 ---
 name: release-gate
-description: Run the kit's release gate on a release pull request - try its exact commit on the sandbox (an update with CI green, the guard's refusal, the ruleset's refusal) and post one report whose last line the "release gate" check reads. The kit's own maintainers' skill, in a cloud session on the kit's repository. Use for "run the release gate on PR #N".
+description: Run the kit's release gate on a release pull request - try its exact commit on the sandbox (an update with CI green, the guard's refusal, the ruleset's refusal) and post one report whose last line the "release gate" check reads; once the release has published, finish it (the sandbox pull request updated from the release tag, then merged). The kit's own maintainers' skill, in a cloud session on the kit's repository. Use for "run the release gate on PR #N" and "finish the release gate".
 ---
 
 # The release gate
@@ -8,6 +8,8 @@ description: Run the kit's release gate on a release pull request - try its exac
 A kit release publishes the moment its `VERSION` bump merges. Before that, this skill tries the release pull request's exact commit on a real project, the sandbox, and posts one gate report on the release pull request. The "release gate" check (`.github/workflows/release-gate.yml`) reads its last line: the release pull request can't merge without a pass for its head commit.
 
 It runs in a cloud session on the kit's repository, with the owner there to approve. It takes about 30 minutes.
+
+The owner asks for it twice: "run the release gate on PR #N" before the release (sections 1 to 4), and "finish the release gate" once the release has published (section 5).
 
 - **The kit's repository** (`KIT_REPO` below): `python3 .claude/workflow/bin/workflow.py version --repo`.
 - **The sandbox** (`<sandbox>` below): `medTech-group/pairnexus-workflow-sandbox`. It needs a ruleset on `main` and its ticket environment (its profile's `run.ticket_environment`).
@@ -177,6 +179,84 @@ The sandbox pull request is closed.
 release-gate: fail <full sha>
 ```
 
-**After a pass, the sandbox pull request stays open.** It merges only after the release publishes. **After a fail, it is closed** (section 3), and the release pull request needs a fix and a new run.
+**After a pass, the sandbox pull request stays open.** It merges only after the release publishes, when the gate is finished (section 5). **After a fail, it is closed** (section 3), and the release pull request needs a fix and a new run.
 
 Then tell the owner the result in one line, with the gate report's link. To see the check's verdict, read the `release gate` check run on the head commit and its step summary.
+
+## 5. Finishing the gate
+
+Asked "finish the release gate" once the release has published, for the version or for the release pull request #N. A pass left the sandbox pull request open (section 4). Finishing updates its branch from the release tag, so the sandbox records the released version rather than the candidate's commit, then merges it.
+
+- It touches the sandbox's `main` only through that pull request's merge, and never `docs/spike.md`, which changes only when a row's status does.
+- Its values carry over by hand, as the gate's do: `$VERSION`, `$SANDBOX`, `$REL`, `<sandbox PR>`, `<head>`.
+
+Run these steps in order. A step that stops the finish says why to the owner, pushes nothing and leaves the sandbox pull request as it is.
+
+1. **The release exists.** Asked for the release pull request #N, read its merge commit and `VERSION` at it; a pull request that hasn't merged has no release:
+
+   ```bash
+   gh api repos/$KIT_REPO/pulls/<N> --jq '[.merged, .merge_commit_sha] | @tsv'
+   gh api "repos/$KIT_REPO/contents/VERSION?ref=<merge sha>" --jq .content | base64 -d
+   ```
+
+   Then read the release `v$VERSION`, a GitHub release, not merely a tag:
+
+   ```bash
+   gh api repos/$KIT_REPO/releases/tags/v$VERSION --jq .tag_name
+   ```
+
+   If it isn't there (a 404), say the release `v$VERSION` hasn't published yet and stop: finish once it has.
+2. **The sandbox pull request.** Find the gate's pull request from its branch, `release-gate/$VERSION`, newest first:
+
+   ```bash
+   gh api "repos/<sandbox>/pulls?state=all&head=medTech-group:release-gate/$VERSION&per_page=100" --jq '.[] | [.number, .state, .merged_at, .head.sha] | @tsv'
+   ```
+
+   Take the first line. Stop, saying why, when:
+   - there's none: no gate opened one for `$VERSION`, so there is nothing to finish;
+   - it is closed: merged already (`merged_at` set), so the gate is finished; or closed by a failed gate (section 3), so the sandbox stays as it is.
+
+   Note its number (`<sandbox PR>`) and its head. The gate report's second line names it too ("tried on the sandbox in …#<n>"): if the two differ, ask the owner which one.
+3. **The update from the tag.** As the candidate was applied (section 2, step 4), with the release tag's checkout as the kit. Add the sandbox with push access (`add_repo`, `access: "push"`), and clone its branch and the tag outside the working tree:
+
+   ```bash
+   SANDBOX=$(mktemp -d)/sandbox && git clone --branch release-gate/$VERSION https://github.com/<sandbox> "$SANDBOX"
+   REL=$(mktemp -d)/release && git clone https://github.com/$KIT_REPO "$REL"
+   git -C "$REL" checkout --detach "v$VERSION"
+   ```
+
+   `git -C "$SANDBOX" rev-parse HEAD` must print the pull request's head. Matt Pocock's skills stay at the release's pinned SHA, the one in `$REL/.claude-plugin/marketplace.json`: check them out at it for `--mattpocock`. Then the update, on the sandbox:
+
+   ```bash
+   CLAUDE_PROJECT_DIR="$SANDBOX" python3 "$REL/scripts/workflow.py" vendor update --kit "$REL" --project "$SANDBOX" --mattpocock <checkout> --strict-pin
+   ```
+
+   Only `vendor update`, not the rest of `update-workflow`: the branch already holds what the candidate's `update-workflow` wrote, and the release is the candidate merged. An update that refuses, or that writes a conflict, stops at step 4.
+4. **Files unchanged apart from the lock's source and version.** The update may change only the lock's `kit_sha` (its source, now the tag's commit) and `kit_version`. Check both:
+
+   ```bash
+   git -C "$SANDBOX" status --porcelain
+   diff <(git -C "$SANDBOX" show HEAD:.claude/workflow/lock.json | jq -S 'del(.kit_sha, .kit_version)') \
+        <(jq -S 'del(.kit_sha, .kit_version)' "$SANDBOX/.claude/workflow/lock.json")
+   ```
+
+   The first must list `.claude/workflow/lock.json` alone, or nothing (then step 5 has no commit to push), and the second must print nothing. Otherwise **stop loudly**: name every file that differs (each line of the first other than the lock, and the lock when the second prints anything), to the owner and in a comment on the sandbox pull request (`gh api -X POST repos/<sandbox>/issues/<sandbox PR>/comments -F body=@<comment file>`). Push nothing, leave the sandbox pull request open, and never touch the sandbox's `main`. The release differs from what the gate tried, and what follows is the owner's call.
+5. **The description names the release.** Commit, push the branch (a plain push: it builds on the pull request's head), and rewrite the sandbox pull request's title and description:
+
+   ```bash
+   git -C "$SANDBOX" add -A && git -C "$SANDBOX" commit -m "Update the workflow kit to release v$VERSION"
+   git -C "$SANDBOX" push origin release-gate/$VERSION
+   gh api -X PATCH repos/<sandbox>/pulls/<sandbox PR> -f title="Kit release v$VERSION" -F body=@<body file> --jq .head.sha
+   ```
+
+   The description says it holds release `v$VERSION`, with the release's link, names the candidate commit the gate passed, links its gate report, and ends with the marker. Note the head it prints (`<head>`).
+6. **CI green.** Wait for CI on `<head>`, judged as section 3's first check: a check-in every 5 minutes; judged only once at least one check has run and each of the sandbox profile's `ci.required_checks` is among them; green when every check on the head has finished with `success`, `neutral` or `skipped`. If it fails, or after 30 minutes, stop: say what failed, with the CI run's link, and leave the sandbox pull request open.
+7. **A merge commit.** Merge it with a merge commit, pinned to `<head>`:
+
+   ```bash
+   gh api -X PUT repos/<sandbox>/pulls/<sandbox PR>/merge -f merge_method=merge -f sha=<head>
+   ```
+
+   If the sandbox's ruleset refuses it, tell the owner why and leave it: never bypass the ruleset.
+
+Then tell the owner in one line that the sandbox's `main` holds release `v$VERSION`, with the sandbox pull request's link.

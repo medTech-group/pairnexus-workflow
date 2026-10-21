@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**"Finish the release gate": the sandbox pull request updated from the release tag, then merged** (#90, part of #36).
+
+- **Asked "finish the release gate"** once the release has published, for the version or the release pull request #N, the `release-gate` skill's new section 5 checks the GitHub release `v<version>` exists, then finds the gate's sandbox pull request from `release-gate/<version>`. Without the release, or when that pull request is missing or closed (a failed gate), it says so and stops.
+- **The update from the tag,** as the candidate was applied: the tag's checkout as `vendor update --kit`, Matt Pocock's skills at the pinned SHA. Only the lock's `kit_sha` and `kit_version` may change; any other file stops it loudly, naming the files on the sandbox pull request, which stays open, with nothing pushed and the sandbox's `main` untouched.
+- **Then** the sandbox pull request's description says it holds release `v<version>`, its CI goes green, and it merges with a merge commit pinned to its head. `docs/spike.md` isn't touched.
+- Docs: `CONTRIBUTING.md`'s release section ends with finishing the gate. Tests: `tests/test_release_gate_skill.py`. Doing it for real is owner task #94.
+- **For projects updating:** nothing to do. The skill is the kit repository's own and never ships.
+
 **The `release-gate` skill: a release tried on the sandbox before it publishes** (#89, part of #36).
 
 - **Asked "run the release gate on PR #N"** in a cloud session on the kit's repository, the skill reads the release pull request's exact commit and its `VERSION`, checks it out outside the working tree, and updates the sandbox to it on a `release-gate/<version>` branch, through the candidate's own `update-workflow` with `vendor update --kit` pointing at the candidate (Matt Pocock's skills at the kit's pinned SHA). It opens the sandbox pull request, naming the candidate commit and the release pull request. It runs only on the kit's own branches, never a fork's, since it runs the candidate's code with push access to the sandbox.

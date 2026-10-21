@@ -53,6 +53,8 @@ Never twice in a row: the check refuses a skip when the previous version's entry
 
 A change to the check's own workflow or script is reviewed as CI config. The check runs the base branch's copy of the script, so a change to the script takes effect once it has merged; a change to the workflow takes effect on its own pull request. To move the script, merge a copy at its new path first, then point the workflow at it in a second pull request.
 
+**Finishing the gate,** after the release publishes. A pass leaves the sandbox pull request open. Once the release has published, ask "finish the release gate" in a cloud session on the kit's repository: the skill updates the sandbox pull request's branch from the release tag, stops naming the files if anything but the lock's source and version changed, says in the description that it holds the release, and merges it with a merge commit once its CI is green. The sandbox's `main` then holds the released version, ready for the next gate.
+
 **The kit's home.** Shipped files don't name this repository outright: they read `workflow version --repo` (`KIT_REPO` in `scripts/workflow/updates.py`), so forks work. A test lists the few places that still do.
 
 **Writing.** The skills, docs and README are read by people and by Claude:
