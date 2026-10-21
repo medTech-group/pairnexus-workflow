@@ -23,30 +23,37 @@ import tempfile
 from pathlib import Path
 
 _NEXT = re.compile(r"(^|\s)/(?:[\w-]+:)?next\b")
-# The commands that plan or build under the flow bring it in on their own:
+# The commands that plan, build or run under the flow bring it in on their own:
 # the kit adds rules to what they publish (flow.md sections 2 and 3).
 _COMMAND = re.compile(
-    r"(^|\s)/(?:[\w-]+:)?(?:to-spec|to-tickets|wayfinder|grill-with-docs|triage|implement(?:-spec)?)(?![\w-])"
+    r"(^|\s)/(?:[\w-]+:)?(?:to-spec|to-tickets|wayfinder|grill-with-docs|triage|implement(?:-spec)?|conductor)(?![\w-])"
 )
 _VERB = re.compile(
     r"\b(implement\w*|build\w*|work(?:ing)?|fix\w*|spec\w*|tickets?|maps?|wayfinder|grill\w*|to-spec|to-tickets|frontier|unattended)\b",
     re.I,
 )
 # Working on a named map, or asking to start, run, resume or stop a run or the
-# conductor. Only mentioning the conductor ("why did the conductor stop?") is
-# not asking: that message gets the guided start like any other.
-_MAP = re.compile(
+# conductor. Only mentioning the conductor ("why did the conductor stop?",
+# "the conductor run on Friday failed") is not asking: that message gets the
+# guided start like any other. The conductor's own wake ("conductor: wake (…)")
+# still brings the flow to its session.
+_MAP_OR_RUN = re.compile(
     r"\bwork(?:ing)?\s+(?:on\s+)?the\s+[\w -]{1,40}\bmap\b"
-    r"|\b(?:start|run|resume|stop)\s+(?:an?\s+|the\s+)?(?:unattended\s+)?(?:run|conductor)\b"
-    r"|\b(?:start|run|work)\s+(?:[\w-]+\s+){0,4}?unattended\b"
-    r"|^\W*conductor\W*\s*(?:start|run|resume|stop)\b",
+    r"|\b(?:start|restart|run|resume|stop)\s+(?:an?\s+|the\s+)?(?:unattended\s+)?(?:run|conductor)\b"
+    # "run the backlog unattended", not "can sessions run unattended?"
+    r"|\b(?:start|run)\s+(?:the|this|my|our|all|every)\s+(?:[\w-]+\s+){0,3}?unattended\b"
+    # "conductor resume" at the start of a line, the verb ending the request
+    # or followed by its object: not "conductor run on Friday never woke up".
+    r"|(?:^|\n)[^\w\n]*(?:(?:ok|okay|hey|please)[^\w\n]+)?conductor[^\w\n]+(?:please\s+)?"
+    r"(?:start|restart|run|resume|stop|wake|check[- ]?in)\b"
+    r"(?=[^\S\n]*(?:$|\n|[^\w\s]|(?:the|a|an|this|it|now|please)\b))",
     re.I,
 )
 _REF = re.compile(r"(?<![\w/])#\d+\b|/issues/\d+")
 
 
 def wants_flow(prompt: str) -> bool:
-    if _NEXT.search(prompt or "") or _COMMAND.search(prompt or "") or _MAP.search(prompt or ""):
+    if _NEXT.search(prompt or "") or _COMMAND.search(prompt or "") or _MAP_OR_RUN.search(prompt or ""):
         return True
     return bool(_VERB.search(prompt or "") and _REF.search(prompt or ""))
 

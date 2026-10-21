@@ -3,11 +3,12 @@ later, the reminder), not the flow; asking to run, resume or stop a run or the
 conductor, and working on a named map, still bring the flow (spec #221,
 decision 4 on #220). Seam: `workflow hook context`, as Claude Code runs it."""
 
+import time
 import uuid
 
 import pytest
 
-from conftest import KIT
+from changelog_notes import since_0110
 from test_plan_first import REMINDER, _ctx, _later
 
 START = "This is the first message of the session."
@@ -20,6 +21,16 @@ MENTIONS = [
     "the conductor run on Friday never woke up",
     "can you explain what the conductor does",
     "the conductor skipped #12",
+    # A run or the conductor named as a thing, not asked for.
+    "Conductor run on Friday never woke up",
+    "Conductor start time is wrong in the report",
+    "conductor: stop button does nothing",
+    # Running unattended asked about, not asked for.
+    "can ticket sessions run unattended?",
+    "the hooks don't work unattended",
+    "why won't my session run unattended?",
+    "sessions start asking for permission when unattended",
+    "can the conductor run unattended overnight?",
 ]
 
 ASKS = [
@@ -34,7 +45,18 @@ ASKS = [
     "start the conductor",
     "work the doctor map",
     "let's keep working on the doctor map",
+    "restart the conductor",
+    "OK conductor resume",
+    "conductor, please resume",
+    "Morning.\nconductor resume",
+    "conductor resume #12",
+    "run all the open tickets unattended",
+    "/conductor",
+    "/pairnexus-workflow:conductor resume",
 ]
+
+# What the conductor's wake routine sends its session (skills/conductor/SKILL.md, set-up step 12).
+WAKE = "conductor: wake (a ticket session finished)\n\n#12 merged in #40"
 
 
 @pytest.fixture(autouse=True)
@@ -64,6 +86,18 @@ def test_asking_to_run_resume_or_stop_or_working_a_map_still_gets_the_flow(repo,
     assert FLOW in later and REMINDER not in later
 
 
-def test_the_changelog_notes_it_under_unreleased():
-    unreleased = (KIT / "CHANGELOG.md").read_text(encoding="utf-8").split("## Unreleased", 1)[1].split("\n## ", 1)[0]
-    assert "(#223, part of #221)" in unreleased and "conductor" in unreleased
+def test_the_conductors_wake_still_brings_the_flow_to_its_session(repo):
+    env, session = {"WORKFLOW_ROLE": "conductor"}, uuid.uuid4().hex
+    assert FLOW in _ctx(repo, WAKE, session, env)
+    assert _ctx(repo, WAKE, session, env).startswith("Follow the workflow's flow")
+
+
+def test_a_long_run_of_whitespace_after_conductor_is_quick(repo):
+    for prompt in ("conductor" + " " * 50_000 + "x", "Conductor:" + "\n" * 50_000 + "x", "\n" * 50_000 + "x"):
+        began = time.monotonic()
+        _ctx(repo, prompt, uuid.uuid4().hex, {"WORKFLOW_ROLE": "conductor"})
+        assert time.monotonic() - began < 5, repr(prompt[:12])
+
+
+def test_the_changelog_notes_it():
+    assert "(#223, part of #221)" in since_0110()
