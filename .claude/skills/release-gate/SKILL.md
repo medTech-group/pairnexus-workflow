@@ -115,7 +115,7 @@ Run them in this order. Record each one's result and its evidence as you go. **A
 
       Drop each flag whose file `check-setup` left out. Doctor takes no `--project`: `CLAUDE_PROJECT_DIR` is how it finds the sandbox. Without it, it reports on this session's checkout.
 
-   It passes on exit 0. Notes never fail `--strict`: solo mode, unattended runs not set up yet and checks not required yet are notes. Every group doctor has, the Previews group (#115) and any it gains, is judged by the same `--strict`, so the sandbox's set-up has to keep up with it. Any other exit fails it: a gap, or a line doctor can't check. Exit 2 is a wrong command, as `check-setup` says: fix the command and run it again; an exit 2 for the command as written here fails it.
+   It passes on exit 0. Notes never fail `--strict`: solo mode, unattended runs not set up yet and checks not required yet are notes. `--strict` judges every group doctor has, the Previews group (#115) among them, and any it gains later, so the sandbox's set-up has to keep up with them. Any other exit fails it: a gap, or a line that couldn't be checked. Exit 2 is a wrong command, as `check-setup` says: fix the command and run it again; an exit 2 for the command as written here fails it. A traceback or another exit code is run again once, as it says too, and that run's exit counts.
 
    One note fails it too: when doctor's note on the cloud environments says whether a run has been made couldn't be read, even after the runs file was fetched again once. `check-setup` counts that line as one doctor couldn't check.
 

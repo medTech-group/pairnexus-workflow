@@ -191,6 +191,8 @@ def test_its_inputs_are_gathered_by_the_candidates_check_setup_as_files():
     assert "including its \"When something goes wrong\"" in s
     assert "fetched again once and doctor run again" in s
     assert "Exit 2 is a wrong command" in s and "an exit 2 for the command as written here fails it" in s
+    # A crash (a traceback, another exit code) is run again once; the second run's exit counts.
+    assert "A traceback or another exit code is run again once" in s and "that run's exit counts" in s
     # Nothing offered, nothing handed over: the gate isn't the person's check.
     assert "offers nothing" in s and "hands over to no other skill" in s
 
