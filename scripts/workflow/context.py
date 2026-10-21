@@ -29,10 +29,19 @@ _COMMAND = re.compile(
     r"(^|\s)/(?:[\w-]+:)?(?:to-spec|to-tickets|wayfinder|grill-with-docs|triage|implement(?:-spec)?)(?![\w-])"
 )
 _VERB = re.compile(
-    r"\b(implement\w*|build\w*|work(?:ing)?|fix\w*|spec\w*|tickets?|maps?|wayfinder|grill\w*|to-spec|to-tickets|frontier|conductor|unattended)\b",
+    r"\b(implement\w*|build\w*|work(?:ing)?|fix\w*|spec\w*|tickets?|maps?|wayfinder|grill\w*|to-spec|to-tickets|frontier|unattended)\b",
     re.I,
 )
-_MAP = re.compile(r"\bwork(?:ing)?\s+(?:on\s+)?the\s+[\w -]{1,40}\bmap\b|\b(?:start|run|resume|stop)\s+(?:an?\s+|the\s+)?(?:unattended\s+)?run\b|\bconductor\b", re.I)
+# Working on a named map, or asking to start, run, resume or stop a run or the
+# conductor. Only mentioning the conductor ("why did the conductor stop?") is
+# not asking: that message gets the guided start like any other.
+_MAP = re.compile(
+    r"\bwork(?:ing)?\s+(?:on\s+)?the\s+[\w -]{1,40}\bmap\b"
+    r"|\b(?:start|run|resume|stop)\s+(?:an?\s+|the\s+)?(?:unattended\s+)?(?:run|conductor)\b"
+    r"|\b(?:start|run|work)\s+(?:[\w-]+\s+){0,4}?unattended\b"
+    r"|^\W*conductor\W*\s*(?:start|run|resume|stop)\b",
+    re.I,
+)
 _REF = re.compile(r"(?<![\w/])#\d+\b|/issues/\d+")
 
 

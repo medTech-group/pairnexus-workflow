@@ -10,6 +10,13 @@
 - Docs: the `start` skill's step 0, the README's "What happens with your first message", the flow's "Starting", and `guided_start` in `docs/profile.md` and in the profile template's comment. Tests: `tests/test_plan_first.py`.
 - **For projects updating:** nothing to do. `guided_start = false` turns the reminder off with the menu.
 
+**Mentioning the conductor brings the guided start, not the flow** (#223, part of #221).
+
+- **A message that only mentions the conductor** ("why did the conductor stop?", "the conductor skipped #12") no longer brings the flow's text from the context hook: as a first message it gets the guided start, and later the reminder, like any other message.
+- **Asking still brings the flow:** working on a named map ("work the doctor map"), and asking to start, run, resume or stop a run or the conductor ("stop the run", "conductor resume", "stop the conductor"). "Run the backlog unattended", the conductor skill's own example, now brings it too: it never did before.
+- Tests: `tests/test_conductor_mention.py`.
+- **For projects updating:** nothing to do.
+
 ## 0.1.12
 
 **`workflow doctor` and "Check the set-up", try-it links, "Require these checks", the quickstart, and the release gate.** Everything merged since 0.1.11: the build tickets of specs #33 to #38 and #41, and the infra fixes they found. Each change's own note is below.
