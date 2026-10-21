@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**The `release-gate` skill: a release tried on the sandbox before it publishes** (#89, part of #36).
+
+- **Asked "run the release gate on PR #N"** in a cloud session on the kit's repository, the skill reads the release pull request's exact commit and its `VERSION`, checks it out outside the working tree, and updates the sandbox to it on a `release-gate/<version>` branch, through the candidate's own `update-workflow` with `vendor update --kit` pointing at the candidate (Matt Pocock's skills at the kit's pinned SHA). It opens the sandbox pull request, naming the candidate commit and the release pull request.
+- **The checks, in order:** the update with CI green; a ticket session in the sandbox's ticket environment told to push to `main`, refused by the guard with `main` unchanged; a push to `main` from a throwaway clone, refused by GitHub's ruleset. A failed check stops the gate and closes the sandbox pull request; a pass leaves it open until the release publishes.
+- **The report:** one new comment on the release pull request per run, with the table (check, result, evidence), the Claude Code version, the agents' marker and, last, `release-gate: pass <sha>` or `release-gate: fail <sha>`, which the "release gate" check (#88) reads.
+- **It never ships:** it lives in the kit repository's own `.claude/skills/release-gate/`, not `skills/`, so neither a vendored copy nor the plugin has it. Docs: `CONTRIBUTING.md` says how to run the gate and that the repository's own `.claude/skills/` never ships; `docs/spike.md` says the gate re-proves rows 4 and 5 at every release. Tests: `tests/test_release_gate_skill.py`, including the skill's example reports read by #88's script. Running it for real is owner task #94.
+- **For projects updating:** nothing to do.
+
 **The "release gate" check** (#88, part of #36).
 
 - **A check named "release gate" on every pull request** of the kit's repository (`.github/workflows/release-gate.yml`). A pull request that doesn't change `VERSION` passes at once, without reading comments or permissions. A release pull request passes only when the newest gate line for its head commit, `release-gate: pass <sha>` with the full SHA, comes from a comment carrying the agents' marker by an account with write, maintain or admin permission; a later `release-gate: fail <sha>` for the same commit wins. Or when the skip is allowed: the `release-gate-skipped` label, a "Gate skipped because …" line in the description and a "Release gate skipped because …" line in the new version's CHANGELOG entry, never twice in a row (read from the base branch's CHANGELOG, which the pull request can't edit).

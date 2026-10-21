@@ -5,6 +5,8 @@
 
 The kit relies on Claude Code and GitHub behaving as their docs say. This file records what has actually been tried, so nothing rests on an assumption by accident. Update it whenever one of these is checked again.
 
+The release gate (`CONTRIBUTING.md`) re-proves rows 4 (the push) and 5 at every release, on the sandbox; this file changes only when a row's status does.
+
 | # | Assumption | Status | How it was checked |
 |---|---|---|---|
 | 1 | Repo hooks in `.claude/settings.json` run in a headless session and the guard's `deny` stops the tool | **Verified** 12 Oct 2026 | `claude -p` (2.1.296) in a copy of pair-drop with the kit vendored and `WORKFLOW_ROLE=ticket`, asked to `git push origin main` with `--allowedTools "Bash(git push:*)"`: the guard denied it and the remote got no `main` |
