@@ -11,6 +11,7 @@ import sys
 import pytest
 
 import fake_gh
+from changelog_notes import since_0110
 from conftest import KIT
 from test_doctor import CLI, _bin, _fake, _gone, _lines, _prof, _project, _report
 from workflow import cli, profile, vendor
@@ -258,7 +259,7 @@ def test_the_changelog_notes_it_under_unreleased_without_a_version_bump():
     log = (KIT / "CHANGELOG.md").read_text()
     start = log.index("## Unreleased\n")
     end = log.index("\n## ", start + 1)
-    assert "#62" in log[start:end] and "local gap" in log[start:end]
+    assert "#62" in since_0110(log) and "local gap" in since_0110(log)
     released = log[end + 4:].split("\n", 1)[0].strip()
     assert (KIT / "VERSION").read_text().strip() == released
 

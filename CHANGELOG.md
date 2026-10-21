@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.1.12
+
+**`workflow doctor` and "Check the set-up", try-it links, "Require these checks", the quickstart, and the release gate.** The build tickets of specs #33 to #38 and #41 merged since 0.1.11, and the infra fixes they found. Each change's own note is below.
+
+- **For projects updating to 0.1.12:**
+  - the update rewrites the guard's hook entry in `.claude/settings.json` (`onFailure`, the timeout, the matcher), keeping the project's own hooks: use Claude Code v2.1.295 or later (see #57);
+  - nothing else: every other change below needs nothing from an updating project.
+
 **The release gate compares Claude Code's tools with the tools the guard sees** (#92, part of #36).
 
 - **A new check, "The tools comparison",** after the ruleset's refusal: the `release-gate` skill reads Claude Code's tools reference (https://code.claude.com/docs/en/tools-reference) and the list of tools the guard sees in the candidate's `docs/enforcement.md`, and notes every tool on the reference that isn't on the list.

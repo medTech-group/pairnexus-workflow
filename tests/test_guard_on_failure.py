@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from changelog_notes import since_0110
 from conftest import at_once
 from test_guard_no_python import (KINDS, LAYOUTS, MCP_TOOLS, MERGE, PUSH, Setup, _bash,
                                   _decision, _mcp)
@@ -193,7 +194,7 @@ def test_update_workflow_names_the_rewritten_guard_entry_in_its_pr():
 
 def test_the_changelog_notes_it_under_unreleased_without_a_version_bump():
     log = (KIT / "CHANGELOG.md").read_text()
-    unreleased = log[log.index("## Unreleased"):log.index("\n## ", log.index("## Unreleased") + 1)]
+    unreleased = since_0110(log)
     assert "#57" in unreleased and "guard's hook entry" in unreleased
     released = log[log.index("\n## ", log.index("## Unreleased") + 1) + 4:].split("\n", 1)[0].strip()
     assert (KIT / "VERSION").read_text().strip() == released
