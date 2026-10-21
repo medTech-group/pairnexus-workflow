@@ -40,9 +40,10 @@ _VERB = re.compile(
 _MAP_OR_RUN = re.compile(
     r"\bwork(?:ing)?\s+(?:on\s+)?the\s+[\w -]{1,40}\bmap\b"
     r"|\b(?:start|restart|run|resume|stop)[^\S\n]+(?:an?[^\S\n]+|the[^\S\n]+)?(?:unattended[^\S\n]+)?(?:run|conductor)\b"
-    # "run the backlog unattended", not "can sessions run unattended?" or "run the tests unattended"
+    # "run the backlog (or a map) unattended", not "can sessions run unattended?" or
+    # "run the tests unattended"
     r"|\b(?:start|run)[^\S\n]+(?:the|this|my|our|all|every)[^\S\n]+(?:[\w-]+[^\S\n]+){0,3}?"
-    r"(?:backlog|tickets?|issues?|queue)[^\S\n]+unattended\b"
+    r"(?:backlog|tickets?|issues?|queue|map)[^\S\n]+unattended\b"
     # A line that is only the command: "conductor resume", "OK conductor, stop",
     # "conductor resume #45", or the wake routine's own text. Not "conductor run:
     # hangs at #12", and not one later in a line ("Thanks. Conductor, resume").

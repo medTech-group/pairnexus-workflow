@@ -42,7 +42,7 @@ MENTIONS = [
     "Conductor stop (does nothing)",
     "conductor resume (fails with a traceback)",
     "conductor wake (never fires for me)",
-    "the session didn't start\nall tickets ran unattended",
+    "the session didn't start\nthe backlog unattended log is attached",
     "run the tests unattended",
     "can you run the linter unattended in CI?",
     # Running unattended asked about, not asked for.
@@ -78,6 +78,7 @@ ASKS = [
     "conductor resume\nit stopped overnight",
     "conductor stop\r\nthanks",
     "run every ready ticket unattended",
+    "run the doctor map unattended",
     "run all the open tickets unattended",
     "/conductor",
     "/pairnexus-workflow:conductor resume",
