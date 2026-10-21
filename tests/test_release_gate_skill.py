@@ -18,9 +18,9 @@ SKILL = KIT / ".claude/skills/release-gate/SKILL.md"
 SCRIPT = KIT / ".github/scripts/release_gate.py"
 SHA = HEAD  # the head commit of test_release_gate's release pull request
 
-# The checks, in their order. Later tickets insert theirs (#91 after the first,
-# #92 after the last) without rewording these.
-CHECKS = ["The update with CI green", "The guard's refusal", "The ruleset's refusal"]
+# The checks, in their order. Later tickets insert theirs (#92 after the last)
+# without rewording these.
+CHECKS = ["The update with CI green", "The set-up check", "The guard's refusal", "The ruleset's refusal"]
 
 
 def _text():
@@ -154,6 +154,84 @@ def test_the_guards_refusal_is_for_the_base_branch_and_leaves_the_head_alone():
     s = _flat(_section("The checks, in order"))
     assert "pushing to the base branch `main` is never allowed" in s and "doesn't count" in s
     assert "is still at `<head>`" in s
+
+
+def _check_item(name):
+    """One check's item in section 3, from its bold name to the next item."""
+    s = _section("The checks, in order")
+    m = re.search(rf"^\d+\. \*\*{re.escape(name)}\.\*\*(.*?)(?=^\d+\. \*\*|\Z)", s, re.M | re.S)
+    assert m, f"no check {name!r}"
+    return _flat(m.group(1))
+
+
+def test_the_set_up_check_runs_doctor_strict_on_the_sandbox():
+    """#91: `workflow doctor --strict`, second, on the sandbox branch's checkout."""
+    s = _check_item("The set-up check")
+    assert "`workflow doctor --strict`" in s
+    assert 'CLAUDE_PROJECT_DIR="$SANDBOX" python3 -B "$SANDBOX/.claude/workflow/bin/workflow.py" doctor --strict ' in s
+    names = re.findall(r"^\d+\. \*\*([^*]+?)\.\*\*", _section("The checks, in order"), re.M)
+    assert names.index("The set-up check") == 1
+
+
+def test_a_flag_whose_file_was_left_out_is_dropped():
+    """check-setup leaves `--checks` or `--rulesets` out at times: a copied command would name a
+    file that isn't there, and fail the gate wrongly."""
+    s = _check_item("The set-up check")
+    assert "Drop each flag whose file `check-setup` left out" in s
+
+
+def test_its_inputs_are_gathered_by_the_candidates_check_setup_as_files():
+    """Following the candidate's own gathering, so a release that breaks it fails here too."""
+    s = _check_item("The set-up check")
+    assert "`$CAND/skills/check-setup/SKILL.md`" in s and "instead of restating it" in s
+    for flag in ("--rulesets", "--repo", "--environments", "--runs", "--checks", "--prs"):
+        assert f"{flag} <dir>/" in s, flag
+    assert "outside the checkout" in s
+    # Its "When something goes wrong" too: a file fetched again once, exit 2 a wrong command.
+    assert "including its \"When something goes wrong\"" in s
+    assert "fetched again once and doctor run again" in s
+    assert "Exit 2 is a wrong command" in s and "an exit 2 for the command as written here fails it" in s
+    # A crash (a traceback, another exit code) is run again once; the second run's exit counts.
+    assert "A traceback or another exit code is run again once" in s and "that run's exit counts" in s
+    # Nothing offered, nothing handed over: the gate isn't the person's check.
+    assert "offers nothing" in s and "hands over to no other skill" in s
+
+
+def test_doctor_checks_the_claude_code_version_the_report_records():
+    """Read once in section 1; never a second `claude --version`."""
+    s = _check_item("The set-up check")
+    assert '--claude-version "<the version from section 1, step 3>"' in s
+    assert "never a second `claude --version`" in s
+    assert "for the set-up check and the report" in _flat(_section("The candidate"))
+
+
+def test_a_non_zero_exit_fails_the_gate_with_doctors_report_quoted():
+    s = _check_item("The set-up check")
+    assert "It passes on exit 0" in s and "Notes never fail `--strict`" in s
+    assert "Any other exit fails it" in s and "doctor's text output" in s and "quoted" in s
+    # A note that can't say whether a run has been made exits 0, yet check-setup counts it as unchecked.
+    assert "whether a run has been made couldn't be read" in s and "fails it too" in s
+    assert "Lines doctor gains later" not in s
+
+
+def test_the_example_first_line_is_one_doctor_prints_for_a_pass():
+    """Doctor leaves out the counts that are zero, but for gaps."""
+    line = re.compile(r"Workflow doctor: 0 gaps(, \d+ notes?)?(, \d+ fine)?")
+    s = _check_item("The set-up check")
+    assert "can't check, " not in s.split("Evidence:")[1].split(";")[0]
+    passed, _ = _examples()
+    row = re.search(r"^\| The set-up check \| pass \| `([^`]+)` \|$", passed, re.M)
+    assert row and line.fullmatch(row.group(1)), row
+
+
+def test_a_fail_with_doctors_output_quoted_still_reads_as_a_fail(tmp_path):
+    """Doctor's text below the table leaves the gate line last."""
+    _, failed = _examples()
+    report = failed.replace("| The set-up check | not run | |", "| The set-up check | fail | `Workflow doctor: 1 gap, 4 notes, 13 fine` |")
+    report = report.replace("\nClaude Code version", "\n```text\nWorkflow doctor: 1 gap, 4 notes, 13 fine\n```\n\nClaude Code version")
+    code, out = _check(tmp_path, report.replace("<full sha>", SHA))
+    assert code == 1 and out.startswith("fail: ") and "failed for the head commit" in out, out
+    assert "doctor's text output, quoted" in _flat(_section("The gate report"))
 
 
 def test_ci_is_judged_only_once_checks_have_run():
@@ -344,6 +422,7 @@ def test_contributing_says_how_to_run_the_gate_and_that_claude_skills_never_ship
     c = _flat((KIT / "CONTRIBUTING.md").read_text())
     assert "run the release gate on PR #N" in c and "about 30 minutes" in c
     assert "ticket environment" in c and "#89 says how" not in c
+    assert "then `workflow doctor --strict` on the sandbox branch" in c
     assert "own `.claude/skills/` is for maintainers and never ships" in c
     assert "kit-only `release-gate` skill" in (KIT / "CLAUDE.md").read_text()
 
@@ -359,5 +438,6 @@ def test_the_changelog_note_and_no_version_bump():
     text = (KIT / "CHANGELOG.md").read_text()
     assert "(#89," in since_0110(text) and "`release-gate`" in since_0110(text)
     assert "(#90," in since_0110(text) and "finish the release gate" in since_0110(text)
+    assert "(#91," in since_0110(text) and "`workflow doctor --strict`" in since_0110(text)
     latest_release = text.split("\n## ")[2].split()[0].lstrip("v")  # the heading after "## Unreleased"
     assert (KIT / "VERSION").read_text().strip() == latest_release

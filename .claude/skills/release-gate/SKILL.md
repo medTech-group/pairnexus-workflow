@@ -1,6 +1,6 @@
 ---
 name: release-gate
-description: Run the kit's release gate on a release pull request - try its exact commit on the sandbox (an update with CI green, the guard's refusal, the ruleset's refusal) and post one report whose last line the "release gate" check reads; once the release has published, finish it (the sandbox pull request updated from the release tag, then merged). The kit's own maintainers' skill, in a cloud session on the kit's repository. Use for "run the release gate on PR #N" and "finish the release gate".
+description: Run the kit's release gate on a release pull request - try its exact commit on the sandbox (an update with CI green, `workflow doctor --strict`, the guard's refusal, the ruleset's refusal) and post one report whose last line the "release gate" check reads; once the release has published, finish it (the sandbox pull request updated from the release tag, then merged). The kit's own maintainers' skill, in a cloud session on the kit's repository. Use for "run the release gate on PR #N" and "finish the release gate".
 ---
 
 # The release gate
@@ -42,7 +42,7 @@ This skill is the kit repository's own (`.claude/skills/release-gate/`). It neve
    ```
 
    `git -C "$CAND" rev-parse HEAD` must print `$SHA`.
-3. **The Claude Code version.** Run `claude --version` once, here, and keep it for the report.
+3. **The Claude Code version.** Run `claude --version` once, here, and keep it for the set-up check and the report.
 
 ## 2. The sandbox branch and its pull request
 
@@ -100,7 +100,29 @@ Run them in this order. Record each one's result and its evidence as you go. **A
    ```
 
    Evidence: the CI run's link.
-2. **The guard's refusal.** A ticket session in the sandbox is told to push to `main`, and the kit's guard must refuse it.
+2. **The set-up check.** `workflow doctor --strict` on the sandbox branch, so a release never ships a set-up that the kit itself reports broken.
+   1. **Gather its inputs** by following the candidate's own `$CAND/skills/check-setup/SKILL.md`, its section 1 "In a cloud session", including its "When something goes wrong", instead of restating it here: a release that breaks that gathering fails the gate too. It writes them to files in a new `mktemp -d` directory (`<dir>`), outside the checkout and the sandbox clone. Three differences:
+      - **It gathers for the sandbox:** `<repo>` is `<sandbox>`, and `<base>` is the sandbox profile's `project.base_branch` (the profile under `$SANDBOX`).
+      - **Claude Code's version is the one read in section 1, step 3:** never a second `claude --version`.
+      - **Only its gathering:** doctor runs as below, not with `--json`, and the gate offers nothing and hands over to no other skill. `check-setup`'s report and offers (its sections 2 and 3) are for a person checking their own set-up.
+
+      A file `check-setup` says to leave out is left out here too, and a file doctor couldn't use is fetched again once and doctor run again, as it says.
+   2. **Run doctor** on the sandbox branch's checkout, at `<head>`, with the candidate's CLI as the update vendored it, and every file gathered:
+
+      ```bash
+      CLAUDE_PROJECT_DIR="$SANDBOX" python3 -B "$SANDBOX/.claude/workflow/bin/workflow.py" doctor --strict --rulesets <dir>/rulesets.json --repo <dir>/repo.json --environments <dir>/environments.json --runs <dir>/run-issues.json --checks <dir>/checks.json --prs <dir>/prs.json --claude-version "<the version from section 1, step 3>"
+      ```
+
+      Drop each flag whose file `check-setup` left out. Doctor takes no `--project`: `CLAUDE_PROJECT_DIR` is how it finds the sandbox. Without it, it reports on this session's checkout.
+
+   It passes on exit 0. Notes never fail `--strict`: solo mode, unattended runs not set up yet and checks not required yet are notes. `--strict` judges every group doctor has, the Previews group (#115) among them, and any it gains later, so the sandbox's set-up has to keep up with them. Any other exit fails it: a gap, or a line that couldn't be checked. Exit 2 is a wrong command, as `check-setup` says: fix the command and run it again; an exit 2 for the command as written here fails it. A traceback or another exit code is run again once, as it says too, and that run's exit counts.
+
+   One note fails it too: when doctor's note on the cloud environments says whether a run has been made couldn't be read, even after the runs file was fetched again once. `check-setup` counts that line as one doctor couldn't check.
+
+   A Claude Code older than doctor asks for is a gap, so the check fails on doctor's line for it. That line and the report's version line always agree: doctor checks the version the report records.
+
+   Evidence: doctor's first line, for example "Workflow doctor: 0 gaps, 4 notes, 14 fine"; on a fail, doctor's text output as well, quoted in full below the report's table.
+3. **The guard's refusal.** A ticket session in the sandbox is told to push to `main`, and the kit's guard must refuse it.
    1. Read `main`'s head: `gh api repos/<sandbox>/commits/main --jq .sha`.
    2. Find the ticket environment: the sandbox profile's `run.ticket_environment`, its id from `list_environments`.
    3. Start a session with `create_session`: that `environment_id`, `source_url` the sandbox, `source_revision` the `release-gate/$VERSION` branch, the sandbox profile's `run.permission_mode`, and this prompt:
@@ -115,7 +137,7 @@ Run them in this order. Record each one's result and its evidence as you go. **A
    - `release-gate/$VERSION` is still at `<head>`, so check 1's CI is for the pull request's head.
 
    Evidence: the transcript's link (`https://claude.ai/code/<session id>`), and `main`'s head before and after.
-3. **The ruleset's refusal.** GitHub itself must refuse a push to `main`. From a throwaway clone outside any checkout with the kit's hooks. Use `git -C` and the sandbox's URL on every command, never a `cd`, so nothing lands in this session's checkout or the kit's `main`:
+4. **The ruleset's refusal.** GitHub itself must refuse a push to `main`. From a throwaway clone outside any checkout with the kit's hooks. Use `git -C` and the sandbox's URL on every command, never a `cd`, so nothing lands in this session's checkout or the kit's `main`:
 
    ```bash
    T=$(mktemp -d) && git clone https://github.com/<sandbox> "$T/clone"
@@ -133,6 +155,7 @@ Run them in this order. Record each one's result and its evidence as you go. **A
 - **Right before posting, read the pull request's head again.** If it is no longer `$SHA`, post the report for `$SHA` all the same, and say in it that the head moved: the check stays red, and the gate runs again on the new head.
 - **It contains:**
   - the table (check | result | evidence), one row per check in the order above, "not run" for those a failure skipped;
+  - on a failed set-up check, doctor's text output, quoted in a ```` ```text ```` block below the table, since a table cell holds one line;
   - the Claude Code version;
   - the agents' marker `<!-- workflow:agent -->`;
   - and, last, the machine-readable line: `release-gate: pass <full sha>` when every check passed, else `release-gate: fail <full sha>`. A line on its own, nothing before it, with `$SHA` in full: 40 lowercase characters, never a short SHA.
@@ -147,6 +170,7 @@ The candidate is <full sha>, tried on the sandbox in medTech-group/pairnexus-wor
 | Check | Result | Evidence |
 |---|---|---|
 | The update with CI green | pass | https://github.com/medTech-group/pairnexus-workflow-sandbox/actions/runs/123 |
+| The set-up check | pass | `Workflow doctor: 0 gaps, 4 notes, 14 fine` |
 | The guard's refusal | pass | https://claude.ai/code/session_01ABC; `main` before and after: 9f1c2d3… |
 | The ruleset's refusal | pass | `! [remote rejected] HEAD -> main (push declined due to repository rule violations)` |
 
@@ -168,6 +192,7 @@ The candidate is <full sha>, tried on the sandbox in medTech-group/pairnexus-wor
 | Check | Result | Evidence |
 |---|---|---|
 | The update with CI green | fail: `workflow kit` failed | https://github.com/medTech-group/pairnexus-workflow-sandbox/actions/runs/123 |
+| The set-up check | not run | |
 | The guard's refusal | not run | |
 | The ruleset's refusal | not run | |
 
