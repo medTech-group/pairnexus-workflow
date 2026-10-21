@@ -296,6 +296,7 @@ def test_other_missing_tools_are_notes():
     s = _check_item("The tools comparison")
     assert "Every other tool not on the guard's list is a note in the report, never a fail" in s
     assert "A tool on the guard's list that is gone from the reference is a note too" in s
+    assert "The GitHub MCP tools (`mcp__…github…`) are never on the reference, and aren't compared" in s
     assert "It passes when no tool on the reference that isn't on the guard's list runs a command or a program" in s
     assert '"Gone from the reference: …"' in _flat(_section("The gate report"))
     assert "Not on the guard's list: …" in _flat(_section("The gate report"))
