@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**The release gate runs `workflow doctor --strict` on the sandbox** (#91, part of #36).
+
+- **A new second check, "The set-up check",** after the update with CI green and before the guard's refusal: the `release-gate` skill gathers the sandbox's rulesets, repository settings, environments, `workflow:run` issues, the base branch's checks and the open pull requests by following the candidate's own `check-setup`, writes them to files outside the checkout, and runs the candidate's `workflow doctor --strict` on the sandbox branch with them and the Claude Code version the report records (read once, never a second `claude --version`).
+- **It passes on exit 0;** notes never fail it. Any other exit fails the gate like the other checks, with doctor's text output quoted below the report's table. A gate run on a Claude Code older than doctor needs fails here.
+- Docs: `CONTRIBUTING.md`'s list of what the gate checks. Tests: `tests/test_release_gate_skill.py`. Running it for real is owner task #94.
+- **For projects updating:** nothing to do. The skill is the kit repository's own and never ships.
+
 **"Finish the release gate": the sandbox pull request updated from the release tag, then merged** (#90, part of #36).
 
 - **Asked "finish the release gate"** once the release has published, for the version or the release pull request #N, the `release-gate` skill's new section 5 checks the GitHub release `v<version>` exists, then finds the gate's sandbox pull request from `release-gate/<version>`. Without the release, or when that pull request is missing, merged already, or closed (by a failed gate or a later version's gate run), it says so and stops.
