@@ -204,8 +204,6 @@ def _note_unreviewed_specs(verdicts, issues, repo: str | None, permissions_file:
     and their authors' permissions come from `--permissions F` or `gh`. Once
     `gh` is missing or times out, it isn't called again: the specs left get
     the "couldn't read" note at once, so `ready` never waits on it spec by spec."""
-    from . import fetch as fetch_mod
-
     gh_down: list[str] = []  # why `gh` can't be used any more, once known
     given: list = []  # the --permissions file's JSON, read once
 
@@ -215,7 +213,7 @@ def _note_unreviewed_specs(verdicts, issues, repo: str | None, permissions_file:
         try:
             return call()
         except fetch_mod.GhError as e:
-            if str(e) == fetch_mod.NOT_INSTALLED or str(e).startswith("gh api took longer"):
+            if str(e) in (fetch_mod.NOT_INSTALLED, fetch_mod.TIMED_OUT):
                 gh_down.append(str(e))
             raise issues_mod.SpecReviewsUnread(f"{what}: {e}") from None
 

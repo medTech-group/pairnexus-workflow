@@ -337,7 +337,7 @@ def test_the_changelog_notes_it_and_version_is_not_bumped():
     assert _read("VERSION").strip() == released[0]
 
 
-# ---------- review round 1: odd inputs, repeated lookups ----------
+# ---------- odd inputs, and each lookup made once ----------
 
 
 def test_a_spec_with_no_readable_creation_date_counts_as_new(project, capsys, tmp_path, monkeypatch):
@@ -430,7 +430,7 @@ def test_once_gh_times_out_it_isnt_called_again(project, capsys, monkeypatch):
 
     def slow(repo, number):
         calls.append(number)
-        raise fetch.GhError(f"gh api took longer than {fetch.TIMEOUT} seconds")
+        raise fetch.GhError(fetch.TIMED_OUT)
 
     monkeypatch.setattr(fetch, "spec_comments", slow)
     issues = [spec(comments=1), spec(20, comments=1), ticket(), ticket(21, section="## Parent\n\n#20")]

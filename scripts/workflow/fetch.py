@@ -29,6 +29,7 @@ TIMEOUT = 120  # seconds for one `gh api` call, every page
 NOT_INSTALLED = "gh (the GitHub CLI) isn't installed here"
 AS_A_FILE = "so it couldn't be fetched: give --{name} as a file"
 PROXY_REFUSED = "not permitted through this proxy"  # a cloud session's proxy, refusing a route
+TIMED_OUT = f"gh api took longer than {TIMEOUT} seconds"
 
 # A pull request's review threads come only from GraphQL, 100 to a page; gh's
 # --paginate follows pageInfo.endCursor through $endCursor.
@@ -61,7 +62,7 @@ def _run(args: list[str]) -> subprocess.CompletedProcess:
     except FileNotFoundError:
         raise GhError(NOT_INSTALLED) from None
     except subprocess.TimeoutExpired:
-        raise GhError(f"gh api took longer than {TIMEOUT} seconds") from None
+        raise GhError(TIMED_OUT) from None
     except OSError as e:
         raise GhError(f"couldn't run gh: {e.strerror or e}") from None
 

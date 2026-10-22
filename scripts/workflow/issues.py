@@ -24,8 +24,8 @@ READY_LABEL = "ready-for-agent"
 CLAIM_LABEL = "workflow:in-progress"
 INFRA_LABEL = "workflow:infra"
 HUMAN_LABELS = {"needs-human", "owner-task", "ready-for-human"}
-NOT_BUILD_LABELS = {"wayfinder:map", "spec"}
 SPEC_LABEL = "spec"
+NOT_BUILD_LABELS = {"wayfinder:map", SPEC_LABEL}
 # Specs created before this date are never noted as unreviewed (#234), so
 # updating the kit adds no notes to old specs: the date of the release that
 # brings the note in, which that release sets.
@@ -610,7 +610,12 @@ def parent_spec(issue: dict, by_num: dict[int, dict], repo: str | None = None, s
     return spec if created is None or created >= since else None
 
 
-def _spec_note(spec: dict, fetch_comments: Callable, permissions: Callable, known: dict[str, str]) -> str | None:
+def _spec_note(
+    spec: dict,
+    fetch_comments: Callable[[int], object],
+    permissions: Callable[[list[str]], object],
+    known: dict[str, str],
+) -> str | None:
     """The note for one spec, or None when it has a clean review. `known` holds
     the permissions already read (login casefolded -> permission), shared by
     every spec of one `ready`, so each login is looked up once."""
@@ -621,7 +626,7 @@ def _spec_note(spec: dict, fetch_comments: Callable, permissions: Callable, know
     n = spec["number"]
     body = spec.get("body") if isinstance(spec.get("body"), str) else ""
 
-    def unread(why: str) -> str:
+    def unread_note(why: str) -> str:
         return f"spec #{n}: couldn't read its reviews ({why})"
 
     try:
@@ -633,9 +638,9 @@ def _spec_note(spec: dict, fetch_comments: Callable, permissions: Callable, know
         else:
             comments = comments_from(fetch_comments(n))
     except SpecReviewsUnread as e:
-        return unread(str(e))
+        return unread_note(str(e))
     except CommentsError as e:
-        return unread(f"its comments: {e}")
+        return unread_note(f"its comments: {e}")
     ordered = _in_time_order(comments, lambda c: _time(c.get("created_at") or c.get("createdAt")), _number)
     records = read(ordered)
     digest = body_hash(body)
@@ -645,9 +650,9 @@ def _spec_note(spec: dict, fetch_comments: Callable, permissions: Callable, know
         try:
             got = _permissions(permissions(new))
         except SpecReviewsUnread as e:
-            return unread(str(e))
+            return unread_note(str(e))
         except Unreadable as e:
-            return unread(f"the reviewers' permissions: {e.why}")
+            return unread_note(f"the reviewers' permissions: {e.why}")
         known.update(got)
         known.update({a.casefold(): "none" for a in new if a.casefold() not in got})  # left out: no write access
     if spec_reviewed([r for r in records if _may_review(r.author, known)], body):
