@@ -150,8 +150,9 @@ def check_key(kind, commit, body_given: bool) -> None:
     commit for a round or a pass, a body for a spec. Raises RecordError."""
     if commit is not None and body_given:  # even an empty --commit: one key or the other
         raise RecordError(BOTH_KEYS)
-    if body_given and _kind(kind) not in ("", "spec"):
-        if _kind(kind) in KINDS:
+    k = _kind(kind)
+    if body_given and k not in ("", "spec"):
+        if k in KINDS:
             raise RecordError("a round or a pass names a commit: give --commit; --body is for a spec record (--kind spec)")
         raise _kind_refused(kind)
 
@@ -227,9 +228,10 @@ def record(*, kind, round, commit=None, reviewers, clean, body=None) -> str:
         result = None
     digest = None
     if body is not None:
+        check_key(kind, commit, body_given=True)
         if not isinstance(body, str):
             raise RecordError("give --body as the spec's text")
-        if not plain_body(body).strip():
+        if not plain_body(body):
             raise RecordError(f"the spec's body {EMPTY_BODY}")
         digest = body_hash(body)
     r = _checked(kind, round, commit, reviewers, result, digest)
@@ -293,7 +295,7 @@ def spec_reviewed(records, body) -> bool:
     clean. Records of other bodies, and round and pass records, don't count.
     It doesn't judge who posted them: a caller that counts only accounts with
     write access leaves the others out first."""
-    if not isinstance(body, str) or not plain_body(body).strip():
+    if not isinstance(body, str) or not plain_body(body):
         return False
     digest = body_hash(body)
     mine = [r for r in records if r.kind == "spec" and r.body == digest]

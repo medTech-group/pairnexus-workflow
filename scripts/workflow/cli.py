@@ -937,7 +937,7 @@ def _spec_body(path: str) -> str:
         raise reviews_mod.RecordError(f"--body `{shown}` isn't UTF-8 text: give the spec's body as you publish it") from None
     except OSError as e:
         raise reviews_mod.RecordError(f"--body `{shown}` can't be read: {e.strerror or e}") from None
-    if not reviews_mod.plain_body(text).strip():
+    if not reviews_mod.plain_body(text):
         raise reviews_mod.RecordError(f"--body `{shown}` {reviews_mod.EMPTY_BODY}")
     return text
 
@@ -953,8 +953,8 @@ def cmd_review_record(a) -> int:
             return 2
     one = {flag: (getattr(a, flag) or [None])[0] for flag in ("kind", "round", "commit")}
     path = (a.body or [None])[0]
-    if path is not None and one["kind"] is None:
-        one["kind"] = "spec"  # --body alone is a spec's review
+    if path is not None and not (one["kind"] or "").strip():
+        one["kind"] = "spec"  # --body alone (or with an empty --kind) is a spec's review
     reviewers = ",".join(a.reviewers) if a.reviewers else None
     try:
         if path is not None:

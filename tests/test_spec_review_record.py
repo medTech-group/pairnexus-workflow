@@ -62,6 +62,14 @@ def test_a_spec_record_is_read_back_with_its_hash_kind_round_reviewers_and_resul
 def test_body_alone_makes_a_spec_record(capsys, spec_file):
     out = spec_record(capsys, spec_file(), kind=())
     assert f"kind=spec round=1 body={SPEC_HASH} " in out
+    # An empty --kind is no kind: --body still makes it a spec's review.
+    for blank in ("", "  "):
+        assert spec_record(capsys, spec_file(), kind=("--kind", blank)) == out
+
+
+def test_an_empty_kind_with_a_missing_body_says_the_file_is_missing(capsys, tmp_path):
+    code, out, err = run(capsys, "--kind", "", "--round", "1", "--body", str(tmp_path / "missing.md"), "--reviewers", "spec", "--clean")
+    assert code != 0 and out == "" and "names no file" in err and "give --kind" not in err
 
 
 def test_reviewers_are_put_in_the_panels_order(capsys, spec_file):
@@ -211,7 +219,13 @@ def test_the_python_writer_refuses_an_empty_body_and_an_empty_body_is_never_revi
     with pytest.raises(reviews.RecordError, match="is empty"):
         reviews.record(kind="spec", round=1, body=text, reviewers="spec", clean=True)
     empty = f"<!-- workflow:review kind=spec round=1 body={reviews.body_hash('')} reviewers=spec result=clean -->"
+    assert len(reviews.records_in(empty)) == 1
     assert reviews.spec_reviewed(reviews.records_in(empty), text) is False
+
+
+def test_the_python_writer_checks_the_key_before_the_body():
+    with pytest.raises(reviews.RecordError, match="--body is for a spec record"):
+        reviews.record(kind="round", round=1, body="", reviewers="spec", clean=True)
 
 
 def test_the_python_writer_refuses_a_body_that_isnt_text():
