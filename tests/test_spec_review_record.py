@@ -134,7 +134,7 @@ def test_a_refusal_shows_the_end_of_a_long_path_where_the_file_name_is(capsys, t
     assert code != 0 and "the-spec.md" in err and "…" in err
 
 
-@pytest.mark.parametrize("text", ["", "\n", "  \r\n\t\n"])
+@pytest.mark.parametrize("text", ["", "\n", "  \r\n\t\n", "\ufeff", "\ufeff\n  \n"])
 def test_an_empty_body_file_is_refused(capsys, spec_file, text):
     code, out, err = run(capsys, "--kind", "spec", "--round", "1", "--body", spec_file(text), "--reviewers", "spec", "--clean")
     assert code != 0 and out == ""
@@ -157,7 +157,7 @@ def test_a_spec_record_without_a_body_is_refused(capsys):
     code, out, err = run(capsys, "--kind", "spec", "--round", "1", "--reviewers", "spec", "--clean")
     assert code != 0 and out == "" and "give --body" in err
     code, out, err = run(capsys, "--kind", "spec", "--round", "1", "--commit", SHA, "--reviewers", "spec", "--clean")
-    assert code != 0 and out == "" and "give --body" in err
+    assert code != 0 and out == "" and "names its body, not a commit: give --body" in err
 
 
 @pytest.mark.parametrize("kind", ["round", "pass"])
@@ -172,6 +172,13 @@ def test_a_round_with_a_body_is_refused_before_the_file_is_read(capsys, tmp_path
     code, out, err = run(capsys, "--kind", kind, "--round", "1", "--body", str(tmp_path / "missing.md"), "--reviewers", "correctness", "--clean")
     assert code != 0 and out == ""
     assert "--body is for a spec record" in err and "no file" not in err
+
+
+@pytest.mark.parametrize("kind", ["sepc", "light"])
+def test_a_mistyped_kind_with_a_body_is_refused_before_the_file_is_read(capsys, tmp_path, kind):
+    code, out, err = run(capsys, "--kind", kind, "--round", "1", "--body", str(tmp_path / "missing.md"), "--reviewers", "spec", "--clean")
+    assert code != 0 and out == ""
+    assert f"--kind is `round` or `pass` (or `spec` for a spec's review), not `{kind}`" in err and "no file" not in err
 
 
 @pytest.mark.parametrize(
@@ -199,13 +206,20 @@ def test_body_given_twice_is_refused(capsys, spec_file):
     assert code != 0 and out == "" and "give --body once" in err
 
 
+@pytest.mark.parametrize("text", ["", " \n", "\ufeff\n"])
+def test_the_python_writer_refuses_an_empty_body_and_an_empty_body_is_never_reviewed(text):
+    with pytest.raises(reviews.RecordError, match="is empty"):
+        reviews.record(kind="spec", round=1, body=text, reviewers="spec", clean=True)
+    empty = f"<!-- workflow:review kind=spec round=1 body={reviews.body_hash('')} reviewers=spec result=clean -->"
+    assert reviews.spec_reviewed(reviews.records_in(empty), text) is False
+
+
 def test_the_python_writer_refuses_a_body_that_isnt_text():
     with pytest.raises(reviews.RecordError, match="body"):
         reviews.record(kind="spec", round=1, body=b"bytes", reviewers="spec", clean=True)
 
 
 # The reader ---------------------------------------------------------------
-
 
 
 @pytest.mark.parametrize(

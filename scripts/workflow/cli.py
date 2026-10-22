@@ -920,7 +920,8 @@ def cmd_adopt(a) -> int:
 
 def _spec_body(path: str) -> str:
     """The spec's body from --body's file, as the session publishes it; raises
-    RecordError, in words, for a file that is missing, isn't text or is empty."""
+    RecordError, in words, for a file that is missing, can't be read, isn't
+    UTF-8 text or is empty."""
     if not path:
         raise reviews_mod.RecordError("give --body a file: the spec's body, exactly as you publish it")
     # The end of a long path, where the file's name is.
@@ -936,7 +937,7 @@ def _spec_body(path: str) -> str:
         raise reviews_mod.RecordError(f"--body `{shown}` isn't UTF-8 text: give the spec's body as you publish it") from None
     except OSError as e:
         raise reviews_mod.RecordError(f"--body `{shown}` can't be read: {e.strerror or e}") from None
-    if not text.strip():
+    if not reviews_mod.plain_body(text).strip():
         raise reviews_mod.RecordError(f"--body `{shown}` {reviews_mod.EMPTY_BODY}")
     return text
 
@@ -957,7 +958,7 @@ def cmd_review_record(a) -> int:
     reviewers = ",".join(a.reviewers) if a.reviewers else None
     try:
         if path is not None:
-            reviews_mod.check_key(one["kind"], one["commit"], True)
+            reviews_mod.check_key(one["kind"], one["commit"], body_given=True)
         body = None if path is None else _spec_body(path)
         text = reviews_mod.record(**one, reviewers=reviewers, clean=a.clean, body=body)
     except reviews_mod.RecordError as e:

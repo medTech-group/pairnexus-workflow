@@ -115,21 +115,34 @@ def _shown(value, n: int) -> str:
     return cut + ("…" if len(text) > n else "")
 
 
+def plain_body(text: str) -> str:
+    """A spec's body as its hash reads it: line endings made `\n` (GitHub gives
+    a body back with `\r\n`), and a byte order mark at the start (an editor's)
+    and the whitespace at the very end left out, so the file a session
+    publishes and the body GitHub returns read alike. Empty when the body is."""
+    return text.removeprefix("\ufeff").replace("\r\n", "\n").replace("\r", "\n").rstrip()
+
+
 def body_hash(text: str) -> str:
-    """The SHA-256 of a spec's body as a spec record names it: line endings made
-    `\n` (GitHub gives a body back with `\r\n`), and a byte order mark at the
-    start (an editor's) and the whitespace at the very end left out, so the file
-    a session publishes and the body GitHub returns hash alike."""
-    plain = text.removeprefix("\ufeff").replace("\r\n", "\n").replace("\r", "\n").rstrip()
-    return hashlib.sha256(plain.encode("utf-8")).hexdigest()
+    """The SHA-256 of a spec's body (`plain_body`), as a spec record names it."""
+    return hashlib.sha256(plain_body(text).encode("utf-8")).hexdigest()
 
 
 def _given(value) -> bool:
     return value is not None and bool(str(value).strip())
 
 
+def _kind(kind) -> str:
+    return str(kind or "").strip().lower()
+
+
 BOTH_KEYS = "give --commit or --body, not both: --commit for a round or a pass, --body for a spec's review"
 EMPTY_BODY = "is empty: give the spec's body as you publish it"
+_BY_SPEC = "a spec's review is by " + " and ".join(SPEC_REVIEWERS)
+
+
+def _kind_refused(given) -> RecordError:
+    return RecordError(f"--kind is `round` or `pass` (or `spec` for a spec's review), not `{_shown(given, 20)}`")
 
 
 def check_key(kind, commit, body_given: bool) -> None:
@@ -137,8 +150,10 @@ def check_key(kind, commit, body_given: bool) -> None:
     commit for a round or a pass, a body for a spec. Raises RecordError."""
     if commit is not None and body_given:  # even an empty --commit: one key or the other
         raise RecordError(BOTH_KEYS)
-    if body_given and str(kind or "").strip().lower() in ("round", "pass"):
-        raise RecordError("a round or a pass names a commit: give --commit; --body is for a spec record (--kind spec)")
+    if body_given and _kind(kind) not in ("", "spec"):
+        if _kind(kind) in KINDS:
+            raise RecordError("a round or a pass names a commit: give --commit; --body is for a spec record (--kind spec)")
+        raise _kind_refused(kind)
 
 
 def _checked(kind, round, commit, reviewers, result, body=None) -> Record:
@@ -147,11 +162,11 @@ def _checked(kind, round, commit, reviewers, result, body=None) -> Record:
     `reviewers` is a comma-separated string or a list, put in the panel's order.
     `body` is a spec record's body hash, given in place of `commit`."""
     check_key(kind, commit, body is not None)
-    given, kind = kind, str(kind or "").strip().lower()
+    given, kind = kind, _kind(kind)
     if not kind:
         raise RecordError("give --kind: `round` for a review round, `pass` for a later Correctness pass, `spec` for a spec's review")
     if kind not in KINDS:
-        raise RecordError(f"--kind is `round` or `pass` (or `spec` for a spec's review), not `{_shown(given, 20)}`")
+        raise _kind_refused(given)
     rnd = "" if round is None else str(round).strip()
     if not rnd:
         raise RecordError("give --round: the round's number (for a pass, the round it follows)")
@@ -160,7 +175,8 @@ def _checked(kind, round, commit, reviewers, result, body=None) -> Record:
     sha = digest = None
     if kind == "spec":
         if body is None:
-            raise RecordError("give --body: the file holding the spec's body, exactly as you publish it")
+            names = "a spec record names its body, not a commit: " if _given(commit) else ""
+            raise RecordError(names + "give --body: the file holding the spec's body, exactly as you publish it")
         digest = str(body)
         if not _SHA256.fullmatch(digest):
             raise RecordError(f"a spec record's body hash is 64 hex characters, not `{_shown(body, 70)}`")
@@ -182,14 +198,13 @@ def _checked(kind, round, commit, reviewers, result, body=None) -> Record:
         raise RecordError("--reviewers has an empty name: give them comma-separated, with nothing between two commas")
     for n, t in zip(names, typed):
         if n not in REVIEWERS:
-            if kind == "spec":
-                raise RecordError(f"unknown reviewer `{_shown(t, 30)}`: a spec's review is by spec and correctness")
-            raise RecordError(f"unknown reviewer `{_shown(t, 30)}`: the reviewers are " + ", ".join(REVIEWERS))
+            known = _BY_SPEC if kind == "spec" else "the reviewers are " + ", ".join(REVIEWERS)
+            raise RecordError(f"unknown reviewer `{_shown(t, 30)}`: {known}")
     who = tuple(r for r in REVIEWERS if r in names)
     if kind == "pass" and who != ("correctness",):
         raise RecordError("a pass is reviewed by correctness alone: give --reviewers correctness")
     if kind == "spec" and not set(who) <= set(SPEC_REVIEWERS):
-        raise RecordError("a spec's review is by spec and correctness: give --reviewers spec,correctness (or the one that ran)")
+        raise RecordError(f"{_BY_SPEC}: give --reviewers {','.join(SPEC_REVIEWERS)} (or the one that ran)")
     if result not in RESULTS:
         raise RecordError("give --clean or --not-clean: whether the round left anything to fix")
     return Record(kind=kind, round=int(rnd), commit=sha, reviewers=who, result=result, body=digest)
@@ -214,7 +229,7 @@ def record(*, kind, round, commit=None, reviewers, clean, body=None) -> str:
     if body is not None:
         if not isinstance(body, str):
             raise RecordError("give --body as the spec's text")
-        if not body.strip():
+        if not plain_body(body).strip():
             raise RecordError(f"the spec's body {EMPTY_BODY}")
         digest = body_hash(body)
     r = _checked(kind, round, commit, reviewers, result, digest)
@@ -278,7 +293,7 @@ def spec_reviewed(records, body) -> bool:
     clean. Records of other bodies, and round and pass records, don't count.
     It doesn't judge who posted them: a caller that counts only accounts with
     write access leaves the others out first."""
-    if not isinstance(body, str) or not body.strip():
+    if not isinstance(body, str) or not plain_body(body).strip():
         return False
     digest = body_hash(body)
     mine = [r for r in records if r.kind == "spec" and r.body == digest]
