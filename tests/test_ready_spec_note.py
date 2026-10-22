@@ -415,7 +415,7 @@ def test_a_permissions_file_that_cant_be_used_says_which(project, capsys, tmp_pa
     issues = [spec(comments=[comment(spec_record())]), ticket()]
     (project / "broken.json").write_text("{not json")
     (project / "odd.json").write_text(json.dumps({"owner": "boss"}))
-    for path, said in ((project / "missing.json", "couldn't be read"), (project / "broken.json", "isn't JSON"), (project / "odd.json", "the reviewers' permissions")):
+    for path, said in ((project / "missing.json", "can't open"), (project / "broken.json", "isn't JSON"), (project / "odd.json", "the reviewers' permissions")):
         notes = run_ready(project, capsys, issues, "--permissions", str(path))[11]["notes"]
         assert len(notes) == 1 and notes[0].startswith(UNREAD) and said in notes[0], notes
     notes = run_ready(project, capsys, issues, "--permissions", "")[11]["notes"]
@@ -438,3 +438,69 @@ def test_once_gh_times_out_it_isnt_called_again(project, capsys, monkeypatch):
     assert calls == [10]
     for n in (11, 21):
         assert len(v[n]["notes"]) == 1 and v[n]["notes"][0].startswith("spec #") and "took longer" in v[n]["notes"][0]
+
+
+def test_a_failed_lookup_is_asked_again_for_the_next_spec_never_taken_as_none(project, capsys, tmp_path, monkeypatch):
+    gh = fake_gh.install(tmp_path, monkeypatch, {PERM.format("owner"): fake_gh.reply(exit=1, stderr="gh: Server Error (HTTP 502)")})
+    issues = [spec(comments=[comment(spec_record())]), spec(20, comments=[comment(spec_record())]), ticket(), ticket(21, section="## Parent\n\n#20")]
+    v = run_ready(project, capsys, issues)
+    assert all(len(v[n]["notes"]) == 1 and v[n]["notes"][0].startswith("spec #") and "HTTP 502" in v[n]["notes"][0] for n in (11, 21))
+    assert routes_asked(gh) == [PERM.format("owner")] * 2
+
+
+def test_a_login_in_two_cases_is_one_person_looked_up_once(project, capsys, tmp_path, monkeypatch):
+    gh = fake_gh.install(tmp_path, monkeypatch, {PERM.format("Owner"): perm("owner", "admin")})
+    both = [comment(spec_record(clean=False), login="owner", cid=1), comment(spec_record(round=2), login="Owner", cid=2, at="2026-12-02T10:00:00Z")]
+    issues = [spec(comments=both), spec(20, comments=[comment(spec_record(), login="OWNER")]), ticket(), ticket(21, section="## Parent\n\n#20")]
+    v = run_ready(project, capsys, issues)
+    assert v[11]["notes"] == [] and v[21]["notes"] == []
+    assert routes_asked(gh) == [PERM.format("Owner")]
+
+
+def test_a_refusing_proxy_reads_the_tokens_own_permission_once_per_run(project, capsys, tmp_path, monkeypatch):
+    refused = fake_gh.reply(exit=1, stderr="gh: not permitted through this proxy (HTTP 403)")
+    routes = {PERM.format("owner"): refused, PERM.format("alice"): refused, "user": {"login": "owner"}, "repos/acme/demo": {"permissions": {"push": True}}}
+    gh = fake_gh.install(tmp_path, monkeypatch, routes)
+    issues = [spec(comments=[comment(spec_record())]), spec(20, comments=[comment(spec_record(), login="alice")]), ticket(), ticket(21, section="## Parent\n\n#20")]
+    v = run_ready(project, capsys, issues)
+    assert v[11]["notes"] == [] and v[21]["notes"] == ["spec #20 has no clean review: check it before building"]
+    assert routes_asked(gh) == [PERM.format("owner"), "user", "repos/acme/demo", PERM.format("alice")]
+
+
+def test_a_permissions_timeout_stops_later_fetches_too(project, capsys, monkeypatch):
+    from workflow import fetch
+
+    fetched = []
+
+    def slow(repo, logins, token=None):
+        raise fetch.GhError(f"gh: not permitted through this proxy (HTTP 403); then the token's own permission: {fetch.TIMED_OUT}")
+
+    monkeypatch.setattr(fetch, "permissions_of", slow)
+    monkeypatch.setattr(fetch, "spec_comments", lambda repo, n: fetched.append(n) or [])
+    issues = [spec(comments=[comment(spec_record())]), spec(20, comments=1), ticket(), ticket(21, section="## Parent\n\n#20")]
+    v = run_ready(project, capsys, issues)
+    assert fetched == []
+    assert all(len(v[n]["notes"]) == 1 and fetch.TIMED_OUT in v[n]["notes"][0] for n in (11, 21))
+
+
+def test_the_permissions_file_is_read_once_as_merge_check_reads_it(project, capsys, tmp_path, monkeypatch):
+    fake_gh.without_gh(tmp_path, monkeypatch)
+    reads = []
+    real = cli._json_inputs
+    monkeypatch.setattr(cli, "_json_inputs", lambda *a, **kw: reads.append(1) or real(*a, **kw))
+    pages = json.dumps([{"login": "alice", "permissions": {"pull": True}}]) + json.dumps([{"login": "owner", "permissions": {"push": True}}])
+    (project / "perms.json").write_text("﻿" + pages, encoding="utf-8")  # two pages in a row, with a byte order mark
+    issues = [spec(comments=[comment(spec_record())]), spec(20, comments=[comment(spec_record(), login="alice")]), ticket(), ticket(21, section="## Parent\n\n#20")]
+    v = run_ready(project, capsys, issues, "--permissions", str(project / "perms.json"))
+    assert v[11]["notes"] == [] and v[21]["notes"] == ["spec #20 has no clean review: check it before building"]
+    assert reads == [1]
+
+
+def test_a_parent_missing_from_the_issue_list_says_so(project, capsys, tmp_path, monkeypatch):
+    gh = owner_can_write(tmp_path, monkeypatch)
+    pr = {"number": 10, "title": "A pull request", "state": "closed", "pull_request": {"merged_at": "2026-12-01T00:00:00Z"}}
+    v = run_ready(project, capsys, [ticket(), ticket(12, section="## Parent\n\n#30")])
+    assert v[11]["ready"] is True and v[11]["notes"] == ["spec #10: couldn't read its reviews (#10 isn't in the issue list)"]
+    assert v[12]["notes"] == ["spec #30: couldn't read its reviews (#30 isn't in the issue list)"]
+    assert run_ready(project, capsys, [ticket(), pr])[11]["notes"] == []  # a pull request is no spec
+    assert routes_asked(gh) == []

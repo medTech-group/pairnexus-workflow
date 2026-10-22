@@ -192,13 +192,15 @@ def spec_comments(repo: str, number: int) -> list:
     return _items(api(f"repos/{repo}/issues/{number}/comments?per_page=100", paginate=True))
 
 
-def permissions_of(repo: str, logins) -> list[dict]:
+def permissions_of(repo: str, logins, token: dict | None = None) -> list[dict]:
     """`collaborators/<u>/permission` for each login, read as `merge_inputs`
     reads them: one GitHub doesn't know here has none, and where a cloud
     session's proxy refuses the route, the token's own login has the token's
     permission and anyone else's can't be shown, so they count as without
-    write access. Raises GhError for any other failure."""
-    r, answers, token = f"repos/{repo}", [], None
+    write access. `token`, when given, keeps the token's own permission
+    between calls, so it is read once. Raises GhError for any other failure."""
+    r, answers = f"repos/{repo}", []
+    token = {} if token is None else token
     for who in logins:
         try:
             answers.append(api(f"{r}/collaborators/{quote(who, safe='')}/permission"))
@@ -208,12 +210,12 @@ def permissions_of(repo: str, logins) -> list[dict]:
                 continue
             if not _refused(e):
                 raise
-            if token is None:
+            if not token:
                 try:
-                    token = token_permission(r)
+                    token["login"], token["permission"] = token_permission(r)
                 except GhError as e2:
                     raise GhError(f"{e}; then the token's own permission: {e2}") from None
-            token_login, token_perm = token
+            token_login, token_perm = token["login"], token["permission"]
             answers.append({"permission": token_perm if who.casefold() == token_login.casefold() else "none", "user": {"login": who}})
     return answers
 

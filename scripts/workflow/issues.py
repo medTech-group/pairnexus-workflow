@@ -645,16 +645,19 @@ def _spec_note(
     records = read(ordered)
     digest = body_hash(body)
     authors = sorted({r.author for r in records if r.kind == "spec" and r.body == digest and r.author}, key=str.casefold)
-    new = [a for a in authors if a.casefold() not in known]
+    new: dict[str, str] = {}  # casefolded -> the login as written, once each whatever its case
+    for a in authors:
+        if a.casefold() not in known:
+            new.setdefault(a.casefold(), a)
     if new:
         try:
-            got = _permissions(permissions(new))
+            got = _permissions(permissions(list(new.values())))
         except SpecReviewsUnread as e:
             return unread_note(str(e))
         except Unreadable as e:
             return unread_note(f"the reviewers' permissions: {e.why}")
         known.update(got)
-        known.update({a.casefold(): "none" for a in new if a.casefold() not in got})  # left out: no write access
+        known.update({k: "none" for k in new if k not in got})  # left out: no write access
     if spec_reviewed([r for r in records if _may_review(r.author, known)], body):
         return None
     return f"spec #{n} has no clean review: check it before building"
@@ -683,11 +686,20 @@ def note_unreviewed_specs(
     raises SpecReviewsUnread, which gives the note "spec #<n>: couldn't read
     its reviews (<why>)" instead of silence."""
     by_num = {i["number"]: i for i in issues if "pull_request" not in i}
+    pulls = {i["number"] for i in issues if "pull_request" in i}
     note_of: dict[int, str | None] = {}  # spec number -> its note, read once
     known: dict[str, str] = {}  # login (casefolded) -> permission, looked up once
     for v in verdicts:
         issue = by_num.get(v.number)
-        spec = parent_spec(issue, by_num, repo, since) if v.ready and issue else None
+        if not v.ready or issue is None:
+            continue
+        parent = parent_of(issue, repo)
+        if parent is not None and parent not in by_num and parent not in pulls:
+            # Not in the list (an issues file of open issues only, or one page):
+            # whether it is a spec, and reviewed, can't be told.
+            v.notes.append(f"spec #{parent}: couldn't read its reviews (#{parent} isn't in the issue list)")
+            continue
+        spec = parent_spec(issue, by_num, repo, since)
         if spec is None:
             continue
         if spec["number"] not in note_of:

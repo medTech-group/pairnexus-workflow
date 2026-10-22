@@ -206,6 +206,7 @@ def _note_unreviewed_specs(verdicts, issues, repo: str | None, permissions_file:
     the "couldn't read" note at once, so `ready` never waits on it spec by spec."""
     gh_down: list[str] = []  # why `gh` can't be used any more, once known
     given: list = []  # the --permissions file's JSON, read once
+    token: dict = {}  # the token's own login and permission, read once (`permissions_of`)
 
     def gh(what: str, call):
         if gh_down:
@@ -213,8 +214,8 @@ def _note_unreviewed_specs(verdicts, issues, repo: str | None, permissions_file:
         try:
             return call()
         except fetch_mod.GhError as e:
-            if str(e) in (fetch_mod.NOT_INSTALLED, fetch_mod.TIMED_OUT):
-                gh_down.append(str(e))
+            down = [m for m in (fetch_mod.NOT_INSTALLED, fetch_mod.TIMED_OUT) if m in str(e)]  # also after a proxy's refusal
+            gh_down.extend(down[:1])
             raise issues_mod.SpecReviewsUnread(f"{what}: {e}") from None
 
     def comments(number: int):
@@ -224,17 +225,15 @@ def _note_unreviewed_specs(verdicts, issues, repo: str | None, permissions_file:
 
     def permissions(logins: list[str]):
         if permissions_file is not None:
-            if not given:
-                try:
-                    given.append(_json(permissions_file))
-                except OSError as e:
-                    raise issues_mod.SpecReviewsUnread(f"--permissions {permissions_file!r} couldn't be read: {e.strerror or e}") from None
-                except (ValueError, RecursionError) as e:
-                    raise issues_mod.SpecReviewsUnread(f"--permissions {permissions_file!r} isn't JSON: {e}") from None
+            if not given:  # read as merge-check reads its --permissions
+                value, why = _json_inputs(argparse.Namespace(permissions=permissions_file), ["permissions"])["permissions"]
+                if why:
+                    raise issues_mod.SpecReviewsUnread(f"--permissions: {why}")
+                given.append(value)
             return given[0]
         if not repo:
             raise issues_mod.SpecReviewsUnread("the reviewers' permissions: no project.repo, give --permissions F")
-        return gh("the reviewers' permissions (or give --permissions F)", lambda: fetch_mod.permissions_of(repo, logins))
+        return gh("the reviewers' permissions (or give --permissions F)", lambda: fetch_mod.permissions_of(repo, logins, token))
 
     issues_mod.note_unreviewed_specs(verdicts, issues, repo, comments, permissions)
 
