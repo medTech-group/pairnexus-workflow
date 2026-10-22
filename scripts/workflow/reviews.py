@@ -27,8 +27,8 @@ review makes the spec read as unreviewed again:
 
 - `kind`: `spec`;
 - `body`: the SHA-256 of the body (`body_hash`): line endings made `\n`, so
-  GitHub's `\r\n` doesn't break the match, and the whitespace at its very end
-  left out;
+  GitHub's `\r\n` doesn't break the match, and a byte order mark at its start
+  and the whitespace at its very end left out;
 - `reviewers`: `spec`, `correctness` or both.
 
 `spec_reviewed` says whether a list of records holds a clean spec record for a
@@ -117,10 +117,10 @@ def _shown(value, n: int) -> str:
 
 def body_hash(text: str) -> str:
     """The SHA-256 of a spec's body as a spec record names it: line endings made
-    `\n` (GitHub gives a body back with `\r\n`), and the whitespace at the
-    very end left out, so the file a session publishes and the body GitHub
-    returns hash alike."""
-    plain = text.replace("\r\n", "\n").replace("\r", "\n").rstrip()
+    `\n` (GitHub gives a body back with `\r\n`), and a byte order mark at the
+    start (an editor's) and the whitespace at the very end left out, so the file
+    a session publishes and the body GitHub returns hash alike."""
+    plain = text.removeprefix("\ufeff").replace("\r\n", "\n").replace("\r", "\n").rstrip()
     return hashlib.sha256(plain.encode("utf-8")).hexdigest()
 
 
@@ -128,13 +128,25 @@ def _given(value) -> bool:
     return value is not None and bool(str(value).strip())
 
 
+BOTH_KEYS = "give --commit or --body, not both: --commit for a round or a pass, --body for a spec's review"
+EMPTY_BODY = "is empty: give the spec's body as you publish it"
+
+
+def check_key(kind, commit, body_given: bool) -> None:
+    """What a record is keyed to, checked before a spec's body is read: a
+    commit for a round or a pass, a body for a spec. Raises RecordError."""
+    if commit is not None and body_given:  # even an empty --commit: one key or the other
+        raise RecordError(BOTH_KEYS)
+    if body_given and str(kind or "").strip().lower() in ("round", "pass"):
+        raise RecordError("a round or a pass names a commit: give --commit; --body is for a spec record (--kind spec)")
+
+
 def _checked(kind, round, commit, reviewers, result, body=None) -> Record:
     """The one set of rules the writer and the reader share: a Record, or
     RecordError saying which flag to fix. Names are read in any case;
     `reviewers` is a comma-separated string or a list, put in the panel's order.
     `body` is a spec record's body hash, given in place of `commit`."""
-    if _given(commit) and body is not None:
-        raise RecordError("give --commit or --body, not both: --commit for a round or a pass, --body for a spec's review")
+    check_key(kind, commit, body is not None)
     given, kind = kind, str(kind or "").strip().lower()
     if not kind:
         raise RecordError("give --kind: `round` for a review round, `pass` for a later Correctness pass, `spec` for a spec's review")
@@ -153,8 +165,6 @@ def _checked(kind, round, commit, reviewers, result, body=None) -> Record:
         if not _SHA256.fullmatch(digest):
             raise RecordError(f"a spec record's body hash is 64 hex characters, not `{_shown(body, 70)}`")
     else:
-        if body is not None:
-            raise RecordError("a round or a pass names a commit: give --commit; --body is for a spec record (--kind spec)")
         if not _given(commit):
             raise RecordError("give --commit: the full SHA the round covered (`git rev-parse HEAD`)")
         sha = str(commit).strip().lower()
@@ -165,12 +175,15 @@ def _checked(kind, round, commit, reviewers, result, body=None) -> Record:
     parts = [reviewers] if isinstance(reviewers, str) else list(reviewers or [])
     typed = [n.strip() for part in parts for n in str(part).split(",")]
     names = [n.lower() for n in typed]
+    allowed = SPEC_REVIEWERS if kind == "spec" else REVIEWERS
     if not any(names):
-        raise RecordError("give --reviewers: those that ran, from " + ", ".join(REVIEWERS))
+        raise RecordError("give --reviewers: those that ran, from " + ", ".join(allowed))
     if "" in names:
         raise RecordError("--reviewers has an empty name: give them comma-separated, with nothing between two commas")
     for n, t in zip(names, typed):
         if n not in REVIEWERS:
+            if kind == "spec":
+                raise RecordError(f"unknown reviewer `{_shown(t, 30)}`: a spec's review is by spec and correctness")
             raise RecordError(f"unknown reviewer `{_shown(t, 30)}`: the reviewers are " + ", ".join(REVIEWERS))
     who = tuple(r for r in REVIEWERS if r in names)
     if kind == "pass" and who != ("correctness",):
@@ -202,7 +215,7 @@ def record(*, kind, round, commit=None, reviewers, clean, body=None) -> str:
         if not isinstance(body, str):
             raise RecordError("give --body as the spec's text")
         if not body.strip():
-            raise RecordError("the spec's body is empty: give the text you publish")
+            raise RecordError(f"the spec's body {EMPTY_BODY}")
         digest = body_hash(body)
     r = _checked(kind, round, commit, reviewers, result, digest)
     names = ", ".join(n.capitalize() for n in r.reviewers)

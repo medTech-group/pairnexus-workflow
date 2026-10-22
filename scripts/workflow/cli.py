@@ -923,20 +923,21 @@ def _spec_body(path: str) -> str:
     RecordError, in words, for a file that is missing, isn't text or is empty."""
     if not path:
         raise reviews_mod.RecordError("give --body a file: the spec's body, exactly as you publish it")
-    shown = reviews_mod._shown(path, 80)
+    # The end of a long path, where the file's name is.
+    shown = reviews_mod._shown(path, 80) if len(path) <= 80 else "…" + reviews_mod._shown(path[-79:], 79)
     p = Path(path)
-    if not p.exists():
-        raise reviews_mod.RecordError(f"--body names no file: `{shown}`")
-    if not p.is_file():
-        raise reviews_mod.RecordError(f"--body `{shown}` isn't a file: give the file holding the spec's body")
     try:
+        if not p.exists():
+            raise reviews_mod.RecordError(f"--body names no file: `{shown}`")
+        if not p.is_file():
+            raise reviews_mod.RecordError(f"--body `{shown}` isn't a file: give the file holding the spec's body")
         text = p.read_bytes().decode("utf-8")
     except UnicodeDecodeError:
         raise reviews_mod.RecordError(f"--body `{shown}` isn't UTF-8 text: give the spec's body as you publish it") from None
     except OSError as e:
         raise reviews_mod.RecordError(f"--body `{shown}` can't be read: {e.strerror or e}") from None
     if not text.strip():
-        raise reviews_mod.RecordError(f"--body `{shown}` is empty: give the spec's body as you publish it")
+        raise reviews_mod.RecordError(f"--body `{shown}` {reviews_mod.EMPTY_BODY}")
     return text
 
 
@@ -955,8 +956,8 @@ def cmd_review_record(a) -> int:
         one["kind"] = "spec"  # --body alone is a spec's review
     reviewers = ",".join(a.reviewers) if a.reviewers else None
     try:
-        if path is not None and one["commit"] is not None:
-            raise reviews_mod.RecordError("give --commit or --body, not both: --commit for a round or a pass, --body for a spec's review")
+        if path is not None:
+            reviews_mod.check_key(one["kind"], one["commit"], True)
         body = None if path is None else _spec_body(path)
         text = reviews_mod.record(**one, reviewers=reviewers, clean=a.clean, body=body)
     except reviews_mod.RecordError as e:
@@ -1490,7 +1491,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--round", action="append", help="the round's number; for a pass, the round it follows")
     s.add_argument("--commit", action="append", help="the full SHA the round covered (`git rev-parse HEAD`)")
     s.add_argument("--body", action="append", metavar="FILE", help="a spec's review: the file holding the spec's body as you publish it, in place of --commit; the record names its SHA-256")
-    s.add_argument("--reviewers", action="append", help="those that ran, comma-separated: " + ",".join(reviews_mod.REVIEWERS))
+    s.add_argument("--reviewers", action="append", help="those that ran, comma-separated: " + ",".join(reviews_mod.REVIEWERS) + "; a spec's review takes " + ",".join(reviews_mod.SPEC_REVIEWERS))
     result = s.add_mutually_exclusive_group()
     result.add_argument("--clean", dest="clean", action="store_true", default=None, help="nothing left to fix")
     result.add_argument("--not-clean", dest="clean", action="store_false", help="the round found something to fix")
