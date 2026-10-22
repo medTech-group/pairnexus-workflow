@@ -320,7 +320,7 @@ They can change course at any point. Take it as said, and confirm in one line:
 - **"Skip that one" / "drop it":** close its issue as not planned.
 - **"Do that one first":** reorder, and change the blockers to match.
 - **A spec or ticket to change after it's published:**
-  - edit it on GitHub, or ask you to;
+  - edit it on GitHub, or ask you to; a spec you edit gets another planning round and its spec record (`review-panel` §8);
   - removing `ready-for-agent` stops `/next` and runs picking it up;
   - closing it as not planned drops it.
 - **A decision to undo:** reopen it.

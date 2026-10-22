@@ -228,6 +228,11 @@ def test_the_planning_review_posts_both_record_kinds():
     assert "make the fixes in that same `spec.md`, once its `record.md` is written, and publish that" in p
     # An edit after publishing is reviewed again before tickets.
     assert "the edited body gets another planning round, its own spec record, before any tickets are written from it" in p
+    # The owner's words for the edit are posted first, and are the Spec reviewer's input.
+    assert "First post the owner's words for the change on the spec's issue, each request or answer quoted word for word" in p
+    assert "an edit after publishing takes the owner's words for the change, posted on the spec's issue" in p
+    # The read-back check's directory is made before the body is saved there.
+    assert p.index("mkdir -p /tmp/review-<issue>-spec-check") < p.index("> /tmp/review-<issue>-spec-check/published.md")
 
 
 def test_the_planning_reviews_scratch_directories_never_mix_a_spec_and_a_pull_request():
@@ -309,6 +314,11 @@ def test_the_guided_starts_spec_step_names_the_answers_and_the_review():
     # Adding to a published spec reviews it again too.
     step = _flatten(_section("skills/start/SKILL.md", "\n**Add to an existing issue:**\n", "\n## "))
     assert "If it's a spec, its edited body gets another planning round and its spec record (`review-panel` §8)" in step
+    # Before the tickets are changed to match.
+    assert step.index("another planning round") < step.index("change them the same way")
+    # A change mid-session (step 7) too.
+    course = _flatten(_section("skills/start/SKILL.md", "\n## 7. Changing course", "\n## "))
+    assert "a spec you edit gets another planning round and its spec record (`review-panel` §8)" in course
     # Stopping mid-interview posts the answers so far, word for word.
     assert "**Stop here**: post their answers so far on the item's issue, each question with the answer quoted word for word" in spec
 

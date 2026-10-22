@@ -117,7 +117,7 @@ Planning is reviewed before it's offered or published (flow §1 and §2): a map 
 
 **The inputs,** in a fresh scratch directory for each kind of review, so a spec's review and the same session's pull request never share one: `/tmp/review-<issue>-spec-r<n>/` for a spec's draft, `/tmp/review-<issue>-pr-r<n>/` for a pull request. `<issue>` is the decision ticket, the item's issue, or the map's number for its Destination item (a spec has no number of its own until it's published), else a short name for the work:
 - the diff as `diff.patch`, or the spec's draft as `spec.md`: the whole body exactly as it will be published, any footer or marker included;
-- the owner's answers as posted, as `answers.md`: each question with the answer quoted word for word, copied from the decision ticket, the item's issue or the map's Destination item (a comment on the map naming it), or, for a spec with none of them, the comment about to be posted, never the session's summary. A map's Destination item's spec takes, as well, the answers posted on the map decisions it draws on. Sensitive data (`profile.md`) is left out of them and marked as left out, never posted;
+- the owner's answers as posted, as `answers.md`: each question with the answer quoted word for word, copied from the decision ticket, the item's issue or the map's Destination item (a comment on the map naming it), or, for a spec with none of them, the comment about to be posted, never the session's summary. A map's Destination item's spec takes, as well, the answers posted on the map decisions it draws on, and an edit after publishing takes the owner's words for the change, posted on the spec's issue (below). Sensitive data (`profile.md`) is left out of them and marked as left out, never posted;
 - the ADRs and glossary, all of them, not only the changed ones;
 - the decision ticket and its map, or the item's issue, as `ticket.md`;
 - the project's rules, as `rules.md`.
@@ -146,7 +146,7 @@ No Standards reviewer and no explorer: there is no code to hold to the standards
 
   (`--not-clean`, for either record, when the round found something to fix.)
 
-  Publish the last round's `spec.md` as is. After a last round that wasn't clean (**Rounds**), make the fixes in that same `spec.md`, once its `record.md` is written, and publish that. Before posting the records, check nothing changed on the way. Save the published body as GitHub returns it, never retyped (`gh api repos/<repo>/issues/<spec> --jq .body > /tmp/review-<issue>-spec-check/published.md`, or the GitHub MCP tools' `body` written to that file as is). Then print the full hash of each file, never writing a `record.md`: `review-record` reads them as a spec record does (line endings made `\n`), which a plain `sha256sum` wouldn't:
+  Publish the last round's `spec.md` as is. After a last round that wasn't clean (**Rounds**), make the fixes in that same `spec.md`, once its `record.md` is written, and publish that. Before posting the records, check nothing changed on the way. Make its directory (`mkdir -p /tmp/review-<issue>-spec-check`) and save the published body as GitHub returns it, never retyped (`gh api repos/<repo>/issues/<spec> --jq .body > /tmp/review-<issue>-spec-check/published.md`, or the GitHub MCP tools' `body` written to that file as is). Then print the full hash of each file, never writing a `record.md`: `review-record` reads them as a spec record does (line endings made `\n`), which a plain `sha256sum` wouldn't:
 
   ```
   WF review-record --kind spec --round 1 --body /tmp/review-<issue>-spec-check/published.md --reviewers spec --clean | grep -o 'body=[0-9a-f]*'
@@ -155,5 +155,5 @@ No Standards reviewer and no explorer: there is no code to hold to the standards
 
   The two must match. If they don't (a footer, a tool's edit), edit the body back to the file's text and check again; if it still differs, post no records and say so in the handover. When the answers are the spec's first comment (flow §2), post them before the records.
 
-**An edit after publishing** (the guided start's "Edit the spec first", a later change to the spec) makes it read as unreviewed: the edited body gets another planning round, its own spec record, before any tickets are written from it.
+**An edit after publishing** (the guided start's "Edit the spec first", a later change to the spec) makes it read as unreviewed: the edited body gets another planning round, its own spec record, before any tickets are written from it. First post the owner's words for the change on the spec's issue, each request or answer quoted word for word, so the Spec reviewer reads them with the rest.
 
