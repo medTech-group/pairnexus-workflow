@@ -29,6 +29,7 @@ TIMEOUT = 120  # seconds for one `gh api` call, every page
 NOT_INSTALLED = "gh (the GitHub CLI) isn't installed here"
 AS_A_FILE = "so it couldn't be fetched: give --{name} as a file"
 PROXY_REFUSED = "not permitted through this proxy"  # a cloud session's proxy, refusing a route
+TIMED_OUT = f"gh api took longer than {TIMEOUT} seconds"
 
 # A pull request's review threads come only from GraphQL, 100 to a page; gh's
 # --paginate follows pageInfo.endCursor through $endCursor.
@@ -61,7 +62,7 @@ def _run(args: list[str]) -> subprocess.CompletedProcess:
     except FileNotFoundError:
         raise GhError(NOT_INSTALLED) from None
     except subprocess.TimeoutExpired:
-        raise GhError(f"gh api took longer than {TIMEOUT} seconds") from None
+        raise GhError(TIMED_OUT) from None
     except OSError as e:
         raise GhError(f"couldn't run gh: {e.strerror or e}") from None
 
@@ -183,6 +184,40 @@ def token_permission(r: str) -> tuple[str, str]:
         if flags.get(flag) is True:
             return login, perm
     return login, "none"
+
+
+def spec_comments(repo: str, number: int) -> list:
+    """An issue's comments, every page, oldest first as GitHub lists them:
+    for `workflow ready`'s note on a ticket whose spec has no clean review (#234)."""
+    return _items(api(f"repos/{repo}/issues/{number}/comments?per_page=100", paginate=True))
+
+
+def permissions_of(repo: str, logins, token: dict | None = None) -> list[dict]:
+    """`collaborators/<u>/permission` for each login, read as `merge_inputs`
+    reads them: one GitHub doesn't know here has none, and where a cloud
+    session's proxy refuses the route, the token's own login has the token's
+    permission and anyone else's can't be shown, so they count as without
+    write access. `token`, when given, keeps the token's own permission
+    between calls, so it is read once. Raises GhError for any other failure."""
+    r, answers = f"repos/{repo}", []
+    token = {} if token is None else token
+    for who in logins:
+        try:
+            answers.append(api(f"{r}/collaborators/{quote(who, safe='')}/permission"))
+        except GhError as e:
+            if _not_found(e):
+                answers.append({"permission": "none", "user": {"login": who}})
+                continue
+            if not _refused(e):
+                raise
+            if not token:
+                try:
+                    token["login"], token["permission"] = token_permission(r)
+                except GhError as e2:
+                    raise GhError(f"{e}; then the token's own permission: {e2}") from None
+            token_login, token_perm = token["login"], token["permission"]
+            answers.append({"permission": token_perm if who.casefold() == token_login.casefold() else "none", "user": {"login": who}})
+    return answers
 
 
 def _reviews_read(reviews, pr) -> tuple[list[tuple[str, str]], set[str]]:

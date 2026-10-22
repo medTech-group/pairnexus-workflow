@@ -81,7 +81,7 @@ Run:
 WF status --fetch
 ```
 
-Where `gh api` isn't available, fetch the issues (`state=all`, with labels, bodies and `sub_issues_summary`) and the open PRs with the GitHub MCP tools. Save them as JSON and pass `--issues issues.json --prs prs.json`.
+Where `gh api` isn't available, fetch the issues (`state=all`, with labels, bodies, `created_at`, `comments` and `sub_issues_summary`) and the open PRs with the GitHub MCP tools. Save them as JSON and pass `--issues issues.json --prs prs.json`.
 
 It reports:
 - whether the kit is set up, and whether the project is brand new (no code of its own);
@@ -93,6 +93,8 @@ It reports:
 - new issues to sort (`needs-triage`, or no label).
 
 Tell the person what matters in two to four lines, for example: "PR #297 is waiting for your merge. Two items from last time aren't started: #301 the booking page (quick ticket), #302 booking reminders (spec). One ticket is ready: #262." Leave out what doesn't matter.
+
+**A ready ticket's note.** Before you name a ready ticket in those lines or offer it ("Carry on", or a ready ticket in "What are we working on?"), read their notes, in one call for all of them: `WF ready --fetch --only <n>` (`<n>` the ticket numbers, comma-separated; or with `--issues`/`--prs` files, as `next` says). Show a note beside the ticket, in its line and in the option's description: "spec #<n> has no clean review: check it before building" means its spec wasn't reviewed since it last changed, and "couldn't read its reviews" that it couldn't be told. Either is a warning, never a block: offer the ticket as usual, and the person decides.
 
 **In solo mode** (status says `Solo mode: yes`), one of those lines says so, with what it means for them: "This project is in solo mode: nothing on GitHub protects `<base branch>` yet, so the kit refuses any change straight to it, and all work goes through pull requests." Name the profile's base branch. Don't offer "Protect `main`" here: it is offered when they ask, and in a refusal.
 

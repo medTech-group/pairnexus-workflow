@@ -17,13 +17,19 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Iterable, Union
+from datetime import date, timezone
+from typing import Callable, Iterable, Union
 
 READY_LABEL = "ready-for-agent"
 CLAIM_LABEL = "workflow:in-progress"
 INFRA_LABEL = "workflow:infra"
 HUMAN_LABELS = {"needs-human", "owner-task", "ready-for-human"}
-NOT_BUILD_LABELS = {"wayfinder:map", "spec"}
+SPEC_LABEL = "spec"
+NOT_BUILD_LABELS = {"wayfinder:map", SPEC_LABEL}
+# Specs created before this date are never noted as unreviewed (#234), so
+# updating the kit adds no notes to old specs: the date of the release that
+# brings the note in, which that release sets.
+SPEC_REVIEW_SINCE = date(2026, 10, 22)
 
 Blocker = Union[int, str]
 
@@ -541,3 +547,168 @@ def startable(
         if area:
             taken.add(area)
     return out
+
+
+# ---------- a spec with no clean review (#234) ----------
+
+_PARENT_HEADING = re.compile(r"^\s*#{1,6}\s*parent\s*:?\s*$", re.I)
+_ISSUE_API_URL = re.compile(r"/repos/([\w.-]+/[\w.-]+)/issues/(\d+)/?$", re.I)
+
+
+class SpecReviewsUnread(Exception):
+    """A spec's comments, or their authors' permissions, couldn't be read:
+    the message says why."""
+
+
+def parent_of(issue: dict, repo: str | None = None) -> int | None:
+    """The ticket's parent issue in this repository: GitHub's sub-issue link
+    (`parent`, as the MCP tools give it, or `parent_issue_url`, as the REST API
+    does), else the first ref on the first line under a `## Parent` heading.
+    None when it has none, or its parent is in another repository."""
+    p = issue.get("parent")
+    if isinstance(p, dict) and isinstance(p.get("number"), int) and not isinstance(p["number"], bool):
+        where = p.get("repository")
+        if isinstance(where, dict):
+            where = where.get("full_name") or where.get("nameWithOwner")
+        return p["number"] if not isinstance(where, str) or not where or _same_repo(where, repo or where) else None
+    url = issue.get("parent_issue_url")
+    if isinstance(url, str) and url:
+        m = _ISSUE_API_URL.search(url)
+        return int(m.group(2)) if m and _same_repo(m.group(1), repo or m.group(1)) else None
+    lines = [_QUOTE.sub("", l) for l in (issue.get("body") or "").splitlines()]
+    for i, line in enumerate(lines):
+        if not _PARENT_HEADING.match(line):
+            continue
+        for cur in lines[i + 1 :]:
+            if _HEADING.match(cur):
+                return None
+            if cur.strip():
+                refs = _refs(cur, repo)  # the first ref, which may be another repository's
+                return refs[0] if refs and isinstance(refs[0], int) else None
+    return None
+
+
+def _created_on(issue: dict) -> date | None:
+    """The day an issue was created, in UTC, or None when it can't be read."""
+    from .merge import _time
+
+    t = _time(issue.get("created_at") or issue.get("createdAt"))
+    try:
+        return t.astimezone(timezone.utc).date() if t else None
+    except OverflowError:  # a date at the edge of the calendar, which GitHub never gives
+        return None
+
+
+def parent_spec(issue: dict, by_num: dict[int, dict], repo: str | None = None, since: date = SPEC_REVIEW_SINCE) -> dict | None:
+    """The ticket's parent spec when its review counts: labelled `spec` and
+    created on or after `since` (one whose creation date can't be read counts:
+    a note costs a question). None otherwise."""
+    n = parent_of(issue, repo)
+    spec = by_num.get(n) if n is not None else None
+    if spec is None or SPEC_LABEL not in labels_of(spec):
+        return None
+    created = _created_on(spec)
+    return spec if created is None or created >= since else None
+
+
+def _unread_note(n: int, why: str) -> str:
+    return f"spec #{n}: couldn't read its reviews ({why})"
+
+
+def _spec_note(
+    spec: dict,
+    fetch_comments: Callable[[int], object],
+    permissions: Callable[[list[str]], object],
+    known: dict[str, str],
+) -> str | None:
+    """The note for one spec, or None when it has a clean review. `known` holds
+    the permissions already read (login casefolded -> permission), shared by
+    every spec of one `ready`, so each login is looked up once."""
+    from .merge import Unreadable, _in_time_order, _may_review, _permissions, _time
+    from .posts import CommentsError, _number, comments_from
+    from .reviews import body_hash, read, spec_reviewed
+
+    n = spec["number"]
+    body = spec.get("body") if isinstance(spec.get("body"), str) else ""
+
+    def unread_note(why: str) -> str:
+        return _unread_note(n, why)
+
+    try:
+        carried = spec.get("comments")
+        if isinstance(carried, int) and not isinstance(carried, bool) and carried == 0:
+            comments = []
+        elif isinstance(carried, (list, dict)):  # the MCP route's file carries them
+            comments = comments_from(carried)
+        else:
+            comments = comments_from(fetch_comments(n))
+    except SpecReviewsUnread as e:
+        return unread_note(str(e))
+    except CommentsError as e:
+        return unread_note(f"its comments: {e}")
+    ordered = _in_time_order(comments, lambda c: _time(c.get("created_at") or c.get("createdAt")), _number)
+    records = read(ordered)
+    digest = body_hash(body)
+    new: dict[str, str] = {}  # casefolded -> the login as first written, once each whatever its case
+    for r in records:  # in the order posted, so the same login is asked each time
+        if r.kind == "spec" and r.body == digest and r.author and r.author.casefold() not in known:
+            new.setdefault(r.author.casefold(), r.author)
+    if new:
+        try:
+            got = _permissions(permissions(list(new.values())))
+        except SpecReviewsUnread as e:
+            return unread_note(str(e))
+        except Unreadable as e:
+            return unread_note(f"the reviewers' permissions: {e.why}")
+        known.update(got)
+        known.update({k: "none" for k in new if k not in got})  # left out: no write access
+    if spec_reviewed([r for r in records if _may_review(r.author, known)], body):
+        return None
+    return f"spec #{n} has no clean review: check it before building"
+
+
+def note_unreviewed_specs(
+    verdicts: list[Verdict],
+    issues: list[dict],
+    repo: str | None,
+    fetch_comments: Callable[[int], object],
+    permissions: Callable[[list[str]], object],
+    since: date = SPEC_REVIEW_SINCE,
+    pull_numbers: Iterable[int] = (),
+) -> None:
+    """Add a note to each ready verdict whose parent spec (`parent_spec`) has
+    no clean spec record for its current body from an account with write
+    access: "spec #<n> has no clean review: check it before building". It
+    never changes whether a ticket is ready.
+
+    A spec's comments come from its issue JSON when it carries them (a list,
+    as the MCP route's file gives them; a count of 0 is none), else from
+    `fetch_comments(number)`, called only for the parent specs of ready
+    tickets, once each. `permissions(logins)` gives the permissions of the
+    authors of a spec's records for its current body, in any shape
+    merge-check's `--permissions` takes, each login asked once; a login it
+    leaves out has no write access. Either raises SpecReviewsUnread, which
+    gives the note "spec #<n>: couldn't read its reviews (<why>)" instead of
+    silence. A parent missing from `issues` gets that note too, unless it is
+    a pull request (listed in `issues`, or in `pull_numbers`)."""
+    by_num = {i["number"]: i for i in issues if "pull_request" not in i}
+    pulls = {i["number"] for i in issues if "pull_request" in i} | set(pull_numbers)
+    note_of: dict[int, str | None] = {}  # spec number -> its note, read once
+    known: dict[str, str] = {}  # login (casefolded) -> permission, looked up once
+    for v in verdicts:
+        issue = by_num.get(v.number)
+        if not v.ready or issue is None:
+            continue
+        parent = parent_of(issue, repo)
+        if parent is not None and parent not in by_num and parent not in pulls:
+            # Not in the list (an issues file of open issues only, or one page):
+            # whether it is a spec, and reviewed, can't be told.
+            v.notes.append(_unread_note(parent, f"#{parent} isn't in the issue list"))
+            continue
+        spec = parent_spec(issue, by_num, repo, since)
+        if spec is None:
+            continue
+        if spec["number"] not in note_of:
+            note_of[spec["number"]] = _spec_note(spec, fetch_comments, permissions, known)
+        if note_of[spec["number"]]:
+            v.notes.append(note_of[spec["number"]])
