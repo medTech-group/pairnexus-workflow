@@ -326,7 +326,13 @@ def test_the_conductors_kick_off_lists_tickets_of_unreviewed_specs():
     plan = text.split("3. **The plan.**", 1)[1].split("\nThen:", 1)[0]
     assert "**Tickets of an unreviewed spec.**" in plan
     assert plan.index("**Tickets naming a protected path.**") < plan.index("**Tickets of an unreviewed spec.**")
-    assert '"Keep it / Exclude it"' in plan.split("**Tickets of an unreviewed spec.**", 1)[1]
+    unreviewed = plan.split("**Tickets of an unreviewed spec.**", 1)[1]
+    assert '"Keep it / Exclude it"' in unreviewed
+    # The owner's say covers the whole spec, and tickets unblocked mid-run too.
+    assert "all the spec's open tickets in `scope.exclude`" in unreviewed
+    assert "doesn't start until they say" in unreviewed
+    start = text.split("**5. Start sessions,**", 1)[1].split("For each ticket to start:", 1)[0]
+    assert "has no clean review" in start and "doesn't start" in start
 
 
 def test_the_changelog_notes_it_and_version_is_not_bumped():
@@ -505,3 +511,42 @@ def test_a_parent_missing_from_the_issue_list_says_so(project, capsys, tmp_path,
     assert v[12]["notes"] == ["spec #30: couldn't read its reviews (#30 isn't in the issue list)"]
     assert run_ready(project, capsys, [ticket(), pr])[11]["notes"] == []  # a pull request is no spec
     assert routes_asked(gh) == []
+
+
+def test_the_cutoff_day_is_read_in_utc(project, capsys, tmp_path, monkeypatch):
+    owner_can_write(tmp_path, monkeypatch)
+    # 02:00 at +05:00 on the cutoff day is the day before in UTC; 22:00 at -05:00 the day before is the cutoff day.
+    assert run_ready(project, capsys, [spec(created=f"{_day(0)}T02:00:00+05:00"), ticket()])[11]["notes"] == []
+    assert run_ready(project, capsys, [spec(created=f"{_day(-1)}T22:00:00-05:00"), ticket()])[11]["notes"] == [NOTE]
+
+
+def test_permissions_on_standard_input_already_read_say_so(project, capsys, tmp_path, monkeypatch):
+    import io
+
+    fake_gh.without_gh(tmp_path, monkeypatch)
+    issues = [spec(comments=[comment(spec_record())]), spec(20, comments=[comment(spec_record())]), ticket(), ticket(21, section="## Parent\n\n#20")]
+    (project / "prs.json").write_text("[]")
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(issues)))
+    assert cli.main(["ready", "--issues", "-", "--prs", str(project / "prs.json"), "--json", "--permissions", "-"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    notes = {v["number"]: v["notes"] for v in out["ready"]}
+    for n, s in ((11, 10), (21, 20)):
+        assert notes[n] == [f"spec #{s}: couldn't read its reviews (--permissions: standard input (-) is already --issues's: only one file can be read from it)"]
+
+
+def test_a_bad_permissions_read_gives_the_same_reason_for_every_spec(project, capsys, tmp_path, monkeypatch):
+    import io
+
+    fake_gh.without_gh(tmp_path, monkeypatch)
+    monkeypatch.setattr("sys.stdin", io.StringIO("{not json"))
+    issues = [spec(comments=[comment(spec_record())]), spec(20, comments=[comment(spec_record())]), ticket(), ticket(21, section="## Parent\n\n#20")]
+    v = run_ready(project, capsys, issues, "--permissions", "-")
+    assert "- isn't JSON" in v[11]["notes"][0] and "- isn't JSON" in v[21]["notes"][0]
+
+
+def test_a_parent_listed_only_among_the_pull_requests_is_no_spec(project, capsys, tmp_path, monkeypatch):
+    owner_can_write(tmp_path, monkeypatch)
+    (project / "issues.json").write_text(json.dumps([ticket()]))
+    (project / "prs.json").write_text(json.dumps([{"number": 10, "state": "open", "body": "A change"}]))
+    assert cli.main(["ready", "--issues", str(project / "issues.json"), "--prs", str(project / "prs.json"), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["ready"][0]["notes"] == []

@@ -568,7 +568,8 @@ def parent_of(issue: dict, repo: str | None = None) -> int | None:
     p = issue.get("parent")
     if isinstance(p, dict) and isinstance(p.get("number"), int) and not isinstance(p["number"], bool):
         where = p.get("repository")
-        where = where.get("full_name") or where.get("nameWithOwner") if isinstance(where, dict) else where
+        if isinstance(where, dict):
+            where = where.get("full_name") or where.get("nameWithOwner")
         return p["number"] if not isinstance(where, str) or not where or _same_repo(where, repo or where) else None
     url = issue.get("parent_issue_url")
     if isinstance(url, str) and url:
@@ -610,6 +611,10 @@ def parent_spec(issue: dict, by_num: dict[int, dict], repo: str | None = None, s
     return spec if created is None or created >= since else None
 
 
+def _unread_note(n: int, why: str) -> str:
+    return f"spec #{n}: couldn't read its reviews ({why})"
+
+
 def _spec_note(
     spec: dict,
     fetch_comments: Callable[[int], object],
@@ -627,7 +632,7 @@ def _spec_note(
     body = spec.get("body") if isinstance(spec.get("body"), str) else ""
 
     def unread_note(why: str) -> str:
-        return f"spec #{n}: couldn't read its reviews ({why})"
+        return _unread_note(n, why)
 
     try:
         carried = spec.get("comments")
@@ -669,6 +674,7 @@ def note_unreviewed_specs(
     fetch_comments: Callable[[int], object],
     permissions: Callable[[list[str]], object],
     since: date = SPEC_REVIEW_SINCE,
+    pull_numbers: Iterable[int] = (),
 ) -> None:
     """Add a note to each ready verdict whose parent spec (`parent_spec`) has
     no clean spec record for its current body from an account with write
@@ -681,11 +687,12 @@ def note_unreviewed_specs(
     tickets, once each. `permissions(logins)` gives the permissions of the
     authors of a spec's records for its current body, in any shape
     merge-check's `--permissions` takes, each login asked once; a login it
-    leaves out has no write access. Either
-    raises SpecReviewsUnread, which gives the note "spec #<n>: couldn't read
-    its reviews (<why>)" instead of silence."""
+    leaves out has no write access. Either raises SpecReviewsUnread, which
+    gives the note "spec #<n>: couldn't read its reviews (<why>)" instead of
+    silence. A parent missing from `issues` gets that note too, unless it is
+    a pull request (listed in `issues`, or in `pull_numbers`)."""
     by_num = {i["number"]: i for i in issues if "pull_request" not in i}
-    pulls = {i["number"] for i in issues if "pull_request" in i}
+    pulls = {i["number"] for i in issues if "pull_request" in i} | set(pull_numbers)
     note_of: dict[int, str | None] = {}  # spec number -> its note, read once
     known: dict[str, str] = {}  # login (casefolded) -> permission, looked up once
     for v in verdicts:
@@ -696,7 +703,7 @@ def note_unreviewed_specs(
         if parent is not None and parent not in by_num and parent not in pulls:
             # Not in the list (an issues file of open issues only, or one page):
             # whether it is a spec, and reviewed, can't be told.
-            v.notes.append(f"spec #{parent}: couldn't read its reviews (#{parent} isn't in the issue list)")
+            v.notes.append(_unread_note(parent, f"#{parent} isn't in the issue list"))
             continue
         spec = parent_spec(issue, by_num, repo, since)
         if spec is None:

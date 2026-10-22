@@ -177,7 +177,7 @@ With `AskUserQuestion`, at most four questions to a round, recommended answers f
 3. **The plan.** The ready tickets with their areas. They start infra first, then by number, one per area at a time; say so. Set `charter.plan` to this list. When `follow_unblocked` is false, it is the whole scope: pin `scope.tickets` to it with `WF charter pin-plan charter.json > charter.json.tmp && mv charter.json.tmp charter.json`.
    - **Maps not yet fully specified.** `WF ready` doesn't know about maps. For each open `wayfinder:map` whose Destination items don't all have a spec and tickets yet, list the ready tickets that belong to it (sub-issues of its specs) and recommend excluding them: a map's tickets wait until every Destination item has its spec and tickets (flow §1's gate). Excluded ones go in `scope.exclude`.
    - **Tickets naming a protected path.** List each noted ticket with its note. A ticket session can't change a protected path, so if the ticket really needs one changed it will end `needs-human`. Ask the owner, for each, "Keep it / Exclude it": excluded ones go in `scope.exclude` (and out of the plan); kept ones run as usual. A ticket noted later in the run (unblocked mid-run) starts as usual; name it in that check-in's comment.
-   - **Tickets of an unreviewed spec.** List each noted ticket with its note, grouped by spec. Its spec wasn't reviewed since it last changed (or its reviews couldn't be read), so a mistake in it may carry into the code. Ask the owner, for each spec's tickets, "Keep it / Exclude it": excluded ones go in `scope.exclude` (and out of the plan); kept ones run as usual. A ticket noted later in the run starts as usual; name it in that check-in's comment.
+   - **Tickets of an unreviewed spec.** List each noted ticket with its note, grouped by spec. Its spec wasn't reviewed since it last changed (or its reviews couldn't be read), so a mistake in it may carry into the code. Ask the owner, for each spec, "Keep it / Exclude it": "Exclude it" puts all the spec's open tickets in `scope.exclude` (and out of the plan), the blocked ones too; kept ones run as usual. A ticket noted later in the run (unblocked mid-run) whose spec the owner kept starts as usual; one of a spec they weren't asked about doesn't start until they say: ask "Keep it / Exclude it" on the tracking issue, as a question for the owner, name it in that check-in's comment, and leave it unstarted until they answer.
 
 Then:
 
@@ -304,6 +304,8 @@ Then act on what you find:
    ```
 
    `--only` always includes every open `workflow:infra` ticket, whoever filed it (you, a session, or the owner), so a fix for a failing check goes first. With `follow_unblocked` true and `scope.tickets` "all-ready", leave out `--only`.
+
+   A ticket in "start now" noted "spec #<n> has no clean review" (or "couldn't read its reviews") whose spec the owner didn't keep at kick-off doesn't start: ask the owner, as kick-off step 3's "Tickets of an unreviewed spec" says, and fill its slot with the next ticket.
 
 For each ticket to start:
 1. Claim it: add the `workflow:in-progress` label to its current labels, and assign `project.owner`.

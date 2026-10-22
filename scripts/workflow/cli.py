@@ -175,7 +175,8 @@ def cmd_ready(a) -> int:
         verdicts = [v for v in verdicts if v.number in only]
         for n in missing:
             print(f"workflow ready: #{n} isn't an open ready-for-agent build ticket", file=sys.stderr)
-    _note_unreviewed_specs(verdicts, issues, prof.repo if prof else None, a.permissions)
+    stdin_for = "issues" if a.issues == "-" else "prs" if a.prs == "-" else None
+    _note_unreviewed_specs(verdicts, issues, prs, prof.repo if prof else None, a.permissions, stdin_for)
     slots = a.slots if a.slots is not None else (prof.max_parallel if prof else 2)
     running = [r.strip().casefold() for r in a.running_area or [] if r and r.strip()]
     start = issues_mod.startable(verdicts, running, max(0, slots), overrides=overrides)
@@ -198,14 +199,15 @@ def cmd_ready(a) -> int:
     return 0
 
 
-def _note_unreviewed_specs(verdicts, issues, repo: str | None, permissions_file: str | None) -> None:
+def _note_unreviewed_specs(verdicts, issues, prs, repo: str | None, permissions_file: str | None, stdin_for: str | None) -> None:
     """`ready`'s note on a ready ticket whose spec has no clean review (#234):
     a spec's comments not carried in the issues file are fetched with `gh`,
     and their authors' permissions come from `--permissions F` or `gh`. Once
     `gh` is missing or times out, it isn't called again: the specs left get
-    the "couldn't read" note at once, so `ready` never waits on it spec by spec."""
+    the "couldn't read" note at once, so `ready` never waits on it spec by spec.
+    `stdin_for` names the flag that already read standard input, if any."""
     gh_down: list[str] = []  # why `gh` can't be used any more, once known
-    given: list = []  # the --permissions file's JSON, read once
+    given: list = []  # the --permissions file's (JSON, why it can't be read), read once
     token: dict = {}  # the token's own login and permission, read once (`permissions_of`)
 
     def gh(what: str, call):
@@ -227,17 +229,20 @@ def _note_unreviewed_specs(verdicts, issues, repo: str | None, permissions_file:
         if permissions_file is not None:
             if not permissions_file.strip():
                 raise issues_mod.SpecReviewsUnread("--permissions was given no file")
+            if permissions_file == "-" and stdin_for:
+                raise issues_mod.SpecReviewsUnread(f"--permissions: standard input (-) is already --{stdin_for}'s: only one file can be read from it")
             if not given:  # read as merge-check reads its --permissions
-                value, why = _json_inputs(argparse.Namespace(permissions=permissions_file), ["permissions"])["permissions"]
-                if why:
-                    raise issues_mod.SpecReviewsUnread(f"--permissions: {why}")
-                given.append(value)
-            return given[0]
+                given.append(_json_inputs(argparse.Namespace(permissions=permissions_file), ["permissions"])["permissions"])
+            value, why = given[0]
+            if why:
+                raise issues_mod.SpecReviewsUnread(f"--permissions: {why}")
+            return value
         if not repo:
             raise issues_mod.SpecReviewsUnread("the reviewers' permissions: no project.repo, give --permissions F")
         return gh("the reviewers' permissions (or give --permissions F)", lambda: fetch_mod.permissions_of(repo, logins, token))
 
-    issues_mod.note_unreviewed_specs(verdicts, issues, repo, comments, permissions)
+    pull_numbers = [p["number"] for p in prs if isinstance(p, dict) and isinstance(p.get("number"), int)] if isinstance(prs, list) else []
+    issues_mod.note_unreviewed_specs(verdicts, issues, repo, comments, permissions, pull_numbers=pull_numbers)
 
 
 def cmd_status(a) -> int:
