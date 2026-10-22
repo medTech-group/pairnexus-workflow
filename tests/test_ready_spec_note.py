@@ -329,10 +329,8 @@ def test_the_conductors_kick_off_lists_tickets_of_unreviewed_specs():
     unreviewed = plan.split("**Tickets of an unreviewed spec.**", 1)[1]
     assert '"Keep it / Exclude it"' in unreviewed
     # The owner's say covers the whole spec, and tickets unblocked mid-run too.
-    assert "all the spec's open tickets in `scope.exclude`" in unreviewed
-    assert "doesn't start until they say" in unreviewed
-    start = text.split("**5. Start sessions,**", 1)[1].split("For each ticket to start:", 1)[0]
-    assert "has no clean review" in start and "doesn't start" in start
+    assert "all the spec's open tickets in `scope.exclude`" in unreviewed and "the blocked ones too" in unreviewed
+    assert "name it, with its note, in that check-in's comment" in unreviewed
 
 
 def test_the_changelog_notes_it_and_version_is_not_bumped():
@@ -550,3 +548,22 @@ def test_a_parent_listed_only_among_the_pull_requests_is_no_spec(project, capsys
     (project / "prs.json").write_text(json.dumps([{"number": 10, "state": "open", "body": "A change"}]))
     assert cli.main(["ready", "--issues", str(project / "issues.json"), "--prs", str(project / "prs.json"), "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["ready"][0]["notes"] == []
+
+
+def test_permissions_on_standard_input_already_read_by_prs_say_so(project, capsys, tmp_path, monkeypatch):
+    import io
+
+    fake_gh.without_gh(tmp_path, monkeypatch)
+    (project / "issues.json").write_text(json.dumps([spec(comments=[comment(spec_record())]), ticket()]))
+    monkeypatch.setattr("sys.stdin", io.StringIO("[]"))
+    assert cli.main(["ready", "--issues", str(project / "issues.json"), "--prs", "-", "--json", "--permissions", "-"]) == 0
+    notes = json.loads(capsys.readouterr().out)["ready"][0]["notes"]
+    assert notes == ["spec #10: couldn't read its reviews (--permissions: standard input (-) is already --prs's: only one file can be read from it)"]
+
+
+def test_a_pull_request_numbered_true_is_no_pull_request(project, capsys, tmp_path, monkeypatch):
+    owner_can_write(tmp_path, monkeypatch)
+    (project / "issues.json").write_text(json.dumps([ticket(section="## Parent\n\n#1")]))
+    (project / "prs.json").write_text(json.dumps([{"number": True, "state": "open", "body": ""}]))
+    assert cli.main(["ready", "--issues", str(project / "issues.json"), "--prs", str(project / "prs.json"), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["ready"][0]["notes"] == ["spec #1: couldn't read its reviews (#1 isn't in the issue list)"]

@@ -175,7 +175,7 @@ def cmd_ready(a) -> int:
         verdicts = [v for v in verdicts if v.number in only]
         for n in missing:
             print(f"workflow ready: #{n} isn't an open ready-for-agent build ticket", file=sys.stderr)
-    stdin_for = "issues" if a.issues == "-" else "prs" if a.prs == "-" else None
+    stdin_for = None if a.fetch else "issues" if a.issues == "-" else "prs" if a.prs == "-" else None
     _note_unreviewed_specs(verdicts, issues, prs, prof.repo if prof else None, a.permissions, stdin_for)
     slots = a.slots if a.slots is not None else (prof.max_parallel if prof else 2)
     running = [r.strip().casefold() for r in a.running_area or [] if r and r.strip()]
@@ -241,7 +241,7 @@ def _note_unreviewed_specs(verdicts, issues, prs, repo: str | None, permissions_
             raise issues_mod.SpecReviewsUnread("the reviewers' permissions: no project.repo, give --permissions F")
         return gh("the reviewers' permissions (or give --permissions F)", lambda: fetch_mod.permissions_of(repo, logins, token))
 
-    pull_numbers = [p["number"] for p in prs if isinstance(p, dict) and isinstance(p.get("number"), int)] if isinstance(prs, list) else []
+    pull_numbers = [p["number"] for p in prs if isinstance(p, dict) and type(p.get("number")) is int] if isinstance(prs, list) else []
     issues_mod.note_unreviewed_specs(verdicts, issues, repo, comments, permissions, pull_numbers=pull_numbers)
 
 
