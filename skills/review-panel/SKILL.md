@@ -115,9 +115,9 @@ A shorter review for a small, low-risk ticket, asked for as "build #12 with a li
 
 Planning is reviewed before it's offered or published (flow §1 and §2): a map decision's pull request (its ADRs and glossary), a spec's draft, and a spec session's ADR or glossary pull request. Build tickets aren't. Sections 1 to 5 hold, with these differences.
 
-**The inputs,** in a scratch directory named by the decision ticket or the item's issue (`/tmp/review-<issue>-r<n>/`; a spec has no number of its own until it's published):
+**The inputs,** in a fresh scratch directory for each kind of review, so a spec's review and the same session's pull request never share one: `/tmp/review-<issue>-spec-r<n>/` for a spec's draft, `/tmp/review-<issue>-pr-r<n>/` for a pull request. `<issue>` is the decision ticket, the item's issue, or the map's number for its Destination item (a spec has no number of its own until it's published), else a short name for the work:
 - the diff as `diff.patch`, or the spec's draft as `spec.md`: the whole body exactly as it will be published, any footer or marker included;
-- the owner's answers as posted, as `answers.md`: each question with the answer quoted word for word, copied from the decision ticket, the item's issue or the map's Destination item (or, for a spec with neither, the comment about to be posted), never the session's summary. Sensitive data (`profile.md`) is left out of them and marked as left out, never posted;
+- the owner's answers as posted, as `answers.md`: each question with the answer quoted word for word, copied from the decision ticket, the item's issue or the map's Destination item (a comment on the map naming it), or, for a spec with none of them, the comment about to be posted, never the session's summary. Sensitive data (`profile.md`) is left out of them and marked as left out, never posted;
 - the ADRs and glossary, all of them, not only the changed ones;
 - the decision ticket and its map, or the item's issue, as `ticket.md`;
 - the project's rules, as `rules.md`.
@@ -133,17 +133,27 @@ No Standards reviewer and no explorer: there is no code to hold to the standards
 **Fixes:** the session fixes wording, facts and omissions itself. A fix that would change what a decision means is put to the owner as a question first, and their answer is posted word for word like the others before the next round.
 
 **Records:** after every round, whatever it found (section 4's rules on refusals hold):
-- a decision's or a spec session's pull request gets a round record on its commit. The pull request is offered only after the review, so keep each `record.md` and post them, oldest first, once it is open (section 4):
+- a decision's or a spec session's pull request gets a round record on its commit, kept until the pull request opens (section 4, "No pull request yet"):
 
   ```
-  WF review-record --kind round --round <n> --commit <sha> --reviewers spec,correctness --clean > /tmp/review-<issue>-r<n>/record.md
+  WF review-record --kind round --round <n> --commit <sha> --reviewers spec,correctness --clean > /tmp/review-<issue>-pr-r<n>/record.md
   ```
-- a spec gets a spec record keyed to its body, the SHA-256 of `spec.md` in place of a commit, posted on the spec issue once it is published, oldest first:
+- a spec gets a spec record keyed to its body, the SHA-256 of `spec.md` in place of a commit, posted on the spec's issue once it is published, oldest first:
 
   ```
-  WF review-record --kind spec --round <n> --body /tmp/review-<issue>-r<n>/spec.md --reviewers spec,correctness --clean > /tmp/review-<issue>-r<n>/record.md
+  WF review-record --kind spec --round <n> --body /tmp/review-<issue>-spec-r<n>/spec.md --reviewers spec,correctness --clean > /tmp/review-<issue>-spec-r<n>/record.md
   ```
 
-  Publish the last round's `spec.md` as is (after a last round that wasn't clean, the fixed file, as **Rounds** says). Then check nothing changed on the way: read the published body back into a file and run the command on it and on the file you published, keeping neither output. The short hashes they name must match. If they don't (a footer, a tool's edit), edit the body back to the file's text, and if it changes again, say so in the handover.
+  (`--not-clean`, for either record, when the round found something to fix.)
 
-(`--not-clean` when the round found something to fix.)
+  Publish the last round's `spec.md` as is (after a last round that wasn't clean, the fixed file, as **Rounds** says). Before posting the records, check nothing changed on the way: save the published body as GitHub returns it to `/tmp/review-<issue>-spec-check/published.md`, then print the full hash of each file, never writing a `record.md`:
+
+  ```
+  WF review-record --kind spec --round 1 --body /tmp/review-<issue>-spec-check/published.md --reviewers spec --clean | grep -o 'body=[0-9a-f]*'
+  WF review-record --kind spec --round 1 --body /tmp/review-<issue>-spec-r<n>/spec.md --reviewers spec --clean | grep -o 'body=[0-9a-f]*'
+  ```
+
+  The two must match. If they don't (a footer, a tool's edit), edit the body back to the file's text and check again; if it still differs, post no records and say so in the handover.
+
+**An edit after publishing** (the guided start's "Edit the spec first", a later change to the spec) makes it read as unreviewed: the edited body gets another planning round, its own spec record, before any tickets are written from it.
+

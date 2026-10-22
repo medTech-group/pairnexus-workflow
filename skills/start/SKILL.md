@@ -244,14 +244,14 @@ For each item, read the flow's section for its path and follow it, skipping noth
    - **Stop here**: post their answers so far on the item's issue, each question with the answer quoted word for word, so the next session carries on from them.
 2. **The spec.** Read `to-spec`'s `SKILL.md` and follow it.
    - Ask the seams as a choice, with the seams listed above the question: **These seams (Recommended)**, **Fewer, higher seams** or **Change them**.
-   - Post their answers, the seams among them, on the item's issue (or the map's Destination item), each question with the answer quoted word for word (flow §2).
+   - Post their answers, the seams among them, on the item's issue (or, for a map's Destination item, a comment on the map naming it), each question with the answer quoted word for word (flow §2).
    - Review the draft before publishing it: `review-panel`'s planning review (§8), until a round is clean. A fix that would change what a decision means is a question for them first; anything still open after the last round is named in the handover.
-   - Publish the reviewed text as is, under flow §2: labels `spec` and `ready-for-agent`, the decision behind each choice cited, and, for a map's Destination item, linked from the map. Then post each round's spec record on it, oldest first.
+   - Publish the reviewed text as is, under flow §2: labels `spec` and `ready-for-agent`, the decision behind each choice cited, and, for a map's Destination item, linked from the map. Check the published body's hash against the reviewed file (`review-panel` §8), then post each round's spec record on it, oldest first.
    - Close the item's issue as completed, with "Planned as #<spec>".
 
    Ask:
    - **Split it into tickets (Recommended)**;
-   - **Edit the spec first**;
+   - **Edit the spec first**: the edited body gets another planning round and its spec record (`review-panel` §8) before the tickets;
    - **Stop here**: `/start` offers the tickets next time, from the open spec.
 3. **The tickets.** Read `to-tickets`' `SKILL.md` and follow it, with flow §2's additions. Show the breakdown and ask:
    - **Publish these (Recommended)**;
