@@ -279,7 +279,7 @@ For each item, read the flow's section for its path and follow it, skipping noth
 **Add to an existing issue:**
 1. Show the change to that issue, and ask **Make this change (Recommended)** or **Change it**.
 2. Edit it on yes.
-3. If it's a spec whose tickets are published, find the tickets the change touches, and change them the same way.
+3. If it's a spec, its edited body gets another planning round and its spec record (`review-panel` §8). If its tickets are published, find the tickets the change touches, and change them the same way.
 4. A ticket already built (closed, or with an open PR) isn't edited: the change becomes a new quick ticket.
 
 ## 5. Sorting new issues

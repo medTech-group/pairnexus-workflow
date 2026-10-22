@@ -475,7 +475,7 @@ Claude interviews you in **rounds**:
 - `/next build` builds the next one with you there, or `/next 123` a particular one;
 - or start an unattended run, which builds them all ([Unattended](#unattended)).
 
-Before building, you can edit any spec or ticket on GitHub like any issue. An edited spec reads as unreviewed until it has another planning review round.
+Before building, you can edit any spec or ticket on GitHub like any issue. An edited spec reads as unreviewed until it has another planning round.
 
 **Use `/next` or a run, not `/implement` or `/implement-spec`.** Matt Pocock's own builders are in the project too, but they work differently:
 - `/implement` commits to the current branch, with no pull request or review panel;

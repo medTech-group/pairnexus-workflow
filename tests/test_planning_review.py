@@ -77,7 +77,11 @@ def test_flow_1_puts_a_fix_that_changes_a_decision_to_the_owner():
     s1 = _flatten(_flow(1))
     assert "A fix that would change what a decision means goes to the owner as a question first" in s1
     # A decision that writes nothing has nothing to review, and says so.
-    assert "A decision that changes no ADR or glossary skips steps 4 and 5, and its checklist says so" in s1
+    assert (
+        "A decision that changes no ADR or glossary skips this step and step 4's commit "
+        "(research notes still go on their branch), and its checklist says so" in s1
+    )
+    assert "A research or task decision posts what the owner said, if anything" in s1
 
 
 def test_flow_1_checklist_carries_the_answers_and_the_review():
@@ -94,7 +98,7 @@ def test_flow_2_says_where_the_answers_are_posted():
     s2 = _flatten(_flow(2))
     assert "each question with the answer quoted word for word" in s2
     assert "on the item's issue or the map's Destination item (a comment on the map naming it), when there is one" in s2
-    assert "otherwise as the spec's first comment once it is published" in s2
+    assert "Otherwise they are the spec's first comment once it is published, before its records" in s2
     # Posted once the seams are agreed, so the seam answer is among them.
     assert s2.index("agree the test seams") < s2.index("**Post the owner's answers**")
     assert "the seams among them" in s2
@@ -168,6 +172,8 @@ def test_the_planning_review_names_its_inputs():
     ):
         assert words in p, words
     assert "never the session's summary" in p
+    # A Destination item's spec is held to the map decisions it is written from.
+    assert "A map's Destination item's spec takes, as well, the answers posted on the map decisions it draws on" in p
     assert "Sensitive data (`profile.md`) is left out of them and marked as left out, never posted" in p
 
 
@@ -216,6 +222,10 @@ def test_the_planning_review_posts_both_record_kinds():
     assert "Before posting the records, check nothing changed on the way" in p
     assert "never writing a `record.md`" in p
     assert "if it still differs, post no records and say so in the handover" in p
+    assert "When the answers are the spec's first comment (flow §2), post them before the records" in p
+    # The body is fetched, never retyped; the fixes after an unclean last round stay in the file the check reads.
+    assert "never retyped (`gh api repos/<repo>/issues/<spec> --jq .body > /tmp/review-<issue>-spec-check/published.md`" in p
+    assert "make the fixes in that same `spec.md`, once its `record.md` is written, and publish that" in p
     # An edit after publishing is reviewed again before tickets.
     assert "the edited body gets another planning round, its own spec record, before any tickets are written from it" in p
 
@@ -296,6 +306,9 @@ def test_the_guided_starts_spec_step_names_the_answers_and_the_review():
     assert "**Edit the spec first**: the edited body gets another planning round and its spec record (`review-panel` §8) before the tickets" in spec
     # The published body is checked before the records go on it.
     assert spec.index("Publish the reviewed text as is") < spec.index("Check the published body's hash") < spec.index("then post each round's spec record")
+    # Adding to a published spec reviews it again too.
+    step = _flatten(_section("skills/start/SKILL.md", "\n**Add to an existing issue:**\n", "\n## "))
+    assert "If it's a spec, its edited body gets another planning round and its spec record (`review-panel` §8)" in step
     # Stopping mid-interview posts the answers so far, word for word.
     assert "**Stop here**: post their answers so far on the item's issue, each question with the answer quoted word for word" in spec
 
@@ -323,7 +336,7 @@ def test_the_readme_tells_the_new_order():
     assert "only then writes the resolution as a comment, closes the issue" in text
     assert "has the spec's draft reviewed against them" in text
     assert "writes the answer as a comment, closes the issue" not in text
-    assert "An edited spec reads as unreviewed until it has another planning review round" in text
+    assert "An edited spec reads as unreviewed until it has another planning round" in text
 
 
 def test_the_changelog_notes_the_planning_review():
