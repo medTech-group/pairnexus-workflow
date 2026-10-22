@@ -94,6 +94,8 @@ It reports:
 
 Tell the person what matters in two to four lines, for example: "PR #297 is waiting for your merge. Two items from last time aren't started: #301 the booking page (quick ticket), #302 booking reminders (spec). One ticket is ready: #262." Leave out what doesn't matter.
 
+**A ready ticket's note.** Before you name a ready ticket in those lines or offer it ("Carry on", or a ready ticket in "What are we working on?"), read its notes: `WF ready --fetch --only <n>` (or with `--issues`/`--prs` files, as `next` says). Show a note beside the ticket, in its line and in the option's description: "spec #<n> has no clean review: check it before building" means its spec wasn't reviewed since it last changed, and "couldn't read its reviews" that it couldn't be told. Either is a warning, never a block: offer the ticket as usual, and the person decides.
+
 **In solo mode** (status says `Solo mode: yes`), one of those lines says so, with what it means for them: "This project is in solo mode: nothing on GitHub protects `<base branch>` yet, so the kit refuses any change straight to it, and all work goes through pull requests." Name the profile's base branch. Don't offer "Protect `main`" here: it is offered when they ask, and in a refusal.
 
 **"Check the set-up"** (the `check-setup` skill) is offered only at these moments, never at every session start:

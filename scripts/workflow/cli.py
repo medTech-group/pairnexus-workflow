@@ -8,7 +8,7 @@
     workflow protection --require-checks F --check NAME [--check NAME ...] [--json]
     workflow protection --checks-ran F [--statuses F] --rulesets F --repo F [--base BRANCH] [--json]
     workflow version [--fresh] [--json] | --repo | --starter
-    workflow ready [--issues F --prs F | --fetch] [--exclude 1,2] [--only 1,2] [--override 3] [--running-area A ...] [--slots N] [--json]
+    workflow ready [--issues F --prs F | --fetch] [--permissions F] [--exclude 1,2] [--only 1,2] [--override 3] [--running-area A ...] [--slots N] [--json]
     workflow charter defaults [--unprotected] | validate F [--approved] [--unprotected] | markdown F [--tickets 13:area,143:-] [--estimate F] | diff OLD NEW | reuse OLD | pin-plan F | questions [--unprotected]
     workflow charter estimate F [--tickets N | 13:area,143:-] [--runs F] [--security 13,143] [--now ISO] [--json]
     workflow charter splice --body F --charter F [--out F] [--tickets 13:area,143:-] [--estimate F]
@@ -175,6 +175,7 @@ def cmd_ready(a) -> int:
         verdicts = [v for v in verdicts if v.number in only]
         for n in missing:
             print(f"workflow ready: #{n} isn't an open ready-for-agent build ticket", file=sys.stderr)
+    _note_unreviewed_specs(verdicts, issues, prof.repo if prof else None, a.permissions)
     slots = a.slots if a.slots is not None else (prof.max_parallel if prof else 2)
     running = [r.strip().casefold() for r in a.running_area or [] if r and r.strip()]
     start = issues_mod.startable(verdicts, running, max(0, slots), overrides=overrides)
@@ -195,6 +196,39 @@ def cmd_ready(a) -> int:
                 print(f"      note: {note}")
         print("start now: " + (", ".join(f"#{v.number}" for v in start) or "nothing"))
     return 0
+
+
+def _note_unreviewed_specs(verdicts, issues, repo: str | None, permissions_file: str | None) -> None:
+    """`ready`'s note on a ready ticket whose spec has no clean review (#234):
+    a spec's comments not carried in the issues file are fetched with `gh`,
+    and their authors' permissions come from `--permissions F` or `gh`."""
+    from . import fetch as fetch_mod
+
+    def unread(what: str, e: Exception) -> issues_mod.SpecReviewsUnread:
+        return issues_mod.SpecReviewsUnread(f"{what}: {e}")
+
+    def comments(number: int):
+        if not repo:
+            raise issues_mod.SpecReviewsUnread("its comments: no project.repo to fetch them from")
+        try:
+            return fetch_mod.spec_comments(repo, number)
+        except fetch_mod.GhError as e:
+            raise unread("its comments", e) from None
+
+    def permissions(logins: list[str]):
+        if permissions_file:
+            try:
+                return _json(permissions_file)
+            except (OSError, ValueError) as e:
+                raise unread("--permissions", e) from None
+        if not repo:
+            raise issues_mod.SpecReviewsUnread("the reviewers' permissions: no project.repo, give --permissions F")
+        try:
+            return fetch_mod.permissions_of(repo, logins)
+        except fetch_mod.GhError as e:
+            raise unread("the reviewers' permissions (or give --permissions F)", e) from None
+
+    issues_mod.note_unreviewed_specs(verdicts, issues, repo, comments, permissions)
 
 
 def cmd_status(a) -> int:
@@ -1344,6 +1378,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--override", help="tickets that may share an area with a running one, e.g. 5,6")
     s.add_argument("--running-area", action="append")
     s.add_argument("--slots", type=int)
+    s.add_argument("--permissions", metavar="F", help="the permissions of those who posted a spec's review records, in any shape merge-check's --permissions takes; else read with `gh api`")
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_ready)
 

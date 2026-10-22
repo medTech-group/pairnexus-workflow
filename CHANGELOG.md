@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+**`workflow ready` notes a ticket whose spec has no clean review, and `next`, `start` and the conductor's kick-off show it** (#234, part of #232).
+
+- **The note.** A ready ticket whose parent spec (its sub-issue link, or the first ref under its `## Parent` heading; the spec labelled `spec`) has no clean spec record (#233) for its current body from an account with write access gets "spec #<n> has no clean review: check it before building". It's a warning, never a block: the ticket stays ready, as with the protected-path note. A not-clean record, a clean one for an older body, or one from an account without write access leaves the note.
+- **Old specs aren't noted:** specs created before `SPEC_REVIEW_SINCE` (in `scripts/workflow/issues.py`, today the date this merged) never are, so updating the kit adds no notes. **The release that brings this in sets `SPEC_REVIEW_SINCE` to its own date.**
+- **Where the comments come from:** a spec's `comments` in the `--issues` file when it carries them as a list (the MCP route), else `gh api`, only for the parent specs of the ready tickets shown, once each (a spec with no comments isn't fetched). The authors' permissions come from `--permissions F` (new, any shape `merge-check --permissions` takes) or `gh api`, as `merge-check` reads them. When either can't be read, the note says so: "spec #<n>: couldn't read its reviews (<why>)".
+- **The skills:** `next` and `start` show the note beside a ticket when they offer it; the conductor's kick-off lists those tickets beside the protected-path ones, for the owner to keep or exclude. `docs/charter.md`'s readiness line says so.
+- Tests: `tests/test_ready_spec_note.py`.
+- **For projects updating:** nothing to do.
+
 **Spec review records: `workflow review-record --body F` keys a spec's review to its body's SHA-256** (#233, part of #232).
 
 - **The writer.** `workflow review-record --kind spec --round N --body spec.md --reviewers spec,correctness --clean` (or `--not-clean`; `--body` alone means `--kind spec`) prints the record a spec's review round posts on the spec's issue: "Spec review round 1 on body `9c1e4b2`: clean. Reviewers: Spec, Correctness.", then a machine line naming the body's SHA-256 in a field of its own (`body=<64 hex>`, in place of `commit=`), so a commit-keyed record and a spec record are never confused. The body is read from the file the session publishes, its line endings made `\n` (GitHub gives a body back with `\r\n`), and a byte order mark at its start and the whitespace at its very end left out, so an edit after the review makes the spec read as unreviewed again.

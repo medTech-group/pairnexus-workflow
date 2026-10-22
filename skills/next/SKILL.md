@@ -30,6 +30,12 @@ It lists each `ready-for-agent` build ticket as READY, or gives why not:
 
 It leaves out specs (the `spec` label, a "Spec:" title, or an issue with sub-issues) and maps.
 
+A READY ticket may carry notes, which never change whether it is ready:
+- "names protected path <path> (<pattern>): check it isn't an owner task";
+- "spec #<n> has no clean review: check it before building", when its spec (its parent issue, labelled `spec`) has no clean review record for its current body from an account with write access. Specs created before the kit brought this in are never noted. When the spec's comments or their authors' permissions can't be read, the note says so: "spec #<n>: couldn't read its reviews (<why>)".
+
+Where `gh api` isn't available, give each spec's comments in its `comments` field in `issues.json`, as a list (`issue_read` with method `get_comments`, every page), and the permissions of those who posted them with `--permissions perms.json` (`list_repository_collaborators`, every page). A spec whose comments aren't given is read with `gh api`.
+
 **Maps and specs:**
 - **A map** is an issue labelled `wayfinder:map`. Its ready decisions are its open, unclaimed child tickets whose blockers are closed, in the order `issue_read` with method `get_sub_issues` returns them. A map's Notes may reorder its own frontier.
 - **A clear map** has no open children and nothing under "Not yet specified". Its first Destination item with no spec linked is ready to spec.
@@ -46,7 +52,7 @@ It leaves out specs (the `spec` label, a "Spec:" title, or an issue with sub-iss
 
 Ready research tickets start at once in background subagents (the `research` skill), alongside whatever you pick.
 
-Say which one you picked and why, in one line. For a build ticket, ask how first (below). Then claim it and follow the matching section of the flow. At the end, name what comes next.
+Say which one you picked and why, in one line, with a build ticket's notes from `WF ready` beside it. "Spec #<n> has no clean review" is a warning, never a block: say so plainly ("its spec wasn't reviewed since it last changed: check it before building"), and the person decides whether to build it; in a ticket or conductor session, the briefing or the charter already did. For a build ticket, ask how first (below). Then claim it and follow the matching section of the flow. At the end, name what comes next.
 
 **How to build it, in an attended session:** ask with the `AskUserQuestion` tool, or as a numbered list where it isn't available:
 - **Build it now (Recommended)**: the full review panel;

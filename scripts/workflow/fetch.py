@@ -185,6 +185,38 @@ def token_permission(r: str) -> tuple[str, str]:
     return login, "none"
 
 
+def spec_comments(repo: str, number: int) -> list:
+    """An issue's comments, every page, oldest first as GitHub lists them:
+    for `workflow ready`'s note on a ticket whose spec has no clean review (#234)."""
+    return _items(api(f"repos/{repo}/issues/{number}/comments?per_page=100", paginate=True))
+
+
+def permissions_of(repo: str, logins) -> list[dict]:
+    """`collaborators/<u>/permission` for each login, read as `merge_inputs`
+    reads them: one GitHub doesn't know here has none, and where a cloud
+    session's proxy refuses the route, the token's own login has the token's
+    permission and anyone else's can't be shown, so they count as without
+    write access. Raises GhError for any other failure."""
+    r, answers, token = f"repos/{repo}", [], None
+    for who in logins:
+        try:
+            answers.append(api(f"{r}/collaborators/{quote(who, safe='')}/permission"))
+        except GhError as e:
+            if _not_found(e):
+                answers.append({"permission": "none", "user": {"login": who}})
+                continue
+            if not _refused(e):
+                raise
+            if token is None:
+                try:
+                    token = token_permission(r)
+                except GhError as e2:
+                    raise GhError(f"{e}; then the token's own permission: {e2}") from None
+            token_login, token_perm = token
+            answers.append({"permission": token_perm if who.casefold() == token_login.casefold() else "none", "user": {"login": who}})
+    return answers
+
+
 def _reviews_read(reviews, pr) -> tuple[list[tuple[str, str]], set[str]]:
     """(login, state) for each review, as merge-check reads them (any shape it
     takes, oldest first, drafts left out), and the logins (casefolded) asked
