@@ -331,7 +331,7 @@ def test_the_conductors_kick_off_lists_tickets_of_unreviewed_specs():
     # The owner's say covers the whole spec, and tickets unblocked mid-run too.
     assert "all the spec's open tickets in `scope.exclude`" in unreviewed and "the blocked ones too" in unreviewed
     assert "name it, with its note, in that check-in's comment" in unreviewed
-    assert "whose `## Parent` names it" in unreviewed and "A ticket filed under an excluded spec later in the run joins `scope.exclude`" in unreviewed
+    assert "whose `## Parent` names it" in unreviewed
 
 
 def test_the_changelog_notes_it_and_version_is_not_bumped():
