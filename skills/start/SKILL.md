@@ -241,12 +241,11 @@ For each item, read the flow's section for its path and follow it, skipping noth
    When nothing is left to ask, confirm your understanding in a few lines and ask:
    - **Write the spec (Recommended)**;
    - **There's more to discuss**;
-   - **Stop here**: comment on the item's issue with the decisions so far, so the next session carries on from them.
-
-   Before writing the spec, post their answers on the item's issue (or the map's Destination item), each question with the answer quoted word for word (flow §2).
+   - **Stop here**: post their answers so far on the item's issue, each question with the answer quoted word for word, so the next session carries on from them.
 2. **The spec.** Read `to-spec`'s `SKILL.md` and follow it.
    - Ask the seams as a choice, with the seams listed above the question: **These seams (Recommended)**, **Fewer, higher seams** or **Change them**.
-   - Review the draft before publishing it: `review-panel`'s planning review (§8), Correctness and Spec against the answers as posted, in rounds until one is clean. A fix that would change what a decision means is a question for them first; anything still open after the last round is named in the handover.
+   - Post their answers, the seams among them, on the item's issue (or the map's Destination item), each question with the answer quoted word for word (flow §2).
+   - Review the draft before publishing it: `review-panel`'s planning review (§8), until a round is clean. A fix that would change what a decision means is a question for them first; anything still open after the last round is named in the handover.
    - Publish the reviewed text as is, under flow §2: labels `spec` and `ready-for-agent`, the decision behind each choice cited, and, for a map's Destination item, linked from the map. Then post each round's spec record on it, oldest first.
    - Close the item's issue as completed, with "Planned as #<spec>".
 

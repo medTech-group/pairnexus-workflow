@@ -442,7 +442,7 @@ Claude interviews you in **rounds**:
 - Your answers open the next round. It goes on until no decision is left unasked; then Claude checks you agree it has understood, and does nothing more until you say so.
 - **Facts are Claude's job, decisions are yours.** Anything it can find out (how the code works now, what a library allows) it looks up itself, often in the background, rather than asking you.
 - **It keeps the project's language straight.** When a word you use clashes with the project's glossary (`GLOSSARY.md`, or whatever name the project uses), it asks which you mean, and adds terms to the glossary as they're settled. When a decision is hard to reverse, surprising, and a real trade-off, it offers to record it as a short ADR in `docs/adr/`.
-- **Those files are only in the session's working tree.** Before the session ends, or you stop, Claude commits them to a branch of their own and opens a pull request for you to merge; the flow's checklist has the step. A cloud session's files are gone when it ends.
+- **Those files are only in the session's working tree.** Before the session ends, or you stop, Claude commits them to a branch of their own, has them reviewed (the review panel's planning review), and opens a pull request for you to merge with the review's records on it; the flow's checklist has the step. A cloud session's files are gone when it ends.
 
 `/grill-me` is the same interview, but it writes nothing down. Use it to think something through away from a repository (a plan, a pitch); in a project, use `/grill-with-docs`.
 
@@ -456,7 +456,8 @@ Claude interviews you in **rounds**:
   - Testing Decisions;
   - Out of Scope;
   - Further Notes.
-- Under the kit's flow, it labels the spec `ready-for-agent` and `spec`, so the readiness check never takes the spec itself for a build ticket, and it cites the decision behind each choice.
+- **Under the kit's flow, before publishing:** Claude posts your answers on the item's issue, each question with your answer quoted word for word, and has the spec's draft reviewed against them and against the code (the review panel's planning review), in rounds until one is clean. A fix that would change what you decided comes back to you as a question first.
+- Under the kit's flow, it publishes the reviewed text as is, with each round's record on the spec's issue, labels the spec `ready-for-agent` and `spec`, so the readiness check never takes the spec itself for a build ticket, and it cites the decision behind each choice.
 
 **3. `/to-tickets`: the build tickets.** Type `/to-tickets`, or `/to-tickets #<spec number>` in a new session.
 - It splits the spec into **thin end-to-end slices**: each works through every layer it touches (data, API, screen, tests) and can be checked on its own, rather than one layer at a time. Any tidying the code needs first comes first.
@@ -510,9 +511,11 @@ When the work is too big for one session, or too unclear to spec yet, chart it f
 **Work through it**, **one decision per session** (research questions excepted). Use `/next map`, or `/wayfinder <map link>`, or the guided start's "Carry on". Claude:
 1. takes the first decision whose blockers are settled, and claims it (the `workflow:in-progress` label, and assigned to you), so no other session takes it;
 2. settles it as its kind says: an interview with you, a prototype you react to, research, or a task;
-3. writes the answer as a comment, closes the issue, and adds one line to the map's "Decisions so far";
-4. opens new decision issues as answers make them clear, moving each from "Not yet specified" as it does;
-5. commits any glossary or ADR change to a branch and offers you a pull request; research notes stay on their own `research/…` branch, linked from the decision, never merged.
+3. posts your answers on the decision's issue, each question with your answer quoted word for word;
+4. commits any glossary or ADR change to a branch and has it reviewed against your answers and the code (the review panel's planning review), in rounds until one is clean; research notes stay on their own `research/…` branch, linked from the decision, never merged;
+5. only then writes the resolution as a comment, closes the issue, and adds one line to the map's "Decisions so far";
+6. opens new decision issues as answers make them clear, moving each from "Not yet specified" as it does;
+7. offers you the pull request, with the review's records on it.
 
 Several decisions that don't block each other can be worked in parallel sessions.
 
