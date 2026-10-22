@@ -418,8 +418,9 @@ def test_a_permissions_file_that_cant_be_used_says_which(project, capsys, tmp_pa
     for path, said in ((project / "missing.json", "can't open"), (project / "broken.json", "isn't JSON"), (project / "odd.json", "the reviewers' permissions")):
         notes = run_ready(project, capsys, issues, "--permissions", str(path))[11]["notes"]
         assert len(notes) == 1 and notes[0].startswith(UNREAD) and said in notes[0], notes
-    notes = run_ready(project, capsys, issues, "--permissions", "")[11]["notes"]
-    assert len(notes) == 1 and notes[0].startswith(UNREAD)
+    for empty in ("", " "):
+        notes = run_ready(project, capsys, issues, "--permissions", empty)[11]["notes"]
+        assert notes == ["spec #10: couldn't read its reviews (--permissions was given no file)"]
     assert routes_asked(gh) == []  # an empty --permissions is still the file asked for, never gh
 
 
@@ -436,8 +437,8 @@ def test_once_gh_times_out_it_isnt_called_again(project, capsys, monkeypatch):
     issues = [spec(comments=1), spec(20, comments=1), ticket(), ticket(21, section="## Parent\n\n#20")]
     v = run_ready(project, capsys, issues)
     assert calls == [10]
-    for n in (11, 21):
-        assert len(v[n]["notes"]) == 1 and v[n]["notes"][0].startswith("spec #") and "took longer" in v[n]["notes"][0]
+    assert v[11]["notes"] == [f"spec #10: couldn't read its reviews (its comments: {fetch.TIMED_OUT})"]
+    assert v[21]["notes"] == [f"spec #20: couldn't read its reviews (its comments: gh wasn't asked, since an earlier call failed: {fetch.TIMED_OUT})"]
 
 
 def test_a_failed_lookup_is_asked_again_for_the_next_spec_never_taken_as_none(project, capsys, tmp_path, monkeypatch):
@@ -449,12 +450,12 @@ def test_a_failed_lookup_is_asked_again_for_the_next_spec_never_taken_as_none(pr
 
 
 def test_a_login_in_two_cases_is_one_person_looked_up_once(project, capsys, tmp_path, monkeypatch):
-    gh = fake_gh.install(tmp_path, monkeypatch, {PERM.format("Owner"): perm("owner", "admin")})
+    gh = fake_gh.install(tmp_path, monkeypatch, {PERM.format("owner"): perm("Owner", "admin")})
     both = [comment(spec_record(clean=False), login="owner", cid=1), comment(spec_record(round=2), login="Owner", cid=2, at="2026-12-02T10:00:00Z")]
     issues = [spec(comments=both), spec(20, comments=[comment(spec_record(), login="OWNER")]), ticket(), ticket(21, section="## Parent\n\n#20")]
     v = run_ready(project, capsys, issues)
     assert v[11]["notes"] == [] and v[21]["notes"] == []
-    assert routes_asked(gh) == [PERM.format("Owner")]
+    assert routes_asked(gh) == [PERM.format("owner")]  # as first posted
 
 
 def test_a_refusing_proxy_reads_the_tokens_own_permission_once_per_run(project, capsys, tmp_path, monkeypatch):

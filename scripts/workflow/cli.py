@@ -210,7 +210,7 @@ def _note_unreviewed_specs(verdicts, issues, repo: str | None, permissions_file:
 
     def gh(what: str, call):
         if gh_down:
-            raise issues_mod.SpecReviewsUnread(f"{what}: {gh_down[0]}")
+            raise issues_mod.SpecReviewsUnread(f"{what}: gh wasn't asked, since an earlier call failed: {gh_down[0]}")
         try:
             return call()
         except fetch_mod.GhError as e:
@@ -225,6 +225,8 @@ def _note_unreviewed_specs(verdicts, issues, repo: str | None, permissions_file:
 
     def permissions(logins: list[str]):
         if permissions_file is not None:
+            if not permissions_file.strip():
+                raise issues_mod.SpecReviewsUnread("--permissions was given no file")
             if not given:  # read as merge-check reads its --permissions
                 value, why = _json_inputs(argparse.Namespace(permissions=permissions_file), ["permissions"])["permissions"]
                 if why:

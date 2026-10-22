@@ -644,11 +644,10 @@ def _spec_note(
     ordered = _in_time_order(comments, lambda c: _time(c.get("created_at") or c.get("createdAt")), _number)
     records = read(ordered)
     digest = body_hash(body)
-    authors = sorted({r.author for r in records if r.kind == "spec" and r.body == digest and r.author}, key=str.casefold)
-    new: dict[str, str] = {}  # casefolded -> the login as written, once each whatever its case
-    for a in authors:
-        if a.casefold() not in known:
-            new.setdefault(a.casefold(), a)
+    new: dict[str, str] = {}  # casefolded -> the login as first written, once each whatever its case
+    for r in records:  # in the order posted, so the same login is asked each time
+        if r.kind == "spec" and r.body == digest and r.author and r.author.casefold() not in known:
+            new.setdefault(r.author.casefold(), r.author)
     if new:
         try:
             got = _permissions(permissions(list(new.values())))
