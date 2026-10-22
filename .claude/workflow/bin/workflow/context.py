@@ -7,7 +7,9 @@ Code's limit; a one-line reminder after that.
 
 The first prompt of an attended session that isn't about the flow already, and
 isn't a command, brings the guided start instead (`skills/start`): Claude asks
-what we're working on, with choices. Anything else passes untouched.
+what we're working on, with choices. Each later prompt like it brings a
+one-line reminder to plan new work before starting on it. Anything else passes
+untouched.
 
 Beside either, the first prompt of an attended session for someone new to
 building brings the kit's glossary and the rule to explain its words once.
@@ -21,21 +23,40 @@ import tempfile
 from pathlib import Path
 
 _NEXT = re.compile(r"(^|\s)/(?:[\w-]+:)?next\b")
-# The commands that plan or build under the flow bring it in on their own:
-# the kit adds rules to what they publish (flow.md sections 2 and 3).
+# The commands that plan, build or run under the flow bring it in on their own:
+# the kit adds rules to what they publish (flow.md sections 2, 3 and 5).
 _COMMAND = re.compile(
-    r"(^|\s)/(?:[\w-]+:)?(?:to-spec|to-tickets|wayfinder|grill-with-docs|triage|implement(?:-spec)?)(?![\w-])"
+    r"(^|\s)/(?:[\w-]+:)?(?:to-spec|to-tickets|wayfinder|grill-with-docs|triage|implement(?:-spec)?|conductor)(?![\w-])"
 )
 _VERB = re.compile(
-    r"\b(implement\w*|build\w*|work(?:ing)?|fix\w*|spec\w*|tickets?|maps?|wayfinder|grill\w*|to-spec|to-tickets|frontier|conductor|unattended)\b",
+    r"\b(implement\w*|build\w*|work(?:ing)?|fix\w*|spec\w*|tickets?|maps?|wayfinder|grill\w*|to-spec|to-tickets|frontier|unattended)\b",
     re.I,
 )
-_MAP = re.compile(r"\bwork(?:ing)?\s+(?:on\s+)?the\s+[\w -]{1,40}\bmap\b|\b(?:start|run|resume|stop)\s+(?:an?\s+|the\s+)?(?:unattended\s+)?run\b|\bconductor\b", re.I)
+# Working on a named map, or asking to start (or restart), run, resume or stop
+# a run or the conductor. Only mentioning the conductor ("why did the conductor
+# stop?", "the conductor run on Friday failed") is not asking: that message gets
+# the guided start like any other. The conductor's own wake ("conductor: wake
+# (…)") still brings the flow to its session.
+_MAP_OR_RUN = re.compile(
+    r"\bwork(?:ing)?\s+(?:on\s+)?the\s+[\w -]{1,40}\bmap\b"
+    r"|\b(?:start|restart|run|resume|stop)[^\S\n]+(?:an?[^\S\n]+|the[^\S\n]+)?(?:unattended[^\S\n]+)?(?:run|conductor)\b"
+    # "run the backlog (or a map) unattended", not "can sessions run unattended?" or
+    # "run the tests unattended"
+    r"|\b(?:start|run)[^\S\n]+(?:the|this|my|our|all|every)[^\S\n]+(?:[\w-]+[^\S\n]+){0,3}?"
+    r"(?:backlog|tickets?|issues?|queue|map)[^\S\n]+unattended\b"
+    # A line that is only the command: "conductor resume", "OK conductor, stop",
+    # "conductor resume #45", or the wake routine's own text. Not "conductor run:
+    # hangs at #12", and not one later in a line ("Thanks. Conductor, resume").
+    r"|(?:^|\n)[^\w\n]*(?:(?:ok|okay|hey|hi|please)[^\w\n]+)?conductor[^\w\n]+(?:please[^\S\n]+)?"
+    r"(?:(?:start|restart|run|resume|stop)(?:[^\S\n]+(?:please|now|the[^\S\n]+run|#\d+|\d\w*(?:-\w+)*))?"
+    r"|wake(?:[^\S\n]+\(a ticket session finished\))?)[^\w\n]*(?=\n|$)",
+    re.I,
+)
 _REF = re.compile(r"(?<![\w/])#\d+\b|/issues/\d+")
 
 
 def wants_flow(prompt: str) -> bool:
-    if _NEXT.search(prompt or "") or _COMMAND.search(prompt or "") or _MAP.search(prompt or ""):
+    if _NEXT.search(prompt or "") or _COMMAND.search(prompt or "") or _MAP_OR_RUN.search(prompt or ""):
         return True
     return bool(_VERB.search(prompt or "") and _REF.search(prompt or ""))
 
@@ -44,14 +65,23 @@ def wants_flow(prompt: str) -> bool:
 # Only a command name: "/home/user/app.py crashes" is a path, not a command.
 _SLASH = re.compile(r"^\s*/[\w:-]+(?=\s|$)")
 
+REMINDER = (
+    "Workflow: if this message asks for new work that isn't part of the plan or ticket already agreed in this "
+    "session, don't start on it: split it into items with a path for each and agree the plan first (the `start` "
+    "skill, step 2). A question, a named issue or one small change with an obvious place may go ahead (on its own "
+    "branch, with a pull request). Replies to your own questions carry on."
+)
+
 START = (
     "This is the first message of the session. Follow the kit's guided start, the `start` skill "
     "(`.claude/skills/start/SKILL.md`, or `pairnexus-workflow:start` as a plugin): first, when `workflow status` finds "
-    "no experience level, ask it as the skill says; then, if this message already asks for "
-    "one clear thing, just do it; if it describes work to plan, or more than one thing, don't start on any of it: "
-    "split it into items with a path for each and agree the plan first; otherwise "
-    "ask \"What are we working on?\" with choices. If the conversation was already under way before this message "
-    "(a resumed session), ignore this."
+    "no experience level, ask it as the skill says. Act on this message straight away only when it is a question, "
+    "names an issue, or asks for one small change with an obvious place (on its own branch, with a pull request). "
+    "If it asks for any other work (a feature, a change, a fix whose cause isn't known, or more than one thing), "
+    "don't start on it: split it into items with a path for each and agree the plan first. Otherwise "
+    "ask \"What are we working on?\" with choices. If the conversation was already under way (a resumed session), "
+    "follow the reminder below instead."
+    "\n\n" + REMINDER
 )
 
 
@@ -78,14 +108,25 @@ def first_prompt(session_id: str) -> bool:
     return _first_time("start", session_id)
 
 
+def _nudged(prompt: str) -> bool:
+    """Whether a prompt may bring the guided start or its reminder: not a
+    command, and not already about the flow."""
+    return not (_SLASH.match(prompt or "") or wants_flow(prompt))
+
+
 def start_for(prompt: str, session_id: str) -> str | None:
     """The guided start's nudge, at the session's first prompt only, unless the
     prompt is a command or already about the flow."""
     if not first_prompt(session_id):
         return None
-    if _SLASH.match(prompt or "") or wants_flow(prompt):
-        return None
-    return START
+    return START if _nudged(prompt) else None
+
+
+def reminder_for(prompt: str) -> str | None:
+    """The reminder, on the same terms as the guided start's nudge. It keeps no
+    marker: the caller asks for it only when `start_for` gave nothing, so every
+    prompt after the first gets it."""
+    return REMINDER if _nudged(prompt) else None
 
 
 def flow_files(project: Path, kit_root: Path, addendum: str = "") -> list[Path]:

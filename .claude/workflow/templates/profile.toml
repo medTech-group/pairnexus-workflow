@@ -15,7 +15,8 @@ rules = ["CLAUDE.md"]                   # e.g. "CLAUDE.md#safety-constraints"
 # Optional project-specific addendum read with the kit's flow.
 flow_addendum = ""                      # e.g. "docs/agents/flow-addendum.md"
 # The guided start: at the first message of an attended session, Claude asks
-# what we're working on, with choices (skills/start). false turns it off;
+# what we're working on, with choices (skills/start), and at each later
+# message it is reminded to plan new work first. false turns both off;
 # /start still works.
 guided_start = true
 # Solo mode: false while no GitHub ruleset protects the base branch, so the

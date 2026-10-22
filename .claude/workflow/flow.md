@@ -6,7 +6,7 @@ The project's specifics live in its profile: `.claude/workflow/profile.toml` (co
 
 **Skills.** Skills named here are in `.claude/skills/<name>/` (vendored) or under the plugins (`pairnexus-workflow:<name>`, `mattpocock-skills:<name>`). A skill marked user-only can't be loaded with the Skill tool: read its `SKILL.md` and follow it as written.
 
-**Starting.** In an attended session, the `start` skill begins at the first message (or `/start`): it asks what we're working on, with choices, splits a request into items, proposes a path for each, and files them as issues. Or name the work ("implement #146", "work the doctor map"), or use `next`: it finds what is ready and does one piece under this file.
+**Starting.** In an attended session, the `start` skill begins at the first message (or `/start`): it asks what we're working on, with choices, splits a request into items, proposes a path for each, and files them as issues. At each later message of an attended session, the kit's hook adds a one-line reminder: new work that isn't part of the plan or ticket already agreed is split into items and the plan agreed first. Or name the work ("implement #146", "work the doctor map"), or use `next`: it finds what is ready and does one piece under this file.
 
 **Handovers.** In an attended session, end each step by offering what comes next as choices (the `AskUserQuestion` tool), your recommendation first: after an interview, a spec, a breakdown, a charted map, a light item and finding a bug's cause. The `start` skill lists them for each step. After a map decision or a build, recommend going on in a fresh session.
 
