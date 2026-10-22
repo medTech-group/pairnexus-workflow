@@ -243,15 +243,17 @@ For each item, read the flow's section for its path and follow it, skipping noth
    When nothing is left to ask, confirm your understanding in a few lines and ask:
    - **Write the spec (Recommended)**;
    - **There's more to discuss**;
-   - **Stop here**: comment on the item's issue with the decisions so far, so the next session carries on from them.
+   - **Stop here**: post their answers so far on the item's issue, each question with the answer quoted word for word, so the next session carries on from them.
 2. **The spec.** Read `to-spec`'s `SKILL.md` and follow it.
    - Ask the seams as a choice, with the seams listed above the question: **These seams (Recommended)**, **Fewer, higher seams** or **Change them**.
-   - Publish it under flow §2: labels `spec` and `ready-for-agent`, the decision behind each choice cited, and, for a map's Destination item, linked from the map.
+   - Post their answers, the seams among them, on the item's issue (or, for a map's Destination item, a comment on the map naming it), each question with the answer quoted word for word (flow §2).
+   - Review the draft before publishing it: `review-panel`'s planning review (§8), until a round is clean. A fix that would change what a decision means is a question for them first; anything still open after the last round is named in the handover.
+   - Publish the reviewed text as is, under flow §2: labels `spec` and `ready-for-agent`, the decision behind each choice cited, and, for a map's Destination item, linked from the map. Check the published body's hash against the reviewed file (`review-panel` §8), then post each round's spec record on it, oldest first.
    - Close the item's issue as completed, with "Planned as #<spec>".
 
    Ask:
    - **Split it into tickets (Recommended)**;
-   - **Edit the spec first**;
+   - **Edit the spec first**: the edited body gets another planning round and its spec record (`review-panel` §8) before the tickets;
    - **Stop here**: `/start` offers the tickets next time, from the open spec.
 3. **The tickets.** Read `to-tickets`' `SKILL.md` and follow it, with flow §2's additions. Show the breakdown and ask:
    - **Publish these (Recommended)**;
@@ -273,12 +275,13 @@ For each item, read the flow's section for its path and follow it, skipping noth
 3. Ask:
    - **Stop here: the first decision in a fresh session (Recommended)**: there, the first message offers it, or `/next map`;
    - **Next item of the plan**: only when it is light.
-4. **The gate** (flow §1). None of a map's build tickets is built until every item of its Destination has a spec and tickets. `next`, this skill and the conductor's kick-off keep to it; `workflow ready` doesn't know about maps. So while a map has unspecified Destination items, don't offer to build its tickets.
+4. **Each decision,** in its own session (flow §1): the owner's answers posted on its ticket, each question with the answer quoted word for word; the ADR and glossary written on a branch and given `review-panel`'s planning review (§8) until clean, before the ticket is closed and the pull request offered with its review records.
+5. **The gate** (flow §1). None of a map's build tickets is built until every item of its Destination has a spec and tickets. `next`, this skill and the conductor's kick-off keep to it; `workflow ready` doesn't know about maps. So while a map has unspecified Destination items, don't offer to build its tickets.
 
 **Add to an existing issue:**
 1. Show the change to that issue, and ask **Make this change (Recommended)** or **Change it**.
 2. Edit it on yes.
-3. If it's a spec whose tickets are published, find the tickets the change touches, and change them the same way.
+3. If it's a spec, its edited body gets another planning round and its spec record (`review-panel` §8). If its tickets are published, find the tickets the change touches, and change them the same way.
 4. A ticket already built (closed, or with an open PR) isn't edited: the change becomes a new quick ticket.
 
 ## 5. Sorting new issues
@@ -319,7 +322,7 @@ They can change course at any point. Take it as said, and confirm in one line:
 - **"Skip that one" / "drop it":** close its issue as not planned.
 - **"Do that one first":** reorder, and change the blockers to match.
 - **A spec or ticket to change after it's published:**
-  - edit it on GitHub, or ask you to;
+  - edit it on GitHub, or ask you to; a spec you edit gets another planning round and its spec record (`review-panel` §8);
   - removing `ready-for-agent` stops `/next` and runs picking it up;
   - closing it as not planned drops it.
 - **A decision to undo:** reopen it.
