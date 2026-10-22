@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, timezone
 from typing import Callable, Iterable, Union
 
 READY_LABEL = "ready-for-agent"
@@ -29,7 +29,7 @@ SPEC_LABEL = "spec"
 # Specs created before this date are never noted as unreviewed (#234), so
 # updating the kit adds no notes to old specs: the date of the release that
 # brings the note in, which that release sets.
-SPEC_REVIEW_SINCE = "2026-10-22"
+SPEC_REVIEW_SINCE = date(2026, 10, 22)
 
 Blocker = Union[int, str]
 
@@ -566,10 +566,10 @@ def parent_of(issue: dict, repo: str | None = None) -> int | None:
     does), else the first ref on the first line under a `## Parent` heading.
     None when it has none, or its parent is in another repository."""
     p = issue.get("parent")
-    if isinstance(p, dict) and isinstance(p.get("number"), int):
+    if isinstance(p, dict) and isinstance(p.get("number"), int) and not isinstance(p["number"], bool):
         where = p.get("repository")
         where = where.get("full_name") or where.get("nameWithOwner") if isinstance(where, dict) else where
-        return p["number"] if not isinstance(where, str) or not where or _same_repo(where, repo) else None
+        return p["number"] if not isinstance(where, str) or not where or _same_repo(where, repo or where) else None
     url = issue.get("parent_issue_url")
     if isinstance(url, str) and url:
         m = _ISSUE_API_URL.search(url)
@@ -582,23 +582,23 @@ def parent_of(issue: dict, repo: str | None = None) -> int | None:
             if _HEADING.match(cur):
                 return None
             if cur.strip():
-                refs = [r for r in _refs(cur, repo) if isinstance(r, int)]
-                return refs[0] if refs else None
+                refs = _refs(cur, repo)  # the first ref, which may be another repository's
+                return refs[0] if refs and isinstance(refs[0], int) else None
     return None
 
 
 def _created_on(issue: dict) -> date | None:
-    v = issue.get("created_at") or issue.get("createdAt")
-    if not isinstance(v, str):
-        return None
+    """The day an issue was created, in UTC, or None when it can't be read."""
+    from .merge import _time
+
+    t = _time(issue.get("created_at") or issue.get("createdAt"))
     try:
-        t = datetime.fromisoformat(v.replace("Z", "+00:00"))
-    except ValueError:
+        return t.astimezone(timezone.utc).date() if t else None
+    except OverflowError:  # a date at the edge of the calendar, which GitHub never gives
         return None
-    return (t if t.tzinfo else t.replace(tzinfo=timezone.utc)).astimezone(timezone.utc).date()
 
 
-def parent_spec(issue: dict, by_num: dict[int, dict], repo: str | None = None, since: str = SPEC_REVIEW_SINCE) -> dict | None:
+def parent_spec(issue: dict, by_num: dict[int, dict], repo: str | None = None, since: date = SPEC_REVIEW_SINCE) -> dict | None:
     """The ticket's parent spec when its review counts: labelled `spec` and
     created on or after `since` (one whose creation date can't be read counts:
     a note costs a question). None otherwise."""
@@ -607,15 +607,23 @@ def parent_spec(issue: dict, by_num: dict[int, dict], repo: str | None = None, s
     if spec is None or SPEC_LABEL not in labels_of(spec):
         return None
     created = _created_on(spec)
-    return spec if created is None or created >= date.fromisoformat(since) else None
+    return spec if created is None or created >= since else None
 
 
-def _spec_note(spec: dict, fetch_comments: Callable, permissions: Callable) -> str | None:
+def _spec_note(spec: dict, fetch_comments: Callable, permissions: Callable, known: dict[str, str]) -> str | None:
+    """The note for one spec, or None when it has a clean review. `known` holds
+    the permissions already read (login casefolded -> permission), shared by
+    every spec of one `ready`, so each login is looked up once."""
     from .merge import Unreadable, _in_time_order, _may_review, _permissions, _time
     from .posts import CommentsError, _number, comments_from
     from .reviews import body_hash, read, spec_reviewed
 
-    n, body = spec["number"], spec.get("body") or ""
+    n = spec["number"]
+    body = spec.get("body") if isinstance(spec.get("body"), str) else ""
+
+    def unread(why: str) -> str:
+        return f"spec #{n}: couldn't read its reviews ({why})"
+
     try:
         carried = spec.get("comments")
         if isinstance(carried, int) and not isinstance(carried, bool) and carried == 0:
@@ -624,15 +632,25 @@ def _spec_note(spec: dict, fetch_comments: Callable, permissions: Callable) -> s
             comments = comments_from(carried)
         else:
             comments = comments_from(fetch_comments(n))
-        ordered = _in_time_order(comments, lambda c: _time(c.get("created_at") or c.get("createdAt")), _number)
-        records = read(ordered)
-        digest = body_hash(body)
-        authors = sorted({r.author for r in records if r.kind == "spec" and r.body == digest and r.author})
-        perms = _permissions(permissions(authors)) if authors else {}
-    except (SpecReviewsUnread, CommentsError, Unreadable) as e:
-        why = e.why if isinstance(e, Unreadable) else str(e)
-        return f"spec #{n}: couldn't read its reviews ({why})"
-    if spec_reviewed([r for r in records if _may_review(r.author, perms)], body):
+    except SpecReviewsUnread as e:
+        return unread(str(e))
+    except CommentsError as e:
+        return unread(f"its comments: {e}")
+    ordered = _in_time_order(comments, lambda c: _time(c.get("created_at") or c.get("createdAt")), _number)
+    records = read(ordered)
+    digest = body_hash(body)
+    authors = sorted({r.author for r in records if r.kind == "spec" and r.body == digest and r.author}, key=str.casefold)
+    new = [a for a in authors if a.casefold() not in known]
+    if new:
+        try:
+            got = _permissions(permissions(new))
+        except SpecReviewsUnread as e:
+            return unread(str(e))
+        except Unreadable as e:
+            return unread(f"the reviewers' permissions: {e.why}")
+        known.update(got)
+        known.update({a.casefold(): "none" for a in new if a.casefold() not in got})  # left out: no write access
+    if spec_reviewed([r for r in records if _may_review(r.author, known)], body):
         return None
     return f"spec #{n} has no clean review: check it before building"
 
@@ -643,7 +661,7 @@ def note_unreviewed_specs(
     repo: str | None,
     fetch_comments: Callable[[int], object],
     permissions: Callable[[list[str]], object],
-    since: str = SPEC_REVIEW_SINCE,
+    since: date = SPEC_REVIEW_SINCE,
 ) -> None:
     """Add a note to each ready verdict whose parent spec (`parent_spec`) has
     no clean spec record for its current body from an account with write
@@ -653,19 +671,21 @@ def note_unreviewed_specs(
     A spec's comments come from its issue JSON when it carries them (a list,
     as the MCP route's file gives them; a count of 0 is none), else from
     `fetch_comments(number)`, called only for the parent specs of ready
-    tickets, once each. `permissions(logins)` gives the authors of the
-    spec's records for its current body, in any shape merge-check's
-    `--permissions` takes; a login it leaves out has no write access. Either
+    tickets, once each. `permissions(logins)` gives the permissions of the
+    authors of a spec's records for its current body, in any shape
+    merge-check's `--permissions` takes, each login asked once; a login it
+    leaves out has no write access. Either
     raises SpecReviewsUnread, which gives the note "spec #<n>: couldn't read
     its reviews (<why>)" instead of silence."""
     by_num = {i["number"]: i for i in issues if "pull_request" not in i}
-    said: dict[int, str | None] = {}
+    note_of: dict[int, str | None] = {}  # spec number -> its note, read once
+    known: dict[str, str] = {}  # login (casefolded) -> permission, looked up once
     for v in verdicts:
         issue = by_num.get(v.number)
         spec = parent_spec(issue, by_num, repo, since) if v.ready and issue else None
         if spec is None:
             continue
-        if spec["number"] not in said:
-            said[spec["number"]] = _spec_note(spec, fetch_comments, permissions)
-        if said[spec["number"]]:
-            v.notes.append(said[spec["number"]])
+        if spec["number"] not in note_of:
+            note_of[spec["number"]] = _spec_note(spec, fetch_comments, permissions, known)
+        if note_of[spec["number"]]:
+            v.notes.append(note_of[spec["number"]])

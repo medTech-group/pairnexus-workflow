@@ -4,7 +4,8 @@ it. Through `cli.main`, fed issue JSON and the fake `gh` (#232's seam 2), and
 the kit's text (seam 3)."""
 
 import json
-from datetime import date, timedelta
+import re
+from datetime import timedelta
 
 import pytest
 
@@ -22,7 +23,7 @@ PERM = "repos/acme/demo/collaborators/{}/permission"
 
 
 def _day(offset: int) -> str:
-    return (date.fromisoformat(SPEC_REVIEW_SINCE) + timedelta(days=offset)).isoformat()
+    return (SPEC_REVIEW_SINCE + timedelta(days=offset)).isoformat()
 
 
 def spec(number=10, created=None, body=SPEC_BODY, comments=None, **kw) -> dict:
@@ -32,7 +33,7 @@ def spec(number=10, created=None, body=SPEC_BODY, comments=None, **kw) -> dict:
         "state": "open",
         "labels": [{"name": "spec"}, {"name": "ready-for-agent"}],
         "body": body,
-        "created_at": created or f"{SPEC_REVIEW_SINCE}T00:00:00Z",
+        "created_at": created or f"{_day(0)}T00:00:00Z",
         "sub_issues_summary": {"total": 1, "completed": 0},
         "comments": [] if comments is None else comments,
     }
@@ -47,7 +48,7 @@ def ticket(number=11, section="## Parent\n\n#10 (newest note first)", labels=("r
         "state": "open",
         "labels": [{"name": l} for l in labels],
         "body": f"Area: notes\n\n{section}\n\n## Blocked by\n\nNone",
-        "created_at": f"{SPEC_REVIEW_SINCE}T01:00:00Z",
+        "created_at": f"{_day(0)}T01:00:00Z",
         "comments": 0,
     }
     out.update(kw)
@@ -332,4 +333,108 @@ def test_the_changelog_notes_it_and_version_is_not_bumped():
     notes = since_0110()
     assert "#234" in notes and "has no clean review: check it before building" in notes
     assert "SPEC_REVIEW_SINCE" in notes
-    assert _read("VERSION").strip() == "0.1.13"
+    released = re.findall(r"^## (\d+\.\d+\.\d+)$", _read("CHANGELOG.md"), re.M)
+    assert _read("VERSION").strip() == released[0]
+
+
+# ---------- review round 1: odd inputs, repeated lookups ----------
+
+
+def test_a_spec_with_no_readable_creation_date_counts_as_new(project, capsys, tmp_path, monkeypatch):
+    owner_can_write(tmp_path, monkeypatch)
+    for created in (None, "yesterday"):
+        s = spec()
+        s.pop("created_at") if created is None else s.update(created_at=created)
+        assert run_ready(project, capsys, [s, ticket()])[11]["notes"] == [NOTE]
+    # A date at the calendar's edge, which GitHub never gives: no traceback.
+    v = run_ready(project, capsys, [spec(created="0001-01-01T00:00:00+14:00"), ticket()])
+    assert v[11]["ready"] is True and v[11]["notes"] == [NOTE]
+
+
+def test_a_spec_body_that_isnt_text_is_noted_not_a_traceback(project, capsys, tmp_path, monkeypatch):
+    owner_can_write(tmp_path, monkeypatch)
+    for body in (None, 12345, ["a"]):
+        v = run_ready(project, capsys, [spec(body=body, comments=[comment(spec_record())]), ticket()])
+        assert v[11]["ready"] is True and v[11]["notes"] == [NOTE]
+
+
+def test_each_login_is_looked_up_once_across_specs(project, capsys, tmp_path, monkeypatch):
+    gh = owner_can_write(tmp_path, monkeypatch)
+    issues = [spec(comments=[comment(spec_record())]), spec(20, comments=[comment(spec_record())]), ticket(), ticket(21, section="## Parent\n\n#20")]
+    v = run_ready(project, capsys, issues)
+    assert v[11]["notes"] == [] and v[21]["notes"] == []
+    assert routes_asked(gh) == [PERM.format("owner")]
+
+
+def test_a_refusing_proxy_reads_the_tokens_permission_once_per_login(project, capsys, tmp_path, monkeypatch):
+    refused = fake_gh.reply(exit=1, stderr="gh: not permitted through this proxy (HTTP 403)")
+    routes = {PERM.format("owner"): refused, "user": {"login": "owner"}, "repos/acme/demo": {"permissions": {"push": True}}}
+    gh = fake_gh.install(tmp_path, monkeypatch, routes)
+    issues = [spec(comments=[comment(spec_record())]), spec(20, comments=[comment(spec_record())]), ticket(), ticket(21, section="## Parent\n\n#20")]
+    assert [v["notes"] for v in run_ready(project, capsys, issues).values() if v["number"] in (11, 21)] == [[], []]
+    assert routes_asked(gh) == [PERM.format("owner"), "user", "repos/acme/demo"]
+
+
+def test_comments_on_two_pages_are_all_read(project, capsys, tmp_path, monkeypatch):
+    first = comment(spec_record(clean=False), cid=1, at="2026-12-01T10:00:00Z")
+    second = comment(spec_record(round=2), cid=2, at="2026-12-02T10:00:00Z")
+    owner_can_write(tmp_path, monkeypatch, {"repos/acme/demo/issues/10/comments": fake_gh.pages([first], [second])})
+    assert run_ready(project, capsys, [spec(comments=2), ticket()])[11]["notes"] == []
+
+
+def test_a_parent_in_another_repository_or_given_oddly_is_no_parent(project, capsys, tmp_path, monkeypatch):
+    gh = owner_can_write(tmp_path, monkeypatch)
+    issues = [
+        spec(),
+        ticket(11, section="", parent={"number": 10, "repository": "other/lib"}),
+        ticket(12, section="## Parent\n\nother/lib#10 (their spec), follows #10"),
+        ticket(13, section="", parent={"number": True, "repository": "acme/demo"}),
+        {**spec(1), "title": "Spec: one"},
+    ]
+    v = run_ready(project, capsys, issues)
+    assert v[11]["notes"] == [] and v[12]["notes"] == [] and v[13]["notes"] == []
+    assert routes_asked(gh) == []
+
+
+def test_without_a_profile_both_sub_issue_links_agree(project, capsys, tmp_path, monkeypatch):
+    (project / ".claude/workflow/profile.toml").unlink()
+    fake_gh.without_gh(tmp_path, monkeypatch)
+    issues = [
+        spec(),
+        ticket(11, section="", parent={"number": 10, "repository": {"full_name": "acme/demo"}}),
+        ticket(12, section="", parent_issue_url="https://api.github.com/repos/acme/demo/issues/10"),
+    ]
+    v = run_ready(project, capsys, issues)
+    assert v[11]["notes"] == [NOTE] and v[12]["notes"] == [NOTE]
+    notes = run_ready(project, capsys, [spec(comments=1), ticket()])[11]["notes"]
+    assert len(notes) == 1 and notes[0].startswith(UNREAD) and "project.repo" in notes[0]
+
+
+def test_a_permissions_file_that_cant_be_used_says_which(project, capsys, tmp_path, monkeypatch):
+    gh = owner_can_write(tmp_path, monkeypatch)
+    issues = [spec(comments=[comment(spec_record())]), ticket()]
+    (project / "broken.json").write_text("{not json")
+    (project / "odd.json").write_text(json.dumps({"owner": "boss"}))
+    for path, said in ((project / "missing.json", "couldn't be read"), (project / "broken.json", "isn't JSON"), (project / "odd.json", "the reviewers' permissions")):
+        notes = run_ready(project, capsys, issues, "--permissions", str(path))[11]["notes"]
+        assert len(notes) == 1 and notes[0].startswith(UNREAD) and said in notes[0], notes
+    notes = run_ready(project, capsys, issues, "--permissions", "")[11]["notes"]
+    assert len(notes) == 1 and notes[0].startswith(UNREAD)
+    assert routes_asked(gh) == []  # an empty --permissions is still the file asked for, never gh
+
+
+def test_once_gh_times_out_it_isnt_called_again(project, capsys, monkeypatch):
+    from workflow import fetch
+
+    calls = []
+
+    def slow(repo, number):
+        calls.append(number)
+        raise fetch.GhError(f"gh api took longer than {fetch.TIMEOUT} seconds")
+
+    monkeypatch.setattr(fetch, "spec_comments", slow)
+    issues = [spec(comments=1), spec(20, comments=1), ticket(), ticket(21, section="## Parent\n\n#20")]
+    v = run_ready(project, capsys, issues)
+    assert calls == [10]
+    for n in (11, 21):
+        assert len(v[n]["notes"]) == 1 and v[n]["notes"][0].startswith("spec #") and "took longer" in v[n]["notes"][0]

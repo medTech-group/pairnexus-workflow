@@ -18,7 +18,7 @@ WF ready --fetch
 ```
 
 Where `gh api` isn't available, fetch the issues and PRs with the GitHub MCP tools, save them as JSON, and pass them with `--issues issues.json --prs prs.json`:
-- every issue, open and closed (`state=all`), with its labels, body, `state_reason`, `sub_issues_summary` and `issue_dependencies_summary`;
+- every issue, open and closed (`state=all`), with its labels, body, `created_at`, `comments`, `state_reason`, `sub_issues_summary` and `issue_dependencies_summary`;
 - the open pull requests.
 
 It lists each `ready-for-agent` build ticket as READY, or gives why not:
@@ -34,7 +34,7 @@ A READY ticket may carry notes, which never change whether it is ready:
 - "names protected path <path> (<pattern>): check it isn't an owner task";
 - "spec #<n> has no clean review: check it before building", when its spec (its parent issue, labelled `spec`) has no clean review record for its current body from an account with write access. Specs created before the kit brought this in are never noted. When the spec's comments or their authors' permissions can't be read, the note says so: "spec #<n>: couldn't read its reviews (<why>)".
 
-Where `gh api` isn't available, give each spec's comments in its `comments` field in `issues.json`, as a list (`issue_read` with method `get_comments`, every page), and the permissions of those who posted them with `--permissions perms.json` (`list_repository_collaborators`, every page). A spec whose comments aren't given is read with `gh api`.
+Where `gh api` isn't available, give each spec's comments in its `comments` field in `issues.json`, as a list (`issue_read` with method `get_comments`, every page), and the permissions of those who posted them with `--permissions perms.json`, in any shape `merge-check --permissions` takes (`list_repository_collaborators`, every page, or each author's `collaborators/<login>/permission`). A spec whose comments aren't given as a list (a count of 0 is none) is read with `gh api`, and a spec without `created_at` counts as new.
 
 **Maps and specs:**
 - **A map** is an issue labelled `wayfinder:map`. Its ready decisions are its open, unclaimed child tickets whose blockers are closed, in the order `issue_read` with method `get_sub_issues` returns them. A map's Notes may reorder its own frontier.

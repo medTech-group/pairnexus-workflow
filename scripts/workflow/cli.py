@@ -201,32 +201,42 @@ def cmd_ready(a) -> int:
 def _note_unreviewed_specs(verdicts, issues, repo: str | None, permissions_file: str | None) -> None:
     """`ready`'s note on a ready ticket whose spec has no clean review (#234):
     a spec's comments not carried in the issues file are fetched with `gh`,
-    and their authors' permissions come from `--permissions F` or `gh`."""
+    and their authors' permissions come from `--permissions F` or `gh`. Once
+    `gh` is missing or times out, it isn't called again: the specs left get
+    the "couldn't read" note at once, so `ready` never waits on it spec by spec."""
     from . import fetch as fetch_mod
 
-    def unread(what: str, e: Exception) -> issues_mod.SpecReviewsUnread:
-        return issues_mod.SpecReviewsUnread(f"{what}: {e}")
+    gh_down: list[str] = []  # why `gh` can't be used any more, once known
+    given: list = []  # the --permissions file's JSON, read once
+
+    def gh(what: str, call):
+        if gh_down:
+            raise issues_mod.SpecReviewsUnread(f"{what}: {gh_down[0]}")
+        try:
+            return call()
+        except fetch_mod.GhError as e:
+            if str(e) == fetch_mod.NOT_INSTALLED or str(e).startswith("gh api took longer"):
+                gh_down.append(str(e))
+            raise issues_mod.SpecReviewsUnread(f"{what}: {e}") from None
 
     def comments(number: int):
         if not repo:
             raise issues_mod.SpecReviewsUnread("its comments: no project.repo to fetch them from")
-        try:
-            return fetch_mod.spec_comments(repo, number)
-        except fetch_mod.GhError as e:
-            raise unread("its comments", e) from None
+        return gh("its comments", lambda: fetch_mod.spec_comments(repo, number))
 
     def permissions(logins: list[str]):
-        if permissions_file:
-            try:
-                return _json(permissions_file)
-            except (OSError, ValueError) as e:
-                raise unread("--permissions", e) from None
+        if permissions_file is not None:
+            if not given:
+                try:
+                    given.append(_json(permissions_file))
+                except OSError as e:
+                    raise issues_mod.SpecReviewsUnread(f"--permissions {permissions_file!r} couldn't be read: {e.strerror or e}") from None
+                except (ValueError, RecursionError) as e:
+                    raise issues_mod.SpecReviewsUnread(f"--permissions {permissions_file!r} isn't JSON: {e}") from None
+            return given[0]
         if not repo:
             raise issues_mod.SpecReviewsUnread("the reviewers' permissions: no project.repo, give --permissions F")
-        try:
-            return fetch_mod.permissions_of(repo, logins)
-        except fetch_mod.GhError as e:
-            raise unread("the reviewers' permissions (or give --permissions F)", e) from None
+        return gh("the reviewers' permissions (or give --permissions F)", lambda: fetch_mod.permissions_of(repo, logins))
 
     issues_mod.note_unreviewed_specs(verdicts, issues, repo, comments, permissions)
 
