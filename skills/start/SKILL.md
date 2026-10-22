@@ -242,9 +242,12 @@ For each item, read the flow's section for its path and follow it, skipping noth
    - **Write the spec (Recommended)**;
    - **There's more to discuss**;
    - **Stop here**: comment on the item's issue with the decisions so far, so the next session carries on from them.
+
+   Before writing the spec, post their answers on the item's issue (or the map's Destination item), each question with the answer quoted word for word (flow §2).
 2. **The spec.** Read `to-spec`'s `SKILL.md` and follow it.
    - Ask the seams as a choice, with the seams listed above the question: **These seams (Recommended)**, **Fewer, higher seams** or **Change them**.
-   - Publish it under flow §2: labels `spec` and `ready-for-agent`, the decision behind each choice cited, and, for a map's Destination item, linked from the map.
+   - Review the draft before publishing it: `review-panel`'s planning review (§8), Correctness and Spec against the answers as posted, in rounds until one is clean. A fix that would change what a decision means is a question for them first; anything still open after the last round is named in the handover.
+   - Publish the reviewed text as is, under flow §2: labels `spec` and `ready-for-agent`, the decision behind each choice cited, and, for a map's Destination item, linked from the map. Then post each round's spec record on it, oldest first.
    - Close the item's issue as completed, with "Planned as #<spec>".
 
    Ask:
@@ -271,7 +274,8 @@ For each item, read the flow's section for its path and follow it, skipping noth
 3. Ask:
    - **Stop here: the first decision in a fresh session (Recommended)**: there, the first message offers it, or `/next map`;
    - **Next item of the plan**: only when it is light.
-4. **The gate** (flow §1). None of a map's build tickets is built until every item of its Destination has a spec and tickets. `next`, this skill and the conductor's kick-off keep to it; `workflow ready` doesn't know about maps. So while a map has unspecified Destination items, don't offer to build its tickets.
+4. **Each decision,** in its own session (flow §1): the owner's answers posted on its ticket, each question with the answer quoted word for word; the ADR and glossary written on a branch and given `review-panel`'s planning review (§8) until clean, before the ticket is closed and the pull request offered with its review records.
+5. **The gate** (flow §1). None of a map's build tickets is built until every item of its Destination has a spec and tickets. `next`, this skill and the conductor's kick-off keep to it; `workflow ready` doesn't know about maps. So while a map has unspecified Destination items, don't offer to build its tickets.
 
 **Add to an existing issue:**
 1. Show the change to that issue, and ask **Make this change (Recommended)** or **Change it**.

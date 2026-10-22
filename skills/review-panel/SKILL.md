@@ -1,6 +1,6 @@
 ---
 name: review-panel
-description: Review a diff or pull request with independent agents in parallel - Standards, Spec, Correctness (with a security review where it applies) and, for UI, API or CLI changes, an explorer that uses the change from outside. Use on any branch or PR, inside build-ticket or alone.
+description: Review a diff or pull request with independent agents in parallel - Standards, Spec, Correctness (with a security review where it applies) and, for UI, API or CLI changes, an explorer that uses the change from outside. Also the planning review - Correctness and Spec on a map decision's or a spec session's ADRs and glossary, or a spec's draft, before it's offered or published. Use on any branch or PR, inside build-ticket or alone.
 ---
 
 # The review panel
@@ -110,3 +110,40 @@ A shorter review for a small, low-risk ticket, asked for as "build #12 with a li
 |---|---|---|---|---|
 | 1 | 1 | Correctness | A not-planned blocker reads as done | Fixed in abc1234, test `test_blockers_not_planned` |
 | 2 | 1 | Spec | No `Area:` on the new tickets | Not a problem: the spec makes areas optional for one-off tickets |
+
+## 8. The planning review
+
+Planning is reviewed before it's offered or published (flow §1 and §2): a map decision's pull request (its ADRs and glossary), a spec's draft, and a spec session's ADR or glossary pull request. Build tickets aren't. Sections 1 to 5 hold, with these differences.
+
+**The inputs,** in the scratch directory as section 1 says:
+- `diff.patch`: the diff, or the spec's draft as `spec.md`, the exact text that will be published;
+- `answers.md`: the owner's answers as posted, each question with the answer quoted word for word, copied from the decision ticket, the item's issue or the map's Destination item (or, for a spec with neither, the comment about to be posted). Never the session's summary;
+- the ADRs and glossary, all of them, not only the changed ones;
+- the decision ticket and its map, or the item's issue, as `ticket.md`;
+- the project's rules, as `rules.md`.
+
+**The reviewers,** both every round, in one message:
+- **Correctness:** the `correctness-reviewer` agent, briefed for a document: check its facts against the code, look for contradictions with other ADRs and the glossary, and apply the project's safety rules (a name or other sensitive data where it shouldn't be, a screen given to the wrong reader).
+- **Spec:** a general-purpose agent with its own brief, since `code-review`'s Spec axis compares code to a ticket: read the record against `answers.md`, word for word, and report anything the owner said that is dropped, reworded into a different meaning, or stated as settled where the owner left it open, and anything recorded that the owner didn't say.
+
+No Standards reviewer and no explorer: there is no code to hold to the standards and nothing to use.
+
+**Rounds:** Both reviewers run every round, until a round is clean, at most the profile's `run.review_rounds` (the light review doesn't apply). Anything still open after the last round goes to the owner: in the pull request's body, or, for a spec, in the handover.
+
+**Fixes:** the session fixes wording, facts and omissions itself. A fix that would change what a decision means is put to the owner as a question first, and the answer is posted word for word like the others before the next round.
+
+**Records:** after every round, whatever it found (section 4's rules on refusals hold):
+- a decision's or a spec session's pull request posts a round record on its commit, as section 4 says, on the pull request:
+
+  ```
+  WF review-record --kind round --round <n> --commit <sha> --reviewers spec,correctness --clean > /tmp/review-<ticket>-r<n>/record.md
+  ```
+- a spec posts a spec record keyed to its body, the SHA-256 of `spec.md` in place of a commit, on the spec issue once it is published, oldest first:
+
+  ```
+  WF review-record --kind spec --round <n> --body /tmp/review-<spec>-r<n>/spec.md --reviewers spec,correctness --clean > /tmp/review-<spec>-r<n>/record.md
+  ```
+
+  Publish `spec.md` of the last round as is: an edit after the review changes the hash, and the spec reads as unreviewed again.
+
+(`--not-clean` when the round found something to fix.)
