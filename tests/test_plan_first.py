@@ -6,6 +6,7 @@ import uuid
 
 import pytest
 
+from changelog_notes import since_0110
 from conftest import KIT, git
 from test_hooks_cli import run_hook
 from workflow.context import CONTEXT_LIMIT as LIMIT
@@ -158,5 +159,5 @@ def test_the_readme_and_the_flow_say_what_later_messages_get():
 
 
 def test_the_changelog_notes_it_under_unreleased():
-    unreleased = _text("CHANGELOG.md").split("## Unreleased", 1)[1].split("\n## ", 1)[0]
-    assert "(#222, part of #221)" in unreleased and "reminder" in unreleased
+    notes = since_0110()
+    assert "(#222, part of #221)" in notes and "reminder" in notes

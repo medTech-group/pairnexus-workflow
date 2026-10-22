@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.13
+
+**Attended sessions plan new work before they code.** Spec #221's two tickets: the guided start's first-message text names its three exceptions exactly, every later message of an attended session gets a one-line reminder to plan new work first, and a message that only mentions the conductor gets the guided start instead of the flow. Each change's own note is below.
+
+- **For projects updating to 0.1.13:** nothing to do. `guided_start = false` in the profile turns the reminder off along with the guided start.
+
 **Attended sessions plan new work before they code: a narrower first-message text, and a reminder at every later message** (#222, part of #221).
 
 - **The first message.** The guided start's text from the context hook now names the `start` skill's three exceptions exactly: act straight away only on a question, a named issue, or one small change with an obvious place (on its own branch, with a pull request). Any other request for work (a feature, a change, a fix whose cause isn't known, or more than one thing) is split into items and the plan agreed first. It no longer says to "just do" one clear thing.
