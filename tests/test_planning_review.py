@@ -231,7 +231,11 @@ def test_the_planning_review_posts_both_record_kinds():
     # The owner's words for the edit are posted first, and are the Spec reviewer's input.
     assert "First post the owner's words for the change on the spec's issue, each request or answer quoted word for word" in p
     # ...as well as, never instead of, the answers the spec was written from.
-    assert "An edit after publishing takes all of these as well as the owner's words for the change, posted on the spec's issue" in p
+    assert "An edit after publishing takes all of these as well as the owner's words for every edit so far, this one included" in p
+    # Later words stand over earlier ones, in the sources and in the Spec reviewer's brief.
+    assert "where later words change an earlier answer, the later words stand" in p
+    brief = p.split("**Spec:**", 1)[1].split("No Standards reviewer", 1)[0]
+    assert "Where the owner's later words change an earlier answer, the later words stand" in brief
     assert "(once the spec is published, its first comment)" in p
     edit = p.split("**An edit after publishing**", 1)[1]
     assert "any sensitive data (`profile.md`) left out and marked as left out" in edit
