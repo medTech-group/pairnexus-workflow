@@ -230,7 +230,11 @@ def test_the_planning_review_posts_both_record_kinds():
     assert "the edited body gets another planning round, its own spec record, before any tickets are written from it" in p
     # The owner's words for the edit are posted first, and are the Spec reviewer's input.
     assert "First post the owner's words for the change on the spec's issue, each request or answer quoted word for word" in p
-    assert "an edit after publishing takes the owner's words for the change, posted on the spec's issue" in p
+    # ...as well as, never instead of, the answers the spec was written from.
+    assert "An edit after publishing takes all of these as well as the owner's words for the change, posted on the spec's issue" in p
+    assert "(once the spec is published, its first comment)" in p
+    edit = p.split("**An edit after publishing**", 1)[1]
+    assert "any sensitive data (`profile.md`) left out and marked as left out" in edit
     # The read-back check's directory is made before the body is saved there.
     assert p.index("mkdir -p /tmp/review-<issue>-spec-check") < p.index("> /tmp/review-<issue>-spec-check/published.md")
 
