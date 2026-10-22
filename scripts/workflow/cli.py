@@ -19,6 +19,8 @@
     workflow merge-check --fetch N [any of the files above] [--charter F --check-logs DIR] [--asker LOGIN] [--review-rounds N] [--json]
     workflow preview --comments F --checks F --sha SHA [--json] | --fetch N [any of those] [--json]
     workflow briefing verify --file F
+    workflow review-record --kind round|pass --round N --commit SHA --reviewers NAMES --clean|--not-clean
+    workflow review-record [--kind spec] --round N --body F --reviewers spec,correctness --clean|--not-clean      (a spec's review, keyed to its body's SHA-256)
     workflow pr-template [--existing FILE]      (prints the file to write; exits 3 for a folder of templates)
     workflow adopt --owner LOGIN --repo OWNER/NAME --name NAME [--project DIR]      (a copy of the starter made yours)
     workflow evidence [--suite NAME ... | --all] [--base-count N | --base-ref BRANCH] [--fresh] [--allow-dirty]
@@ -916,18 +918,49 @@ def cmd_adopt(a) -> int:
     return 0
 
 
+def _spec_body(path: str) -> str:
+    """The spec's body from --body's file, as the session publishes it; raises
+    RecordError, in words, for a file that is missing, can't be read, isn't
+    UTF-8 text or is empty."""
+    if not path:
+        raise reviews_mod.RecordError("give --body a file: the spec's body, exactly as you publish it")
+    # The end of a long path, where the file's name is.
+    shown = reviews_mod._shown(path, 80) if len(path) <= 80 else "…" + reviews_mod._shown(path[-79:], 79)
+    p = Path(path)
+    try:
+        if not p.exists():
+            raise reviews_mod.RecordError(f"--body names no file: `{shown}`")
+        if not p.is_file():
+            raise reviews_mod.RecordError(f"--body `{shown}` isn't a file: give the file holding the spec's body")
+        text = p.read_bytes().decode("utf-8")
+    except UnicodeDecodeError:
+        raise reviews_mod.RecordError(f"--body `{shown}` isn't UTF-8 text: give the spec's body as you publish it") from None
+    except OSError as e:
+        raise reviews_mod.RecordError(f"--body `{shown}` can't be read: {e.strerror or e}") from None
+    if not reviews_mod.plain_body(text):
+        raise reviews_mod.RecordError(f"--body `{shown}` {reviews_mod.EMPTY_BODY}")
+    return text
+
+
 def cmd_review_record(a) -> int:
-    """`review-record`: the comment a review round or a later Correctness pass posts."""
+    """`review-record`: the comment a review round, a later Correctness pass, or
+    a spec's review round (keyed to its body's SHA-256) posts."""
     # Each flag is a list (`append`), so a repeated one is refused rather than
     # the last silently winning; repeated --reviewers add up.
-    for flag in ("kind", "round", "commit"):
+    for flag in ("kind", "round", "commit", "body"):
         if len(getattr(a, flag) or []) > 1:
             print(f"workflow review-record: give --{flag} once", file=sys.stderr)
             return 2
     one = {flag: (getattr(a, flag) or [None])[0] for flag in ("kind", "round", "commit")}
+    path = (a.body or [None])[0]
+    if path is not None and not (one["kind"] or "").strip():
+        one["kind"] = "spec"  # --body alone (or with an empty --kind) is a spec's review
     reviewers = ",".join(a.reviewers) if a.reviewers else None
     try:
-        text = reviews_mod.record(**one, reviewers=reviewers, clean=a.clean)
+        if path is not None:
+            reviews_mod.check_key(one["kind"], one["commit"], body_given=True)
+        body = None if path is None else _spec_body(path)
+        text = reviews_mod.record(**one, reviewers=reviewers, clean=a.clean, body=body)
     except reviews_mod.RecordError as e:
         print(f"workflow review-record: {e}", file=sys.stderr)
         return 2
@@ -1453,12 +1486,13 @@ def main(argv: list[str] | None = None) -> int:
     s.set_defaults(fn=cmd_adopt)
 
     s = sub.add_parser(
-        "review-record", allow_abbrev=False, help="the record a review round or a later Correctness pass posts on the pull request"
+        "review-record", allow_abbrev=False, help="the record a review round or a later Correctness pass posts on the pull request, or a spec's review on the spec"
     )
-    s.add_argument("--kind", action="append", help="`round`, or `pass` for a Correctness pass after the last round")
+    s.add_argument("--kind", action="append", help="`round`, `pass` for a Correctness pass after the last round, or `spec` for a spec's review (the default with --body)")
     s.add_argument("--round", action="append", help="the round's number; for a pass, the round it follows")
     s.add_argument("--commit", action="append", help="the full SHA the round covered (`git rev-parse HEAD`)")
-    s.add_argument("--reviewers", action="append", help="those that ran, comma-separated: " + ",".join(reviews_mod.REVIEWERS))
+    s.add_argument("--body", action="append", metavar="FILE", help="a spec's review: the file holding the spec's body as you publish it, in place of --commit; the record names its SHA-256")
+    s.add_argument("--reviewers", action="append", help="those that ran, comma-separated: " + ",".join(reviews_mod.REVIEWERS) + "; a spec's review takes " + ",".join(reviews_mod.SPEC_REVIEWERS))
     result = s.add_mutually_exclusive_group()
     result.add_argument("--clean", dest="clean", action="store_true", default=None, help="nothing left to fix")
     result.add_argument("--not-clean", dest="clean", action="store_false", help="the round found something to fix")

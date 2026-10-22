@@ -689,8 +689,10 @@ class Context:
         return self.once("comments", read)
 
     def records(self) -> list[reviews.Record]:
-        """The review records in the comments (`reviews.read`), oldest first."""
-        return reviews.read(self.comments())
+        """The round and pass records in the comments (`reviews.read`), oldest
+        first. A spec record (#233) names a spec's body, not a commit, so it is
+        no review of the pull request's code."""
+        return [r for r in reviews.read(self.comments()) if r.kind != "spec"]
 
     def compare(self) -> int:
         """How many commits the head is behind the base."""

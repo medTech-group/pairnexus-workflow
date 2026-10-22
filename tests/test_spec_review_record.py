@@ -1,0 +1,348 @@
+"""Spec review records (#233, part of #232): `workflow review-record --body F`
+writes a record keyed by the SHA-256 of a spec's body, `reviews.read` reads it
+back, and `reviews.spec_reviewed` says whether a body has a clean one."""
+
+import hashlib
+
+import pytest
+
+from workflow import cli, reviews
+from changelog_notes import since_0110
+from test_merge_check import check, comment, inputs, note_ids, project  # noqa: F401  (project is a fixture)
+
+SHA = "3f2a9c0b7de14a2c9e8f5d6b1a0c3e2f4d5b6a7c"
+SPEC = "## Problem Statement\n\nThe notes list shows the oldest note first.\n\n## Solution\n\nShow the newest first.\n"
+SPEC_HASH = hashlib.sha256(SPEC.rstrip().encode("utf-8")).hexdigest()
+
+
+def run(capsys, *args):
+    code = cli.main(["review-record", *args])
+    out, err = capsys.readouterr()
+    return code, out, err
+
+
+@pytest.fixture
+def spec_file(tmp_path):
+    def write(text=SPEC, name="spec.md", newline=None):
+        p = tmp_path / name
+        with open(p, "w", encoding="utf-8", newline=newline) as f:
+            f.write(text)
+        return str(p)
+
+    return write
+
+
+def spec_record(capsys, path, *, round="1", reviewers="spec,correctness", result="--clean", kind=("--kind", "spec")):
+    code, out, err = run(capsys, *kind, "--round", round, "--body", path, "--reviewers", reviewers, result)
+    assert code == 0, err
+    return out
+
+
+# The writer, through the CLI --------------------------------------------------
+
+
+def test_a_spec_record_names_the_bodys_hash_in_a_field_of_its_own(capsys, spec_file):
+    out = spec_record(capsys, spec_file())
+    assert out.splitlines() == [
+        f"Spec review round 1 on body `{SPEC_HASH[:7]}`: clean. Reviewers: Spec, Correctness.",
+        f"<!-- workflow:review kind=spec round=1 body={SPEC_HASH} reviewers=spec,correctness result=clean -->",
+        "<!-- workflow:agent -->",
+    ]
+    assert "commit=" not in out
+
+
+def test_a_spec_record_is_read_back_with_its_hash_kind_round_reviewers_and_result(capsys, spec_file):
+    out = spec_record(capsys, spec_file(), round="2", reviewers="correctness", result="--not-clean")
+    (r,) = reviews.records_in(out)
+    assert (r.kind, r.round, r.body, r.commit, r.reviewers, r.result, r.clean) == ("spec", 2, SPEC_HASH, None, ("correctness",), "not-clean", False)
+    (r,) = reviews.read([{"id": 7, "user": {"login": "notes-app-owner"}, "created_at": "2026-10-22T10:00:00Z", "body": out}])
+    assert (r.kind, r.body, r.author, r.comment_id, r.created_at) == ("spec", SPEC_HASH, "notes-app-owner", 7, "2026-10-22T10:00:00Z")
+
+
+def test_body_alone_makes_a_spec_record(capsys, spec_file):
+    out = spec_record(capsys, spec_file(), kind=())
+    assert f"kind=spec round=1 body={SPEC_HASH} " in out
+    # An empty --kind is no kind: --body still makes it a spec's review.
+    for blank in ("", "  "):
+        assert spec_record(capsys, spec_file(), kind=("--kind", blank)) == out
+
+
+def test_an_empty_kind_with_a_missing_body_says_the_file_is_missing(capsys, tmp_path):
+    code, out, err = run(capsys, "--kind", "", "--round", "1", "--body", str(tmp_path / "missing.md"), "--reviewers", "spec", "--clean")
+    assert code != 0 and out == "" and "names no file" in err and "give --kind" not in err
+
+
+def test_reviewers_are_put_in_the_panels_order(capsys, spec_file):
+    out = spec_record(capsys, spec_file(), reviewers="Correctness, SPEC")
+    assert "reviewers=spec,correctness " in out
+
+
+@pytest.mark.parametrize("who", ["standards", "spec,security", "correctness,explorer"])
+def test_a_spec_record_allows_only_spec_and_correctness(capsys, spec_file, who):
+    code, out, err = run(capsys, "--kind", "spec", "--round", "1", "--body", spec_file(), "--reviewers", who, "--clean")
+    assert code != 0 and out == ""
+    assert "a spec's review is by spec and correctness" in err and err.startswith("workflow review-record: ")
+
+
+def test_the_same_body_with_crlf_line_endings_gives_the_same_hash(capsys, spec_file):
+    lf = spec_record(capsys, spec_file())
+    crlf = spec_record(capsys, spec_file(newline="\r\n", name="crlf.md"))
+    assert lf == crlf
+    assert reviews.body_hash(SPEC.replace("\n", "\r\n")) == reviews.body_hash(SPEC) == SPEC_HASH
+    assert reviews.body_hash(SPEC.replace("\n", "\r")) == SPEC_HASH
+
+
+def test_the_hash_reads_the_text_not_the_whitespace_at_its_end():
+    assert reviews.body_hash(SPEC.rstrip()) == reviews.body_hash(SPEC + "\n\n  \n") == SPEC_HASH
+    # Whitespace inside the text is the text's own.
+    assert reviews.body_hash(SPEC.replace("first.", "first. ")) != SPEC_HASH
+
+
+def test_a_byte_order_mark_at_the_start_doesnt_change_the_hash(capsys, spec_file):
+    assert reviews.body_hash("\ufeff" + SPEC) == SPEC_HASH
+    with_bom = spec_record(capsys, spec_file("\ufeff" + SPEC, name="bom.md"))
+    assert with_bom == spec_record(capsys, spec_file())
+    assert reviews.spec_reviewed(reviews.records_in(with_bom), SPEC) is True
+
+
+# Refused in words ----------------------------------------------------------
+
+
+def test_a_commit_and_a_body_together_are_refused(capsys, spec_file):
+    for kind in ("spec", "round"):
+        code, out, err = run(capsys, "--kind", kind, "--round", "1", "--commit", SHA, "--body", spec_file(), "--reviewers", "correctness", "--clean")
+        assert code != 0 and out == ""
+        assert "give --commit or --body, not both" in err
+    code, out, err = run(capsys, "--round", "1", "--commit", "", "--body", spec_file(), "--reviewers", "spec", "--clean")
+    assert code != 0 and out == "" and "not both" in err
+    with pytest.raises(reviews.RecordError, match="not both"):
+        reviews.record(kind="spec", round=1, commit=SHA, body=SPEC, reviewers="spec", clean=True)
+
+
+def test_a_missing_body_file_is_refused(capsys, tmp_path):
+    missing = str(tmp_path / "nowhere.md")
+    code, out, err = run(capsys, "--kind", "spec", "--round", "1", "--body", missing, "--reviewers", "spec", "--clean")
+    assert code != 0 and out == ""
+    assert "no file" in err and "nowhere.md" in err and "Traceback" not in err
+    code, out, err = run(capsys, "--kind", "spec", "--round", "1", "--body", str(tmp_path), "--reviewers", "spec", "--clean")
+    assert code != 0 and out == "" and "isn't a file" in err
+
+
+@pytest.mark.parametrize("name", ["a" * 5000, "b" * 300 + ".md"], ids=["5000-characters", "300-characters"])
+def test_a_body_path_too_long_for_the_system_is_refused_in_words(capsys, tmp_path, name):
+    code, out, err = run(capsys, "--kind", "spec", "--round", "1", "--body", str(tmp_path / name), "--reviewers", "spec", "--clean")
+    assert code == 2 and out == ""
+    assert err.startswith("workflow review-record: --body ") and "Traceback" not in err and len(err) < 300
+
+
+def test_a_refusal_shows_the_end_of_a_long_path_where_the_file_name_is(capsys, tmp_path):
+    deep = tmp_path / ("d" * 120)
+    deep.mkdir()
+    code, out, err = run(capsys, "--kind", "spec", "--round", "1", "--body", str(deep / "the-spec.md"), "--reviewers", "spec", "--clean")
+    assert code != 0 and "the-spec.md" in err and "…" in err
+
+
+@pytest.mark.parametrize("text", ["", "\n", "  \r\n\t\n", "\ufeff", "\ufeff\n  \n"])
+def test_an_empty_body_file_is_refused(capsys, spec_file, text):
+    code, out, err = run(capsys, "--kind", "spec", "--round", "1", "--body", spec_file(text), "--reviewers", "spec", "--clean")
+    assert code != 0 and out == ""
+    assert "is empty" in err
+
+
+def test_a_body_file_that_isnt_text_is_refused(capsys, tmp_path):
+    p = tmp_path / "spec.bin"
+    p.write_bytes(b"\xff\xfe\x00bad")
+    code, out, err = run(capsys, "--kind", "spec", "--round", "1", "--body", str(p), "--reviewers", "spec", "--clean")
+    assert code != 0 and out == "" and "UTF-8" in err and "Traceback" not in err
+
+
+def test_an_empty_body_flag_is_refused(capsys):
+    code, out, err = run(capsys, "--kind", "spec", "--round", "1", "--body", "", "--reviewers", "spec", "--clean")
+    assert code != 0 and out == "" and "give --body" in err
+
+
+def test_a_spec_record_without_a_body_is_refused(capsys):
+    code, out, err = run(capsys, "--kind", "spec", "--round", "1", "--reviewers", "spec", "--clean")
+    assert code != 0 and out == "" and "give --body" in err
+    code, out, err = run(capsys, "--kind", "spec", "--round", "1", "--commit", SHA, "--reviewers", "spec", "--clean")
+    assert code != 0 and out == "" and "names its body, not a commit: give --body" in err
+
+
+@pytest.mark.parametrize("kind", ["round", "pass"])
+def test_a_round_or_pass_with_a_body_is_refused(capsys, spec_file, kind):
+    code, out, err = run(capsys, "--kind", kind, "--round", "1", "--body", spec_file(), "--reviewers", "correctness", "--clean")
+    assert code != 0 and out == ""
+    assert "--body is for a spec record" in err
+
+
+@pytest.mark.parametrize("kind", ["round", "pass", " ROUND "])
+def test_a_round_with_a_body_is_refused_before_the_file_is_read(capsys, tmp_path, kind):
+    code, out, err = run(capsys, "--kind", kind, "--round", "1", "--body", str(tmp_path / "missing.md"), "--reviewers", "correctness", "--clean")
+    assert code != 0 and out == ""
+    assert "--body is for a spec record" in err and "no file" not in err
+
+
+@pytest.mark.parametrize("kind", ["sepc", "light"])
+def test_a_mistyped_kind_with_a_body_is_refused_before_the_file_is_read(capsys, tmp_path, kind):
+    code, out, err = run(capsys, "--kind", kind, "--round", "1", "--body", str(tmp_path / "missing.md"), "--reviewers", "spec", "--clean")
+    assert code != 0 and out == ""
+    assert f"--kind is `round` or `pass` (or `spec` for a spec's review), not `{kind}`" in err and "no file" not in err
+
+
+@pytest.mark.parametrize(
+    "who, says",
+    [
+        (["--reviewers", "owner"], "unknown reviewer `owner`: a spec's review is by spec and correctness"),
+        ([], "give --reviewers: those that ran, from spec, correctness"),
+    ],
+)
+def test_a_spec_records_reviewer_hints_name_only_spec_and_correctness(capsys, spec_file, who, says):
+    code, out, err = run(capsys, "--kind", "spec", "--round", "1", "--body", spec_file(), *who, "--clean")
+    assert code != 0 and out == ""
+    assert says in err and "standards" not in err
+
+
+def test_the_help_says_which_reviewers_a_spec_record_takes(capsys):
+    with pytest.raises(SystemExit):
+        cli.main(["review-record", "--help"])
+    out = " ".join(capsys.readouterr().out.split())
+    assert "--body FILE" in out and "a spec's review takes spec,correctness" in out
+
+
+def test_body_given_twice_is_refused(capsys, spec_file):
+    code, out, err = run(capsys, "--round", "1", "--body", spec_file(), "--body", spec_file(name="b.md"), "--reviewers", "spec", "--clean")
+    assert code != 0 and out == "" and "give --body once" in err
+
+
+@pytest.mark.parametrize("text", ["", " \n", "\ufeff\n"])
+def test_the_python_writer_refuses_an_empty_body_and_an_empty_body_is_never_reviewed(text):
+    with pytest.raises(reviews.RecordError, match="is empty"):
+        reviews.record(kind="spec", round=1, body=text, reviewers="spec", clean=True)
+    empty = f"<!-- workflow:review kind=spec round=1 body={reviews.body_hash('')} reviewers=spec result=clean -->"
+    assert len(reviews.records_in(empty)) == 1
+    assert reviews.spec_reviewed(reviews.records_in(empty), text) is False
+
+
+def test_the_python_writer_checks_the_key_before_the_body():
+    with pytest.raises(reviews.RecordError, match="--body is for a spec record"):
+        reviews.record(kind="round", round=1, body="", reviewers="spec", clean=True)
+
+
+def test_the_python_writer_refuses_a_body_that_isnt_text():
+    with pytest.raises(reviews.RecordError, match="body"):
+        reviews.record(kind="spec", round=1, body=b"bytes", reviewers="spec", clean=True)
+
+
+# The reader ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        f"<!-- workflow:review kind=spec round=1 body={SPEC_HASH[:63]} reviewers=spec result=clean -->",
+        f"<!-- workflow:review kind=spec round=1 body={SPEC_HASH}a reviewers=spec result=clean -->",
+        f"<!-- workflow:review kind=spec round=1 body={SPEC_HASH.upper()} reviewers=spec result=clean -->",
+        f"<!-- workflow:review kind=spec round=1 body={'g' * 64} reviewers=spec result=clean -->",
+        f"<!-- workflow:review kind=spec round=1 body={SHA} reviewers=spec result=clean -->",
+        f"<!-- workflow:review kind=spec round=1 body= reviewers=spec result=clean -->",
+        f"<!-- workflow:review kind=spec round=1 commit={SHA} reviewers=spec result=clean -->",
+        f"<!-- workflow:review kind=round round=1 body={SPEC_HASH} reviewers=spec result=clean -->",
+        f"<!-- workflow:review kind=pass round=1 body={SPEC_HASH} reviewers=correctness result=clean -->",
+        f"<!-- workflow:review kind=spec round=1 commit={SHA} body={SPEC_HASH} reviewers=spec result=clean -->",
+        f"<!-- workflow:review kind=spec round=1 body={SPEC_HASH} reviewers=standards result=clean -->",
+        f"<!-- workflow:review kind=spec round=1 body={SPEC_HASH} reviewers=correctness,spec result=clean -->",
+        f"<!-- workflow:review kind=spec body={SPEC_HASH} round=1 reviewers=spec result=clean -->",
+        f"<!-- workflow:review kind=spec round=0 body={SPEC_HASH} reviewers=spec result=clean -->",
+        f"<!-- workflow:review kind=spec round=1 body={SPEC_HASH} reviewers=spec -->",
+    ],
+)
+def test_a_malformed_spec_record_line_is_skipped(line):
+    assert reviews.records_in(f"Spec review round 1.\n{line}\n<!-- workflow:agent -->") == []
+
+
+def test_a_good_spec_record_beside_a_malformed_one_is_still_read(capsys, spec_file):
+    good = spec_record(capsys, spec_file())
+    bad = f"<!-- workflow:review kind=spec round=1 body={SPEC_HASH[:12]} reviewers=spec result=clean -->"
+    assert [r.body for r in reviews.records_in(bad + "\n" + good)] == [SPEC_HASH]
+
+
+def test_a_spec_record_quoted_in_a_code_block_is_not_a_record(capsys, spec_file):
+    line = spec_record(capsys, spec_file()).splitlines()[1]
+    assert reviews.records_in(f"A spec record looks like:\n```\n{line}\n```\n") == []
+    assert reviews.records_in(f"- {line}") == []
+
+
+# Whether a body has a clean review --------------------------------------------
+
+
+def spec_records_for(capsys, spec_file, *results, text=SPEC):
+    path = spec_file(text, name=f"s{len(results)}.md")
+    out = [spec_record(capsys, path, round=str(i + 1), result=res) for i, res in enumerate(results)]
+    return reviews.read([{"id": i + 1, "user": {"login": "owner"}, "body": b} for i, b in enumerate(out)])
+
+
+def test_a_clean_record_for_the_body_means_reviewed(capsys, spec_file):
+    got = spec_records_for(capsys, spec_file, "--clean")
+    assert reviews.spec_reviewed(got, SPEC) is True
+    # As GitHub gives the body back, with \r\n line endings.
+    assert reviews.spec_reviewed(got, SPEC.replace("\n", "\r\n")) is True
+
+
+def test_a_changed_body_is_not_reviewed(capsys, spec_file):
+    got = spec_records_for(capsys, spec_file, "--clean")
+    assert reviews.spec_reviewed(got, SPEC.replace("newest", "latest")) is False
+
+
+def test_clean_then_not_clean_is_not_reviewed_and_the_reverse_is(capsys, spec_file):
+    assert reviews.spec_reviewed(spec_records_for(capsys, spec_file, "--clean", "--not-clean"), SPEC) is False
+    assert reviews.spec_reviewed(spec_records_for(capsys, spec_file, "--not-clean", "--clean"), SPEC) is True
+
+
+def test_only_the_bodys_own_records_count(capsys, spec_file):
+    other = spec_records_for(capsys, spec_file, "--not-clean", text="An older draft.\n")
+    mine = spec_records_for(capsys, spec_file, "--clean")
+    # A not-clean record of another body after this one's clean record doesn't undo it.
+    assert reviews.spec_reviewed(mine + other, SPEC) is True
+    assert reviews.spec_reviewed(other, SPEC) is False
+
+
+def test_no_records_or_round_records_only_is_not_reviewed():
+    assert reviews.spec_reviewed([], SPEC) is False
+    text = reviews.record(kind="round", round=1, commit=SHA, reviewers="spec,correctness", clean=True)
+    assert reviews.spec_reviewed(reviews.records_in(text), SPEC) is False
+
+
+def test_an_empty_or_missing_body_is_never_reviewed():
+    assert reviews.spec_reviewed([], "") is False
+    assert reviews.spec_reviewed([], None) is False
+
+
+# Commit-keyed records, and merge-check, are unchanged ------------------------
+
+
+def test_a_round_record_reads_back_with_no_body(capsys):
+    text = reviews.record(kind="round", round=1, commit=SHA, reviewers="spec", clean=True)
+    (r,) = reviews.records_in(text)
+    assert (r.commit, r.body) == (SHA, None)
+
+
+def test_a_spec_record_on_a_pull_request_leaves_merge_check_as_it_was(project, capsys, spec_file):
+    data = inputs()
+    data["comments"].append(comment(spec_record(capsys, spec_file()), cid=101))
+    data["pr"]["comments"] = len(data["comments"])
+    got, code = check(project, capsys, data)
+    assert code == 0 and got["decision"] == "ready", got["reasons"]
+    assert "records_ignored" not in note_ids(got)
+    # A spec record is no round: alone, the pull request has no review.
+    data["comments"] = [comment(spec_record(capsys, spec_file()))]
+    data["pr"]["comments"] = 1
+    got, _ = check(project, capsys, data)
+    assert "no_review" in [r["id"] for r in got["reasons"]]
+
+
+# The docs ------------------------------------------------------------------
+
+
+def test_the_changelog_notes_spec_records():
+    notes = since_0110()
+    assert "#233" in notes and "review-record" in notes and "--body" in notes and "SHA-256" in notes
