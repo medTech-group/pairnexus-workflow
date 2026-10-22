@@ -158,7 +158,7 @@ def test_a_spec_md_without_the_footer_is_reviewed_once_published_with_it(capsys,
 
 def test_a_body_that_is_only_the_footer_is_refused(capsys, spec_file):
     code, _, err = run(capsys, "--kind", "spec", "--round", "1", "--body", spec_file(FOOTER + "\n"), "--reviewers", "spec", "--clean")
-    assert code != 0 and "is empty (nothing but whitespace, or only Claude Code's footer)" in err
+    assert code != 0 and "or only a cloud session's footer)" in err
 
 
 # Refused in words ----------------------------------------------------------
