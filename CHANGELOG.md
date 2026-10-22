@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+**Spec review records: `workflow review-record --body F` keys a spec's review to its body's SHA-256** (#233, part of #232).
+
+- **The writer.** `workflow review-record --kind spec --round N --body spec.md --reviewers spec,correctness --clean` (or `--not-clean`; `--body` alone means `--kind spec`) prints the record a spec's review round posts on the spec's issue: "Spec review round 1 on body `9c1e4b2`: clean. Reviewers: Spec, Correctness.", then a machine line naming the body's SHA-256 in a field of its own (`body=<64 hex>`, in place of `commit=`), so a commit-keyed record and a spec record are never confused. The body is read from the file the session publishes, its line endings made `\n` (GitHub gives a body back with `\r\n`) and the whitespace at its very end left out, so an edit after the review makes the spec read as unreviewed again.
+- **Refused in words:** a body file that's missing, isn't UTF-8 text or is empty; `--commit` and `--body` together; a round or pass with `--body`; a spec record without one; reviewers other than `spec` and `correctness`.
+- **The reader.** `reviews.read` and `records_in` return spec records with their hash (`body`) and author; a line whose hash isn't 64 hex characters is skipped. `reviews.spec_reviewed(records, body)` says whether the latest spec record for that body's hash is clean.
+- **Round and pass records are unchanged,** and `workflow merge-check` reads only those: a spec record on a pull request is no review of its code.
+- Tests: `tests/test_spec_review_record.py`. The review panel's text comes with the planning-review ticket (#235), and `workflow ready`'s note with #234.
+- **For projects updating:** nothing to do.
+
 ## 0.1.13
 
 **Attended sessions plan new work before they code.** Spec #221's two tickets: the guided start's first-message text names its three exceptions exactly, every later message of an attended session gets a one-line reminder to plan new work first, and a message that only mentions the conductor gets the guided start instead of the flow. Each change's own note is below.
