@@ -2,10 +2,16 @@
 
 ## Unreleased
 
+## 0.1.14
+
+**Planning is reviewed before it's offered or published, and `workflow ready` notes a ticket whose spec has no clean review.** Spec #232's three tickets: spec review records keyed to the spec's text (#233), the planning review in the flow, the review panel and the guided start (#235), and `workflow ready`'s note, shown by `next`, `start` and the conductor's kick-off (#234). Each change's own note is below.
+
+- **For projects updating to 0.1.14:** nothing to do. `SPEC_REVIEW_SINCE` is this release's date, 2026-10-23, so specs created before it are never noted as unreviewed and updating adds no notes.
+
 **`workflow ready` notes a ticket whose spec has no clean review, and `next`, `start` and the conductor's kick-off show it** (#234, part of #232).
 
 - **The note.** A ready ticket whose parent spec (its sub-issue link, or the first ref on the first line under its `## Parent` heading, when it is in this repository; the spec labelled `spec`) has no clean spec record (#233) for its current body from an account with write access gets "spec #<n> has no clean review: check it before building". It's a warning, never a block: the ticket stays ready, as with the protected-path note. A not-clean record, a clean one for an older body, or one from an account without write access leaves the note.
-- **Old specs aren't noted:** specs created before `SPEC_REVIEW_SINCE` (in `scripts/workflow/issues.py`, today the date this merged) never are, so updating the kit adds no notes. A spec whose creation date can't be read counts as new, so the MCP route's issues file gives each issue's `created_at` (`next` and `start` list it). **The release that brings this in sets `SPEC_REVIEW_SINCE` to its own date.**
+- **Old specs aren't noted:** specs created before `SPEC_REVIEW_SINCE` (in `scripts/workflow/issues.py`, this release's date) never are, so updating the kit adds no notes. A spec whose creation date can't be read counts as new, so the MCP route's issues file gives each issue's `created_at` (`next` and `start` list it). **The release that brings this in sets `SPEC_REVIEW_SINCE` to its own date.**
 - **Where the comments come from:** a spec's `comments` in the `--issues` file when it carries them as a list (the MCP route), else `gh api`, only for the parent specs of the ready tickets shown, once each (a spec with no comments isn't fetched). The authors' permissions come from `--permissions F` (new, any shape `merge-check --permissions` takes) or `gh api`, as `merge-check` reads them, each login once. Once `gh` is missing or times out, it isn't called again in that run. When either can't be read, or the parent isn't in the issue list at all, the note says so: "spec #<n>: couldn't read its reviews (<why>)".
 - **The skills:** `next` and `start` show the note beside a ticket when they offer it; the conductor's kick-off lists those tickets beside the protected-path ones, for the owner to keep or exclude by spec (excluding a spec excludes all its open tickets, blocked ones too); a ticket of an unreviewed spec noted later in the run is named in that check-in's comment. `docs/charter.md`'s readiness line says so.
 - Tests: `tests/test_ready_spec_note.py`.
