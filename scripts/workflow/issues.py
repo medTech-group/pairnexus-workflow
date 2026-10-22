@@ -29,7 +29,7 @@ NOT_BUILD_LABELS = {"wayfinder:map", SPEC_LABEL}
 # Specs created before this date are never noted as unreviewed (#234), so
 # updating the kit adds no notes to old specs: the date of the release that
 # brings the note in, which that release sets.
-SPEC_REVIEW_SINCE = date(2026, 10, 22)
+SPEC_REVIEW_SINCE = date(2026, 10, 23)
 
 Blocker = Union[int, str]
 
