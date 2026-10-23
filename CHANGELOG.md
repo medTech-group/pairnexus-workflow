@@ -4,9 +4,9 @@
 
 ## 0.1.15
 
-**Specs published from a Claude Code cloud session can be recorded as reviewed.** One fix, #250: the spec's hash leaves out the footer those sessions' GitHub tools add to every issue body. Its own note is below.
+**A spec published from a Claude Code cloud session can get its spec records.** One fix, #250: the spec's hash leaves out the footer those sessions' GitHub tools add to every issue body. Its own note is below.
 
-- **For projects updating to 0.1.15:** nothing to do.
+- **For projects updating to 0.1.15:** nothing to do, unless a spec record was made from a `spec.md` that itself ended with that footer: that spec reads as unreviewed until it is reviewed again.
 
 **A spec published from a Claude Code cloud session can get its spec records: the body's hash leaves out the footer those sessions add** (#250, found publishing #243; #233's records, #235's read-back check).
 
