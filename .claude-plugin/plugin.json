@@ -1,6 +1,6 @@
 {
   "name": "pairnexus-workflow",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "description": "Spec, tickets, build, review panel and merge, attended or as an unattended run under a conductor with a run charter.",
   "author": {
     "name": "MedTech LLC"
