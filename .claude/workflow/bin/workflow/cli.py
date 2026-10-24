@@ -8,7 +8,7 @@
     workflow protection --require-checks F --check NAME [--check NAME ...] [--json]
     workflow protection --checks-ran F [--statuses F] --rulesets F --repo F [--base BRANCH] [--json]
     workflow version [--fresh] [--json] | --repo | --starter
-    workflow ready [--issues F --prs F | --fetch] [--exclude 1,2] [--only 1,2] [--override 3] [--running-area A ...] [--slots N] [--json]
+    workflow ready [--issues F --prs F | --fetch] [--permissions F] [--exclude 1,2] [--only 1,2] [--override 3] [--running-area A ...] [--slots N] [--json]
     workflow charter defaults [--unprotected] | validate F [--approved] [--unprotected] | markdown F [--tickets 13:area,143:-] [--estimate F] | diff OLD NEW | reuse OLD | pin-plan F | questions [--unprotected]
     workflow charter estimate F [--tickets N | 13:area,143:-] [--runs F] [--security 13,143] [--now ISO] [--json]
     workflow charter splice --body F --charter F [--out F] [--tickets 13:area,143:-] [--estimate F]
@@ -19,6 +19,8 @@
     workflow merge-check --fetch N [any of the files above] [--charter F --check-logs DIR] [--asker LOGIN] [--review-rounds N] [--json]
     workflow preview --comments F --checks F --sha SHA [--json] | --fetch N [any of those] [--json]
     workflow briefing verify --file F
+    workflow review-record --kind round|pass --round N --commit SHA --reviewers NAMES --clean|--not-clean
+    workflow review-record [--kind spec] --round N --body F --reviewers spec,correctness --clean|--not-clean      (a spec's review, keyed to its body's SHA-256)
     workflow pr-template [--existing FILE]      (prints the file to write; exits 3 for a folder of templates)
     workflow adopt --owner LOGIN --repo OWNER/NAME --name NAME [--project DIR]      (a copy of the starter made yours)
     workflow evidence [--suite NAME ... | --all] [--base-count N | --base-ref BRANCH] [--fresh] [--allow-dirty]
@@ -173,6 +175,8 @@ def cmd_ready(a) -> int:
         verdicts = [v for v in verdicts if v.number in only]
         for n in missing:
             print(f"workflow ready: #{n} isn't an open ready-for-agent build ticket", file=sys.stderr)
+    stdin_for = None if a.fetch else "issues" if a.issues == "-" else "prs" if a.prs == "-" else None
+    _note_unreviewed_specs(verdicts, issues, prs, prof.repo if prof else None, a.permissions, stdin_for)
     slots = a.slots if a.slots is not None else (prof.max_parallel if prof else 2)
     running = [r.strip().casefold() for r in a.running_area or [] if r and r.strip()]
     start = issues_mod.startable(verdicts, running, max(0, slots), overrides=overrides)
@@ -193,6 +197,52 @@ def cmd_ready(a) -> int:
                 print(f"      note: {note}")
         print("start now: " + (", ".join(f"#{v.number}" for v in start) or "nothing"))
     return 0
+
+
+def _note_unreviewed_specs(verdicts, issues, prs, repo: str | None, permissions_file: str | None, stdin_for: str | None) -> None:
+    """`ready`'s note on a ready ticket whose spec has no clean review (#234):
+    a spec's comments not carried in the issues file are fetched with `gh`,
+    and their authors' permissions come from `--permissions F` or `gh`. Once
+    `gh` is missing or times out, it isn't called again: the specs left get
+    the "couldn't read" note at once, so `ready` never waits on it spec by spec.
+    `stdin_for` names the flag that already read standard input, if any."""
+    gh_down: list[str] = []  # why `gh` can't be used any more, once known
+    given: list = []  # the --permissions file's (JSON, why it can't be read), read once
+    token: dict = {}  # the token's own login and permission, read once (`permissions_of`)
+
+    def gh(what: str, call):
+        if gh_down:
+            raise issues_mod.SpecReviewsUnread(f"{what}: gh wasn't asked, since an earlier call failed: {gh_down[0]}")
+        try:
+            return call()
+        except fetch_mod.GhError as e:
+            down = [m for m in (fetch_mod.NOT_INSTALLED, fetch_mod.TIMED_OUT) if m in str(e)]  # also after a proxy's refusal
+            gh_down.extend(down[:1])
+            raise issues_mod.SpecReviewsUnread(f"{what}: {e}") from None
+
+    def comments(number: int):
+        if not repo:
+            raise issues_mod.SpecReviewsUnread("its comments: no project.repo to fetch them from")
+        return gh("its comments", lambda: fetch_mod.spec_comments(repo, number))
+
+    def permissions(logins: list[str]):
+        if permissions_file is not None:
+            if not permissions_file.strip():
+                raise issues_mod.SpecReviewsUnread("--permissions was given no file")
+            if permissions_file == "-" and stdin_for:
+                raise issues_mod.SpecReviewsUnread(f"--permissions: standard input (-) is already --{stdin_for}'s: only one file can be read from it")
+            if not given:  # read as merge-check reads its --permissions
+                given.append(_json_inputs(argparse.Namespace(permissions=permissions_file), ["permissions"])["permissions"])
+            value, why = given[0]
+            if why:
+                raise issues_mod.SpecReviewsUnread(f"--permissions: {why}")
+            return value
+        if not repo:
+            raise issues_mod.SpecReviewsUnread("the reviewers' permissions: no project.repo, give --permissions F")
+        return gh("the reviewers' permissions (or give --permissions F)", lambda: fetch_mod.permissions_of(repo, logins, token))
+
+    pull_numbers = [p["number"] for p in prs if isinstance(p, dict) and type(p.get("number")) is int] if isinstance(prs, list) else []
+    issues_mod.note_unreviewed_specs(verdicts, issues, repo, comments, permissions, pull_numbers=pull_numbers)
 
 
 def cmd_status(a) -> int:
@@ -916,18 +966,49 @@ def cmd_adopt(a) -> int:
     return 0
 
 
+def _spec_body(path: str) -> str:
+    """The spec's body from --body's file, as the session publishes it; raises
+    RecordError, in words, for a file that is missing, can't be read, isn't
+    UTF-8 text or is empty."""
+    if not path:
+        raise reviews_mod.RecordError("give --body a file: the spec's body, exactly as you publish it")
+    # The end of a long path, where the file's name is.
+    shown = reviews_mod._shown(path, 80) if len(path) <= 80 else "…" + reviews_mod._shown(path[-79:], 79)
+    p = Path(path)
+    try:
+        if not p.exists():
+            raise reviews_mod.RecordError(f"--body names no file: `{shown}`")
+        if not p.is_file():
+            raise reviews_mod.RecordError(f"--body `{shown}` isn't a file: give the file holding the spec's body")
+        text = p.read_bytes().decode("utf-8")
+    except UnicodeDecodeError:
+        raise reviews_mod.RecordError(f"--body `{shown}` isn't UTF-8 text: give the spec's body as you publish it") from None
+    except OSError as e:
+        raise reviews_mod.RecordError(f"--body `{shown}` can't be read: {e.strerror or e}") from None
+    if not reviews_mod.plain_body(text):
+        raise reviews_mod.RecordError(f"--body `{shown}` {reviews_mod.EMPTY_BODY}")
+    return text
+
+
 def cmd_review_record(a) -> int:
-    """`review-record`: the comment a review round or a later Correctness pass posts."""
+    """`review-record`: the comment a review round, a later Correctness pass, or
+    a spec's review round (keyed to its body's SHA-256) posts."""
     # Each flag is a list (`append`), so a repeated one is refused rather than
     # the last silently winning; repeated --reviewers add up.
-    for flag in ("kind", "round", "commit"):
+    for flag in ("kind", "round", "commit", "body"):
         if len(getattr(a, flag) or []) > 1:
             print(f"workflow review-record: give --{flag} once", file=sys.stderr)
             return 2
     one = {flag: (getattr(a, flag) or [None])[0] for flag in ("kind", "round", "commit")}
+    path = (a.body or [None])[0]
+    if path is not None and not (one["kind"] or "").strip():
+        one["kind"] = "spec"  # --body alone (or with an empty --kind) is a spec's review
     reviewers = ",".join(a.reviewers) if a.reviewers else None
     try:
-        text = reviews_mod.record(**one, reviewers=reviewers, clean=a.clean)
+        if path is not None:
+            reviews_mod.check_key(one["kind"], one["commit"], body_given=True)
+        body = None if path is None else _spec_body(path)
+        text = reviews_mod.record(**one, reviewers=reviewers, clean=a.clean, body=body)
     except reviews_mod.RecordError as e:
         print(f"workflow review-record: {e}", file=sys.stderr)
         return 2
@@ -1311,6 +1392,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--override", help="tickets that may share an area with a running one, e.g. 5,6")
     s.add_argument("--running-area", action="append")
     s.add_argument("--slots", type=int)
+    s.add_argument("--permissions", metavar="F", help="the permissions of those who posted a spec's review records, in any shape merge-check's --permissions takes; else read with `gh api`")
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_ready)
 
@@ -1453,12 +1535,13 @@ def main(argv: list[str] | None = None) -> int:
     s.set_defaults(fn=cmd_adopt)
 
     s = sub.add_parser(
-        "review-record", allow_abbrev=False, help="the record a review round or a later Correctness pass posts on the pull request"
+        "review-record", allow_abbrev=False, help="the record a review round or a later Correctness pass posts on the pull request, or a spec's review on the spec"
     )
-    s.add_argument("--kind", action="append", help="`round`, or `pass` for a Correctness pass after the last round")
+    s.add_argument("--kind", action="append", help="`round`, `pass` for a Correctness pass after the last round, or `spec` for a spec's review (the default with --body)")
     s.add_argument("--round", action="append", help="the round's number; for a pass, the round it follows")
     s.add_argument("--commit", action="append", help="the full SHA the round covered (`git rev-parse HEAD`)")
-    s.add_argument("--reviewers", action="append", help="those that ran, comma-separated: " + ",".join(reviews_mod.REVIEWERS))
+    s.add_argument("--body", action="append", metavar="FILE", help="a spec's review: the file holding the spec's body as you publish it, in place of --commit; the record names its SHA-256")
+    s.add_argument("--reviewers", action="append", help="those that ran, comma-separated: " + ",".join(reviews_mod.REVIEWERS) + "; a spec's review takes " + ",".join(reviews_mod.SPEC_REVIEWERS))
     result = s.add_mutually_exclusive_group()
     result.add_argument("--clean", dest="clean", action="store_true", default=None, help="nothing left to fix")
     result.add_argument("--not-clean", dest="clean", action="store_false", help="the round found something to fix")
