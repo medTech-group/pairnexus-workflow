@@ -553,3 +553,56 @@ def test_more_attended_curl_enqueues_the_guard_cant_read_are_asked(ticket, form)
 def test_attended_curl_writes_that_arent_queue_calls_are_left_alone(ticket, form):
     d = run(ticket, form, "attended")
     assert d.action == "allow", d.reason
+
+
+@pytest.mark.parametrize("role", ["conductor", "attended"])
+@pytest.mark.parametrize(
+    "form",
+    [
+        'gh api -X PUT "$CONTENTS_URL" -f message=update -f content=aGk= -f sha="$BLOB"',
+        'gh api -X PUT "$PR_URL/merge" -f sha="$SHA"',
+        'gh api -X PUT "repos/$REPO/pulls/$N/$ACTION" -f sha="$SHA" -f merge_method=squash',
+    ],
+)
+def test_other_puts_with_a_filled_in_path_pass(ticket, role, form):
+    d = run(ticket, form, role)
+    assert d.action == "allow", (role, d.reason)
+
+
+def test_an_attended_curl_with_an_unread_config_and_its_own_url_is_left_alone(ticket):
+    d = run(ticket, "curl -sS --config missing.curlrc https://api.github.com/repos/acme/demo/pulls/12", "attended")
+    assert d.action == "allow", d.reason
+
+
+@pytest.mark.parametrize("role", ["conductor", "attended"])
+@pytest.mark.parametrize(
+    "form",
+    [
+        "gh api -X PUT repos/{owner}/{repo}/pulls/12/{branch} -f merge_action=direct_merge -f sha={sha}",
+        "gh api -X PUT repos/{owner}/{repo}/pulls/12/merge-{branch} -f sha={sha}",
+        "gh api -X PUT repos/acme/demo/pulls/12/merge-asyn? -f merge_action=direct_merge -f sha={sha}",
+        'gh api -X PUT "$URL" --input direct.json',
+        'gh api -X PUT "$URL" --input - <<<\'{"merge_action":"direct_merge","sha":"x"}\'',
+    ],
+)
+def test_more_hidden_routes_are_refused(ticket, role, form):
+    (ticket / "direct.json").write_text('{"merge_action": "direct_merge", "sha": "x"}')
+    d = run(ticket, form, role)
+    assert refused(d, role), (role, d)
+
+
+@pytest.mark.parametrize(
+    "form",
+    [
+        "curl -X PUT 'https://api.github.com/repos/acme/demo/pulls/12/merge-async?bypass_rules=true' -d '{\"merge_action\":\"merge_queue\",\"sha\":\"{sha}\"}'",
+        CURL + " --url-query bypass_rules=true -d '{\"merge_action\":\"merge_queue\",\"sha\":\"{sha}\"}'",
+    ],
+)
+def test_an_attended_curl_enqueue_with_a_query_string_is_asked(ticket, form):
+    d = run(ticket, form, "attended")
+    assert d.action == "ask", d
+
+
+def test_the_wrong_head_refusal_names_queueing(ticket):
+    d = run(ticket, ROUTE + f" -f merge_action=merge_queue -f sha={OTHER}")
+    assert d.action == "deny" and "merges or queues only its own" in d.reason

@@ -2541,7 +2541,7 @@ def _pin_problem(what: str, pins: list[str], root: Path, profile: Profile, how: 
         if pin.lower() != head:
             return (
                 f"`{pin}` isn't the head of this session's ticket branch `{branch}` (`{head}`), so this {what} may be another ticket's "
-                f"pull request: a ticket session merges only its own. Push your branch and pin it to `{head}`; if the pull request's "
+                f"pull request: a ticket session merges or queues only its own. Push your branch and pin it to `{head}`; if the pull request's "
                 "head moved on GitHub (the branch was updated there), `git pull` first and pin to the new head"
             )
     return None
@@ -2729,13 +2729,13 @@ def _ticket_merge_problem(seg: Seg, toks: list[str], profile: Profile, root: Pat
 # `%`-escapes, `//`, `./`, a start the shell fills in); a path the shell fills
 # in counts too when the call names a `merge_action`, or PUTs a bare `sha`. An
 # attended session's curl is asked unless its JSON body queues it.
-# An expansion the shell fills in; a path word that starts as a path (a URL or
-# `repos/`), so it can't be a flag; and a path whose last part after
-# `pulls/<n>/` the shell fills in, which may be `merge-async` (`pulls/comments/<id>`
-# is another route).
-_FILLED = re.compile(r"[$`]")
+# An expansion the shell (or gh, for `{branch}`) fills in; a path word that
+# starts as a path (a URL or `repos/`), so it can't be a flag; and a path whose
+# last part after `pulls/<n>/` is filled in or a glob, which may be
+# `merge-async` (`pulls/comments/<id>` is another route).
+_FILLED = re.compile(r"[$`]|\{branch\}")  # gh fills `{branch}` in from the checkout
 _PATH_START = re.compile(r"(?i)(?:[a-z][a-z0-9+.-]*://|/?repos/)")
-_LAST_FILLED = re.compile(r"(?i)pulls/(?!comments/)[^/]+/[^/]*[$`][^/]*/?$")
+_LAST_FILLED = re.compile(r"(?i)pulls/(?!comments/)[^/]+/[^/]*(?:[$`*?\[]|\{branch\})[^/]*/?$")
 _FILLED_PATH_WHY = (
     "write this API call out: the shell fills in its path `{path}`, which may be `merge-async`, "
     "and `{word}`, which may be a flag of its own"
@@ -2868,14 +2868,15 @@ def _curl_url_queues(word: str) -> bool:
 def _curl_queue_problem(toks: list[str], joined: str, cwd: str | None) -> str | None:
     """An attended session's curl PUT that may add a pull request to a merge
     queue (a URL `_curl_url_queues`, or a config file it reads that names
-    `merge-async`, or can't be read when it names no other host) is asked
-    unless it sends one JSON body that queues it (`_queued_json`)."""
+    `merge-async`, or can't be read when the command names no URL) is asked
+    unless it sends one JSON body that queues it (`_queued_json`), with no
+    query string."""
     configs = _curl_configs(toks)
-    other_host = any("://" in t and not _GITHUB_API.search(t) for t in toks)
+    any_url = any("://" in t for t in toks)  # an unread config then only adds to that URL
     named = any(_curl_url_queues(t) for t in toks)
     for f in configs:
         text = _read_text(f, cwd)
-        named = named or (re.search(r"(?i)merge-async", urllib.parse.unquote(text)) is not None if text is not None else not other_host)
+        named = named or (re.search(r"(?i)merge-async", urllib.parse.unquote(text)) is not None if text is not None else not any_url)
     if not named:
         return None
     methods = [m.group(1) or (toks[k + 1] if k + 1 < len(toks) else "") for k, t in enumerate(toks) if (m := re.fullmatch(r"(?:-X|--request=?)(.*)", t, re.S))]
@@ -2903,7 +2904,8 @@ def _curl_queue_problem(toks: list[str], joined: str, cwd: str | None) -> str | 
             f = val[1:]
             val = None if f in ("", "-") else _read_text(f, cwd)
         bodies.append(val)
-    if not unread and len(bodies) == 1 and _queued_json(bodies[0]):
+    query = any(_curl_url_queues(t) and "?" in t for t in toks)
+    if not unread and not query and len(bodies) == 1 and _queued_json(bodies[0]):
         return None
     return (
         "to add a pull request to the merge queue with curl, send one JSON body the guard can read: `merge_action` "
@@ -2957,7 +2959,10 @@ def _merge_async_problem(seg: Seg, toks: list[str], profile: Profile, role: str,
         return _BYPASS_WHY
     filled = _FILLED.search(call.word)
     unread_path = seg.fed and not _PATH_START.match(call.word)
-    whole_filled = (filled and not _PATH_START.match(call.word)) or unread_path
+    # A path the shell fills in from its start to its last part (`"$URL"`, not
+    # `"$PR_URL/merge"`), so it may be any route.
+    last_part = call.word.rstrip("/").rsplit("/", 1)[-1]
+    whole_filled = (filled and not _PATH_START.match(call.word) and _FILLED.search(last_part)) or unread_path
     # GitHub takes `merge-async` only as a PUT; a literal other method can't
     # become one unless xargs adds words or a word the shell fills in is a flag.
     if call.method in ("POST", "PATCH", "DELETE") and not seg.fed:
@@ -2968,11 +2973,14 @@ def _merge_async_problem(seg: Seg, toks: list[str], profile: Profile, role: str,
     body, body_unread = _input_body(seg, toks)
     if (route or filled or unread_path) and _body_has_bypass(body):
         return _BYPASS_WHY
-    last_filled = _LAST_FILLED.search(call.word)
+    # The merge's and update-branch's own fields say which route a filled-in
+    # last part is.
+    other_route = {"merge_method", "expected_head_sha"} & set(keys)
+    last_filled = _LAST_FILLED.search(call.word) and not other_route
     # A whole path the shell fills in may be `merge-async` with no
-    # `merge_action`: when it PUTs a `sha` with none of the merge's or
-    # update-branch's own fields, or a body that names one or can't be read.
-    queue_fields = "sha" in keys and not {"merge_method", "expected_head_sha"} & set(keys)
+    # `merge_action`: when it PUTs a `sha` and only fields `merge-async` takes,
+    # or a body that names `merge_action` or `sha`, or can't be read.
+    queue_fields = "sha" in keys and set(keys) <= {"sha", "commit_title", "commit_message"}
     queue_body = body_unread or bool(_json_keys(body) & {"merge_action", "sha"})
     bare_put = whole_filled and (queue_fields or queue_body)
     if not (route or (filled and "merge_action" in keys) or last_filled or unread_path or bare_put):
