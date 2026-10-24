@@ -684,3 +684,9 @@ def test_an_attended_curl_with_dev_null_as_config_is_left_alone(ticket):
 def test_an_attended_curl_config_under_dev_spelled_another_way_is_asked(ticket):
     d = run(ticket, "curl -K /tmp/../dev/fd/3 https://api.github.com/repos/acme/demo/issues/1 3<<'EOF'\nurl = \"https://api.github.com/repos/acme/demo/pulls/12/merge-async\"\nEOF", "attended")
     assert d.action == "ask", d
+
+
+@pytest.mark.parametrize("cfg", ["/dev/fd/3/../null", "/dev/stdin/../null", "/dev//null"])
+def test_only_dev_null_as_written_is_an_empty_config(ticket, cfg):
+    d = run(ticket, f"curl -K {cfg} -X PUT https://api.github.com/repos/acme/demo/issues/1", "attended")
+    assert d.action == "ask", d

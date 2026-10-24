@@ -2868,14 +2868,14 @@ def _curl_url_queues(word: str) -> bool:
 def _hidden_config(f: str, cwd: str | None) -> bool:
     """A curl config whose text isn't a file the guard can read now: stdin, a
     descriptor or device (any path that resolves under `/dev/` or `/proc/`,
-    `/dev/null` aside, which is empty), or a name the shell fills in."""
+    `/dev/null` as written aside, which is empty), or a name the shell fills in."""
     if f in ("", "-") or _STDIN_FILE.fullmatch(f) or _FILLED.search(f):
         return True
     a = os.path.expanduser(f)
     if not a.startswith("/") and cwd:
         a = cwd + "/" + a
     n = posixpath.normpath(re.sub("/+", "/", a))
-    return n != os.devnull and n.startswith(("/dev/", "/proc/"))
+    return f != os.devnull and n.startswith(("/dev/", "/proc/"))  # `/dev/null` as written: `/dev/fd/3/../null` is elsewhere
 
 
 def _curl_queue_problem(toks: list[str], joined: str, cwd: str | None) -> str | None:
