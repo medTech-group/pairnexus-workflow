@@ -210,7 +210,7 @@ REASONS = {
     # The pass cap (#256): in place of the three above when a pass would come next.
     "passes_used_up": Reason("review_panel", "review", {
         "new": ("Not yet: the short checks of the latest changes have reached their limit, so this change waits on the owner.", "The owner decides: one more check, or leave it as it is."),
-        "developer": ("Not yet: {passes} after round {round}, the cap ({cap} allowed), and the head {short} still needs one: this pull request waits on the owner.", "The owner decides: \"One more pass\" (merge-check skill) runs one past the cap; in a run the ticket stops at needs-human with the open findings in the PR body."),
+        "developer": ("Not yet: {passes} after round {round} used up the pass cap ({cap} allowed), and the head {short} still needs one: this pull request waits on the owner.", "The owner decides: \"One more pass\" (merge-check skill) runs one past the cap; in a run the ticket stops at needs-human with the open findings in the PR body."),
     }),
     "conflict": Reason("mergeable", "resolve_conflict", {
         "new": ("Not yet: this change clashes with something already in {base}.", "Ask Claude to resolve the conflict."),

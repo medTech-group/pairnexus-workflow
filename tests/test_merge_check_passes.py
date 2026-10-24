@@ -226,7 +226,7 @@ def test_passes_used_up_is_worded_at_both_levels(project, capsys):
     r = used_up(check(project, capsys, data)[0])
     dev, new = r["wording"]["developer"], r["wording"]["new"]
     assert dev["message"].startswith("Not yet: ") and new["message"].startswith("Not yet: ")
-    assert "2 Correctness passes after round 3, the cap (2 allowed)" in dev["message"]
+    assert "2 Correctness passes after round 3 used up the pass cap (2 allowed)" in dev["message"]
     for w in (dev, new):
         assert "waits on the owner" in w["message"] + w["fix"]
     assert "One more pass" in dev["fix"] and "needs-human" in dev["fix"]
@@ -237,7 +237,7 @@ def test_the_text_answer_says_the_cap_is_reached(project, capsys, monkeypatch):
     data = inputs()
     data["comments"] = records(rec(rnd=1, commit=EARLIER))
     out, _ = check(project, capsys, data, "--review-passes", "0", as_json=False)
-    assert "the cap (0 allowed)" in out and "waits on the owner" in out
+    assert "the pass cap (0 allowed)" in out and "waits on the owner" in out
     monkeypatch.setenv("WORKFLOW_EXPERIENCE", "new")
     out, _ = check(project, capsys, data, "--review-passes", "0", as_json=False)
     assert "waits on the owner" in out
