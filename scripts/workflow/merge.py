@@ -80,6 +80,8 @@ _STATUS_URL_SHA = re.compile(r"/statuses/([0-9a-fA-F]{40})\b")
 PREVIEWS_DOC = Path(__file__).resolve().parents[2] / "docs/previews.md"
 DEFAULT_REVIEW_ROUNDS = 3  # the profile's run.review_rounds when it can't be read
 REVIEW_ROUNDS = range(1, 11)  # what --review-rounds accepts, as profile.py's run.review_rounds
+DEFAULT_REVIEW_PASSES = 2  # the profile's run.review_passes when it can't be read
+REVIEW_PASSES = range(0, 11)  # what --review-passes accepts, as profile.py's run.review_passes
 
 
 class Unreadable(Exception):
@@ -121,6 +123,7 @@ class Result:
     files: list[str] = field(default_factory=list)
     preview: dict | None = None
     review_rounds: int = DEFAULT_REVIEW_ROUNDS  # the allowed review rounds the review rule used
+    review_passes: int = DEFAULT_REVIEW_PASSES  # the pass cap the review rule used
 
     def as_dict(self) -> dict:
         return {
@@ -135,6 +138,7 @@ class Result:
             "files": self.files,
             "preview": self.preview,
             "review_rounds": self.review_rounds,
+            "review_passes": self.review_passes,
         }
 
 
@@ -202,6 +206,11 @@ REASONS = {
     "review_stale": Reason("review_panel", "review", {
         "new": ("Not yet: the newest changes haven't been reviewed.", "Review it now: a short check of the latest changes."),
         "developer": ("Not yet: the last clean round covers {round_short}, not the head {short}, and no later clean Correctness pass covers the head.", "Run a Correctness pass on the head (review-panel §5)."),
+    }),
+    # The pass cap (#256): in place of the three above when a pass would come next.
+    "passes_used_up": Reason("review_panel", "review", {
+        "new": ("Not yet: the short checks of the latest changes have reached their limit, so this change waits on the owner.", "The owner decides: one more check, or leave it as it is."),
+        "developer": ("Not yet: {passes} after round {round}, the cap ({cap} allowed), and the head {short} still needs one: this pull request waits on the owner.", "The owner decides: \"One more pass\" (merge-check skill) runs one past the cap; in a run the ticket stops at needs-human with the open findings in the PR body."),
     }),
     "conflict": Reason("mergeable", "resolve_conflict", {
         "new": ("Not yet: this change clashes with something already in {base}.", "Ask Claude to resolve the conflict."),
@@ -475,7 +484,7 @@ class Context:
     """The inputs as the rules read them. Each reader raises Unreadable (the
     same one each time) for an input it can't read."""
 
-    def __init__(self, inputs: dict, profile, profile_error: str | None, waivable: frozenset = frozenset(), logs: dict | None = None, review_rounds: int | None = None):
+    def __init__(self, inputs: dict, profile, profile_error: str | None, waivable: frozenset = frozenset(), logs: dict | None = None, review_rounds: int | None = None, review_passes: int | None = None):
         self.inputs = inputs
         self.profile = profile
         self.profile_error = profile_error
@@ -483,6 +492,8 @@ class Context:
         self.logs = logs or {}  # --check-logs: file name -> the log's tail
         # The allowed review rounds: --review-rounds, else the profile's run.review_rounds.
         self.review_rounds = review_rounds or (profile.review_rounds if profile else DEFAULT_REVIEW_ROUNDS)
+        # The pass cap: --review-passes, else the profile's run.review_passes (0 is a cap).
+        self.review_passes = review_passes if review_passes is not None else (profile.review_passes if profile else DEFAULT_REVIEW_PASSES)
         self.waived: list[str] = []  # the waivers used
         self.notes: list[dict] = []
         self.checks: list[dict] = []
@@ -926,7 +937,10 @@ def _panel(ctx: Context, add) -> None:
     with a later clean Correctness pass on the head. A round that wasn't clean
     needs another round, unless it is the last allowed one (its number at least
     `ctx.review_rounds`, #170): then a later clean Correctness pass on the head
-    lifts its findings, and no further round is asked for. Records from accounts
+    lifts its findings, and no further round is asked for. Where a pass is what
+    comes next and the counted passes after the last round (on any commit of the
+    PR, each record counted) number `ctx.review_passes`, the pass cap (#256)
+    gives `passes_used_up` instead: the owner decides. Records from accounts
     without write access, or naming a commit outside the PR, are ignored."""
     head = ctx.pr().head
     perms = ctx.permissions()
@@ -943,19 +957,28 @@ def _panel(ctx: Context, add) -> None:
     last = counted[rounds[-1]]
     allowed = ctx.review_rounds
     details = {"round": last.round, "round_short": _short(last.commit), "allowed": allowed, "reviewers": list(last.reviewers)}
-    passes = [r for r in counted[rounds[-1] + 1:] if r.kind == "pass" and r.commit == head]
+    after = [r for r in counted[rounds[-1] + 1:] if r.kind == "pass"]
+    passes = [r for r in after if r.commit == head]
+    cap = ctx.review_passes
+
+    def needs_pass(rid, **more):
+        if len(after) >= cap:
+            add("passes_used_up", next="owner", passes=_plural(len(after), "Correctness pass", "Correctness passes"), cap=cap, **details)
+        else:
+            add(rid, **more, **details)
+
     if not last.clean:
         if last.round < allowed:
             add("review_not_clean", next="round", **details)
         elif not passes:
-            add("review_not_clean", next="pass", case="last_round", **details)
+            needs_pass("review_not_clean", next="pass", case="last_round")
         elif not passes[-1].clean:
-            add("pass_not_clean", **details)
+            needs_pass("pass_not_clean")
         return
     if passes and not passes[-1].clean:
-        add("pass_not_clean", **details)
+        needs_pass("pass_not_clean")
     elif last.commit != head and not passes:
-        add("review_stale", **details)
+        needs_pass("review_stale")
 
 
 def _mergeable(ctx: Context, add) -> None:
@@ -1159,15 +1182,18 @@ def evaluate(
     logs: dict | None = None,
     role: str | None = None,
     review_rounds: int | None = None,
+    review_passes: int | None = None,
 ) -> Result:
     """The decision. `inputs` maps each name in INPUTS to (value, None) when
     read, (None, why) when it couldn't be; a name left out wasn't given (the
     preview: none). `profile_error` says why the profile couldn't be read.
     `charter_input` and `role` (see `waivers`) and `logs` (the checks' logs,
     by file name) are for the run's waivers. `review_rounds` is the allowed
-    review rounds (`--review-rounds`); None takes the profile's `run.review_rounds`."""
+    review rounds (`--review-rounds`); None takes the profile's `run.review_rounds`.
+    `review_passes` is the pass cap (`--review-passes`); None takes the profile's
+    `run.review_passes`."""
     waivable, charter_notes = waivers(charter_input, role, profile)
-    ctx = Context(inputs, profile, profile_error, waivable, logs, review_rounds)
+    ctx = Context(inputs, profile, profile_error, waivable, logs, review_rounds, review_passes)
     ctx.notes += charter_notes
     try:
         pr = ctx.pr()
@@ -1212,7 +1238,7 @@ def evaluate(
         decision = "owner_review"
     else:
         decision = "ready"
-    return Result(decision, number, head, level, owner, reasons, ctx.notes, ctx.checks, kit, ctx.preview, ctx.review_rounds)
+    return Result(decision, number, head, level, owner, reasons, ctx.notes, ctx.checks, kit, ctx.preview, ctx.review_rounds, ctx.review_passes)
 
 
 # ---------- text ----------

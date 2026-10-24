@@ -102,7 +102,7 @@ def test_a_not_clean_pass_after_the_last_round_is_pass_not_clean(project, capsys
 def test_the_latest_pass_on_the_head_decides(project, capsys):
     data = inputs()
     data["comments"] = records(rec(rnd=3, commit=EARLIER, clean=False), rec("pass", rnd=3, commit=HEAD), rec("pass", rnd=3, commit=HEAD, clean=False))
-    got, _ = check(project, capsys, data)
+    got, _ = check(project, capsys, data, "--review-passes", "3")  # below the pass cap (#256)
     assert ids(got) == ["pass_not_clean"]
     data["comments"] = records(rec(rnd=3, commit=EARLIER, clean=False), rec("pass", rnd=3, commit=HEAD, clean=False), rec("pass", rnd=3, commit=HEAD))
     got, _ = check(project, capsys, data)

@@ -59,6 +59,7 @@ ALLOWED: dict[str, set[str] | None] = {
         "max_parallel",
         "max_retries",
         "review_rounds",
+        "review_passes",
         "ticket_environment",
         "conductor_environment",
         "environment_setup",
@@ -198,6 +199,8 @@ class Profile:
     max_parallel: int = 2
     max_retries: int = 1
     review_rounds: int = 3
+    # The Correctness passes allowed after the last counted round (#256).
+    review_passes: int = 2
     ticket_environment: str = ""
     conductor_environment: str = ""
     environment_setup: str = ""
@@ -434,6 +437,7 @@ def parse(data: dict, root: Path) -> Profile:
         max_parallel=_int(run.get("max_parallel"), "run.max_parallel", 2, 1, 16),
         max_retries=_int(run.get("max_retries"), "run.max_retries", 1, 0, 5),
         review_rounds=_int(run.get("review_rounds"), "run.review_rounds", 3, 1, 10),
+        review_passes=_int(run.get("review_passes"), "run.review_passes", 2, 0, 10),
         ticket_environment=str(run.get("ticket_environment") or ""),
         conductor_environment=str(run.get("conductor_environment") or ""),
         environment_setup=str(run.get("environment_setup") or ""),

@@ -117,6 +117,7 @@ An unknown key is an error, so a typo can't quietly turn previews off. In a prof
 | `max_parallel` | Ticket sessions at once (1–16) | `2` |
 | `max_retries` | Retries per ticket before `needs-human` (0–5) | `1` |
 | `review_rounds` | Review panel rounds at most (1–10) | `3` |
+| `review_passes` | The pass cap: Correctness passes at most after the last round (0–10), counting every pass, repeated ones on one commit included. Past it, `workflow merge-check` says `passes_used_up` and the owner decides; a run's ticket stops at `needs-human` | `2` |
 | `preset` | A run's size, `light`, `normal` or `thorough` (`charter.md` §2): only the charter's recommended answer; Normal is the numbers above. Attended builds never read it. Anything else fails `profile check` | `normal` |
 | `ticket_environment` | The claude.ai environment ticket sessions run in, by name: no credentials, `WORKFLOW_ROLE=ticket` | empty (a warning) |
 | `conductor_environment` | The conductor's environment, by name: `WORKFLOW_ROLE=conductor` | empty (a warning) |

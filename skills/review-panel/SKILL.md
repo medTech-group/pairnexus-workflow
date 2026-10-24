@@ -80,6 +80,7 @@ Repeat on the new diff until a round finds nothing to fix, at most the briefing'
 
 - Anything still open after the last round goes to the owner in the PR body, never silently.
 - Any commit after the last round gets a Correctness pass on just those commits before merging. Before it starts, `mkdir -p /tmp/review-<ticket>-pass<k>` (its scratch directory, `k` counting the passes from 1) and write `git rev-parse HEAD` to `commit.txt` there: the commit it covers, never one made after. Then post its record (section 4).
+- **Passes stop at the pass cap:** at most the briefing's pass cap in a ticket session, else the profile's `run.review_passes`, counting every pass after the last round, each record once, on any commit. When one more pass would be needed past it, `workflow merge-check` says `passes_used_up`: run no further pass. What's still open goes to the owner in the PR body, and the owner decides (in attended work they can choose "One more pass").
 
 ## 6. The light review
 

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+**The pass cap: at most `run.review_passes` Correctness passes after the last round, then the owner decides** (#256, from #255; answers 3, 10 and 21 on #253).
+
+- **The problem.** Review rounds were capped, but the Correctness passes after the last round weren't: every later commit needed a clean pass, and a review that kept finding something new looped until the session stopped.
+- **The setting.** `run.review_passes` in the profile: default 2, a whole number from 0 to 10, refused outside it, as `run.review_rounds` is (`templates/profile.toml`, `docs/profile.md`).
+- **`workflow merge-check --review-passes N`** (0 to 10), beside `--review-rounds`, defaulting to the profile's; `--json` gives it as `review_passes`. Every counted pass record after the last counted round counts, on any commit of the pull request, repeated ones on one commit included. Where a pass is what comes next (`review_not_clean` with `next: pass`, `pass_not_clean` or `review_stale`) and the cap is reached, the new reason `passes_used_up` replaces them, with action `review` and `next: owner`: the pull request waits on the owner. With `--review-passes 0`, any change after the last round stops there at once. A round that isn't clean below the round limit still asks for another round, and a clean pass on the head is still ready.
+- **The skills and the flow.** The `merge-check` skill offers "One more pass" with `passes_used_up`, beyond the cap since the person chose it, and tells a person checking a run's pull request to pass `--review-passes`. `review-panel` §5 stops passes at the cap. `build-ticket` passes `--review-passes` (the briefing's pass cap, else the profile's) and takes `passes_used_up` as `needs-human`, with the open findings in the PR body; so does the conductor's row for a pull request that isn't ready. The ticket-session briefing's "Stopping" list and flow §5 name the cap; flow §3 names it, and §4's item 4 names it within the item.
+- Tests: `tests/test_merge_check_passes.py`; `tests/test_merge_check_rounds.py`'s "the latest pass on the head decides" now allows 3 passes, so it still checks what it did below the cap.
+- **For projects updating:** nothing to do. With no `run.review_passes`, the cap is 2: a pull request whose head already has 2 passes after its last round, and needs another, now waits on the owner.
+
 ## 0.1.15
 
 **A spec published from a Claude Code cloud session can get its spec records.** One fix, #250: the spec's hash leaves out the footer those sessions' GitHub tools add to every issue body. Its own note is below.
