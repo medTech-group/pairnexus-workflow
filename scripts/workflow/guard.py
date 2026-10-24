@@ -2183,7 +2183,9 @@ def _api_problem(toks: list[str], profile: Profile, role: str, cwd: str | None =
     with `cat` or `<`, which a query or body may come from by a variable."""
     base = profile.base_branch
     name = Path(toks[0]).name if toks else ""
-    if name == "curl" and re.search(r"(?:api|uploads)\.github\.com|/api/v3/|/api/graphql", " ".join(toks), re.I):
+    # An attended session's curl that reads a config file (`-K`) may name GitHub there.
+    config = role == "attended" and re.search(r"\s(?:-[a-zA-Z]*K|--conf\w*)", f" {' '.join(toks)}")
+    if name == "curl" and (re.search(r"(?:api|uploads)\.github\.com|/api/v3/|/api/graphql", " ".join(toks), re.I) or config):
         joined = f" {' '.join(toks)} "
         # A short flag may carry its value joined (`-dX`, `-Tq.json`, `-Kcfg`); a
         # config file (`-K`) can hold any of them.
@@ -2194,13 +2196,8 @@ def _api_problem(toks: list[str], profile: Profile, role: str, cwd: str | None =
         )
         if writes and role != "attended":
             return "GitHub writes go through `gh api` or the GitHub MCP tools, not curl"
-        if writes and re.search(r"(?i)merge(?:-|%2d)async", joined):
-            text = joined + "".join("\n" + (_read_text(f, cwd) or "") for f in _body_files(toks))
-            if _BYPASS_RULES.search(text) or not re.search(r'"merge_action"\s*:\s*"merge_queue"', text) or not re.search(r'"sha"\s*:\s*"[^"]', text):
-                return (
-                    "add a pull request to the merge queue only with `merge_action` `merge_queue` and a `sha`, never `bypass_rules`: "
-                    "`gh api -X PUT repos/<repo>/pulls/<n>/merge-async -f merge_action=merge_queue -f sha=<sha>`"
-                )
+        if writes:
+            return _curl_queue_problem(toks, joined, cwd)
         return None
     call = _api(toks)
     if not call:
@@ -2726,25 +2723,119 @@ def _ticket_merge_problem(seg: Seg, toks: list[str], profile: Profile, root: Pat
 # branch's head in a ticket session, to a commit in any other. Its fields are
 # read only from `-f`/`-F`, where the guard sees them: a body from a file or
 # stdin is refused once it has been searched for `bypass_rules`, to name that
-# first. The path is read however it is spelled (a host, `%`-escapes, `//`,
-# `./`), and one the shell fills in counts when the call names a `merge_action`.
-_MERGE_ASYNC = re.compile(r"repos/[^/]+/[^/]+/pulls/[^/]+/merge-async", re.I)
+# first. The path is read by its last part, however it is spelled (a host,
+# `%`-escapes, `//`, `./`, a start the shell fills in); a path the shell fills
+# in counts too when the call names a `merge_action`, or PUTs a bare `sha`. An
+# attended session's curl is asked unless its JSON body queues it.
 _ASYNC_PIN_HOW = "`-f sha=<sha>`, with `<sha>` from `git rev-parse HEAD` once the branch is pushed"
 _BYPASS_RULES = re.compile(r"(?i)bypass(?:_|\\u005f)rules")
 _BYPASS_WHY = (
-    "`bypass_rules` merges past the base branch's ruleset, as `gh pr merge --admin` does; it is never allowed: "
-    "leave it out, and the queue runs the ruleset's checks before it merges"
+    "`bypass_rules` merges past the base branch's ruleset, as `gh pr merge --admin` does: leave it out, and the queue "
+    "runs the ruleset's checks before it merges. Sending it is never allowed"
 )
 
 
 def _is_merge_async(word: str) -> bool:
-    """The path word names `pulls/<n>/merge-async`, however it is spelled."""
+    """The path word names `merge-async`, however it is spelled: by its last
+    part, so a start the shell fills in (`repos/$REPO/…`, `${B}merge-async`)
+    still reads as the route. No other GitHub route ends in `merge-async`."""
     p = urllib.parse.unquote(word)
     p = re.sub(r"(?i)^[a-z][a-z0-9+.-]*://[^/]*", "", p)
     p = re.split(r"[?#]", p, maxsplit=1)[0]
-    p = posixpath.normpath("/" + re.sub("/+", "/", p)).lstrip("/")
-    p = re.sub(r"(?i)^api/v3/", "", p)
-    return bool(_MERGE_ASYNC.fullmatch(p))
+    last = posixpath.normpath("/" + re.sub("/+", "/", p)).rsplit("/", 1)[-1].casefold()
+    return last == "merge-async" or (bool(_FILLED.search(last)) and last.endswith("merge-async"))
+
+
+def _bypass_key(key: str) -> bool:
+    """A field named `bypass_rules`, or a part of it (`bypass_rules[x]`)."""
+    return bool(re.fullmatch(r"(?i)bypass(?:_|\\u005f)rules(?:\[.*)?", key, re.S))
+
+
+def _body_has_bypass(text: str) -> bool:
+    """A body that names `bypass_rules`: as a JSON key at any depth, its escapes
+    read, or anywhere in it when it isn't one JSON document."""
+    found = False
+
+    def keys(pairs):
+        nonlocal found
+        found = found or any(_bypass_key(k) for k, _ in pairs)
+        return dict(pairs)
+
+    try:
+        json.loads(text, object_pairs_hook=keys)
+    except ValueError:
+        return bool(_BYPASS_RULES.search(text))
+    return found
+
+
+def _queued_json(text: str | None) -> bool:
+    """One JSON object that queues a pull request: `merge_action` `merge_queue`,
+    a `sha`, no `bypass_rules`, and no key given twice (the last would win)."""
+
+    def once(pairs):
+        names = [k for k, _ in pairs]
+        if len(set(names)) != len(names):
+            raise ValueError("a key given twice")
+        return dict(pairs)
+
+    try:
+        obj = json.loads(text or "", object_pairs_hook=once)
+    except ValueError:
+        return False
+    if not isinstance(obj, dict) or any(_bypass_key(k) for k in obj):
+        return False
+    sha = obj.get("sha")
+    return obj.get("merge_action") == "merge_queue" and isinstance(sha, str) and bool(sha.strip())
+
+
+# curl's options that send a body, and those whose body the guard doesn't read.
+_CURL_BODY = {"-d", "--data", "--data-raw", "--data-binary", "--data-ascii", "--json"}
+_CURL_UNREAD = {"--data-urlencode", "-F", "--form", "--form-string", "-T", "--upload-file", "-K", "--config"}
+
+
+def _curl_queue_problem(toks: list[str], joined: str, cwd: str | None) -> str | None:
+    """An attended session's curl write that may add a pull request to a merge
+    queue (its URL names `merge-async`, or ends in a part the shell or curl
+    fills in, or a config file it reads names it or can't be read) is asked
+    unless it sends one JSON body that queues it (`_queued_json`)."""
+    texts = [joined]
+    for k, t in enumerate(toks):
+        if t in ("-K", "--config") or t.startswith("--config="):
+            f = t.split("=", 1)[1] if "=" in t else (toks[k + 1] if k + 1 < len(toks) else "")
+            texts.append(_read_text(f, cwd) or "merge-async")  # unread: it may name it
+    urls = [t for t in toks if re.search(r"(?i)(?:api|uploads)\.github\.com|/api/v3/", t)]
+    if not re.search(r"(?i)merge-async", urllib.parse.unquote("\n".join(texts))) and not any(
+        re.search(r"[$`{\[][^/]*$", u) for u in urls
+    ):
+        return None
+    bodies: list[str | None] = []
+    unread = False
+    i = 1
+    while i < len(toks):
+        t = toks[i]
+        i += 1
+        name, eq, val = t.partition("=") if t.startswith("--") else (t, "", "")
+        if name in _CURL_BODY:
+            if not eq:
+                val, i = (toks[i] if i < len(toks) else ""), i + 1
+        elif re.fullmatch(r"-d.+", t, re.S):
+            val = t[2:]
+        elif name in _CURL_UNREAD or re.fullmatch(r"-[FTK].+", t, re.S):
+            unread = True
+            continue
+        else:
+            continue
+        if val.startswith("@"):
+            f = val[1:]
+            val = None if f in ("", "-") else _read_text(f, cwd)
+        bodies.append(val)
+    if not unread and len(bodies) == 1 and _queued_json(bodies[0]):
+        return None
+    return (
+        "add a pull request to the merge queue with curl only with one JSON body the guard can read, with `merge_action` "
+        "`merge_queue`, a `sha` and no `bypass_rules`; or use `gh api -X PUT repos/<repo>/pulls/<n>/merge-async "
+        "-f merge_action=merge_queue -f sha=<sha>`"
+    )
 
 
 # An expansion the shell fills in; a path word that starts as a path (a URL or
@@ -2797,25 +2888,30 @@ def _merge_async_problem(seg: Seg, toks: list[str], profile: Profile, role: str,
     if not call or call.method == "GET":
         return None
     keys = [f.split("=", 1)[0] for f in call.fields]
-    if any(_BYPASS_RULES.match(k) for k in keys):
+    if any(_bypass_key(k) for k in keys):
         return _BYPASS_WHY
     filled = _FILLED.search(call.word)
-    last_filled = _LAST_FILLED.search(call.word)
     unread_path = seg.fed and not _PATH_START.match(call.word)
-    if not (_is_merge_async(call.word) or (filled and "merge_action" in keys) or last_filled or unread_path):
+    route = _is_merge_async(call.word)
+    body = ""
+    if call.files or call.stdin:
+        body = "\n".join(_read_text(f, seg.cwd) or "" for f in call.files)
+        if call.stdin:
+            body += "\n" + (seg.heredoc or "") + "\n" + ((_read_text(seg.stdin, seg.cwd) or "") if seg.stdin else "")
+    if (route or filled or unread_path) and _body_has_bypass(body):
+        return _BYPASS_WHY
+    last_filled = _LAST_FILLED.search(call.word)
+    # A whole path the shell fills in, PUT with a `sha` and none of the merge's
+    # or update-branch's own fields, may be `merge-async` with no `merge_action`.
+    whole_filled = (filled and not _PATH_START.match(call.word)) or unread_path
+    bare_put = whole_filled and call.method == "PUT" and "sha" in keys and not {"merge_method", "expected_head_sha"} & set(keys)
+    if not (route or (filled and "merge_action" in keys) or last_filled or unread_path or bare_put):
         if (filled or unread_path) and (word := _filled_word(toks, call.word)) is not None:
             return (
                 f"write this API call out: the shell fills in its path `{call.word}`, which may be `merge-async`, "
                 f"and `{word}`, which may be a flag of its own"
             )
         return None
-    body = ""
-    if call.files or call.stdin:
-        body = "\n".join(_read_text(f, seg.cwd) or "" for f in call.files)
-        if call.stdin:
-            body += "\n" + (seg.heredoc or "") + "\n" + ((_read_text(seg.stdin, seg.cwd) or "") if seg.stdin else "")
-    if _BYPASS_RULES.search(body):
-        return _BYPASS_WHY
     if re.search(r"[?#]", call.word):
         return "write the `merge-async` path without a query string or `#`, and its fields as `-f` or `-F` fields, so the guard reads every one"
     split = _split_api_word(seg, toks)
@@ -2824,7 +2920,10 @@ def _merge_async_problem(seg: Seg, toks: list[str], profile: Profile, role: str,
     if not split and (last_filled or unread_path):
         split = f"the shell fills in the path `{call.word}`, which may be `merge-async`"
     if split:
-        return f"write this `merge-async` call out, with its fields as plain `-f name=value` fields: {split}, so the guard can't tell which fields it sends"
+        return (
+            "write this `merge-async` call out, quoting what the shell fills in (`-f sha=\"$SHA\"`, "
+            f"`pulls/\"$N\"/merge-async`) and with its fields as plain `-f name=value` fields: {split}, so the guard can't tell which fields it sends"
+        )
     unplain = next((k for k in keys if not re.fullmatch(r"[A-Za-z_]\w*", k)), None)
     if unplain is not None:
         return f"write `merge-async`'s fields out as plain `-f name=value` fields: with `{unplain}`, the guard can't tell which field it sends"

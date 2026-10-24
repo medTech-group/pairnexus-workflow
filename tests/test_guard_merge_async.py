@@ -415,3 +415,79 @@ def test_a_filled_in_path_with_a_word_that_may_be_a_flag_is_refused(ticket, role
     d = run(ticket, form, role)
     assert refused(d, role), (role, d)
     assert "write" in d.reason
+
+
+@pytest.mark.parametrize("role", ["conductor", "attended"])
+@pytest.mark.parametrize(
+    "form",
+    [
+        'gh api -X PUT "repos/$REPO/pulls/12/merge-async" -f sha={sha}',
+        'gh api -X PUT "repos/${GITHUB_REPOSITORY}/pulls/12/merge-async" -f sha="$SHA"',
+        'gh api -X PUT repos/"$REPO"/pulls/12/merge-async -f sha={sha}',
+        'gh api -X PUT "repos/$REPO/pulls/12/merge-async" --input body.json',
+        'gh api -X PUT "$URL" -f sha={sha}',
+        'gh api -X PUT "$URL" --input body.json',
+        'gh api -X PUT "${B}merge-async" -f sha={sha}',
+        'gh api -X PUT "repos/acme/demo/$P/merge-async" -f sha={sha}',
+    ],
+)
+def test_a_route_whose_start_the_shell_fills_in_is_still_checked(ticket, role, form):
+    (ticket / "body.json").write_text('{"merge_action": "merge_queue", "sha": "x", "bypass_rules": true}')
+    d = run(ticket, form, role)
+    assert refused(d, role), (role, d)
+
+
+@pytest.mark.parametrize("role", ["conductor", "attended"])
+@pytest.mark.parametrize(
+    "form",
+    [
+        'gh api -X PUT "repos/$REPO/pulls/12/merge-async" -f merge_action=merge_queue -f sha="$SHA"',
+        'gh api -X PUT "$MERGE_URL" -f sha="$SHA" -f merge_method=merge',
+        'gh api -X PUT "repos/$REPO/pulls/$N/update-branch" -f expected_head_sha="$SHA"',
+        "gh api repos/acme/demo/issues/12/comments -F body=@c.md -F bypass_rules_note=x",
+    ],
+)
+def test_ordinary_calls_with_filled_in_parts_still_pass(ticket, role, form):
+    (ticket / "c.md").write_text("Done <!-- workflow:agent -->")
+    d = run(ticket, form, role)
+    assert d.action == "allow", (role, d.reason)
+
+
+CURL = "curl -X PUT https://api.github.com/repos/acme/demo/pulls/12/merge-async"
+
+
+@pytest.mark.parametrize(
+    "form",
+    [
+        CURL + ' -d \'{"merge_action":"merge_queue","merge_action":"direct_merge","sha":"{sha}"}\'',
+        CURL + ' -d \'{"merge_action":"merge_queue","sha":"{sha}","\\u0062ypass_rules":true}\'',
+        "curl -X PUT -H 'X-Note: \"merge_action\":\"merge_queue\",\"sha\":\"x\"' https://api.github.com/repos/acme/demo/pulls/12/merge-async -d '{\"merge_action\":\"direct_merge\"}'",
+        "curl -X PUT https://api.github.com/repos/acme/demo/pulls/12/merge-asyn%63 -d '{\"merge_action\":\"direct_merge\",\"sha\":\"{sha}\"}'",
+        "curl -X PUT https://api.github.com/repos/acme/demo/pulls/12/$M -d '{\"merge_action\":\"direct_merge\",\"sha\":\"{sha}\"}'",
+        "curl -X PUT 'https://api.github.com/repos/acme/demo/pulls/12/merge-{async,x}' -d '{\"merge_action\":\"direct_merge\",\"sha\":\"{sha}\"}'",
+        "curl -X PUT -K cfg.txt",
+        CURL + ' -d "$BODY"',
+    ],
+)
+def test_an_attended_curl_enqueue_the_guard_cant_read_as_queued_is_asked(ticket, form):
+    (ticket / "cfg.txt").write_text('url = "https://api.github.com/repos/acme/demo/pulls/12/merge-async"\ndata = "{\\"merge_action\\":\\"direct_merge\\"}"\n')
+    d = run(ticket, form, "attended")
+    assert d.action == "ask", d
+
+
+def test_an_attended_curl_enqueue_with_a_json_file_is_read(ticket):
+    (ticket / "ok.json").write_text(f'{{"merge_action": "merge_queue", "sha": "{head(ticket)}"}}')
+    d = run(ticket, CURL + " --json @ok.json", "attended")
+    assert d.action == "allow", d.reason
+
+
+def test_the_attended_bypass_question_reads_plainly(ticket):
+    d = run(ticket, ROUTE + SHA_ARGS + " -F bypass_rules=true", "attended")
+    assert d.action == "ask"
+    assert "leave it out" in d.reason and "allow it only if you mean to" in d.reason
+    assert d.reason.index("leave it out") < d.reason.index("allow it only if you mean to")
+
+
+def test_an_unquoted_expansion_refusal_says_to_quote_it(ticket):
+    d = run(ticket, ROUTE + " -f merge_action=merge_queue -f sha=$SHA", "conductor")
+    assert d.action == "deny" and 'sha="$SHA"' in d.reason
