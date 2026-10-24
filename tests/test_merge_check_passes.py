@@ -8,7 +8,7 @@ reached, `passes_used_up` replaces `review_not_clean` (next: pass),
 `pass_not_clean` and `review_stale`, and the pull request waits on the owner.
 """
 
-import json
+import re
 from pathlib import Path
 
 import pytest
@@ -22,8 +22,10 @@ KIT = Path(__file__).resolve().parents[1]
 
 
 def passes_in_profile(project, n):
+    """Set `run.review_passes` to `n`, adding the `[run]` table the first time."""
     path = project / ".claude/workflow/profile.toml"
-    path.write_text(path.read_text() + f"\n[run]\nreview_passes = {n}\n")
+    text = re.sub(r"\n\[run\]\nreview_passes = \d+\n", "", path.read_text())
+    path.write_text(text + f"\n[run]\nreview_passes = {n}\n")
 
 
 def three_commits():
@@ -98,8 +100,7 @@ def test_the_cap_comes_from_the_profile(project, capsys):
     )
     got, _ = check(project, capsys, data)
     assert ids(got) == ["pass_not_clean"] and got["review_passes"] == 3
-    passes_in_profile_1 = project / ".claude/workflow/profile.toml"
-    passes_in_profile_1.write_text(passes_in_profile_1.read_text().replace("review_passes = 3", "review_passes = 1"))
+    passes_in_profile(project, 1)
     got, _ = check(project, capsys, data)
     used_up(got)
     assert got["review_passes"] == 1
