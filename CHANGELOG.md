@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**The guard lets a session add its pull request to a merge queue through `merge-async`, pinned, and never merge directly** (#244, part of #243).
+
+- **The route.** `gh api -X PUT repos/<repo>/pulls/<n>/merge-async -f merge_action=merge_queue -f sha=<sha>` is the one way the kit queues a pull request. Ticket sessions may now call it (it joins their API allow-list), pinned like their merges: `sha` must be the ticket branch's head, written out in full. Conductor and attended sessions need a `sha` that is a full commit sha, or one the shell fills in.
+- **In every role** (asked in attended sessions, refused where nobody is asked): `bypass_rules` in any form (`-f`, `-F` on any `gh api` write, an `--input` body or a heredoc on stdin), any `merge_action` but `merge_queue` (none means `default`, which merges directly when no queue is required), an `--input` body or `@file` field, a query string or `#` on the path, a field name that isn't plain, words `xargs`, `eval`, `sh -c` or an unquoted expansion add, and a quoted expansion that may be a flag of its own (`"$E"`). The path is read by its last part, however it is spelled (a full URL, `%`-escapes, `//`, `repos/$REPO/…`). An attended session's `curl` to `merge-async` is asked unless it sends one JSON body that queues it with a `sha` and no `bypass_rules`.
+- **Today's rules are unchanged:** merges, auto-merge and update-branch. `docs/enforcement.md`'s merge pins and its every-role list gain the route.
+- Tests: `tests/test_guard_merge_async.py`.
+- **For projects updating:** nothing to do.
+
 ## 0.1.15
 
 **A spec published from a Claude Code cloud session can get its spec records.** One fix, #250: the spec's hash leaves out the footer those sessions' GitHub tools add to every issue body. Its own note is below.
