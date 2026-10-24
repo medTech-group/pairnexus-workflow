@@ -74,6 +74,7 @@ RANK = {"admin": 5, "maintain": 4, "write": 3, "triage": 2, "read": 1, "none": 0
 # GitHub lists at most this many of a pull request's files, and of its commits.
 MAX_FILES = 3000
 MAX_COMMITS = 250
+CHARTER_REFUSED = "The charter wasn't used, so no check is waived: "
 PARTIAL = "it holds only part of the list: fetch every page (gh api --paginate --slurp; with GraphQL, until pageInfo.hasNextPage is false)"
 _SHA = re.compile(r"[0-9a-f]{40}")
 _STATUS_URL_SHA = re.compile(r"/statuses/([0-9a-fA-F]{40})\b")
@@ -1131,7 +1132,7 @@ def waivers(charter_input: tuple | None, role: str | None, profile) -> tuple[fro
         if not problems and c["merge"].get("waived_checks") and c["merge"].get("mode") != "session":
             problems = [f"waivers need merge.mode session, and it is {c['merge'].get('mode')}"]
     if problems:
-        return frozenset(), [{"id": "charter_refused", "message": "The charter wasn't used, so no check is waived: " + _clean("; ".join(problems)) + "."}]
+        return frozenset(), [{"id": "charter_refused", "message": CHARTER_REFUSED + _clean("; ".join(problems)) + "."}]
     return frozenset(c["merge"].get("waived_checks") or []), []
 
 
@@ -1185,7 +1186,7 @@ def evaluate(
     if waivable and ctx.queue():
         # Every merge goes through the queue, and only a direct merge could take a waiver (#241, answer 13).
         ctx.waivable = frozenset()
-        _note(ctx, "charter_refused", "The charter wasn't used, so no check is waived: waivers don't apply with the merge queue on (flow §4.1).")
+        _note(ctx, "charter_refused", CHARTER_REFUSED + "waivers don't apply with the merge queue on (flow §4.1).")
     try:
         pr = ctx.pr()
         number, head, base = pr.number, pr.head, pr.base

@@ -211,7 +211,7 @@ def _checked_name(rs, i: int) -> str:
     return where
 
 
-def _queues(rs: dict) -> bool:
+def _has_merge_queue(rs: dict) -> bool:
     """The ruleset has a merge-queue rule."""
     return any(r["type"] == "merge_queue" for r in rs["rules"])
 
@@ -303,7 +303,9 @@ def check(rulesets, base: str, settings=None, base_if_unknown: bool = False) -> 
     names = [_checked_name(rs, i) for i, rs in enumerate(rulesets)]
     merge, default = _settings(settings) if settings is not None else (None, None)
     excluded = any("~DEFAULT_BRANCH" in (((rs.get("conditions") or {}).get("ref_name") or {}).get("exclude") or []) for rs in rulesets)
-    if default is None and base_if_unknown and not excluded:
+    # A default branch only taken to be `base` never counts a merge queue on it (#245).
+    assumed = default is None and base_if_unknown and not excluded
+    if assumed:
         default, settings = base, settings if settings is not None else {}
     if not rulesets:
         return Report(base, False, [f"no rulesets: nothing on GitHub protects {base}"], [], merge, kinds=["no_rulesets"])
@@ -323,7 +325,7 @@ def check(rulesets, base: str, settings=None, base_if_unknown: bool = False) -> 
         elif off_target:
             ignored.append(("unsure", f"{name} {off_target}"))
             unsure.append(f"{name} {off_target}")
-            if _queues(rs):
+            if _has_merge_queue(rs):
                 queue_unsure.append(f"{name} {off_target}")
         else:
             effective.append((name, rs))
@@ -348,7 +350,14 @@ def check(rulesets, base: str, settings=None, base_if_unknown: bool = False) -> 
 
     protected = not problems
     found = [] if protected else ignored + problems
-    queue = any(_queues(rs) for _, rs in effective)
+    queue = False
+    for name, rs in effective:
+        if not _has_merge_queue(rs):
+            continue
+        if assumed and not {"~ALL", f"refs/heads/{base}"} & set(((rs.get("conditions") or {}).get("ref_name") or {}).get("include") or []):
+            queue_unsure.append(f"{name} targets the default branch, and the repository's default branch isn't given, so it can't tell whether that is {base}")
+        else:
+            queue = True
     return Report(base, protected, [m for _, m in found], checks, merge, unsure, [k for k, _ in found], [rs for _, rs in effective], queue, queue_unsure)
 
 

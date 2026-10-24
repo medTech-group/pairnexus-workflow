@@ -123,7 +123,9 @@ def test_without_the_queue_the_same_waiver_still_counts(project, capsys, monkeyp
     queue_ruleset(enforcement="evaluate"),
     queue_ruleset(enforcement="disabled"),
     queue_ruleset(include=("refs/heads/release",)),
-], ids=["unsure", "evaluate", "disabled", "other-branch"])
+    {**queue_ruleset(), "conditions": {"ref_name": {"include": ["~ALL"], "exclude": ["refs/heads/main"]}}},
+    {**queue_ruleset(), "conditions": {"ref_name": {"include": ["~ALL"], "exclude": ["refs/heads/**"]}}},  # unsure: an exclude it can't match
+], ids=["unsure", "evaluate", "disabled", "other-branch", "excludes-base", "unsure-exclude"])
 def test_a_queue_rule_not_in_force_doesnt_count_as_a_queue(project, capsys, rs):
     data = behind(inputs())
     data["rulesets"].append(rs)
@@ -205,7 +207,7 @@ def skill():
 def test_the_skill_queues_with_merge_async_pinned_to_the_head():
     text = skill()
     assert "`queue`" in text
-    assert "gh api -X PUT repos/<repo>/pulls/12/merge-async -f merge_action=merge_queue -f sha=<head>" in text
+    assert "gh api -i -X PUT repos/<repo>/pulls/12/merge-async -f merge_action=merge_queue -f sha=<head>" in text
     assert "Never `--admin`" in text and "`bypass_rules`" in text
 
 
@@ -235,10 +237,41 @@ def test_the_guard_lets_the_skills_queue_command_through_and_refuses_bypass(tmp_
     from workflow.guard import decide
 
     monkeypatch.delenv("WORKFLOW_ROLE", raising=False)
-    line = re.search(r"`(gh api -X PUT repos/<repo>/pulls/12/merge-async [^`]*)`", skill()).group(1)
+    line = re.search(r"`(gh api -i -X PUT repos/<repo>/pulls/12/merge-async [^`]*)`", skill()).group(1)
     cmd = line.replace("<repo>", "acme/demo").replace("<head>", SHA)
     profile = _on_disk(tmp_path, True)
     d = decide(_event("Bash", {"command": cmd}, "default"), profile, "attended", profile.root, "feature")
     assert d.action == "allow", d.reason
     d = decide(_event("Bash", {"command": cmd + " -F bypass_rules=true"}, "default"), profile, "attended", profile.root, "feature")
     assert d.action in ("ask", "deny")
+
+
+# ---------- round 1's findings ----------
+
+
+def test_a_queue_on_a_default_branch_only_assumed_to_be_the_base_isnt_counted(project, capsys):
+    # Without base.repo.default_branch, merge-check takes the profile's base as
+    # the default branch: that may count more required checks, never a queue.
+    data = queued(behind(inputs()))
+    del data["pr"]["base"]["repo"]
+    got, _ = check(project, capsys, data)
+    assert got["queue"] is False
+    assert "behind" in ids(got)
+    [note] = [n for n in got["notes"] if n["id"] == "queue_unsure"]
+    assert "default branch isn't given" in note["message"]
+
+
+def test_a_queue_naming_the_base_counts_without_the_default_branch(project, capsys):
+    data = behind(inputs())
+    del data["pr"]["base"]["repo"]
+    data["rulesets"] = data["rulesets"] + [queue_ruleset(include=("refs/heads/main",))]
+    got, _ = check(project, capsys, data)
+    assert got["decision"] == "ready", got["reasons"]
+    assert got["queue"] is True
+
+
+def test_in_an_attended_session_the_charter_is_only_ignored_with_the_queue(project, capsys, monkeypatch):
+    data, logs = waiver_case(project, monkeypatch, role="attended")
+    queued(data)
+    got, _ = run(project, capsys, data, "--check-logs", str(logs), files={"charter": json.dumps(a_charter())})
+    assert "charter_ignored" in note_ids(got) and "charter_refused" not in note_ids(got)

@@ -141,7 +141,7 @@ The change touches the kit's or CI files (`files`), which only the owner merges:
 
 **With `queue: true`** (in the answer of step 1's check), "Merge it now" adds the pull request to the merge queue instead of merging it. Step 1 is the same; then, in place of steps 2 and 3:
 
-2. **Queue it, pinned to that commit:** `gh api -X PUT repos/<repo>/pulls/12/merge-async -f merge_action=merge_queue -f sha=<head>`, with the path and the full head SHA written out. `merge_queue` makes GitHub refuse rather than merge directly when no queue is required. Never `--admin`, `bypass_rules`, another `merge_action`, a direct merge or auto-merge (`--auto`).
+2. **Queue it, pinned to that commit:** `gh api -i -X PUT repos/<repo>/pulls/12/merge-async -f merge_action=merge_queue -f sha=<head>`, with the path and the full head SHA written out. `-i` prints the answer's status line (`HTTP/2.0 202 Accepted`) above its body; on a 4xx, `gh` names the status (`HTTP 422`) beside GitHub's message. `merge_queue` makes GitHub refuse rather than merge directly when no queue is required. Never `--admin`, `bypass_rules`, another `merge_action`, a direct merge or auto-merge (`--auto`).
 3. **Say what GitHub answered:**
    - **202**: accepted, not yet queued. Read the result with `gh api repos/<repo>/pulls/12/merge-async/<uuid>` (the `uuid` from the 202's body) before saying it's in the queue: `enqueued` means "It's in the merge queue: it merges once its group passes"; `pending` means GitHub hasn't finished, so read it again shortly; `failed` shows GitHub's message, as it gave it.
    - **200** "already in a merge queue": it's in the queue, waiting.
