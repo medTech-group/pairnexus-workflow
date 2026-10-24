@@ -2874,10 +2874,11 @@ def _curl_queue_problem(toks: list[str], joined: str, cwd: str | None) -> str | 
     configs = _curl_configs(toks)
     named = any(_curl_url_queues(t) for t in toks)
     for f in configs:
-        text = None if f in ("", "-") or _FILLED.search(f) else _read_text(f, cwd)
+        hidden = f in ("", "-") or _STDIN_FILE.fullmatch(f) or f.startswith(("/dev/", "/proc/")) or _FILLED.search(f)
+        text = None if hidden else _read_text(f, cwd)
         if text is not None:
             named = named or re.search(r"(?i)merge-async", urllib.parse.unquote(text)) is not None
-        elif f in ("", "-") or _FILLED.search(f) or not any("://" in t for t in toks):
+        elif hidden or not any("://" in t for t in toks):
             named = True  # stdin or a name the shell fills in may hold anything; a plain missing file only fails
     if not named:
         return None
@@ -2953,16 +2954,32 @@ def _filled_word(toks: list[str], path: str) -> str | None:
     return None
 
 
-def _may_add_flags(seg: Seg, toks: list[str], call: _ApiCall) -> bool:
+def _may_add_flags(seg: Seg, toks: list[str], call: _ApiCall, keys: list[str]) -> bool:
     """Whether the shell or xargs may add flags to this `gh api` call (a
-    `-XPUT`, a field): xargs feeds it, a word outside a value holds an
-    expansion (`_filled_word`), the path word doesn't start as a path and
-    holds one, or an unquoted word other than a path splits."""
+    `-XPUT`, a field): xargs feeds it; a word outside a value holds an
+    expansion (`_filled_word`); the path word holds one and doesn't start as a
+    path, with another word left to be the path; or an unquoted word splits,
+    a path that starts as one only when the call names `merge_action` or `sha`."""
     if seg.fed or _filled_word(toks, call.word) is not None:
         return True
-    if _FILLED.search(call.word) and not _PATH_START.match(call.word):
+    if _FILLED.search(call.word) and not _PATH_START.match(call.word) and len(_positionals(toks)) > 1:
         return True
-    return any(isinstance(t, Word) and t.splits and not _PATH_START.match(t) for t in toks[1:])
+    queue_keys = {"merge_action", "sha"} & set(keys)
+    return any(isinstance(t, Word) and t.splits and (queue_keys or not _PATH_START.match(t)) for t in toks[1:])
+
+
+def _positionals(toks: list[str]) -> list[str]:
+    """A `gh api` call's words that are neither options nor their values."""
+    out: list[str] = []
+    i = toks.index("api") + 1 if "api" in toks else 1
+    while i < len(toks):
+        t = toks[i]
+        i += 1
+        if t in _FIELD_FLAGS or t in _API_VALUES or t in ("-X", "--method", "--input"):
+            i += 1
+        elif not t.startswith("-") or t == "-":
+            out.append(t)
+    return out
 
 
 def _merge_async_problem(seg: Seg, toks: list[str], profile: Profile, role: str, root: Path) -> str | None:
@@ -2982,7 +2999,7 @@ def _merge_async_problem(seg: Seg, toks: list[str], profile: Profile, role: str,
     # GitHub takes `merge-async` only as a PUT; a literal other method can't
     # become one unless xargs adds words, or a word the shell fills in (outside
     # a value, the path included when it doesn't start as a path) is a flag.
-    if call.method in ("POST", "PATCH", "DELETE") and not _may_add_flags(seg, toks, call):
+    if call.method in ("POST", "PATCH", "DELETE") and not _may_add_flags(seg, toks, call, keys):
         return None
     route = _is_merge_async(call.word)
     bodies, body_unread = _input_body(seg, toks)

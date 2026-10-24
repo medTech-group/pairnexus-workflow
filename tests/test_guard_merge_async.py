@@ -647,3 +647,30 @@ def test_each_input_body_is_read_on_its_own(ticket, role):
     (ticket / "b.json").write_text('{"\\u0073ha": "x", "merge_action": "direct_merge"}')
     d = run(ticket, 'gh api -X PUT "$URL" --input a.json --input b.json', role)
     assert refused(d, role), (role, d)
+
+
+@pytest.mark.parametrize("role", ["conductor", "attended"])
+@pytest.mark.parametrize(
+    "form",
+    [
+        "jq -n '{body:\"x <!-- workflow:agent -->\"}' | gh api -X PATCH \"$ISSUE_URL\" --input -",
+        'gh api -X PATCH "$URL" --input "$F"',
+        "gh api -X POST \"$TREES_URL\" --input tree.json",
+    ],
+)
+def test_a_literal_other_method_to_a_filled_in_path_passes(ticket, role, form):
+    (ticket / "tree.json").write_text('{"tree": [{"path": "a", "sha": "x"}]}')
+    d = run(ticket, form, role)
+    assert d.action == "allow", (role, d.reason)
+
+
+@pytest.mark.parametrize("role", ["conductor", "attended"])
+def test_an_unquoted_path_that_may_split_into_a_flag_is_refused(ticket, role):
+    d = run(ticket, "gh api -X POST repos/$R -f merge_action=direct_merge -f sha={sha}", role)
+    assert refused(d, role), (role, d)
+
+
+@pytest.mark.parametrize("cfg", ["/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"])
+def test_an_attended_curl_config_read_from_stdin_is_asked(ticket, cfg):
+    d = run(ticket, f"curl -K {cfg} https://api.github.com/repos/acme/demo/issues/1 <<'EOF'\nurl = \"https://api.github.com/repos/acme/demo/pulls/12/merge-async\"\nEOF", "attended")
+    assert d.action == "ask", d
