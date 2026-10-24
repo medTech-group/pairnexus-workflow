@@ -41,12 +41,14 @@ interpreter one-liners, and in ticket and conductor sessions finds `git`,
   pinned to the checked-out ticket branch's head (`--match-head-commit`, the
   REST merge's `sha`, `merge_pull_request`'s `expectedHeadSha`), or, for
   `enable_pr_auto_merge` and `ccr/auto_merge`, with the pull request's head
-  read back from GitHub (`_pr_head`).
+  read back from GitHub (`_pr_head`); adding it to a merge queue through
+  `merge-async` is pinned by its `sha` the same way.
 
 **Every role** is held to a deny-list: pushing to the base branch, force-pushes,
 deleting or mirroring branches (also by `remote.*.mirror`, `remote.pushDefault`
 or `remote.*.skipDefaultUpdate` set with `-c` or `git config`, or
-`git remote add --mirror`), `gh pr merge --admin`, and rewriting the base
+`git remote add --mirror`), `gh pr merge --admin`, a `merge-async` with
+`bypass_rules`, any `merge_action` but `merge_queue` or no `sha`, and rewriting the base
 branch, its name, the default branch (`gh repo edit --default-branch`, `gh api`
 with its body in a file too), its protection or rulesets through the API; a
 GraphQL mutation that does so is looked for in the whole command and the files
@@ -1842,7 +1844,7 @@ _TICKET_API_WRITES = [
     r"issues/comments/\d+",
     r"pulls",
     r"pulls/\d+",
-    r"pulls/\d+/(merge|reviews|comments|requested_reviewers|update-branch|ccr/auto_merge)",
+    r"pulls/\d+/(merge|merge-async|reviews|comments|requested_reviewers|update-branch|ccr/auto_merge)",
     r"pulls/\d+/reviews/\d+(/events)?",
     r"pulls/comments/\d+(/replies)?",
     r"actions/runs/\d+/rerun(-failed-jobs)?",
@@ -2507,11 +2509,11 @@ def _own_head(root: Path, profile: Profile) -> tuple[str | None, str | None, str
     return branch, head.lower(), None
 
 
-def _pin_problem(what: str, pins: list[str], root: Path, profile: Profile) -> str | None:
+def _pin_problem(what: str, pins: list[str], root: Path, profile: Profile, how: str = _PIN_HOW) -> str | None:
     """A ticket session's merge `pins` (every head commit it names) must each be
-    its ticket branch's head."""
+    its ticket branch's head. `how` says how to pin it."""
     if not pins:
-        return f"a ticket session merges only its own pull request, so this {what} must be pinned to its ticket branch's head: add {_PIN_HOW}"
+        return f"a ticket session merges only its own pull request, so this {what} must be pinned to its ticket branch's head: add {how}"
     for pin in pins:
         if not _SHA.fullmatch(pin):
             return f"pin this {what} to the full commit sha that `git rev-parse HEAD` prints, not " + (f"`{pin}`" if pin else "an empty one")
@@ -2660,7 +2662,7 @@ def _rest_merge_problem(seg: Seg, toks: list[str], call: _ApiCall, profile: Prof
     m = re.fullmatch(r"repos/([^/]+/[^/]+)/pulls/(\d+)/(merge|ccr/auto_merge)", call.path, re.I)
     # The path word as written: one the shell fills in (`pulls/9?/merge`) reads as another path.
     path_words = [t for t in toks[1:] if re.match(r"(?:https?://[^/\s]+/(?:api/v3/)?)?/?repos/", t)]
-    if not m and not any(re.search(r"(?i)pulls/[^/\s]*/(merge|ccr/auto_merge)", t) for t in path_words):
+    if not m and not any(re.search(r"(?i)pulls/[^/\s]*/(merge(?!-async)|ccr/auto_merge)", t) for t in path_words):
         return None
     what = "arm of auto-merge" if m and m.group(3).lower() != "merge" else "merge"
     unread = _unread_merge_word(seg, toks)
@@ -2695,6 +2697,59 @@ def _ticket_merge_problem(seg: Seg, toks: list[str], profile: Profile, root: Pat
         return _rest_merge_problem(seg, toks, call, profile, root)
     return None
 
+
+# ---------- adding a pull request to a merge queue ----------
+
+# The one route the kit queues a pull request by (#243, #244): REST
+# `PUT repos/<repo>/pulls/<n>/merge-async`. Its `merge_action` must be
+# `merge_queue`: `default` (also what a missing one means) merges directly when
+# no queue is required, and `direct_merge` always does. `bypass_rules` skips the
+# ruleset, as `gh pr merge --admin` does. Both hold in every role, and the call
+# is pinned by `sha`: to the ticket branch's head in a ticket session, present
+# in any other. Its fields are read only from `-f`/`-F`, where the guard sees
+# them: a body from a file or stdin is refused once it has been searched for
+# `bypass_rules`, to name that first.
+_MERGE_ASYNC = re.compile(r"repos/[^/]+/[^/]+/pulls/[^/]+/merge-async", re.I)
+_ASYNC_PIN_HOW = "`-f sha=<sha>`, with `<sha>` from `git rev-parse HEAD` once the branch is pushed"
+_BYPASS = re.compile(r"(?i)bypass(?:_|\\u005f)rules")
+
+
+def _merge_async_problem(seg: Seg, toks: list[str], profile: Profile, role: str, root: Path) -> str | None:
+    """A `gh api` write to `pulls/<n>/merge-async`, in any role (toks start at the gh word)."""
+    call = _api(toks)
+    if not call or call.method == "GET" or not _MERGE_ASYNC.fullmatch(call.path):
+        return None
+    keys = [f.split("=", 1)[0] for f in call.fields]
+    body = ""
+    if call.files or call.stdin:
+        body = "\n".join(_read_text(f, seg.cwd) or "" for f in call.files)
+        if call.stdin:
+            body += "\n" + (seg.heredoc or "") + "\n" + ((_read_text(seg.stdin, seg.cwd) or "") if seg.stdin else "")
+    if any(_BYPASS.match(k) for k in keys) or _BYPASS.search(body):
+        return "`bypass_rules` merges past the base branch's ruleset, as `gh pr merge --admin` does; it is never allowed"
+    if any("?" in t and _MERGE_ASYNC.search(t) for t in toks[1:]):
+        return "write `merge-async`'s fields as `-f` fields, not in the path's query string, so the guard reads every one"
+    odd = next((k for k in keys if not re.fullmatch(r"[A-Za-z_]\w*", k)), None)
+    if odd is not None or any(isinstance(t, Word) and t.splits for t in toks[1:]):
+        what = f"`{odd}`" if odd is not None else "a word the shell fills in"
+        return f"write `merge-async`'s fields out as plain `-f name=value` fields: with {what}, the guard can't tell which fields it sends"
+    if call.files or call.stdin:
+        return (
+            "the guard reads `merge-async`'s fields only from `-f`: send `-f merge_action=merge_queue -f sha=<sha>`, "
+            "without an `--input` body or `@file` fields"
+        )
+    actions = [f.split("=", 1)[1] if "=" in f else "" for f in call.fields if f.split("=", 1)[0] == "merge_action"]
+    if not actions or any(a != "merge_queue" for a in actions):
+        return (
+            "add a pull request to the merge queue only with `-f merge_action=merge_queue`: `default`, or none, merges it "
+            "directly when no queue is required, and `direct_merge` always does"
+        )
+    pins = [f.split("=", 1)[1] if "=" in f else "" for f in call.fields if f.split("=", 1)[0] == "sha"]
+    if role == "ticket":
+        return _pin_problem("enqueue", pins, root, profile, _ASYNC_PIN_HOW)
+    if not pins or not all(pins):
+        return "pin this enqueue to the head you checked with `-f sha=<sha>`, so GitHub never queues a head nobody checked"
+    return None
 
 def _ticket_mcp_merge_problem(name: str, inp: dict, profile: Profile, root: Path) -> str | None:
     if name not in ("merge_pull_request", "enable_pr_auto_merge"):
@@ -5378,6 +5433,9 @@ def check_bash(
             if p:
                 return _deny(role, p)
             p = _ticket_merge_problem(seg, toks, profile, root) if role == "ticket" else None
+            if p:
+                return _deny(role, p)
+            p = _merge_async_problem(seg, toks, profile, role, root)
             if p:
                 return _deny(role, p)
         p = _api_problem(seg.words, profile, role, seg.cwd, command, read) if seg.words and Path(seg.words[0]).name == "curl" else None
