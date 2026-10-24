@@ -3,9 +3,10 @@
 `PUT repos/<repo>/pulls/<n>/merge-async` is the one route the kit uses to queue
 a pull request. A ticket session's call is pinned like its merges (#87): `sha`
 must be its ticket branch's head. A conductor's or attended session's needs a
-`sha` that is a full commit sha, or one the shell fills in. In every role `bypass_rules` is refused in any form, and so is
-any `merge_action` but `merge_queue`, a missing one included: GitHub reads that
-as `default`, which merges directly when no queue is required. Attended
+`sha` that is a full commit sha, or one the shell fills in. In every role
+`bypass_rules` is refused in any form, and so is any `merge_action` but
+`merge_queue`, a missing one included: GitHub reads that as `default`, which
+merges directly when no queue is required. Attended
 sessions are asked, as for the guard's other never-allowed merges, and refused
 where nobody is asked.
 """
@@ -491,3 +492,64 @@ def test_the_attended_bypass_question_reads_plainly(ticket):
 def test_an_unquoted_expansion_refusal_says_to_quote_it(ticket):
     d = run(ticket, ROUTE + " -f merge_action=merge_queue -f sha=$SHA", "conductor")
     assert d.action == "deny" and 'sha="$SHA"' in d.reason
+
+
+@pytest.mark.parametrize("role", ["conductor", "attended"])
+@pytest.mark.parametrize(
+    "form",
+    [
+        "printf '{\"merge_action\":\"merge_queue\",\"sha\":\"x\",\"bypass_rules\":true}' | gh api -X PUT \"$URL\" --input -",
+        'gh api -X PUT "$URL" --input "$F"',
+        'gh api -X PUT "$URL" --input direct.json',
+    ],
+)
+def test_a_put_to_a_filled_in_path_whose_body_may_queue_it_is_refused(ticket, role, form):
+    (ticket / "direct.json").write_text('{"merge_action": "direct_merge", "sha": "x"}')
+    d = run(ticket, form, role)
+    assert refused(d, role), (role, d)
+
+
+@pytest.mark.parametrize("role", ["conductor", "attended"])
+@pytest.mark.parametrize(
+    "form",
+    [
+        'gh api -X POST "repos/$REPO/issues/$N/comments" -F body=@note.md',
+        'gh api -X DELETE "repos/$R/pulls/$N/$X"',
+        'gh api -X PUT "$URL" --input labels.json',
+    ],
+)
+def test_ordinary_writes_that_mention_or_resemble_the_route_pass(ticket, role, form):
+    (ticket / "note.md").write_text("The guard now refuses bypass_rules on merge-async. <!-- workflow:agent -->")
+    (ticket / "labels.json").write_text('{"labels": ["ready"]}')
+    d = run(ticket, form, role)
+    assert d.action == "allow", (role, d.reason)
+
+
+@pytest.mark.parametrize(
+    "form",
+    [
+        "curl -X PUT -Kcfg.txt",
+        "curl -X PUT -sK cfg.txt",
+        CURL + " -G -d '{\"merge_action\":\"merge_queue\",\"sha\":\"{sha}\"}'",
+        CURL + " --get -d '{\"merge_action\":\"merge_queue\",\"sha\":\"{sha}\"}'",
+        "curl -X PUT \"$API/repos/acme/demo/pulls/12/merge-async\" -d '{\"merge_action\":\"direct_merge\",\"sha\":\"{sha}\"}'",
+    ],
+)
+def test_more_attended_curl_enqueues_the_guard_cant_read_are_asked(ticket, form):
+    (ticket / "cfg.txt").write_text('url = "https://api.github.com/repos/acme/demo/pulls/12/merge-async"\ndata = "{\\"merge_action\\":\\"direct_merge\\"}"\n')
+    d = run(ticket, form, "attended")
+    assert d.action == "ask", d
+
+
+@pytest.mark.parametrize(
+    "form",
+    [
+        "curl -X PATCH https://api.github.com/repos/acme/demo/pulls/$N -d '{\"title\":\"x\"}'",
+        "curl -X PATCH https://api.github.com/repos/acme/demo/issues/$N -d '{\"state\":\"closed\"}'",
+        "curl -X POST https://api.github.com/repos/acme/demo/issues/12/comments -d '{\"body\":\"queued with pulls/12/merge-async\"}'",
+        "curl -X PUT -K missing.cfg https://example.com/upload -d x",
+    ],
+)
+def test_attended_curl_writes_that_arent_queue_calls_are_left_alone(ticket, form):
+    d = run(ticket, form, "attended")
+    assert d.action == "allow", d.reason
