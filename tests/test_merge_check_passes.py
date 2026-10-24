@@ -319,14 +319,16 @@ def test_build_ticket_takes_it_as_needs_human_and_passes_the_flag():
 
 def test_the_conductor_takes_it_as_needs_human():
     conductor = _read("skills/conductor/SKILL.md")
-    line = next(ln for ln in conductor.splitlines() if "`passes_used_up`" in ln)
+    line = next(ln for ln in conductor.splitlines() if ln.startswith("| **`not_yet` with `passes_used_up`**"))
     assert "needs-human" in line
     # It leaves the labelling to the session, and claims no findings that may not exist.
     # Stopping is the session's: the conductor never settles a session that still runs.
     assert "Don't label or archive it yourself while its session runs" in line
     assert "see its review records and PR body" in line
     # Asking the owner, or a retry, would only start a session that stops at the cap again.
-    assert "without that row's question to the owner" in line and "never requeue it" in line
+    assert "without that row's question to the owner" in line and "never requeues it while `WF merge-check` says `passes_used_up`" in line
+    answers = conductor.split("**When the owner answers**", 1)[1].split("\n3. ", 1)[0]
+    assert "Except when `WF merge-check` on its pull request says `passes_used_up`" in answers and "don't requeue it" in answers
     assert "is the stuck row's, except that instead of a retry you label the ticket `needs-human`" in line
 
 
