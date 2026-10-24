@@ -321,6 +321,8 @@ def test_the_conductor_takes_it_as_needs_human():
     conductor = _read("skills/conductor/SKILL.md")
     line = next(ln for ln in conductor.splitlines() if "`passes_used_up`" in ln)
     assert "needs-human" in line
+    # It leaves the labelling to the session, and claims no findings that may not exist.
+    assert "Leave the labelling to the session" in line and "see its review records and PR body" in line
 
 
 def test_the_ticket_session_prompts_stopping_list_names_the_cap():
