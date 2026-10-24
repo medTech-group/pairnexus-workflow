@@ -606,3 +606,44 @@ def test_an_attended_curl_enqueue_with_a_query_string_is_asked(ticket, form):
 def test_the_wrong_head_refusal_names_queueing(ticket):
     d = run(ticket, ROUTE + f" -f merge_action=merge_queue -f sha={OTHER}")
     assert d.action == "deny" and "merges or queues only its own" in d.reason
+
+
+@pytest.mark.parametrize("role", ROLES)
+@pytest.mark.parametrize(
+    "form",
+    [
+        'E=-XPUT; gh api -X POST repos/acme/demo/pulls/12/merge-async -f merge_action=direct_merge -f sha={sha} "$E"',
+        'E=--method=PUT; gh api -X DELETE repos/acme/demo/pulls/12/merge-async -f sha={sha} "$E"',
+        'E=-XPUT; gh api -X POST "$E" repos/acme/demo/pulls/12/merge-async -f merge_action=direct_merge -f sha={sha}',
+        "gh api -X POST repos/acme/demo/pulls/12/merge-async -f sha={sha} \"$(cat <<'EOF'\n-XPUT\nEOF\n)\"",
+        "gh api -X PUT repos/acme/demo/pulls/12/merge-async -f sha={sha} -f merge_action=merge_queue \"$(cat <<'EOF'\n-fmerge_action=direct_merge\nEOF\n)\"",
+    ],
+)
+def test_a_word_that_may_change_the_method_is_refused(ticket, role, form):
+    d = run(ticket, form, role)
+    assert refused(d, role), (role, d)
+
+
+@pytest.mark.parametrize(
+    "form",
+    [
+        "curl -X PUT https://api.github.com/repos/acme/demo/pulls/12/./merge-async -d '{\"merge_action\":\"direct_merge\",\"sha\":\"{sha}\"}'",
+        "curl -X PUT https://api.github.com/repos/acme/demo/pulls/12/x/../merge-async -d '{\"merge_action\":\"direct_merge\",\"sha\":\"{sha}\"}'",
+        "curl -X PUT \"$PR_URL/merge-async\" -d '{\"merge_action\":\"direct_merge\",\"sha\":\"{sha}\"}'",
+        "curl -X POST -sXPUT https://api.github.com/repos/acme/demo/pulls/12/merge-async -d '{\"merge_action\":\"direct_merge\",\"sha\":\"{sha}\"}'",
+        "curl -X PUT https://api.github.com/repos/acme/demo/pulls/12/merge-async -d '{\"merge_action\":\"direct_merge\",\"sha\":\"{sha}\"}' --next -X POST https://api.github.com/repos/acme/demo/issues/1/comments -d x",
+        "curl -K - https://api.github.com/repos/acme/demo/issues/1 <<'EOF'\nurl = \"https://api.github.com/repos/acme/demo/pulls/12/merge-async\"\nEOF",
+        "curl -K \"$CFG\" https://api.github.com/repos/acme/demo/issues/1",
+    ],
+)
+def test_attended_curl_enqueues_in_other_spellings_are_asked(ticket, form):
+    d = run(ticket, form, "attended")
+    assert d.action == "ask", d
+
+
+@pytest.mark.parametrize("role", ["conductor", "attended"])
+def test_each_input_body_is_read_on_its_own(ticket, role):
+    (ticket / "a.json").write_text('{"labels": ["x"]}')
+    (ticket / "b.json").write_text('{"\\u0073ha": "x", "merge_action": "direct_merge"}')
+    d = run(ticket, 'gh api -X PUT "$URL" --input a.json --input b.json', role)
+    assert refused(d, role), (role, d)

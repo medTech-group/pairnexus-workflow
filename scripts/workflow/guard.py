@@ -2183,7 +2183,6 @@ def _api_problem(toks: list[str], profile: Profile, role: str, cwd: str | None =
     with `cat` or `<`, which a query or body may come from by a variable."""
     base = profile.base_branch
     name = Path(toks[0]).name if toks else ""
-    # An attended session's curl that reads a config file (`-K`) may name GitHub there.
     # An attended session's curl that reads a config file (`-K`) may name GitHub
     # there, and one whose URL names `merge-async` may have its host filled in.
     queue = role == "attended" and (_curl_configs(toks) or any(_curl_url_queues(t) for t in toks))
@@ -2799,10 +2798,11 @@ def _json_keys(text: str) -> set[str]:
     return found
 
 
-def _input_body(seg: Seg, toks: list[str]) -> tuple[str, bool]:
-    """(the text of a `gh api` call's `--input` bodies, whether any can't be
-    read): a file named plainly, or stdin from a heredoc, a `<` file, a `cat`
-    or a plain `echo`/`printf` piping into it. `@file` fields aren't bodies."""
+def _input_body(seg: Seg, toks: list[str]) -> tuple[list[str], bool]:
+    """(the texts of a `gh api` call's `--input` bodies, each on its own, and
+    whether any can't be read): a file named plainly, or stdin from a heredoc,
+    a `<` file, a `cat` or a plain `echo`/`printf` piping into it. `@file`
+    fields aren't bodies."""
     texts, unread = [], False
     for f in _input_files(toks):
         if _STDIN_FILE.fullmatch(f):
@@ -2812,7 +2812,7 @@ def _input_body(seg: Seg, toks: list[str]) -> tuple[str, bool]:
             t = None if _FILLED.search(f) else _read_text(f, seg.cwd)
         unread = unread or t is None
         texts.append(t or "")
-    return "\n".join(texts), unread
+    return texts, unread
 
 
 def _queued_json(text: str | None) -> bool:
@@ -2857,10 +2857,10 @@ def _curl_configs(toks: list[str]) -> list[str]:
 def _curl_url_queues(word: str) -> bool:
     """A curl word that is a URL naming `merge-async`, or a GitHub API URL whose
     part after `pulls/<n>/` the shell or curl fills in (`$M`, `{…}`, `[…]`)."""
-    if re.search(r'[\s"]', word):
+    if re.search(r'[\s"]', word) or "/" not in word:
         return False  # text, such as a body, not a URL
     u = urllib.parse.unquote(word)
-    if re.search(r"(?i)/pulls/[^/]+/merge-async/?(?:[?#]|$)", u):
+    if _is_merge_async(word):
         return True
     return bool(_GITHUB_API.search(u) and re.search(r"(?i)/pulls/(?!comments/)[^/]+/[^/]*[$`{\[][^/]*$", u))
 
@@ -2872,17 +2872,23 @@ def _curl_queue_problem(toks: list[str], joined: str, cwd: str | None) -> str | 
     unless it sends one JSON body that queues it (`_queued_json`), with no
     query string."""
     configs = _curl_configs(toks)
-    any_url = any("://" in t for t in toks)  # an unread config then only adds to that URL
     named = any(_curl_url_queues(t) for t in toks)
     for f in configs:
-        text = _read_text(f, cwd)
-        named = named or (re.search(r"(?i)merge-async", urllib.parse.unquote(text)) is not None if text is not None else not any_url)
+        text = None if f in ("", "-") or _FILLED.search(f) else _read_text(f, cwd)
+        if text is not None:
+            named = named or re.search(r"(?i)merge-async", urllib.parse.unquote(text)) is not None
+        elif f in ("", "-") or _FILLED.search(f) or not any("://" in t for t in toks):
+            named = True  # stdin or a name the shell fills in may hold anything; a plain missing file only fails
     if not named:
         return None
-    methods = [m.group(1) or (toks[k + 1] if k + 1 < len(toks) else "") for k, t in enumerate(toks) if (m := re.fullmatch(r"(?:-X|--request=?)(.*)", t, re.S))]
-    method = methods[-1] if methods else ("PUT" if any(t in ("-T", "--upload-file") for t in toks) else "")
-    if not configs and method and not _FILLED.search(method) and method.upper() != "PUT":
-        return None  # GitHub takes `merge-async` only as a PUT
+    # GitHub takes `merge-async` only as a PUT: a curl whose every method is a
+    # literal other one, with one URL (no `--next`) and no config, is left alone.
+    methods = [m.group(1) or (toks[k + 1] if k + 1 < len(toks) else "") for k, t in enumerate(toks) if (m := re.fullmatch(r"(?:-[a-zA-Z]*X|--request=?)(.*)", t, re.S))]
+    if any(t in ("-T", "--upload-file") or re.fullmatch(r"-[a-zA-Z]*T.*", t, re.S) for t in toks):
+        methods.append("PUT")
+    several = any(t in ("--next", "-:") for t in toks)
+    if methods and not configs and not several and not any(_FILLED.search(m) or m.upper() == "PUT" for m in methods):
+        return None
     bodies: list[str | None] = []
     unread = False
     i = 1
@@ -2924,8 +2930,6 @@ def _filled_word(toks: list[str], path: str) -> str | None:
     while i < len(toks):
         t = toks[i]
         i += 1
-        if _literal_heredoc(t):
-            continue
         if t in _FIELD_FLAGS:
             t, i = (toks[i] if i < len(toks) else ""), i + 1
         elif t in _API_VALUES or t in ("-X", "--method", "--input"):
@@ -2949,6 +2953,18 @@ def _filled_word(toks: list[str], path: str) -> str | None:
     return None
 
 
+def _may_add_flags(seg: Seg, toks: list[str], call: _ApiCall) -> bool:
+    """Whether the shell or xargs may add flags to this `gh api` call (a
+    `-XPUT`, a field): xargs feeds it, a word outside a value holds an
+    expansion (`_filled_word`), the path word doesn't start as a path and
+    holds one, or an unquoted word other than a path splits."""
+    if seg.fed or _filled_word(toks, call.word) is not None:
+        return True
+    if _FILLED.search(call.word) and not _PATH_START.match(call.word):
+        return True
+    return any(isinstance(t, Word) and t.splits and not _PATH_START.match(t) for t in toks[1:])
+
+
 def _merge_async_problem(seg: Seg, toks: list[str], profile: Profile, role: str, root: Path) -> str | None:
     """A `gh api` write to `pulls/<n>/merge-async`, in any role (toks start at the gh word)."""
     call = _api(toks)
@@ -2964,14 +2980,13 @@ def _merge_async_problem(seg: Seg, toks: list[str], profile: Profile, role: str,
     last_part = call.word.rstrip("/").rsplit("/", 1)[-1]
     whole_filled = (filled and not _PATH_START.match(call.word) and _FILLED.search(last_part)) or unread_path
     # GitHub takes `merge-async` only as a PUT; a literal other method can't
-    # become one unless xargs adds words or a word the shell fills in is a flag.
-    if call.method in ("POST", "PATCH", "DELETE") and not seg.fed:
-        if whole_filled and (word := _filled_word(toks, call.word)) is not None:
-            return _FILLED_PATH_WHY.format(path=call.word, word=word)
+    # become one unless xargs adds words, or a word the shell fills in (outside
+    # a value, the path included when it doesn't start as a path) is a flag.
+    if call.method in ("POST", "PATCH", "DELETE") and not _may_add_flags(seg, toks, call):
         return None
     route = _is_merge_async(call.word)
-    body, body_unread = _input_body(seg, toks)
-    if (route or filled or unread_path) and _body_has_bypass(body):
+    bodies, body_unread = _input_body(seg, toks)
+    if (route or filled or unread_path) and any(_body_has_bypass(b) for b in bodies):
         return _BYPASS_WHY
     # The merge's and update-branch's own fields say which route a filled-in
     # last part is.
@@ -2981,7 +2996,7 @@ def _merge_async_problem(seg: Seg, toks: list[str], profile: Profile, role: str,
     # `merge_action`: when it PUTs a `sha` and only fields `merge-async` takes,
     # or a body that names `merge_action` or `sha`, or can't be read.
     queue_fields = "sha" in keys and set(keys) <= {"sha", "commit_title", "commit_message"}
-    queue_body = body_unread or bool(_json_keys(body) & {"merge_action", "sha"})
+    queue_body = body_unread or any(_json_keys(b) & {"merge_action", "sha"} for b in bodies)
     bare_put = whole_filled and (queue_fields or queue_body)
     if not (route or (filled and "merge_action" in keys) or last_filled or unread_path or bare_put):
         if (filled or unread_path) and (word := _filled_word(toks, call.word)) is not None:
