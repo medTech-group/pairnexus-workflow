@@ -121,6 +121,7 @@ class Result:
     files: list[str] = field(default_factory=list)
     preview: dict | None = None
     review_rounds: int = DEFAULT_REVIEW_ROUNDS  # the allowed review rounds the review rule used
+    queue: bool = False  # a ruleset in force on the base requires a merge queue: "ready" means ready to queue (#245)
 
     def as_dict(self) -> dict:
         return {
@@ -135,6 +136,7 @@ class Result:
             "files": self.files,
             "preview": self.preview,
             "review_rounds": self.review_rounds,
+            "queue": self.queue,
         }
 
 
@@ -639,6 +641,14 @@ class Context:
 
         return self.once("rulesets", read)
 
+    def queue(self) -> bool:
+        """A ruleset in force on the base requires a merge queue (`protection.check`'s
+        reader); not when the rulesets can't be read, which is a reason of its own."""
+        try:
+            return self.rulesets().queue
+        except Unreadable:
+            return False
+
     def open_threads(self) -> list[str | None]:
         """Who opened each unresolved review thread (None when it can't be told)."""
 
@@ -915,7 +925,10 @@ def _evidence(ctx: Context, add) -> None:
 
 
 def _up_to_date(ctx: Context, add) -> None:
-    """flow §4.3: the head isn't behind the base."""
+    """flow §4.3: the head isn't behind the base, or the merge queue the
+    ruleset requires meets it (#245): the queue tests it on the latest base."""
+    if ctx.queue():
+        return
     behind = ctx.compare()
     if behind or ctx.pr().behind:
         add("behind", by=f" by {_plural(behind, 'commit')}" if behind else "")
@@ -1169,6 +1182,10 @@ def evaluate(
     waivable, charter_notes = waivers(charter_input, role, profile)
     ctx = Context(inputs, profile, profile_error, waivable, logs, review_rounds)
     ctx.notes += charter_notes
+    if waivable and ctx.queue():
+        # Every merge goes through the queue, and only a direct merge could take a waiver (#241, answer 13).
+        ctx.waivable = frozenset()
+        _note(ctx, "charter_refused", "The charter wasn't used, so no check is waived: waivers don't apply with the merge queue on (flow §4.1).")
     try:
         pr = ctx.pr()
         number, head, base = pr.number, pr.head, pr.base
@@ -1203,6 +1220,17 @@ def evaluate(
                 owner = ctx.permissions().get(who) == "admin"
             except Unreadable:
                 owner = False
+    queue = ctx.queue()
+    if queue:
+        _note(ctx, "queue", "The base's ruleset requires a merge queue, which meets flow §4.3 (up to date), so \"ready\" means ready to queue. "
+              "These rules are checked when it is queued: a request made after that (changes requested, a new review thread) doesn't stop the merge.")
+    else:
+        try:
+            unsure = ctx.rulesets().queue_unsure
+        except Unreadable:
+            unsure = []
+        if unsure:
+            _note(ctx, "queue_unsure", "A merge-queue rule in a ruleset this command can't judge isn't counted as a queue: " + "; ".join(unsure) + ".")
     kit = ctx.kit
     if reasons:
         decision = "not_yet"
@@ -1212,7 +1240,7 @@ def evaluate(
         decision = "owner_review"
     else:
         decision = "ready"
-    return Result(decision, number, head, level, owner, reasons, ctx.notes, ctx.checks, kit, ctx.preview, ctx.review_rounds)
+    return Result(decision, number, head, level, owner, reasons, ctx.notes, ctx.checks, kit, ctx.preview, ctx.review_rounds, queue)
 
 
 # ---------- text ----------
@@ -1222,7 +1250,7 @@ def text(res: Result) -> str:
     """The answer for people: the decision first, then each reason and its fix."""
     n = f"#{res.pr}" if res.pr is not None else "This pull request"
     if res.decision == "ready":
-        lines = [f"Ready: {n} may merge."]
+        lines = [f"Ready to queue: {n} may join the merge queue." if res.queue else f"Ready: {n} may merge."]
     elif res.decision == "owner_review":
         if res.owner:
             lines = ["Ready once you've read the changes to these files:"]

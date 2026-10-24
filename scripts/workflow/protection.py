@@ -12,7 +12,8 @@ together, restrict deletions, block force pushes and require pull requests,
 and none of them has a bypass list. Anything it can't tell counts as missing,
 so an unknown never reads as protected. `check` is the one place this rule
 lives: the "Protect `main`" upgrade, set-up, the conductor's pre-flight and
-`workflow doctor` will call it rather than repeat it.
+`workflow doctor` will call it rather than repeat it. It is also the queue
+reader (#245): whether those rulesets require a merge queue (`Report.queue`).
 
 Beside it, the request builder (#66): the requests that create the ruleset and
 set the merge settings (`protect`), that add checks to a ruleset
@@ -130,6 +131,11 @@ class Report:
     # branch, whose other rules doctor reads. Neither is in --json.
     kinds: list[str] = field(default_factory=list)
     effective: list[dict] = field(default_factory=list)
+    # The queue reader (#245): whether a ruleset in force on the base (one of
+    # `effective`) requires a merge queue; and each `unsure` ruleset with a
+    # merge-queue rule, never counted as a queue. Neither is in --json.
+    queue: bool = False
+    queue_unsure: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict:
         return {
@@ -203,6 +209,11 @@ def _checked_name(rs, i: int) -> str:
             if not isinstance(checks, list) or not all(isinstance(c, dict) for c in checks):
                 raise ProtectionError(f"{where}: required_status_checks must be a list of objects")
     return where
+
+
+def _queues(rs: dict) -> bool:
+    """The ruleset has a merge-queue rule."""
+    return any(r["type"] == "merge_queue" for r in rs["rules"])
 
 
 def _targets(rs: dict, base: str, default: str | None, have_settings: bool) -> str | None:
@@ -299,6 +310,7 @@ def check(rulesets, base: str, settings=None, base_if_unknown: bool = False) -> 
 
     ignored: list[tuple[str, str]] = []
     unsure: list[str] = []
+    queue_unsure: list[str] = []
     effective: list[tuple[str, dict]] = []
     for name, rs in zip(names, rulesets):
         off_target = _targets(rs, base, default, settings is not None)
@@ -311,6 +323,8 @@ def check(rulesets, base: str, settings=None, base_if_unknown: bool = False) -> 
         elif off_target:
             ignored.append(("unsure", f"{name} {off_target}"))
             unsure.append(f"{name} {off_target}")
+            if _queues(rs):
+                queue_unsure.append(f"{name} {off_target}")
         else:
             effective.append((name, rs))
 
@@ -334,7 +348,8 @@ def check(rulesets, base: str, settings=None, base_if_unknown: bool = False) -> 
 
     protected = not problems
     found = [] if protected else ignored + problems
-    return Report(base, protected, [m for _, m in found], checks, merge, unsure, [k for k, _ in found], [rs for _, rs in effective])
+    queue = any(_queues(rs) for _, rs in effective)
+    return Report(base, protected, [m for _, m in found], checks, merge, unsure, [k for k, _ in found], [rs for _, rs in effective], queue, queue_unsure)
 
 
 def text(rep: Report) -> str:
