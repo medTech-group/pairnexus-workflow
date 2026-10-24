@@ -2865,6 +2865,19 @@ def _curl_url_queues(word: str) -> bool:
     return bool(_GITHUB_API.search(u) and re.search(r"(?i)/pulls/(?!comments/)[^/]+/[^/]*[$`{\[][^/]*$", u))
 
 
+def _hidden_config(f: str, cwd: str | None) -> bool:
+    """A curl config whose text isn't a file the guard can read now: stdin, a
+    descriptor or device (any path that resolves under `/dev/` or `/proc/`,
+    `/dev/null` aside, which is empty), or a name the shell fills in."""
+    if f in ("", "-") or _STDIN_FILE.fullmatch(f) or _FILLED.search(f):
+        return True
+    a = os.path.expanduser(f)
+    if not a.startswith("/") and cwd:
+        a = cwd + "/" + a
+    n = posixpath.normpath(re.sub("/+", "/", a))
+    return n != os.devnull and n.startswith(("/dev/", "/proc/"))
+
+
 def _curl_queue_problem(toks: list[str], joined: str, cwd: str | None) -> str | None:
     """An attended session's curl PUT that may add a pull request to a merge
     queue (a URL `_curl_url_queues`, or a config file it reads that names
@@ -2874,7 +2887,7 @@ def _curl_queue_problem(toks: list[str], joined: str, cwd: str | None) -> str | 
     configs = _curl_configs(toks)
     named = any(_curl_url_queues(t) for t in toks)
     for f in configs:
-        hidden = f in ("", "-") or _STDIN_FILE.fullmatch(f) or f.startswith(("/dev/", "/proc/")) or _FILLED.search(f)
+        hidden = _hidden_config(f, cwd)
         text = None if hidden else _read_text(f, cwd)
         if text is not None:
             named = named or re.search(r"(?i)merge-async", urllib.parse.unquote(text)) is not None

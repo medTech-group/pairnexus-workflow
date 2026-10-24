@@ -674,3 +674,13 @@ def test_an_unquoted_path_that_may_split_into_a_flag_is_refused(ticket, role):
 def test_an_attended_curl_config_read_from_stdin_is_asked(ticket, cfg):
     d = run(ticket, f"curl -K {cfg} https://api.github.com/repos/acme/demo/issues/1 <<'EOF'\nurl = \"https://api.github.com/repos/acme/demo/pulls/12/merge-async\"\nEOF", "attended")
     assert d.action == "ask", d
+
+
+def test_an_attended_curl_with_dev_null_as_config_is_left_alone(ticket):
+    d = run(ticket, "curl -K /dev/null https://api.github.com/repos/acme/demo/pulls/12", "attended")
+    assert d.action == "allow", d.reason
+
+
+def test_an_attended_curl_config_under_dev_spelled_another_way_is_asked(ticket):
+    d = run(ticket, "curl -K /tmp/../dev/fd/3 https://api.github.com/repos/acme/demo/issues/1 3<<'EOF'\nurl = \"https://api.github.com/repos/acme/demo/pulls/12/merge-async\"\nEOF", "attended")
+    assert d.action == "ask", d
