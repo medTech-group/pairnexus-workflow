@@ -226,9 +226,9 @@ def test_passes_used_up_is_worded_at_both_levels(project, capsys):
     r = used_up(check(project, capsys, data)[0])
     dev, new = r["wording"]["developer"], r["wording"]["new"]
     assert dev["message"].startswith("Not yet: ") and new["message"].startswith("Not yet: ")
-    assert "2 Correctness passes after round 3 used up the pass cap (2 allowed)" in dev["message"]
-    for w in (dev, new):
-        assert "waits on the owner" in w["message"] + w["fix"]
+    assert "the pass cap is reached (2 allowed after round 3, 2 Correctness passes posted)" in dev["message"]
+    assert "waits on the owner" in dev["message"]
+    assert "the owner decides" in new["message"] and "stays unmerged" in new["fix"]
     assert "One more pass" in dev["fix"] and "needs-human" in dev["fix"]
     assert r["round"] == 3 and r["reviewers"] == ["standards", "spec", "correctness"]
 
@@ -237,10 +237,10 @@ def test_the_text_answer_says_the_cap_is_reached(project, capsys, monkeypatch):
     data = inputs()
     data["comments"] = records(rec(rnd=1, commit=EARLIER))
     out, _ = check(project, capsys, data, "--review-passes", "0", as_json=False)
-    assert "the pass cap (0 allowed)" in out and "waits on the owner" in out
+    assert "The pass cap is reached (0 allowed after round 1, 0 Correctness passes posted)" in out and "waits on the owner" in out
     monkeypatch.setenv("WORKFLOW_EXPERIENCE", "new")
     out, _ = check(project, capsys, data, "--review-passes", "0", as_json=False)
-    assert "waits on the owner" in out
+    assert "The short checks of the latest changes have reached their limit, so the owner decides what happens next." in out
 
 
 # ---------- --review-passes refuses values outside 0 to 10 ----------
@@ -348,3 +348,11 @@ def test_the_flow_names_the_cap_in_3_4_and_5():
 def test_the_changelog_has_the_note():
     unreleased = since_0110(_read("CHANGELOG.md"))
     assert "(#256" in unreleased and "--review-passes N" in unreleased and "`passes_used_up`" in unreleased
+
+
+def test_the_wording_holds_past_the_cap(project, capsys):
+    # After "One more pass" that wasn't clean, the passes number more than the cap.
+    data = inputs()
+    data["comments"] = records(rec(rnd=1, commit=EARLIER), *[rec("pass", rnd=1, commit=HEAD, clean=False)] * 3)
+    r = used_up(check(project, capsys, data)[0])
+    assert "the pass cap is reached (2 allowed after round 1, 3 Correctness passes posted)" in r["wording"]["developer"]["message"]
