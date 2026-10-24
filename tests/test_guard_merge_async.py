@@ -224,14 +224,14 @@ def test_any_merge_action_but_merge_queue_is_refused(ticket, role, action):
 def test_a_field_or_query_the_guard_cant_read_is_refused(ticket, role, form):
     d = run(ticket, form, role)
     assert refused(d, role), d
-    assert "write" in d.reason
+    assert "write" in d.reason and ("-f" in d.reason or "query string" in d.reason)
 
 
 @pytest.mark.parametrize(
     "form",
     [
         ROUTE + " -f merge_action=merge_queue -f sha=$SHA",
-        "echo x | xargs " + ROUTE[0:] + " -f merge_action=merge_queue -f sha={sha}",
+        "echo x | xargs " + ROUTE + " -f merge_action=merge_queue -f sha={sha}",
         "gh api -X PUT repos/acme/demo/pulls/1?/merge-async -f merge_action=merge_queue -f sha={sha}",
     ],
 )
@@ -259,3 +259,129 @@ def test_attended_bypass_rules_is_refused_where_nobody_is_asked(ticket):
 def test_text_that_mentions_the_route_is_no_enqueue(ticket):
     d = run(ticket, "gh api repos/acme/demo/issues/5/comments -f body='Queued with pulls/12/merge-async and bypass_rules off <!-- workflow:agent -->'")
     assert d.action == "allow", d.reason
+
+
+# ---------- round 1's findings: what the shell or the path's spelling can add ----------
+
+
+SHA_ARGS = " -f merge_action=merge_queue -f sha={sha}"
+
+
+@pytest.mark.parametrize("role", ROLES)
+@pytest.mark.parametrize(
+    "form",
+    [
+        "printf -- '-F bypass_rules=true' | xargs " + ROUTE + SHA_ARGS,
+        "printf -- '-f merge_action=direct_merge' | xargs " + ROUTE + SHA_ARGS,
+        "X='-F bypass_rules=true'; sh -c \"" + ROUTE + SHA_ARGS + " $X\"",
+        "X='-F bypass_rules=true'; eval \"" + ROUTE + SHA_ARGS + " $X\"",
+    ],
+)
+def test_words_xargs_or_another_shell_add_are_refused(ticket, role, form):
+    d = run(ticket, form, role)
+    assert refused(d, role), (role, d)
+
+
+@pytest.mark.parametrize("role", ROLES)
+@pytest.mark.parametrize(
+    "path",
+    [
+        "'repos/acme/demo/pulls/12/merge-async#x'",
+        "HTTPS://api.github.com/repos/acme/demo/pulls/12/merge-async",
+        "https://api.github.com/repos/acme/demo/pulls/12/merge-async",
+        "repos/acme/demo/pulls/12//merge-async",
+        "repos/acme/demo/pulls/12/./merge-async",
+        "repos/acme/demo/pulls/12/merge%2Dasync",
+        "repos/acme/demo/pulls/12/MERGE-ASYNC",
+    ],
+)
+def test_another_spelling_of_the_path_is_still_checked(ticket, role, path):
+    d = run(ticket, f"gh api -X PUT {path} -f sha={{sha}} -F bypass_rules=true -f merge_action=direct_merge", role)
+    assert refused(d, role), (role, d)
+
+
+@pytest.mark.parametrize("role", ROLES)
+def test_bypass_rules_is_refused_whatever_the_path(ticket, role):
+    d = run(ticket, 'gh api -X PUT "$P" -f merge_action=merge_queue -f sha={sha} -F bypass_rules=true', role)
+    assert refused(d, role), (role, d)
+    assert "bypass_rules" in d.reason
+
+
+@pytest.mark.parametrize("role", ["conductor", "attended"])
+@pytest.mark.parametrize("pin", ["-F sha=null", "-F sha=true", "-F sha=12", "-f sha=HEAD"])
+def test_a_sha_that_isnt_a_commit_is_refused(ticket, role, pin):
+    d = run(ticket, ROUTE + f" -f merge_action=merge_queue {pin}", role)
+    assert refused(d, role), (role, d)
+    assert "sha" in d.reason
+
+
+@pytest.mark.parametrize("role", ["conductor", "attended"])
+@pytest.mark.parametrize("pin", ['-f sha="$SHA"', "-f sha=\"$(git rev-parse HEAD)\"", f"-f sha={OTHER.upper()}"])
+def test_a_conductors_sha_the_shell_fills_in_is_allowed(ticket, role, pin):
+    d = run(ticket, ROUTE + f" -f merge_action=merge_queue {pin}", role)
+    assert d.action == "allow", (role, d.reason)
+
+
+@pytest.mark.parametrize(
+    "form",
+    [
+        "curl -X PUT https://api.github.com/repos/acme/demo/pulls/12/merge-async -d '{\"merge_action\":\"merge_queue\",\"sha\":\"{sha}\",\"bypass_rules\":true}'",
+        "curl -X PUT https://api.github.com/repos/acme/demo/pulls/12/merge-async -d '{\"merge_action\":\"direct_merge\",\"sha\":\"{sha}\"}'",
+        "curl -X PUT https://api.github.com/repos/acme/demo/pulls/12/merge-async -d @body.json",
+    ],
+)
+def test_an_attended_curl_enqueue_is_asked_unless_queued_and_pinned(ticket, form):
+    (ticket / "body.json").write_text('{"merge_action":"merge_queue","sha":"x","bypass_rules":true}')
+    d = run(ticket, form, "attended")
+    assert d.action == "ask", d
+
+
+def test_an_attended_curl_enqueue_queued_and_pinned_is_left_alone(ticket):
+    form = "curl -X PUT https://api.github.com/repos/acme/demo/pulls/12/merge-async -d '{\"merge_action\":\"merge_queue\",\"sha\":\"{sha}\"}'"
+    d = run(ticket, form, "attended")
+    assert d.action == "allow", d.reason
+
+
+@pytest.mark.parametrize("role", ROLES)
+@pytest.mark.parametrize(
+    "form",
+    [
+        "E=--field=bypass_rules=true; " + ROUTE + SHA_ARGS + ' "$E"',
+        ROUTE + SHA_ARGS + ' "${E:--fbypass_rules=true}"',
+        "E=-fmerge_action=default; " + ROUTE + SHA_ARGS + ' "$E"',
+        "E=--input=b.json; " + ROUTE + SHA_ARGS + ' "$E"',
+        ROUTE + SHA_ARGS + ' -f "$K=true"',
+        "M=merge-async; gh api -X PUT \"repos/acme/demo/pulls/12/$M\" -f sha={sha}",
+        "gh api -X PUT \"repos/acme/demo/pulls/12/merge-$(echo async)\" -f sha={sha}",
+        "echo repos/acme/demo/pulls/12/merge-async | xargs -I{} gh api -X PUT {} -f sha={sha}",
+    ],
+)
+def test_a_quoted_expansion_that_may_be_a_flag_or_the_route_is_refused(ticket, role, form):
+    d = run(ticket, form, role)
+    assert refused(d, role), (role, d)
+
+
+@pytest.mark.parametrize("role", ["conductor", "attended"])
+@pytest.mark.parametrize(
+    "form",
+    [
+        "gh api -X PUT \"repos/acme/demo/pulls/$N/merge-async\" -f merge_action=merge_queue -f sha=\"$SHA\" --jq \"$Q\"",
+        "gh api -X PUT \"repos/$R/pulls/$N/update-branch\" -f expected_head_sha=\"$SHA\"",
+        "gh api -X PUT repos/acme/demo/pulls/12/merge -f sha=\"$SHA\" -H \"$H\"",
+    ],
+)
+def test_expansions_in_values_and_paths_are_fine(ticket, role, form):
+    d = run(ticket, form, role)
+    assert d.action == "allow", (role, d.reason)
+
+
+def test_the_bypass_refusal_says_what_to_do(ticket):
+    d = run(ticket, ROUTE + SHA_ARGS + " -F bypass_rules=true")
+    assert "leave it out" in d.reason
+
+
+def test_off_the_ticket_branch_the_refusal_names_queueing(ticket):
+    sha = head(ticket)
+    git(ticket, "checkout", "-q", "main")
+    d = run(ticket, ROUTE + f" -f merge_action=merge_queue -f sha={sha}")
+    assert d.action == "deny" and "queues" in d.reason

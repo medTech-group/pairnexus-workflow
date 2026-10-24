@@ -102,11 +102,12 @@ It reads each command the way a shell would, well enough to catch a well-meaning
 **In every role** it denies (asks, in attended sessions):
 - pushes to the base branch in any form it can parse (refspecs, `HEAD`, `@`, abbreviated options, `send-pack`, `git-push`), force-pushes, deletes, `--mirror`, `--all`;
 - `gh pr merge --admin`;
-- adding a pull request to a merge queue (`PUT repos/<repo>/pulls/<n>/merge-async`, #244) other than with `-f merge_action=merge_queue` and a `sha`:
-  - `bypass_rules` in any form (`-f`, `-F`, or an `--input` body, a heredoc's too), since it merges past the ruleset as `--admin` does;
+- adding a pull request to a merge queue (`PUT repos/<repo>/pulls/<n>/merge-async`, #244) other than with `-f merge_action=merge_queue` and a `sha`. The path is read however it is spelled (a full URL, `%`-escapes, `//`, `./`), and a path the shell fills in counts when the call names a `merge_action`:
+  - `bypass_rules` in any form (`-f`, `-F`, or an `--input` body, a heredoc's too), since it merges past the ruleset as `--admin` does; as a field it is refused on any `gh api` write, whatever the path;
   - any `merge_action` but `merge_queue`, a missing one included: GitHub reads none as `default`, which merges directly when no queue is required, and `direct_merge` always does;
-  - no `sha`, or an empty one: a ticket session's must be its ticket branch's head (above), anyone else's must be the head they checked;
-  - fields the guard doesn't read: an `--input` body or `@file` field (refused after it is searched for `bypass_rules`), a query string on the path, or a field name the shell fills in;
+  - no `sha`, or one that isn't a commit: a ticket session's must be its ticket branch's head (above); anyone else's must be a full sha, or one the shell fills in (`-f sha="$SHA"`), never `-F sha=null`;
+  - what the guard can't read: an `--input` body or `@file` field (refused after it is searched for `bypass_rules`), a query string or `#` on the path, a field name that isn't a plain name, words that `xargs`, `eval`, `sh -c` or an unquoted expansion add, and a quoted expansion anywhere but a field's or a flag's value or the path (`"$E"` can be `--field=bypass_rules=true`); a path whose last part the shell fills in (`pulls/12/$M`) counts as `merge-async`;
+  - in attended sessions, a `curl` to `merge-async` too, unless its body (read from `-d` and its files) has `"merge_action": "merge_queue"` and a `"sha"`, and no `bypass_rules`;
 - rewriting, renaming or merging into the base branch, its protection, its rulesets or the default branch through the API.
 
 In attended sessions the guard doesn't stop changes to protected paths: the person sees them in the pull request, which is theirs to merge.
