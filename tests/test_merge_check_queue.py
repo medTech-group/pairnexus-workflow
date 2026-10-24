@@ -258,13 +258,14 @@ def test_a_queue_on_a_default_branch_only_assumed_to_be_the_base_isnt_counted(pr
     assert got["queue"] is False
     assert "behind" in ids(got)
     [note] = [n for n in got["notes"] if n["id"] == "queue_unsure"]
-    assert "default branch isn't given" in note["message"]
+    assert "base.repo.default_branch" in note["message"]
 
 
-def test_a_queue_naming_the_base_counts_without_the_default_branch(project, capsys):
+@pytest.mark.parametrize("include", [("refs/heads/main",), ("~ALL",)])
+def test_a_queue_naming_the_base_counts_without_the_default_branch(project, capsys, include):
     data = behind(inputs())
     del data["pr"]["base"]["repo"]
-    data["rulesets"] = data["rulesets"] + [queue_ruleset(include=("refs/heads/main",))]
+    data["rulesets"] = data["rulesets"] + [queue_ruleset(include=include)]
     got, _ = check(project, capsys, data)
     assert got["decision"] == "ready", got["reasons"]
     assert got["queue"] is True
@@ -275,3 +276,17 @@ def test_in_an_attended_session_the_charter_is_only_ignored_with_the_queue(proje
     queued(data)
     got, _ = run(project, capsys, data, "--check-logs", str(logs), files={"charter": json.dumps(a_charter())})
     assert "charter_ignored" in note_ids(got) and "charter_refused" not in note_ids(got)
+
+
+# ---------- round 2's findings ----------
+
+
+def test_waivers_are_refused_where_a_ruleset_may_require_a_merge_queue(project, capsys, monkeypatch):
+    data, logs = waiver_case(project, monkeypatch)
+    queued(data)
+    del data["pr"]["base"]["repo"]  # the queue on ~DEFAULT_BRANCH can't be counted either way
+    got, _ = run(project, capsys, data, "--check-logs", str(logs), files={"charter": json.dumps(a_charter())})
+    assert got["queue"] is False
+    assert got["decision"] == "not_yet" and "checks_failed" in ids(got)
+    [note] = [n for n in got["notes"] if n["id"] == "charter_refused"]
+    assert "may require a merge queue" in note["message"]

@@ -74,10 +74,11 @@ RANK = {"admin": 5, "maintain": 4, "write": 3, "triage": 2, "read": 1, "none": 0
 # GitHub lists at most this many of a pull request's files, and of its commits.
 MAX_FILES = 3000
 MAX_COMMITS = 250
-CHARTER_REFUSED = "The charter wasn't used, so no check is waived: "
 PARTIAL = "it holds only part of the list: fetch every page (gh api --paginate --slurp; with GraphQL, until pageInfo.hasNextPage is false)"
 _SHA = re.compile(r"[0-9a-f]{40}")
 _STATUS_URL_SHA = re.compile(r"/statuses/([0-9a-fA-F]{40})\b")
+# How a refused charter's note starts (`waivers`, and the merge queue's refusal).
+CHARTER_REFUSED = "The charter wasn't used, so no check is waived: "
 PREVIEWS_DOC = Path(__file__).resolve().parents[2] / "docs/previews.md"
 DEFAULT_REVIEW_ROUNDS = 3  # the profile's run.review_rounds when it can't be read
 REVIEW_ROUNDS = range(1, 11)  # what --review-rounds accepts, as profile.py's run.review_rounds
@@ -650,6 +651,13 @@ class Context:
         except Unreadable:
             return False
 
+    def queue_unsure(self) -> list[str]:
+        """The rulesets with a merge-queue rule it can't count either way."""
+        try:
+            return self.rulesets().queue_unsure
+        except Unreadable:
+            return []
+
     def open_threads(self) -> list[str | None]:
         """Who opened each unresolved review thread (None when it can't be told)."""
 
@@ -1183,10 +1191,12 @@ def evaluate(
     waivable, charter_notes = waivers(charter_input, role, profile)
     ctx = Context(inputs, profile, profile_error, waivable, logs, review_rounds)
     ctx.notes += charter_notes
-    if waivable and ctx.queue():
-        # Every merge goes through the queue, and only a direct merge could take a waiver (#241, answer 13).
+    if waivable and (ctx.queue() or ctx.queue_unsure()):
+        # Every merge goes through the queue, and only a direct merge could take a waiver (#241, answer 13);
+        # a queue it can't rule out refuses them too.
         ctx.waivable = frozenset()
-        _note(ctx, "charter_refused", CHARTER_REFUSED + "waivers don't apply with the merge queue on (flow §4.1).")
+        why = "with the merge queue on" if ctx.queue() else "where a ruleset may require a merge queue"
+        _note(ctx, "charter_refused", CHARTER_REFUSED + f"waivers don't apply {why} (flow §4.1).")
     try:
         pr = ctx.pr()
         number, head, base = pr.number, pr.head, pr.base
@@ -1225,13 +1235,8 @@ def evaluate(
     if queue:
         _note(ctx, "queue", "The base's ruleset requires a merge queue, which meets flow §4.3 (up to date), so \"ready\" means ready to queue. "
               "These rules are checked when it is queued: a request made after that (changes requested, a new review thread) doesn't stop the merge.")
-    else:
-        try:
-            unsure = ctx.rulesets().queue_unsure
-        except Unreadable:
-            unsure = []
-        if unsure:
-            _note(ctx, "queue_unsure", "A merge-queue rule in a ruleset this command can't judge isn't counted as a queue: " + "; ".join(unsure) + ".")
+    elif ctx.queue_unsure():
+        _note(ctx, "queue_unsure", "A merge-queue rule in a ruleset this command can't judge isn't counted as a queue: " + "; ".join(ctx.queue_unsure()) + ".")
     kit = ctx.kit
     if reasons:
         decision = "not_yet"

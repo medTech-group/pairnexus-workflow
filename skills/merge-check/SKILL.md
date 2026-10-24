@@ -139,7 +139,7 @@ The change touches the kit's or CI files (`files`), which only the owner merges:
 2. **Merge with a merge commit, pinned to that commit:** `gh pr merge 12 --merge --match-head-commit <head>`, or `merge_pull_request` with `merge_method: merge` and the head pinned: `expectedHeadSha: <head>` in the GitHub MCP server's tool (GitHub's REST API calls it `sha`). A merge tool that can't take the head commit isn't used: merge with `gh`, or say they can merge from the pull request's page. Never `--admin`, a squash or rebase merge, or auto-merge (`--auto`).
 3. **Say it merged.** For *new to building*, add one line: "To undo it, ask Claude to revert #12."
 
-**With `queue: true`** (in the answer of step 1's check), "Merge it now" adds the pull request to the merge queue instead of merging it. Step 1 is the same; then, in place of steps 2 and 3:
+**With `queue: true`** (from step 1's check), "Merge it now" adds the pull request to the merge queue instead of merging it. Step 1 is the same; then, in place of steps 2 and 3:
 
 2. **Queue it, pinned to that commit:** `gh api -i -X PUT repos/<repo>/pulls/12/merge-async -f merge_action=merge_queue -f sha=<head>`, with the path and the full head SHA written out. `-i` prints the answer's status line (`HTTP/2.0 202 Accepted`) above its body; on a 4xx, `gh` names the status (`HTTP 422`) beside GitHub's message. `merge_queue` makes GitHub refuse rather than merge directly when no queue is required. Never `--admin`, `bypass_rules`, another `merge_action`, a direct merge or auto-merge (`--auto`).
 3. **Say what GitHub answered:**

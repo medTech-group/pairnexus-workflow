@@ -211,6 +211,11 @@ def _checked_name(rs, i: int) -> str:
     return where
 
 
+def _ref(rs: dict) -> dict:
+    """The ruleset's ref condition: its `include` and `exclude` lists."""
+    return (rs.get("conditions") or {}).get("ref_name") or {}
+
+
 def _has_merge_queue(rs: dict) -> bool:
     """The ruleset has a merge-queue rule."""
     return any(r["type"] == "merge_queue" for r in rs["rules"])
@@ -228,7 +233,7 @@ def _targets(rs: dict, base: str, default: str | None, have_settings: bool) -> s
     """
     if rs["target"] != "branch":
         return f"doesn't target {base} (it is a {quote(rs['target'])} ruleset)"
-    ref = (rs.get("conditions") or {}).get("ref_name") or {}
+    ref = _ref(rs)
     full = f"refs/heads/{base}"
 
     def names_base(pattern: str) -> bool | None:
@@ -302,7 +307,7 @@ def check(rulesets, base: str, settings=None, base_if_unknown: bool = False) -> 
     rulesets = _flatten(rulesets)
     names = [_checked_name(rs, i) for i, rs in enumerate(rulesets)]
     merge, default = _settings(settings) if settings is not None else (None, None)
-    excluded = any("~DEFAULT_BRANCH" in (((rs.get("conditions") or {}).get("ref_name") or {}).get("exclude") or []) for rs in rulesets)
+    excluded = any("~DEFAULT_BRANCH" in (_ref(rs).get("exclude") or []) for rs in rulesets)
     # A default branch only taken to be `base` never counts a merge queue on it (#245).
     assumed = default is None and base_if_unknown and not excluded
     if assumed:
@@ -354,8 +359,8 @@ def check(rulesets, base: str, settings=None, base_if_unknown: bool = False) -> 
     for name, rs in effective:
         if not _has_merge_queue(rs):
             continue
-        if assumed and not {"~ALL", f"refs/heads/{base}"} & set(((rs.get("conditions") or {}).get("ref_name") or {}).get("include") or []):
-            queue_unsure.append(f"{name} targets the default branch, and the repository's default branch isn't given, so it can't tell whether that is {base}")
+        if assumed and not {"~ALL", f"refs/heads/{base}"} & set(_ref(rs).get("include") or []):
+            queue_unsure.append(f"{name} targets the default branch, and the pull request doesn't give the repository's (base.repo.default_branch), so it can't tell whether that is {base}")
         else:
             queue = True
     return Report(base, protected, [m for _, m in found], checks, merge, unsure, [k for k, _ in found], [rs for _, rs in effective], queue, queue_unsure)
