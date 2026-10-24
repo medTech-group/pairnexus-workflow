@@ -322,10 +322,12 @@ def test_the_conductor_takes_it_as_needs_human():
     line = next(ln for ln in conductor.splitlines() if "`passes_used_up`" in ln)
     assert "needs-human" in line
     # It leaves the labelling to the session, and claims no findings that may not exist.
-    assert "Leave the labelling to the session while it works" in line and "status_bucket` isn't `working`" in line
+    # Stopping is the session's: the conductor never settles a session that still runs.
+    assert "Don't label or archive it yourself while its session runs" in line
     assert "see its review records and PR body" in line
     # Asking the owner, or a retry, would only start a session that stops at the cap again.
-    assert "Don't ask the owner about it (step 2) and never requeue it" in line and "wins over the stuck row" in line
+    assert "without that row's question to the owner" in line and "never requeue it" in line
+    assert "is the stuck row's, except that instead of a retry you label the ticket `needs-human`" in line
 
 
 def test_the_ticket_session_prompts_stopping_list_names_the_cap():
