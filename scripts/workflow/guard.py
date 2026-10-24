@@ -51,9 +51,8 @@ or `remote.*.skipDefaultUpdate` set with `-c` or `git config`, or
 `bypass_rules`, any `merge_action` but `merge_queue` or no `sha`, and
 rewriting the base branch, its name, the default branch (`gh repo edit
 --default-branch`, `gh api` with its body in a file too), its protection or
-rulesets through the API; a
-GraphQL mutation that does so is looked for in the whole command and the files
-it reads with `cat`. Ticket sessions and the conductor are denied; attended
+rulesets through the API; a GraphQL mutation that does so is looked for in the
+whole command and the files it reads with `cat`. Ticket sessions and the conductor are denied; attended
 sessions are asked, except in solo mode (`project.ruleset = false`): there an
 attended session's git push that touches the base branch, or whose destination
 can't be told, is refused with `solo_refusal`'s reason (a force-push or
@@ -1906,6 +1905,11 @@ class _StdinFile:
 _STDIN_FILE = _StdinFile
 
 
+# `gh api`'s options whose value is the next word, whatever it holds (`-X`,
+# `--method`, `--input` and the field flags are read on their own).
+_API_VALUES = {"-H", "--header", "-q", "--jq", "-t", "--template", "--hostname", "--cache", "-p", "--preview"}
+
+
 def _api(toks: list[str]) -> _ApiCall | None:
     """`gh api`'s method, path, fields and files, else None."""
     if len(toks) < 2 or Path(toks[0]).name != "gh":
@@ -1962,7 +1966,7 @@ def _api(toks: list[str]) -> _ApiCall | None:
             elif f:
                 files.append(f)
             continue
-        if t in ("-H", "--header", "-q", "--jq", "-t", "--template", "--hostname", "--cache", "-p", "--preview"):
+        if t in _API_VALUES:
             i += 2
             continue
         if not t.startswith("-") and path is None:
@@ -1972,6 +1976,11 @@ def _api(toks: list[str]) -> _ApiCall | None:
     method = (method or ("POST" if has_body else "GET")).upper()
     p = re.sub(r"^https?://[^/]+/(api/v3/)?", "", path or "").lstrip("/").split("?", 1)[0].rstrip("/")
     return _ApiCall(method, p, " ".join(toks[start:]), fields, files, stdin, path or "")
+
+
+def _field_values(call: _ApiCall, name: str) -> list[str]:
+    """Every value the call gives the field `name` (gh sends the last)."""
+    return [f.split("=", 1)[1] if "=" in f else "" for f in call.fields if f.split("=", 1)[0] == name]
 
 
 def _field(call: _ApiCall, name: str) -> str | None:
@@ -2522,7 +2531,7 @@ def _pin_problem(what: str, pins: list[str], root: Path, profile: Profile, how: 
     """A ticket session's merge or `merge-async` `pins` (every head commit it
     names) must each be its ticket branch's head. `how` says how to pin it."""
     if not pins:
-        return f"a ticket session merges only its own pull request, so this {what} must be pinned to its ticket branch's head: add {how}"
+        return f"a ticket session merges or queues only its own pull request, so this {what} must be pinned to its ticket branch's head: add {how}"
     for pin in pins:
         if not _SHA.fullmatch(pin):
             return f"pin this {what} to the full commit sha that `git rev-parse HEAD` prints, not " + (f"`{pin}`" if pin else "an empty one")
@@ -2728,11 +2737,6 @@ _BYPASS_WHY = (
 )
 
 
-def _field_values(call: _ApiCall, name: str) -> list[str]:
-    """Every value the call gives the field `name` (gh sends the last)."""
-    return [f.split("=", 1)[1] if "=" in f else "" for f in call.fields if f.split("=", 1)[0] == name]
-
-
 def _is_merge_async(word: str) -> bool:
     """The path word names `pulls/<n>/merge-async`, however it is spelled."""
     p = urllib.parse.unquote(word)
@@ -2743,17 +2747,22 @@ def _is_merge_async(word: str) -> bool:
     return bool(_MERGE_ASYNC.fullmatch(p))
 
 
-# `gh api`'s options whose value is the next word, whatever it holds.
-_API_VALUES = {"-X", "--method", "-H", "--header", "-q", "--jq", "-t", "--template", "--hostname", "--cache", "-p", "--preview", "--input"}
+# An expansion the shell fills in; a path word that starts as a path (a URL or
+# `repos/`), so it can't be a flag; and a path whose last part after
+# `pulls/<n>/` the shell fills in, which may be `merge-async` (`pulls/comments/<id>`
+# is another route).
+_FILLED = re.compile(r"[$`]")
+_PATH_START = re.compile(r"(?i)(?:[a-z][a-z0-9+.-]*://|/?repos/)")
+_LAST_FILLED = re.compile(r"(?i)pulls/(?!comments/)[^/]+/[^/]*[$`][^/]*/?$")
 
 
-def _filled_word(toks: list[str]) -> str | None:
+def _filled_word(toks: list[str], path: str) -> str | None:
     """A `gh api` word the shell fills in that may be a flag of its own: one
     holding an expansion, quoted or not, outside a flag's value, a field's value
-    (after a plain `name=`) and the path (a word that starts `repos/` or with
-    a URL). Quoted text such as `"$E"` stays one word, but that word can be
-    `--field=bypass_rules=true`."""
+    (after a plain `name=`) and the path word `path`. Quoted text such as `"$E"`
+    stays one word, but that word can be `--field=bypass_rules=true`."""
     i = toks.index("api") + 1 if "api" in toks else 1
+    path_seen = False
     while i < len(toks):
         t = toks[i]
         i += 1
@@ -2761,7 +2770,7 @@ def _filled_word(toks: list[str]) -> str | None:
             continue
         if t in _FIELD_FLAGS:
             t, i = (toks[i] if i < len(toks) else ""), i + 1
-        elif t in _API_VALUES:
+        elif t in _API_VALUES or t in ("-X", "--method", "--input"):
             i += 1
             continue
         elif re.fullmatch(r"--(?:method|header|jq|template|hostname|cache|preview|input)=.*|-[XHqtp].+", t, re.S):
@@ -2770,13 +2779,14 @@ def _filled_word(toks: list[str]) -> str | None:
             t = t.split("=", 1)[1]
         elif re.fullmatch(r"-[fF].+", t, re.S):
             t = t[3:] if t[2] == "=" else t[2:]
-        elif re.match(r"(?i)(?:[a-z][a-z0-9+.-]*://|/?repos/)", t):
-            continue
         else:
-            if re.search(r"[$`]", t):
+            if t == path and not path_seen:
+                path_seen = True
+                continue
+            if _FILLED.search(t):
                 return t
             continue
-        if re.search(r"[$`]", t.split("=", 1)[0]) or (re.search(r"[$`]", t) and "=" not in t):
+        if _FILLED.search(t.split("=", 1)[0]) or (_FILLED.search(t) and "=" not in t):
             return t
     return None
 
@@ -2789,10 +2799,15 @@ def _merge_async_problem(seg: Seg, toks: list[str], profile: Profile, role: str,
     keys = [f.split("=", 1)[0] for f in call.fields]
     if any(_BYPASS_RULES.match(k) for k in keys):
         return _BYPASS_WHY
-    filled = re.search(r"[$`]", call.word)
-    last_filled = re.search(r"(?i)pulls/[^/]*/[^/]*[$`]", call.word)
-    unread_path = seg.fed and not re.match(r"(?i)(?:[a-z][a-z0-9+.-]*://|/?repos/)", call.word)
+    filled = _FILLED.search(call.word)
+    last_filled = _LAST_FILLED.search(call.word)
+    unread_path = seg.fed and not _PATH_START.match(call.word)
     if not (_is_merge_async(call.word) or (filled and "merge_action" in keys) or last_filled or unread_path):
+        if (filled or unread_path) and (word := _filled_word(toks, call.word)) is not None:
+            return (
+                f"write this API call out: the shell fills in its path `{call.word}`, which may be `merge-async`, "
+                f"and `{word}`, which may be a flag of its own"
+            )
         return None
     body = ""
     if call.files or call.stdin:
@@ -2804,7 +2819,7 @@ def _merge_async_problem(seg: Seg, toks: list[str], profile: Profile, role: str,
     if re.search(r"[?#]", call.word):
         return "write the `merge-async` path without a query string or `#`, and its fields as `-f` or `-F` fields, so the guard reads every one"
     split = _split_api_word(seg, toks)
-    if not split and (word := _filled_word(toks)) is not None:
+    if not split and (word := _filled_word(toks, call.word)) is not None:
         split = f"the shell fills in `{word}`, which may be a flag of its own"
     if not split and (last_filled or unread_path):
         split = f"the shell fills in the path `{call.word}`, which may be `merge-async`"
@@ -2827,7 +2842,7 @@ def _merge_async_problem(seg: Seg, toks: list[str], profile: Profile, role: str,
     pins = _field_values(call, "sha")
     if role == "ticket":
         return _pin_problem("`merge-async` call", pins, root, profile, _ASYNC_PIN_HOW)
-    if not pins or not all(_SHA.fullmatch(v) or re.search(r"[$`]", v) for v in pins):
+    if not pins or not all(_SHA.fullmatch(v) or _FILLED.search(v) for v in pins):
         return (
             "pin this `merge-async` call to the head you checked with `-f sha=<sha>`, the full commit sha "
             "(or one the shell fills in), so GitHub never queues a head nobody checked"

@@ -2,8 +2,8 @@
 
 `PUT repos/<repo>/pulls/<n>/merge-async` is the one route the kit uses to queue
 a pull request. A ticket session's call is pinned like its merges (#87): `sha`
-must be its ticket branch's head. A conductor's or attended session's needs
-`sha` present. In every role `bypass_rules` is refused in any form, and so is
+must be its ticket branch's head. A conductor's or attended session's needs a
+`sha` that is a full commit sha, or one the shell fills in. In every role `bypass_rules` is refused in any form, and so is
 any `merge_action` but `merge_queue`, a missing one included: GitHub reads that
 as `default`, which merges directly when no queue is required. Attended
 sessions are asked, as for the guard's other never-allowed merges, and refused
@@ -261,7 +261,7 @@ def test_text_that_mentions_the_route_is_no_enqueue(ticket):
     assert d.action == "allow", d.reason
 
 
-# ---------- round 1's findings: what the shell or the path's spelling can add ----------
+# ---------- what the shell or the path's spelling can add ----------
 
 
 SHA_ARGS = " -f merge_action=merge_queue -f sha={sha}"
@@ -385,3 +385,33 @@ def test_off_the_ticket_branch_the_refusal_names_queueing(ticket):
     git(ticket, "checkout", "-q", "main")
     d = run(ticket, ROUTE + f" -f merge_action=merge_queue -f sha={sha}")
     assert d.action == "deny" and "queues" in d.reason
+
+
+@pytest.mark.parametrize("role", ["conductor", "attended"])
+@pytest.mark.parametrize(
+    "form",
+    [
+        "gh api -X POST \"repos/acme/demo/pulls/comments/$ID/replies\" -f body='Thanks <!-- workflow:agent -->'",
+        "gh api -X PATCH \"repos/acme/demo/pulls/comments/$ID\" -f body='Fixed <!-- workflow:agent -->'",
+        "gh api -X DELETE \"repos/acme/demo/pulls/comments/$ID\"",
+        "gh api -X PATCH \"$ISSUE_URL\" -f state=closed",
+    ],
+)
+def test_other_routes_with_a_filled_in_part_are_left_alone(ticket, role, form):
+    d = run(ticket, form, role)
+    assert d.action == "allow", (role, d.reason)
+
+
+@pytest.mark.parametrize("role", ["conductor", "attended"])
+@pytest.mark.parametrize(
+    "form",
+    [
+        'gh api -X PUT "$P" -f sha={sha} "$E"',
+        'gh api -X PUT "$P" "${E:--fmerge_action=direct_merge}" -f sha={sha}',
+        "gh api -X PUT \"$P\" -f sha={sha} `printf x`",
+    ],
+)
+def test_a_filled_in_path_with_a_word_that_may_be_a_flag_is_refused(ticket, role, form):
+    d = run(ticket, form, role)
+    assert refused(d, role), (role, d)
+    assert "write" in d.reason
