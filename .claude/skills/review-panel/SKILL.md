@@ -1,6 +1,6 @@
 ---
 name: review-panel
-description: Review a diff or pull request with independent agents in parallel - Standards, Spec, Correctness (with a security review where it applies) and, for UI, API or CLI changes, an explorer that uses the change from outside. Use on any branch or PR, inside build-ticket or alone.
+description: Review a diff or pull request with independent agents in parallel - Standards, Spec, Correctness (with a security review where it applies) and, for UI, API or CLI changes, an explorer that uses the change from outside. Also the planning review of a map decision's or a spec session's ADRs and glossary, or a spec's draft, before it's offered or published. Use on any branch or PR, inside build-ticket or alone.
 ---
 
 # The review panel
@@ -110,3 +110,50 @@ A shorter review for a small, low-risk ticket, asked for as "build #12 with a li
 |---|---|---|---|---|
 | 1 | 1 | Correctness | A not-planned blocker reads as done | Fixed in abc1234, test `test_blockers_not_planned` |
 | 2 | 1 | Spec | No `Area:` on the new tickets | Not a problem: the spec makes areas optional for one-off tickets |
+
+## 8. The planning review
+
+Planning is reviewed before it's offered or published (flow §1 and §2): a map decision's pull request (its ADRs and glossary), a spec's draft, and a spec session's ADR or glossary pull request. Build tickets aren't. Sections 1 to 5 hold, with these differences.
+
+**The inputs,** in a fresh scratch directory for each kind of review, so a spec's review and the same session's pull request never share one: `/tmp/review-<issue>-spec-r<n>/` for a spec's draft, `/tmp/review-<issue>-pr-r<n>/` for a pull request. `<issue>` is the decision ticket, the item's issue, or the map's number for its Destination item (a spec has no number of its own until it's published), else a short name for the work:
+- the diff as `diff.patch`, or the spec's draft as `spec.md`: the whole body exactly as it will be published, any footer or marker included (a Claude Code cloud session's own footer needn't be: the hash leaves it out, **Records**);
+- the owner's answers as posted, as `answers.md`: each question with the answer quoted word for word, copied from the decision ticket, the item's issue or the map's Destination item (a comment on the map naming it), or, for a spec with none of them, the comment about to be posted (once the spec is published, its first comment), never the session's summary. A map's Destination item's spec takes, as well, the answers posted on the map decisions it draws on. An edit after publishing takes all of these as well as the owner's words for every edit so far, this one included, posted on the spec's issue (below), so a dropped earlier answer is still caught. The whole file is in the order the comments were posted, oldest first, each with its date and where it was posted. Sensitive data (`profile.md`) is left out of them and marked as left out, never posted;
+- the ADRs and glossary, all of them, not only the changed ones;
+- the decision ticket and its map, or the item's issue, as `ticket.md`;
+- the project's rules, as `rules.md`.
+
+**The reviewers,** both every round, in one message:
+- **Correctness:** the `correctness-reviewer` agent, briefed for a document: check its facts against the code, look for contradictions with other ADRs and the glossary, and apply the project's safety rules (a name or other sensitive data where it shouldn't be, a screen given to the wrong reader).
+- **Spec:** a general-purpose agent with its own brief, since `code-review`'s Spec axis compares code to a ticket: read the ADRs and glossary, or the spec's draft, against `answers.md`, word for word, and report anything the owner said that is dropped, reworded into a different meaning, or stated as settled where the owner left it open, and anything recorded as the owner's that they didn't say. Where the owner's later words plainly change an earlier answer, the later words stand; where it's unclear whether they do, report it, so it goes to the owner (**Fixes**).
+
+No Standards reviewer and no explorer: there is no code to hold to the standards and nothing to use.
+
+**Rounds:** both reviewers run every round, until a round is clean, up to the profile's `run.review_rounds`. Planning runs in attended sessions, never in a ticket session, so no briefing's rounds apply, and the light review doesn't either. Anything still open after the last round goes to the owner: in the pull request's body, or, for a spec, in the handover. A spec whose last round wasn't clean is fixed and published all the same, and the handover says it reads as unreviewed (`workflow ready` notes its tickets) until a clean round on its current body is posted.
+
+**Fixes:** the session fixes wording, facts and omissions itself. A fix that would change what a decision means is put to the owner as a question first, and their answer is posted word for word like the others before the next round.
+
+**Records:** after every round, whatever it found (section 4's rules on refusals hold):
+- a decision's or a spec session's pull request gets a round record on its commit, kept until the pull request opens (section 4, "No pull request yet"):
+
+  ```
+  WF review-record --kind round --round <n> --commit <sha> --reviewers spec,correctness --clean > /tmp/review-<issue>-pr-r<n>/record.md
+  ```
+- a spec gets a spec record keyed to its body, the SHA-256 of `spec.md` in place of a commit, posted on the spec's issue once it is published, oldest first:
+
+  ```
+  WF review-record --kind spec --round <n> --body /tmp/review-<issue>-spec-r<n>/spec.md --reviewers spec,correctness --clean > /tmp/review-<issue>-spec-r<n>/record.md
+  ```
+
+  (`--not-clean`, for either record, when the round found something to fix.)
+
+  Publish the last round's `spec.md` as is. After a last round that wasn't clean (**Rounds**), make the fixes in that same `spec.md`, once its `record.md` is written, and publish that. Before posting the records, check nothing changed on the way. Make its directory (`mkdir -p /tmp/review-<issue>-spec-check`) and save the published body as GitHub returns it, never retyped (`gh api repos/<repo>/issues/<spec> --jq .body > /tmp/review-<issue>-spec-check/published.md`, or the GitHub MCP tools' `body` written to that file as is). Then print the full hash of each file, never writing a `record.md`: `review-record` reads them as a spec record does (line endings made `\n`, a cloud session's footer left out), which a plain `sha256sum` wouldn't:
+
+  ```
+  WF review-record --kind spec --round 1 --body /tmp/review-<issue>-spec-check/published.md --reviewers spec --clean | grep -o 'body=[0-9a-f]*'
+  WF review-record --kind spec --round 1 --body /tmp/review-<issue>-spec-r<n>/spec.md --reviewers spec --clean | grep -o 'body=[0-9a-f]*'
+  ```
+
+  The two must match. A Claude Code cloud session's GitHub tools, `gh api` among them, add their footer to every body they write, editing it back included: a blank line, `---`, then `_Generated by [Claude Code](https://claude.ai/code)_`. The hash leaves out exactly that footer at the very end (repeated, too), so it never makes the two differ, and needn't be in `spec.md`. Any other difference counts. Each line must print a `body=` line: one that prints nothing was refused (its message is on stderr), and two empty lines are no match. If they don't match (another footer, a tool's edit), edit the body back to the file's text and check again; if it still differs, post no records and say so in the handover. When the answers are the spec's first comment (flow §2), post them before the records.
+
+**An edit after publishing** (the guided start's "Edit the spec first", a later change to the spec) makes it read as unreviewed: the edited body gets another planning round, its own spec record, before any tickets are written from it. First post the owner's words for the change on the spec's issue, each request or answer quoted word for word, any sensitive data (`profile.md`) left out and marked as left out, so the Spec reviewer reads them with the rest.
+
