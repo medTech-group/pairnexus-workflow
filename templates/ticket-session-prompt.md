@@ -51,7 +51,7 @@ Merge mode: **{{merge.mode}}**. Waived CI checks: {{merge.waived}}. As build-tic
   - `{{project.base_branch}}`, force-pushes and protected paths;
   - existing tests: never skip or disable one.
 - **Checks you can't run here:** a check that needs a real device, account or service is built against fakes, and added as a checkbox to the by-hand checklist. It is never marked done.
-- **Stopping:** if CI is still red after three fix attempts, or the ticket can't be built as written:
+- **Stopping:** if CI is still red after three fix attempts, the review reached its pass cap (`merge-check` says `passes_used_up`: put the open findings in the PR body), or the ticket can't be built as written:
   1. label it `needs-human`, and remove `workflow:in-progress` and `ready-for-agent`;
   2. comment exactly why on #{{ticket.number}} and #{{tracking.issue}};
   3. fire the wake routine;

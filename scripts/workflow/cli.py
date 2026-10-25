@@ -17,8 +17,8 @@
                    | drop --body F --ticket N --head SHA --answer A --out F | queue --body F --queue on|off --out F
     workflow render --template F --ticket F --charter F --slots F --tracking N [--by-hand N] [--out F] [--print]
     workflow comments --file F [--owner LOGIN] [--since-id N]
-    workflow merge-check --pr F --files F --commits F --checks F --rulesets F --threads F --reviews F --comments F --permissions F --compare F [--preview F] [--asker LOGIN] [--review-rounds N] [--json]
-    workflow merge-check --fetch N [any of the files above] [--charter F --check-logs DIR] [--asker LOGIN] [--review-rounds N] [--json]
+    workflow merge-check --pr F --files F --commits F --checks F --rulesets F --threads F --reviews F --comments F --permissions F --compare F [--preview F] [--asker LOGIN] [--review-rounds N] [--review-passes N] [--json]
+    workflow merge-check --fetch N [any of the files above] [--charter F --check-logs DIR] [--asker LOGIN] [--review-rounds N] [--review-passes N] [--json]
     workflow preview --comments F --checks F --sha SHA [--json] | --fetch N [any of those] [--json]
     workflow briefing verify --file F
     workflow review-record --kind round|pass --round N --commit SHA --reviewers NAMES --clean|--not-clean
@@ -802,6 +802,12 @@ def _review_rounds(v: str) -> int:
     return int(v)
 
 
+def _review_passes(v: str) -> int:
+    if not (re.fullmatch(r"[0-9]{1,2}", v) and int(v) in merge_mod.REVIEW_PASSES):
+        raise argparse.ArgumentTypeError(f"'{reviews_mod._shown(v, 20)}' isn't a whole number from 0 to 10 (the Correctness passes allowed after the last round, as the briefing or the profile's run.review_passes gives them)")
+    return int(v)
+
+
 def _json_inputs(a, names, raw=()) -> dict:
     """Each of `names` given as a file (or - for standard input, once): its
     JSON, several values in a row read as a list, `(value, None)`; or
@@ -876,7 +882,7 @@ def cmd_merge_check(a) -> int:
             print(f"workflow merge-check: can't read --check-logs {a.check_logs}: {e.strerror or e}; no check's log was read", file=sys.stderr)
     role = roles.env_role() if not roles.unrecognised() else None  # waivers want a firm role: see merge.waivers
     level = resolve_experience(root, prof.experience if prof else None).wording_level
-    res = merge_mod.evaluate(inputs, prof, profile_error, asker=a.asker, level=level, charter_input=charter, logs=logs, role=role, review_rounds=a.review_rounds)
+    res = merge_mod.evaluate(inputs, prof, profile_error, asker=a.asker, level=level, charter_input=charter, logs=logs, role=role, review_rounds=a.review_rounds, review_passes=a.review_passes)
     _out(res.as_dict() if a.json else merge_mod.text(res))
     return 0
 
@@ -1596,6 +1602,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--check-logs", metavar="DIR", help="a waived check's log, one file per check, named by its check run's id on the head (<id>, <id>.log or <id>.txt; the id is its job's), as `gh run view --log-failed --job <id>` gives its tail")
     s.add_argument("--asker", metavar="LOGIN", help="the GitHub login of whoever asks (the owner gets \"Ready once you've read\" for kit and CI files)")
     s.add_argument("--review-rounds", metavar="N", type=_review_rounds, help="the review rounds allowed, 1 to 10 (default: the profile's run.review_rounds): after the last one, a clean Correctness pass on the head lifts its findings; a run passes the briefing's")
+    s.add_argument("--review-passes", metavar="N", type=_review_passes, help="the Correctness passes allowed after the last round, 0 to 10 (default: the profile's run.review_passes): where one more would be needed, the answer is passes_used_up and the owner decides; a run passes the briefing's")
     s.add_argument("--json", action="store_true", help="the decision, its reasons and notes, and each check's name and state, as JSON")
     s.set_defaults(fn=cmd_merge_check)
 

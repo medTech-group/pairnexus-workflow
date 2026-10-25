@@ -988,6 +988,7 @@ SCENARIOS = {
     "review_not_clean": (None, lambda d: d.update(comments=[comment(rec(clean=False))])),
     "review_stale": (None, lambda d: d.update(comments=[comment(rec(commit=EARLIER))])),
     "pass_not_clean": (None, lambda d: d.update(comments=[comment(rec(), cid=1), comment(rec("pass", clean=False), cid=2)])),
+    "passes_used_up": (None, lambda d: d.update(comments=[comment(rec(), cid=1), comment(rec("pass", clean=False), cid=2), comment(rec("pass", clean=False), cid=3)])),
     "conflict": (None, _set(("pr", "mergeable"), False)),
     "mergeable_unknown": (None, _set(("pr", "mergeable"), None)),
     "draft": (None, _set(("pr", "draft"), True)),
