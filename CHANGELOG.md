@@ -13,6 +13,16 @@
 - Tests: `tests/test_doctor_merge_queue.py`.
 - **For projects updating:** nothing to do. An organisation's repository with required checks gets the suggestion and the `merge_group` note; neither fails `--strict` while the queue is off. Otherwise the report is as before.
 
+**The charter and the run's state with a merge queue: no waivers, and `workflow state drop` decides what to do with each answer to queueing a pull request** (#248, part of #243).
+
+- **No waivers with the queue on.** `charter validate`, `charter questions` and `state init` take the queue's state as read, `--queue on` or `--queue off`. With it on, `validate` and `state init` refuse a charter with `merge.waived_checks` (every merge goes through the queue, and only a direct merge could take a waiver), and the merge question no longer asks about waivers: its note says "No waivers". With it off, or not given, nothing changes. The merge modes keep their names; `docs/charter.md` §5 says what each means with the queue.
+- **The queue's state at kick-off** is recorded in the run state's `merge_queue` by `state init --queue`. `workflow state queue --body F --queue on|off --out F` prints `unchanged`, `changed` (with the old and new state) or `recorded` (when none was), and records what it was given, so a change is reported once. Over a charter with waivers, it adds that they no longer apply when the queue is on (at `changed` or `recorded`), and that they apply again when it changes to off.
+- **`workflow state drop --body F --ticket N --head SHA --answer A --out F`** takes GitHub's answer to queueing a ticket's pull request: `202-enqueued`, `202-pending`, `200-waiting`, `200-merged`, `409`, `failed` or `refused`. It prints what to do: `in_queue`, `waiting`, `merged`, `retry`, `requeued`, `merge_base` or `needs_human`.
+- **The rule.** A head's first `202-enqueued` is `in_queue`, and "already in a merge queue" is `waiting`. A later `202-enqueued` of a head in the queue means GitHub dropped it: the first drop on a head is `requeued`, a second `merge_base`, and any drop once the base was merged in `needs_human`, whatever the head. The other answers are `retry`, but a third `failed` on one head is `needs_human`.
+- **On the ticket** it records the heads seen in the queue with their drops (`queue_heads`), the `failed` answers per head (`queue_failed`), whether the base was merged in (`base_merged`) and the last decision (`queue_result`).
+- `docs/charter.md` says so. Tests: `tests/test_charter_queue.py`.
+- **For projects updating:** nothing to do. Without `--queue on`, every charter and state command answers as before.
+
 **`workflow merge-check` with a merge queue: "ready" means ready to queue, and the `merge-check` skill's "Merge it now" adds the pull request to the queue** (#245, part of #243).
 
 - **The queue reader.** `protection.check` says whether a ruleset in force on the base (active, and one it can tell targets the base) has a `merge_queue` rule. A merge-queue rule in a ruleset it can't judge (`unsure`) is listed apart, for doctor to show, and never counts as a queue; so is one on `~DEFAULT_BRANCH` when the default branch is only taken to be the base (the pull request didn't give it). `workflow protection --json` is unchanged.
