@@ -716,6 +716,9 @@ def _state_record(a, body: str) -> int:
     s = state_mod.get(body)
     if s is None:
         raise state_mod.StateError("no state block in this body; use `state put` first")
+    problems = state_mod.validate(s)
+    if problems:
+        raise state_mod.StateError("the state in this body has problems, so nothing was decided:\n- " + "\n- ".join(problems))
     if a.action == "drop":
         tickets = s.get("tickets") if isinstance(s.get("tickets"), dict) else {}
         t = tickets.get(str(a.ticket))

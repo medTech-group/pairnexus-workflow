@@ -73,7 +73,7 @@ def _iso(v) -> bool:
     return charter_mod._time(v) is not None
 
 
-_HEAD = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+_HEAD = re.compile(r"[0-9a-f]{40}")  # as merge-check reads a head
 
 # What `drop` takes: GitHub's answer to `PUT pulls/<n>/merge-async` with
 # `merge_action: merge_queue`, as #243 names them, and what it prints.
@@ -105,10 +105,10 @@ TICKET_FIELDS = {
     # The hash on the last line of the briefing it was sent (`Briefing <hash>`).
     "briefing": (lambda v: isinstance(v, str) and bool(re.fullmatch(r"[0-9a-f]{12}", v)), "the briefing's 12-character hash"),
     # The merge queue (`drop`): each head seen in it, with its drops; `failed` answers per head.
-    "queue_heads": (lambda v: _counts(v), "an object of commit SHAs and whole numbers"),
-    "queue_failed": (lambda v: _counts(v), "an object of commit SHAs and whole numbers"),
+    "queue_heads": (_counts, "an object of commit SHAs and whole numbers"),
+    "queue_failed": (_counts, "an object of commit SHAs and whole numbers"),
     "base_merged": (lambda v: isinstance(v, bool), "true or false"),
-    "queue_result": (lambda v: v in DROP_RESULTS, "one of " + ", ".join(sorted(DROP_RESULTS))),
+    "queue_result": (lambda v: isinstance(v, str) and v in DROP_RESULTS, "one of " + ", ".join(sorted(DROP_RESULTS))),
 }
 
 
@@ -275,12 +275,12 @@ def queue_seen(state: dict, on: bool) -> str:
     `state`, which is changed in place, so a change is reported once."""
     was = state.get("merge_queue")
     state["merge_queue"] = on
-    now = "on" if on else "off"
+    word = {True: "on", False: "off"}
     if was is None:
-        return f"recorded: the merge queue is {now}"
+        return f"recorded: the merge queue is {word[on]}"
     if was == on:
-        return f"unchanged: the merge queue is {now}"
-    return f"changed: the merge queue is now {now} (it was {'on' if was else 'off'})"
+        return f"unchanged: the merge queue is {word[on]}"
+    return f"changed: the merge queue is now {word[on]} (it was {word[was]})"
 
 
 def _approved(state: Any) -> bool:

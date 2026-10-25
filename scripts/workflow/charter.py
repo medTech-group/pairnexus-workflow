@@ -236,6 +236,7 @@ def questions(
                 "(you merge each PR yourself)."
             )
         if q["key"] == "merge" and queue is True:
+            q["ask"] = "Merge automatically when a ticket passes the merge rule?"
             no_waivers = "No waivers: the merge queue is on, and every merge goes through it."
             q["note"] = f"{q['note']} {no_waivers}" if q.get("note") else no_waivers
     return out

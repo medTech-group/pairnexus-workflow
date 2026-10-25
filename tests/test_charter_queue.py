@@ -120,8 +120,9 @@ def test_questions_say_no_waivers_with_the_queue_on(tmp_path):
     on = merge(_cli("charter", "questions", "--queue", "on", env=env).stdout)
     assert "No waivers" in on["note"] and "merge queue" in on["note"]
     assert on["options"] == ["auto-merge", "session", "owner"]
+    assert "waived" not in on["ask"]
     off = merge(_cli("charter", "questions", env=env).stdout)
-    assert "note" not in off
+    assert "note" not in off and "waived" in off["ask"]
 
 
 # ---------- the queue's state at kick-off, and a change ----------
@@ -327,6 +328,32 @@ def test_drop_refuses_what_it_cant_decide(run, args, words):
     p = _cli("state", "drop", "--body", str(run.body), *args, "--out", str(out), env=run.env)
     assert p.returncode != 0
     assert words in p.stderr
+    assert not out.exists()
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [{"queue_result": []}, {"queue_heads": {HEAD_A: "1"}}, {"queue_heads": "x"}, {"queue_failed": {HEAD_A: "1"}}],
+)
+def test_drop_refuses_a_hand_edited_state_it_cant_read(run, fields):
+    s = state.get(run.body.read_text())
+    s["tickets"]["12"].update(fields)
+    block = json.dumps(s)
+    text = run.body.read_text()
+    start, end = text.index("```json\n") + len("```json\n"), text.index("\n```\n")
+    run.body.write_text(text[:start] + block + text[end:])
+    out = run.body.with_name("other.md")
+    p = _cli("state", "drop", "--body", str(run.body), "--ticket", "12", "--head", HEAD_A, "--answer", "202-enqueued", "--out", str(out), env=run.env)
+    assert p.returncode == 1, p.stderr
+    assert "Traceback" not in p.stderr and "tickets[12]." in p.stderr
+    assert not out.exists()
+
+
+def test_drop_refuses_a_body_without_state(run):
+    run.body.write_text("Just words.")
+    out = run.body.with_name("other.md")
+    p = _cli("state", "drop", "--body", str(run.body), "--ticket", "12", "--head", HEAD_A, "--answer", "200-waiting", "--out", str(out), env=run.env)
+    assert p.returncode == 1 and "no state block" in p.stderr
     assert not out.exists()
 
 
