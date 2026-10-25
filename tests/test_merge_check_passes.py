@@ -328,7 +328,13 @@ def test_the_conductor_takes_it_as_needs_human():
     # Asking the owner, or a retry, would only start a session that stops at the cap again.
     assert "without that row's question to the owner" in line and "never requeues it while `WF merge-check` says `passes_used_up`" in line
     answers = conductor.split("**When the owner answers**", 1)[1].split("\n3. ", 1)[0]
-    assert "Except when `WF merge-check` on its pull request says `passes_used_up`" in answers and "don't requeue it" in answers
+    # The same merge-check as the merge rule's, so a Light run's capped ticket isn't read as `next: round`.
+    assert "Except when `WF merge-check` on its pull request, run as the \"PR open, not merged\" row runs it (with `--charter` and `--review-rounds <N>`), says `passes_used_up`" in answers
+    assert "don't requeue it" in answers
+    # An answer that can't requeue it leaves the run waiting on nothing.
+    assert "clear its `asked_at`" in answers
+    asking = conductor.split("**Asking about a `needs-human` ticket.**", 1)[1].split("\n\n", 1)[0]
+    assert "says `passes_used_up` is never asked about, whatever stopped its session" in asking
     assert "is the stuck row's, except that instead of a retry you label the ticket `needs-human`" in line
 
 
