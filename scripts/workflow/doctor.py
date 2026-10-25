@@ -2261,7 +2261,8 @@ def _read_ci(i: Inputs) -> _Answer:
             return _Answer(why=Words("GitHub named a commit the kit can't read", f"{_shown(sha)} isn't a commit sha"), fix=_again(GIVE_CI))
         runs = _gh(i, f"repos/{repo}/commits/{sha}/check-runs?per_page=100", deadline, "--ci", give=GIVE_CI)
         flows = runs if runs.why else _gh(i, f"repos/{repo}/actions/runs?head_sha={sha}&per_page=100", deadline, "--ci", give=GIVE_CI)
-        if flows.why:
+        cut = not flows.why and (_items(runs.value, "check_runs") is None or _items(flows.value, "workflow_runs") is None)
+        if flows.why or cut and not on_base:
             if on_base:
                 return flows
             continue  # a pull request's head: the others still tell
@@ -2272,14 +2273,14 @@ def _read_ci(i: Inputs) -> _Answer:
 def _ci_minutes(ci: list[_CICommit], required: list[str]) -> dict:
     """CI's longest and typical (median) time on the base's commits, in whole
     minutes: on each commit whose required checks have all finished, the
-    longest of their runs that passed or failed, each from its own start to
+    longest of their runs that passed, failed or timed out, each from its own start to
     its own end (so a re-run, or another workflow, never stretches it)."""
     took = []
     for c in ci:
         mine = [r for r in c.runs if r["name"] in required]
         if not c.base or any(r.get("status") != "completed" for r in mine):
             continue
-        runs = [r for r in mine if r.get("conclusion") in ("success", "failure")]  # a skipped or cancelled run took no CI time
+        runs = [r for r in mine if r.get("conclusion") in ("success", "failure", "timed_out")]  # a skipped or cancelled run took no CI time
         times = [(_iso(r.get("started_at")), _iso(r.get("completed_at"))) for r in runs]
         spans = [(end - start).total_seconds() for start, end in times if start and end and end >= start]
         if spans:
@@ -2417,7 +2418,8 @@ def _triggers(text: str, base: str) -> tuple[str, str]:
     ("cant_check", why), read from its `on:` keys line by line. Anything it
     can't follow is `cant_check`, never fine."""
     lines = [ln for ln in text.removeprefix("\ufeff").splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
-    if any(_uncommented(ln) in ("---", "...") for ln in lines[1:] if not ln[0].isspace()):
+    markers = [k for k, ln in enumerate(lines) if not ln[0].isspace() and _uncommented(ln) in ("---", "...")]
+    if [k for k in markers if k and not (k == len(lines) - 1 and _uncommented(lines[k]) == "...")]:
         return "cant_check", "it holds more than one YAML document"
     ons = [k for k, ln in enumerate(lines) if not ln[0].isspace() and _TOP_ON.fullmatch(ln.rstrip())]
     if len(ons) != 1:
@@ -2463,6 +2465,8 @@ def _triggers(text: str, base: str) -> tuple[str, str]:
             continue
         value, under = filters[name]
         items = _flow_list(value) if value else [_unquoted(_uncommented(ln.strip()[1:])) if ln.strip().startswith("- ") else None for ln in under]
+        if items == [] and name == "branches-ignore":
+            continue  # it ignores nothing
         if not items or None in items:
             return "cant_check", f"its `merge_group:` `{name}` filter can't be read"
         if any(_PATTERN.search(p) for p in items):
@@ -2508,11 +2512,11 @@ def _merge_group(i: Inputs, rep: protection_mod.Report) -> tuple[Line, dict]:
     workflows = []
     for path in paths:
         if not _WORKFLOW_FILE.fullmatch(path):
-            workflows.append({"path": path, "state": "cant_check", "why": "it isn't a workflow file in `.github/workflows/`"})
+            workflows.append({"path": path, "state": "cant_check", "why": "it isn't a workflow file in `.github/workflows/`", "file": True})
             continue
         shown = _run(i, ["git", "show", f"{ref}:{path}"])
         if shown.state != "ok":
-            workflows.append({"path": path, "state": "cant_check", "why": f"it isn't on `{base}` (or can't be read there)"})
+            workflows.append({"path": path, "state": "cant_check", "why": f"it isn't on `{base}` (or can't be read there)", "file": True})
             continue
         state, why = _triggers(shown.out, base)
         workflows.append({"path": path, "state": state, "why": why})
@@ -2557,11 +2561,12 @@ def _merge_group_line(i: Inputs, rep: protection_mod.Report, checks: list[dict],
             ), NONE))
         elif w["state"] == "cant_check":
             fix = Words(
-                f"Edit {name} so its `on:` lists its events one per line under it, `pull_request:` among them; then check the set-up again.",
-                f"Make on: in {name} a block mapping with pull_request: (read line by line, no YAML library).",
-            ) if "`on:`" in w["why"] else Words(
-                f"Look at {name} on `{base}` for what that says, then check the set-up again.",
-                f"Check {name} on `{base}` ({w['why']}), then rerun.",
+                f"Make sure {name} is a workflow file in `.github/workflows/` on `{base}`, as UTF-8 text; then check the set-up again.",
+                f"{name} must be a UTF-8 file under .github/workflows/ on `{base}`; then rerun.",
+            ) if w.get("file") else Words(
+                f"Edit {name} so the kit can read its triggers: `on:` as a mapping with one event per line, each named once, `pull_request:` among them,"
+                " and `merge_group:`'s filters as plain lists; then check the set-up again.",
+                f"Make on: in {name} a block mapping (one key per line, no duplicates) with pull_request:, merge_group filters as plain lists (read line by line, no YAML library).",
             )
             found.append(("cant_check", Words(f"{name} can't be read for its triggers: {w['why']}", f"{name}: {w['why']}"), fix))
     for c in checks:

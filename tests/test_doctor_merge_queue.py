@@ -460,20 +460,9 @@ def test_a_pull_requests_head_gh_cant_read_is_left_out_but_a_base_commits_makes_
 
 def test_gh_reads_the_same_as_files_and_only_reads(tmp_path, project):
     import fake_gh
-    from test_doctor import gh_routes
 
-    routes = gh_routes(settings=PRIVATE)
-    routes["orgs/acme"] = {"login": "acme", "plan": {"name": "enterprise"}}
-    routes["repos/acme/demo/commits"] = _chain(3)
-    routes["repos/acme/demo/pulls"] = fake_gh.pages([{"number": 5, "state": "open", "body": "", "head": {"sha": PR_SHA, "repo": {"full_name": "acme/demo"}}}])
-    routes["repos/acme/demo/issues"] = []
     # The base's newest commit (the chain's first) ran the check; its older ones nothing.
-    head, *older = [c["sha"] for c in _chain(3)]
-    routes[f"repos/acme/demo/commits/{head}/check-runs"] = {"total_count": 1, "check_runs": [_check_run("tests", head, 11)]}
-    for sha in older:
-        routes[f"repos/acme/demo/commits/{sha}/check-runs"] = {"total_count": 0, "check_runs": []}
-    routes["repos/acme/demo/actions/runs"] = {"total_count": 2, "workflow_runs": [_workflow_run(head, 11), _workflow_run(PR_SHA, 21)]}
-    routes[f"repos/acme/demo/commits/{PR_SHA}/check-runs"] = {"total_count": 1, "check_runs": [_check_run("tests", PR_SHA, 21)]}
+    routes, head, older = _gh_routes()
     path = _path(tmp_path, gh=routes)
     r = _report(tmp_path, project, "--now", NOW, path=path)
     lines = {ln["id"]: ln for ln in r["lines"]}
@@ -538,7 +527,7 @@ def test_the_changelog_has_a_note_under_unreleased():
     assert "#246" in notes and "merge_group" in notes and "use_merge_queue" in notes
 
 
-# ---------- round 1: the queue off never fails --strict ----------
+# ---------- the queue off never fails --strict, and odd inputs ----------
 
 
 @pytest.mark.parametrize("ci, files", [
@@ -661,7 +650,7 @@ def test_doctor_runs_only_git_rev_parse_and_show(tmp_path, project):
     assert set(log.read_text().split()) == {"rev-parse", "show"}
 
 
-# ---------- round 2 ----------
+# ---------- fixes that follow their reason, and edge cases of the signals ----------
 
 
 def test_a_branches_ignore_filter_is_fixed_by_taking_the_base_out_of_it(tmp_path):
@@ -672,14 +661,16 @@ def test_a_branches_ignore_filter_is_fixed_by_taking_the_base_out_of_it(tmp_path
     assert "branches-ignore" in fix and "widen" not in fix, fix
 
 
-@pytest.mark.parametrize("why_text, on_fix", [
-    ("name: CI\non:\n  pull_request:\n  merge_group:\n    branches: [ma?n]\njobs: {}\n", False),
-    ("name: CI\non: [push, pull_request]\njobs: {}\n", True),
-], ids=["filter", "list-on"])
-def test_a_workflows_cant_check_fix_follows_its_reason(tmp_path, why_text, on_fix):
-    root = _checkout(tmp_path, {"ci.yml": why_text})
+@pytest.mark.parametrize("files, file_fix", [
+    ({"ci.yml": "name: CI\non:\n  pull_request:\n  merge_group:\n    branches: [ma?n]\njobs: {}\n"}, False),
+    ({"ci.yml": "name: CI\non: [push, pull_request]\njobs: {}\n"}, False),
+    ({"other.yml": CI_YML}, True),  # ci.yml, behind the check, isn't on the base
+], ids=["filter", "list-on", "not-on-base"])
+def test_a_workflows_cant_check_fix_follows_where_the_read_failed(tmp_path, files, file_fix):
+    root = _checkout(tmp_path, files)
     lines, _ = _github(tmp_path, root, rulesets=(_queued(),))
-    assert ("one per line" in lines["github.merge_group"]["fix"]) is on_fix, lines["github.merge_group"]
+    fix = lines["github.merge_group"]["fix"]
+    assert ("UTF-8" in fix, "one event per line" in fix) == (file_fix, not file_fix), fix
 
 
 def test_a_document_marker_with_a_comment_is_a_second_document(tmp_path):
@@ -723,3 +714,36 @@ def test_a_pull_requests_head_that_isnt_a_sha_is_left_out(tmp_path, project):
                                                      {"number": 5, "state": "open", "body": "", "head": {"sha": PR_SHA, "repo": {"full_name": "acme/demo"}}}])
     r = _report(tmp_path, project, "--now", NOW, path=_path(tmp_path, gh=routes))
     assert r["merge_queue"]["merge_group"]["status"] == "fine", r["merge_queue"]["merge_group"]
+
+
+def test_a_first_commit_inside_the_window_gives_an_exact_count(tmp_path, project):
+    commits = [_commit("1" * 40, "2026-10-25T10:00:00Z", ("2" * 40,)), _commit("2" * 40, "2026-10-25T09:00:00Z")]
+    _, r = _github(tmp_path, project, commits=commits)
+    s = r["merge_queue"]["signals"]
+    assert (s["base_commits_7d"], s["base_commits_at_least"]) == (2, False)
+
+
+def test_a_timed_out_run_counts_as_ci_time(tmp_path, project):
+    ci = [_entry(BASE_SHA, True, [{**_check_run("tests", BASE_SHA, 11, completed="2026-10-24T10:45:00Z"), "conclusion": "timed_out"}], [])]
+    _, r = _github(tmp_path, project, ci=ci)
+    assert r["merge_queue"]["signals"]["ci_minutes"]["longest"] == 45
+
+
+def test_a_pull_requests_head_with_a_page_missing_is_left_out(tmp_path, project):
+    routes, head, older = _gh_routes()
+    routes[f"repos/acme/demo/commits/{PR_SHA}/check-runs"] = {"total_count": 120, "check_runs": [_check_run("tests", PR_SHA, 21)]}
+    r = _report(tmp_path, project, "--now", NOW, path=_path(tmp_path, gh=routes))
+    assert r["merge_queue"]["merge_group"]["status"] == "fine", r["merge_queue"]["merge_group"]
+
+
+@pytest.mark.parametrize("text, state", [
+    ("name: CI\non:\n  pull_request:\n  merge_group:\njobs: {}\n...\n", "ready"),
+    ("name: CI\non:\n  pull_request:\n  merge_group:\n    branches-ignore: []\njobs: {}\n", "ready"),
+    ("name: CI\non:\n  pull_request:\n  pull_request:\n  merge_group:\njobs: {}\n", "cant_check"),
+], ids=["document-end", "empty-ignore", "twice"])
+def test_a_document_end_and_an_empty_ignore_read_and_a_duplicate_key_is_named_in_the_fix(tmp_path, text, state):
+    root = _checkout(tmp_path, {"ci.yml": text})
+    lines, r = _github(tmp_path, root, rulesets=(_queued(),))
+    assert [w["state"] for w in r["merge_queue"]["merge_group"]["workflows"]] == [state]
+    if state == "cant_check":
+        assert "each named once" in lines["github.merge_group"]["fix"]
