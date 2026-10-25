@@ -219,6 +219,16 @@ def test_a_queue_state_with_none_recorded_is_recorded_not_a_change(tmp_path):
     assert state.get(out.read_text())["merge_queue"] is True
 
 
+@pytest.mark.parametrize("args", [["--out", "OUT"], ["--queue", "on"], ["--queue", "on", "--out", ""]])
+def test_state_queue_needs_queue_and_out(tmp_path, args):
+    env = _profile(tmp_path)
+    body = _started(tmp_path, env)
+    args = [str(tmp_path / "new.md") if a == "OUT" else a for a in args]
+    p = _cli("state", "queue", "--body", str(body), *args, env=env)
+    assert p.returncode == 2 and "state queue needs --queue and --out" in p.stderr
+    assert not (tmp_path / "new.md").exists()
+
+
 def test_the_recorded_queue_state_must_be_true_false_or_null():
     s = state.empty(None)
     s["merge_queue"] = "on"

@@ -718,7 +718,7 @@ def _state_record(a, body: str) -> int:
         raise state_mod.StateError("no state block in this body; use `state put` first")
     problems = state_mod.validate(s)
     if problems:
-        raise state_mod.StateError("the state in this body has problems, so nothing was decided:\n- " + "\n- ".join(problems))
+        raise state_mod.StateError("the state in this body has problems, so nothing was recorded:\n- " + "\n- ".join(problems))
     if a.action == "drop":
         tickets = s.get("tickets") if isinstance(s.get("tickets"), dict) else {}
         t = tickets.get(str(a.ticket))
@@ -1518,7 +1518,7 @@ def main(argv: list[str] | None = None) -> int:
         "--queue",
         choices=["on", "off"],
         help="init: whether the base's ruleset requires a merge queue at kick-off, recorded to notice a change (with it on, "
-        "no check may be waived); queue: whether it does now, printed as unchanged, changed or recorded",
+        "no check may be waived); queue: whether it does now, printed as unchanged, changed or recorded (with whether the charter's waivers apply)",
     )
     s.add_argument("--ticket", type=int, help="drop: the ticket whose pull request was queued")
     s.add_argument("--head", type=_head, help="drop: the head commit queued, its full SHA")
