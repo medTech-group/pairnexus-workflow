@@ -109,9 +109,16 @@ def test_the_owner_s_timeout_wins(repo, inp, given, longest):
     assert queue_rule(body)["check_response_timeout_minutes"] == int(given)
 
 
-@pytest.mark.parametrize("given", ["1", "25", "24"])
-def test_an_owner_s_timeout_not_above_the_longest_run_is_refused(repo, inp, given):
-    bad(queue(repo, inp, recorded_ruleset(), doctor(longest=25), "--timeout", given), "longest", "25 minutes")
+@pytest.mark.parametrize("given,longest", [("1", 25), ("25", 25), ("24", 25), ("358", 358)])
+def test_an_owner_s_timeout_not_above_the_longest_run_is_refused(repo, inp, given, longest):
+    p = queue(repo, inp, recorded_ruleset(), doctor(longest=longest), "--timeout", given)
+    bad(p, "longest", f"{longest} minutes", "groups would time out")
+    assert "give 360" not in p.stderr
+
+
+def test_just_above_the_longest_run_is_taken(repo, inp):
+    body = body_of(queue(repo, inp, recorded_ruleset(), doctor(longest=358), "--timeout", "359"))["body"]
+    assert queue_rule(body)["check_response_timeout_minutes"] == 359
 
 
 @pytest.mark.parametrize("given,longest", [("359", 359), ("10", 360), ("1", 361), ("359", 900)])

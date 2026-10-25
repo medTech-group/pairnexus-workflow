@@ -101,7 +101,8 @@ def test_the_update_uses_the_writer_with_doctors_verdict_and_reads_back():
     ]
     at = [two.index(s) for s in order]
     assert at == sorted(at), order
-    assert "Exit 2 is a refusal: nothing was sent, and the clicks would do what it refused, so give none" in two
+    assert "Three are refusals, where the clicks would do what was refused, so give none" in two
+    assert "fetch the ruleset again once and rerun; if it still fails, say nothing was sent, and give the clicks" in two
     assert "a merge_group check that isn't clean, back to step 1; a timeout, back to the settings screen" in two
     assert "**Require merge queue**" in two and "untick **Require branches to be up to date before merging**" in two
     assert "`merge_queue.queue` is `true`" in two
@@ -221,7 +222,8 @@ def test_require_these_checks_beside_the_queue_needs_merge_group_on_the_new_chec
     assert "**Beside a merge queue**" in screen
     assert "must also come from a workflow that runs on `merge_group`" in screen
     assert "After the read-back, run doctor again" in screen
-    assert "one without `merge_group:` beside `pull_request:` gets **Not now** recommended" in screen
+    assert "isn't ticked by default, and says why, as a failing check does" in screen
+    assert "After `git fetch origin <base>`" in screen and "leaves out the base branch" in screen
     assert "before the check is required" in screen
     assert '(never "up to date" beside a merge queue)' in _part("Require these checks")
 
