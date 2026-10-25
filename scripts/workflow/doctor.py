@@ -2057,7 +2057,7 @@ def parse_now(value: str | None) -> datetime | None:
         t = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
     except ValueError:
         return None
-    return t if t.tzinfo is not None and "T" in value and t.year > 1970 else None
+    return t if t.tzinfo is not None and "T" in value and 1970 < t.year < 9999 else None
 
 
 def _iso(value) -> datetime | None:
@@ -2144,10 +2144,10 @@ def _first_parents(commits: list[dict]) -> tuple[list[tuple[str, datetime | None
         seen.add(c["sha"])
         committer = (c.get("commit") or {}).get("committer") if isinstance(c.get("commit"), dict) else None
         out.append((c["sha"], _iso(committer.get("date")) if isinstance(committer, dict) else None))
-        parents = c.get("parents") if isinstance(c.get("parents"), list) else []
-        first = parents[0].get("sha") if parents and isinstance(parents[0], dict) else None
-        if not parents:
+        parents = c.get("parents")
+        if parents == []:
             return out, False  # the first commit
+        first = parents[0].get("sha") if isinstance(parents, list) and isinstance(parents[0], dict) else None
         if not isinstance(first, str):
             return out, True  # a parent it can't follow: only "at least"
         c = by_sha.get(first)
@@ -2256,6 +2256,8 @@ def _read_ci(i: Inputs) -> _Answer:
     repo, deadline, out = i.profile.repo, _gh_deadline(i), []
     for sha, on_base in [(s, True) for s in base] + [(s, False) for s in heads]:
         if not _SHA.fullmatch(sha):
+            if not on_base:
+                continue  # a pull request's head: the others still tell
             return _Answer(why=Words("GitHub named a commit the kit can't read", f"{_shown(sha)} isn't a commit sha"), fix=_again(GIVE_CI))
         runs = _gh(i, f"repos/{repo}/commits/{sha}/check-runs?per_page=100", deadline, "--ci", give=GIVE_CI)
         flows = runs if runs.why else _gh(i, f"repos/{repo}/actions/runs?head_sha={sha}&per_page=100", deadline, "--ci", give=GIVE_CI)
@@ -2303,14 +2305,18 @@ def _signals(i: Inputs, rep: protection_mod.Report) -> dict:
     }
 
 
+def _minutes(n: int) -> str:
+    return "under a minute" if not n else _count(n, "a minute", "minutes")
+
+
 def _signal_words(i: Inputs, s: dict) -> Words:
     base, ci = i.profile.base_branch, s["ci_minutes"]
     day = i.now.astimezone(timezone.utc).strftime("%d %b %Y")
     if ci["typical"] is None:
         took = Words(f"how long CI takes on `{base}` couldn't be read", "CI time on the base: unknown")
     else:
-        about = "under a minute" if not ci["typical"] else "about " + _count(ci["typical"], "a minute", "minutes")
-        took = Words(f"CI takes {about} on `{base}` (the longest {_count(ci['longest'], 'a minute', 'minutes')})",
+        about = ("" if not ci["typical"] else "about ") + _minutes(ci["typical"])
+        took = Words(f"CI takes {about} on `{base}` (the longest {_minutes(ci['longest'])})",
                      f"CI on `{base}`: typical {ci['typical']} min, longest {ci['longest']} (over {_count(ci['commits'], 'its last commit', 'commits')})")
     n = s["base_commits_7d"]
     if n is None:
@@ -2411,7 +2417,7 @@ def _triggers(text: str, base: str) -> tuple[str, str]:
     ("cant_check", why), read from its `on:` keys line by line. Anything it
     can't follow is `cant_check`, never fine."""
     lines = [ln for ln in text.removeprefix("\ufeff").splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
-    if any(ln.rstrip() in ("---", "...") for ln in lines[1:]):
+    if any(_uncommented(ln) in ("---", "...") for ln in lines[1:] if not ln[0].isspace()):
         return "cant_check", "it holds more than one YAML document"
     ons = [k for k, ln in enumerate(lines) if not ln[0].isspace() and _TOP_ON.fullmatch(ln.rstrip())]
     if len(ons) != 1:
@@ -2535,7 +2541,8 @@ def _merge_group_line(i: Inputs, rep: protection_mod.Report, checks: list[dict],
     found: list[tuple[str, Words, Words]] = []  # (status, what, fix)
     on = rep.queue
     lacking = [w["path"] for w in workflows if w["state"] == "missing"]
-    narrow = [w["path"] for w in workflows if w["state"] == "excluded"]
+    narrow = [w["path"] for w in workflows if w["state"] == "excluded" and w["why"] == "branches"]
+    ignoring = [w["path"] for w in workflows if w["state"] == "excluded" and w["why"] == "branches-ignore"]
     for w in workflows:
         name = _files_named([w["path"]])
         if w["state"] == "missing":
@@ -2549,10 +2556,14 @@ def _merge_group_line(i: Inputs, rep: protection_mod.Report, checks: list[dict],
                 f"{name}: merge_group's {w['why']} filter leaves out `{base}`",
             ), NONE))
         elif w["state"] == "cant_check":
-            found.append(("cant_check", Words(f"{name} can't be read for its triggers: {w['why']}", f"{name}: {w['why']}"), Words(
+            fix = Words(
                 f"Edit {name} so its `on:` lists its events one per line under it, `pull_request:` among them; then check the set-up again.",
                 f"Make on: in {name} a block mapping with pull_request: (read line by line, no YAML library).",
-            )))
+            ) if "`on:`" in w["why"] else Words(
+                f"Look at {name} on `{base}` for what that says, then check the set-up again.",
+                f"Check {name} on `{base}` ({w['why']}), then rerun.",
+            )
+            found.append(("cant_check", Words(f"{name} can't be read for its triggers: {w['why']}", f"{name}: {w['why']}"), fix))
     for c in checks:
         name = f"`{_shown(c['name'])}`"
         if c["state"] == "other_ci":
@@ -2594,6 +2605,12 @@ def _merge_group_line(i: Inputs, rep: protection_mod.Report, checks: list[dict],
         found.append(("gap" if on else "note", NONE, Words(
             f"Ask Claude to widen the `branches` filter of `merge_group:` in {files} to cover `{base}`, in a pull request; CI files are yours to review and merge.",
             f"Widen merge_group's branches filter in {files} to cover `{base}` (a PR to a protected path: the owner merges it).",
+        )))
+    if ignoring:
+        files = _files_named(ignoring)
+        found.append(("gap" if on else "note", NONE, Words(
+            f"Ask Claude to take `{base}` out of the `branches-ignore` filter of `merge_group:` in {files}, in a pull request; CI files are yours to review and merge.",
+            f"Stop merge_group's branches-ignore filter in {files} matching `{base}` (a PR to a protected path: the owner merges it).",
         )))
     status = min((s for s, _, _ in found), key=_rank, default="fine")
     ready = [w["path"] for w in workflows if w["state"] == "ready"]

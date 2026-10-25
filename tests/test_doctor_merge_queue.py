@@ -659,3 +659,67 @@ def test_doctor_runs_only_git_rev_parse_and_show(tmp_path, project):
     r = _report(tmp_path, project, *_inputs(tmp_path), path=path)
     assert r["merge_queue"]["merge_group"]["clean"] is True
     assert set(log.read_text().split()) == {"rev-parse", "show"}
+
+
+# ---------- round 2 ----------
+
+
+def test_a_branches_ignore_filter_is_fixed_by_taking_the_base_out_of_it(tmp_path):
+    text = "name: CI\non:\n  pull_request:\n  merge_group:\n    branches-ignore: [main]\njobs: {}\n"
+    root = _checkout(tmp_path, {"ci.yml": text})
+    lines, _ = _github(tmp_path, root, rulesets=(_queued(),))
+    fix = lines["github.merge_group"]["fix"]
+    assert "branches-ignore" in fix and "widen" not in fix, fix
+
+
+@pytest.mark.parametrize("why_text, on_fix", [
+    ("name: CI\non:\n  pull_request:\n  merge_group:\n    branches: [ma?n]\njobs: {}\n", False),
+    ("name: CI\non: [push, pull_request]\njobs: {}\n", True),
+], ids=["filter", "list-on"])
+def test_a_workflows_cant_check_fix_follows_its_reason(tmp_path, why_text, on_fix):
+    root = _checkout(tmp_path, {"ci.yml": why_text})
+    lines, _ = _github(tmp_path, root, rulesets=(_queued(),))
+    assert ("one per line" in lines["github.merge_group"]["fix"]) is on_fix, lines["github.merge_group"]
+
+
+def test_a_document_marker_with_a_comment_is_a_second_document(tmp_path):
+    root = _checkout(tmp_path, {"ci.yml": "name: CI\n--- # second\non:\n  pull_request:\n  merge_group:\njobs: {}\n"})
+    _, r = _github(tmp_path, root, rulesets=(_queued(),))
+    assert [w["state"] for w in r["merge_queue"]["merge_group"]["workflows"]] == ["cant_check"]
+
+
+def test_a_now_too_late_to_count_from_is_refused(tmp_path, project):
+    p = subprocess.run([shutil.which("python3"), "-B", str(project / ".claude/workflow/bin/workflow.py"), "doctor", "--json", "--now", "9999-12-31T23:30:00-01:00"],
+                       cwd=project, capture_output=True, text=True)
+    assert p.returncode == 2 and "--now" in p.stderr
+
+
+@pytest.mark.parametrize("seconds, words", [(20, "CI takes under a minute on `main` (the longest under a minute)"),
+                                            (60, "CI takes about a minute on `main` (the longest a minute)")])
+def test_short_ci_is_worded_in_minutes(tmp_path, project, seconds, words):
+    ci = [_entry(BASE_SHA, True, [_check_run("tests", BASE_SHA, 11, started="2026-10-24T10:00:00Z", completed=f"2026-10-24T10:{seconds // 60:02d}:{seconds % 60:02d}Z")],
+                 [_workflow_run(BASE_SHA, 11)])]
+    lines, _ = _github(tmp_path, project, ci=ci)
+    assert words in lines["github.merge_queue"]["message"]
+
+
+@pytest.mark.parametrize("parents", [None, "missing"])
+def test_parents_not_given_cant_be_followed_so_the_count_is_at_least(tmp_path, project, parents):
+    second = _commit("2" * 40, "2026-10-25T09:00:00Z")
+    if parents == "missing":
+        del second["parents"]
+    else:
+        second["parents"] = None
+    _, r = _github(tmp_path, project, commits=[_commit("1" * 40, "2026-10-25T10:00:00Z", ("2" * 40,)), second])
+    s = r["merge_queue"]["signals"]
+    assert (s["base_commits_7d"], s["base_commits_at_least"]) == (2, True)
+
+
+def test_a_pull_requests_head_that_isnt_a_sha_is_left_out(tmp_path, project):
+    import fake_gh
+
+    routes, head, older = _gh_routes()
+    routes["repos/acme/demo/pulls"] = fake_gh.pages([{"number": 4, "state": "open", "body": "", "head": {"sha": "not-a-sha", "repo": {"full_name": "acme/demo"}}},
+                                                     {"number": 5, "state": "open", "body": "", "head": {"sha": PR_SHA, "repo": {"full_name": "acme/demo"}}}])
+    r = _report(tmp_path, project, "--now", NOW, path=_path(tmp_path, gh=routes))
+    assert r["merge_queue"]["merge_group"]["status"] == "fine", r["merge_queue"]["merge_group"]
