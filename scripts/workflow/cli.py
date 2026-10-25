@@ -6,6 +6,7 @@
     workflow protection --rulesets F [--repo F] [--base BRANCH] [--json]
     workflow protection --protect --repo F [--base BRANCH] [--check NAME ...] [--json]
     workflow protection --require-checks F --check NAME [--check NAME ...] [--json]
+    workflow protection --merge-queue F --doctor F [--timeout MINUTES] [--json]
     workflow protection --checks-ran F [--statuses F] --rulesets F --repo F [--base BRANCH] [--json]
     workflow version [--fresh] [--json] | --repo | --starter
     workflow ready [--issues F --prs F | --fetch] [--permissions F] [--exclude 1,2] [--only 1,2] [--override 3] [--running-area A ...] [--slots N] [--json]
@@ -409,8 +410,21 @@ def cmd_protection(a) -> int:
 
     def require():
         if a.rulesets is not None or a.repo is not None or a.base is not None:
-            raise protection_mod.ProtectionError("--require-checks takes the ruleset alone, without --rulesets, --repo or --base: it names its repository, and targets what it targets")
+            raise protection_mod.ProtectionError("--require-checks takes the ruleset alone, without --rulesets, --repo or --base: the ruleset names its own repository and branches")
         req = protection_mod.require_checks(given(a.require_checks, "ruleset"), a.check)
+        return {"requests": [req.as_dict()]} if a.json else protection_mod.requests_text([req])
+
+    def queue():
+        if a.rulesets is not None or a.repo is not None or a.base is not None:
+            raise protection_mod.ProtectionError("--merge-queue takes the ruleset and --doctor alone, without --rulesets, --repo or --base: the ruleset names its own repository and branches")
+        if a.doctor is None:
+            raise protection_mod.ProtectionError("--merge-queue needs doctor's verdict with --doctor (what `workflow doctor --json` prints)")
+        timeout = None
+        if a.timeout is not None:
+            if not (re.fullmatch(r"[1-9][0-9]{0,2}", a.timeout) and int(a.timeout) <= protection_mod.QUEUE_TIMEOUT_MAX):
+                raise protection_mod.ProtectionError(f"--timeout {protection_mod.quote(a.timeout)} isn't whole minutes from 1 to {protection_mod.QUEUE_TIMEOUT_MAX}, as GitHub takes it")
+            timeout = int(a.timeout)
+        req = protection_mod.merge_queue(given(a.merge_queue, "ruleset"), given(a.doctor, "doctor"), timeout)
         return {"requests": [req.as_dict()]} if a.json else protection_mod.requests_text([req])
 
     def checks_ran():
@@ -423,17 +437,21 @@ def cmd_protection(a) -> int:
         return {"checks": ran, "required": rep.required_checks} if a.json else protection_mod.ran_text(ran, rep.required_checks)
 
     try:
-        files = [f for f in (a.rulesets, a.repo, a.require_checks, a.checks_ran, a.statuses) if f is not None]
+        files = [f for f in (a.rulesets, a.repo, a.require_checks, a.merge_queue, a.doctor, a.checks_ran, a.statuses) if f is not None]
         if files.count("-") > 1:
             raise protection_mod.ProtectionError("only one of the files can be read from standard input (-)")
         if a.check and not (a.protect or a.require_checks is not None):
             raise protection_mod.ProtectionError("--check goes with --protect or --require-checks")
         if a.statuses is not None and a.checks_ran is None:
             raise protection_mod.ProtectionError("--statuses goes with --checks-ran")
+        if (a.doctor is not None or a.timeout is not None) and a.merge_queue is None:
+            raise protection_mod.ProtectionError(f"{'--doctor' if a.doctor is not None else '--timeout'} goes with --merge-queue")
         if a.protect:
             out = protect()
         elif a.require_checks is not None:
             out = require()
+        elif a.merge_queue is not None:
+            out = queue()
         elif a.checks_ran is not None:
             out = checks_ran()
         else:
@@ -1471,9 +1489,12 @@ def main(argv: list[str] | None = None) -> int:
     mode = s.add_mutually_exclusive_group()
     mode.add_argument("--protect", action="store_true", help="print the requests that protect the base branch: the ruleset to create, and the merge settings (needs --repo)")
     mode.add_argument("--require-checks", metavar="F", help="print the request that adds --check names to this ruleset (GET repos/<repo>/rulesets/<id>, in full)")
+    mode.add_argument("--merge-queue", metavar="F", help="print the request that adds the merge-queue rule to this ruleset (GET repos/<repo>/rulesets/<id>, in full), with \"up to date\" off; refused unless --doctor's merge_group verdict is clean")
     mode.add_argument("--checks-ran", metavar="F", help="the checks that ran on a commit (GET repos/<repo>/commits/<ref>/check-runs), less those --rulesets require")
     s.add_argument("--statuses", metavar="F", help="with --checks-ran: the commit's statuses (GET repos/<repo>/commits/<ref>/statuses)")
     s.add_argument("--check", action="append", default=[], metavar="NAME", help="a check to require (repeat for each)")
+    s.add_argument("--doctor", metavar="F", help="with --merge-queue: what `workflow doctor --json` printed (or -), for its merge_group verdict and CI's longest run")
+    s.add_argument("--timeout", metavar="MINUTES", help="with --merge-queue: the check timeout the owner chose, 1 to 360 (default: twice CI's longest run on the base, 60 to 360)")
     s.add_argument("--rulesets", help="the repository's rulesets, each in full (GET repos/<repo>/rulesets/<id>), as a JSON list (or -)")
     s.add_argument("--repo", help="the repository's settings (GET repos/<repo>): the merge settings, and the default branch that ~DEFAULT_BRANCH means")
     s.add_argument("--base", help="the base branch (default: the profile's project.base_branch)")

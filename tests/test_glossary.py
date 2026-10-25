@@ -21,6 +21,7 @@ PARTS = {
         "Pull request (PR)": "pull-request-pr",
         "Checks (CI)": "checks-ci",
         "Merge": "merge",
+        "Merge queue": "merge-queue",
         "Revert": "revert",
         "Preview link": "preview-link",
         "Cloud session": "cloud-session",
@@ -51,6 +52,7 @@ MENTIONS = {
     "pull-request-pr": r"\bpull requests?\b|\bPRs?\b",
     "checks-ci": r"\bchecks\b|\bcheck\b(?! the set-up|-setup)|\bCI\b",
     "merge": r"\bmerg(?:e|es|ed|ing)\b",
+    "merge-queue": r"\bmerge queues?\b",
     "revert": r"\brevert",
     "preview-link": r"\bpreview links?\b",
     "cloud-session": r"\bcloud sessions?\b",
@@ -111,7 +113,7 @@ def test_the_glossary_has_the_two_parts_with_each_word_under_its_part():
     assert list(parts) == list(PARTS)
     for part, words in PARTS.items():
         assert list(parts[part]) == list(words), part
-    assert sum(len(w) for w in PARTS.values()) == 22
+    assert sum(len(w) for w in PARTS.values()) == 23
 
 
 def test_each_heading_has_its_stable_anchor():
