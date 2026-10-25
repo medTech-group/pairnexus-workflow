@@ -2,11 +2,11 @@
 
 ## Unreleased
 
-**The conductor at the pass cap: "couldn't read" never hides `passes_used_up`, and the answers exception updates `for_owner`** (#281, from #256's last Correctness pass).
+**The conductor at the pass cap: "couldn't read" never hides `passes_used_up`, and one set of steps for a ticket at the cap** (#281, from #256's last Correctness pass).
 
-- **`passes_used_up` wins.** In step 2's "Waiting on the owner", a ticket counts as waiting only with no pull request, or when its `merge-check` doesn't say `passes_used_up` and still has a "couldn't read" reason after the row's retry. `merge-check` keeps judging the review when an input can't be read (an unreadable try-it link, say), so the cap can come back beside such a reason; before, the run then waited on the owner until its end time.
-- **The answers exception** ("When the owner answers", a ticket at the cap) now replaces the ticket's `for_owner` line with the pass-cap row's and names the change on the tracking issue, as step 2's check does, so the final report no longer shows the answered question.
-- Tests: `tests/test_merge_check_passes.py`.
+- **`passes_used_up` wins.** In step 2's "Waiting on the owner", `passes_used_up` counts even beside a "couldn't read" reason (an unreadable try-it link, say), since `merge-check` keeps judging the review when an input can't be read. Before, the run then waited on the owner until its end time. A "couldn't read" reason for the profile is the exception: the profile holds the cap itself, so `merge-check` then judges against the default of 2. A ticket with no pull request, or with a "couldn't read" reason and no `passes_used_up`, still counts as waiting.
+- **One set of steps.** Step 2 holds the steps for a ticket at the cap: its labels stay (`needs-human`, never claimed again), `asked_at` is cleared, its `for_owner` line becomes the pass-cap row's, the ticket gets the "One more pass" note, and the change is named on the tracking issue, in the next check-in's comment for an answer between check-ins. Each step is taken only where it isn't done already. "When the owner answers" now points to them rather than restating them, so it updates `for_owner` too, and nothing is posted twice.
+- Tests: `tests/test_merge_check_passes.py`, including two of `merge-check` itself: the cap beside an unreadable try-it link, and beside an unreadable profile.
 - **For projects updating:** nothing to do.
 
 **The pass cap: at most `run.review_passes` Correctness passes after the last round, then the owner decides** (#256, from #255; answers 3, 10 and 21 on #253).

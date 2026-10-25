@@ -126,6 +126,34 @@ def test_an_unreadable_profile_still_says_2(project, capsys):
     assert got["review_passes"] == 2
 
 
+def _at_the_cap():
+    data = three_commits()
+    data["comments"] = records(
+        rec(rnd=3, commit=EARLIER, clean=False), rec("pass", rnd=3, commit=MIDDLE, clean=False), rec("pass", rnd=3, commit=HEAD, clean=False),
+    )
+    return data
+
+
+def test_the_cap_still_comes_back_beside_an_input_that_cant_be_read(project, capsys):
+    # The conductor's step 2 relies on this (#281): an unreadable try-it link doesn't hide the cap.
+    data = _at_the_cap()
+    data["preview"] = {}
+    got, _ = check(project, capsys, data, raw={"preview": "{not json"})
+    assert [r.get("input") for r in got["reasons"] if r["id"] == "couldnt_read"] == ["preview"]
+    used_up(got)
+
+
+def test_with_the_profile_unreadable_the_cap_is_the_default_and_says_so(project, capsys):
+    # The cap then isn't the project's own, so the conductor doesn't take it as the cap (#281).
+    passes_in_profile(project, 4)
+    data = _at_the_cap()
+    assert ids(check(project, capsys, data)[0]) == ["pass_not_clean"]  # 2 of the project's 4
+    (project / ".claude/workflow/profile.toml").write_text("[project\n")
+    got, _ = check(project, capsys, data)
+    assert [r.get("input") for r in got["reasons"] if r["id"] == "couldnt_read"] == ["profile"]
+    used_up(got)
+
+
 # ---------- --review-passes 0 ----------
 
 
@@ -331,29 +359,32 @@ def test_the_conductor_takes_it_as_needs_human():
     # The same merge-check as the merge rule's, so a Light run's capped ticket isn't read as `next: round`.
     assert "Except when `WF merge-check` on its pull request, run as the \"PR open, not merged\" row runs it (with `--charter` and `--review-rounds <N>`), says `passes_used_up`" in answers
     assert "don't requeue it" in answers
-    # An answer that can't requeue it leaves the run waiting on nothing.
-    assert "clear its `asked_at`" in answers
+    # An answer that can't requeue it leaves the run waiting on nothing: step 2's steps clear `asked_at`.
+    assert "clear its `asked_at`" in conductor.split("- **Waiting on the owner** (not done):", 1)[1].split("\n- **Done**", 1)[0]
     asking = conductor.split("**Asking about a `needs-human` ticket.**", 1)[1].split("\n\n", 1)[0]
     assert "says `passes_used_up` is never asked about, whatever stopped its session" in asking
     # One asked about before its pull request reached the cap doesn't keep the run waiting either:
     # step 2 checks it each check-in, before it counts the run as waiting.
     waiting = conductor.split("- **Waiting on the owner** (not done):", 1)[1].split("\n- **Done**", 1)[0]
     # The merge rule's merge-check, flags and all: without `--review-rounds`, a Light run's capped ticket reads as `next: round`.
-    assert "Before counting a `needs-human` ticket with `asked_at` as waiting, run `WF merge-check` on its pull request as the \"PR open, not merged\" row runs it (with `--charter` and `--review-rounds <N>`): if it says `passes_used_up`, clear its `asked_at`" in waiting
+    assert "Before counting a `needs-human` ticket with `asked_at` as waiting, run `WF merge-check` on its pull request as the \"PR open, not merged\" row runs it (with `--charter` and `--review-rounds <N>`)." in waiting
     # What the owner sees follows: the old question is no longer what the run waits on.
     assert "replace its `for_owner` line with the pass-cap row's" in waiting
-    assert "name the change in this check-in's comment on the tracking issue" in waiting
-    # Without a pull request, or a readable answer, it can't be at the cap: it still counts.
     # `merge-check` keeps judging the review when an input can't be read, so `passes_used_up` wins
-    # over a "couldn't read" reason (an unreadable try-it link, say) (#281).
-    assert "A ticket with no pull request, or whose `merge-check` doesn't say `passes_used_up` and still has a \"couldn't read\" reason after the row's retry, still counts." in waiting
-    # One note on the ticket, not two, when step 2 and an answer meet in one check-in.
-    assert "unless the ticket already says so" in answers
-    # The answers exception leaves what the owner sees as step 2's check does (#281).
+    # over a "couldn't read" reason (an unreadable try-it link, say), but not over one for the profile,
+    # which holds the cap itself (#281).
+    assert "`passes_used_up` counts even beside a \"couldn't read\" reason, unless that reason is for the profile" in waiting
+    assert "A ticket with no pull request still counts, and so does one whose `merge-check` doesn't say `passes_used_up` but still has a \"couldn't read\" reason after the row's retry, or has one for the profile." in waiting
+    # The answers exception does what step 2's check does, from one place (#281), and only what isn't
+    # done already: one note on the ticket and one on the tracking issue when the two meet in one check-in.
     exception = answers.split("Except when `WF merge-check`", 1)[1]
-    assert "replace its `for_owner` line with the pass-cap row's (\"#n reached its pass cap (#PR): see its review records and PR body\")" in exception
-    assert "name the change in this check-in's comment on the tracking issue" in exception
+    assert "take the steps for a ticket at the cap in step 2's \"Waiting on the owner\", each only where it isn't done already" in exception
     assert "leave it in `for_owner`" not in exception
+    # Its labels stay: it isn't requeued, so it isn't claimed either.
+    assert "leave its labels as they are" in waiting
+    # One place names the change on the tracking issue, once, also for an answer between check-ins.
+    assert "name the change on the tracking issue (this check-in's comment, or the next one's for an answer between check-ins)" in waiting
+    assert waiting.count("#n reached its pass cap (#PR): see its review records and PR body") == 1
     assert "step 2's \"Waiting on the owner\" clears its `asked_at`" in asking
     assert "or its pull request reaches the pass cap" in conductor.split("- Never block on a question:", 1)[1].split("\n", 1)[0]
     assert "is the stuck row's, except that instead of a retry you label the ticket `needs-human`" in line
