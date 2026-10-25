@@ -352,9 +352,11 @@ def test_the_conductor_takes_it_as_needs_human():
     # It leaves the labelling to the session, and claims no findings that may not exist.
     # Stopping is the session's: the conductor never settles a session that still runs.
     assert "Don't label or archive it yourself while its session runs" in line
-    assert "see its review records and PR body" in line
+    # Once labelled, a ticket at the cap takes step 2's steps (the "One more pass" note, the `for_owner`
+    # line) on every path, the session's own stop at the cap included (#281).
+    assert "for a ticket at the cap (step 2's \"A ticket at the cap\") take its steps instead of that row's question to the owner and its `for_owner` line" in line
     # Asking the owner, or a retry, would only start a session that stops at the cap again.
-    assert "without that row's question to the owner" in line and "never requeues a ticket at the cap (step 2's \"A ticket at the cap\")" in line
+    assert "never requeues a ticket at the cap (step 2's \"A ticket at the cap\")" in line
     # "A ticket at the cap" is said once (#281): the merge rule's merge-check, flags and all (without
     # `--review-rounds`, a Light run's capped ticket reads as `next: round`), and the steps for it.
     at_cap = conductor.split("**A ticket at the cap.**", 1)[1].split("\n\n", 1)[0]
@@ -365,8 +367,10 @@ def test_the_conductor_takes_it_as_needs_human():
     assert "with no \"couldn't read\" reason for the profile, which holds the cap itself" in at_cap
     # Only an open pull request can be at the cap: a new PR starts with no passes counted.
     assert "A ticket with no open pull request (none, or one closed without merging) is never at the cap." in at_cap
-    # With the profile unreadable the cap can't be told: neither path acts on it until it can.
-    assert "With a \"couldn't read\" reason for the profile, whether it is at the cap can't be told: it still counts as waiting, and an answer on it waits for a check-in that reads the profile." in at_cap
+    # With the profile unreadable the cap can't be told, so it isn't taken as the cap: the ticket keeps
+    # waiting, and an answer requeues it as usual. Nothing is held, so no answer can be dropped.
+    assert "With a \"couldn't read\" reason for the profile, whether it is at the cap can't be told, so it isn't at the cap: it still counts as waiting, and an answer requeues it as usual." in at_cap
+    assert "waits for a check-in that reads the profile" not in conductor
     # The steps, each taken once, whichever path comes to them first.
     assert "take these steps, each only where it isn't done already:" in at_cap
     assert "leave its labels as they are (`needs-human` stays, with no `ready-for-agent` or `workflow:in-progress`)" in at_cap
