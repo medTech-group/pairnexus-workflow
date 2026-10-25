@@ -335,6 +335,8 @@ def test_the_conductor_takes_it_as_needs_human():
     assert "clear its `asked_at`" in answers
     asking = conductor.split("**Asking about a `needs-human` ticket.**", 1)[1].split("\n\n", 1)[0]
     assert "says `passes_used_up` is never asked about, whatever stopped its session" in asking
+    # One asked about before its pull request reached the cap doesn't keep the run waiting either.
+    assert "A ticket already asked about whose pull request now says `passes_used_up`: clear its `asked_at`" in asking
     assert "is the stuck row's, except that instead of a retry you label the ticket `needs-human`" in line
 
 
