@@ -104,6 +104,14 @@ def _no_auto_merge_reason(profile: Any, protected: bool | None) -> str | None:
     return None
 
 
+# Why a charter may waive no check while the ruleset requires a merge queue
+# (#243, answer 13): only a direct merge could take a waiver.
+QUEUE_NO_WAIVERS = (
+    "merge.waived_checks with the merge queue on: every merge goes through the merge queue, and only a direct "
+    "merge could take a waiver; remove the waived checks"
+)
+
+
 # The kick-off questions, in the order asked, with their recommended defaults.
 QUESTIONS: list[dict[str, Any]] = [
     {
@@ -202,13 +210,15 @@ def defaults(release_steps: list[str] | None = None, profile: Any = None, protec
     return out
 
 
-def questions(release_steps: list[str] | None = None, profile: Any = None, protected: bool | None = None) -> list[dict]:
+def questions(
+    release_steps: list[str] | None = None, profile: Any = None, protected: bool | None = None, queue: bool | None = None
+) -> list[dict]:
     """The kick-off questions with defaults fitted to the profile, as `defaults`
     gives them. The limits question offers the presets first, the profile's
     run.preset first and `recommended`, with each one's numbers in `presets`.
     Where auto-merge would merge with nothing checked (solo mode, no CI, no
     required checks), the merge question doesn't offer it, and its note says
-    why."""
+    why. With `queue` true, its note says no check can be waived."""
     d = defaults(release_steps, profile, protected)
     out = json.loads(json.dumps(QUESTIONS))
     why = _no_auto_merge_reason(profile, protected)
@@ -225,6 +235,10 @@ def questions(release_steps: list[str] | None = None, profile: Any = None, prote
                 f"Not offering auto-merge: {why}. Use session (the session merges under the merge rule) or owner "
                 "(you merge each PR yourself)."
             )
+        if q["key"] == "merge" and queue is True:
+            q["ask"] = "Merge automatically when a ticket passes the merge rule?"
+            no_waivers = "No waivers: the merge queue is on, and every merge goes through it."
+            q["note"] = f"{q['note']} {no_waivers}" if q.get("note") else no_waivers
     return out
 
 
@@ -320,9 +334,11 @@ def _unknown(keys, allowed: set[str], where: str) -> list[str]:
     return [f"{where}: unknown key{'s' if len(bad) > 1 else ''} {', '.join(repr(k) for k in bad)}; allowed: {', '.join(sorted(allowed))}"]
 
 
-def validate(c: Any, require_approval: bool = False, now: datetime | None = None) -> list[str]:
+def validate(c: Any, require_approval: bool = False, now: datetime | None = None, queue: bool | None = None) -> list[str]:
     """The charter's problems, empty when valid. With require_approval it must be
-    approved and its end time still ahead (as at `now`, default the clock)."""
+    approved and its end time still ahead (as at `now`, default the clock). With
+    `queue` true (the ruleset requires a merge queue on the base) it may waive
+    no check; false or left out, nothing changes."""
     now = now or datetime.now(timezone.utc)
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
@@ -377,6 +393,8 @@ def validate(c: Any, require_approval: bool = False, now: datetime | None = None
                 "merge.waived_checks with merge.mode auto-merge: Auto-merge can't tell killed from failed; "
                 "use mode session, where the session checks the killed markers before merging."
             )
+        if w and queue is True and isinstance(w, list):
+            p.append(QUEUE_NO_WAIVERS)
     r = c.get("release")
     if not isinstance(r, dict):
         p.append("release must be an object")
