@@ -41,17 +41,19 @@ interpreter one-liners, and in ticket and conductor sessions finds `git`,
   pinned to the checked-out ticket branch's head (`--match-head-commit`, the
   REST merge's `sha`, `merge_pull_request`'s `expectedHeadSha`), or, for
   `enable_pr_auto_merge` and `ccr/auto_merge`, with the pull request's head
-  read back from GitHub (`_pr_head`).
+  read back from GitHub (`_pr_head`); adding it to a merge queue through
+  `merge-async` is pinned by its `sha` the same way.
 
 **Every role** is held to a deny-list: pushing to the base branch, force-pushes,
 deleting or mirroring branches (also by `remote.*.mirror`, `remote.pushDefault`
 or `remote.*.skipDefaultUpdate` set with `-c` or `git config`, or
-`git remote add --mirror`), `gh pr merge --admin`, and rewriting the base
-branch, its name, the default branch (`gh repo edit --default-branch`, `gh api`
-with its body in a file too), its protection or rulesets through the API; a
-GraphQL mutation that does so is looked for in the whole command and the files
-it reads with `cat`. Ticket sessions and the conductor are denied; attended
-sessions are asked, except in solo mode (`project.ruleset = false`): there an
+`git remote add --mirror`), `gh pr merge --admin`, a `merge-async` with
+`bypass_rules`, any `merge_action` but `merge_queue` or no `sha`, and
+rewriting the base branch, its name, the default branch (`gh repo edit
+--default-branch`, `gh api` with its body in a file too), its protection or
+rulesets through the API; a GraphQL mutation that does so is looked for in the
+whole command and the files it reads with `cat`. Ticket sessions and the
+conductor are denied; attended sessions are asked, except in solo mode (`project.ruleset = false`): there an
 attended session's git push that touches the base branch, or whose destination
 can't be told, is refused with `solo_refusal`'s reason (a force-push or
 deletion of a named feature branch is still asked), and so is a change to the
@@ -1842,7 +1844,7 @@ _TICKET_API_WRITES = [
     r"issues/comments/\d+",
     r"pulls",
     r"pulls/\d+",
-    r"pulls/\d+/(merge|reviews|comments|requested_reviewers|update-branch|ccr/auto_merge)",
+    r"pulls/\d+/(merge|merge-async|reviews|comments|requested_reviewers|update-branch|ccr/auto_merge)",
     r"pulls/\d+/reviews/\d+(/events)?",
     r"pulls/comments/\d+(/replies)?",
     r"actions/runs/\d+/rerun(-failed-jobs)?",
@@ -1883,6 +1885,7 @@ class _ApiCall:
     fields: list[str]
     files: list[str]  # @file fields and --input
     stdin: bool
+    word: str = ""  # the path as written
 
 
 _STDIN_RE = re.compile(r"-|/dev/stdin|/dev/fd/0|/proc/(?:self|thread-self|\d+|\$\$|\$BASHPID)/fd/0")
@@ -1900,6 +1903,11 @@ class _StdinFile:
 
 
 _STDIN_FILE = _StdinFile
+
+
+# `gh api`'s options whose value is the next word, whatever it holds (`-X`,
+# `--method`, `--input` and the field flags are read on their own).
+_API_VALUES = {"-H", "--header", "-q", "--jq", "-t", "--template", "--hostname", "--cache", "-p", "--preview"}
 
 
 def _api(toks: list[str]) -> _ApiCall | None:
@@ -1958,7 +1966,7 @@ def _api(toks: list[str]) -> _ApiCall | None:
             elif f:
                 files.append(f)
             continue
-        if t in ("-H", "--header", "-q", "--jq", "-t", "--template", "--hostname", "--cache", "-p", "--preview"):
+        if t in _API_VALUES:
             i += 2
             continue
         if not t.startswith("-") and path is None:
@@ -1967,7 +1975,12 @@ def _api(toks: list[str]) -> _ApiCall | None:
     has_body = bool(fields) or bool(files) or stdin
     method = (method or ("POST" if has_body else "GET")).upper()
     p = re.sub(r"^https?://[^/]+/(api/v3/)?", "", path or "").lstrip("/").split("?", 1)[0].rstrip("/")
-    return _ApiCall(method, p, " ".join(toks[start:]), fields, files, stdin)
+    return _ApiCall(method, p, " ".join(toks[start:]), fields, files, stdin, path or "")
+
+
+def _field_values(call: _ApiCall, name: str) -> list[str]:
+    """Every value the call gives the field `name` (gh sends the last)."""
+    return [f.split("=", 1)[1] if "=" in f else "" for f in call.fields if f.split("=", 1)[0] == name]
 
 
 def _field(call: _ApiCall, name: str) -> str | None:
@@ -2170,7 +2183,10 @@ def _api_problem(toks: list[str], profile: Profile, role: str, cwd: str | None =
     with `cat` or `<`, which a query or body may come from by a variable."""
     base = profile.base_branch
     name = Path(toks[0]).name if toks else ""
-    if name == "curl" and re.search(r"(?:api|uploads)\.github\.com|/api/v3/|/api/graphql", " ".join(toks), re.I):
+    # An attended session's curl that reads a config file (`-K`) may name GitHub
+    # there, and one whose URL names `merge-async` may have its host filled in.
+    queue = role == "attended" and (_curl_configs(toks) or any(_curl_url_queues(t) for t in toks))
+    if name == "curl" and (re.search(r"(?:api|uploads)\.github\.com|/api/v3/|/api/graphql", " ".join(toks), re.I) or queue):
         joined = f" {' '.join(toks)} "
         # A short flag may carry its value joined (`-dX`, `-Tq.json`, `-Kcfg`); a
         # config file (`-K`) can hold any of them.
@@ -2181,6 +2197,8 @@ def _api_problem(toks: list[str], profile: Profile, role: str, cwd: str | None =
         )
         if writes and role != "attended":
             return "GitHub writes go through `gh api` or the GitHub MCP tools, not curl"
+        if writes:
+            return _curl_queue_problem(toks, joined, cwd)
         return None
     call = _api(toks)
     if not call:
@@ -2498,7 +2516,7 @@ def _own_head(root: Path, profile: Profile) -> tuple[str | None, str | None, str
     if not branch or not fnmatch.fnmatchcase(branch, profile.ticket_branch):
         where = f"on `{branch}`, not a branch matching" if branch else "detached, not on a branch matching"
         return None, None, (
-            f"a ticket session merges, or arms auto-merge on, only its own pull request, told by its ticket branch's head, and the checkout is {where} "
+            f"a ticket session merges, queues or arms auto-merge on only its own pull request, told by its ticket branch's head, and the checkout is {where} "
             f"`{profile.ticket_branch}`: switch back to your ticket branch"
         )
     head = _git_out(d, "rev-parse", "--verify", "-q", "HEAD")
@@ -2507,11 +2525,11 @@ def _own_head(root: Path, profile: Profile) -> tuple[str | None, str | None, str
     return branch, head.lower(), None
 
 
-def _pin_problem(what: str, pins: list[str], root: Path, profile: Profile) -> str | None:
-    """A ticket session's merge `pins` (every head commit it names) must each be
-    its ticket branch's head."""
+def _pin_problem(what: str, pins: list[str], root: Path, profile: Profile, how: str = _PIN_HOW) -> str | None:
+    """A ticket session's merge or `merge-async` `pins` (every head commit it
+    names) must each be its ticket branch's head. `how` says how to pin it."""
     if not pins:
-        return f"a ticket session merges only its own pull request, so this {what} must be pinned to its ticket branch's head: add {_PIN_HOW}"
+        return f"a ticket session merges or queues only its own pull request, so this {what} must be pinned to its ticket branch's head: add {how}"
     for pin in pins:
         if not _SHA.fullmatch(pin):
             return f"pin this {what} to the full commit sha that `git rev-parse HEAD` prints, not " + (f"`{pin}`" if pin else "an empty one")
@@ -2522,7 +2540,7 @@ def _pin_problem(what: str, pins: list[str], root: Path, profile: Profile) -> st
         if pin.lower() != head:
             return (
                 f"`{pin}` isn't the head of this session's ticket branch `{branch}` (`{head}`), so this {what} may be another ticket's "
-                f"pull request: a ticket session merges only its own. Push your branch and pin it to `{head}`; if the pull request's "
+                f"pull request: a ticket session merges or queues only its own. Push your branch and pin it to `{head}`; if the pull request's "
                 "head moved on GitHub (the branch was updated there), `git pull` first and pin to the new head"
             )
     return None
@@ -2660,7 +2678,7 @@ def _rest_merge_problem(seg: Seg, toks: list[str], call: _ApiCall, profile: Prof
     m = re.fullmatch(r"repos/([^/]+/[^/]+)/pulls/(\d+)/(merge|ccr/auto_merge)", call.path, re.I)
     # The path word as written: one the shell fills in (`pulls/9?/merge`) reads as another path.
     path_words = [t for t in toks[1:] if re.match(r"(?:https?://[^/\s]+/(?:api/v3/)?)?/?repos/", t)]
-    if not m and not any(re.search(r"(?i)pulls/[^/\s]*/(merge|ccr/auto_merge)", t) for t in path_words):
+    if not m and not any(re.search(r"(?i)pulls/[^/\s]*/(merge(?!-async)|ccr/auto_merge)", t) for t in path_words):
         return None
     what = "arm of auto-merge" if m and m.group(3).lower() != "merge" else "merge"
     unread = _unread_merge_word(seg, toks)
@@ -2671,8 +2689,7 @@ def _rest_merge_problem(seg: Seg, toks: list[str], call: _ApiCall, profile: Prof
     if what == "merge":
         if call.files or call.stdin:
             return "the guard reads a merge's pin only from its `-f sha=<sha>` field: send the merge without an `--input` body or `@file` fields"
-        pins = [f.split("=", 1)[1] for f in call.fields if f.split("=", 1)[0] == "sha"]
-        return _pin_problem("merge", pins, root, profile)
+        return _pin_problem("merge", _field_values(call, "sha"), root, profile)
     repo = profile.repo if m.group(1) == "{owner}/{repo}" else m.group(1)
     return _arm_problem(m.group(2), repo, root, profile)
 
@@ -2693,6 +2710,362 @@ def _ticket_merge_problem(seg: Seg, toks: list[str], profile: Profile, root: Pat
         )
     if call.method not in ("GET", "DELETE"):
         return _rest_merge_problem(seg, toks, call, profile, root)
+    return None
+
+
+# ---------- adding a pull request to a merge queue ----------
+
+# The one route the kit queues a pull request by (#243, #244): REST
+# `PUT repos/<repo>/pulls/<n>/merge-async`. Its `merge_action` must be
+# `merge_queue`: `default` (also what a missing one means) merges directly when
+# no queue is required, and `direct_merge` always does. `bypass_rules` skips the
+# ruleset, as `gh pr merge --admin` does, and is refused on any `gh api` write.
+# These hold in every role, and the call is pinned by `sha`: to the ticket
+# branch's head in a ticket session, to a commit in any other. Its fields are
+# read only from `-f`/`-F`, where the guard sees them: a body from a file or
+# stdin is refused once it has been searched for `bypass_rules`, to name that
+# first. The path is read by its last part, however it is spelled (a host,
+# `%`-escapes, `//`, `./`, a start the shell fills in); a path the shell fills
+# in counts too when the call names a `merge_action`, or PUTs a bare `sha`. An
+# attended session's curl is asked unless its JSON body queues it.
+# An expansion the shell (or gh, for `{branch}`) fills in; a path word that
+# starts as a path (a URL or `repos/`), so it can't be a flag; and a path whose
+# last part after `pulls/<n>/` is filled in or a glob, which may be
+# `merge-async` (`pulls/comments/<id>` is another route).
+_FILLED = re.compile(r"[$`]|\{branch\}")  # gh fills `{branch}` in from the checkout
+_PATH_START = re.compile(r"(?i)(?:[a-z][a-z0-9+.-]*://|/?repos/)")
+_LAST_FILLED = re.compile(r"(?i)pulls/(?!comments/)[^/]+/[^/]*(?:[$`*?\[]|\{branch\})[^/]*/?$")
+_FILLED_PATH_WHY = (
+    "write this API call out: the shell fills in its path `{path}`, which may be `merge-async`, "
+    "and `{word}`, which may be a flag of its own"
+)
+_ASYNC_PIN_HOW = "`-f sha=<sha>`, with `<sha>` from `git rev-parse HEAD` once the branch is pushed"
+_BYPASS_NAME = r"bypass(?:_|\\u005f)rules"
+_BYPASS_RULES = re.compile(r"(?i)" + _BYPASS_NAME)
+_GITHUB_API = re.compile(r"(?i)(?:api|uploads)\.github\.com|/api/v3/")
+_BYPASS_WHY = (
+    "`bypass_rules` merges past the base branch's ruleset, as `gh pr merge --admin` does: leave it out, and the queue "
+    "runs the ruleset's checks before it merges. Sending it is never allowed"
+)
+
+
+def _is_merge_async(word: str) -> bool:
+    """The path word names `merge-async`, however it is spelled: by its last
+    part, so a start the shell fills in (`repos/$REPO/…`, `${B}merge-async`)
+    still reads as the route. No other GitHub route ends in `merge-async`."""
+    p = urllib.parse.unquote(word)
+    p = re.sub(r"(?i)^[a-z][a-z0-9+.-]*://[^/]*", "", p)
+    p = re.split(r"[?#]", p, maxsplit=1)[0]
+    last = posixpath.normpath("/" + re.sub("/+", "/", p)).rsplit("/", 1)[-1].casefold()
+    return last == "merge-async" or (bool(_FILLED.search(last)) and last.endswith("merge-async"))
+
+
+def _bypass_key(key: str) -> bool:
+    """A field named `bypass_rules`, or a part of it (`bypass_rules[x]`)."""
+    return bool(re.fullmatch(r"(?i)" + _BYPASS_NAME + r"(?:\[.*)?", key, re.S))
+
+
+def _body_has_bypass(text: str) -> bool:
+    """A body that names `bypass_rules`: as a JSON key at any depth, its escapes
+    read, or anywhere in it when it isn't one JSON document."""
+    found = False
+
+    def keys(pairs):
+        nonlocal found
+        found = found or any(_bypass_key(k) for k, _ in pairs)
+        return dict(pairs)
+
+    try:
+        json.loads(text, object_pairs_hook=keys)
+    except ValueError:
+        return bool(_BYPASS_RULES.search(text))
+    return found
+
+
+def _json_keys(text: str) -> set[str]:
+    """The keys of the JSON documents in `text`, at any depth; `"name":` spellings
+    when it isn't JSON."""
+    found: set[str] = set()
+
+    def keys(pairs):
+        found.update(k for k, _ in pairs)
+        return dict(pairs)
+
+    try:
+        json.loads(text, object_pairs_hook=keys)
+    except ValueError:
+        found.update(re.findall(r'"([A-Za-z_]\w*)"\s*:', text))
+    return found
+
+
+def _input_body(seg: Seg, toks: list[str]) -> tuple[list[str], bool]:
+    """(the texts of a `gh api` call's `--input` bodies, each on its own, and
+    whether any can't be read): a file named plainly, or stdin from a heredoc,
+    a `<` file, a `cat` or a plain `echo`/`printf` piping into it. `@file`
+    fields aren't bodies."""
+    texts, unread = [], False
+    for f in _input_files(toks):
+        if _STDIN_FILE.fullmatch(f):
+            t = _stdin_text(seg)
+            t = _echoed(seg) if t is None else t
+        else:
+            t = None if _FILLED.search(f) else _read_text(f, seg.cwd)
+        unread = unread or t is None
+        texts.append(t or "")
+    return texts, unread
+
+
+def _queued_json(text: str | None) -> bool:
+    """One JSON object that queues a pull request: `merge_action` `merge_queue`,
+    a `sha`, no `bypass_rules`, and no key given twice (the last would win)."""
+
+    def once(pairs):
+        names = [k for k, _ in pairs]
+        if len(set(names)) != len(names):
+            raise ValueError("a key given twice")
+        return dict(pairs)
+
+    try:
+        obj = json.loads(text or "", object_pairs_hook=once)
+    except ValueError:
+        return False
+    if not isinstance(obj, dict) or any(_bypass_key(k) for k in obj):
+        return False
+    sha = obj.get("sha")
+    return obj.get("merge_action") == "merge_queue" and isinstance(sha, str) and bool(sha.strip())
+
+
+# curl's options that send a body, and those whose body the guard doesn't read
+# (`-G` sends it as the query string instead).
+_CURL_BODY = {"-d", "--data", "--data-raw", "--data-binary", "--data-ascii", "--json"}
+_CURL_UNREAD = {"--data-urlencode", "-F", "--form", "--form-string", "-T", "--upload-file", "-K", "--config", "-G", "--get", "--url-query"}
+
+
+def _curl_configs(toks: list[str]) -> list[str]:
+    """The config files a curl reads: `-K f`, `-Kf`, `-sK f`, `--config[=]f`."""
+    out = []
+    for k, t in enumerate(toks):
+        nxt = toks[k + 1] if k + 1 < len(toks) else ""
+        m = re.fullmatch(r"-[a-zA-Z]*K(.*)", t, re.S)
+        if m:
+            out.append(m.group(1) or nxt)
+        elif t == "--config" or t.startswith("--config="):
+            out.append(t.split("=", 1)[1] if "=" in t else nxt)
+    return out
+
+
+def _curl_url_queues(word: str) -> bool:
+    """A curl word that is a URL naming `merge-async`, or a GitHub API URL whose
+    part after `pulls/<n>/` the shell or curl fills in (`$M`, `{…}`, `[…]`)."""
+    if re.search(r'[\s"]', word) or "/" not in word:
+        return False  # text, such as a body, not a URL
+    u = urllib.parse.unquote(word)
+    if _is_merge_async(word):
+        return True
+    return bool(_GITHUB_API.search(u) and re.search(r"(?i)/pulls/(?!comments/)[^/]+/[^/]*[$`{\[][^/]*$", u))
+
+
+def _hidden_config(f: str, cwd: str | None) -> bool:
+    """A curl config whose text isn't a file the guard can read now: stdin, a
+    descriptor or device (any path that resolves under `/dev/` or `/proc/`,
+    `/dev/null` as written aside, which is empty), or a name the shell fills in."""
+    if f in ("", "-") or _STDIN_FILE.fullmatch(f) or _FILLED.search(f):
+        return True
+    a = os.path.expanduser(f)
+    if not a.startswith("/") and cwd:
+        a = cwd + "/" + a
+    n = posixpath.normpath(re.sub("/+", "/", a))
+    return f != os.devnull and n.startswith(("/dev/", "/proc/"))  # `/dev/null` as written: `/dev/fd/3/../null` is elsewhere
+
+
+def _curl_queue_problem(toks: list[str], joined: str, cwd: str | None) -> str | None:
+    """An attended session's curl PUT that may add a pull request to a merge
+    queue (a URL `_curl_url_queues`, or a config file it reads that names
+    `merge-async`, or can't be read when the command names no URL) is asked
+    unless it sends one JSON body that queues it (`_queued_json`), with no
+    query string."""
+    configs = _curl_configs(toks)
+    named = any(_curl_url_queues(t) for t in toks)
+    for f in configs:
+        hidden = _hidden_config(f, cwd)
+        text = None if hidden else _read_text(f, cwd)
+        if text is not None:
+            named = named or re.search(r"(?i)merge-async", urllib.parse.unquote(text)) is not None
+        elif hidden or not any("://" in t for t in toks):
+            named = True  # stdin or a name the shell fills in may hold anything; a plain missing file only fails
+    if not named:
+        return None
+    # GitHub takes `merge-async` only as a PUT: a curl whose every method is a
+    # literal other one, with one URL (no `--next`) and no config, is left alone.
+    methods = [m.group(1) or (toks[k + 1] if k + 1 < len(toks) else "") for k, t in enumerate(toks) if (m := re.fullmatch(r"(?:-[a-zA-Z]*X|--request=?)(.*)", t, re.S))]
+    if any(t in ("-T", "--upload-file") or re.fullmatch(r"-[a-zA-Z]*T.*", t, re.S) for t in toks):
+        methods.append("PUT")
+    several = any(t in ("--next", "-:") for t in toks)
+    if methods and not configs and not several and not any(_FILLED.search(m) or m.upper() == "PUT" for m in methods):
+        return None
+    bodies: list[str | None] = []
+    unread = False
+    i = 1
+    while i < len(toks):
+        t = toks[i]
+        i += 1
+        name, eq, val = t.partition("=") if t.startswith("--") else (t, "", "")
+        if name in _CURL_BODY:
+            if not eq:
+                val, i = (toks[i] if i < len(toks) else ""), i + 1
+        elif re.fullmatch(r"-d.+", t, re.S):
+            val = t[2:]
+        elif name in _CURL_UNREAD or re.fullmatch(r"-[FTK].+|-[a-zA-Z]*[GK][a-zA-Z]*", t, re.S):
+            unread = True
+            continue
+        else:
+            continue
+        if val.startswith("@"):
+            f = val[1:]
+            val = None if f in ("", "-") else _read_text(f, cwd)
+        bodies.append(val)
+    query = any(_curl_url_queues(t) and "?" in t for t in toks)
+    if not unread and not query and len(bodies) == 1 and _queued_json(bodies[0]):
+        return None
+    return (
+        "to add a pull request to the merge queue with curl, send one JSON body the guard can read: `merge_action` "
+        "`merge_queue`, a `sha`, and no `bypass_rules`. Or use `gh api -X PUT repos/<repo>/pulls/<n>/merge-async "
+        "-f merge_action=merge_queue -f sha=<sha>`"
+    )
+
+
+def _filled_word(toks: list[str], path: str) -> str | None:
+    """A `gh api` word the shell fills in that may be a flag of its own: one
+    holding an expansion, quoted or not, outside a flag's value, a field's value
+    (after a plain `name=`) and the path word `path`. Quoted text such as `"$E"`
+    stays one word, but that word can be `--field=bypass_rules=true`."""
+    i = toks.index("api") + 1 if "api" in toks else 1
+    path_seen = False
+    while i < len(toks):
+        t = toks[i]
+        i += 1
+        if t in _FIELD_FLAGS:
+            t, i = (toks[i] if i < len(toks) else ""), i + 1
+        elif t in _API_VALUES or t in ("-X", "--method", "--input"):
+            i += 1
+            continue
+        elif re.fullmatch(r"--(?:method|header|jq|template|hostname|cache|preview|input)=.*|-[XHqtp].+", t, re.S):
+            continue
+        elif t.startswith(("--field=", "--raw-field=")):
+            t = t.split("=", 1)[1]
+        elif re.fullmatch(r"-[fF].+", t, re.S):
+            t = t[3:] if t[2] == "=" else t[2:]
+        else:
+            if t == path and not path_seen:
+                path_seen = True
+                continue
+            if _FILLED.search(t):
+                return t
+            continue
+        if _FILLED.search(t.split("=", 1)[0]) or (_FILLED.search(t) and "=" not in t):
+            return t
+    return None
+
+
+def _may_add_flags(seg: Seg, toks: list[str], call: _ApiCall, keys: list[str]) -> bool:
+    """Whether the shell or xargs may add flags to this `gh api` call (a
+    `-XPUT`, a field): xargs feeds it; a word outside a value holds an
+    expansion (`_filled_word`); the path word holds one and doesn't start as a
+    path, with another word left to be the path; or an unquoted word splits,
+    a path that starts as one only when the call names `merge_action` or `sha`."""
+    if seg.fed or _filled_word(toks, call.word) is not None:
+        return True
+    if _FILLED.search(call.word) and not _PATH_START.match(call.word) and len(_positionals(toks)) > 1:
+        return True
+    queue_keys = {"merge_action", "sha"} & set(keys)
+    return any(isinstance(t, Word) and t.splits and (queue_keys or not _PATH_START.match(t)) for t in toks[1:])
+
+
+def _positionals(toks: list[str]) -> list[str]:
+    """A `gh api` call's words that are neither options nor their values."""
+    out: list[str] = []
+    i = toks.index("api") + 1 if "api" in toks else 1
+    while i < len(toks):
+        t = toks[i]
+        i += 1
+        if t in _FIELD_FLAGS or t in _API_VALUES or t in ("-X", "--method", "--input"):
+            i += 1
+        elif not t.startswith("-") or t == "-":
+            out.append(t)
+    return out
+
+
+def _merge_async_problem(seg: Seg, toks: list[str], profile: Profile, role: str, root: Path) -> str | None:
+    """A `gh api` write to `pulls/<n>/merge-async`, in any role (toks start at the gh word)."""
+    call = _api(toks)
+    if not call or call.method == "GET":
+        return None
+    keys = [f.split("=", 1)[0] for f in call.fields]
+    if any(_bypass_key(k) for k in keys):
+        return _BYPASS_WHY
+    filled = _FILLED.search(call.word)
+    unread_path = seg.fed and not _PATH_START.match(call.word)
+    # A path the shell fills in from its start to its last part (`"$URL"`, not
+    # `"$PR_URL/merge"`), so it may be any route.
+    last_part = call.word.rstrip("/").rsplit("/", 1)[-1]
+    whole_filled = (filled and not _PATH_START.match(call.word) and _FILLED.search(last_part)) or unread_path
+    # GitHub takes `merge-async` only as a PUT; a literal other method can't
+    # become one unless xargs adds words, or a word the shell fills in (outside
+    # a value, the path included when it doesn't start as a path) is a flag.
+    if call.method in ("POST", "PATCH", "DELETE") and not _may_add_flags(seg, toks, call, keys):
+        return None
+    route = _is_merge_async(call.word)
+    bodies, body_unread = _input_body(seg, toks)
+    if (route or filled or unread_path) and any(_body_has_bypass(b) for b in bodies):
+        return _BYPASS_WHY
+    # The merge's and update-branch's own fields say which route a filled-in
+    # last part is.
+    other_route = {"merge_method", "expected_head_sha"} & set(keys)
+    last_filled = _LAST_FILLED.search(call.word) and not other_route
+    # A whole path the shell fills in may be `merge-async` with no
+    # `merge_action`: when it PUTs a `sha` and only fields `merge-async` takes,
+    # or a body that names `merge_action` or `sha`, or can't be read.
+    queue_fields = "sha" in keys and set(keys) <= {"sha", "commit_title", "commit_message"}
+    queue_body = body_unread or any(_json_keys(b) & {"merge_action", "sha"} for b in bodies)
+    bare_put = whole_filled and (queue_fields or queue_body)
+    if not (route or (filled and "merge_action" in keys) or last_filled or unread_path or bare_put):
+        if (filled or unread_path) and (word := _filled_word(toks, call.word)) is not None:
+            return _FILLED_PATH_WHY.format(path=call.word, word=word)
+        return None
+    if re.search(r"[?#]", call.word):
+        return "write the `merge-async` path without a query string or `#`, and its fields as `-f` or `-F` fields, so the guard reads every one"
+    split = _split_api_word(seg, toks)
+    if not split and (word := _filled_word(toks, call.word)) is not None:
+        split = f"the shell fills in `{word}`, which may be a flag of its own"
+    if not split and (last_filled or unread_path):
+        split = f"the shell fills in the path `{call.word}`, which may be `merge-async`"
+    if split:
+        return (
+            "write this `merge-async` call out, quoting what the shell fills in (`-f sha=\"$SHA\"`, "
+            f"`pulls/\"$N\"/merge-async`) and with its fields as plain `-f name=value` fields: {split}, so the guard can't tell which fields it sends"
+        )
+    unplain = next((k for k in keys if not re.fullmatch(r"[A-Za-z_]\w*", k)), None)
+    if unplain is not None:
+        return f"write `merge-async`'s fields out as plain `-f name=value` fields: with `{unplain}`, the guard can't tell which field it sends"
+    if call.files or call.stdin:
+        return (
+            "the guard reads `merge-async`'s fields only from `-f` or `-F`: send `-f merge_action=merge_queue -f sha=<sha>`, "
+            "without an `--input` body or `@file` fields"
+        )
+    actions = _field_values(call, "merge_action")
+    if not actions or any(a != "merge_queue" for a in actions):
+        return (
+            "add a pull request to the merge queue only with `-f merge_action=merge_queue`: `default`, or none, merges it "
+            "directly when no queue is required, and `direct_merge` always does"
+        )
+    pins = _field_values(call, "sha")
+    if role == "ticket":
+        return _pin_problem("`merge-async` call", pins, root, profile, _ASYNC_PIN_HOW)
+    if not pins or not all(_SHA.fullmatch(v) or _FILLED.search(v) for v in pins):
+        return (
+            "pin this `merge-async` call to the head you checked with `-f sha=<sha>`, the full commit sha "
+            "(or one the shell fills in), so GitHub never queues a head nobody checked"
+        )
     return None
 
 
@@ -5374,6 +5747,9 @@ def check_bash(
                 if p:
                     return Decision("deny", p)
         if toks and Path(toks[0]).name == "gh":
+            p = _merge_async_problem(seg, toks, profile, role, root)
+            if p:
+                return _deny(role, p)
             p = _gh_problem(toks, profile, role, seg.cwd, command, read)
             if p:
                 return _deny(role, p)

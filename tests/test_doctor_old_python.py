@@ -37,6 +37,7 @@ ONLY_WHEN_WRONG = {
     "github.profile_checks",  # a check the ruleset requires that the profile doesn't list (#69)
     "previews.setup",  # only with a Wrangler config or a [previews] section (#115)
     "previews.access",  # only with [sensitive] patterns and previews on, a gap or fine; not in the short report (#115)
+    "github.merge_queue", "github.merge_group",  # only where a merge queue fits or is on (#246)
 }
 
 

@@ -61,7 +61,7 @@ def test_the_fourth_path_is_named_with_its_offer():
     assert text.index("# Require these checks") < text.index(f"\n# {NAME}\n")
     assert f"The fourth path (offer `add_try_it_links`)." in _part()
     assert doctor.OFFERS["add_try_it_links"] == NAME
-    assert "shared by all four" in text
+    assert "shared by all five" in text
 
 
 def test_it_is_offered_only_from_the_quickstart_doctor_and_when_asked():

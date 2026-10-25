@@ -12,7 +12,8 @@ together, restrict deletions, block force pushes and require pull requests,
 and none of them has a bypass list. Anything it can't tell counts as missing,
 so an unknown never reads as protected. `check` is the one place this rule
 lives: the "Protect `main`" upgrade, set-up, the conductor's pre-flight and
-`workflow doctor` will call it rather than repeat it.
+`workflow doctor` will call it rather than repeat it. It is also the queue
+reader (#245): whether those rulesets require a merge queue (`Report.queue`).
 
 Beside it, the request builder (#66): the requests that create the ruleset and
 set the merge settings (`protect`), that add checks to a ruleset
@@ -130,6 +131,11 @@ class Report:
     # branch, whose other rules doctor reads. Neither is in --json.
     kinds: list[str] = field(default_factory=list)
     effective: list[dict] = field(default_factory=list)
+    # The queue reader (#245): whether a ruleset in force on the base (one of
+    # `effective`) requires a merge queue; and each `unsure` ruleset with a
+    # merge-queue rule, never counted as a queue. Neither is in --json.
+    queue: bool = False
+    queue_unsure: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict:
         return {
@@ -205,6 +211,16 @@ def _checked_name(rs, i: int) -> str:
     return where
 
 
+def _ref(rs: dict) -> dict:
+    """The ruleset's ref condition: its `include` and `exclude` lists."""
+    return (rs.get("conditions") or {}).get("ref_name") or {}
+
+
+def _has_merge_queue(rs: dict) -> bool:
+    """The ruleset has a merge-queue rule."""
+    return any(r["type"] == "merge_queue" for r in rs["rules"])
+
+
 def _targets(rs: dict, base: str, default: str | None, have_settings: bool) -> str | None:
     """Why the ruleset doesn't take in the base branch, or None when it does.
 
@@ -217,7 +233,7 @@ def _targets(rs: dict, base: str, default: str | None, have_settings: bool) -> s
     """
     if rs["target"] != "branch":
         return f"doesn't target {base} (it is a {quote(rs['target'])} ruleset)"
-    ref = (rs.get("conditions") or {}).get("ref_name") or {}
+    ref = _ref(rs)
     full = f"refs/heads/{base}"
 
     def names_base(pattern: str) -> bool | None:
@@ -291,14 +307,17 @@ def check(rulesets, base: str, settings=None, base_if_unknown: bool = False) -> 
     rulesets = _flatten(rulesets)
     names = [_checked_name(rs, i) for i, rs in enumerate(rulesets)]
     merge, default = _settings(settings) if settings is not None else (None, None)
-    excluded = any("~DEFAULT_BRANCH" in (((rs.get("conditions") or {}).get("ref_name") or {}).get("exclude") or []) for rs in rulesets)
-    if default is None and base_if_unknown and not excluded:
+    excluded = any("~DEFAULT_BRANCH" in (_ref(rs).get("exclude") or []) for rs in rulesets)
+    # A default branch only taken to be `base` never counts a merge queue on it (#245).
+    assumed = default is None and base_if_unknown and not excluded
+    if assumed:
         default, settings = base, settings if settings is not None else {}
     if not rulesets:
         return Report(base, False, [f"no rulesets: nothing on GitHub protects {base}"], [], merge, kinds=["no_rulesets"])
 
     ignored: list[tuple[str, str]] = []
     unsure: list[str] = []
+    queue_unsure: list[str] = []
     effective: list[tuple[str, dict]] = []
     for name, rs in zip(names, rulesets):
         off_target = _targets(rs, base, default, settings is not None)
@@ -311,6 +330,8 @@ def check(rulesets, base: str, settings=None, base_if_unknown: bool = False) -> 
         elif off_target:
             ignored.append(("unsure", f"{name} {off_target}"))
             unsure.append(f"{name} {off_target}")
+            if _has_merge_queue(rs):
+                queue_unsure.append(f"{name} {off_target}")
         else:
             effective.append((name, rs))
 
@@ -334,7 +355,15 @@ def check(rulesets, base: str, settings=None, base_if_unknown: bool = False) -> 
 
     protected = not problems
     found = [] if protected else ignored + problems
-    return Report(base, protected, [m for _, m in found], checks, merge, unsure, [k for k, _ in found], [rs for _, rs in effective])
+    queue = False
+    for name, rs in effective:
+        if not _has_merge_queue(rs):
+            continue
+        if assumed and not {"~ALL", f"refs/heads/{base}"} & set(_ref(rs).get("include") or []):
+            queue_unsure.append(f"{name} targets the default branch, and the pull request doesn't give the repository's (base.repo.default_branch), so it can't tell whether that is {base}")
+        else:
+            queue = True
+    return Report(base, protected, [m for _, m in found], checks, merge, unsure, [k for k, _ in found], [rs for _, rs in effective], queue, queue_unsure)
 
 
 def text(rep: Report) -> str:
@@ -470,8 +499,32 @@ def protect(base: str, settings, names=()) -> list[Request]:
     ]
 
 
+def _update(ruleset, verb: str) -> tuple[str, dict]:
+    """(the PUT's path, the body GitHub accepts on an update) for the
+    repository's own branch ruleset; raises on one the kit can't change.
+    `verb` says what the change does, for the messages."""
+    if not isinstance(ruleset, dict):
+        raise ProtectionError("the ruleset file must be one ruleset (a JSON object), as GET repos/<repo>/rulesets/<id> returns it")
+    where = _checked_name(ruleset, 0)
+    if not isinstance(ruleset.get("name"), str):
+        raise ProtectionError(f"{where} has no name")
+    if ruleset["target"] != "branch":
+        raise ProtectionError(f"{where} is a {quote(ruleset['target'])} ruleset: only a branch ruleset can {verb}")
+    rid = ruleset.get("id")
+    if not isinstance(rid, int) or isinstance(rid, bool) or rid <= 0:
+        raise ProtectionError(f"{where} has no id, so the request can't name it")
+    if ruleset.get("source_type") == "Organization":
+        raise ProtectionError(f"{where} is an organisation's ruleset: the kit changes only the repository's own, so change it in the organisation's settings")
+    source = _repo_name(ruleset.get("source"))
+    if ruleset.get("source_type") != "Repository" or source is None:
+        raise ProtectionError(f"{where} has no source repository (source_type Repository, source owner/repo), so the request can't name it")
+    return f"repos/{source}/rulesets/{rid}", {k: copy.deepcopy(ruleset[k]) for k in UPDATE_FIELDS if k in ruleset}
+
+
 def require_checks(ruleset, names) -> Request:
-    """The ruleset with the names added to its required checks and "up to date" on.
+    """The ruleset with the names added to its required checks and "up to date"
+    on, or left as it is when the ruleset has a merge-queue rule (#247): the
+    queue meets "up to date", which would only send branches back to update.
 
     Nothing else changes and nothing is removed; only the fields GitHub accepts
     on an update are sent.
@@ -479,25 +532,13 @@ def require_checks(ruleset, names) -> Request:
     names = check_names(names)
     if not names:
         raise ProtectionError("give the checks to require with --check NAME (one for each)")
-    if not isinstance(ruleset, dict):
-        raise ProtectionError("the ruleset file must be one ruleset (a JSON object), as GET repos/<repo>/rulesets/<id> returns it")
-    where = _checked_name(ruleset, 0)
-    if not isinstance(ruleset.get("name"), str):
-        raise ProtectionError(f"{where} has no name")
-    if ruleset["target"] != "branch":
-        raise ProtectionError(f"{where} is a {quote(ruleset['target'])} ruleset: only a branch ruleset can require checks")
-    rid = ruleset.get("id")
-    if not isinstance(rid, int) or isinstance(rid, bool) or rid <= 0:
-        raise ProtectionError(f"{where} has no id, so the request can't name it")
-    if ruleset.get("source_type") == "Organization":
-        raise ProtectionError(f"{where} is an organisation's ruleset: the kit adds checks only to the repository's own, so change it in the organisation's settings")
-    source = _repo_name(ruleset.get("source"))
-    if ruleset.get("source_type") != "Repository" or source is None:
-        raise ProtectionError(f"{where} has no source repository (source_type Repository, source owner/repo), so the request can't name it")
-    body = {k: copy.deepcopy(ruleset[k]) for k in UPDATE_FIELDS if k in ruleset}
+    path, body = _update(ruleset, "require checks")
+    queued = _has_merge_queue(body)
     rule = next((r for r in body["rules"] if r["type"] == "required_status_checks"), None)
     if rule is None:
-        body["rules"].append(_checks_rule(names))
+        rule = _checks_rule(names)
+        rule["parameters"]["strict_required_status_checks_policy"] = not queued
+        body["rules"].append(rule)
     else:
         if rule.get("parameters") is None:
             rule["parameters"] = {}
@@ -506,11 +547,121 @@ def require_checks(ruleset, names) -> Request:
         if have is None:
             have = params["required_status_checks"] = []
         if not isinstance(have, list) or not all(isinstance(c, dict) and isinstance(c.get("context"), str) for c in have):
-            raise ProtectionError(f"{where}: required_status_checks must be a list of objects, each with a context")
+            raise ProtectionError(f"{_checked_name(ruleset, 0)}: required_status_checks must be a list of objects, each with a context")
         known = {c["context"] for c in have}
         have += [{"context": n} for n in names if n not in known]
-        params["strict_required_status_checks_policy"] = True
-    return Request("add the checks to the ruleset", "PUT", f"repos/{source}/rulesets/{rid}", body)
+        if queued:
+            if not isinstance(params.get("strict_required_status_checks_policy"), bool):
+                params["strict_required_status_checks_policy"] = False  # GitHub requires the field, a boolean
+        else:
+            params["strict_required_status_checks_policy"] = True
+    return Request("add the checks to the ruleset", "PUT", path, body)
+
+
+# The merge-queue rule's settings (#243), shown to the owner before the change.
+QUEUE_SETTINGS = {
+    "merge_method": "MERGE",
+    "grouping_strategy": "ALLGREEN",  # every pull request in a group must pass
+    "max_entries_to_build": 5,
+    "max_entries_to_merge": 5,
+    "min_entries_to_merge": 1,
+    "min_entries_to_merge_wait_minutes": 0,
+}
+QUEUE_TIMEOUT = 60  # minutes, with no CI history: GitHub's own default
+QUEUE_TIMEOUT_MAX = 360  # GitHub's cap
+
+
+def queue_timeout(longest: int | None) -> int:
+    """The check timeout for the base's longest recent CI run (whole minutes,
+    or None): twice it, for room to spare, never below the no-history 60, and
+    at most GitHub's 360."""
+    return min(QUEUE_TIMEOUT_MAX, max(QUEUE_TIMEOUT, 2 * (longest or 0)))
+
+
+# How doctor's merge_group check words a workflow or a check that isn't ready (#246).
+NOT_READY = {
+    "missing": "no merge_group trigger",
+    "excluded": "a merge_group filter that leaves out the base branch",
+    "cant_check": "can't be checked",
+    "other_ci": "from another CI service, which must run on pushes to gh-readonly-queue/<base>",
+    "no_run": "no run seen",
+    "unknown_workflow": "its workflow can't be found",
+}
+
+
+def _not_ready(items, key: str, fine: str) -> list[str]:
+    """Each of doctor's `workflows` (key `path`) or `checks` (key `name`)
+    whose state isn't `fine`, quoted with what is wrong."""
+    return [f"{quote(x[key])} ({NOT_READY.get(x.get('state'), 'not ready')})"
+            for x in (items if isinstance(items, list) else [])
+            if isinstance(x, dict) and isinstance(x.get(key), str) and x.get("state") != fine]
+
+
+def _longest_if_clean(report) -> int | None:
+    """The longest recent CI run from `workflow doctor --json`, once its
+    `merge_group` verdict is clean; raises when it isn't."""
+    if not isinstance(report, dict):
+        raise ProtectionError("the doctor file must be what `workflow doctor --json` prints (a JSON object)")
+    mq = report.get("merge_queue")
+    if not isinstance(mq, dict):
+        raise ProtectionError("the doctor file has no merge_queue: run `workflow doctor --json` with checks required on a protected base branch, and give its output")
+    mg = mq.get("merge_group")
+    if not isinstance(mg, dict):
+        raise ProtectionError(
+            "doctor made no merge_group check: it makes one only where it suggests a merge queue "
+            "(an organisation's repository that can have one, its base branch protected, with checks required)"
+        )
+    if mg.get("clean") is not True:
+        lacking = _not_ready(mg.get("workflows"), "path", "ready") + _not_ready(mg.get("checks"), "name", "actions")
+        raise ProtectionError(
+            "doctor's merge_group check isn't clean: every required check must come from a workflow that also runs on "
+            "merge_group on the base branch before the queue goes on"
+            + (f"; not ready: {', '.join(lacking)}" if lacking else "; run `workflow doctor` for what it couldn't check")
+        )
+    signals = mq.get("signals")
+    ci = signals.get("ci_minutes") if isinstance(signals, dict) else None
+    longest = ci.get("longest") if isinstance(ci, dict) else None
+    if longest is not None and (not isinstance(longest, int) or isinstance(longest, bool) or longest < 0):
+        raise ProtectionError("the doctor file: merge_queue.signals.ci_minutes.longest must be whole minutes, or null")
+    return longest
+
+
+def merge_queue(ruleset, report, timeout: int | None = None) -> Request:
+    """The ruleset with the merge-queue rule (#247) and "up to date" off,
+    its required checks kept; refused unless doctor's `merge_group` verdict
+    (`report`, `workflow doctor --json`) is clean. The timeout is the
+    owner's when given, else `queue_timeout` of doctor's longest CI run.
+
+    A merge-queue rule already there is replaced (one, where it was);
+    nothing else changes. A ruleset that isn't active is refused.
+    """
+    longest = _longest_if_clean(report)
+    if timeout is not None and not 1 <= timeout <= QUEUE_TIMEOUT_MAX:
+        raise ProtectionError(f"--timeout {timeout} isn't whole minutes from 1 to {QUEUE_TIMEOUT_MAX}, as GitHub takes it")
+    if timeout is not None and longest is not None and timeout <= min(longest, QUEUE_TIMEOUT_MAX - 1):
+        raise ProtectionError(
+            f"--timeout {timeout} isn't above the base branch's longest recent CI run ({longest} minute{'' if longest == 1 else 's'}): "
+            + (f"give {QUEUE_TIMEOUT_MAX}, GitHub's most, though groups may still time out at it" if longest >= QUEUE_TIMEOUT_MAX - 1 else "groups would time out")
+        )
+    path, body = _update(ruleset, "hold a merge queue")
+    if ruleset["enforcement"] != "active":
+        raise ProtectionError(f"{_checked_name(ruleset, 0)} isn't active (enforcement {quote(ruleset['enforcement'])}), so its queue would enforce nothing")
+    rule = next((r for r in body["rules"] if r["type"] == "required_status_checks"), None)
+    params = rule.get("parameters") if rule else None
+    have = params.get("required_status_checks") if isinstance(params, dict) else None
+    if have is not None and not (isinstance(have, list) and all(isinstance(c, dict) and isinstance(c.get("context"), str) for c in have)):
+        raise ProtectionError(f"{_checked_name(ruleset, 0)}: required_status_checks must be a list of objects, each with a context")
+    if not have:
+        raise ProtectionError(
+            f"{_checked_name(ruleset, 0)} requires no checks: the queue goes in the ruleset holding the required checks "
+            "(\"Require these checks\" adds them), since a queue with no required checks would merge anything"
+        )
+    params["strict_required_status_checks_policy"] = False
+    queue = {"type": "merge_queue", "parameters": {**QUEUE_SETTINGS, "check_response_timeout_minutes": timeout or queue_timeout(longest)}}
+    at = next((n for n, r in enumerate(body["rules"]) if r["type"] == "merge_queue"), len(body["rules"]))
+    body["rules"] = [r for r in body["rules"] if r["type"] != "merge_queue"]
+    body["rules"].insert(at, queue)
+    return Request("add the merge queue to the ruleset, with \"up to date\" off", "PUT", path, body)
 
 
 def _when(v, what: str) -> datetime | None:

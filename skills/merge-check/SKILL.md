@@ -1,6 +1,6 @@
 ---
 name: merge-check
-description: Answer "is #12 ready to merge?", "can I merge this?" or "is my change ready?" in the chat, from `workflow merge-check --json`. "Not yet" gives each reason in plain words and offers the fixes as choices ("Review it now", "Bring it up to date", "Resolve the conflict", "Ask Claude to fix it"); "Ready" gives the try-it link first, then "Merge it now", which checks again on the same head commit and merges with a merge commit pinned to it. Posts nothing on GitHub. Use when someone asks whether a pull request is ready or can be merged, or picks "Check whether #N is ready to merge".
+description: Answer "is #12 ready to merge?", "can I merge this?" or "is my change ready?" in the chat, from `workflow merge-check --json`. "Not yet" gives each reason in plain words and offers the fixes as choices ("Review it now", "Bring it up to date", "Resolve the conflict", "Ask Claude to fix it"); "Ready" gives the try-it link first, then "Merge it now", which checks again on the same head commit and merges with a merge commit pinned to it (with a merge queue, adds it to the queue, pinned). Posts nothing on GitHub. Use when someone asks whether a pull request is ready or can be merged, or picks "Check whether #N is ready to merge".
 ---
 
 # Is it ready to merge?
@@ -91,6 +91,7 @@ The JSON's `decision` is `ready`, `not_yet` or `owner_review`. **Only `ready` is
 - on a review reason with a counted round, its `round` and `reviewers`, and on `review_not_clean` its `next`: `round` (another round) or `pass` (that round was the last allowed one: a Correctness pass on the head); on `passes_used_up` its `next` is `owner`: the pass cap is reached, and the owner decides;
 - `review_rounds`: how many review rounds it allowed (`--review-rounds`, else the profile's `run.review_rounds`);
 - `review_passes`: how many Correctness passes it allowed after the last round, the pass cap (`--review-passes`, else the profile's `run.review_passes`);
+- `queue`: whether the base's ruleset requires a merge queue. With `queue: true`, `ready` means ready to queue: the queue meets "up to date" (flow §4.3), so being behind the base is never a reason, and its `queue` note says the rules are checked when it is queued;
 - `notes[]`, `checks[]` (each check's name, state and whether it's required), `files` (the kit's and CI files it changes) and `preview` (the try-it link, `{state, url}`).
 
 Use each reason's `message` and `fix` as they are: they are already worded for the person's level. Say the most important reason first: one that needs someone to act (a conflict, a failed check, a reviewer's question, a closed pull request) before one that only needs waiting (checks still running, GitHub still checking).
@@ -123,6 +124,8 @@ In this order:
 2. "Merge when you've tried it."
 3. The choices **"Merge it now"** and "Not now".
 
+With `queue: true`, say "Ready to queue" instead, and that "Merge it now" adds it to the merge queue, which merges it once its group passes. Say the `queue` note's point in plain words: a request made after it is queued (changes requested, a new review thread) doesn't stop the merge.
+
 ## 5. The owner's review (`owner_review`)
 
 The change touches the kit's or CI files (`files`), which only the owner merges:
@@ -136,5 +139,17 @@ The change touches the kit's or CI files (`files`), which only the owner merges:
 1. **Check again first.** Gather fresh inputs (step 1, in a new directory) and run the command again. Merge only when it still says `ready` (or, after "I've read them", `owner_review` for the owner with the same files) **on the same head commit** (`head`) it said that for. Otherwise say what changed (a new push, a red check, a new review) and don't merge; offer what the new answer offers.
 2. **Merge with a merge commit, pinned to that commit:** `gh pr merge 12 --merge --match-head-commit <head>`, or `merge_pull_request` with `merge_method: merge` and the head pinned: `expectedHeadSha: <head>` in the GitHub MCP server's tool (GitHub's REST API calls it `sha`). A merge tool that can't take the head commit isn't used: merge with `gh`, or say they can merge from the pull request's page. Never `--admin`, a squash or rebase merge, or auto-merge (`--auto`).
 3. **Say it merged.** For *new to building*, add one line: "To undo it, ask Claude to revert #12."
+
+**With `queue: true`** (from step 1's check), "Merge it now" adds the pull request to the merge queue instead of merging it. Step 1 is the same; then, in place of steps 2 and 3:
+
+2. **Queue it, pinned to that commit:** `gh api -i -X PUT repos/<repo>/pulls/12/merge-async -f merge_action=merge_queue -f sha=<head>`, with the path and the full head SHA written out. `-i` prints the answer's status line (`HTTP/2.0 202 Accepted`) above its body; on a 4xx, `gh` names the status (`HTTP 422`) beside GitHub's message. `merge_queue` makes GitHub refuse rather than merge directly when no queue is required. Never `--admin`, `bypass_rules`, another `merge_action`, a direct merge or auto-merge (`--auto`).
+3. **Say what GitHub answered:**
+   - **202**: accepted, not yet queued. Read the result with `gh api repos/<repo>/pulls/12/merge-async/<uuid>` (the `uuid` from the 202's body) before saying it's in the queue: `enqueued` means "It's in the merge queue: it merges once its group passes"; `pending` means GitHub hasn't finished, so read it again shortly; `failed` shows GitHub's message, as it gave it.
+   - **200** "already in a merge queue": it's in the queue, waiting.
+   - **200** merged: it merged. Say so, as step 3 above does.
+   - **409**: another merge request for it is pending; ask again shortly.
+   - **400**, **403** or **422**: GitHub refused (closed, a draft, the rules): show GitHub's message, as it gave it.
+
+**A dropped pull request.** GitHub takes a pull request out of the queue when a check in its group fails, it times out, or one ahead of it fails. Asking again then finds it open: when the answer is `ready` again, it offers "Merge it now" again, which queues it again.
 
 **A refused merge is the answer.** If the guard or Claude Code's permission settings refuse the merge, say so with its reason as given (when the guard can't decide, its reason says the guard isn't working: show that), and don't try another way: no other tool, no `--admin`, no API call. Say they can merge from the pull request's page, with its link. The same when GitHub refuses it (the head moved, a rule): say why, and check again.

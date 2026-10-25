@@ -77,6 +77,8 @@ MAX_COMMITS = 250
 PARTIAL = "it holds only part of the list: fetch every page (gh api --paginate --slurp; with GraphQL, until pageInfo.hasNextPage is false)"
 _SHA = re.compile(r"[0-9a-f]{40}")
 _STATUS_URL_SHA = re.compile(r"/statuses/([0-9a-fA-F]{40})\b")
+# How a refused charter's note starts (`waivers`, and the merge queue's refusal).
+CHARTER_REFUSED = "The charter wasn't used, so no check is waived: "
 PREVIEWS_DOC = Path(__file__).resolve().parents[2] / "docs/previews.md"
 DEFAULT_REVIEW_ROUNDS = 3  # the profile's run.review_rounds when it can't be read
 REVIEW_ROUNDS = range(1, 11)  # what --review-rounds accepts, as profile.py's run.review_rounds
@@ -124,6 +126,7 @@ class Result:
     preview: dict | None = None
     review_rounds: int = DEFAULT_REVIEW_ROUNDS  # the allowed review rounds the review rule used
     review_passes: int = DEFAULT_REVIEW_PASSES  # the pass cap the review rule used
+    queue: bool = False  # a ruleset in force on the base requires a merge queue: "ready" means ready to queue (#245)
 
     def as_dict(self) -> dict:
         return {
@@ -139,6 +142,7 @@ class Result:
             "preview": self.preview,
             "review_rounds": self.review_rounds,
             "review_passes": self.review_passes,
+            "queue": self.queue,
         }
 
 
@@ -650,6 +654,21 @@ class Context:
 
         return self.once("rulesets", read)
 
+    def queue(self) -> bool:
+        """A ruleset in force on the base requires a merge queue (`protection.check`'s
+        reader); not when the rulesets can't be read, which is a reason of its own."""
+        try:
+            return self.rulesets().queue
+        except Unreadable:
+            return False
+
+    def queue_unsure(self) -> list[str]:
+        """The rulesets with a merge-queue rule it can't count either way."""
+        try:
+            return self.rulesets().queue_unsure
+        except Unreadable:
+            return []
+
     def open_threads(self) -> list[str | None]:
         """Who opened each unresolved review thread (None when it can't be told)."""
 
@@ -926,7 +945,10 @@ def _evidence(ctx: Context, add) -> None:
 
 
 def _up_to_date(ctx: Context, add) -> None:
-    """flow §4.3: the head isn't behind the base."""
+    """flow §4.3: the head isn't behind the base, or the merge queue the
+    ruleset requires meets it (#245): the queue tests it on the latest base."""
+    if ctx.queue():
+        return
     behind = ctx.compare()
     if behind or ctx.pr().behind:
         add("behind", by=f" by {_plural(behind, 'commit')}" if behind else "")
@@ -1141,7 +1163,7 @@ def waivers(charter_input: tuple | None, role: str | None, profile) -> tuple[fro
         if not problems and c["merge"].get("waived_checks") and c["merge"].get("mode") != "session":
             problems = [f"waivers need merge.mode session, and it is {c['merge'].get('mode')}"]
     if problems:
-        return frozenset(), [{"id": "charter_refused", "message": "The charter wasn't used, so no check is waived: " + _clean("; ".join(problems)) + "."}]
+        return frozenset(), [{"id": "charter_refused", "message": CHARTER_REFUSED + _clean("; ".join(problems)) + "."}]
     return frozenset(c["merge"].get("waived_checks") or []), []
 
 
@@ -1195,6 +1217,12 @@ def evaluate(
     waivable, charter_notes = waivers(charter_input, role, profile)
     ctx = Context(inputs, profile, profile_error, waivable, logs, review_rounds, review_passes)
     ctx.notes += charter_notes
+    if waivable and (ctx.queue() or ctx.queue_unsure()):
+        # Every merge goes through the queue, and only a direct merge could take a waiver (#241, answer 13);
+        # a queue it can't rule out refuses them too.
+        ctx.waivable = frozenset()
+        why = "with the merge queue on" if ctx.queue() else "where a ruleset may require a merge queue"
+        _note(ctx, "charter_refused", CHARTER_REFUSED + f"waivers don't apply {why} (flow §4.1).")
     try:
         pr = ctx.pr()
         number, head, base = pr.number, pr.head, pr.base
@@ -1229,6 +1257,12 @@ def evaluate(
                 owner = ctx.permissions().get(who) == "admin"
             except Unreadable:
                 owner = False
+    queue = ctx.queue()
+    if queue:
+        _note(ctx, "queue", "The base's ruleset requires a merge queue, which meets flow §4.3 (up to date), so \"ready\" means ready to queue. "
+              "These rules are checked when it is queued: a request made after that (changes requested, a new review thread) doesn't stop the merge.")
+    elif ctx.queue_unsure():
+        _note(ctx, "queue_unsure", "A merge-queue rule in a ruleset this command can't judge isn't counted as a queue: " + "; ".join(ctx.queue_unsure()) + ".")
     kit = ctx.kit
     if reasons:
         decision = "not_yet"
@@ -1238,7 +1272,7 @@ def evaluate(
         decision = "owner_review"
     else:
         decision = "ready"
-    return Result(decision, number, head, level, owner, reasons, ctx.notes, ctx.checks, kit, ctx.preview, ctx.review_rounds, ctx.review_passes)
+    return Result(decision, number, head, level, owner, reasons, ctx.notes, ctx.checks, kit, ctx.preview, ctx.review_rounds, ctx.review_passes, queue)
 
 
 # ---------- text ----------
@@ -1248,7 +1282,7 @@ def text(res: Result) -> str:
     """The answer for people: the decision first, then each reason and its fix."""
     n = f"#{res.pr}" if res.pr is not None else "This pull request"
     if res.decision == "ready":
-        lines = [f"Ready: {n} may merge."]
+        lines = [f"Ready to queue: {n} may join the merge queue." if res.queue else f"Ready: {n} may merge."]
     elif res.decision == "owner_review":
         if res.owner:
             lines = ["Ready once you've read the changes to these files:"]

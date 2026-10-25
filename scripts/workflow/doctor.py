@@ -7,13 +7,15 @@ picks one wording by experience (#16: what is checked, and each status, never
 depend on it), puts the most serious line first and groups the rest.
 
 Doctor never changes anything (#27): it reads files and runs `python3`,
-`claude --version` and `gh api` (GETs only, when no file is given: for the
-GitHub lines, the checks that ran on the base branch, the open pull requests
-and whether a run has been made), nothing else. It reads files only through
+`claude --version`, `gh api` (GETs only, when no file is given: for the
+GitHub lines, the checks that ran on the base branch, the open pull requests,
+whether a run has been made, and the merge queue's inputs) and `git rev-parse`
+and `git show` (the workflow files as they are on `origin/<base>`, #246),
+nothing else. It reads files only through
 `_read_text` (and `_read_value`, `_read_json` on it), `_file` and
 `_hash_file`, which never raise and never wait on a pipe; only a file given as
-`-` (`--rulesets`, `--repo`, `--environments`, `--runs`, `--checks` or
-`--prs`) reads standard input, as asked. A check that fails unexpectedly becomes a
+`-` (`--rulesets`, `--repo`, `--environments`, `--runs`, `--checks`,
+`--prs`, `--org`, `--ci` or `--commits`) reads standard input, as asked. A check that fails unexpectedly becomes a
 `cant_check` line, never a traceback: doctor is advice, and exits 0.
 
 **Adding a group or a check** (the GitHub, Cloud and Previews tickets): write
@@ -35,6 +37,7 @@ and the checkout.
 
 from __future__ import annotations
 
+import dataclasses
 import difflib
 import hashlib
 import json
@@ -42,6 +45,7 @@ import os
 import re
 import shutil
 import signal
+import statistics
 import subprocess
 import sys
 import textwrap
@@ -49,6 +53,7 @@ import time
 import tomllib
 import urllib.parse
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import NamedTuple
 
@@ -71,7 +76,7 @@ LABELS = {"gap": "gap", "cant_check": "can't check", "note": "note", "fine": "fi
 # The upgrades a line may offer, by the names #47 and #48 use (the glossary's
 # names: "Protect `main`" is the upgrade's name whatever the base branch).
 OFFERS = {"protect_main": "Protect `main`", "restore_protection": "Restore protection", "set_up_unattended_runs": "Set up unattended runs",
-          "require_checks": "Require these checks", "add_try_it_links": "Add try-it links"}
+          "require_checks": "Require these checks", "add_try_it_links": "Add try-it links", "use_merge_queue": "Use a merge queue"}
 
 PYTHON_MIN = (3, 11)
 # The oldest Claude Code that honours the guard's `onFailure: "block"` (#57,
@@ -155,6 +160,14 @@ class Inputs:
     # over `gh api` (#69).
     checks_file: Path | str | None = None
     prs_file: Path | str | None = None
+    # --org (the owning organisation, for its plan), --ci (the check runs of
+    # the base's last commits and of recent pull requests' heads, with the
+    # workflow runs behind them) and --commits (the base's), which win over
+    # `gh api`, and --now, where the 7 days end (#246).
+    org_file: Path | str | None = None
+    ci_file: Path | str | None = None
+    commits_file: Path | str | None = None
+    now: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     # Only gaps are wanted (`workflow status`, #62, which keeps the gap lines
     # itself): a check may leave out what can only be a note or fine and
     # costs time. `check_profile` skips `profile check`'s warnings, whose globs
@@ -165,6 +178,10 @@ class Inputs:
     _runs: _Answer | None = field(default=None, repr=False)  # the `workflow:run` issues, read once
     _checks: _Answer | None = field(default=None, repr=False)  # the checks that ran on the base branch, read once
     _prs: _Answer | None = field(default=None, repr=False)  # the open pull requests, read once
+    _ci: _Answer | None = field(default=None, repr=False)  # the CI behind the required checks, read once
+    _commits: _Answer | None = field(default=None, repr=False)  # the base branch's commits, read once
+    _run_open: bool | None = field(default=None, repr=False)  # a `workflow:run` issue is open, once the runs are read
+    _mq: dict | None = field(default=None, repr=False)  # the JSON's merge_queue, once its check has run
     _gh_until: float | None = field(default=None, repr=False)  # when doctor stops waiting on GitHub (`_gh_deadline`)
 
     @property
@@ -1026,6 +1043,7 @@ class _GitHub:
     unprotected_either: bool = False
     merge: dict | None = None
     merge_why: _Answer | None = None
+    settings: dict | None = None  # the repository's settings as given (its owner and visibility, #246)
 
 
 ADMIN = Words(
@@ -1215,6 +1233,7 @@ def _github(i: Inputs) -> _GitHub | None:
     gh = i._github = _GitHub()
     settings = _given(i, i.repo_file, "--repo") if i.repo_file is not None else _gh(i, f"repos/{i.profile.repo}", deadline, "--repo")
     accepted = None  # the settings the read-back took
+    gh.settings = settings.value if not settings.why and isinstance(settings.value, dict) else None
     if settings.why:
         gh.merge_why = settings
     else:
@@ -1660,12 +1679,33 @@ def _with_offer(line: Line, ran: list[dict], base: str) -> Line:
     ), line.fix, offer="require_checks")
 
 
-def _gap_fix(base: str, missing: list[str], ran: list[dict]) -> Words:
+def _queued_checks(rep: protection_mod.Report) -> bool:
+    """The ruleset "Require these checks" adds checks to holds the merge
+    queue, so it leaves "up to date" as it is there (#247): the kit's own,
+    else the one ruleset in force; with several and none the kit's, one
+    holding both the queue and required checks. Only a queue the reader
+    counts (`rep.queue`) counts."""
+    if not rep.queue:
+        return False
+    own = [rs for rs in rep.effective if rs.get("name") == f"Protect {rep.base_branch} ({protection_mod.KIT})"]
+    chosen = own or (rep.effective if len(rep.effective) == 1 else [])
+    if chosen:
+        return protection_mod._has_merge_queue(chosen[0])
+    return any(protection_mod._has_merge_queue(rs) and any(r["type"] == "required_status_checks" for r in rs["rules"]) for rs in rep.effective)
+
+
+def _up_to_date(queue: bool) -> str:
+    """What "Require these checks" does to "up to date": on, or left as it is
+    beside a merge queue, which meets it (#247)."""
+    return "\"up to date\" left as it is (the merge queue meets it)" if queue else "\"up to date\" on"
+
+
+def _gap_fix(base: str, missing: list[str], ran: list[dict], queue: bool = False) -> Words:
     """The fix of the gap naming listed checks the ruleset doesn't require:
     the offer's when they all ran; else they can be ticked once they have."""
     waiting = [c for c in missing if c not in {r["name"] for r in ran}]
     if not waiting:
-        return _offer_fix(base)
+        return _offer_fix(base, queue)
     one, shown = len(waiting) == 1, _check_names(waiting)
     if ran:
         return Words(
@@ -1674,14 +1714,14 @@ def _gap_fix(base: str, missing: list[str], ran: list[dict]) -> Words:
         )
     return Words(
         f"Ask Claude to \"{REQUIRE_CHECKS}\", once {'it has' if one else 'they have'} run on `{base}`.",
-        f"Run upgrade-setup's \"{REQUIRE_CHECKS}\" once {shown} {'has' if one else 'have'} run (adds {'it' if one else 'them'} to the ruleset with \"up to date\" on).",
+        f"Run upgrade-setup's \"{REQUIRE_CHECKS}\" once {shown} {'has' if one else 'have'} run (adds {'it' if one else 'them'} to the ruleset with {_up_to_date(queue)}).",
     )
 
 
-def _offer_fix(base: str) -> Words:
+def _offer_fix(base: str, queue: bool = False) -> Words:
     return Words(
         f"Ask Claude to \"{REQUIRE_CHECKS}\": it shows the checks that ran on `{base}` for you to tick.",
-        f"Run upgrade-setup's \"{REQUIRE_CHECKS}\" (`require_checks`): the ticked checks go in the ruleset, with \"up to date\" on, and in ci.required_checks.",
+        f"Run upgrade-setup's \"{REQUIRE_CHECKS}\" (`require_checks`): the ticked checks go in the ruleset, with {_up_to_date(queue)}, and in ci.required_checks.",
     )
 
 
@@ -1718,7 +1758,7 @@ def check_required_checks(i: Inputs) -> list[Line]:
             ))
         ran = _offerable(i, rep)
         if ran:
-            line = _with_offer(Line(g, id_, "note", line.message, _offer_fix(base)), ran, base)
+            line = _with_offer(Line(g, id_, "note", line.message, _offer_fix(base, _queued_checks(rep))), ran, base)
         return [line] + _profile_checks(i, rep)
     rep, wait = _report(i, id_, Words("whether GitHub requires the checks the kit's profile lists", "ci.required_checks against the ruleset"))
     if wait:
@@ -1750,13 +1790,13 @@ def check_required_checks(i: Inputs) -> list[Line]:
         line = Line(g, id_, "gap", Words(
             f"GitHub doesn't require {'this check' if len(missing) == 1 else 'these checks'} the kit's profile lists to pass before a pull request merges: {shown}.",
             f"ci.required_checks not required by any active ruleset on `{base}`: {shown}.",
-        ), _gap_fix(base, missing, ran))
+        ), _gap_fix(base, missing, ran, _queued_checks(rep)))
     elif ran:
         # The profile and the ruleset agree, but a check added to CI later has run.
         line = Line(g, id_, "note", Words(
             f"GitHub requires the checks the kit's profile lists ({names}), but neither lists every check that runs on `{base}`.",
             f"Every ci.required_checks name is required on `{base}` ({names}); not every check that ran is.",
-        ), _offer_fix(base))
+        ), _offer_fix(base, _queued_checks(rep)))
     else:
         line = Line(g, id_, "fine", Words(
             f"GitHub requires the checks the kit's profile lists to pass before a pull request merges ({names}).",
@@ -1839,7 +1879,17 @@ def check_ruleset_rules(i: Inputs) -> list[Line]:
     base = i.profile.base_branch
     lines = []
     strict = [p.get("strict_required_status_checks_policy") is True for p in _rules(rep, "required_status_checks")]
-    if not strict and not i.profile.required_checks:
+    if rep.queue:
+        lines.append(_queue_up_to_date(rep, base))
+    elif rep.queue_unsure and not any(strict):
+        lines.append(Line(g, "github.up_to_date", "cant_check", Words(
+            f"Can't tell whether a merge queue keeps pull requests up to date with `{base}`: {_shown(rep.queue_unsure[0], 300)}.",
+            f"Merge queue unknown on `{base}`, and strict_required_status_checks_policy isn't true: {_shown('; '.join(rep.queue_unsure), 300)}.",
+        ), Words(
+            f"Check in Settings → Rules whether that ruleset applies to `{base}`; naming `{base}` itself (not a pattern) lets the kit tell.",
+            f"Name refs/heads/{base} (or ~DEFAULT_BRANCH, with --repo's default_branch) in its include, so the reader can count it.",
+        )))
+    elif not strict and not i.profile.required_checks:
         lines.append(Line(g, "github.up_to_date", "note", Words(
             f"\"Require branches to be up to date\" comes with the required checks, and none are required on `{base}` yet.",
             f"No required_status_checks rule on `{base}` (ci.required_checks is empty), so no strict_required_status_checks_policy.",
@@ -1912,7 +1962,34 @@ def check_ruleset_rules(i: Inputs) -> list[Line]:
             f"GitHub accepts merge commits on `{base}` (no \"Require linear history\").",
             "No required_linear_history rule.",
         )))
+    try:  # the merge queue's lines (#246), said only where a queue fits or is on
+        lines += check_merge_queue(i)
+    except Exception as e:  # advice never ends in a traceback
+        lines.append(_failed(i, check_merge_queue, e))
     return lines
+
+
+def _queue_up_to_date(rep: protection_mod.Report, base: str) -> Line:
+    """`github.up_to_date` with a merge queue in force: the queue meets it
+    (#243), and a ruleset still keeping "up to date" on is named, for the
+    owner to turn it off there. Its fix never turns "up to date" on."""
+    keeping = [rs for rs in rep.effective for r in rs["rules"] if r["type"] == "required_status_checks"
+               and (r.get("parameters") or {}).get("strict_required_status_checks_policy") is True]
+    if not keeping:
+        return Line("GitHub", "github.up_to_date", "fine", Words(
+            f"The merge queue keeps pull requests up to date with `{base}`: each is tested against the latest `{base}` before it merges.",
+            f"A merge_queue rule meets \"up to date\" on `{base}` (strict_required_status_checks_policy off).",
+        ))
+    keeping = list({id(rs): rs for rs in keeping}.values())  # a ruleset once, however many such rules it has
+    names = _most(f"`{_shown(str(rs.get('name') or rs.get('id')))}`" for rs in keeping)
+    org = any(rs.get("source_type") == "Organization" for rs in keeping)
+    return Line("GitHub", "github.up_to_date", "note", Words(
+        f"The merge queue keeps pull requests up to date with `{base}`, but \"Require branches to be up to date\" is still on in {names}, so GitHub may still make a pull request update before it can join the queue.",
+        f"A merge_queue rule is in force on `{base}`, and strict_required_status_checks_policy is still true in {names}.",
+    ), Words(
+        f"Turn \"Require branches to be up to date\" off in {names}" + (" (an organisation's ruleset: its owners change it in the organisation's settings)." if org else "."),
+        f"Turn it off: strict_required_status_checks_policy = false in {names}" + (" (an organisation ruleset)." if org else "."),
+    ))
 
 
 @_check("GitHub", "github.merge_commits")
@@ -1958,6 +2035,671 @@ def check_merge_settings(i: Inputs) -> list[Line]:
                 ("When you leave solo mode, ask" if solo else "Ask") + " Claude to turn on \"Allow auto-merge\" (Settings → General → Pull Requests).",
                 "Set allow_auto_merge = true" + (" when leaving solo mode." if solo else " (PATCH repos/<repo>, or upgrade-setup's \"Protect `main`\")."),
             )))
+    return lines
+
+
+# ---------- the merge queue (#246) ----------
+# GitHub's merge queue, suggested and never a gap: where checks are required,
+# the queue is off and GitHub offers it ("in any public repository owned by an
+# organization, or in private repositories owned by organizations using GitHub
+# Enterprise Cloud"). Beside it, the `merge_group` check over the workflows
+# behind the required checks, read from `origin/<base>`, never the checkout's;
+# and the signals the check-setup skill words its recommendation from. Each
+# input is read only once a line needs it: --org, --ci and --commits when
+# given, else with `gh api` (GETs only, one page each); the workflow files
+# with `git`, from what the checkout holds of `origin/<base>`.
+
+USE_MERGE_QUEUE = OFFERS["use_merge_queue"]
+GIVE_ORG = "--org (GET orgs/<owner>)"
+GIVE_CI = "--ci (each commit's GET .../commits/<sha>/check-runs and GET .../actions/runs?head_sha=<sha>)"
+GIVE_COMMITS = "--commits (GET repos/<repo>/commits?sha=<base>&per_page=100)"
+ACTIONS_APP = "github-actions"  # the app behind GitHub Actions' check runs
+WINDOW = timedelta(days=7)  # how often the base moved, counted over this
+CI_COMMITS = 5  # the base's last commits, and the open pull requests' heads, whose CI is read with `gh`
+# An organisation's plans as GET orgs/<owner> names them: Enterprise Cloud has
+# the queue; these don't. Any other name is read as not known.
+ENTERPRISE_PLAN = "enterprise"
+PLANS_WITHOUT = ("free", "team", "pro")
+_SHA = re.compile(r"[0-9a-fA-F]{40}")
+UNCHECKED = {"status": "cant_check", "clean": False, "workflows": [], "checks": []}  # the merge_group check's JSON, not read
+_WORKFLOW_FILE = re.compile(r"\.github/workflows/[^/\x00-\x1f]+\.ya?ml")
+# The keys of a workflow's `on:` block, read line by line with no YAML library.
+_TOP_ON = re.compile(r"""(?:on|"on"|'on')[ ]*:(?:[ ]+(.*))?""")
+_KEY = re.compile(r"""([A-Za-z_][\w-]*|"[^"\n]*"|'[^'\n]*')[ ]*:(?:[ ]+(.*))?""")
+_ALIAS = re.compile(r"(?:^|[\s:\[,])[&*!|>][\w-]")  # an anchor, alias, tag or block scalar
+_PATTERN = re.compile(r"[?+\[\]!\\]")  # filter-pattern characters the kit doesn't match
+
+
+def parse_now(value: str | None) -> datetime | None:
+    """--now as a time with its zone; now when not given; None when it isn't one."""
+    if value is None:
+        return datetime.now(timezone.utc)
+    try:
+        t = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t if t.tzinfo is not None and "T" in value and 1970 < t.year < 9999 else None
+
+
+def _iso(value) -> datetime | None:
+    """GitHub's time (UTC when it gives no zone), or None."""
+    if not isinstance(value, str):
+        return None
+    try:
+        t = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
+def _org_plan(i: Inputs, login: str) -> str | None:
+    """The organisation's plan, casefolded, from --org or `gh api`; None
+    when it can't be read (only the organisation's owners can see it)."""
+    if i.org_file is not None:
+        got = _given(i, i.org_file, "--org", what="the organisation")
+    else:
+        got = _gh(i, f"orgs/{urllib.parse.quote(login, safe='')}", _gh_deadline(i), "--org", give=GIVE_ORG)
+    plan = got.value.get("plan") if isinstance(got.value, dict) else None
+    name = plan.get("name") if isinstance(plan, dict) else None
+    return name.casefold() if isinstance(name, str) and name else None
+
+
+def _availability(i: Inputs, gh: _GitHub) -> str | None:
+    """Whether GitHub offers this repository a merge queue: "yes", "check_plan"
+    (a private organisation repository whose plan can't be read), or None (a
+    personal repository, a private one on a plan without it, or an owner the
+    settings don't name)."""
+    s = gh.settings or {}
+    owner = s.get("owner") if isinstance(s.get("owner"), dict) else {}
+    if owner.get("type") != "Organization":
+        return None
+    visibility = s.get("visibility")
+    if visibility not in ("public", "private", "internal"):
+        visibility = {True: "private", False: "public"}.get(s.get("private"))
+    if visibility in ("public", "internal"):  # internal: only Enterprise has it
+        return "yes"
+    if visibility != "private":
+        return None
+    login = owner.get("login") if isinstance(owner.get("login"), str) and owner.get("login") else i.profile.repo.split("/")[0]
+    plan = _org_plan(i, login)
+    if plan == ENTERPRISE_PLAN:
+        return "yes"
+    return None if plan in PLANS_WITHOUT else "check_plan"
+
+
+def _commits(i: Inputs) -> _Answer:
+    """The base branch's commits, newest first, each an object with a sha:
+    from --commits, else one page through `gh api`; read once."""
+    if i._commits is None:
+        fix = Words(
+            "Ask Claude to fetch the main branch's commits from GitHub again, or leave out --commits to read them with `gh`.",
+            f"Give {GIVE_COMMITS}, as the GitHub API returns them, or leave it out to use `gh api`.",
+        )
+        if i.commits_file is not None:
+            got = _given(i, i.commits_file, "--commits", fix, "commits")
+        else:
+            ref = urllib.parse.quote(i.profile.base_branch, safe="/")
+            got = _gh(i, f"repos/{i.profile.repo}/commits?sha={ref}&per_page=100", _gh_deadline(i), "--commits", give=GIVE_COMMITS)
+        if not got.why:
+            try:
+                commits = estimate_mod._flatten(got.value) if isinstance(got.value, list) else None
+            except RecursionError:  # nested deeper than any list of pages
+                commits = None
+            if commits is None or not all(isinstance(c, dict) and isinstance(c.get("sha"), str) for c in commits):
+                got = _Answer(why=Words("the main branch's commits couldn't be read", "the commits aren't a list of commits, each with a sha"), fix=fix)
+            else:
+                got = _Answer(commits)
+        i._commits = got
+    return i._commits
+
+
+def _first_parents(commits: list[dict]) -> tuple[list[tuple[str, datetime | None]], bool]:
+    """The base's own history from its newest commit, by first parents: each
+    commit's sha and committer time; and whether it runs off the list."""
+    by_sha = {c["sha"]: c for c in commits}
+    out, seen = [], set()
+    if not commits:
+        return out, False
+    c = commits[0]
+    while c is not None and c["sha"] not in seen:
+        seen.add(c["sha"])
+        committer = (c.get("commit") or {}).get("committer") if isinstance(c.get("commit"), dict) else None
+        out.append((c["sha"], _iso(committer.get("date")) if isinstance(committer, dict) else None))
+        parents = c.get("parents")
+        if parents == []:
+            return out, False  # the first commit
+        first = parents[0].get("sha") if isinstance(parents, list) and isinstance(parents[0], dict) else None
+        if not isinstance(first, str):
+            return out, True  # a parent it can't follow: only "at least"
+        c = by_sha.get(first)
+    return out, c is None
+
+
+def _moved(i: Inputs) -> tuple[int | None, bool]:
+    """How many commits reached the base in the 7 days to `now`, by first
+    parents (each merge or push once), and whether that is only "at least"
+    (the list ends inside the window). None when it can't be read."""
+    commits = _commits(i)
+    if commits.why:
+        return None, False
+    chain, off = _first_parents(commits.value)
+    start, n = i.now - WINDOW, 0
+    for _, when in chain:
+        if when is None:
+            return None, False
+        if when <= start:
+            return n, False
+        if when <= i.now:
+            n += 1
+    return (None, False) if off and not n else (n, off)
+
+
+@dataclass
+class _CICommit:
+    """One commit's CI: its check runs and the workflow runs behind them."""
+
+    sha: str
+    base: bool
+    runs: list[dict]
+    workflow_runs: list[dict]
+
+
+def _items(value, key: str) -> list[dict] | None:
+    """GitHub's answer (or its pages) as the list under `key`; None when it
+    isn't one, or holds fewer than its `total_count` (a page missing)."""
+    pages = value if isinstance(value, list) else [value]
+    if not all(isinstance(p, dict) and isinstance(p.get(key), list) for p in pages):
+        return None
+    items = [x for p in pages for x in p[key]]
+    totals = [p["total_count"] for p in pages if isinstance(p.get("total_count"), int) and not isinstance(p.get("total_count"), bool)]
+    if totals and len(items) < max(totals):
+        return None
+    return items if all(isinstance(x, dict) for x in items) else None
+
+
+def _an_id(v) -> bool:
+    return v is None or isinstance(v, (int, str)) and not isinstance(v, bool)
+
+
+def _parse_ci(entries) -> list[_CICommit] | None:
+    """--ci's entries, each with its check runs (a name and an app with a
+    slug, as GitHub gives them) and workflow runs; None when they aren't."""
+    if not isinstance(entries, list):
+        return None
+    out = []
+    for e in entries:
+        if not isinstance(e, dict) or not isinstance(e.get("sha"), str) or not isinstance(e.get("base"), bool):
+            return None
+        runs = _items(e.get("check_runs"), "check_runs")
+        flows = _items(e["workflow_runs"], "workflow_runs") if "workflow_runs" in e else []
+        if runs is None or flows is None:
+            return None
+        if not all(isinstance(r.get("name"), str) and isinstance(r.get("app"), dict) and isinstance(r["app"].get("slug"), str)
+                   and (r.get("check_suite") is None or isinstance(r["check_suite"], dict) and _an_id(r["check_suite"].get("id"))) for r in runs):
+            return None
+        if not all(_an_id(w.get("check_suite_id")) and (w.get("path") is None or isinstance(w["path"], str)) for w in flows):
+            return None
+        out.append(_CICommit(e["sha"], e["base"], runs, flows))
+    return out
+
+
+def _ci(i: Inputs) -> _Answer:
+    """The CI of the base's last commits and of the open pull requests' heads,
+    from --ci, else `gh api`; read once."""
+    if i._ci is None:
+        if i.ci_file is not None:
+            got = _given(i, i.ci_file, "--ci", Words(
+                "Ask Claude to fetch the checks that ran on the main branch and on the open pull requests again, as check-setup gathers them.",
+                f"Give {GIVE_CI}, as check-setup gathers them.",
+            ), "CI runs")
+        else:
+            got = _read_ci(i)
+        if not got.why:
+            parsed = _parse_ci(got.value)
+            got = _Answer(parsed) if parsed is not None else _Answer(why=Words(
+                "the checks that ran aren't in the shape GitHub gives them",
+                "the CI runs aren't a list of {sha, base, check_runs, workflow_runs}, every page, each check run with a name and its app's slug",
+            ), fix=Words("Ask Claude to fetch them again, as check-setup gathers them.", f"Give {GIVE_CI}."))
+        i._ci = got
+    return i._ci
+
+
+def _read_ci(i: Inputs) -> _Answer:
+    """The CI read with `gh api`: the base's last `CI_COMMITS` commits, by
+    first parents, and as many open pull requests' heads."""
+    commits = _commits(i)
+    if commits.why:
+        return commits
+    base = [sha for sha, _ in _first_parents(commits.value)[0][:CI_COMMITS]]
+    prs = _open_prs(i)
+    heads = [] if prs.why else [(pr.get("head") or {}).get("sha") for pr in prs.value if isinstance(pr.get("head"), dict)]
+    heads = [s for s in heads if isinstance(s, str) and s not in base][:CI_COMMITS]
+    repo, deadline, out = i.profile.repo, _gh_deadline(i), []
+    for sha, on_base in [(s, True) for s in base] + [(s, False) for s in heads]:
+        if not _SHA.fullmatch(sha):
+            if not on_base:
+                continue  # a pull request's head: the others still tell
+            return _Answer(why=Words("GitHub named a commit the kit can't read", f"{_shown(sha)} isn't a commit sha"), fix=_again(GIVE_CI))
+        runs = _gh(i, f"repos/{repo}/commits/{sha}/check-runs?per_page=100", deadline, "--ci", give=GIVE_CI)
+        flows = runs if runs.why else _gh(i, f"repos/{repo}/actions/runs?head_sha={sha}&per_page=100", deadline, "--ci", give=GIVE_CI)
+        cut = not flows.why and (_items(runs.value, "check_runs") is None or _items(flows.value, "workflow_runs") is None)
+        if flows.why or cut and not on_base:
+            if on_base:
+                return flows
+            continue  # a pull request's head: the others still tell
+        out.append({"sha": sha, "base": on_base, "check_runs": runs.value, "workflow_runs": flows.value})
+    return _Answer(out)
+
+
+def _ci_minutes(ci: list[_CICommit], required: list[str]) -> dict:
+    """CI's longest and typical (median) time on the base's commits, in whole
+    minutes: on each commit whose required checks have all finished, the
+    longest of their runs that passed, failed or timed out, each from its own start to
+    its own end (so a re-run, or another workflow, never stretches it)."""
+    took = []
+    for c in ci:
+        mine = [r for r in c.runs if r["name"] in required]
+        if not c.base or any(r.get("status") != "completed" for r in mine):
+            continue
+        runs = [r for r in mine if r.get("conclusion") in ("success", "failure", "timed_out")]  # a skipped or cancelled run took no CI time
+        times = [(_iso(r.get("started_at")), _iso(r.get("completed_at"))) for r in runs]
+        spans = [(end - start).total_seconds() for start, end in times if start and end and end >= start]
+        if spans:
+            took.append(round(max(spans) / 60))
+    return {"longest": max(took) if took else None, "typical": statistics.median_low(took) if took else None, "commits": len(took)}
+
+
+def _signals(i: Inputs, rep: protection_mod.Report) -> dict:
+    """What check-setup words its recommendation from (#243): CI's length
+    on the base, how often the base moved in the 7 days to `now`, and
+    whether unattended runs are set up or one is in progress."""
+    runs = _runs(i)  # first: the Cloud lines read it too, within the same budget
+    ci = _ci(i)
+    moved, at_least = _moved(i)
+    p = i.profile
+    return {
+        "now": i.now.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "ci_minutes": _ci_minutes(ci.value, rep.required_checks) if not ci.why else {"longest": None, "typical": None, "commits": 0},
+        "base_commits_7d": moved,
+        "base_commits_at_least": at_least,
+        "runs_set_up": bool(p.ticket_environment and p.conductor_environment),
+        "run_in_progress": None if runs.why else i._run_open,
+    }
+
+
+def _minutes(n: int) -> str:
+    return "under a minute" if not n else _count(n, "a minute", "minutes")
+
+
+def _signal_words(i: Inputs, s: dict) -> Words:
+    base, ci = i.profile.base_branch, s["ci_minutes"]
+    day = i.now.astimezone(timezone.utc).strftime("%d %b %Y")
+    if ci["typical"] is None:
+        took = Words(f"how long CI takes on `{base}` couldn't be read", "CI time on the base: unknown")
+    else:
+        about = ("" if not ci["typical"] else "about ") + _minutes(ci["typical"])
+        took = Words(f"CI takes {about} on `{base}` (the longest {_minutes(ci['longest'])})",
+                     f"CI on `{base}`: typical {ci['typical']} min, longest {ci['longest']} (over {_count(ci['commits'], 'its last commit', 'commits')})")
+    n = s["base_commits_7d"]
+    if n is None:
+        moved = Words(f"how often `{base}` moves couldn't be read", "base moves in 7 days: unknown")
+    else:
+        more = "at least " if s["base_commits_at_least"] else ""
+        moved = Words(f"`{base}` moved {more}{_count(n, 'once', 'times')} in the 7 days to {day}",
+                      f"{more}{n} first-parent commits on `{base}` in the 7 days to {s['now']}")
+    if s["run_in_progress"]:
+        runs = Words("an unattended run is in progress", "a run is in progress")
+    elif s["runs_set_up"]:
+        runs = Words("unattended runs are set up", "runs set up" + (", none in progress" if s["run_in_progress"] is False else ""))
+    else:
+        runs = Words("unattended runs aren't set up", "runs not set up")
+    return Words(f"{_upper(took.new)}, {moved.new}, and {runs.new}.", f"{took.developer}; {moved.developer}; {runs.developer}.")
+
+
+def _queue_line(i: Inputs, rep: protection_mod.Report, available: str | None, signals: dict) -> Line:
+    g, id_, base = "GitHub", "github.merge_queue", i.profile.base_branch
+    said = _signal_words(i, signals)
+    if rep.queue:
+        return Line(g, id_, "fine", Words(
+            f"GitHub's merge queue is on for `{base}`: it tests each pull request against the latest `{base}` (and those queued ahead of it) before merging it. {said.new}",
+            f"A merge_queue rule is in force on `{base}`. {said.developer}",
+        ))
+    plan = available == "check_plan"
+    return Line(g, id_, "note", Words(
+        f"A merge queue could keep pull requests up to date with `{base}` for you"
+        + (", if your plan has it: on a private repository GitHub offers it only with GitHub Enterprise Cloud, and the kit can't tell this organisation's plan (only its owners can see it), so check before taking the upgrade" if plan else "")
+        + f". It tests each pull request against the latest `{base}` before merging it, so a green pull request never has to be updated and tested again. {said.new}",
+        "Merge queue off; " + ("a private repository has it only on GitHub Enterprise Cloud, and the organisation's plan can't be told (check first)" if plan else "available")
+        + f"; \"up to date\" holds today. {said.developer}",
+    ), Words(
+        ("If your organisation is on GitHub Enterprise Cloud and it fits" if plan else "If it fits")
+        + f", ask Claude to \"{USE_MERGE_QUEUE}\": it first adds the queue's trigger to your CI in a pull request for you to merge.",
+        (f"Confirm the plan is Enterprise Cloud, then run" if plan else "Run") + f" upgrade-setup's \"{USE_MERGE_QUEUE}\" (`use_merge_queue`): merge_group in the workflows first, then the ruleset.",
+    ), offer="use_merge_queue")
+
+
+def _flow_list(text: str) -> list[str] | None:
+    """`[a, 'b', "c"]`, or a single plain value, as its items; None when it isn't one of those."""
+    text = text.strip()
+    if text.startswith("["):
+        if not text.endswith("]") or any(c in text[1:-1] for c in "[]{}"):
+            return None
+        parts = [p.strip() for p in text[1:-1].split(",") if p.strip()]
+    elif text and text[0] not in "{&*!|>":
+        parts = [text]
+    else:
+        return None
+    return [_unquoted(p) for p in parts]
+
+
+def _unquoted(v: str) -> str:
+    return v[1:-1] if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'" else v
+
+
+def _uncommented(v: str) -> str:
+    """A value with a trailing ` # comment` left out."""
+    m = re.search(r"(?:^|\s)#", v)
+    return (v[:m.start()] if m else v).strip()
+
+
+def _block(lines: list[str]) -> tuple[dict | None, str]:
+    """The keys of an indented block of lines, each with its inline value
+    and the lines under it; or (None, why it can't be read)."""
+    if not lines:
+        return None, "it has nothing under it"
+    indent = len(lines[0]) - len(lines[0].lstrip(" "))
+    keys: dict = {}
+    current = None
+    for ln in lines:
+        at = len(ln) - len(ln.lstrip(" "))
+        if at < indent:
+            return None, "its indentation can't be followed"
+        if at > indent:
+            keys[current][1].append(ln)
+            continue
+        m = _KEY.fullmatch(ln.strip())
+        if not m:
+            return None, f"a line under it isn't a key: {_shown(ln.strip())}"
+        current = _unquoted(m.group(1))
+        if current in keys:
+            return None, f"it names `{_shown(current)}` twice"
+        keys[current] = (_uncommented(m.group(2) or ""), [])
+    return keys, ""
+
+
+def _branch_matches(pattern: str, base: str) -> bool:
+    """A filter pattern with `*` and `**` against the base branch's name."""
+    rx = "".join(".*" if part == "**" else "[^/]*" if part == "*" else re.escape(part) for part in re.split(r"(\*\*|\*)", pattern))
+    return re.fullmatch(rx, base) is not None
+
+
+def _triggers(text: str, base: str) -> tuple[str, str]:
+    """A workflow's `merge_group` state for the base: ("ready", ""),
+    ("missing", ""), ("excluded", which filter leaves it out), or
+    ("cant_check", why), read from its `on:` keys line by line. Anything it
+    can't follow is `cant_check`, never fine."""
+    lines = [ln for ln in text.removeprefix("\ufeff").splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
+    markers = [k for k, ln in enumerate(lines) if not ln[0].isspace() and _uncommented(ln) in ("---", "...")]
+    if [k for k in markers if k and not (k == len(lines) - 1 and _uncommented(lines[k]) == "...")]:
+        return "cant_check", "it holds more than one YAML document"
+    ons = [k for k, ln in enumerate(lines) if not ln[0].isspace() and _TOP_ON.fullmatch(ln.rstrip())]
+    if len(ons) != 1:
+        return "cant_check", "it has no `on:` key" if not ons else "it has `on:` more than once"
+    k = ons[0]
+    inline = _uncommented(_TOP_ON.fullmatch(lines[k].rstrip()).group(1) or "")
+    if inline.startswith("["):
+        return "cant_check", "its `on:` is a list, not a mapping with `pull_request:`"
+    if inline:
+        if inline[0] in "{&*!|>":
+            return "cant_check", "its `on:` is written in a form the kit doesn't read (one key per line)"
+        return "cant_check", f"its `on:` is a single event (`{_shown(inline)}`), not a mapping with `pull_request:`"
+    body = []
+    for ln in lines[k + 1:]:
+        if not ln[0].isspace():
+            break
+        body.append(ln)
+    if any("\t" in ln[:len(ln) - len(ln.lstrip())] for ln in body):
+        return "cant_check", "its `on:` is indented with tabs"
+    if any(_ALIAS.search(_uncommented(ln)) for ln in body):
+        return "cant_check", "its `on:` uses an anchor, an alias, a tag or a block scalar, which the kit doesn't follow"
+    if body and body[0].lstrip(" ").startswith("-"):
+        return "cant_check", "its `on:` is a list, not a mapping with `pull_request:`"
+    keys, why = _block(body)
+    if keys is None:
+        return "cant_check", f"its `on:` can't be read: {why}"
+    if "pull_request" not in keys:
+        return "cant_check", "its `on:` has no `pull_request:` (" + (", ".join(f"`{_shown(x)}`" for x in keys) or "no events") + ")"
+    if "merge_group" not in keys:
+        return "missing", ""
+    value, under = keys["merge_group"]
+    if value and value not in ("null", "~", "{}"):
+        return "cant_check", "its `merge_group:` is written in a form the kit doesn't read (one key per line)"
+    if not under:
+        return "ready", ""
+    filters, why = _block(under)
+    if filters is None or set(filters) - {"types", "branches", "branches-ignore"}:
+        return "cant_check", f"its `merge_group:` can't be read: {why or 'it has a key GitHub does not give it'}"
+    if "branches" in filters and "branches-ignore" in filters:
+        return "cant_check", "its `merge_group:` has both `branches` and `branches-ignore`"
+    for name in ("branches", "branches-ignore"):
+        if name not in filters:
+            continue
+        value, under = filters[name]
+        items = _flow_list(value) if value else [_unquoted(_uncommented(ln.strip()[1:])) if ln.strip().startswith("- ") else None for ln in under]
+        if value and items == [] and name == "branches-ignore":
+            continue  # `[]`: it ignores nothing
+        if not items or None in items or any(p.casefold() in ("~", "null") for p in items):
+            return "cant_check", f"its `merge_group:` `{name}` filter can't be read"
+        if any(_PATTERN.search(p) for p in items):
+            return "cant_check", f"its `merge_group:` `{name}` filter has a pattern the kit doesn't match"
+        hit = any(_branch_matches(p, base) for p in items)
+        if hit == (name == "branches-ignore"):
+            return "excluded", name
+    return "ready", ""
+
+
+def _base_ref(i: Inputs) -> str | None:
+    """`origin/<base>`'s commit in this checkout, or None when it isn't there."""
+    ran = _run(i, ["git", "rev-parse", "--verify", "-q", f"refs/remotes/origin/{i.profile.base_branch}^{{commit}}"])
+    sha = (ran.out or "").strip()
+    return sha if ran.state == "ok" and _SHA.fullmatch(sha) else None
+
+
+def _merge_group(i: Inputs, rep: protection_mod.Report) -> tuple[Line, dict]:
+    """The `merge_group` check: each required check traced through its check
+    runs to the workflow behind it, and each such workflow read from
+    `origin/<base>`. A gap only with the queue on; with it off, its state for
+    the upgrade (a note where a trigger is missing)."""
+    g, id_, base = "GitHub", "github.merge_group", i.profile.base_branch
+    what = Words("whether the workflows behind the required checks run for a merge queue", "The merge_group check")
+    ci = _ci(i)
+    if ci.why:
+        return _waits(i, id_, what, ci), dict(UNCHECKED)
+    ref = _base_ref(i)
+    if ref is None:
+        return Line(g, id_, "cant_check", Words(
+            f"Can't check {what.new}: `origin/{base}` isn't in this checkout, and the kit reads them as they are on `{base}`, never the checkout's.",
+            f"{what.developer} unchecked: no refs/remotes/origin/{base} here.",
+        ), Words(f"Run `git fetch origin {base}`, then check the set-up again.", f"Run `git fetch origin {base}` and rerun.")), dict(UNCHECKED)
+    checks, paths, statuses = [], [], _status_contexts(i, rep)
+    for name in rep.required_checks:
+        runs = [r for c in ci.value for r in c.runs if r["name"] == name]
+        others = sorted({r["app"]["slug"] for r in runs} - {ACTIONS_APP}) or (["a commit status"] if not runs and name in statuses else [])
+        suites = {r["check_suite"]["id"] for r in runs if isinstance(r.get("check_suite"), dict) and r["check_suite"].get("id") is not None}
+        flows = sorted({w["path"] for c in ci.value for w in c.workflow_runs if w.get("check_suite_id") in suites and isinstance(w.get("path"), str)})
+        state = "other_ci" if others else "no_run" if not runs else "actions" if flows else "unknown_workflow"
+        checks.append({"name": name, "state": state, "app": others[0] if others else (ACTIONS_APP if runs else None), "workflows": flows if state == "actions" else []})
+        paths += [p for p in flows if state == "actions" and p not in paths]
+    workflows = []
+    for path in paths:
+        if not _WORKFLOW_FILE.fullmatch(path):
+            workflows.append({"path": path, "state": "cant_check", "why": "it isn't a workflow file in `.github/workflows/`",
+                              "file": "github" if path.startswith("dynamic/") else True})  # dynamic/: one GitHub runs itself
+            continue
+        shown = _run(i, ["git", "show", f"{ref}:{path}"])
+        if shown.state != "ok":
+            workflows.append({"path": path, "state": "cant_check", "why": f"it isn't on `{base}` (or can't be read there)", "file": True})
+            continue
+        state, why = _triggers(shown.out, base)
+        workflows.append({"path": path, "state": state, "why": why})
+    return _merge_group_line(i, rep, checks, workflows)
+
+
+def _status_contexts(i: Inputs, rep: protection_mod.Report) -> set[str]:
+    """The contexts of the statuses on the base's latest commit (--checks,
+    else `gh`, as the required checks' offer reads them): CI that reports
+    statuses, not check runs, is another CI service. Empty when unreadable."""
+    _checks_ran(i, rep)  # reads them, once
+    if i._checks is None or i._checks.why:
+        return set()
+    try:
+        return {r.name for r in protection_mod._statuses(i._checks.value[1])}
+    except protection_mod.ProtectionError:
+        return set()
+
+
+def _files_named(paths: list[str]) -> str:
+    return _most(f"`{_shown(PurePosixPath(p).name, 60)}`" for p in paths)
+
+
+def _merge_group_line(i: Inputs, rep: protection_mod.Report, checks: list[dict], workflows: list[dict]) -> tuple[Line, dict]:
+    g, id_, base = "GitHub", "github.merge_group", i.profile.base_branch
+    found: list[tuple[str, Words, Words]] = []  # (status, what, fix)
+    on = rep.queue
+    lacking = [w["path"] for w in workflows if w["state"] == "missing"]
+    narrow = [w["path"] for w in workflows if w["state"] == "excluded" and w["why"] == "branches"]
+    ignoring = [w["path"] for w in workflows if w["state"] == "excluded" and w["why"] == "branches-ignore"]
+    for w in workflows:
+        name = _files_named([w["path"]])
+        if w["state"] == "missing":
+            found.append(("gap" if on else "note", Words(
+                f"{name} doesn't run for a merge queue (no `merge_group:` beside `pull_request:`)" + (", so its checks never come and pull requests wait in the queue" if on else ""),
+                f"no merge_group trigger in {name}",
+            ), NONE))
+        elif w["state"] == "excluded":
+            found.append(("gap" if on else "note", Words(
+                f"{name}'s `merge_group:` has a `{w['why']}` filter that leaves out `{base}`",
+                f"{name}: merge_group's {w['why']} filter leaves out `{base}`",
+            ), NONE))
+        elif w["state"] == "cant_check":
+            fix = Words(
+                f"{name} is a workflow GitHub runs itself (such as code scanning's default set-up): check in its settings that it runs for a merge queue.",
+                f"{name} is a GitHub-run workflow, not a file here: confirm it runs on merge_group yourself.",
+            ) if w.get("file") == "github" else Words(
+                f"Make sure {name} is a workflow file in `.github/workflows/` on `{base}`, as UTF-8 text; then check the set-up again.",
+                f"{name} must be a UTF-8 file under .github/workflows/ on `{base}`; then rerun.",
+            ) if w.get("file") else Words(
+                f"Edit {name} so the kit can read its triggers: `on:` as a mapping with one event per line, each named once, `pull_request:` among them,"
+                " and `merge_group:`'s filters as plain lists of names, `*` and `**` (no `?`, `+`, `[]`, `!` or `\\`); then check the set-up again.",
+                f"Make on: in {name} a block mapping (one key per line, no duplicates) with pull_request:, merge_group filters as plain lists using only `*`/`**` (read line by line, no YAML library).",
+            )
+            found.append(("cant_check", Words(f"{name} can't be read for its triggers: {w['why']}", f"{name}: {w['why']}"), fix))
+    for c in checks:
+        name = f"`{_shown(c['name'])}`"
+        if c["state"] == "other_ci":
+            found.append(("cant_check", Words(
+                f"{name} comes from {_shown(c['app'])}, another CI service, which the kit can't check: GitHub's rule is that such CI must also run on pushes to `gh-readonly-queue/{base}/*` branches",
+                f"{name} is from app {_shown(c['app'])}, not GitHub Actions: it must run on push to gh-readonly-queue/{base}/*",
+            ), Words(
+                f"Set {name}'s CI service to also run on pushes to `gh-readonly-queue/{base}/*` before taking a merge queue.",
+                f"Trigger {name} on push to gh-readonly-queue/{base}/**.",
+            )))
+        elif c["state"] == "no_run":
+            found.append(("cant_check", Words(
+                f"no run seen of {name} on `{base}` or the open pull requests, so which workflow runs it can't be told",
+                f"no run seen of {name} on the base or recent PR heads",
+            ), Words(
+                f"Let {name} run once (on a pull request or on `{base}`), then check the set-up again.",
+                f"Run {name} once, then rerun (or point the upgrade at its workflow).",
+            )))
+        elif c["state"] == "unknown_workflow":
+            found.append(("cant_check", Words(
+                f"which workflow runs {name} can't be told: none of the workflow runs given matches its check suite",
+                f"{name}: no workflow run matches its check_suite id",
+            ), Words(
+                "Ask Claude to fetch the checks that ran again, with the workflow runs behind them.",
+                f"Give {GIVE_CI}, with each commit's workflow runs.",
+            )))
+    if lacking:
+        files = _files_named(lacking)
+        fix = Words(
+            f"Ask Claude to add `merge_group:` beside `pull_request:` in {files} (covering `{base}`) in a pull request; CI files are yours to review and merge.",
+            f"Add merge_group: (covering `{base}`) beside pull_request: in {files}; CI config is a protected path, so the owner merges it.",
+        ) if on else Words(
+            f"When you take a merge queue, \"{USE_MERGE_QUEUE}\" adds `merge_group:` to {files} in a pull request first.",
+            f"\"{USE_MERGE_QUEUE}\" adds merge_group to {files} in a PR first.",
+        )
+        found.append(("gap" if on else "note", NONE, fix))
+    if narrow:
+        files = _files_named(narrow)
+        found.append(("gap" if on else "note", NONE, Words(
+            f"Ask Claude to widen the `branches` filter of `merge_group:` in {files} to cover `{base}`, in a pull request; CI files are yours to review and merge.",
+            f"Widen merge_group's branches filter in {files} to cover `{base}` (a PR to a protected path: the owner merges it).",
+        )))
+    if ignoring:
+        files = _files_named(ignoring)
+        found.append(("gap" if on else "note", NONE, Words(
+            f"Ask Claude to take `{base}` out of the `branches-ignore` filter of `merge_group:` in {files}, in a pull request; CI files are yours to review and merge.",
+            f"Stop merge_group's branches-ignore filter in {files} matching `{base}` (a PR to a protected path: the owner merges it).",
+        )))
+    status = min((s for s, _, _ in found), key=_rank, default="fine")
+    ready = [w["path"] for w in workflows if w["state"] == "ready"]
+    state = {"status": status, "clean": status == "fine" and bool(workflows), "workflows": workflows, "checks": checks}
+    if status == "fine":
+        names = _files_named(ready)
+        return Line(g, id_, "fine", Words(
+            f"Every workflow behind a required check also runs for a merge queue (`merge_group`): {names}.",
+            f"merge_group on every workflow behind a required check: {names}.",
+        )), state
+    whats = [w for _, w, _ in sorted(found, key=lambda f: _rank(f[0])) if w is not NONE]
+    fixes = list(dict.fromkeys(f for _, _, f in sorted(found, key=lambda f: _rank(f[0])) if f is not NONE))
+    return Line(g, id_, status, Words(
+        "For a merge queue, the workflows behind the required checks must also run on `merge_group`: " + "; ".join(w.new for w in whats) + ".",
+        "merge_group check: " + "; ".join(w.developer for w in whats) + ".",
+    ), Words(" ".join(f.new for f in fixes), " ".join(f.developer for f in fixes))), state
+
+
+@_check("GitHub", "github.merge_queue")
+def check_merge_queue(i: Inputs) -> list[Line]:  # run by check_ruleset_rules, so not in CHECKS
+    """The merge-queue suggestion (a note offering "Use a merge queue",
+    never a gap) where it fits, or the queue's line once it is on; with
+    either, the `merge_group` check. No line where GitHub won't give one,
+    nothing is required, or the read-back can't be read (the other lines
+    say so). The queue's state, the check and the signals also go in the
+    JSON's `merge_queue`."""
+    gh = _github(i)
+    if gh is None or gh.report is None:
+        return []
+    rep = gh.report
+    unsure = bool(rep.queue_unsure) and not rep.queue
+    mq = i._mq = {"queue": None if unsure else rep.queue, "available": None, "merge_group": None, "signals": None}
+    if unsure and any(p.get("strict_required_status_checks_policy") is True for p in _rules(rep, "required_status_checks")):
+        # "Up to date" is met either way, so github.up_to_date is fine: the
+        # queue rule that may apply is said here (without "up to date" on,
+        # github.up_to_date says it).
+        base = i.profile.base_branch
+        return [Line("GitHub", "github.merge_queue", "cant_check", Words(
+            f"Can't tell whether GitHub's merge queue is on for `{base}`: {_shown(rep.queue_unsure[0], 300)}.",
+            f"Merge queue unknown on `{base}`: {_shown('; '.join(rep.queue_unsure), 300)}.",
+        ), Words(
+            f"Check in Settings → Rules whether that ruleset applies to `{base}`; naming `{base}` itself (not a pattern) lets the kit tell.",
+            f"Name refs/heads/{base} (or ~DEFAULT_BRANCH, with --repo's default_branch) in its include, so the reader can count it.",
+        ))]
+    if not rep.queue:
+        if unsure or i.profile.ruleset is False or not rep.protected or not rep.required_checks:
+            return []
+        mq["available"] = _availability(i, gh)
+        if mq["available"] is None:
+            return []
+    mq["signals"] = _signals(i, rep)
+    lines = [_queue_line(i, rep, mq["available"], mq["signals"])]
+    if rep.required_checks:
+        line, mq["merge_group"] = _merge_group(i, rep)
+        if not rep.queue and line.status == "cant_check":
+            # The queue is off: what can't be checked is for the upgrade to
+            # read (the JSON keeps it), never a problem with the set-up.
+            line = dataclasses.replace(line, status="note")
+        lines.append(line)
     return lines
 
 
@@ -2238,6 +2980,8 @@ def _read_runs(i: Inputs) -> _Answer:
         found = [x for x in issues if isinstance(x, dict) and isinstance(x.get("labels", []), list)
                  and (_number(x) is not None or "labels" in x)]
         runs = [x for x in found if "pull_request" not in x and ("labels" not in x or RUN_LABEL in _label_names(x))]
+        states = [str(x.get("state") or "").casefold() for x in runs]
+        i._run_open = True if "open" in states else None if "" in states else False  # a run without its state can't be told
         if runs or len(found) == len(issues):  # a run is a run, whatever else the file holds
             return _Answer([_number(x) for x in runs])
         shape = "an entry isn't an issue"
@@ -2618,6 +3362,9 @@ class Report:
     wording: str  # "new" or "developer"
     experience: Experience
     default: str | None  # the profile's project.experience
+    # The merge queue's state, its merge_group check and the signals (#246);
+    # None when its check didn't get that far.
+    merge_queue: dict | None = None
 
     def counts(self) -> dict[str, int]:
         return {s: sum(ln.status == s for ln in self.lines) for s in STATUSES}
@@ -2634,6 +3381,7 @@ class Report:
             "counts": self.counts(),
             "strict_ok": self.strict_ok(),
             "lines": [ln.as_dict(self.wording) for ln in self.lines],
+            "merge_queue": self.merge_queue,
         }
 
 
@@ -2681,7 +3429,7 @@ def report(i: Inputs, checks: list | None = None) -> Report:
             lines.append(_failed(i, check, e))
     for ln in lines:
         assert ln.status in STATUSES and ln.group in GROUPS and (ln.offer is None or ln.offer in OFFERS), ln
-    return Report(order(lines), i.experience.wording_level, i.experience, i.default)
+    return Report(order(lines), i.experience.wording_level, i.experience, i.default, i._mq)
 
 
 def _plural(n: int, status: str) -> str:

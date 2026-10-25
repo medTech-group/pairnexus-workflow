@@ -60,6 +60,9 @@ def on_disk(root: Path, ruleset):
     (root / ".workflow/ruleset.json").write_text(json.dumps(KIT_RULESET))
     checks_req = protection.require_checks(KIT_RULESET, ["test"])
     (root / ".workflow/checks-request.json").write_text(json.dumps(checks_req.body))
+    # #247: the request adding the merge queue, from doctor's clean verdict.
+    clean = {"merge_queue": {"merge_group": {"status": "fine", "clean": True, "workflows": [], "checks": []}, "signals": None}}
+    (root / ".workflow/queue-request.json").write_text(json.dumps(protection.merge_queue(checks_req.body | {"id": 42, "source_type": "Repository", "source": "acme/demo"}, clean).body))
     return load(root)
 
 
@@ -97,6 +100,8 @@ POST = "gh api -X POST repos/acme/demo/rulesets --input .workflow/ruleset-reques
 PATCH = "gh api -X PATCH repos/acme/demo --input .workflow/merge-request.json"
 # #68: "Require these checks" adds them to the ruleset protecting the base branch.
 PUT = "gh api -X PUT repos/acme/demo/rulesets/42 --input .workflow/checks-request.json"
+# #247: "Use a merge queue" adds the merge-queue rule to the same ruleset.
+QUEUE_PUT = "gh api -X PUT repos/acme/demo/rulesets/42 --input .workflow/queue-request.json"
 READS = [
     "gh auth status --hostname github.com",
     "gh api repos/acme/demo",
@@ -199,6 +204,28 @@ def test_the_put_is_refused_in_ticket_and_conductor_sessions(prof, role):
     assert act(prof, PUT, role=role, branch="claude/build-1").action == "deny"
 
 
+# ---------- #247: the merge-queue PUT, decided as the require-checks one ----------
+
+
+@pytest.mark.parametrize("ruleset", [True, None], ids=["protected", "unset"])
+def test_the_queue_put_is_asked_in_an_attended_session_outside_solo_mode(tmp_path, ruleset):
+    assert act(on_disk(tmp_path, ruleset), QUEUE_PUT).action == "ask"
+
+
+@pytest.mark.parametrize("mode", ["bypassPermissions", "dontAsk"])
+def test_the_queue_put_is_refused_in_modes_that_never_ask(tmp_path, mode):
+    assert act(on_disk(tmp_path, True), QUEUE_PUT, mode=mode).action == "deny"
+
+
+def test_the_queue_put_is_refused_in_solo_mode(solo):
+    assert act(solo, QUEUE_PUT).action == "deny"
+
+
+@pytest.mark.parametrize("role", ["ticket", "conductor"])
+def test_the_queue_put_is_refused_in_ticket_and_conductor_sessions(prof, role):
+    assert act(prof, QUEUE_PUT, role=role, branch="claude/build-1").action == "deny"
+
+
 # ---------- the commands tested are the ones the skill gives ----------
 
 
@@ -207,7 +234,7 @@ def test_every_gh_command_the_skill_runs_is_one_tested_here():
     whose decision is tested above, so a changed command can't slip past."""
     text = SKILL.read_text(encoding="utf-8")
     given = re.findall(r"`(gh (?:api|auth status)[^`]*)`", text)
-    tested = {POST, PATCH, PUT, *READS}
+    tested = {POST, PATCH, PUT, QUEUE_PUT, *READS}
     # `gh api` alone names the tool, not a command.
     fill = {"<repo>": "acme/demo", "<base>": "main", "<id>": "42"}
     commands = [c for c in given if c != "gh api"]
