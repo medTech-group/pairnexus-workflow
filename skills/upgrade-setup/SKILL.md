@@ -341,7 +341,7 @@ By experience, the words only:
 - *New to building* gets one plain sentence above the list: "GitHub won't merge a change until these pass".
 - *A developer* gets the names, and that "Require branches to be up to date" goes on with them (a branch behind `main` must be updated before it merges); with a merge queue on that ruleset, that it stays as it is, since the queue meets it.
 
-**Beside a merge queue** (the chosen ruleset has a `merge_queue` rule), each ticked check must also come from a workflow that runs on `merge_group`, or every group waits for it until the timeout: say so on the screen, for both levels, and after the read-back run doctor again, as "Use a merge queue" reads it. A `github.merge_group` line that isn't `fine` then gets "Use a merge queue"'s step 1 for the workflows it names.
+**Beside a merge queue** (the chosen ruleset has a `merge_queue` rule), each ticked check must also come from a workflow that runs on `merge_group`, or every group waits for it until the timeout and its pull requests are dropped: say so on the screen, for both levels, and recommend **Not now** for a check whose workflow doctor's `merge_group` check doesn't show `ready` yet ("Use a merge queue"'s step 1 first). After the read-back, run doctor again, as "Use a merge queue" reads it. A `github.merge_group` line that isn't `fine` then gets "Use a merge queue"'s step 1 for the workflows it names.
 
 The choices, with `AskUserQuestion` as the automatic path's checks question has them: **Require the ticked ones** (recommended, naming each with its result), **Choose which** (multiSelect questions, two to four checks each, in a follow-up call; past sixteen, a numbered list), and **Not now**. With a single check: **Require it** (recommended only when it is passing) and **Not now**; a failing or pending one gets **Not now** first. With none ticked by default, no **Require the ticked ones**. On the update with `gh`, the same screen says Claude Code's prompt is expected (below).
 
@@ -547,8 +547,8 @@ First `git fetch origin <base>`: doctor reads the workflows as they are on `orig
 - **`queue` is `true`:** the queue is on already. When the `github.up_to_date` line says a ruleset still keeps "up to date" on, give its fix (the clicks below, unticking it in that ruleset; an organisation's is its owner's). Otherwise say so, and stop.
 - **`queue` is `null`:** a merge-queue rule in a ruleset the kit can't judge: say the `github.merge_queue` line's message and fix, and stop.
 - **No `use_merge_queue` offer** on the `github.merge_queue` line (a personal repository, a private one on a plan without the queue, the base branch unprotected or no checks required): say why from doctor's lines, and stop. "Protect `main`" and "Require these checks" come first.
-- **`available` is `check_plan`:** say the queue needs GitHub Enterprise Cloud for a private repository, and ask the owner to check the organisation's plan first, with **My plan has it** and **Not now**.
 - **A run in progress** (above): stop.
+- **`available` is `check_plan`:** say the queue needs GitHub Enterprise Cloud for a private repository, and ask the owner to check the organisation's plan first, with **My plan has it** and **Not now**.
 - **`merge_group.clean` is `true`:** the workflows are ready: step 2.
 - Otherwise: step 1.
 

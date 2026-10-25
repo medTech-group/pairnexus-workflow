@@ -550,7 +550,9 @@ def require_checks(ruleset, names) -> Request:
             raise ProtectionError(f"{_checked_name(ruleset, 0)}: required_status_checks must be a list of objects, each with a context")
         known = {c["context"] for c in have}
         have += [{"context": n} for n in names if n not in known]
-        if not queued:
+        if queued:
+            params.setdefault("strict_required_status_checks_policy", False)  # GitHub requires the field
+        else:
             params["strict_required_status_checks_policy"] = True
     return Request("add the checks to the ruleset", "PUT", path, body)
 
@@ -635,8 +637,11 @@ def merge_queue(ruleset, report, timeout: int | None = None) -> Request:
     longest = _longest_if_clean(report)
     if timeout is not None and not 1 <= timeout <= QUEUE_TIMEOUT_MAX:
         raise ProtectionError(f"--timeout {timeout} isn't whole minutes from 1 to {QUEUE_TIMEOUT_MAX}, as GitHub takes it")
-    if timeout is not None and longest is not None and timeout <= longest < QUEUE_TIMEOUT_MAX:
-        raise ProtectionError(f"--timeout {timeout} isn't above the base branch's longest recent CI run ({longest} minutes): groups would time out")
+    if timeout is not None and longest is not None and timeout <= min(longest, QUEUE_TIMEOUT_MAX - 1):
+        raise ProtectionError(
+            f"--timeout {timeout} isn't above the base branch's longest recent CI run ({longest} minutes"
+            + (f"; give {QUEUE_TIMEOUT_MAX}, GitHub's most" if longest >= QUEUE_TIMEOUT_MAX else "") + "): groups would time out"
+        )
     path, body = _update(ruleset, "hold a merge queue")
     if ruleset["enforcement"] != "active":
         raise ProtectionError(f"{_checked_name(ruleset, 0)} isn't active (enforcement {quote(ruleset['enforcement'])}), so its queue would enforce nothing")

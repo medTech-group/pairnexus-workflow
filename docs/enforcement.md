@@ -191,7 +191,7 @@ The reason says the guard isn't working, why if known (the error, the profile's 
 
 ## 5. Checking the set-up
 
-Ask Claude to **check the set-up** (the `check-setup` skill), or run `workflow doctor` yourself: one report of what's set up and what isn't, each line with its fix, the most serious first. Neither changes anything. In a cloud session, `check-setup` gathers what only a session can see (the rulesets and repository settings through the GitHub tools, the base branch's latest check runs and statuses and the open pull requests, the environments with `list_environments`, the `workflow:run` issues and Claude Code's version), hands them to `workflow doctor --json` as files, shows the report in words that suit you, and offers each upgrade it names ("Protect `main`", "Restore protection", "Set up unattended runs", "Require these checks") as a choice with "Not now", protecting first. In a local session it runs doctor with what `gh` gives, and says the environments can only be checked from a cloud session. The guided start offers it when its quick local look (`workflow status`) finds a gap, and once a session in solo mode.
+Ask Claude to **check the set-up** (the `check-setup` skill), or run `workflow doctor` yourself: one report of what's set up and what isn't, each line with its fix, the most serious first. Neither changes anything. In a cloud session, `check-setup` gathers what only a session can see (the rulesets and repository settings through the GitHub tools, the base branch's latest check runs and statuses and the open pull requests, the environments with `list_environments`, the `workflow:run` issues and Claude Code's version), hands them to `workflow doctor --json` as files, shows the report in words that suit you, and offers each upgrade it names ("Protect `main`", "Restore protection", "Set up unattended runs", "Require these checks", "Use a merge queue") as a choice with "Not now", protecting first. In a local session it runs doctor with what `gh` gives, and says the environments can only be checked from a cloud session. The guided start offers it when its quick local look (`workflow status`) finds a gap, and once a session in solo mode.
 
 The checklist below is what doctor checks, kept as the reference: what an owner, or a cloud session asked to "check the workflow set-up", looks at by hand after the set-up pull request merges. Only a cloud session can list the account's environments. Report each item as fine or as a gap with its fix; change nothing.
 
@@ -200,7 +200,7 @@ The checklist below is what doctor checks, kept as the reference: what an owner,
    - `bypass_actors` is empty;
    - its rules include `deletion` and `non_fast_forward`;
    - `pull_request`: `required_approving_review_count` 0 (more is a choice, with the consequence in §1) and `require_code_owner_review` false;
-   - `required_status_checks`: every name in the profile's `ci.required_checks` (vendored mode includes `workflow kit`), and `strict_required_status_checks_policy` true;
+   - `required_status_checks`: every name in the profile's `ci.required_checks` (vendored mode includes `workflow kit`), and `strict_required_status_checks_policy` true, or false beside a `merge_queue` rule, which meets it;
    - no `required_linear_history` rule.
 2. **The merge settings:** `gh api repos/<repo>`: `allow_auto_merge` and `allow_merge_commit` are true.
 3. **CODEOWNERS** (§3) covers `/.claude/` and `/.github/workflows/`.

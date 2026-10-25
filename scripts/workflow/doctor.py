@@ -1680,9 +1680,17 @@ def _with_offer(line: Line, ran: list[dict], base: str) -> Line:
 
 
 def _queued_checks(rep: protection_mod.Report) -> bool:
-    """A ruleset in force on the base holds both the merge queue and required
-    checks: where "Require these checks" adds checks, it leaves "up to date"
-    as it is (#247)."""
+    """The ruleset "Require these checks" adds checks to holds the merge
+    queue, so it leaves "up to date" as it is there (#247): the kit's own,
+    else the one ruleset in force; with several and none the kit's, one
+    holding both the queue and required checks. Only a queue the reader
+    counts (`rep.queue`) counts."""
+    if not rep.queue:
+        return False
+    own = [rs for rs in rep.effective if rs.get("name") == f"Protect {rep.base_branch} ({protection_mod.KIT})"]
+    chosen = own or (rep.effective if len(rep.effective) == 1 else [])
+    if chosen:
+        return protection_mod._has_merge_queue(chosen[0])
     return any(protection_mod._has_merge_queue(rs) and any(r["type"] == "required_status_checks" for r in rs["rules"]) for rs in rep.effective)
 
 

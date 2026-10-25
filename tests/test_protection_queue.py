@@ -114,6 +114,18 @@ def test_an_owner_s_timeout_not_above_the_longest_run_is_refused(repo, inp, give
     bad(queue(repo, inp, recorded_ruleset(), doctor(longest=25), "--timeout", given), "longest", "25 minutes")
 
 
+@pytest.mark.parametrize("given,longest", [("359", 359), ("10", 360), ("1", 361), ("359", 900)])
+def test_at_or_past_github_s_cap_only_360_is_taken(repo, inp, given, longest):
+    bad(queue(repo, inp, recorded_ruleset(), doctor(longest=longest), "--timeout", given), "longest", f"{longest} minutes")
+
+
+def test_a_checks_rule_without_up_to_date_beside_the_queue_gets_it_off(repo, inp):
+    rs = with_queue(recorded_ruleset(), False)
+    del rs["rules"][2]["parameters"]["strict_required_status_checks_policy"]
+    params = checks_params(body_of(require(repo, inp, rs, "tests"))["body"])
+    assert params["strict_required_status_checks_policy"] is False
+
+
 @pytest.mark.parametrize("given", ["0", "361", "1000", "007", "-5", "1.5", "an hour", ""])
 def test_a_timeout_outside_github_s_range_is_refused_in_one_message(repo, inp, given):
     p = queue(repo, inp, recorded_ruleset(), doctor(), "--timeout", given)

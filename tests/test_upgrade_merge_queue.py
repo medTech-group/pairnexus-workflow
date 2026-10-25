@@ -218,10 +218,29 @@ def test_require_these_checks_beside_the_queue_needs_merge_group_on_the_new_chec
     screen = _sec(_part("Require these checks"), "The checks screen")
     assert "**Beside a merge queue**" in screen
     assert "must also come from a workflow that runs on `merge_group`" in screen
-    assert "after the read-back run doctor again" in screen
+    assert "After the read-back, run doctor again" in screen
+    assert "recommend **Not now** for a check whose workflow doctor's `merge_group` check doesn't show `ready` yet" in screen
 
 
 def test_enforcement_scopes_up_to_date_to_no_queue():
     doc = (KIT / "docs/enforcement.md").read_text()
     assert "unless the ruleset has a merge queue, which meets it" in doc
     assert "If the owner leaves it off with no merge queue on the base branch, the conductor's pre-flight raises it as a safety gap" in doc
+    assert "`strict_required_status_checks_policy` true, or false beside a `merge_queue` rule, which meets it" in doc
+
+
+def test_a_run_in_progress_stops_before_the_plan_question():
+    where = _sec(_part(NAME), "Where it stands")
+    assert where.index("**A run in progress**") < where.index("**`available` is `check_plan`:**")
+
+
+def test_doctors_fix_follows_the_kits_own_ruleset_with_the_queue_and_no_checks_yet(tmp_path):
+    # The queue in the kit's own ruleset, the checks in another: "Require these
+    # checks" adds to the kit's own, beside its queue, so "up to date" stays off.
+    import copy
+
+    own = copy.deepcopy(RULESET)
+    own.update(id=303, name="Protect main (pairnexus-workflow)", rules=[r for r in own["rules"] if r["type"] != "required_status_checks"] + [QUEUE_RULE])
+    ran = [_runs(_run("tests"), _run("lint", n=2))]
+    r = _report(tmp_path, _project(tmp_path, profile=DEVELOPER), *_given(tmp_path, ran, rulesets=[RULESET, own]))
+    assert "left as it is (the merge queue meets it)" in _github(r)["github.required_checks"]["fix"]

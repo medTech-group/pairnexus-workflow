@@ -410,7 +410,7 @@ def cmd_protection(a) -> int:
 
     def require():
         if a.rulesets is not None or a.repo is not None or a.base is not None:
-            raise protection_mod.ProtectionError("--require-checks takes the ruleset alone, without --rulesets, --repo or --base: it names its repository, and targets what it targets")
+            raise protection_mod.ProtectionError("--require-checks takes the ruleset alone, without --rulesets, --repo or --base: the ruleset names its own repository and branches")
         req = protection_mod.require_checks(given(a.require_checks, "ruleset"), a.check)
         return {"requests": [req.as_dict()]} if a.json else protection_mod.requests_text([req])
 
