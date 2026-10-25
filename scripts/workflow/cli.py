@@ -1520,12 +1520,12 @@ def main(argv: list[str] | None = None) -> int:
         help="init: whether the base's ruleset requires a merge queue at kick-off, recorded to notice a change (with it on, "
         "no check may be waived); queue: whether it does now, printed as unchanged, changed or recorded",
     )
-    s.add_argument("--ticket", type=int, help="drop: the ticket whose pull request was enqueued")
-    s.add_argument("--head", type=_head, help="drop: the head commit enqueued, its full SHA")
+    s.add_argument("--ticket", type=int, help="drop: the ticket whose pull request was queued")
+    s.add_argument("--head", type=_head, help="drop: the head commit queued, its full SHA")
     s.add_argument(
         "--answer",
         choices=state_mod.DROP_ANSWERS,
-        help="drop: GitHub's answer to the enqueue; prints in_queue, waiting, merged, retry, requeued, merge_base or needs_human",
+        help="drop: GitHub's answer to queueing it; prints in_queue, waiting, merged, retry, requeued, merge_base or needs_human",
     )
     s.add_argument("--state")
     s.add_argument("--patch")
@@ -1658,7 +1658,7 @@ def main(argv: list[str] | None = None) -> int:
         p.error("state put needs --state")
     if a.cmd == "state" and a.action == "patch" and not a.patch:
         p.error("state patch needs --patch")
-    if a.cmd == "state" and a.action == "drop" and None in (a.ticket, a.head, a.answer, a.out):
+    if a.cmd == "state" and a.action == "drop" and (None in (a.ticket, a.head, a.answer) or not a.out):
         p.error("state drop needs --ticket, --head, --answer and --out")
     if a.cmd == "state" and a.action == "queue" and not (a.queue and a.out):
         p.error("state queue needs --queue and --out")

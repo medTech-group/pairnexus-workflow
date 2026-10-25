@@ -16,7 +16,7 @@ Optional: `merge_queue`, whether the ruleset required a merge queue on the base
 when last seen (`state init --queue`, then `queue_seen` at each change), used
 only to notice a change; null when not known.
 
-With the queue on, `drop` decides each answer GitHub gives to enqueueing a
+With the queue on, `drop` decides each answer GitHub gives to queueing a
 ticket's pull request (#243), and keeps on the ticket what it needs: the heads
 seen in the queue with their drops (`queue_heads`), the `failed` answers per
 head (`queue_failed`), whether the base was merged in (`base_merged`) and the
@@ -222,7 +222,7 @@ def put(body: str, state: dict) -> str:
 
 
 def drop(ticket: dict, head: str, answer: str) -> str:
-    """What to do with one answer to enqueueing the ticket's pull request at
+    """What to do with one answer to queueing the ticket's pull request at
     `head` (a full SHA), recorded on `ticket`, which is changed in place:
     - `200-merged` is `merged`; `200-waiting` ("already in a merge queue") is
       `waiting`, never a drop;

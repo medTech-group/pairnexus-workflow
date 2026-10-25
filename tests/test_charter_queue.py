@@ -370,8 +370,9 @@ def test_drop_refuses_a_body_without_state(run):
     assert not out.exists()
 
 
-def test_drop_needs_out(run):
-    p = _cli("state", "drop", "--body", str(run.body), "--ticket", "12", "--head", HEAD_A, "--answer", "200-waiting", env=run.env)
+@pytest.mark.parametrize("out", [[], ["--out", ""]])
+def test_drop_needs_out(run, out):
+    p = _cli("state", "drop", "--body", str(run.body), "--ticket", "12", "--head", HEAD_A, "--answer", "200-waiting", *out, env=run.env)
     assert p.returncode == 2 and "--out" in p.stderr
 
 
