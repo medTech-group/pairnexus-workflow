@@ -104,6 +104,8 @@ def test_the_update_uses_the_writer_with_doctors_verdict_and_reads_back():
     assert "Three are refusals, where the clicks would do what was refused, so give none" in two
     assert "fetch the ruleset again once and rerun; if it still fails, say nothing was sent, and give the clicks" in two
     assert "a merge_group check that isn't clean, back to step 1; a timeout, back to the settings screen" in two
+    assert "a ruleset that requires no checks or isn't active, stop" in two
+    assert "A message naming the doctor file: `git fetch origin <base>`, run doctor again and go back to \"Where it stands\"" in two
     assert "**Require merge queue**" in two and "untick **Require branches to be up to date before merging**" in two
     assert "`merge_queue.queue` is `true`" in two
 
@@ -222,7 +224,10 @@ def test_require_these_checks_beside_the_queue_needs_merge_group_on_the_new_chec
     assert "**Beside a merge queue**" in screen
     assert "must also come from a workflow that runs on `merge_group`" in screen
     assert "After the read-back, run doctor again" in screen
-    assert "isn't ticked by default, and says why, as a failing check does" in screen
+    assert "isn't ticked by default and says why, as a failing check does" in screen
+    assert "a failing or pending one too" in screen and "`merge_group:` has a `branches` or `branches-ignore` filter" in screen
+    assert "never recommended for a check left unticked beside a merge queue; a failing, pending or unticked one gets **Not now** first" in screen
+    assert "in parentheses, `name (a, b)`" in screen
     assert "After `git fetch origin <base>`" in screen and "leaves out the base branch" in screen
     assert "before the check is required" in screen
     assert '(never "up to date" beside a merge queue)' in _part("Require these checks")
