@@ -742,7 +742,9 @@ def test_a_pull_requests_head_with_a_page_missing_is_left_out(tmp_path, project)
     ("name: CI\non:\n  pull_request:\n  pull_request:\n  merge_group:\njobs: {}\n", "cant_check"),
     ("name: CI\non:\n  pull_request:\n  merge_group:\n    branches-ignore:\njobs: {}\n", "cant_check"),
     ("name: CI\non:\n  pull_request:\n  merge_group:\n    branches-ignore: ~\njobs: {}\n", "cant_check"),
-], ids=["document-end", "empty-ignore", "twice", "ignore-no-value", "ignore-null"])
+    ("name: CI\non:\n  pull_request:\n  merge_group:\n    branches-ignore: NULL\njobs: {}\n", "cant_check"),
+    ("name: CI\non:\n  pull_request:\n  merge_group:\n    branches: ~\njobs: {}\n", "cant_check"),
+], ids=["document-end", "empty-ignore", "twice", "ignore-no-value", "ignore-null", "ignore-null-upper", "branches-null"])
 def test_a_document_end_and_an_empty_ignore_read_and_a_duplicate_key_is_named_in_the_fix(tmp_path, text, state):
     root = _checkout(tmp_path, {"ci.yml": text})
     lines, r = _github(tmp_path, root, rulesets=(_queued(),))
@@ -756,6 +758,9 @@ def test_a_workflow_github_runs_itself_gets_a_fix_the_owner_can_follow(tmp_path,
     lines, _ = _github(tmp_path, project, ci=ci, rulesets=(_queued(),))
     fix = lines["github.merge_group"]["fix"]
     assert "GitHub runs itself" in fix and ".github/workflows/" not in fix, fix
+    ci[0]["workflow_runs"]["workflow_runs"][0]["path"] = "acme/shared/.github/workflows/ci.yml@main"  # not GitHub's own
+    lines, _ = _github(tmp_path, project, ci=ci, rulesets=(_queued(),))
+    assert "GitHub runs itself" not in lines["github.merge_group"]["fix"]
 
 
 def test_a_pattern_in_a_filter_is_named_in_the_fix(tmp_path):

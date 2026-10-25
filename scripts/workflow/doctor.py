@@ -2467,7 +2467,7 @@ def _triggers(text: str, base: str) -> tuple[str, str]:
         items = _flow_list(value) if value else [_unquoted(_uncommented(ln.strip()[1:])) if ln.strip().startswith("- ") else None for ln in under]
         if value and items == [] and name == "branches-ignore":
             continue  # `[]`: it ignores nothing
-        if not items or None in items or any(p in ("~", "null") for p in items):
+        if not items or None in items or any(p.casefold() in ("~", "null") for p in items):
             return "cant_check", f"its `merge_group:` `{name}` filter can't be read"
         if any(_PATTERN.search(p) for p in items):
             return "cant_check", f"its `merge_group:` `{name}` filter has a pattern the kit doesn't match"
@@ -2512,7 +2512,8 @@ def _merge_group(i: Inputs, rep: protection_mod.Report) -> tuple[Line, dict]:
     workflows = []
     for path in paths:
         if not _WORKFLOW_FILE.fullmatch(path):
-            workflows.append({"path": path, "state": "cant_check", "why": "it isn't a workflow file in `.github/workflows/`", "file": "github"})
+            workflows.append({"path": path, "state": "cant_check", "why": "it isn't a workflow file in `.github/workflows/`",
+                              "file": "github" if path.startswith("dynamic/") else True})  # dynamic/: one GitHub runs itself
             continue
         shown = _run(i, ["git", "show", f"{ref}:{path}"])
         if shown.state != "ok":
