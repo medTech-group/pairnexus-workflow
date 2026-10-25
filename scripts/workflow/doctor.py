@@ -1940,6 +1940,10 @@ def check_ruleset_rules(i: Inputs) -> list[Line]:
             f"GitHub accepts merge commits on `{base}` (no \"Require linear history\").",
             "No required_linear_history rule.",
         )))
+    try:  # the merge queue's lines (#246), said only where a queue fits or is on
+        lines += check_merge_queue(i)
+    except Exception as e:  # advice never ends in a traceback
+        lines.append(_failed(i, check_merge_queue, e))
     return lines
 
 
@@ -2564,7 +2568,7 @@ def _merge_group_line(i: Inputs, rep: protection_mod.Report, checks: list[dict],
 
 
 @_check("GitHub", "github.merge_queue")
-def check_merge_queue(i: Inputs) -> list[Line]:
+def check_merge_queue(i: Inputs) -> list[Line]:  # run by check_ruleset_rules, so not in CHECKS
     """The merge-queue suggestion (a note offering "Use a merge queue",
     never a gap) where it fits, or the queue's line once it is on; with
     either, the `merge_group` check. No line where GitHub won't give one,
@@ -3230,7 +3234,7 @@ def _previews_block(i: Inputs, page: str, configs: list[str]) -> Line:
 # Every check, in the order its lines show when they are equally serious: the
 # profile first, since setting the kit up comes before anything it then checks.
 CHECKS = [check_python, check_claude_code, check_profile, check_install, check_vendor, check_experience, check_ruleset,
-          check_protection, check_required_checks, check_ruleset_rules, check_merge_queue, check_merge_settings, check_codeowners,
+          check_protection, check_required_checks, check_ruleset_rules, check_merge_settings, check_codeowners,
           check_environments, check_environment_contents, check_previews]
 # The checks that read only this computer and the checkout: no `gh`, no
 # network, and nothing a session hands in. `workflow status` runs these (#62),

@@ -218,7 +218,7 @@ _PREVIEWS_TABLE = re.compile(r"^[ \t]*\[[ \t]*[\"']?previews[\"']?[ \t]*[\].]", 
 _PREVIEWS_KEY = re.compile(r"^[ \t]*[\"']?previews[\"']?[ \t]*[.=]", re.M)
 _FIRST_TABLE = re.compile(r"^[ \t]*\[", re.M)
 # The files a session hands the full doctor: taken here, and not read.
-_DOCTOR_FILES = ("rulesets", "repo", "environments", "runs", "checks", "prs")
+_DOCTOR_FILES = ("rulesets", "repo", "environments", "runs", "checks", "prs", "org", "ci", "commits")
 _EXPERIENCE_LEVELS = ("new", "developer")
 _EXPERIENCE_FILE_MAX = 200  # bytes, as profile.py reads it
 
@@ -260,6 +260,7 @@ def _doctor_parser():
     p.add_argument("--claude-version", metavar="VERSION", help="Claude Code's version (not read until python3 is {}+)".format(NEEDS))
     for flag in _DOCTOR_FILES:
         p.add_argument("--" + flag, metavar="F", help="as the full doctor takes it (not read until python3 is {}+)".format(NEEDS))
+    p.add_argument("--now", metavar="TIME", help="as the full doctor takes it (not read until python3 is {}+)".format(NEEDS))
     p.add_argument("--json", action="store_true", help="every line's group, id, status, message, fix and offer, for skills")
     p.add_argument("--strict", action="store_true", help="exit 1 when any line is a gap or can't be checked (here, always)")
     return p
@@ -277,7 +278,7 @@ def _doctor(args, env, version, cwd):
     except Exception:  # argparse itself failing: the flags as plainly given
         a = argparse.Namespace(json="--json" in args, strict="--strict" in args, **dict.fromkeys(_DOCTOR_FILES))
     if [getattr(a, f) for f in _DOCTOR_FILES].count("-") > 1:
-        _say("workflow doctor: only one of --rulesets, --repo, --environments, --runs, --checks and --prs can be standard input (-)\n")
+        _say("workflow doctor: only one of --rulesets, --repo, --environments, --runs, --checks, --prs, --org, --ci and --commits can be standard input (-)\n")
         return 2
     try:
         r = _doctor_report(_doctor_root(env, cwd), env, version)
@@ -446,6 +447,7 @@ def _doctor_report(root, env, version):
         "counts": counts,
         "strict_ok": not (counts["gap"] or counts["cant_check"]),
         "lines": lines,
+        "merge_queue": None,
     }
 
 
