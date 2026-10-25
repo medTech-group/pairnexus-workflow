@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**The conductor at the pass cap: "couldn't read" never hides `passes_used_up`, and the answers exception updates `for_owner`** (#281, from #256's last Correctness pass).
+
+- **`passes_used_up` wins.** In step 2's "Waiting on the owner", a ticket counts as waiting only with no pull request, or when its `merge-check` doesn't say `passes_used_up` and still has a "couldn't read" reason after the row's retry. `merge-check` keeps judging the review when an input can't be read (an unreadable try-it link, say), so the cap can come back beside such a reason; before, the run then waited on the owner until its end time.
+- **The answers exception** ("When the owner answers", a ticket at the cap) now replaces the ticket's `for_owner` line with the pass-cap row's and names the change on the tracking issue, as step 2's check does, so the final report no longer shows the answered question.
+- Tests: `tests/test_merge_check_passes.py`.
+- **For projects updating:** nothing to do.
+
 **The pass cap: at most `run.review_passes` Correctness passes after the last round, then the owner decides** (#256, from #255; answers 3, 10 and 21 on #253).
 
 - **The problem.** Review rounds were capped, but the Correctness passes after the last round weren't: every later commit needed a clean pass, and a review that kept finding something new looped until the session stopped.

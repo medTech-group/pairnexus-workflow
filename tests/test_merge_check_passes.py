@@ -344,9 +344,16 @@ def test_the_conductor_takes_it_as_needs_human():
     assert "replace its `for_owner` line with the pass-cap row's" in waiting
     assert "name the change in this check-in's comment on the tracking issue" in waiting
     # Without a pull request, or a readable answer, it can't be at the cap: it still counts.
-    assert "A ticket with no pull request, or whose `merge-check` can't be read after the row's retry, still counts." in waiting
+    # `merge-check` keeps judging the review when an input can't be read, so `passes_used_up` wins
+    # over a "couldn't read" reason (an unreadable try-it link, say) (#281).
+    assert "A ticket with no pull request, or whose `merge-check` doesn't say `passes_used_up` and still has a \"couldn't read\" reason after the row's retry, still counts." in waiting
     # One note on the ticket, not two, when step 2 and an answer meet in one check-in.
     assert "unless the ticket already says so" in answers
+    # The answers exception leaves what the owner sees as step 2's check does (#281).
+    exception = answers.split("Except when `WF merge-check`", 1)[1]
+    assert "replace its `for_owner` line with the pass-cap row's (\"#n reached its pass cap (#PR): see its review records and PR body\")" in exception
+    assert "name the change in this check-in's comment on the tracking issue" in exception
+    assert "leave it in `for_owner`" not in exception
     assert "step 2's \"Waiting on the owner\" clears its `asked_at`" in asking
     assert "or its pull request reaches the pass cap" in conductor.split("- Never block on a question:", 1)[1].split("\n", 1)[0]
     assert "is the stuck row's, except that instead of a retry you label the ticket `needs-human`" in line
