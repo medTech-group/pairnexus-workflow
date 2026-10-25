@@ -246,7 +246,7 @@ Keep scratch files (`charter.json`, `body.md`, `state.json`, `estimate.json`, `r
 **A ticket at the cap.** A `needs-human` ticket is at the cap when `WF merge-check` on its pull request, run as the "PR open, not merged" row runs it (with `--charter` and `--review-rounds <N>`), says `passes_used_up` with no "couldn't read" reason for the profile, which holds the cap itself. Beside any other "couldn't read" reason, `passes_used_up` still counts: `merge-check` keeps judging the review when an input can't be read. A ticket with no open pull request (none, or one closed without merging) is never at the cap. With a "couldn't read" reason for the profile, whether it is at the cap can't be told, so it isn't at the cap: it still counts as waiting, and an answer requeues it as usual. For a ticket at the cap, take these steps, each only where it isn't done already:
 - leave its labels as they are (`needs-human` stays, with no `ready-for-agent` or `workflow:in-progress`);
 - clear its `asked_at`, so the run doesn't wait on it;
-- replace its `for_owner` line with the pass-cap row's ("#n reached its pass cap (#PR): see its review records and PR body");
+- replace its `for_owner` line with "#n reached its pass cap (#PR): see its review records and PR body";
 - say on the ticket that "One more pass" runs in an attended session (the `merge-check` skill);
 - name the change on the tracking issue: in this check-in's comment, or, for an answer in chat between check-ins, in a comment of its own at once.
 

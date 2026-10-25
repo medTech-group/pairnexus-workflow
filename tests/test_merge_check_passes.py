@@ -375,7 +375,9 @@ def test_the_conductor_takes_it_as_needs_human():
     assert "take these steps, each only where it isn't done already:" in at_cap
     assert "leave its labels as they are (`needs-human` stays, with no `ready-for-agent` or `workflow:in-progress`)" in at_cap
     assert "clear its `asked_at`, so the run doesn't wait on it" in at_cap
-    assert "replace its `for_owner` line with the pass-cap row's (\"#n reached its pass cap (#PR): see its review records and PR body\")" in at_cap
+    # The line is given here, not borrowed from the pass-cap row, which now points here for it.
+    assert "replace its `for_owner` line with \"#n reached its pass cap (#PR): see its review records and PR body\"" in at_cap
+    assert "the pass-cap row's" not in conductor
     assert "say on the ticket that \"One more pass\" runs in an attended session (the `merge-check` skill)" in at_cap
     # Named on the tracking issue at once, never left owed to a later check-in.
     assert "name the change on the tracking issue: in this check-in's comment, or, for an answer in chat between check-ins, in a comment of its own at once" in at_cap
