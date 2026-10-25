@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+**Doctor and check-setup suggest a merge queue where it fits, and check the base's workflows for `merge_group`** (#246, part of #243).
+
+- **New inputs.** `workflow doctor` takes `--org` (GET `orgs/<owner>`, for a private repository's plan), `--commits` (the base's commits, one page), `--ci` (the check runs of the base's last commits and of recent pull requests' heads, each with GET `actions/runs?head_sha=<sha>` for the workflow behind it) and `--now`. Without the files it reads them with `gh` (GETs, one page each), and only where a line needs them. It reads the workflow files with `git` as they are on `origin/<base>`, never the checkout's.
+- **The suggestion** (`github.merge_queue`): a note offering "Use a merge queue" (`use_merge_queue`), never a gap, where the base is protected with required checks and the queue is off, for a public or internal organisation repository, or a private one on GitHub Enterprise Cloud. For a private one whose plan can't be read, it says the queue needs Enterprise Cloud and to check first. A personal repository, a private one on another plan, or one with nothing required gets no line. With the queue on, the line says so.
+- **The `merge_group` check** (`github.merge_group`), over only the workflows behind the required checks, found through their check runs and workflow runs. Each `on:` is read line by line with no YAML library: one it can't read, or one that isn't a mapping with `pull_request:`, is `cant_check`; so is a required check from another CI service (with GitHub's rule that it must run on pushes to `gh-readonly-queue/<base>`), and one with no run seen, named. A missing trigger, or a `branches` filter leaving out the base, is a gap only with the queue on, else a note for the upgrade.
+- **`github.up_to_date`** counts the merge queue as meeting it, and its fix never offers "up to date" then. A ruleset still keeping "up to date" on beside the queue is a note naming it; a merge-queue rule in an `unsure` ruleset is `cant_check`.
+- **The signals,** in the suggestion's words and in `--json`'s new `merge_queue` (with the queue's state, its availability and the `merge_group` check's workflows and checks): CI's typical and longest time on the base, the commits that reached it in the 7 days to `--now` (by first parents), and whether unattended runs are set up or one is in progress.
+- **The `check-setup` skill** gathers the new inputs, shows the suggestion with the notes, and offers "Use a merge queue" with "Not now": recommended, with its reason, when CI takes 10 minutes or more and the base moved 10 or more times in the week or runs are set up; never while a run is in progress. The conductor's pre-flight fetches `origin/<base>` for it.
+- Tests: `tests/test_doctor_merge_queue.py`.
+- **For projects updating:** nothing to do. Without an organisation owner in the repository's settings or a merge-queue rule, the report is as before.
+
 **`workflow merge-check` with a merge queue: "ready" means ready to queue, and the `merge-check` skill's "Merge it now" adds the pull request to the queue** (#245, part of #243).
 
 - **The queue reader.** `protection.check` says whether a ruleset in force on the base (active, and one it can tell targets the base) has a `merge_queue` rule. A merge-queue rule in a ruleset it can't judge (`unsure`) is listed apart, for doctor to show, and never counts as a queue; so is one on `~DEFAULT_BRANCH` when the default branch is only taken to be the base (the pull request didn't give it). `workflow protection --json` is unchanged.

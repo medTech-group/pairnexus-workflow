@@ -7,9 +7,11 @@ picks one wording by experience (#16: what is checked, and each status, never
 depend on it), puts the most serious line first and groups the rest.
 
 Doctor never changes anything (#27): it reads files and runs `python3`,
-`claude --version` and `gh api` (GETs only, when no file is given: for the
-GitHub lines, the checks that ran on the base branch, the open pull requests
-and whether a run has been made), nothing else. It reads files only through
+`claude --version`, `gh api` (GETs only, when no file is given: for the
+GitHub lines, the checks that ran on the base branch, the open pull requests,
+whether a run has been made, and the merge queue's inputs) and `git rev-parse`
+and `git show` (the workflow files as they are on `origin/<base>`, #246),
+nothing else. It reads files only through
 `_read_text` (and `_read_value`, `_read_json` on it), `_file` and
 `_hash_file`, which never raise and never wait on a pipe; only a file given as
 `-` (`--rulesets`, `--repo`, `--environments`, `--runs`, `--checks` or
