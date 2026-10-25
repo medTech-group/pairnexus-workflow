@@ -9,10 +9,11 @@
     workflow protection --checks-ran F [--statuses F] --rulesets F --repo F [--base BRANCH] [--json]
     workflow version [--fresh] [--json] | --repo | --starter
     workflow ready [--issues F --prs F | --fetch] [--permissions F] [--exclude 1,2] [--only 1,2] [--override 3] [--running-area A ...] [--slots N] [--json]
-    workflow charter defaults [--unprotected] | validate F [--approved] [--unprotected] | markdown F [--tickets 13:area,143:-] [--estimate F] | diff OLD NEW | reuse OLD | pin-plan F | questions [--unprotected]
+    workflow charter defaults [--unprotected] | validate F [--approved] [--unprotected] [--queue on|off] | markdown F [--tickets 13:area,143:-] [--estimate F] | diff OLD NEW | reuse OLD | pin-plan F | questions [--unprotected] [--queue on|off]
     workflow charter estimate F [--tickets N | 13:area,143:-] [--runs F] [--security 13,143] [--now ISO] [--json]
     workflow charter splice --body F --charter F [--out F] [--tickets 13:area,143:-] [--estimate F]
-    workflow state init --charter F --run-id ID [--by-hand N] [--read-through ID] | get --body F | put --body F --state F [--out F] | patch --body F --patch F [--out F]
+    workflow state init --charter F --run-id ID [--by-hand N] [--read-through ID] [--queue on|off] | get --body F | put --body F --state F [--out F] | patch --body F --patch F [--out F]
+                   | drop --body F --ticket N --head SHA --answer A --out F | queue --body F --queue on|off --out F
     workflow render --template F --ticket F --charter F --slots F --tracking N [--by-hand N] [--out F] [--print]
     workflow comments --file F [--owner LOGIN] [--since-id N]
     workflow merge-check --pr F --files F --commits F --checks F --rulesets F --threads F --reviews F --comments F --permissions F --compare F [--preview F] [--asker LOGIN] [--review-rounds N] [--json]
@@ -485,7 +486,7 @@ def cmd_charter(a) -> int:
         _out(charter_mod.defaults(profile=load(required=False), protected=_protected(a)))
         return 0
     if a.action == "questions":
-        _out(charter_mod.questions(profile=load(required=False), protected=_protected(a)))
+        _out(charter_mod.questions(profile=load(required=False), protected=_protected(a), queue=_queue(a)))
         return 0
     if a.action == "reuse":
         old = _json(a.file)
@@ -507,7 +508,7 @@ def cmd_charter(a) -> int:
         return 0
     if a.action == "validate":
         c = _json(a.file)
-        problems = charter_mod.validate(c, require_approval=a.approved)
+        problems = charter_mod.validate(c, require_approval=a.approved, queue=_queue(a))
         prof = load(required=False)
         # Against the profile only once the charter itself is sound.
         if prof is not None and not problems:
@@ -611,6 +612,13 @@ def _protected(a) -> bool | None:
     return False if getattr(a, "unprotected", False) else None
 
 
+def _queue(a) -> bool | None:
+    """`--queue on|off`: whether the base's ruleset requires a merge queue, as
+    read at that moment. Without it, the state isn't known here."""
+    q = getattr(a, "queue", None)
+    return None if q is None else q == "on"
+
+
 def _against_profile(c: dict, prof, who: bool = True, protected: bool | None = None) -> list[str]:
     """The charter against the profile: release steps, waived checks, auto-merge
     in solo mode and, with `who`, that the profile's project.owner approved and
@@ -647,7 +655,7 @@ def _charter_change_problems(old, new) -> list[str]:
 def cmd_state(a) -> int:
     if a.action == "init":
         c = _json(a.charter)
-        problems = charter_mod.validate(c, require_approval=True)
+        problems = charter_mod.validate(c, require_approval=True, queue=_queue(a))
         if not problems:
             prof = load(required=False)
             if prof is not None:
@@ -656,6 +664,7 @@ def cmd_state(a) -> int:
             print("The charter isn't ready:\n- " + "\n- ".join(problems), file=sys.stderr)
             return 1
         s = state_mod.empty(c)
+        s["merge_queue"] = _queue(a)
         s["run_id"] = a.run_id
         s["by_hand_issue"] = a.by_hand
         s["comments_read_through"] = a.read_through
@@ -675,6 +684,8 @@ def cmd_state(a) -> int:
             return 1
         _out(s)
         return 0
+    if a.action in ("drop", "queue"):
+        return _state_record(a, body)
     if a.action == "put":
         try:
             cur = state_mod.get(body)
@@ -696,6 +707,26 @@ def cmd_state(a) -> int:
         Path(a.out).write_text(new, encoding="utf-8")
     else:
         print(new)
+    return 0
+
+
+def _state_record(a, body: str) -> int:
+    """`state drop` and `state queue`: decide, print the decision, and write the
+    body with it recorded to --out."""
+    s = state_mod.get(body)
+    if s is None:
+        raise state_mod.StateError("no state block in this body; use `state put` first")
+    if a.action == "drop":
+        tickets = s.get("tickets") if isinstance(s.get("tickets"), dict) else {}
+        t = tickets.get(str(a.ticket))
+        if not isinstance(t, dict):
+            raise state_mod.StateError(f"#{a.ticket} isn't one of the run's tickets: add it to the state first")
+        said = state_mod.drop(t, a.head, a.answer)
+    else:
+        said = state_mod.queue_seen(s, _queue(a))
+    new = state_mod.put(body, s)
+    Path(a.out).write_text(new, encoding="utf-8")
+    print(said)
     return 0
 
 
@@ -856,6 +887,12 @@ def _fetched_preview(repo: str, number: int, inputs: dict) -> tuple:
         return previews_mod.read(got["comments"][0], got["checks"][0], got["sha"][0]).as_dict(), None
     except previews_mod.PreviewError as e:
         return None, f"`workflow preview` said: {e}"
+
+
+def _head(v: str) -> str:
+    if not state_mod.is_head(v.lower()):
+        raise argparse.ArgumentTypeError(f"'{reviews_mod._shown(v, 50)}' isn't a head commit's full SHA (40 hex characters)")
+    return v.lower()
 
 
 def _sha(v: str) -> str:
@@ -1457,18 +1494,36 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--security", help="estimate: the plan's tickets the review panel would give a security review, e.g. 13,143")
     s.add_argument("--now", metavar="ISO", help="estimate: the time to count from (else now)")
     s.add_argument("--json", action="store_true", help="estimate: as JSON")
+    s.add_argument(
+        "--queue",
+        choices=["on", "off"],
+        help="questions, validate: whether the base's ruleset requires a merge queue (read now); with it on, no check may be waived",
+    )
     s.add_argument("--body", help="splice: the tracking issue's body (a file, or -)")
     s.add_argument("--charter", help="splice: the charter")
     s.add_argument("--out", help="splice: write the new body here (else print it)")
     s.set_defaults(fn=cmd_charter)
 
     s = sub.add_parser("state")
-    s.add_argument("action", choices=["init", "get", "put", "patch"])
+    s.add_argument("action", choices=["init", "get", "put", "patch", "drop", "queue"])
     s.add_argument("--body")
     s.add_argument("--charter")
     s.add_argument("--run-id")
     s.add_argument("--by-hand", type=int)
     s.add_argument("--read-through", type=int, help="init: the id of the tracking issue's newest comment (0 for none)")
+    s.add_argument(
+        "--queue",
+        choices=["on", "off"],
+        help="init: whether the base's ruleset requires a merge queue at kick-off, recorded to notice a change (with it on, "
+        "no check may be waived); queue: whether it does now, printed as unchanged, changed or recorded",
+    )
+    s.add_argument("--ticket", type=int, help="drop: the ticket whose pull request was enqueued")
+    s.add_argument("--head", type=_head, help="drop: the head commit enqueued, its full SHA")
+    s.add_argument(
+        "--answer",
+        choices=state_mod.DROP_ANSWERS,
+        help="drop: GitHub's answer to the enqueue; prints in_queue, waiting, merged, retry, requeued, merge_base or needs_human",
+    )
     s.add_argument("--state")
     s.add_argument("--patch")
     s.add_argument("--out")
@@ -1600,6 +1655,10 @@ def main(argv: list[str] | None = None) -> int:
         p.error("state put needs --state")
     if a.cmd == "state" and a.action == "patch" and not a.patch:
         p.error("state patch needs --patch")
+    if a.cmd == "state" and a.action == "drop" and not (a.ticket and a.head and a.answer and a.out):
+        p.error("state drop needs --ticket, --head, --answer and --out")
+    if a.cmd == "state" and a.action == "queue" and not (a.queue and a.out):
+        p.error("state queue needs --queue and --out")
     try:
         return a.fn(a)
     except (ProfileError, state_mod.StateError, render_mod.RenderError, evidence_mod.EvidenceError, vendor_mod.VendorError) as e:

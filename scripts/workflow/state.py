@@ -12,6 +12,15 @@ Optional: `wake_trigger`, the id of the poke-only routine that wakes the
 conductor when a ticket session ends (`trig_…`), deleted when the run stops.
 Optional: `estimate`, the estimate the owner approved (`charter estimate
 --json`'s output), so a resumed conductor can splice the one page with it.
+Optional: `merge_queue`, whether the ruleset required a merge queue on the base
+when last seen (`state init --queue`, then `queue_seen` at each change), used
+only to notice a change; null when not known.
+
+With the queue on, `drop` decides each answer GitHub gives to enqueueing a
+ticket's pull request (#243), and keeps on the ticket what it needs: the heads
+seen in the queue with their drops (`queue_heads`), the `failed` answers per
+head (`queue_failed`), whether the base was merged in (`base_merged`) and the
+last decision (`queue_result`).
 """
 
 from __future__ import annotations
@@ -51,6 +60,7 @@ def empty(charter: dict | None = None) -> dict:
         "comments_read_through": None,
         "kickoff_tickets": [],
         "ci_minutes_at_start": None,
+        "merge_queue": None,
         "status": "running",
     }
 
@@ -61,6 +71,24 @@ def _int(v) -> bool:
 
 def _iso(v) -> bool:
     return charter_mod._time(v) is not None
+
+
+_HEAD = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+
+# What `drop` takes: GitHub's answer to `PUT pulls/<n>/merge-async` with
+# `merge_action: merge_queue`, as #243 names them, and what it prints.
+DROP_ANSWERS = ("202-enqueued", "202-pending", "200-waiting", "200-merged", "409", "failed", "refused")
+DROP_RESULTS = {"in_queue", "waiting", "merged", "retry", "requeued", "merge_base", "needs_human"}
+FAILED_LIMIT = 3
+
+
+def is_head(v) -> bool:
+    """A full commit SHA in lower case."""
+    return isinstance(v, str) and bool(_HEAD.fullmatch(v))
+
+
+def _counts(v) -> bool:
+    return isinstance(v, dict) and all(is_head(k) and _int(n) and n >= 0 for k, n in v.items())
 
 
 # Optional ticket fields and their checks.
@@ -76,6 +104,11 @@ TICKET_FIELDS = {
     "asked_at": (_iso, "an ISO time with its zone"),
     # The hash on the last line of the briefing it was sent (`Briefing <hash>`).
     "briefing": (lambda v: isinstance(v, str) and bool(re.fullmatch(r"[0-9a-f]{12}", v)), "the briefing's 12-character hash"),
+    # The merge queue (`drop`): each head seen in it, with its drops; `failed` answers per head.
+    "queue_heads": (lambda v: _counts(v), "an object of commit SHAs and whole numbers"),
+    "queue_failed": (lambda v: _counts(v), "an object of commit SHAs and whole numbers"),
+    "base_merged": (lambda v: isinstance(v, bool), "true or false"),
+    "queue_result": (lambda v: v in DROP_RESULTS, "one of " + ", ".join(sorted(DROP_RESULTS))),
 }
 
 
@@ -118,6 +151,8 @@ def validate(s: Any) -> list[str]:
     est = s.get("estimate")
     if est is not None and not (isinstance(est, dict) and isinstance(est.get("line"), str) and isinstance(est.get("basis"), str)):
         p.append("estimate must be `workflow charter estimate --json`'s output or null")
+    if s.get("merge_queue") is not None and not isinstance(s["merge_queue"], bool):
+        p.append("merge_queue must be true, false or null")
     if "status" in s and not (isinstance(s["status"], str) and s["status"] in RUN_STATUSES):
         p.append(f"status must be one of {sorted(RUN_STATUSES)}")
     for i, e in enumerate(s.get("ledger") or []):
@@ -184,6 +219,68 @@ def put(body: str, state: dict) -> str:
             "move narrative to comments and finished tickets to the run report"
         )
     return new
+
+
+def drop(ticket: dict, head: str, answer: str) -> str:
+    """What to do with one answer to enqueueing the ticket's pull request at
+    `head` (a full SHA), recorded on `ticket`, which is changed in place:
+    - `200-merged` is `merged`; `200-waiting` ("already in a merge queue") is
+      `waiting`, never a drop;
+    - a head is in the queue from the first answer that shows it there: its
+      first `202-enqueued` (`in_queue`) or a `200-waiting`;
+    - a later `202-enqueued` of a head in the queue is a drop: the first on that
+      head `requeued`, a second `merge_base` (the base is then counted as merged
+      in), and any once the base was merged in `needs_human`, whatever the head;
+    - `202-pending`, `409`, `refused` and `failed` are `retry`, never drops; the
+      third `failed` on one head is `needs_human`."""
+    if not is_head(head):
+        raise StateError(f"the head must be a full commit SHA in lower case, not {head!r}")
+    if answer not in DROP_ANSWERS:
+        raise StateError(f"the answer must be one of {', '.join(DROP_ANSWERS)}, not {answer!r}")
+    heads = dict(ticket.get("queue_heads") or {})
+    if answer == "200-merged":
+        result = "merged"
+    elif answer == "200-waiting":
+        heads.setdefault(head, 0)
+        result = "waiting"
+    elif answer == "202-enqueued":
+        if head not in heads:
+            heads[head] = 0
+            result = "in_queue"
+        else:
+            heads[head] += 1
+            if ticket.get("base_merged"):
+                result = "needs_human"
+            elif heads[head] == 1:
+                result = "requeued"
+            else:
+                result = "merge_base"
+                ticket["base_merged"] = True
+    elif answer == "failed":
+        failed = dict(ticket.get("queue_failed") or {})
+        failed[head] = failed.get(head, 0) + 1
+        ticket["queue_failed"] = failed
+        result = "needs_human" if failed[head] >= FAILED_LIMIT else "retry"
+    else:
+        result = "retry"
+    if heads:
+        ticket["queue_heads"] = heads
+    ticket["queue_result"] = result
+    return result
+
+
+def queue_seen(state: dict, on: bool) -> str:
+    """The merge queue's state seen now against the one recorded, in words that
+    start `unchanged`, `changed` or `recorded` (when none was), and recorded on
+    `state`, which is changed in place, so a change is reported once."""
+    was = state.get("merge_queue")
+    state["merge_queue"] = on
+    now = "on" if on else "off"
+    if was is None:
+        return f"recorded: the merge queue is {now}"
+    if was == on:
+        return f"unchanged: the merge queue is {now}"
+    return f"changed: the merge queue is now {now} (it was {'on' if was else 'off'})"
 
 
 def _approved(state: Any) -> bool:
