@@ -37,6 +37,7 @@ and the checkout.
 
 from __future__ import annotations
 
+import dataclasses
 import difflib
 import hashlib
 import json
@@ -2145,8 +2146,10 @@ def _first_parents(commits: list[dict]) -> tuple[list[tuple[str, datetime | None
         out.append((c["sha"], _iso(committer.get("date")) if isinstance(committer, dict) else None))
         parents = c.get("parents") if isinstance(c.get("parents"), list) else []
         first = parents[0].get("sha") if parents and isinstance(parents[0], dict) else None
+        if not parents:
+            return out, False  # the first commit
         if not isinstance(first, str):
-            return out, False
+            return out, True  # a parent it can't follow: only "at least"
         c = by_sha.get(first)
     return out, c is None
 
@@ -2267,13 +2270,14 @@ def _read_ci(i: Inputs) -> _Answer:
 def _ci_minutes(ci: list[_CICommit], required: list[str]) -> dict:
     """CI's longest and typical (median) time on the base's commits, in whole
     minutes: on each commit whose required checks have all finished, the
-    longest of their runs, each from its own start to its own end (so a
-    re-run, or another workflow, never stretches it)."""
+    longest of their runs that passed or failed, each from its own start to
+    its own end (so a re-run, or another workflow, never stretches it)."""
     took = []
     for c in ci:
-        runs = [r for r in c.runs if r["name"] in required]
-        if not c.base or not runs or any(r.get("status") != "completed" for r in runs):
+        mine = [r for r in c.runs if r["name"] in required]
+        if not c.base or any(r.get("status") != "completed" for r in mine):
             continue
+        runs = [r for r in mine if r.get("conclusion") in ("success", "failure")]  # a skipped or cancelled run took no CI time
         times = [(_iso(r.get("started_at")), _iso(r.get("completed_at"))) for r in runs]
         spans = [(end - start).total_seconds() for start, end in times if start and end and end >= start]
         if spans:
@@ -2305,7 +2309,8 @@ def _signal_words(i: Inputs, s: dict) -> Words:
     if ci["typical"] is None:
         took = Words(f"how long CI takes on `{base}` couldn't be read", "CI time on the base: unknown")
     else:
-        took = Words(f"CI takes {'under a minute' if not ci['typical'] else 'about ' + _count(ci['typical'], 'a minute', 'minutes')} on `{base}` (the longest {_count(ci['longest'], 'a minute', 'minutes')})",
+        about = "under a minute" if not ci["typical"] else "about " + _count(ci["typical"], "a minute", "minutes")
+        took = Words(f"CI takes {about} on `{base}` (the longest {_count(ci['longest'], 'a minute', 'minutes')})",
                      f"CI on `{base}`: typical {ci['typical']} min, longest {ci['longest']} (over {_count(ci['commits'], 'its last commit', 'commits')})")
     n = s["base_commits_7d"]
     if n is None:
@@ -2646,7 +2651,7 @@ def check_merge_queue(i: Inputs) -> list[Line]:  # run by check_ruleset_rules, s
         if not rep.queue and line.status == "cant_check":
             # The queue is off: what can't be checked is for the upgrade to
             # read (the JSON keeps it), never a problem with the set-up.
-            line = Line(line.group, line.id, "note", line.message, line.fix)
+            line = dataclasses.replace(line, status="note")
         lines.append(line)
     return lines
 

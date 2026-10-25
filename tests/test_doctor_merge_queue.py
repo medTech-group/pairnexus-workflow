@@ -429,6 +429,35 @@ def test_each_new_line_has_both_wordings_with_the_same_status(tmp_path, project)
             assert n[id_]["message"] != d[id_]["message"], id_
 
 
+def _gh_routes():
+    import fake_gh
+    from test_doctor import gh_routes
+
+    routes = gh_routes(settings=PRIVATE)
+    routes["orgs/acme"] = {"login": "acme", "plan": {"name": "enterprise"}}
+    routes["repos/acme/demo/commits"] = _chain(3)
+    routes["repos/acme/demo/pulls"] = fake_gh.pages([{"number": 5, "state": "open", "body": "", "head": {"sha": PR_SHA, "repo": {"full_name": "acme/demo"}}}])
+    routes["repos/acme/demo/issues"] = []
+    head, *older = [c["sha"] for c in _chain(3)]
+    routes[f"repos/acme/demo/commits/{head}/check-runs"] = {"total_count": 1, "check_runs": [_check_run("tests", head, 11)]}
+    routes["repos/acme/demo/actions/runs"] = {"total_count": 2, "workflow_runs": [_workflow_run(head, 11), _workflow_run(PR_SHA, 21)]}
+    routes[f"repos/acme/demo/commits/{PR_SHA}/check-runs"] = {"total_count": 1, "check_runs": [_check_run("tests", PR_SHA, 21)]}
+    for sha in older:
+        routes[f"repos/acme/demo/commits/{sha}/check-runs"] = {"total_count": 0, "check_runs": []}
+    return routes, head, older
+
+
+def test_a_pull_requests_head_gh_cant_read_is_left_out_but_a_base_commits_makes_the_ci_unreadable(tmp_path, project):
+    routes, head, older = _gh_routes()
+    del routes[f"repos/acme/demo/commits/{PR_SHA}/check-runs"]
+    r = _report(tmp_path / "pr", project, "--now", NOW, path=_path(tmp_path / "pr", gh=routes))
+    assert r["merge_queue"]["merge_group"]["status"] == "fine", r["merge_queue"]["merge_group"]
+    routes, head, older = _gh_routes()
+    del routes[f"repos/acme/demo/commits/{older[0]}/check-runs"]
+    r = _report(tmp_path / "base", project, "--now", NOW, path=_path(tmp_path / "base", gh=routes))
+    assert r["merge_queue"]["merge_group"] == {"status": "cant_check", "clean": False, "workflows": [], "checks": []}
+
+
 def test_gh_reads_the_same_as_files_and_only_reads(tmp_path, project):
     import fake_gh
     from test_doctor import gh_routes
@@ -567,6 +596,9 @@ def test_ci_time_is_the_required_checks_own_runs_on_finished_commits(tmp_path, p
                                                                            completed="2026-10-25T02:30:00Z", id_=5)], [_workflow_run("1" * 40, 41)]),
         # still running: left out, never counted as short
         _entry("2" * 40, True, [{**_check_run("tests", "2" * 40, 43), "status": "in_progress", "conclusion": None, "completed_at": None}], []),
+        # skipped or cancelled: no CI time
+        _entry("3" * 40, True, [{**_check_run("tests", "3" * 40, 44, completed="2026-10-24T10:00:00Z"), "conclusion": "skipped"}], []),
+        _entry("4" * 40, True, [{**_check_run("tests", "4" * 40, 45, completed="2026-10-24T10:03:00Z"), "conclusion": "cancelled"}], []),
     ]
     _, r = _github(tmp_path, project, ci=ci)
     assert r["merge_queue"]["signals"]["ci_minutes"] == {"longest": 12, "typical": 12, "commits": 1}
@@ -587,7 +619,8 @@ def test_ci_of_the_wrong_shape_is_unreadable_never_a_crash(tmp_path, project, ci
 def test_commits_of_the_wrong_shape_are_unknown_never_a_crash(tmp_path, project):
     commits = [_commit("1" * 40, "2026-10-25T10:00:00Z", ("2" * 40,)), {**_commit("2" * 40, "2026-10-25T09:00:00Z"), "parents": [{"sha": []}]}]
     _, r = _github(tmp_path, project, commits=commits)
-    assert r["merge_queue"]["signals"]["base_commits_7d"] == 2
+    s = r["merge_queue"]["signals"]
+    assert (s["base_commits_7d"], s["base_commits_at_least"]) == (2, True)
     _, r = _github(tmp_path, project, commits=[])
     assert r["merge_queue"]["signals"]["base_commits_7d"] == 0 and r["merge_queue"]["signals"]["base_commits_at_least"] is False
 
