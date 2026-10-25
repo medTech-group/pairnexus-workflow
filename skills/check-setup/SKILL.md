@@ -123,7 +123,7 @@ Open with one line from `counts`: "2 problems to fix, 1 line I couldn't check, 3
 
 **The note naming the open profile pull request.** When GitHub requires checks the profile doesn't list and an open pull request adds them, `github.profile_checks` is a `note` naming that pull request. Show it as doctor words it, its message and its fix, with the other notes, never as something to fix now: the profile catches up when that pull request merges. It carries no offer. Without such a pull request the same line is a `gap`, shown as any gap.
 
-**The merge-queue suggestion.** `github.merge_queue`'s note is a suggestion, never a gap: show it with the notes, never among the problems, worded as section 3 says. `github.merge_group` beside it is the state of the workflows for that upgrade: a `note` while the queue is off, and a `gap` only once the queue is on.
+**The merge-queue suggestion.** `github.merge_queue`'s note is a suggestion, never a gap: show it with the notes, never among the problems, worded as section 3 says. `github.merge_group` beside it is the state of the workflows for that upgrade: a `note` while the queue is off (what it couldn't check among them, so `--strict` still passes), and a `gap` or `cant_check` only once the queue is on.
 
 Show the `cloud.contents` note with the others, never summarised away: nothing can read what an environment holds, so the person confirms the ticket environment has no secrets. In a local session, add once the line that the environments need a cloud session.
 
@@ -145,7 +145,7 @@ Each line with an `offer` is an upgrade one tap away. Offer each one the report 
 - **Otherwise** offer it without "(Recommended)".
 - **Never recommend it** when `available` is `check_plan`: say beside the choice that a private repository has the queue only on GitHub Enterprise Cloud, and to check the organisation's plan first.
 - **Give the reason** beside the choice, in one sentence from the signals, either way. For example: "CI takes about 30 minutes and `main` moved 25 times this week, so each merge sends the other pull requests back through CI." Or: "CI takes about 3 minutes, so updating a pull request costs little; the queue can wait."
-- **While a run is in progress** (`run_in_progress` true), don't offer it: name it as text ("Doctor also suggests a merge queue: once the run has ended, ask Claude to \"Use a merge queue\"."). A run's merging mustn't change under it.
+- **While a run is in progress** (`run_in_progress` true, or `null`: it can't be told), don't offer it: name it as text ("Doctor also suggests a merge queue: once the run has ended, ask Claude to \"Use a merge queue\"."). A run's merging mustn't change under it.
 
 **Protecting comes first.** When the report offers `protect_main` or `restore_protection` as well as `require_checks`, ask the protecting one first, and on yes to both, finish "Protect `main`" before starting "Require these checks": checks are only added to a protected base branch. Today's doctor offers `require_checks` only once the base branch is protected, so it never offers both in one report; the order holds for any report that does.
 

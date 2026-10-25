@@ -14,8 +14,8 @@ and `git show` (the workflow files as they are on `origin/<base>`, #246),
 nothing else. It reads files only through
 `_read_text` (and `_read_value`, `_read_json` on it), `_file` and
 `_hash_file`, which never raise and never wait on a pipe; only a file given as
-`-` (`--rulesets`, `--repo`, `--environments`, `--runs`, `--checks` or
-`--prs`) reads standard input, as asked. A check that fails unexpectedly becomes a
+`-` (`--rulesets`, `--repo`, `--environments`, `--runs`, `--checks`,
+`--prs`, `--org`, `--ci` or `--commits`) reads standard input, as asked. A check that fails unexpectedly becomes a
 `cant_check` line, never a traceback: doctor is advice, and exits 0.
 
 **Adding a group or a check** (the GitHub, Cloud and Previews tickets): write
@@ -2039,6 +2039,7 @@ CI_COMMITS = 5  # the base's last commits, and the open pull requests' heads, wh
 ENTERPRISE_PLAN = "enterprise"
 PLANS_WITHOUT = ("free", "team", "pro")
 _SHA = re.compile(r"[0-9a-fA-F]{40}")
+UNCHECKED = {"status": "cant_check", "clean": False, "workflows": [], "checks": []}  # the merge_group check's JSON, not read
 _WORKFLOW_FILE = re.compile(r"\.github/workflows/[^/\x00-\x1f]+\.ya?ml")
 # The keys of a workflow's `on:` block, read line by line with no YAML library.
 _TOP_ON = re.compile(r"""(?:on|"on"|'on')[ ]*:(?:[ ]+(.*))?""")
@@ -2051,8 +2052,11 @@ def parse_now(value: str | None) -> datetime | None:
     """--now as a time with its zone; now when not given; None when it isn't one."""
     if value is None:
         return datetime.now(timezone.utc)
-    t = _iso(value)
-    return t if t is not None and t.tzinfo is not None and "T" in value else None
+    try:
+        t = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t if t.tzinfo is not None and "T" in value and t.year > 1970 else None
 
 
 def _iso(value) -> datetime | None:
@@ -2115,7 +2119,10 @@ def _commits(i: Inputs) -> _Answer:
             ref = urllib.parse.quote(i.profile.base_branch, safe="/")
             got = _gh(i, f"repos/{i.profile.repo}/commits?sha={ref}&per_page=100", _gh_deadline(i), "--commits", give=GIVE_COMMITS)
         if not got.why:
-            commits = estimate_mod._flatten(got.value) if isinstance(got.value, list) else None
+            try:
+                commits = estimate_mod._flatten(got.value) if isinstance(got.value, list) else None
+            except RecursionError:  # nested deeper than any list of pages
+                commits = None
             if commits is None or not all(isinstance(c, dict) and isinstance(c.get("sha"), str) for c in commits):
                 got = _Answer(why=Words("the main branch's commits couldn't be read", "the commits aren't a list of commits, each with a sha"), fix=fix)
             else:
@@ -2129,14 +2136,16 @@ def _first_parents(commits: list[dict]) -> tuple[list[tuple[str, datetime | None
     commit's sha and committer time; and whether it runs off the list."""
     by_sha = {c["sha"]: c for c in commits}
     out, seen = [], set()
-    c = commits[0] if commits else None
+    if not commits:
+        return out, False
+    c = commits[0]
     while c is not None and c["sha"] not in seen:
         seen.add(c["sha"])
         committer = (c.get("commit") or {}).get("committer") if isinstance(c.get("commit"), dict) else None
         out.append((c["sha"], _iso(committer.get("date")) if isinstance(committer, dict) else None))
         parents = c.get("parents") if isinstance(c.get("parents"), list) else []
         first = parents[0].get("sha") if parents and isinstance(parents[0], dict) else None
-        if first is None:
+        if not isinstance(first, str):
             return out, False
         c = by_sha.get(first)
     return out, c is None
@@ -2158,7 +2167,7 @@ def _moved(i: Inputs) -> tuple[int | None, bool]:
             return n, False
         if when <= i.now:
             n += 1
-    return n, off
+    return (None, False) if off and not n else (n, off)
 
 
 @dataclass
@@ -2172,12 +2181,20 @@ class _CICommit:
 
 
 def _items(value, key: str) -> list[dict] | None:
-    """GitHub's answer (or its pages) as the list under `key`; None when it isn't one."""
+    """GitHub's answer (or its pages) as the list under `key`; None when it
+    isn't one, or holds fewer than its `total_count` (a page missing)."""
     pages = value if isinstance(value, list) else [value]
     if not all(isinstance(p, dict) and isinstance(p.get(key), list) for p in pages):
         return None
     items = [x for p in pages for x in p[key]]
+    totals = [p["total_count"] for p in pages if isinstance(p.get("total_count"), int) and not isinstance(p.get("total_count"), bool)]
+    if totals and len(items) < max(totals):
+        return None
     return items if all(isinstance(x, dict) for x in items) else None
+
+
+def _an_id(v) -> bool:
+    return v is None or isinstance(v, (int, str)) and not isinstance(v, bool)
 
 
 def _parse_ci(entries) -> list[_CICommit] | None:
@@ -2193,7 +2210,10 @@ def _parse_ci(entries) -> list[_CICommit] | None:
         flows = _items(e["workflow_runs"], "workflow_runs") if "workflow_runs" in e else []
         if runs is None or flows is None:
             return None
-        if not all(isinstance(r.get("name"), str) and isinstance(r.get("app"), dict) and isinstance(r["app"].get("slug"), str) for r in runs):
+        if not all(isinstance(r.get("name"), str) and isinstance(r.get("app"), dict) and isinstance(r["app"].get("slug"), str)
+                   and (r.get("check_suite") is None or isinstance(r["check_suite"], dict) and _an_id(r["check_suite"].get("id"))) for r in runs):
+            return None
+        if not all(_an_id(w.get("check_suite_id")) and (w.get("path") is None or isinstance(w["path"], str)) for w in flows):
             return None
         out.append(_CICommit(e["sha"], e["base"], runs, flows))
     return out
@@ -2214,7 +2234,7 @@ def _ci(i: Inputs) -> _Answer:
             parsed = _parse_ci(got.value)
             got = _Answer(parsed) if parsed is not None else _Answer(why=Words(
                 "the checks that ran aren't in the shape GitHub gives them",
-                "the CI runs aren't a list of {sha, base, check_runs, workflow_runs}, each check run with a name and its app's slug",
+                "the CI runs aren't a list of {sha, base, check_runs, workflow_runs}, every page, each check run with a name and its app's slug",
             ), fix=Words("Ask Claude to fetch them again, as check-setup gathers them.", f"Give {GIVE_CI}."))
         i._ci = got
     return i._ci
@@ -2235,42 +2255,43 @@ def _read_ci(i: Inputs) -> _Answer:
         if not _SHA.fullmatch(sha):
             return _Answer(why=Words("GitHub named a commit the kit can't read", f"{_shown(sha)} isn't a commit sha"), fix=_again(GIVE_CI))
         runs = _gh(i, f"repos/{repo}/commits/{sha}/check-runs?per_page=100", deadline, "--ci", give=GIVE_CI)
-        if runs.why:
-            return runs
-        flows = _gh(i, f"repos/{repo}/actions/runs?head_sha={sha}&per_page=100", deadline, "--ci", give=GIVE_CI)
+        flows = runs if runs.why else _gh(i, f"repos/{repo}/actions/runs?head_sha={sha}&per_page=100", deadline, "--ci", give=GIVE_CI)
         if flows.why:
-            return flows
+            if on_base:
+                return flows
+            continue  # a pull request's head: the others still tell
         out.append({"sha": sha, "base": on_base, "check_runs": runs.value, "workflow_runs": flows.value})
     return _Answer(out)
 
 
-def _ci_minutes(ci: list[_CICommit]) -> dict:
+def _ci_minutes(ci: list[_CICommit], required: list[str]) -> dict:
     """CI's longest and typical (median) time on the base's commits, in whole
-    minutes: from a commit's first check run starting to its last finishing,
-    the try-it link's left out."""
+    minutes: on each commit whose required checks have all finished, the
+    longest of their runs, each from its own start to its own end (so a
+    re-run, or another workflow, never stretches it)."""
     took = []
     for c in ci:
-        if not c.base:
+        runs = [r for r in c.runs if r["name"] in required]
+        if not c.base or not runs or any(r.get("status") != "completed" for r in runs):
             continue
-        done = [r for r in c.runs if r.get("status") == "completed" and str(r["app"]["slug"]).casefold() not in protection_mod.NEVER_OFFERED_APPS]
-        starts = [t for t in (_iso(r.get("started_at")) for r in done) if t]
-        ends = [t for t in (_iso(r.get("completed_at")) for r in done) if t]
-        if starts and ends and max(ends) >= min(starts):
-            took.append(round((max(ends) - min(starts)).total_seconds() / 60))
+        times = [(_iso(r.get("started_at")), _iso(r.get("completed_at"))) for r in runs]
+        spans = [(end - start).total_seconds() for start, end in times if start and end and end >= start]
+        if spans:
+            took.append(round(max(spans) / 60))
     return {"longest": max(took) if took else None, "typical": statistics.median_low(took) if took else None, "commits": len(took)}
 
 
-def _signals(i: Inputs) -> dict:
+def _signals(i: Inputs, rep: protection_mod.Report) -> dict:
     """What check-setup words its recommendation from (#243): CI's length
     on the base, how often the base moved in the 7 days to `now`, and
     whether unattended runs are set up or one is in progress."""
+    runs = _runs(i)  # first: the Cloud lines read it too, within the same budget
     ci = _ci(i)
     moved, at_least = _moved(i)
-    runs = _runs(i)
     p = i.profile
     return {
         "now": i.now.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "ci_minutes": _ci_minutes(ci.value) if not ci.why else {"longest": None, "typical": None, "commits": 0},
+        "ci_minutes": _ci_minutes(ci.value, rep.required_checks) if not ci.why else {"longest": None, "typical": None, "commits": 0},
         "base_commits_7d": moved,
         "base_commits_at_least": at_least,
         "runs_set_up": bool(p.ticket_environment and p.conductor_environment),
@@ -2284,7 +2305,7 @@ def _signal_words(i: Inputs, s: dict) -> Words:
     if ci["typical"] is None:
         took = Words(f"how long CI takes on `{base}` couldn't be read", "CI time on the base: unknown")
     else:
-        took = Words(f"CI takes about {_count(ci['typical'], 'a minute', 'minutes')} on `{base}` (the longest {ci['longest']})",
+        took = Words(f"CI takes {'under a minute' if not ci['typical'] else 'about ' + _count(ci['typical'], 'a minute', 'minutes')} on `{base}` (the longest {_count(ci['longest'], 'a minute', 'minutes')})",
                      f"CI on `{base}`: typical {ci['typical']} min, longest {ci['longest']} (over {_count(ci['commits'], 'its last commit', 'commits')})")
     n = s["base_commits_7d"]
     if n is None:
@@ -2313,9 +2334,9 @@ def _queue_line(i: Inputs, rep: protection_mod.Report, available: str | None, si
     plan = available == "check_plan"
     return Line(g, id_, "note", Words(
         f"A merge queue could keep pull requests up to date with `{base}` for you"
-        + (", if your plan has it: on a private repository GitHub offers it only with GitHub Enterprise Cloud, and the kit can't read this organisation's plan (only its owners can), so check before taking the upgrade" if plan else "")
+        + (", if your plan has it: on a private repository GitHub offers it only with GitHub Enterprise Cloud, and the kit can't tell this organisation's plan (only its owners can see it), so check before taking the upgrade" if plan else "")
         + f". It tests each pull request against the latest `{base}` before merging it, so a green pull request never has to be updated and tested again. {said.new}",
-        "Merge queue off; " + ("a private repository has it only on GitHub Enterprise Cloud, and the organisation's plan is unreadable (check first)" if plan else "available")
+        "Merge queue off; " + ("a private repository has it only on GitHub Enterprise Cloud, and the organisation's plan can't be told (check first)" if plan else "available")
         + f"; \"up to date\" holds today. {said.developer}",
     ), Words(
         ("If your organisation is on GitHub Enterprise Cloud and it fits" if plan else "If it fits")
@@ -2354,8 +2375,6 @@ def _block(lines: list[str]) -> tuple[dict | None, str]:
     if not lines:
         return None, "it has nothing under it"
     indent = len(lines[0]) - len(lines[0].lstrip(" "))
-    if lines[0].lstrip(" ").startswith("-"):
-        return None, "list"
     keys: dict = {}
     current = None
     for ln in lines:
@@ -2386,10 +2405,8 @@ def _triggers(text: str, base: str) -> tuple[str, str]:
     ("missing", ""), ("excluded", which filter leaves it out), or
     ("cant_check", why), read from its `on:` keys line by line. Anything it
     can't follow is `cant_check`, never fine."""
-    lines = [ln for ln in text.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
-    if any("\t" in ln[:len(ln) - len(ln.lstrip())] for ln in lines):
-        return "cant_check", "it is indented with tabs"
-    if any(ln.strip() in ("---", "...") for ln in lines[1:]):
+    lines = [ln for ln in text.removeprefix("\ufeff").splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
+    if any(ln.rstrip() in ("---", "...") for ln in lines[1:]):
         return "cant_check", "it holds more than one YAML document"
     ons = [k for k, ln in enumerate(lines) if not ln[0].isspace() and _TOP_ON.fullmatch(ln.rstrip())]
     if len(ons) != 1:
@@ -2407,11 +2424,15 @@ def _triggers(text: str, base: str) -> tuple[str, str]:
         if not ln[0].isspace():
             break
         body.append(ln)
-    if any(_ALIAS.search(ln) for ln in body):
+    if any("\t" in ln[:len(ln) - len(ln.lstrip())] for ln in body):
+        return "cant_check", "its `on:` is indented with tabs"
+    if any(_ALIAS.search(_uncommented(ln)) for ln in body):
         return "cant_check", "its `on:` uses an anchor, an alias, a tag or a block scalar, which the kit doesn't follow"
+    if body and body[0].lstrip(" ").startswith("-"):
+        return "cant_check", "its `on:` is a list, not a mapping with `pull_request:`"
     keys, why = _block(body)
     if keys is None:
-        return "cant_check", "its `on:` is a list, not a mapping with `pull_request:`" if why == "list" else f"its `on:` can't be read: {why}"
+        return "cant_check", f"its `on:` can't be read: {why}"
     if "pull_request" not in keys:
         return "cant_check", "its `on:` has no `pull_request:` (" + (", ".join(f"`{_shown(x)}`" for x in keys) or "no events") + ")"
     if "merge_group" not in keys:
@@ -2457,21 +2478,20 @@ def _merge_group(i: Inputs, rep: protection_mod.Report) -> tuple[Line, dict]:
     what = Words("whether the workflows behind the required checks run for a merge queue", "The merge_group check")
     ci = _ci(i)
     if ci.why:
-        return _waits(i, id_, what, ci), {"status": "cant_check", "clean": False, "workflows": [], "checks": []}
+        return _waits(i, id_, what, ci), dict(UNCHECKED)
     ref = _base_ref(i)
     if ref is None:
         return Line(g, id_, "cant_check", Words(
             f"Can't check {what.new}: `origin/{base}` isn't in this checkout, and the kit reads them as they are on `{base}`, never the checkout's.",
             f"{what.developer} unchecked: no refs/remotes/origin/{base} here.",
-        ), Words(f"Run `git fetch origin {base}`, then check the set-up again.", f"Run `git fetch origin {base}` and rerun.")), \
-            {"status": "cant_check", "clean": False, "workflows": [], "checks": []}
-    checks, paths = [], []
+        ), Words(f"Run `git fetch origin {base}`, then check the set-up again.", f"Run `git fetch origin {base}` and rerun.")), dict(UNCHECKED)
+    checks, paths, statuses = [], [], _status_contexts(i, rep)
     for name in rep.required_checks:
         runs = [r for c in ci.value for r in c.runs if r["name"] == name]
-        others = sorted({r["app"]["slug"] for r in runs} - {ACTIONS_APP})
+        others = sorted({r["app"]["slug"] for r in runs} - {ACTIONS_APP}) or (["a commit status"] if not runs and name in statuses else [])
         suites = {r["check_suite"]["id"] for r in runs if isinstance(r.get("check_suite"), dict) and r["check_suite"].get("id") is not None}
         flows = sorted({w["path"] for c in ci.value for w in c.workflow_runs if w.get("check_suite_id") in suites and isinstance(w.get("path"), str)})
-        state = "no_run" if not runs else "other_ci" if others else "actions" if flows else "unknown_workflow"
+        state = "other_ci" if others else "no_run" if not runs else "actions" if flows else "unknown_workflow"
         checks.append({"name": name, "state": state, "app": others[0] if others else (ACTIONS_APP if runs else None), "workflows": flows if state == "actions" else []})
         paths += [p for p in flows if state == "actions" and p not in paths]
     workflows = []
@@ -2488,6 +2508,19 @@ def _merge_group(i: Inputs, rep: protection_mod.Report) -> tuple[Line, dict]:
     return _merge_group_line(i, rep, checks, workflows)
 
 
+def _status_contexts(i: Inputs, rep: protection_mod.Report) -> set[str]:
+    """The contexts of the statuses on the base's latest commit (--checks,
+    else `gh`, as the required checks' offer reads them): CI that reports
+    statuses, not check runs, is another CI service. Empty when unreadable."""
+    _checks_ran(i, rep)  # reads them, once
+    if i._checks is None or i._checks.why:
+        return set()
+    try:
+        return {r.name for r in protection_mod._statuses(i._checks.value[1])}
+    except protection_mod.ProtectionError:
+        return set()
+
+
 def _files_named(paths: list[str]) -> str:
     return _most(f"`{_shown(PurePosixPath(p).name, 60)}`" for p in paths)
 
@@ -2496,7 +2529,8 @@ def _merge_group_line(i: Inputs, rep: protection_mod.Report, checks: list[dict],
     g, id_, base = "GitHub", "github.merge_group", i.profile.base_branch
     found: list[tuple[str, Words, Words]] = []  # (status, what, fix)
     on = rep.queue
-    lacking = [w["path"] for w in workflows if w["state"] in ("missing", "excluded")]
+    lacking = [w["path"] for w in workflows if w["state"] == "missing"]
+    narrow = [w["path"] for w in workflows if w["state"] == "excluded"]
     for w in workflows:
         name = _files_named([w["path"]])
         if w["state"] == "missing":
@@ -2550,6 +2584,12 @@ def _merge_group_line(i: Inputs, rep: protection_mod.Report, checks: list[dict],
             f"\"{USE_MERGE_QUEUE}\" adds merge_group to {files} in a PR first.",
         )
         found.append(("gap" if on else "note", NONE, fix))
+    if narrow:
+        files = _files_named(narrow)
+        found.append(("gap" if on else "note", NONE, Words(
+            f"Ask Claude to widen the `branches` filter of `merge_group:` in {files} to cover `{base}`, in a pull request; CI files are yours to review and merge.",
+            f"Widen merge_group's branches filter in {files} to cover `{base}` (a PR to a protected path: the owner merges it).",
+        )))
     status = min((s for s, _, _ in found), key=_rank, default="fine")
     ready = [w["path"] for w in workflows if w["state"] == "ready"]
     state = {"status": status, "clean": status == "fine" and bool(workflows), "workflows": workflows, "checks": checks}
@@ -2581,16 +2621,32 @@ def check_merge_queue(i: Inputs) -> list[Line]:  # run by check_ruleset_rules, s
     rep = gh.report
     unsure = bool(rep.queue_unsure) and not rep.queue
     mq = i._mq = {"queue": None if unsure else rep.queue, "available": None, "merge_group": None, "signals": None}
+    if unsure and any(p.get("strict_required_status_checks_policy") is True for p in _rules(rep, "required_status_checks")):
+        # "Up to date" is met either way, so github.up_to_date is fine: the
+        # queue rule that may apply is said here (without "up to date" on,
+        # github.up_to_date says it).
+        base = i.profile.base_branch
+        return [Line("GitHub", "github.merge_queue", "cant_check", Words(
+            f"Can't tell whether GitHub's merge queue is on for `{base}`: {_shown(rep.queue_unsure[0], 300)}.",
+            f"Merge queue unknown on `{base}`: {_shown('; '.join(rep.queue_unsure), 300)}.",
+        ), Words(
+            f"Check in Settings → Rules whether that ruleset applies to `{base}`; naming `{base}` itself (not a pattern) lets the kit tell.",
+            f"Name refs/heads/{base} (or ~DEFAULT_BRANCH, with --repo's default_branch) in its include, so the reader can count it.",
+        ))]
     if not rep.queue:
         if unsure or i.profile.ruleset is False or not rep.protected or not rep.required_checks:
             return []
         mq["available"] = _availability(i, gh)
         if mq["available"] is None:
             return []
-    mq["signals"] = _signals(i)
+    mq["signals"] = _signals(i, rep)
     lines = [_queue_line(i, rep, mq["available"], mq["signals"])]
     if rep.required_checks:
         line, mq["merge_group"] = _merge_group(i, rep)
+        if not rep.queue and line.status == "cant_check":
+            # The queue is off: what can't be checked is for the upgrade to
+            # read (the JSON keeps it), never a problem with the set-up.
+            line = Line(line.group, line.id, "note", line.message, line.fix)
         lines.append(line)
     return lines
 
@@ -2872,7 +2928,8 @@ def _read_runs(i: Inputs) -> _Answer:
         found = [x for x in issues if isinstance(x, dict) and isinstance(x.get("labels", []), list)
                  and (_number(x) is not None or "labels" in x)]
         runs = [x for x in found if "pull_request" not in x and ("labels" not in x or RUN_LABEL in _label_names(x))]
-        i._run_open = any(str(x.get("state") or "").casefold() == "open" for x in runs)
+        states = [str(x.get("state") or "").casefold() for x in runs]
+        i._run_open = True if "open" in states else None if "" in states else False  # a run without its state can't be told
         if runs or len(found) == len(issues):  # a run is a run, whatever else the file holds
             return _Answer([_number(x) for x in runs])
         shape = "an entry isn't an issue"

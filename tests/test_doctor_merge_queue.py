@@ -94,8 +94,8 @@ def _git(root, *args):
 
 def _checkout(tmp_path, base_files, worktree=None, profile=PROFILE):
     """A project whose `origin/main` holds `base_files` (path: text) under
-    `.github/workflows/`, and whose working tree holds `worktree` instead
-    when given (uncommitted)."""
+    `.github/workflows/`, and whose branch (HEAD) holds `worktree` instead
+    when given."""
     root = _project(tmp_path, profile=profile)
     _git(root, "init", "-q", "-b", "work")
     wf = root / ".github/workflows"
@@ -105,8 +105,10 @@ def _checkout(tmp_path, base_files, worktree=None, profile=PROFILE):
     _git(root, "add", "-A")
     _git(root, "commit", "-q", "-m", "base")
     _git(root, "update-ref", "refs/remotes/origin/main", "HEAD")
-    for name, text in (worktree or {}).items():
+    for name, text in (worktree or {}).items():  # committed on the branch, so HEAD isn't origin/main
         (wf / name).write_text(text)
+    if worktree:
+        _git(root, "commit", "-q", "-am", "the branch's own")
     return root
 
 
@@ -137,8 +139,8 @@ def _doc(tmp_path, root, *args, env=None, gh=None, **kw):
     return _report(tmp_path, root, *_inputs(tmp_path, **kw), *args, path=_path(tmp_path, gh), env=env)
 
 
-def _github(tmp_path, root, **kw):
-    r = _doc(tmp_path, root, **kw)
+def _github(tmp_path, root, extra=(), **kw):
+    r = _doc(tmp_path, root, *extra, **kw)
     return {ln["id"]: ln for ln in r["lines"] if ln["group"] == "GitHub"}, r
 
 
@@ -170,7 +172,7 @@ def test_a_private_organisation_repository_whose_plan_cant_be_read_names_enterpr
 
 
 def test_an_unreadable_organisation_is_the_same_as_an_unreadable_plan(tmp_path, project):
-    lines, r = _github(tmp_path, project, settings=PRIVATE, org='{"message": "Not Found"', )
+    lines, r = _github(tmp_path, project, settings=PRIVATE, org={"message": "Not Found", "status": "404"})
     assert lines["github.merge_queue"]["offer"] == "use_merge_queue"
     assert r["merge_queue"]["available"] == "check_plan"
 
@@ -244,7 +246,7 @@ def test_the_workflows_are_read_from_the_base_not_the_checkout(tmp_path):
 def test_no_origin_base_is_cant_check_saying_to_fetch_it(tmp_path):
     root = _checkout(tmp_path, {"ci.yml": CI_YML})
     _git(root, "update-ref", "-d", "refs/remotes/origin/main")
-    lines, _ = _github(tmp_path, root)
+    lines, _ = _github(tmp_path, root, rulesets=(_queued(),))
     mg = lines["github.merge_group"]
     assert mg["status"] == "cant_check" and "origin/main" in mg["message"], mg
     assert "git fetch origin main" in mg["fix"]
@@ -270,7 +272,7 @@ def test_a_missing_trigger_is_a_gap_only_with_the_queue_on(tmp_path):
 ], ids=["inline-list", "block-list", "scalar", "push-only"])
 def test_an_on_that_isnt_a_mapping_with_pull_request_is_cant_check(tmp_path, on_block):
     root = _checkout(tmp_path, {"ci.yml": "name: CI\n" + on_block + "jobs:\n  tests:\n    runs-on: x\n"})
-    lines, r = _github(tmp_path, root)
+    lines, r = _github(tmp_path, root, rulesets=(_queued(),))
     mg = lines["github.merge_group"]
     assert mg["status"] == "cant_check", mg
     assert "ci.yml" in mg["message"] and "pull_request" in mg["message"]
@@ -287,8 +289,9 @@ def test_an_on_that_isnt_a_mapping_with_pull_request_is_cant_check(tmp_path, on_
 ], ids=["flow-mapping", "anchor", "no-on", "tab", "twice", "pattern"])
 def test_an_on_block_it_cant_read_is_cant_check_never_fine(tmp_path, text):
     root = _checkout(tmp_path, {"ci.yml": text})
-    lines, _ = _github(tmp_path, root)
+    lines, r = _github(tmp_path, root, rulesets=(_queued(),))
     assert lines["github.merge_group"]["status"] == "cant_check", lines["github.merge_group"]
+    assert [w["state"] for w in r["merge_queue"]["merge_group"]["workflows"]] == ["cant_check"]
 
 
 @pytest.mark.parametrize("merge_group, state", [
@@ -312,7 +315,7 @@ def test_a_branches_filter_that_leaves_out_the_base_is_a_gap_with_the_queue_on(t
 
 def test_a_check_from_another_ci_service_is_cant_check_with_githubs_rule(tmp_path, project):
     ci = [_entry(BASE_SHA, True, [_check_run("tests", BASE_SHA, 31, app="circleci-checks")], [])]
-    lines, r = _github(tmp_path, project, ci=ci)
+    lines, r = _github(tmp_path, project, ci=ci, rulesets=(_queued(),))
     mg = lines["github.merge_group"]
     assert mg["status"] == "cant_check", mg
     assert "tests" in mg["message"] and "gh-readonly-queue/main" in mg["message"] + mg["fix"]
@@ -321,7 +324,7 @@ def test_a_check_from_another_ci_service_is_cant_check_with_githubs_rule(tmp_pat
 
 def test_a_required_check_with_no_run_seen_says_so_naming_it_never_another_ci_service(tmp_path):
     profile = _prof('experience = "new"\nruleset = true\n', '[ci]\nrequired_checks = ["tests", "lint"]\n')
-    rs = _rs()
+    rs = _queued()
     _rule(rs, "required_status_checks")["parameters"]["required_status_checks"].append({"context": "lint"})
     root = _checkout(tmp_path, {"ci.yml": CI_YML}, profile=profile)
     lines, r = _github(tmp_path, root, rulesets=(rs,))
@@ -333,7 +336,7 @@ def test_a_required_check_with_no_run_seen_says_so_naming_it_never_another_ci_se
 
 
 def test_ci_that_isnt_githubs_shape_is_cant_check(tmp_path, project):
-    lines, _ = _github(tmp_path, project, ci=[{"sha": BASE_SHA}])
+    lines, _ = _github(tmp_path, project, ci=[{"sha": BASE_SHA}], rulesets=(_queued(),))
     assert lines["github.merge_group"]["status"] == "cant_check"
 
 
@@ -450,6 +453,9 @@ def test_gh_reads_the_same_as_files_and_only_reads(tmp_path, project):
     assert r["merge_queue"]["signals"]["base_commits_7d"] == 3
     gh = fake_gh.FakeGh(path)
     assert "orgs/acme" in [p.split("?")[0] for p in gh.paths()]
+    # Each commit's workflow runs are asked for by its own sha.
+    asked = sorted(p.split("head_sha=")[1].split("&")[0] for p in gh.paths() if p.startswith("repos/acme/demo/actions/runs"))
+    assert asked == sorted([head, *older, PR_SHA]), asked
     for args in gh.calls():
         assert args[0] == "api" and not {"-X", "--method", "-f", "-F", "--field", "--raw-field", "--input"} & set(args), args
 
@@ -501,3 +507,122 @@ def test_the_offer_is_doctors():
 def test_the_changelog_has_a_note_under_unreleased():
     notes = since_0110()
     assert "#246" in notes and "merge_group" in notes and "use_merge_queue" in notes
+
+
+# ---------- round 1: the queue off never fails --strict ----------
+
+
+@pytest.mark.parametrize("ci, files", [
+    ([_entry(BASE_SHA, True, [_check_run("tests", BASE_SHA, 31, app="circleci-checks")], [])], {"ci.yml": CI_YML}),
+    ([], {"ci.yml": CI_YML}),
+    (CI, {"ci.yml": "name: CI\non: [push, pull_request]\njobs: {}\n"}),
+    ("nope", {"ci.yml": CI_YML}),
+], ids=["other-ci", "no-run", "list-on", "ci-unreadable"])
+def test_with_the_queue_off_what_cant_be_checked_is_a_note_and_strict_passes(tmp_path, ci, files):
+    root = _checkout(tmp_path, files)
+    lines, r = _github(tmp_path, root, ci=ci)
+    mg = lines["github.merge_group"]
+    assert mg["status"] == "note", mg
+    assert r["merge_queue"]["merge_group"]["status"] == "cant_check" and r["merge_queue"]["merge_group"]["clean"] is False
+    assert r["strict_ok"] is True, [ln for ln in r["lines"] if ln["status"] in ("gap", "cant_check")]
+
+
+def test_an_excluding_filter_with_the_queue_off_is_a_note_whose_fix_widens_it(tmp_path):
+    text = "name: CI\non:\n  pull_request:\n  merge_group:\n    branches: [release]\njobs: {}\n"
+    root = _checkout(tmp_path, {"ci.yml": text})
+    lines, _ = _github(tmp_path, root)
+    mg = lines["github.merge_group"]
+    assert mg["status"] == "note" and "widen" in mg["fix"] and "add `merge_group:`" not in mg["fix"], mg
+    on, _ = _github(tmp_path, root, rulesets=(_queued(),))
+    assert on["github.merge_group"]["status"] == "gap" and "widen" in on["github.merge_group"]["fix"]
+
+
+def test_an_unsure_merge_queue_rule_is_cant_check_even_with_up_to_date_on(tmp_path, project):
+    unsure = _queued(_rs(id=203, name="Queue", conditions={"ref_name": {"include": ["refs/heads/ma*"], "exclude": []}}))
+    lines, r = _github(tmp_path, project, rulesets=(RULESET, unsure))
+    assert lines["github.up_to_date"]["status"] == "fine"
+    q = lines["github.merge_queue"]
+    assert q["status"] == "cant_check" and "Queue" in q["message"], q
+    assert r["merge_queue"]["queue"] is None
+
+
+def test_a_required_check_reported_as_a_commit_status_is_another_ci_service(tmp_path):
+    profile = _prof('experience = "new"\nruleset = true\n', '[ci]\nrequired_checks = ["tests", "ci/jenkins"]\n')
+    rs = _queued()
+    _rule(rs, "required_status_checks")["parameters"]["required_status_checks"].append({"context": "ci/jenkins"})
+    root = _checkout(tmp_path, {"ci.yml": CI_YML}, profile=profile)
+    d = tmp_path / "input"
+    d.mkdir(exist_ok=True)
+    (d / "checks.json").write_text(json.dumps([{"total_count": 0, "check_runs": []},
+                                               {"sha": BASE_SHA, "statuses": [{"context": "ci/jenkins", "state": "success", "id": 9}]}]))
+    lines, r = _github(tmp_path, root, rulesets=(rs,), extra=("--checks", str(d / "checks.json")))
+    assert {c["name"]: c["state"] for c in r["merge_queue"]["merge_group"]["checks"]} == {"tests": "actions", "ci/jenkins": "other_ci"}
+    assert "gh-readonly-queue/main" in lines["github.merge_group"]["message"]
+
+
+def test_ci_time_is_the_required_checks_own_runs_on_finished_commits(tmp_path, project):
+    ci = [
+        # tests took 12 minutes; a nightly run the next day on the same commit doesn't stretch it
+        _entry("1" * 40, True, [_check_run("tests", "1" * 40, 41), _check_run("nightly", "1" * 40, 42, started="2026-10-25T02:00:00Z",
+                                                                           completed="2026-10-25T02:30:00Z", id_=5)], [_workflow_run("1" * 40, 41)]),
+        # still running: left out, never counted as short
+        _entry("2" * 40, True, [{**_check_run("tests", "2" * 40, 43), "status": "in_progress", "conclusion": None, "completed_at": None}], []),
+    ]
+    _, r = _github(tmp_path, project, ci=ci)
+    assert r["merge_queue"]["signals"]["ci_minutes"] == {"longest": 12, "typical": 12, "commits": 1}
+
+
+@pytest.mark.parametrize("ci", [
+    [_entry(BASE_SHA, True, [{**_check_run("tests", BASE_SHA, 1), "check_suite": {"id": [1]}}], [])],
+    [_entry(BASE_SHA, True, [_check_run("tests", BASE_SHA, 11)], [{**_workflow_run(BASE_SHA, 11), "check_suite_id": [11]}])],
+    [{**_entry(BASE_SHA, True, [_check_run("tests", BASE_SHA, 11)], []), "check_runs": {"total_count": 2, "check_runs": [_check_run("tests", BASE_SHA, 11)]}}],
+], ids=["suite-list", "workflow-suite-list", "a-page-missing"])
+def test_ci_of_the_wrong_shape_is_unreadable_never_a_crash(tmp_path, project, ci):
+    lines, r = _github(tmp_path, project, ci=ci)
+    assert "couldn't run" not in json.dumps(r["lines"])
+    assert lines["github.merge_queue"]["offer"] == "use_merge_queue"
+    assert r["merge_queue"]["merge_group"]["status"] == "cant_check"
+
+
+def test_commits_of_the_wrong_shape_are_unknown_never_a_crash(tmp_path, project):
+    commits = [_commit("1" * 40, "2026-10-25T10:00:00Z", ("2" * 40,)), {**_commit("2" * 40, "2026-10-25T09:00:00Z"), "parents": [{"sha": []}]}]
+    _, r = _github(tmp_path, project, commits=commits)
+    assert r["merge_queue"]["signals"]["base_commits_7d"] == 2
+    _, r = _github(tmp_path, project, commits=[])
+    assert r["merge_queue"]["signals"]["base_commits_7d"] == 0 and r["merge_queue"]["signals"]["base_commits_at_least"] is False
+
+
+@pytest.mark.parametrize("runs, in_progress", [
+    ([{"number": 7, "state": "closed", "labels": [{"name": "workflow:run"}]}], False),
+    ([{"number": 7, "labels": [{"name": "workflow:run"}]}], None),
+    ([], False),
+], ids=["closed", "no-state", "none"])
+def test_a_run_in_progress_is_false_only_when_it_can_be_told(tmp_path, project, runs, in_progress):
+    _, r = _github(tmp_path, project, runs=runs)
+    assert r["merge_queue"]["signals"]["run_in_progress"] is in_progress
+
+
+@pytest.mark.parametrize("now", ["2026-10-25T12:00:00", "0001-01-01T00:00:00Z", "2026-10-25"])
+def test_a_now_without_its_zone_or_too_early_is_refused(tmp_path, project, now):
+    p = subprocess.run([shutil.which("python3"), "-B", str(project / ".claude/workflow/bin/workflow.py"), "doctor", "--json", "--now", now],
+                       cwd=project, capture_output=True, text=True)
+    assert p.returncode == 2 and "--now" in p.stderr
+
+
+def test_lines_outside_on_dont_make_the_file_unreadable(tmp_path):
+    text = ("name: CI\non:\n  pull_request:\n  merge_group: # *not an alias\njobs:\n  t:\n    steps:\n      - run: |\n"
+            "          cat <<-EOF\n\t\tindented with tabs\n\t\tEOF\n---\n")
+    root = _checkout(tmp_path, {"ci.yml": "\ufeff" + text.replace("\n---\n", "\n")})
+    _, r = _github(tmp_path, root)
+    assert [w["state"] for w in r["merge_queue"]["merge_group"]["workflows"]] == ["ready"]
+
+
+def test_doctor_runs_only_git_rev_parse_and_show(tmp_path, project):
+    path = _path(tmp_path)
+    (path / "git").unlink()
+    log = tmp_path / "git-calls.log"
+    (path / "git").write_text(f"#!/bin/sh\necho \"$1\" >> {log}\nexec {shutil.which('git')} \"$@\"\n")
+    (path / "git").chmod(0o755)
+    r = _report(tmp_path, project, *_inputs(tmp_path), path=path)
+    assert r["merge_queue"]["merge_group"]["clean"] is True
+    assert set(log.read_text().split()) == {"rev-parse", "show"}
