@@ -2,10 +2,11 @@
 
 ## Unreleased
 
-**The conductor at the pass cap: "couldn't read" never hides `passes_used_up`, and one set of steps for a ticket at the cap** (#281, from #256's last Correctness pass).
+**The conductor at the pass cap: one definition of "a ticket at the cap", and "couldn't read" never hides it** (#281, from #256's last Correctness pass).
 
-- **`passes_used_up` wins.** In step 2's "Waiting on the owner", `passes_used_up` counts even beside a "couldn't read" reason (an unreadable try-it link, say), since `merge-check` keeps judging the review when an input can't be read. Before, the run then waited on the owner until its end time. A "couldn't read" reason for the profile is the exception: the profile holds the cap itself, so `merge-check` then judges against the default of 2. A ticket with no pull request, or with a "couldn't read" reason and no `passes_used_up`, still counts as waiting.
-- **One set of steps.** Step 2 holds the steps for a ticket at the cap: its labels stay (`needs-human`, never claimed again), `asked_at` is cleared, its `for_owner` line becomes the pass-cap row's, the ticket gets the "One more pass" note, and the change is named on the tracking issue, in the next check-in's comment for an answer between check-ins. Each step is taken only where it isn't done already. "When the owner answers" now points to them rather than restating them, so it updates `for_owner` too, and nothing is posted twice.
+- **One definition.** Step 2 gains "A ticket at the cap": `merge-check`, run as the "PR open, not merged" row runs it, says `passes_used_up` with no "couldn't read" reason for the profile. Beside any other "couldn't read" reason (an unreadable try-it link, say) the cap still counts, since `merge-check` keeps judging the review when an input can't be read; before, the run then waited on the owner until its end time. A "couldn't read" reason for the profile is the exception: the profile holds the cap itself, so `merge-check` then judges against the default of 2. A ticket with no pull request is never at the cap.
+- **One set of steps,** each taken only where it isn't done already: its labels stay (`needs-human`, never claimed again), `asked_at` is cleared, its `for_owner` line becomes the pass-cap row's, the ticket gets the "One more pass" note, and the change is named on the tracking issue at once (for an answer in chat between check-ins, beside the comment that records it).
+- **Every path uses it:** step 2's "Waiting on the owner", "Asking about a `needs-human` ticket" and the "When the owner answers" exception point to it, so the answers path now updates `for_owner` too and keeps the profile's exception.
 - Tests: `tests/test_merge_check_passes.py`, including two of `merge-check` itself: the cap beside an unreadable try-it link, and beside an unreadable profile.
 - **For projects updating:** nothing to do.
 

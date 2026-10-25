@@ -355,38 +355,35 @@ def test_the_conductor_takes_it_as_needs_human():
     assert "see its review records and PR body" in line
     # Asking the owner, or a retry, would only start a session that stops at the cap again.
     assert "without that row's question to the owner" in line and "never requeues it while `WF merge-check` says `passes_used_up`" in line
-    answers = conductor.split("**When the owner answers**", 1)[1].split("\n3. ", 1)[0]
-    # The same merge-check as the merge rule's, so a Light run's capped ticket isn't read as `next: round`.
-    assert "Except when `WF merge-check` on its pull request, run as the \"PR open, not merged\" row runs it (with `--charter` and `--review-rounds <N>`), says `passes_used_up`" in answers
-    assert "don't requeue it" in answers
-    # An answer that can't requeue it leaves the run waiting on nothing: step 2's steps clear `asked_at`.
-    assert "clear its `asked_at`" in conductor.split("- **Waiting on the owner** (not done):", 1)[1].split("\n- **Done**", 1)[0]
-    asking = conductor.split("**Asking about a `needs-human` ticket.**", 1)[1].split("\n\n", 1)[0]
-    assert "says `passes_used_up` is never asked about, whatever stopped its session" in asking
-    # One asked about before its pull request reached the cap doesn't keep the run waiting either:
-    # step 2 checks it each check-in, before it counts the run as waiting.
+    # "A ticket at the cap" is said once (#281): the merge rule's merge-check, flags and all (without
+    # `--review-rounds`, a Light run's capped ticket reads as `next: round`), and the steps for it.
+    at_cap = conductor.split("**A ticket at the cap.**", 1)[1].split("\n\n", 1)[0]
+    assert "`WF merge-check` on its pull request, run as the \"PR open, not merged\" row runs it (with `--charter` and `--review-rounds <N>`), says `passes_used_up`" in at_cap
+    # `merge-check` keeps judging the review when an input can't be read, so the cap wins over a
+    # "couldn't read" reason (an unreadable try-it link, say), but not over one for the profile,
+    # which holds the cap itself.
+    assert "with no \"couldn't read\" reason for the profile, which holds the cap itself" in at_cap
+    assert "A ticket with no pull request is never at the cap." in at_cap
+    # The steps, each taken once, whichever path comes to them first.
+    assert "take these steps, each only where it isn't done already:" in at_cap
+    assert "leave its labels as they are (`needs-human` stays, with no `ready-for-agent` or `workflow:in-progress`)" in at_cap
+    assert "clear its `asked_at`, so the run doesn't wait on it" in at_cap
+    assert "replace its `for_owner` line with the pass-cap row's (\"#n reached its pass cap (#PR): see its review records and PR body\")" in at_cap
+    assert "say on the ticket that \"One more pass\" runs in an attended session (the `merge-check` skill)" in at_cap
+    # Named on the tracking issue at once, never left owed to a later check-in.
+    assert "name the change on the tracking issue: in this check-in's comment, or, for an answer in chat between check-ins, beside the comment that records it" in at_cap
+    # Every path uses that one definition.
     waiting = conductor.split("- **Waiting on the owner** (not done):", 1)[1].split("\n- **Done**", 1)[0]
-    # The merge rule's merge-check, flags and all: without `--review-rounds`, a Light run's capped ticket reads as `next: round`.
-    assert "Before counting a `needs-human` ticket with `asked_at` as waiting, run `WF merge-check` on its pull request as the \"PR open, not merged\" row runs it (with `--charter` and `--review-rounds <N>`)." in waiting
-    # What the owner sees follows: the old question is no longer what the run waits on.
-    assert "replace its `for_owner` line with the pass-cap row's" in waiting
-    # `merge-check` keeps judging the review when an input can't be read, so `passes_used_up` wins
-    # over a "couldn't read" reason (an unreadable try-it link, say), but not over one for the profile,
-    # which holds the cap itself (#281).
-    assert "`passes_used_up` counts even beside a \"couldn't read\" reason, unless that reason is for the profile" in waiting
-    assert "A ticket with no pull request still counts, and so does one whose `merge-check` doesn't say `passes_used_up` but still has a \"couldn't read\" reason after the row's retry, or has one for the profile." in waiting
-    # The answers exception does what step 2's check does, from one place (#281), and only what isn't
-    # done already: one note on the ticket and one on the tracking issue when the two meet in one check-in.
-    exception = answers.split("Except when `WF merge-check`", 1)[1]
-    assert "take the steps for a ticket at the cap in step 2's \"Waiting on the owner\", each only where it isn't done already" in exception
-    assert "leave it in `for_owner`" not in exception
-    # Its labels stay: it isn't requeued, so it isn't claimed either.
-    assert "leave its labels as they are" in waiting
-    # One place names the change on the tracking issue, once, also for an answer between check-ins.
-    assert "name the change on the tracking issue (this check-in's comment, or the next one's for an answer between check-ins)" in waiting
-    assert waiting.count("#n reached its pass cap (#PR): see its review records and PR body") == 1
-    assert "step 2's \"Waiting on the owner\" clears its `asked_at`" in asking
-    assert "or its pull request reaches the pass cap" in conductor.split("- Never block on a question:", 1)[1].split("\n", 1)[0]
+    assert "Before counting a `needs-human` ticket with `asked_at` as waiting, check whether it is at the cap (\"A ticket at the cap\", below)" in waiting
+    assert "any other still counts, among them one whose `merge-check` has a \"couldn't read\" reason after the row's retry" in waiting
+    asking = conductor.split("**Asking about a `needs-human` ticket.**", 1)[1].split("\n\n", 1)[0]
+    assert "A ticket at the cap (below) is never asked about, whatever stopped its session: no answer lets a run build it." in asking
+    answers = conductor.split("**When the owner answers**", 1)[1].split("\n3. ", 1)[0]
+    assert "Except for a ticket at the cap (above): a new session would only stop at the pass cap again, so don't requeue it, and take the steps for a ticket at the cap instead." in answers
+    # Each rule is said once: the definition and the `for_owner` line aren't restated elsewhere in step 2.
+    step2 = conductor.split("**2. Stop or wind down?**", 1)[1].split("**3. The owner's words.**", 1)[0]
+    assert step2.count("says `passes_used_up`") == 1
+    assert step2.count("#n reached its pass cap (#PR): see its review records and PR body") == 1
     assert "is the stuck row's, except that instead of a retry you label the ticket `needs-human`" in line
 
 
