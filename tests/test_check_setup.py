@@ -248,7 +248,7 @@ def test_each_offer_is_a_choice_with_not_now():
 
 def test_it_hands_doctors_offers_over_to_the_upgrade_skill():
     offers = _section(_text(), "The offers")
-    for offer in ("protect_main", "restore_protection", "set_up_unattended_runs", "add_try_it_links"):
+    for offer in ("protect_main", "restore_protection", "set_up_unattended_runs", "add_try_it_links", "use_merge_queue"):
         assert f"`{offer}`" in offers, offer
         assert offer in doctor.OFFERS, offer
         # The upgrade skill knows the offer by the same name.

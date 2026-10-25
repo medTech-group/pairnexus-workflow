@@ -499,8 +499,32 @@ def protect(base: str, settings, names=()) -> list[Request]:
     ]
 
 
+def _update(ruleset, verb: str) -> tuple[str, dict]:
+    """(the PUT's path, the body GitHub accepts on an update) for the
+    repository's own branch ruleset; raises on one the kit can't change.
+    `verb` says what the change does, for the messages."""
+    if not isinstance(ruleset, dict):
+        raise ProtectionError("the ruleset file must be one ruleset (a JSON object), as GET repos/<repo>/rulesets/<id> returns it")
+    where = _checked_name(ruleset, 0)
+    if not isinstance(ruleset.get("name"), str):
+        raise ProtectionError(f"{where} has no name")
+    if ruleset["target"] != "branch":
+        raise ProtectionError(f"{where} is a {quote(ruleset['target'])} ruleset: only a branch ruleset can {verb}")
+    rid = ruleset.get("id")
+    if not isinstance(rid, int) or isinstance(rid, bool) or rid <= 0:
+        raise ProtectionError(f"{where} has no id, so the request can't name it")
+    if ruleset.get("source_type") == "Organization":
+        raise ProtectionError(f"{where} is an organisation's ruleset: the kit changes only the repository's own, so change it in the organisation's settings")
+    source = _repo_name(ruleset.get("source"))
+    if ruleset.get("source_type") != "Repository" or source is None:
+        raise ProtectionError(f"{where} has no source repository (source_type Repository, source owner/repo), so the request can't name it")
+    return f"repos/{source}/rulesets/{rid}", {k: copy.deepcopy(ruleset[k]) for k in UPDATE_FIELDS if k in ruleset}
+
+
 def require_checks(ruleset, names) -> Request:
-    """The ruleset with the names added to its required checks and "up to date" on.
+    """The ruleset with the names added to its required checks and "up to date"
+    on, or left as it is when the ruleset has a merge-queue rule (#247): the
+    queue meets "up to date", which would only send branches back to update.
 
     Nothing else changes and nothing is removed; only the fields GitHub accepts
     on an update are sent.
@@ -508,25 +532,13 @@ def require_checks(ruleset, names) -> Request:
     names = check_names(names)
     if not names:
         raise ProtectionError("give the checks to require with --check NAME (one for each)")
-    if not isinstance(ruleset, dict):
-        raise ProtectionError("the ruleset file must be one ruleset (a JSON object), as GET repos/<repo>/rulesets/<id> returns it")
-    where = _checked_name(ruleset, 0)
-    if not isinstance(ruleset.get("name"), str):
-        raise ProtectionError(f"{where} has no name")
-    if ruleset["target"] != "branch":
-        raise ProtectionError(f"{where} is a {quote(ruleset['target'])} ruleset: only a branch ruleset can require checks")
-    rid = ruleset.get("id")
-    if not isinstance(rid, int) or isinstance(rid, bool) or rid <= 0:
-        raise ProtectionError(f"{where} has no id, so the request can't name it")
-    if ruleset.get("source_type") == "Organization":
-        raise ProtectionError(f"{where} is an organisation's ruleset: the kit adds checks only to the repository's own, so change it in the organisation's settings")
-    source = _repo_name(ruleset.get("source"))
-    if ruleset.get("source_type") != "Repository" or source is None:
-        raise ProtectionError(f"{where} has no source repository (source_type Repository, source owner/repo), so the request can't name it")
-    body = {k: copy.deepcopy(ruleset[k]) for k in UPDATE_FIELDS if k in ruleset}
+    path, body = _update(ruleset, "require checks")
+    queued = any(r["type"] == "merge_queue" for r in body["rules"])
     rule = next((r for r in body["rules"] if r["type"] == "required_status_checks"), None)
     if rule is None:
-        body["rules"].append(_checks_rule(names))
+        rule = _checks_rule(names)
+        rule["parameters"]["strict_required_status_checks_policy"] = not queued
+        body["rules"].append(rule)
     else:
         if rule.get("parameters") is None:
             rule["parameters"] = {}
@@ -535,11 +547,90 @@ def require_checks(ruleset, names) -> Request:
         if have is None:
             have = params["required_status_checks"] = []
         if not isinstance(have, list) or not all(isinstance(c, dict) and isinstance(c.get("context"), str) for c in have):
-            raise ProtectionError(f"{where}: required_status_checks must be a list of objects, each with a context")
+            raise ProtectionError(f"{_checked_name(ruleset, 0)}: required_status_checks must be a list of objects, each with a context")
         known = {c["context"] for c in have}
         have += [{"context": n} for n in names if n not in known]
-        params["strict_required_status_checks_policy"] = True
-    return Request("add the checks to the ruleset", "PUT", f"repos/{source}/rulesets/{rid}", body)
+        if not queued:
+            params["strict_required_status_checks_policy"] = True
+    return Request("add the checks to the ruleset", "PUT", path, body)
+
+
+# The merge-queue rule's settings (#243), shown to the owner before the change.
+QUEUE_SETTINGS = {
+    "merge_method": "MERGE",
+    "grouping_strategy": "ALLGREEN",  # every pull request in a group must pass
+    "max_entries_to_build": 5,
+    "max_entries_to_merge": 5,
+    "min_entries_to_merge": 1,
+    "min_entries_to_merge_wait_minutes": 0,
+}
+QUEUE_TIMEOUT = 60  # minutes, with no CI history: GitHub's own default
+QUEUE_TIMEOUT_MAX = 360  # GitHub's cap
+
+
+def queue_timeout(longest: int | None) -> int:
+    """The check timeout for the base's longest recent CI run (whole minutes,
+    or None): twice it, for room to spare, never below the no-history 60, and
+    at most GitHub's 360."""
+    return min(QUEUE_TIMEOUT_MAX, max(QUEUE_TIMEOUT, 2 * (longest or 0)))
+
+
+def _verdict(report) -> int | None:
+    """The longest recent CI run from `workflow doctor --json`, once its
+    `merge_group` verdict is clean; raises when it isn't."""
+    if not isinstance(report, dict):
+        raise ProtectionError("the doctor file must be what `workflow doctor --json` prints (a JSON object)")
+    mq = report.get("merge_queue")
+    if not isinstance(mq, dict):
+        raise ProtectionError("the doctor file has no merge_queue: run `workflow doctor --json` with checks required on a protected base branch, and give its output")
+    mg = mq.get("merge_group")
+    if not isinstance(mg, dict) or mg.get("clean") is not True:
+        flows = mg.get("workflows") if isinstance(mg, dict) else None
+        lacking = [w["path"] for w in flows or [] if isinstance(w, dict) and w.get("state") != "ready" and isinstance(w.get("path"), str)]
+        status = mg.get("status") if isinstance(mg, dict) and isinstance(mg.get("status"), str) else "not read"
+        raise ProtectionError(
+            f"doctor's merge_group check isn't clean (status {quote(status)}"
+            + (f"; not ready: {', '.join(quote(p) for p in lacking)}" if lacking else "")
+            + "): every workflow behind a required check must run on merge_group on the base branch before the queue goes on"
+        )
+    signals = mq.get("signals")
+    ci = signals.get("ci_minutes") if isinstance(signals, dict) else None
+    longest = ci.get("longest") if isinstance(ci, dict) else None
+    if longest is not None and (not isinstance(longest, int) or isinstance(longest, bool) or longest < 0):
+        raise ProtectionError("the doctor file: merge_queue.signals.ci_minutes.longest must be whole minutes, or null")
+    return longest
+
+
+def merge_queue(ruleset, report, timeout: int | None = None) -> Request:
+    """The ruleset with the merge-queue rule (#247) and "up to date" off,
+    its required checks kept; refused unless doctor's `merge_group` verdict
+    (`report`, `workflow doctor --json`) is clean. The timeout is the
+    owner's when given, else `queue_timeout` of doctor's longest CI run.
+
+    A merge-queue rule already there is replaced; nothing else changes.
+    """
+    longest = _verdict(report)
+    if timeout is not None and not 1 <= timeout <= QUEUE_TIMEOUT_MAX:
+        raise ProtectionError(f"the check timeout must be 1 to {QUEUE_TIMEOUT_MAX} minutes, as GitHub takes it")
+    path, body = _update(ruleset, "hold a merge queue")
+    rule = next((r for r in body["rules"] if r["type"] == "required_status_checks"), None)
+    params = rule.get("parameters") if rule else None
+    have = params.get("required_status_checks") if isinstance(params, dict) else None
+    if have is not None and not (isinstance(have, list) and all(isinstance(c, dict) and isinstance(c.get("context"), str) for c in have)):
+        raise ProtectionError(f"{_checked_name(ruleset, 0)}: required_status_checks must be a list of objects, each with a context")
+    if not have:
+        raise ProtectionError(
+            f"{_checked_name(ruleset, 0)} requires no checks: the queue goes in the ruleset \"Require these checks\" chose, "
+            "since a queue with no required checks would merge anything"
+        )
+    params["strict_required_status_checks_policy"] = False
+    queue = {"type": "merge_queue", "parameters": {**QUEUE_SETTINGS, "check_response_timeout_minutes": timeout or queue_timeout(longest)}}
+    at = next((n for n, r in enumerate(body["rules"]) if r["type"] == "merge_queue"), None)
+    if at is None:
+        body["rules"].append(queue)
+    else:
+        body["rules"][at] = queue
+    return Request("add the merge queue to the ruleset, with \"up to date\" off", "PUT", path, body)
 
 
 def _when(v, what: str) -> datetime | None:

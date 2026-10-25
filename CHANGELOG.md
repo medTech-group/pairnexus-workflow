@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+**The "Use a merge queue" upgrade: `merge_group` in the workflows first, then the ruleset's merge-queue rule with "up to date" off** (#247, part of #243).
+
+- **The ruleset writer.** `workflow protection --merge-queue ruleset.json --doctor doctor.json [--timeout MINUTES]` prints the `PUT` that adds a `merge_queue` rule to the ruleset: merge method `MERGE`, grouping `ALLGREEN`, at most 5 entries built and 5 merged at once, a minimum of 1 and no wait, and a check timeout of twice the base's longest recent CI run (doctor's `merge_queue.signals.ci_minutes.longest`), at least 60 minutes (60 with no history) and at most 360, or the owner's `--timeout`. The same change turns "up to date" off and keeps the required checks. It refuses unless doctor's `merge_group` verdict is clean, naming the workflows not ready, and refuses a ruleset that requires no checks. It sends nothing.
+- **`--require-checks`** leaves "up to date" as it is when the ruleset has a merge-queue rule (a new checks rule beside the queue gets it off), and doctor's `require_checks` fix says so then.
+- **The `upgrade-setup` skill's "Use a merge queue"** (`use_merge_queue`, offered by doctor through `check-setup`, or when asked), in an attended session and never while a run is in progress: first a pull request adding `merge_group:` beside `pull_request:` in each workflow doctor's check names, which the owner merges; then, once the check is clean on the base, the settings shown to the owner and chosen there, the ruleset change with `gh` after one confirmation on the owner's computer or click by click, and the read-back through doctor. "Require these checks" and its read-back no longer turn "up to date" on, or give its click, beside the queue.
+- **The kit's CI template** (`templates/github/workflow-kit.yml`) runs on `merge_group` too.
+- **Docs:** `docs/protection.md` gains "The merge queue" (its availability, the settings, "up to date" off, and a note for path-filtered CI: diff the merge group's `base_sha..head_sha`); the glossary gains "Merge queue", and its "Merge" entry says "Merge it now" joins the queue there, other entries trimmed to stay under 6,000 characters.
+- Tests: `tests/test_protection_queue.py`, `tests/test_upgrade_merge_queue.py`.
+- **For projects updating:** the kit's update brings `merge_group:` into `.github/workflows/workflow-kit.yml` (it does nothing without a queue). Nothing else changes until the owner takes "Use a merge queue".
+
 **Doctor and check-setup suggest a merge queue where it fits, and check the base's workflows for `merge_group`** (#246, part of #243).
 
 - **New inputs.** `workflow doctor` takes `--org` (GET `orgs/<owner>`, for a private repository's plan), `--commits` (the base's commits, one page), `--ci` (the check runs of the base's last commits and of recent pull requests' heads, each with GET `actions/runs?head_sha=<sha>` for the workflow behind it) and `--now`. Without the files it reads them with `gh` (GETs, one page each), and only where a line needs them. It reads the workflow files with `git` as they are on `origin/<base>`, never the checkout's.
