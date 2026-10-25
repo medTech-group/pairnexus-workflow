@@ -183,7 +183,28 @@ def test_a_change_to_on_says_the_charters_waivers_stop(tmp_path):
     p = _queue(body, out, "on", env)
     assert p.stdout.startswith("changed:") and "waived checks no longer apply" in p.stdout
     p = _queue(out, out, "off", env)
-    assert p.stdout.startswith("changed:") and "waived" not in p.stdout
+    assert p.stdout.startswith("changed:") and "waived checks apply again" in p.stdout
+
+
+def test_a_first_sighting_of_the_queue_on_says_the_charters_waivers_dont_apply(tmp_path):
+    env = _profile(tmp_path)
+    p = _init(tmp_path, env, waived=["CI"])
+    assert p.returncode == 0, p.stderr
+    body = _body(tmp_path, json.loads(p.stdout))
+    out = tmp_path / "new.md"
+    p = _queue(body, out, "on", env)
+    assert p.stdout.startswith("recorded:") and "waived checks no longer apply" in p.stdout
+    p = _queue(body, out, "off", env)
+    assert p.stdout.startswith("recorded:") and "waived" not in p.stdout
+
+
+def test_no_waivers_no_waiver_words(tmp_path):
+    env = _profile(tmp_path)
+    body = _started(tmp_path, env, "off")
+    out = tmp_path / "new.md"
+    for value in ("on", "off"):
+        p = _queue(body if value == "on" else out, out, value, env)
+        assert p.stdout.startswith("changed:") and "waived" not in p.stdout
 
 
 def test_a_queue_state_with_none_recorded_is_recorded_not_a_change(tmp_path):
