@@ -1679,6 +1679,13 @@ def _with_offer(line: Line, ran: list[dict], base: str) -> Line:
     ), line.fix, offer="require_checks")
 
 
+def _queued_checks(rep: protection_mod.Report) -> bool:
+    """A ruleset in force on the base holds both the merge queue and required
+    checks: where "Require these checks" adds checks, it leaves "up to date"
+    as it is (#247)."""
+    return any(protection_mod._has_merge_queue(rs) and any(r["type"] == "required_status_checks" for r in rs["rules"]) for rs in rep.effective)
+
+
 def _up_to_date(queue: bool) -> str:
     """What "Require these checks" does to "up to date": on, or left as it is
     beside a merge queue, which meets it (#247)."""
@@ -1743,7 +1750,7 @@ def check_required_checks(i: Inputs) -> list[Line]:
             ))
         ran = _offerable(i, rep)
         if ran:
-            line = _with_offer(Line(g, id_, "note", line.message, _offer_fix(base, rep.queue)), ran, base)
+            line = _with_offer(Line(g, id_, "note", line.message, _offer_fix(base, _queued_checks(rep))), ran, base)
         return [line] + _profile_checks(i, rep)
     rep, wait = _report(i, id_, Words("whether GitHub requires the checks the kit's profile lists", "ci.required_checks against the ruleset"))
     if wait:
@@ -1775,13 +1782,13 @@ def check_required_checks(i: Inputs) -> list[Line]:
         line = Line(g, id_, "gap", Words(
             f"GitHub doesn't require {'this check' if len(missing) == 1 else 'these checks'} the kit's profile lists to pass before a pull request merges: {shown}.",
             f"ci.required_checks not required by any active ruleset on `{base}`: {shown}.",
-        ), _gap_fix(base, missing, ran, rep.queue))
+        ), _gap_fix(base, missing, ran, _queued_checks(rep)))
     elif ran:
         # The profile and the ruleset agree, but a check added to CI later has run.
         line = Line(g, id_, "note", Words(
             f"GitHub requires the checks the kit's profile lists ({names}), but neither lists every check that runs on `{base}`.",
             f"Every ci.required_checks name is required on `{base}` ({names}); not every check that ran is.",
-        ), _offer_fix(base, rep.queue))
+        ), _offer_fix(base, _queued_checks(rep)))
     else:
         line = Line(g, id_, "fine", Words(
             f"GitHub requires the checks the kit's profile lists to pass before a pull request merges ({names}).",

@@ -103,22 +103,33 @@ def test_the_timeout_is_above_the_longest_run_with_room_to_spare_and_capped_at_3
     assert queue_rule(body)["check_response_timeout_minutes"] == minutes
 
 
-@pytest.mark.parametrize("given", ["1", "45", "360"])
-def test_the_owner_s_timeout_wins(repo, inp, given):
-    body = body_of(queue(repo, inp, recorded_ruleset(), doctor(longest=200), "--timeout", given))["body"]
+@pytest.mark.parametrize("given,longest", [("1", None), ("45", 44), ("360", 200), ("360", 900)])
+def test_the_owner_s_timeout_wins(repo, inp, given, longest):
+    body = body_of(queue(repo, inp, recorded_ruleset(), doctor(longest=longest), "--timeout", given))["body"]
     assert queue_rule(body)["check_response_timeout_minutes"] == int(given)
 
 
-@pytest.mark.parametrize("given", ["0", "361", "-5", "1.5", "an hour", ""])
-def test_a_timeout_outside_github_s_range_is_refused(repo, inp, given):
-    bad(queue(repo, inp, recorded_ruleset(), doctor(), "--timeout", given), "timeout")
+@pytest.mark.parametrize("given", ["1", "25", "24"])
+def test_an_owner_s_timeout_not_above_the_longest_run_is_refused(repo, inp, given):
+    bad(queue(repo, inp, recorded_ruleset(), doctor(longest=25), "--timeout", given), "longest", "25 minutes")
 
 
-def test_a_queue_rule_already_there_is_replaced_not_doubled(repo, inp):
+@pytest.mark.parametrize("given", ["0", "361", "1000", "007", "-5", "1.5", "an hour", ""])
+def test_a_timeout_outside_github_s_range_is_refused_in_one_message(repo, inp, given):
+    p = queue(repo, inp, recorded_ruleset(), doctor(), "--timeout", given)
+    bad(p, "--timeout", "isn't whole minutes from 1 to 360")
+
+
+@pytest.mark.parametrize("copies", [1, 2])
+def test_a_queue_rule_already_there_is_replaced_not_doubled(repo, inp, copies):
     rs = recorded_ruleset()
-    rs["rules"].insert(1, {"type": "merge_queue", "parameters": {**SETTINGS, "merge_method": "SQUASH", "check_response_timeout_minutes": 15}})
+    for _ in range(copies):
+        rs["rules"].insert(1, {"type": "merge_queue", "parameters": {**SETTINGS, "merge_method": "SQUASH", "check_response_timeout_minutes": 15}})
     body = body_of(queue(repo, inp, rs, doctor(longest=40)))["body"]
-    assert [r["type"] for r in body["rules"]] == [r["type"] for r in rs["rules"]]
+    want = [r["type"] for r in rs["rules"]]
+    for _ in range(copies - 1):
+        want.remove("merge_queue")
+    assert [r["type"] for r in body["rules"]] == want
     assert queue_rule(body) == {**SETTINGS, "check_response_timeout_minutes": 80}
 
 
@@ -164,8 +175,34 @@ def test_the_refusal_names_the_workflows_still_missing_the_trigger(repo, inp):
         {"path": ".github/workflows/lint.yml", "state": "ready", "why": None},
     ]
     p = queue(repo, inp, recorded_ruleset(), doctor(clean=False, workflows=flows))
-    bad(p, "ci.yml")
-    assert "lint.yml" not in p.stderr
+    bad(p, '".github/workflows/ci.yml" (no merge_group trigger)')
+    assert "lint.yml" not in p.stderr and "status" not in p.stderr
+
+
+def test_the_refusal_names_the_checks_that_cant_be_queued(repo, inp):
+    report = doctor(clean=False, status="cant_check", workflows=[])
+    report["merge_queue"]["merge_group"]["checks"] = [
+        {"name": "tests", "state": "no_run", "app": None, "workflows": []},
+        {"name": "circleci", "state": "other_ci", "app": "circleci-checks", "workflows": []},
+        {"name": "lint", "state": "actions", "app": "github-actions", "workflows": ["wf/lint.yml"]},
+    ]
+    p = queue(repo, inp, recorded_ruleset(), report)
+    bad(p, '"tests" (no run seen)', '"circleci" (from another CI service')
+    assert '"lint"' not in p.stderr
+
+
+@pytest.mark.parametrize("flows", [5, True, 1.5, "ci.yml", {"path": "x"}])
+def test_odd_workflows_in_an_unclean_verdict_are_a_plain_refusal(repo, inp, flows):
+    report = doctor(clean=False)
+    report["merge_queue"]["merge_group"]["workflows"] = flows
+    report["merge_queue"]["merge_group"]["checks"] = flows
+    bad(queue(repo, inp, recorded_ruleset(), report), "merge_group")
+
+
+def test_no_merge_group_check_says_where_doctor_makes_one(repo, inp):
+    report = doctor()
+    report["merge_queue"]["merge_group"] = None
+    bad(queue(repo, inp, recorded_ruleset(), report), "doctor made no merge_group check", "organisation")
 
 
 def test_it_needs_the_doctor_file(repo, inp):
@@ -190,10 +227,24 @@ def test_unreadable_signals_count_as_no_history(repo, inp):
 # ---------- the ruleset it goes in ----------
 
 
-def test_a_ruleset_without_required_checks_is_refused(repo, inp):
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda rs: rs.update(rules=[r for r in rs["rules"] if r["type"] != "required_status_checks"]),
+        lambda rs: rs["rules"][2]["parameters"].update(required_status_checks=[]),
+        lambda rs: rs["rules"][2].update(parameters=None),
+        lambda rs: rs["rules"][2].pop("parameters"),
+    ],
+)
+def test_a_ruleset_without_required_checks_is_refused(repo, inp, change):
     rs = recorded_ruleset()
-    rs["rules"] = [r for r in rs["rules"] if r["type"] != "required_status_checks"]
+    change(rs)
     bad(queue(repo, inp, rs, doctor()), "Require these checks")
+
+
+@pytest.mark.parametrize("enforcement", ["disabled", "evaluate"])
+def test_a_ruleset_that_isnt_active_is_refused(repo, inp, enforcement):
+    bad(queue(repo, inp, {**recorded_ruleset(), "enforcement": enforcement}, doctor()), "isn't active")
 
 
 @pytest.mark.parametrize(
@@ -263,14 +314,14 @@ def test_require_checks_without_the_queue_still_turns_up_to_date_on(repo, inp):
     assert checks_params(body)["strict_required_status_checks_policy"] is True
 
 
-def test_the_queued_ruleset_reads_back_as_protected_with_the_queue(repo, inp):
+def test_the_queued_ruleset_still_reads_back_with_its_required_checks(repo, inp):
     rs = recorded_ruleset()
     queued = body_of(queue(repo, inp, rs, doctor()))["body"]
     current = {**{k: rs[k] for k in ("id", "source_type", "source")}, **queued}
     settings = {"full_name": "acme/demo", "default_branch": "main", "allow_merge_commit": True, "allow_auto_merge": True}
     p = cli(repo, "--rulesets", put(inp, "rulesets.json", [current]), "--repo", put(inp, "repo.json", settings), "--json")
     out = ok(p)
-    assert out["checks"]["required"] == ["build", "lint"]
+    assert out["checks"]["required"] == ["build", "lint"] and out["checks"]["note"] is None
 
 
 def test_the_doctor_file_can_come_from_standard_input(repo, inp):

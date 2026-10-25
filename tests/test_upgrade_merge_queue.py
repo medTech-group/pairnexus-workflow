@@ -174,3 +174,54 @@ def test_doctors_require_checks_fix_leaves_up_to_date_alone_with_the_queue(tmp_p
     assert line["offer"] == before["offer"] == "require_checks", (line, before)
     assert '"up to date" left as it is (the merge queue meets it)' in line["fix"] and '"up to date" on' not in line["fix"], line
     assert '"up to date" on' in before["fix"], before
+
+
+def test_doctors_fix_follows_the_ruleset_holding_the_checks(tmp_path):
+    # The queue in a ruleset of its own: "Require these checks" adds to the
+    # one holding the checks, which turns "up to date" on, and the fix says so.
+    import copy
+
+    alone = copy.deepcopy(RULESET)
+    alone.update(id=202, name="Queue only", rules=[QUEUE_RULE])
+    ran = [_runs(_run("tests"), _run("lint", n=2))]
+    r = _report(tmp_path, _project(tmp_path, profile=DEVELOPER), *_given(tmp_path, ran, rulesets=[RULESET, alone]))
+    assert '"up to date" on' in _github(r)["github.required_checks"]["fix"]
+
+
+# ---------- the round-1 review's fixes ----------
+
+
+def test_the_description_fits_claude_codes_limit():
+    head = _text().split("---", 2)[1]
+    description = re.search(r"^description: (.*)$", head, re.M).group(1)
+    assert len(description) <= 1024
+
+
+def test_step_one_opens_nothing_when_nothing_is_the_kits_to_change():
+    one = _sec(_part(NAME), "Step 1")
+    assert "**Nothing for the kit to change:** when no workflow is `missing` or `excluded`, open no pull request" in one
+    assert "the queue can't go on while they are required" in one
+    assert "a workflow GitHub runs itself (a `dynamic/` path" in one and "has no file" in one
+    # A push refused for want of the workflow scope: the change by hand.
+    assert "without the `workflow` scope" in one and "give the owner each change to make by hand" in one
+    assert '"The queue waits for <what is left>' in _sec(_part(NAME), "Where the queue ends")
+
+
+def test_step_two_knows_which_way_before_the_settings_and_shows_the_minutes():
+    two = _sec(_part(NAME), "Step 2")
+    assert two.index("**Which way:**") < two.index("**The settings, shown first,**")
+    assert "with the timeout as a number of minutes" in two
+    assert "above the longest recent CI run and at most 360: the writer refuses one that isn't" in two
+
+
+def test_require_these_checks_beside_the_queue_needs_merge_group_on_the_new_checks():
+    screen = _sec(_part("Require these checks"), "The checks screen")
+    assert "**Beside a merge queue**" in screen
+    assert "must also come from a workflow that runs on `merge_group`" in screen
+    assert "after the read-back run doctor again" in screen
+
+
+def test_enforcement_scopes_up_to_date_to_no_queue():
+    doc = (KIT / "docs/enforcement.md").read_text()
+    assert "unless the ruleset has a merge queue, which meets it" in doc
+    assert "If the owner leaves it off with no merge queue on the base branch, the conductor's pre-flight raises it as a safety gap" in doc

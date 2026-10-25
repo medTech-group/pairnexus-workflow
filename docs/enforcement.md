@@ -22,7 +22,7 @@ The `upgrade-setup` skill's "Protect `main`" sets this up.
 - **Everyone else gets the guided clicks below:** cloud sessions, a missing or signed-out `gh`, and a ruleset already on the base branch that doesn't protect it. The clicks stay the fallback whenever a step fails. The kit never edits an existing ruleset in solo mode.
 
 - **Target:** the profile's `project.base_branch`, normally the default branch ("Include default branch"); if they differ, target the base branch by name.
-- **Rules:** Restrict deletions; Block force pushes; Require a pull request before merging (required approvals **0**, so unattended runs can merge: with more, the conductor recommends `merge.mode: owner` and runs stop at "ready for review"; "Require review from Code Owners": see below); Require status checks to pass (add the profile's `ci.required_checks`, and tick "Require branches to be up to date", which the API calls `strict_required_status_checks_policy`).
+- **Rules:** Restrict deletions; Block force pushes; Require a pull request before merging (required approvals **0**, so unattended runs can merge: with more, the conductor recommends `merge.mode: owner` and runs stop at "ready for review"; "Require review from Code Owners": see below); Require status checks to pass (add the profile's `ci.required_checks`, and tick "Require branches to be up to date", which the API calls `strict_required_status_checks_policy`, unless the ruleset has a merge queue, which meets it: "Use a merge queue" turns it off).
 - **Bypass list:** empty. Sessions act through the owner's GitHub account, so whatever the owner may bypass, a session may too.
 - **Merge settings:** keep "Allow merge commits" on and "Require linear history" off: sessions and the conductor merge with a merge commit.
 - **Enforcement status: Active.** A ruleset left "Disabled" or "Evaluate" enforces nothing.
@@ -32,7 +32,7 @@ The `upgrade-setup` skill's "Protect `main`" sets this up.
 
 Turn it on when agents use their own GitHub identity (a bot account or a GitHub App): then the owner is a different person from the PR's author, and their approval is what merges a change to a protected path.
 
-"Require branches to be up to date" matters more than it looks: without it, two PRs that are each green against an older base can both merge and break the base together. If the owner leaves it off, the conductor's pre-flight raises it as a safety gap. Every merge in a run still runs on `workflow merge-check`, which never says `ready` for a branch that isn't level with the base (flow §4.3).
+"Require branches to be up to date" matters more than it looks: without it, two PRs that are each green against an older base can both merge and break the base together. If the owner leaves it off with no merge queue on the base branch, the conductor's pre-flight raises it as a safety gap: a merge queue meets it instead, since it tests each pull request against the latest base before merging (`docs/protection.md`, "The merge queue"). Every merge in a run still runs on `workflow merge-check`, which never says `ready` for a branch that isn't level with the base (flow §4.3).
 
 Rulesets and branch protection on **private** repositories need a paid GitHub plan for the organisation (Team or above). Without one, the guard hook and instructions are the only line, and the charter's pre-flight says so.
 

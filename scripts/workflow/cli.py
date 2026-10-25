@@ -416,13 +416,13 @@ def cmd_protection(a) -> int:
 
     def queue():
         if a.rulesets is not None or a.repo is not None or a.base is not None:
-            raise protection_mod.ProtectionError("--merge-queue takes the ruleset and --doctor alone, without --rulesets, --repo or --base: it names its repository, and targets what it targets")
+            raise protection_mod.ProtectionError("--merge-queue takes the ruleset and --doctor alone, without --rulesets, --repo or --base: the ruleset names its own repository and branches")
         if a.doctor is None:
             raise protection_mod.ProtectionError("--merge-queue needs doctor's verdict with --doctor (what `workflow doctor --json` prints)")
         timeout = None
         if a.timeout is not None:
-            if not re.fullmatch(r"[0-9]{1,3}", a.timeout):
-                raise protection_mod.ProtectionError(f"--timeout {protection_mod.quote(a.timeout)} isn't whole minutes, 1 to {protection_mod.QUEUE_TIMEOUT_MAX}")
+            if not (re.fullmatch(r"[1-9][0-9]{0,2}", a.timeout) and int(a.timeout) <= protection_mod.QUEUE_TIMEOUT_MAX):
+                raise protection_mod.ProtectionError(f"--timeout {protection_mod.quote(a.timeout)} isn't whole minutes from 1 to {protection_mod.QUEUE_TIMEOUT_MAX}, as GitHub takes it")
             timeout = int(a.timeout)
         req = protection_mod.merge_queue(given(a.merge_queue, "ruleset"), given(a.doctor, "doctor"), timeout)
         return {"requests": [req.as_dict()]} if a.json else protection_mod.requests_text([req])

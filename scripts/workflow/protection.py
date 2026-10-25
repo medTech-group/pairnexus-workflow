@@ -533,7 +533,7 @@ def require_checks(ruleset, names) -> Request:
     if not names:
         raise ProtectionError("give the checks to require with --check NAME (one for each)")
     path, body = _update(ruleset, "require checks")
-    queued = any(r["type"] == "merge_queue" for r in body["rules"])
+    queued = _has_merge_queue(body)
     rule = next((r for r in body["rules"] if r["type"] == "required_status_checks"), None)
     if rule is None:
         rule = _checks_rule(names)
@@ -575,7 +575,26 @@ def queue_timeout(longest: int | None) -> int:
     return min(QUEUE_TIMEOUT_MAX, max(QUEUE_TIMEOUT, 2 * (longest or 0)))
 
 
-def _verdict(report) -> int | None:
+# How doctor's merge_group check words a workflow or a check that isn't ready (#246).
+NOT_READY = {
+    "missing": "no merge_group trigger",
+    "excluded": "a merge_group filter that leaves out the base branch",
+    "cant_check": "can't be checked",
+    "other_ci": "from another CI service, which must run on pushes to gh-readonly-queue/<base>",
+    "no_run": "no run seen",
+    "unknown_workflow": "its workflow can't be found",
+}
+
+
+def _not_ready(items, key: str, fine: str) -> list[str]:
+    """Each of doctor's `workflows` (key `path`) or `checks` (key `name`)
+    whose state isn't `fine`, quoted with what is wrong."""
+    return [f"{quote(x[key])} ({NOT_READY.get(x.get('state'), 'not ready')})"
+            for x in (items if isinstance(items, list) else [])
+            if isinstance(x, dict) and isinstance(x.get(key), str) and x.get("state") != fine]
+
+
+def _longest_if_clean(report) -> int | None:
     """The longest recent CI run from `workflow doctor --json`, once its
     `merge_group` verdict is clean; raises when it isn't."""
     if not isinstance(report, dict):
@@ -584,14 +603,17 @@ def _verdict(report) -> int | None:
     if not isinstance(mq, dict):
         raise ProtectionError("the doctor file has no merge_queue: run `workflow doctor --json` with checks required on a protected base branch, and give its output")
     mg = mq.get("merge_group")
-    if not isinstance(mg, dict) or mg.get("clean") is not True:
-        flows = mg.get("workflows") if isinstance(mg, dict) else None
-        lacking = [w["path"] for w in flows or [] if isinstance(w, dict) and w.get("state") != "ready" and isinstance(w.get("path"), str)]
-        status = mg.get("status") if isinstance(mg, dict) and isinstance(mg.get("status"), str) else "not read"
+    if not isinstance(mg, dict):
         raise ProtectionError(
-            f"doctor's merge_group check isn't clean (status {quote(status)}"
-            + (f"; not ready: {', '.join(quote(p) for p in lacking)}" if lacking else "")
-            + "): every workflow behind a required check must run on merge_group on the base branch before the queue goes on"
+            "doctor made no merge_group check: it makes one only where it suggests a merge queue "
+            "(an organisation's repository that can have one, its base branch protected, with checks required)"
+        )
+    if mg.get("clean") is not True:
+        lacking = _not_ready(mg.get("workflows"), "path", "ready") + _not_ready(mg.get("checks"), "name", "actions")
+        raise ProtectionError(
+            "doctor's merge_group check isn't clean: every required check must come from a workflow that also runs on "
+            "merge_group on the base branch before the queue goes on"
+            + (f"; not ready: {', '.join(lacking)}" if lacking else "; run `workflow doctor` for what it couldn't check")
         )
     signals = mq.get("signals")
     ci = signals.get("ci_minutes") if isinstance(signals, dict) else None
@@ -607,12 +629,17 @@ def merge_queue(ruleset, report, timeout: int | None = None) -> Request:
     (`report`, `workflow doctor --json`) is clean. The timeout is the
     owner's when given, else `queue_timeout` of doctor's longest CI run.
 
-    A merge-queue rule already there is replaced; nothing else changes.
+    A merge-queue rule already there is replaced (one, where it was);
+    nothing else changes. A ruleset that isn't active is refused.
     """
-    longest = _verdict(report)
+    longest = _longest_if_clean(report)
     if timeout is not None and not 1 <= timeout <= QUEUE_TIMEOUT_MAX:
-        raise ProtectionError(f"the check timeout must be 1 to {QUEUE_TIMEOUT_MAX} minutes, as GitHub takes it")
+        raise ProtectionError(f"--timeout {timeout} isn't whole minutes from 1 to {QUEUE_TIMEOUT_MAX}, as GitHub takes it")
+    if timeout is not None and longest is not None and timeout <= longest < QUEUE_TIMEOUT_MAX:
+        raise ProtectionError(f"--timeout {timeout} isn't above the base branch's longest recent CI run ({longest} minutes): groups would time out")
     path, body = _update(ruleset, "hold a merge queue")
+    if ruleset["enforcement"] != "active":
+        raise ProtectionError(f"{_checked_name(ruleset, 0)} isn't active (enforcement {quote(ruleset['enforcement'])}), so its queue would enforce nothing")
     rule = next((r for r in body["rules"] if r["type"] == "required_status_checks"), None)
     params = rule.get("parameters") if rule else None
     have = params.get("required_status_checks") if isinstance(params, dict) else None
@@ -625,11 +652,9 @@ def merge_queue(ruleset, report, timeout: int | None = None) -> Request:
         )
     params["strict_required_status_checks_policy"] = False
     queue = {"type": "merge_queue", "parameters": {**QUEUE_SETTINGS, "check_response_timeout_minutes": timeout or queue_timeout(longest)}}
-    at = next((n for n, r in enumerate(body["rules"]) if r["type"] == "merge_queue"), None)
-    if at is None:
-        body["rules"].append(queue)
-    else:
-        body["rules"][at] = queue
+    at = next((n for n, r in enumerate(body["rules"]) if r["type"] == "merge_queue"), len(body["rules"]))
+    body["rules"] = [r for r in body["rules"] if r["type"] != "merge_queue"]
+    body["rules"].insert(at, queue)
     return Request("add the merge queue to the ruleset, with \"up to date\" off", "PUT", path, body)
 
 

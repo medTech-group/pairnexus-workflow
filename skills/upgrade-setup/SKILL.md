@@ -341,6 +341,8 @@ By experience, the words only:
 - *New to building* gets one plain sentence above the list: "GitHub won't merge a change until these pass".
 - *A developer* gets the names, and that "Require branches to be up to date" goes on with them (a branch behind `main` must be updated before it merges); with a merge queue on that ruleset, that it stays as it is, since the queue meets it.
 
+**Beside a merge queue** (the chosen ruleset has a `merge_queue` rule), each ticked check must also come from a workflow that runs on `merge_group`, or every group waits for it until the timeout: say so on the screen, for both levels, and after the read-back run doctor again, as "Use a merge queue" reads it. A `github.merge_group` line that isn't `fine` then gets "Use a merge queue"'s step 1 for the workflows it names.
+
 The choices, with `AskUserQuestion` as the automatic path's checks question has them: **Require the ticked ones** (recommended, naming each with its result), **Choose which** (multiSelect questions, two to four checks each, in a follow-up call; past sixteen, a numbered list), and **Not now**. With a single check: **Require it** (recommended only when it is passing) and **Not now**; a failing or pending one gets **Not now** first. With none ticked by default, no **Require the ticked ones**. On the update with `gh`, the same screen says Claude Code's prompt is expected (below).
 
 **Not now** leaves everything as it is: nothing is sent, and `workflow doctor` still says what's left.
@@ -556,15 +558,17 @@ Doctor's `merge_queue.merge_group` names what to change:
 
 - each workflow in `workflows[]` with `state` `missing`: add `merge_group:` beside `pull_request:` in its `on:` block, at the same indent, on the line after `pull_request:` and anything under it. Change nothing else in the file;
 - `excluded`: its `merge_group:` has a `branches` or `branches-ignore` filter (its `why`) that leaves out the base branch: widen it, or take the base branch out of `branches-ignore`;
-- `cant_check`: say its `why` and that the owner edits that file by hand (an `on:` that is a list, push only, or a workflow GitHub runs itself);
+- `cant_check`: say its `why`. An `on:` that is a list, or push only, the owner edits by hand; a workflow GitHub runs itself (a `dynamic/` path, such as code scanning's default set-up) has no file: its settings say whether it can run for a queue;
 - each check in `checks[]` with `state` `other_ci` (another CI service, or a commit status): that service must run on pushes to `gh-readonly-queue/<base>`, GitHub's rule for CI outside GitHub Actions, and the owner sets it up there;
 - `no_run` or `unknown_workflow`: name the check, and ask which workflow reports it, so the owner points the change at it.
 
 **Path-filtered CI** (a workflow with `paths:` under `pull_request:`, or a step that diffs the pull request's files): `merge_group` takes no `paths:` filter, and a merge group's changed files are the diff of its `base_sha..head_sha` (`github.event.merge_group.base_sha` and `head_sha`). Say so in the pull request's body, and leave the project's own scripts as they are.
 
-Then:
+**Nothing for the kit to change:** when no workflow is `missing` or `excluded`, open no pull request. Name what is left (the `cant_check` workflows, the `other_ci`, `no_run` or `unknown_workflow` checks) and say plainly that the queue can't go on while they are required and doctor can't see them run for it: the owner fixes them in their own settings or CI service, or stops requiring them, then asks again. Stop with its line in "Where the queue ends".
+
+Otherwise:
 1. A branch from the base branch, such as `workflow/merge-group`, with only those changes.
-2. Push it and open the pull request. Its body: what the queue is, in one plain sentence; each workflow changed; anything left for the owner (above); and that CI files are a protected path, so the owner reviews and merges it.
+2. Push it and open the pull request. Its body: what the queue is, in one plain sentence; each workflow changed; anything left for the owner (above); and that CI files are a protected path, so the owner reviews and merges it. GitHub refuses a push that changes `.github/workflows/` from a token without the `workflow` scope (or an app without the workflows permission), as a cloud session's often is: then say so, and give the owner each change to make by hand, in a code block per file.
 3. Never merge it, or enable auto-merge on it, yourself.
 
 The ruleset waits until it has merged and doctor's check is clean on the base branch: once the owner says it merged, fetch and read doctor again ("Where it stands"), and go on to step 2 only when `merge_group.clean` is `true`.
@@ -573,7 +577,8 @@ The ruleset waits until it has merged and doctor's check is clean on the base br
 
 1. **Admin first,** exactly as "Protect `main`" step 1 does, keeping the JSON in `.workflow/repo.json`. Not an admin: a message for the owner, as there, with step 2's clicks.
 2. **The ruleset:** the one "Require these checks" chose, found as its "Which ruleset, and is it protected" does: the kit's own, else the one protecting the base branch that requires the checks. An organisation's is its owner's: give the clicks with its page in the organisation's settings.
-3. **The settings, shown first,** in one screen, worded by experience, with the timeout from doctor's `merge_queue.signals.ci_minutes.longest`:
+3. **Which way:** the same four conditions as "Which way", read the same way. All four, and a repository's own ruleset: the update with `gh`. Otherwise the clicks.
+4. **The settings, shown first,** in one screen, worded by experience, with the timeout as a number of minutes, worked out from doctor's `merge_queue.signals.ci_minutes.longest` (the writer's `check_response_timeout_minutes`, once it has run, is the same number):
    - merge method: a merge commit (`MERGE`);
    - every pull request in a group must pass (`ALLGREEN`);
    - a check timeout of twice the base branch's longest recent CI run, at least 60 minutes (60 with no history) and at most GitHub's 360;
@@ -581,8 +586,7 @@ The ruleset waits until it has merged and doctor's check is clean on the base br
    - a minimum of 1 entry, and no wait;
    - "Require branches to be up to date" turned off, the required checks kept, and the profile's `ci.required_checks` unchanged.
 
-   The choices: **Use these settings** (recommended), **Change the timeout** (then ask for the minutes, 1 to 360) and **Not now**. On the update with `gh`, the same screen says Claude Code's prompt is expected, as "The update with `gh`" of "Require these checks" does. **Not now** leaves everything as it is.
-4. **Which way:** the same four conditions as "Which way", read the same way. All four, and a repository's own ruleset: the update with `gh`. Otherwise the clicks.
+   The choices: **Use these settings** (recommended), **Change the timeout** (then ask for the minutes, above the longest recent CI run and at most 360: the writer refuses one that isn't, since groups would time out) and **Not now**. On the update with `gh`, the same screen says Claude Code's prompt is expected, as "The update with `gh`" of "Require these checks" does. **Not now** leaves everything as it is.
 
 **The update with `gh`,** made as "Protect `main`" makes its change, after that one confirmation:
 1. `gh api repos/<repo>/rulesets/<id> > .workflow/ruleset.json`.
@@ -604,6 +608,7 @@ Say where it stands in one line:
 - "The merge queue is on for `main`: pull requests now join it to merge.";
 - "#<n> adds `merge_group` to the workflows: merge it, then ask me to \"Use a merge queue\" again for the ruleset.";
 - "The merge queue is on already." when it was;
+- "The queue waits for <what is left>: the kit can't see them run for a merge queue." when step 1 has nothing to change;
 - "Nothing was changed." after **Not now**;
 - "Once the run has ended, ask Claude to \"Use a merge queue\"." while a run is in progress;
 - "<what was done>; <what's left>: the clicks for it are above." after a failure;
