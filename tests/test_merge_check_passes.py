@@ -335,8 +335,13 @@ def test_the_conductor_takes_it_as_needs_human():
     assert "clear its `asked_at`" in answers
     asking = conductor.split("**Asking about a `needs-human` ticket.**", 1)[1].split("\n\n", 1)[0]
     assert "says `passes_used_up` is never asked about, whatever stopped its session" in asking
-    # One asked about before its pull request reached the cap doesn't keep the run waiting either.
-    assert "A ticket already asked about whose pull request now says `passes_used_up`: clear its `asked_at`" in asking
+    # One asked about before its pull request reached the cap doesn't keep the run waiting either:
+    # step 2 checks it each check-in, before it counts the run as waiting.
+    waiting = conductor.split("- **Waiting on the owner** (not done):", 1)[1].split("\n- **Done**", 1)[0]
+    assert "Before counting a `needs-human` ticket with `asked_at` as waiting, run `WF merge-check` on its pull request" in waiting
+    assert "if it says `passes_used_up`, clear its `asked_at`" in waiting
+    assert "step 2's \"Waiting on the owner\" clears its `asked_at`" in asking
+    assert "or its pull request reaches the pass cap" in conductor.split("- Never block on a question:", 1)[1].split("\n", 1)[0]
     assert "is the stuck row's, except that instead of a retry you label the ticket `needs-human`" in line
 
 
