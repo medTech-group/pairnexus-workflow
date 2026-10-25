@@ -341,7 +341,7 @@ By experience, the words only:
 - *New to building* gets one plain sentence above the list: "GitHub won't merge a change until these pass".
 - *A developer* gets the names, and that "Require branches to be up to date" goes on with them (a branch behind `main` must be updated before it merges); with a merge queue on that ruleset, that it stays as it is, since the queue meets it.
 
-**Beside a merge queue** (the chosen ruleset has a `merge_queue` rule), each ticked check must also come from a workflow that runs on `merge_group`, or every group waits for it until the timeout and its pull requests are dropped: say so on the screen, for both levels, and recommend **Not now** for a check whose workflow doctor's `merge_group` check doesn't show `ready` yet ("Use a merge queue"'s step 1 first). After the read-back, run doctor again, as "Use a merge queue" reads it. A `github.merge_group` line that isn't `fine` then gets "Use a merge queue"'s step 1 for the workflows it names.
+**Beside a merge queue** (the chosen ruleset has a `merge_queue` rule), each ticked check must also come from a workflow that runs on `merge_group`, or every group waits for it until the timeout and its pull requests are dropped: say so on the screen, for both levels. Read the workflow file behind each ticked check on `origin/<base>` (its job's `name:`, under `.github/workflows/`; ask the owner when it can't be told): one without `merge_group:` beside `pull_request:` gets **Not now** recommended, and "Use a merge queue"'s step 1 for that file first, before the check is required. After the read-back, run doctor again, as "Use a merge queue" reads it. A `github.merge_group` line that isn't `fine` then gets "Use a merge queue"'s step 1 for the workflows it names.
 
 The choices, with `AskUserQuestion` as the automatic path's checks question has them: **Require the ticked ones** (recommended, naming each with its result), **Choose which** (multiSelect questions, two to four checks each, in a follow-up call; past sixteen, a numbered list), and **Not now**. With a single check: **Require it** (recommended only when it is passing) and **Not now**; a failing or pending one gets **Not now** first. With none ticked by default, no **Require the ticked ones**. On the update with `gh`, the same screen says Claude Code's prompt is expected (below).
 
@@ -359,7 +359,7 @@ One confirmation: the checks screen is it. On the same screen: "Claude Code will
 
 **A refusal naming the permission mode** (nobody is asked in `bypassPermissions` or `dontAsk`): nothing was sent. Answer "switch the permission mode and try again" (Shift+Tab, or the mode selector), and never retry the command in that mode. A solo-mode refusal: the profile went back to solo mode, so "Solo mode waits". Any other refusal, or the person declining the prompt: nothing was sent; say so, and offer the clicks.
 
-**A failure partway:** say what was done and what's left, read back, and give the clicks for the rest: the request failed to build or send, the clicks for all of it; the update went through but the read-back finds a name or "up to date" missing, the clicks for those on the ruleset's page; the update went through but the profile's pull request couldn't be opened, the ruleset stands, so say so and give the profile change to make by hand.
+**A failure partway:** say what was done and what's left, read back, and give the clicks for the rest: the request failed to build or send, the clicks for all of it; the update went through but the read-back finds a name or "up to date" missing, the clicks for those on the ruleset's page (never "up to date" beside a merge queue); the update went through but the profile's pull request couldn't be opened, the ruleset stands, so say so and give the profile change to make by hand.
 
 ## The clicks for the checks
 
@@ -545,7 +545,7 @@ The level changes only the words, as in "The screens": read `WF status --json` f
 First `git fetch origin <base>`: doctor reads the workflows as they are on `origin/<base>`, and trusts whatever the checkout holds of it. Then `WF doctor --json > .workflow/doctor.json`, given the files `check-setup` gathers where `gh` isn't signed in (`--rulesets`, `--repo`, `--org`, `--ci`, `--commits`, `--runs`). Read its `merge_queue`:
 
 - **`queue` is `true`:** the queue is on already. When the `github.up_to_date` line says a ruleset still keeps "up to date" on, give its fix (the clicks below, unticking it in that ruleset; an organisation's is its owner's). Otherwise say so, and stop.
-- **`queue` is `null`:** a merge-queue rule in a ruleset the kit can't judge: say the `github.merge_queue` line's message and fix, and stop.
+- **`queue` is `null`:** a merge-queue rule in a ruleset the kit can't judge: say the `github.merge_queue` line's message and fix (or, without that line, `github.up_to_date`'s), and stop.
 - **No `use_merge_queue` offer** on the `github.merge_queue` line (a personal repository, a private one on a plan without the queue, the base branch unprotected or no checks required): say why from doctor's lines, and stop. "Protect `main`" and "Require these checks" come first.
 - **A run in progress** (above): stop.
 - **`available` is `check_plan`:** say the queue needs GitHub Enterprise Cloud for a private repository, and ask the owner to check the organisation's plan first, with **My plan has it** and **Not now**.
@@ -576,21 +576,21 @@ The ruleset waits until it has merged and doctor's check is clean on the base br
 ## Step 2: the ruleset change
 
 1. **Admin first,** exactly as "Protect `main`" step 1 does, keeping the JSON in `.workflow/repo.json`. Not an admin: a message for the owner, as there, with step 2's clicks.
-2. **The ruleset:** the one "Require these checks" chose, found as its "Which ruleset, and is it protected" does: the kit's own, else the one protecting the base branch that requires the checks. An organisation's is its owner's: give the clicks with its page in the organisation's settings.
+2. **The ruleset:** the one holding the required checks, found as "Require these checks"'s "Which ruleset, and is it protected" does: the kit's own when it holds them, else the one protecting the base branch that requires them. An organisation's is its owner's: give the clicks with its page in the organisation's settings.
 3. **Which way:** the same four conditions as "Which way", read the same way. All four, and a repository's own ruleset: the update with `gh`. Otherwise the clicks.
 4. **The settings, shown first,** in one screen, worded by experience, with the timeout as a number of minutes, worked out from doctor's `merge_queue.signals.ci_minutes.longest` (the writer's `check_response_timeout_minutes`, once it has run, is the same number):
    - merge method: a merge commit (`MERGE`);
    - every pull request in a group must pass (`ALLGREEN`);
-   - a check timeout of twice the base branch's longest recent CI run, at least 60 minutes (60 with no history) and at most GitHub's 360;
+   - a check timeout of twice the base branch's longest recent CI run, at least 60 minutes (60 with no history) and at most GitHub's 360. When CI's longest run is near or past 360 minutes, say plainly that groups may time out even at 360;
    - at most 5 entries built and 5 merged at once;
    - a minimum of 1 entry, and no wait;
    - "Require branches to be up to date" turned off, the required checks kept, and the profile's `ci.required_checks` unchanged.
 
-   The choices: **Use these settings** (recommended), **Change the timeout** (then ask for the minutes, above the longest recent CI run and at most 360: the writer refuses one that isn't, since groups would time out) and **Not now**. On the update with `gh`, the same screen says Claude Code's prompt is expected, as "The update with `gh`" of "Require these checks" does. **Not now** leaves everything as it is.
+   The choices: **Use these settings** (recommended), **Change the timeout** (then ask for the minutes, above the longest recent CI run and at most 360, or 360 itself when CI runs that long: the writer refuses one below, since groups would time out) and **Not now**. On the update with `gh`, the same screen says Claude Code's prompt is expected, as "The update with `gh`" of "Require these checks" does. **Not now** leaves everything as it is.
 
 **The update with `gh`,** made as "Protect `main`" makes its change, after that one confirmation:
 1. `gh api repos/<repo>/rulesets/<id> > .workflow/ruleset.json`.
-2. `WF protection --merge-queue .workflow/ruleset.json --doctor .workflow/doctor.json --json > .workflow/queue.json`, adding `--timeout <minutes>` when the owner changed it. It gives one `PUT` with the merge-queue rule, "up to date" off and the required checks kept, and sends nothing. It refuses unless doctor's `merge_group` verdict is clean: then back to step 1. With the Write tool, put its `body` in `.workflow/queue-request.json`, checking its `method` is `PUT` and its `path` is `repos/<repo>/rulesets/<id>`. Exit 2 or any other failure: nothing was sent; say so and why, and give the clicks.
+2. `WF protection --merge-queue .workflow/ruleset.json --doctor .workflow/doctor.json --json > .workflow/queue.json`, adding `--timeout <minutes>` when the owner changed it. It gives one `PUT` with the merge-queue rule, "up to date" off and the required checks kept, and sends nothing. With the Write tool, put its `body` in `.workflow/queue-request.json`, checking its `method` is `PUT` and its `path` is `repos/<repo>/rulesets/<id>`. Exit 2 is a refusal: nothing was sent, and the clicks would do what it refused, so give none. Say its reason in plain words, then: a merge_group check that isn't clean, back to step 1; a timeout, back to the settings screen; a ruleset that requires no checks or isn't active, stop, naming the ruleset that holds the required checks if there is one. Any other failure (the ruleset couldn't be read, the command failed to run): nothing was sent; say so, and give the clicks.
 3. `gh api -X PUT repos/<repo>/rulesets/<id> --input .workflow/queue-request.json`. The guard asks; Claude Code's prompt is the person's approval. Send it once. Refusals are answered as "Require these checks" answers them.
 4. The read-back, below.
 

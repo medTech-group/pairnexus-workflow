@@ -101,7 +101,8 @@ def test_the_update_uses_the_writer_with_doctors_verdict_and_reads_back():
     ]
     at = [two.index(s) for s in order]
     assert at == sorted(at), order
-    assert "It refuses unless doctor's `merge_group` verdict is clean: then back to step 1" in two
+    assert "Exit 2 is a refusal: nothing was sent, and the clicks would do what it refused, so give none" in two
+    assert "a merge_group check that isn't clean, back to step 1; a timeout, back to the settings screen" in two
     assert "**Require merge queue**" in two and "untick **Require branches to be up to date before merging**" in two
     assert "`merge_queue.queue` is `true`" in two
 
@@ -211,7 +212,8 @@ def test_step_two_knows_which_way_before_the_settings_and_shows_the_minutes():
     two = _sec(_part(NAME), "Step 2")
     assert two.index("**Which way:**") < two.index("**The settings, shown first,**")
     assert "with the timeout as a number of minutes" in two
-    assert "above the longest recent CI run and at most 360: the writer refuses one that isn't" in two
+    assert "above the longest recent CI run and at most 360, or 360 itself when CI runs that long: the writer refuses one below" in two
+    assert "groups may time out even at 360" in two
 
 
 def test_require_these_checks_beside_the_queue_needs_merge_group_on_the_new_checks():
@@ -219,7 +221,9 @@ def test_require_these_checks_beside_the_queue_needs_merge_group_on_the_new_chec
     assert "**Beside a merge queue**" in screen
     assert "must also come from a workflow that runs on `merge_group`" in screen
     assert "After the read-back, run doctor again" in screen
-    assert "recommend **Not now** for a check whose workflow doctor's `merge_group` check doesn't show `ready` yet" in screen
+    assert "one without `merge_group:` beside `pull_request:` gets **Not now** recommended" in screen
+    assert "before the check is required" in screen
+    assert '(never "up to date" beside a merge queue)' in _part("Require these checks")
 
 
 def test_enforcement_scopes_up_to_date_to_no_queue():
@@ -244,3 +248,20 @@ def test_doctors_fix_follows_the_kits_own_ruleset_with_the_queue_and_no_checks_y
     ran = [_runs(_run("tests"), _run("lint", n=2))]
     r = _report(tmp_path, _project(tmp_path, profile=DEVELOPER), *_given(tmp_path, ran, rulesets=[RULESET, own]))
     assert "left as it is (the merge queue meets it)" in _github(r)["github.required_checks"]["fix"]
+
+
+def test_doctors_fix_with_several_rulesets_follows_the_one_holding_queue_and_checks(tmp_path):
+    import copy
+
+    both = _queued()
+    both.update(id=404, name="Main rules")
+    other = copy.deepcopy(RULESET)
+    other.update(id=405, name="Other rules")
+    ran = [_runs(_run("tests"), _run("lint", n=2))]
+    r = _report(tmp_path, _project(tmp_path, profile=DEVELOPER), *_given(tmp_path, ran, rulesets=[other, both]))
+    assert "left as it is (the merge queue meets it)" in _github(r)["github.required_checks"]["fix"]
+
+
+def test_enforcement_says_merge_check_is_ready_to_queue_with_the_queue():
+    doc = (KIT / "docs/enforcement.md").read_text()
+    assert "unless a merge queue meets it: then `ready` means ready to queue" in doc

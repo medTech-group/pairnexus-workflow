@@ -551,7 +551,8 @@ def require_checks(ruleset, names) -> Request:
         known = {c["context"] for c in have}
         have += [{"context": n} for n in names if n not in known]
         if queued:
-            params.setdefault("strict_required_status_checks_policy", False)  # GitHub requires the field
+            if not isinstance(params.get("strict_required_status_checks_policy"), bool):
+                params["strict_required_status_checks_policy"] = False  # GitHub requires the field, a boolean
         else:
             params["strict_required_status_checks_policy"] = True
     return Request("add the checks to the ruleset", "PUT", path, body)
@@ -639,8 +640,8 @@ def merge_queue(ruleset, report, timeout: int | None = None) -> Request:
         raise ProtectionError(f"--timeout {timeout} isn't whole minutes from 1 to {QUEUE_TIMEOUT_MAX}, as GitHub takes it")
     if timeout is not None and longest is not None and timeout <= min(longest, QUEUE_TIMEOUT_MAX - 1):
         raise ProtectionError(
-            f"--timeout {timeout} isn't above the base branch's longest recent CI run ({longest} minutes"
-            + (f"; give {QUEUE_TIMEOUT_MAX}, GitHub's most" if longest >= QUEUE_TIMEOUT_MAX else "") + "): groups would time out"
+            f"--timeout {timeout} isn't above the base branch's longest recent CI run ({longest} minute{'' if longest == 1 else 's'}): "
+            + (f"give {QUEUE_TIMEOUT_MAX}, GitHub's most, though groups may still time out at it" if longest >= QUEUE_TIMEOUT_MAX - 1 else "groups would time out")
         )
     path, body = _update(ruleset, "hold a merge queue")
     if ruleset["enforcement"] != "active":
@@ -652,8 +653,8 @@ def merge_queue(ruleset, report, timeout: int | None = None) -> Request:
         raise ProtectionError(f"{_checked_name(ruleset, 0)}: required_status_checks must be a list of objects, each with a context")
     if not have:
         raise ProtectionError(
-            f"{_checked_name(ruleset, 0)} requires no checks: the queue goes in the ruleset \"Require these checks\" chose, "
-            "since a queue with no required checks would merge anything"
+            f"{_checked_name(ruleset, 0)} requires no checks: the queue goes in the ruleset holding the required checks "
+            "(\"Require these checks\" adds them), since a queue with no required checks would merge anything"
         )
     params["strict_required_status_checks_policy"] = False
     queue = {"type": "merge_queue", "parameters": {**QUEUE_SETTINGS, "check_response_timeout_minutes": timeout or queue_timeout(longest)}}

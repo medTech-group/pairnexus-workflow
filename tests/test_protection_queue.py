@@ -116,12 +116,20 @@ def test_an_owner_s_timeout_not_above_the_longest_run_is_refused(repo, inp, give
 
 @pytest.mark.parametrize("given,longest", [("359", 359), ("10", 360), ("1", 361), ("359", 900)])
 def test_at_or_past_github_s_cap_only_360_is_taken(repo, inp, given, longest):
-    bad(queue(repo, inp, recorded_ruleset(), doctor(longest=longest), "--timeout", given), "longest", f"{longest} minutes")
+    bad(queue(repo, inp, recorded_ruleset(), doctor(longest=longest), "--timeout", given), "longest", f"{longest} minutes", "give 360", "may still time out")
 
 
-def test_a_checks_rule_without_up_to_date_beside_the_queue_gets_it_off(repo, inp):
+def test_a_one_minute_run_reads_as_one_minute(repo, inp):
+    bad(queue(repo, inp, recorded_ruleset(), doctor(longest=1), "--timeout", "1"), "(1 minute)")
+
+
+@pytest.mark.parametrize("odd", ["missing", None, "yes", 1])
+def test_a_checks_rule_without_up_to_date_beside_the_queue_gets_it_off(repo, inp, odd):
     rs = with_queue(recorded_ruleset(), False)
-    del rs["rules"][2]["parameters"]["strict_required_status_checks_policy"]
+    if odd == "missing":
+        del rs["rules"][2]["parameters"]["strict_required_status_checks_policy"]
+    else:
+        rs["rules"][2]["parameters"]["strict_required_status_checks_policy"] = odd
     params = checks_params(body_of(require(repo, inp, rs, "tests"))["body"])
     assert params["strict_required_status_checks_policy"] is False
 
