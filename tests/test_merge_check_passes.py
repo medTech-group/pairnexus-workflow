@@ -338,8 +338,15 @@ def test_the_conductor_takes_it_as_needs_human():
     # One asked about before its pull request reached the cap doesn't keep the run waiting either:
     # step 2 checks it each check-in, before it counts the run as waiting.
     waiting = conductor.split("- **Waiting on the owner** (not done):", 1)[1].split("\n- **Done**", 1)[0]
-    assert "Before counting a `needs-human` ticket with `asked_at` as waiting, run `WF merge-check` on its pull request" in waiting
-    assert "if it says `passes_used_up`, clear its `asked_at`" in waiting
+    # The merge rule's merge-check, flags and all: without `--review-rounds`, a Light run's capped ticket reads as `next: round`.
+    assert "Before counting a `needs-human` ticket with `asked_at` as waiting, run `WF merge-check` on its pull request as the \"PR open, not merged\" row runs it (with `--charter` and `--review-rounds <N>`): if it says `passes_used_up`, clear its `asked_at`" in waiting
+    # What the owner sees follows: the old question is no longer what the run waits on.
+    assert "replace its `for_owner` line with the pass-cap row's" in waiting
+    assert "name the change in this check-in's comment on the tracking issue" in waiting
+    # Without a pull request, or a readable answer, it can't be at the cap: it still counts.
+    assert "A ticket with no pull request, or whose `merge-check` can't be read after the row's retry, still counts." in waiting
+    # One note on the ticket, not two, when step 2 and an answer meet in one check-in.
+    assert "unless the ticket already says so" in answers
     assert "step 2's \"Waiting on the owner\" clears its `asked_at`" in asking
     assert "or its pull request reaches the pass cap" in conductor.split("- Never block on a question:", 1)[1].split("\n", 1)[0]
     assert "is the stuck row's, except that instead of a retry you label the ticket `needs-human`" in line
