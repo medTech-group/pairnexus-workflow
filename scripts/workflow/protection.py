@@ -12,7 +12,8 @@ together, restrict deletions, block force pushes and require pull requests,
 and none of them has a bypass list. Anything it can't tell counts as missing,
 so an unknown never reads as protected. `check` is the one place this rule
 lives: the "Protect `main`" upgrade, set-up, the conductor's pre-flight and
-`workflow doctor` will call it rather than repeat it.
+`workflow doctor` will call it rather than repeat it. It is also the queue
+reader (#245): whether those rulesets require a merge queue (`Report.queue`).
 
 Beside it, the request builder (#66): the requests that create the ruleset and
 set the merge settings (`protect`), that add checks to a ruleset
@@ -130,6 +131,11 @@ class Report:
     # branch, whose other rules doctor reads. Neither is in --json.
     kinds: list[str] = field(default_factory=list)
     effective: list[dict] = field(default_factory=list)
+    # The queue reader (#245): whether a ruleset in force on the base (one of
+    # `effective`) requires a merge queue; and each `unsure` ruleset with a
+    # merge-queue rule, never counted as a queue. Neither is in --json.
+    queue: bool = False
+    queue_unsure: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict:
         return {
@@ -205,6 +211,16 @@ def _checked_name(rs, i: int) -> str:
     return where
 
 
+def _ref(rs: dict) -> dict:
+    """The ruleset's ref condition: its `include` and `exclude` lists."""
+    return (rs.get("conditions") or {}).get("ref_name") or {}
+
+
+def _has_merge_queue(rs: dict) -> bool:
+    """The ruleset has a merge-queue rule."""
+    return any(r["type"] == "merge_queue" for r in rs["rules"])
+
+
 def _targets(rs: dict, base: str, default: str | None, have_settings: bool) -> str | None:
     """Why the ruleset doesn't take in the base branch, or None when it does.
 
@@ -217,7 +233,7 @@ def _targets(rs: dict, base: str, default: str | None, have_settings: bool) -> s
     """
     if rs["target"] != "branch":
         return f"doesn't target {base} (it is a {quote(rs['target'])} ruleset)"
-    ref = (rs.get("conditions") or {}).get("ref_name") or {}
+    ref = _ref(rs)
     full = f"refs/heads/{base}"
 
     def names_base(pattern: str) -> bool | None:
@@ -291,14 +307,17 @@ def check(rulesets, base: str, settings=None, base_if_unknown: bool = False) -> 
     rulesets = _flatten(rulesets)
     names = [_checked_name(rs, i) for i, rs in enumerate(rulesets)]
     merge, default = _settings(settings) if settings is not None else (None, None)
-    excluded = any("~DEFAULT_BRANCH" in (((rs.get("conditions") or {}).get("ref_name") or {}).get("exclude") or []) for rs in rulesets)
-    if default is None and base_if_unknown and not excluded:
+    excluded = any("~DEFAULT_BRANCH" in (_ref(rs).get("exclude") or []) for rs in rulesets)
+    # A default branch only taken to be `base` never counts a merge queue on it (#245).
+    assumed = default is None and base_if_unknown and not excluded
+    if assumed:
         default, settings = base, settings if settings is not None else {}
     if not rulesets:
         return Report(base, False, [f"no rulesets: nothing on GitHub protects {base}"], [], merge, kinds=["no_rulesets"])
 
     ignored: list[tuple[str, str]] = []
     unsure: list[str] = []
+    queue_unsure: list[str] = []
     effective: list[tuple[str, dict]] = []
     for name, rs in zip(names, rulesets):
         off_target = _targets(rs, base, default, settings is not None)
@@ -311,6 +330,8 @@ def check(rulesets, base: str, settings=None, base_if_unknown: bool = False) -> 
         elif off_target:
             ignored.append(("unsure", f"{name} {off_target}"))
             unsure.append(f"{name} {off_target}")
+            if _has_merge_queue(rs):
+                queue_unsure.append(f"{name} {off_target}")
         else:
             effective.append((name, rs))
 
@@ -334,7 +355,15 @@ def check(rulesets, base: str, settings=None, base_if_unknown: bool = False) -> 
 
     protected = not problems
     found = [] if protected else ignored + problems
-    return Report(base, protected, [m for _, m in found], checks, merge, unsure, [k for k, _ in found], [rs for _, rs in effective])
+    queue = False
+    for name, rs in effective:
+        if not _has_merge_queue(rs):
+            continue
+        if assumed and not {"~ALL", f"refs/heads/{base}"} & set(_ref(rs).get("include") or []):
+            queue_unsure.append(f"{name} targets the default branch, and the pull request doesn't give the repository's (base.repo.default_branch), so it can't tell whether that is {base}")
+        else:
+            queue = True
+    return Report(base, protected, [m for _, m in found], checks, merge, unsure, [k for k, _ in found], [rs for _, rs in effective], queue, queue_unsure)
 
 
 def text(rep: Report) -> str:
