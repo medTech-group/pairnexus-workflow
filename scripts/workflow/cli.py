@@ -1658,7 +1658,7 @@ def main(argv: list[str] | None = None) -> int:
         p.error("state put needs --state")
     if a.cmd == "state" and a.action == "patch" and not a.patch:
         p.error("state patch needs --patch")
-    if a.cmd == "state" and a.action == "drop" and not (a.ticket and a.head and a.answer and a.out):
+    if a.cmd == "state" and a.action == "drop" and None in (a.ticket, a.head, a.answer, a.out):
         p.error("state drop needs --ticket, --head, --answer and --out")
     if a.cmd == "state" and a.action == "queue" and not (a.queue and a.out):
         p.error("state queue needs --queue and --out")

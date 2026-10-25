@@ -272,7 +272,8 @@ def drop(ticket: dict, head: str, answer: str) -> str:
 def queue_seen(state: dict, on: bool) -> str:
     """The merge queue's state seen now against the one recorded, in words that
     start `unchanged`, `changed` or `recorded` (when none was), and recorded on
-    `state`, which is changed in place, so a change is reported once."""
+    `state`, which is changed in place, so a change is reported once. A change
+    to on says the charter's waivers stop applying, when it has any."""
     was = state.get("merge_queue")
     state["merge_queue"] = on
     word = {True: "on", False: "off"}
@@ -280,7 +281,12 @@ def queue_seen(state: dict, on: bool) -> str:
         return f"recorded: the merge queue is {word[on]}"
     if was == on:
         return f"unchanged: the merge queue is {word[on]}"
-    return f"changed: the merge queue is now {word[on]} (it was {word[was]})"
+    said = f"changed: the merge queue is now {word[on]} (it was {word[was]})"
+    c = state.get("charter")
+    m = c.get("merge") if isinstance(c, dict) else None
+    if on and isinstance(m, dict) and m.get("waived_checks"):
+        said += "; the charter's waived checks no longer apply"
+    return said
 
 
 def _approved(state: Any) -> bool:

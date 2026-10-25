@@ -174,6 +174,18 @@ def test_a_different_queue_state_is_reported_as_a_change_once(tmp_path):
     assert state.get(out.read_text())["merge_queue"] is False
 
 
+def test_a_change_to_on_says_the_charters_waivers_stop(tmp_path):
+    env = _profile(tmp_path)
+    p = _init(tmp_path, env, "--queue", "off", waived=["CI"])
+    assert p.returncode == 0, p.stderr
+    body = _body(tmp_path, json.loads(p.stdout))
+    out = tmp_path / "new.md"
+    p = _queue(body, out, "on", env)
+    assert p.stdout.startswith("changed:") and "waived checks no longer apply" in p.stdout
+    p = _queue(out, out, "off", env)
+    assert p.stdout.startswith("changed:") and "waived" not in p.stdout
+
+
 def test_a_queue_state_with_none_recorded_is_recorded_not_a_change(tmp_path):
     env = _profile(tmp_path)
     s = state.empty(None)
@@ -321,6 +333,7 @@ def test_drop_heads_are_read_in_lower_case(run):
         (["--ticket", "12", "--head", HEAD_A, "--answer", "201"], "invalid choice"),
         (["--ticket", "12", "--head", HEAD_A], "--answer"),
         (["--ticket", "12", "--answer", "200-waiting"], "--head"),
+        (["--ticket", "0", "--head", HEAD_A, "--answer", "200-waiting"], "#0"),
     ],
 )
 def test_drop_refuses_what_it_cant_decide(run, args, words):
