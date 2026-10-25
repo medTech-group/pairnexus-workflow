@@ -9,7 +9,8 @@ jobs:
   tests:
     # Pinned: setup-python's Python 3.9 (past its end of life) may not be built for newer images.
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # The suite takes about 9 to 10 minutes; room to grow, still a stop for a hung job.
+    timeout-minutes: 20
     strategy:
       matrix:
         python: ["3.11", "3.12", "3.13"]
