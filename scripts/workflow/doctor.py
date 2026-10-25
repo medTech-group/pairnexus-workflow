@@ -2465,9 +2465,9 @@ def _triggers(text: str, base: str) -> tuple[str, str]:
             continue
         value, under = filters[name]
         items = _flow_list(value) if value else [_unquoted(_uncommented(ln.strip()[1:])) if ln.strip().startswith("- ") else None for ln in under]
-        if items == [] and name == "branches-ignore":
-            continue  # it ignores nothing
-        if not items or None in items:
+        if value and items == [] and name == "branches-ignore":
+            continue  # `[]`: it ignores nothing
+        if not items or None in items or any(p in ("~", "null") for p in items):
             return "cant_check", f"its `merge_group:` `{name}` filter can't be read"
         if any(_PATTERN.search(p) for p in items):
             return "cant_check", f"its `merge_group:` `{name}` filter has a pattern the kit doesn't match"
@@ -2512,7 +2512,7 @@ def _merge_group(i: Inputs, rep: protection_mod.Report) -> tuple[Line, dict]:
     workflows = []
     for path in paths:
         if not _WORKFLOW_FILE.fullmatch(path):
-            workflows.append({"path": path, "state": "cant_check", "why": "it isn't a workflow file in `.github/workflows/`", "file": True})
+            workflows.append({"path": path, "state": "cant_check", "why": "it isn't a workflow file in `.github/workflows/`", "file": "github"})
             continue
         shown = _run(i, ["git", "show", f"{ref}:{path}"])
         if shown.state != "ok":
@@ -2561,12 +2561,15 @@ def _merge_group_line(i: Inputs, rep: protection_mod.Report, checks: list[dict],
             ), NONE))
         elif w["state"] == "cant_check":
             fix = Words(
+                f"{name} is a workflow GitHub runs itself (such as code scanning's default set-up): check in its settings that it runs for a merge queue.",
+                f"{name} is a GitHub-run workflow, not a file here: confirm it runs on merge_group yourself.",
+            ) if w.get("file") == "github" else Words(
                 f"Make sure {name} is a workflow file in `.github/workflows/` on `{base}`, as UTF-8 text; then check the set-up again.",
                 f"{name} must be a UTF-8 file under .github/workflows/ on `{base}`; then rerun.",
             ) if w.get("file") else Words(
                 f"Edit {name} so the kit can read its triggers: `on:` as a mapping with one event per line, each named once, `pull_request:` among them,"
-                " and `merge_group:`'s filters as plain lists; then check the set-up again.",
-                f"Make on: in {name} a block mapping (one key per line, no duplicates) with pull_request:, merge_group filters as plain lists (read line by line, no YAML library).",
+                " and `merge_group:`'s filters as plain lists of names, `*` and `**` (no `?`, `+`, `[]`, `!` or `\\`); then check the set-up again.",
+                f"Make on: in {name} a block mapping (one key per line, no duplicates) with pull_request:, merge_group filters as plain lists using only `*`/`**` (read line by line, no YAML library).",
             )
             found.append(("cant_check", Words(f"{name} can't be read for its triggers: {w['why']}", f"{name}: {w['why']}"), fix))
     for c in checks:
