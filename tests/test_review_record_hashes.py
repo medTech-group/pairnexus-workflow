@@ -39,6 +39,14 @@ def edit(root, rel, old, new):
     path.write_text(path.read_text().replace(old, new))
 
 
+@pytest.fixture(autouse=True)
+def _no_user_git_config(monkeypatch):
+    """The developer's global and system git configuration (attributes, hooks,
+    signing) never reach these repositories."""
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+
 @pytest.fixture
 def checkout(tmp_path, monkeypatch):
     """A checkout whose `origin` is a local bare repository, on a branch whose

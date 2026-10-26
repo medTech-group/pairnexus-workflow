@@ -151,8 +151,8 @@ def _with_patches(patch: bytes, files: list[tuple[Change, int]]) -> list[Change]
     as GitHub's `patch` gives them: from the first `@@` line, header lines left
     out; None with no hunks. A type change's two sections have their hunks
     joined. A section whose `diff --git` line doesn't name its file's paths
-    (a line where git quotes either path isn't compared), or counts that don't match, raise
-    CantHash rather than pair hunks with the wrong file."""
+    (a line where git quotes either path isn't compared), or counts that don't
+    match, raise CantHash rather than pair hunks with the wrong file."""
     sections = _SECTION.split(patch)[1:]
     if len(sections) != sum(n for _, n in files):
         raise CantHash("git diff's list of files and its patch don't match")
@@ -175,8 +175,8 @@ def local_files(root: Path, commit: str, ref: str) -> list[Change]:
     """The files changed from the merge base of `ref` to `commit`, each with its
     status, blob SHA and patch, as GitHub's REST list gives them. The
     attributes (a `-diff` or `binary` file) are read from `commit`'s own
-    `.gitattributes`, never the working tree's, a global or the system's file. Raises
-    CantMeasure or CantHash."""
+    `.gitattributes` (git 2.40 and later), never a global or the system's
+    file. Raises CantMeasure or CantHash."""
     mb = _git(root, "merge-base", ref, commit)
     if mb.returncode != 0:
         shallow = _git(root, "rev-parse", "--is-shallow-repository").stdout.strip() == "true"
