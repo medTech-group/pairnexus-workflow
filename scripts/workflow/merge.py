@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import charter as charter_mod
-from . import protection, reviews, state
+from . import protection, reviews, small, state
 from .evidence import is_full, read_headline
 from .guard import matches
 from .posts import CommentsError, _login, _number, comments_from, decode_values
@@ -126,6 +126,9 @@ class Result:
     preview: dict | None = None
     review_rounds: int = DEFAULT_REVIEW_ROUNDS  # the allowed review rounds the review rule used
     review_passes: int = DEFAULT_REVIEW_PASSES  # the pass cap the review rule used
+    small_max_lines: int = small.DEFAULT_MAX_LINES  # the small threshold the review rule used (#257)
+    small_max_files: int = small.DEFAULT_MAX_FILES
+    measured: dict | None = None  # the diff against it, where the small review's condition applies
     queue: bool = False  # a ruleset in force on the base requires a merge queue: "ready" means ready to queue (#245)
 
     def as_dict(self) -> dict:
@@ -142,6 +145,9 @@ class Result:
             "preview": self.preview,
             "review_rounds": self.review_rounds,
             "review_passes": self.review_passes,
+            "small_max_lines": self.small_max_lines,
+            "small_max_files": self.small_max_files,
+            "small": self.measured,
             "queue": self.queue,
         }
 
@@ -202,6 +208,16 @@ REASONS = {
             "new": ("Not yet: the last review found things to fix.", "Fix them, then ask for a short check of the latest changes."),
             "developer": ("Not yet: review round {round} on {round_short} wasn't clean, and no round is left ({allowed} allowed).", "Fix the findings and run a Correctness pass on the head; no further round."),
         },
+        # The small review (#257): its round (`small`), and the full-panel round after it
+        # (`after_small`), count as the last allowed one, whatever the round limit.
+        "small": {
+            "new": ("Not yet: the last review found things to fix.", "Fix them, then ask for a short check of the latest changes."),
+            "developer": ("Not yet: review round {round} on {round_short} wasn't clean, and no counted round ran Spec (the small review), so it counts as the last round.", "Fix the findings and run a Correctness pass on the head; no further round."),
+        },
+        "after_small": {
+            "new": ("Not yet: the last review found things to fix.", "Fix them, then ask for a short check of the latest changes."),
+            "developer": ("Not yet: review round {round} on {round_short} wasn't clean, and as the full-panel round after a small review it counts as the last round.", "Fix the findings and run a Correctness pass on the head; no further round."),
+        },
     }),
     "pass_not_clean": Reason("review_panel", "review", {
         "new": ("Not yet: the last check of the newest changes found things to fix.", "Fix them, then ask Claude to check again."),
@@ -215,6 +231,11 @@ REASONS = {
     "passes_used_up": Reason("review_panel", "review", {
         "new": ("Not yet: the short checks of the latest changes have reached their limit, so the owner decides what happens next.", "The owner can ask Claude for one more check; until then, this change stays unmerged."),
         "developer": ("Not yet: the pass cap is reached ({cap} allowed after round {round}, {passes} posted), and the head {short} still needs one: this pull request waits on the owner.", "The owner decides: \"One more pass\" (merge-check skill) runs one past the cap; in a run the ticket stops at needs-human with the open findings in the PR body."),
+    }),
+    # The small review's condition (#257): in place of every other review reason.
+    "past_small_threshold": Reason("review_panel", "review", {
+        "new": ("Not yet: this change has grown past what a short review covers ({size}, where a short review covers at most {most}).", "Review it now: Claude runs the full review panel."),
+        "developer": ("Not yet: no counted round ran Spec, and the diff is past the small threshold: {size} outside tests, where the threshold is at most {most}.", "Run the full panel (the light review's shape for a 1-round run's pull request), allowed past the round limit; never a Correctness-only round."),
     }),
     "conflict": Reason("mergeable", "resolve_conflict", {
         "new": ("Not yet: this change clashes with something already in {base}.", "Ask Claude to resolve the conflict."),
@@ -488,7 +509,8 @@ class Context:
     """The inputs as the rules read them. Each reader raises Unreadable (the
     same one each time) for an input it can't read."""
 
-    def __init__(self, inputs: dict, profile, profile_error: str | None, waivable: frozenset = frozenset(), logs: dict | None = None, review_rounds: int | None = None, review_passes: int | None = None):
+    def __init__(self, inputs: dict, profile, profile_error: str | None, waivable: frozenset = frozenset(), logs: dict | None = None, review_rounds: int | None = None, review_passes: int | None = None,
+                 small_max_lines: int | None = None, small_max_files: int | None = None):
         self.inputs = inputs
         self.profile = profile
         self.profile_error = profile_error
@@ -498,6 +520,10 @@ class Context:
         self.review_rounds = review_rounds or (profile.review_rounds if profile else DEFAULT_REVIEW_ROUNDS)
         # The pass cap: --review-passes, else the profile's run.review_passes (0 is a cap).
         self.review_passes = review_passes if review_passes is not None else (profile.review_passes if profile else DEFAULT_REVIEW_PASSES)
+        # The small threshold (#257): the flags, else the profile's run.small_max_lines and run.small_max_files.
+        self.small_max_lines = small_max_lines or (profile.small_max_lines if profile else small.DEFAULT_MAX_LINES)
+        self.small_max_files = small_max_files or (profile.small_max_files if profile else small.DEFAULT_MAX_FILES)
+        self.measured: small.Measure | None = None  # the diff against it, once measured
         self.waived: list[str] = []  # the waivers used
         self.notes: list[dict] = []
         self.checks: list[dict] = []
@@ -586,18 +612,23 @@ class Context:
 
         return self.once("commits", read)
 
-    def files(self) -> list[str]:
-        """Every path the PR changes, a rename's old path too."""
+    def changes(self) -> list[small.Change]:
+        """Each file the PR changes: its path, a rename's old path, its status,
+        and its additions and deletions as given (#257): `size` checks them,
+        only where the small review's condition needs them."""
 
         def read():
             items = _walk(self.raw("files"), "files", lambda d: "filename" in d or "path" in d, GRAPHQL + ("files", "nodes"))
-            out: list[str] = []
+            out: list[small.Change] = []
             for f in items:
                 for k in ("filename", "path", "previous_filename"):
                     if k in f and (not isinstance(f[k], str) or not f[k]):
                         raise Unreadable("files", f"a file's {k} isn't a path")
-                    if isinstance(f.get(k), str) and f[k] not in out:
-                        out.append(f[k])
+                status = f.get("status", f.get("changeType"))
+                out.append(small.Change(
+                    f.get("filename") or f["path"], f.get("previous_filename"),
+                    status.lower() if isinstance(status, str) else None, f.get("additions"), f.get("deletions"),
+                ))
             try:
                 want = self.pr().counts["files"]
             except Unreadable:
@@ -608,6 +639,30 @@ class Context:
             return out
 
         return self.once("files", read)
+
+    def files(self) -> list[str]:
+        """Every path the PR changes, a rename's old path too."""
+        out: list[str] = []
+        for c in self.changes():
+            for p in (c.path, c.previous):
+                if p and p not in out:
+                    out.append(p)
+        return out
+
+    def size(self) -> small.Measure:
+        """The diff against the small threshold (`small.measure`), counting
+        files outside the profile's suites' globs. Unreadable when a counted
+        file has no additions and deletions, or a file on a test path has no
+        status (it may be a rename from outside tests)."""
+        globs = small.suite_globs(self.profile)
+        for c in self.changes():
+            if c.status is None and c.previous is None and small.is_test(c.path, globs):
+                # gh's and GraphQL's lists may name no status: a rename into tests would go uncounted.
+                raise Unreadable("files", f"`{c.path}` is on a test path but has no status, so a rename into it from outside tests can't be told: give --files as GitHub's REST list of the pull request's files (GET repos/<repo>/pulls/<n>/files), with each file's status and previous_filename")
+        try:
+            return small.measure(self.changes(), globs, self.small_max_lines, self.small_max_files)
+        except small.NoCounts as e:
+            raise Unreadable("files", f"{e}, which the small threshold counts: give --files as GitHub's REST list of the pull request's files (GET repos/<repo>/pulls/<n>/files), with each file's additions and deletions") from None
 
     def checks_ran(self) -> list:
         """The latest result of each check on the head commit (`protection.latest`)."""
@@ -963,7 +1018,15 @@ def _panel(ctx: Context, add) -> None:
     comes next and the counted passes after the last round (on any commit of the
     PR, each record counted) number `ctx.review_passes`, the pass cap (#256)
     gives `passes_used_up` instead: the owner decides. Records from accounts
-    without write access, or naming a commit outside the PR, are ignored."""
+    without write access, or naming a commit outside the PR, are ignored.
+
+    The small review (#257): when no counted round ran `spec`, the diff must be
+    within the small threshold (`ctx.size`). Past it, `past_small_threshold`
+    replaces every other review reason and asks for a full-panel round, allowed
+    past the round limit. Within it, a round that isn't clean counts as the
+    last allowed one, and so does that full-panel round, the first to run
+    `spec` after rounds that didn't. Without the files' line counts, it says
+    it can't read them, beside the reason today's rule gives."""
     head = ctx.pr().head
     perms = ctx.permissions()
     shas = ctx.commits() | {head}
@@ -979,6 +1042,21 @@ def _panel(ctx: Context, add) -> None:
     last = counted[rounds[-1]]
     allowed = ctx.review_rounds
     details = {"round": last.round, "round_short": _short(last.commit), "allowed": allowed, "reviewers": list(last.reviewers)}
+    ran_spec = ["spec" in counted[i].reviewers for i in rounds]
+    unread = None
+    last_allowed = last.round >= allowed or (ran_spec[-1] and len(rounds) > 1 and not any(ran_spec[:-1]))
+    if not any(ran_spec):
+        try:
+            ctx.measured = ctx.size()
+        except Unreadable as e:
+            unread = e
+        if ctx.measured is not None and not ctx.measured.within:
+            m = ctx.measured
+            size = f"{_plural(m.lines, 'changed line')} in {_plural(m.files, 'file')}"
+            most = f"{_plural(m.max_lines, 'line')} in {_plural(m.max_files, 'file')}"
+            add("past_small_threshold", next="full_round", size=size, most=most, **details)
+            return
+        last_allowed = last_allowed or ctx.measured is not None
     after = [r for r in counted[rounds[-1] + 1:] if r.kind == "pass"]
     passes = [r for r in after if r.commit == head]
     cap = ctx.review_passes
@@ -990,17 +1068,18 @@ def _panel(ctx: Context, add) -> None:
             add(rid, **more, **details)
 
     if not last.clean:
-        if last.round < allowed:
+        if not last_allowed:
             add("review_not_clean", next="round", **details)
         elif not passes:
-            needs_pass("review_not_clean", next="pass", case="last_round")
+            needs_pass("review_not_clean", next="pass", case="last_round" if last.round >= allowed else "small" if not any(ran_spec) else "after_small")
         elif not passes[-1].clean:
             needs_pass("pass_not_clean")
-        return
-    if passes and not passes[-1].clean:
+    elif passes and not passes[-1].clean:
         needs_pass("pass_not_clean")
     elif last.commit != head and not passes:
         needs_pass("review_stale")
+    if unread is not None:
+        raise unread
 
 
 def _mergeable(ctx: Context, add) -> None:
@@ -1205,6 +1284,8 @@ def evaluate(
     role: str | None = None,
     review_rounds: int | None = None,
     review_passes: int | None = None,
+    small_max_lines: int | None = None,
+    small_max_files: int | None = None,
 ) -> Result:
     """The decision. `inputs` maps each name in INPUTS to (value, None) when
     read, (None, why) when it couldn't be; a name left out wasn't given (the
@@ -1213,9 +1294,10 @@ def evaluate(
     by file name) are for the run's waivers. `review_rounds` is the allowed
     review rounds (`--review-rounds`); None takes the profile's `run.review_rounds`.
     `review_passes` is the pass cap (`--review-passes`); None takes the profile's
-    `run.review_passes`."""
+    `run.review_passes`. `small_max_lines` and `small_max_files` are the small
+    threshold (`--small-max-lines`, `--small-max-files`); None takes the profile's."""
     waivable, charter_notes = waivers(charter_input, role, profile)
-    ctx = Context(inputs, profile, profile_error, waivable, logs, review_rounds, review_passes)
+    ctx = Context(inputs, profile, profile_error, waivable, logs, review_rounds, review_passes, small_max_lines, small_max_files)
     ctx.notes += charter_notes
     if waivable and (ctx.queue() or ctx.queue_unsure()):
         # Every merge goes through the queue, and only a direct merge could take a waiver (#241, answer 13);
@@ -1272,7 +1354,8 @@ def evaluate(
         decision = "owner_review"
     else:
         decision = "ready"
-    return Result(decision, number, head, level, owner, reasons, ctx.notes, ctx.checks, kit, ctx.preview, ctx.review_rounds, ctx.review_passes, queue)
+    return Result(decision, number, head, level, owner, reasons, ctx.notes, ctx.checks, kit, ctx.preview, ctx.review_rounds, ctx.review_passes,
+                  ctx.small_max_lines, ctx.small_max_files, ctx.measured.as_dict() if ctx.measured else None, queue)
 
 
 # ---------- text ----------
