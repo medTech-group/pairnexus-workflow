@@ -7,7 +7,7 @@ description: Find the next ready piece of work (a map decision, a spec to write,
 
 Pick one ready piece of work and do it, following the flow (`.claude/workflow/flow.md` vendored, or `docs/flow.md` beside `skills/` as a plugin). One piece per session.
 
-**Never in a conductor session.** In a conductor session (`WORKFLOW_ROLE=conductor`), never build: follow the `conductor` skill's "A ticket named in chat" with the ticket, or, with none named, offer a run of the ready tickets as its "Start a run" says. The conductor hands each ticket to a ticket session; it never claims one or writes its code.
+**Never in a conductor session.** In a conductor session (`WORKFLOW_ROLE=conductor`), never build: follow the `conductor` skill's "A ticket named in chat" with the ticket, or, with none named, offer a run of the ready tickets as its "Start a run" says. The conductor hands each ticket to a ticket session; it never builds one itself.
 
 Read the flow and the project's profile (`.claude/workflow/profile.toml`, `profile.md`) first. Use the GitHub MCP tools, or `gh api` where the session has it. `WF` is the kit's CLI: `python3 .claude/workflow/bin/workflow.py`, or `python3 <this skill's directory>/../../scripts/workflow.py` as a plugin.
 

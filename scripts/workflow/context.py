@@ -135,30 +135,35 @@ def reminder_for(prompt: str) -> str | None:
 
 # A ticket named to a conductor session (#308): a build verb with the ticket
 # just after it ("build #12", "building tickets 12 and 13", "Let's work on the
-# #12", "pick up owner/repo#12"), the ticket before "build", "built" or
-# "implement" ("#12 please build it"), or `/next` and `/build-ticket`. The
-# conductor never builds one itself, so its session is told where the ticket
-# goes. "why did the build fail?" or "fix 2 typos" names no ticket: a bare
-# number counts only at the end of its clause ("build 12", "build 12 and 13").
-_TICKET = (
-    r"(?:(?:[\w.-]+/[\w.-]+)?[#\uff03][0-9]+\b|https?://[^\s]{0,200}?/issues/[0-9]+"
-    r"|[0-9]+(?=[^\S\n]*(?:[.!?,;:)]|and\b|$)))"
+# #12", "pick up owner/repo#12", "build spec #32"), the ticket before "build",
+# "built" or "implement" ("#12 please build it"), or `/next`, `/build-ticket`
+# and `/implement-spec`. The conductor never builds one itself, so its session
+# is told where the ticket goes. "why did the build fail?", "fix 2 typos" or
+# "build 2.0" names no ticket: a bare number counts after "ticket" or "issue",
+# or at the end of its clause ("build 12", "build 12 please", "12 and 13").
+# Every repeat is bounded, so a long pasted prompt stays quick.
+_NUMBER_ENDS = (
+    r"[0-9]+\b(?![.,][0-9])(?=[^\S\n]*(?:(?:please|now|next|today|first|for[^\S\n]+me)\b[^\S\n]*)?"
+    r"(?:[.!?,;:)]|and\b|$))"
 )
+_TICKET = r"(?:(?:[\w.-]{1,39}/[\w.-]{1,100})?[#\uff03][0-9]+\b|https?://[^\s]{0,200}?/issues/[0-9]+|" + _NUMBER_ENDS + ")"
 _NAMED = re.compile(
-    r"\b(?:build(?:s|ing)?|implement(?:s|ing)?|fix(?:es|ing)?|develop(?:s|ing)?|tackle|do|work(?:ing)?"
+    r"\b(?:build(?:s|ing)?|implement(?:s|ing)?|fix(?:es|ing)?|develop(?:s|ing)?|tackle|do"
     r"|work(?:ing)?[^\S\n]+on|start(?:ing)?[^\S\n]+(?:on|with)|pick[^\S\n]+up|go[^\S\n]+ahead[^\S\n]+with)"
-    r"[\s:,-]{1,4}(?:the[^\S\n]+)?(?:(?:tickets?|issues?|bugs?)[\s:]{1,3})?" + _TICKET
-    + r"|[#\uff03][0-9]+\b[^\n#\uff03]{0,30}?\b(?:build|built|implement)"
-    r"|(?:^|\s)/(?:[\w-]+:)?build-ticket\b",
+    r"[\s:,-]{1,4}(?:the[^\S\n]+)?"
+    r"(?:(?:tickets?|issues?|bugs?|specs?)[\s:]{1,3}[#\uff03]?[0-9]+\b|" + _TICKET + ")"
+    + r"|[#\uff03][0-9]+\b[^\n#\uff03]{0,30}?\b(?:build|built|implement)\b"
+    r"|(?:^|\s)/(?:[\w-]{1,60}:)?(?:build-ticket|implement-spec)\b",
     re.I | re.M,
 )
 
 CONDUCTOR_LINE = (
     "This is a conductor session: the conductor never builds a ticket itself. If this message asks for a ticket "
-    "to be built, never claim it, branch for it or write its code, and don't load `next` or `build-ticket` for "
-    "it: follow the `conductor` skill's \"A ticket named in chat\", which hands it to a ticket session (with no "
-    "run in progress, a run scoped to it; during this session's run, the amendment \"also #<n>\"). The only code "
-    "the conductor writes is its own fixes, where the charter grants `conductor_fixes`."
+    "to be built, don't branch for it, write its code or open its pull request, and don't load `next` or "
+    "`build-ticket` for it: follow the `conductor` skill's \"A ticket named in chat\", which hands it to a "
+    "ticket session (with no run in progress, a run scoped to it; during this session's run, the amendment "
+    "\"also #<n>\"). The only code the conductor writes is its own fixes, where the charter grants "
+    "`conductor_fixes`."
 )
 
 

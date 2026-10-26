@@ -48,6 +48,14 @@ NAMED = [
     "/build-ticket 12",
     "build owner/repo#12",
     "build \uff0312",
+    # From round 2's Correctness review.
+    "build 12 please",
+    "work on 12 now",
+    "implement ticket 12 next",
+    "build issue 12 for me",
+    "Lets work on 12 today",
+    "build spec #32",
+    "/implement-spec #32",
 ]
 
 # A conductor's own messages, and the owner's that name no ticket to build.
@@ -68,6 +76,9 @@ NOT_NAMED = [
     "start on 1 March",
     "implement 3 retries",
     "work on 10 minutes",
+    "build 2.0",
+    "fix 3.11 support",
+    "Good work, #12 merged",
     "conductor resume",
     "conductor: wake (a ticket session finished)\n\n#12 merged in #40",
     "also #140",
@@ -106,6 +117,12 @@ def test_the_line_is_conditional_so_a_refusal_never_reads_as_a_request(repo):
     assert "If this message asks for a ticket to be built" in line
 
 
+def test_the_line_leaves_the_claim_to_check_in_step_5(repo):
+    # The conductor claims each ticket for its ticket session (check-in step 5): the line never forbids it.
+    line = _ctx(repo, "build #12", uuid.uuid4().hex, CONDUCTOR).split("\n\n", 1)[0]
+    assert "claim" not in line
+
+
 def test_the_line_and_the_whole_flow_budget_fit_under_the_limit():
     from workflow.context import CONDUCTOR_LINE, CONTEXT_LIMIT, FLOW_BUDGET
 
@@ -115,7 +132,16 @@ def test_the_line_and_the_whole_flow_budget_fit_under_the_limit():
 def test_long_prompts_stay_quick(repo):
     import time
 
-    for prompt in ("build" + " " * 50_000 + "x", "#1" + "x" * 50_000 + " build", "work on https://" + "a" * 50_000, "1" * 50_000 + "x"):
+    for prompt in (
+        "build" + " " * 50_000 + "x",
+        "#1" + "x" * 50_000 + " build",
+        "work on https://" + "a" * 50_000,
+        "1" * 50_000 + "x",
+        "do-" * 30_000,
+        "fix-" * 30_000,
+        "build " + "a-" * 30_000 + "#1",
+        " /" + "a-" * 30_000,
+    ):
         began = time.monotonic()
         _ctx(repo, prompt, uuid.uuid4().hex, CONDUCTOR)
         assert time.monotonic() - began < 5, repr(prompt[:20])
@@ -187,8 +213,15 @@ def test_the_conductor_says_what_a_named_ticket_becomes():
     section = text.split("## A ticket named in chat", 1)[1].split(" ## ", 1)[0]
     for part in (
         "You never build it yourself",
-        "never claim it, branch for it, write its code",
-        "`next` or `build-ticket`",
+        "no branch, code or pull request of your own for it",
+        "never `next` or `build-ticket`",
+        "Claiming it for its ticket session (check-in step 5) is as usual.",
+        "Show that scope as already answered",
+        "**A kick-off under way in this session**",
+        "add it to the plan being drafted",
+        "when it is already in the plan or running",
+        "it won't start in this run",
+        "**A spec named**",
         "**No run in progress** (no open `workflow:run` issue)",
         "`scope.tickets` is `[<n>]`",
         "`follow_unblocked` false",
