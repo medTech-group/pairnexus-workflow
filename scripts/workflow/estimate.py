@@ -189,9 +189,15 @@ def _review(c: dict, profile: Any) -> dict | None:
     return presets_mod.review_of(c, profile)
 
 
-def _review_words(rv: dict) -> str:
+def _runs_explorer(rv: dict, profile: Any) -> bool:
+    """The review runs the UI explorer, and the profile, when it reads, has one
+    (as `presets.small_reviewers` says, #296)."""
+    return presets_mod.runs_explorer(rv) and (profile is None or presets_mod.has_explorer(profile))
+
+
+def _review_words(rv: dict, profile: Any = None) -> str:
     return f"up to {presets_mod.plural(rv['rounds'], 'round', 'rounds')}, " + (
-        "UI explorer on" if presets_mod.runs_explorer(rv) else "no UI explorer"
+        "UI explorer on" if _runs_explorer(rv, profile) else "no UI explorer"
     )
 
 
@@ -274,10 +280,10 @@ def estimate(
         notes.append("the charter's review or preset isn't well formed, so the review wasn't compared with the project's default")
     if rv is not None:
         usual = presets_mod.numbers("normal", profile)["review"]
-        if rv["rounds"] < usual["rounds"] or (presets_mod.runs_explorer(usual) and not presets_mod.runs_explorer(rv)):
+        if rv["rounds"] < usual["rounds"] or (_runs_explorer(usual, profile) and not _runs_explorer(rv, profile)):
             named = ", ".join(f"#{n}" for n in security)
             warnings.append(
-                f"The review ({_review_words(rv)}) is lighter than the project's default ({_review_words(usual)}), "
+                f"The review ({_review_words(rv, profile)}) is lighter than the project's default ({_review_words(usual, profile)}), "
                 f"while the plan has {'a ticket' if len(security) == 1 else 'tickets'} the review panel would give a security review: {named}."
             )
     return {

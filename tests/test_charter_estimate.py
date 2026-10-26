@@ -257,6 +257,49 @@ def test_a_lighter_review_with_a_security_review_ticket(tmp_path, env):
     assert est["warnings"] == []
 
 
+def _reviewed(tmp_path, env, rounds, explorer):
+    """A charter whose own review is `{rounds, explorer}`, no preset."""
+    f = tmp_path / "charter.json"
+    c = json.loads(open(_charter(tmp_path, env)).read())
+    c.pop("preset", None)
+    c["review"] = {"rounds": rounds, "explorer": explorer}
+    f.write_text(json.dumps(c))
+    return str(f)
+
+
+LIGHTER = "The review ({}) is lighter than the project's default ({}), "
+
+
+def test_with_no_explorer_in_the_profile_neither_side_says_the_explorer_is_on(tmp_path, env):
+    """#296: the review words follow the profile's `ui.explorer`, as
+    `presets.small_reviewers` does, for the run's review and the default."""
+    profile = tmp_path / ".claude/workflow/profile.toml"
+    profile.write_text(profile.read_text().replace('explorer="browser"', 'explorer="none"'))
+    # A charter asking for the explorer, under a profile that has none.
+    est, _ = _estimate(env, _reviewed(tmp_path, env, 2, True), "--tickets", "3", "--security", "12")
+    (w,) = est["warnings"]
+    assert w.startswith(LIGHTER.format("up to 2 rounds, no UI explorer", "up to 3 rounds, no UI explorer")), w
+    assert "UI explorer on" not in w
+    est, _ = _estimate(env, _charter(tmp_path, env, preset="light"), "--tickets", "3", "--security", "12")
+    (w,) = est["warnings"]
+    assert w.startswith(LIGHTER.format("up to 1 round, no UI explorer", "up to 3 rounds, no UI explorer")), w
+    # The explorer alone is never lighter when the project has none.
+    est, _ = _estimate(env, _reviewed(tmp_path, env, 3, False), "--tickets", "3", "--security", "12")
+    assert est["warnings"] == []
+
+
+def test_with_an_explorer_in_the_profile_the_review_words_are_unchanged(tmp_path, env):
+    est, _ = _estimate(env, _reviewed(tmp_path, env, 2, True), "--tickets", "3", "--security", "12")
+    (w,) = est["warnings"]
+    assert w.startswith(LIGHTER.format("up to 2 rounds, UI explorer on", "up to 3 rounds, UI explorer on")), w
+    est, _ = _estimate(env, _charter(tmp_path, env, preset="light"), "--tickets", "3", "--security", "12")
+    (w,) = est["warnings"]
+    assert w.startswith(LIGHTER.format("up to 1 round, no UI explorer", "up to 3 rounds, UI explorer on")), w
+    est, _ = _estimate(env, _reviewed(tmp_path, env, 3, False), "--tickets", "3", "--security", "12")
+    (w,) = est["warnings"]
+    assert w.startswith(LIGHTER.format("up to 3 rounds, no UI explorer", "up to 3 rounds, UI explorer on")), w
+
+
 def test_text_and_json_agree(tmp_path, env):
     c = _charter(tmp_path, env, max_sessions=10, ends_at="2026-10-17T05:00:00Z")
     runs = _runs(tmp_path, [_issue(140, RUN_A), _issue(150, RUN_B)])
