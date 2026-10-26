@@ -1,6 +1,6 @@
 ---
 name: build-ticket
-description: Build one ready ticket from claim to merge - tdd at the spec's seams, the review panel in rounds until clean, a pull request with its findings table, CI green, the local suite's evidence, and the merge under the merge rule. Use for "implement #N", "build #N", "build #N with a light review" ("quick build #N"), or a ticket session's briefing.
+description: Build one ready ticket from claim to merge - tdd at the spec's seams, the review panel in rounds until clean, a pull request with its findings table, CI green, the local suite's evidence, and the merge under the merge rule. Use for "implement #N", "build #N", "build #N with a light review" ("quick build #N"), "build #N with the full panel", or a ticket session's briefing.
 ---
 
 # Build a ticket
@@ -59,7 +59,12 @@ Follow the `review-panel` skill on the diff against the base branch:
 - rerun the typecheck and the affected tests after each round;
 - after the last round, any further commit gets a short Correctness pass, at most the briefing's pass cap, else the profile's `run.review_passes` (`review-panel` §5); past it, the owner decides (`passes_used_up`: in a run, `needs-human`, step 6.3). The exception is a merge of the base that leaves the pull request's own changes identical, which needs CI only: after pushing a merge of the base, run step 6.3's `WF merge-check` (with `--fetch <PR>` and the briefing's flags) and run a pass only when it asks for one. In attended work, where the merge is the owner's, run `WF merge-check --fetch <PR> --json` after pushing a merge of the base, for its review reasons only.
 
-**A light review,** when the person asks for one: "build #12 with a light review", or "quick build #12". "Light review" is its name; "quick build" is only understood. It is not the guided start's "quick ticket", which files a small ticket. Follow `review-panel`'s light review (section 6), which gives its shape. A ticket session uses that shape when its briefing's review rounds are 1, the Correctness-only rounds coming on top of the briefing's "at most 1". A light review is never chosen for the person, in attended or unattended work, and it never changes the merge rule.
+**A light review,** when the person asks for one: "build #12 with a light review", or "quick build #12". "Light review" is its name; "quick build" is only understood. It is not the guided start's "quick ticket", which writes a build ticket on the spot. Follow `review-panel`'s light review (section 6), which gives its shape. A ticket session uses that shape when its briefing's review rounds are 1 (unless the ticket gets the small review, below), the Correctness-only rounds coming on top of the briefing's "at most 1". A light review is never chosen for the person, in attended or unattended work, and it never changes the merge rule.
+
+**The small review,** on a ticket marked `Review: small` (a line in its body, written at planning; flow §2). In attended work it is always allowed; in a ticket session, when the briefing's "Small review" line says on (off: build the ticket like any other). A ticket marked small gets it in a 1-round run too; unmarked tickets keep the light review there. A build the person chose ("build #12 with a light review", "build #12 with the full panel") isn't the small review: the person's choice wins over the mark.
+- Before reviewing, measure the diff: `WF review-record --measure --commit <sha>`, with `<sha>` your branch's head (in a run, with the briefing's `--small-max-lines` and `--small-max-files`, as its "Small review" line gives them; else the profile's `run.small_max_lines` and `run.small_max_files`). It prints whether the change is within the small threshold. If it can't measure (it exits non-zero), run the full panel. Measure again before opening the pull request, after the fixes.
+- Within the threshold, follow `review-panel`'s small review (section 7): one round of Correctness, with the security review and the explorer where they apply, then Correctness passes under the pass cap, with no further rounds.
+- Past it, run the full panel (the light review in a 1-round run), and the PR body says the diff overruled the mark. So does a later commit that takes it past the threshold, which `WF merge-check` reports as `past_small_threshold`: then run the one full-panel round it asks for, with the next round number and allowed past the round limit, and if it isn't clean, a Correctness pass (`review-panel` §7).
 
 ## 4. Open the pull request
 
@@ -93,7 +98,8 @@ Below it, unchanged:
 - `Closes #<n>`;
 - what was built: routes, screens, tables, settings;
 - how it was tested: the seams, the suites, what the explorer exercised;
-- after a light review (asked for, or a briefing's review rounds at 1), the line "Light review: one round, no UI explorer", adding "plus N Correctness rounds for the fixes" when there were some, above the findings table;
+- after a light review (asked for, or a briefing's review rounds at 1), the line "Light review: one round, no UI explorer", adding "plus N Correctness rounds for the fixes" when there were some, above the findings table (not on a ticket that got the small review);
+- after the small review, the line "Small review: one round, Correctness", adding ", security" and ", explorer" when they ran, above the findings table. On a ticket marked small whose diff was past the threshold, say instead that the diff overruled the mark ("Marked `Review: small`, but the diff overruled the mark: 85 lines in 3 files outside tests, so the full panel ran"). With none of these lines, the full panel ran;
 - the findings table: round, reviewer, finding, and what happened (fixed in which commit, or not a problem and why);
 - the decisions taken, under "Decisions for the owner";
 - the by-hand checks added.

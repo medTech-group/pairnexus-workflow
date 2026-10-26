@@ -91,7 +91,7 @@ def test_the_glossarys_review_panel_entry_mentions_the_light_review():
     text = _read("docs/glossary.md")
     entry = text.split("\n### Review panel\n", 1)[1].split("\n### ", 1)[0]
     assert "light review" in entry
-    assert "one round with no walk-through of the screens" in entry and "small changes" in entry
+    assert "one round with no walk-through of the screens" in entry and "the light review, asked for" in entry
     assert "never chosen for you" in entry
     assert "### light review" not in text.lower()
     assert len(text) < 6000

@@ -78,7 +78,7 @@ No pull request yet (the first rounds of `build-ticket` run before it opens)? Ke
 
 ## 5. When to stop
 
-Repeat on the new diff until a round finds nothing to fix, at most the briefing's review rounds in a ticket session, else the profile's `run.review_rounds`. For a light review, or when the briefing's review rounds are 1, follow the light review (section 6) instead.
+Repeat on the new diff until a round finds nothing to fix, at most the briefing's review rounds in a ticket session, else the profile's `run.review_rounds` (a ticket that gets the small review has its one round: section 7). For a light review, or when the briefing's review rounds are 1, follow the light review (section 6) instead, unless the ticket gets the small review (section 7).
 
 - Anything still open after the last round goes to the owner in the PR body, never silently.
 - Any commit after the last round gets a Correctness pass on just those commits before merging, except a merge of the base that leaves the pull request's own changes identical, which needs CI only: after pushing a merge of the base, run `workflow merge-check` (`--fetch <PR> --json`, in a ticket session with the briefing's flags) and run a pass only when it asks for one. Before a pass starts, `mkdir -p /tmp/review-<ticket>-pass<k>` (its scratch directory, `k` counting the passes from 1) and write `git rev-parse HEAD` to `commit.txt` there: the commit it covers, never one made after. Then post its record (section 4).
@@ -86,7 +86,7 @@ Repeat on the new diff until a round finds nothing to fix, at most the briefing'
 
 ## 6. The light review
 
-A shorter review for a small, low-risk ticket, asked for as "build #12 with a light review" (`build-ticket`, "Review it"). It keeps every reviewer but the explorer, and it never changes the merge rule (flow §4): CI green, the review record, the owner's review of kit and CI files and the rest of it all stand.
+A shorter review for a low-risk change, asked for as "build #12 with a light review" (`build-ticket`, "Review it"). It keeps every reviewer but the explorer, and it never changes the merge rule (flow §4): CI green, the review record, the owner's review of kit and CI files and the rest of it all stand.
 
 - **Round 1** runs the full panel (Standards, Spec, Correctness, and the security review where it applies) but no UI explorer. Its record:
 
@@ -105,14 +105,28 @@ A shorter review for a small, low-risk ticket, asked for as "build #12 with a li
 - **Post each record** as section 4 says. A later commit after the last round still gets its Correctness pass (section 5).
 - **Anything still open** after them goes to the owner in the PR body, never silently.
 
-**In a run:** when the briefing's review rounds are 1, ticket sessions use this same shape, so one round means one full-panel round, without the explorer, in attended and unattended work alike. There the owner chose it, by giving the run one review round; it is never chosen for the person.
+**In a run:** when the briefing's review rounds are 1, ticket sessions use this same shape, except on a ticket that gets the small review (section 7), so one round means one full-panel round, without the explorer, in attended and unattended work alike. There the owner chose it, by giving the run one review round; it is never chosen for the person.
 
-## 7. The findings table (for the PR body)
+## 7. The small review
 
-| # | Round | Reviewer | Finding | Outcome |
-|---|---|---|---|---|
-| 1 | 1 | Correctness | A not-planned blocker reads as done | Fixed in abc1234, test `test_blockers_not_planned` |
-| 2 | 1 | Spec | No `Area:` on the new tickets | Not a problem: the spec makes areas optional for one-off tickets |
+The review of a ticket marked `Review: small` while its diff stays within the small threshold: at most the briefing's small threshold in a ticket session, else the profile's `run.small_max_lines` changed lines in `run.small_max_files` files, both outside tests (`build-ticket`, "Review it", measures it first). Planning writes the mark (flow §2). Like the light review, it never changes the merge rule (flow §4): `workflow merge-check` holds a review with no Spec round to the threshold.
+
+- **One round.** Its reviewers, started as section 2 says:
+  - Correctness;
+  - the security review, where it applies (section 2);
+  - the explorer, only where it would run in any round: the explorer isn't `none` and the change touches a screen, an endpoint or a command.
+
+  No Standards and no Spec reviewer. The inputs are section 1's.
+- **Its record** is an ordinary round record, as section 4 says, with the reviewers that ran:
+
+  ```
+  WF review-record --kind round --round 1 --commit <sha> --reviewers correctness --clean > /tmp/review-<ticket>-r1/record.md
+  ```
+
+  (`correctness,security`, `correctness,explorer` or `correctness,security,explorer` when those ran; `--not-clean` when it found something to fix.)
+- **Fixes after it** are covered by Correctness passes (section 5), under the pass cap. There are no further rounds: when the round isn't clean, fix its findings as in section 3, and a clean pass on the head lifts them.
+- **Past the small threshold,** measured before reviewing or as `merge-check`'s `past_small_threshold`, the ticket doesn't get the small review: run the full panel (section 5), or the light review (section 6) in a 1-round run. The pull request's body says the diff overruled the mark. After a small round already ran, that is one full-panel round (the light review's round 1 in a 1-round run, without the explorer) with the next round number, allowed past the round limit; if it isn't clean, fix its findings and run a Correctness pass, with no further round.
+- **Anything still open** after the pass cap goes to the owner in the PR body, never silently.
 
 ## 8. The planning review
 
@@ -160,3 +174,9 @@ No Standards reviewer and no explorer: there is no code to hold to the standards
 
 **An edit after publishing** (the guided start's "Edit the spec first", a later change to the spec) makes it read as unreviewed: the edited body gets another planning round, its own spec record, before any tickets are written from it. First post the owner's words for the change on the spec's issue, each request or answer quoted word for word, any sensitive data (`profile.md`) left out and marked as left out, so the Spec reviewer reads them with the rest.
 
+## 9. The findings table (for the PR body)
+
+| # | Round | Reviewer | Finding | Outcome |
+|---|---|---|---|---|
+| 1 | 1 | Correctness | A not-planned blocker reads as done | Fixed in abc1234, test `test_blockers_not_planned` |
+| 2 | 1 | Spec | No `Area:` on the new tickets | Not a problem: the spec makes areas optional for one-off tickets |

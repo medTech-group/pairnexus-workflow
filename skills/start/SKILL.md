@@ -11,7 +11,7 @@ Guide the person from "what are we working on?" to work done, one choice at a ti
 
 **Every question is a choice to click.** Use the `AskUserQuestion` tool:
 - **Options:** 2 to 4. Your recommended option comes first, its label ending "(Recommended)", with one line saying why. "Other" is always added for their own words, so never add a "something else" option.
-- **Building a ticket:** **Build it with a light review** is always the second choice, after the full build: never first, never "(Recommended)", never chosen for them.
+- **Building a ticket:** **Build it with a light review** is always the second choice, after the full build: never first, never "(Recommended)", never chosen for them. So on a ticket marked `Review: small`, after **Build it now (Recommended)** (the small review) and before **Build it with the full panel**.
 - **Questions:** up to 4 in one call, when they don't depend on each other. More than 4 means several calls.
 - **No tool:** where `AskUserQuestion` isn't available (a headless `-p` session), ask the same choices as a numbered list.
 
@@ -215,13 +215,21 @@ For each item, read the flow's section for its path and follow it, skipping noth
    - what to build;
    - acceptance criteria, each naming where it's tested;
    - `## Blocked by`, with what the item waits for;
-   - an `Area:` line.
+   - an `Area:` line;
+   - a `Review: small` line, only when you expect the change to stay within the small threshold (the profile's `run.small_max_lines` changed lines in `run.small_max_files` files, outside tests) and to add no endpoint, table, screen or setting (flow §2). Removing the line opts the ticket out.
 
    Show it, and ask **Publish it (Recommended)** or **Change it**.
 2. Publish by editing the item's issue into the ticket: replace its body, drop the marker, and add `ready-for-agent`. The item's issue becomes the ticket.
 3. Ask:
    - **Build it now (Recommended)**: load `build-ticket` with the Skill tool, on a fresh branch;
-   - **Build it with a light review**: the same, asking `build-ticket` for a light review (`review-panel` §6, "The light review"): one review round, for a small change;
+   - **Build it with a light review**: the same, asking `build-ticket` for a light review (`review-panel` §6, "The light review"): one review round, for a low-risk change;
+   - **Leave it ready for later**: `/next` or a run picks it up;
+   - **Next item**.
+
+   **On a ticket marked `Review: small`**, ask instead (`AskUserQuestion` takes four choices, so with it leave out **Next item**: they can still say it under "Other"):
+   - **Build it now (Recommended)**: load `build-ticket` with the Skill tool, on a fresh branch: the small review, one round of Correctness with the security review and the explorer where they apply (`review-panel` §7, "The small review"), or the full panel if the diff grows past the small threshold;
+   - **Build it with a light review**: as above;
+   - **Build it with the full panel**: the same, asking `build-ticket` for the full panel, as for an unmarked ticket;
    - **Leave it ready for later**: `/next` or a run picks it up;
    - **Next item**.
 
@@ -292,7 +300,7 @@ Take them one at a time, oldest first, following `triage`'s steps for each. Read
 - reproducing a bug before anything else.
 
 Say in two lines what it asks and what you found, then ask, your recommendation first:
-- **Ready to build**: it becomes a build ticket as in "Quick ticket" above, with the same template (flow §2 says a triaged ticket gets `Area:`, `## Blocked by` and acceptance criteria);
+- **Ready to build**: it becomes a build ticket as in "Quick ticket" above, with the same template and its `Review: small` line only where the quick ticket says (flow §2 says a triaged ticket gets `Area:`, `## Blocked by` and acceptance criteria);
 - **Needs a spec**: it joins the plan: append the item marker with `path=spec`;
 - **Needs more information**: comment asking for it, label `needs-info`;
 - **Won't do**: comment why, label `wontfix`, close as not planned.

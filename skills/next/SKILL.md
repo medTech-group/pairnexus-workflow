@@ -56,9 +56,14 @@ Say which one you picked and why, in one line, with a build ticket's notes from 
 
 **How to build it, in an attended session:** ask with the `AskUserQuestion` tool, or as a numbered list where it isn't available:
 - **Build it now (Recommended)**: the full review panel;
-- **Build it with a light review**: one review round, for a small change (`review-panel` §6, "The light review").
+- **Build it with a light review**: one review round, for a low-risk change (`review-panel` §6, "The light review").
 
-The light review is always second, never recommended, and never chosen for them. When they already said how ("build #12", "build #12 with a light review", "quick build #12"; the `build` argument alone isn't saying how), don't ask again: build it as they said. In a ticket or conductor session (`WORKFLOW_ROLE` set to anything but `attended`, or a branch named like the profile's `run.ticket_branch`), ask nothing: build as the briefing says.
+**On a ticket marked `Review: small`** (a line in its body), ask instead:
+- **Build it now (Recommended)**: the small review, one round of Correctness with the security review and the explorer where they apply (`review-panel` §7, "The small review"); the full panel if the diff grows past the small threshold;
+- **Build it with a light review**: as above;
+- **Build it with the full panel**: every reviewer, as for an unmarked ticket.
+
+The light review is always second, never recommended, and never chosen for them. When they already said how ("build #12", "build #12 with a light review", "build #12 with the full panel", "quick build #12"; the `build` argument alone isn't saying how), don't ask again: build it as they said. In a ticket or conductor session (`WORKFLOW_ROLE` set to anything but `attended`, or a branch named like the profile's `run.ticket_branch`), ask nothing: build as the briefing says.
 
 ## 3. Nothing ready
 
