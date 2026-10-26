@@ -35,7 +35,8 @@ A large effort can start as a **map**: an issue labelled `wayfinder:map` whose c
    - `## Blocked by` (issue refs, or "None"), written out even when the tickets are also linked with GitHub's own dependencies, so a blocker closed as not planned is seen;
    - an `Area: <name>` line from the profile's `[areas]`, so the conductor never runs two sessions on one area;
    - acceptance criteria naming their seams;
-   - the by-hand checks it will need (a real device, account or service), if any.
+   - the by-hand checks it will need (a real device, account or service), if any;
+   - `Review: small` if the change should stay within the small threshold and add no endpoint, table, screen or setting (§3).
 3. Anything only the owner can do (create an account, a key, a domain) is its own issue labelled `owner-task` (or `ready-for-human`), and blocks what needs it.
 4. **A change to a protected path** (the profile's `guard.protected_paths`: the kit, CI config, CODEOWNERS, secrets files) is an owner task too, labelled `owner-task`, never a build ticket: a ticket session can't change those paths. `workflow ready` notes a ticket whose body names one ("names protected path … : check it isn't an owner task"), leaving it ready; the conductor lists such tickets at kick-off for the owner to keep or exclude. Paths in fenced code (unless the prose before it asks for a change "to" or "in" it), or after "don't", "do not" or "never" in their clause, aren't noted; when in doubt, a path is noted.
 5. **A ticket that fixes a failing or flaky required check** is infra: label it `workflow:infra` as well, so it starts before other tickets. (If its fix is to CI config itself, it is an owner task, as above.)
@@ -54,7 +55,9 @@ Follow the `build-ticket` skill, one ticket at a time. When the person typed `im
 4. **Pull request** to the base branch: "In plain words" first (what changes for you, how to try it, what could go wrong), then `Closes #<n>`, what was built, how it was tested, the findings table, the decisions taken.
 5. **Green and merge** under the merge rule (below), or leave it for the owner in attended work.
 
-**A light review,** asked for as "build #12 with a light review" (or "quick build #12"), and used when the briefing's review rounds are 1: one full-panel round without the explorer, then Correctness-only rounds for its fixes, at most 2 more, each posting its record (`review-panel`, "The light review"). It is never chosen for the person, and the merge rule stands unchanged.
+**The small review,** on a ticket marked `Review: small` (§2) whose diff stays within the small threshold (the briefing's in a ticket session, else the profile's): one round of Correctness, with the security review and the explorer where they apply, then Correctness passes under the pass cap, with no further rounds (`review-panel`, "The small review"). It is allowed in attended work always, and in a run when the briefing says the small review is on, a 1-round run included. `build-ticket` measures the diff before reviewing; past the threshold, the ticket gets the full panel (the light review in a 1-round run), and the PR body says the diff overruled the mark. The person can still ask for a light review or the full panel instead, and removing the line opts the ticket out.
+
+**A light review,** asked for as "build #12 with a light review" (or "quick build #12"), and used when the briefing's review rounds are 1 on a ticket that doesn't get the small review: one full-panel round without the explorer, then Correctness-only rounds for its fixes, at most 2 more, each posting its record (`review-panel`, "The light review"). It is never chosen for the person, and the merge rule stands unchanged.
 
 **Checklist:** blockers closed and spec read; each acceptance criterion met with its test; typecheck and full suite pass; review rounds until clean; every finding fixed or answered; PR opened with the findings table; merged under the rule (or left for the owner); notes for the next tickets posted.
 
