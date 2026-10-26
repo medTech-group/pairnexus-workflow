@@ -1,10 +1,12 @@
 # The workflow kit's own check: the vendored copy matches its lock, the profile
 # is valid. Add its job name ("workflow kit") to the ruleset's required checks
 # and to ci.required_checks in .claude/workflow/profile.toml. Setup replaces
-# BASE_BRANCH with the profile's project.base_branch.
+# BASE_BRANCH with the profile's project.base_branch. merge_group runs it for
+# a merge queue too, and does nothing without one.
 name: workflow kit
 on:
   pull_request:
+  merge_group:
   push:
     branches: [main]
 

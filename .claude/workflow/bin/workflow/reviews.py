@@ -7,7 +7,7 @@ the two can't drift. A record is a comment written for people, with one
 machine-readable line and the agents' marker:
 
     Review round 2 on `3f2a9c0`: clean. Reviewers: Standards, Spec, Correctness.
-    <!-- workflow:review kind=round round=2 commit=<full sha> reviewers=standards,spec,correctness result=clean -->
+    <!-- workflow:review kind=round round=2 commit=<full sha> reviewers=standards,spec,correctness diff=<64 hex> lines=<64 hex> result=clean -->
     <!-- workflow:agent -->
 
 - `kind`: `round` for a review round, `pass` for the short Correctness pass on
@@ -15,6 +15,11 @@ machine-readable line and the agents' marker:
 - `round`: the round's number; for a `pass`, the round it follows;
 - `commit`: the full SHA the round or pass covered (the branch's head when it ran);
 - `reviewers`: those that ran, in `REVIEWERS`' order; a `pass` is `correctness`;
+- `diff` and `lines` (#258): the hashes of the pull request's own changes at
+  `commit`, with their context lines and of the changed lines alone
+  (`own_changes`), each `unknown` where they couldn't be computed. The command
+  computes them, not this writer: without them it writes the line as before
+  #258, and the reader takes records with or without them;
 - `result`: `clean` (nothing left to fix) or `not-clean`.
 
 A spec has no commit to name (#233): its record names the SHA-256 of the spec's
@@ -47,6 +52,7 @@ import hashlib
 import re
 from dataclasses import dataclass, replace
 
+from .own_changes import UNKNOWN
 from .posts import AGENT_MARKER, _login, _number, comments_from
 
 KINDS = ("round", "pass", "spec")
@@ -56,6 +62,7 @@ SPEC_REVIEWERS = ("spec", "correctness")
 RESULTS = ("clean", "not-clean")
 
 _FIELDS = ("kind", "round", "commit", "reviewers", "result")
+_HASHED_FIELDS = ("kind", "round", "commit", "reviewers", "diff", "lines", "result")
 _SPEC_FIELDS = ("kind", "round", "body", "reviewers", "result")
 # A record line is a line of its own, at the start of the line as the writer
 # writes it, before any code fence: one quoted in a sentence, in backticks, in
@@ -93,6 +100,10 @@ class Record:
     result: str
     # A spec record's body hash (`body_hash`); None for a round or pass.
     body: str | None = None
+    # A round's or pass's hashes of its own changes (64 hex, or `unknown`);
+    # None on a record without them (before #258) and on a spec record.
+    diff: str | None = None
+    lines: str | None = None
     # Filled by `read` from the comment that carried the record.
     author: str | None = None
     comment_id: int | None = None
@@ -109,9 +120,10 @@ class Record:
                 f"<!-- workflow:review kind=spec round={self.round} body={self.body} "
                 f"reviewers={','.join(self.reviewers)} result={self.result} -->"
             )
+        hashes = "" if self.diff is None else f"diff={self.diff} lines={self.lines} "
         return (
             f"<!-- workflow:review kind={self.kind} round={self.round} commit={self.commit} "
-            f"reviewers={','.join(self.reviewers)} result={self.result} -->"
+            f"reviewers={','.join(self.reviewers)} {hashes}result={self.result} -->"
         )
 
 
@@ -169,11 +181,12 @@ def check_key(kind, commit, body_given: bool) -> None:
         raise _kind_refused(kind)
 
 
-def _checked(kind, round, commit, reviewers, result, body=None) -> Record:
+def _checked(kind, round, commit, reviewers, result, body=None, diff=None, lines=None) -> Record:
     """The one set of rules the writer and the reader share: a Record, or
     RecordError saying which flag to fix. Names are read in any case;
     `reviewers` is a comma-separated string or a list, put in the panel's order.
-    `body` is a spec record's body hash, given in place of `commit`."""
+    `body` is a spec record's body hash, given in place of `commit`. `diff` and
+    `lines` are a round's or pass's hashes of its own changes, both or neither."""
     check_key(kind, commit, body is not None)
     given, kind = kind, _kind(kind)
     if not kind:
@@ -220,18 +233,29 @@ def _checked(kind, round, commit, reviewers, result, body=None) -> Record:
         raise RecordError(f"{_BY_SPEC}: give --reviewers {','.join(SPEC_REVIEWERS)} (or the one that ran)")
     if result not in RESULTS:
         raise RecordError("give --clean or --not-clean: whether the round left anything to fix")
-    return Record(kind=kind, round=int(rnd), commit=sha, reviewers=who, result=result, body=digest)
+    if (diff is None) != (lines is None):
+        raise RecordError("a record names both hashes of its own changes, diff and lines, or neither")
+    if diff is not None:
+        if kind == "spec":
+            raise RecordError("a spec record names no hashes of a pull request's changes")
+        for name, value in (("diff", diff), ("lines", lines)):
+            if value != UNKNOWN and not (isinstance(value, str) and _SHA256.fullmatch(value)):
+                raise RecordError(f"the {name} hash is 64 hex characters or `{UNKNOWN}`, not `{_shown(value, 70)}`")
+    return Record(kind=kind, round=int(rnd), commit=sha, reviewers=who, result=result, body=digest, diff=diff, lines=lines)
 
 
-def record(*, kind, round, commit=None, reviewers, clean, body=None) -> str:
+def record(*, kind, round, commit=None, reviewers, clean, body=None, diff=None, lines=None) -> str:
     """The comment's body for one round or pass, or for a spec's review round,
     ending with a newline.
 
     `round` is a number (or its digits), `reviewers` a list of names or one
     comma-separated string, `clean` True or False (None: not given). A round or
     a pass gives `commit`; a spec's review gives `body`, the spec's text as it
-    is published, and the record names its `body_hash`. Raises RecordError,
-    saying which flag to fix, for a missing or malformed field."""
+    is published, and the record names its `body_hash`. `diff` and `lines`
+    are a round's or pass's hashes of its own changes (`own_changes`), which
+    `workflow review-record` computes; without them the line is written as
+    before #258. Raises RecordError, saying which flag to fix, for a missing or
+    malformed field."""
     if clean is True:
         result = "clean"
     elif clean is False:
@@ -246,7 +270,7 @@ def record(*, kind, round, commit=None, reviewers, clean, body=None) -> str:
         if not plain_body(body):
             raise RecordError(f"the spec's body {EMPTY_BODY}")
         digest = body_hash(body)
-    r = _checked(kind, round, commit, reviewers, result, digest)
+    r = _checked(kind, round, commit, reviewers, result, digest, diff, lines)
     names = ", ".join(n.capitalize() for n in r.reviewers)
     if r.kind == "spec":
         what, on = f"Spec review round {r.round}", f"body `{r.body[:7]}`"
@@ -261,6 +285,8 @@ def _parse(fields: str) -> Record | None:
     try:
         if set(got) == set(_FIELDS):
             r = _checked(*(got[k] for k in _FIELDS))
+        elif set(got) == set(_HASHED_FIELDS):
+            r = _checked(*(got[k] for k in _FIELDS), diff=got["diff"], lines=got["lines"])
         elif set(got) == set(_SPEC_FIELDS):
             r = _checked(got["kind"], got["round"], None, got["reviewers"], got["result"], got["body"])
         else:

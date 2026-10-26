@@ -117,6 +117,21 @@ def _rounds(n: int) -> str:
     return "1 (the light review)" if n == 1 else str(n)
 
 
+def _small(review: dict, profile: Profile) -> str:
+    """The small review's line: on or off, with the threshold to measure against."""
+    if not review["small"]:
+        return "off: build a ticket marked `Review: small` with the review above, as any other"
+    past = presets_mod.past_small(review) + (", as for an unmarked ticket" if review["rounds"] == 1 else "")
+    return (
+        "on: a ticket marked `Review: small` gets the small review (`review-panel`: one round, Correctness, "
+        f"{presets_mod.small_reviewers(review, profile)}) while its diff stays within "
+        f"{presets_mod.threshold_words(review)} outside tests (added plus removed). Measure it before reviewing: "
+        "`python3 .claude/workflow/bin/workflow.py review-record --measure --commit <sha> "
+        f"--small-max-lines {review['small_max_lines']} --small-max-files {review['small_max_files']}`; "
+        f"past the threshold, {past}"
+    )
+
+
 def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking: int, by_hand: int | None) -> dict:
     merge = charter.get("merge") or {}
     review = presets_mod.review_of(charter, profile)
@@ -136,6 +151,12 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
         "merge.waived": ", ".join(waived) if waived else "none: every required check must be green",
         "run.review_rounds": _rounds(review["rounds"]),
         "review.rounds": str(review["rounds"]),  # the bare number, for merge-check's --review-rounds
+        "review.small": _small(review, profile),
+        "review.passes_words": presets_mod.passes_words(review),
+        # The bare numbers, for merge-check's --review-passes, --small-max-lines and --small-max-files.
+        "review.passes": str(review["passes"]),
+        "review.small_max_lines": str(review["small_max_lines"]),
+        "review.small_max_files": str(review["small_max_files"]),
         "run.check_in_minutes": str((charter.get("limits") or {}).get("check_in_minutes", profile.check_in_minutes)),
         "open_decisions": "take the choice most consistent with the spec, ADRs and the project's rules, and record it in the PR body"
         if charter.get("open_decisions", "decide-and-record") == "decide-and-record"
