@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -260,7 +261,7 @@ def test_a_lighter_review_with_a_security_review_ticket(tmp_path, env):
 def _reviewed(tmp_path, env, rounds, explorer):
     """A charter whose own review is `{rounds, explorer}`, no preset."""
     f = tmp_path / "charter.json"
-    c = json.loads(open(_charter(tmp_path, env)).read())
+    c = json.loads(Path(_charter(tmp_path, env)).read_text())
     c.pop("preset", None)
     c["review"] = {"rounds": rounds, "explorer": explorer}
     f.write_text(json.dumps(c))
@@ -283,7 +284,7 @@ def test_with_no_explorer_in_the_profile_neither_side_says_the_explorer_is_on(tm
     est, _ = _estimate(env, _charter(tmp_path, env, preset="light"), "--tickets", "3", "--security", "12")
     (w,) = est["warnings"]
     assert w.startswith(LIGHTER.format("up to 1 round, no UI explorer", "up to 3 rounds, no UI explorer")), w
-    # The explorer alone is never lighter when the project has none.
+    # As before, the explorer alone is never lighter when the project has none.
     est, _ = _estimate(env, _reviewed(tmp_path, env, 3, False), "--tickets", "3", "--security", "12")
     assert est["warnings"] == []
 
@@ -298,6 +299,16 @@ def test_with_an_explorer_in_the_profile_the_review_words_are_unchanged(tmp_path
     est, _ = _estimate(env, _reviewed(tmp_path, env, 3, False), "--tickets", "3", "--security", "12")
     (w,) = est["warnings"]
     assert w.startswith(LIGHTER.format("up to 3 rounds, no UI explorer", "up to 3 rounds, UI explorer on")), w
+
+
+def test_with_no_profile_that_reads_the_review_words_are_unchanged(tmp_path, env):
+    """As `presets.small_reviewers`: with no profile, the run's review alone says
+    whether the explorer runs."""
+    charter = _reviewed(tmp_path, env, 2, True)
+    (tmp_path / ".claude/workflow/profile.toml").write_text("not = = toml\n")
+    est, _ = _estimate(env, charter, "--tickets", "3", "--security", "12")
+    (w,) = est["warnings"]
+    assert w.startswith(LIGHTER.format("up to 2 rounds, UI explorer on", "up to 3 rounds, no UI explorer")), w
 
 
 def test_text_and_json_agree(tmp_path, env):
@@ -403,7 +414,7 @@ def test_bad_inputs_are_clean_errors(tmp_path, env):
         assert p.returncode == 1, args
         assert p.stderr.startswith("workflow charter estimate:") and "Traceback" not in p.stderr, p.stderr
     # An unvalidated review says nothing about the review, rather than crashing.
-    c = json.loads(open(_charter(tmp_path, env)).read())
+    c = json.loads(Path(_charter(tmp_path, env)).read_text())
     c["review"] = {"rounds": "3", "explorer": True}
     f = tmp_path / "odd.json"
     f.write_text(json.dumps(c))
@@ -422,7 +433,7 @@ def test_never_money(tmp_path, env):
 
 
 def _approvable(tmp_path, env):
-    c = json.loads(open(_charter(tmp_path, env)).read())
+    c = json.loads(Path(_charter(tmp_path, env)).read_text())
     c["plan"] = [13, 143]
     f = tmp_path / "c2.json"
     f.write_text(json.dumps(c))

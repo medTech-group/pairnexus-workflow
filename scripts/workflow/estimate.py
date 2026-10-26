@@ -195,7 +195,7 @@ def _runs_explorer(rv: dict, profile: Any) -> bool:
     return presets_mod.runs_explorer(rv) and (profile is None or presets_mod.has_explorer(profile))
 
 
-def _review_words(rv: dict, profile: Any = None) -> str:
+def _review_words(rv: dict, profile: Any) -> str:
     return f"up to {presets_mod.plural(rv['rounds'], 'round', 'rounds')}, " + (
         "UI explorer on" if _runs_explorer(rv, profile) else "no UI explorer"
     )
