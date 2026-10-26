@@ -472,7 +472,7 @@ def test_the_panels_docstring_says_which_review_comes_before_a_pass():
 def test_the_merge_check_skills_commits_row_says_their_order():
     skill = _read("skills/merge-check/SKILL.md")
     commits = next(ln for ln in skill.splitlines() if ln.startswith("| `--commits` |"))
-    assert "oldest first, as GitHub gives them" in commits
+    assert "oldest first, as `GET repos/<repo>/pulls/12/commits` gives them" in commits
 
 
 def test_flow_4_item_4_says_a_recheck_of_open_findings_always_counts():

@@ -64,7 +64,7 @@ In a cloud session, whose proxy refuses GraphQL and `collaborators/<login>/permi
 |---|---|
 | `--pr` | the pull request: `GET repos/<repo>/pulls/12`, with `changed_files`, `comments`, `commits` and `head.sha` |
 | `--files` | its changed files, every page, each as GitHub's REST list gives it: `filename` (and `previous_filename` for a rename), `status`, and `additions` and `deletions`, which the small threshold counts, and `sha` and `patch`, which `head_hashes` hashes (without them, no review carries over a merge of the base) |
-| `--commits` | its commits, every page, oldest first, as GitHub gives them, each with its `parents`, which tell a merge of the base (without them, every pass counts toward the pass cap) |
+| `--commits` | its commits, every page, oldest first, as `GET repos/<repo>/pulls/12/commits` gives them, each with its `parents`, which tell a merge of the base (without them, every pass counts toward the pass cap) |
 | `--checks` | the head commit's check runs, every page, then its combined status, one JSON value after another in one file |
 | `--rulesets` | each of the repository's rulesets in full (`GET repos/<repo>/rulesets/<id>`) |
 | `--threads` | the review threads, from GraphQL: `reviewThreads` with `totalCount` and `pageInfo`, every page |

@@ -5,7 +5,7 @@
 **Wording: which review comes before a pass, and the order of `--commits`** (#301, from #261's last Correctness pass). Nothing changes in behaviour.
 
 - **`merge.py`'s `_panel` docstring** says the counted review before a pass is the latest by the PR's history.
-- **The `merge-check` skill's `--commits` row** says the commits come oldest first, as GitHub gives them: a hand-built newest-first list would rank the review records backwards.
+- **The `merge-check` skill's `--commits` row** says the commits come oldest first, as `GET repos/<repo>/pulls/12/commits` gives them: a hand-built newest-first list (a branch's commits, say) would rank the review records backwards.
 - **Flow §4 item 4** says a pass that rechecks open findings always counts toward the pass cap, beside the free pass on a merge of the base.
 - Tests: three text tests in `tests/test_merge_check_carry_over.py`.
 - **For projects updating:** nothing to do.
