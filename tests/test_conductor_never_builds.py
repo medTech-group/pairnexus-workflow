@@ -164,7 +164,7 @@ def test_the_pattern_is_linear_on_hostile_prompts():
 
     from workflow.context import names_a_ticket
 
-    for prompt in ("do-" * 60_000, "fix-" * 60_000, "build " + "a-" * 60_000 + "#1", " /" + "a-" * 60_000, '"' * 120_000):
+    for prompt in ("do-" * 60_000, "fix-" * 60_000, "build " + "a-" * 60_000 + "#1", " /" + "a-" * 60_000, "build " + '"' * 120_000 + "#1"):
         began = time.monotonic()
         names_a_ticket(prompt)
         assert time.monotonic() - began < 1, repr(prompt[:20])
@@ -253,6 +253,8 @@ def test_the_conductor_says_what_a_named_ticket_becomes():
         "when it is already in the plan or running",
         "it won't start in this run",
         "a `stop_run_on` condition met",
+        "doesn't list it as ready (blocked, closed, without `ready-for-agent`, or not a build ticket)",
+        "if it is ready (as above), add it to the plan being drafted, and to `scope.tickets` when that is a list, take it out of `scope.exclude`",
         "with #<n> taken out of `scope.exclude`",
         "a leftover claimed by an earlier run goes through the kick-off's leftover question",
         "pin the plan again when `follow_unblocked` is false, run the estimate again",
