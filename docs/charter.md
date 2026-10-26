@@ -127,7 +127,7 @@ When a previous charter exists, start from `workflow charter reuse old.json` (it
   "scope":   {"tickets": "all-ready", "exclude": [143], "follow_unblocked": true},
   "limits":  {"ends_at": "2026-10-13T03:30:00Z", "max_parallel": 2, "max_sessions": 40, "max_retries": 1, "check_in_minutes": 20},
   "preset":  "normal",
-  "review":  {"rounds": 3, "explorer": true, "small": true, "passes": 2},
+  "review":  {"rounds": 3, "explorer": true, "small": true},
   "merge":   {"mode": "session", "waived_checks": ["Backend tests (seam 1)"]},
   "release": {"when": "end", "steps": ["deploy poc"], "smoke_test": true},
   "plan":    [146, 147, 148],
