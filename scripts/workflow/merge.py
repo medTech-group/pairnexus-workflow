@@ -208,8 +208,8 @@ REASONS = {
             "new": ("Not yet: the last review found things to fix.", "Fix them, then ask for a short check of the latest changes."),
             "developer": ("Not yet: review round {round} on {round_short} wasn't clean, and no round is left ({allowed} allowed).", "Fix the findings and run a Correctness pass on the head; no further round."),
         },
-        # The small review (#257): its round, or the full-panel round asked for past the
-        # small threshold, counts as the last allowed one, whatever the round limit.
+        # The small review (#257): its round (`small`), and the full-panel round after it
+        # (`after_small`), count as the last allowed one, whatever the round limit.
         "small": {
             "new": ("Not yet: the last review found things to fix.", "Fix them, then ask for a short check of the latest changes."),
             "developer": ("Not yet: review round {round} on {round_short} wasn't clean, and no counted round ran Spec (the small review), so it counts as the last round.", "Fix the findings and run a Correctness pass on the head; no further round."),
