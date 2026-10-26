@@ -25,16 +25,21 @@ A file with additions or deletions but no patch (too large for GitHub to show),
 or with no status, makes both hashes `unknown` (`CantHash`).
 
 Locally, `git diff` is pinned to what GitHub shows, whatever the configuration
-says: no external diff or textconv, the Myers algorithm with git's default
-indent heuristic, 3 lines of context, no hunks joined across unchanged lines,
-renames found (copies never), UTF-8 paths, empty context lines with their space.
+or the environment says: no external diff or textconv, the Myers algorithm with
+git's default indent heuristic, 3 lines of context, no hunks joined across
+unchanged lines, renames found (copies never) within git's default limit,
+UTF-8 paths, empty context lines with their space, a submodule as its
+`Subproject commit` lines and never left out, and git's default size past
+which a file is binary, and the attributes of the commit itself. A type change, which git shows as a removal and an
+addition of the same path, is one `changed` file with both hunks.
 """
 
 from __future__ import annotations
 
 import hashlib
+import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .small import CantMeasure, Change, _git, base_ref
@@ -107,73 +112,90 @@ def of_files(files: list[Change]) -> Hashes:
 # ---------- the local side: `review-record` ----------
 
 _DIFF = (
-    "-c", "core.quotePath=false", "-c", "diff.suppressBlankEmpty=false",
+    "-c", "core.quotePath=false", "-c", "diff.suppressBlankEmpty=false", "-c", "core.bigFileThreshold=512m",
     "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-relative", "--diff-algorithm=myers",
-    "--indent-heuristic", "-U3", "--inter-hunk-context=0", "-M",
+    "--indent-heuristic", "-U3", "--inter-hunk-context=0", "-M", "-l1000", "--submodule=short",
+    "--ignore-submodules=none", "--src-prefix=a/", "--dst-prefix=b/",
 )
 _STATUS = {"A": "added", "D": "removed", "M": "modified", "R": "renamed", "T": "changed"}
 _SECTION = re.compile(rb"^diff --git ", re.M)
 
 
-def _raw(out: bytes) -> list[tuple[str, str | None, str, str]]:
-    """`git diff --raw -z --no-abbrev`'s entries: (path, old path for a rename,
-    status, blob SHA at the commit). A modification with the same blob on both
-    sides is a change of mode alone: `changed`."""
+def _raw(out: bytes) -> list[tuple[Change, int]]:
+    """`git diff --raw -z --no-abbrev`'s files, without their patches: path,
+    old path for a rename, status, and blob SHA at the commit (none when
+    removed), each with how many sections `git diff -p` shows it in: two for a
+    type change, as a removal and an addition. A modification with the same
+    blob on both sides is a change of mode alone: `changed`."""
     tokens = out.split(b"\0")
-    entries, i = [], 0
+    files, i = [], 0
     while i < len(tokens) and tokens[i]:
-        _modes, _new_mode, old_sha, new_sha, letter = tokens[i].decode("ascii").lstrip(":").split(" ")
+        _old_mode, _new_mode, old_sha, new_sha, letter = tokens[i].decode("ascii").lstrip(":").split(" ")
         status = _STATUS.get(letter[:1])
         if status is None:
             raise CantHash(f"git reported a change of kind `{letter}`, which has no GitHub name")
         if status == "modified" and old_sha == new_sha:
             status = "changed"
-        if status == "renamed":
-            previous, path = (t.decode("utf-8", "surrogateescape") for t in tokens[i + 1:i + 3])
-            i += 3
-        else:
-            previous, path = None, tokens[i + 1].decode("utf-8", "surrogateescape")
-            i += 2
-        entries.append((path, previous, status, new_sha))
-    return entries
+        paths = [t.decode("utf-8", "surrogateescape") for t in tokens[i + 1:i + (3 if status == "renamed" else 2)]]
+        i += 1 + len(paths)
+        previous, path = paths if status == "renamed" else (None, paths[0])
+        files.append((Change(path, previous, status, sha=None if status == "removed" else new_sha), 2 if letter == "T" else 1))
+    return files
 
 
-def _hunks(section: bytes) -> str | None:
-    """A file's section of `git diff -p` as GitHub's `patch`: its hunks, from
-    the first `@@` line, its header lines left out; None with no hunks."""
-    at = section.find(b"\n@@ ")
-    return None if at == -1 else section[at + 1:].decode("utf-8", "surrogateescape")
+def _with_patches(patch: bytes, files: list[tuple[Change, int]]) -> list[Change]:
+    """Each file with its hunks from `git diff -p`'s output, in `--raw`'s order,
+    as GitHub's `patch` gives them: from the first `@@` line, header lines left
+    out; None with no hunks. A type change's two sections have their hunks
+    joined. A section whose `diff --git` line doesn't name its file's paths
+    (one git quotes isn't compared), or counts that don't match, raise
+    CantHash rather than pair hunks with the wrong file."""
+    sections = _SECTION.split(patch)[1:]
+    if len(sections) != sum(n for _, n in files):
+        raise CantHash("git diff's list of files and its patch don't match")
+    out = []
+    for c, n in files:
+        mine, sections = sections[:n], sections[n:]
+        hunks = []
+        for section in mine:
+            names = section.split(b"\n", 1)[0].decode("utf-8", "surrogateescape")
+            if not names.startswith('"') and names != f"a/{c.previous or c.path} b/{c.path}":
+                raise CantHash(f"git diff's patch doesn't match its list of files at `{c.path}`")
+            at = section.find(b"\n@@ ")
+            if at != -1:
+                hunks.append(section[at + 1:].decode("utf-8", "surrogateescape"))
+        out.append(replace(c, patch="".join(hunks) or None))
+    return out
 
 
 def local_files(root: Path, commit: str, ref: str) -> list[Change]:
     """The files changed from the merge base of `ref` to `commit`, each with its
-    status, blob SHA and patch, as GitHub's REST list gives them. Raises
+    status, blob SHA and patch, as GitHub's REST list gives them. The
+    attributes (a `-diff` or `binary` file) are read from `commit`'s own
+    `.gitattributes`, never the working tree's or a global file. Raises
     CantMeasure or CantHash."""
     mb = _git(root, "merge-base", ref, commit)
     if mb.returncode != 0:
-        raise CantMeasure(f"the commit {commit[:7]} has no merge base with {ref.removeprefix('refs/remotes/')}")
-    base = mb.stdout.strip()
-    raw = _git(root, *_DIFF, "--raw", "-z", "--no-abbrev", base, commit, binary=True)
-    patch = _git(root, *_DIFF, "-p", base, commit, binary=True)
+        shallow = _git(root, "rev-parse", "--is-shallow-repository").stdout.strip() == "true"
+        raise CantMeasure(f"the commit {commit[:7]} has no merge base with {ref.removeprefix('refs/remotes/')}"
+                          + (" in this shallow clone's history" if shallow else ""))
+    base, attrs = mb.stdout.strip(), {"GIT_ATTR_SOURCE": commit}
+    pinned = ("-c", f"core.attributesFile={os.devnull}", *_DIFF)
+    raw = _git(root, *pinned, "--raw", "-z", "--no-abbrev", base, commit, binary=True, env=attrs)
+    patch = _git(root, *pinned, "-p", base, commit, binary=True, env=attrs)
     for got in (raw, patch):
         if got.returncode != 0:
             raise CantMeasure(f"git diff failed: {got.stderr.decode('utf-8', 'replace').strip()}")
-    entries = _raw(raw.stdout)
-    sections = _SECTION.split(patch.stdout)[1:]
-    if len(sections) != len(entries):
-        raise CantHash(f"git diff listed {len(entries)} files but showed {len(sections)}")
-    return [Change(path, previous, status, sha=None if status == "removed" else sha, patch=_hunks(section))
-            for (path, previous, status, sha), section in zip(entries, sections)]
+    return _with_patches(patch.stdout, _raw(raw.stdout))
 
 
-def local(root: Path, commit: str, base: str, note, source: str = "--base") -> Hashes:
+def local(root: Path, commit: str, base: str, note, source: str) -> Hashes:
     """The hashes of `commit`'s own changes: from the merge base of
     `origin/<base>`, fetched first (`small.base_ref`, which notes a failed
     fetch), to `commit`. A commit not in the repository is found before the
     fetch. Raises CantMeasure or CantHash."""
-    there = _git(root, "cat-file", "-e", f"{commit}^{{commit}}")
-    if there.returncode != 0:
-        if "not a git repository" in there.stderr:
-            raise CantMeasure("there is no git repository here")
+    if _git(root, "rev-parse", "--git-dir").returncode != 0:
+        raise CantMeasure("there is no git repository here")
+    if _git(root, "cat-file", "-e", f"{commit}^{{commit}}").returncode != 0:
         raise CantMeasure(f"{commit[:7]} isn't a commit in this repository")
     return of_files(local_files(root, commit, base_ref(root, base, note, source)))

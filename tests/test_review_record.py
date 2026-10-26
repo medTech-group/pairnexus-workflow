@@ -12,6 +12,13 @@ SHA = "3f2a9c0b7de14a2c9e8f5d6b1a0c3e2f4d5b6a7c"
 OTHER = "0123456789abcdef0123456789abcdef01234567"
 
 
+@pytest.fixture(autouse=True)
+def _no_project(tmp_path, monkeypatch):
+    """No profile and no git here: a round's or pass's hashes (#258) are
+    `unknown` without running git in the kit's own checkout."""
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+
+
 def run(capsys, *args):
     code = cli.main(["review-record", *args])
     out, err = capsys.readouterr()

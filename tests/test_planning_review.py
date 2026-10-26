@@ -269,12 +269,17 @@ def _run_review_record(command: str, capsys, paths: dict[str, str]) -> str:
     assert cli.main(["review-record", *args]) == 0, command
     out, err = capsys.readouterr()
     # A made-up commit's hashes are `unknown` (#258), said on standard error.
-    assert all(line.endswith("unknown for diff and lines") for line in err.splitlines()), err
+    unknown = f"workflow review-record: can't hash the pull request's own changes: there is no git repository here: unknown for diff and lines\n"
+    assert err in ("", unknown), err
     return out
 
 
-def test_the_planning_reviews_commands_run(tmp_path, capsys):
+def test_the_planning_reviews_commands_run(tmp_path, capsys, monkeypatch):
     """Each fenced command in the planning review, run through `cli.main` as written."""
+    (tmp_path / ".claude/workflow").mkdir(parents=True)
+    (tmp_path / ".claude/workflow/profile.toml").write_text('[project]\nname = "demo"\nrepo = "acme/demo"\nbase_branch = "main"\n')
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))
     commands = _commands_of_planning()
     assert len(commands) == 3
     spec = tmp_path / "spec.md"

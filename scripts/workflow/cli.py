@@ -1083,7 +1083,7 @@ def cmd_review_record(a) -> int:
     a spec's review round (keyed to its body's SHA-256) posts."""
     # Each flag is a list (`append`), so a repeated one is refused rather than
     # the last silently winning; repeated --reviewers add up.
-    for flag in ("kind", "round", "commit", "body"):
+    for flag in ("kind", "round", "commit", "body", "base"):
         if len(getattr(a, flag) or []) > 1:
             print(f"workflow review-record: give --{flag} once", file=sys.stderr)
             return 2
@@ -1101,6 +1101,7 @@ def cmd_review_record(a) -> int:
         if path is not None:
             reviews_mod.check_key(one["kind"], one["commit"], body_given=True)
         body = None if path is None else _spec_body(path)
+        # Checked before any git runs: a refused record is never hashed.
         text = reviews_mod.record(**one, reviewers=reviewers, clean=a.clean, body=body)
         if (one["kind"] or "").strip().lower() in ("round", "pass"):
             hashes = _own_hashes(a, one["commit"].strip().lower())
@@ -1117,22 +1118,36 @@ def _own_hashes(a, commit: str) -> own_changes_mod.Hashes:
     of `origin/<base>`, fetched first, to `commit`, never the working head.
     Whatever stops them, they are `unknown`, with a note on standard error:
     the record still counts, and standard output stays the record alone."""
-    note = lambda text: print(f"workflow review-record: {text}", file=sys.stderr)  # noqa: E731
     unknown = f"{own_changes_mod.UNKNOWN} for diff and lines"
     try:
         prof = load()
     except (ProfileError, OSError, UnicodeDecodeError) as e:
-        if not a.base:
-            note(f"couldn't read the profile for the base branch ({e}): {unknown}")
+        if not _given_base(a):
+            _record_note(f"couldn't read the profile for the base branch ({e}): {unknown}")
             return own_changes_mod.UNKNOWN_HASHES
-        root, base = project_root(), a.base
-    else:
-        root, base = prof.root, a.base or prof.base_branch
+        prof = None
     try:
-        return own_changes_mod.local(root, commit, base, note, "--base" if a.base else "the profile's project.base_branch")
+        base, source = _base(a, prof)
+        return own_changes_mod.local(prof.root if prof else project_root(), commit, base, _record_note, source)
     except (small_mod.CantMeasure, own_changes_mod.CantHash) as e:
-        note(f"can't hash the pull request's own changes: {e}: {unknown}")
+        _record_note(f"can't hash the pull request's own changes: {e}: {unknown}")
         return own_changes_mod.UNKNOWN_HASHES
+
+
+def _record_note(text: str) -> None:
+    print(f"workflow review-record: {text}", file=sys.stderr)
+
+
+def _given_base(a) -> str | None:
+    return (a.base or [None])[0]
+
+
+def _base(a, prof) -> tuple[str, str]:
+    """`review-record`'s base branch, and where it came from, for a name git
+    refuses: `--base`, else the profile's."""
+    if _given_base(a) is not None:
+        return _given_base(a), "--base"
+    return prof.base_branch, "the profile's project.base_branch"
 
 
 def _measure(a) -> int:
@@ -1153,9 +1168,9 @@ def _measure(a) -> int:
     except (ProfileError, OSError, UnicodeDecodeError) as e:
         print(f"workflow review-record: can't measure: couldn't read the profile: {e}", file=sys.stderr)
         return 1
-    note = lambda text: print(f"workflow review-record: {text}", file=sys.stderr)  # noqa: E731
     try:
-        ref = small_mod.base_ref(prof.root, a.base or prof.base_branch, note, "--base" if a.base else "the profile's project.base_branch")
+        base, source = _base(a, prof)
+        ref = small_mod.base_ref(prof.root, base, _record_note, source)
         changes = small_mod.local_changes(prof.root, commit, ref)
     except small_mod.CantMeasure as e:
         print(f"workflow review-record: can't measure: {e}", file=sys.stderr)
@@ -1723,7 +1738,7 @@ def main(argv: list[str] | None = None) -> int:
     result.add_argument("--clean", dest="clean", action="store_true", default=None, help="nothing left to fix")
     result.add_argument("--not-clean", dest="clean", action="store_false", help="the round found something to fix")
     s.add_argument("--measure", action="store_true", help="write no record: print --commit's changed lines and files outside tests, against the merge base of origin/<base>, and whether they are within the small threshold, counted as merge-check counts them")
-    s.add_argument("--base", metavar="BRANCH", help="the base branch, fetched as origin/<base> first (default: the profile's project.base_branch)")
+    s.add_argument("--base", action="append", metavar="BRANCH", help="the base branch, fetched as origin/<base> first (default: the profile's project.base_branch)")
     s.add_argument("--small-max-lines", metavar="N", type=_small_max_lines, help="with --measure: the small threshold's changed lines, 1 to 1000 (default: the profile's run.small_max_lines)")
     s.add_argument("--small-max-files", metavar="N", type=_small_max_files, help="with --measure: the small threshold's changed files, 1 to 50 (default: the profile's run.small_max_files)")
     s.set_defaults(fn=cmd_review_record)

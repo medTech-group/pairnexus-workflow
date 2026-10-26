@@ -42,7 +42,9 @@ def edit(root, rel, old, new):
 def checkout(tmp_path, monkeypatch):
     """A checkout whose `origin` is a local bare repository, on a branch whose
     change has a file with two hunks, a rename with a change, a rename alone,
-    a binary file, an empty file, a change of mode alone and a removed file."""
+    a binary file, an empty file, a change of mode alone, a removed file, a
+    path with a space and an accent, and a copy of a changed file (found as
+    added: copies are never detected)."""
     origin, root = tmp_path / "origin.git", tmp_path / "work"
     git(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
     git(tmp_path, "clone", "-q", str(origin), str(root))
@@ -66,6 +68,8 @@ def checkout(tmp_path, monkeypatch):
     (root / "src/__init__.py").write_text("")
     (root / "bin/run.sh").chmod(0o755)
     (root / "data/gone.txt").unlink()
+    (root / "docs/café notes.md").write_text("Ça va.\n")
+    (root / "src/app_copy.py").write_text(APP)
     commit_all(root)
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
     monkeypatch.chdir(root)
@@ -230,12 +234,63 @@ def test_the_base_is_an_option(checkout, capsys):
     assert git(checkout, "rev-parse", "origin/release") == head()
 
 
-def test_the_configuration_doesnt_change_them(checkout, capsys):
+def test_the_configuration_and_the_environment_dont_change_them(checkout, capsys, monkeypatch):
     before = recorded(capsys, head())
     for key, value in [("diff.algorithm", "patience"), ("diff.context", "8"), ("diff.interHunkContext", "20"),
                        ("diff.suppressBlankEmpty", "true"), ("diff.renames", "copies"), ("diff.indentHeuristic", "false"),
-                       ("diff.noprefix", "true"), ("core.quotePath", "true"), ("diff.external", "false")]:
+                       ("diff.noprefix", "true"), ("diff.mnemonicPrefix", "true"), ("core.quotePath", "true"),
+                       ("diff.external", "false"), ("diff.renameLimit", "1"), ("core.bigFileThreshold", "10"),
+                       ("color.ui", "always"), ("diff.orderFile", "/dev/null")]:
         git(checkout, "config", key, value)
+    monkeypatch.setenv("GIT_DIFF_OPTS", "--unified=0")
+    monkeypatch.setenv("GIT_EXTERNAL_DIFF", "false")
+    assert recorded(capsys, head()) == before
+
+
+def test_the_attributes_are_the_commits_own(checkout, capsys):
+    reviewed = head()
+    before = recorded(capsys, reviewed)
+    (checkout / ".gitattributes").write_text("*.py -diff\n")
+    commit_all(checkout, "attributes after the review")
+    git(checkout, "config", "core.attributesFile", str(checkout / ".gitattributes"))
+    assert recorded(capsys, reviewed) == before
+    # The commit's own attributes do count, as GitHub reads them.
+    files = {c.path: c for c in own_changes.local_files(checkout, head(), "refs/remotes/origin/main")}
+    assert files["src/app.py"].patch is None and files["src/app.py"].sha == git(checkout, "rev-parse", "HEAD:src/app.py")
+
+
+def test_a_type_change_is_one_changed_file_with_both_hunks(checkout, capsys):
+    git(checkout, "checkout", "-q", "-b", "link", "origin/main")
+    (checkout / "data/gone.txt").unlink()
+    os.symlink("../src/app.py", checkout / "data/gone.txt")
+    commit_all(checkout)
+    (c,) = own_changes.local_files(checkout, head(), "refs/remotes/origin/main")
+    assert (c.path, c.status, c.sha) == ("data/gone.txt", "changed", git(checkout, "rev-parse", "HEAD:data/gone.txt"))
+    assert c.patch == "@@ -1,2 +0,0 @@\n-a\n-b\n@@ -0,0 +1 @@\n+../src/app.py\n\\ No newline at end of file\n"
+    assert "unknown" not in recorded(capsys, head())
+
+
+def test_a_submodule_is_its_commit_lines_whatever_the_configuration(checkout, capsys, tmp_path):
+    lib = tmp_path / "lib"
+    git(tmp_path, "init", "-q", "-b", "main", str(lib))
+    (lib / "x.txt").write_text("1\n")
+    old = commit_all(lib, "one")
+    git(checkout, "checkout", "-q", "-b", "sub", "origin/main")
+    git(checkout, "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(lib), "libs/lib")
+    commit_all(checkout, "the submodule")
+    git(checkout, "push", "-q", "origin", "HEAD:main")
+    (lib / "x.txt").write_text("2\n")
+    new = commit_all(lib, "two")
+    git(checkout / "libs/lib", "-c", "protocol.file.allow=always", "pull", "-q", "origin", "main")
+    commit_all(checkout, "bump")
+    (c,) = own_changes.local_files(checkout, head(), "refs/remotes/origin/main")
+    assert (c.path, c.status, c.sha) == ("libs/lib", "modified", new)
+    assert c.patch == f"@@ -1 +1 @@\n-Subproject commit {old}\n+Subproject commit {new}\n"
+    before = recorded(capsys, head())
+    for key, value in [("diff.submodule", "log"), ("diff.ignoreSubmodules", "all"), ("submodule.libs/lib.ignore", "all")]:
+        git(checkout, "config", key, value)
+        assert recorded(capsys, head()) == before, key
+    git(checkout, "config", "diff.submodule", "diff")
     assert recorded(capsys, head()) == before
 
 
@@ -263,7 +318,8 @@ def test_binary_renamed_empty_and_mode_only_files_hash_as_defined(checkout, caps
     blob = lambda rel: git(root, "rev-parse", f"HEAD:{rel}")  # noqa: E731
     assert {p: (c.previous, c.status) for p, c in files.items()} == {
         "assets/logo.png": (None, "added"), "bin/run.sh": (None, "changed"), "data/gone.txt": (None, "removed"), "docs/moved.md": ("docs/same.md", "renamed"), "docs/new.md": ("docs/old.md", "renamed"),
-        "src/__init__.py": (None, "added"), "src/app.py": (None, "modified"),
+        "src/__init__.py": (None, "added"), "src/app.py": (None, "modified"), "docs/café notes.md": (None, "added"),
+        "src/app_copy.py": (None, "added"),
     }
     # No hunks: binary, empty, a rename alone, a mode change alone.
     for rel in ("assets/logo.png", "src/__init__.py", "docs/moved.md", "bin/run.sh"):
@@ -285,6 +341,8 @@ def test_binary_renamed_empty_and_mode_only_files_hash_as_defined(checkout, caps
         ("docs/new.md", "docs/old.md", "renamed", blob("docs/new.md"),
          "@@ -2,7 +2,7 @@ Note 1.\n Note 2.\n Note 3.\n Note 4.\n-Note 5.\n+Note five.\n Note 6.\n Note 7.\n Note 8."),
         ("src/__init__.py", "", "added", EMPTY_BLOB, None),
+        ("docs/café notes.md", "", "added", blob("docs/café notes.md"), "@@ -0,0 +1 @@\n+Ça va."),
+        ("src/app_copy.py", "", "added", blob("src/app_copy.py"), "@@ -0,0 +1,30 @@\n" + "\n".join("+" + ln for ln in APP.splitlines())),
         ("src/app.py", "", "modified", blob("src/app.py"),
          "@@ -7,7 +7,7 @@\n line 7\n line 8\n line 9\n-line 10\n+line ten\n line 11\n line 12\n line 13\n"
          "@@ -17,7 +17,7 @@ line 16\n line 17\n line 18\n line 19\n-line 20\n+line twenty\n line 21\n line 22\n line 23"),
@@ -377,6 +435,22 @@ def test_an_unreadable_profile_without_base_gives_unknown_and_with_base_hashes(c
     assert recorded(capsys, head(), "--base", "main") == before
 
 
+def test_a_shallow_clone_without_the_merge_base_says_so(checkout, capsys, tmp_path, monkeypatch):
+    git(checkout, "push", "-q", "origin", "HEAD")
+    shallow = tmp_path / "shallow"
+    git(tmp_path, "clone", "-q", "--depth", "1", "--no-single-branch", "-b", "claude/build-1", f"file://{tmp_path / 'origin.git'}", str(shallow))
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(shallow))
+    monkeypatch.chdir(shallow)
+    _, out, err = run(capsys, "--kind", "round", "--round", "1", "--commit", head(), "--reviewers", "correctness", "--clean")
+    assert "diff=unknown lines=unknown" in out and "no merge base with origin/main in this shallow clone's history" in err
+
+
+def test_base_given_twice_is_refused(checkout, capsys):
+    code, out, err = run(capsys, "--kind", "round", "--round", "1", "--commit", head(), "--reviewers", "correctness", "--clean",
+                         "--base", "nosuch", "--base", "main")
+    assert code == 2 and out == "" and "give --base once" in err
+
+
 def test_a_refused_record_runs_no_git(checkout, capsys, monkeypatch):
     monkeypatch.setattr(own_changes, "local", lambda *a, **k: pytest.fail("hashed a refused record"))
     code, out, err = run(capsys, "--kind", "round", "--round", "0", "--commit", head(), "--reviewers", "correctness", "--clean")
@@ -388,7 +462,9 @@ def test_a_refused_record_runs_no_git(checkout, capsys, monkeypatch):
 
 def test_the_review_panel_gives_the_base_where_it_isnt_the_profiles():
     text = (KIT / "skills/review-panel/SKILL.md").read_text(encoding="utf-8")
-    assert "--base <branch>" in text and "project.base_branch" in text
+    assert "When the pull request's base branch isn't the profile's `project.base_branch`, add `--base <branch>` to the command." in text
+    # The diff the reviewers read is against the same base.
+    assert "The base is the pull request's base branch (the profile's `project.base_branch` unless it targets another)" in text
 
 
 def test_the_changelog_has_the_note():
