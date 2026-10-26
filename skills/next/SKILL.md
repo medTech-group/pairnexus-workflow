@@ -65,7 +65,7 @@ Say which one you picked and why, in one line, with a build ticket's notes from 
 - **Build it with a light review**: as above;
 - **Build it with the full panel**: every reviewer, as for an unmarked ticket.
 
-The light review is always second, never recommended, and never chosen for them. When they already said how ("build #12", "build #12 with a light review", "build #12 with the full panel", "quick build #12"; the `build` argument alone isn't saying how), don't ask again: build it as they said. In a ticket session (`WORKFLOW_ROLE=ticket`, or a branch named like the profile's `run.ticket_branch`), ask nothing: build as the briefing says.
+The light review is always second, never recommended, and never chosen for them. When they already said how ("build #12", "build #12 with a light review", "build #12 with the full panel", "quick build #12"; the `build` argument alone isn't saying how), don't ask again: build it as they said. In a ticket session (`WORKFLOW_ROLE` set to anything but `attended` or `conductor`, or a branch named like the profile's `run.ticket_branch`), ask nothing: build as the briefing says.
 
 ## 3. Nothing ready
 
