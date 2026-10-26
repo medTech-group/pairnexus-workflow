@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**The ticket-session prompt's older merge lines name queueing** (#297, a follow-up from #249, part of #243). Wording only: nothing changes in behaviour.
+
+- **The ticket-session prompt's Merging section:** "Right before each of these (merging, arming auto-merge, queueing, saying it's ready), run `workflow merge-check`", and "On `not_yet`, never merge, arm auto-merge or queue (disarm auto-merge if it's armed)", so the rule reads in one place. The merge-queue bullet no longer repeats "on `not_yet`, never queue". With the queue off, a session merges or arms auto-merge as before, and the "Without a merge queue" bullet is unchanged.
+- **`build-ticket` §6 step 3** says the same: `merge-check` comes right before queueing too, and on `not_yet` nothing is queued.
+- Tests: the pinned phrases in `tests/test_run_merges_on_merge_check.py`, `tests/test_charter_small_review.py` and `tests/test_queue_runs.py` move to the new wording.
+- **For projects updating:** nothing to do.
+
 **`review-record --measure` counts with the same pinned `git diff` as the hashes** (#298, from #258).
 
 - **`small.local_changes`** (what `--measure` counts) now diffs with the pins `own_changes` gives the hashes, which move to `small.py` (`DIFF` and `pinned_diff`) so both use one: renames within git's default limit, a submodule never left out, git's default size for a binary file, no external diff or textconv, Myers, and the attributes of the commit itself (git 2.40 and later), never a global, the system's or the working tree's file. So `diff.renameLimit=1`, `diff.ignoreSubmodules=all`, `core.bigFileThreshold`, `core.attributesFile` or an uncommitted `.gitattributes` with `-diff` no longer change `--measure`'s counts, which now agree with what `merge-check` measures from GitHub.
