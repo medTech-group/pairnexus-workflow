@@ -506,7 +506,7 @@ def test_with_the_profile_unreadable_a_small_review_at_the_cap_can_read_past_sma
     # profile: with it unreadable, test files count too, and a pull request at its pass cap reads past it.
     suites(project)
     data = three_commits()
-    data["files"] = [changed("src/app.py", 30), changed("tests/test_app.py", 100)]
+    data["files"] = [changed("src/app.py", 70), changed("tests/test_app.py", 100)]  # 70: past the default 60, within the flag
     data["pr"]["changed_files"] = 2
     data["comments"] = records(
         rec(rnd=1, commit=EARLIER, clean=False, reviewers="correctness"),
@@ -518,7 +518,7 @@ def test_with_the_profile_unreadable_a_small_review_at_the_cap_can_read_past_sma
     got, _ = check(project, capsys, data, *flags)
     assert [r.get("input") for r in got["reasons"] if r["id"] == "couldnt_read"] == ["profile"]
     assert [r["id"] for r in review_reasons(got)] == ["past_small_threshold"]
-    assert got["small"]["lines"] == 130
+    assert (got["small"]["lines"], got["small"]["max_lines"]) == (170, 100)
 
 
 def test_past_small_threshold_beside_an_unreadable_profile_marks_the_ticket_too():
