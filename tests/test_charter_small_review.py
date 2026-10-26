@@ -11,7 +11,6 @@ import sys
 
 import pytest
 
-from changelog_notes import since_0110
 from conftest import KIT
 
 CLI = KIT / "scripts/workflow.py"
@@ -179,9 +178,22 @@ def test_reuse_fills_small_from_the_preset_and_diff_shows_it(tmp_path, preset, r
         assert {k: new["review"][k] for k in review} == review
     else:
         assert new["review"]["rounds"] == {"light": 1, "thorough": 3}.get(preset, 2)
+        assert new["review"]["explorer"] is (preset != "light")
     _file(tmp_path, new, "new.json")
     lines = _cli(tmp_path, "charter", "diff", "old.json", "new.json").stdout.splitlines()
     assert any(l.startswith("review: ") and f'"small": {json.dumps(want)}' in l for l in lines), lines
+
+
+def test_reuse_without_a_profile_says_the_review_is_the_defaults(tmp_path):
+    old = json.loads(_cli(tmp_path, "charter", "defaults").stdout)
+    del old["review"]
+    p = _cli(tmp_path, "charter", "reuse", _file(tmp_path, old))
+    assert p.returncode == 0 and "no profile could be read" in p.stderr, p.stderr
+    assert json.loads(p.stdout)["review"] == {"rounds": 3, "explorer": False, "small": True}
+    # With a review to keep, nothing is taken from the defaults, and nothing is said.
+    old["review"] = {"rounds": 2, "explorer": True}
+    p = _cli(tmp_path, "charter", "reuse", _file(tmp_path, old))
+    assert p.returncode == 0 and p.stderr == "" and json.loads(p.stdout)["review"]["explorer"] is True
 
 
 def test_reuse_keeps_a_small_the_owner_chose(tmp_path):
@@ -199,7 +211,7 @@ def test_missing_passes_and_threshold_read_as_the_profiles(tmp_path):
     _project(tmp_path, "review_passes = 4\nsmall_max_lines = 30\nsmall_max_files = 2\n")
     brief = _brief(tmp_path, _defaults(tmp_path))
     assert "--review-rounds 3 --review-passes 4 --small-max-lines 30 --small-max-files 2`" in _merge_check(brief)
-    assert "30 changed lines in 2 files" in _line(brief, "- **Small review:**")
+    assert "30 lines in 2 files outside tests" in _line(brief, "- **Small review:**")
     assert "at most 4 Correctness passes" in _line(brief, "- **Pass cap:**")
 
 
@@ -210,8 +222,8 @@ def test_the_charters_passes_and_threshold_win(tmp_path):
     assert _validate(tmp_path, c).returncode == 0
     brief = _brief(tmp_path, c)
     assert "--review-passes 0 --small-max-lines 1000 --small-max-files 50`" in _merge_check(brief)
-    assert "1000 changed lines in 50 files" in _line(brief, "- **Small review:**")
-    assert "at most 0 Correctness passes" in _line(brief, "- **Pass cap:**")
+    assert "1000 lines in 50 files outside tests" in _line(brief, "- **Small review:**")
+    assert _line(brief, "- **Pass cap:**").startswith("- **Pass cap:** no Correctness passes after the last review round")
 
 
 def test_without_a_profile_the_defaults_are_the_profiles_defaults(tmp_path):
@@ -290,6 +302,43 @@ def test_the_one_page_names_a_changed_small_review_and_pass_cap(tmp_path):
     assert "--small-max-lines 40 --small-max-files 4`" in _merge_check(_brief(tmp_path, c))
 
 
+@pytest.mark.parametrize("preset, review, want", [
+    ("normal", {"rounds": 3, "explorer": True}, "**Normal**, changed: the small review off."),
+    ("normal", None, "**Normal**, changed: the small review off."),
+    ("thorough", {"rounds": 3, "explorer": True, "small": True, "passes": 1}, "**Thorough**, changed: the small review on, 1 pass."),
+    ("thorough", {"rounds": 3, "explorer": True}, "**Thorough**."),
+])
+def test_the_one_page_names_a_small_review_that_differs_from_the_preset(tmp_path, preset, review, want):
+    """An old charter's small review reads as off: the size line says so, as the small review's line does."""
+    _project(tmp_path)
+    c = _defaults(tmp_path)
+    c["preset"] = preset
+    c["limits"].update(_limits_q(tmp_path)["presets"][preset]["limits"])
+    if review is None:
+        del c["review"]
+    else:
+        c["review"] = review
+    assert f"- **Size:** {want}" in _page(tmp_path, c)
+
+
+def test_without_a_profile_normal_still_names_the_small_review(tmp_path):
+    c = json.loads(_cli(tmp_path, "charter", "defaults").stdout)
+    c["limits"]["ends_at"] = "2099-10-13T03:30:00Z"
+    c["review"]["small"] = False
+    assert "- **Size:** **Normal**, changed: the small review off." in _page(tmp_path, c)
+
+
+def test_the_small_review_names_the_explorer_only_where_the_run_has_one(tmp_path):
+    _project(tmp_path)
+    page = _page(tmp_path, _defaults(tmp_path))
+    assert "(with the security review and the UI explorer where they apply)" in _line(page, "- **Small review:**")
+    for review in ({"rounds": 3, "explorer": False, "small": True}, {"rounds": 1, "explorer": True, "small": True}):
+        c = _defaults(tmp_path)
+        c["review"] = review
+        assert "(with the security review where it applies)" in _line(_page(tmp_path, c), "- **Small review:**")
+        assert "with the security review where it applies)" in _line(_brief(tmp_path, c), "- **Small review:**")
+
+
 def test_the_one_page_says_a_profile_value_written_out_is_no_change(tmp_path):
     _project(tmp_path)
     c = _defaults(tmp_path)
@@ -305,10 +354,10 @@ def test_the_briefing_gives_the_small_review_the_threshold_and_the_pass_cap(tmp_
     brief = _brief(tmp_path, _defaults(tmp_path))
     small = _line(brief, "- **Small review:**")
     assert small.startswith("- **Small review:** on:")
-    assert "`Review: small`" in small and "60 changed lines in 4 files outside tests" in small
+    assert "`Review: small`" in small and "within 60 lines in 4 files outside tests (added plus removed)" in small
     assert "workflow.py review-record --measure --commit <sha> --small-max-lines 60 --small-max-files 4`" in small
     assert "the full panel" in small
-    assert _line(brief, "- **Pass cap:**").startswith("- **Pass cap:** at most 2 Correctness passes after the last round")
+    assert _line(brief, "- **Pass cap:**").startswith("- **Pass cap:** at most 2 Correctness passes after the last review round")
     assert _merge_check(brief).count("--review-rounds 3 --review-passes 2 --small-max-lines 60 --small-max-files 4`") == 1
 
 
@@ -366,6 +415,6 @@ def test_docs_charter_names_the_new_keys():
 
 def test_changelog_notes_259_without_bumping_version():
     text = (KIT / "CHANGELOG.md").read_text()
-    assert "(#259" in since_0110(text)
+    assert "(#259" in text.split("## Unreleased\n", 1)[1].split("\n## ", 1)[0]
     released = text.split("\n## ")[2].split()[0].lstrip("v")
     assert (KIT / "VERSION").read_text().strip() == released

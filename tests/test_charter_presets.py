@@ -173,7 +173,7 @@ def test_markdown_names_every_change(tmp_path):
     c["limits"].update(max_parallel=1, max_sessions=12, max_retries=1)
     c["review"] = {"rounds": 2, "explorer": True}
     md = _cli("charter", "markdown", _file(tmp_path, c), env=env).stdout
-    assert "**Size:** **Light**, changed: 12 sessions in all, 1 retry per ticket, 2 review rounds, the UI explorer on." in md
+    assert "**Size:** **Light**, changed: 12 sessions in all, 1 retry per ticket, 2 review rounds, the UI explorer on, the small review off." in md
 
 
 def test_markdown_says_the_project_has_no_explorer(tmp_path):
@@ -382,7 +382,8 @@ def test_a_preset_without_review_reviews_as_its_preset(tmp_path):
     del c["review"]
     assert _validate(tmp_path, env, c).returncode == 0
     md = _cli("charter", "markdown", _file(tmp_path, c), env=env).stdout
-    assert "**Size:** **Light**." in md and "up to 1 round per ticket; UI explorer off." in md
+    # Without a review, the small review reads as off (#259): a change from Light's.
+    assert "**Size:** **Light**, changed: the small review off." in md and "up to 1 round per ticket; UI explorer off." in md
     assert presets.review_of(c, profile_mod.load(tmp_path)) == {"rounds": 1, "explorer": False, **OFF}
 
 

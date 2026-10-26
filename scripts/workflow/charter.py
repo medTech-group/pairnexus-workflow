@@ -125,7 +125,7 @@ QUESTIONS: list[dict[str, Any]] = [
     {
         "key": "limits",
         "ask": "How big a run: Light, Normal or Thorough (each sets sessions at once (max_parallel), in all "
-        "(max_sessions), retries per ticket (max_retries), review rounds, the small review for tickets marked small "
+        "(max_sessions), retries per ticket (max_retries), review rounds, the small review for tickets marked `Review: small` "
         "and the UI explorer, beside the profile's pass cap and small threshold; any one number can then be changed)? "
         "When does the run end (ends_at; required: there is no default end time)? How often to check in "
         "(check_in_minutes)?",
@@ -619,11 +619,10 @@ def _size_lines(c: dict, profile: Any, estimate: Any = None) -> list[str]:
     rv = presets_mod.review_of(c, profile)
     rounds = presets_mod.plural(rv["rounds"], "round", "rounds")
     if rv["small"]:
-        past = "the light review" if rv["rounds"] == 1 else "the full panel"
         small = (
-            "on: a ticket marked `Review: small` gets one Correctness round (with the security review and the UI "
-            f"explorer where they apply) while its diff stays within {presets_mod.threshold_words(rv)} outside tests "
-            f"(added plus removed); past that, {past}"
+            f"on: a ticket marked `Review: small` gets one Correctness round ({presets_mod.small_reviewers(rv)}) while its diff stays "
+            f"within {presets_mod.threshold_words(rv)} outside tests (added plus removed); past that, "
+            f"{presets_mod.past_small(rv)}"
         )
     else:
         small = "off: a ticket marked `Review: small` gets the same review as any other"

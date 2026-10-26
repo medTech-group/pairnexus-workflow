@@ -121,11 +121,11 @@ def _small(review: dict) -> str:
     """The small review's line: on or off, with the threshold to measure against."""
     if not review["small"]:
         return "off: build a ticket marked `Review: small` with the review above, as any other"
-    past = "the light review, as for an unmarked ticket" if review["rounds"] == 1 else "the full panel"
+    past = presets_mod.past_small(review) + (", as for an unmarked ticket" if review["rounds"] == 1 else "")
     return (
-        "on: a ticket marked `Review: small` gets the small review (`review-panel`: one round, Correctness, with the "
-        "security review and the explorer where they apply) while its diff stays within "
-        f"{presets_mod.threshold_words(review, 'changed line')} outside tests. Measure it before reviewing: "
+        "on: a ticket marked `Review: small` gets the small review (`review-panel`: one round, Correctness, "
+        f"{presets_mod.small_reviewers(review)}) while its diff stays within "
+        f"{presets_mod.threshold_words(review)} outside tests (added plus removed). Measure it before reviewing: "
         "`python3 .claude/workflow/bin/workflow.py review-record --measure --commit <sha> "
         f"--small-max-lines {review['small_max_lines']} --small-max-files {review['small_max_files']}`; "
         f"past the threshold, {past}"

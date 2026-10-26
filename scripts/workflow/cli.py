@@ -521,7 +521,14 @@ def cmd_charter(a) -> int:
         if not isinstance(old, dict):
             print("workflow: the old charter must be a JSON object", file=sys.stderr)
             return 1
-        _out(charter_mod.reuse(old, _page_profile()))
+        prof = _page_profile()
+        if prof is None and not isinstance(old.get("review"), dict):
+            print(
+                "note: no profile could be read: the review written out (rounds and UI explorer) is the profile's "
+                "defaults; check it in `charter diff`",
+                file=sys.stderr,
+            )
+        _out(charter_mod.reuse(old, prof))
         return 0
     if a.action == "pin-plan":
         c = _json(a.file)

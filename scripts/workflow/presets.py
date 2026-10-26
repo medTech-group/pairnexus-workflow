@@ -87,15 +87,31 @@ def _explorer_phrase(review: dict, profile: Any) -> str:
     return "UI explorer off"
 
 
-def threshold_words(review: dict, lines: str = "line") -> str:
-    """ "60 lines in 4 files" (or, with `lines` "changed line", "60 changed
-    lines in 4 files"): the small threshold of a review (`review_of`)."""
-    return f"{plural(review['small_max_lines'], lines, lines + 's')} in {plural(review['small_max_files'], 'file', 'files')}"
+def threshold_words(review: dict) -> str:
+    """ "60 lines in 4 files": the small threshold of a review (`review_of`)."""
+    return f"{plural(review['small_max_lines'], 'line', 'lines')} in {plural(review['small_max_files'], 'file', 'files')}"
 
 
 def passes_words(review: dict) -> str:
-    """ "at most 2 Correctness passes": the pass cap of a review (`review_of`)."""
+    """ "at most 2 Correctness passes", or "no Correctness passes" for 0: the
+    pass cap of a review (`review_of`)."""
+    if review["passes"] == 0:
+        return "no Correctness passes"
     return f"at most {plural(review['passes'], 'Correctness pass', 'Correctness passes')}"
+
+
+def past_small(review: dict) -> str:
+    """What a ticket marked small gets past the threshold: the full panel, or
+    in a 1-round run the light review."""
+    return "the light review" if review["rounds"] == 1 else "the full panel"
+
+
+def small_reviewers(review: dict) -> str:
+    """Who the small review runs beside Correctness: the security review where
+    it applies, and the UI explorer only when the run has one."""
+    if runs_explorer(review):
+        return "with the security review and the UI explorer where they apply"
+    return "with the security review where it applies"
 
 
 def words(name: str, profile: Any = None) -> str:
@@ -159,13 +175,16 @@ def review_of(c: dict, profile: Any = None) -> dict:
 def changes(c: dict, profile: Any = None) -> list[str]:
     """What the charter changed from its preset's numbers, in words ("3
     sessions at once"); empty when it matches, or has no preset. Without a
-    profile, only what doesn't depend on it: nothing for Normal, not
-    Thorough's rounds of 3 or more, and Light's explorer only."""
+    profile, only what doesn't depend on it: for Normal only the small
+    review, not Thorough's rounds of 3 or more, and Light's explorer only."""
     if not isinstance(c, dict) or c.get("preset") not in PRESETS:
         return []
-    if profile is None and c["preset"] == "normal":
-        return []
     want = numbers(c["preset"], profile)
+    # Every preset's small is fixed; a charter without one (written before it) reads as off.
+    small = review_of(c, profile)["small"]
+    small_change = [f"the small review {'on' if small else 'off'}"] if small != want["review"]["small"] else []
+    if profile is None and c["preset"] == "normal":
+        return small_change
     lim = c.get("limits") if isinstance(c.get("limits"), dict) else {}
     out = []
     for key, one, many in (
@@ -184,15 +203,14 @@ def changes(c: dict, profile: Any = None) -> list[str]:
         # Light's explorer is always off; the others' follow the profile.
         if (profile is not None or c["preset"] == "light") and "explorer" in rev and rev["explorer"] != want["review"]["explorer"]:
             out.append(f"the UI explorer {'on' if rev['explorer'] else 'off'}")
-        if "small" in rev and rev["small"] != want["review"]["small"]:
-            out.append(f"the small review {'on' if rev['small'] else 'off'}")
-        # The pass cap and the threshold are the profile's in every preset: a change only against a profile.
-        if profile is not None:
-            got, usual = review_of(c, profile), review_of({"preset": c["preset"]}, profile)
-            if got["passes"] != usual["passes"]:
-                out.append(plural(got["passes"], "pass", "passes"))
-            if (got["small_max_lines"], got["small_max_files"]) != (usual["small_max_lines"], usual["small_max_files"]):
-                out.append(f"a small threshold of {threshold_words(got)}")
+    out += small_change
+    # The pass cap and the threshold are the profile's in every preset: a change only against a profile.
+    if isinstance(rev, dict) and profile is not None:
+        got, usual = review_of(c, profile), review_of({"preset": c["preset"]}, profile)
+        if got["passes"] != usual["passes"]:
+            out.append(plural(got["passes"], "pass", "passes"))
+        if (got["small_max_lines"], got["small_max_files"]) != (usual["small_max_lines"], usual["small_max_files"]):
+            out.append(f"a small threshold of {threshold_words(got)}")
     return out
 
 
