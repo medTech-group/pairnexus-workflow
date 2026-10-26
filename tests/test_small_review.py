@@ -210,6 +210,9 @@ def test_a_small_round_that_isnt_clean_with_3_rounds_allowed_asks_for_a_pass(pro
     got, _ = check(project, capsys, data)
     [r] = review_reasons(got)
     assert r["id"] == "review_not_clean" and r["next"] == "pass" and got["review_rounds"] == 3
+    # Its wording gives the small review as the reason, never "no round is left" with rounds to spare.
+    assert "it counts as the last round: no counted round before it ran Spec" in r["wording"]["developer"]["message"]
+    assert "no round is left" not in r["wording"]["developer"]["message"]
     data = with_files(changed("src/app.py", 10), recs=[small(commit=EARLIER, clean=False), rec("pass")])
     got, _ = check(project, capsys, data)
     assert got["decision"] == "ready", got["reasons"]
@@ -411,7 +414,7 @@ def test_a_failed_fetch_uses_the_origin_base_already_here_with_a_note(checkout, 
     code, out, err = measure(capsys)
     assert code == 0
     assert out.startswith("11 lines in 4 files") and out.count("\n") == 1
-    assert "couldn't fetch origin/main" in err and "already here" in err
+    assert "couldn't fetch origin/main (fatal: " in err and "already here" in err
 
 
 def test_with_no_origin_base_it_says_it_cant_measure(checkout, capsys):
@@ -426,7 +429,7 @@ def test_a_commit_not_in_the_repository_cant_be_measured(checkout, capsys):
     code = cli.main(["review-record", "--measure", "--commit", "d" * 40])
     out, err = capsys.readouterr()
     assert code == 1 and out == ""
-    assert "isn't in this repository" in err
+    assert "isn't a commit in this repository" in err
 
 
 @pytest.mark.parametrize("extra", [("--reviewers", "correctness"), ("--clean",), ("--kind", "round"), ("--round", "1")])
@@ -546,3 +549,12 @@ def test_measure_counts_with_myers_whatever_the_configuration(checkout, capsys):
     code, out, err = measure(capsys)
     assert code == 0, err
     assert out.startswith("11 lines in 4 files")
+
+
+@pytest.mark.parametrize("base", ["*", "ma*", "main:refs/heads/x", "ma in", "-x"])
+def test_a_base_that_isnt_a_branchs_name_is_refused_before_any_fetch(checkout, capsys, base):
+    before = git(checkout, "for-each-ref")
+    code, out, err = measure(capsys, f"--base={base}")
+    assert code == 1 and out == ""
+    assert "isn't a branch's name" in err
+    assert git(checkout, "for-each-ref") == before

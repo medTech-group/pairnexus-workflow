@@ -170,9 +170,12 @@ def base_ref(root: Path, base: str, note) -> str:
     """`origin/<base>`, fetched first (as `review-panel` §1 does). If the fetch
     fails, the existing one, with a note (`note(text)`); with none, CantMeasure."""
     ref = f"refs/remotes/origin/{base}"
+    if base.startswith("-") or any(c in base for c in "*?[") or _git(root, "check-ref-format", f"refs/heads/{base}").returncode != 0:
+        raise CantMeasure(f"`{base}` isn't a branch's name (--base)")
     try:
         got = _git(root, "fetch", "--quiet", "origin", f"+refs/heads/{base}:{ref}", timeout=120)
-        why = None if got.returncode == 0 else (got.stderr.strip().splitlines() or ["git fetch failed"])[-1]
+        lines = got.stderr.strip().splitlines()
+        why = None if got.returncode == 0 else next((ln for ln in lines if ln.startswith("fatal:")), lines[-1] if lines else "git fetch failed")
     except CantMeasure as e:
         why = str(e)
     have = _git(root, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}").returncode == 0
@@ -205,7 +208,7 @@ def local_changes(root: Path, commit: str, ref: str) -> list[Change]:
     """The changes from the merge base of `ref` to `commit`, renames found, by
     git's default (Myers) diff whatever the configuration says, as GitHub counts."""
     if _git(root, "cat-file", "-e", f"{commit}^{{commit}}").returncode != 0:
-        raise CantMeasure(f"the commit {commit[:7]} isn't in this repository")
+        raise CantMeasure(f"{commit[:7]} isn't a commit in this repository")
     mb = _git(root, "merge-base", ref, commit)
     if mb.returncode != 0:
         raise CantMeasure(f"the commit {commit[:7]} has no merge base with {ref.removeprefix('refs/remotes/')}")
