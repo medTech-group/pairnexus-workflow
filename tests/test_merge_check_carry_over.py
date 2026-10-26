@@ -25,7 +25,7 @@ from pathlib import Path
 from test_merge_check import EARLIER, HEAD, check, comment, ids, inputs, note_ids, project  # noqa: F401 (project is a fixture)
 from test_review_record_hashes import checkout, git, recorded, rest_files  # noqa: F401 (checkout is a fixture)
 from changelog_notes import since_0110
-from workflow import reviews
+from workflow import merge, reviews
 
 KIT = Path(__file__).resolve().parents[1]
 MIDDLE = "e" * 40  # a commit of the PR between EARLIER and HEAD
@@ -460,3 +460,21 @@ def test_the_merge_check_skill_names_the_files_and_commits_fields():
 def test_the_changelog_has_the_note():
     notes = since_0110(_read("CHANGELOG.md"))
     assert "#261" in notes and "`head_hashes`" in notes
+
+
+# ---------- the wording from #261's last pass (#301) ----------
+
+
+def test_the_panels_docstring_says_which_review_comes_before_a_pass():
+    assert "the counted review before it (the latest by the PR's history) was clean" in " ".join(merge._panel.__doc__.split())
+
+
+def test_the_merge_check_skills_commits_row_says_their_order():
+    skill = _read("skills/merge-check/SKILL.md")
+    commits = next(ln for ln in skill.splitlines() if ln.startswith("| `--commits` |"))
+    assert "oldest first, as GitHub gives them" in commits
+
+
+def test_flow_4_item_4_says_a_recheck_of_open_findings_always_counts():
+    item4 = next(ln for ln in _read("docs/flow.md").splitlines() if ln.startswith("4. **The reviews are clean**"))
+    assert "doesn't count toward the cap (a pass that rechecks open findings always counts)" in item4

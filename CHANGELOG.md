@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**Wording: which review comes before a pass, and the order of `--commits`** (#301, from #261's last Correctness pass). Nothing changes in behaviour.
+
+- **`merge.py`'s `_panel` docstring** says the counted review before a pass is the latest by the PR's history.
+- **The `merge-check` skill's `--commits` row** says the commits come oldest first, as GitHub gives them: a hand-built newest-first list would rank the review records backwards.
+- **Flow §4 item 4** says a pass that rechecks open findings always counts toward the pass cap, beside the free pass on a merge of the base.
+- Tests: three text tests in `tests/test_merge_check_carry_over.py`.
+- **For projects updating:** nothing to do.
+
 **`review-record --measure` counts with the same pinned `git diff` as the hashes** (#298, from #258).
 
 - **`small.local_changes`** (what `--measure` counts) now diffs with the pins `own_changes` gives the hashes, which move to `small.py` (`DIFF` and `pinned_diff`) so both use one: renames within git's default limit, a submodule never left out, git's default size for a binary file, no external diff or textconv, Myers, and the attributes of the commit itself (git 2.40 and later), never a global, the system's or the working tree's file. So `diff.renameLimit=1`, `diff.ignoreSubmodules=all`, `core.bigFileThreshold`, `core.attributesFile` or an uncommitted `.gitattributes` with `-diff` no longer change `--measure`'s counts, which now agree with what `merge-check` measures from GitHub.
