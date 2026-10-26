@@ -41,7 +41,8 @@ def test_next_offers_the_light_review_second_after_the_full_build():
     said = pick.split("When they already said how", 1)[1].split("\n", 1)[0]
     for phrase in ('"build #12"', '"build #12 with a light review"', '"quick build #12"', "the `build` argument alone isn't saying how", "don't ask again"):
         assert phrase in said, phrase
-    assert "(`WORKFLOW_ROLE` set to anything but `attended`, or a branch named like the profile's `run.ticket_branch`), ask nothing" in pick
+    # A conductor session never builds (#308): its rule opens the skill.
+    assert "(`WORKFLOW_ROLE` set to anything but `attended` or `conductor`, or a branch named like the profile's `run.ticket_branch`), ask nothing" in pick
     # The shape lives in one place.
     assert '`review-panel` §6, "The light review"' in pick
     _never_recommended(_read("skills/next/SKILL.md"))

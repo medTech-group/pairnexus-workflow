@@ -78,7 +78,7 @@ Merging is the owner's in attended work. A planning pull request (a map decision
 
 ## 5. Unattended runs
 
-Follow the `conductor` skill. The conductor never builds tickets itself: it asks the owner the kick-off questions once (the **run charter**, `charter.md` in the kit's docs), then hands each ready ticket to its own session, checks in, keeps PRs moving to merge, and reports. What it may do outside the repo is exactly what the charter grants, logged in the run's ledger.
+Follow the `conductor` skill. The conductor never builds tickets itself: it asks the owner the kick-off questions once (the **run charter**, `charter.md` in the kit's docs), then hands each ready ticket to its own session, checks in, keeps PRs moving to merge, and reports. A ticket named to the conductor ("build #12", "implement #12", "let's work on #12") becomes a run scoped to it, or during a run the amendment "also #12": a ticket session builds it. What it may do outside the repo is exactly what the charter grants, logged in the run's ledger.
 
 **The never-list.** A ticket session changes only its ticket's code, tests and docs, on its own branch. The owner keeps these to themselves, and the guard hook and the GitHub ruleset back it up:
 - deploys and releases;
