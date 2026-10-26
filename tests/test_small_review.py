@@ -211,7 +211,7 @@ def test_a_small_round_that_isnt_clean_with_3_rounds_allowed_asks_for_a_pass(pro
     [r] = review_reasons(got)
     assert r["id"] == "review_not_clean" and r["next"] == "pass" and got["review_rounds"] == 3
     # Its wording gives the small review as the reason, never "no round is left" with rounds to spare.
-    assert "it counts as the last round: no counted round before it ran Spec" in r["wording"]["developer"]["message"]
+    assert "no counted round ran Spec (the small review), so it counts as the last round" in r["wording"]["developer"]["message"]
     assert "no round is left" not in r["wording"]["developer"]["message"]
     data = with_files(changed("src/app.py", 10), recs=[small(commit=EARLIER, clean=False), rec("pass")])
     got, _ = check(project, capsys, data)
@@ -231,6 +231,8 @@ def test_a_full_panel_round_past_the_limit_that_isnt_clean_asks_for_a_pass(proje
     got, _ = check(project, capsys, data)
     [r] = review_reasons(got)
     assert r["id"] == "review_not_clean" and r["next"] == "pass" and r["round"] == 2
+    assert "as the full-panel round after a small review it counts as the last round" in r["wording"]["developer"]["message"]
+    assert "no round is left" not in r["wording"]["developer"]["message"]
     data = with_files(big, recs=[small(commit=EARLIER), rec(rnd=2, commit=EARLIER, clean=False), rec("pass", rnd=2)])
     got, _ = check(project, capsys, data)
     assert got["decision"] == "ready", got["reasons"]

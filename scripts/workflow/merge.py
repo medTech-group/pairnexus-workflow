@@ -212,7 +212,11 @@ REASONS = {
         # small threshold, counts as the last allowed one, whatever the round limit.
         "small": {
             "new": ("Not yet: the last review found things to fix.", "Fix them, then ask for a short check of the latest changes."),
-            "developer": ("Not yet: review round {round} on {round_short} wasn't clean, and it counts as the last round: no counted round before it ran Spec (the small review).", "Fix the findings and run a Correctness pass on the head; no further round."),
+            "developer": ("Not yet: review round {round} on {round_short} wasn't clean, and no counted round ran Spec (the small review), so it counts as the last round.", "Fix the findings and run a Correctness pass on the head; no further round."),
+        },
+        "after_small": {
+            "new": ("Not yet: the last review found things to fix.", "Fix them, then ask for a short check of the latest changes."),
+            "developer": ("Not yet: review round {round} on {round_short} wasn't clean, and as the full-panel round after a small review it counts as the last round.", "Fix the findings and run a Correctness pass on the head; no further round."),
         },
     }),
     "pass_not_clean": Reason("review_panel", "review", {
@@ -1061,7 +1065,7 @@ def _panel(ctx: Context, add) -> None:
         if not last_allowed:
             add("review_not_clean", next="round", **details)
         elif not passes:
-            needs_pass("review_not_clean", next="pass", case="last_round" if last.round >= allowed else "small")
+            needs_pass("review_not_clean", next="pass", case="last_round" if last.round >= allowed else "small" if not any(ran_spec) else "after_small")
         elif not passes[-1].clean:
             needs_pass("pass_not_clean")
     elif passes and not passes[-1].clean:
