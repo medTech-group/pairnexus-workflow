@@ -414,18 +414,34 @@ def test_a_queue_rule_on_every_branch_is_on_whatever_the_default_branch(tmp_path
     assert r["merge_queue"] == _queue_only(True)
 
 
+OTHERS = _queued(_rs(id=205, name="Others", conditions={"ref_name": {"include": ["~ALL"], "exclude": ["~DEFAULT_BRANCH"]}}))
+
+
+def _on_main(strict):
+    rs = _rs(conditions={"ref_name": {"include": ["refs/heads/main"], "exclude": []}})
+    _rule(rs, "required_status_checks")["parameters"]["strict_required_status_checks_policy"] = strict
+    return rs
+
+
 def test_a_queue_rule_off_the_default_branch_with_it_unknown_gives_queue_null(tmp_path, project):
     # Read with the base as the default branch, the ruleset leaves it out;
-    # read with another, its exclude can't be matched: the readings agree on
-    # the other lines, never on the queue.
-    others = _queued(_rs(id=205, name="Others", conditions={"ref_name": {"include": ["~ALL"], "exclude": ["~DEFAULT_BRANCH"]}}))
-    _, r = _github(tmp_path, project, rulesets=(others,), settings=NO_DEFAULT)
-    assert r["merge_queue"]["queue"] is None
-    main = _rs(conditions={"ref_name": {"include": ["refs/heads/main"], "exclude": []}})
-    lines, r = _github(tmp_path, project, rulesets=(main, others), settings=NO_DEFAULT)
+    # read with another, it may apply: the readings agree on the other
+    # lines, never on the queue.
+    lines, r = _github(tmp_path, project, rulesets=(OTHERS,), settings=NO_DEFAULT)
+    assert r["merge_queue"] == _queue_only(None) and _no_queue_lines(lines)
+    assert lines["github.ruleset"]["status"] == "gap"
+    lines, r = _github(tmp_path, project, rulesets=(_on_main(True), OTHERS), settings=NO_DEFAULT)
     assert r["merge_queue"]["queue"] is None
     q = lines["github.merge_queue"]
     assert q["status"] == "cant_check" and "Others" in q["message"] and q["offer"] is None, q
+    assert "default_branch" in q["message"]  # the cause: the settings don't say which branch is the default
+
+
+def test_with_the_default_branch_unknown_up_to_date_never_asks_for_it_beside_a_queue_rule(tmp_path, project):
+    lines, r = _github(tmp_path, project, rulesets=(_on_main(False), OTHERS), settings=NO_DEFAULT)
+    assert r["merge_queue"]["queue"] is None
+    u = lines["github.up_to_date"]
+    assert u["status"] == "cant_check" and "Others" in u["message"], u
 
 
 @pytest.mark.parametrize("rulesets", ["nope", [{**_queued(), "enforcement": 5}]], ids=["unreadable", "malformed"])
@@ -467,6 +483,7 @@ def test_upgrade_setup_says_the_ruleset_line_when_no_queue_line_explains_a_null_
 def test_the_changelog_says_when_merge_queue_is_null_as_a_whole():
     notes = since_0110()
     assert "#302" in notes and "`merge_queue.queue`" in notes
+    assert "`null` as a whole only where the rulesets can't be read" in notes
 
 
 # ---------- the signals ----------

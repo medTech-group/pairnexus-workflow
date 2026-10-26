@@ -1041,10 +1041,10 @@ class _GitHub:
     # checked, unless neither reading puts a ruleset on it (then `report` is
     # set, and they read as with none).
     unprotected_either: bool = False
-    # Without the default branch, its two readings: the JSON's merge_queue
-    # reads both, so a queue rule only one of them can place is never lost,
-    # even where `report` is None (#302).
-    readings: tuple[protection_mod.Report, protection_mod.Report] | None = None
+    # Without the default branch, the rulesets read with none: a merge-queue
+    # rule that applies only through it is unsure there. The queue's state is
+    # read from this, even where `report` is None (#302).
+    undefaulted: protection_mod.Report | None = None
     merge: dict | None = None
     merge_why: _Answer | None = None
     settings: dict | None = None  # the repository's settings as given (its owner and visibility, #246)
@@ -1266,7 +1266,7 @@ def _github(i: Inputs) -> _GitHub | None:
             # on what can't be seen; when they agree, either is the answer.
             either = [{**(placed or {}), "default_branch": d} for d in (base, f"{base}-not")]
             rep, other = (protection_mod.check(rulesets.value, base, settings_) for settings_ in either)
-            gh.readings = (rep, other)
+            gh.undefaulted = protection_mod.check(rulesets.value, base, placed)
             gh.unprotected_either = not any(protection_mod.check(seen, base, settings_).protected for settings_ in either)
             placed = either[0]
     except protection_mod.ProtectionError as e:
@@ -1326,6 +1326,12 @@ def _report(i: Inputs, id_: str, what: Words) -> tuple[protection_mod.Report | N
     if gh is None or gh.report is None:
         return None, _waits(i, id_, what, gh.report_why if gh else None)
     return gh.report, None
+
+
+def _queue_reading(gh: _GitHub) -> protection_mod.Report:
+    """The read-back the merge queue's state is read from: without the
+    default branch, the rulesets read with none (#302)."""
+    return gh.undefaulted if gh.undefaulted is not None else gh.report
 
 
 def _rules(rep: protection_mod.Report, type_: str) -> list[dict]:
@@ -1884,12 +1890,13 @@ def check_ruleset_rules(i: Inputs) -> list[Line]:
     base = i.profile.base_branch
     lines = []
     strict = [p.get("strict_required_status_checks_policy") is True for p in _rules(rep, "required_status_checks")]
+    unplaced = _queue_reading(_github(i)).queue_unsure
     if rep.queue:
         lines.append(_queue_up_to_date(rep, base))
-    elif rep.queue_unsure and not any(strict):
+    elif unplaced and not any(strict):
         lines.append(Line(g, "github.up_to_date", "cant_check", Words(
-            f"Can't tell whether a merge queue keeps pull requests up to date with `{base}`: {_shown(rep.queue_unsure[0], 300)}.",
-            f"Merge queue unknown on `{base}`, and strict_required_status_checks_policy isn't true: {_shown('; '.join(rep.queue_unsure), 300)}.",
+            f"Can't tell whether a merge queue keeps pull requests up to date with `{base}`: {_shown(unplaced[0], 300)}.",
+            f"Merge queue unknown on `{base}`, and strict_required_status_checks_policy isn't true: {_shown('; '.join(unplaced), 300)}.",
         ), Words(
             f"Check in Settings → Rules whether that ruleset applies to `{base}`; naming `{base}` itself (not a pattern) lets the kit tell.",
             f"Name refs/heads/{base} (or ~DEFAULT_BRANCH, with --repo's default_branch) in its include, so the reader can count it.",
@@ -2680,18 +2687,15 @@ def check_merge_queue(i: Inputs) -> list[Line]:  # run by check_ruleset_rules, s
     JSON's `merge_queue`: null as a whole only where the rulesets can't be
     read; where they can but can't be placed, `queue` alone (#302)."""
     gh = _github(i)
-    if gh is None or (gh.report is None and not gh.readings):
+    if gh is None or (gh.report is None and gh.undefaulted is None):
         return []
-    # Without the default branch, on or off only when both readings say so.
-    readings = gh.readings or (gh.report,)
-    said = {None if r.queue_unsure and not r.queue else r.queue for r in readings}
-    queue = said.pop() if len(said) == 1 else None
-    mq = i._mq = {"queue": queue, "available": None, "merge_group": None, "signals": None}
+    q = _queue_reading(gh)
+    unsure = bool(q.queue_unsure) and not q.queue
+    mq = i._mq = {"queue": None if unsure else q.queue, "available": None, "merge_group": None, "signals": None}
     if gh.report is None:
         return []
     rep = gh.report
-    unsure = queue is None
-    unplaced = list(dict.fromkeys(w for r in readings for w in r.queue_unsure))
+    unplaced = q.queue_unsure
     if unsure and any(p.get("strict_required_status_checks_policy") is True for p in _rules(rep, "required_status_checks")):
         # "Up to date" is met either way, so github.up_to_date is fine: the
         # queue rule that may apply is said here (without "up to date" on,
