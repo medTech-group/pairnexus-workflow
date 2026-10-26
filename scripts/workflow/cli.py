@@ -522,7 +522,8 @@ def cmd_charter(a) -> int:
             print("workflow: the old charter must be a JSON object", file=sys.stderr)
             return 1
         prof = _page_profile()
-        if prof is None and not isinstance(old.get("review"), dict):
+        # Light's review is fixed; any other review written out needs the profile's numbers.
+        if prof is None and not isinstance(old.get("review"), dict) and old.get("preset") != "light":
             print(
                 "note: no profile could be read: the review written out (rounds and UI explorer) is the profile's "
                 "defaults; check it in `charter diff`",

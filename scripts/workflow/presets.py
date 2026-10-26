@@ -210,7 +210,7 @@ def changes(c: dict, profile: Any = None) -> list[str]:
         if got["passes"] != usual["passes"]:
             out.append(plural(got["passes"], "pass", "passes"))
         if (got["small_max_lines"], got["small_max_files"]) != (usual["small_max_lines"], usual["small_max_files"]):
-            out.append(f"a small threshold of {threshold_words(got)}")
+            out.append(f"a small threshold of {threshold_words(got)} outside tests")
     return out
 
 

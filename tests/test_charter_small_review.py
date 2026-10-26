@@ -191,6 +191,12 @@ def test_reuse_without_a_profile_says_the_review_is_the_defaults(tmp_path):
     p = _cli(tmp_path, "charter", "reuse", _file(tmp_path, old))
     assert p.returncode == 0 and "no profile could be read" in p.stderr, p.stderr
     assert json.loads(p.stdout)["review"] == {"rounds": 3, "explorer": False, "small": True}
+    # Light's review doesn't depend on the profile: nothing to say.
+    old["preset"] = "light"
+    p = _cli(tmp_path, "charter", "reuse", _file(tmp_path, old))
+    assert p.returncode == 0 and p.stderr == "", p.stderr
+    assert json.loads(p.stdout)["review"] == {"rounds": 1, "explorer": False, "small": True}
+    del old["preset"]
     # With a review to keep, nothing is taken from the defaults, and nothing is said.
     old["review"] = {"rounds": 2, "explorer": True}
     p = _cli(tmp_path, "charter", "reuse", _file(tmp_path, old))
@@ -297,7 +303,7 @@ def test_the_one_page_names_a_changed_small_review_and_pass_cap(tmp_path):
     c = _defaults(tmp_path)
     c["review"].update(small=False, passes=5, small_max_lines=40)
     page = _page(tmp_path, c)
-    assert "**Size:** **Normal**, changed: the small review off, 5 passes, a small threshold of 40 lines in 4 files." in page
+    assert "**Size:** **Normal**, changed: the small review off, 5 passes, a small threshold of 40 lines in 4 files outside tests." in page
     assert _line(page, "- **Small review:**").startswith("- **Small review:** off")
     # The threshold the owner set is what a run uses, even with the small review off.
     assert "--small-max-lines 40 --small-max-files 4`" in _merge_check(_brief(tmp_path, c))
