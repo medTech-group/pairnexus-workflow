@@ -146,7 +146,7 @@ def reminder_for(prompt: str) -> str | None:
 # message that may not ask for a build, and a closer pattern isn't worth it.
 # Every repeat is bounded, so a long pasted prompt stays quick.
 _NUMBER_ENDS = (
-    r"[0-9]+\b(?![.,][0-9])(?=[^\S\n]*(?:(?:please|now|next|today|first|for[^\S\n]+me)\b[^\S\n]*)?"
+    r"[0-9]+\b(?![.,:][0-9])(?=[^\S\n]*(?:(?:please|now|next|today|first|for[^\S\n]+me)\b[^\S\n]*)?"
     r"(?:[.!?,;:)]|and\b|$))"
 )
 _TICKET = r"(?:(?:[\w.-]{1,39}/[\w.-]{1,100})?[#\uff03][0-9]+\b|https?://[^\s]{0,200}?/issues/[0-9]+|" + _NUMBER_ENDS + ")"
