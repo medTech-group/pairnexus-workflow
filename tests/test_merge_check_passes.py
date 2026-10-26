@@ -422,7 +422,7 @@ def test_with_its_profile_unreadable_a_ticket_is_marked_and_checked_again_until_
     # Step 2 looks again first, before "Stop now" and "Done", so the check-in that reads the profile takes the steps.
     step2 = conductor.split("**2. Stop or wind down?**", 1)[1].split("\n- **Stop now**", 1)[0]
     assert "First, look again at each ticket marked `cap_unknown_at`" in step2
-    assert "for each whose run reads the profile, clear its mark, and take the steps for a ticket at the cap if it is at the cap; if not, it stays with the row it took" in step2
+    assert "for each where that `merge-check` gives no \"couldn't read\" reason for the profile, clear its mark and, if it is at the cap, take the steps for a ticket at the cap; if not, it stays with the row it took" in step2
     # A stopping run skips step 2 (step 0), so the report looks again too.
     report = conductor.split("4. **The report.**", 1)[1].split("\n", 1)[0]
     assert "First look again at each ticket still marked `cap_unknown_at`, as check-in step 2 begins." in report
@@ -430,6 +430,9 @@ def test_with_its_profile_unreadable_a_ticket_is_marked_and_checked_again_until_
     # the steps, or the mark.
     out_of_tries = next(ln for ln in conductor.splitlines() if ln.startswith("3. A ticket whose `attempts`"))
     assert "unless it is at the cap (step 2's \"A ticket at the cap\"): then take its steps instead of that line." in out_of_tries
+    # The label row goes through the definition too, so a wake that says "#n needs-human" gets the steps, or the mark.
+    labelled = next(ln for ln in conductor.splitlines() if ln.startswith("| **Labelled `needs-human`**"))
+    assert "With its pull request open, first check whether it is at the cap (step 2's \"A ticket at the cap\"): one that is takes its steps instead of that line." in labelled
     # Said once each: marked in the definition, looked at in step 2 and before the report.
     assert conductor.count("`cap_unknown_at`") == 3
 
@@ -449,7 +452,7 @@ def test_the_stuck_clause_is_only_for_a_ticket_at_the_cap():
     line = _pass_cap_row()
     stuck = line.split("A session that stops without labelling it", 1)[1]
     assert stuck.startswith(" is the stuck row's, except that, for a ticket at the cap (step 2's \"A ticket at the cap\", its `needs-human` label aside), instead of a retry you label the ticket `needs-human`, comment why on it, and archive the session")
-    assert "any other, the profile unreadable among them, gets the stuck row's retry" in stuck
+    assert "any other ticket, the profile unreadable among them, gets the stuck row's retry" in stuck
 
 
 def test_the_ticket_session_prompts_stopping_list_names_the_cap():
