@@ -698,7 +698,7 @@ class Context:
         def read():
             try:
                 changes = self.changes()
-                if any(c.patch is None and c.status != "removed" and None in (c.additions, c.deletions) for c in changes):
+                if any(not c.patch and c.status != "removed" and None in (c.additions, c.deletions) for c in changes):
                     return own_changes.UNKNOWN_HASHES
                 return own_changes.of_files(changes)
             except (Unreadable, ValueError):  # CantHash, or text the hash can't encode (a lone surrogate)
@@ -1085,12 +1085,13 @@ def _panel(ctx: Context, add) -> None:
     `spec` after rounds that didn't. Without the files' line counts, it says
     it can't read them, beside the reason today's rule gives.
 
-    The free base merge (#261): when the head isn't the last counted review's
-    commit, but its own changes hash the same with their context (`diff`),
-    that review covers the head, with its result, clean or not. A pass
-    doesn't count toward the cap when its commit is a merge of the base
-    (`ctx.base_merge`), the counted review before it was clean, and its
-    changed lines hash the same as that review's (`lines`); nor is the cap
+    The free base merge (#261): when the head is a merge of the base
+    (`ctx.base_merge`) and isn't the last counted review's commit, but its own
+    changes hash the same with their context (`diff`), that review covers the
+    head, with its result, clean or not. A pass doesn't count toward the cap
+    when its commit is a merge of the base, the counted review before it was
+    clean, its changed lines hash the same as that review's (`lines`), and no
+    record on its commit since the last round wasn't clean; nor is the cap
     reached by a pass on the head that wouldn't count. A record without the
     hashes, or with `unknown`, covers only its own commit."""
     head = ctx.pr().head
@@ -1124,9 +1125,9 @@ def _panel(ctx: Context, add) -> None:
             return
         last_allowed = last_allowed or ctx.measured is not None
     latest, hashes = counted[-1], ctx.head_hashes()  # the last counted review, round or pass
-    # Never over a review of the head itself since the last round: a record posted late for an older commit
-    # doesn't override it.
-    carried = (latest.commit != head and _hashed(latest.diff) and latest.diff == hashes.diff
+    # Only to a merge of the base (answer 4), and never over a review of the head itself since the last round:
+    # a record posted late for an older commit doesn't override it.
+    carried = (latest.commit != head and ctx.base_merge(head) and _hashed(latest.diff) and latest.diff == hashes.diff
                and not any(r.commit == head for r in counted[rounds[-1]:]))
     if carried:
         _note(ctx, "review_carried", f"The review of {_short(latest.commit)} covers the head {_short(head)}: the pull request's own changes, context included, are the same (its `diff` hash).")
@@ -1134,12 +1135,16 @@ def _panel(ctx: Context, add) -> None:
     def on_head(r: reviews.Record) -> bool:
         return r.commit == head or (carried and r is latest)
 
-    def free(prev: reviews.Record, commit: str | None, lines: str | None) -> bool:
-        """A pass on `commit` after `prev` doesn't count toward the cap (answer 23)."""
-        return ctx.base_merge(commit) and prev.clean and _hashed(lines) and lines == prev.lines
+    def free(i: int, commit: str | None, lines: str | None) -> bool:
+        """A pass on `commit` after the counted record `i` doesn't count toward
+        the cap (answer 23). One that rechecks open findings always counts: a
+        record since the last round on that commit that wasn't clean."""
+        prev, since = counted[i], counted[rounds[-1]:i + 1]
+        return (ctx.base_merge(commit) and prev.clean and _hashed(lines) and lines == prev.lines
+                and all(r.clean for r in since if r.commit == commit))
 
-    after = [(counted[i - 1], r) for i, r in enumerate(counted) if i > rounds[-1] and r.kind == "pass"]
-    used = [r for prev, r in after if not free(prev, r.commit, r.lines)]
+    after = [(i - 1, r) for i, r in enumerate(counted) if i > rounds[-1] and r.kind == "pass"]
+    used = [r for i, r in after if not free(i, r.commit, r.lines)]
     if len(after) > len(used):
         _note(ctx, "free_passes", f"{_plural(len(after) - len(used), 'Correctness pass', 'Correctness passes')} after a merge of the base that left the pull request's changed lines as they were didn't count toward the pass cap.")
     passes = [r for _, r in after if on_head(r)]
@@ -1148,7 +1153,7 @@ def _panel(ctx: Context, add) -> None:
     def needs_pass(rid, **more):
         # A pass the head needs that wouldn't count doesn't meet the cap (answer 23: no false needs-human). It is
         # judged on GitHub's `lines` hash; the pass's record names git's, so where they differ, that pass counts.
-        if len(used) >= cap and not free(latest, head, hashes.lines):
+        if len(used) >= cap and not free(len(counted) - 1, head, hashes.lines):
             posted = " posted" if len(used) == len(after) else f" counted of {len(after)} posted"
             add("passes_used_up", next="owner", passes=_plural(len(used), "Correctness pass", "Correctness passes") + posted, cap=cap, **details)
         else:

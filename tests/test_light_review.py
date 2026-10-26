@@ -121,7 +121,7 @@ def test_flow_section_3_mentions_the_light_review():
 def test_the_done_checklists_review_line():
     # The checklist gate reads these lines; #261 added the exception for a merge of the base to the review line.
     text = _read("skills/build-ticket/SKILL.md")
-    assert "- [ ] Review panel run in rounds until clean (or the limit, the rest raised); late commits had a Correctness pass, except a merge of the base `merge-check` carried a review over" in text
+    assert "- [ ] Review panel run in rounds until clean (or the limit, the rest raised); late commits had a Correctness pass, except a merge of the base that `merge-check` carried a review over" in text
 
 
 def test_changelog_notes_under_unreleased_and_no_version_bump():

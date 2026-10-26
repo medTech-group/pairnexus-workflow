@@ -107,9 +107,10 @@ def test_a_file_with_changes_but_no_patch_makes_them_unknown(project, capsys):
 
 def test_a_file_with_no_patch_and_no_counts_makes_them_unknown(project, capsys):
     data = inputs()
-    data["files"] = [{"filename": "src/app.py", "status": "modified", "sha": "1" * 40}]
-    got, _ = check(project, capsys, data)
-    assert got["head_hashes"] == {"diff": "unknown", "lines": "unknown"}
+    for patch in ({}, {"patch": ""}):
+        data["files"] = [{"filename": "src/app.py", "status": "modified", "sha": "1" * 40, **patch}]
+        got, _ = check(project, capsys, data)
+        assert got["head_hashes"] == {"diff": "unknown", "lines": "unknown"}
 
 
 def test_files_that_cant_be_read_make_them_unknown(project, capsys):
@@ -181,6 +182,15 @@ def test_a_late_record_for_an_older_commit_never_overrides_the_heads_own_pass(pr
     assert ids(got) == ["pass_not_clean"] and "review_carried" not in note_ids(got)
 
 
+def test_a_commit_that_isnt_a_merge_of_the_base_never_carries_over(project, capsys):
+    # A change of mode alone on a file with hunks keeps GitHub's per-file data, and so the hashes, as they were.
+    reviewed = hashes_of(project, capsys, REVIEWED)
+    data = fixed(REVIEWED)
+    data["comments"] = records(hashed(rnd=1, commit=MIDDLE, hashes=reviewed))
+    got, _ = check(project, capsys, data)
+    assert ids(got) == ["review_stale"] and "review_carried" not in note_ids(got)
+
+
 def test_only_the_last_counted_review_carries_over(project, capsys):
     reviewed = hashes_of(project, capsys, REVIEWED)
     data = merged_in(ELSEWHERE)
@@ -224,6 +234,21 @@ def test_after_a_review_that_wasnt_clean_its_pass_counts(project, capsys):
     data = pr(RESOLVED, (EARLIER, [FORK_POINT]), (MIDDLE, [EARLIER, BASE_TIP]), (HEAD, [MIDDLE]))
     data["comments"] = records(hashed(rnd=3, commit=EARLIER, clean=False, hashes=reviewed), hashed("pass", rnd=3, commit=MIDDLE, hashes=context))
     got, _ = check(project, capsys, data, "--review-passes", "1")
+    assert ids(got) == ["passes_used_up"]
+
+
+def test_a_pass_that_rechecks_open_findings_counts_whatever_was_posted_between(project, capsys):
+    # A late clean record for an older commit, posted between a pass on the head that wasn't clean and its recheck.
+    reviewed = hashes_of(project, capsys, REVIEWED)
+    data = merged_in(ELSEWHERE)
+    late = [hashed(rnd=1, commit=EARLIER, hashes=reviewed), hashed("pass", rnd=1, commit=HEAD, clean=False, hashes=reviewed),
+            hashed("pass", rnd=1, commit=MIDDLE, hashes=reviewed)]
+    data["comments"] = records(*late)
+    for cap in ("0", "1"):
+        got, _ = check(project, capsys, data, "--review-passes", cap)
+        assert ids(got) == ["passes_used_up"], cap
+    data["comments"] = records(*late, hashed("pass", rnd=1, commit=HEAD, clean=False, hashes=reviewed))
+    got, _ = check(project, capsys, data, "--review-passes", "2")
     assert ids(got) == ["passes_used_up"]
 
 
@@ -404,7 +429,7 @@ def test_build_ticket_says_it_in_its_review_step_and_checklist():
     step = text.split("## 3. Review it", 1)[1].split("\n## ", 1)[0]
     assert EXCEPTION in step and "needs CI only" in step
     assert "`WF merge-check --fetch <PR> --json`" in step and "review reasons only" in step
-    assert "- [ ] Review panel run in rounds until clean (or the limit, the rest raised); late commits had a Correctness pass, except a merge of the base `merge-check` carried a review over" in text
+    assert "- [ ] Review panel run in rounds until clean (or the limit, the rest raised); late commits had a Correctness pass, except a merge of the base that `merge-check` carried a review over" in text
 
 
 def test_the_merge_check_skill_names_the_files_and_commits_fields():

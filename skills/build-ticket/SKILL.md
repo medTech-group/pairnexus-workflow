@@ -166,7 +166,7 @@ Use `waiting` when CI is running and a check-in is scheduled. With `done`, inclu
 - [ ] Blockers closed and the spec read
 - [ ] Every acceptance criterion met, each with its test
 - [ ] Typecheck and the full suite pass; evidence posted on the PR
-- [ ] Review panel run in rounds until clean (or the limit, the rest raised); late commits had a Correctness pass, except a merge of the base `merge-check` carried a review over
+- [ ] Review panel run in rounds until clean (or the limit, the rest raised); late commits had a Correctness pass, except a merge of the base that `merge-check` carried a review over
 - [ ] Every finding fixed or answered with its reason
 - [ ] PR opened with the findings table and decisions; by-hand checks filed
 - [ ] Merged under the merge rule (or left for the owner), notes for the next tickets posted; the claim label removed and the conductor woken (in a run)
