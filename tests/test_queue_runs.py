@@ -176,7 +176,11 @@ def test_the_briefing_queues_once_per_head_and_stays(tmp_path, mode):
     assert "With a `queue_unsure` note, never merge directly or arm auto-merge (disarm it if it is armed)" in line
     # The bullets for "up to date" say so, and a refused queueing goes to the conductor too.
     assert "- **Without a merge queue** (`merge-check`'s `queue` is false, with no `queue_unsure` note). On `ready`, act by the merge mode" in merging
-    assert "right after `merge-check` says `ready` on that head; on `not_yet`, never queue" in line
+    # #297: "on `not_yet`, never queue" now sits in the briefing's `ready` line, so the bullet doesn't repeat it.
+    assert "(build-ticket §6 step 4), right after `merge-check` says `ready` on that head. `session` mode queues" in line
+    assert "never queue" not in line
+    assert "- Right before each of these (merging, arming auto-merge, queueing, saying it's ready), run `workflow merge-check`" in merging
+    assert "- `ready` is the only yes. On `not_yet`, never merge, arm auto-merge or queue (disarm auto-merge if it's armed)" in merging
     assert "on `ready`, comment on the PR and on #232 that it is ready for the owner to merge" in line
     assert "(or arming auto-merge, or queueing)" in merging and "the conductor merges it, arms auto-merge or queues it" in merging
     assert "`session` mode queues after your own final `merge-check` says `ready`" in line

@@ -93,7 +93,7 @@ def _brief(tmp_path, c):
 
 
 def _merge_check(text):
-    return _line(text, "- Right before each of these")
+    return _line(text, "- Right before each of these (merging, arming auto-merge, queueing, saying it's ready)")
 
 
 # ---------- the presets' small ----------
