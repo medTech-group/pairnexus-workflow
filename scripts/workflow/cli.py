@@ -1103,7 +1103,7 @@ def cmd_review_record(a) -> int:
         body = None if path is None else _spec_body(path)
         # Checked before any git runs: a refused record is never hashed.
         text = reviews_mod.record(**one, reviewers=reviewers, clean=a.clean, body=body)
-        if (one["kind"] or "").strip().lower() in ("round", "pass"):
+        if reviews_mod._kind(one["kind"]) in ("round", "pass"):
             hashes = _own_hashes(a, one["commit"].strip().lower())
             text = reviews_mod.record(**one, reviewers=reviewers, clean=a.clean, diff=hashes.diff, lines=hashes.lines)
     except reviews_mod.RecordError as e:

@@ -29,9 +29,10 @@ or the environment says: no external diff or textconv, the Myers algorithm with
 git's default indent heuristic, 3 lines of context, no hunks joined across
 unchanged lines, renames found (copies never) within git's default limit,
 UTF-8 paths, empty context lines with their space, a submodule as its
-`Subproject commit` lines and never left out, and git's default size past
-which a file is binary, and the attributes of the commit itself. A type change, which git shows as a removal and an
-addition of the same path, is one `changed` file with both hunks.
+`Subproject commit` lines and never left out, git's default size past which a
+file is binary, and the attributes of the commit itself. A type change, which
+git shows as a removal and an addition of the same path, is one `changed`
+file with both hunks.
 """
 
 from __future__ import annotations
