@@ -335,6 +335,27 @@ def _spelled_out(files):
     return hashlib.sha256(diff).hexdigest(), hashlib.sha256(lines).hexdigest()
 
 
+def rest_files(root):
+    """The checkout's change as GitHub's REST list would give its files, written
+    out by hand: (path, old path, status, blob SHA, patch), as `_spelled_out`
+    takes them. Shared with `test_merge_check_carry_over.py`'s test of both sides."""
+    blob = lambda rel: git(root, "rev-parse", f"HEAD:{rel}")  # noqa: E731
+    return [
+        ("assets/logo.png", "", "added", blob("assets/logo.png"), None),
+        ("bin/run.sh", "", "changed", blob("bin/run.sh"), None),
+        ("data/gone.txt", "", "removed", None, "@@ -1,2 +0,0 @@\n-a\n-b"),
+        ("docs/moved.md", "docs/same.md", "renamed", blob("docs/moved.md"), None),
+        ("docs/new.md", "docs/old.md", "renamed", blob("docs/new.md"),
+         "@@ -2,7 +2,7 @@ Note 1.\n Note 2.\n Note 3.\n Note 4.\n-Note 5.\n+Note five.\n Note 6.\n Note 7.\n Note 8."),
+        ("src/__init__.py", "", "added", EMPTY_BLOB, None),
+        ("docs/café notes.md", "", "added", blob("docs/café notes.md"), "@@ -0,0 +1 @@\n+Ça va."),
+        ("src/app_copy.py", "", "added", blob("src/app_copy.py"), "@@ -0,0 +1,30 @@\n" + "\n".join("+" + ln for ln in APP.splitlines())),
+        ("src/app.py", "", "modified", blob("src/app.py"),
+         "@@ -7,7 +7,7 @@\n line 7\n line 8\n line 9\n-line 10\n+line ten\n line 11\n line 12\n line 13\n"
+         "@@ -17,7 +17,7 @@ line 16\n line 17\n line 18\n line 19\n-line 20\n+line twenty\n line 21\n line 22\n line 23"),
+    ]
+
+
 def test_binary_renamed_empty_and_mode_only_files_hash_as_defined(checkout, capsys):
     root = checkout
     files = {c.path: c for c in own_changes.local_files(root, head(), "refs/remotes/origin/main")}
@@ -355,21 +376,7 @@ def test_binary_renamed_empty_and_mode_only_files_hash_as_defined(checkout, caps
     assert files["src/app.py"].patch.count("\n@@ ") == 1 and files["src/app.py"].patch.startswith("@@ -7,7 +7,7 @@")
     assert files["data/gone.txt"].patch == "@@ -1,2 +0,0 @@\n-a\n-b\n"
     # REST-shaped, as GitHub would list these files: the same hashes as the record's.
-    rest = [
-        ("assets/logo.png", "", "added", blob("assets/logo.png"), None),
-        ("bin/run.sh", "", "changed", blob("bin/run.sh"), None),
-        ("data/empty.txt", "", "removed", None, None),  # as GitHub lists an empty file removed: no blob
-        ("data/gone.txt", "", "removed", None, "@@ -1,2 +0,0 @@\n-a\n-b"),
-        ("docs/moved.md", "docs/same.md", "renamed", blob("docs/moved.md"), None),
-        ("docs/new.md", "docs/old.md", "renamed", blob("docs/new.md"),
-         "@@ -2,7 +2,7 @@ Note 1.\n Note 2.\n Note 3.\n Note 4.\n-Note 5.\n+Note five.\n Note 6.\n Note 7.\n Note 8."),
-        ("src/__init__.py", "", "added", EMPTY_BLOB, None),
-        ("docs/café notes.md", "", "added", blob("docs/café notes.md"), "@@ -0,0 +1 @@\n+Ça va."),
-        ("src/app_copy.py", "", "added", blob("src/app_copy.py"), "@@ -0,0 +1,30 @@\n" + "\n".join("+" + ln for ln in APP.splitlines())),
-        ("src/app.py", "", "modified", blob("src/app.py"),
-         "@@ -7,7 +7,7 @@\n line 7\n line 8\n line 9\n-line 10\n+line ten\n line 11\n line 12\n line 13\n"
-         "@@ -17,7 +17,7 @@ line 16\n line 17\n line 18\n line 19\n-line 20\n+line twenty\n line 21\n line 22\n line 23"),
-    ]
+    rest = rest_files(root) + [("data/empty.txt", "", "removed", None, None)]  # as GitHub lists an empty file removed: no blob
     as_github = own_changes.of_files([Change(p, prev or None, s, sha=sha, patch=patch) for p, prev, s, sha, patch in rest])
     assert as_github == own_changes.Hashes(*_spelled_out(rest))
     # The record's, without the empty file removed (git pairs two empty files as a rename).
