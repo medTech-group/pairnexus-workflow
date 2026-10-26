@@ -521,7 +521,7 @@ def cmd_charter(a) -> int:
         if not isinstance(old, dict):
             print("workflow: the old charter must be a JSON object", file=sys.stderr)
             return 1
-        _out(charter_mod.reuse(old))
+        _out(charter_mod.reuse(old, _page_profile()))
         return 0
     if a.action == "pin-plan":
         c = _json(a.file)

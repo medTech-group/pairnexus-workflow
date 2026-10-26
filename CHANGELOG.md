@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+**Runs and the small review: the charter's `review.small`, pass cap and small threshold, the presets, and the briefing** (#259, from #255; answers 3, 5, 8, 15, 17 and 21 on #253).
+
+- **The charter's `review`** takes four more keys, each optional and refused out of range: `small` (true or false), `passes` (0 to 10), `small_max_lines` (1 to 1000) and `small_max_files` (1 to 50). A missing `small` reads as off, with or without a `review` object, so a charter approved before this change behaves as approved; a missing `passes` or threshold value reads as the profile's (`presets.review_of`).
+- **The presets** set `small`: Light and Normal on, Thorough off. The pass cap and the threshold are the profile's in every preset, so a charter written from a preset carries `small` and leaves them out.
+- **`workflow charter reuse`** fills a missing `small` from the old charter's preset (Normal's without one), writing out the review it read as when it had none, so `charter diff` shows the change at the kick-off.
+- **The limits question** names the small review and the pass cap, and each preset's `words` gives them ("small review on (at most 60 lines in 4 files outside tests); at most 2 Correctness passes"). **The one page** (`charter markdown`, `charter splice`) gains "**Small review:**" and "**Pass cap:**" lines, and names a changed small review, pass cap or threshold beside the preset ("**Normal**, changed: the small review off, 5 passes").
+- **The ticket-session briefing** (`templates/ticket-session-prompt.md`, `workflow render`) gains "**Small review:**" (on or off, with the threshold and the `review-record --measure` command to measure against it) and "**Pass cap:**" lines, and its `merge-check` command carries `--review-passes`, `--small-max-lines` and `--small-max-files` with the charter's values.
+- **`build-ticket`**'s step 3 `merge-check` adds `--small-max-lines <L> --small-max-files <F>` from the briefing, beside `--review-rounds` and `--review-passes`; **`conductor`**'s "PR open, not merged" row passes the same three flags with the charter's values, and its kick-off says what `reuse` fills in. The `merge-check` skill no longer says briefings carry none. `docs/charter.md` names the new keys, what an old charter reads as, and the presets' `small`.
+- Tests: `tests/test_charter_small_review.py`; `tests/test_charter_presets.py`'s pinned preset and `review_of` values gain the new keys.
+- **For projects updating:** nothing to do. A run approved before this change keeps the small review off; a new run's kick-off from it shows the small review turned on by its preset (off for Thorough). The briefing's `merge-check` line needs a vendored kit with `--review-passes` and the threshold flags, which this release has.
+
 **`merge-check` judges the small review by the diff: the small threshold, `past_small_threshold`, and `review-record --measure`** (#257, from #255; answers 1, 5, 6, 9, 14, 16, 19 and 20 on #253).
 
 - **The settings.** `run.small_max_lines` (default 60, from 1 to 1000) and `run.small_max_files` (default 4, from 1 to 50) in the profile, refused outside those (`templates/profile.toml`, `docs/profile.md`). "Within the threshold" means at most both.
