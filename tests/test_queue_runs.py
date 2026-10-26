@@ -60,7 +60,7 @@ def _queue_paragraph():
 def test_build_ticket_reads_the_queue_from_merge_check_never_the_briefing():
     step = _merge_step()
     assert "Read whether the merge queue is on from the JSON's `queue` each time, never from the briefing" in step
-    assert "With a `queue_unsure` note (a merge-queue rule it can't judge, `queue` false), never merge directly or arm auto-merge" in step
+    assert "With a `queue_unsure` note (a merge-queue rule it can't judge, `queue` false), never merge directly or arm auto-merge, and disarm auto-merge if it is armed" in step
 
 
 def test_build_ticket_enqueues_once_per_head_pinned_through_merge_async():
@@ -173,7 +173,7 @@ def test_the_briefing_queues_once_per_head_and_stays(tmp_path, mode):
     assert "In `session` and `auto-merge` mode, on `ready`" in line and "`owner` mode queues nothing" in line
     assert "pinned to your checkout's head, its full SHA" in line and "A head you queued only waits" in line
     assert "and fix any red check" in line and "a conflict you still resolve by merging the base in" in line
-    assert "With a `queue_unsure` note, never merge directly or arm auto-merge" in line
+    assert "With a `queue_unsure` note, never merge directly or arm auto-merge (disarm it if it is armed)" in line
     # The bullets for "up to date" say so, and a refused queueing goes to the conductor too.
     assert "- **Without a merge queue** (`merge-check`'s `queue` is false, with no `queue_unsure` note). On `ready`, act by the merge mode" in merging
     assert "right after `merge-check` says `ready` on that head; on `not_yet`, never queue" in line
@@ -254,7 +254,11 @@ def test_a_mid_run_change_of_the_queue_is_logged_said_followed_and_stops_waivers
     assert "Nothing stops" in para
     # An unsure queue: never a direct merge or armed auto-merge; the owner merges it.
     assert "A `queue_unsure` note (a merge-queue rule the kit can't judge) counts as on for the state and the waivers" in para
-    assert "never merge it directly or arm auto-merge" in para and "yours to merge (#PR)" in para
+    assert "in `session` or `auto-merge` mode (`owner` mode keeps its row), never merge it directly or arm auto-merge, and disarm auto-merge if it is armed" in para
+    assert "yours to merge (#PR)" in para
+    # A doctor answer with no merge_queue at all is off, or a failed read; and the recorded state is read back.
+    assert "a `merge_queue` that is `null` as a whole is off, or a failed read where doctor's `github.ruleset` line is `cant_check`" in para
+    assert "write the body to the issue, and read the state back from it (`WF state get --body .workflow/run/body.md`) so step 8's write keeps it" in para
     assert "it counts as settled for \"Done\"" in para
     # A failed read of the rulesets is never a change.
     assert "a `WF merge-check` run above with no \"couldn't read\" reason for the rulesets" in para
@@ -277,8 +281,10 @@ def test_every_charter_check_and_the_owners_answer_carry_the_queue():
     assert "4. Run `WF charter validate charter.json --queue <on|off>`" in text
     assert "10. Run `WF charter validate charter.json --approved --queue <on|off>`." in text
     # Waivers already in the charter never block an unrelated amendment once the queue comes on.
-    assert "3. Run `WF charter validate --approved --queue <on|off>`: the queue's state as this check-in reads it" in text
-    assert "when the change touches `merge.waived_checks`, else `--queue off`" in text
+    assert "3. Run `WF charter validate --approved --queue <on|off>`: for a change that adds a waived check, the queue's state read for it now" in text
+    assert "else `--queue off`, since waivers already in the charter only stop applying while the queue is on and never block another change, a narrowing of them included" in text
+    # docs/charter.md says the same.
+    assert "again for an amendment's `validate` when the amendment adds a waived check; any other amendment is validated with `--queue off`" in _read("docs/charter.md")
     assert "With `null`, tell the owner that every ready pull request will be theirs to merge, whatever the mode" in text
     assert "no `asked_at`, `base_merged`, `queue_heads`, `queue_failed` or `queue_result`, so the merge queue's drop rule starts afresh" in text
 
@@ -288,6 +294,7 @@ def test_the_kick_off_records_the_queue_and_recommends_it_with_its_reason():
     kickoff = _section(text, "### 2. The kick-off", "## Each check-in")
     para = _section(kickoff, "**The merge queue.**", "\n\n")
     assert "doctor's JSON `merge_queue`" in para
+    assert "A `merge_queue` that is `null` as a whole is `off` (no ruleset in force), unless doctor's `github.ruleset` line is `cant_check`" in para
     assert "the `check-setup` skill's rule" in para and "with its reason" in para
     assert "\"Use a merge queue\"" in para and "attended session" in para
     assert "never changes the ruleset itself" in para
