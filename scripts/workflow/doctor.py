@@ -1044,7 +1044,7 @@ class _GitHub:
     # Without the default branch, the two readings when they differ and a
     # ruleset applies in either (`report` is None then): the JSON's
     # merge_queue still says whether a queue may be required (#302).
-    either: tuple[protection_mod.Report, protection_mod.Report] | None = None
+    readings: tuple[protection_mod.Report, protection_mod.Report] | None = None
     merge: dict | None = None
     merge_why: _Answer | None = None
     settings: dict | None = None  # the repository's settings as given (its owner and visibility, #246)
@@ -1284,7 +1284,7 @@ def _github(i: Inputs) -> _GitHub | None:
             "Give --repo with default_branch (GET repos/<repo>).",
         ))
         if rep.effective or other.effective:
-            gh.either = (rep, other)
+            gh.readings = (rep, other)
             return gh
         # Neither reading puts a ruleset on the base branch: the lines that
         # read its rules read the same in both, so they read this one.
@@ -2680,9 +2680,9 @@ def check_merge_queue(i: Inputs) -> list[Line]:  # run by check_ruleset_rules, s
     JSON's `merge_queue`: null as a whole only where the rulesets can't be
     read; where they can but can't be placed, `queue` alone (#302)."""
     gh = _github(i)
-    if gh is not None and gh.report is None and gh.either:
+    if gh is not None and gh.report is None and gh.readings:
         # Without the default branch: on or off only when both readings say so.
-        said = {None if r.queue_unsure and not r.queue else r.queue for r in gh.either}
+        said = {None if r.queue_unsure and not r.queue else r.queue for r in gh.readings}
         i._mq = {"queue": said.pop() if len(said) == 1 else None, "available": None, "merge_group": None, "signals": None}
     if gh is None or gh.report is None:
         return []

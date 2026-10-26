@@ -14,7 +14,7 @@ import pytest
 
 from changelog_notes import since_0110
 from conftest import KIT
-from test_doctor import RULESET, SETTINGS, _bin, _prof, _project, _report
+from test_doctor import RULESET, SETTINGS, _bin, _prof, _project, _report, gh_routes
 from test_doctor_github import _rs, _rule, _without
 
 NOW = "2026-10-25T12:00:00Z"
@@ -380,33 +380,38 @@ PATTERN = {"ref_name": {"include": ["refs/heads/ma*"], "exclude": []}}
 EVERY_BRANCH = {"ref_name": {"include": ["~ALL"], "exclude": []}}
 
 
-def _only(queue):
+def _queue_only(queue):
     return {"queue": queue, "available": None, "merge_group": None, "signals": None}
+
+
+def _no_queue_lines(lines):
+    return "github.merge_queue" not in lines and "github.merge_group" not in lines
 
 
 @pytest.mark.parametrize("settings", [NO_DEFAULT, "nope"], ids=["no-default-branch", "settings-unreadable"])
 def test_a_queue_rule_with_the_default_branch_unknown_gives_queue_null(tmp_path, project, settings):
     lines, r = _github(tmp_path, project, rulesets=(_queued(),), settings=settings)
-    assert lines["github.ruleset"]["status"] == "cant_check"  # the two readings differ
-    assert r["merge_queue"] == _only(None)
+    assert lines["github.ruleset"]["status"] == "cant_check" and _no_queue_lines(lines)  # the two readings differ
+    assert r["merge_queue"] == _queue_only(None)
 
 
 def test_a_pattern_queue_rule_with_the_default_branch_unknown_gives_queue_null(tmp_path, project):
-    _, r = _github(tmp_path, project, rulesets=(RULESET, _queued(_rs(id=203, name="Queue", conditions=PATTERN))), settings=NO_DEFAULT)
-    assert r["merge_queue"] == _only(None)
+    lines, r = _github(tmp_path, project, rulesets=(RULESET, _queued(_rs(id=203, name="Queue", conditions=PATTERN))), settings=NO_DEFAULT)
+    assert _no_queue_lines(lines)
+    assert r["merge_queue"] == _queue_only(None)
 
 
 def test_no_queue_rule_with_the_default_branch_unknown_gives_queue_false(tmp_path, project):
     lines, r = _github(tmp_path, project, settings=NO_DEFAULT)
-    assert lines["github.ruleset"]["status"] == "cant_check"
-    assert r["merge_queue"] == _only(False)
+    assert lines["github.ruleset"]["status"] == "cant_check" and _no_queue_lines(lines)
+    assert r["merge_queue"] == _queue_only(False)
 
 
 def test_a_queue_rule_on_every_branch_is_on_whatever_the_default_branch(tmp_path, project):
     every = _queued(_rs(id=204, name="Everywhere", conditions=EVERY_BRANCH))
     lines, r = _github(tmp_path, project, rulesets=(RULESET, every), settings=NO_DEFAULT)
-    assert lines["github.ruleset"]["status"] == "cant_check"
-    assert r["merge_queue"] == _only(True)
+    assert lines["github.ruleset"]["status"] == "cant_check" and _no_queue_lines(lines)
+    assert r["merge_queue"] == _queue_only(True)
 
 
 @pytest.mark.parametrize("rulesets", ["nope", [{**_queued(), "enforcement": 5}]], ids=["unreadable", "malformed"])
@@ -419,14 +424,30 @@ def test_rulesets_that_cant_be_read_give_merge_queue_null_as_a_whole(tmp_path, p
 def test_a_queue_rule_placed_by_a_pattern_alone_gives_queue_null(tmp_path, project):
     # No ruleset in force on the base: the ruleset lines say it isn't protected.
     lines, r = _github(tmp_path, project, rulesets=(_queued(_rs(id=203, name="Queue", conditions=PATTERN)),))
-    assert lines["github.ruleset"]["status"] == "gap" and "github.merge_queue" not in lines
-    assert r["merge_queue"] == _only(None)
+    assert lines["github.ruleset"]["status"] == "gap" and _no_queue_lines(lines)
+    assert r["merge_queue"] == _queue_only(None)
 
 
 def test_no_ruleset_gives_queue_false(tmp_path, project):
     lines, r = _github(tmp_path, project, rulesets=())
-    assert lines["github.ruleset"]["status"] == "gap" and "github.merge_queue" not in lines
-    assert r["merge_queue"] == _only(False)
+    assert lines["github.ruleset"]["status"] == "gap" and _no_queue_lines(lines)
+    assert r["merge_queue"] == _queue_only(False)
+
+
+def test_rulesets_that_need_a_paid_plan_give_queue_false(tmp_path, project):
+    import fake_gh
+
+    routes = gh_routes(settings=ORG)
+    routes["repos/acme/demo/rulesets"] = fake_gh.reply(exit=1, stderr="gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)")
+    r = _report(tmp_path, project, path=_path(tmp_path, routes))
+    lines = {ln["id"]: ln for ln in r["lines"] if ln["group"] == "GitHub"}
+    assert "paid" in lines["github.ruleset"]["message"] and _no_queue_lines(lines)
+    assert r["merge_queue"] == _queue_only(False)
+
+
+def test_upgrade_setup_says_the_ruleset_line_when_no_queue_line_explains_a_null_queue():
+    bullet = next(ln for ln in _skill("upgrade-setup").splitlines() if ln.startswith("- **`queue` is `null`:**"))
+    assert "`github.merge_queue`" in bullet and "`github.up_to_date`" in bullet and "`github.ruleset`" in bullet
 
 
 def test_the_changelog_says_when_merge_queue_is_null_as_a_whole():
