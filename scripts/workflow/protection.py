@@ -238,8 +238,9 @@ def _targets(rs: dict, base: str, default: str | None, have_settings: bool) -> s
     matches the base branch, a pattern included, takes it out, and one whose
     pattern can't be matched here (or isn't a full ref name) counts as taking
     it out. Excludes are matched ignoring case, so they only ever take out more.
-    One that names the base branch (`~ALL`, or its full ref name exactly) wins
-    over any reason it can't tell (#302).
+    One that names the base branch (`~ALL`, its full ref name exactly, or
+    `~DEFAULT_BRANCH` when it is the default) wins over any reason it can't
+    tell (#302).
     """
     if rs["target"] != "branch":
         return f"doesn't target {base} (it is a {quote(rs['target'])} ruleset)"
@@ -254,10 +255,11 @@ def _targets(rs: dict, base: str, default: str | None, have_settings: bool) -> s
             return None if default is None else default == base
         return False
 
-    # An exclude that names the base (`~ALL`, or its full ref name exactly)
-    # takes it out, whatever else can't be told. A pattern, or a match only
-    # when case is ignored, is never that certain.
-    out = next((p for p in ref.get("exclude") or [] if names_base(p)), None)
+    # An exclude that names the base (`~ALL`, its full ref name exactly, or
+    # `~DEFAULT_BRANCH` when the settings say the base is the default) takes
+    # it out, whatever else can't be told. A pattern, a name GitHub may read as
+    # one (braces), or a match only when case is ignored is never that certain.
+    out = next((p for p in ref.get("exclude") or [] if names_base(p) and not any(c in p for c in UNREAD_GLOB)), None)
     unknown = DEFAULT_UNKNOWN[0] if have_settings else DEFAULT_UNKNOWN[1]
     hits = [names_base(p) for p in ref.get("include") or []]
     patterns = [p for p in ref.get("include") or [] if any(c in GLOB for c in p)]

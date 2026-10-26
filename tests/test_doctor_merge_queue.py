@@ -459,6 +459,13 @@ def test_a_queue_rule_in_a_ruleset_that_excludes_the_base_is_off(tmp_path, proje
     assert lines["github.up_to_date"]["status"] == "gap"
 
 
+def test_a_ruleset_named_like_the_reason_never_asks_for_the_default_branch(tmp_path, project):
+    named = _queued(_rs(id=207, name="Queue (the settings file has no default_branch)",
+                        conditions={"ref_name": {"include": ["refs/heads/ma*"], "exclude": []}}))
+    lines, _ = _github(tmp_path, project, rulesets=(RULESET, named))
+    assert lines["github.merge_queue"]["fix"].startswith("Check in Settings → Rules"), lines["github.merge_queue"]
+
+
 def test_with_the_default_branch_unknown_up_to_date_never_asks_for_it_beside_a_queue_rule(tmp_path, project):
     lines, r = _github(tmp_path, project, rulesets=(_on_main(False), OTHERS), settings=NO_DEFAULT)
     assert r["merge_queue"]["queue"] is None

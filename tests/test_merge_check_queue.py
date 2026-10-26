@@ -160,6 +160,15 @@ def test_a_pattern_ruleset_excluding_the_base_by_name_is_off_the_base(project, c
     assert ("queue_unsure" in note_ids(got)) is unsure
 
 
+def test_an_exclude_naming_a_base_with_braces_is_never_certain():
+    # GitHub reads braces as a pattern, so `refs/heads/rel{1}` may not be the base itself.
+    from workflow import protection
+
+    rs = {**queue_ruleset(), "conditions": {"ref_name": {"include": ["refs/heads/rel*"], "exclude": ["refs/heads/rel{1}"]}}}
+    rep = protection.check([rs], "rel{1}", {"default_branch": "main"})
+    assert len(rep.queue_unsure) == 1 and len(rep.unsure) == 1
+
+
 def test_the_reader_reports_the_queue_and_an_unsure_one_apart():
     from workflow import protection
 
