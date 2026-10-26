@@ -373,6 +373,67 @@ def test_a_merge_queue_rule_in_an_unsure_ruleset_is_cant_check(tmp_path, project
     assert "github.merge_queue" not in lines and r["merge_queue"]["queue"] is None
 
 
+# ---------- the queue's state where the rulesets can't be placed (#302) ----------
+
+NO_DEFAULT = {k: v for k, v in ORG.items() if k != "default_branch"}
+PATTERN = {"ref_name": {"include": ["refs/heads/ma*"], "exclude": []}}
+EVERY_BRANCH = {"ref_name": {"include": ["~ALL"], "exclude": []}}
+
+
+def _only(queue):
+    return {"queue": queue, "available": None, "merge_group": None, "signals": None}
+
+
+@pytest.mark.parametrize("settings", [NO_DEFAULT, "nope"], ids=["no-default-branch", "settings-unreadable"])
+def test_a_queue_rule_with_the_default_branch_unknown_gives_queue_null(tmp_path, project, settings):
+    lines, r = _github(tmp_path, project, rulesets=(_queued(),), settings=settings)
+    assert lines["github.ruleset"]["status"] == "cant_check"  # the two readings differ
+    assert r["merge_queue"] == _only(None)
+
+
+def test_a_pattern_queue_rule_with_the_default_branch_unknown_gives_queue_null(tmp_path, project):
+    _, r = _github(tmp_path, project, rulesets=(RULESET, _queued(_rs(id=203, name="Queue", conditions=PATTERN))), settings=NO_DEFAULT)
+    assert r["merge_queue"] == _only(None)
+
+
+def test_no_queue_rule_with_the_default_branch_unknown_gives_queue_false(tmp_path, project):
+    lines, r = _github(tmp_path, project, settings=NO_DEFAULT)
+    assert lines["github.ruleset"]["status"] == "cant_check"
+    assert r["merge_queue"] == _only(False)
+
+
+def test_a_queue_rule_on_every_branch_is_on_whatever_the_default_branch(tmp_path, project):
+    every = _queued(_rs(id=204, name="Everywhere", conditions=EVERY_BRANCH))
+    lines, r = _github(tmp_path, project, rulesets=(RULESET, every), settings=NO_DEFAULT)
+    assert lines["github.ruleset"]["status"] == "cant_check"
+    assert r["merge_queue"] == _only(True)
+
+
+@pytest.mark.parametrize("rulesets", ["nope", [{**_queued(), "enforcement": 5}]], ids=["unreadable", "malformed"])
+def test_rulesets_that_cant_be_read_give_merge_queue_null_as_a_whole(tmp_path, project, rulesets):
+    lines, r = _github(tmp_path, project, rulesets=rulesets)
+    assert lines["github.ruleset"]["status"] == "cant_check"
+    assert r["merge_queue"] is None
+
+
+def test_a_queue_rule_placed_by_a_pattern_alone_gives_queue_null(tmp_path, project):
+    # No ruleset in force on the base: the ruleset lines say it isn't protected.
+    lines, r = _github(tmp_path, project, rulesets=(_queued(_rs(id=203, name="Queue", conditions=PATTERN)),))
+    assert lines["github.ruleset"]["status"] == "gap" and "github.merge_queue" not in lines
+    assert r["merge_queue"] == _only(None)
+
+
+def test_no_ruleset_gives_queue_false(tmp_path, project):
+    lines, r = _github(tmp_path, project, rulesets=())
+    assert lines["github.ruleset"]["status"] == "gap" and "github.merge_queue" not in lines
+    assert r["merge_queue"] == _only(False)
+
+
+def test_the_changelog_says_when_merge_queue_is_null_as_a_whole():
+    notes = since_0110()
+    assert "#302" in notes and "`merge_queue.queue`" in notes
+
+
 # ---------- the signals ----------
 
 

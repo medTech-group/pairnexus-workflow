@@ -1041,6 +1041,10 @@ class _GitHub:
     # checked, unless neither reading puts a ruleset on it (then `report` is
     # set, and they read as with none).
     unprotected_either: bool = False
+    # Without the default branch, the two readings when they differ and a
+    # ruleset applies in either (`report` is None then): the JSON's
+    # merge_queue still says whether a queue may be required (#302).
+    either: tuple[protection_mod.Report, protection_mod.Report] | None = None
     merge: dict | None = None
     merge_why: _Answer | None = None
     settings: dict | None = None  # the repository's settings as given (its owner and visibility, #246)
@@ -1280,6 +1284,7 @@ def _github(i: Inputs) -> _GitHub | None:
             "Give --repo with default_branch (GET repos/<repo>).",
         ))
         if rep.effective or other.effective:
+            gh.either = (rep, other)
             return gh
         # Neither reading puts a ruleset on the base branch: the lines that
         # read its rules read the same in both, so they read this one.
@@ -1872,10 +1877,10 @@ def check_ruleset_rules(i: Inputs) -> list[Line]:
     }
     reads = [_report(i, id_, what) for id_, what in whats.items()]
     if reads[0][1]:
-        return [wait for _, wait in reads]
+        return [wait for _, wait in reads] + _merge_queue_lines(i)
     rep = reads[0][0]
     if not rep.effective:
-        return []
+        return _merge_queue_lines(i)
     base = i.profile.base_branch
     lines = []
     strict = [p.get("strict_required_status_checks_policy") is True for p in _rules(rep, "required_status_checks")]
@@ -1962,11 +1967,17 @@ def check_ruleset_rules(i: Inputs) -> list[Line]:
             f"GitHub accepts merge commits on `{base}` (no \"Require linear history\").",
             "No required_linear_history rule.",
         )))
-    try:  # the merge queue's lines (#246), said only where a queue fits or is on
-        lines += check_merge_queue(i)
+    return lines + _merge_queue_lines(i)
+
+
+def _merge_queue_lines(i: Inputs) -> list[Line]:
+    """The merge queue's lines (#246), said only where a queue fits or is
+    on; run even where the other rules can't be read or there are none, so
+    the JSON's merge_queue is filled in (#302)."""
+    try:
+        return check_merge_queue(i)
     except Exception as e:  # advice never ends in a traceback
-        lines.append(_failed(i, check_merge_queue, e))
-    return lines
+        return [_failed(i, check_merge_queue, e)]
 
 
 def _queue_up_to_date(rep: protection_mod.Report, base: str) -> Line:
@@ -2666,8 +2677,13 @@ def check_merge_queue(i: Inputs) -> list[Line]:  # run by check_ruleset_rules, s
     either, the `merge_group` check. No line where GitHub won't give one,
     nothing is required, or the read-back can't be read (the other lines
     say so). The queue's state, the check and the signals also go in the
-    JSON's `merge_queue`."""
+    JSON's `merge_queue`: null as a whole only where the rulesets can't be
+    read; where they can but can't be placed, `queue` alone (#302)."""
     gh = _github(i)
+    if gh is not None and gh.report is None and gh.either:
+        # Without the default branch: on or off only when both readings say so.
+        said = {None if r.queue_unsure and not r.queue else r.queue for r in gh.either}
+        i._mq = {"queue": said.pop() if len(said) == 1 else None, "available": None, "merge_group": None, "signals": None}
     if gh is None or gh.report is None:
         return []
     rep = gh.report

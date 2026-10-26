@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**Doctor says "can't tell" in `merge_queue.queue` rather than nulling `merge_queue` as a whole** (#302, part of #243; a follow-up from #249). The JSON's `merge_queue` is now `null` as a whole only where the rulesets can't be read (a read error, or a rulesets file the kit can't read).
+
+- **The default branch unknown,** with the two readings differing and a ruleset applying in either: `merge_queue` is `{"queue": …}` with `available`, `merge_group` and `signals` null. `queue` is `null` when a merge-queue rule may apply to the base branch, and `true` or `false` only when both readings say so (a merge-queue rule on every branch, or none in any ruleset that may apply).
+- **No ruleset in force on the base branch** (none at all, or only rulesets the kit can't place, such as one included by a pattern it doesn't match): `queue` is `false`, or `null` with a merge-queue rule in a ruleset it can't place, where `merge_queue` was null as a whole.
+- Tests: `tests/test_doctor_merge_queue.py`.
+- **For projects updating:** nothing to do. A conductor that read a whole null as "can't tell" now reads `queue: null` as on and `queue: false` as off in these cases, as it already did where the rulesets could be placed.
+
 **Wording: which review comes before a pass, and the order of `--commits`** (#301, from #261's last Correctness pass). Nothing changes in behaviour.
 
 - **`merge.py`'s `_panel` docstring** says the counted review before a pass is the latest by the PR's history.
