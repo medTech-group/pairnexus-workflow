@@ -17,12 +17,13 @@
                    | drop --body F --ticket N --head SHA --answer A --out F | queue --body F --queue on|off --out F
     workflow render --template F --ticket F --charter F --slots F --tracking N [--by-hand N] [--out F] [--print]
     workflow comments --file F [--owner LOGIN] [--since-id N]
-    workflow merge-check --pr F --files F --commits F --checks F --rulesets F --threads F --reviews F --comments F --permissions F --compare F [--preview F] [--asker LOGIN] [--review-rounds N] [--review-passes N] [--json]
-    workflow merge-check --fetch N [any of the files above] [--charter F --check-logs DIR] [--asker LOGIN] [--review-rounds N] [--review-passes N] [--json]
+    workflow merge-check --pr F --files F --commits F --checks F --rulesets F --threads F --reviews F --comments F --permissions F --compare F [--preview F] [--asker LOGIN] [--review-rounds N] [--review-passes N] [--small-max-lines N] [--small-max-files N] [--json]
+    workflow merge-check --fetch N [any of the files above] [--charter F --check-logs DIR] [--asker LOGIN] [--review-rounds N] [--review-passes N] [--small-max-lines N] [--small-max-files N] [--json]
     workflow preview --comments F --checks F --sha SHA [--json] | --fetch N [any of those] [--json]
     workflow briefing verify --file F
     workflow review-record --kind round|pass --round N --commit SHA --reviewers NAMES --clean|--not-clean
     workflow review-record [--kind spec] --round N --body F --reviewers spec,correctness --clean|--not-clean      (a spec's review, keyed to its body's SHA-256)
+    workflow review-record --measure --commit SHA [--base BRANCH] [--small-max-lines N] [--small-max-files N]      (the diff against the small threshold; no record)
     workflow pr-template [--existing FILE]      (prints the file to write; exits 3 for a folder of templates)
     workflow adopt --owner LOGIN --repo OWNER/NAME --name NAME [--project DIR]      (a copy of the starter made yours)
     workflow evidence [--suite NAME ... | --all] [--base-count N | --base-ref BRANCH] [--fresh] [--allow-dirty]
@@ -70,6 +71,7 @@ from . import protection as protection_mod
 from . import render as render_mod
 from . import repair as repair_mod
 from . import reviews as reviews_mod
+from . import small as small_mod
 from . import roles
 from . import state as state_mod
 from . import status as status_mod
@@ -808,6 +810,18 @@ def _review_passes(v: str) -> int:
     return int(v)
 
 
+def _small_max_lines(v: str) -> int:
+    if not (re.fullmatch(r"[0-9]{1,4}", v) and int(v) in small_mod.MAX_LINES):
+        raise argparse.ArgumentTypeError(f"'{reviews_mod._shown(v, 20)}' isn't a whole number from 1 to 1000 (the small threshold's changed lines, as the briefing or the profile's run.small_max_lines gives them)")
+    return int(v)
+
+
+def _small_max_files(v: str) -> int:
+    if not (re.fullmatch(r"[0-9]{1,2}", v) and int(v) in small_mod.MAX_FILES):
+        raise argparse.ArgumentTypeError(f"'{reviews_mod._shown(v, 20)}' isn't a whole number from 1 to 50 (the small threshold's changed files, as the briefing or the profile's run.small_max_files gives them)")
+    return int(v)
+
+
 def _json_inputs(a, names, raw=()) -> dict:
     """Each of `names` given as a file (or - for standard input, once): its
     JSON, several values in a row read as a list, `(value, None)`; or
@@ -882,7 +896,8 @@ def cmd_merge_check(a) -> int:
             print(f"workflow merge-check: can't read --check-logs {a.check_logs}: {e.strerror or e}; no check's log was read", file=sys.stderr)
     role = roles.env_role() if not roles.unrecognised() else None  # waivers want a firm role: see merge.waivers
     level = resolve_experience(root, prof.experience if prof else None).wording_level
-    res = merge_mod.evaluate(inputs, prof, profile_error, asker=a.asker, level=level, charter_input=charter, logs=logs, role=role, review_rounds=a.review_rounds, review_passes=a.review_passes)
+    res = merge_mod.evaluate(inputs, prof, profile_error, asker=a.asker, level=level, charter_input=charter, logs=logs, role=role, review_rounds=a.review_rounds, review_passes=a.review_passes,
+                              small_max_lines=a.small_max_lines, small_max_files=a.small_max_files)
     _out(res.as_dict() if a.json else merge_mod.text(res))
     return 0
 
@@ -1071,6 +1086,11 @@ def cmd_review_record(a) -> int:
         if len(getattr(a, flag) or []) > 1:
             print(f"workflow review-record: give --{flag} once", file=sys.stderr)
             return 2
+    if a.measure:
+        return _measure(a)
+    if a.small_max_lines is not None or a.small_max_files is not None:
+        print("workflow review-record: --small-max-lines and --small-max-files go only with --measure", file=sys.stderr)
+        return 2
     one = {flag: (getattr(a, flag) or [None])[0] for flag in ("kind", "round", "commit")}
     path = (a.body or [None])[0]
     if path is not None and not (one["kind"] or "").strip():
@@ -1085,6 +1105,36 @@ def cmd_review_record(a) -> int:
         print(f"workflow review-record: {e}", file=sys.stderr)
         return 2
     sys.stdout.write(text)
+    return 0
+
+
+def _measure(a) -> int:
+    """`review-record --measure` (#257): the commit's counted lines and files
+    against the merge base of `origin/<base>`, and whether they are within the
+    small threshold, counted as `merge-check` counts them. Writes no record:
+    standard output is only the measurement, every note goes to standard error."""
+    given = [f"--{f}" for f in ("kind", "round", "body", "reviewers") if getattr(a, f)] + (["--clean or --not-clean"] if a.clean is not None else [])
+    if given:
+        print(f"workflow review-record: --measure writes no record: leave out {', '.join(given)}", file=sys.stderr)
+        return 2
+    commit = (a.commit or [""])[0].strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        print("workflow review-record: --measure needs --commit, the full 40-character SHA to measure (`git rev-parse HEAD`)", file=sys.stderr)
+        return 2
+    try:
+        prof = load()
+    except (ProfileError, OSError, UnicodeDecodeError) as e:
+        print(f"workflow review-record: can't measure: couldn't read the profile: {e}", file=sys.stderr)
+        return 1
+    note = lambda text: print(f"workflow review-record: {text}", file=sys.stderr)  # noqa: E731
+    try:
+        ref = small_mod.base_ref(prof.root, a.base or prof.base_branch, note)
+        changes = small_mod.local_changes(prof.root, commit, ref)
+    except small_mod.CantMeasure as e:
+        print(f"workflow review-record: can't measure: {e}", file=sys.stderr)
+        return 1
+    m = small_mod.measure(changes, small_mod.suite_globs(prof), a.small_max_lines or prof.small_max_lines, a.small_max_files or prof.small_max_files)
+    print(m.text())
     return 0
 
 
@@ -1603,6 +1653,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--asker", metavar="LOGIN", help="the GitHub login of whoever asks (the owner gets \"Ready once you've read\" for kit and CI files)")
     s.add_argument("--review-rounds", metavar="N", type=_review_rounds, help="the review rounds allowed, 1 to 10 (default: the profile's run.review_rounds): after the last one, a clean Correctness pass on the head lifts its findings; a run passes the briefing's")
     s.add_argument("--review-passes", metavar="N", type=_review_passes, help="the Correctness passes allowed after the last round, 0 to 10 (default: the profile's run.review_passes): where one more would be needed, the answer is passes_used_up and the owner decides; a run passes the briefing's")
+    s.add_argument("--small-max-lines", metavar="N", type=_small_max_lines, help="the small threshold's changed lines outside tests, 1 to 1000 (default: the profile's run.small_max_lines): a review in which no counted round ran Spec counts only within it; a run passes the briefing's")
+    s.add_argument("--small-max-files", metavar="N", type=_small_max_files, help="the small threshold's changed files outside tests, 1 to 50 (default: the profile's run.small_max_files)")
     s.add_argument("--json", action="store_true", help="the decision, its reasons and notes, and each check's name and state, as JSON")
     s.set_defaults(fn=cmd_merge_check)
 
@@ -1643,6 +1695,10 @@ def main(argv: list[str] | None = None) -> int:
     result = s.add_mutually_exclusive_group()
     result.add_argument("--clean", dest="clean", action="store_true", default=None, help="nothing left to fix")
     result.add_argument("--not-clean", dest="clean", action="store_false", help="the round found something to fix")
+    s.add_argument("--measure", action="store_true", help="write no record: print --commit's changed lines and files outside tests, against the merge base of origin/<base>, and whether they are within the small threshold, counted as merge-check counts them")
+    s.add_argument("--base", metavar="BRANCH", help="the base branch, fetched as origin/<base> first (default: the profile's project.base_branch)")
+    s.add_argument("--small-max-lines", metavar="N", type=_small_max_lines, help="with --measure: the small threshold's changed lines, 1 to 1000 (default: the profile's run.small_max_lines)")
+    s.add_argument("--small-max-files", metavar="N", type=_small_max_files, help="with --measure: the small threshold's changed files, 1 to 50 (default: the profile's run.small_max_files)")
     s.set_defaults(fn=cmd_review_record)
 
     s = sub.add_parser("evidence")

@@ -989,6 +989,10 @@ SCENARIOS = {
     "review_stale": (None, lambda d: d.update(comments=[comment(rec(commit=EARLIER))])),
     "pass_not_clean": (None, lambda d: d.update(comments=[comment(rec(), cid=1), comment(rec("pass", clean=False), cid=2)])),
     "passes_used_up": (None, lambda d: d.update(comments=[comment(rec(), cid=1), comment(rec("pass", clean=False), cid=2), comment(rec("pass", clean=False), cid=3)])),
+    "past_small_threshold": (None, lambda d: d.update(
+        files=[{"filename": "src/app.py", "status": "modified", "additions": 61, "deletions": 0}],
+        comments=[comment(rec(reviewers="correctness"))],
+    )),
     "conflict": (None, _set(("pr", "mergeable"), False)),
     "mergeable_unknown": (None, _set(("pr", "mergeable"), None)),
     "draft": (None, _set(("pr", "draft"), True)),
