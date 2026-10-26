@@ -14,7 +14,7 @@ Independent reviewers read the change fresh, each in its own context and in para
 Make a scratch directory outside the repo, for example `/tmp/review-<ticket>-r<round>/`. Write into it:
 
 - `commit.txt`: `git rev-parse HEAD`, the commit this round covers.
-- `diff.patch`: `git diff <base>...HEAD`. The base is the profile's `project.base_branch`, as `origin/<base>` after a `git fetch`.
+- `diff.patch`: `git diff <base>...HEAD`. The base is the pull request's base branch (the profile's `project.base_branch` unless it targets another), as `origin/<base>` after a `git fetch`.
 - `ticket.md`: the ticket's body and comments, its spec (the issue under "Parent") and the issues they link.
 - `rules.md`: the project's rules, copied from each document in the profile's `project.rules` (safety rules, wording), plus `profile.md`'s sensitive-data and secrets sections.
 - `previous.md`, from round 2: the earlier findings and what was done about each.
@@ -67,6 +67,8 @@ Post a record on the pull request after every round, whatever it found, and afte
   ```
   WF review-record --kind pass --round <last round> --commit <sha> --reviewers correctness --clean > /tmp/review-<ticket>-pass<k>/record.md
   ```
+
+A round's or a pass's record also names two hashes of the pull request's own changes at that commit, `diff=` (with their context lines) and `lines=` (the changed lines alone), which the command computes from the diff against the merge base of `origin/<base>`, fetched first. When the pull request's base branch isn't the profile's `project.base_branch`, add `--base <branch>` to the command. A hash it can't compute reads `unknown`, and it says why on standard error: the record still counts, and `record.md` holds only the record.
 
 Keep `record.md` only when the command exited 0. If it refuses, delete the empty `record.md`, fix what it names and run it again: never write a record by hand.
 

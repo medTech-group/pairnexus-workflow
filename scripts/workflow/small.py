@@ -18,6 +18,7 @@ the merge base of `origin/<base>`), so the two can't disagree:
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from dataclasses import dataclass
@@ -38,6 +39,8 @@ class Change:
     status: str | None = None  # GitHub's: added, removed, modified, renamed, ...
     additions: int | None = None  # None where not given
     deletions: int | None = None
+    sha: str | None = None  # the blob at the commit (GitHub's per-file `sha`)
+    patch: str | None = None  # its hunks, as GitHub's per-file `patch` gives them
 
 
 @dataclass(frozen=True)
@@ -156,12 +159,18 @@ class CantMeasure(Exception):
     """The measurement can't be made, said in plain words."""
 
 
-def _git(root: Path, *args: str, timeout: int = 60) -> subprocess.CompletedProcess:
+def _git(root: Path, *args: str, timeout: int = 60, binary: bool = False, env: dict | None = None) -> subprocess.CompletedProcess:
     """git in `root`; CantMeasure when it can't run or doesn't finish. A path
-    that isn't UTF-8 is kept (surrogate escapes), never an error."""
+    that isn't UTF-8 is kept (surrogate escapes), never an error. With
+    `binary`, the output is bytes, so a `\\r\\n` stays as it is. git never asks
+    for credentials itself (a fetch fails instead; ssh's own prompt isn't
+    stopped), and the environment's diff options and external diff are left
+    out; `env` adds to it."""
+    text = {} if binary else {"text": True, "encoding": "utf-8", "errors": "surrogateescape"}
+    env = {**{k: v for k, v in os.environ.items() if k not in ("GIT_DIFF_OPTS", "GIT_EXTERNAL_DIFF")}, "GIT_TERMINAL_PROMPT": "0", **(env or {})}
     try:
-        return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, encoding="utf-8",
-                              errors="surrogateescape", timeout=timeout)
+        return subprocess.run(["git", *args], cwd=root, capture_output=True, stdin=subprocess.DEVNULL, env=env,
+                              timeout=timeout, **text)
     except (OSError, subprocess.TimeoutExpired) as e:
         raise CantMeasure(f"git {args[0]} failed: {e}") from None
 
@@ -183,7 +192,7 @@ def base_ref(root: Path, base: str, note, source: str = "--base") -> str:
     if why is not None:
         if not have:
             raise CantMeasure(f"couldn't fetch origin/{base} ({why}), and there is no origin/{base} here to measure against")
-        note(f"couldn't fetch origin/{base} ({why}): measuring against the origin/{base} already here")
+        note(f"couldn't fetch origin/{base} ({why}): using the origin/{base} already here")
     return ref
 
 
