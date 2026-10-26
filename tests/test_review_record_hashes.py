@@ -7,6 +7,7 @@ repository, never the network.
 
 import hashlib
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -23,7 +24,7 @@ EMPTY_BLOB = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
 
 
 def git(cwd, *args):
-    return subprocess.run(["git", "-c", "user.email=t@example.com", "-c", "user.name=t", *args], cwd=cwd,
+    return subprocess.run(["git", "-c", "user.email=t@example.com", "-c", "user.name=t", "-c", "core.autocrlf=false", *args], cwd=cwd,
                           capture_output=True, text=True, check=True).stdout.strip()
 
 
@@ -253,7 +254,9 @@ def test_the_attributes_are_the_commits_own(checkout, capsys):
     (checkout / ".gitattributes").write_text("*.py -diff\n")
     commit_all(checkout, "attributes after the review")
     git(checkout, "config", "core.attributesFile", str(checkout / ".gitattributes"))
-    assert recorded(capsys, reviewed) == before
+    # Before git 2.40, git ignores GIT_ATTR_SOURCE and reads the working tree's (the changelog says so).
+    if tuple(int(n) for n in re.findall(r"\d+", git(checkout, "version"))[:2]) >= (2, 40):
+        assert recorded(capsys, reviewed) == before
     # The commit's own attributes do count, as GitHub reads them.
     files = {c.path: c for c in own_changes.local_files(checkout, head(), "refs/remotes/origin/main")}
     assert files["src/app.py"].patch is None and files["src/app.py"].sha == git(checkout, "rev-parse", "HEAD:src/app.py")
@@ -443,6 +446,8 @@ def test_an_unreadable_profile_without_base_gives_unknown_and_with_base_hashes(c
     (checkout / ".claude/workflow/profile.toml").write_text("[project\n")
     assert recorded(capsys, head()) == ("unknown", "unknown")
     assert recorded(capsys, head(), "--base", "main") == before
+    _, out, err = run(capsys, "--kind", "round", "--round", "1", "--commit", head(), "--reviewers", "correctness", "--clean", "--base", "")
+    assert "diff=unknown lines=unknown" in out and "isn't a branch's name (--base)" in err
 
 
 def test_a_shallow_clone_without_the_merge_base_says_so(checkout, capsys, tmp_path, monkeypatch):

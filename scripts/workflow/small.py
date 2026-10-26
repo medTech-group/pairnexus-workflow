@@ -162,9 +162,10 @@ class CantMeasure(Exception):
 def _git(root: Path, *args: str, timeout: int = 60, binary: bool = False, env: dict | None = None) -> subprocess.CompletedProcess:
     """git in `root`; CantMeasure when it can't run or doesn't finish. A path
     that isn't UTF-8 is kept (surrogate escapes), never an error. With
-    `binary`, the output is bytes, so a `\\r\\n` stays as it is. It never asks
-    for credentials (a fetch fails instead), and the environment's diff options
-    and external diff are left out; `env` adds to it."""
+    `binary`, the output is bytes, so a `\\r\\n` stays as it is. git never asks
+    for credentials itself (a fetch fails instead; ssh's own prompt isn't
+    stopped), and the environment's diff options and external diff are left
+    out; `env` adds to it."""
     text = {} if binary else {"text": True, "encoding": "utf-8", "errors": "surrogateescape"}
     env = {**{k: v for k, v in os.environ.items() if k not in ("GIT_DIFF_OPTS", "GIT_EXTERNAL_DIFF")}, "GIT_TERMINAL_PROMPT": "0", **(env or {})}
     try:

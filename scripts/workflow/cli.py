@@ -1122,7 +1122,7 @@ def _own_hashes(a, commit: str) -> own_changes_mod.Hashes:
     try:
         prof = load()
     except (ProfileError, OSError, UnicodeDecodeError) as e:
-        if not _given_base(a):
+        if _given_base(a) is None:
             _record_note(f"couldn't read the profile for the base branch ({e}): {unknown}")
             return own_changes_mod.UNKNOWN_HASHES
         prof = None

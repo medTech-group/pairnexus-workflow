@@ -175,14 +175,14 @@ def local_files(root: Path, commit: str, ref: str) -> list[Change]:
     """The files changed from the merge base of `ref` to `commit`, each with its
     status, blob SHA and patch, as GitHub's REST list gives them. The
     attributes (a `-diff` or `binary` file) are read from `commit`'s own
-    `.gitattributes`, never the working tree's or a global file. Raises
+    `.gitattributes`, never the working tree's, a global or the system's file. Raises
     CantMeasure or CantHash."""
     mb = _git(root, "merge-base", ref, commit)
     if mb.returncode != 0:
         shallow = _git(root, "rev-parse", "--is-shallow-repository").stdout.strip() == "true"
         raise CantMeasure(f"the commit {commit[:7]} has no merge base with {ref.removeprefix('refs/remotes/')}"
                           + (" in this shallow clone's history" if shallow else ""))
-    base, attrs = mb.stdout.strip(), {"GIT_ATTR_SOURCE": commit}
+    base, attrs = mb.stdout.strip(), {"GIT_ATTR_SOURCE": commit, "GIT_ATTR_NOSYSTEM": "1"}
     pinned = ("-c", f"core.attributesFile={os.devnull}", *_DIFF)
     raw = _git(root, *pinned, "--raw", "-z", "--no-abbrev", base, commit, binary=True, env=attrs)
     patch = _git(root, *pinned, "-p", base, commit, binary=True, env=attrs)
