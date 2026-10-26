@@ -52,9 +52,10 @@ def _fresh_guard_budget(monkeypatch):
 def _no_user_git_config(monkeypatch, tmp_path):
     """The developer's global and system git configuration, and their own
     git files (`~/.config/git/ignore` and `attributes`), never reach the
-    repositories a test makes. A fixture that makes a repository asks for
-    it, and so does a module whose tests run git without one
-    (`pytest.mark.usefixtures`)."""
+    repositories of a test that asks for it. The `checkout` fixtures of
+    tests/test_small_review.py and tests/test_review_record_hashes.py ask
+    for it, and so does a module whose tests run git without one
+    (`pytest.mark.usefixtures`); `repo` and `ticket_checkout` below don't."""
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
