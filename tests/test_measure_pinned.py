@@ -11,7 +11,6 @@ import subprocess
 import pytest
 
 from workflow import own_changes, small
-from test_review_record_hashes import _no_user_git_config  # noqa: F401 (an autouse fixture)
 from test_small_review import checkout, git, measure  # noqa: F401 (checkout is a fixture)
 
 COUNTS = "11 lines in 4 files outside tests: within the small threshold"

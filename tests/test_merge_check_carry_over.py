@@ -23,7 +23,7 @@ import re
 from pathlib import Path
 
 from test_merge_check import EARLIER, HEAD, check, comment, ids, inputs, note_ids, project  # noqa: F401 (project is a fixture)
-from test_review_record_hashes import _no_user_git_config, checkout, git, recorded, rest_files  # noqa: F401 (fixtures)
+from test_review_record_hashes import checkout, git, recorded, rest_files  # noqa: F401 (checkout is a fixture)
 from changelog_notes import since_0110
 from workflow import reviews
 
