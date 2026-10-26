@@ -139,8 +139,8 @@ def reminder_for(prompt: str) -> str | None:
 # "built" or "implement" ("#12 please build it"), or `/next`, `/build-ticket`
 # and `/implement-spec`. The conductor never builds one itself, so its session
 # is told where the ticket goes. "why did the build fail?", "fix 2 typos" or
-# "build 2.0" names no ticket: a bare number counts after "ticket" or "issue",
-# or at the end of its clause ("build 12", "build 12 please", "12 and 13"). A
+# "build 2.0" names no ticket: a bare number counts after "ticket", "issue",
+# "bug" or "spec", or at the end of its clause ("build 12", "build 12 please", "12 and 13"). A
 # ticket in quotes, brackets or bold counts ("build `#12`", "build [#12](…)").
 # Status questions ("is #12 built?") bring the line too: it is worded for a
 # message that may not ask for a build, and a closer pattern isn't worth it.
