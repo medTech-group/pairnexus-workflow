@@ -589,7 +589,7 @@ def test_measure_counts_with_myers_whatever_the_configuration(checkout, capsys):
     assert out.startswith("17 lines in 5 files")  # 11, and Myers' 6 for src/algo.txt (histogram's would be 8)
 
 
-@pytest.mark.parametrize("base", ["*", "ma*", "main:refs/heads/x", "ma in", "-x"])
+@pytest.mark.parametrize("base", ["*", "ma*", "main:refs/heads/x", "ma in", "-x", ""])
 def test_a_base_that_isnt_a_branchs_name_is_refused_before_any_fetch(checkout, capsys, base):
     before = git(checkout, "for-each-ref")
     code, out, err = measure(capsys, f"--base={base}")

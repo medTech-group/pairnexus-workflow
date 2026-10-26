@@ -40,11 +40,13 @@ def edit(root, rel, old, new):
 
 
 @pytest.fixture(autouse=True)
-def _no_user_git_config(monkeypatch):
-    """The developer's global and system git configuration (attributes, hooks,
-    signing) never reach these repositories."""
+def _no_user_git_config(monkeypatch, tmp_path):
+    """The developer's global and system git configuration, and their own
+    git files (`~/.config/git/ignore` and `attributes`), never reach these
+    repositories."""
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
 
 
 @pytest.fixture
