@@ -67,8 +67,8 @@
 
 **The conductor marks a ticket for another look when `past_small_threshold` comes beside an unreadable profile** (#295, from #257's finding 30 on #289).
 
-- **Marked too.** Step 2's "A ticket at the cap" now marks a `needs-human` ticket in the run's state (`cap_unknown_at`) when its `merge-check` gives `past_small_threshold` beside a "couldn't read" reason for the profile, as it already did for `passes_used_up`. The small threshold and the test globs come from the profile, so with it unreadable `merge-check` measures against the defaults, and a pull request at its pass cap could read `past_small_threshold` instead and go unmarked. Without that "couldn't read" reason, `past_small_threshold` marks nothing. Step 2's look again, when the mark goes, and that it never keeps the run going on its own are unchanged.
-- Tests: `tests/test_merge_check_passes.py`, including one of `merge-check` itself: a small review at the cap reads `passes_used_up` with the profile, and `past_small_threshold` without it.
+- **Marked too.** Step 2's "A ticket at the cap" now marks a `needs-human` ticket in the run's state (`cap_unknown_at`) when its `merge-check` gives `past_small_threshold` beside a "couldn't read" reason for the profile, as it already did for `passes_used_up`. The test globs come from the profile, so with it unreadable `merge-check` counts test files as well (the conductor gives the threshold itself as flags), and a pull request at its pass cap could read `past_small_threshold` instead and go unmarked. Without that "couldn't read" reason, `past_small_threshold` marks nothing. Step 2's look again is unchanged, as is when the mark goes; it still never keeps the run going on its own.
+- Tests: `tests/test_merge_check_passes.py`, including one of `merge-check` itself, run with the conductor's flags: a small review at the cap whose diff is mostly tests reads `passes_used_up` with the profile, and `past_small_threshold` without it.
 - **For projects updating:** nothing to do.
 
 **The conductor at the pass cap with its own profile unreadable: the ticket is looked at again, and a crashed session is retried** (#283, from #281's last Correctness pass).
