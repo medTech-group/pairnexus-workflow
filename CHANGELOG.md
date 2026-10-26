@@ -10,6 +10,14 @@
 - Tests: `tests/test_conductor_never_builds.py`; `tests/test_light_review_offers.py`'s pinned line moves to the new wording.
 - **For projects updating:** nothing to do. A conductor session that was asked to build a ticket now starts a run for it instead.
 
+**Wording: which review comes before a pass, and the order of `--commits`** (#301, from #261's last Correctness pass). Nothing changes in behaviour.
+
+- **`merge.py`'s `_panel` docstring** says the counted review before a pass is the latest by the PR's history.
+- **The `merge-check` skill's `--commits` row** says the commits come oldest first, as `GET repos/<repo>/pulls/12/commits` gives them: a hand-built newest-first list (a branch's commits, say) would rank the review records backwards.
+- **Flow §4 item 4** says a pass that rechecks open findings always counts toward the pass cap, beside the free pass on a merge of the base.
+- Tests: three text tests in `tests/test_merge_check_carry_over.py`.
+- **For projects updating:** nothing to do.
+
 **`review-record --measure` counts with the same pinned `git diff` as the hashes** (#298, from #258).
 
 - **`small.local_changes`** (what `--measure` counts) now diffs with the pins `own_changes` gives the hashes, which move to `small.py` (`DIFF` and `pinned_diff`) so both use one: renames within git's default limit, a submodule never left out, git's default size for a binary file, no external diff or textconv, Myers, and the attributes of the commit itself (git 2.40 and later), never a global, the system's or the working tree's file. So `diff.renameLimit=1`, `diff.ignoreSubmodules=all`, `core.bigFileThreshold`, `core.attributesFile` or an uncommitted `.gitattributes` with `-diff` no longer change `--measure`'s counts, which now agree with what `merge-check` measures from GitHub.
@@ -157,6 +165,11 @@
 - **In every role** (asked in attended sessions, refused where nobody is asked): `bypass_rules` in any form (`-f`, `-F` on any `gh api` write, an `--input` body or a heredoc on stdin), any `merge_action` but `merge_queue` (none means `default`, which merges directly when no queue is required), an `--input` body or `@file` field, a query string or `#` on the path, a field name that isn't plain, words `xargs`, `eval`, `sh -c` or an unquoted expansion add, and a quoted expansion that may be a flag of its own (`"$E"`). The path is read by its last part, however it is spelled (a full URL, `%`-escapes, `//`, `repos/$REPO/…`). An attended session's `curl` to `merge-async` is asked unless it sends one JSON body that queues it with a `sha` and no `bypass_rules`.
 - **Today's rules are unchanged:** merges, auto-merge and update-branch. `docs/enforcement.md`'s merge pins and its every-role list gain the route.
 - Tests: `tests/test_guard_merge_async.py`.
+- **For projects updating:** nothing to do.
+
+**The estimate's lighter-review warning names the UI explorer only where the run would run one** (#296, from #255; a follow-up from #259). `workflow charter estimate`'s "The review (…) is lighter than the project's default (…)" said "UI explorer on" from the charter's review alone, so under a profile with `ui.explorer = "none"` it could name an explorer that never runs. Both sides of it now read the profile, as `presets.small_reviewers` does: with no explorer in the profile, neither says it's on. With an explorer set, or no profile that reads, the words are unchanged.
+
+- Tests: `tests/test_charter_estimate.py`.
 - **For projects updating:** nothing to do.
 
 ## 0.1.15

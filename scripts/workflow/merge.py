@@ -1089,11 +1089,12 @@ def _panel(ctx: Context, add) -> None:
     (`ctx.base_merge`) and isn't the last counted review's commit, but its own
     changes hash the same with their context (`diff`), that review covers the
     head, with its result, clean or not. A pass doesn't count toward the cap
-    when its commit is a merge of the base, the counted review before it was
-    clean, its changed lines hash the same as that review's (`lines`), and no
-    record on its commit since the last round wasn't clean; nor is the cap
-    reached by a pass on the head that wouldn't count. A record without the
-    hashes, or with `unknown`, covers only its own commit."""
+    when its commit is a merge of the base, the counted review before it (the
+    latest by the PR's history) was clean, its changed lines hash the same as
+    that review's (`lines`), and no record on its commit since the last round
+    wasn't clean; nor is the cap reached by a pass on the head that wouldn't
+    count. A record without the hashes, or with `unknown`, covers only its own
+    commit."""
     head = ctx.pr().head
     perms = ctx.permissions()
     shas = ctx.commits() | {head}
