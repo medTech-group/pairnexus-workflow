@@ -146,13 +146,13 @@ def test_protection_doc_covers_the_queue_and_require_checks_with_it():
     assert "left as it is when the ruleset has a `merge_queue` rule" in require
 
 
-def test_the_changelog_notes_it_under_unreleased():
+def test_the_changelog_notes_it():
+    # Under "## Unreleased" until a release moves it under its version: since_0110 reads both.
     notes = since_0110()
-    unreleased = notes.split("\n## ", 1)[0]
-    assert "(#247, part of #243)" in unreleased
+    assert "(#247, part of #243)" in notes
     for words in ("--merge-queue", "Use a merge queue", "merge_group", "Merge queue"):
-        assert words in unreleased, words
-    assert "tests/test_protection_queue.py" in unreleased
+        assert words in notes, words
+    assert "tests/test_protection_queue.py" in notes
 
 
 # ---------- doctor's require_checks fix with the queue ----------

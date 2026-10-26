@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from changelog_notes import since_0110
 from workflow import charter, state
 
 KIT = Path(__file__).resolve().parents[1]
@@ -437,7 +438,6 @@ def test_the_charter_doc_covers_the_queue():
     assert "No waivers" in doc or "no waivers" in doc
 
 
-def test_the_changelog_says_so_under_unreleased():
-    text = (KIT / "CHANGELOG.md").read_text()
-    unreleased = text.split("## Unreleased", 1)[1].split("\n## ", 1)[0]
-    assert "state drop" in unreleased
+def test_the_changelog_says_so():
+    # Under "## Unreleased" until a release moves it under its version: since_0110 reads both.
+    assert "state drop" in since_0110()
