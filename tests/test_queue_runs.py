@@ -82,10 +82,14 @@ def test_build_ticket_reads_back_the_202_and_leaves_every_re_queue_to_the_conduc
 
 def test_build_ticket_stays_until_merged_and_handles_the_conductors_base_merge():
     para = _queue_paragraph()
-    assert "Stay with it until GitHub has merged it" in para
+    assert "stay with it until GitHub has merged it" in para
     assert "After the conductor merges the base in (a second drop), `git pull`, run `WF merge-check` again, and run a Correctness pass only when it asks for one" in para
     assert "fix any red check" in para
-    assert "labels the ticket `needs-human`" in para and "stop" in para
+    assert "If the conductor labels the ticket `needs-human` (dropped from the queue again after the base was merged in), stop: take steps 6.6 and 6.7" in para
+    assert "In `session` and `auto-merge` mode, stay with it until GitHub has merged it" in para
+    # A head already queued only waits, and the notes are posted once, before the first queueing.
+    assert "a head you queued only waits, whatever `WF merge-check` says of it later" in para
+    assert "Before you first queue it, post your notes for the next tickets (step 6.5) on the tracking issue, once" in para
 
 
 def test_build_ticket_scopes_the_up_to_date_steps_to_no_queue():
@@ -93,7 +97,11 @@ def test_build_ticket_scopes_the_up_to_date_steps_to_no_queue():
     assert "The update-branch steps, the \"behind\" handling and the \"already clean\" fallback don't apply" in para
     green = _section(_read(BUILD_TICKET), "## 5. Get it green", "## 6.")
     moved = next(ln for ln in green.splitlines() if ln.startswith("- **The base branch moved:**"))
-    assert "With the merge queue on (`WF merge-check`'s `queue`), don't: the queue tests the pull request on the latest base itself" in moved
+    assert "With the merge queue on (`WF merge-check`'s `queue`), don't merge the base in because it moved" in moved
+    # A conflict is still the session's to resolve, or a conflicting PR would never be ready.
+    assert "Still merge it in to resolve a conflict (`WF merge-check`'s `resolve_conflict`)" in moved
+    four = next(ln for ln in _merge_step().splitlines() if ln.startswith("4. **Merge** on `ready`."))
+    assert "Without a merge queue (the JSON's `queue` is false), what you do depends on the briefing's mode" in four
     level = next(ln for ln in _merge_step().splitlines() if ln.startswith("1. **Push everything,**"))
     assert "(with the merge queue on, the queue meets this)" in level
 
@@ -160,10 +168,25 @@ def test_the_briefing_queues_once_per_head_and_stays(tmp_path, mode):
     assert "read whether it is on from `merge-check`'s `queue` each time, never from this briefing" in line
     assert "once per head through `merge-async`, pinned to your checkout's head" in line
     assert "gh api -i -X PUT repos/a/d/pulls/<PR>/merge-async -f merge_action=merge_queue -f sha=<head>" in line
-    assert "`auto-merge` mode never arms GitHub's auto-merge with the queue on" in line
+    assert "`auto-merge` mode queues as soon as it says `ready` and never arms GitHub's auto-merge with the queue on (disarm it if it is armed)" in line
+    assert "In `session` and `auto-merge` mode, on `ready`" in line and "`owner` mode queues nothing" in line
+    assert "pinned to your checkout's head, its full SHA" in line and "A head you queued only waits" in line
+    assert "and fix any red check" in line and "a conflict you still resolve by merging the base in" in line
+    assert "With a `queue_unsure` note, never merge directly or arm auto-merge" in line
+    # The bullets for "up to date" say so, and a refused queueing goes to the conductor too.
+    assert "- **Without a merge queue** (`merge-check`'s `queue` is false). On `ready`, act by the merge mode" in merging
+    assert "(or arming auto-merge, or queueing)" in merging and "the conductor merges it, arms auto-merge or queues it" in merging
     assert "`session` mode queues after your own final `merge-check` says `ready`" in line
     assert "Stay with the PR until GitHub merges it" in line
     assert "the update-branch steps, the \"behind\" handling and the \"already clean\" fallback don't apply" in line
+
+
+def test_the_guard_lets_a_ticket_session_run_the_briefings_queue_command(tmp_path_factory, ticket):
+    line = next(ln for ln in _render(tmp_path_factory.mktemp("render"), "session").splitlines() if ln.startswith("- **The merge queue:**"))
+    cmd = re.search(r"`(gh api -i -X PUT repos/a/d/pulls/<PR>/merge-async [^`]*)`", line).group(1)
+    sha = git(ticket, "rev-parse", "HEAD").strip()
+    cmd = cmd.replace("a/d", "acme/demo").replace("<PR>", "12").replace("<head>", sha)
+    assert _decide(ticket, cmd, "ticket").action == "allow"
 
 
 # ---------- the conductor's check-ins ----------
@@ -188,6 +211,9 @@ def test_the_conductor_gives_each_answer_to_state_drop_and_does_what_it_prints()
     assert "`gh api -X PUT repos/<repo>/pulls/<n>/update-branch -f expected_head_sha=<sha>`" in row
     assert "\"dropped from the merge queue again after the base was merged in\"" in row
     assert "GitHub's message after three `failed` answers" in row
+    assert "for `failed` or `refused`, say GitHub's message on the tracking issue" in row
+    assert "Its push takes the pull request out of the queue. If GitHub refuses it (a conflict, or the head moved)" in row
+    assert "a conflict is the ticket session's (`resolve_conflict`)" in row
     # After a merge_base, the pass cap applies as to any PR.
     assert "`passes_used_up`" in row and "the pass-cap row" in row
 
@@ -210,7 +236,7 @@ def test_the_up_to_date_rows_are_scoped_to_no_queue():
 
 def test_the_stuck_row_counts_waiting_in_the_queue_as_waiting_on_ci():
     stuck = _row(_check_in_rows(), "No movement for 6 check-ins")
-    assert "a PR waiting in the merge queue (`state drop`'s last answer `waiting` or `in_queue`) counts as waiting on CI" in stuck
+    assert "a PR in the merge queue, whose ticket's `queue_result` is `in_queue`, `waiting` or `requeued`, counts as waiting on CI" in stuck
 
 
 def test_a_mid_run_change_of_the_queue_is_logged_said_followed_and_stops_waivers():
@@ -222,6 +248,18 @@ def test_a_mid_run_change_of_the_queue_is_logged_said_followed_and_stops_waivers
     assert "follow the ruleset from then on" in para
     assert "stop applying the charter's waivers" in para
     assert "Nothing stops" in para
+    # An unsure queue: never a direct merge or armed auto-merge; the owner merges it.
+    assert "A `queue_unsure` note (a merge-queue rule the kit can't judge) counts as on for the state and the waivers" in para
+    assert "never merge it directly or arm auto-merge" in para and "yours to merge (#PR)" in para
+
+
+def test_every_charter_check_and_the_owners_answer_carry_the_queue():
+    text = _read(CONDUCTOR)
+    assert "`WF charter questions --queue <on|off>` lists them" in text
+    assert "4. Run `WF charter validate charter.json --queue <on|off>`" in text
+    assert "10. Run `WF charter validate charter.json --approved --queue <on|off>`." in text
+    assert "3. Run `WF charter validate --approved --queue <on|off>`, with the queue's state as this check-in reads it" in text
+    assert "no `asked_at`, `base_merged`, `queue_heads`, `queue_failed` or `queue_result`, so the merge queue's drop rule starts afresh" in text
 
 
 def test_the_kick_off_records_the_queue_and_recommends_it_with_its_reason():
@@ -242,9 +280,13 @@ def test_the_kick_off_records_the_queue_and_recommends_it_with_its_reason():
 
 def test_the_run_report_flags_a_late_request_and_offers_a_revert():
     text = _read("skills/run-report/SKILL.md")
-    assert "merged with a request made after it was queued" in text
-    assert "changes requested" in text and "an open review thread" in text
-    assert "offer a revert" in text
+    gather = _section(text, "## Gather the record", "## Its sections")
+    # Every merged PR's timeline, so one its session queued is found too.
+    assert "**Each merged PR's timeline**" in gather and "`added_to_merge_queue` event" in gather and "whoever queued it" in gather
+    bullet = next(ln for ln in _section(text, "6. **For you:**", "7. **Follow-ups.**").splitlines() if "after it was queued" in ln)
+    assert "merged with a request made after it was queued" in bullet
+    assert "changes requested" in bullet and "an open review thread" in bullet
+    assert "offer a revert" in bullet
 
 
 # ---------- flow §4 ----------
