@@ -53,7 +53,7 @@ def _no_user_git_config(monkeypatch, tmp_path):
     """The developer's global and system git configuration, and their own
     git files (`~/.config/git/ignore` and `attributes`), never reach the
     repositories a test makes. A fixture that makes a repository asks for
-    it, and so does a module whose tests make their own
+    it, and so does a module whose tests run git without one
     (`pytest.mark.usefixtures`)."""
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")

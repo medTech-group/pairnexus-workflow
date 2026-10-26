@@ -22,7 +22,7 @@ PROFILE = '[project]\nname = "demo"\nrepo = "acme/demo"\nbase_branch = "main"\n'
 APP = "".join(f"line {i}\n" for i in range(1, 31))
 EMPTY_BLOB = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
 
-pytestmark = pytest.mark.usefixtures("_no_user_git_config")  # tests/conftest.py
+pytestmark = pytest.mark.usefixtures("_no_user_git_config")  # tests/conftest.py: some tests run git without `checkout`
 
 
 def git(cwd, *args):
