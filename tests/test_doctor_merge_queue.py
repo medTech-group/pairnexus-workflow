@@ -414,6 +414,20 @@ def test_a_queue_rule_on_every_branch_is_on_whatever_the_default_branch(tmp_path
     assert r["merge_queue"] == _queue_only(True)
 
 
+def test_a_queue_rule_off_the_default_branch_with_it_unknown_gives_queue_null(tmp_path, project):
+    # Read with the base as the default branch, the ruleset leaves it out;
+    # read with another, its exclude can't be matched: the readings agree on
+    # the other lines, never on the queue.
+    others = _queued(_rs(id=205, name="Others", conditions={"ref_name": {"include": ["~ALL"], "exclude": ["~DEFAULT_BRANCH"]}}))
+    _, r = _github(tmp_path, project, rulesets=(others,), settings=NO_DEFAULT)
+    assert r["merge_queue"]["queue"] is None
+    main = _rs(conditions={"ref_name": {"include": ["refs/heads/main"], "exclude": []}})
+    lines, r = _github(tmp_path, project, rulesets=(main, others), settings=NO_DEFAULT)
+    assert r["merge_queue"]["queue"] is None
+    q = lines["github.merge_queue"]
+    assert q["status"] == "cant_check" and "Others" in q["message"] and q["offer"] is None, q
+
+
 @pytest.mark.parametrize("rulesets", ["nope", [{**_queued(), "enforcement": 5}]], ids=["unreadable", "malformed"])
 def test_rulesets_that_cant_be_read_give_merge_queue_null_as_a_whole(tmp_path, project, rulesets):
     lines, r = _github(tmp_path, project, rulesets=rulesets)

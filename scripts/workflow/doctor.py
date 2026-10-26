@@ -1041,9 +1041,9 @@ class _GitHub:
     # checked, unless neither reading puts a ruleset on it (then `report` is
     # set, and they read as with none).
     unprotected_either: bool = False
-    # Without the default branch, the two readings when they differ and a
-    # ruleset applies in either (`report` is None then): the JSON's
-    # merge_queue still says whether a queue may be required (#302).
+    # Without the default branch, its two readings: the JSON's merge_queue
+    # reads both, so a queue rule only one of them can place is never lost,
+    # even where `report` is None (#302).
     readings: tuple[protection_mod.Report, protection_mod.Report] | None = None
     merge: dict | None = None
     merge_why: _Answer | None = None
@@ -1266,6 +1266,7 @@ def _github(i: Inputs) -> _GitHub | None:
             # on what can't be seen; when they agree, either is the answer.
             either = [{**(placed or {}), "default_branch": d} for d in (base, f"{base}-not")]
             rep, other = (protection_mod.check(rulesets.value, base, settings_) for settings_ in either)
+            gh.readings = (rep, other)
             gh.unprotected_either = not any(protection_mod.check(seen, base, settings_).protected for settings_ in either)
             placed = either[0]
     except protection_mod.ProtectionError as e:
@@ -1284,7 +1285,6 @@ def _github(i: Inputs) -> _GitHub | None:
             "Give --repo with default_branch (GET repos/<repo>).",
         ))
         if rep.effective or other.effective:
-            gh.readings = (rep, other)
             return gh
         # Neither reading puts a ruleset on the base branch: the lines that
         # read its rules read the same in both, so they read this one.
@@ -2680,23 +2680,26 @@ def check_merge_queue(i: Inputs) -> list[Line]:  # run by check_ruleset_rules, s
     JSON's `merge_queue`: null as a whole only where the rulesets can't be
     read; where they can but can't be placed, `queue` alone (#302)."""
     gh = _github(i)
-    if gh is not None and gh.report is None and gh.readings:
-        # Without the default branch: on or off only when both readings say so.
-        said = {None if r.queue_unsure and not r.queue else r.queue for r in gh.readings}
-        i._mq = {"queue": said.pop() if len(said) == 1 else None, "available": None, "merge_group": None, "signals": None}
-    if gh is None or gh.report is None:
+    if gh is None or (gh.report is None and not gh.readings):
+        return []
+    # Without the default branch, on or off only when both readings say so.
+    readings = gh.readings or (gh.report,)
+    said = {None if r.queue_unsure and not r.queue else r.queue for r in readings}
+    queue = said.pop() if len(said) == 1 else None
+    mq = i._mq = {"queue": queue, "available": None, "merge_group": None, "signals": None}
+    if gh.report is None:
         return []
     rep = gh.report
-    unsure = bool(rep.queue_unsure) and not rep.queue
-    mq = i._mq = {"queue": None if unsure else rep.queue, "available": None, "merge_group": None, "signals": None}
+    unsure = queue is None
+    unplaced = list(dict.fromkeys(w for r in readings for w in r.queue_unsure))
     if unsure and any(p.get("strict_required_status_checks_policy") is True for p in _rules(rep, "required_status_checks")):
         # "Up to date" is met either way, so github.up_to_date is fine: the
         # queue rule that may apply is said here (without "up to date" on,
         # github.up_to_date says it).
         base = i.profile.base_branch
         return [Line("GitHub", "github.merge_queue", "cant_check", Words(
-            f"Can't tell whether GitHub's merge queue is on for `{base}`: {_shown(rep.queue_unsure[0], 300)}.",
-            f"Merge queue unknown on `{base}`: {_shown('; '.join(rep.queue_unsure), 300)}.",
+            f"Can't tell whether GitHub's merge queue is on for `{base}`: {_shown(unplaced[0], 300)}.",
+            f"Merge queue unknown on `{base}`: {_shown('; '.join(unplaced), 300)}.",
         ), Words(
             f"Check in Settings → Rules whether that ruleset applies to `{base}`; naming `{base}` itself (not a pattern) lets the kit tell.",
             f"Name refs/heads/{base} (or ~DEFAULT_BRANCH, with --repo's default_branch) in its include, so the reader can count it.",
