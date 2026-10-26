@@ -6,10 +6,11 @@ whose `origin` is a local bare repository.
 """
 
 import re
+import subprocess
 
 import pytest
 
-from workflow import own_changes
+from workflow import own_changes, small
 from test_review_record_hashes import _no_user_git_config  # noqa: F401 (an autouse fixture)
 from test_small_review import checkout, git, measure  # noqa: F401 (checkout is a fixture)
 
@@ -121,3 +122,17 @@ def test_a_grafted_commit_doesnt_move_the_merge_base(checkout, capsys, replace_r
     git(checkout, "replace", "--graft", commit, git(checkout, "rev-parse", "origin/main"))
     assert counts(capsys).startswith(COUNTS)
     assert own_changes.of_files(own_changes.local_files(checkout, commit, "refs/remotes/origin/main")) == hashes
+
+
+def test_a_diff_that_doesnt_finish_is_named_as_git_diff(checkout, capsys, monkeypatch):
+    # The pins' `-c` options come first; the error names the command.
+    def timed_out(cmd, **kw):
+        if "diff" in cmd:
+            raise subprocess.TimeoutExpired(cmd, kw.get("timeout"))
+        return run(cmd, **kw)
+
+    run = subprocess.run
+    monkeypatch.setattr(small.subprocess, "run", timed_out)
+    code, out, err = measure(capsys)
+    assert code == 1 and out == ""
+    assert "git diff failed" in err and "git -c failed" not in err

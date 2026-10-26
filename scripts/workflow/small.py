@@ -174,7 +174,8 @@ def _git(root: Path, *args: str, timeout: int = 60, binary: bool = False, env: d
         return subprocess.run(["git", "-c", "core.useReplaceRefs=false", *args], cwd=root, capture_output=True, stdin=subprocess.DEVNULL, env=env,
                               timeout=timeout, **text)
     except (OSError, subprocess.TimeoutExpired) as e:
-        raise CantMeasure(f"git {args[0]} failed: {e}") from None
+        command = next((a for before, a in zip(("", *args), args) if "-c" not in (a, before)), args[0])
+        raise CantMeasure(f"git {command} failed: {e}") from None
 
 
 def base_ref(root: Path, base: str, note, source: str = "--base") -> str:
