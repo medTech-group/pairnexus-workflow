@@ -166,12 +166,13 @@ def _git(root: Path, *args: str, timeout: int = 60) -> subprocess.CompletedProce
         raise CantMeasure(f"git {args[0]} failed: {e}") from None
 
 
-def base_ref(root: Path, base: str, note) -> str:
+def base_ref(root: Path, base: str, note, source: str = "--base") -> str:
     """`origin/<base>`, fetched first (as `review-panel` §1 does). If the fetch
-    fails, the existing one, with a note (`note(text)`); with none, CantMeasure."""
+    fails, the existing one, with a note (`note(text)`); with none, CantMeasure.
+    `source` names where `base` came from, for a name git refuses."""
     ref = f"refs/remotes/origin/{base}"
     if base.startswith("-") or any(c in base for c in "*?[") or _git(root, "check-ref-format", f"refs/heads/{base}").returncode != 0:
-        raise CantMeasure(f"`{base}` isn't a branch's name (--base)")
+        raise CantMeasure(f"`{base}` isn't a branch's name ({source})")
     try:
         got = _git(root, "fetch", "--quiet", "origin", f"+refs/heads/{base}:{ref}", timeout=120)
         lines = got.stderr.strip().splitlines()

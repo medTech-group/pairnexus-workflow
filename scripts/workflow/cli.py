@@ -1128,7 +1128,7 @@ def _measure(a) -> int:
         return 1
     note = lambda text: print(f"workflow review-record: {text}", file=sys.stderr)  # noqa: E731
     try:
-        ref = small_mod.base_ref(prof.root, a.base or prof.base_branch, note)
+        ref = small_mod.base_ref(prof.root, a.base or prof.base_branch, note, "--base" if a.base else "the profile's project.base_branch")
         changes = small_mod.local_changes(prof.root, commit, ref)
     except small_mod.CantMeasure as e:
         print(f"workflow review-record: can't measure: {e}", file=sys.stderr)

@@ -652,9 +652,15 @@ class Context:
     def size(self) -> small.Measure:
         """The diff against the small threshold (`small.measure`), counting
         files outside the profile's suites' globs. Unreadable when a counted
-        file has no additions and deletions."""
+        file has no additions and deletions, or a file on a test path has no
+        status (it may be a rename from outside tests)."""
+        globs = small.suite_globs(self.profile)
+        for c in self.changes():
+            if c.status is None and c.previous is None and small.is_test(c.path, globs):
+                # gh's and GraphQL's lists may name no status: a rename into tests would go uncounted.
+                raise Unreadable("files", f"`{c.path}` is on a test path but has no status, so a rename into it from outside tests can't be told: give --files as GitHub's REST list of the pull request's files (GET repos/<repo>/pulls/<n>/files), with each file's status and previous_filename")
         try:
-            return small.measure(self.changes(), small.suite_globs(self.profile), self.small_max_lines, self.small_max_files)
+            return small.measure(self.changes(), globs, self.small_max_lines, self.small_max_files)
         except small.NoCounts as e:
             raise Unreadable("files", f"{e}, which the small threshold counts: give --files as GitHub's REST list of the pull request's files (GET repos/<repo>/pulls/<n>/files), with each file's additions and deletions") from None
 

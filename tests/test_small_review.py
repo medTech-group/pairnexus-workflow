@@ -140,6 +140,27 @@ def test_a_rename_whose_old_path_isnt_given_counts(project, capsys):
     past(check(project, capsys, data)[0])
 
 
+def test_a_test_path_with_no_status_cant_be_read_where_the_condition_applies(project, capsys):
+    # gh pr view's list names no status: the file may have been renamed from outside tests.
+    suites(project)
+    data = with_files()
+    data["files"] = {"files": [{"path": "tests/test_helpers.py", "additions": 70, "deletions": 0}]}
+    got, _ = check(project, capsys, data)
+    assert [x["input"] for x in got["reasons"] if x["id"] == "couldnt_read"] == ["files"]
+    assert "has no status" in got["reasons"][0]["wording"]["developer"]["message"]
+    data["files"]["files"][0]["changeType"] = "MODIFIED"
+    got, _ = check(project, capsys, data)
+    assert got["decision"] == "ready", got["reasons"]
+
+
+def test_a_profile_base_git_refuses_is_named_as_the_profiles(checkout, capsys):
+    path = checkout / ".claude/workflow/profile.toml"
+    path.write_text(path.read_text().replace('base_branch = "main"', 'base_branch = "ma*"'))
+    code, out, err = measure(capsys)
+    assert code == 1 and out == ""
+    assert "(the profile's project.base_branch)" in err
+
+
 def test_a_rename_counts_as_one_file(project, capsys):
     files = [changed(f"src/{n}.py", 1, status="renamed", previous=f"old/{n}.py") for n in "abcd"]
     got, _ = check(project, capsys, with_files(*files))
@@ -545,12 +566,27 @@ def test_a_path_that_isnt_utf8_is_measured_not_a_traceback(checkout, capsys):
     assert out.startswith("13 lines in 5 files outside tests")
 
 
+# Myers counts this change as 3 lines out, 3 in; histogram as 4 and 4.
+ALGO_BEFORE = ["x", "}", "y", "", "{", "{", "return;", "{", "x", "return;", "{", "return;", "}", "{", "{", "y", "y", "{", "}", "{",
+               "return;", "y", "{", "return;", "{", "}", "", "", "return;", "{"]
+ALGO_AFTER = ["x", "{", "y", "{", "{", "return;", "{", "x", "return;", "{", "return;", "}", "{", "{", "{", "y", "y", "}", "}", "{",
+              "return;", "y", "{", "return;", "{", "}", "", "", "return;", "{"]
+
+
 def test_measure_counts_with_myers_whatever_the_configuration(checkout, capsys):
+    git(checkout, "checkout", "-q", "main")
+    (checkout / "src/algo.txt").write_text("\n".join(ALGO_BEFORE) + "\n")
+    git(checkout, "add", ".")
+    git(checkout, "commit", "-qm", "algo")
+    git(checkout, "push", "-q", "origin", "main")
+    git(checkout, "checkout", "-q", "claude/build-1")
+    git(checkout, "merge", "-q", "--no-edit", "main")
+    (checkout / "src/algo.txt").write_text("\n".join(ALGO_AFTER) + "\n")
+    git(checkout, "commit", "-qam", "algo changed")
     git(checkout, "config", "diff.algorithm", "histogram")
-    git(checkout, "config", "diff.external", "false")
     code, out, err = measure(capsys)
     assert code == 0, err
-    assert out.startswith("11 lines in 4 files")
+    assert out.startswith("17 lines in 5 files")  # 11, and Myers' 6 for src/algo.txt (histogram's would be 8)
 
 
 @pytest.mark.parametrize("base", ["*", "ma*", "main:refs/heads/x", "ma in", "-x"])
