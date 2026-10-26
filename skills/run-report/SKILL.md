@@ -13,7 +13,7 @@ One comment on the tracking issue, written for the owner to act on. Build it onl
 
 - **The state:** save the tracking issue's body to `body.md`, then run `WF state get --body body.md`. Each ticket has its status, attempts, `started_at`, `merged_at` and PR. The state also holds the ledger and `for_owner`.
 - **Each merged PR's body:** its "Decisions for the owner", any findings left open, and the number of review rounds.
-- **Each merged PR's timeline** (`gh api repos/<repo>/issues/<PR>/timeline`): one with an `added_to_merge_queue` event went through the merge queue, whoever queued it. For those, when it was last added to the queue, and its reviews and review threads.
+- **Each merged PR's timeline**, every page (`gh api --paginate --slurp 'repos/<repo>/issues/<PR>/timeline?per_page=100'`, or one `?page=N` at a time where `--paginate` is refused): one with an `added_to_merge_queue` event went through the merge queue, whoever queued it. For those, when it was last added to the queue, and its reviews and review threads.
 - **The by-hand issue:** its open checkboxes.
 - **The tracking issue's comments:** each ticket session's notes and failures.
 

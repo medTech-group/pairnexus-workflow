@@ -60,6 +60,7 @@ def _queue_paragraph():
 def test_build_ticket_reads_the_queue_from_merge_check_never_the_briefing():
     step = _merge_step()
     assert "Read whether the merge queue is on from the JSON's `queue` each time, never from the briefing" in step
+    assert "With a `queue_unsure` note (a merge-queue rule it can't judge, `queue` false), never merge directly or arm auto-merge" in step
 
 
 def test_build_ticket_enqueues_once_per_head_pinned_through_merge_async():
@@ -83,7 +84,7 @@ def test_build_ticket_reads_back_the_202_and_leaves_every_re_queue_to_the_conduc
 def test_build_ticket_stays_until_merged_and_handles_the_conductors_base_merge():
     para = _queue_paragraph()
     assert "stay with it until GitHub has merged it" in para
-    assert "After the conductor merges the base in (a second drop), `git pull`, run `WF merge-check` again, and run a Correctness pass only when it asks for one" in para
+    assert "After the conductor merges the base in (once GitHub has taken the head out of the queue twice), `git pull`, run `WF merge-check` again, and run a Correctness pass only when it asks for one" in para
     assert "fix any red check" in para
     assert "If the conductor labels the ticket `needs-human` (dropped from the queue again after the base was merged in), stop: take steps 6.6 and 6.7" in para
     assert "In `session` and `auto-merge` mode, stay with it until GitHub has merged it" in para
@@ -101,7 +102,7 @@ def test_build_ticket_scopes_the_up_to_date_steps_to_no_queue():
     # A conflict is still the session's to resolve, or a conflicting PR would never be ready.
     assert "Still merge it in to resolve a conflict (`WF merge-check`'s `resolve_conflict`)" in moved
     four = next(ln for ln in _merge_step().splitlines() if ln.startswith("4. **Merge** on `ready`."))
-    assert "Without a merge queue (the JSON's `queue` is false), what you do depends on the briefing's mode" in four
+    assert "Without a merge queue (the JSON's `queue` is false, with no `queue_unsure` note: with one, step 3 says), what you do depends on the briefing's mode" in four
     level = next(ln for ln in _merge_step().splitlines() if ln.startswith("1. **Push everything,**"))
     assert "(with the merge queue on, the queue meets this)" in level
 
@@ -174,7 +175,9 @@ def test_the_briefing_queues_once_per_head_and_stays(tmp_path, mode):
     assert "and fix any red check" in line and "a conflict you still resolve by merging the base in" in line
     assert "With a `queue_unsure` note, never merge directly or arm auto-merge" in line
     # The bullets for "up to date" say so, and a refused queueing goes to the conductor too.
-    assert "- **Without a merge queue** (`merge-check`'s `queue` is false). On `ready`, act by the merge mode" in merging
+    assert "- **Without a merge queue** (`merge-check`'s `queue` is false, with no `queue_unsure` note). On `ready`, act by the merge mode" in merging
+    assert "right after `merge-check` says `ready` on that head; on `not_yet`, never queue" in line
+    assert "on `ready`, comment on the PR and on #232 that it is ready for the owner to merge" in line
     assert "(or arming auto-merge, or queueing)" in merging and "the conductor merges it, arms auto-merge or queues it" in merging
     assert "`session` mode queues after your own final `merge-check` says `ready`" in line
     assert "Stay with the PR until GitHub merges it" in line
@@ -236,7 +239,8 @@ def test_the_up_to_date_rows_are_scoped_to_no_queue():
 
 def test_the_stuck_row_counts_waiting_in_the_queue_as_waiting_on_ci():
     stuck = _row(_check_in_rows(), "No movement for 6 check-ins")
-    assert "a PR in the merge queue, whose ticket's `queue_result` is `in_queue`, `waiting` or `requeued`, counts as waiting on CI" in stuck
+    # Only this check-in's answer for the current head counts: a stale one would hide a stuck session.
+    assert "a PR in the merge queue counts as waiting on CI when this check-in's `state drop` for its current head printed `in_queue`, `waiting` or `requeued`" in stuck
 
 
 def test_a_mid_run_change_of_the_queue_is_logged_said_followed_and_stops_waivers():
@@ -251,6 +255,20 @@ def test_a_mid_run_change_of_the_queue_is_logged_said_followed_and_stops_waivers
     # An unsure queue: never a direct merge or armed auto-merge; the owner merges it.
     assert "A `queue_unsure` note (a merge-queue rule the kit can't judge) counts as on for the state and the waivers" in para
     assert "never merge it directly or arm auto-merge" in para and "yours to merge (#PR)" in para
+    assert "it counts as settled for \"Done\"" in para
+    # A failed read of the rulesets is never a change.
+    assert "a `WF merge-check` run above with no \"couldn't read\" reason for the rulesets" in para
+    assert "If neither could read the rulesets, skip the rest of this paragraph at this check-in: a failed read is never a change." in para
+
+
+def test_the_rows_without_a_queue_leave_an_unsure_queue_to_its_paragraph():
+    rows = _check_in_rows()
+    for lead in ("`session` mode, `ready`", "`auto-merge` mode, `ready`", "You tried to enable auto-merge"):
+        assert "no `queue_unsure` note" in _row(rows, lead), lead
+    for lead in ("`session` mode, `ready`", "`auto-merge` mode, `ready`"):
+        assert "with one, \"The merge queue's state\" below" in _row(rows, lead), lead
+    # The drops' record survives the check-in's own write.
+    assert "read the state back from it (`WF state get --body .workflow/run/body.md`) so step 8's write keeps what it recorded" in _row(rows, "The merge queue on")
 
 
 def test_every_charter_check_and_the_owners_answer_carry_the_queue():
@@ -258,7 +276,10 @@ def test_every_charter_check_and_the_owners_answer_carry_the_queue():
     assert "`WF charter questions --queue <on|off>` lists them" in text
     assert "4. Run `WF charter validate charter.json --queue <on|off>`" in text
     assert "10. Run `WF charter validate charter.json --approved --queue <on|off>`." in text
-    assert "3. Run `WF charter validate --approved --queue <on|off>`, with the queue's state as this check-in reads it" in text
+    # Waivers already in the charter never block an unrelated amendment once the queue comes on.
+    assert "3. Run `WF charter validate --approved --queue <on|off>`: the queue's state as this check-in reads it" in text
+    assert "when the change touches `merge.waived_checks`, else `--queue off`" in text
+    assert "With `null`, tell the owner that every ready pull request will be theirs to merge, whatever the mode" in text
     assert "no `asked_at`, `base_merged`, `queue_heads`, `queue_failed` or `queue_result`, so the merge queue's drop rule starts afresh" in text
 
 
@@ -282,6 +303,7 @@ def test_the_run_report_flags_a_late_request_and_offers_a_revert():
     text = _read("skills/run-report/SKILL.md")
     gather = _section(text, "## Gather the record", "## Its sections")
     # Every merged PR's timeline, so one its session queued is found too.
+    assert "gh api --paginate --slurp 'repos/<repo>/issues/<PR>/timeline?per_page=100'" in gather
     assert "**Each merged PR's timeline**" in gather and "`added_to_merge_queue` event" in gather and "whoever queued it" in gather
     bullet = next(ln for ln in _section(text, "6. **For you:**", "7. **Follow-ups.**").splitlines() if "after it was queued" in ln)
     assert "merged with a request made after it was queued" in bullet
