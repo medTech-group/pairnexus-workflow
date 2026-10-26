@@ -545,7 +545,7 @@ The level changes only the words, as in "The screens": read `WF status --json` f
 First `git fetch origin <base>`: doctor reads the workflows as they are on `origin/<base>`, and trusts whatever the checkout holds of it. Then `WF doctor --json > .workflow/doctor.json`, given the files `check-setup` gathers where `gh` isn't signed in (`--rulesets`, `--repo`, `--org`, `--ci`, `--commits`, `--runs`). Read its `merge_queue`:
 
 - **`queue` is `true`:** the queue is on already. When the `github.up_to_date` line says a ruleset still keeps "up to date" on, give its fix (the clicks below, unticking it in that ruleset; an organisation's is its owner's). Otherwise say so, and stop.
-- **`queue` is `null`:** a merge-queue rule in a ruleset the kit can't judge: say the `github.merge_queue` line's message and fix (or, without that line, `github.up_to_date`'s), and stop.
+- **`queue` is `null`:** a merge-queue rule in a ruleset the kit can't judge: say the `github.merge_queue` line's message and fix (or, without that line, `github.up_to_date`'s, or, without either, `github.ruleset`'s), and stop.
 - **No `use_merge_queue` offer** on the `github.merge_queue` line (a personal repository, a private one on a plan without the queue, the base branch unprotected or no checks required): say why from doctor's lines, and stop. "Protect `main`" and "Require these checks" come first.
 - **A run in progress** (above): stop.
 - **`available` is `check_plan`:** say the queue needs GitHub Enterprise Cloud for a private repository, and ask the owner to check the organisation's plan first, with **My plan has it** and **Not now**.
