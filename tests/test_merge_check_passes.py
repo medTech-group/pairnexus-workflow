@@ -16,6 +16,7 @@ import pytest
 from test_merge_check import EARLIER, HEAD, check, comment, ids, inputs, project, rec  # noqa: F401 (project is a fixture)
 from changelog_notes import since_0110
 from workflow import profile as profile_mod
+from workflow import state
 
 MIDDLE = "c" * 40  # a commit of the PR between EARLIER and HEAD
 KIT = Path(__file__).resolve().parents[1]
@@ -347,7 +348,7 @@ def test_build_ticket_takes_it_as_needs_human_and_passes_the_flag():
 
 def test_the_conductor_takes_it_as_needs_human():
     conductor = _read("skills/conductor/SKILL.md")
-    line = next(ln for ln in conductor.splitlines() if ln.startswith("| **`not_yet` with `passes_used_up`**"))
+    line = _pass_cap_row()
     assert "needs-human" in line
     # It leaves the labelling to the session, and claims no findings that may not exist.
     # Stopping is the session's: the conductor never settles a session that still runs.
@@ -400,7 +401,7 @@ def test_the_conductor_takes_it_as_needs_human():
     assert "is the stuck row's, except that, for a ticket at the cap" in line
 
 
-def _the_row():
+def _pass_cap_row():
     conductor = _read("skills/conductor/SKILL.md")
     return next(ln for ln in conductor.splitlines() if ln.startswith("| **`not_yet` with `passes_used_up`**"))
 
@@ -412,22 +413,28 @@ def test_with_its_profile_unreadable_a_ticket_is_marked_and_checked_again_until_
     at_cap = conductor.split("**A ticket at the cap.**", 1)[1].split("\n\n", 1)[0]
     # The definition is unchanged: unreadable, it isn't at the cap (yet).
     assert "With a \"couldn't read\" reason for the profile, whether it is at the cap can't be told, so it isn't at the cap" in at_cap
-    # A mark in the run's state carries it across check-ins, and step 2 runs the definition again on it
-    # at each one, whether or not the owner was asked.
-    assert "Mark it in the state (`cap_unknown_at`, the time)" in at_cap
-    assert "at each check-in, here in step 2, run that `merge-check` again on every ticket with the mark until one reads the profile" in at_cap
-    # Then the steps, or the row it took already.
-    assert "then clear the mark, and take the steps below if it is at the cap; if not, it stays with the row it took" in at_cap
-    # A ticket that leaves `needs-human` (an answer requeued it) is no longer one the definition is for.
-    assert "The mark goes too when the ticket leaves `needs-human`." in at_cap
-    answers = conductor.split("**When the owner answers**", 1)[1].split("\n3. ", 1)[0]
-    assert "no `asked_at` or `cap_unknown_at`" in answers
-    # Said once: the paths reach it through the definition, not each their own copy.
-    assert conductor.count("`cap_unknown_at`") == 2
+    # A mark in the run's state carries it across check-ins: only on a ticket already labelled `needs-human`
+    # (never one the stuck clause is still deciding), and only beside `passes_used_up`.
+    assert "If the ticket is labelled `needs-human` and `merge-check` gives `passes_used_up` beside that reason, mark it in the state (`cap_unknown_at`, the time)" in at_cap
+    # It goes with a requeue of any kind (an answer, a retry) or the pull request, so a running ticket never
+    # takes the steps. It doesn't hold the run open: the profile may never read.
+    assert "The mark goes when the ticket is queued again or no longer has an open pull request, and it never keeps the run going on its own." in at_cap
+    # Step 2 looks again first, before "Stop now" and "Done", so the check-in that reads the profile takes the steps.
+    step2 = conductor.split("**2. Stop or wind down?**", 1)[1].split("\n- **Stop now**", 1)[0]
+    assert "First, look again at each ticket marked `cap_unknown_at`" in step2
+    assert "for each whose run reads the profile, clear its mark, and take the steps for a ticket at the cap if it is at the cap; if not, it stays with the row it took" in step2
+    # A stopping run skips step 2 (step 0), so the report looks again too.
+    report = conductor.split("4. **The report.**", 1)[1].split("\n", 1)[0]
+    assert "First look again at each ticket still marked `cap_unknown_at`, as check-in step 2 begins." in report
+    # A stuck ticket out of tries is labelled by the conductor: it goes through the definition too, so it gets
+    # the steps, or the mark.
+    out_of_tries = next(ln for ln in conductor.splitlines() if ln.startswith("3. A ticket whose `attempts`"))
+    assert "unless it is at the cap (step 2's \"A ticket at the cap\"): then take its steps instead of that line." in out_of_tries
+    # Said once each: marked in the definition, looked at in step 2 and before the report.
+    assert conductor.count("`cap_unknown_at`") == 3
 
 
 def test_the_state_takes_the_mark():
-    from workflow import state
     s = state.empty()
     s["tickets"] = {"7": {"status": "needs-human", "cap_unknown_at": "2026-10-26T10:00:00Z", "attempts": 0}}
     assert state.validate(s) == []
@@ -439,7 +446,7 @@ def test_the_state_takes_the_mark():
 def test_the_stuck_clause_is_only_for_a_ticket_at_the_cap():
     # #283: on a bare `passes_used_up` (the profile unreadable), a crashed session's ticket was set aside
     # where the stuck row would have retried it.
-    line = _the_row()
+    line = _pass_cap_row()
     stuck = line.split("A session that stops without labelling it", 1)[1]
     assert stuck.startswith(" is the stuck row's, except that, for a ticket at the cap (step 2's \"A ticket at the cap\", its `needs-human` label aside), instead of a retry you label the ticket `needs-human`, comment why on it, and archive the session")
     assert "any other, the profile unreadable among them, gets the stuck row's retry" in stuck
