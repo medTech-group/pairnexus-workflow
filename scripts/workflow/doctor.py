@@ -1342,9 +1342,11 @@ def _unplaced_fix(i: Inputs) -> Words:
         f"Check in Settings → Rules whether that ruleset applies to `{base}`; naming `{base}` itself (not a pattern) lets the kit tell.",
         f"Name refs/heads/{base} (or ~DEFAULT_BRANCH, with --repo's default_branch) in its include, so the reader can count it.",
     )
-    # Read from the reason's end: a ruleset's name, at its start, could hold the words.
-    tails = [f", and {w}, so it can't tell whether that is {base}" for w in protection_mod.DEFAULT_UNKNOWN]
-    if not any(r.endswith(t) for r in _queue_reading(_github(i)).queue_unsure for t in tails):
+    # Read from the reason's end (a ruleset's name, at its start, could hold
+    # the words), with the base as the reader named it.
+    q = _queue_reading(_github(i))
+    tails = [f", and {w}, so it can't tell whether that is {q.base_branch}" for w in protection_mod.DEFAULT_UNKNOWN]
+    if not any(r.endswith(t) for r in q.queue_unsure for t in tails):
         return fix
     return Words(
         "Ask Claude to fetch the repository's settings from GitHub in full, with its default branch, and check again. If it still can't tell: " + fix.new[:1].lower() + fix.new[1:],

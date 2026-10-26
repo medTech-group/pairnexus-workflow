@@ -459,6 +459,12 @@ def test_a_queue_rule_in_a_ruleset_that_excludes_the_base_is_off(tmp_path, proje
     assert lines["github.up_to_date"]["status"] == "gap"
 
 
+def test_a_base_written_as_a_ref_still_gets_the_settings_first_fix(tmp_path):
+    root = _checkout(tmp_path, {"ci.yml": CI_YML}, profile=PROFILE.replace('[project]\n', '[project]\nbase_branch = "refs/heads/main"\n', 1))
+    lines, _ = _github(tmp_path, root, rulesets=(_on_main(True), OTHERS), settings=NO_DEFAULT)
+    assert lines["github.merge_queue"]["fix"].startswith("Ask Claude to fetch the repository's settings"), lines["github.merge_queue"]
+
+
 def test_a_ruleset_named_like_the_reason_never_asks_for_the_default_branch(tmp_path, project):
     named = _queued(_rs(id=207, name="Queue (the settings file has no default_branch)",
                         conditions={"ref_name": {"include": ["refs/heads/ma*"], "exclude": []}}))
