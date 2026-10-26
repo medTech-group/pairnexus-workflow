@@ -404,7 +404,7 @@ def test_build_ticket_says_it_in_its_review_step_and_checklist():
     step = text.split("## 3. Review it", 1)[1].split("\n## ", 1)[0]
     assert EXCEPTION in step and "needs CI only" in step
     assert "`WF merge-check --fetch <PR> --json`" in step and "review reasons only" in step
-    assert "- [ ] Review panel run in rounds until clean (or the limit, the rest raised); late commits had a Correctness pass where `merge-check` asked for one" in text
+    assert "- [ ] Review panel run in rounds until clean (or the limit, the rest raised); late commits had a Correctness pass, except a merge of the base `merge-check` carried a review over" in text
 
 
 def test_the_merge_check_skill_names_the_files_and_commits_fields():
