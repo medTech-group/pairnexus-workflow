@@ -9,6 +9,7 @@ import re
 
 import pytest
 
+from workflow import own_changes
 from test_review_record_hashes import _no_user_git_config  # noqa: F401 (an autouse fixture)
 from test_small_review import checkout, git, measure  # noqa: F401 (checkout is a fixture)
 
@@ -85,3 +86,15 @@ def test_a_submodule_counts_whatever_the_configuration(checkout, capsys, tmp_pat
     for key, value in [("diff.ignoreSubmodules", "all"), ("submodule.libs/lib.ignore", "all")]:
         git(checkout, "config", key, value)
         assert counts(capsys) == before, key
+        git(checkout, "config", "--unset", key)
+
+
+def test_a_replaced_object_doesnt_change_them_or_the_hashes(checkout, capsys):
+    # GitHub never reads `git replace`'s refs: both sides diff the objects as committed.
+    commit = git(checkout, "rev-parse", "HEAD")
+    hashes = own_changes.of_files(own_changes.local_files(checkout, commit, "refs/remotes/origin/main"))
+    (checkout.parent / "other.py").write_text("only = 1\n")
+    other = git(checkout, "hash-object", "-w", str(checkout.parent / "other.py"))
+    git(checkout, "replace", git(checkout, "rev-parse", f"{commit}:src/new.py"), other)
+    assert counts(capsys).startswith(COUNTS)
+    assert own_changes.of_files(own_changes.local_files(checkout, commit, "refs/remotes/origin/main")) == hashes

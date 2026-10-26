@@ -228,9 +228,10 @@ DIFF = (
 def pinned_diff(root: Path, base: str, commit: str, *args: str, binary: bool = False) -> subprocess.CompletedProcess:
     """`git diff <args> <base> <commit>` with `DIFF`'s pins, the attributes
     read from `commit`'s own `.gitattributes` (git 2.40 and later), never a
-    global or the system's file."""
+    global or the system's file, and the objects as committed, never their
+    replacements (`git replace`), which GitHub doesn't read."""
     return _git(root, "-c", f"core.attributesFile={os.devnull}", *DIFF, *args, base, commit, binary=binary,
-                env={"GIT_ATTR_SOURCE": commit, "GIT_ATTR_NOSYSTEM": "1"})
+                env={"GIT_ATTR_SOURCE": commit, "GIT_ATTR_NOSYSTEM": "1", "GIT_NO_REPLACE_OBJECTS": "1"})
 
 
 def local_changes(root: Path, commit: str, ref: str) -> list[Change]:
