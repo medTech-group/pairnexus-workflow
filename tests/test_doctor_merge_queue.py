@@ -437,6 +437,12 @@ def test_a_queue_rule_off_the_default_branch_with_it_unknown_gives_queue_null(tm
     assert "default_branch" in q["message"]  # the cause: the settings don't say which branch is the default
 
 
+def test_with_the_settings_unreadable_the_cant_tell_line_says_so(tmp_path, project):
+    lines, _ = _github(tmp_path, project, rulesets=(_on_main(True), OTHERS), settings="nope")
+    q = lines["github.merge_queue"]
+    assert q["status"] == "cant_check" and "the repository's settings (--repo) weren't given, so" in q["message"], q
+
+
 def test_with_the_default_branch_unknown_up_to_date_never_asks_for_it_beside_a_queue_rule(tmp_path, project):
     lines, r = _github(tmp_path, project, rulesets=(_on_main(False), OTHERS), settings=NO_DEFAULT)
     assert r["merge_queue"]["queue"] is None

@@ -247,7 +247,7 @@ def _targets(rs: dict, base: str, default: str | None, have_settings: bool) -> s
     unknown = (
         "the settings file has no default_branch"
         if have_settings
-        else "without the repository's settings (--repo)"
+        else "the repository's settings (--repo) weren't given"
     )
     hits = [names_base(p) for p in ref.get("include") or []]
     if True not in hits:
