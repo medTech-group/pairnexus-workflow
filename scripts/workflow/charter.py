@@ -620,7 +620,7 @@ def _size_lines(c: dict, profile: Any, estimate: Any = None) -> list[str]:
     rounds = presets_mod.plural(rv["rounds"], "round", "rounds")
     if rv["small"]:
         small = (
-            f"on: a ticket marked `Review: small` gets one Correctness round ({presets_mod.small_reviewers(rv)}) while its diff stays "
+            f"on: a ticket marked `Review: small` gets one Correctness round ({presets_mod.small_reviewers(rv, profile)}) while its diff stays "
             f"within {presets_mod.threshold_words(rv)} outside tests (added plus removed); past that, "
             f"{presets_mod.past_small(rv)}"
         )

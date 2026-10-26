@@ -346,6 +346,17 @@ def test_the_small_review_names_the_explorer_only_where_the_run_has_one(tmp_path
         assert "with the security review where it applies)" in _line(_brief(tmp_path, c), "- **Small review:**")
 
 
+def test_the_small_review_names_no_explorer_when_the_profile_has_none(tmp_path):
+    """A charter approved before the profile's explorer went to `none` asks for one: no small review promises it."""
+    _project(tmp_path, explorer="none")
+    c = _defaults(tmp_path)
+    c["review"] = {"rounds": 3, "explorer": True, "small": True}
+    assert "(with the security review where it applies)" in _line(_page(tmp_path, c), "- **Small review:**")
+    brief = _brief(tmp_path, c)
+    assert "UI explorer: none." in _line(brief, "- **Review:**")
+    assert "with the security review where it applies)" in _line(brief, "- **Small review:**")
+
+
 def test_the_one_page_says_a_profile_value_written_out_is_no_change(tmp_path):
     _project(tmp_path)
     c = _defaults(tmp_path)

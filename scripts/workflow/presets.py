@@ -106,10 +106,11 @@ def past_small(review: dict) -> str:
     return "the light review" if review["rounds"] == 1 else "the full panel"
 
 
-def small_reviewers(review: dict) -> str:
+def small_reviewers(review: dict, profile: Any = None) -> str:
     """Who the small review runs beside Correctness: the security review where
-    it applies, and the UI explorer only when the run has one."""
-    if runs_explorer(review):
+    it applies, and the UI explorer only when the run has one (and the
+    profile, when given, has one)."""
+    if runs_explorer(review) and (profile is None or has_explorer(profile)):
         return "with the security review and the UI explorer where they apply"
     return "with the security review where it applies"
 
