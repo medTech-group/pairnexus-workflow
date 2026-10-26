@@ -286,7 +286,8 @@ def test_every_charter_check_and_the_owners_answer_carry_the_queue():
     assert "else `--queue off`, since waivers already in the charter only stop applying while the queue is on and never block another change, a narrowing of them included" in text
     # docs/charter.md says the same.
     assert "again for an amendment's `validate` when the amendment adds a waived check; any other amendment is validated with `--queue off`" in _read("docs/charter.md")
-    assert "With `null`, tell the owner that every ready pull request will be theirs to merge, whatever the mode" in text
+    assert "With `queue` `null` (a merge-queue rule the kit can't judge), tell the owner that every ready pull request will be theirs to merge, whatever the mode" in text
+    assert "it can be asked again once a run pull request is open or the ruleset reads" in text
     assert "no `asked_at`, `base_merged`, `queue_heads`, `queue_failed` or `queue_result`, so the merge queue's drop rule starts afresh" in text
 
 
@@ -302,7 +303,8 @@ def test_the_kick_off_records_the_queue_and_recommends_it_with_its_reason():
     assert "\"Use a merge queue\"" in para and "attended session" in para
     assert "never changes the ruleset itself" in para
     assert "never offers the upgrade while a run is in progress" in para
-    assert "WF state init --charter charter.json --run-id <id> --by-hand <n> --read-through <id of the newest comment on the tracking issue, or 0> --queue <on|off>" in kickoff
+    assert "WF state init --charter charter.json --run-id <id> --by-hand <n> --read-through <id of the newest comment on the tracking issue, or 0> [--queue <on|off>]" in kickoff
+    assert "Leave out `--queue` when doctor couldn't tell (step 1's \"The merge queue\")" in kickoff
     assert "`--queue on|off`" in kickoff
 
 
