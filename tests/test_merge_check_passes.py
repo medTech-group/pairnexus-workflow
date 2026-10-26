@@ -495,3 +495,44 @@ def test_the_wording_holds_past_the_cap(project, capsys):
 def test_the_changelog_has_283s_note():
     unreleased = since_0110(_read("CHANGELOG.md"))
     assert "(#283" in unreleased and "`cap_unknown_at`" in unreleased
+
+
+# ---------- #295: `past_small_threshold` beside an unreadable profile ----------
+
+
+def test_with_the_profile_unreadable_a_small_review_at_the_cap_can_read_past_small_threshold(project, capsys):
+    # The conductor relies on this (#295): the small threshold comes from the profile too, so with it
+    # unreadable a pull request at its pass cap is measured against the defaults and reads past it.
+    path = project / ".claude/workflow/profile.toml"
+    path.write_text(path.read_text() + "\n[run]\nsmall_max_lines = 200\n")
+    data = three_commits()
+    data["files"] = [{"filename": "src/app.py", "status": "modified", "additions": 100, "deletions": 0}]
+    data["pr"]["changed_files"] = 1
+    data["comments"] = records(
+        rec(rnd=1, commit=EARLIER, clean=False, reviewers="correctness"),
+        rec("pass", rnd=1, commit=MIDDLE, clean=False), rec("pass", rnd=1, commit=HEAD, clean=False),
+    )
+    used_up(check(project, capsys, data)[0])
+    path.write_text("[project\n")
+    got, _ = check(project, capsys, data)
+    assert [r.get("input") for r in got["reasons"] if r["id"] == "couldnt_read"] == ["profile"]
+    assert [r["id"] for r in review_reasons(got)] == ["past_small_threshold"]
+
+
+def test_past_small_threshold_beside_an_unreadable_profile_marks_the_ticket_too():
+    conductor = _read("skills/conductor/SKILL.md")
+    at_cap = conductor.split("**A ticket at the cap.**", 1)[1].split("\n\n", 1)[0]
+    # The small threshold and the test globs come from the profile, so a pull request at its cap can read
+    # `past_small_threshold` against the defaults instead of `passes_used_up`, and went unmarked.
+    assert "So does `past_small_threshold` beside that reason: the small threshold and the test globs come from the profile too, so with it unreadable a pull request at its cap can read `past_small_threshold` against the defaults instead." in at_cap
+    # Without that reason the review was judged against the project's own threshold: nothing to look at again.
+    assert "Without a \"couldn't read\" reason for the profile, `past_small_threshold` marks nothing: it asks for a full-panel round, and the ticket isn't at the cap." in at_cap
+    # The mark comes before the sentence on when it goes, so that sentence covers both.
+    assert at_cap.index("So does `past_small_threshold`") < at_cap.index("The mark goes when the ticket is queued again")
+    # Step 2's look again is unchanged, and the mark is still named three times.
+    assert conductor.count("`cap_unknown_at`") == 3
+
+
+def test_the_changelog_has_295s_note():
+    unreleased = since_0110(_read("CHANGELOG.md"))
+    assert "(#295" in unreleased and "`past_small_threshold`" in unreleased.split("(#295", 1)[1].split("\n\n**", 1)[0]
