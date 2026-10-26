@@ -259,6 +259,16 @@ def test_the_attributes_are_the_commits_own(checkout, capsys):
     assert files["src/app.py"].patch is None and files["src/app.py"].sha == git(checkout, "rev-parse", "HEAD:src/app.py")
 
 
+def test_a_rename_to_a_path_git_quotes_is_hashed(checkout, capsys):
+    git(checkout, "checkout", "-q", "-b", "quoted", "origin/main")
+    git(checkout, "mv", "src/app.py", 'src/"app".py')
+    edit(checkout, 'src/"app".py', "line 10\n", "line ten\n")
+    commit_all(checkout)
+    (c,) = own_changes.local_files(checkout, head(), "refs/remotes/origin/main")
+    assert (c.path, c.previous, c.status) == ('src/"app".py', "src/app.py", "renamed") and c.patch.startswith("@@ -7,7 +7,7 @@")
+    assert "unknown" not in recorded(capsys, head())
+
+
 def test_a_type_change_is_one_changed_file_with_both_hunks(checkout, capsys):
     git(checkout, "checkout", "-q", "-b", "link", "origin/main")
     (checkout / "data/gone.txt").unlink()

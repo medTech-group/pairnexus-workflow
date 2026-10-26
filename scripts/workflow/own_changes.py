@@ -30,9 +30,11 @@ git's default indent heuristic, 3 lines of context, no hunks joined across
 unchanged lines, renames found (copies never) within git's default limit,
 UTF-8 paths, empty context lines with their space, a submodule as its
 `Subproject commit` lines and never left out, git's default size past which a
-file is binary, and the attributes of the commit itself. A type change, which
-git shows as a removal and an addition of the same path, is one `changed`
-file with both hunks.
+file is binary, and the attributes of the commit itself (git 2.40 and later;
+older git reads the working tree's). Two things still count: a diff driver's
+`binary` setting in the configuration, and `.git/info/attributes`. A type
+change, which git shows as a removal and an addition of the same path, is one
+`changed` file with both hunks.
 """
 
 from __future__ import annotations
@@ -149,7 +151,7 @@ def _with_patches(patch: bytes, files: list[tuple[Change, int]]) -> list[Change]
     as GitHub's `patch` gives them: from the first `@@` line, header lines left
     out; None with no hunks. A type change's two sections have their hunks
     joined. A section whose `diff --git` line doesn't name its file's paths
-    (one git quotes isn't compared), or counts that don't match, raise
+    (a line where git quotes either path isn't compared), or counts that don't match, raise
     CantHash rather than pair hunks with the wrong file."""
     sections = _SECTION.split(patch)[1:]
     if len(sections) != sum(n for _, n in files):
@@ -160,7 +162,7 @@ def _with_patches(patch: bytes, files: list[tuple[Change, int]]) -> list[Change]
         hunks = []
         for section in mine:
             names = section.split(b"\n", 1)[0].decode("utf-8", "surrogateescape")
-            if not names.startswith('"') and names != f"a/{c.previous or c.path} b/{c.path}":
+            if '"' not in names and names != f"a/{c.previous or c.path} b/{c.path}":
                 raise CantHash(f"git diff's patch doesn't match its list of files at `{c.path}`")
             at = section.find(b"\n@@ ")
             if at != -1:
