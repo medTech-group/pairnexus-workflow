@@ -147,8 +147,7 @@ def test_protection_doc_covers_the_queue_and_require_checks_with_it():
 
 
 def test_the_changelog_notes_it():
-    notes = since_0110()
-    assert "(#247, part of #243)" in notes
+    notes = since_0110().split("(#247, part of #243)", 1)[1].split("\n\n**", 1)[0]
     for words in ("--merge-queue", "Use a merge queue", "merge_group", "Merge queue"):
         assert words in notes, words
     assert "tests/test_protection_queue.py" in notes

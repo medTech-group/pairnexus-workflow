@@ -438,6 +438,6 @@ def test_the_charter_doc_covers_the_queue():
     assert "No waivers" in doc or "no waivers" in doc
 
 
-def test_the_changelog_says_so():
+def test_the_queue_note_names_the_state_drop():
     note = since_0110().split("(#248, part of #243)", 1)[1].split("\n\n**", 1)[0]
     assert "state drop" in note
