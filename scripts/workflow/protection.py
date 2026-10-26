@@ -230,6 +230,8 @@ def _targets(rs: dict, base: str, default: str | None, have_settings: bool) -> s
     matches the base branch, a pattern included, takes it out, and one whose
     pattern can't be matched here (or isn't a full ref name) counts as taking
     it out. Excludes are matched ignoring case, so they only ever take out more.
+    One that certainly takes the base branch out wins over any reason it can't
+    tell (#302).
     """
     if rs["target"] != "branch":
         return f"doesn't target {base} (it is a {quote(rs['target'])} ruleset)"
@@ -244,16 +246,28 @@ def _targets(rs: dict, base: str, default: str | None, have_settings: bool) -> s
             return None if default is None else default == base
         return False
 
+    def excludes_base(pattern: str) -> bool:
+        """Whether an exclude certainly takes the base branch out."""
+        if names_base(pattern):
+            return True
+        if any(s in pattern for s in UNREAD_GLOB) or not pattern.startswith("refs/"):
+            return False
+        return fnmatch.fnmatchcase(full, pattern) or fnmatch.fnmatchcase(full.casefold(), pattern.casefold())
+
+    # An exclude that names the base takes it out, whatever else can't be told.
+    out = next((p for p in ref.get("exclude") or [] if excludes_base(p)), None)
     unknown = (
         "the settings file has no default_branch"
         if have_settings
-        else "the repository's settings (--repo) weren't given"
+        else "the repository's settings (--repo) weren't given or couldn't be read"
     )
     hits = [names_base(p) for p in ref.get("include") or []]
+    patterns = [p for p in ref.get("include") or [] if any(c in GLOB for c in p)]
+    if out is not None and (True in hits or None in hits or patterns):
+        return f"doesn't target {base} (it excludes {quote(out)})"
     if True not in hits:
         if None in hits:
             return f"targets the default branch, and {unknown}, so it can't tell whether that is {base}"
-        patterns = [p for p in ref.get("include") or [] if any(c in GLOB for c in p)]
         if patterns:
             return f"includes {quote(patterns[0])}, a pattern this command doesn't match, so it can't tell whether it targets {base}"
         if "~DEFAULT_BRANCH" in (ref.get("include") or []):
@@ -263,12 +277,8 @@ def _targets(rs: dict, base: str, default: str | None, have_settings: bool) -> s
         hit = names_base(p)
         if hit is None:
             return f"excludes the default branch, and {unknown}, so it can't tell whether that is {base}"
-        if hit:
-            return f"doesn't target {base} (it excludes {quote(p)})"
         if any(s in p for s in UNREAD_GLOB) or not p.startswith("refs/"):
             return f"excludes {quote(p)}, a pattern this command can't match, so it can't tell whether {base} is left out"
-        if fnmatch.fnmatchcase(full, p) or fnmatch.fnmatchcase(full.casefold(), p.casefold()):
-            return f"doesn't target {base} (it excludes {quote(p)})"
     return None
 
 

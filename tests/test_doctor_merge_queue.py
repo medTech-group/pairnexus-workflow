@@ -440,7 +440,20 @@ def test_a_queue_rule_off_the_default_branch_with_it_unknown_gives_queue_null(tm
 def test_with_the_settings_unreadable_the_cant_tell_line_says_so(tmp_path, project):
     lines, _ = _github(tmp_path, project, rulesets=(_on_main(True), OTHERS), settings="nope")
     q = lines["github.merge_queue"]
-    assert q["status"] == "cant_check" and "the repository's settings (--repo) weren't given, so" in q["message"], q
+    assert q["status"] == "cant_check" and "the repository's settings (--repo) weren't given or couldn't be read, so" in q["message"], q
+
+
+@pytest.mark.parametrize("ref_name", [
+    {"include": ["~DEFAULT_BRANCH"], "exclude": ["refs/heads/main"]},
+    {"include": ["~ALL"], "exclude": ["~DEFAULT_BRANCH", "refs/heads/main"]},
+    {"include": ["refs/heads/ma*"], "exclude": ["refs/heads/main"]},
+], ids=["default-branch", "all-but-default", "pattern"])
+def test_a_queue_rule_in_a_ruleset_that_excludes_the_base_is_off(tmp_path, project, ref_name):
+    # Whatever the include, an exclude that names the base takes it out.
+    elsewhere = _queued(_rs(id=206, name="Elsewhere", conditions={"ref_name": ref_name}))
+    lines, r = _github(tmp_path, project, rulesets=(_on_main(False), elsewhere), settings=NO_DEFAULT)
+    assert r["merge_queue"]["queue"] is False
+    assert lines["github.up_to_date"]["status"] == "gap"
 
 
 def test_with_the_default_branch_unknown_up_to_date_never_asks_for_it_beside_a_queue_rule(tmp_path, project):
