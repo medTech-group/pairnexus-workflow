@@ -30,10 +30,11 @@ git's default indent heuristic, 3 lines of context, no hunks joined across
 unchanged lines, renames found (copies never) within git's default limit,
 UTF-8 paths, empty context lines with their space, a submodule as its
 `Subproject commit` lines and never left out, git's default size past which a
-file is binary, and the attributes of the commit itself (git 2.40 and later;
-older git reads the working tree's), the objects as committed, never their
-replacements (`git replace`). Two things still count: a diff driver's
-`binary` setting in the configuration, and `.git/info/attributes`. A type
+file is binary, the attributes of the commit itself (git 2.40 and later;
+older git reads the working tree's), and the objects as committed, never
+their replacements (`git replace`), the merge base's included. Two things
+still count: a diff driver's `binary` setting in the configuration, and
+`.git/info/attributes`. A type
 change, which git shows as a removal and an addition of the same path, is one
 `changed` file with both hunks.
 """

@@ -89,12 +89,35 @@ def test_a_submodule_counts_whatever_the_configuration(checkout, capsys, tmp_pat
         git(checkout, "config", "--unset", key)
 
 
-def test_a_replaced_object_doesnt_change_them_or_the_hashes(checkout, capsys):
+@pytest.fixture
+def replace_refs_read(monkeypatch):
+    """git reads replace refs, as it does by default, whatever the developer's environment says."""
+    monkeypatch.delenv("GIT_NO_REPLACE_OBJECTS", raising=False)
+
+
+def test_a_replaced_object_doesnt_change_them_or_the_hashes(checkout, capsys, replace_refs_read):
     # GitHub never reads `git replace`'s refs: both sides diff the objects as committed.
     commit = git(checkout, "rev-parse", "HEAD")
     hashes = own_changes.of_files(own_changes.local_files(checkout, commit, "refs/remotes/origin/main"))
     (checkout.parent / "other.py").write_text("only = 1\n")
     other = git(checkout, "hash-object", "-w", str(checkout.parent / "other.py"))
     git(checkout, "replace", git(checkout, "rev-parse", f"{commit}:src/new.py"), other)
+    assert counts(capsys).startswith(COUNTS)
+    assert own_changes.of_files(own_changes.local_files(checkout, commit, "refs/remotes/origin/main")) == hashes
+
+
+def test_a_grafted_commit_doesnt_move_the_merge_base(checkout, capsys, replace_refs_read):
+    # The base moves on, and the branch's commit is grafted onto its new tip:
+    # GitHub still diffs from the real merge base.
+    base = checkout.parent / "base"
+    git(checkout.parent, "clone", "-q", "-b", "main", str(checkout.parent / "origin.git"), str(base))
+    (base / "src/other.py").write_text("".join(f"y{i} = {i}\n" for i in range(100)))
+    git(base, "add", ".")
+    git(base, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "elsewhere")
+    git(base, "push", "-q", "origin", "main")
+    git(checkout, "fetch", "-q", "origin")
+    commit = git(checkout, "rev-parse", "HEAD")
+    hashes = own_changes.of_files(own_changes.local_files(checkout, commit, "refs/remotes/origin/main"))
+    git(checkout, "replace", "--graft", commit, git(checkout, "rev-parse", "origin/main"))
     assert counts(capsys).startswith(COUNTS)
     assert own_changes.of_files(own_changes.local_files(checkout, commit, "refs/remotes/origin/main")) == hashes

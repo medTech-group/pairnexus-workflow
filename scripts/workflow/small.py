@@ -165,11 +165,13 @@ def _git(root: Path, *args: str, timeout: int = 60, binary: bool = False, env: d
     `binary`, the output is bytes, so a `\\r\\n` stays as it is. git never asks
     for credentials itself (a fetch fails instead; ssh's own prompt isn't
     stopped), and the environment's diff options and external diff are left
-    out; `env` adds to it."""
+    out; `env` adds to it. Objects are read as committed, never their
+    replacements (`git replace`), which GitHub doesn't read."""
     text = {} if binary else {"text": True, "encoding": "utf-8", "errors": "surrogateescape"}
-    env = {**{k: v for k, v in os.environ.items() if k not in ("GIT_DIFF_OPTS", "GIT_EXTERNAL_DIFF")}, "GIT_TERMINAL_PROMPT": "0", **(env or {})}
+    env = {**{k: v for k, v in os.environ.items() if k not in ("GIT_DIFF_OPTS", "GIT_EXTERNAL_DIFF")}, "GIT_TERMINAL_PROMPT": "0",
+           "GIT_NO_REPLACE_OBJECTS": "1", **(env or {})}
     try:
-        return subprocess.run(["git", *args], cwd=root, capture_output=True, stdin=subprocess.DEVNULL, env=env,
+        return subprocess.run(["git", "-c", "core.useReplaceRefs=false", *args], cwd=root, capture_output=True, stdin=subprocess.DEVNULL, env=env,
                               timeout=timeout, **text)
     except (OSError, subprocess.TimeoutExpired) as e:
         raise CantMeasure(f"git {args[0]} failed: {e}") from None
@@ -228,10 +230,9 @@ DIFF = (
 def pinned_diff(root: Path, base: str, commit: str, *args: str, binary: bool = False) -> subprocess.CompletedProcess:
     """`git diff <args> <base> <commit>` with `DIFF`'s pins, the attributes
     read from `commit`'s own `.gitattributes` (git 2.40 and later), never a
-    global or the system's file, and the objects as committed, never their
-    replacements (`git replace`), which GitHub doesn't read."""
+    global or the system's file."""
     return _git(root, "-c", f"core.attributesFile={os.devnull}", *DIFF, *args, base, commit, binary=binary,
-                env={"GIT_ATTR_SOURCE": commit, "GIT_ATTR_NOSYSTEM": "1", "GIT_NO_REPLACE_OBJECTS": "1"})
+                env={"GIT_ATTR_SOURCE": commit, "GIT_ATTR_NOSYSTEM": "1"})
 
 
 def local_changes(root: Path, commit: str, ref: str) -> list[Change]:
