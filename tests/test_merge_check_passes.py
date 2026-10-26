@@ -397,7 +397,52 @@ def test_the_conductor_takes_it_as_needs_human():
     assert step2.count("#n reached its pass cap (#PR): see its review records and PR body") == 1
     # Step 9 names the cap as an end of waiting on a question.
     assert "or its pull request reaches the pass cap" in conductor.split("- Never block on a question:", 1)[1].split("\n", 1)[0]
-    assert "is the stuck row's, except that instead of a retry you label the ticket `needs-human`" in line
+    assert "is the stuck row's, except that, for a ticket at the cap" in line
+
+
+def _the_row():
+    conductor = _read("skills/conductor/SKILL.md")
+    return next(ln for ln in conductor.splitlines() if ln.startswith("| **`not_yet` with `passes_used_up`**"))
+
+
+def test_with_its_profile_unreadable_a_ticket_is_marked_and_checked_again_until_it_reads():
+    # #283: a session that stopped at the cap while the conductor couldn't read its own profile fell
+    # through to the "Labelled `needs-human`" row, archived with no `asked_at`, so nothing looked again.
+    conductor = _read("skills/conductor/SKILL.md")
+    at_cap = conductor.split("**A ticket at the cap.**", 1)[1].split("\n\n", 1)[0]
+    # The definition is unchanged: unreadable, it isn't at the cap (yet).
+    assert "With a \"couldn't read\" reason for the profile, whether it is at the cap can't be told, so it isn't at the cap" in at_cap
+    # A mark in the run's state carries it across check-ins, and step 2 runs the definition again on it
+    # at each one, whether or not the owner was asked.
+    assert "Mark it in the state (`cap_unknown_at`, the time)" in at_cap
+    assert "at each check-in, here in step 2, run that `merge-check` again on every ticket with the mark until one reads the profile" in at_cap
+    # Then the steps, or the row it took already.
+    assert "then clear the mark, and take the steps below if it is at the cap; if not, it stays with the row it took" in at_cap
+    # A ticket that leaves `needs-human` (an answer requeued it) is no longer one the definition is for.
+    assert "The mark goes too when the ticket leaves `needs-human`." in at_cap
+    answers = conductor.split("**When the owner answers**", 1)[1].split("\n3. ", 1)[0]
+    assert "no `asked_at` or `cap_unknown_at`" in answers
+    # Said once: the paths reach it through the definition, not each their own copy.
+    assert conductor.count("`cap_unknown_at`") == 2
+
+
+def test_the_state_takes_the_mark():
+    from workflow import state
+    s = state.empty()
+    s["tickets"] = {"7": {"status": "needs-human", "cap_unknown_at": "2026-10-26T10:00:00Z", "attempts": 0}}
+    assert state.validate(s) == []
+    for bad in ("yesterday", "", 5, True):
+        s["tickets"]["7"]["cap_unknown_at"] = bad
+        assert any("cap_unknown_at" in p for p in state.validate(s)), bad
+
+
+def test_the_stuck_clause_is_only_for_a_ticket_at_the_cap():
+    # #283: on a bare `passes_used_up` (the profile unreadable), a crashed session's ticket was set aside
+    # where the stuck row would have retried it.
+    line = _the_row()
+    stuck = line.split("A session that stops without labelling it", 1)[1]
+    assert stuck.startswith(" is the stuck row's, except that, for a ticket at the cap (step 2's \"A ticket at the cap\", its `needs-human` label aside), instead of a retry you label the ticket `needs-human`, comment why on it, and archive the session")
+    assert "any other, the profile unreadable among them, gets the stuck row's retry" in stuck
 
 
 def test_the_ticket_session_prompts_stopping_list_names_the_cap():
@@ -433,3 +478,8 @@ def test_the_wording_holds_past_the_cap(project, capsys):
     data["comments"] = records(rec(rnd=1, commit=EARLIER), *[rec("pass", rnd=1, commit=HEAD, clean=False)] * 3)
     r = used_up(check(project, capsys, data)[0])
     assert "the pass cap is reached (2 allowed after round 1, 3 Correctness passes posted)" in r["wording"]["developer"]["message"]
+
+
+def test_the_changelog_has_283s_note():
+    unreleased = since_0110(_read("CHANGELOG.md"))
+    assert "(#283" in unreleased and "`cap_unknown_at`" in unreleased
