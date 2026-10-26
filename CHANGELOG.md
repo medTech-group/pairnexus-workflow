@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 0.1.16
+
+**The conductor hands every ticket to a ticket session, runs can use a merge queue, and small tickets get a small review.** The conductor fix, #308: "build #12", "implement #12" or "let's work on #12" in a conductor session now starts a run for that ticket, or adds it to the conductor's own run, instead of the conductor building it itself. Spec #243's merge queue, #244 to #249, #297 and #302: a project can take "Use a merge queue"; `merge-check` then judges a pull request ready to queue, the guard lets a session queue its own, and runs and ticket sessions queue pull requests instead of updating them. Spec #255's small review, #256 to #261, #281, #283, #295, #296, #298 and #301: tickets marked `Review: small` get one Correctness round, Correctness passes after the last round are capped (`run.review_passes`, 2 by default), and a merge of the base that leaves a pull request's own changes identical keeps its review. Each change's own note is below.
+
+- **For projects updating to 0.1.16:**
+  - Update every checkout that runs `merge-check` at the same time: an older kit drops the new review records, which carry hashes of the pull request's own changes, so its `merge-check` reads such a pull request as unreviewed (from #258).
+  - The pass cap is new: with no `run.review_passes`, a pull request that already has 2 Correctness passes after its last round, on any of its commits, and needs another, now waits on the owner. So does one brought up to date after its passes reached the cap, unless the merge of the base leaves its own changes identical and the review before it was clean; passes recorded before the update carry no hashes, so for those it waits (from #256 and #261).
+  - A new run's kick-off has the small review on in the Light and Normal presets (off in Thorough); a run approved before the update keeps it off (from #259).
+  - A pull request reviewed only by Correctness rounds (no Spec reviewer) now needs its diff within the small threshold, and `--files` given to `merge-check` by hand needs GitHub's REST fields for each file (`additions`, `deletions`, `status`, and `previous_filename` for a rename); the carry-over and the free pass also need `sha` and `patch` in `--files` and `parents` in `--commits` (from #257 and #261). Runs and sessions read them with `--fetch`, so only a hand-run `merge-check` is affected.
+  - A base branch whose ruleset already has a merge-queue rule counts as having a queue: runs and ticket sessions queue pull requests, and a charter's waived checks no longer apply. Where the kit can't judge the rule, a run's ready pull requests go to the owner to merge, and waived checks don't apply there either (from #245 and #249).
+  - `workflow doctor --strict` now fails, with its can't-tell line, where the default branch is unknown and a ruleset that excludes it has a merge-queue rule; `merge-check` no longer counts a ruleset whose exclude names the base branch as one it can't place, so that ruleset's required checks no longer hold a pull request back (from #302).
+  - The update brings `merge_group:` into `.github/workflows/workflow-kit.yml` (it does nothing without a queue) and the build-ticket issue template's new comment on `Review: small` (from #247 and #260).
+  - Otherwise nothing to do.
+
 **Doctor says "can't tell" in `merge_queue.queue` rather than nulling `merge_queue` as a whole** (#302, part of #243; a follow-up from #249). The JSON's `merge_queue` is now `null` as a whole only where the rulesets can't be read (a read error, or a rulesets file the kit can't read).
 
 - **The default branch unknown:** the queue's state is read from the rulesets as if no branch were the default. `queue` is `null` when a merge-queue rule may apply to the base branch through the default branch (a ruleset including `~DEFAULT_BRANCH`, or `~ALL` excluding it), `true` for one on the base branch by name or on every branch, and `false` when no ruleset that may apply has one. Its can't-tell lines (`github.merge_queue`, and `github.up_to_date` without "up to date" on) name that ruleset, say the settings don't give the default branch and, first in their fix, ask for the settings with it, where `github.up_to_date` read the base as the default and could ask for "up to date" beside such a rule. Where the base read as the default and another branch read as the default differ and a ruleset applies in either, doctor can't read the rest, so `available`, `merge_group` and `signals` are null.
@@ -10,6 +24,7 @@
 - **The `upgrade-setup` skill,** at `queue` `null` with neither the `github.merge_queue` nor the `github.up_to_date` line (no ruleset in force), says the `github.ruleset` line's message instead.
 - Tests: `tests/test_doctor_merge_queue.py`.
 - **For projects updating:** nothing to do. A conductor that read a whole null as "can't tell" now reads `queue: null` as on and `queue: false` as off in these cases, as it already did where the rulesets could be placed. `workflow doctor --strict` now fails, with the can't-tell line, where the default branch is unknown and a ruleset excluding it has a merge-queue rule: it used to read the queue as off there. `merge-check` no longer reports a ruleset whose exclude names the base branch as one it can't place (`required_unknown`, `queue_unsure`), so its required checks no longer hold a pull request back.
+
 
 **The conductor never builds a ticket named to it: "build #12" becomes a run for #12** (#308).
 
