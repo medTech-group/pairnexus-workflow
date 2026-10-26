@@ -1334,6 +1334,22 @@ def _queue_reading(gh: _GitHub) -> protection_mod.Report:
     return gh.undefaulted if gh.undefaulted is not None else gh.report
 
 
+def _unplaced_fix(i: Inputs) -> Words:
+    """The fix for a merge-queue rule the kit can't place: without the
+    default branch, the settings that give it come first (#302)."""
+    base = i.profile.base_branch
+    fix = Words(
+        f"Check in Settings → Rules whether that ruleset applies to `{base}`; naming `{base}` itself (not a pattern) lets the kit tell.",
+        f"Name refs/heads/{base} (or ~DEFAULT_BRANCH, with --repo's default_branch) in its include, so the reader can count it.",
+    )
+    if _github(i).undefaulted is None:
+        return fix
+    return Words(
+        "Ask Claude to fetch the repository's settings from GitHub in full, with its default branch, and check again. If it still can't tell: " + fix.new[:1].lower() + fix.new[1:],
+        "Give --repo with default_branch (GET repos/<repo>) and rerun; then, if still unknown: " + fix.developer,
+    )
+
+
 def _rules(rep: protection_mod.Report, type_: str) -> list[dict]:
     """The rules of this type in the active rulesets on the base branch,
     each one's parameters (an object, empty when it has none)."""
@@ -1897,10 +1913,7 @@ def check_ruleset_rules(i: Inputs) -> list[Line]:
         lines.append(Line(g, "github.up_to_date", "cant_check", Words(
             f"Can't tell whether a merge queue keeps pull requests up to date with `{base}`: {_shown(unplaced[0], 300)}.",
             f"Merge queue unknown on `{base}`, and strict_required_status_checks_policy isn't true: {_shown('; '.join(unplaced), 300)}.",
-        ), Words(
-            f"Check in Settings → Rules whether that ruleset applies to `{base}`; naming `{base}` itself (not a pattern) lets the kit tell.",
-            f"Name refs/heads/{base} (or ~DEFAULT_BRANCH, with --repo's default_branch) in its include, so the reader can count it.",
-        )))
+        ), _unplaced_fix(i)))
     elif not strict and not i.profile.required_checks:
         lines.append(Line(g, "github.up_to_date", "note", Words(
             f"\"Require branches to be up to date\" comes with the required checks, and none are required on `{base}` yet.",
@@ -2704,10 +2717,7 @@ def check_merge_queue(i: Inputs) -> list[Line]:  # run by check_ruleset_rules, s
         return [Line("GitHub", "github.merge_queue", "cant_check", Words(
             f"Can't tell whether GitHub's merge queue is on for `{base}`: {_shown(unplaced[0], 300)}.",
             f"Merge queue unknown on `{base}`: {_shown('; '.join(unplaced), 300)}.",
-        ), Words(
-            f"Check in Settings → Rules whether that ruleset applies to `{base}`; naming `{base}` itself (not a pattern) lets the kit tell.",
-            f"Name refs/heads/{base} (or ~DEFAULT_BRANCH, with --repo's default_branch) in its include, so the reader can count it.",
-        ))]
+        ), _unplaced_fix(i))]
     if not rep.queue:
         if unsure or i.profile.ruleset is False or not rep.protected or not rep.required_checks:
             return []

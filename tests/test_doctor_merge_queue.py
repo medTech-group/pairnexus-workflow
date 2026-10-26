@@ -435,6 +435,7 @@ def test_a_queue_rule_off_the_default_branch_with_it_unknown_gives_queue_null(tm
     q = lines["github.merge_queue"]
     assert q["status"] == "cant_check" and "Others" in q["message"] and q["offer"] is None, q
     assert "default_branch" in q["message"]  # the cause: the settings don't say which branch is the default
+    assert q["fix"].startswith("Ask Claude to fetch the repository's settings") and "default branch" in q["fix"], q
 
 
 def test_with_the_settings_unreadable_the_cant_tell_line_says_so(tmp_path, project):
@@ -461,6 +462,7 @@ def test_with_the_default_branch_unknown_up_to_date_never_asks_for_it_beside_a_q
     assert r["merge_queue"]["queue"] is None
     u = lines["github.up_to_date"]
     assert u["status"] == "cant_check" and "Others" in u["message"], u
+    assert u["fix"].startswith("Ask Claude to fetch the repository's settings"), u
 
 
 @pytest.mark.parametrize("rulesets", ["nope", [{**_queued(), "enforcement": 5}]], ids=["unreadable", "malformed"])
