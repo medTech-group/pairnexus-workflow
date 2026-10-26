@@ -361,7 +361,7 @@ def test_the_conductor_takes_it_as_needs_human():
     # "A ticket at the cap" is said once (#281): the merge rule's merge-check, flags and all (without
     # `--review-rounds`, a Light run's capped ticket reads as `next: round`), and the steps for it.
     at_cap = conductor.split("**A ticket at the cap.**", 1)[1].split("\n\n", 1)[0]
-    assert "`WF merge-check` on its pull request, run as the \"PR open, not merged\" row runs it (with `--charter` and `--review-rounds <N>`), says `passes_used_up`" in at_cap
+    assert "`WF merge-check` on its pull request, run as the \"PR open, not merged\" row runs it (with `--charter`, `--review-rounds <N>`, `--review-passes <P>`, `--small-max-lines <L>` and `--small-max-files <F>`), says `passes_used_up`" in at_cap
     # `merge-check` keeps judging the review when an input can't be read, so the cap wins over a
     # "couldn't read" reason (an unreadable try-it link, say), but not over one for the profile,
     # which holds the cap itself.
