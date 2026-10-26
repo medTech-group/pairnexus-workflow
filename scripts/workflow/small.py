@@ -38,6 +38,8 @@ class Change:
     status: str | None = None  # GitHub's: added, removed, modified, renamed, ...
     additions: int | None = None  # None where not given
     deletions: int | None = None
+    sha: str | None = None  # the blob at the commit (GitHub's per-file `sha`)
+    patch: str | None = None  # its hunks, as GitHub's per-file `patch` gives them
 
 
 @dataclass(frozen=True)
@@ -156,12 +158,13 @@ class CantMeasure(Exception):
     """The measurement can't be made, said in plain words."""
 
 
-def _git(root: Path, *args: str, timeout: int = 60) -> subprocess.CompletedProcess:
+def _git(root: Path, *args: str, timeout: int = 60, binary: bool = False) -> subprocess.CompletedProcess:
     """git in `root`; CantMeasure when it can't run or doesn't finish. A path
-    that isn't UTF-8 is kept (surrogate escapes), never an error."""
+    that isn't UTF-8 is kept (surrogate escapes), never an error. With
+    `binary`, the output is bytes, so a `\r\n` stays as it is."""
+    text = {} if binary else {"text": True, "encoding": "utf-8", "errors": "surrogateescape"}
     try:
-        return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, encoding="utf-8",
-                              errors="surrogateescape", timeout=timeout)
+        return subprocess.run(["git", *args], cwd=root, capture_output=True, timeout=timeout, **text)
     except (OSError, subprocess.TimeoutExpired) as e:
         raise CantMeasure(f"git {args[0]} failed: {e}") from None
 

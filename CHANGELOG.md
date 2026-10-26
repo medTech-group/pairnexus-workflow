@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+**Review records name the hashes of the pull request's own changes: `diff=` and `lines=`** (#258, from #255; answers 4, 11, 13, 23 and 24 on #253). The record side of a free base merge; `merge-check`'s carry-over is #261.
+
+- **`workflow review-record`** computes them for `--kind round` and `--kind pass` from `--commit`, never the working head: the diff from the merge base of `origin/<base>` to that commit, the base fetched first (`--base B`, else the profile's `project.base_branch`; if the fetch fails, the `origin/<base>` already here, with a note). A commit not in the repository, no repository, no `origin/<base>` or an unreadable profile without `--base` gives `unknown` for both, with a note on standard error: it never refuses, and standard output stays exactly the record.
+- **The record's fields:** `diff=<64 hex> lines=<64 hex>`, each `unknown` when it can't be computed, between the reviewers and the result, on round and pass records only, never on spec records. The reader takes records with or without them.
+- **The definition,** in one place (`scripts/workflow/own_changes.py`'s `of_files`, taking each file's path(s), status, blob SHA and patch as GitHub's REST list gives them, for #261 to reuse): per file in path order, its path(s) and GitHub's status, then for `diff` each hunk's context, added and removed lines (each `@@` line replaced by a fixed separator, `\ No newline at end of file` and `\r` kept), and for `lines` only the added and removed lines with their marks. A file with no hunks adds its blob SHA (none when removed); one with changed lines but no patch makes both `unknown`. Locally `git diff` is pinned whatever the configuration says (no external diff or textconv, Myers, 3 lines of context, renames, UTF-8 paths).
+- **`review-panel`** says to add `--base <branch>` where the pull request's base isn't the profile's.
+- Tests: `tests/test_review_record_hashes.py`; the exact record lines from made-up commits in `tests/test_review_record.py` now end `diff=unknown lines=unknown`.
+- **For projects updating:** a kit older than this change drops records with the new fields, so its `merge-check` reads such a pull request as unreviewed: update every checkout that runs `merge-check` together.
+
 **`merge-check` judges the small review by the diff: the small threshold, `past_small_threshold`, and `review-record --measure`** (#257, from #255; answers 1, 5, 6, 9, 14, 16, 19 and 20 on #253).
 
 - **The settings.** `run.small_max_lines` (default 60, from 1 to 1000) and `run.small_max_files` (default 4, from 1 to 50) in the profile, refused outside those (`templates/profile.toml`, `docs/profile.md`). "Within the threshold" means at most both.

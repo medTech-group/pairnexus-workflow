@@ -31,7 +31,7 @@ def test_a_round_prints_the_human_line_the_record_line_and_the_marker(capsys):
     out = body(capsys, "--kind", "round", "--round", "2", "--commit", SHA, "--reviewers", "standards,spec,correctness", "--clean")
     assert out.splitlines() == [
         "Review round 2 on `3f2a9c0`: clean. Reviewers: Standards, Spec, Correctness.",
-        f"<!-- workflow:review kind=round round=2 commit={SHA} reviewers=standards,spec,correctness result=clean -->",
+        f"<!-- workflow:review kind=round round=2 commit={SHA} reviewers=standards,spec,correctness diff=unknown lines=unknown result=clean -->",
         "<!-- workflow:agent -->",
     ]
 
@@ -46,7 +46,7 @@ def test_a_pass_names_the_round_it_follows(capsys):
     out = body(capsys, "--kind", "pass", "--round", "3", "--commit", SHA, "--reviewers", "correctness", "--clean")
     assert out.splitlines() == [
         "Correctness pass after round 3 on `3f2a9c0`: clean. Reviewers: Correctness.",
-        f"<!-- workflow:review kind=pass round=3 commit={SHA} reviewers=correctness result=clean -->",
+        f"<!-- workflow:review kind=pass round=3 commit={SHA} reviewers=correctness diff=unknown lines=unknown result=clean -->",
         "<!-- workflow:agent -->",
     ]
 
@@ -173,7 +173,8 @@ def written(capsys, *args):
 def test_records_written_by_the_command_read_back_field_for_field(capsys):
     text = written(capsys, "--kind", "round", "--round", "2", "--reviewers", "spec,standards,correctness,security", "--not-clean")
     assert reviews.records_in(text) == [
-        reviews.Record(kind="round", round=2, commit=SHA, reviewers=("standards", "spec", "correctness", "security"), result="not-clean")
+        reviews.Record(kind="round", round=2, commit=SHA, reviewers=("standards", "spec", "correctness", "security"), result="not-clean",
+                       diff="unknown", lines="unknown")
     ]
     text = written(capsys, "--kind", "pass", "--round", "2", "--reviewers", "correctness", "--clean")
     (r,) = reviews.records_in(text)
@@ -195,7 +196,7 @@ def test_a_comment_without_a_record_yields_none():
 
 def test_the_command_reads_names_in_any_case_and_a_padded_sha(capsys):
     out = body(capsys, "--kind", " ROUND ", "--round", " 1 ", "--commit", f"  {SHA}\n", "--reviewers", "Spec", "--clean")
-    assert f"kind=round round=1 commit={SHA} reviewers=spec result=clean" in out
+    assert f"kind=round round=1 commit={SHA} reviewers=spec diff=unknown lines=unknown result=clean" in out
 
 
 def test_the_python_writer_takes_only_true_or_false_as_the_result():

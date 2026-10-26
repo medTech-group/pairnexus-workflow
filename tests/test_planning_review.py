@@ -268,7 +268,8 @@ def _run_review_record(command: str, capsys, paths: dict[str, str]) -> str:
     args = [paths.get(w, next((v for k, v in paths.items() if w.endswith(k)), w)) for w in words[2:]]
     assert cli.main(["review-record", *args]) == 0, command
     out, err = capsys.readouterr()
-    assert not err
+    # A made-up commit's hashes are `unknown` (#258), said on standard error.
+    assert all(line.endswith("unknown for diff and lines") for line in err.splitlines()), err
     return out
 
 

@@ -68,6 +68,8 @@ Post a record on the pull request after every round, whatever it found, and afte
   WF review-record --kind pass --round <last round> --commit <sha> --reviewers correctness --clean > /tmp/review-<ticket>-pass<k>/record.md
   ```
 
+A round's or a pass's record also names two hashes of the pull request's own changes at that commit, `diff=` (with their context lines) and `lines=` (the changed lines alone), which the command computes from the diff against the merge base of `origin/<base>`, fetched first. When the pull request's base branch isn't the profile's `project.base_branch`, add `--base <branch>` to the command. A hash it can't compute reads `unknown`, and it says why on standard error: the record still counts, and `record.md` holds only the record.
+
 Keep `record.md` only when the command exited 0. If it refuses, delete the empty `record.md`, fix what it names and run it again: never write a record by hand.
 
 Post `record.md` as it is, as a comment on the pull request: `gh api repos/<repo>/issues/<pr>/comments -F body=@/tmp/review-<ticket>-r<n>/record.md` (the pass's path for a pass), or the GitHub MCP tools with its text. It already ends with the agents' marker; add nothing.
