@@ -147,7 +147,6 @@ def test_protection_doc_covers_the_queue_and_require_checks_with_it():
 
 
 def test_the_changelog_notes_it():
-    # Under "## Unreleased" until a release moves it under its version: since_0110 reads both.
     notes = since_0110()
     assert "(#247, part of #243)" in notes
     for words in ("--merge-queue", "Use a merge queue", "merge_group", "Merge queue"):

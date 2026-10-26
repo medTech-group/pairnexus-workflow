@@ -439,5 +439,5 @@ def test_the_charter_doc_covers_the_queue():
 
 
 def test_the_changelog_says_so():
-    # Under "## Unreleased" until a release moves it under its version: since_0110 reads both.
-    assert "state drop" in since_0110()
+    note = since_0110().split("(#248, part of #243)", 1)[1].split("\n\n**", 1)[0]
+    assert "state drop" in note
