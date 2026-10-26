@@ -16,9 +16,12 @@ given and tickets unblocked during the run join it. A plan's tickets must be in
 the scope and not excluded.
 
 `preset` (optional) is the run's size, `light`, `normal` or `thorough`, and
-`review` (optional) its review: `rounds` and `explorer`. The presets' numbers
-are in presets.py. A charter written before presets has neither, and reads as
-Normal: the profile's review rounds and UI explorer.
+`review` (optional) its review: `rounds` and `explorer`, and optionally
+`small` (the small review on or off), `passes` (the pass cap) and the small
+threshold, `small_max_lines` and `small_max_files`. The presets' numbers are in
+presets.py. A charter written before presets has neither, and reads as Normal:
+the profile's review rounds and UI explorer. A missing `small` reads as off, and
+a missing pass cap or threshold value as the profile's (`presets.review_of`).
 
 Every amendment is `{at, by, change, source}`: when, who (the owner's login),
 what changed, and the comment URL or quoted words it came from.
@@ -104,6 +107,14 @@ def _no_auto_merge_reason(profile: Any, protected: bool | None) -> str | None:
     return None
 
 
+# Why a charter may waive no check while the ruleset requires a merge queue
+# (#243, answer 13): only a direct merge could take a waiver.
+QUEUE_NO_WAIVERS = (
+    "merge.waived_checks with the merge queue on: every merge goes through the merge queue, and only a direct "
+    "merge could take a waiver; remove the waived checks"
+)
+
+
 # The kick-off questions, in the order asked, with their recommended defaults.
 QUESTIONS: list[dict[str, Any]] = [
     {
@@ -114,11 +125,14 @@ QUESTIONS: list[dict[str, Any]] = [
     {
         "key": "limits",
         "ask": "How big a run: Light, Normal or Thorough (each sets sessions at once (max_parallel), in all "
-        "(max_sessions), retries per ticket (max_retries), review rounds and the UI explorer; any one number can then "
-        "be changed)? When does the run end (ends_at; required: there is no default end time)? How often to check in "
+        "(max_sessions), retries per ticket (max_retries), review rounds, the small review for tickets marked `Review: small` "
+        "and the UI explorer, beside the profile's pass cap and small threshold; any one number can then be changed)? "
+        "When does the run end (ends_at; required: there is no default end time)? How often to check in "
         "(check_in_minutes)?",
         "note": "limits.ends_at must be given by the owner: an ISO time with its zone, e.g. 2026-10-13T03:30:00Z. "
-        "Choosing a preset sets preset, limits (but ends_at and check_in_minutes) and review from presets[name].",
+        "Choosing a preset sets preset, limits (but ends_at and check_in_minutes) and review from presets[name]. "
+        "review.passes (the pass cap) and the small threshold (review.small_max_lines, review.small_max_files) are "
+        "the profile's in every preset: add one to review only when the owner changes it.",
         "options": list(presets_mod.PRESETS),
         "default": {"ends_at": None, **presets_mod.numbers(presets_mod.DEFAULT)["limits"], "check_in_minutes": 20},
     },
@@ -202,13 +216,15 @@ def defaults(release_steps: list[str] | None = None, profile: Any = None, protec
     return out
 
 
-def questions(release_steps: list[str] | None = None, profile: Any = None, protected: bool | None = None) -> list[dict]:
+def questions(
+    release_steps: list[str] | None = None, profile: Any = None, protected: bool | None = None, queue: bool | None = None
+) -> list[dict]:
     """The kick-off questions with defaults fitted to the profile, as `defaults`
     gives them. The limits question offers the presets first, the profile's
     run.preset first and `recommended`, with each one's numbers in `presets`.
     Where auto-merge would merge with nothing checked (solo mode, no CI, no
     required checks), the merge question doesn't offer it, and its note says
-    why."""
+    why. With `queue` true, its note says no check can be waived."""
     d = defaults(release_steps, profile, protected)
     out = json.loads(json.dumps(QUESTIONS))
     why = _no_auto_merge_reason(profile, protected)
@@ -225,15 +241,31 @@ def questions(release_steps: list[str] | None = None, profile: Any = None, prote
                 f"Not offering auto-merge: {why}. Use session (the session merges under the merge rule) or owner "
                 "(you merge each PR yourself)."
             )
+        if q["key"] == "merge" and queue is True:
+            q["ask"] = "Merge automatically when a ticket passes the merge rule?"
+            no_waivers = "No waivers: the merge queue is on, and every merge goes through it."
+            q["note"] = f"{q['note']} {no_waivers}" if q.get("note") else no_waivers
     return out
 
 
-def reuse(old: dict) -> dict:
+def reuse(old: dict, profile: Any = None) -> dict:
     """A new charter from an earlier run's: the same answers, not approved, no
     amendments, no accepted gaps (they are asked again), no plan (the tickets
     have changed), and no end time (the owner gives a new one). A ticket list in
-    `scope.tickets` that came from the old plan is reset to "all-ready"."""
+    `scope.tickets` that came from the old plan is reset to "all-ready". A
+    review without `small` (written before the small review) takes its
+    preset's, Normal's without a preset, so `diff` shows it to the owner; with
+    no review at all, the review it read as (`presets.review_of`) is written
+    out with it."""
     c = json.loads(json.dumps(old))
+    preset = c.get("preset") if c.get("preset") in presets_mod.PRESETS else presets_mod.DEFAULT
+    small = presets_mod.numbers(preset, profile)["review"]["small"]
+    rv = c.get("review")
+    if not isinstance(rv, dict):
+        was = presets_mod.review_of(c, profile)
+        c["review"] = {"rounds": was["rounds"], "explorer": was["explorer"], "small": small}
+    elif "small" not in rv:
+        rv["small"] = small
     c["approved"] = None
     c["amendments"] = []
     c["accepted_gaps"] = []
@@ -308,7 +340,7 @@ SUBKEYS = {
     "outward": {"allowed"},
     "notify": {"failures", "final_report"},
     "approved": {"by", "at", "source"},
-    "review": {"rounds", "explorer"},
+    "review": {"rounds", "explorer", "small", "passes", "small_max_lines", "small_max_files"},
 }
 AMENDMENT_KEYS = {"at", "by", "change", "source"}
 
@@ -320,9 +352,11 @@ def _unknown(keys, allowed: set[str], where: str) -> list[str]:
     return [f"{where}: unknown key{'s' if len(bad) > 1 else ''} {', '.join(repr(k) for k in bad)}; allowed: {', '.join(sorted(allowed))}"]
 
 
-def validate(c: Any, require_approval: bool = False, now: datetime | None = None) -> list[str]:
+def validate(c: Any, require_approval: bool = False, now: datetime | None = None, queue: bool | None = None) -> list[str]:
     """The charter's problems, empty when valid. With require_approval it must be
-    approved and its end time still ahead (as at `now`, default the clock)."""
+    approved and its end time still ahead (as at `now`, default the clock). With
+    `queue` true (the ruleset requires a merge queue on the base) it may waive
+    no check; false or left out, nothing changes."""
     now = now or datetime.now(timezone.utc)
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
@@ -377,6 +411,8 @@ def validate(c: Any, require_approval: bool = False, now: datetime | None = None
                 "merge.waived_checks with merge.mode auto-merge: Auto-merge can't tell killed from failed; "
                 "use mode session, where the session checks the killed markers before merging."
             )
+        if w and queue is True and isinstance(w, list):
+            p.append(QUEUE_NO_WAIVERS)
     r = c.get("release")
     if not isinstance(r, dict):
         p.append("release must be an object")
@@ -431,6 +467,11 @@ def validate(c: Any, require_approval: bool = False, now: datetime | None = None
                 p.append("review.rounds must be a whole number from 1 to 10")
             if not isinstance(rv.get("explorer"), bool):
                 p.append("review.explorer must be true or false")
+            if "small" in rv and not isinstance(rv["small"], bool):
+                p.append("review.small must be true or false, or absent (off)")
+            for k, _, lo, hi in presets_mod.PROFILE_REVIEW:
+                if k in rv and not _pos_int(rv[k], lo, hi):
+                    p.append(f"review.{k} must be a whole number from {lo} to {hi}, or absent (the profile's)")
     p += validate_amendments(c.get("amendments", []))
     plan = c.get("plan")
     if plan is not None:
@@ -568,8 +609,8 @@ def _estimate_lines(est: Any) -> list[str]:
 
 def _size_lines(c: dict, profile: Any, estimate: Any = None) -> list[str]:
     """The one page's size and review: the preset and what changed from it
-    ("**Normal**, changed: 3 sessions at once"), and the review it gives; and,
-    when given, the estimate the owner saw."""
+    ("**Normal**, changed: 3 sessions at once"), and the review it gives; when
+    given, the estimate the owner saw; then the small review and the pass cap."""
     if c.get("preset") in presets_mod.PRESETS:
         changed = presets_mod.changes(c, profile)
         size = f"**{presets_mod.LABELS[c['preset']]}**" + (f", changed: {', '.join(changed)}" if changed else "")
@@ -577,10 +618,20 @@ def _size_lines(c: dict, profile: Any, estimate: Any = None) -> list[str]:
         size = "Normal (no preset in the charter)"
     rv = presets_mod.review_of(c, profile)
     rounds = presets_mod.plural(rv["rounds"], "round", "rounds")
+    if rv["small"]:
+        small = (
+            f"on: a ticket marked `Review: small` gets one Correctness round ({presets_mod.small_reviewers(rv, profile)}) while its diff stays "
+            f"within {presets_mod.threshold_words(rv)} outside tests (added plus removed); past that, "
+            f"{presets_mod.past_small(rv)}"
+        )
+    else:
+        small = "off: a ticket marked `Review: small` gets the same review as any other"
     return [
         f"- **Size:** {size}.",
         f"- **Review:** up to {rounds} per ticket; {presets_mod.explorer_words(c, profile)}.",
         *(_estimate_lines(estimate) if estimate is not None else []),
+        f"- **Small review:** {small}.",
+        f"- **Pass cap:** {presets_mod.passes_words(rv)} after the last review round, then `needs-human`.",
     ]
 
 

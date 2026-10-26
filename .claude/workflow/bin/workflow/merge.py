@@ -23,7 +23,9 @@ than repeating them:
 - the checks on the head commit: `protection.latest` (a name reported twice
   counts by its latest result, the try-it link's check marked);
 - the checks the rulesets require: `protection.check`;
-- kit and CI files: the guard's own matcher, `guard.matches`.
+- kit and CI files: the guard's own matcher, `guard.matches`;
+- the hashes of the pull request's own changes at its head: `own_changes.of_files`,
+  on GitHub's per-file data, as `workflow review-record` hashes them from git.
 
 Every input is read before any rule runs (`Context.read_all`), so each one it
 can't read is a reason of its own ("couldn't read …"), never `ready`. A list
@@ -42,7 +44,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import charter as charter_mod
-from . import protection, reviews, state
+from . import own_changes, protection, reviews, small, state
 from .evidence import is_full, read_headline
 from .guard import matches
 from .posts import CommentsError, _login, _number, comments_from, decode_values
@@ -77,9 +79,13 @@ MAX_COMMITS = 250
 PARTIAL = "it holds only part of the list: fetch every page (gh api --paginate --slurp; with GraphQL, until pageInfo.hasNextPage is false)"
 _SHA = re.compile(r"[0-9a-f]{40}")
 _STATUS_URL_SHA = re.compile(r"/statuses/([0-9a-fA-F]{40})\b")
+# How a refused charter's note starts (`waivers`, and the merge queue's refusal).
+CHARTER_REFUSED = "The charter wasn't used, so no check is waived: "
 PREVIEWS_DOC = Path(__file__).resolve().parents[2] / "docs/previews.md"
 DEFAULT_REVIEW_ROUNDS = 3  # the profile's run.review_rounds when it can't be read
 REVIEW_ROUNDS = range(1, 11)  # what --review-rounds accepts, as profile.py's run.review_rounds
+DEFAULT_REVIEW_PASSES = 2  # the profile's run.review_passes when it can't be read
+REVIEW_PASSES = range(0, 11)  # what --review-passes accepts, as profile.py's run.review_passes
 
 
 class Unreadable(Exception):
@@ -121,6 +127,12 @@ class Result:
     files: list[str] = field(default_factory=list)
     preview: dict | None = None
     review_rounds: int = DEFAULT_REVIEW_ROUNDS  # the allowed review rounds the review rule used
+    review_passes: int = DEFAULT_REVIEW_PASSES  # the pass cap the review rule used
+    small_max_lines: int = small.DEFAULT_MAX_LINES  # the small threshold the review rule used (#257)
+    small_max_files: int = small.DEFAULT_MAX_FILES
+    measured: dict | None = None  # the diff against it, where the small review's condition applies
+    queue: bool = False  # a ruleset in force on the base requires a merge queue: "ready" means ready to queue (#245)
+    head_hashes: own_changes.Hashes = own_changes.UNKNOWN_HASHES  # the head's own changes, hashed (#261)
 
     def as_dict(self) -> dict:
         return {
@@ -135,6 +147,12 @@ class Result:
             "files": self.files,
             "preview": self.preview,
             "review_rounds": self.review_rounds,
+            "review_passes": self.review_passes,
+            "small_max_lines": self.small_max_lines,
+            "small_max_files": self.small_max_files,
+            "small": self.measured,
+            "queue": self.queue,
+            "head_hashes": {"diff": self.head_hashes.diff, "lines": self.head_hashes.lines},
         }
 
 
@@ -194,6 +212,16 @@ REASONS = {
             "new": ("Not yet: the last review found things to fix.", "Fix them, then ask for a short check of the latest changes."),
             "developer": ("Not yet: review round {round} on {round_short} wasn't clean, and no round is left ({allowed} allowed).", "Fix the findings and run a Correctness pass on the head; no further round."),
         },
+        # The small review (#257): its round (`small`), and the full-panel round after it
+        # (`after_small`), count as the last allowed one, whatever the round limit.
+        "small": {
+            "new": ("Not yet: the last review found things to fix.", "Fix them, then ask for a short check of the latest changes."),
+            "developer": ("Not yet: review round {round} on {round_short} wasn't clean, and no counted round ran Spec (the small review), so it counts as the last round.", "Fix the findings and run a Correctness pass on the head; no further round."),
+        },
+        "after_small": {
+            "new": ("Not yet: the last review found things to fix.", "Fix them, then ask for a short check of the latest changes."),
+            "developer": ("Not yet: review round {round} on {round_short} wasn't clean, and as the full-panel round after a small review it counts as the last round.", "Fix the findings and run a Correctness pass on the head; no further round."),
+        },
     }),
     "pass_not_clean": Reason("review_panel", "review", {
         "new": ("Not yet: the last check of the newest changes found things to fix.", "Fix them, then ask Claude to check again."),
@@ -202,6 +230,16 @@ REASONS = {
     "review_stale": Reason("review_panel", "review", {
         "new": ("Not yet: the newest changes haven't been reviewed.", "Review it now: a short check of the latest changes."),
         "developer": ("Not yet: the last clean round covers {round_short}, not the head {short}, and no later clean Correctness pass covers the head.", "Run a Correctness pass on the head (review-panel §5)."),
+    }),
+    # The pass cap (#256): in place of the three above when a pass would come next.
+    "passes_used_up": Reason("review_panel", "review", {
+        "new": ("Not yet: the short checks of the latest changes have reached their limit, so the owner decides what happens next.", "The owner can ask Claude for one more check; until then, this change stays unmerged."),
+        "developer": ("Not yet: the pass cap is reached ({cap} allowed after round {round}, {passes}), and the head {short} still needs one: this pull request waits on the owner.", "The owner decides: \"One more pass\" (merge-check skill) runs one past the cap; in a run the ticket stops at needs-human with the open findings in the PR body."),
+    }),
+    # The small review's condition (#257): in place of every other review reason.
+    "past_small_threshold": Reason("review_panel", "review", {
+        "new": ("Not yet: this change has grown past what a short review covers ({size}, where a short review covers at most {most}).", "Review it now: Claude runs the full review panel."),
+        "developer": ("Not yet: no counted round ran Spec, and the diff is past the small threshold: {size} outside tests, where the threshold is at most {most}.", "Run the full panel (the light review's shape for a 1-round run's pull request), allowed past the round limit; never a Correctness-only round."),
     }),
     "conflict": Reason("mergeable", "resolve_conflict", {
         "new": ("Not yet: this change clashes with something already in {base}.", "Ask Claude to resolve the conflict."),
@@ -249,6 +287,17 @@ def _plural(n: int, one: str, many: str | None = None) -> str:
 def _sha(v) -> str | None:
     """A full SHA, lowercased; None when `v` isn't one."""
     return v.lower() if isinstance(v, str) and _SHA.fullmatch(v.lower()) else None
+
+
+def _parents(v) -> tuple[str, ...] | None:
+    """A commit's parents' SHAs, from REST's `[{sha}]` or GraphQL's
+    `{nodes: [{oid}]}`; None when not given, or not in either shape."""
+    if isinstance(v, dict):
+        v = v.get("nodes")
+    if not isinstance(v, list):
+        return None
+    shas = tuple(_sha(p.get("sha") or p.get("oid")) if isinstance(p, dict) else None for p in v)
+    return None if None in shas else shas
 
 
 def _int(v) -> int | None:
@@ -475,7 +524,8 @@ class Context:
     """The inputs as the rules read them. Each reader raises Unreadable (the
     same one each time) for an input it can't read."""
 
-    def __init__(self, inputs: dict, profile, profile_error: str | None, waivable: frozenset = frozenset(), logs: dict | None = None, review_rounds: int | None = None):
+    def __init__(self, inputs: dict, profile, profile_error: str | None, waivable: frozenset = frozenset(), logs: dict | None = None, review_rounds: int | None = None, review_passes: int | None = None,
+                 small_max_lines: int | None = None, small_max_files: int | None = None):
         self.inputs = inputs
         self.profile = profile
         self.profile_error = profile_error
@@ -483,6 +533,12 @@ class Context:
         self.logs = logs or {}  # --check-logs: file name -> the log's tail
         # The allowed review rounds: --review-rounds, else the profile's run.review_rounds.
         self.review_rounds = review_rounds or (profile.review_rounds if profile else DEFAULT_REVIEW_ROUNDS)
+        # The pass cap: --review-passes, else the profile's run.review_passes (0 is a cap).
+        self.review_passes = review_passes if review_passes is not None else (profile.review_passes if profile else DEFAULT_REVIEW_PASSES)
+        # The small threshold (#257): the flags, else the profile's run.small_max_lines and run.small_max_files.
+        self.small_max_lines = small_max_lines or (profile.small_max_lines if profile else small.DEFAULT_MAX_LINES)
+        self.small_max_files = small_max_files or (profile.small_max_files if profile else small.DEFAULT_MAX_FILES)
+        self.measured: small.Measure | None = None  # the diff against it, once measured
         self.waived: list[str] = []  # the waivers used
         self.notes: list[dict] = []
         self.checks: list[dict] = []
@@ -560,29 +616,59 @@ class Context:
         return self.once("permissions", lambda: _permissions(self.raw("permissions")))
 
     def commits(self) -> set[str]:
+        return set(self.parents())
+
+    def parents(self) -> dict[str, tuple[str, ...] | None]:
+        """Each commit of the PR, with its parents' SHAs where given (REST's
+        `parents: [{sha}]`, GraphQL's `parents: {nodes: [{oid}]}`), else None.
+        With a page of commits left out, none are kept: a parent from that
+        page would read as outside the pull request."""
+
         def read():
             items = _walk(self.raw("commits"), "commits", lambda d: "sha" in d or "oid" in d or isinstance(d.get("commit"), dict), GRAPHQL + ("commits", "nodes"))
             # REST's {sha}, gh's {oid}, GraphQL's {commit: {oid}}
-            shas = {_sha(c.get("sha") or c.get("oid") or c["commit"].get("oid")) for c in items}
-            if None in shas:
+            nodes = [c if "sha" in c or "oid" in c else c["commit"] for c in items]
+            out = {_sha(c.get("sha") or c.get("oid")): _parents(c.get("parents")) for c in nodes}
+            if None in out:
                 raise Unreadable("commits", "a commit's SHA isn't a full 40-character SHA")
             self._complete("commits", len(items), required=False)  # a commit left out only leaves out records
-            return shas
+            try:
+                want = self.pr().counts["commits"]
+            except Unreadable:
+                want = None
+            whole = want is not None and want <= len(items)
+            return out if whole else dict.fromkeys(out)
 
         return self.once("commits", read)
 
-    def files(self) -> list[str]:
-        """Every path the PR changes, a rename's old path too."""
+    def base_merge(self, sha: str | None) -> bool:
+        """The commit is a merge of the base: a commit of the PR with two or more
+        parents, at least one of them outside the PR's commits. Without its
+        parents, it isn't."""
+        got = self.parents().get(sha)
+        return got is not None and len(got) >= 2 and any(p not in self.parents() for p in got)
+
+    def changes(self) -> list[small.Change]:
+        """Each file the PR changes: its path, a rename's old path, its status,
+        and its additions and deletions as given (#257): `size` checks them,
+        only where the small review's condition needs them. Also its blob SHA
+        and patch where given (#261), which `head_hashes` reads."""
 
         def read():
             items = _walk(self.raw("files"), "files", lambda d: "filename" in d or "path" in d, GRAPHQL + ("files", "nodes"))
-            out: list[str] = []
+            out: list[small.Change] = []
             for f in items:
                 for k in ("filename", "path", "previous_filename"):
                     if k in f and (not isinstance(f[k], str) or not f[k]):
                         raise Unreadable("files", f"a file's {k} isn't a path")
-                    if isinstance(f.get(k), str) and f[k] not in out:
-                        out.append(f[k])
+                if f.get("patch") is not None and not isinstance(f["patch"], str):
+                    raise Unreadable("files", "a file's patch isn't text")
+                status, sha = f.get("status", f.get("changeType")), f.get("sha")
+                out.append(small.Change(
+                    f.get("filename") or f["path"], f.get("previous_filename"),
+                    status.lower() if isinstance(status, str) else None, f.get("additions"), f.get("deletions"),
+                    sha if isinstance(sha, str) else None, f.get("patch"),
+                ))
             try:
                 want = self.pr().counts["files"]
             except Unreadable:
@@ -593,6 +679,47 @@ class Context:
             return out
 
         return self.once("files", read)
+
+    def files(self) -> list[str]:
+        """Every path the PR changes, a rename's old path too."""
+        out: list[str] = []
+        for c in self.changes():
+            for p in (c.path, c.previous):
+                if p and p not in out:
+                    out.append(p)
+        return out
+
+    def head_hashes(self) -> own_changes.Hashes:
+        """The hashes of the PR's own changes at its head, from GitHub's
+        per-file data (`own_changes.of_files`): `unknown` when the files can't
+        be read, or a file can't be hashed (changes with no patch, or no patch
+        and no counts to say it has no changes)."""
+
+        def read():
+            try:
+                changes = self.changes()
+                if any(not c.patch and c.status != "removed" and None in (c.additions, c.deletions) for c in changes):
+                    return own_changes.UNKNOWN_HASHES
+                return own_changes.of_files(changes)
+            except (Unreadable, ValueError):  # CantHash, or text the hash can't encode (a lone surrogate)
+                return own_changes.UNKNOWN_HASHES
+
+        return self.once("head_hashes", read)
+
+    def size(self) -> small.Measure:
+        """The diff against the small threshold (`small.measure`), counting
+        files outside the profile's suites' globs. Unreadable when a counted
+        file has no additions and deletions, or a file on a test path has no
+        status (it may be a rename from outside tests)."""
+        globs = small.suite_globs(self.profile)
+        for c in self.changes():
+            if c.status is None and c.previous is None and small.is_test(c.path, globs):
+                # gh's and GraphQL's lists may name no status: a rename into tests would go uncounted.
+                raise Unreadable("files", f"`{c.path}` is on a test path but has no status, so a rename into it from outside tests can't be told: give --files as GitHub's REST list of the pull request's files (GET repos/<repo>/pulls/<n>/files), with each file's status and previous_filename")
+        try:
+            return small.measure(self.changes(), globs, self.small_max_lines, self.small_max_files)
+        except small.NoCounts as e:
+            raise Unreadable("files", f"{e}, which the small threshold counts: give --files as GitHub's REST list of the pull request's files (GET repos/<repo>/pulls/<n>/files), with each file's additions and deletions") from None
 
     def checks_ran(self) -> list:
         """The latest result of each check on the head commit (`protection.latest`)."""
@@ -638,6 +765,21 @@ class Context:
             return protection.check(rulesets, pr.base, settings, base_if_unknown=assume)
 
         return self.once("rulesets", read)
+
+    def queue(self) -> bool:
+        """A ruleset in force on the base requires a merge queue (`protection.check`'s
+        reader); not when the rulesets can't be read, which is a reason of its own."""
+        try:
+            return self.rulesets().queue
+        except Unreadable:
+            return False
+
+    def queue_unsure(self) -> list[str]:
+        """The rulesets with a merge-queue rule it can't count either way."""
+        try:
+            return self.rulesets().queue_unsure
+        except Unreadable:
+            return []
 
     def open_threads(self) -> list[str | None]:
         """Who opened each unresolved review thread (None when it can't be told)."""
@@ -915,7 +1057,10 @@ def _evidence(ctx: Context, add) -> None:
 
 
 def _up_to_date(ctx: Context, add) -> None:
-    """flow §4.3: the head isn't behind the base."""
+    """flow §4.3: the head isn't behind the base, or the merge queue the
+    ruleset requires meets it (#245): the queue tests it on the latest base."""
+    if ctx.queue():
+        return
     behind = ctx.compare()
     if behind or ctx.pr().behind:
         add("behind", by=f" by {_plural(behind, 'commit')}" if behind else "")
@@ -926,8 +1071,30 @@ def _panel(ctx: Context, add) -> None:
     with a later clean Correctness pass on the head. A round that wasn't clean
     needs another round, unless it is the last allowed one (its number at least
     `ctx.review_rounds`, #170): then a later clean Correctness pass on the head
-    lifts its findings, and no further round is asked for. Records from accounts
-    without write access, or naming a commit outside the PR, are ignored."""
+    lifts its findings, and no further round is asked for. Where a pass is what
+    comes next and the counted passes after the last round (on any commit of the
+    PR, each record counted) number `ctx.review_passes`, the pass cap (#256)
+    gives `passes_used_up` instead: the owner decides. Records from accounts
+    without write access, or naming a commit outside the PR, are ignored.
+
+    The small review (#257): when no counted round ran `spec`, the diff must be
+    within the small threshold (`ctx.size`). Past it, `past_small_threshold`
+    replaces every other review reason and asks for a full-panel round, allowed
+    past the round limit. Within it, a round that isn't clean counts as the
+    last allowed one, and so does that full-panel round, the first to run
+    `spec` after rounds that didn't. Without the files' line counts, it says
+    it can't read them, beside the reason today's rule gives.
+
+    The free base merge (#261): when the head is a merge of the base
+    (`ctx.base_merge`) and isn't the last counted review's commit, but its own
+    changes hash the same with their context (`diff`), that review covers the
+    head, with its result, clean or not. A pass doesn't count toward the cap
+    when its commit is a merge of the base, the counted review before it (the
+    latest by the PR's history) was clean, its changed lines hash the same as
+    that review's (`lines`), and no record on its commit since the last round
+    wasn't clean; nor is the cap reached by a pass on the head that wouldn't
+    count. A record without the hashes, or with `unknown`, covers only its own
+    commit."""
     head = ctx.pr().head
     perms = ctx.permissions()
     shas = ctx.commits() | {head}
@@ -943,19 +1110,80 @@ def _panel(ctx: Context, add) -> None:
     last = counted[rounds[-1]]
     allowed = ctx.review_rounds
     details = {"round": last.round, "round_short": _short(last.commit), "allowed": allowed, "reviewers": list(last.reviewers)}
-    passes = [r for r in counted[rounds[-1] + 1:] if r.kind == "pass" and r.commit == head]
+    ran_spec = ["spec" in counted[i].reviewers for i in rounds]
+    unread = None
+    last_allowed = last.round >= allowed or (ran_spec[-1] and len(rounds) > 1 and not any(ran_spec[:-1]))
+    if not any(ran_spec):
+        try:
+            ctx.measured = ctx.size()
+        except Unreadable as e:
+            unread = e
+        if ctx.measured is not None and not ctx.measured.within:
+            m = ctx.measured
+            size = f"{_plural(m.lines, 'changed line')} in {_plural(m.files, 'file')}"
+            most = f"{_plural(m.max_lines, 'line')} in {_plural(m.max_files, 'file')}"
+            add("past_small_threshold", next="full_round", size=size, most=most, **details)
+            return
+        last_allowed = last_allowed or ctx.measured is not None
+    latest, hashes = counted[-1], ctx.head_hashes()  # the last counted review, round or pass
+    # Only to a merge of the base (answer 4), and never over a review of the head itself since the last round:
+    # a record posted late for an older commit doesn't override it.
+    carried = (latest.commit != head and ctx.base_merge(head) and _hashed(latest.diff) and latest.diff == hashes.diff
+               and not any(r.commit == head for r in counted[rounds[-1]:]))
+    if carried:
+        _note(ctx, "review_carried", f"The review of {_short(latest.commit)} covers the head {_short(head)}: the pull request's own changes, context included, are the same (its `diff` hash).")
+
+    def on_head(r: reviews.Record) -> bool:
+        return r.commit == head or (carried and r is latest)
+
+    history = {sha: n for n, sha in enumerate(ctx.parents())}  # the PR's commits, oldest first
+
+    def free(i: int, commit: str | None, lines: str | None) -> bool:
+        """A pass on `commit` after the counted records up to `i` doesn't count
+        toward the cap (answer 23). The review before it is the latest since
+        the last round by the PR's history, then by posting, so a record posted
+        late for an older commit isn't it. One that rechecks open findings
+        always counts: a record on that commit since the last round that
+        wasn't clean."""
+        since = counted[rounds[-1]:i + 1]
+        prev = max(enumerate(since), key=lambda e: (history.get(e[1].commit, -1), e[0]))[1]
+        return (ctx.base_merge(commit) and prev.clean and _hashed(lines) and lines == prev.lines
+                and all(r.clean for r in since if r.commit == commit))
+
+    after = [(i - 1, r) for i, r in enumerate(counted) if i > rounds[-1] and r.kind == "pass"]
+    used = [r for i, r in after if not free(i, r.commit, r.lines)]
+    if len(after) > len(used):
+        _note(ctx, "free_passes", f"{_plural(len(after) - len(used), 'Correctness pass', 'Correctness passes')} after a merge of the base that left the pull request's changed lines as they were didn't count toward the pass cap.")
+    passes = [r for _, r in after if on_head(r)]
+    cap = ctx.review_passes
+
+    def needs_pass(rid, **more):
+        # A pass the head needs that wouldn't count doesn't meet the cap (answer 23: no false needs-human). It is
+        # judged on GitHub's `lines` hash; the pass's record names git's, so where they differ, that pass counts.
+        if len(used) >= cap and not free(len(counted) - 1, head, hashes.lines):
+            posted = " posted" if len(used) == len(after) else f" counted of {len(after)} posted"
+            add("passes_used_up", next="owner", passes=_plural(len(used), "Correctness pass", "Correctness passes") + posted, cap=cap, **details)
+        else:
+            add(rid, **more, **details)
+
     if not last.clean:
-        if last.round < allowed:
+        if not last_allowed:
             add("review_not_clean", next="round", **details)
         elif not passes:
-            add("review_not_clean", next="pass", case="last_round", **details)
+            needs_pass("review_not_clean", next="pass", case="last_round" if last.round >= allowed else "small" if not any(ran_spec) else "after_small")
         elif not passes[-1].clean:
-            add("pass_not_clean", **details)
-        return
-    if passes and not passes[-1].clean:
-        add("pass_not_clean", **details)
-    elif last.commit != head and not passes:
-        add("review_stale", **details)
+            needs_pass("pass_not_clean")
+    elif passes and not passes[-1].clean:
+        needs_pass("pass_not_clean")
+    elif not on_head(last) and not passes:
+        needs_pass("review_stale")
+    if unread is not None:
+        raise unread
+
+
+def _hashed(h: str | None) -> bool:
+    """A record's hash that was computed: not missing (before #258), not `unknown`."""
+    return h is not None and h != own_changes.UNKNOWN
 
 
 def _mergeable(ctx: Context, add) -> None:
@@ -1118,7 +1346,7 @@ def waivers(charter_input: tuple | None, role: str | None, profile) -> tuple[fro
         if not problems and c["merge"].get("waived_checks") and c["merge"].get("mode") != "session":
             problems = [f"waivers need merge.mode session, and it is {c['merge'].get('mode')}"]
     if problems:
-        return frozenset(), [{"id": "charter_refused", "message": "The charter wasn't used, so no check is waived: " + _clean("; ".join(problems)) + "."}]
+        return frozenset(), [{"id": "charter_refused", "message": CHARTER_REFUSED + _clean("; ".join(problems)) + "."}]
     return frozenset(c["merge"].get("waived_checks") or []), []
 
 
@@ -1159,16 +1387,28 @@ def evaluate(
     logs: dict | None = None,
     role: str | None = None,
     review_rounds: int | None = None,
+    review_passes: int | None = None,
+    small_max_lines: int | None = None,
+    small_max_files: int | None = None,
 ) -> Result:
     """The decision. `inputs` maps each name in INPUTS to (value, None) when
     read, (None, why) when it couldn't be; a name left out wasn't given (the
     preview: none). `profile_error` says why the profile couldn't be read.
     `charter_input` and `role` (see `waivers`) and `logs` (the checks' logs,
     by file name) are for the run's waivers. `review_rounds` is the allowed
-    review rounds (`--review-rounds`); None takes the profile's `run.review_rounds`."""
+    review rounds (`--review-rounds`); None takes the profile's `run.review_rounds`.
+    `review_passes` is the pass cap (`--review-passes`); None takes the profile's
+    `run.review_passes`. `small_max_lines` and `small_max_files` are the small
+    threshold (`--small-max-lines`, `--small-max-files`); None takes the profile's."""
     waivable, charter_notes = waivers(charter_input, role, profile)
-    ctx = Context(inputs, profile, profile_error, waivable, logs, review_rounds)
+    ctx = Context(inputs, profile, profile_error, waivable, logs, review_rounds, review_passes, small_max_lines, small_max_files)
     ctx.notes += charter_notes
+    if waivable and (ctx.queue() or ctx.queue_unsure()):
+        # Every merge goes through the queue, and only a direct merge could take a waiver (#241, answer 13);
+        # a queue it can't rule out refuses them too.
+        ctx.waivable = frozenset()
+        why = "with the merge queue on" if ctx.queue() else "where a ruleset may require a merge queue"
+        _note(ctx, "charter_refused", CHARTER_REFUSED + f"waivers don't apply {why} (flow §4.1).")
     try:
         pr = ctx.pr()
         number, head, base = pr.number, pr.head, pr.base
@@ -1203,6 +1443,12 @@ def evaluate(
                 owner = ctx.permissions().get(who) == "admin"
             except Unreadable:
                 owner = False
+    queue = ctx.queue()
+    if queue:
+        _note(ctx, "queue", "The base's ruleset requires a merge queue, which meets flow §4.3 (up to date), so \"ready\" means ready to queue. "
+              "These rules are checked when it is queued: a request made after that (changes requested, a new review thread) doesn't stop the merge.")
+    elif ctx.queue_unsure():
+        _note(ctx, "queue_unsure", "A merge-queue rule in a ruleset this command can't judge isn't counted as a queue: " + "; ".join(ctx.queue_unsure()) + ".")
     kit = ctx.kit
     if reasons:
         decision = "not_yet"
@@ -1212,7 +1458,8 @@ def evaluate(
         decision = "owner_review"
     else:
         decision = "ready"
-    return Result(decision, number, head, level, owner, reasons, ctx.notes, ctx.checks, kit, ctx.preview, ctx.review_rounds)
+    return Result(decision, number, head, level, owner, reasons, ctx.notes, ctx.checks, kit, ctx.preview, ctx.review_rounds, ctx.review_passes,
+                  ctx.small_max_lines, ctx.small_max_files, ctx.measured.as_dict() if ctx.measured else None, queue, ctx.head_hashes())
 
 
 # ---------- text ----------
@@ -1222,7 +1469,7 @@ def text(res: Result) -> str:
     """The answer for people: the decision first, then each reason and its fix."""
     n = f"#{res.pr}" if res.pr is not None else "This pull request"
     if res.decision == "ready":
-        lines = [f"Ready: {n} may merge."]
+        lines = [f"Ready to queue: {n} may join the merge queue." if res.queue else f"Ready: {n} may merge."]
     elif res.decision == "owner_review":
         if res.owner:
             lines = ["Ready once you've read the changes to these files:"]

@@ -1,6 +1,6 @@
 # Reading back the base branch's protection, and the requests to protect it
 
-`workflow protection` says whether the base branch is protected, from JSON that a session fetched from GitHub. It also builds the requests that protect the base branch and require its checks, and lists the checks that ran (#66; see [Building the requests](#building-the-requests)). It asks GitHub nothing, sends nothing and changes nothing: it reads the files it is given and prints a report or the requests.
+`workflow protection` says whether the base branch is protected, from JSON that a session fetched from GitHub. It also builds the requests that protect the base branch, require its checks and add a merge queue, and lists the checks that ran (#66, #247; see [Building the requests](#building-the-requests)). It asks GitHub nothing, sends nothing and changes nothing: it reads the files it is given and prints a report or the requests.
 
 The rule for "protected" lives here, and these call it rather than repeat it (solo mode, #32). The first does already; the others come with their tickets:
 - the "Protect `main`" upgrade (`skills/upgrade-setup`), to read back the clicks;
@@ -41,7 +41,7 @@ The base branch is protected when the active rulesets that target it, taken toge
 - require a pull request (a `pull_request` rule);
 - and none of them has a bypass list.
 
-A ruleset **targets** the base branch when it is a branch ruleset and its ref conditions include `refs/heads/<base>`, `~ALL`, or `~DEFAULT_BRANCH` when the base branch is the default branch, and none of its excludes matches the base branch. An include pattern such as `refs/heads/ma*` doesn't count: the report says it can't tell. Excludes are matched ignoring case. An exclude pattern GitHub reads differently from this command (one with `**`, `[^`, `[!`, `\`, `{` or `}`), or one that isn't a full ref name (`main` rather than `refs/heads/main`), counts as excluding the base branch.
+A ruleset **targets** the base branch when it is a branch ruleset and its ref conditions include `refs/heads/<base>`, `~ALL`, or `~DEFAULT_BRANCH` when the base branch is the default branch, and none of its excludes matches the base branch. An include pattern such as `refs/heads/ma*` doesn't count: the report says it can't tell, unless an exclude names the base branch (`~ALL`, `refs/heads/<base>` exactly, or `~DEFAULT_BRANCH` when the settings say the base branch is the default), which takes it out whatever the include. A `~DEFAULT_BRANCH` include or exclude without the settings' `default_branch` is the same. Excludes are matched ignoring case. An exclude pattern GitHub reads differently from this command (one with `**`, `[^`, `[!`, `\`, `{` or `}`), or one that isn't a full ref name (`main` rather than `refs/heads/main`), counts as excluding the base branch.
 
 Each thing missing is its own line, in plain words:
 - no rulesets;
@@ -89,7 +89,7 @@ Checks not required yet: no active ruleset on main requires status checks.
 
 ## Building the requests
 
-Three more forms of the same command print requests for a session to send, or the checks it can offer. They send nothing: the session sends each request itself (`gh api -X <method> <path> --input <body file>`, or the GitHub MCP tools), where the guard asks or refuses as it does for any ruleset change (#17, #33). Each takes `--json`, which gives the same for skills and `workflow doctor`; the text form is for a developer to read. Wrong input exits 2 with a plain message and prints nothing, as the read-back does: a request is never built from half the data. That includes JSON's `NaN` and `Infinity`, and numbers too large to read (`1e400`), which no request may carry, and check names that are empty, have spaces at either end, or hold a line break or a control character. Text from the input is printed with line breaks and bytes that aren't text escaped, as the read-back prints it.
+Four more forms of the same command print requests for a session to send, or the checks it can offer. They send nothing: the session sends each request itself (`gh api -X <method> <path> --input <body file>`, or the GitHub MCP tools), where the guard asks or refuses as it does for any ruleset change (#17, #33). Each takes `--json`, which gives the same for skills and `workflow doctor`; the text form is for a developer to read. Wrong input exits 2 with a plain message and prints nothing, as the read-back does: a request is never built from half the data. That includes JSON's `NaN` and `Infinity`, and numbers too large to read (`1e400`), which no request may carry, and check names that are empty, have spaces at either end, or hold a line break or a control character. Text from the input is printed with line breaks and bytes that aren't text escaped, as the read-back prints it.
 
 ### Protect
 
@@ -117,10 +117,27 @@ workflow protection --require-checks ruleset.json --check NAME [--check NAME ...
 
 From one ruleset in full (`GET repos/<repo>/rulesets/<id>`) and the names, `PUT repos/<repo>/rulesets/<id>`:
 - its first `required_status_checks` rule gains each name it doesn't already require, after the ones it has; none is removed or reordered, and the rule's other parameters stay. A ruleset with no such rule gains one;
-- "up to date" is turned on;
+- "up to date" is turned on, or left as it is when the ruleset has a `merge_queue` rule: the queue meets it, and "up to date" would only send branches back to update before they can queue (a new `required_status_checks` rule beside the queue gets it off);
 - every other rule, the conditions, the bypass list, the name and the enforcement are sent as they are. Only the fields GitHub accepts on an update are sent (`name`, `target`, `enforcement`, `bypass_actors`, `conditions`, `rules`): no `id`, `source`, `node_id`, `_links` or times. A ruleset read without admin access has no `bypass_actors`, and the request then leaves it out, which keeps it as it is.
 
 The repository is the ruleset's own `source`. An organisation's ruleset is refused: the kit adds checks only to the repository's. So is a ruleset that isn't a branch ruleset, or one whose required checks lack a `context`.
+
+### The merge queue
+
+```bash
+workflow protection --merge-queue ruleset.json --doctor doctor.json [--timeout MINUTES] [--json]
+```
+
+GitHub's merge queue tests each pull request against the latest base branch plus the pull requests ahead of it, then merges them in order (#243). GitHub offers it "in any public repository owned by an organization, or in private repositories owned by organizations using GitHub Enterprise Cloud"; `workflow doctor` suggests it only there, and the `upgrade-setup` skill's "Use a merge queue" takes it, in an attended session and never while a run is in progress: a pull request adding `merge_group:` beside `pull_request:` in the workflows behind the required checks first, then this request.
+
+From one ruleset in full (the one holding the required checks, which "Require these checks" adds) and what `workflow doctor --json` printed, `PUT repos/<repo>/rulesets/<id>`:
+- a `merge_queue` rule: merge method `MERGE`, grouping `ALLGREEN` (every pull request in a group must pass), at most 5 entries built and 5 merged at once, a minimum of 1 and no wait, and a check timeout of twice the base's longest recent CI run (doctor's `merge_queue.signals.ci_minutes.longest`), at least 60 minutes (60 with no history) and at most GitHub's 360. `--timeout` gives the owner's choice instead: whole minutes from 1 to 360, above that longest run (only 360 when it ran 359 or more, and groups may then still time out). A `merge_queue` rule already there is replaced (one, where it was);
+- "up to date" is turned off in its `required_status_checks` rule, whose checks are kept;
+- everything else is sent as "Require checks" sends it, and the same rulesets are refused.
+
+It is refused unless doctor's `merge_queue.merge_group.clean` is `true` (every workflow behind a required check runs on `merge_group` on `origin/<base>`), naming the workflows and checks not ready yet, and for a ruleset that requires no checks (a queue with nothing required would merge anything) or isn't active. Read doctor after `git fetch origin <base>`. The profile's `ci.required_checks` is unchanged. Where another ruleset (an organisation's) keeps "up to date" on, doctor's `github.up_to_date` line says so, and its owner turns it off there.
+
+**Path-filtered CI:** `merge_group` takes no `paths:` filter. A script that finds a pull request's changed files to choose what to run must, in a merge group, diff the group's `base_sha..head_sha` (`github.event.merge_group.base_sha` and `head_sha`), not the pull request's base.
 
 ### The checks that ran
 
