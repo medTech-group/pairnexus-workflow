@@ -165,14 +165,17 @@ def _git(root: Path, *args: str, timeout: int = 60, binary: bool = False, env: d
     `binary`, the output is bytes, so a `\\r\\n` stays as it is. git never asks
     for credentials itself (a fetch fails instead; ssh's own prompt isn't
     stopped), and the environment's diff options and external diff are left
-    out; `env` adds to it."""
+    out; `env` adds to it. Objects are read as committed, never their
+    replacements (`git replace`), which GitHub doesn't read."""
     text = {} if binary else {"text": True, "encoding": "utf-8", "errors": "surrogateescape"}
-    env = {**{k: v for k, v in os.environ.items() if k not in ("GIT_DIFF_OPTS", "GIT_EXTERNAL_DIFF")}, "GIT_TERMINAL_PROMPT": "0", **(env or {})}
+    env = {**{k: v for k, v in os.environ.items() if k not in ("GIT_DIFF_OPTS", "GIT_EXTERNAL_DIFF")}, "GIT_TERMINAL_PROMPT": "0",
+           "GIT_NO_REPLACE_OBJECTS": "1", **(env or {})}
     try:
-        return subprocess.run(["git", *args], cwd=root, capture_output=True, stdin=subprocess.DEVNULL, env=env,
+        return subprocess.run(["git", "-c", "core.useReplaceRefs=false", *args], cwd=root, capture_output=True, stdin=subprocess.DEVNULL, env=env,
                               timeout=timeout, **text)
     except (OSError, subprocess.TimeoutExpired) as e:
-        raise CantMeasure(f"git {args[0]} failed: {e}") from None
+        command = next((a for before, a in zip(("", *args), args) if "-c" not in (a, before)), args[0])
+        raise CantMeasure(f"git {command} failed: {e}") from None
 
 
 def base_ref(root: Path, base: str, note, source: str = "--base") -> str:
@@ -214,15 +217,34 @@ def _numstat(text: str) -> list[Change]:
     return out
 
 
+# `git diff` pinned to what GitHub shows, whatever the configuration or the
+# environment says (`own_changes` names each pin). Both the counts here and the
+# hashes (`own_changes.local_files`) diff with it, so they count the same diff.
+DIFF = (
+    "-c", "core.quotePath=false", "-c", "diff.suppressBlankEmpty=false", "-c", "core.bigFileThreshold=512m",
+    "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-relative", "--diff-algorithm=myers",
+    "--indent-heuristic", "-U3", "--inter-hunk-context=0", "-M", "-l1000", "--submodule=short",
+    "--ignore-submodules=none", "--src-prefix=a/", "--dst-prefix=b/",
+)
+
+
+def pinned_diff(root: Path, base: str, commit: str, *args: str, binary: bool = False) -> subprocess.CompletedProcess:
+    """`git diff <args> <base> <commit>` with `DIFF`'s pins, the attributes
+    read from `commit`'s own `.gitattributes` (git 2.40 and later), never a
+    global or the system's file."""
+    return _git(root, "-c", f"core.attributesFile={os.devnull}", *DIFF, *args, base, commit, binary=binary,
+                env={"GIT_ATTR_SOURCE": commit, "GIT_ATTR_NOSYSTEM": "1"})
+
+
 def local_changes(root: Path, commit: str, ref: str) -> list[Change]:
-    """The changes from the merge base of `ref` to `commit`, renames found, by
-    git's default (Myers) diff whatever the configuration says, as GitHub counts."""
+    """The changes from the merge base of `ref` to `commit`, by the same pinned
+    diff as the hashes (`pinned_diff`), as GitHub counts."""
     if _git(root, "cat-file", "-e", f"{commit}^{{commit}}").returncode != 0:
         raise CantMeasure(f"{commit[:7]} isn't a commit in this repository")
     mb = _git(root, "merge-base", ref, commit)
     if mb.returncode != 0:
         raise CantMeasure(f"the commit {commit[:7]} has no merge base with {ref.removeprefix('refs/remotes/')}")
-    diff = _git(root, "diff", "--numstat", "-z", "-M", "--diff-algorithm=myers", "--no-ext-diff", "--no-textconv", "--no-color", mb.stdout.strip(), commit)
+    diff = pinned_diff(root, mb.stdout.strip(), commit, "--numstat", "-z")
     if diff.returncode != 0:
         raise CantMeasure(f"git diff failed: {diff.stderr.strip()}")
     return _numstat(diff.stdout)
