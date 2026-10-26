@@ -216,9 +216,9 @@ def test_starts_choice_rule_names_the_three_choices_on_a_ticket_marked_small():
 
 def test_flow_section_2_writes_the_mark():
     step = _flat(_section("docs/flow.md", "## 2. A spec", "\n## 3."))
-    assert f"{MARK}, only when the planner expects the change to stay within the small threshold" in step
-    assert NO_NEW_SURFACE in step
-    assert "removing the line opts the ticket out" in step
+    assert f"{MARK} if the change should stay within the small threshold and add {NO_NEW_SURFACE}" in step
+    # The opt-out is in §3, keeping §2 short enough for the first flow context.
+    assert "removing the line opts the ticket out" in _flow3()
 
 
 def test_the_quick_ticket_and_the_sorting_write_the_mark():
@@ -236,7 +236,7 @@ def test_the_build_ticket_issue_template_names_the_mark_without_writing_it():
     note = _flat(template)
     assert f"Add a line reading {MARK} here only when" in note
     assert NO_NEW_SURFACE in note and "small threshold" in note
-    assert "Without the line it gets the full panel" in note
+    assert "Without the line it gets the usual review" in note
 
 
 # ---------- the glossary and the wording ----------
