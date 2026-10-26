@@ -134,13 +134,23 @@ def reminder_for(prompt: str) -> str | None:
 
 
 # A ticket named to a conductor session (#308): a build verb with the ticket
-# right after it ("build #12", "implement ticket 12", "Let's work on 12"), or
-# `/next`. The conductor never builds one itself, so its session is told where
-# the ticket goes. "why did the build fail?" or "fix the CI" names no ticket.
+# just after it ("build #12", "building tickets 12 and 13", "Let's work on the
+# #12", "pick up owner/repo#12"), the ticket before "build", "built" or
+# "implement" ("#12 please build it"), or `/next` and `/build-ticket`. The
+# conductor never builds one itself, so its session is told where the ticket
+# goes. "why did the build fail?" or "fix 2 typos" names no ticket: a bare
+# number counts only at the end of its clause ("build 12", "build 12 and 13").
+_TICKET = (
+    r"(?:(?:[\w.-]+/[\w.-]+)?[#\uff03][0-9]+\b|https?://[^\s]{0,200}?/issues/[0-9]+"
+    r"|[0-9]+(?=[^\S\n]*(?:[.!?,;:)]|and\b|$)))"
+)
 _NAMED = re.compile(
-    r"\b(?:build|implement|fix|work(?:ing)?[^\S\n]+on|start[^\S\n]+on)[^\S\n]+(?:(?:the[^\S\n]+)?(?:ticket|issue)[^\S\n]+)?"
-    r"(?:#\d+\b|\d+\b|https?://\S*/issues/\d+)",
-    re.I,
+    r"\b(?:build(?:s|ing)?|implement(?:s|ing)?|fix(?:es|ing)?|develop(?:s|ing)?|tackle|do|work(?:ing)?"
+    r"|work(?:ing)?[^\S\n]+on|start(?:ing)?[^\S\n]+(?:on|with)|pick[^\S\n]+up|go[^\S\n]+ahead[^\S\n]+with)"
+    r"[\s:,-]{1,4}(?:the[^\S\n]+)?(?:(?:tickets?|issues?|bugs?)[\s:]{1,3})?" + _TICKET
+    + r"|[#\uff03][0-9]+\b[^\n#\uff03]{0,30}?\b(?:build|built|implement)"
+    r"|(?:^|\s)/(?:[\w-]+:)?build-ticket\b",
+    re.I | re.M,
 )
 
 CONDUCTOR_LINE = (

@@ -28,6 +28,26 @@ NAMED = [
     "can you fix #12?",
     "/next 12",
     "work on https://github.com/acme/demo/issues/12",
+    # From the explorer's round 1.
+    "build tickets 12 and 13",
+    "build issues #12 and #13",
+    "building #12",
+    "implementing #12",
+    "fix bug #12",
+    "work on the #12",
+    "build: #12",
+    "build\n#12",
+    "#12 please build it",
+    "Let's get #12 built",
+    "#12: implement",
+    "start with #12",
+    "pick up #12",
+    "tackle #12",
+    "do #12",
+    "go ahead with #12",
+    "/build-ticket 12",
+    "build owner/repo#12",
+    "build \uff0312",
 ]
 
 # A conductor's own messages, and the owner's that name no ticket to build.
@@ -43,6 +63,11 @@ NOT_NAMED = [
     "pick up where you left off",
     "work on the report tonight",
     "rebuild #12",
+    "fix 2 typos in the README",
+    "build 2 dashboards",
+    "start on 1 March",
+    "implement 3 retries",
+    "work on 10 minutes",
     "conductor resume",
     "conductor: wake (a ticket session finished)\n\n#12 merged in #40",
     "also #140",
@@ -85,6 +110,15 @@ def test_the_line_and_the_whole_flow_budget_fit_under_the_limit():
     from workflow.context import CONDUCTOR_LINE, CONTEXT_LIMIT, FLOW_BUDGET
 
     assert len(CONDUCTOR_LINE) + 2 + FLOW_BUDGET < CONTEXT_LIMIT
+
+
+def test_long_prompts_stay_quick(repo):
+    import time
+
+    for prompt in ("build" + " " * 50_000 + "x", "#1" + "x" * 50_000 + " build", "work on https://" + "a" * 50_000, "1" * 50_000 + "x"):
+        began = time.monotonic()
+        _ctx(repo, prompt, uuid.uuid4().hex, CONDUCTOR)
+        assert time.monotonic() - began < 5, repr(prompt[:20])
 
 
 def test_a_conductor_session_without_a_profile_still_gets_the_line(repo):
