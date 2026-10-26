@@ -13,6 +13,10 @@ untouched.
 
 Beside either, the first prompt of an attended session for someone new to
 building brings the kit's glossary and the rule to explain its words once.
+
+In a conductor session, a prompt that names a ticket to build brings a line
+first, beside anything else: the conductor never builds it, and its skill
+hands it to a ticket session (#308).
 """
 
 from __future__ import annotations
@@ -129,6 +133,56 @@ def reminder_for(prompt: str) -> str | None:
     return REMINDER if _nudged(prompt) else None
 
 
+# A ticket named to a conductor session (#308): a build verb with the ticket
+# just after it ("build #12", "building tickets 12 and 13", "Let's work on the
+# #12", "pick up owner/repo#12", "build spec #32"), the ticket before "build",
+# "built" or "implement" ("#12 please build it"), or `/next`, `/build-ticket`
+# and `/implement-spec`. The conductor never builds one itself, so its session
+# is told where the ticket goes. "why did the build fail?", "fix 2 typos" or
+# "build 2.0" names no ticket: a bare number counts after "ticket", "issue",
+# "bug" or "spec", or at the end of its clause ("build 12", "build 12 please", "12 and 13"). A
+# ticket in quotes, brackets or bold counts ("build `#12`", "build [#12](…)").
+# Status questions ("is #12 built?") bring the line too: it is worded for a
+# message that may not ask for a build, and a closer pattern isn't worth it.
+# Every repeat is bounded, so a long pasted prompt stays quick.
+_NUMBER_ENDS = (
+    r"[0-9]+\b(?![.,:][0-9])(?=[^\S\n]*(?:(?:please|now|next|today|first|for[^\S\n]+me)\b[^\S\n]*)?"
+    r"(?:[.!?,;:)]|and\b|$))"
+)
+_TICKET = r"(?:(?:[\w.-]{1,39}/[\w.-]{1,100})?[#\uff03][0-9]+\b|https?://[^\s]{0,200}?/issues/[0-9]+|" + _NUMBER_ENDS + ")"
+_NAMED = re.compile(
+    r"\b(?:build(?:s|ing)?|implement(?:s|ing)?|fix(?:es|ing)?|develop(?:s|ing)?|tackle|do"
+    r"|start(?:ing)?|take|handle|kick[^\S\n]+off|work(?:ing)?[^\S\n]+on|start(?:ing)?[^\S\n]+(?:on|with)"
+    r"|pick[^\S\n]+up|go[^\S\n]+ahead[^\S\n]+with)"
+    r"[\s:,(\[*\"'`-]{1,6}(?:the[^\S\n]+)?"
+    r"(?:(?:tickets?|issues?|bugs?|specs?)[\s:]{1,3}[#\uff03]?[0-9]+\b|" + _TICKET + ")"
+    + r"|[#\uff03][0-9]+\b[^\n#\uff03]{0,30}?\b(?:build|built|implement)\b"
+    r"|(?:^|\s)/(?:[\w-]{1,60}:)?(?:build-ticket|implement-spec)\b",
+    re.I | re.M,
+)
+
+CONDUCTOR_LINE = (
+    "This is a conductor session: the conductor never builds a ticket itself. If this message asks for a ticket "
+    "to be built, don't branch for it, write its code or open its pull request, and don't load `next` or "
+    "`build-ticket` for it: follow the `conductor` skill's \"A ticket named in chat\", which hands it to a "
+    "ticket session (with no run in progress, a run scoped to it; during this session's run, the amendment "
+    "\"also #<n>\"). The only code the conductor writes is its own fixes, where the charter grants "
+    "`conductor_fixes`."
+)
+
+
+def names_a_ticket(prompt: str) -> bool:
+    """Whether a prompt names a ticket beside a build verb, or is `/next` or
+    `/build-ticket`: a conductor session's cue for `CONDUCTOR_LINE`, which is
+    worded for a message that may not ask for a build ("don't build #13")."""
+    return bool(_NEXT.search(prompt or "") or _NAMED.search(prompt or ""))
+
+
+def with_conductor_line(ctx: str | None) -> str:
+    """`ctx` with the conductor line first, where Claude reads it before the flow."""
+    return f"{CONDUCTOR_LINE}\n\n{ctx}" if ctx else CONDUCTOR_LINE
+
+
 def flow_files(project: Path, kit_root: Path, addendum: str = "") -> list[Path]:
     out = []
     for cand in (project / ".claude/workflow/flow.md", kit_root / "docs/flow.md"):
@@ -142,7 +196,8 @@ def flow_files(project: Path, kit_root: Path, addendum: str = "") -> list[Path]:
 
 FLOW_HEAD = "This request is part of the project's workflow. Follow its flow step by step: skip nothing, and end with its checklist."
 # What the first flow context may take of Claude Code's limit (CONTEXT_LIMIT,
-# below): the rest is room for the glossary's rule and path put in front of it.
+# below): the rest is room for what goes in front of it, the glossary's rule
+# and path in an attended session or the conductor line in a conductor session.
 FLOW_BUDGET = 8_500
 _READ = " Read it now, all of it, before acting: "
 _WHOLE = " All of it is below (from "

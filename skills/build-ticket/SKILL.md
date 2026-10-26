@@ -1,6 +1,6 @@
 ---
 name: build-ticket
-description: Build one ready ticket from claim to merge - tdd at the spec's seams, the review panel in rounds until clean, a pull request with its findings table, CI green, the local suite's evidence, and the merge under the merge rule. Use for "implement #N", "build #N", "build #N with a light review" ("quick build #N"), "build #N with the full panel", or a ticket session's briefing.
+description: Build one ready ticket from claim to merge - tdd at the spec's seams, the review panel in rounds until clean, a pull request with its findings table, CI green, the local suite's evidence, and the merge under the merge rule. Use for "implement #N", "build #N", "build #N with a light review" ("quick build #N"), "build #N with the full panel", or a ticket session's briefing. Never in a conductor session, which hands the ticket to a ticket session instead.
 ---
 
 # Build a ticket
@@ -33,6 +33,8 @@ In a ticket session the guard refuses a post without it. Labels, assignees, stat
 - **The ticket,** its spec (the issue under "Parent") and every issue they link. Use `gh api` or the GitHub MCP tools.
 - **The profile** (`.claude/workflow/profile.toml`, `profile.md`) and the rules it points to.
 - **Its blockers.** If any isn't closed as completed, say so and stop: it isn't ready.
+
+**Never in a conductor session.** With `WORKFLOW_ROLE=conductor`, stop here, before the claim or any other write: the conductor never builds a ticket. Follow the `conductor` skill's "A ticket named in chat" with it instead.
 
 ## 1. Claim it
 
