@@ -151,6 +151,11 @@
 - Tests: `tests/test_guard_merge_async.py`.
 - **For projects updating:** nothing to do.
 
+**The estimate's lighter-review warning names the UI explorer only where the run would run one** (#296, from #255; a follow-up from #259). `workflow charter estimate`'s "The review (…) is lighter than the project's default (…)" said "UI explorer on" from the charter's review alone, so under a profile with `ui.explorer = "none"` it could name an explorer that never runs. Both sides of it now read the profile, as `presets.small_reviewers` does: with no explorer in the profile, neither says it's on. With an explorer set, or no profile that reads, the words are unchanged.
+
+- Tests: `tests/test_charter_estimate.py`.
+- **For projects updating:** nothing to do.
+
 ## 0.1.15
 
 **A spec published from a Claude Code cloud session can get its spec records.** One fix, #250: the spec's hash leaves out the footer those sessions' GitHub tools add to every issue body. Its own note is below.
