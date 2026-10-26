@@ -11,6 +11,7 @@ import sys
 
 import pytest
 
+from changelog_notes import since_0110
 from conftest import KIT
 
 CLI = KIT / "scripts/workflow.py"
@@ -415,6 +416,6 @@ def test_docs_charter_names_the_new_keys():
 
 def test_changelog_notes_259_without_bumping_version():
     text = (KIT / "CHANGELOG.md").read_text()
-    assert "(#259" in text.split("## Unreleased\n", 1)[1].split("\n## ", 1)[0]
+    assert "(#259" in since_0110(text)
     released = text.split("\n## ")[2].split()[0].lstrip("v")
     assert (KIT / "VERSION").read_text().strip() == released
