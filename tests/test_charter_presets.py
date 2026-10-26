@@ -16,6 +16,8 @@ from workflow import charter, presets
 from conftest import KIT
 
 CLI = KIT / "scripts/workflow.py"
+# What review_of adds for a charter without them (#259): the small review off, the profile's pass cap and threshold.
+OFF = {"small": False, "passes": 2, "small_max_lines": 60, "small_max_files": 4}
 
 
 def _cli(*args, env=None):
@@ -71,7 +73,7 @@ def test_questions_offer_the_presets_first_with_the_profiles_recommended(tmp_pat
     for name, p in q["presets"].items():
         assert set(p) == {"label", "limits", "review", "words"}
         assert set(p["limits"]) == {"max_parallel", "max_sessions", "max_retries"}
-        assert set(p["review"]) == {"rounds", "explorer"}
+        assert set(p["review"]) == {"rounds", "explorer", "small"}
     assert "Light, Normal or Thorough" in q["ask"]
     # The end time is still asked: no preset gives one.
     assert "ends_at" in q["ask"] and "ends_at" not in q["presets"][want]["limits"]
@@ -108,18 +110,18 @@ def test_defaults_keep_solo_modes_merge_rule(tmp_path):
 def test_each_presets_numbers_from_a_default_profile(tmp_path):
     ps = _limits_q(_profile(tmp_path, explorer="browser"))["presets"]
     assert ps["light"]["limits"] == {"max_parallel": 1, "max_sessions": 10, "max_retries": 0}
-    assert ps["light"]["review"] == {"rounds": 1, "explorer": False}
+    assert ps["light"]["review"] == {"rounds": 1, "explorer": False, "small": True}
     assert ps["normal"]["limits"] == {"max_parallel": 2, "max_sessions": 40, "max_retries": 1}
-    assert ps["normal"]["review"] == {"rounds": 3, "explorer": True}
+    assert ps["normal"]["review"] == {"rounds": 3, "explorer": True, "small": True}
     assert ps["thorough"]["limits"] == {"max_parallel": 3, "max_sessions": 60, "max_retries": 1}
-    assert ps["thorough"]["review"] == {"rounds": 3, "explorer": True}
+    assert ps["thorough"]["review"] == {"rounds": 3, "explorer": True, "small": False}
 
 
 def test_normal_comes_from_the_profile(tmp_path):
     env = _profile(tmp_path, "max_parallel = 4\nmax_retries = 2\nreview_rounds = 2\n", explorer="cli")
     ps = _limits_q(env)["presets"]
     assert ps["normal"]["limits"] == {"max_parallel": 4, "max_sessions": 40, "max_retries": 2}
-    assert ps["normal"]["review"] == {"rounds": 2, "explorer": True}
+    assert ps["normal"]["review"] == {"rounds": 2, "explorer": True, "small": True}
     # Light and Thorough are fixed, apart from Thorough's rounds and both explorers.
     assert ps["light"]["limits"] == {"max_parallel": 1, "max_sessions": 10, "max_retries": 0}
     assert ps["thorough"]["limits"] == {"max_parallel": 3, "max_sessions": 60, "max_retries": 1}
@@ -142,7 +144,7 @@ def test_presets_without_a_profile():
     # Normal is the profile's defaults then, and nothing claims an explorer.
     assert presets.numbers("normal") == {
         "limits": {"max_parallel": 2, "max_sessions": 40, "max_retries": 1},
-        "review": {"rounds": 3, "explorer": False},
+        "review": {"rounds": 3, "explorer": False, "small": True},
     }
     assert charter.defaults()["preset"] == "normal"
 
@@ -171,7 +173,7 @@ def test_markdown_names_every_change(tmp_path):
     c["limits"].update(max_parallel=1, max_sessions=12, max_retries=1)
     c["review"] = {"rounds": 2, "explorer": True}
     md = _cli("charter", "markdown", _file(tmp_path, c), env=env).stdout
-    assert "**Size:** **Light**, changed: 12 sessions in all, 1 retry per ticket, 2 review rounds, the UI explorer on." in md
+    assert "**Size:** **Light**, changed: 12 sessions in all, 1 retry per ticket, 2 review rounds, the UI explorer on, the small review off." in md
 
 
 def test_markdown_says_the_project_has_no_explorer(tmp_path):
@@ -200,7 +202,7 @@ def test_reuse_keeps_preset_and_review(tmp_path):
     p = _cli("charter", "reuse", _file(tmp_path, c), env=env)
     assert p.returncode == 0, p.stderr
     new = json.loads(p.stdout)
-    assert new["preset"] == "thorough" and new["review"] == {"rounds": 4, "explorer": True}
+    assert new["preset"] == "thorough" and new["review"] == {"rounds": 4, "explorer": True, "small": False}
 
 
 def test_diff_shows_changes_to_preset_and_review(tmp_path):
@@ -300,7 +302,7 @@ def test_a_charter_without_preset_or_review_reads_as_normal(tmp_path):
     from workflow import profile as profile_mod
 
     prof = profile_mod.load(tmp_path)
-    assert presets.review_of(c, prof) == {"rounds": 2, "explorer": True}
+    assert presets.review_of(c, prof) == {"rounds": 2, "explorer": True, **OFF}
 
 
 def test_review_of_takes_the_charters_review(tmp_path):
@@ -310,7 +312,7 @@ def test_review_of_takes_the_charters_review(tmp_path):
     prof = profile_mod.load(tmp_path)
     c = _defaults(env)
     c["review"] = {"rounds": 1, "explorer": False}
-    assert presets.review_of(c, prof) == {"rounds": 1, "explorer": False}
+    assert presets.review_of(c, prof) == {"rounds": 1, "explorer": False, **OFF}
 
 
 # ---------- run.preset in the profile ----------
@@ -380,8 +382,9 @@ def test_a_preset_without_review_reviews_as_its_preset(tmp_path):
     del c["review"]
     assert _validate(tmp_path, env, c).returncode == 0
     md = _cli("charter", "markdown", _file(tmp_path, c), env=env).stdout
-    assert "**Size:** **Light**." in md and "up to 1 round per ticket; UI explorer off." in md
-    assert presets.review_of(c, profile_mod.load(tmp_path)) == {"rounds": 1, "explorer": False}
+    # Without a review, the small review reads as off (#259): a change from Light's.
+    assert "**Size:** **Light**, changed: the small review off." in md and "up to 1 round per ticket; UI explorer off." in md
+    assert presets.review_of(c, profile_mod.load(tmp_path)) == {"rounds": 1, "explorer": False, **OFF}
 
 
 def test_a_review_without_a_preset_shows_the_charters_review(tmp_path):
