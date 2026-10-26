@@ -132,6 +132,14 @@ def test_a_rename_between_a_test_and_a_non_test_path_counts(project, capsys):
     assert got["decision"] == "ready", got["reasons"]
 
 
+def test_a_rename_whose_old_path_isnt_given_counts(project, capsys):
+    # gh's and GraphQL's lists name only the new path: it may have come from outside tests.
+    suites(project)
+    data = with_files()
+    data["files"] = {"files": [{"path": "tests/test_old.py", "additions": 70, "deletions": 0, "changeType": "RENAMED"}]}
+    past(check(project, capsys, data)[0])
+
+
 def test_a_rename_counts_as_one_file(project, capsys):
     files = [changed(f"src/{n}.py", 1, status="renamed", previous=f"old/{n}.py") for n in "abcd"]
     got, _ = check(project, capsys, with_files(*files))
@@ -268,10 +276,14 @@ def test_a_test_file_without_counts_isnt_needed(project, capsys):
     assert got["decision"] == "ready", got["reasons"]
 
 
-def test_counts_that_arent_whole_numbers_cant_be_read(project, capsys):
-    data = with_files(changed("src/app.py", "ten"), recs=[])
-    got, _ = check(project, capsys, data)
+def test_counts_that_arent_whole_numbers_cant_be_read_where_the_condition_applies(project, capsys):
+    got, _ = check(project, capsys, with_files(changed("src/app.py", "ten")))
     assert [x["input"] for x in got["reasons"] if x["id"] == "couldnt_read"] == ["files"]
+    assert "whole numbers" in got["reasons"][0]["wording"]["developer"]["message"]
+    # Elsewhere they aren't needed, so they never block.
+    for recs in ([], [rec()]):
+        got, _ = check(project, capsys, with_files(changed("src/app.py", "ten"), recs=recs))
+        assert "couldnt_read" not in ids(got), got["reasons"]
 
 
 # ---------- review-record --measure (seam 2) ----------
@@ -343,7 +355,8 @@ def test_measure_writes_no_record_and_counts_as_merge_check_does(checkout, capsy
     assert code == 0, err
     assert out == "11 lines in 4 files outside tests: within the small threshold (at most 60 lines in at most 4 files)\n"
     assert "workflow:review" not in out
-    # merge-check, on the same change as GitHub lists it, with the same suite globs.
+    # merge-check, on the same change as GitHub lists it, in a project with the same suite globs.
+    os.environ["CLAUDE_PROJECT_DIR"] = str(project)
     suites(project)
     got, _ = check(project, capsys, with_files(*REST_FILES))
     assert got["small"] == {"lines": 11, "files": 4, "max_lines": 60, "max_files": 4, "within": True}
@@ -355,6 +368,7 @@ def test_measure_and_merge_check_agree_with_the_threshold_flags(checkout, capsys
     code, out, err = measure(capsys, *flags)
     assert code == 0, err
     assert out.startswith("11 lines in 4 files outside tests: " + ("within" if within else "past"))
+    os.environ["CLAUDE_PROJECT_DIR"] = str(project)
     suites(project)
     got, _ = check(project, capsys, with_files(*REST_FILES), *flags)
     assert (got["small"]["lines"], got["small"]["files"], got["small"]["within"]) == (11, 4, within)
@@ -382,11 +396,13 @@ def test_measure_counts_against_the_merge_base_not_the_bases_tip(checkout, capsy
 
 
 def test_measure_takes_the_base_as_an_option(checkout, capsys):
-    git(checkout, "push", "-q", "origin", "main:release")
+    # `release` holds the branch's change already, so against it nothing counts.
+    git(checkout, "push", "-q", "origin", "HEAD:release")
+    git(checkout, "update-ref", "-d", "refs/remotes/origin/release")  # so only a fetch brings it back
     code, out, err = measure(capsys, "--base", "release")
     assert code == 0, err
-    assert out.startswith("11 lines in 4 files")
-    assert git(checkout, "rev-parse", "origin/release") == git(checkout, "rev-parse", "main")
+    assert out.startswith("0 lines in 0 files outside tests: within")
+    assert git(checkout, "rev-parse", "origin/release") == git(checkout, "rev-parse", "HEAD")
 
 
 def test_a_failed_fetch_uses_the_origin_base_already_here_with_a_note(checkout, capsys):
@@ -513,3 +529,20 @@ def test_the_merge_check_skill_matches_flow_4():
 def test_the_changelog_has_the_note():
     notes = since_0110()
     assert "(#257" in notes and "`past_small_threshold`" in notes and "review-record --measure" in notes
+
+
+def test_a_path_that_isnt_utf8_is_measured_not_a_traceback(checkout, capsys):
+    (Path(os.fsdecode(bytes(checkout) + b"/caf\xe9.txt"))).write_text("one\ntwo\n")
+    git(checkout, "add", ".")
+    git(checkout, "commit", "-qm", "latin-1 name")
+    code, out, err = measure(capsys)
+    assert code == 0, err
+    assert out.startswith("13 lines in 5 files outside tests")
+
+
+def test_measure_counts_with_myers_whatever_the_configuration(checkout, capsys):
+    git(checkout, "config", "diff.algorithm", "histogram")
+    git(checkout, "config", "diff.external", "false")
+    code, out, err = measure(capsys)
+    assert code == 0, err
+    assert out.startswith("11 lines in 4 files")

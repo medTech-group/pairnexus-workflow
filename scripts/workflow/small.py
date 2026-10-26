@@ -42,6 +42,8 @@ class Change:
 
 @dataclass(frozen=True)
 class Measure:
+    """A change's counted lines and files, and the threshold they're held to."""
+
     lines: int
     files: int
     max_lines: int
@@ -49,7 +51,12 @@ class Measure:
 
     @property
     def within(self) -> bool:
+        """At most both numbers."""
         return self.lines <= self.max_lines and self.files <= self.max_files
+
+    def as_dict(self) -> dict:
+        """As `merge-check --json` gives it, under `small`."""
+        return {"lines": self.lines, "files": self.files, "max_lines": self.max_lines, "max_files": self.max_files, "within": self.within}
 
     def text(self) -> str:
         """The measurement in one line, as `review-record --measure` prints it."""
@@ -115,13 +122,21 @@ def _regex(glob: str) -> re.Pattern:
 
 
 def is_test(path: str, globs: list[str]) -> bool:
+    """The path matches one of the globs, as path patterns (`_regex`)."""
     return any(_regex(g).fullmatch(path) for g in globs)
 
 
 def counted(changes: list[Change], globs: list[str]) -> list[Change]:
     """The changes that count: those outside tests. A rename is a test only
-    when both its paths are."""
-    return [c for c in changes if not (is_test(c.path, globs) and (c.previous is None or is_test(c.previous, globs)))]
+    when both its paths are, so one whose old path isn't given (gh's and
+    GraphQL's lists name only the new one) counts."""
+
+    def test(c: Change) -> bool:
+        if c.previous is None:
+            return c.status not in ("renamed", "copied") and is_test(c.path, globs)
+        return is_test(c.path, globs) and is_test(c.previous, globs)
+
+    return [c for c in changes if not test(c)]
 
 
 def measure(changes: list[Change], globs: list[str], max_lines: int, max_files: int) -> Measure:
@@ -129,8 +144,8 @@ def measure(changes: list[Change], globs: list[str], max_lines: int, max_files: 
     naming the first counted file without its additions and deletions."""
     mine = counted(changes, globs)
     for c in mine:
-        if c.additions is None or c.deletions is None:
-            raise NoCounts(f"`{c.path}` has no additions and deletions")
+        if not all(isinstance(n, int) and not isinstance(n, bool) and n >= 0 for n in (c.additions, c.deletions)):
+            raise NoCounts(f"`{c.path}` has no additions and deletions as whole numbers")
     return Measure(sum(c.additions + c.deletions for c in mine), len(mine), max_lines, max_files)
 
 
@@ -142,7 +157,13 @@ class CantMeasure(Exception):
 
 
 def _git(root: Path, *args: str, timeout: int = 60) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, timeout=timeout)
+    """git in `root`; CantMeasure when it can't run or doesn't finish. A path
+    that isn't UTF-8 is kept (surrogate escapes), never an error."""
+    try:
+        return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, encoding="utf-8",
+                              errors="surrogateescape", timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise CantMeasure(f"git {args[0]} failed: {e}") from None
 
 
 def base_ref(root: Path, base: str, note) -> str:
@@ -152,7 +173,7 @@ def base_ref(root: Path, base: str, note) -> str:
     try:
         got = _git(root, "fetch", "--quiet", "origin", f"+refs/heads/{base}:{ref}", timeout=120)
         why = None if got.returncode == 0 else (got.stderr.strip().splitlines() or ["git fetch failed"])[-1]
-    except (OSError, subprocess.TimeoutExpired) as e:
+    except CantMeasure as e:
         why = str(e)
     have = _git(root, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}").returncode == 0
     if why is not None:
@@ -181,13 +202,14 @@ def _numstat(text: str) -> list[Change]:
 
 
 def local_changes(root: Path, commit: str, ref: str) -> list[Change]:
-    """The changes from the merge base of `ref` to `commit`, renames found."""
+    """The changes from the merge base of `ref` to `commit`, renames found, by
+    git's default (Myers) diff whatever the configuration says, as GitHub counts."""
     if _git(root, "cat-file", "-e", f"{commit}^{{commit}}").returncode != 0:
         raise CantMeasure(f"the commit {commit[:7]} isn't in this repository")
     mb = _git(root, "merge-base", ref, commit)
     if mb.returncode != 0:
         raise CantMeasure(f"the commit {commit[:7]} has no merge base with {ref.removeprefix('refs/remotes/')}")
-    diff = _git(root, "diff", "--numstat", "-z", "-M", "--no-ext-diff", "--no-textconv", "--no-color", mb.stdout.strip(), commit)
+    diff = _git(root, "diff", "--numstat", "-z", "-M", "--diff-algorithm=myers", "--no-ext-diff", "--no-textconv", "--no-color", mb.stdout.strip(), commit)
     if diff.returncode != 0:
         raise CantMeasure(f"git diff failed: {diff.stderr.strip()}")
     return _numstat(diff.stdout)

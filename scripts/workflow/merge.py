@@ -128,7 +128,7 @@ class Result:
     review_passes: int = DEFAULT_REVIEW_PASSES  # the pass cap the review rule used
     small_max_lines: int = small.DEFAULT_MAX_LINES  # the small threshold the review rule used (#257)
     small_max_files: int = small.DEFAULT_MAX_FILES
-    small: dict | None = None  # the diff against it, where the small review's condition applies
+    measured: dict | None = None  # the diff against it, where the small review's condition applies
     queue: bool = False  # a ruleset in force on the base requires a merge queue: "ready" means ready to queue (#245)
 
     def as_dict(self) -> dict:
@@ -147,7 +147,7 @@ class Result:
             "review_passes": self.review_passes,
             "small_max_lines": self.small_max_lines,
             "small_max_files": self.small_max_files,
-            "small": self.small,
+            "small": self.measured,
             "queue": self.queue,
         }
 
@@ -513,7 +513,7 @@ class Context:
         # The small threshold (#257): the flags, else the profile's run.small_max_lines and run.small_max_files.
         self.small_max_lines = small_max_lines or (profile.small_max_lines if profile else small.DEFAULT_MAX_LINES)
         self.small_max_files = small_max_files or (profile.small_max_files if profile else small.DEFAULT_MAX_FILES)
-        self.small: small.Measure | None = None  # the diff against it, once measured
+        self.measured: small.Measure | None = None  # the diff against it, once measured
         self.waived: list[str] = []  # the waivers used
         self.notes: list[dict] = []
         self.checks: list[dict] = []
@@ -604,7 +604,8 @@ class Context:
 
     def changes(self) -> list[small.Change]:
         """Each file the PR changes: its path, a rename's old path, its status,
-        and its additions and deletions where given (#257)."""
+        and its additions and deletions as given (#257): `size` checks them,
+        only where the small review's condition needs them."""
 
         def read():
             items = _walk(self.raw("files"), "files", lambda d: "filename" in d or "path" in d, GRAPHQL + ("files", "nodes"))
@@ -613,9 +614,6 @@ class Context:
                 for k in ("filename", "path", "previous_filename"):
                     if k in f and (not isinstance(f[k], str) or not f[k]):
                         raise Unreadable("files", f"a file's {k} isn't a path")
-                for k in ("additions", "deletions"):
-                    if f.get(k) is not None and _int(f[k]) is None:
-                        raise Unreadable("files", f"a file's {k} isn't a whole number")
                 status = f.get("status", f.get("changeType"))
                 out.append(small.Change(
                     f.get("filename") or f["path"], f.get("previous_filename"),
@@ -1033,16 +1031,16 @@ def _panel(ctx: Context, add) -> None:
     last_allowed = last.round >= allowed or (ran_spec[-1] and len(rounds) > 1 and not any(ran_spec[:-1]))
     if not any(ran_spec):
         try:
-            ctx.small = ctx.size()
+            ctx.measured = ctx.size()
         except Unreadable as e:
             unread = e
-        if ctx.small is not None and not ctx.small.within:
-            m = ctx.small
+        if ctx.measured is not None and not ctx.measured.within:
+            m = ctx.measured
             size = f"{_plural(m.lines, 'changed line')} in {_plural(m.files, 'file')}"
             most = f"{_plural(m.max_lines, 'line')} in {_plural(m.max_files, 'file')}"
             add("past_small_threshold", next="full_round", size=size, most=most, **details)
             return
-        last_allowed = last_allowed or ctx.small is not None
+        last_allowed = last_allowed or ctx.measured is not None
     after = [r for r in counted[rounds[-1] + 1:] if r.kind == "pass"]
     passes = [r for r in after if r.commit == head]
     cap = ctx.review_passes
@@ -1341,15 +1339,7 @@ def evaluate(
     else:
         decision = "ready"
     return Result(decision, number, head, level, owner, reasons, ctx.notes, ctx.checks, kit, ctx.preview, ctx.review_rounds, ctx.review_passes,
-                  ctx.small_max_lines, ctx.small_max_files, _measure(ctx.small), queue)
-
-
-def _measure(m: small.Measure | None) -> dict | None:
-    """The diff against the small threshold, as `--json` gives it; None where
-    the small review's condition didn't apply, or the counts couldn't be read."""
-    if m is None:
-        return None
-    return {"lines": m.lines, "files": m.files, "max_lines": m.max_lines, "max_files": m.max_files, "within": m.within}
+                  ctx.small_max_lines, ctx.small_max_files, ctx.measured.as_dict() if ctx.measured else None, queue)
 
 
 # ---------- text ----------
