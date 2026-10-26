@@ -23,7 +23,9 @@ than repeating them:
 - the checks on the head commit: `protection.latest` (a name reported twice
   counts by its latest result, the try-it link's check marked);
 - the checks the rulesets require: `protection.check`;
-- kit and CI files: the guard's own matcher, `guard.matches`.
+- kit and CI files: the guard's own matcher, `guard.matches`;
+- the hashes of the pull request's own changes at its head: `own_changes.of_files`,
+  on GitHub's per-file data, as `workflow review-record` hashes them from git.
 
 Every input is read before any rule runs (`Context.read_all`), so each one it
 can't read is a reason of its own ("couldn't read …"), never `ready`. A list
@@ -42,7 +44,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import charter as charter_mod
-from . import protection, reviews, small, state
+from . import own_changes, protection, reviews, small, state
 from .evidence import is_full, read_headline
 from .guard import matches
 from .posts import CommentsError, _login, _number, comments_from, decode_values
@@ -130,6 +132,7 @@ class Result:
     small_max_files: int = small.DEFAULT_MAX_FILES
     measured: dict | None = None  # the diff against it, where the small review's condition applies
     queue: bool = False  # a ruleset in force on the base requires a merge queue: "ready" means ready to queue (#245)
+    head_hashes: own_changes.Hashes = own_changes.UNKNOWN_HASHES  # the head's own changes, hashed (#261)
 
     def as_dict(self) -> dict:
         return {
@@ -149,6 +152,7 @@ class Result:
             "small_max_files": self.small_max_files,
             "small": self.measured,
             "queue": self.queue,
+            "head_hashes": {"diff": self.head_hashes.diff, "lines": self.head_hashes.lines},
         }
 
 
@@ -283,6 +287,17 @@ def _plural(n: int, one: str, many: str | None = None) -> str:
 def _sha(v) -> str | None:
     """A full SHA, lowercased; None when `v` isn't one."""
     return v.lower() if isinstance(v, str) and _SHA.fullmatch(v.lower()) else None
+
+
+def _parents(v) -> tuple[str, ...] | None:
+    """A commit's parents' SHAs, from REST's `[{sha}]` or GraphQL's
+    `{nodes: [{oid}]}`; None when not given, or not in either shape."""
+    if isinstance(v, dict):
+        v = v.get("nodes")
+    if not isinstance(v, list):
+        return None
+    shas = tuple(_sha(p.get("sha") or p.get("oid")) if isinstance(p, dict) else None for p in v)
+    return None if None in shas else shas
 
 
 def _int(v) -> int | None:
@@ -601,21 +616,43 @@ class Context:
         return self.once("permissions", lambda: _permissions(self.raw("permissions")))
 
     def commits(self) -> set[str]:
+        return set(self.parents())
+
+    def parents(self) -> dict[str, tuple[str, ...] | None]:
+        """Each commit of the PR, with its parents' SHAs where given (REST's
+        `parents: [{sha}]`, GraphQL's `parents: {nodes: [{oid}]}`), else None.
+        With a page of commits left out, none are kept: a parent from that
+        page would read as outside the pull request."""
+
         def read():
             items = _walk(self.raw("commits"), "commits", lambda d: "sha" in d or "oid" in d or isinstance(d.get("commit"), dict), GRAPHQL + ("commits", "nodes"))
             # REST's {sha}, gh's {oid}, GraphQL's {commit: {oid}}
-            shas = {_sha(c.get("sha") or c.get("oid") or c["commit"].get("oid")) for c in items}
-            if None in shas:
+            nodes = [c if "sha" in c or "oid" in c else c["commit"] for c in items]
+            out = {_sha(c.get("sha") or c.get("oid")): _parents(c.get("parents")) for c in nodes}
+            if None in out:
                 raise Unreadable("commits", "a commit's SHA isn't a full 40-character SHA")
             self._complete("commits", len(items), required=False)  # a commit left out only leaves out records
-            return shas
+            try:
+                want = self.pr().counts["commits"]
+            except Unreadable:
+                want = None
+            whole = want is not None and want <= len(items)
+            return out if whole else dict.fromkeys(out)
 
         return self.once("commits", read)
+
+    def base_merge(self, sha: str | None) -> bool:
+        """The commit is a merge of the base: a commit of the PR with two or more
+        parents, at least one of them outside the PR's commits. Without its
+        parents, it isn't."""
+        got = self.parents().get(sha)
+        return got is not None and len(got) >= 2 and any(p not in self.parents() for p in got)
 
     def changes(self) -> list[small.Change]:
         """Each file the PR changes: its path, a rename's old path, its status,
         and its additions and deletions as given (#257): `size` checks them,
-        only where the small review's condition needs them."""
+        only where the small review's condition needs them. Also its blob SHA
+        and patch where given (#261), which `head_hashes` reads."""
 
         def read():
             items = _walk(self.raw("files"), "files", lambda d: "filename" in d or "path" in d, GRAPHQL + ("files", "nodes"))
@@ -624,10 +661,13 @@ class Context:
                 for k in ("filename", "path", "previous_filename"):
                     if k in f and (not isinstance(f[k], str) or not f[k]):
                         raise Unreadable("files", f"a file's {k} isn't a path")
-                status = f.get("status", f.get("changeType"))
+                if f.get("patch") is not None and not isinstance(f["patch"], str):
+                    raise Unreadable("files", "a file's patch isn't text")
+                status, sha = f.get("status", f.get("changeType")), f.get("sha")
                 out.append(small.Change(
                     f.get("filename") or f["path"], f.get("previous_filename"),
                     status.lower() if isinstance(status, str) else None, f.get("additions"), f.get("deletions"),
+                    sha if isinstance(sha, str) else None, f.get("patch"),
                 ))
             try:
                 want = self.pr().counts["files"]
@@ -648,6 +688,19 @@ class Context:
                 if p and p not in out:
                     out.append(p)
         return out
+
+    def head_hashes(self) -> own_changes.Hashes:
+        """The hashes of the PR's own changes at its head, from GitHub's
+        per-file data (`own_changes.of_files`): `unknown` when the files can't
+        be read, or a file can't be hashed (changes with no patch)."""
+
+        def read():
+            try:
+                return own_changes.of_files(self.changes())
+            except (Unreadable, own_changes.CantHash):
+                return own_changes.UNKNOWN_HASHES
+
+        return self.once("head_hashes", read)
 
     def size(self) -> small.Measure:
         """The diff against the small threshold (`small.measure`), counting
@@ -1026,7 +1079,16 @@ def _panel(ctx: Context, add) -> None:
     past the round limit. Within it, a round that isn't clean counts as the
     last allowed one, and so does that full-panel round, the first to run
     `spec` after rounds that didn't. Without the files' line counts, it says
-    it can't read them, beside the reason today's rule gives."""
+    it can't read them, beside the reason today's rule gives.
+
+    The free base merge (#261): when the head isn't the last counted review's
+    commit, but its own changes hash the same with their context (`diff`),
+    that review covers the head, with its result, clean or not. A pass
+    doesn't count toward the cap when its commit is a merge of the base
+    (`ctx.base_merge`), the counted review before it was clean, and its
+    changed lines hash the same as that review's (`lines`); nor is the cap
+    reached by a pass on the head that wouldn't count. A record without the
+    hashes, or with `unknown`, covers only its own commit."""
     head = ctx.pr().head
     perms = ctx.permissions()
     shas = ctx.commits() | {head}
@@ -1057,13 +1119,28 @@ def _panel(ctx: Context, add) -> None:
             add("past_small_threshold", next="full_round", size=size, most=most, **details)
             return
         last_allowed = last_allowed or ctx.measured is not None
+    final, hashes = counted[-1], ctx.head_hashes()
+    carried = final.commit != head and _hashed(final.diff) and final.diff == hashes.diff
+    if carried:
+        _note(ctx, "review_carried", f"The review of {_short(final.commit)} covers the head {_short(head)}: the pull request's own changes, context included, are the same (its `diff` hash).")
+
+    def on_head(r: reviews.Record) -> bool:
+        return r.commit == head or (carried and r is final)
+
+    def free(prev: reviews.Record, commit: str | None, lines: str | None) -> bool:
+        """A pass on `commit` after `prev` doesn't count toward the cap (answer 23)."""
+        return ctx.base_merge(commit) and prev.clean and _hashed(lines) and lines == prev.lines
+
     after = [r for r in counted[rounds[-1] + 1:] if r.kind == "pass"]
-    passes = [r for r in after if r.commit == head]
+    used = [r for i, r in enumerate(counted) if i > rounds[-1] and r.kind == "pass" and not free(counted[i - 1], r.commit, r.lines)]
+    if len(after) > len(used):
+        _note(ctx, "free_passes", f"{_plural(len(after) - len(used), 'Correctness pass', 'Correctness passes')} after a merge of the base that left the pull request's changed lines as they were didn't count toward the pass cap.")
+    passes = [r for r in after if on_head(r)]
     cap = ctx.review_passes
 
     def needs_pass(rid, **more):
-        if len(after) >= cap:
-            add("passes_used_up", next="owner", passes=_plural(len(after), "Correctness pass", "Correctness passes"), cap=cap, **details)
+        if len(used) >= cap and not free(final, head, hashes.lines):
+            add("passes_used_up", next="owner", passes=_plural(len(used), "Correctness pass", "Correctness passes"), cap=cap, **details)
         else:
             add(rid, **more, **details)
 
@@ -1076,10 +1153,15 @@ def _panel(ctx: Context, add) -> None:
             needs_pass("pass_not_clean")
     elif passes and not passes[-1].clean:
         needs_pass("pass_not_clean")
-    elif last.commit != head and not passes:
+    elif not on_head(last) and not passes:
         needs_pass("review_stale")
     if unread is not None:
         raise unread
+
+
+def _hashed(h: str | None) -> bool:
+    """A record's hash that was computed: not missing (before #258), not `unknown`."""
+    return h is not None and h != own_changes.UNKNOWN
 
 
 def _mergeable(ctx: Context, add) -> None:
@@ -1355,7 +1437,7 @@ def evaluate(
     else:
         decision = "ready"
     return Result(decision, number, head, level, owner, reasons, ctx.notes, ctx.checks, kit, ctx.preview, ctx.review_rounds, ctx.review_passes,
-                  ctx.small_max_lines, ctx.small_max_files, ctx.measured.as_dict() if ctx.measured else None, queue)
+                  ctx.small_max_lines, ctx.small_max_files, ctx.measured.as_dict() if ctx.measured else None, queue, ctx.head_hashes())
 
 
 # ---------- text ----------

@@ -63,8 +63,8 @@ In a cloud session, whose proxy refuses GraphQL and `collaborators/<login>/permi
 | Flag | What, as GitHub returns it |
 |---|---|
 | `--pr` | the pull request: `GET repos/<repo>/pulls/12`, with `changed_files`, `comments` and `head.sha` |
-| `--files` | its changed files, every page, each as GitHub's REST list gives it: `filename` (and `previous_filename` for a rename), `status`, and `additions` and `deletions`, which the small threshold counts |
-| `--commits` | its commits, every page |
+| `--files` | its changed files, every page, each as GitHub's REST list gives it: `filename` (and `previous_filename` for a rename), `status`, and `additions` and `deletions`, which the small threshold counts, and `sha` and `patch`, which `head_hashes` hashes (without them, no review carries over a merge of the base) |
+| `--commits` | its commits, every page, each with its `parents`, which tell a merge of the base (without them, every pass counts toward the pass cap) |
 | `--checks` | the head commit's check runs, every page, then its combined status, one JSON value after another in one file |
 | `--rulesets` | each of the repository's rulesets in full (`GET repos/<repo>/rulesets/<id>`) |
 | `--threads` | the review threads, from GraphQL: `reviewThreads` with `totalCount` and `pageInfo`, every page |
@@ -93,6 +93,7 @@ The JSON's `decision` is `ready`, `not_yet` or `owner_review`. **Only `ready` is
 - `review_passes`: how many Correctness passes it allowed after the last round, the pass cap (`--review-passes`, else the profile's `run.review_passes`);
 - `small_max_lines` and `small_max_files`: the small threshold it used (`--small-max-lines` and `--small-max-files`, else the profile's `run.small_max_lines` and `run.small_max_files`);
 - `small`: the diff's counted lines and files against the small threshold (`lines`, `files`, `max_lines`, `max_files` and `within`), where no counted round ran Spec; else `null`;
+- `head_hashes`: the hashes of the pull request's own changes at its head (`diff`, with their context lines, and `lines`, of the changed lines alone), from `--files`, each `unknown` where it can't compute them. When the head isn't the last review's commit but its `diff` is that review's record's (a merge of the base that left the changes as they were), that review covers the head, and a note says so;
 - `queue`: whether the base's ruleset requires a merge queue. With `queue: true`, `ready` means ready to queue: the queue meets "up to date" (flow §4.3), so being behind the base is never a reason, and its `queue` note says the rules are checked when it is queued;
 - `notes[]`, `checks[]` (each check's name, state and whether it's required), `files` (the kit's and CI files it changes) and `preview` (the try-it link, `{state, url}`).
 

@@ -57,7 +57,7 @@ Follow the `review-panel` skill on the diff against the base branch:
 - rounds until one comes back clean, at most the briefing's review rounds in a ticket session, else the profile's `run.review_rounds`;
 - verify each finding, then fix it with a test or answer it with a reason;
 - rerun the typecheck and the affected tests after each round;
-- after the last round, any further commit gets a short Correctness pass, at most the briefing's pass cap, else the profile's `run.review_passes` (`review-panel` §5); past it, the owner decides (`passes_used_up`: in a run, `needs-human`, step 6.3).
+- after the last round, any further commit gets a short Correctness pass, at most the briefing's pass cap, else the profile's `run.review_passes` (`review-panel` §5); past it, the owner decides (`passes_used_up`: in a run, `needs-human`, step 6.3). The exception is a merge of the base that leaves the pull request's own changes identical, which needs CI only: after merging the base in, run `WF merge-check` and run a pass only when it asks for one. In attended work, where the merge is the owner's, run `WF merge-check --fetch <PR> --json` after a merge of the base for its review reasons only.
 
 **A light review,** when the person asks for one: "build #12 with a light review", or "quick build #12". "Light review" is its name; "quick build" is only understood. It is not the guided start's "quick ticket", which files a small ticket. Follow `review-panel`'s light review (section 6), which gives its shape. A ticket session uses that shape when its briefing's review rounds are 1, the Correctness-only rounds coming on top of the briefing's "at most 1". A light review is never chosen for the person, in attended or unattended work, and it never changes the merge rule.
 
@@ -166,7 +166,7 @@ Use `waiting` when CI is running and a check-in is scheduled. With `done`, inclu
 - [ ] Blockers closed and the spec read
 - [ ] Every acceptance criterion met, each with its test
 - [ ] Typecheck and the full suite pass; evidence posted on the PR
-- [ ] Review panel run in rounds until clean (or the limit, the rest raised); late commits had a Correctness pass
+- [ ] Review panel run in rounds until clean (or the limit, the rest raised); late commits had a Correctness pass where `merge-check` asked for one
 - [ ] Every finding fixed or answered with its reason
 - [ ] PR opened with the findings table and decisions; by-hand checks filed
 - [ ] Merged under the merge rule (or left for the owner), notes for the next tickets posted; the claim label removed and the conductor woken (in a run)
