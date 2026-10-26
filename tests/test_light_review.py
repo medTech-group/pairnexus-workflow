@@ -119,7 +119,7 @@ def test_flow_section_3_mentions_the_light_review():
 
 
 def test_the_done_checklists_are_unchanged():
-    # The checklist gate reads these lines; this ticket leaves them as they were.
+    # The checklist gate reads these lines; #261 added "where `merge-check` asked for one" to the review line.
     text = _read("skills/build-ticket/SKILL.md")
     assert "- [ ] Review panel run in rounds until clean (or the limit, the rest raised); late commits had a Correctness pass where `merge-check` asked for one" in text
 

@@ -117,6 +117,16 @@ def test_a_patch_that_isnt_text_cant_be_read(project, capsys):
     assert "couldnt_read" in ids(got) and got["head_hashes"] == {"diff": "unknown", "lines": "unknown"}
 
 
+def test_text_the_hash_cant_encode_makes_them_unknown_never_a_traceback(project, capsys):
+    surrogate = '[{"filename": "src/app.py", "status": "modified", "additions": 1, "deletions": 1, "sha": "' + "1" * 40 + '", "patch": "@@ -1 +1 @@\\n-a\\n+\\ud800"}]'
+    for comments in ([], None):  # with and without a counted round
+        data = inputs()
+        if comments is not None:
+            data["comments"] = comments
+        got, code = check(project, capsys, data, raw={"files": surrogate})
+        assert code == 0 and got["head_hashes"] == {"diff": "unknown", "lines": "unknown"}
+
+
 # ---------- the carry-over ----------
 
 
@@ -152,6 +162,7 @@ def test_after_a_last_round_that_wasnt_clean_it_stays_not_clean(project, capsys)
     got, _ = check(project, capsys, data)
     [r] = review_reasons(got)
     assert r["id"] == "review_not_clean" and r["next"] == "pass"
+    assert "review_carried" in note_ids(got)
 
 
 def test_only_the_last_counted_review_carries_over(project, capsys):
@@ -216,6 +227,43 @@ def test_commits_given_without_parents_the_pass_after_a_base_merge_counts(projec
     assert ids(got) == ["passes_used_up"]
 
 
+def test_commits_in_graphqls_shape_tell_a_merge_of_the_base(project, capsys):
+    reviewed, context = hashes_of(project, capsys, REVIEWED), hashes_of(project, capsys, CONTEXT)
+    data = pr(RESOLVED, (EARLIER, [FORK_POINT]), (MIDDLE, [EARLIER, BASE_TIP]), (HEAD, [MIDDLE]))
+    data["commits"] = {"data": {"repository": {"pullRequest": {"commits": {"nodes": [
+        {"commit": {"oid": c["sha"], "parents": {"nodes": [{"oid": p["sha"]} for p in c["parents"]]}}} for c in data["commits"]
+    ], "pageInfo": {"hasNextPage": False}}}}}}
+    data["comments"] = records(hashed(rnd=1, commit=EARLIER, hashes=reviewed), hashed("pass", rnd=1, commit=MIDDLE, hashes=context))
+    got, _ = check(project, capsys, data, "--review-passes", "1")
+    assert ids(got) == ["review_stale"] and "free_passes" in note_ids(got)
+
+
+def test_with_a_page_of_commits_left_out_every_pass_counts(project, capsys):
+    # GitHub lists at most 250 commits: a parent on a page left out would read as outside the pull request.
+    reviewed, context = hashes_of(project, capsys, REVIEWED), hashes_of(project, capsys, CONTEXT)
+    data = pr(RESOLVED, (EARLIER, [FORK_POINT]), (MIDDLE, [EARLIER, BASE_TIP]), (HEAD, [MIDDLE]))
+    data["commits"] = [{"sha": f"{i:040x}", "parents": [{"sha": f"{i - 1:040x}"}]} for i in range(1, 248)] + data["commits"]
+    data["pr"]["commits"] = 300
+    data["comments"] = records(hashed(rnd=1, commit=EARLIER, hashes=reviewed), hashed("pass", rnd=1, commit=MIDDLE, hashes=context))
+    got, _ = check(project, capsys, data, "--review-passes", "1")
+    assert ids(got) == ["passes_used_up"]
+    data["pr"]["commits"] = 250
+    got, _ = check(project, capsys, data, "--review-passes", "1")
+    assert ids(got) == ["review_stale"]
+
+
+def test_at_the_cap_the_answer_says_how_many_passes_counted(project, capsys):
+    reviewed, context, resolved = (hashes_of(project, capsys, p) for p in (REVIEWED, CONTEXT, RESOLVED))
+    data = pr(RESOLVED, (EARLIER, [FORK_POINT]), (MIDDLE, [EARLIER, BASE_TIP]), ("8" * 40, [MIDDLE]), (HEAD, ["8" * 40, BASE_TIP]))
+    data["files"] = files(REVIEWED)
+    data["comments"] = records(hashed(rnd=1, commit=EARLIER, hashes=reviewed), hashed("pass", rnd=1, commit=MIDDLE, hashes=context),
+                               hashed("pass", rnd=1, commit="8" * 40, hashes=resolved))
+    got, _ = check(project, capsys, data, "--review-passes", "1")
+    [r] = review_reasons(got)
+    assert r["id"] == "passes_used_up"
+    assert "(1 allowed after round 1, 1 Correctness pass counted of 2 posted)" in r["wording"]["developer"]["message"]
+
+
 def test_a_merge_of_two_of_the_prs_own_commits_isnt_a_merge_of_the_base(project, capsys):
     reviewed, context = hashes_of(project, capsys, REVIEWED), hashes_of(project, capsys, CONTEXT)
     data = pr(RESOLVED, (EARLIER, [FORK_POINT]), (MIDDLE, [FORK_POINT]), ("8" * 40, [EARLIER, MIDDLE]), (HEAD, ["8" * 40]))
@@ -262,6 +310,14 @@ def test_unknown_covers_only_its_own_commit(project, capsys):
     data["comments"] = records(hashed(rnd=1, commit=EARLIER, hashes=unknown), hashed("pass", rnd=1, commit=MIDDLE, hashes=unknown))
     got, _ = check(project, capsys, data, "--review-passes", "1")
     assert ids(got) == ["passes_used_up"]
+
+
+def test_an_unknown_record_never_carries_over_to_an_unknown_head(project, capsys):
+    data = merged_in(ELSEWHERE)
+    del data["files"][0]["patch"]
+    data["comments"] = records(hashed(rnd=1, commit=MIDDLE, hashes=("unknown", "unknown")))
+    got, _ = check(project, capsys, data)
+    assert got["head_hashes"]["diff"] == "unknown" and ids(got) == ["review_stale"]
 
 
 def test_a_head_whose_hashes_are_unknown_gets_no_carry_over(project, capsys):

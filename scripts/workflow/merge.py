@@ -234,7 +234,7 @@ REASONS = {
     # The pass cap (#256): in place of the three above when a pass would come next.
     "passes_used_up": Reason("review_panel", "review", {
         "new": ("Not yet: the short checks of the latest changes have reached their limit, so the owner decides what happens next.", "The owner can ask Claude for one more check; until then, this change stays unmerged."),
-        "developer": ("Not yet: the pass cap is reached ({cap} allowed after round {round}, {passes} posted), and the head {short} still needs one: this pull request waits on the owner.", "The owner decides: \"One more pass\" (merge-check skill) runs one past the cap; in a run the ticket stops at needs-human with the open findings in the PR body."),
+        "developer": ("Not yet: the pass cap is reached ({cap} allowed after round {round}, {passes}), and the head {short} still needs one: this pull request waits on the owner.", "The owner decides: \"One more pass\" (merge-check skill) runs one past the cap; in a run the ticket stops at needs-human with the open findings in the PR body."),
     }),
     # The small review's condition (#257): in place of every other review reason.
     "past_small_threshold": Reason("review_panel", "review", {
@@ -697,7 +697,7 @@ class Context:
         def read():
             try:
                 return own_changes.of_files(self.changes())
-            except (Unreadable, own_changes.CantHash):
+            except (Unreadable, ValueError):  # CantHash, or text the hash can't encode (a lone surrogate)
                 return own_changes.UNKNOWN_HASHES
 
         return self.once("head_hashes", read)
@@ -1119,28 +1119,31 @@ def _panel(ctx: Context, add) -> None:
             add("past_small_threshold", next="full_round", size=size, most=most, **details)
             return
         last_allowed = last_allowed or ctx.measured is not None
-    final, hashes = counted[-1], ctx.head_hashes()
-    carried = final.commit != head and _hashed(final.diff) and final.diff == hashes.diff
+    latest, hashes = counted[-1], ctx.head_hashes()  # the last counted review, round or pass
+    carried = latest.commit != head and _hashed(latest.diff) and latest.diff == hashes.diff
     if carried:
-        _note(ctx, "review_carried", f"The review of {_short(final.commit)} covers the head {_short(head)}: the pull request's own changes, context included, are the same (its `diff` hash).")
+        _note(ctx, "review_carried", f"The review of {_short(latest.commit)} covers the head {_short(head)}: the pull request's own changes, context included, are the same (its `diff` hash).")
 
     def on_head(r: reviews.Record) -> bool:
-        return r.commit == head or (carried and r is final)
+        return r.commit == head or (carried and r is latest)
 
     def free(prev: reviews.Record, commit: str | None, lines: str | None) -> bool:
         """A pass on `commit` after `prev` doesn't count toward the cap (answer 23)."""
         return ctx.base_merge(commit) and prev.clean and _hashed(lines) and lines == prev.lines
 
-    after = [r for r in counted[rounds[-1] + 1:] if r.kind == "pass"]
-    used = [r for i, r in enumerate(counted) if i > rounds[-1] and r.kind == "pass" and not free(counted[i - 1], r.commit, r.lines)]
+    after = [(counted[i - 1], r) for i, r in enumerate(counted) if i > rounds[-1] and r.kind == "pass"]
+    used = [r for prev, r in after if not free(prev, r.commit, r.lines)]
     if len(after) > len(used):
         _note(ctx, "free_passes", f"{_plural(len(after) - len(used), 'Correctness pass', 'Correctness passes')} after a merge of the base that left the pull request's changed lines as they were didn't count toward the pass cap.")
-    passes = [r for r in after if on_head(r)]
+    passes = [r for _, r in after if on_head(r)]
     cap = ctx.review_passes
 
     def needs_pass(rid, **more):
-        if len(used) >= cap and not free(final, head, hashes.lines):
-            add("passes_used_up", next="owner", passes=_plural(len(used), "Correctness pass", "Correctness passes"), cap=cap, **details)
+        # A pass the head needs that wouldn't count doesn't meet the cap (answer 23: no false needs-human). It is
+        # judged on GitHub's `lines` hash; the pass's record names git's, so where they differ, that pass counts.
+        if len(used) >= cap and not free(latest, head, hashes.lines):
+            posted = "" if len(used) == len(after) else f" counted of {len(after)} posted"
+            add("passes_used_up", next="owner", passes=_plural(len(used), "Correctness pass", "Correctness passes") + (posted or " posted"), cap=cap, **details)
         else:
             add(rid, **more, **details)
 
