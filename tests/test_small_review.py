@@ -390,24 +390,25 @@ def test_measure_writes_no_record_and_counts_as_merge_check_does(checkout, capsy
     assert got["small"] == {"lines": 11, "files": 4, "max_lines": 60, "max_files": 4, "within": True}
 
 
-
 @pytest.fixture(params=["global", "system", "xdg"])
 def users_git_config(request, tmp_path, monkeypatch):
     """The developer's git configuration, in each place git reads one, set
     before `checkout` is made: it signs every commit with a program that
-    always fails."""
-    path = tmp_path / "home" / ("git/config" if request.param == "xdg" else f"{request.param}.gitconfig")
-    path.parent.mkdir(parents=True)
-    path.write_text("[commit]\n\tgpgSign = true\n[gpg]\n\tprogram = false\n")
+    always fails. The `xdg` case also ignores `src/new.py` in their own
+    `git/ignore`, which git reads whatever `GIT_CONFIG_GLOBAL` says."""
+    home = tmp_path / "home"
+    (home / "git").mkdir(parents=True)
+    config = home / ("git/config" if request.param == "xdg" else f"{request.param}.gitconfig")
+    config.write_text("[commit]\n\tgpgSign = true\n[gpg]\n\tprogram = false\n")
     if request.param == "global":
-        monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(path))
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
     elif request.param == "system":
         monkeypatch.delenv("GIT_CONFIG_NOSYSTEM", raising=False)
-        monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(path))
+        monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(config))
     else:
+        (home / "git/ignore").write_text("src/new.py\n")
         monkeypatch.delenv("GIT_CONFIG_GLOBAL", raising=False)
-        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "home"))
-    return path
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(home))
 
 
 def test_the_checkout_never_reads_the_users_git_config(users_git_config, checkout, capsys):
@@ -422,6 +423,7 @@ def test_the_git_isolation_is_defined_once_in_the_conftest():
     tests = Path(__file__).resolve().parent
     defined = sorted(p.name for p in tests.glob("*.py") if re.search(r"^def _no_user_git_config\(", p.read_text(), re.M))
     assert defined == ["conftest.py"]
+
 
 @pytest.mark.parametrize("flags, within", [(("--small-max-lines", "10"), False), (("--small-max-files", "3"), False),
                                            (("--small-max-lines", "11", "--small-max-files", "4"), True)])

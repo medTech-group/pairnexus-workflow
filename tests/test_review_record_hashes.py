@@ -42,7 +42,7 @@ def edit(root, rel, old, new):
 
 
 @pytest.fixture
-def checkout(tmp_path, monkeypatch):
+def checkout(tmp_path, monkeypatch, _no_user_git_config):
     """A checkout whose `origin` is a local bare repository, on a branch whose
     change has a file with two hunks, a rename with a change, a rename alone,
     a binary file, an empty file, a change of mode alone, a removed file, a
