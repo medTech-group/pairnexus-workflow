@@ -692,11 +692,15 @@ class Context:
     def head_hashes(self) -> own_changes.Hashes:
         """The hashes of the PR's own changes at its head, from GitHub's
         per-file data (`own_changes.of_files`): `unknown` when the files can't
-        be read, or a file can't be hashed (changes with no patch)."""
+        be read, or a file can't be hashed (changes with no patch, or no patch
+        and no counts to say it has no changes)."""
 
         def read():
             try:
-                return own_changes.of_files(self.changes())
+                changes = self.changes()
+                if any(c.patch is None and c.status != "removed" and None in (c.additions, c.deletions) for c in changes):
+                    return own_changes.UNKNOWN_HASHES
+                return own_changes.of_files(changes)
             except (Unreadable, ValueError):  # CantHash, or text the hash can't encode (a lone surrogate)
                 return own_changes.UNKNOWN_HASHES
 
@@ -1120,7 +1124,10 @@ def _panel(ctx: Context, add) -> None:
             return
         last_allowed = last_allowed or ctx.measured is not None
     latest, hashes = counted[-1], ctx.head_hashes()  # the last counted review, round or pass
-    carried = latest.commit != head and _hashed(latest.diff) and latest.diff == hashes.diff
+    # Never over a review of the head itself since the last round: a record posted late for an older commit
+    # doesn't override it.
+    carried = (latest.commit != head and _hashed(latest.diff) and latest.diff == hashes.diff
+               and not any(r.commit == head for r in counted[rounds[-1]:]))
     if carried:
         _note(ctx, "review_carried", f"The review of {_short(latest.commit)} covers the head {_short(head)}: the pull request's own changes, context included, are the same (its `diff` hash).")
 
@@ -1142,8 +1149,8 @@ def _panel(ctx: Context, add) -> None:
         # A pass the head needs that wouldn't count doesn't meet the cap (answer 23: no false needs-human). It is
         # judged on GitHub's `lines` hash; the pass's record names git's, so where they differ, that pass counts.
         if len(used) >= cap and not free(latest, head, hashes.lines):
-            posted = "" if len(used) == len(after) else f" counted of {len(after)} posted"
-            add("passes_used_up", next="owner", passes=_plural(len(used), "Correctness pass", "Correctness passes") + (posted or " posted"), cap=cap, **details)
+            posted = " posted" if len(used) == len(after) else f" counted of {len(after)} posted"
+            add("passes_used_up", next="owner", passes=_plural(len(used), "Correctness pass", "Correctness passes") + posted, cap=cap, **details)
         else:
             add(rid, **more, **details)
 

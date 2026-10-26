@@ -105,6 +105,13 @@ def test_a_file_with_changes_but_no_patch_makes_them_unknown(project, capsys):
     assert got["head_hashes"] == {"diff": "unknown", "lines": "unknown"}
 
 
+def test_a_file_with_no_patch_and_no_counts_makes_them_unknown(project, capsys):
+    data = inputs()
+    data["files"] = [{"filename": "src/app.py", "status": "modified", "sha": "1" * 40}]
+    got, _ = check(project, capsys, data)
+    assert got["head_hashes"] == {"diff": "unknown", "lines": "unknown"}
+
+
 def test_files_that_cant_be_read_make_them_unknown(project, capsys):
     got, _ = check(project, capsys, inputs(), leave_out=("files",))
     assert got["head_hashes"] == {"diff": "unknown", "lines": "unknown"}
@@ -163,6 +170,15 @@ def test_after_a_last_round_that_wasnt_clean_it_stays_not_clean(project, capsys)
     [r] = review_reasons(got)
     assert r["id"] == "review_not_clean" and r["next"] == "pass"
     assert "review_carried" in note_ids(got)
+
+
+def test_a_late_record_for_an_older_commit_never_overrides_the_heads_own_pass(project, capsys):
+    reviewed = hashes_of(project, capsys, REVIEWED)
+    data = merged_in(ELSEWHERE)
+    data["comments"] = records(hashed(rnd=1, commit=EARLIER, hashes=reviewed), hashed("pass", rnd=1, commit=HEAD, clean=False, hashes=reviewed),
+                               hashed("pass", rnd=1, commit=MIDDLE, hashes=reviewed))
+    got, _ = check(project, capsys, data, "--review-passes", "3")
+    assert ids(got) == ["pass_not_clean"] and "review_carried" not in note_ids(got)
 
 
 def test_only_the_last_counted_review_carries_over(project, capsys):
