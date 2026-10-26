@@ -163,7 +163,7 @@ def test_build_ticket_runs_merge_check_with_the_charter_before_merging():
 def test_build_ticket_handles_owner_review_and_attended_work():
     step = _merge_step()
     owner_review = next(ln for ln in step.splitlines() if ln.strip().startswith("- `owner_review`:"))
-    assert "Never merge it or arm auto-merge: comment on the PR and on the tracking issue that the owner reviews and merges it" in owner_review
+    assert "Never merge it, arm auto-merge or queue it: comment on the PR and on the tracking issue that the owner reviews and merges it" in owner_review
     assert "end with `WORKFLOW-STATUS: waiting`" in owner_review
     assert "is #N ready to merge?" in step
     attended = step[step.index("3. **Run `WF merge-check`.**"):].split("\n")[0]
@@ -222,7 +222,7 @@ def test_briefing_names_merge_check_and_the_charter(tmp_path):
     assert "evidence --base-ref origin/main" in merging
 
 
-def test_with_the_queue_off_the_briefing_merges_as_before(tmp_path):
+def test_without_a_queue_the_briefing_merges_or_arms_auto_merge(tmp_path):
     # #297: queueing joins the two older lines; what a session does without a queue reads as it did.
     merging = _render(tmp_path, "auto-merge", [])
     assert (

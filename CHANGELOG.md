@@ -5,8 +5,8 @@
 **The ticket-session prompt's older merge lines name queueing** (#297, a follow-up from #249, part of #243). Wording only: nothing changes in behaviour.
 
 - **The ticket-session prompt's Merging section:** "Right before each of these (merging, arming auto-merge, queueing, saying it's ready), run `workflow merge-check`", and "On `not_yet`, never merge, arm auto-merge or queue (disarm auto-merge if it's armed)", so the rule reads in one place. The merge-queue bullet no longer repeats "on `not_yet`, never queue". With the queue off, a session merges or arms auto-merge as before, and the "Without a merge queue" bullet is unchanged.
-- **`build-ticket` §6 step 3** says the same: `merge-check` comes right before queueing too, and on `not_yet` nothing is queued.
-- Tests: the pinned phrases in `tests/test_run_merges_on_merge_check.py`, `tests/test_charter_small_review.py` and `tests/test_queue_runs.py` move to the new wording.
+- **`build-ticket` §6 step 3** says the same: `merge-check` comes right before queueing too, and on `not_yet` or `owner_review` nothing is queued.
+- Tests: the pinned phrases in `tests/test_run_merges_on_merge_check.py`, `tests/test_charter_small_review.py` and `tests/test_queue_runs.py` move to the new wording, and `test_without_a_queue_the_briefing_merges_or_arms_auto_merge` pins the "Without a merge queue" bullet and the `ready` line whole.
 - **For projects updating:** nothing to do.
 
 **`review-record --measure` counts with the same pinned `git diff` as the hashes** (#298, from #258).
