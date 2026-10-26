@@ -257,7 +257,7 @@ def test_a_mid_run_change_of_the_queue_is_logged_said_followed_and_stops_waivers
     assert "in `session` or `auto-merge` mode (`owner` mode keeps its row), never merge it directly or arm auto-merge, and disarm auto-merge if it is armed" in para
     assert "yours to merge (#PR)" in para
     # A doctor answer with no merge_queue at all is off, or a failed read; and the recorded state is read back.
-    assert "a `merge_queue` that is `null` as a whole is off, or a failed read where doctor's `github.ruleset` line is `cant_check`" in para
+    assert "a `merge_queue` that is `null` as a whole is a failed read" in para
     assert "write the body to the issue, and read the state back from it (`WF state get --body .workflow/run/body.md`) so step 8's write keeps it" in para
     assert "it counts as settled for \"Done\"" in para
     # A failed read of the rulesets is never a change.
@@ -282,6 +282,7 @@ def test_every_charter_check_and_the_owners_answer_carry_the_queue():
     assert "10. Run `WF charter validate charter.json --approved --queue <on|off>`." in text
     # Waivers already in the charter never block an unrelated amendment once the queue comes on.
     assert "3. Run `WF charter validate --approved --queue <on|off>`: for a change that adds a waived check, the queue's state read for it now" in text
+    assert "if neither can read it, `--queue on`: refuse the added waiver" in text
     assert "else `--queue off`, since waivers already in the charter only stop applying while the queue is on and never block another change, a narrowing of them included" in text
     # docs/charter.md says the same.
     assert "again for an amendment's `validate` when the amendment adds a waived check; any other amendment is validated with `--queue off`" in _read("docs/charter.md")
@@ -294,7 +295,9 @@ def test_the_kick_off_records_the_queue_and_recommends_it_with_its_reason():
     kickoff = _section(text, "### 2. The kick-off", "## Each check-in")
     para = _section(kickoff, "**The merge queue.**", "\n\n")
     assert "doctor's JSON `merge_queue`" in para
-    assert "A `merge_queue` that is `null` as a whole is `off` (no ruleset in force), unless doctor's `github.ruleset` line is `cant_check`" in para
+    # Doctor can't tell: nothing is recorded, so the first check-in that reads the queue records it, never a change.
+    assert "A `merge_queue` that is `null` as a whole means doctor couldn't tell" in para
+    assert "pass `--queue off` to `charter questions` and `charter validate` and no `--queue` to `state init`, so the first check-in that reads the queue records it (`recorded`)" in para
     assert "the `check-setup` skill's rule" in para and "with its reason" in para
     assert "\"Use a merge queue\"" in para and "attended session" in para
     assert "never changes the ruleset itself" in para
