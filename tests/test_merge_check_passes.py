@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from test_merge_check import EARLIER, HEAD, check, comment, ids, inputs, project, rec  # noqa: F401 (project is a fixture)
+from test_small_review import changed, suites
 from changelog_notes import since_0110
 from workflow import profile as profile_mod
 from workflow import state
@@ -495,3 +496,43 @@ def test_the_wording_holds_past_the_cap(project, capsys):
 def test_the_changelog_has_283s_note():
     unreleased = since_0110(_read("CHANGELOG.md"))
     assert "(#283" in unreleased and "`cap_unknown_at`" in unreleased
+
+
+# ---------- #295: `past_small_threshold` beside an unreadable profile ----------
+
+
+def test_with_the_profile_unreadable_a_small_review_at_the_cap_can_read_past_small_threshold(project, capsys):
+    # The conductor relies on this (#295). It gives the threshold as flags, but the test globs come from the
+    # profile: with it unreadable, test files count too, and a pull request at its pass cap reads past it.
+    suites(project)
+    data = three_commits()
+    data["files"] = [changed("src/app.py", 70), changed("tests/test_app.py", 100)]  # 70: past the default 60, within the flag
+    data["pr"]["changed_files"] = 2
+    data["comments"] = records(
+        rec(rnd=1, commit=EARLIER, clean=False, reviewers="correctness"),
+        rec("pass", rnd=1, commit=MIDDLE, clean=False), rec("pass", rnd=1, commit=HEAD, clean=False),
+    )
+    flags = ("--review-rounds", "3", "--review-passes", "2", "--small-max-lines", "100", "--small-max-files", "4")
+    used_up(check(project, capsys, data, *flags)[0])
+    (project / ".claude/workflow/profile.toml").write_text("[project\n")
+    got, _ = check(project, capsys, data, *flags)
+    assert [r.get("input") for r in got["reasons"] if r["id"] == "couldnt_read"] == ["profile"]
+    assert [r["id"] for r in review_reasons(got)] == ["past_small_threshold"]
+    assert (got["small"]["lines"], got["small"]["max_lines"]) == (170, 100)
+
+
+def test_past_small_threshold_beside_an_unreadable_profile_marks_the_ticket_too():
+    conductor = _read("skills/conductor/SKILL.md")
+    at_cap = conductor.split("**A ticket at the cap.**", 1)[1].split("\n\n", 1)[0]
+    # The test globs come from the profile, so with it unreadable test files count, and a pull request at its
+    # pass cap can read `past_small_threshold` instead of `passes_used_up`, and went unmarked.
+    assert "So does `past_small_threshold` beside that reason: the test globs come from the profile too, so with it unreadable `merge-check` counts test files as well, and a pull request at its pass cap can read `past_small_threshold` instead." in at_cap
+    # Without that reason the review was judged against the project's own threshold: nothing to look at again.
+    assert "Without a \"couldn't read\" reason for the profile, `past_small_threshold` marks nothing: it asks for a full-panel round, and the ticket isn't at the cap." in at_cap
+    # The mark comes before the sentence on when it goes, so that sentence covers both.
+    assert at_cap.index("So does `past_small_threshold`") < at_cap.index("The mark goes when the ticket is queued again")
+
+
+def test_the_changelog_has_295s_note():
+    unreleased = since_0110(_read("CHANGELOG.md"))
+    assert "(#295" in unreleased and "`past_small_threshold`" in unreleased.split("(#295", 1)[1].split("\n\n**", 1)[0]
