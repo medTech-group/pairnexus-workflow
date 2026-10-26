@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**`review-record --measure` counts with the same pinned `git diff` as the hashes** (#298, from #258).
+
+- **`small.local_changes`** (what `--measure` counts) now diffs with the pins `own_changes` gives the hashes, which move to `small.py` (`DIFF` and `pinned_diff`) so both use one: renames within git's default limit, a submodule never left out, git's default size for a binary file, no external diff or textconv, Myers, and the attributes of the commit itself (git 2.40 and later), never a global, the system's or the working tree's file. So `diff.renameLimit=1`, `diff.ignoreSubmodules=all`, `core.bigFileThreshold`, `core.attributesFile` or an uncommitted `.gitattributes` with `-diff` no longer change `--measure`'s counts, which now agree with what `merge-check` measures from GitHub. As for the hashes, a diff driver's `binary` setting in the configuration and `.git/info/attributes` still count.
+- Tests: `tests/test_measure_pinned.py`.
+- **For projects updating:** nothing to do. Counts for ordinary changes are unchanged; a checkout whose configuration changed them now counts as GitHub does.
+
 **Runs queue instead of updating: the conductor's check-ins, `build-ticket` and the ticket-session prompt with a merge queue** (#249, part of #243; answers 7, 12, 14, 17 and 18 on #241). With the queue off, nothing changes, except where a ruleset has a merge-queue rule the kit can't judge (below).
 
 - **`build-ticket` and the ticket-session prompt:** a session reads whether the merge queue is on from `merge-check`'s `queue` each time, never from its briefing. With it on, it queues its pull request once per head through `merge-async`, pinned to its checkout's head: in `session` mode after its own final `merge-check` says `ready`, in `auto-merge` mode as soon as it does, never arming GitHub's auto-merge. It stays with the pull request until GitHub merges it; after the conductor merges the base in, it runs `merge-check` again and a Correctness pass only when it asks for one. The update-branch steps, the "behind" handling and the "already clean" fallback don't apply, but a conflict is still resolved by merging the base in. A head already queued only waits.

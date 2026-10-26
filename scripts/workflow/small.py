@@ -214,15 +214,34 @@ def _numstat(text: str) -> list[Change]:
     return out
 
 
+# `git diff` pinned to what GitHub shows, whatever the configuration or the
+# environment says (`own_changes` names each pin). Both the counts here and the
+# hashes (`own_changes.local_files`) diff with it, so they count the same diff.
+DIFF = (
+    "-c", "core.quotePath=false", "-c", "diff.suppressBlankEmpty=false", "-c", "core.bigFileThreshold=512m",
+    "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-relative", "--diff-algorithm=myers",
+    "--indent-heuristic", "-U3", "--inter-hunk-context=0", "-M", "-l1000", "--submodule=short",
+    "--ignore-submodules=none", "--src-prefix=a/", "--dst-prefix=b/",
+)
+
+
+def pinned_diff(root: Path, base: str, commit: str, *args: str, binary: bool = False) -> subprocess.CompletedProcess:
+    """`git diff <args> <base> <commit>` with `DIFF`'s pins, the attributes
+    read from `commit`'s own `.gitattributes` (git 2.40 and later), never a
+    global or the system's file."""
+    return _git(root, "-c", f"core.attributesFile={os.devnull}", *DIFF, *args, base, commit, binary=binary,
+                env={"GIT_ATTR_SOURCE": commit, "GIT_ATTR_NOSYSTEM": "1"})
+
+
 def local_changes(root: Path, commit: str, ref: str) -> list[Change]:
-    """The changes from the merge base of `ref` to `commit`, renames found, by
-    git's default (Myers) diff whatever the configuration says, as GitHub counts."""
+    """The changes from the merge base of `ref` to `commit`, by the same pinned
+    diff as the hashes (`pinned_diff`), as GitHub counts."""
     if _git(root, "cat-file", "-e", f"{commit}^{{commit}}").returncode != 0:
         raise CantMeasure(f"{commit[:7]} isn't a commit in this repository")
     mb = _git(root, "merge-base", ref, commit)
     if mb.returncode != 0:
         raise CantMeasure(f"the commit {commit[:7]} has no merge base with {ref.removeprefix('refs/remotes/')}")
-    diff = _git(root, "diff", "--numstat", "-z", "-M", "--diff-algorithm=myers", "--no-ext-diff", "--no-textconv", "--no-color", mb.stdout.strip(), commit)
+    diff = pinned_diff(root, mb.stdout.strip(), commit, "--numstat", "-z")
     if diff.returncode != 0:
         raise CantMeasure(f"git diff failed: {diff.stderr.strip()}")
     return _numstat(diff.stdout)

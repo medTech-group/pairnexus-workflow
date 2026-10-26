@@ -40,12 +40,11 @@ change, which git shows as a removal and an addition of the same path, is one
 from __future__ import annotations
 
 import hashlib
-import os
 import re
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from .small import CantMeasure, Change, _git, base_ref
+from .small import CantMeasure, Change, _git, base_ref, pinned_diff
 
 UNKNOWN = "unknown"
 
@@ -114,12 +113,6 @@ def of_files(files: list[Change]) -> Hashes:
 
 # ---------- the local side: `review-record` ----------
 
-_DIFF = (
-    "-c", "core.quotePath=false", "-c", "diff.suppressBlankEmpty=false", "-c", "core.bigFileThreshold=512m",
-    "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-relative", "--diff-algorithm=myers",
-    "--indent-heuristic", "-U3", "--inter-hunk-context=0", "-M", "-l1000", "--submodule=short",
-    "--ignore-submodules=none", "--src-prefix=a/", "--dst-prefix=b/",
-)
 _STATUS = {"A": "added", "D": "removed", "M": "modified", "R": "renamed", "T": "changed"}
 _SECTION = re.compile(rb"^diff --git ", re.M)
 
@@ -182,10 +175,9 @@ def local_files(root: Path, commit: str, ref: str) -> list[Change]:
         shallow = _git(root, "rev-parse", "--is-shallow-repository").stdout.strip() == "true"
         raise CantMeasure(f"the commit {commit[:7]} has no merge base with {ref.removeprefix('refs/remotes/')}"
                           + (" in this shallow clone's history" if shallow else ""))
-    base, attrs = mb.stdout.strip(), {"GIT_ATTR_SOURCE": commit, "GIT_ATTR_NOSYSTEM": "1"}
-    pinned = ("-c", f"core.attributesFile={os.devnull}", *_DIFF)
-    raw = _git(root, *pinned, "--raw", "-z", "--no-abbrev", base, commit, binary=True, env=attrs)
-    patch = _git(root, *pinned, "-p", base, commit, binary=True, env=attrs)
+    base = mb.stdout.strip()
+    raw = pinned_diff(root, base, commit, "--raw", "-z", "--no-abbrev", binary=True)
+    patch = pinned_diff(root, base, commit, "-p", binary=True)
     for got in (raw, patch):
         if got.returncode != 0:
             raise CantMeasure(f"git diff failed: {got.stderr.decode('utf-8', 'replace').strip()}")
