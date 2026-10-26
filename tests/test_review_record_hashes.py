@@ -22,6 +22,8 @@ PROFILE = '[project]\nname = "demo"\nrepo = "acme/demo"\nbase_branch = "main"\n'
 APP = "".join(f"line {i}\n" for i in range(1, 31))
 EMPTY_BLOB = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
 
+pytestmark = pytest.mark.usefixtures("_no_user_git_config")  # tests/conftest.py
+
 
 def git(cwd, *args):
     return subprocess.run(["git", "-c", "user.email=t@example.com", "-c", "user.name=t", "-c", "core.autocrlf=false", *args], cwd=cwd,
@@ -37,16 +39,6 @@ def commit_all(root, message="change"):
 def edit(root, rel, old, new):
     path = root / rel
     path.write_text(path.read_text().replace(old, new))
-
-
-@pytest.fixture(autouse=True)
-def _no_user_git_config(monkeypatch, tmp_path):
-    """The developer's global and system git configuration, and their own
-    git files (`~/.config/git/ignore` and `attributes`), never reach these
-    repositories."""
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
-    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
 
 
 @pytest.fixture

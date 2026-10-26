@@ -10,6 +10,7 @@ that isn't clean is treated as the last allowed one. `workflow review-record
 """
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -324,9 +325,10 @@ DOC = "".join(f"Line {i} of the notes.\n" for i in range(1, 21))
 
 
 @pytest.fixture
-def checkout(tmp_path, monkeypatch):
+def checkout(tmp_path, monkeypatch, _no_user_git_config):
     """A checkout whose `origin` is a local bare repository, with a branch whose
-    change, as GitHub would list its files, is `REST_FILES`."""
+    change, as GitHub would list its files, is `REST_FILES`. The user's git
+    configuration never reaches it."""
     origin, root = tmp_path / "origin.git", tmp_path / "work"
     git(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
     git(tmp_path, "clone", "-q", str(origin), str(root))
@@ -387,6 +389,39 @@ def test_measure_writes_no_record_and_counts_as_merge_check_does(checkout, capsy
     got, _ = check(project, capsys, with_files(*REST_FILES))
     assert got["small"] == {"lines": 11, "files": 4, "max_lines": 60, "max_files": 4, "within": True}
 
+
+
+@pytest.fixture(params=["global", "system", "xdg"])
+def users_git_config(request, tmp_path, monkeypatch):
+    """The developer's git configuration, in each place git reads one, set
+    before `checkout` is made: it signs every commit with a program that
+    always fails."""
+    path = tmp_path / "home" / ("git/config" if request.param == "xdg" else f"{request.param}.gitconfig")
+    path.parent.mkdir(parents=True)
+    path.write_text("[commit]\n\tgpgSign = true\n[gpg]\n\tprogram = false\n")
+    if request.param == "global":
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(path))
+    elif request.param == "system":
+        monkeypatch.delenv("GIT_CONFIG_NOSYSTEM", raising=False)
+        monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(path))
+    else:
+        monkeypatch.delenv("GIT_CONFIG_GLOBAL", raising=False)
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "home"))
+    return path
+
+
+def test_the_checkout_never_reads_the_users_git_config(users_git_config, checkout, capsys):
+    unset = subprocess.run(["git", "config", "--get", "commit.gpgSign"], cwd=checkout, capture_output=True, text=True)
+    assert unset.returncode == 1, unset.stdout
+    code, out, err = measure(capsys)
+    assert code == 0, err
+    assert out.startswith("11 lines in 4 files outside tests: within")
+
+
+def test_the_git_isolation_is_defined_once_in_the_conftest():
+    tests = Path(__file__).resolve().parent
+    defined = sorted(p.name for p in tests.glob("*.py") if re.search(r"^def _no_user_git_config\(", p.read_text(), re.M))
+    assert defined == ["conftest.py"]
 
 @pytest.mark.parametrize("flags, within", [(("--small-max-lines", "10"), False), (("--small-max-files", "3"), False),
                                            (("--small-max-lines", "11", "--small-max-files", "4"), True)])

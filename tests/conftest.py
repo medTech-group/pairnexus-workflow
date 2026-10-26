@@ -48,6 +48,17 @@ def _fresh_guard_budget(monkeypatch):
     monkeypatch.setattr(cli, "_STARTED", time.monotonic())
 
 
+
+@pytest.fixture
+def _no_user_git_config(monkeypatch, tmp_path):
+    """The developer's global and system git configuration, and their own
+    git files (`~/.config/git/ignore` and `attributes`), never reach these
+    repositories. A fixture that makes a repository asks for it, or a
+    module uses it for every test (`pytest.mark.usefixtures`)."""
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
 @pytest.fixture
 def profile(tmp_path):
     return parse(json.loads(json.dumps(BASE_PROFILE)), tmp_path)
