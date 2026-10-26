@@ -1462,11 +1462,18 @@ def _hook_context(event: dict) -> int:
     ctx = context_mod.context_for(prompt, session, files)
     role: list[str] = []  # read once, and only when something would be added
 
-    def attended() -> bool:
+    def current() -> str:
         if not role:
             role.append(roles.role(root, prof.ticket_branch))
-        return role[0] == "attended"
+        return role[0]
 
+    def attended() -> bool:
+        return current() == "attended"
+
+    # A ticket handed to the conductor goes to a ticket session, never built
+    # by the conductor itself (#308): the line comes first, beside the flow.
+    if prof is not None and context_mod.hands_a_ticket(prompt) and current() == "conductor":
+        ctx = context_mod.with_conductor_line(ctx)
     # The guided start at the first prompt (marked whatever it was), and its
     # reminder at each later one: attended sessions only, since ticket and
     # conductor sessions start from a briefing or a charter, never from a menu.

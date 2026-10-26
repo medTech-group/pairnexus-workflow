@@ -34,6 +34,8 @@ In a ticket session the guard refuses a post without it. Labels, assignees, stat
 - **The profile** (`.claude/workflow/profile.toml`, `profile.md`) and the rules it points to.
 - **Its blockers.** If any isn't closed as completed, say so and stop: it isn't ready.
 
+**Never in a conductor session.** With `WORKFLOW_ROLE=conductor`, stop here, before the claim or any other write: the conductor never builds a ticket. Follow the `conductor` skill's "A ticket named in chat" with it instead.
+
 ## 1. Claim it
 
 Skip this if the briefing says the conductor has claimed it. Otherwise, before any other write:

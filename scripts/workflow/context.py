@@ -129,6 +129,34 @@ def reminder_for(prompt: str) -> str | None:
     return REMINDER if _nudged(prompt) else None
 
 
+# A ticket handed to a conductor session (#308): "build #12", "implement #12",
+# "Let's work on 12", `/next 12`. The conductor never builds one itself, so
+# its session is told where the ticket goes, whatever else the prompt brings.
+_HANDED = re.compile(
+    r"\b(?:build\w*|implement\w*|work(?:ing)?[^\S\n]+on|fix\w*|develop\w*|tackle|pick[^\S\n]+up|start[^\S\n]+(?:on|with))\b",
+    re.I,
+)
+
+CONDUCTOR_LINE = (
+    "This is a conductor session: the conductor never builds a ticket itself. Never claim it, branch for it or "
+    "write its code, and don't load `next` or `build-ticket` for it. A ticket named in this message goes to a "
+    "ticket session, under the `conductor` skill's \"A ticket named in chat\": with no run in progress, a run "
+    "scoped to that ticket, through the kick-off; during a run, the amendment \"also #<n>\". The only code the "
+    "conductor writes is its own fixes, where the charter grants `conductor_fixes`."
+)
+
+
+def hands_a_ticket(prompt: str) -> bool:
+    """Whether a prompt asks for a ticket to be built: a conductor session's cue
+    for `CONDUCTOR_LINE`."""
+    return bool(_NEXT.search(prompt or "") or _HANDED.search(prompt or ""))
+
+
+def with_conductor_line(ctx: str | None) -> str:
+    """`ctx` with the conductor line first, where Claude reads it before the flow."""
+    return f"{CONDUCTOR_LINE}\n\n{ctx}" if ctx else CONDUCTOR_LINE
+
+
 def flow_files(project: Path, kit_root: Path, addendum: str = "") -> list[Path]:
     out = []
     for cand in (project / ".claude/workflow/flow.md", kit_root / "docs/flow.md"):

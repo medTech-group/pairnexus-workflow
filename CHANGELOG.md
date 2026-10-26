@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**The conductor never builds a ticket it's handed: "build #12" becomes a run for #12** (#308).
+
+- **The context hook:** in a conductor session (`WORKFLOW_ROLE=conductor`), a message that asks for a ticket to be built ("build #12", "implement #12", "Let's work on 12", `/next 12`) brings a line first, beside the flow: the conductor never builds a ticket itself, never claims it, branches for it or writes its code, and never loads `next` or `build-ticket` for it; the ticket goes to a ticket session. Attended and ticket sessions get nothing new.
+- **`conductor`'s "A ticket named in chat":** with no run in progress, a run scoped to that ticket (`scope.tickets` `[<n>]`, `follow_unblocked` false), through the usual pre-flight and kick-off; during a run, the amendment "also #<n>". Its description names these phrases.
+- **`next`** no longer treats a conductor session like a ticket session ("build as the briefing says"): in a conductor session it never builds, and follows the `conductor` skill instead. **`build-ticket`** stops before the claim in a conductor session. Flow §5 says what a ticket named to the conductor becomes.
+- Tests: `tests/test_conductor_never_builds.py`.
+- **For projects updating:** nothing to do. A conductor session that was asked to build a ticket now starts a run for it instead.
+
 **`review-record --measure` counts with the same pinned `git diff` as the hashes** (#298, from #258).
 
 - **`small.local_changes`** (what `--measure` counts) now diffs with the pins `own_changes` gives the hashes, which move to `small.py` (`DIFF` and `pinned_diff`) so both use one: renames within git's default limit, a submodule never left out, git's default size for a binary file, no external diff or textconv, Myers, and the attributes of the commit itself (git 2.40 and later), never a global, the system's or the working tree's file. So `diff.renameLimit=1`, `diff.ignoreSubmodules=all`, `core.bigFileThreshold`, `core.attributesFile` or an uncommitted `.gitattributes` with `-diff` no longer change `--measure`'s counts, which now agree with what `merge-check` measures from GitHub.

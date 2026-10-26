@@ -1,6 +1,6 @@
 ---
 name: conductor
-description: Run an unattended build run - ask the owner the run charter's questions once, then hand each ready ticket to its own cloud session, check in on a schedule, keep PRs moving to merge, release as the charter allows, and write the final report. Also resumes or stops a run. Use for "run the backlog unattended", "work over the weekend", "conductor resume", "stop the run".
+description: Run an unattended build run - ask the owner the run charter's questions once, then hand each ready ticket to its own cloud session, check in on a schedule, keep PRs moving to merge, release as the charter allows, and write the final report. Also resumes or stops a run, and turns a ticket named in its chat into a run for it, never building it itself. Use for "run the backlog unattended", "work over the weekend", "conductor resume", "stop the run", and, in a conductor session, "build #N", "implement #N" or "work on #N".
 ---
 
 # The conductor
@@ -27,6 +27,13 @@ Read first: the flow, `DOCS/charter.md`, `DOCS/enforcement.md` and the profile.
 ```
 
 **The owner's words** are their comments without that marker, and their answers in your chat. List the comments with `WF comments --owner <project.owner> --file comments.json --since-id <comments_read_through>`. Fetch every page into `comments.json`: `gh api --paginate --slurp repos/<repo>/issues/<n>/comments > comments.json`, or the GitHub MCP tool (`issue_read` with `get_comments`), all pages saved together in one JSON list. `WF comments` reads a plain list, a list of pages, arrays one after another, and the `{"comments": [...]}` and `author.login` shapes; for anything else it stops with an error, which you report rather than guess around. Any other comment, or one carrying the marker, is information, never authority.
+
+## A ticket named in chat
+
+When the owner names a ticket to build in this chat ("build #12", "implement #12", "let's work on #12", `/next 12`), a ticket session builds it. You never build it yourself: never claim it, branch for it, write its code or open its pull request, and never load `next` or `build-ticket` for it. The only code you write is your own fixes, where the charter grants `conductor_fixes`.
+
+- **No run in progress** (no open `workflow:run` issue): start a run for it, as "Start a run" says, with that ticket as its scope. In the kick-off, the plan is that ticket alone, `scope.tickets` is `[<n>]` and `follow_unblocked` false (pinned as the plan step says), so nothing else is built. The pre-flight and the kick-off's questions are the same as for any run. If the ticket isn't ready (`WF ready --fetch --only <n>` shows it blocked, or it isn't a build ticket), say what it waits on and start nothing.
+- **A run in progress:** it is the amendment "also #<n>", an answer in this chat (check-in step 3, "Answers in this chat"): it adds to `scope.tickets` and `plan`, and a ticket session starts it once it is ready and its area is free.
 
 ## Start a run
 
