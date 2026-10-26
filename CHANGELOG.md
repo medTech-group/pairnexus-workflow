@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.1.16
+
+**The conductor hands every ticket to a ticket session, runs can use a merge queue, and small tickets get a small review.** The conductor fix (#308): "build #12", "implement #12" or "let's work on #12" in a conductor session now starts a run for that ticket, or adds it to the conductor's own run, instead of the conductor building it itself. Spec #243's merge queue (#244 to #249, #297): a project can take "Use a merge queue", and `merge-check`, the guard, runs and the ticket sessions queue pull requests instead of updating them. Spec #255's small review (#256 to #261, #281, #283, #295, #296, #298, #301): tickets marked `Review: small` get one Correctness round, Correctness passes after the last round are capped (`run.review_passes`, 2 by default), and a merge of the base that leaves a pull request's own changes identical keeps its review.
+
+- **For projects updating to 0.1.16:**
+  - Update every checkout that runs `merge-check` together: an older kit drops review records with the new `diff=` and `lines=` hashes, so its `merge-check` reads such a pull request as unreviewed (#258).
+  - The pass cap is new: with no `run.review_passes`, a pull request whose head already has 2 Correctness passes after its last round, and needs another, now waits on the owner (#256).
+  - The update brings `merge_group:` into `.github/workflows/workflow-kit.yml` (it does nothing without a queue) and the build-ticket issue template's new comment on `Review: small` (#247, #260). Nothing else changes until the owner takes "Use a merge queue".
+  - Otherwise nothing to do.
+
 **The conductor never builds a ticket named to it: "build #12" becomes a run for #12** (#308).
 
 - **The context hook:** in a conductor session (`WORKFLOW_ROLE=conductor`, with or without a profile), a message that names a ticket right after a build verb ("build #12", "building tickets 12 and 13", "fix bug #12", "Let's work on 12", "pick up #12", "kick off #12", "build `#12`", "build spec #32"), names it before "build", "built" or "implement" ("#12 please build it"), or is `/next`, `/build-ticket` or `/implement-spec` brings a line first, beside the flow: if the message asks for a ticket to be built, the conductor makes no branch, code or pull request of its own for it, never loads `next` or `build-ticket` for it, and follows the `conductor` skill instead. A message that names no ticket ("why did the build fail?", "fix the CI", "fix 2 typos", "build 2.0") brings nothing: a bare number counts after "ticket", "issue", "bug" or "spec", or at the end of its clause ("build 12 please"). Only `WORKFLOW_ROLE` makes a conductor session, so the hook reads no branch for it, and every repeat in its pattern is bounded, so a long pasted prompt stays quick. Attended and ticket sessions get nothing new.
