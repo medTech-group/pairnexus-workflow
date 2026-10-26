@@ -163,8 +163,9 @@ CONDUCTOR_LINE = (
 
 
 def names_a_ticket(prompt: str) -> bool:
-    """Whether a prompt asks for a named ticket to be built, or is `/next`: a
-    conductor session's cue for `CONDUCTOR_LINE`."""
+    """Whether a prompt names a ticket beside a build verb, or is `/next` or
+    `/build-ticket`: a conductor session's cue for `CONDUCTOR_LINE`, which is
+    worded for a message that may not ask for a build ("don't build #13")."""
     return bool(_NEXT.search(prompt or "") or _NAMED.search(prompt or ""))
 
 

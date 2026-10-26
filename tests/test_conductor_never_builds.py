@@ -1,6 +1,6 @@
-"""#308: a conductor session never builds a ticket it's named. "build #12",
+"""#308: a conductor session never builds a ticket named to it. "build #12",
 "implement #12" or "Let's work on #12" in a conductor session becomes a run
-scoped to that ticket (or, during a run, the amendment "also #12"), named to a
+scoped to that ticket (or, during a run, the amendment "also #12"), handed to a
 ticket session. Seams: `workflow hook context`, as Claude Code runs it, and the
 skills' own text."""
 
