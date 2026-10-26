@@ -13,6 +13,10 @@ untouched.
 
 Beside either, the first prompt of an attended session for someone new to
 building brings the kit's glossary and the rule to explain its words once.
+
+In a conductor session, a prompt that names a ticket to build brings a line
+first, beside anything else: the conductor never builds it, and its skill
+hands it to a ticket session (#308).
 """
 
 from __future__ import annotations
@@ -129,27 +133,29 @@ def reminder_for(prompt: str) -> str | None:
     return REMINDER if _nudged(prompt) else None
 
 
-# A ticket handed to a conductor session (#308): "build #12", "implement #12",
-# "Let's work on 12", `/next 12`. The conductor never builds one itself, so
-# its session is told where the ticket goes, whatever else the prompt brings.
-_HANDED = re.compile(
-    r"\b(?:build\w*|implement\w*|work(?:ing)?[^\S\n]+on|fix\w*|develop\w*|tackle|pick[^\S\n]+up|start[^\S\n]+(?:on|with))\b",
+# A ticket named to a conductor session (#308): a build verb with the ticket
+# right after it ("build #12", "implement ticket 12", "Let's work on 12"), or
+# `/next`. The conductor never builds one itself, so its session is told where
+# the ticket goes. "why did the build fail?" or "fix the CI" names no ticket.
+_NAMED = re.compile(
+    r"\b(?:build|implement|fix|work(?:ing)?[^\S\n]+on|start[^\S\n]+on)[^\S\n]+(?:(?:the[^\S\n]+)?(?:ticket|issue)[^\S\n]+)?"
+    r"(?:#\d+\b|\d+\b|https?://\S*/issues/\d+)",
     re.I,
 )
 
 CONDUCTOR_LINE = (
-    "This is a conductor session: the conductor never builds a ticket itself. Never claim it, branch for it or "
-    "write its code, and don't load `next` or `build-ticket` for it. A ticket named in this message goes to a "
-    "ticket session, under the `conductor` skill's \"A ticket named in chat\": with no run in progress, a run "
-    "scoped to that ticket, through the kick-off; during a run, the amendment \"also #<n>\". The only code the "
-    "conductor writes is its own fixes, where the charter grants `conductor_fixes`."
+    "This is a conductor session: the conductor never builds a ticket itself. If this message asks for a ticket "
+    "to be built, never claim it, branch for it or write its code, and don't load `next` or `build-ticket` for "
+    "it: follow the `conductor` skill's \"A ticket named in chat\", which hands it to a ticket session (with no "
+    "run in progress, a run scoped to it; during this session's run, the amendment \"also #<n>\"). The only code "
+    "the conductor writes is its own fixes, where the charter grants `conductor_fixes`."
 )
 
 
-def hands_a_ticket(prompt: str) -> bool:
-    """Whether a prompt asks for a ticket to be built: a conductor session's cue
-    for `CONDUCTOR_LINE`."""
-    return bool(_NEXT.search(prompt or "") or _HANDED.search(prompt or ""))
+def names_a_ticket(prompt: str) -> bool:
+    """Whether a prompt asks for a named ticket to be built, or is `/next`: a
+    conductor session's cue for `CONDUCTOR_LINE`."""
+    return bool(_NEXT.search(prompt or "") or _NAMED.search(prompt or ""))
 
 
 def with_conductor_line(ctx: str | None) -> str:
@@ -170,7 +176,8 @@ def flow_files(project: Path, kit_root: Path, addendum: str = "") -> list[Path]:
 
 FLOW_HEAD = "This request is part of the project's workflow. Follow its flow step by step: skip nothing, and end with its checklist."
 # What the first flow context may take of Claude Code's limit (CONTEXT_LIMIT,
-# below): the rest is room for the glossary's rule and path put in front of it.
+# below): the rest is room for what goes in front of it, the glossary's rule
+# and path in an attended session or the conductor line in a conductor session.
 FLOW_BUDGET = 8_500
 _READ = " Read it now, all of it, before acting: "
 _WHOLE = " All of it is below (from "

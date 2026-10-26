@@ -1,6 +1,6 @@
 ---
 name: build-ticket
-description: Build one ready ticket from claim to merge - tdd at the spec's seams, the review panel in rounds until clean, a pull request with its findings table, CI green, the local suite's evidence, and the merge under the merge rule. Use for "implement #N", "build #N", "build #N with a light review" ("quick build #N"), "build #N with the full panel", or a ticket session's briefing.
+description: Build one ready ticket from claim to merge - tdd at the spec's seams, the review panel in rounds until clean, a pull request with its findings table, CI green, the local suite's evidence, and the merge under the merge rule. Use for "implement #N", "build #N", "build #N with a light review" ("quick build #N"), "build #N with the full panel", or a ticket session's briefing. Never in a conductor session, which hands the ticket to a ticket session instead.
 ---
 
 # Build a ticket

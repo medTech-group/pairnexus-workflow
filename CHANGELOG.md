@@ -2,11 +2,11 @@
 
 ## Unreleased
 
-**The conductor never builds a ticket it's handed: "build #12" becomes a run for #12** (#308).
+**The conductor never builds a ticket named to it: "build #12" becomes a run for #12** (#308).
 
-- **The context hook:** in a conductor session (`WORKFLOW_ROLE=conductor`), a message that asks for a ticket to be built ("build #12", "implement #12", "Let's work on 12", `/next 12`) brings a line first, beside the flow: the conductor never builds a ticket itself, never claims it, branches for it or writes its code, and never loads `next` or `build-ticket` for it; the ticket goes to a ticket session. Attended and ticket sessions get nothing new.
-- **`conductor`'s "A ticket named in chat":** with no run in progress, a run scoped to that ticket (`scope.tickets` `[<n>]`, `follow_unblocked` false), through the usual pre-flight and kick-off; during a run, the amendment "also #<n>". Its description names these phrases.
-- **`next`** no longer treats a conductor session like a ticket session ("build as the briefing says"): in a conductor session it never builds, and follows the `conductor` skill instead. **`build-ticket`** stops before the claim in a conductor session. Flow §5 says what a ticket named to the conductor becomes.
+- **The context hook:** in a conductor session (`WORKFLOW_ROLE=conductor`, with or without a profile), a message that names a ticket right after a build verb ("build #12", "implement ticket 12", "fix #12", "Let's work on 12") or is `/next` brings a line first, beside the flow: if the message asks for a ticket to be built, the conductor never claims it, branches for it or writes its code, never loads `next` or `build-ticket` for it, and follows the `conductor` skill instead. A message that names no ticket ("why did the build fail?", "fix the CI") brings nothing. Attended and ticket sessions get nothing new.
+- **`conductor`'s "A ticket named in chat":** with no run in progress, a run scoped to that ticket (`scope.tickets` `[<n>]`, `follow_unblocked` false), through the usual pre-flight and kick-off; during the run this session conducts, the amendment "also #<n>" (added to `plan`, to `scope.tickets` when it is a list, and out of `scope.exclude`); during a run another session conducts, nothing written, and the owner told to comment "also #<n>" on its tracking issue or to say "conductor resume". `/next` with no ticket offers a run of the ready tickets. Its description names these phrases.
+- **`next`** opens with "Never in a conductor session" and no longer treats a conductor session like a ticket session ("build as the briefing says"). **`build-ticket`** stops before the claim in a conductor session, and its description says so. Flow §5 says what a ticket named to the conductor becomes.
 - Tests: `tests/test_conductor_never_builds.py`.
 - **For projects updating:** nothing to do. A conductor session that was asked to build a ticket now starts a run for it instead.
 
