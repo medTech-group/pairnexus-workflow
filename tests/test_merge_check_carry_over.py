@@ -6,13 +6,15 @@ at its commit (#258): `diff`, with their context lines, and `lines`, of the
 changed lines alone. `merge-check` computes the head's from GitHub's per-file
 data (`--files`: each file's `status`, `sha` and `patch`) and shows them as
 `head_hashes`.
-- **The carry-over:** when the head isn't the last counted review's commit but
-  its `diff` hash is that review's, that review covers the head, with its
-  result, clean or not. No pass is needed.
+- **The carry-over:** when the head is a merge of the base (two or more
+  parents, one outside the pull request's commits, read from `--commits`) and
+  isn't the last counted review's commit, but its `diff` hash is that
+  review's, that review covers the head, with its result, clean or not. No
+  pass is needed.
 - **The cap:** a pass doesn't count toward `--review-passes` when its commit
-  is a merge of the base (two or more parents, one outside the pull request's
-  commits, read from `--commits`), the last counted review before it was
-  clean, and its `lines` hash is that review's.
+  is a merge of the base, the last counted review before it (by the pull
+  request's history) was clean, and its `lines` hash is that review's. A pass
+  that rechecks open findings always counts.
 - A record without the hashes, or with `unknown`, covers only its own commit,
   and its passes count.
 """
@@ -248,6 +250,20 @@ def test_a_pass_that_rechecks_open_findings_counts_whatever_was_posted_between(p
         got, _ = check(project, capsys, data, "--review-passes", cap)
         assert ids(got) == ["passes_used_up"], cap
     data["comments"] = records(*late, hashed("pass", rnd=1, commit=HEAD, clean=False, hashes=reviewed))
+    got, _ = check(project, capsys, data, "--review-passes", "2")
+    assert ids(got) == ["passes_used_up"]
+
+
+def test_a_late_record_for_an_older_commit_isnt_the_review_before_a_pass(project, capsys):
+    # The open findings are on an earlier merge (MIDDLE); a clean record for EARLIER, posted after them, doesn't hide them.
+    reviewed, context = hashes_of(project, capsys, REVIEWED), hashes_of(project, capsys, CONTEXT)
+    data = pr(CONTEXT, (EARLIER, [FORK_POINT]), (MIDDLE, [EARLIER, BASE_TIP]), (HEAD, [MIDDLE, BASE_TIP]))
+    late = [hashed(rnd=1, commit=EARLIER, hashes=reviewed), hashed("pass", rnd=1, commit=MIDDLE, clean=False, hashes=context),
+            hashed("pass", rnd=1, commit=EARLIER, hashes=reviewed)]
+    data["comments"] = records(*late)
+    got, _ = check(project, capsys, data, "--review-passes", "1")
+    assert ids(got) == ["passes_used_up"]
+    data["comments"] = records(*late, hashed("pass", rnd=1, commit=HEAD, clean=False, hashes=context))
     got, _ = check(project, capsys, data, "--review-passes", "2")
     assert ids(got) == ["passes_used_up"]
 

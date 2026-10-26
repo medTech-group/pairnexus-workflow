@@ -1135,11 +1135,17 @@ def _panel(ctx: Context, add) -> None:
     def on_head(r: reviews.Record) -> bool:
         return r.commit == head or (carried and r is latest)
 
+    history = {sha: n for n, sha in enumerate(ctx.parents())}  # the PR's commits, oldest first
+
     def free(i: int, commit: str | None, lines: str | None) -> bool:
-        """A pass on `commit` after the counted record `i` doesn't count toward
-        the cap (answer 23). One that rechecks open findings always counts: a
-        record since the last round on that commit that wasn't clean."""
-        prev, since = counted[i], counted[rounds[-1]:i + 1]
+        """A pass on `commit` after the counted records up to `i` doesn't count
+        toward the cap (answer 23). The review before it is the latest since
+        the last round by the PR's history, then by posting, so a record posted
+        late for an older commit isn't it. One that rechecks open findings
+        always counts: a record on that commit since the last round that
+        wasn't clean."""
+        since = counted[rounds[-1]:i + 1]
+        prev = max(enumerate(since), key=lambda e: (history.get(e[1].commit, -1), e[0]))[1]
         return (ctx.base_merge(commit) and prev.clean and _hashed(lines) and lines == prev.lines
                 and all(r.clean for r in since if r.commit == commit))
 
