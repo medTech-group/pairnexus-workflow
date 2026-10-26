@@ -221,6 +221,14 @@ def _has_merge_queue(rs: dict) -> bool:
     return any(r["type"] == "merge_queue" for r in rs["rules"])
 
 
+# Why a ruleset on the default branch can't be placed: the settings file has
+# no default_branch, or there are no settings to read it from (#302).
+DEFAULT_UNKNOWN = (
+    "the settings file has no default_branch",
+    "the repository's settings (--repo) weren't given or couldn't be read",
+)
+
+
 def _targets(rs: dict, base: str, default: str | None, have_settings: bool) -> str | None:
     """Why the ruleset doesn't take in the base branch, or None when it does.
 
@@ -230,8 +238,8 @@ def _targets(rs: dict, base: str, default: str | None, have_settings: bool) -> s
     matches the base branch, a pattern included, takes it out, and one whose
     pattern can't be matched here (or isn't a full ref name) counts as taking
     it out. Excludes are matched ignoring case, so they only ever take out more.
-    One that certainly takes the base branch out wins over any reason it can't
-    tell (#302).
+    One that names the base branch (`~ALL`, or its full ref name exactly) wins
+    over any reason it can't tell (#302).
     """
     if rs["target"] != "branch":
         return f"doesn't target {base} (it is a {quote(rs['target'])} ruleset)"
@@ -246,21 +254,11 @@ def _targets(rs: dict, base: str, default: str | None, have_settings: bool) -> s
             return None if default is None else default == base
         return False
 
-    def excludes_base(pattern: str) -> bool:
-        """Whether an exclude certainly takes the base branch out."""
-        if names_base(pattern):
-            return True
-        if any(s in pattern for s in UNREAD_GLOB) or not pattern.startswith("refs/"):
-            return False
-        return fnmatch.fnmatchcase(full, pattern) or fnmatch.fnmatchcase(full.casefold(), pattern.casefold())
-
-    # An exclude that names the base takes it out, whatever else can't be told.
-    out = next((p for p in ref.get("exclude") or [] if excludes_base(p)), None)
-    unknown = (
-        "the settings file has no default_branch"
-        if have_settings
-        else "the repository's settings (--repo) weren't given or couldn't be read"
-    )
+    # An exclude that names the base (`~ALL`, or its full ref name exactly)
+    # takes it out, whatever else can't be told. A pattern, or a match only
+    # when case is ignored, is never that certain.
+    out = next((p for p in ref.get("exclude") or [] if names_base(p)), None)
+    unknown = DEFAULT_UNKNOWN[0] if have_settings else DEFAULT_UNKNOWN[1]
     hits = [names_base(p) for p in ref.get("include") or []]
     patterns = [p for p in ref.get("include") or [] if any(c in GLOB for c in p)]
     if out is not None and (True in hits or None in hits or patterns):
@@ -279,6 +277,8 @@ def _targets(rs: dict, base: str, default: str | None, have_settings: bool) -> s
             return f"excludes the default branch, and {unknown}, so it can't tell whether that is {base}"
         if any(s in p for s in UNREAD_GLOB) or not p.startswith("refs/"):
             return f"excludes {quote(p)}, a pattern this command can't match, so it can't tell whether {base} is left out"
+        if fnmatch.fnmatchcase(full, p) or fnmatch.fnmatchcase(full.casefold(), p.casefold()):
+            return f"doesn't target {base} (it excludes {quote(p)})"
     return None
 
 

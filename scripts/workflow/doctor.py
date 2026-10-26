@@ -1335,18 +1335,19 @@ def _queue_reading(gh: _GitHub) -> protection_mod.Report:
 
 
 def _unplaced_fix(i: Inputs) -> Words:
-    """The fix for a merge-queue rule the kit can't place: without the
-    default branch, the settings that give it come first (#302)."""
+    """The fix for a merge-queue rule the kit can't place: where the
+    default branch would place it, the settings that give it come first (#302)."""
     base = i.profile.base_branch
     fix = Words(
         f"Check in Settings → Rules whether that ruleset applies to `{base}`; naming `{base}` itself (not a pattern) lets the kit tell.",
         f"Name refs/heads/{base} (or ~DEFAULT_BRANCH, with --repo's default_branch) in its include, so the reader can count it.",
     )
-    if _github(i).undefaulted is None:
+    reasons = _queue_reading(_github(i)).queue_unsure
+    if not any(w in r for r in reasons for w in protection_mod.DEFAULT_UNKNOWN):
         return fix
     return Words(
         "Ask Claude to fetch the repository's settings from GitHub in full, with its default branch, and check again. If it still can't tell: " + fix.new[:1].lower() + fix.new[1:],
-        "Give --repo with default_branch (GET repos/<repo>) and rerun; then, if still unknown: " + fix.developer,
+        "Give --repo with default_branch (GET repos/<repo>) and rerun; then, if still unknown: " + fix.developer[:1].lower() + fix.developer[1:],
     )
 
 
