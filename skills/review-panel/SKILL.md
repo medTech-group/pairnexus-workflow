@@ -123,7 +123,7 @@ The review of a ticket marked `Review: small` while its diff stays within the sm
 
   (`correctness,security`, `correctness,explorer` or `correctness,security,explorer` when those ran; `--not-clean` when it found something to fix.)
 - **Fixes after it** are covered by Correctness passes (section 5), under the pass cap. There are no further rounds: when the round isn't clean, fix its findings as in section 3, and a clean pass on the head lifts them.
-- **Past the small threshold,** measured before reviewing or as `merge-check`'s `past_small_threshold`, the ticket doesn't get the small review: run the full panel (section 5), or the light review (section 6) in a 1-round run. The pull request's body says the diff overruled the mark.
+- **Past the small threshold,** measured before reviewing or as `merge-check`'s `past_small_threshold`, the ticket doesn't get the small review: run the full panel (section 5), or the light review (section 6) in a 1-round run. The pull request's body says the diff overruled the mark. After a small round already ran, that is one full-panel round (the light review's round 1 in a 1-round run, without the explorer) with the next round number, allowed past the round limit; if it isn't clean, fix its findings and run a Correctness pass, with no further round.
 - **Anything still open** after the pass cap goes to the owner in the PR body, never silently.
 
 ## 8. The planning review

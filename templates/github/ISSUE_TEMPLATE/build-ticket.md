@@ -5,8 +5,7 @@ labels: ["ready-for-agent"]
 ---
 
 Area: <one of the profile's [areas]>
-<!-- Keep the next line only when you expect the change to stay within the small threshold (the profile's run.small_max_lines changed lines in run.small_max_files files, outside tests) and to add no endpoint, table, screen or setting: the ticket then gets the small review. Otherwise delete it; deleting it opts the ticket out. -->
-Review: small
+<!-- Add a line reading `Review: small` here only when you expect the change to stay within the small threshold (the profile's run.small_max_lines changed lines in run.small_max_files files, outside tests) and to add no endpoint, table, screen or setting: the ticket then gets the small review. Without the line it gets the full panel; deleting the line later opts the ticket out. -->
 
 ## Parent
 

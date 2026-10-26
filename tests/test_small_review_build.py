@@ -13,6 +13,8 @@ NOW = "**Build it now (Recommended)**"
 LIGHT = "**Build it with a light review**"
 FULL = "**Build it with the full panel**"
 LATER = "**Leave it ready for later**"
+# What a ticket marked small adds: no new surface.
+NO_NEW_SURFACE = "no endpoint, table, screen or setting"
 
 
 def _read(rel: str) -> str:
@@ -96,6 +98,10 @@ def test_past_the_threshold_it_is_the_full_panel_or_the_light_review_in_a_one_ro
     assert "past the small threshold" in small.lower()
     assert "the full panel (section 5)" in small
     assert "the light review (section 6) in a 1-round run" in small
+    # After a small round, as merge-check's `after_small`: one full-panel round past the limit, then passes.
+    assert "one full-panel round (the light review's round 1 in a 1-round run, without the explorer) with the next round number, allowed past the round limit" in small
+    assert "if it isn't clean, fix its findings and run a Correctness pass, with no further round" in small
+    assert "allowed past the round limit" in _build_review()
     assert "never changes the merge rule (flow §4)" in small
 
 
@@ -150,7 +156,7 @@ def test_flow_section_3_names_the_small_review():
     assert "Correctness passes under the pass cap" in flow
     assert "the full panel (the light review in a 1-round run)" in flow
     # The light review is now for unmarked tickets in a 1-round run.
-    assert "used when the briefing's review rounds are 1 on an unmarked ticket" in flow
+    assert "used when the briefing's review rounds are 1 on a ticket that doesn't get the small review" in flow
 
 
 def test_the_skills_and_the_flow_say_the_same_things():
@@ -208,30 +214,29 @@ def test_starts_choice_rule_names_the_three_choices_on_a_ticket_marked_small():
 
 # ---------- planning writes the mark ----------
 
-WHEN = "no endpoint, table, screen or setting"
-
-
 def test_flow_section_2_writes_the_mark():
     step = _flat(_section("docs/flow.md", "## 2. A spec", "\n## 3."))
     assert f"{MARK}, only when the planner expects the change to stay within the small threshold" in step
-    assert WHEN in step
+    assert NO_NEW_SURFACE in step
     assert "removing the line opts the ticket out" in step
 
 
 def test_the_quick_ticket_and_the_sorting_write_the_mark():
     quick = _flat(_section("skills/start/SKILL.md", "**Quick ticket** (flow §2", "**Find the cause first:**"))
-    assert MARK in quick and WHEN in quick and "small threshold" in quick
+    assert MARK in quick and NO_NEW_SURFACE in quick and "small threshold" in quick
     sorting = _flat(_section("skills/start/SKILL.md", "## 5. Sorting new issues", "\n## "))
     ready = sorting.split("**Ready to build**", 1)[1].split(" - **", 1)[0]
     assert MARK in ready
 
 
-def test_the_build_ticket_issue_template_names_the_mark():
+def test_the_build_ticket_issue_template_names_the_mark_without_writing_it():
     template = _read("templates/github/ISSUE_TEMPLATE/build-ticket.md")
-    assert re.search(r"^Review: small$", template, re.M)
+    # Opt-in: a ticket filed from the template isn't marked small unless the planner adds the line.
+    assert not re.search(r"^\s*Review: small\s*$", template, re.M)
     note = _flat(template)
-    assert WHEN in note and "small threshold" in note
-    assert "delete" in note.lower()
+    assert f"Add a line reading {MARK} here only when" in note
+    assert NO_NEW_SURFACE in note and "small threshold" in note
+    assert "Without the line it gets the full panel" in note
 
 
 # ---------- the glossary and the wording ----------
