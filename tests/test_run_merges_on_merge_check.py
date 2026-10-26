@@ -138,9 +138,9 @@ def test_build_ticket_runs_merge_check_with_the_charter_before_merging():
     assert "the tracking issue the briefing names saved there (`gh api repos/<repo>/issues/<tracking> --jq .body > .workflow/tracking.md`" in step
     assert "--check-logs .workflow/check-logs" in step
     assert "**`ready` is the only yes**" in step
-    assert "- `not_yet`: never merge or arm auto-merge, and if auto-merge is armed, disarm it (" + DISARM + ")" in step
+    assert "- `not_yet`: never merge, arm auto-merge or queue, and if auto-merge is armed, disarm it (" + DISARM + ")" in step
     assert "`review_stale`: a Correctness pass on the new commits" in step
-    assert "right before each of these (merging, arming auto-merge, saying it's ready), run `WF merge-check --fetch <PR> --json" in step
+    assert "right before each of these (merging, arming auto-merge, queueing, saying it's ready), run `WF merge-check --fetch <PR> --json" in step
     session = next(ln for ln in step.splitlines() if ln.startswith("   | `session` |"))
     assert all(pin in session for pin in PINS), session
     auto = next(ln for ln in step.splitlines() if ln.startswith("   | `auto-merge` |"))
@@ -163,7 +163,7 @@ def test_build_ticket_runs_merge_check_with_the_charter_before_merging():
 def test_build_ticket_handles_owner_review_and_attended_work():
     step = _merge_step()
     owner_review = next(ln for ln in step.splitlines() if ln.strip().startswith("- `owner_review`:"))
-    assert "Never merge it or arm auto-merge: comment on the PR and on the tracking issue that the owner reviews and merges it" in owner_review
+    assert "Never merge it, arm auto-merge or queue it: comment on the PR and on the tracking issue that the owner reviews and merges it" in owner_review
     assert "end with `WORKFLOW-STATUS: waiting`" in owner_review
     assert "is #N ready to merge?" in step
     attended = step[step.index("3. **Run `WF merge-check`.**"):].split("\n")[0]
@@ -212,14 +212,32 @@ def test_briefing_names_merge_check_and_the_charter(tmp_path):
     merging = _render(tmp_path, "session", ["Backend tests"])
     assert "merge-check --fetch <PR> --json --charter .workflow/tracking.md" in merging
     assert "the body of the tracking issue #232 saved to `.workflow/tracking.md`" in merging
-    assert "`ready` is the only yes. On `not_yet`, never merge or arm auto-merge (disarm it if it's armed)" in merging
+    assert "`ready` is the only yes. On `not_yet`, never merge, arm auto-merge or queue (disarm auto-merge if it's armed)" in merging
     assert "merge it yourself with a merge commit pinned to the head it checked" in merging
     assert "On `ready`, act by the merge mode: `session` merges with a merge commit pinned to the head it checked; `auto-merge` arms auto-merge pinned to it; `owner` says it's ready and leaves it." in merging
     assert "In `auto-merge` mode, disarm auto-merge before any push while it's armed." in merging
-    assert "Right before each of these (merging, arming auto-merge, saying it's ready), run `workflow merge-check`" in merging
+    assert "Right before each of these (merging, arming auto-merge, queueing, saying it's ready), run `workflow merge-check`" in merging
     assert "Merge mode: **session**" in merging and "Backend tests" in merging
     assert "--check-logs" in merging
     assert "evidence --base-ref origin/main" in merging
+
+
+def test_without_a_queue_the_briefing_merges_or_arms_auto_merge(tmp_path):
+    # #297: queueing joins the two older lines; what a session does without a queue reads as it did.
+    merging = _render(tmp_path, "auto-merge", [])
+    assert (
+        "- **Without a merge queue** (`merge-check`'s `queue` is false, with no `queue_unsure` note). On `ready`, act by the merge mode: "
+        "`session` merges with a merge commit pinned to the head it checked; `auto-merge` arms auto-merge pinned to it; "
+        "`owner` says it's ready and leaves it. In `auto-merge` mode, disarm auto-merge before any push while it's armed. "
+        "If GitHub refuses to arm auto-merge because the PR is already mergeable (clean), run `merge-check` again at that moment "
+        "and, on `ready`, merge it yourself with a merge commit pinned to the head it checked.\n"
+    ) in merging
+    ready = next(ln for ln in merging.splitlines() if ln.startswith("- `ready` is the only yes."))
+    assert ready == (
+        "- `ready` is the only yes. On `not_yet`, never merge, arm auto-merge or queue (disarm auto-merge if it's armed), "
+        "and act on its reasons. On `owner_review`, comment on the PR and on #232 that the owner reviews and merges it, "
+        "and end with `WORKFLOW-STATUS: waiting`."
+    )
 
 
 def test_briefing_keeps_auto_merge_and_no_waivers(tmp_path):
