@@ -41,7 +41,7 @@ The base branch is protected when the active rulesets that target it, taken toge
 - require a pull request (a `pull_request` rule);
 - and none of them has a bypass list.
 
-A ruleset **targets** the base branch when it is a branch ruleset and its ref conditions include `refs/heads/<base>`, `~ALL`, or `~DEFAULT_BRANCH` when the base branch is the default branch, and none of its excludes matches the base branch. An include pattern such as `refs/heads/ma*` doesn't count: the report says it can't tell. Excludes are matched ignoring case. An exclude pattern GitHub reads differently from this command (one with `**`, `[^`, `[!`, `\`, `{` or `}`), or one that isn't a full ref name (`main` rather than `refs/heads/main`), counts as excluding the base branch.
+A ruleset **targets** the base branch when it is a branch ruleset and its ref conditions include `refs/heads/<base>`, `~ALL`, or `~DEFAULT_BRANCH` when the base branch is the default branch, and none of its excludes matches the base branch. An include pattern such as `refs/heads/ma*` doesn't count: the report says it can't tell, unless an exclude names the base branch (`~ALL`, `refs/heads/<base>` exactly, or `~DEFAULT_BRANCH` when the settings say the base branch is the default), which takes it out whatever the include. A `~DEFAULT_BRANCH` include or exclude without the settings' `default_branch` is the same. Excludes are matched ignoring case. An exclude pattern GitHub reads differently from this command (one with `**`, `[^`, `[!`, `\`, `{` or `}`), or one that isn't a full ref name (`main` rather than `refs/heads/main`), counts as excluding the base branch.
 
 Each thing missing is its own line, in plain words:
 - no rulesets;

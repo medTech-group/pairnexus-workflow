@@ -14,7 +14,7 @@ import pytest
 
 from changelog_notes import since_0110
 from conftest import KIT
-from test_doctor import RULESET, SETTINGS, _bin, _prof, _project, _report
+from test_doctor import RULESET, SETTINGS, _bin, _prof, _project, _report, gh_routes
 from test_doctor_github import _rs, _rule, _without
 
 NOW = "2026-10-25T12:00:00Z"
@@ -373,6 +373,155 @@ def test_a_merge_queue_rule_in_an_unsure_ruleset_is_cant_check(tmp_path, project
     assert "github.merge_queue" not in lines and r["merge_queue"]["queue"] is None
 
 
+# ---------- the queue's state where the rulesets can't be placed (#302) ----------
+
+NO_DEFAULT = {k: v for k, v in ORG.items() if k != "default_branch"}
+PATTERN = {"ref_name": {"include": ["refs/heads/ma*"], "exclude": []}}
+EVERY_BRANCH = {"ref_name": {"include": ["~ALL"], "exclude": []}}
+
+
+def _queue_only(queue):
+    return {"queue": queue, "available": None, "merge_group": None, "signals": None}
+
+
+def _no_queue_lines(lines):
+    return "github.merge_queue" not in lines and "github.merge_group" not in lines
+
+
+@pytest.mark.parametrize("settings", [NO_DEFAULT, "nope"], ids=["no-default-branch", "settings-unreadable"])
+def test_a_queue_rule_with_the_default_branch_unknown_gives_queue_null(tmp_path, project, settings):
+    lines, r = _github(tmp_path, project, rulesets=(_queued(),), settings=settings)
+    assert lines["github.ruleset"]["status"] == "cant_check" and _no_queue_lines(lines)  # the two readings differ
+    assert r["merge_queue"] == _queue_only(None)
+
+
+def test_a_pattern_queue_rule_with_the_default_branch_unknown_gives_queue_null(tmp_path, project):
+    lines, r = _github(tmp_path, project, rulesets=(RULESET, _queued(_rs(id=203, name="Queue", conditions=PATTERN))), settings=NO_DEFAULT)
+    assert _no_queue_lines(lines)
+    assert r["merge_queue"] == _queue_only(None)
+
+
+def test_no_queue_rule_with_the_default_branch_unknown_gives_queue_false(tmp_path, project):
+    lines, r = _github(tmp_path, project, settings=NO_DEFAULT)
+    assert lines["github.ruleset"]["status"] == "cant_check" and _no_queue_lines(lines)
+    assert r["merge_queue"] == _queue_only(False)
+
+
+def test_a_queue_rule_on_every_branch_is_on_whatever_the_default_branch(tmp_path, project):
+    every = _queued(_rs(id=204, name="Everywhere", conditions=EVERY_BRANCH))
+    lines, r = _github(tmp_path, project, rulesets=(RULESET, every), settings=NO_DEFAULT)
+    assert lines["github.ruleset"]["status"] == "cant_check" and _no_queue_lines(lines)
+    assert r["merge_queue"] == _queue_only(True)
+
+
+OTHERS = _queued(_rs(id=205, name="Others", conditions={"ref_name": {"include": ["~ALL"], "exclude": ["~DEFAULT_BRANCH"]}}))
+
+
+def _on_main(strict):
+    rs = _rs(conditions={"ref_name": {"include": ["refs/heads/main"], "exclude": []}})
+    _rule(rs, "required_status_checks")["parameters"]["strict_required_status_checks_policy"] = strict
+    return rs
+
+
+def test_a_queue_rule_off_the_default_branch_with_it_unknown_gives_queue_null(tmp_path, project):
+    # Read with the base as the default branch, the ruleset leaves it out;
+    # read with another, it may apply: the readings agree on the other
+    # lines, never on the queue.
+    lines, r = _github(tmp_path, project, rulesets=(OTHERS,), settings=NO_DEFAULT)
+    assert r["merge_queue"] == _queue_only(None) and _no_queue_lines(lines)
+    assert lines["github.ruleset"]["status"] == "gap"
+    lines, r = _github(tmp_path, project, rulesets=(_on_main(True), OTHERS), settings=NO_DEFAULT)
+    assert r["merge_queue"]["queue"] is None
+    q = lines["github.merge_queue"]
+    assert q["status"] == "cant_check" and "Others" in q["message"] and q["offer"] is None, q
+    assert "default_branch" in q["message"]  # the cause: the settings don't say which branch is the default
+    assert q["fix"].startswith("Ask Claude to fetch the repository's settings") and "default branch" in q["fix"], q
+    lines, _ = _github(tmp_path, project, rulesets=(_on_main(True), OTHERS), settings=NO_DEFAULT, env={"WORKFLOW_EXPERIENCE": "developer"})
+    assert lines["github.merge_queue"]["fix"].startswith("Give --repo with default_branch (GET repos/<repo>) and rerun; then, if still unknown: name refs/heads/main")
+
+
+def test_with_the_settings_unreadable_the_cant_tell_line_says_so(tmp_path, project):
+    lines, _ = _github(tmp_path, project, rulesets=(_on_main(True), OTHERS), settings="nope")
+    q = lines["github.merge_queue"]
+    assert q["status"] == "cant_check" and "the repository's settings (--repo) weren't given or couldn't be read, so" in q["message"], q
+
+
+@pytest.mark.parametrize("ref_name", [
+    {"include": ["~DEFAULT_BRANCH"], "exclude": ["refs/heads/main"]},
+    {"include": ["~ALL"], "exclude": ["~DEFAULT_BRANCH", "refs/heads/main"]},
+    {"include": ["refs/heads/ma*"], "exclude": ["refs/heads/main"]},
+], ids=["default-branch", "all-but-default", "pattern"])
+def test_a_queue_rule_in_a_ruleset_that_excludes_the_base_is_off(tmp_path, project, ref_name):
+    # Whatever the include, an exclude that names the base takes it out.
+    elsewhere = _queued(_rs(id=206, name="Elsewhere", conditions={"ref_name": ref_name}))
+    lines, r = _github(tmp_path, project, rulesets=(_on_main(False), elsewhere), settings=NO_DEFAULT)
+    assert r["merge_queue"]["queue"] is False
+    assert lines["github.up_to_date"]["status"] == "gap"
+
+
+def test_a_base_written_as_a_ref_still_gets_the_settings_first_fix(tmp_path):
+    root = _checkout(tmp_path, {"ci.yml": CI_YML}, profile=PROFILE.replace('[project]\n', '[project]\nbase_branch = "refs/heads/main"\n', 1))
+    lines, _ = _github(tmp_path, root, rulesets=(_on_main(True), OTHERS), settings=NO_DEFAULT)
+    assert lines["github.merge_queue"]["fix"].startswith("Ask Claude to fetch the repository's settings"), lines["github.merge_queue"]
+
+
+def test_a_ruleset_named_like_the_reason_never_asks_for_the_default_branch(tmp_path, project):
+    named = _queued(_rs(id=207, name="Queue (the settings file has no default_branch)",
+                        conditions={"ref_name": {"include": ["refs/heads/ma*"], "exclude": []}}))
+    lines, _ = _github(tmp_path, project, rulesets=(RULESET, named))
+    assert lines["github.merge_queue"]["fix"].startswith("Check in Settings → Rules"), lines["github.merge_queue"]
+
+
+def test_with_the_default_branch_unknown_up_to_date_never_asks_for_it_beside_a_queue_rule(tmp_path, project):
+    lines, r = _github(tmp_path, project, rulesets=(_on_main(False), OTHERS), settings=NO_DEFAULT)
+    assert r["merge_queue"]["queue"] is None
+    u = lines["github.up_to_date"]
+    assert u["status"] == "cant_check" and "Others" in u["message"], u
+    assert u["fix"].startswith("Ask Claude to fetch the repository's settings"), u
+
+
+@pytest.mark.parametrize("rulesets", ["nope", [{**_queued(), "enforcement": 5}]], ids=["unreadable", "malformed"])
+def test_rulesets_that_cant_be_read_give_merge_queue_null_as_a_whole(tmp_path, project, rulesets):
+    lines, r = _github(tmp_path, project, rulesets=rulesets)
+    assert lines["github.ruleset"]["status"] == "cant_check"
+    assert r["merge_queue"] is None
+
+
+def test_a_queue_rule_placed_by_a_pattern_alone_gives_queue_null(tmp_path, project):
+    # No ruleset in force on the base: the ruleset lines say it isn't protected.
+    lines, r = _github(tmp_path, project, rulesets=(_queued(_rs(id=203, name="Queue", conditions=PATTERN)),))
+    assert lines["github.ruleset"]["status"] == "gap" and _no_queue_lines(lines)
+    assert r["merge_queue"] == _queue_only(None)
+
+
+def test_no_ruleset_gives_queue_false(tmp_path, project):
+    lines, r = _github(tmp_path, project, rulesets=())
+    assert lines["github.ruleset"]["status"] == "gap" and _no_queue_lines(lines)
+    assert r["merge_queue"] == _queue_only(False)
+
+
+def test_rulesets_that_need_a_paid_plan_give_queue_false(tmp_path, project):
+    import fake_gh
+
+    routes = gh_routes(settings=ORG)
+    routes["repos/acme/demo/rulesets"] = fake_gh.reply(exit=1, stderr="gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)")
+    r = _report(tmp_path, project, path=_path(tmp_path, routes))
+    lines = {ln["id"]: ln for ln in r["lines"] if ln["group"] == "GitHub"}
+    assert "paid" in lines["github.ruleset"]["message"] and _no_queue_lines(lines)
+    assert r["merge_queue"] == _queue_only(False)
+
+
+def test_upgrade_setup_says_the_ruleset_line_when_no_queue_line_explains_a_null_queue():
+    bullet = next(ln for ln in _skill("upgrade-setup").splitlines() if ln.startswith("- **`queue` is `null`:**"))
+    assert "`github.merge_queue`" in bullet and "`github.up_to_date`" in bullet and "`github.ruleset`" in bullet
+
+
+def test_the_changelog_says_when_merge_queue_is_null_as_a_whole():
+    notes = since_0110()
+    assert "#302" in notes and "`merge_queue.queue`" in notes
+    assert "`null` as a whole only where the rulesets can't be read" in notes
+
+
 # ---------- the signals ----------
 
 
@@ -555,13 +704,19 @@ def test_an_excluding_filter_with_the_queue_off_is_a_note_whose_fix_widens_it(tm
     assert on["github.merge_group"]["status"] == "gap" and "widen" in on["github.merge_group"]["fix"]
 
 
-def test_an_unsure_merge_queue_rule_is_cant_check_even_with_up_to_date_on(tmp_path, project):
+@pytest.mark.parametrize("settings", [ORG, NO_DEFAULT], ids=["default-known", "default-unknown"])
+def test_an_unsure_merge_queue_rule_is_cant_check_even_with_up_to_date_on(tmp_path, project, settings):
     unsure = _queued(_rs(id=203, name="Queue", conditions={"ref_name": {"include": ["refs/heads/ma*"], "exclude": []}}))
-    lines, r = _github(tmp_path, project, rulesets=(RULESET, unsure))
-    assert lines["github.up_to_date"]["status"] == "fine"
-    q = lines["github.merge_queue"]
-    assert q["status"] == "cant_check" and "Queue" in q["message"], q
-    assert r["merge_queue"]["queue"] is None
+    rulesets = (RULESET if settings is ORG else _on_main(True), unsure)
+    for level, fix in (("new", "Check in Settings → Rules whether that ruleset applies to `main`"),
+                       ("developer", "Name refs/heads/main (or ~DEFAULT_BRANCH, with --repo's default_branch) in its include")):
+        lines, r = _github(tmp_path, project, rulesets=rulesets, settings=settings, env={"WORKFLOW_EXPERIENCE": level})
+        assert lines["github.up_to_date"]["status"] == "fine"
+        q = lines["github.merge_queue"]
+        assert q["status"] == "cant_check" and "Queue" in q["message"], q
+        # A pattern include: the default branch wouldn't settle it, so the fix never asks for it.
+        assert q["fix"].startswith(fix), q
+        assert r["merge_queue"]["queue"] is None
 
 
 def test_a_required_check_reported_as_a_commit_status_is_another_ci_service(tmp_path):
