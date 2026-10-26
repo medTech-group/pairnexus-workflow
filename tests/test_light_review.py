@@ -38,7 +38,7 @@ def test_build_ticket_understands_the_request_phrases():
     # "Light review" is the name; "quick build" is only understood.
     assert '"Light review" is its name; "quick build" is only understood' in review
     # Not the guided start's quick ticket.
-    assert "quick ticket" in review and "files a small ticket" in review
+    assert "quick ticket" in review and "writes a build ticket on the spot" in review
 
 
 def test_a_light_review_is_never_chosen_for_the_person():

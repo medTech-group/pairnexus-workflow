@@ -303,7 +303,7 @@ Claude replies with two items and asks about each:
   - **Quick ticket (Recommended):** "the page has the free times already; it's how they're shown";
   - **Spec**.
 
-Then *"Go with this plan? 1. Booking page (quick ticket) 2. Booking reminders (spec)"*. You click **Go**. It files #301 and #302, writes the booking page ticket, shows it to you, publishes it on your click, and asks **Build it now**, **Build it with a light review** (one review round, for a small change; never the recommendation), **Leave it ready for later** or **Next item**.
+Then *"Go with this plan? 1. Booking page (quick ticket) 2. Booking reminders (spec)"*. You click **Go**. It files #301 and #302, writes the booking page ticket, shows it to you, publishes it on your click, and asks **Build it now**, **Build it with a light review** (one review round, for a low-risk change; never the recommendation), **Leave it ready for later** or **Next item**. On a ticket marked `Review: small`, **Build it now** runs the small review (one round of Correctness), and **Build it with the full panel** comes after the light review.
 
 **At every handover, a choice:**
 

@@ -104,7 +104,7 @@ A plan for work too big or unclear for one [spec](#spec), decided one question a
 
 ### Review panel
 
-Claude reviewers who each read a change, a [spec](#spec) or a [map](#map) decision from one side (does it work, does it follow the rules), each round leaving its record. A light review is one round with no walk-through of the screens, for small changes, never chosen for you.
+Claude reviewers who each read a change, a [spec](#spec) or a [map](#map) decision from one side, each round leaving its record. The small review is one round of Correctness for a [ticket](#ticket) marked small; the light review, asked for, is one round with no walk-through of the screens, never chosen for you.
 
 **Why it matters to you:** mistakes are caught before you see the change.
 
