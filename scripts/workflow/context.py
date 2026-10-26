@@ -140,7 +140,10 @@ def reminder_for(prompt: str) -> str | None:
 # and `/implement-spec`. The conductor never builds one itself, so its session
 # is told where the ticket goes. "why did the build fail?", "fix 2 typos" or
 # "build 2.0" names no ticket: a bare number counts after "ticket" or "issue",
-# or at the end of its clause ("build 12", "build 12 please", "12 and 13").
+# or at the end of its clause ("build 12", "build 12 please", "12 and 13"). A
+# ticket in quotes, brackets or bold counts ("build `#12`", "build [#12](…)").
+# Status questions ("is #12 built?") bring the line too: it is worded for a
+# message that may not ask for a build, and a closer pattern isn't worth it.
 # Every repeat is bounded, so a long pasted prompt stays quick.
 _NUMBER_ENDS = (
     r"[0-9]+\b(?![.,][0-9])(?=[^\S\n]*(?:(?:please|now|next|today|first|for[^\S\n]+me)\b[^\S\n]*)?"
@@ -149,8 +152,9 @@ _NUMBER_ENDS = (
 _TICKET = r"(?:(?:[\w.-]{1,39}/[\w.-]{1,100})?[#\uff03][0-9]+\b|https?://[^\s]{0,200}?/issues/[0-9]+|" + _NUMBER_ENDS + ")"
 _NAMED = re.compile(
     r"\b(?:build(?:s|ing)?|implement(?:s|ing)?|fix(?:es|ing)?|develop(?:s|ing)?|tackle|do"
-    r"|work(?:ing)?[^\S\n]+on|start(?:ing)?[^\S\n]+(?:on|with)|pick[^\S\n]+up|go[^\S\n]+ahead[^\S\n]+with)"
-    r"[\s:,-]{1,4}(?:the[^\S\n]+)?"
+    r"|start(?:ing)?|take|handle|kick[^\S\n]+off|work(?:ing)?[^\S\n]+on|start(?:ing)?[^\S\n]+(?:on|with)"
+    r"|pick[^\S\n]+up|go[^\S\n]+ahead[^\S\n]+with)"
+    r"[\s:,(\[*\"'`-]{1,6}(?:the[^\S\n]+)?"
     r"(?:(?:tickets?|issues?|bugs?|specs?)[\s:]{1,3}[#\uff03]?[0-9]+\b|" + _TICKET + ")"
     + r"|[#\uff03][0-9]+\b[^\n#\uff03]{0,30}?\b(?:build|built|implement)\b"
     r"|(?:^|\s)/(?:[\w-]{1,60}:)?(?:build-ticket|implement-spec)\b",

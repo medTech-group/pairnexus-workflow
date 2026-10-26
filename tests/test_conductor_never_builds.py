@@ -56,6 +56,16 @@ NAMED = [
     "Lets work on 12 today",
     "build spec #32",
     "/implement-spec #32",
+    # From round 2's explorer.
+    "build `#12`",
+    "build **#12**",
+    "build (#12)",
+    'build "#12"',
+    "build [#12](https://github.com/acme/demo/issues/12)",
+    "start #12",
+    "take #12",
+    "handle #12",
+    "kick off #12",
 ]
 
 # A conductor's own messages, and the owner's that name no ticket to build.
