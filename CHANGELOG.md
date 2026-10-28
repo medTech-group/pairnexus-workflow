@@ -21,6 +21,14 @@
 - Tests: `tests/test_code_writers_profile.py`; `tests/test_status_local_gaps.py` counts the two new `status --json` keys.
 - **For projects updating:** nothing to do. A profile without the keys reads as before.
 
+**When the guard can't decide, a branch-only or mistyped session is a planning session under `code_writers = "ticket"`** (#342, part of #338). The guard can't decide when it fails or runs out of time, the profile is invalid, the event isn't JSON, or `python3` is old, missing or failing. Its fallbacks used to refuse every tool to a session that is a ticket session only by its branch, or by a `WORKFLOW_ROLE` that isn't a role.
+
+- **Under `"ticket"`,** that session now gets the fallback an attended session gets. A push or a merge (and the GitHub MCP tools that push, write files or merge) is asked, or refused in solo mode or a permission mode that never asks. The rest goes through. In solo mode, a check that runs past the guard's time budget is still refused, whatever the tool.
+- **Read without the kit:** from a plain `code_writers = "ticket"` line, in the working tree's profile or the base's as last fetched (`origin/<base>`, with `<base>` from a plain `base_branch` line, default main, else `origin/HEAD`). The vendored guard hook asks `fallback.sh --ticket-rule` before refusing every tool.
+- **As before:** `WORKFLOW_ROLE=ticket` and the conductor are refused every tool, and so is every branch-only or mistyped session under `"any"` or with `code_writers` absent. The plugin's hook, which never refuses every tool, is unchanged.
+- Tests: `tests/test_cant_decide_planning.py`.
+- **For projects updating:** nothing to do; the vendored guard hook in `.claude/settings.json` changes with the update.
+
 ## 0.1.16
 
 **The conductor hands every ticket to a ticket session, runs can use a merge queue, and small tickets get a small review.** The conductor fix, #308: "build #12", "implement #12" or "let's work on #12" in a conductor session now starts a run for that ticket, or adds it to the conductor's own run, instead of the conductor building it itself. Spec #243's merge queue, #244 to #249, #297 and #302: a project can take "Use a merge queue"; `merge-check` then judges a pull request ready to queue, the guard lets a session queue its own, and runs and ticket sessions queue pull requests instead of updating them. Spec #255's small review, #256 to #261, #281, #283, #295, #296, #298 and #301: tickets marked `Review: small` get one Correctness round, Correctness passes after the last round are capped (`run.review_passes`, 2 by default), and a merge of the base that leaves a pull request's own changes identical keeps its review. Each change's own note is below.
