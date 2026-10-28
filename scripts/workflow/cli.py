@@ -78,7 +78,7 @@ from . import state as state_mod
 from . import status as status_mod
 from . import updates as updates_mod
 from . import vendor as vendor_mod
-from .profile import PROFILE_PATH, ProfileError, load, project_root, resolve_experience
+from .profile import PROFILE_PATH, ProfileError, code_rule, load, project_root, resolve_experience
 
 KIT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -289,6 +289,8 @@ def cmd_status(a) -> int:
         local_gaps=[ln.as_dict(local.wording) for ln in local.lines if ln.status == "gap"],
         profile_error=error is not None,
     )
+    rule = code_rule(root)
+    st.code_writers, st.writes_code = rule.code_writers, rule.writes_code()
     kit = updates_mod.check(root, KIT_ROOT) if a.fetch else {"installed": updates_mod.installed(root, KIT_ROOT)}
     if a.json:
         _out({**st.as_dict(), "kit": kit})

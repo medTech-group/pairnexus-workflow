@@ -64,6 +64,10 @@ class Status:
     # profile is there but can't be used (its gap is kit.profile).
     local_gaps: list[dict] | None = None
     profile_error: bool = False
+    # Who writes code (#339), from the profile that counts (profile.code_rule):
+    # "ticket", "any" or None (not answered), and whether this session may.
+    code_writers: str | None = None
+    writes_code: bool = True
 
     @property
     def local_gap(self) -> bool | None:

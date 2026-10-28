@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+**The profile can say who writes code: `code_writers` and `code_paths`** (#339, part of #338). Nothing reads them yet to refuse anything: the guard, the hooks and the skills that follow them come in #340 to #349.
+
+- **`[guard] code_writers`:** `"ticket"` (only ticket sessions, `WORKFLOW_ROLE=ticket`) or `"any"`; absent means not answered, as before. Any other value or type is a `profile check` error. Written as a plain `code_writers = "ticket"` line, since it is read from that line when the profile doesn't parse; `profile check` warns on any other spelling.
+- **`[guard] code_paths`:** the globs that are code, matched as `protected_paths` is; absent is `[]`, with no defaults. A path matching a protected path too counts as protected. `profile check` warns when `code_writers = "ticket"` and the list is empty, and lists tracked files outside `.claude/` that match both. Its JSON gains `code_writers` and `code_paths`.
+- **Which profile counts:** `profile.code_rule`, the one helper the guard, the hooks, doctor and status call: the working tree's profile and the base branch's as last fetched (`origin/<base_branch>`, else `origin/HEAD`), the stricter (`"ticket"` wins, the code-path lists joined). A working tree's profile that is missing or invalid gives way to the base's; a base profile with keys this kit doesn't know is still read for the rule's keys, and one whose TOML doesn't parse by its plain `code_writers` line.
+- **`workflow status --json`** gains `code_writers` (the value that counts, or `null`) and `writes_code`: under `"ticket"`, true only with `WORKFLOW_ROLE=ticket`, never for a session that is a ticket session only by its branch or by a mistyped `WORKFLOW_ROLE`.
+- **Docs:** `docs/profile.md` and the profile template name both keys (the template with them commented out), and the `run.ticket_branch` and `WORKFLOW_ROLE` notes say that under `"ticket"` a branch alone, or a mistyped role, makes a planning session.
+- Tests: `tests/test_code_writers_profile.py`; `tests/test_status_local_gaps.py` counts the two new `status --json` keys.
+- **For projects updating:** nothing to do. A profile without the keys reads as before.
+
 ## 0.1.16
 
 **The conductor hands every ticket to a ticket session, runs can use a merge queue, and small tickets get a small review.** The conductor fix, #308: "build #12", "implement #12" or "let's work on #12" in a conductor session now starts a run for that ticket, or adds it to the conductor's own run, instead of the conductor building it itself. Spec #243's merge queue, #244 to #249, #297 and #302: a project can take "Use a merge queue"; `merge-check` then judges a pull request ready to queue, the guard lets a session queue its own, and runs and ticket sessions queue pull requests instead of updating them. Spec #255's small review, #256 to #261, #281, #283, #295, #296, #298 and #301: tickets marked `Review: small` get one Correctness round, Correctness passes after the last round are capped (`run.review_passes`, 2 by default), and a merge of the base that leaves a pull request's own changes identical keeps its review. Each change's own note is below.
