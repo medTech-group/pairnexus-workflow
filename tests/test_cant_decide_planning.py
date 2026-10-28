@@ -23,6 +23,9 @@ from conftest import copy_kit_package
 from workflow import _old_python, cli, fallback, vendor
 from workflow.profile import plain_code_writers
 
+# The developer's own git configuration (a signing key, a hooks path) never reaches these repositories.
+pytestmark = pytest.mark.usefixtures("_no_user_git_config")
+
 KIT = Path(__file__).resolve().parents[1]
 
 PUSH = {"tool_name": "Bash", "tool_input": {"command": "git push origin claude/build-1"}, "permission_mode": "default"}
