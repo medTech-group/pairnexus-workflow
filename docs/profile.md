@@ -76,6 +76,8 @@ In the environment and the file, case and spaces around the value don't matter (
 | `deploy_commands` | Commands only the owner, or the conductor under a release grant, may run. A script path matches however it's run; others by their first words. Attended sessions are asked first | `[]` |
 | `test_paths` | Test files where a new skip or focus marker is refused in ticket sessions. A list here also replaces the defaults | common test file patterns |
 | `allow_new_skips` | Allow new skip markers | `false` |
+| `code_writers` | Who writes code: `"ticket"` (only ticket sessions, those whose `WORKFLOW_ROLE` is `ticket`; every other session, the conductor included, is a planning session) or `"any"` (any session, as before). Write it as a plain `code_writers = "ticket"` line under `[guard]`: it is read from that line when the profile doesn't parse, and `profile check` warns on any other spelling. The choice that counts is the stricter of this profile's and the base branch's as last fetched (`origin/<base_branch>`, else `origin/HEAD`), so loosening a session's own copy changes nothing until its pull request merges. Any other value is a `profile check` error; `workflow status --json` gives the one that counts, and `writes_code` for the session. The template leaves it out | absent: not answered (as before) |
+| `code_paths` | The globs that are code, matched as `protected_paths` is, relative to the checkout's top level; the base branch's list is joined to this one. A file matching a protected path too is protected, not code (`profile check` lists tracked ones outside `.claude/`). `.workflow/` is never code, nor is an untracked file git ignores; a tracked file is code whatever `.gitignore` says. With `code_writers = "ticket"` and no list, `profile check` warns: nothing counts as code | `[]` (no defaults) |
 
 ## `[sensitive]`
 
@@ -112,7 +114,7 @@ An unknown key is an error, so a typo can't quietly turn previews off. In a prof
 
 | Key | What it is | Default |
 |---|---|---|
-| `ticket_branch` | Ticket sessions' branches; a session on one counts as a ticket session even without `WORKFLOW_ROLE` | `claude/build-*` |
+| `ticket_branch` | Ticket sessions' branches. With `code_writers` absent or `"any"`, a session on one counts as a ticket session even without `WORKFLOW_ROLE`; with `code_writers = "ticket"`, such a branch alone makes a planning session, which writes no code | `claude/build-*` |
 | `check_in_minutes` | The conductor's check-in cadence (a run's charter takes 5–240) | `20` |
 | `max_parallel` | Ticket sessions at once (1–16) | `2` |
 | `max_retries` | Retries per ticket before `needs-human` (0–5) | `1` |
@@ -132,7 +134,7 @@ The run's limits and review default from here, through `preset`; each run's char
 
 | Variable | Read by | What it does |
 |---|---|---|
-| `WORKFLOW_ROLE` | The hooks | `ticket`, `conductor` or `attended` (any case). Set it in the claude.ai environment, never in the profile. Any other value counts as `ticket`, the strictest |
+| `WORKFLOW_ROLE` | The hooks | `ticket`, `conductor` or `attended` (any case). Set it in the claude.ai environment, never in the profile. Any other value counts as `ticket`, the strictest; with `code_writers = "ticket"`, a session with such a value is a planning session instead, which writes no code |
 | `WORKFLOW_EXPERIENCE` | `workflow status` | `new` or `developer`: this person's experience, ahead of `.workflow/experience` and `project.experience` (see "Experience" above). Any other value is skipped with a warning |
 | `WORKFLOW_UPDATE_CHECK` | The session start | `off` (or `0`, `false`, `no`) stops the lookup of the latest kit release |
 | `TMPDIR` | The hooks | Where the hooks keep their per-session markers and the latest-release cache (six hours) |

@@ -5,11 +5,13 @@ from __future__ import annotations
 import glob
 import os
 import re
+import subprocess
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import presets as presets_mod
+from . import roles as roles_mod
 
 PROFILE_PATH = Path(".claude/workflow/profile.toml")
 
@@ -40,6 +42,13 @@ class ProfileError(ValueError):
     pass
 
 
+# Who writes code (#338): `guard.code_writers`, "ticket" (only ticket sessions)
+# or "any"; absent is not answered. Written as a plain line, as `ruleset` is,
+# so it can be read from a profile that doesn't parse (`plain_code_writers`).
+CODE_WRITERS = ("ticket", "any")
+_CODE_WRITERS_LINE = re.compile(r'^[ \t]*code_writers[ \t]*=[ \t]*"([^"\n]*)"', re.M)
+
+
 # Every key the profile may hold, so a typo ("required_check", "[area]") fails
 # instead of being quietly ignored. None: any key (area names).
 ALLOWED: dict[str, set[str] | None] = {
@@ -47,7 +56,7 @@ ALLOWED: dict[str, set[str] | None] = {
     "commands": {"setup", "setup_check", "typecheck", "test_file", "suite", "package", "select_suites"},
     "ci": {"required_checks", "killed_markers", "none", "path_filtered"},
     "ui": {"explorer", "start", "sizes", "notes"},
-    "guard": {"protected_paths", "deploy_commands", "test_paths", "allow_new_skips"},
+    "guard": {"protected_paths", "deploy_commands", "test_paths", "allow_new_skips", "code_writers", "code_paths"},
     "sensitive": {"description", "patterns"},
     "previews": {"provider", "on", "access"},
     "areas": None,
@@ -190,6 +199,10 @@ class Profile:
     deploy_commands: list[str] = field(default_factory=list)
     test_paths: list[str] = field(default_factory=lambda: list(DEFAULT_TEST_PATHS))
     allow_new_skips: bool = False
+    # Who writes code (#338): "ticket", "any", or None (not answered). Read it
+    # through `code_rule`, which also counts the base branch's profile.
+    code_writers: str | None = None
+    code_paths: list[str] = field(default_factory=list)
     sensitive_description: str = ""
     sensitive_patterns: list[str] = field(default_factory=list)
     previews: Previews = field(default_factory=Previews)
@@ -283,6 +296,35 @@ def _packages(raw) -> list[Package]:
     if len(names) != len(set(names)):
         raise ProfileError("commands.package names must be unique")
     return out
+
+
+def _shown(v) -> str:
+    return repr(v) if len(repr(v)) <= 40 else repr(v)[:39] + "…"
+
+
+def _code_writers(guard: dict) -> str | None:
+    v = guard.get("code_writers")
+    if v is not None and not (isinstance(v, str) and v in CODE_WRITERS):
+        raise ProfileError(
+            f'guard.code_writers must be "ticket" (only ticket sessions write code) or "any" (any session), not {_shown(v)}; '
+            "leave it out while it isn't answered"
+        )
+    return v
+
+
+def _code_paths(guard: dict) -> list[str]:
+    v = guard.get("code_paths", [])
+    if not isinstance(v, list) or not all(isinstance(x, str) and x.strip() for x in v):
+        raise ProfileError(f"guard.code_paths must be a list of globs (relative to the checkout's top level), not {_shown(v)}")
+    return list(v)
+
+
+def plain_code_writers(text: str | None) -> str | None:
+    """`code_writers` from the profile's first plain `code_writers = "…"` line,
+    whatever else the profile holds (it may not parse): "ticket", "any", or
+    None when there is no such line or it holds neither."""
+    m = _CODE_WRITERS_LINE.search((text or "").lstrip("\ufeff"))
+    return m.group(1) if m and m.group(1) in CODE_WRITERS else None
 
 
 def parse(data: dict, root: Path) -> Profile:
@@ -398,6 +440,7 @@ def parse(data: dict, root: Path) -> Profile:
     allow = guard.get("allow_new_skips", False)
     if not isinstance(allow, bool):
         raise ProfileError("guard.allow_new_skips must be true or false")
+    code_writers, code_paths = _code_writers(guard), _code_paths(guard)
     return Profile(
         root=root,
         name=name,
@@ -432,6 +475,8 @@ def parse(data: dict, root: Path) -> Profile:
         if "test_paths" in guard
         else list(DEFAULT_TEST_PATHS),
         allow_new_skips=allow,
+        code_writers=code_writers,
+        code_paths=code_paths,
         sensitive_description=str(sens.get("description") or ""),
         sensitive_patterns=patterns,
         previews=previews,
@@ -553,6 +598,135 @@ def load(root: Path | None = None, required: bool = True) -> Profile | None:
     return parse(data, root)
 
 
+# ---------- which profile counts for who writes code (#339) ----------
+
+
+@dataclass
+class CodeRule:
+    """Who writes code and where code is, from the profile that counts: the
+    working tree's and the base branch's as last fetched (`origin/<base>`),
+    whichever is stricter. `code_writers` "ticket" beats "any" or None, and
+    the code-path lists are joined. `protected_paths`, `repo` and
+    `base_branch` are the working tree's, or the base's when the working
+    tree's profile is missing or invalid; `profile` is the whole profile that
+    counts (the working tree's, else the base's), None when neither parses.
+    `sources` names what was read: "working tree", "origin/main", …"""
+
+    code_writers: str | None = None
+    code_paths: list[str] = field(default_factory=list)
+    protected_paths: list[str] = field(default_factory=lambda: list(DEFAULT_PROTECTED))
+    repo: str | None = None
+    base_branch: str = "main"
+    profile: Profile | None = None
+    sources: list[str] = field(default_factory=list)
+
+    def writes_code(self) -> bool:
+        """Whether this session may write code: under "ticket", only one whose
+        `WORKFLOW_ROLE` is `ticket` (trimmed, any case), never one that is a
+        ticket session only by its branch or by a value that isn't a role;
+        under "any" or unanswered, every session, as before."""
+        if self.code_writers != "ticket":
+            return True
+        return roles_mod.env_role() == "ticket" and roles_mod.unrecognised() is None
+
+
+def _git(root: Path, *args: str) -> str | None:
+    try:
+        p = subprocess.run(["git", *args], cwd=root, capture_output=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None
+    return p.stdout.decode("utf-8", errors="replace") if p.returncode == 0 else None
+
+
+def _base_text(root: Path, base: str) -> tuple[str | None, str | None]:
+    """(the ref read, the base's profile text) from `origin/<base>`, else
+    `origin/HEAD`, as last fetched: (None, None) when neither ref exists, and
+    (ref, None) when the ref has no profile."""
+    for name in (base, "HEAD"):
+        ref = f"refs/remotes/origin/{name}"
+        if _git(root, "rev-parse", "--verify", "--quiet", ref + "^{commit}") is not None:
+            return f"origin/{name}", _git(root, "show", f"{ref}:{PROFILE_PATH.as_posix()}")
+    return None, None
+
+
+def _rule_fields(data: dict) -> dict:
+    """The keys the rule needs from a profile this kit may not fully read (a
+    later release's, with keys it doesn't know): each read on its own, one
+    that is invalid left out, everything else ignored."""
+    out: dict = {}
+    proj = data.get("project") if isinstance(data.get("project"), dict) else {}
+    guard = data.get("guard") if isinstance(data.get("guard"), dict) else {}
+    for key, read in (("code_writers", _code_writers), ("code_paths", _code_paths)):
+        try:
+            out[key] = read(guard)
+        except ProfileError:
+            pass
+    try:
+        if "protected_paths" in guard:
+            out["protected_paths"] = _strs(guard["protected_paths"], "guard.protected_paths")
+    except ProfileError:
+        pass
+    if isinstance(proj.get("repo"), str) and proj["repo"].count("/") == 1:
+        out["repo"] = proj["repo"]
+    if isinstance(proj.get("base_branch"), str) and proj["base_branch"]:
+        out["base_branch"] = proj["base_branch"]
+    return out
+
+
+def _stricter(a: str | None, b: str | None) -> str | None:
+    return "ticket" if "ticket" in (a, b) else "any" if "any" in (a, b) else None
+
+
+def code_rule(root: Path | None = None) -> CodeRule:
+    """Which profile counts for who writes code: the one helper the guard,
+    the hooks, doctor and status call. Never raises; with neither profile
+    readable, a rule with nothing answered (as before)."""
+    root = root or project_root()
+    tree: Profile | None = None
+    tree_data = None
+    try:
+        tree_data = tomllib.loads((root / PROFILE_PATH).read_text(encoding="utf-8"))
+        tree = parse(tree_data, root)
+    except (OSError, ValueError):  # missing, not UTF-8, TOML that doesn't parse, or invalid
+        pass
+    base_branch = "main"
+    if tree is not None:
+        base_branch = tree.base_branch
+    elif isinstance(tree_data, dict):
+        base_branch = _rule_fields(tree_data).get("base_branch", "main")
+    ref, text = _base_text(root, base_branch)
+    base: Profile | None = None
+    fields: dict = {}
+    if text is not None:
+        try:
+            data = tomllib.loads(text)
+        except ValueError:
+            data = None
+        if isinstance(data, dict):
+            fields = _rule_fields(data)
+            try:
+                base = parse(data, root)
+            except ProfileError:
+                pass
+        if fields.get("code_writers") is None and plain_code_writers(text):
+            fields["code_writers"] = plain_code_writers(text)  # a base that doesn't parse, or doesn't validate
+    rule = CodeRule(sources=[ref] if text is not None else [])
+    if tree is None:
+        rule.code_writers = fields.get("code_writers")
+        rule.code_paths = list(fields.get("code_paths", []))
+        rule.protected_paths = list(fields.get("protected_paths", DEFAULT_PROTECTED))
+        rule.repo = fields.get("repo")
+        rule.base_branch = fields.get("base_branch", base_branch)
+        rule.profile = base
+        return rule
+    rule.sources.insert(0, "working tree")
+    rule.code_writers = _stricter(tree.code_writers, fields.get("code_writers"))
+    rule.code_paths = list(tree.code_paths) + [p for p in fields.get("code_paths", []) if p not in tree.code_paths]
+    rule.protected_paths = list(tree.protected_paths)
+    rule.repo, rule.base_branch, rule.profile = tree.repo, tree.base_branch, tree
+    return rule
+
+
 def slug(text: str) -> str:
     """A heading as its #anchor: lowercase, spaces to `-`, punctuation dropped."""
     return re.sub(r"[^\w\- ]", "", text.strip().lower()).replace(" ", "-")
@@ -583,6 +757,45 @@ def globs(spec: str) -> list[str]:
 
 def matches(root: Path, pattern: str) -> bool:
     return any(True for _ in glob.iglob(str(root / pattern), recursive=True))
+
+
+# The vendored kit's own folder, whose files are expected to be both code and
+# protected (its scripts match a project's code paths), so never listed.
+_KIT_FOLDER = ".claude/"
+_LISTED = 10
+
+
+def _code_warnings(profile: Profile) -> list[str]:
+    """`profile check`'s warnings about `code_writers` and `code_paths`."""
+    w: list[str] = []
+    if profile.code_writers == "ticket" and not profile.code_paths:
+        w.append('guard.code_writers is "ticket" but guard.code_paths is empty: no file counts as code, so the rule refuses nothing')
+    if profile.code_writers is not None:
+        try:
+            text = (profile.root / PROFILE_PATH).read_text(encoding="utf-8")
+        except (OSError, ValueError):
+            text = None
+        if text is not None and plain_code_writers(text) != profile.code_writers:
+            w.append(
+                f'guard.code_writers: write it as a plain line, code_writers = "{profile.code_writers}", under [guard]: '
+                "it is read from that line when the profile doesn't parse"
+            )
+    if profile.code_paths:
+        from .guard import matches  # the guard's own matching, as for protected_paths
+
+        tracked = _git(profile.root, "ls-files", "-z") or ""
+        both = [
+            f
+            for f in tracked.split("\0")
+            if f and not f.startswith(_KIT_FOLDER) and matches(f, profile.code_paths) and matches(f, profile.protected_paths)
+        ]
+        if both:
+            listed = ", ".join(both[:_LISTED]) + (f" and {len(both) - _LISTED} more" if len(both) > _LISTED else "")
+            w.append(
+                f"guard.code_paths and guard.protected_paths both match {len(both)} tracked file{'s' if len(both) > 1 else ''}, "
+                f"which count as protected, not code: {listed}"
+            )
+    return w
 
 
 def check(profile: Profile) -> list[str]:
@@ -626,6 +839,7 @@ def check(profile: Profile) -> list[str]:
     for must in (".claude/**", ".github/workflows/**"):
         if must not in profile.protected_paths:
             w.append(f"guard.protected_paths leaves out {must!r}: a list there replaces the defaults, so ticket sessions could change it")
+    w.extend(_code_warnings(profile))
     if not profile.ticket_environment:
         w.append("run.ticket_environment is empty: name the claude.ai environment ticket sessions run in")
     if not profile.conductor_environment:
@@ -659,6 +873,8 @@ def summary(profile: Profile) -> dict:
         "areas": profile.areas,
         "deploy_commands": profile.deploy_commands,
         "protected_paths": profile.protected_paths,
+        "code_writers": profile.code_writers,
+        "code_paths": profile.code_paths,
         "release_steps": [st.get("name") for st in profile.release_steps],
         "repair": profile.repair,
         "explorer": profile.explorer,

@@ -20,6 +20,8 @@ from workflow import cli, profile, vendor
 FIELDS = {"set_up", "brand_new", "own_files", "issues_read", "solo_mode", "experience", "run", "in_progress", "prs", "planned", "maps",
           "specs", "ready", "waiting", "to_triage", "kit_update_pr", "kit"}
 ADDED = {"local_gap", "local_gaps", "profile_error"}
+# Added since by #339: who writes code.
+CODE_WRITERS = {"code_writers", "writes_code"}
 
 
 def _trap(bin_dir):
@@ -246,7 +248,7 @@ def test_with_fetch_only_issues_and_pull_requests_are_read(tmp_path):
 
 def test_the_json_only_adds_the_local_gap_fields(tmp_path):
     root = _project(tmp_path)
-    assert set(_json(tmp_path, root)) == FIELDS | ADDED
+    assert set(_json(tmp_path, root)) == FIELDS | ADDED | CODE_WRITERS
 
 
 def test_the_text_only_adds_one_line(tmp_path):
