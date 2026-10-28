@@ -38,6 +38,15 @@
 - Tests: `tests/test_cant_decide_planning.py`.
 - **For projects updating:** nothing to do; the vendored guard hook in `.claude/settings.json` changes with the update.
 
+**Doctor says who writes code: `kit.code_writers`** (#344, part of #338), from the profile that counts (`profile.code_rule`), so "check the set-up" shows it too.
+
+- **Unanswered:** a note, with the fix "Choose who writes code".
+- **`"ticket"` with `run.ticket_environment` empty:** a note that nothing writes code until a ticket environment exists, made by "Set up unattended runs" (offered) or by hand.
+- **In plugin mode,** which has no unattended runs, the line says code is written only in a session on the owner's computer with `WORKFLOW_ROLE=ticket`, and that the rule holds only where the plugin is installed: a note without a ticket environment, fine with one.
+- **`"any"`, or `"ticket"` with a ticket environment:** fine. Where the base branch's `"ticket"` counts over a working tree that says less, the line says so.
+- Doctor now also runs `git check-ref-format`, to read the base's profile. Tests: `tests/test_doctor_code_writers.py`.
+- **For projects updating:** nothing to do.
+
 ## 0.1.16
 
 **The conductor hands every ticket to a ticket session, runs can use a merge queue, and small tickets get a small review.** The conductor fix, #308: "build #12", "implement #12" or "let's work on #12" in a conductor session now starts a run for that ticket, or adds it to the conductor's own run, instead of the conductor building it itself. Spec #243's merge queue, #244 to #249, #297 and #302: a project can take "Use a merge queue"; `merge-check` then judges a pull request ready to queue, the guard lets a session queue its own, and runs and ticket sessions queue pull requests instead of updating them. Spec #255's small review, #256 to #261, #281, #283, #295, #296, #298 and #301: tickets marked `Review: small` get one Correctness round, Correctness passes after the last round are capped (`run.review_passes`, 2 by default), and a merge of the base that leaves a pull request's own changes identical keeps its review. Each change's own note is below.

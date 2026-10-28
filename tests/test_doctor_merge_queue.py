@@ -794,7 +794,7 @@ def test_lines_outside_on_dont_make_the_file_unreadable(tmp_path):
     assert [w["state"] for w in r["merge_queue"]["merge_group"]["workflows"]] == ["ready"]
 
 
-def test_doctor_runs_only_git_rev_parse_and_show(tmp_path, project):
+def test_doctor_runs_only_git_rev_parse_show_and_check_ref_format(tmp_path, project):
     path = _path(tmp_path)
     (path / "git").unlink()
     log = tmp_path / "git-calls.log"
@@ -802,7 +802,8 @@ def test_doctor_runs_only_git_rev_parse_and_show(tmp_path, project):
     (path / "git").chmod(0o755)
     r = _report(tmp_path, project, *_inputs(tmp_path), path=path)
     assert r["merge_queue"]["merge_group"]["clean"] is True
-    assert set(log.read_text().split()) == {"rev-parse", "show"}
+    # check-ref-format reads no repository: who writes code checks the base's name with it (#344).
+    assert set(log.read_text().split()) == {"rev-parse", "show", "check-ref-format"}
 
 
 # ---------- fixes that follow their reason, and edge cases of the signals ----------
