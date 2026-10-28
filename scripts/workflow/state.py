@@ -119,6 +119,9 @@ TICKET_FIELDS = {
     "queue_failed": (_counts, "an object of commit SHAs and whole numbers"),
     "base_merged": (lambda v: isinstance(v, bool), "true or false"),
     "queue_result": (lambda v: isinstance(v, str) and v in DROP_RESULTS, "one of " + ", ".join(sorted(DROP_RESULTS))),
+    # The pull request's head when the owner's "also #<n>" asked for a code fix (#361): it is held, never merged,
+    # queued or armed, until a commit carrying the fix is pushed and reviewed.
+    "requeued_head": (is_head, "a full commit SHA in lower case"),
 }
 
 
