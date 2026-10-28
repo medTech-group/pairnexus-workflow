@@ -437,6 +437,8 @@ def test_a_code_fix_on_an_open_run_pull_request_goes_in_for_owner():
         "Add \"#n's pull request needs a code fix (#PR): <the fix asked for, or the link to the comment that asks for it>; "
         "if it merges without the fix, the fix needs a ticket of its own\" to `for_owner`, so the report lists it, and say so in your reply.",
         "The pull request goes on as any other and may merge before its fix: holding it for its fix is #361's.",
+        # An answer to a `needs-human` ticket still requeues it, as before.
+        "A `needs-human` or `set-aside` ticket's fix is an owner's answer (step 2's \"When the owner answers\"), not this.",
     ):
         assert part in step3, part
     assert (
@@ -460,14 +462,12 @@ def test_the_requeue_is_left_to_361():
     stop = _section(text, "## Stop the run", "2. **Sessions.**")
     assert "1. **Status.** Set `status: \"stopping\"` and the reason" in stop
     assert "First read the owner's new comments" not in stop
-    s = state.empty(_charter())
-    s["tickets"] = {"12": {"status": "queued", "requeued_head": SHA}}
-    assert "tickets[12].requeued_head" not in " ".join(state.validate(s))
+    assert "requeued_head" not in state.TICKET_FIELDS
 
 
 def test_the_report_looks_again_at_each_revert_opened():
     report = _section(_conductor(), "4. **The report.**", "5. **Wind up.**")
-    assert "Before anything else, look again at each revert still `opened` (\"Reverting a merged change\", step 3)." in report
+    assert "Before the rest of this step, look again at each revert still `opened` (\"Reverting a merged change\", step 3), so the state it writes carries their results." in report
     assert "First look again at each ticket still marked `cap_unknown_at`, as check-in step 2 begins, and write the state to the issue." in report
 
 
