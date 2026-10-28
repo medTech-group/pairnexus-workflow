@@ -977,9 +977,10 @@ def check_code_writers(i: Inputs) -> list[Line]:
     rule = profile_mod.code_rule(i.root)
     counts = rule.profile or i.profile
     if counts is None:  # nothing readable answers, or the base answers in a profile this kit can't read whole
+        known = f'guard.code_writers = "{rule.code_writers}" ({", ".join(rule.sources)}), but' if rule.code_writers else "guard.code_writers and"
         return [Line(g, id_, "cant_check", Words(
             "Can't tell who writes code in this project until the kit's profile can be read.",
-            "guard.code_writers unknown: no readable profile.",
+            f"{known} run.ticket_environment unknown: no readable profile.",
         ), PROFILE_FIRST if i.profile_error else SET_UP_FIRST)]
     if rule.code_writers is None:
         return [Line(g, id_, "note", Words(
@@ -991,17 +992,17 @@ def check_code_writers(i: Inputs) -> list[Line]:
         ))]
     if rule.code_writers == "any":
         return [Line(g, id_, "fine", Words("Any session may write code in this project, chosen on purpose.", 'guard.code_writers = "any".'))]
-    # The base's "ticket" counts over a working tree that says less, until a pull request changes the base.
-    base = next((s for s in rule.sources if s != "working tree"), None)
-    over = (i.profile is None or i.profile.code_writers != "ticket") and base
-    by = Words(f" The `{rule.base_branch}` branch's profile says so, and it counts over the copy you're working on." if over else "",
+    # The base's "ticket" counts over a working tree's profile that says less, until a pull request changes the base.
+    base = next((s for s in rule.sources if s.startswith("origin/")), None)
+    over = bool(base) and i.profile is not None and i.profile.code_writers != "ticket"
+    branch = "The base branch's" if base == "origin/HEAD" else f"The `{(base or '').removeprefix('origin/')}` branch's"
+    by = Words(f" {branch} profile says so, and it counts over the copy you're working on." if over else "",
                f" (from {base}, which counts over the working tree's)" if over else "")
     env = counts.ticket_environment
     if not i.vendored:
         return [Line(g, id_, "fine" if env else "note", Words(
-            "Only ticket sessions write code here. With the kit as a plugin there are no unattended runs, so that is a session you start "
-            "on your computer with `WORKFLOW_ROLE=ticket`. The rule holds only where the plugin is installed: a cloud session has no kit and no guard."
-            + by.new,
+            f"Only ticket sessions write code here.{by.new} With the kit as a plugin there are no unattended runs, so that is a session you start "
+            "on your computer with `WORKFLOW_ROLE=ticket`. The rule holds only where the plugin is installed: a cloud session has no kit and no guard.",
             f"guard.code_writers = \"ticket\"{by.developer} in plugin mode (unattended runs need the vendored kit): code is written only in a local "
             "session with WORKFLOW_ROLE=ticket, and the rule holds only where the plugin is installed (a cloud session has no kit and no guard).",
         ), NONE if env else Words(
@@ -1014,7 +1015,7 @@ def check_code_writers(i: Inputs) -> list[Line]:
             f"guard.code_writers = \"ticket\"{by.developer}; run.ticket_environment = {_named(env)}.",
         ))]
     return [Line(g, id_, "note", Words(
-        f"Only ticket sessions write code in this project, and no cloud environment for them is named yet, so nothing writes code until one exists.{by.new}",
+        f"Only ticket sessions write code in this project.{by.new} No cloud environment for them is named yet, so nothing writes code until one exists.",
         f"guard.code_writers = \"ticket\"{by.developer} and run.ticket_environment is empty: nothing writes code until a ticket environment exists.",
     ), Words(
         f"Ask Claude to \"{OFFERS['set_up_unattended_runs']}\": it walks you through making that environment. Or make it by hand (docs/enforcement.md §2).",

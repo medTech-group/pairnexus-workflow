@@ -105,36 +105,58 @@ def test_without_a_readable_profile_it_cant_check(tmp_path, profile, fix):
     assert "kit.profile" in dev["fix"], dev
 
 
-def test_the_base_branchs_ticket_counts_over_an_unanswered_working_tree(tmp_path):
-    """Who writes code is the profile that counts (`profile.code_rule`): the
-    base's `"ticket"`, as last fetched, beats a working tree that doesn't answer."""
-    root = _project(tmp_path, profile=_profile("ticket", NO_TICKET_ENV))
+def _with_base(tmp_path, root, tree):
+    """Make `root` a checkout whose `origin/main`, as last fetched, holds its
+    profile as it is now, then write `tree` (None: deleted) as its working
+    tree's; the PATH doctor runs with, with git on it."""
     git(root, "init", "-q", "-b", "main")
     git(root, "add", ".claude/workflow/profile.toml")
     git(root, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "profile")
     git(root, "update-ref", "refs/remotes/origin/main", "HEAD")
-    (root / ".claude/workflow/profile.toml").write_text(_profile(None, NO_TICKET_ENV))
-    path = _bin(tmp_path)
-    (path / "git").symlink_to(shutil.which("git"))
-    new, dev = (_lines(_report(tmp_path / w, root, path=path, env=env))["kit.code_writers"] for w, env in (("new", NEW), ("dev", DEV)))
+    path = root / ".claude/workflow/profile.toml"
+    if tree is None:
+        path.unlink()
+    elif tree is not True:
+        path.write_text(tree)
+    bin_dir = _bin(tmp_path)
+    (bin_dir / "git").symlink_to(shutil.which("git"))
+    return bin_dir
+
+
+@pytest.mark.parametrize("tree", [_profile(None, NO_TICKET_ENV), _profile("any", NO_TICKET_ENV)], ids=["unanswered", "any"])
+def test_the_base_branchs_ticket_counts_over_a_working_tree_that_says_less(tmp_path, tree):
+    """Who writes code is the profile that counts (`profile.code_rule`): the
+    base's `"ticket"`, as last fetched, beats a working tree that doesn't
+    answer or says `"any"`, and the line says where it comes from."""
+    root = _project(tmp_path, profile=_profile("ticket", NO_TICKET_ENV))
+    new, dev = _both(tmp_path, root, path=_with_base(tmp_path, root, tree))
     for ln in (new, dev):
         assert (ln["status"], ln["offer"]) == ("note", "set_up_unattended_runs"), ln
         assert "Choose who writes code" not in ln["fix"], ln
-    # It says where the answer comes from, since the working tree's profile doesn't say it.
-    assert "`main` branch's profile" in new["message"], new
+    assert "`main` branch's profile says so" in new["message"], new
     assert "from origin/main" in dev["message"], dev
 
 
-def test_where_the_working_tree_says_ticket_too_it_names_no_base(tmp_path):
+@pytest.mark.parametrize("tree", [True, None, '[project]\nname = "demo"\nnot_a_key = 1\n'], ids=["ticket", "missing", "invalid"])
+def test_it_names_no_base_unless_a_working_tree_profile_says_less(tmp_path, tree):
+    """A working tree that says `"ticket"` itself, or has no readable profile
+    to count over (the profile line says so), names no base."""
     root = _project(tmp_path, profile=_profile("ticket", NO_TICKET_ENV))
-    git(root, "init", "-q", "-b", "main")
-    git(root, "add", ".claude/workflow/profile.toml")
-    git(root, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "profile")
-    git(root, "update-ref", "refs/remotes/origin/main", "HEAD")
-    path = _bin(tmp_path)
-    (path / "git").symlink_to(shutil.which("git"))
-    ln = _lines(_report(tmp_path, root, path=path, env=DEV))["kit.code_writers"]
-    assert ln["status"] == "note" and "origin/main" not in ln["message"], ln
+    new, dev = _both(tmp_path, root, path=_with_base(tmp_path, root, tree))
+    for ln in (new, dev):
+        assert (ln["status"], ln["offer"]) == ("note", "set_up_unattended_runs"), ln
+        assert "branch's profile" not in ln["message"] and "origin/main" not in ln["message"], ln
+
+
+def test_a_base_this_kit_cant_read_whole_still_says_its_answer_while_it_cant_check(tmp_path):
+    """No working tree's profile, and a base with a key this kit doesn't
+    know (a later release's): its `"ticket"` counts, its ticket environment
+    can't be read."""
+    later = '[project]\nname = "demo"\nnot_a_key = 1\n' + _guard("ticket")
+    root = _project(tmp_path, profile=later)
+    new, dev = _both(tmp_path, root, path=_with_base(tmp_path, root, None))
+    assert (new["status"], dev["status"]) == ("cant_check", "cant_check"), (new, dev)
+    assert 'guard.code_writers = "ticket" (origin/main)' in dev["message"], dev
 
 
 def test_the_changelog_has_a_note():
