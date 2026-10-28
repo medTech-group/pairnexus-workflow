@@ -381,7 +381,7 @@ def test_git_clean_in_another_checkout_a_worktree_or_of_one_file(proj, tmp_path,
 def test_a_plain_patch_from_a_subdirectory(proj, monkeypatch, capsys):
     (proj / "plain.patch").write_text("--- a/app.py\n+++ b/app.py\n@@ -1 +1 @@\n-a = 1\n+a = 2\n")
     d, why = hook(monkeypatch, capsys, proj, bash("git apply ../plain.patch"), cwd=proj / "src")
-    assert d == "deny" and "code path `src/" in why, why
+    assert d == "deny" and "code path `src/app.py`" in why, why
     assert hook(monkeypatch, capsys, proj, bash("git apply plain.patch"))[0] == "allow"  # `app.py` at the top: not code
 
 

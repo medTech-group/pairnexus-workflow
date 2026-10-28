@@ -6016,7 +6016,7 @@ def _code_session(
             label = f'attended session (WORKFLOW_ROLE={odd!r} isn\'t a role, so under `code_writers = "ticket"` it isn\'t a ticket session)'
         else:
             on = f"`{branch}`, matching `{profile.ticket_branch}`" if branch else f"matching `{profile.ticket_branch}`"
-            label = f'attended session (a ticket session only by its branch, {on}, which under `code_writers = "ticket"` isn\'t a ticket session)'
+            label = f'attended session (a ticket session only by its branch, {on}: under `code_writers = "ticket"` that isn\'t a ticket session)'
         role = "attended"
     if not rule.code_paths:
         return role, None, label
@@ -6222,7 +6222,8 @@ def _patched_files(seg: Seg, g: tuple[list[str], list[str], str | None], root: P
     if unknown or not top:
         return []
     # A git diff's paths are from the top level; a plain patch's, from where it runs.
-    return [os.path.join(top if "diff --git " in txt else d, p) for txt in texts for p in _patch_paths(txt)]
+    # The paths with their `a/` and `b/` dropped first, so a refusal names the file git writes.
+    return [os.path.join(top if "diff --git " in txt else d, p) for txt in texts for p in reversed(_patch_paths(txt))]
 
 
 def _named_code(names: list[str], nocase: bool, own: bool, start: str, root: Path, code: _Code) -> _Hit | None:
@@ -6272,7 +6273,8 @@ def _shell_code(segs: list[Seg], code: _Code, root: Path) -> str | None:
             for c in _candidates(tgt, seg.cwd):
                 hit = _code_at(_abspath(c, seg.cwd), code, root, tree=True, untracked_only=True)
                 if hit:
-                    return f"`git clean` of `{tgt}` removes the code path {_shown(hit)} ({hit.pattern}); {code.instead}"
+                    shown = os.path.relpath(tgt, seg.cwd) if seg.cwd else tgt
+                    return f"`git clean` of `{shown}` removes the code path {_shown(hit)} ({hit.pattern}); {code.instead}"
         for r, cwd in t.searched:
             a = _abspath(r, cwd)
             hit = _code_at(top if a and _holds_root(a, root) else a, code, root, tree=True)
