@@ -131,6 +131,17 @@ def test_the_lines_set_up_writes_are_read_from_the_template(tmp_path):
     assert parse(tomllib.loads(template), KIT).code_writers is None
 
 
+def test_setup_writes_the_answer_last():
+    item = _para(_section(_text(SETUP), "3. Write"), "- **`code_writers` and `code_paths`,**")
+    assert "Write these two lines last, after the rest of this step 3" in item and "Then run `WF profile check` again" in item
+
+
+def test_setup_pull_request_words_plugin_mode():
+    body = _section(_text(SETUP), "4. The pull request")
+    line = _para(body, "- who writes code, as answered")
+    assert "in plugin mode instead, that code is written only in a session started on the owner's computer with `WORKFLOW_ROLE=ticket`" in line
+
+
 def test_setup_pushes_in_a_command_of_its_own():
     write = _section(_text(SETUP), "3. Write")
     assert "push the branch in a command of its own" in write and CHAINED in write
@@ -164,7 +175,7 @@ def test_setup_pull_request_and_checklist_name_who_writes_code():
 def test_update_asks_once_for_a_profile_without_code_writers():
     step = _update_step("Who writes code")
     assert "`WF profile check`" in step and '`"code_writers": null`' in step
-    assert "ask once" in step
+    assert "ask it a single time" in step
     _asks_first_ticket_sessions(step)
     # Set-up's words for "only ticket sessions", and its code paths.
     assert "set-up's" in step and "`code_paths`" in step
@@ -183,7 +194,7 @@ def test_update_skip_writes_nothing_as_the_experience_question_does():
 
 def test_update_writes_the_answer_last_and_says_it_in_the_pull_request():
     step = _update_step("Who writes code")
-    assert "once the update's other files are written" in step
+    assert "after the update's other files are written" in step
     assert '`code_writers = "ticket"`' in step and '`code_writers = "any"`' in step and "`[guard]`" in step
     pr = _update_step("The PR")
     assert "who writes code" in pr and "push the branch in a command of its own" in pr and CHAINED in pr
@@ -207,7 +218,7 @@ def test_choose_who_writes_code_is_attended_only_and_offered_by_check_setup():
     intro = _part().split("\n## ", 1)[0]
     assert "The sixth path." in intro
     assert "in an attended session" in intro and "`kit.code_writers`" in intro
-    assert "the conductor never runs it" in intro
+    assert 'Nor "Choose who writes code".' in _text(UPGRADE)  # the conductor never runs it
     assert "in plugin mode this is where it is asked" in intro
     offered = _section(_text(UPGRADE), "When it's offered")
     assert f'**"{NAME}"**' in offered and "`check-setup`" in offered
@@ -247,8 +258,9 @@ def test_choose_who_writes_code_ends_in_a_pull_request_the_owner_merges():
     assert "`[guard]`" in pr and '`code_writers = "ticket"`' in pr and '`code_writers = "any"`' in pr
     assert "`code_paths`" in pr and "Change nothing else" in pr
     assert "`WF profile check` passes" in pr
-    assert "in a command of its own" in pr and CHAINED in pr
-    assert "open the pull request" in pr.lower() and '("Pushing")' in pr
+    # The push in a command of its own, as "Pushing" says for every path.
+    assert "push the branch in a command of its own (\"Pushing\")" in pr
+    assert "open the pull request" in pr.lower()
     assert "never merge it, or enable auto-merge on it, yourself" in pr
     # A loosening counts only once it merges, and in a branch only once the merged
     # base is in it: the stricter of the working tree's answer and the base's counts.
@@ -257,7 +269,22 @@ def test_choose_who_writes_code_ends_in_a_pull_request_the_owner_merges():
     assert "once it has the merged base branch in it" in _section(_part(), "5. Where it ends")
     # Nothing to change is judged after the code paths, against the base's profile.
     assert "When the answer and the confirmed code paths are what `origin/<base>`'s profile says already" in pr
-    assert "already" not in _section(_part(), "2. The question").replace("already that", "")
+    # ...never at the question, before the code paths are confirmed.
+    assert "already" not in _section(_part(), "2. The question")
+
+
+def test_an_open_pull_request_is_found_before_asking():
+    # A second answer beside an open one would be lost, or merge into two `code_writers` lines.
+    where = _section(_part(), "1. Where it stands")
+    assert "an open pull request changing `code_writers` in the profile" in where and "the kit's update among them" in where
+    assert "If there is one, ask nothing" in where
+    step = _update_step("Who writes code")
+    assert "an open pull request changing `code_writers` in the profile" in step and "ask nothing" in step
+
+
+def test_set_up_offers_runs_after_the_merge_among_upgrade_setups_moments():
+    offered = _section(_text(UPGRADE), "When it's offered")
+    assert '"Set up unattended runs" once too, after it, when set-up\'s answer was only ticket sessions in vendored mode' in offered
 
 
 def test_choose_who_writes_code_proposes_code_paths_as_set_up_does():
@@ -294,7 +321,7 @@ def test_check_setup_offers_it_on_doctors_unanswered_note(tmp_path):
     assert "`kit.code_writers`" in para and "`note`" in para and f'"{NAME}"' in para
     # Only the unanswered line has no offer: under "ticket" with no ticket environment it offers runs.
     assert "While `guard.code_writers` is unanswered, doctor's `kit.code_writers` line carries no `offer`" in para
-    assert f"**{NAME}**" in para and "**Not now**" in para
+    assert f"**{NAME}**" in para and "**Not now**" in para and 'without "(Recommended)"' in para
     assert "upgrade-setup" in para
     assert "plugin mode" in para
     # Doctor's line is that, in both modes: a note, no offer of its own, its fix naming the step.
@@ -330,6 +357,7 @@ def test_install_names_the_question_and_the_upgrade():
     text = _text(INSTALL)
     every = _section(text, "Every project, whichever mode")
     assert "who writes code" in every and f'"{NAME}"' in every
+    assert "once per update while it is unanswered" in every
 
 
 def test_changelog_notes_it_under_unreleased():

@@ -151,7 +151,7 @@ Each line with an `offer` is an upgrade one tap away. Offer each one the report 
 
 **Not now** ends that offer for now: nothing is changed, and the next check still names it.
 
-**Who writes code.** While `guard.code_writers` is unanswered, doctor's `kit.code_writers` line carries no `offer`. While it is a `note` whose fix names "Choose who writes code" (`guard.code_writers` unanswered), offer **Choose who writes code** as a choice with **Not now**, among the others and in the same way, without "(Recommended)" (a note). On yes, load `upgrade-setup` for "Choose who writes code", from its "Where it stands": its question comes next, so ask no other first. In plugin mode, which has no kit update to ask it, this is where it is asked. Once answered, the line's fix no longer names it, and it isn't offered.
+**Who writes code.** While `guard.code_writers` is unanswered, doctor's `kit.code_writers` line carries no `offer`. While it is a `note` whose fix names "Choose who writes code", offer **Choose who writes code** as a choice with **Not now**, among the others and in the same way, without "(Recommended)" (a note). On yes, load `upgrade-setup` for "Choose who writes code", from its "Where it stands": its question comes next, so ask no other first. In plugin mode, which has no kit update to ask it, this is where it is asked. Once answered, the line's fix no longer names it, and it isn't offered.
 
 **Any other offer** doctor names that isn't in the table (a later kit adds them) is named as text, not offered as a choice: "Doctor also suggests `<offer>`: <the line's fix>." Start only the upgrades in the table.
 

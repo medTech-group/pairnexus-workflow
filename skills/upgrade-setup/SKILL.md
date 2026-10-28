@@ -40,7 +40,7 @@ The read-back needs GitHub's own JSON: the repository (`GET repos/<repo>`, with 
 
 Offered, never as a nag, at these moments only (`require_checks` and `add_try_it_links` have their own, narrower rules, below). Each comes with "Not now", and "Not now" ends it for that moment:
 - when the person asks ("protect main", "set up the ruleset", "set up unattended runs", "require the checks");
-- right after the set-up pull request merges, "Protect `main`" once (set-up's own offer), and both in its body as optional next steps;
+- right after the set-up pull request merges, "Protect `main`" once (set-up's own offer), and both in its body as optional next steps; "Set up unattended runs" once too, after it, when set-up's answer was only ticket sessions in vendored mode;
 - in the guard's solo-mode refusal, once it offers "Protect `main`";
 - before an unattended run in solo mode, once the conductor's pre-flight offers it;
 - by `workflow doctor`, once it exists, when it finds the base branch unprotected.
@@ -620,11 +620,13 @@ Say where it stands in one line:
 
 # Choose who writes code
 
-The sixth path. It answers, or changes, who writes code in this project: the profile's `guard.code_writers` (`"ticket"`, only ticket sessions, or `"any"`, any session) with `guard.code_paths`, in a pull request for the owner to merge. Asked for in an attended session ("choose who writes code", "only ticket sessions should write code", "let my sessions write code again"), or picked where `check-setup` offers it, while doctor's `kit.code_writers` note says it is unanswered. A ticket session never runs it, and the conductor never runs it. Both modes: the plugin has no kit update to ask it, so in plugin mode this is where it is asked.
+The sixth path. It answers, or changes, who writes code in this project: the profile's `guard.code_writers` (`"ticket"`, only ticket sessions, or `"any"`, any session) with `guard.code_paths`, in a pull request for the owner to merge. Asked for in an attended session ("choose who writes code", "only ticket sessions should write code", "let my sessions write code again"), or picked where `check-setup` offers it, while doctor's `kit.code_writers` note says it is unanswered. Both modes: the plugin has no kit update to ask it, so in plugin mode this is where it is asked.
 
 ## 1. Where it stands
 
 `git fetch origin <base>`, then read `WF status --json`: its `code_writers` is the answer that counts, the stricter of the working tree's profile and the base branch's as last fetched, `null` while unanswered. `WF profile check` gives the profile's own `code_writers` and `code_paths`. Say where it stands in one line: "Not answered yet: any session writes code, as before.", "Only ticket sessions write code." or "Any session writes code."
+
+Then look for an open pull request changing `code_writers` in the profile (from `workflow/code-writers`, or any other, the kit's update among them). If there is one, ask nothing: say what it sets and point at it, to merge or close before asking again, and stop. A second answer beside it would be lost, or merged into a profile with two `code_writers` lines.
 
 ## 2. The question
 
@@ -641,12 +643,12 @@ With **Only ticket sessions**, propose `code_paths` as set-up does (its "The cod
 
 ## 4. One pull request
 
-First look for one already open (from `workflow/code-writers`, or any open pull request changing `code_writers` in the profile): if there is one, point at it rather than opening another. When the answer and the confirmed code paths are what `origin/<base>`'s profile says already, the branch would change nothing: say so, and stop.
+When the answer and the confirmed code paths are what `origin/<base>`'s profile says already, the branch would change nothing: say so, and stop.
 
 1. A branch from the base branch, such as `workflow/code-writers`.
 2. In `.claude/workflow/profile.toml`'s `[guard]` table, a plain `code_writers = "ticket"` or `code_writers = "any"` line on its own, in place of the `code_writers` line there, or of the template's commented `# code_writers = "ticket"`, or at the end of `[guard]` when neither is there; and `code_paths` with the confirmed globs, the same way. Change nothing else.
 3. `WF profile check` passes. Under `"ticket"`, its warning that `guard.code_paths` is empty stays only when the person named no folders.
-4. Commit, then push the branch in a command of its own, never chained with the commit (`git commit … && git push`) ("Pushing"): under `"ticket"` that counts in this session as soon as its working tree says so.
+4. Commit, then push the branch in a command of its own ("Pushing"). Once its working tree says `"ticket"`, this session writes no code.
 5. Open the pull request. Its body: the answer, the code paths, and what changes once it merges (with only ticket sessions: no other session, the conductor included, writes code, and where it is built instead, as the question said).
 
 **Loosening waits for the merge.** From `"ticket"` to `"any"`, nothing changes until the pull request merges: the stricter of the working tree's answer and the base's counts, so a session's branch stays under `"ticket"` until the merged base is in it (pulled or merged in, not only fetched). Say so.
