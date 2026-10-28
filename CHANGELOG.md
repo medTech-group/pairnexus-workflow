@@ -20,11 +20,8 @@
 - Tests: `tests/test_cant_decide_planning.py`.
 - **For projects updating:** nothing to do; the vendored guard hook in `.claude/settings.json` changes with the update.
 
-**Doctor says who writes code: `kit.code_writers`** (#344, part of #338), from the profile that counts (`profile.code_rule`), so "check the set-up" shows it too.
+**Doctor says who writes code: `kit.code_writers`** (#344, part of #338), read through `profile.code_rule`, so "check the set-up" shows it too. Unanswered, it is a note whose fix is "Choose who writes code". Under `"ticket"` with `run.ticket_environment` empty, it is a note that nothing writes code until a ticket environment exists, made by "Set up unattended runs" (offered) or by hand; in plugin mode, which has no unattended runs, that code is written only in a session on the owner's computer with `WORKFLOW_ROLE=ticket`, and the rule holds only where the plugin is installed. Under `"any"`, or `"ticket"` with a ticket environment, it is fine.
 
-- **Unanswered:** a note, with the fix "Choose who writes code".
-- **`"ticket"` with `run.ticket_environment` empty:** a note that nothing writes code until a ticket environment exists, made by "Set up unattended runs" (offered) or by hand. In plugin mode, which has no unattended runs, it says code is written only in a session on the owner's computer with `WORKFLOW_ROLE=ticket`, and that the rule holds only where the plugin is installed.
-- **`"any"`, or `"ticket"` with a ticket environment:** fine.
 - Doctor now also runs `git check-ref-format`, to read the base's profile. Tests: `tests/test_doctor_code_writers.py`.
 - **For projects updating:** nothing to do.
 
