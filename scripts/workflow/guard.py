@@ -6005,8 +6005,7 @@ def _code_session(event: dict, profile: Profile, role: str, root: Path, role_fro
     if firm_ticket or not (tool in _CODE_TOOLS or (role == "ticket" and tool.startswith("mcp__"))):
         return role, None, None
     rule = profile_mod.code_rule(root)
-    writers = "ticket" if "ticket" in (rule.code_writers, profile.code_writers) else rule.code_writers
-    if writers != "ticket" or rule.writes_code():
+    if rule.code_writers != "ticket" or rule.writes_code():
         return role, None, None
     label = None
     if role == "ticket":
@@ -6015,10 +6014,9 @@ def _code_session(event: dict, profile: Profile, role: str, root: Path, role_fro
         else:
             label = f'attended session (a ticket session only by its branch, `{profile.ticket_branch}`, which under `code_writers = "ticket"` isn\'t a ticket session)'
         role = "attended"
-    paths = list(rule.code_paths) + [p for p in profile.code_paths if p not in rule.code_paths]
-    if not paths:
+    if not rule.code_paths:
         return role, None, label
-    return role, _Code(paths, list(profile.protected_paths), _instead(role, profile, root), _writes_none(role)), label
+    return role, _Code(list(rule.code_paths), list(rule.protected_paths), _instead(role, profile, root), _writes_none(role)), label
 
 
 def _writes_none(role: str) -> str:
@@ -6038,7 +6036,9 @@ def _instead(role: str, profile: Profile, root: Path) -> str:
         else:
             way = "with the charter's `conductor_fixes` on, file the fix as a `workflow:infra` ticket, for a ticket session; with it off, add it to `for_owner`, for the report"
         return f"{_writes_none(role)}: {way}"
-    if not (root / ".claude/workflow/lock.json").exists():  # plugin mode: no unattended runs
+    from . import updates as updates_mod
+
+    if updates_mod.mode(root) == "plugin":  # no unattended runs
         way = "build it in a session on your own computer started with `WORKFLOW_ROLE=ticket` instead"
     elif profile.ticket_environment:
         way = "hand it to a conductor run instead (**Run it unattended**), as a ticket, or a quick ticket for a small change"

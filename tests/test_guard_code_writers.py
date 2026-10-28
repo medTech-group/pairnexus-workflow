@@ -121,7 +121,7 @@ def powershell(command):
 
 
 # A session that doesn't write code under "ticket": (WORKFLOW_ROLE, branch).
-PLANNING = {
+NOT_TICKET = {
     "attended": (None, "feature"),
     "attended by its role": ("attended", "feature"),
     "conductor": ("conductor", "feature"),
@@ -139,9 +139,9 @@ def _on(root, branch):
 
 
 @pytest.mark.parametrize("tool", ["Write", "Edit", "MultiEdit", "NotebookEdit"])
-@pytest.mark.parametrize("who", list(PLANNING))
+@pytest.mark.parametrize("who", list(NOT_TICKET))
 def test_a_code_write_is_refused_outside_ticket_sessions_in_every_mode(proj, monkeypatch, capsys, tool, who):
-    role, branch = PLANNING[who]
+    role, branch = NOT_TICKET[who]
     _on(proj, branch)
     for mode in MODES:
         for path in (CODE, str(proj / CODE), "tests/test_new.py", "src/new/deep/mod.py"):
@@ -159,13 +159,13 @@ def test_a_ticket_session_writes_code(proj, monkeypatch, capsys, role, tool):
         assert hook(monkeypatch, capsys, proj, write(CODE, tool), role, mode)[0] == "allow", mode
 
 
-@pytest.mark.parametrize("who", list(PLANNING))
+@pytest.mark.parametrize("who", list(NOT_TICKET))
 @pytest.mark.parametrize("path", ["docs/guide.md", "README.md", ".workflow/run/body.md", ".workflow/src/x.py", "src/protected/keep.py", ".claude/workflow/profile.toml"])
 def test_what_isnt_code_decides_as_today(tmp_path, monkeypatch, capsys, who, path):
     """Docs, protected paths, `.workflow/` and a path that is both code and
     protected decide exactly as without `code_writers`; a branch-only or
     mistyped session, under "ticket", as an attended session does."""
-    role, branch = PLANNING[who]
+    role, branch = NOT_TICKET[who]
     ticket = _tree(tmp_path / "ticket", "ticket", branch)
     absent = _tree(tmp_path / "absent", None, branch)
     as_attended = _tree(tmp_path / "attended", None, "feature")
@@ -272,7 +272,7 @@ REFUSED_BASH = [
 @pytest.mark.parametrize("command", REFUSED_BASH)
 @pytest.mark.parametrize("who", ["attended", "conductor", "branch-only ticket session", "mistyped WORKFLOW_ROLE"])
 def test_a_shell_write_to_a_code_path_is_refused(proj, monkeypatch, capsys, command, who):
-    role, branch = PLANNING[who]
+    role, branch = NOT_TICKET[who]
     _on(proj, branch)
     for mode in (None, "bypassPermissions"):
         d, why = hook(monkeypatch, capsys, proj, bash(command), role, mode)
@@ -342,7 +342,7 @@ def test_the_conductors_shell_code_write_is_refused(proj, monkeypatch, capsys):
 )
 @pytest.mark.parametrize("who", ["attended", "branch-only ticket session", "mistyped WORKFLOW_ROLE"])
 def test_powershell_naming_a_code_path_is_refused(proj, monkeypatch, capsys, command, who):
-    role, branch = PLANNING[who]
+    role, branch = NOT_TICKET[who]
     _on(proj, branch)
     for mode in (None, "default", "bypassPermissions"):
         d, why = hook(monkeypatch, capsys, proj, powershell(command), role, mode)
