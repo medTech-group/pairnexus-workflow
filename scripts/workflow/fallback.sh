@@ -39,8 +39,9 @@ if [ "${1:-}" = --ticket-rule ]; then
         BEGIN { bom = "\357\273\277" }
         NR == 1 { while (index($0, bom) == 1) $0 = substr($0, length(bom) + 1) }
         /^[ \t]*code_writers[ \t]*=[ \t]*"ticket"/ { ticket = 1 }
-        !seen && /^[ \t]*base_branch[ \t]*=[ \t]*"[^"]*"/ {
-            base = $0; sub(/^[ \t]*base_branch[ \t]*=[ \t]*"/, "", base); sub(/".*/, "", base); seen = 1
+        !seen && /^[ \t]*base_branch[ \t]*=[ \t]*("[^"]*"|\047[^\047]*\047)/ {
+            base = $0; sub(/^[ \t]*base_branch[ \t]*=[ \t]*/, "", base)
+            q = substr(base, 1, 1); base = substr(base, 2); base = substr(base, 1, index(base, q) - 1); seen = 1
         }
         END { if (ticket) print "ticket"; else print "base " base }'
     }
@@ -52,7 +53,8 @@ if [ "${1:-}" = --ticket-rule ]; then
         # A branch's name only, as `profile.code_rule` takes it: "main~1" or
         # "main@{1}" would read an older base.
         git check-ref-format "$REF" 2>/dev/null || continue
-        if THERE=$(git -C "${CLAUDE_PROJECT_DIR:-.}" show "$REF:.claude/workflow/profile.toml" 2>/dev/null); then
+        # Never a fetch: a partial clone's missing object is a failure, not a download.
+        if THERE=$(GIT_NO_LAZY_FETCH=1 git -C "${CLAUDE_PROJECT_DIR:-.}" show "$REF:.claude/workflow/profile.toml" 2>/dev/null); then
             [ "$(printf '%s\n' "$THERE" | plain)" = ticket ] && echo ticket
             exit 0
         fi

@@ -14,6 +14,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -361,6 +362,7 @@ def _commit_with(root, profile, parent=None):
     ('base_branch = "trunk"\n', {"main": True, "trunk": False}, False),  # origin/trunk is the base, and it doesn't say so
     ('base_branch = "trunk"\n', {"HEAD": True, "trunk": False}, False),  # nor does origin/HEAD count once origin/trunk exists
     ('base_branch = "главная"\n', {"главная": False, "HEAD": True}, False),  # a branch's name in any script
+    ("base_branch = 'trunk'\n", {"main": True, "trunk": False}, False),  # a literal string names it too
 ])
 def test_the_base_is_read_where_the_profile_names_it(tmp_path, base_line, refs, want):
     root = _project(tmp_path / "proj", VALID + base_line, branch="main")
@@ -376,6 +378,48 @@ def test_the_base_is_read_where_the_profile_names_it(tmp_path, base_line, refs, 
             _git(root, "update-ref", f"refs/remotes/origin/{name}", sha)
     assert fallback.ticket_rule(root) is want
     assert (_shell_rule(root).stdout == "ticket\n") is want
+
+
+def _fake_git(tmp_path, body):
+    bindir = tmp_path / "fakebin"
+    bindir.mkdir()
+    (bindir / "git").write_text("#!/bin/sh\n" + body)
+    (bindir / "git").chmod(0o755)
+    return str(bindir) + os.pathsep + os.environ["PATH"]
+
+
+def test_the_rule_spends_at_most_its_git_seconds_in_all(tmp_path, monkeypatch):
+    root = tmp_path / "proj"
+    (root / ".claude/workflow").mkdir(parents=True)
+    (root / ".claude/workflow/profile.toml").write_text(VALID)
+    monkeypatch.setenv("PATH", _fake_git(tmp_path, "exec sleep 5\n"))  # every git call hangs
+    started = time.monotonic()
+    assert fallback.ticket_rule(root) is False
+    assert time.monotonic() - started < fallback.GIT_SECONDS + 1.5
+
+
+def test_the_base_is_never_fetched(tmp_path, monkeypatch):
+    # A partial clone's `git show` would fetch the missing object: both readers forbid it.
+    root = tmp_path / "proj"
+    (root / ".claude/workflow").mkdir(parents=True)
+    (root / ".claude/workflow/profile.toml").write_text(VALID)
+    log = tmp_path / "git.log"
+    path = _fake_git(tmp_path, f'case "$*" in *show*) echo "lazy=$GIT_NO_LAZY_FETCH" >> "{log}";; esac\nexit 0\n')
+    monkeypatch.setenv("PATH", path)
+    fallback.ticket_rule(root)
+    subprocess.run(["sh", str(KIT / "scripts/workflow/fallback.sh"), "--ticket-rule"], stdin=subprocess.DEVNULL,
+                   capture_output=True, env={"PATH": path, "CLAUDE_PROJECT_DIR": str(root)}, check=True)
+    assert log.read_text().split() == ["lazy=1", "lazy=1"]
+
+
+def test_without_a_working_tree_profile_the_cli_still_refuses_a_mistyped_session(tmp_path, monkeypatch, capsys):
+    # "ticket" on the base, but the profile is missing here: restore it, as before.
+    root = _project(tmp_path / "proj", VALID, VALID + TICKET, "feature")
+    (root / ".claude/workflow/profile.toml").unlink()
+    for failure in ("malformed", None):
+        for event in (PUSH, WRITE):
+            out = _hook(monkeypatch, capsys, root, failure, event, "tikcet")
+            assert out and out["permissionDecision"] == "deny", (failure, event, out)
 
 
 def test_the_fallbacks_say_so():

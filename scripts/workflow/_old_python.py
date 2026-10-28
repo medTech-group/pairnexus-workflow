@@ -177,10 +177,10 @@ def _hook(sub, stdin_text, env, version, cwd):
     event = fallback.read_event(text) if text.strip() else {}
     here = event.get("cwd") if isinstance(event, dict) and isinstance(event.get("cwd"), str) else None
     where = here or (str(cwd) if cwd else os.getcwd())
-    firm = _refused(env, where)
+    refused = _refused(env, where)
     if sub != "guard":
-        return _repair(firm, version)
-    return _guard(event, firm, version, env.get("CLAUDE_PROJECT_DIR") or where)
+        return _repair(refused, version)
+    return _guard(event, refused, version, env.get("CLAUDE_PROJECT_DIR") or where)
 
 
 # ---------- `workflow doctor`'s short report (#61) ----------

@@ -1380,11 +1380,14 @@ def _planning(role: str | None, firm: str | None, root=None) -> bool:
     session (#342): under `code_writers = "ticket"`, read from a plain line of
     the working tree's profile or the base's (`fallback.ticket_rule`), a
     session that is a ticket session only by its branch (`firm` None) or by a
-    WORKFLOW_ROLE that isn't a role. Never one with WORKFLOW_ROLE=ticket."""
+    WORKFLOW_ROLE that isn't a role. Never one with WORKFLOW_ROLE=ticket, nor
+    one without a working tree's profile."""
     if role != "ticket" or (firm is not None and roles.unrecognised() is None):
         return False
     try:
-        return fallback.ticket_rule(root or project_root())
+        root = Path(root or project_root())
+        # Without a working tree's profile the CLI refuses as before (restore it).
+        return (root / PROFILE_PATH).is_file() and fallback.ticket_rule(root)
     except Exception:
         return False
 
@@ -1439,8 +1442,9 @@ def _hook_guard(event, raw: str = "") -> int:
     except _OverBudget:
         # A role not read in time is the strictest, unless the rule says that
         # without WORKFLOW_ROLE=ticket no session gets more than a planning session's.
-        planning = _planning(role or firm or "ticket", firm, root)
-        role = "attended" if planning else role or firm or "ticket"
+        strictest = role or firm or "ticket"
+        planning = _planning(strictest, firm, root)
+        role = "attended" if planning else strictest
         label = _planning_label() if planning else _role_label(role)
         # Solo mode refuses what touches the base branch, so a check not finished in time is refused too.
         if role in ("ticket", "conductor") or (role == "attended" and prof.ruleset is False):

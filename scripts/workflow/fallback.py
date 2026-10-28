@@ -49,7 +49,7 @@ MCP_PUSH = ("merge_pull_request", "push_files", "create_or_update_file", "delete
 COMMAND_TOOLS = ("Bash", "Monitor", "PowerShell")
 _RULESET = re.compile(r"^[ \t]*ruleset[ \t]*=[ \t]*(\w+)", re.M)
 _TICKET_RULE = re.compile(r'^[ \t]*code_writers[ \t]*=[ \t]*"ticket"', re.M)
-_BASE_BRANCH = re.compile(r'^[ \t]*base_branch[ \t]*=[ \t]*"([^"\n]*)"', re.M)
+_BASE_BRANCH = re.compile(r'^[ \t]*base_branch[ \t]*=[ \t]*(?:"([^"\n]*)"|\'([^\'\n]*)\')', re.M)
 # How long `ticket_rule` may spend in git, all its calls together: it can run
 # after the guard's own budget is spent, with 5 seconds left of the hook's.
 GIT_SECONDS = 2.0
@@ -155,12 +155,14 @@ def _profile_text(root):
 
 
 def _git(root, deadline, *args):
-    """git's output, or None when it fails or `deadline` (a time.monotonic()) passes."""
+    """git's output, or None when it fails or `deadline` (a time.monotonic()) passes.
+    Never a fetch: a partial clone's missing object is a failure, not a download."""
     left = deadline - time.monotonic()
     if left <= 0:
         return None
     try:
-        p = subprocess.run(("git",) + args, cwd=str(root), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=left)
+        p = subprocess.run(("git",) + args, cwd=str(root), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=left,
+                           env=dict(os.environ, GIT_NO_LAZY_FETCH="1"))
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
     return p.stdout.decode("utf-8", "replace") if p.returncode == 0 else None
@@ -178,12 +180,12 @@ def ticket_rule(root):
     `root`, or in the base's as last fetched, `origin/<base>` (`<base>` from
     the working tree's plain `base_branch` line, default main), else
     `origin/HEAD`. False when neither says so or neither can be read, or git
-takes longer than `GIT_SECONDS` in all."""
+    takes longer than `GIT_SECONDS` in all."""
     text = _profile_text(root)
     if ticket_rule_from_text(text):
         return True
     m = _BASE_BRANCH.search((text or "").lstrip("\ufeff"))
-    base = (m.group(1) if m else "") or "main"
+    base = (m and (m.group(1) or m.group(2))) or "main"
     deadline = time.monotonic() + GIT_SECONDS
     for name in (base, "HEAD"):
         ref = "refs/remotes/origin/" + name
