@@ -21,6 +21,8 @@ NEW = {"WORKFLOW_EXPERIENCE": "new"}
 DEV = {"WORKFLOW_EXPERIENCE": "developer"}
 PLUGIN = {"enabledPlugins": {vendor.PLUGIN_KEY: True}}
 NO_TICKET_ENV = RUN.replace('ticket_environment = "t"\n', "")
+# A profile with a key this kit doesn't know (a later release's, or a typo).
+LATER = '[project]\nname = "demo"\nnot_a_key = 1\n'
 
 
 def _guard(writers):
@@ -95,7 +97,7 @@ def test_in_plugin_mode_a_ticket_environment_named_is_never_where_the_rule_holds
         assert "`t`" not in ln["message"], ln
 
 
-@pytest.mark.parametrize("profile, fix", [(None, "set the kit up"), ('[project]\nname = "demo"\nnot_a_key = 1\n', "correct the kit's profile")],
+@pytest.mark.parametrize("profile, fix", [(None, "set the kit up"), (LATER, "correct the kit's profile")],
                          ids=["no-profile", "invalid-profile"])
 def test_without_a_readable_profile_it_cant_check(tmp_path, profile, fix):
     root = _project(tmp_path, profile=profile)
@@ -105,14 +107,14 @@ def test_without_a_readable_profile_it_cant_check(tmp_path, profile, fix):
     assert "kit.profile" in dev["fix"], dev
 
 
-def _with_base(tmp_path, root, tree):
-    """Make `root` a checkout whose `origin/main`, as last fetched, holds its
-    profile as it is now, then write `tree` (None: deleted) as its working
-    tree's; the PATH doctor runs with, with git on it."""
+def _with_base(tmp_path, root, tree, ref="main"):
+    """Make `root` a checkout whose `origin/<ref>`, as last fetched, holds its
+    profile as it is now, then write `tree` (None: deleted; True: kept) as
+    its working tree's; the PATH doctor runs with, with git on it."""
     git(root, "init", "-q", "-b", "main")
     git(root, "add", ".claude/workflow/profile.toml")
     git(root, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "profile")
-    git(root, "update-ref", "refs/remotes/origin/main", "HEAD")
+    git(root, "update-ref", f"refs/remotes/origin/{ref}", "HEAD")
     path = root / ".claude/workflow/profile.toml"
     if tree is None:
         path.unlink()
@@ -137,7 +139,31 @@ def test_the_base_branchs_ticket_counts_over_a_working_tree_that_says_less(tmp_p
     assert "from origin/main" in dev["message"], dev
 
 
-@pytest.mark.parametrize("tree", [True, None, '[project]\nname = "demo"\nnot_a_key = 1\n'], ids=["ticket", "missing", "invalid"])
+@pytest.mark.parametrize("vendored", [True, False], ids=["vendored", "plugin"])
+def test_the_base_is_named_beside_who_writes_code_never_beside_the_working_trees_environment(tmp_path, vendored):
+    """The working tree says `"any"` and names the ticket environment; the
+    base says `"ticket"`: the base is named for who writes code alone."""
+    root = _project(tmp_path, profile=_profile("ticket", NO_TICKET_ENV), vendored=vendored, settings=None if vendored else PLUGIN)
+    new, dev = _both(tmp_path, root, path=_with_base(tmp_path, root, _profile("any", RUN)))
+    for ln in (new, dev):
+        assert ln["status"] == "fine", ln
+    assert new["message"].startswith("Only ticket sessions write code") and "branch's profile says so" in new["message"], new
+    assert "from origin/main" in dev["message"], dev
+    if vendored:
+        said, env = new["message"].index("branch's profile says so"), new["message"].index("`t`")
+        assert said < env and "Their cloud environment is `t`." in new["message"], new
+
+
+def test_the_base_read_from_origin_head_is_the_base_branch(tmp_path):
+    """No `origin/main`: the base's profile is read from `origin/HEAD`, and the
+    line names that, never `main`."""
+    root = _project(tmp_path, profile=_profile("ticket", NO_TICKET_ENV))
+    new, dev = _both(tmp_path, root, path=_with_base(tmp_path, root, _profile(None, NO_TICKET_ENV), ref="HEAD"))
+    assert "The base branch's profile says so" in new["message"] and "`main`" not in new["message"], new
+    assert "from origin/HEAD" in dev["message"], dev
+
+
+@pytest.mark.parametrize("tree", [True, None, LATER], ids=["ticket", "missing", "invalid"])
 def test_it_names_no_base_unless_a_working_tree_profile_says_less(tmp_path, tree):
     """A working tree that says `"ticket"` itself, or has no readable profile
     to count over (the profile line says so), names no base."""
@@ -148,14 +174,18 @@ def test_it_names_no_base_unless_a_working_tree_profile_says_less(tmp_path, tree
         assert "branch's profile" not in ln["message"] and "origin/main" not in ln["message"], ln
 
 
-def test_a_base_this_kit_cant_read_whole_still_says_its_answer_while_it_cant_check(tmp_path):
+@pytest.mark.parametrize("writers", ["ticket", "any"])
+def test_a_base_this_kit_cant_read_whole_still_says_its_answer(tmp_path, writers):
     """No working tree's profile, and a base with a key this kit doesn't
-    know (a later release's): its `"ticket"` counts, its ticket environment
-    can't be read."""
-    later = '[project]\nname = "demo"\nnot_a_key = 1\n' + _guard("ticket")
-    root = _project(tmp_path, profile=later)
+    know (a later release's): its `"ticket"` counts while its ticket
+    environment can't be read; its `"any"` needs no ticket environment."""
+    root = _project(tmp_path, profile=LATER + _guard(writers))
     new, dev = _both(tmp_path, root, path=_with_base(tmp_path, root, None))
+    if writers == "any":
+        assert (new["status"], dev["status"]) == ("fine", "fine"), (new, dev)
+        return
     assert (new["status"], dev["status"]) == ("cant_check", "cant_check"), (new, dev)
+    assert new["message"].startswith("Only ticket sessions write code") and "can't be told" in new["message"], new
     assert 'guard.code_writers = "ticket" (origin/main)' in dev["message"], dev
 
 

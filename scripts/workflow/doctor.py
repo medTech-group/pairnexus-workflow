@@ -14,7 +14,8 @@ and `git show` (the workflow files as they are on `origin/<base>`, #246, and
 the base's profile, with `git check-ref-format`, for who writes code, #344),
 nothing else. It reads files only through
 `_read_text` (and `_read_value`, `_read_json` on it), `_file` and
-`_hash_file`, which never raise and never wait on a pipe; only a file given as
+`_hash_file`, which never raise and never wait on a pipe (and the profile
+through `profile.code_rule`, which reads it the same way); only a file given as
 `-` (`--rulesets`, `--repo`, `--environments`, `--runs`, `--checks`,
 `--prs`, `--org`, `--ci` or `--commits`) reads standard input, as asked. A check that fails unexpectedly becomes a
 `cant_check` line, never a traceback: doctor is advice, and exits 0.
@@ -976,11 +977,12 @@ def check_code_writers(i: Inputs) -> list[Line]:
     g, id_ = "The kit", "kit.code_writers"
     rule = profile_mod.code_rule(i.root)
     counts = rule.profile or i.profile
-    if counts is None:  # nothing readable answers, or the base answers in a profile this kit can't read whole
-        known = f'guard.code_writers = "{rule.code_writers}" ({", ".join(rule.sources)}), but' if rule.code_writers else "guard.code_writers and"
+    if counts is None and rule.code_writers != "any":  # nothing readable answers, or a base this kit can't read whole does
         return [Line(g, id_, "cant_check", Words(
-            "Can't tell who writes code in this project until the kit's profile can be read.",
-            f"{known} run.ticket_environment unknown: no readable profile.",
+            "Only ticket sessions write code in this project, but whether a cloud environment exists for them can't be told until the kit's profile can be read."
+            if rule.code_writers else "Can't tell who writes code in this project until the kit's profile can be read.",
+            f'guard.code_writers = "ticket" ({", ".join(rule.sources)}), but run.ticket_environment can\'t be read: no profile this kit can read whole.'
+            if rule.code_writers else "guard.code_writers unknown: no readable profile.",
         ), PROFILE_FIRST if i.profile_error else SET_UP_FIRST)]
     if rule.code_writers is None:
         return [Line(g, id_, "note", Words(
@@ -1011,7 +1013,7 @@ def check_code_writers(i: Inputs) -> list[Line]:
         ))]
     if env:
         return [Line(g, id_, "fine", Words(
-            f"Only ticket sessions write code in this project, in the cloud environment {_named(env)}.{by.new}",
+            f"Only ticket sessions write code in this project.{by.new} Their cloud environment is {_named(env)}.",
             f"guard.code_writers = \"ticket\"{by.developer}; run.ticket_environment = {_named(env)}.",
         ))]
     return [Line(g, id_, "note", Words(
