@@ -624,11 +624,11 @@ The sixth path. It answers, or changes, who writes code in this project: the pro
 
 ## 1. Where it stands
 
-The pull request's branch starts from the base branch, so where it stands is the base's profile: `git fetch origin <base>`, then read `code_writers` and `code_paths` from `git show origin/<base>:.claude/workflow/profile.toml`. Say where it stands in one line: "Not answered yet: any session writes code, as before.", "Only ticket sessions write code." or "Any session writes code."
-
-Then read `WF status --json`: its `code_writers` is the answer that counts in this session, the stricter of the working tree's profile and the base's. When it is stricter than the base's (`"ticket"` where the base says `"any"` or nothing), or the working tree's `code_paths` (`WF profile check`) list paths the base doesn't, this session's branch is behind: say that the base's answer applies here once it is merged in (pulled or merged, not only fetched).
+The pull request's branch starts from the base branch, so where it stands is the base's profile: `git fetch origin <base>`, then read `code_writers` and `code_paths` from `git show origin/<base>:.claude/workflow/profile.toml`. When the base has no profile yet (set-up's pull request hasn't merged), say set-up's pull request merges first, and stop. Otherwise say where it stands in one line: "Not answered yet: any session writes code, as before.", "Only ticket sessions write code." or "Any session writes code."
 
 Then look for an open pull request changing `code_writers` in the profile (from `workflow/code-writers`, or any other, the kit's update among them). If there is one, ask nothing: say what it sets and point at it, to merge or close before asking again, and stop. A second answer beside it would be lost, or merged into a profile with two `code_writers` lines.
+
+Then read `WF status --json`: its `code_writers` is the answer that counts in this session, the stricter of the working tree's profile and the base's. When it is stricter than the base's (`"ticket"` where the base says `"any"` or nothing), or the working tree's `code_paths` (`WF profile check`) list paths the base doesn't, and the base isn't in this branch yet (`git merge-base --is-ancestor origin/<base> HEAD` fails), this session's branch is behind: say that the base's answer applies here once it is merged in (pulled or merged, not only fetched).
 
 ## 2. The question
 

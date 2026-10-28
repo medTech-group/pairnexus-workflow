@@ -286,6 +286,11 @@ def test_an_open_pull_request_is_found_before_asking():
     where = _section(_part(), "1. Where it stands")
     assert "an open pull request changing `code_writers` in the profile" in where and "the kit's update among them" in where
     assert "If there is one, ask nothing" in where
+    # Before anything is said about this session's own branch, which may carry the open answer itself.
+    assert where.index("If there is one, ask nothing") < where.index("this session's branch is behind")
+    assert "`git merge-base --is-ancestor origin/<base> HEAD` fails" in where
+    # No profile on the base yet: set-up's pull request merges first.
+    assert "When the base has no profile yet (set-up's pull request hasn't merged)" in where
     step = _update_step("Who writes code")
     assert "an open pull request changing `code_writers` in the profile" in step and "an earlier kit update's among them" in step
     # Looked for before the question is asked.
