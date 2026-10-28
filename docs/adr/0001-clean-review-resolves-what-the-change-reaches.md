@@ -21,7 +21,7 @@ We decided this because reviews weren't converging. Of about 264 review rounds o
 ## Considered Options
 
 - **Every finding blocks** (the rule before this): reviews didn't converge, and the pass cap handed changes to the owner unmerged.
-- **Only defects in the change's own lines, unmet criteria, missing tests and safety breaches block, the rest filed as `needs-triage` follow-ups** (#360's proposal, answers 2 and 10): rejected. A regression the change causes in a caller it didn't touch, or an old broken function its new button calls, would merge, and the owner would sort a growing pile of issues.
+- **Only defects in the change's own lines, unmet criteria, missing tests and safety breaches block, the rest filed as `needs-triage` follow-ups** (#360's proposal, taken in answers 2 and 10): replaced by answers 26 and 27. A regression the change causes in a caller it didn't touch, or an old broken function its new button calls, would merge, and the owner would sort a growing pile of issues.
 - **Only critical- or important-severity findings block:** rejected, because a minor defect the change reaches would merge.
 - **The ticket session classifies findings:** rejected, because the builder would judge its own work. The reviewer marks each finding. The session may contest a mark with a written reason, and the next reviewer rules. A blocking finding the session answers "not a problem" also waits for the next reviewer.
 
@@ -29,4 +29,4 @@ We decided this because reviews weren't converging. Of about 264 review rounds o
 
 - Reviewers review the change and what it reaches, not unrelated code.
 - The rule applies to build reviews only. Planning reviews (a spec's draft, a map decision's or a spec session's ADRs and glossary, and, in phase 2, a breakdown's review) still count every finding. A blocking rule of their own for planning reviews is out of scope here; it is filed as #363 (answer 36).
-- It arrives with a project's kit update, with no setting. Until spec #362's phase-1 tickets reach a project in its kit update (this repository included), every finding still blocks. A run in progress keeps the rule it started with; if the kit is updated mid-run, the conductor asks the owner whether to finish the run on the new rule (answer 35). An attended pull request open across the update follows the new rule from its next round or pass.
+- It arrives with a project's kit update, with no setting. Until spec #362's phase-1 tickets reach a project in its kit update (this repository included), every finding still blocks. A run in progress keeps the rule it started with; if the kit is updated mid-run, the conductor asks the owner to finish the run on the new rule or to stop starting new tickets (answer 35; in vendored installs, from this update on). An attended pull request open across the update follows the new rule from its next round or pass.
