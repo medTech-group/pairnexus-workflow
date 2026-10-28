@@ -188,11 +188,18 @@ def test_a_branch_only_ticket_session_may_write_a_protected_path_under_ticket(tm
     assert hook(monkeypatch, capsys, under, write(".claude/workflow/profile.toml"), "ticket")[0] == "deny"
 
 
+def test_a_branch_only_session_may_switch_branches_under_ticket(tmp_path, monkeypatch, capsys):
+    under = _tree(tmp_path / "ticket", "ticket", "claude/build-1")
+    before = _tree(tmp_path / "absent", None, "claude/build-1")
+    assert hook(monkeypatch, capsys, under, bash("git switch main"))[0] == "allow"
+    assert hook(monkeypatch, capsys, before, bash("git switch main"))[0] == "deny"
+
+
 def test_a_branch_only_or_mistyped_session_is_named_as_not_a_ticket_session(proj, monkeypatch, capsys):
     _on(proj, "claude/build-1")
     d, why = hook(monkeypatch, capsys, proj, write(CODE))
     assert d == "deny" and why.startswith("[workflow guard, attended session"), why
-    assert "only by its branch" in why and "isn't a ticket session" in why, why
+    assert "only by its branch, `claude/build-1`, matching `claude/build-*`" in why and "isn't a ticket session" in why, why
     d, why = hook(monkeypatch, capsys, proj, write(CODE), "tikcet")
     assert d == "deny" and why.startswith("[workflow guard, attended session"), why
     assert "WORKFLOW_ROLE='tikcet' isn't a role" in why and "treated as ticket" not in why, why
@@ -218,6 +225,10 @@ def test_a_code_path_in_a_claude_code_worktree_is_refused(proj, monkeypatch, cap
     # and its protected paths aren't code.
     for path in (str(wt / "docs/guide.md"), str(wt / ".workflow/x.py"), str(wt / "src/protected/keep.py")):
         assert hook(monkeypatch, capsys, proj, write(path))[0] == "allow", path
+    # Ignored files are judged by the worktree's own `.gitignore`.
+    (wt / ".gitignore").write_text("src/build/\nsrc/local/\n")
+    assert hook(monkeypatch, capsys, proj, write(str(wt / "src/local/a.py")))[0] == "allow"
+    assert hook(monkeypatch, capsys, proj, write(str(proj / "src/local/a.py")))[0] == "deny"
     # From inside the worktree, as a session working there writes.
     d, why = hook(monkeypatch, capsys, proj, write(CODE), cwd=wt)
     assert d == "deny", why
@@ -316,9 +327,65 @@ ALLOWED_BASH = [
 
 
 @pytest.mark.parametrize("command", ALLOWED_BASH)
-def test_what_a_shell_command_does_without_writing_code_goes_through(proj, monkeypatch, capsys, command):
-    d, why = hook(monkeypatch, capsys, proj, bash(command))
-    assert d == "allow", (command, why)
+@pytest.mark.parametrize("who", ["attended", "conductor", "branch-only ticket session", "mistyped WORKFLOW_ROLE"])
+def test_what_a_shell_command_does_without_writing_code_goes_through(proj, monkeypatch, capsys, command, who):
+    role, branch = NOT_TICKET[who]
+    _on(proj, branch)
+    d, why = hook(monkeypatch, capsys, proj, bash(command), role)
+    assert "code path" not in why, (command, who, why)
+    if who != "conductor" or not command.startswith("git switch"):
+        assert d == "allow", (command, who, why)
+
+
+def test_monitor_is_read_as_bash(proj, monkeypatch, capsys):
+    d, why = hook(monkeypatch, capsys, proj, {"tool_name": "Monitor", "tool_input": {"command": "echo x > src/app.py"}})
+    assert d == "deny" and "code path" in why, why
+    assert hook(monkeypatch, capsys, proj, {"tool_name": "Monitor", "tool_input": {"command": "python3 -m pytest tests"}})[0] == "allow"
+
+
+def test_a_shell_write_to_a_path_both_code_and_protected_decides_as_today(proj, monkeypatch, capsys):
+    for role in (None, "conductor"):
+        assert hook(monkeypatch, capsys, proj, bash("echo x > src/protected/keep.py"), role)[0] == "allow", role
+
+
+def test_git_clean_judged_by_the_untracked_files_it_removes(proj, monkeypatch, capsys):
+    # Nothing untracked but ignored files: nothing it removes is code.
+    for command in ("git clean -fd", "git clean -fdx", "git clean -fdX", "git clean -n", "git clean -fdx src"):
+        assert hook(monkeypatch, capsys, proj, bash(command))[0] == "allow", command
+    (proj / "src/new.py").write_text("n = 1\n")  # untracked, not ignored: code
+    for command in ("git clean -fd", "git clean -fdx", "git clean -f src"):
+        d, why = hook(monkeypatch, capsys, proj, bash(command))
+        assert d == "deny" and "src/new.py" in why, (command, why)
+    for command in ("git clean -fdX", "git clean -nd", "git clean -fd docs"):
+        assert hook(monkeypatch, capsys, proj, bash(command))[0] == "allow", command
+
+
+def test_a_find_limited_by_name_reaches_code_in_a_matching_folder(proj, monkeypatch, capsys):
+    (proj / "src/subpkg").mkdir()
+    (proj / "src/subpkg/m.py").write_text("m = 1\n")
+    git(proj, "add", "src/subpkg/m.py")
+    d, why = hook(monkeypatch, capsys, proj, bash("find src -name 'sub*' -exec rm -rf {} +"))
+    assert d == "deny" and "src/subpkg/m.py" in why, why
+    assert hook(monkeypatch, capsys, proj, bash("find src -name 'nothing*' -exec rm -rf {} +"))[0] == "allow"
+
+
+def test_removing_a_directory_above_the_project_is_refused(proj, monkeypatch, capsys):
+    d, why = hook(monkeypatch, capsys, proj, bash("rm -rf .."))
+    assert d == "deny" and "code path" in why, why
+
+
+def test_git_apply_is_judged_in_the_checkout_it_runs_in(proj, tmp_path, monkeypatch, capsys):
+    other = tmp_path / "other"
+    other.mkdir()
+    git(other, "init", "-q", "-b", "main")
+    (other / "src").mkdir()
+    (other / CODE).write_text("a = 1\n")
+    for command in (f"cd {other} && git apply {proj}/fix.patch", f"git -C {other} apply {proj}/fix.patch"):
+        assert hook(monkeypatch, capsys, proj, bash(command))[0] == "allow", command
+    wt = proj / ".claude/worktrees/side"
+    git(proj, "worktree", "add", "-q", "-b", "side", str(wt))
+    d, why = hook(monkeypatch, capsys, proj, bash(f"git apply {proj}/fix.patch"), cwd=wt)
+    assert d == "deny" and "in the worktree `.claude/worktrees/side`" in why, why
 
 
 def test_a_shell_code_write_is_refused_even_after_an_ask(proj, monkeypatch, capsys):
@@ -340,7 +407,7 @@ def test_the_conductors_shell_code_write_is_refused(proj, monkeypatch, capsys):
     "command",
     ["Set-Content -Path src\\app.py -Value x", "Get-Content SRC\\App.py", "python .\\src\\app.py", "Remove-Item tests", f"Get-Content '{KIT}/x' ; type src/new.ps1"],
 )
-@pytest.mark.parametrize("who", ["attended", "branch-only ticket session", "mistyped WORKFLOW_ROLE"])
+@pytest.mark.parametrize("who", ["attended", "conductor", "branch-only ticket session", "mistyped WORKFLOW_ROLE"])
 def test_powershell_naming_a_code_path_is_refused(proj, monkeypatch, capsys, command, who):
     role, branch = NOT_TICKET[who]
     _on(proj, branch)
@@ -460,6 +527,20 @@ TODAY = [
     (powershell("Get-Content src\\app.py"), None, "allow"),
     (powershell("Get-Content src\\app.py"), "conductor", "deny"),
 ]
+
+
+@pytest.mark.parametrize("code_writers", ["any", None])
+def test_any_and_unanswered_never_refuse_a_code_write(tmp_path, monkeypatch, capsys, code_writers):
+    root = _tree(tmp_path / "proj", code_writers)
+    wt = root / ".claude/worktrees/side"
+    git(root, "worktree", "add", "-q", "-b", "side", str(wt))
+    events = [bash(c) for c in REFUSED_BASH] + [write(CODE, t) for t in ("Write", "Edit", "MultiEdit", "NotebookEdit")]
+    events += [powershell("Set-Content -Path src\\app.py -Value x"), write(str(wt / CODE))]
+    for event in events:
+        for role in (None, "conductor", "tikcet"):
+            d, why = hook(monkeypatch, capsys, root, event, role)
+            assert "code path" not in why and "code_writers" not in why, (event, role, why)
+        assert hook(monkeypatch, capsys, root, event)[0] in ("allow", "ask"), event
 
 
 @pytest.mark.parametrize("code_writers", ["any", None])

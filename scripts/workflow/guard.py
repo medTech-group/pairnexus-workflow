@@ -5992,7 +5992,9 @@ def _shown(hit: _Hit) -> str:
 _CODE_TOOLS = WRITE_TOOLS | {"Bash", "Monitor", "PowerShell"}
 
 
-def _code_session(event: dict, profile: Profile, role: str, root: Path, role_from_env: bool) -> tuple[str, _Code | None, str | None]:
+def _code_session(
+    event: dict, profile: Profile, role: str, root: Path, role_from_env: bool, branch: str | None
+) -> tuple[str, _Code | None, str | None]:
     """(the role to decide by, the code rule when this session writes no code,
     the session's name in a refusal when not its role's). Under "ticket", a
     session that is a ticket session only by its branch, or by a value of
@@ -6012,7 +6014,8 @@ def _code_session(event: dict, profile: Profile, role: str, root: Path, role_fro
         if odd is not None:
             label = f'attended session (WORKFLOW_ROLE={odd!r} isn\'t a role, so under `code_writers = "ticket"` it isn\'t a ticket session)'
         else:
-            label = f'attended session (a ticket session only by its branch, `{profile.ticket_branch}`, which under `code_writers = "ticket"` isn\'t a ticket session)'
+            on = f"`{branch}`, matching `{profile.ticket_branch}`" if branch else f"matching `{profile.ticket_branch}`"
+            label = f'attended session (a ticket session only by its branch, {on}, which under `code_writers = "ticket"` isn\'t a ticket session)'
         role = "attended"
     if not rule.code_paths:
         return role, None, label
@@ -6065,7 +6068,7 @@ def _conductor_fixes(root: Path) -> bool | None:
 
 def _git_lines(top: str, *args: str, sep: str = "\n") -> list[str] | None:
     try:
-        p = subprocess.run(["git", "-C", top, *args], capture_output=True, timeout=5)
+        p = subprocess.run(["git", "--literal-pathspecs", "-C", top, *args], capture_output=True, timeout=5)
     except (OSError, subprocess.TimeoutExpired, ValueError):
         return None
     if p.returncode != 0:
@@ -6109,7 +6112,8 @@ def _listed_code(rel: str, code: _Code) -> str | None:
 
 
 def _ignored(top: str, rel: str) -> bool:
-    """An untracked path git ignores (`check-ignore` never names a tracked one)."""
+    """An untracked path git ignores (`check-ignore` never names a tracked one;
+    a name it reads as pathspec magic fails it, so counts as not ignored)."""
     try:
         p = subprocess.run(["git", "-C", top, "check-ignore", "-q", "--", rel], capture_output=True, timeout=5)
     except (OSError, subprocess.TimeoutExpired, ValueError):
@@ -6163,7 +6167,10 @@ def _code_targets(seg: Seg, root: Path) -> tuple[_Targets, _Targets]:
         if sub in _CHECKS_OUT:
             continue
         if sub == "clean":
-            _git_targets(g[1], loose)
+            loose.trees += _clean_trees(g[1][1:])
+            continue
+        if sub in ("apply", "am"):
+            t.files += _patched_files(s, g, root)
             continue
         w = _write_targets(s, root)
         t.files += [x for x in w.files if x not in t.files]
@@ -6171,6 +6178,48 @@ def _code_targets(seg: Seg, root: Path) -> tuple[_Targets, _Targets]:
         t.searched += w.searched
         t.named_from_root += w.named_from_root
     return t, loose
+
+
+def _clean_trees(args: list[str]) -> list[str]:
+    """What `git clean` removes from: its paths, else the whole checkout;
+    nothing for a dry run or `-X`, which removes only ignored files."""
+    flags = "".join(a[1:] for a in args if re.fullmatch(r"-[a-zA-Z]+", a))
+    if "n" in flags or "X" in flags or "--dry-run" in args:
+        return []
+    skip = set(_opt_values(["x", *args], ("-e", "--exclude")))
+    return [a for a in args if not a.startswith("-") and a not in skip] or ["."]
+
+
+def _patched_files(seg: Seg, g: tuple[list[str], list[str], str | None], root: Path) -> list[str]:
+    """The files `git apply` or `git am` changes, from the top level of the
+    checkout it runs in; none it can place when that is another repository
+    or the patch can't be read."""
+    _, args, cdir = g
+    texts, unknown, _ = _patch_texts("git" if args[0] == "apply" else "git-am", args[1:], seg)
+    d = _git_dir_of(root, seg.cwd, cdir)
+    top = _git_out(d, "rev-parse", "--show-toplevel") if d else None
+    if unknown or not top:
+        return []
+    return [os.path.join(top, p) for txt in texts for p in _patch_paths(txt)]
+
+
+def _named_code(names: list[str], nocase: bool, start: str, root: Path, code: _Code) -> _Hit | None:
+    """A code path a writing `find` limited by name reaches: a file whose
+    name matches, or one inside a directory whose name does."""
+    co = _checkout_of(start, root)
+    if co is None:
+        return None
+    top, rel, wt = co
+    fold = (lambda x: x.casefold()) if nocase else (lambda x: x)
+    globs = [fold(n) for n in names]
+    skip = len([x for x in rel.split("/") if x])
+    for f in _code_files(top, rel):
+        parts = f.split("/")[skip:]
+        if any(fnmatch.fnmatchcase(fold(x), n) for x in parts for n in globs):
+            m = _listed_code(f, code)
+            if m:
+                return _Hit(f, m, wt)
+    return None
 
 
 def _shell_code(segs: list[Seg], code: _Code, root: Path) -> str | None:
@@ -6184,9 +6233,13 @@ def _shell_code(segs: list[Seg], code: _Code, root: Path) -> str | None:
                 hit = _code_at(_abspath(c, seg.cwd), code, root) if c.strip() else None
                 if hit:
                     return f"writing `{tgt}` writes the code path {_shown(hit)} ({hit.pattern}); {code.instead}"
+        top = os.path.realpath(str(root))
         for tgt in t.trees:
             for c in _candidates(tgt, seg.cwd):
-                hit = _code_at(_abspath(c, seg.cwd), code, root, tree=True) if c.strip() else None
+                a = _abspath(c, seg.cwd) if c.strip() else None
+                if a and a != top and _holds_root(a, root):
+                    a = top  # a directory above the project: all of it
+                hit = _code_at(a, code, root, tree=True)
                 if hit:
                     return f"writing into, removing or moving `{tgt}` changes the code path {_shown(hit)} ({hit.pattern}); {code.instead}"
         for tgt in loose.trees:
@@ -6201,16 +6254,9 @@ def _shell_code(segs: list[Seg], code: _Code, root: Path) -> str | None:
                     f"so the guard can't see which files change; name the files. If they are code, {code.instead}"
                 )
         for names, nocase, _own, start in t.named_from_root:
-            co = _checkout_of(start, root)
-            if co is None:
-                continue
-            top, rel, wt = co
-            for f in _code_files(top, rel):
-                base = posixpath.basename(f)
-                if any(fnmatch.fnmatchcase(base.casefold() if nocase else base, n.casefold() if nocase else n) for n in names):
-                    m = _listed_code(f, code)
-                    if m:
-                        return f"this find matches the code path {_shown(_Hit(f, m, wt))} ({m}) by name; {code.instead}"
+            hit = _named_code(names, nocase, start, root, code)
+            if hit:
+                return f"this find reaches the code path {_shown(hit)} ({hit.pattern}) by name; {code.instead}"
     return None
 
 
@@ -6256,7 +6302,7 @@ def decide(
     a session that is a ticket session only by its branch or by a mistyped
     `WORKFLOW_ROLE` is decided as an attended one, and a session that doesn't
     write code is refused writing it (#340)."""
-    role, code, label = _code_session(event, profile, role, root, role_from_env)
+    role, code, label = _code_session(event, profile, role, root, role_from_env, current_branch)
     d = _decide(event, profile, role, root, current_branch, role_from_env, cwd, code)
     mode = event.get("permission_mode")
     if d.action == "ask" and role == "attended" and modes.never_asks(mode):
