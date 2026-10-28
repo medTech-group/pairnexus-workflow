@@ -136,7 +136,8 @@ def _ref_of(value: str, emphasis: str = "") -> str | None:
     wrapped = re.fullmatch(r"([*_]{1,3})(.+)\1", value)
     if wrapped:
         value = wrapped.group(2).strip()
-    m = re.fullmatch(r"(?:`[ \t]*([^`\s]+)[ \t]*`|([^`\s]+?))\.?(?:[ \t]+\(.*\))?", value)
+    after = "(?:" + re.escape(emphasis) + ")?" if emphasis and not closed else ""  # closed after the code span
+    m = re.fullmatch(r"(?:`[ \t]*([^`\s]+)[ \t]*`" + after + r"|([^`\s]+?))\.?(?:[ \t]+\(.*\))?", value)
     if not m:
         return None
     ref = m.group(1) or m.group(2)

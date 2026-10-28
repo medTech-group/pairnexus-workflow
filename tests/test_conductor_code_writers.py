@@ -148,6 +148,8 @@ def test_the_briefing_starts_from_the_base_branch_by_default(profile):
         ("_Starts from: feature/x_.", "feature/x"),
         ("_Starts from: `fix_`_", "fix_"),
         ("_Starts from: `deps/bump_`", "deps/bump_"),
+        ("*Starts from: `feature/x`*.", "feature/x"),
+        ("_Starts from: `fix`_ (the PR's)", "fix"),
         ("_Starts from_: fix_", "fix_"),
         ("Starts from: ` feature/x `", "feature/x"),
         ("<!-- old -->Starts from: feature/x", "feature/x"),
@@ -440,7 +442,8 @@ def test_also_requeues_a_ticket_whose_pull_request_needs_a_code_fix():
         "disarm auto-merge on it if it is armed",
         "once it is archived set `requeued_head` to the branch's head then; that stop adds no attempt and never labels it `needs-human`",
         "While the run is stopping or winding down, hold it all the same",
-        "once any session of it is archived, mark the ticket `in-review` rather than `queued` (no attempt added, never `needs-human`)",
+        "once any session of it is archived, mark the ticket `in-review` rather than `queued` (no attempt added, never `needs-human`; it counts as settled for \"Done\")",
+        "Where that can't be done here, say so on the tracking issue and don't requeue it yet: while it stays in the queue, start no session for it",
         "the fix asked for (the owner's words, or the link to the comment or finding that asks for it)",
         "merges, arms auto-merge, queues or says it's ready only once that fix is pushed and reviewed",
         "requeue it",
@@ -459,18 +462,22 @@ def test_also_requeues_a_ticket_whose_pull_request_needs_a_code_fix():
 def test_an_also_is_read_before_the_run_stops():
     text = _flat(_text("skills/conductor/SKILL.md"))
     step0 = _section(text, "**0. Stopping already?**", "**1. Read the state.**")
-    assert "first read the owner's new comments (step 3's *Comments*) for an \"also #<n>\" asking a code fix" in step0
+    assert "first read the owner's new comments as step 3's *Comments* does (applying each amendment, and setting `comments_read_through`)" in step0
     stop = _section(text, "## Stop the run", "2. **Sessions.**")
-    assert "First read the owner's new comments (check-in step 3's *Comments*) for an \"also #<n>\" asking a code fix" in stop
+    assert "First read the owner's new comments as check-in step 3's *Comments* does" in stop
+    assert "but when the reason would be `done`, it requeues the ticket instead and the run goes on (no stop)" in stop
+    report = _section(text, "4. **The report.**", "5. **Wind up.**")
+    assert "and at each revert still `opened`" in report
 
 
 def test_a_requeued_pull_request_never_merges_before_its_fix():
     row = _section(_text("skills/conductor/SKILL.md"), "| **A requeued ticket whose fix hasn't landed**", "\n")
     for part in (
-        "The `ready`, `owner_review`, path-filtered, merge-queue and \"behind the base\" rows don't apply",
+        "Otherwise the `ready`, `owner_review`, path-filtered, merge-queue and \"behind the base\" rows don't apply",
         "nor \"The merge queue's state\"'s handling of `ready`",
         "never merge it, update its branch, arm auto-merge or queue it, and disarm auto-merge if it is armed",
         "Clear `requeued_head` only once the fix is there",
+        "If its pull request merged anyway (the merge queue took it, or a session merged it), take the **Merged** row's steps",
         "`WF merge-check` gives no review reason on the head (a clean review covers it, carried over a merge of the base or not)",
         "`git log --first-parent --no-merges --oneline <requeued_head>..origin/<branch>` lists one",
         "the base's commits brought in by a merge never count",
