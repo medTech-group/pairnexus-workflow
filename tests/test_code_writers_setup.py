@@ -133,7 +133,7 @@ def test_the_lines_set_up_writes_are_read_from_the_template(tmp_path):
 
 def test_setup_writes_the_answer_last():
     item = _para(_section(_text(SETUP), "3. Write"), "- **`code_writers` and `code_paths`,**")
-    assert "Write these two lines last, after the rest of this step 3" in item and "Then run `WF profile check` again" in item
+    assert "Write these two lines last, after every other item of this step 3" in item and "Then run `WF profile check` again" in item
 
 
 def test_setup_pull_request_words_plugin_mode():
@@ -197,6 +197,7 @@ def test_update_writes_the_answer_last_and_says_it_in_the_pull_request():
     assert "after the update's other files are written" in step
     assert '`code_writers = "ticket"`' in step and '`code_writers = "any"`' in step and "`[guard]`" in step
     pr = _update_step("The PR")
+    assert "nothing writes code until one exists" in pr and '"Set up unattended runs" makes one' in pr
     assert "who writes code" in pr and "push the branch in a command of its own" in pr and CHAINED in pr
 
 
@@ -265,6 +266,8 @@ def test_choose_who_writes_code_ends_in_a_pull_request_the_owner_merges():
     # A loosening counts only once it merges, and in a branch only once the merged
     # base is in it: the stricter of the working tree's answer and the base's counts.
     loosening = _para(pr, "**Loosening waits for the merge.**")
+    assert "or removing code paths" in loosening
+    assert "this session's branch is behind" in pr
     assert "not only fetched" in loosening and "the stricter of the working tree's answer and the base's" in loosening
     assert "once it has the merged base branch in it" in _section(_part(), "5. Where it ends")
     # Nothing to change is judged after the code paths, against the base's profile.
@@ -279,7 +282,11 @@ def test_an_open_pull_request_is_found_before_asking():
     assert "an open pull request changing `code_writers` in the profile" in where and "the kit's update among them" in where
     assert "If there is one, ask nothing" in where
     step = _update_step("Who writes code")
-    assert "an open pull request changing `code_writers` in the profile" in step and "ask nothing" in step
+    assert "an open pull request changing `code_writers` in the profile" in step and "an earlier kit update's among them" in step
+    # Looked for before the question is asked.
+    assert step.index("If there is one, ask nothing") < step.index("Otherwise ask it a single time")
+    # Its lines go where upgrade-setup puts them, never a second key beside one already there.
+    assert "in place of its line there, or of a commented one, or at the end of `[guard]`" in step
 
 
 def test_set_up_offers_runs_after_the_merge_among_upgrade_setups_moments():

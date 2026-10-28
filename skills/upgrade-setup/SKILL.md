@@ -643,7 +643,7 @@ With **Only ticket sessions**, propose `code_paths` as set-up does (its "The cod
 
 ## 4. One pull request
 
-When the answer and the confirmed code paths are what `origin/<base>`'s profile says already, the branch would change nothing: say so, and stop.
+When the answer and the confirmed code paths are what `origin/<base>`'s profile says already, the branch would change nothing: say so, and stop. If step 1's answer that counts was stricter than that (`"ticket"` where the base says `"any"`, or code paths the base no longer lists), this session's branch is behind: say that the base's answer applies here once it is merged in (pulled or merged, not only fetched).
 
 1. A branch from the base branch, such as `workflow/code-writers`.
 2. In `.claude/workflow/profile.toml`'s `[guard]` table, a plain `code_writers = "ticket"` or `code_writers = "any"` line on its own, in place of the `code_writers` line there, or of the template's commented `# code_writers = "ticket"`, or at the end of `[guard]` when neither is there; and `code_paths` with the confirmed globs, the same way. Change nothing else.
@@ -651,7 +651,7 @@ When the answer and the confirmed code paths are what `origin/<base>`'s profile 
 4. Commit, then push the branch in a command of its own ("Pushing"). Once its working tree says `"ticket"`, this session writes no code.
 5. Open the pull request. Its body: the answer, the code paths, and what changes once it merges (with only ticket sessions: no other session, the conductor included, writes code, and where it is built instead, as the question said).
 
-**Loosening waits for the merge.** From `"ticket"` to `"any"`, nothing changes until the pull request merges: the stricter of the working tree's answer and the base's counts, so a session's branch stays under `"ticket"` until the merged base is in it (pulled or merged in, not only fetched). Say so.
+**Loosening waits for the merge.** From `"ticket"` to `"any"`, or removing code paths, nothing changes until the pull request merges: the stricter of the working tree's answer and the base's counts, so a session's branch stays under `"ticket"` until the merged base is in it (pulled or merged in, not only fetched). Say so.
 
 It changes `.claude/`, so merging it is the owner's: never merge it, or enable auto-merge on it, yourself.
 
