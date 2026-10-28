@@ -401,6 +401,7 @@ def test_also_requeues_a_ticket_whose_pull_request_needs_a_code_fix():
         "A ticket of an earlier run, not in this run's state, whose open pull request is on a `run.ticket_branch` branch, is adopted the same way",
         "nothing starts while the run is stopping or winding down",
         "take its line out of `for_owner`",
+        "if a session of it still runs, stop it safely and archive it first",
         "the fix asked for (the owner's words, or the link to the comment or finding that asks for it)",
         "merges, arms auto-merge, queues or says it's ready only once that fix is pushed and reviewed",
         "an `in-review` one too",
@@ -412,7 +413,10 @@ def test_also_requeues_a_ticket_whose_pull_request_needs_a_code_fix():
         assert part in step3, part
     named = _section(text, "**A run in progress that this session conducts**", "**A run in progress that another session conducts")
     assert "when it is already in the plan or running" in named
-    assert "A ticket in the plan whose pull request needs a code fix, an `in-review` one too, is requeued instead (check-in step 3)." in named
+    assert (
+        "A ticket whose pull request needs a code fix, an `in-review` one too, or an earlier run's leftover, is requeued "
+        "or adopted instead (check-in step 3's \"also #<n>\")."
+    ) in named
 
 
 def test_a_requeued_pull_request_never_merges_before_its_fix():
