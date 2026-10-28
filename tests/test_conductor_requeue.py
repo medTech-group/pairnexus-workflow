@@ -169,13 +169,17 @@ def test_a_session_stopped_by_the_hold_pushes_nothing_that_counts_as_the_fix():
     for part in (
         "if a session of it runs, interrupt it, delete its pending check-ins and archive it at once, rather than \"Stopping a stuck session safely\", so it never wakes to merge, arm or queue the old head",
         "it adds no attempt and never labels the ticket `needs-human`",
-        "The ticket keeps its status until the next check-in: then set `requeued_head` to the branch's head as it is then, so nothing that session pushed counts as the fix, and only then do rows 5 and 6 change its status.",
+        "This replaces a safe stop already under way: clear the ticket's `stopped_head`.",
+        "The ticket stays `running` until the next check-in, where the held row sets `requeued_head` to the branch's head as it is then, so nothing that session pushed counts as the fix, and only then do rows 5 and 6 change its status.",
     ):
         assert part in hold, part
     fix = _section(_flat(_requeue()), "**The fix is there**", "**Its `for_owner` lines.**")
-    assert "Never judge it before the check-in after a session was archived by the hold." in fix
-    # It never goes through the safe stop, whose `stopped_head` would keep a later stop from stopping its next session.
-    assert "stopped_head" not in _requeue()
+    # The reset is the held row's first step, on state anyone can read (`running`, its session archived), before the
+    # fix is judged; the report does it first too.
+    held = next(ln for ln in _text("skills/conductor/SKILL.md").splitlines() if ln.startswith("| **A held pull request**"))
+    first = "First, a held ticket still `running` whose session the hold archived: set `requeued_head` to the branch's head as it is now, then rows 5 or 6's change of status."
+    assert first in held and held.index(first) < held.index("if the fix is there")
+    assert "first, for a ticket whose session the hold archived, it sets `requeued_head` as the held row's first step does; then row 7 if it merged" in _flat(_row(9))
     # Rows 5 and 6 change the status only once no session runs, so no second session starts beside it.
     assert "Once no session of it runs (at once, or at the check-in after the hold archived one), mark it `in-review` rather than `queued`" in _row(5)
     assert "once no session of it runs (at once, or at the check-in after the hold archived one), mark it `queued`" in _row(6)
@@ -185,10 +189,10 @@ def test_the_held_row_wins_over_every_row_that_merges():
     raw = _text("skills/conductor/SKILL.md")
     held = next(ln for ln in raw.splitlines() if ln.startswith("| **A held pull request**"))
     for part in (
-        "First, if it merged, that section's row 7; if the fix is there (that section), clear `requeued_head` and take the rows as usual. Otherwise this row wins over the `ready` rows, `owner_review`, the path-filtered row, the merge queue row, \"behind the base\", `not_yet`'s `update_branch` and \"The merge queue's state\"'s `ready`",
+        "Then, if it merged, that section's row 7; if the fix is there, clear the hold as \"The fix is there\" says and take the rows as usual. Otherwise this row wins over the `ready` rows, `owner_review`, the path-filtered row, the merge queue row, \"behind the base\", `not_yet`'s `update_branch` and \"The merge queue's state\"'s `ready`",
         "never merge it, update its branch, arm auto-merge on it or queue it; disarm auto-merge if it is armed, and take it out of the merge queue if it is in it.",
         "The other rows apply as usual.",
-        "While the run winds down with the ticket `queued`, that section's row 8.",
+        "When the wind-down changes over a ticket held `queued` or `in-review`, that section's row 8.",
     ):
         assert part in held, part
     # It sits above the rows it wins over.
@@ -202,7 +206,7 @@ def test_the_fix_is_there_only_with_a_commit_of_its_own_and_a_review_over_it():
     for part in (
         "`WF merge-check` on the pull request gives no reason whose `action` is `review` and no \"couldn't read\" reason",
         "the branch has a commit of its own since `requeued_head`",
-        "`git log --first-parent --no-merges --oneline <requeued_head>..origin/<branch>` lists one (a merge of the base brings no fix)",
+        "after `git fetch origin pull/<PR>/head` (which outlives a deleted branch), `git log --first-parent --no-merges --oneline <requeued_head>..FETCH_HEAD` lists one (a merge of the base brings no fix)",
         "Then clear `requeued_head` and take its fix line out of `for_owner`",
     ):
         assert part in fix, part
@@ -237,7 +241,10 @@ def test_winding_down_holds_it_and_starts_nothing():
     ):
         assert part in row, part
     # A ticket requeued before the wind-down began, and not started, is held the same way.
-    assert "| 8 | **The run winds down while it is `queued`** (no session of it started yet) | Row 5. |" in _requeue()
+    assert (
+        "| 8 | **The wind-down changes:** the run winds down while it is `queued` (no session of it started yet), or "
+        "stops winding down while row 5 holds it `in-review` | The first: row 5. The second: row 6, so it starts once a slot is free. |"
+    ) in _requeue()
 
 
 def test_the_run_stopping_holds_it_and_says_so():
@@ -251,8 +258,9 @@ def test_the_run_stopping_holds_it_and_says_so():
     report = _section(_conductor(), "4. **The report.**", "5. **Wind up.**")
     assert (
         "Read too the owner's comments not read yet (check-in step 3's *Comments*, setting `comments_read_through`), "
-        "applying none: an \"also #<n>\" for a pull request needing a code fix takes the first of rows 1 to 4 of "
-        "\"A pull request that needs a code fix\" that fits, and any other change gets the reply that the run has stopped."
+        "applying none: an \"also #<n>\" for a pull request needing a code fix takes the first of rows 2 to 4 of "
+        "\"A pull request that needs a code fix\" that fits, row 3 adding no label, and any other change, a `needs-human` "
+        "ticket's answer among them, gets the reply that the run has stopped, requeuing nothing."
     ) in report
     assert "Then look again at each ticket with `requeued_head`, as that section's row 9 says." in report
     # In order: reverts, the owner's comments, held tickets, then `cap_unknown_at` and the state written.
@@ -322,7 +330,7 @@ def test_merged_before_or_while_held():
     ) in row
     # The held row looks at a merge and at the fix first, before anything it holds.
     held = next(ln for ln in _text("skills/conductor/SKILL.md").splitlines() if ln.startswith("| **A held pull request**"))
-    assert held.index("First, if it merged") < held.index("Otherwise this row wins")
+    assert held.index("Then, if it merged") < held.index("Otherwise this row wins")
 
 
 def test_for_owner_lines_added_replaced_and_taken_out():
@@ -330,7 +338,7 @@ def test_for_owner_lines_added_replaced_and_taken_out():
     for part in (
         "Its merge lines are the ones that leave its pull request to the owner to merge: \"ready for you to merge\", a protected path, a path-filtered check, a merge-queue rule the kit can't judge.",
         "The fix line is \"#n's pull request is held for a code fix (#PR): <the fix asked for>; merge it only once a review covers the fix\".",
-        "To write the fix line, take its merge lines and any earlier fix line out and put in one fix line naming every fix asked for, whether or not there were any.",
+        "To write the fix line, take its merge lines, any earlier fix line and any line asking for its fix (step 7's) out and put in one fix line naming every fix asked for, whether or not there were any.",
         "The merged line is \"#n merged before its fix (#PR): the fix needs a ticket of its own\".",
     ):
         assert part in lines, part
