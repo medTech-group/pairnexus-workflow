@@ -3390,7 +3390,9 @@ def _unzip_targets(toks: list[str], seg: Seg, t: _Targets) -> None:
             t.files.append(_join(dest, m2.lstrip("/")))
 
 
-def _patch_paths(text: str) -> list[str]:
+def _patch_paths(text: str, stripped: bool = True) -> list[str]:
+    """The paths a patch names, each also with its first part dropped
+    (`a/`, `b/`, `-p1`) unless `stripped` is False."""
     out: list[str] = []
     for line in text.splitlines():
         m = re.match(r"^(?:\+\+\+|---) (\"?)(.+?)\1(?:\t.*)?$", line)
@@ -3406,6 +3408,8 @@ def _patch_paths(text: str) -> list[str]:
         m = re.match(r"^(?:rename|copy) (?:from|to) (.+)$", line)
         if m:
             out.append(m.group(1))
+    if not stripped:
+        return out
     paths: list[str] = []
     for p in out:
         paths.append(p)
@@ -6178,8 +6182,8 @@ def _code_targets(seg: Seg, root: Path) -> _CodeTargets:
         sub = g[1][0] if g and g[1] else None
         if sub in _CHECKS_OUT:
             continue
-        if sub in ("clean", "rm", "mv") and g[2]:  # their paths are from `git -C`'s directory
-            s = replace(s, cwd=_git_dir_of(root, s.cwd, g[2]))
+        if sub in ("clean", "rm", "mv") and g[2]:  # their paths are from `git -C`'s directory; `t` holds the redirects
+            s = replace(s, cwd=_git_dir_of(root, s.cwd, g[2]), redirects=[])
         if sub == "clean":
             specs = _clean_trees(g[1][1:])
             if s.cwd and specs:
@@ -6189,8 +6193,8 @@ def _code_targets(seg: Seg, root: Path) -> _CodeTargets:
             out.patched += _patched_files(s, g, root)
             continue
         w = _write_targets(s, root)
-        if s.cwd != seg.cwd and s.cwd:  # read from `git -C`'s directory: placed from there, the shell's redirects aside
-            w.files = [x if x in seg.redirects else _from(s.cwd, [x])[0] for x in w.files]
+        if s.cwd != seg.cwd and s.cwd:  # read from `git -C`'s directory: placed from there
+            w.files = _from(s.cwd, w.files)
             w.trees = _from(s.cwd, w.trees)
         t.files += [x for x in w.files if x not in t.files]
         t.trees += w.trees
@@ -6235,12 +6239,20 @@ def _patched_files(seg: Seg, g: tuple[list[str], list[str], str | None], root: P
     if unknown or not top:
         return []
     # A git diff's paths, and `git am`'s, are from the top level. `git apply` places a plain
-    # patch's from where it runs, unless they already name that folder: both are judged.
-    # The paths with their `a/` and `b/` dropped first, so a refusal names the file git writes.
+    # patch's path, its first part dropped, from where it runs, unless it already names that
+    # folder, as git does. The paths with their `a/` and `b/` dropped come first, so a refusal
+    # names the file git writes.
+    here = os.path.relpath(os.path.realpath(d), os.path.realpath(top)).replace(os.sep, "/")
     out: list[str] = []
     for txt in texts:
-        bases = [top] if "diff --git " in txt or args[0] == "am" else [top, d]
-        out += [os.path.join(b, p) for b in bases for p in reversed(_patch_paths(txt))]
+        if "diff --git " in txt or args[0] == "am" or here == ".":
+            out += [os.path.join(top, p) for p in reversed(_patch_paths(txt))]
+            continue
+        for raw in _patch_paths(txt, stripped=False):
+            if "/" in raw:
+                rest = raw.split("/", 1)[1]
+                out.append(os.path.join(top if rest.startswith(here + "/") else d, rest))
+            out.append(os.path.join(top, raw))
     return out
 
 
@@ -6293,8 +6305,11 @@ def _shell_code(segs: list[Seg], code: _Code, root: Path) -> str | None:
                     return f"writing into, removing or moving `{tgt}` changes the code path {_shown(hit)} ({hit.pattern}); {code.instead}"
         for d, specs in ct.cleans:
             co = _checkout_of(os.path.realpath(d), root)
+            inside = _git_out(d, "rev-parse", "--show-toplevel") if co else None
+            if not inside or os.path.realpath(inside) != co[0]:
+                continue  # another repository nested in the project: left alone
             # What git itself lists for these pathspecs: its globs cross folders, `:/` is the top level.
-            listed = _git_lines(d, "ls-files", "-z", "-o", "--exclude-standard", "--full-name", "--", *specs, sep="\0", literal=False) if co else None
+            listed = _git_lines(d, "ls-files", "-z", "-o", "--exclude-standard", "--full-name", "--", *specs, sep="\0", literal=False)
             for f in listed or []:
                 m = _listed_code(f, code)
                 if m:

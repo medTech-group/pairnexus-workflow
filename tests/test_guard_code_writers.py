@@ -386,6 +386,20 @@ def test_git_clean_pathspecs_as_git_reads_them(proj, monkeypatch, capsys):
     assert hook(monkeypatch, capsys, proj, bash("git clean -f '*.md'"))[0] == "allow"
 
 
+def test_git_clean_in_a_clone_nested_in_the_project(proj, monkeypatch, capsys):
+    nested = proj / "third_party/lib"
+    nested.mkdir(parents=True)
+    git(nested, "init", "-q", "-b", "main")
+    (nested / "src").mkdir()
+    (nested / "src/x.py").write_text("x = 1\n")
+    assert hook(monkeypatch, capsys, proj, bash("git clean -fdx"), cwd=nested)[0] == "allow"
+
+
+def test_a_plain_patch_onto_a_protected_path_from_a_subdirectory(proj, monkeypatch, capsys):
+    (proj / "keep.patch").write_text("--- a/src/protected/keep.py\n+++ b/src/protected/keep.py\n@@ -1 +1 @@\n-k = 1\n+k = 2\n")
+    assert hook(monkeypatch, capsys, proj, bash("git apply ../keep.patch"), cwd=proj / "src")[0] == "allow"
+
+
 def test_git_minus_c_rm_and_mv_in_the_project(proj, monkeypatch, capsys):
     for command in ("git -C src rm app.py", "git -C src mv app.py b.py"):
         d, why = hook(monkeypatch, capsys, proj, bash(command))
