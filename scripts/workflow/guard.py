@@ -6044,7 +6044,7 @@ def _instead(role: str, profile: Profile, root: Path) -> str:
     if updates_mod.mode(root) == "plugin":  # no unattended runs
         way = "build it in a session on your own computer started with `WORKFLOW_ROLE=ticket` instead"
     elif profile.ticket_environment:
-        way = "hand it to a conductor run instead (**Run it unattended**), as a ticket, or a quick ticket for a small change"
+        way = "hand it to a conductor run instead (**Run it unattended**), as a ticket or, for a small change, a quick ticket"
     else:
         way = (
             "hand it to a conductor run instead, once unattended runs are set up (**Set up unattended runs**): "
@@ -6195,8 +6195,8 @@ def _patched_files(seg: Seg, g: tuple[list[str], list[str], str | None], root: P
     checkout it runs in; none it can place when that is another repository
     or the patch can't be read."""
     _, args, cdir = g
-    texts, unknown, _ = _patch_texts("git" if args[0] == "apply" else "git-am", args[1:], seg)
     d = _git_dir_of(root, seg.cwd, cdir)
+    texts, unknown, _ = _patch_texts("git" if args[0] == "apply" else "git-am", args[1:], replace(seg, cwd=d) if cdir else seg)
     top = _git_out(d, "rev-parse", "--show-toplevel") if d else None
     if unknown or not top:
         return []
@@ -6232,7 +6232,8 @@ def _shell_code(segs: list[Seg], code: _Code, root: Path) -> str | None:
             for c in _candidates(tgt, seg.cwd):
                 hit = _code_at(_abspath(c, seg.cwd), code, root) if c.strip() else None
                 if hit:
-                    return f"writing `{tgt}` writes the code path {_shown(hit)} ({hit.pattern}); {code.instead}"
+                    what = "this" if os.path.isabs(tgt) else f"writing `{tgt}`"  # a patch's files: named once, below
+                    return f"{what} writes the code path {_shown(hit)} ({hit.pattern}); {code.instead}"
         top = os.path.realpath(str(root))
         for tgt in t.trees:
             for c in _candidates(tgt, seg.cwd):
@@ -6261,6 +6262,7 @@ def _shell_code(segs: list[Seg], code: _Code, root: Path) -> str | None:
 
 
 _PS_WORDS = re.compile(r"[^\s;|&(){}<>,=\"'`]+")
+_PS_PARAM = re.compile(r"^-\w+:(.+)$")  # `-Path:src/app.py`
 _WINDOWS_ABS = re.compile(r"^[A-Za-z]:/")
 
 
@@ -6270,6 +6272,10 @@ def _powershell_code(inp: dict, code: _Code, root: Path, cwd: str | os.PathLike 
     top = os.path.realpath(str(root)).replace("\\", "/").rstrip("/")
     start = _start_cwd(root, cwd)
     for w in _PS_WORDS.findall(text.replace("\\", "/")):
+        m = _PS_PARAM.match(w)
+        w = m.group(1) if m else w
+        if w.startswith("-") or not ("/" in w or "." in w or os.path.lexists(os.path.join(start or top, w))):
+            continue  # a parameter, or a bare word naming nothing there (`Get-Date`)
         if w.casefold().startswith(top.casefold() + "/"):
             a = _abspath(top + w[len(top) :], start)
         elif _WINDOWS_ABS.match(w):

@@ -386,6 +386,9 @@ def test_git_apply_is_judged_in_the_checkout_it_runs_in(proj, tmp_path, monkeypa
     git(proj, "worktree", "add", "-q", "-b", "side", str(wt))
     d, why = hook(monkeypatch, capsys, proj, bash(f"git apply {proj}/fix.patch"), cwd=wt)
     assert d == "deny" and "in the worktree `.claude/worktrees/side`" in why, why
+    d, why = hook(monkeypatch, capsys, proj, bash("git -C .claude/worktrees/side apply ../../../fix.patch"))
+    assert d == "deny" and "in the worktree `.claude/worktrees/side`" in why, why
+    assert why.startswith("[workflow guard, attended session] this writes the code path `src/app.py`"), why
 
 
 def test_a_shell_code_write_is_refused_even_after_an_ask(proj, monkeypatch, capsys):
@@ -414,6 +417,18 @@ def test_powershell_naming_a_code_path_is_refused(proj, monkeypatch, capsys, com
     for mode in (None, "default", "bypassPermissions"):
         d, why = hook(monkeypatch, capsys, proj, powershell(command), role, mode)
         assert d == "deny" and "code path" in why and "run it through Bash" in why, (command, mode, why)
+
+
+def test_powershell_run_from_a_code_folder(proj, monkeypatch, capsys):
+    """Words that name nothing there aren't paths: run from `src/`, `Get-Date` decides as today."""
+    assert hook(monkeypatch, capsys, proj, powershell("Get-Date"), cwd=proj / "src") == ("allow", "")
+    d, why = hook(monkeypatch, capsys, proj, powershell("Set-Content app.py x"), cwd=proj / "src")
+    assert d == "deny" and "`src/app.py`" in why, why
+
+
+def test_powershell_parameter_joined_with_a_colon(proj, monkeypatch, capsys):
+    d, why = hook(monkeypatch, capsys, proj, powershell("Set-Content -Path:src\\app.py -Value x"))
+    assert d == "deny" and "run it through Bash" in why, why
 
 
 def test_powershell_naming_an_absolute_code_path_is_refused(proj, monkeypatch, capsys):
