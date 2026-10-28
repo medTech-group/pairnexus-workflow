@@ -427,7 +427,7 @@ def test_a_not_a_ticket_session_post_sets_the_row_aside_and_winds_down():
     assert "the state's `wind_down` is set (a session that wasn't a ticket session, check-in step 4)" in wind
 
 
-def test_a_code_fix_on_an_open_run_pull_request():
+def test_a_needs_human_tickets_code_fix_stays_an_owners_answer():
     """A `needs-human` ticket's fix stays an owner's answer; the requeue itself is #361's (test_conductor_requeue.py)."""
     text = _conductor()
     step3 = _section(text, "**3. The owner's words.**", "**4. Each ticket in flight.**")

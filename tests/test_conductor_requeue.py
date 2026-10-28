@@ -10,6 +10,7 @@ import sys
 
 import pytest
 
+from changelog_notes import since_0110
 from conftest import KIT
 from workflow import charter, state
 
@@ -101,10 +102,10 @@ def test_also_for_a_code_fix_requeues_the_ticket_with_its_pull_request_in_the_br
     for part in (
         "The hold, then requeue it.",
         "Stop any session of it safely, adding no attempt and never labelling it `needs-human`",
-        "once that session is archived set `requeued_head` to the branch's head then",
+        "once that session is archived, set `requeued_head` to the branch's head as it is then",
         "Mark it `queued` with `attempts: 0` and no `asked_at`, `base_merged`, `queue_heads`, `queue_failed` or `queue_result`",
         "with `ready-for-agent` and `workflow:in-progress` on it: it starts at check-in step 5 like any queued ticket",
-        "A ticket already requeued is requeued again from its head then, its briefing giving every fix asked for.",
+        "A ticket already requeued is requeued again, `requeued_head` set to the pull request's head at the new \"also\", and its briefing gives every fix asked for.",
     ):
         assert part in going_on, part
     # The briefing's slot says so.
@@ -256,7 +257,7 @@ def test_done_waits_for_a_requeue_and_reads_the_owners_comments_first():
     ) in done
 
 
-def test_the_merge_queue():
+def test_the_merge_queue_hold_and_drop_rule_and_a_merge_while_held():
     hold = _section(_flat(_requeue()), "**The hold.**", "**Its briefing.**")
     assert "take it out (GitHub's **Remove from queue**)" in hold
     # The drop rule starts afresh on the requeued pull request.
@@ -331,7 +332,6 @@ def test_the_charter_docs_say_so():
 
 
 def test_the_changelog_notes_it_under_unreleased():
-    text = _text("CHANGELOG.md")
-    unreleased = _section(text, "## Unreleased\n", "\n## ")
+    unreleased = since_0110()
     assert "**The owner's \"also #<n>\" sends a pull request that needs a code fix back to a ticket session** (#361, part of #338)" in unreleased
     assert "Tests: `tests/test_conductor_requeue.py`." in unreleased
