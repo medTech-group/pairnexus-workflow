@@ -443,7 +443,7 @@ def test_also_requeues_a_ticket_whose_pull_request_needs_a_code_fix():
         "At once, before anything else at this check-in, record its pull request's head SHA as the ticket's `requeued_head` and write the state",
         "disarm auto-merge on it if it is armed",
         "once it is archived set `requeued_head` to the branch's head then; that stop adds no attempt and never labels it `needs-human`",
-        "While the run is stopping or winding down, hold it all the same",
+        "While the run is stopping or winding down (judged once all of this check-in's comments' charter changes are applied, whatever their order, so a raised limit read in the same check-in counts)",
         "once any session of it is archived, mark the ticket `in-review` rather than `queued` (no attempt added, never `needs-human`; it counts as settled for \"Done\")",
         "Where that can't be done here, say so on the tracking issue and in `for_owner`, and requeue it all the same",
         "the fix asked for (the owner's words, or the link to the comment or finding that asks for it)",
