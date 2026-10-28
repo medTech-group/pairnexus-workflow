@@ -433,11 +433,12 @@ def test_also_requeues_a_ticket_whose_pull_request_needs_a_code_fix():
     for part in (
         '**"also #<n>" for a ticket whose open pull request needs a code fix**',
         "A ticket of an earlier run, not in this run's state, whose open pull request is on a `run.ticket_branch` branch, is adopted the same way",
-        "take its \"ready for you to merge\" line out of `for_owner`, if it has one",
+        "take out of `for_owner` its lines that leave its pull request to the owner to merge (\"ready for you to merge\", a protected path, a path-filtered check, a merge-queue rule the kit can't judge), since they no longer hold; a line saying it couldn't be taken out of the queue stays",
+        "take out of `for_owner` its lines that leave its pull request to the owner to merge, as a requeue does, and add \"#n's pull request needs a code fix (#PR)\"",
         "requeue it all the same (that `for_owner` line stays)",
         "a `queued`, `running` or `in-review` ticket of the run alike",
         "if it is in the merge queue, take it out (GitHub's **Remove from queue**",
-        "A ticket that merged before this check-in read the comment isn't requeued: add \"#n merged before its fix (#PR): the fix needs a ticket of its own\" to `for_owner`",
+        "A ticket that merged before this check-in read the comment isn't requeued: replace the ticket's `for_owner` lines with \"#n merged before its fix (#PR): the fix needs a ticket of its own\"",
         "it will need the owner's \"One more pass\"",
         "At once, before anything else at this check-in, record its pull request's head SHA as the ticket's `requeued_head` and write the state",
         "disarm auto-merge on it if it is armed",
@@ -470,6 +471,10 @@ def test_an_also_is_read_before_the_run_stops():
     assert "unless the reason is `owner` (the `workflow:stop` label, or \"stop the run\" here), which always stops" in stop
     assert "`ends_at` still passed stops" in stop
     assert "only when nothing is left to finish does it stop" in stop
+    # A wind-down that still holds starts nothing, so what the comments add never keeps it going.
+    assert "`ends_at` still passed stops, and so does any other reason while check-in step 2's **Wind down** still holds" in stop
+    assert "otherwise (a `done` run, or a wind-down the comments lifted, with a raised `limits.max_sessions` say), a ticket the comments added or requeued means the run goes on" in stop
+    assert "(a ticket added won't start in this run)" in stop
     assert "reply to a change it won't act on that the run is stopping, never that it is applied" in stop
     report = _section(text, "4. **The report.**", "5. **Wind up.**")
     assert (
