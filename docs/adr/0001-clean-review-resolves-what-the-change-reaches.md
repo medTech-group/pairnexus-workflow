@@ -28,5 +28,5 @@ We decided this because reviews weren't converging. Of 84 review rounds on 29 me
 ## Consequences
 
 - Reviewers review the change and what it reaches, not unrelated code.
-- The rule applies to build reviews only. Planning reviews (a spec's draft, a map decision's or a spec session's ADRs and glossary, and, in phase 2, a breakdown's review) still count every finding.
+- The rule applies to build reviews only. Planning reviews (a spec's draft, a map decision's or a spec session's ADRs and glossary, and, in phase 2, a breakdown's review) still count every finding. Extending the rule to them is out of scope here and a possible follow-up.
 - It arrives with a project's kit update, with no setting. A run in progress keeps the rule it started with. An attended pull request open across the update follows the new rule from its next round or pass.
