@@ -83,9 +83,9 @@ _STARTS_FROM = re.compile(
     r"([*_]{0,3})starts[ \t]+from([*_]{0,3})[ \t]*[:\uff1a]([*_]{0,3})[ \t]*(.*)$",
     re.I,
 )
-# The quote markers that open a line, up to the last `>` and one space after it:
-# one pass, never backtracking more than the line's length.
-_QUOTE = re.compile(r"^[ >]*>[ ]?")
+# The quote markers that open a line, each at most 3 columns in (more is code),
+# with one space after it: nothing follows the group, so one greedy pass.
+_QUOTE = re.compile(r"^(?: {0,3}>[ ]?)+")
 # A branch name or `pull/<n>/head`: no option, no `..`, nothing a shell reads.
 _REF = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._/-]{0,199}")
 _REF_WORDS = "one branch name of letters, digits and `._/-` (at most 200), or `pull/<n>/head`"
@@ -139,6 +139,8 @@ def _ref_of(value: str, emphasis: str = "") -> str | None:
     if not m:
         return None
     ref = m.group(1) or m.group(2)
+    if emphasis and ref.endswith(emphasis):  # closed before a full stop or a remark
+        ref = ref[: -len(emphasis)]
     if ref.startswith("refs/heads/"):
         ref = ref[len("refs/heads/"):]
     if (

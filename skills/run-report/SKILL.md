@@ -33,7 +33,7 @@ One comment on the tracking issue, written for the owner to act on. Build it onl
 2. **Merged.** A table of ticket, title, PR, review rounds, wall time (from `started_at` to `merged_at`) and attempts.
 3. **Set aside.** Each `needs-human` or set-aside ticket, with exactly what it needs and from whom. A run wound down because a session wasn't a ticket session (the state's `wind_down`) says so first, with the environment's fix: `WORKFLOW_ROLE=ticket` in the ticket environment's variables (`docs/enforcement.md` §2), before the next run.
 4. **What's live.** Each release step in the ledger: what ran, from which commit, and the smoke test's result. A release skipped because the owner stopped the run says so, and that the owner can release by hand.
-5. **Changes outside the repo.** The ledger, as a list for the owner to **confirm or undo**. Each line gives the change, when it happened, and the charter line or owner comment that allowed it. A revert entry gives its `result`: one whose `result` says "not made" is listed as not made, with why, never as a change to undo.
+5. **Changes outside the repo.** The ledger, as a list for the owner to **confirm or undo**. Each line gives the change, when it happened, and the charter line or owner comment that allowed it. A revert entry gives its `result`: only one whose `result` says "made" is a change to confirm or undo; any other ("opened", "not made") is listed as not made, with its pull request or why.
 6. **For you:**
    - the decisions sessions took that the owner should confirm, each with its PR;
    - `for_owner`;
