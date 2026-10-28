@@ -87,9 +87,7 @@ def test_a_cleared_requeued_head_is_fine():
 
 def test_also_for_a_code_fix_requeues_the_ticket_with_its_pull_request_in_the_briefing():
     text = _flat(_requeue())
-    assert (
-        "The owner's \"also #<n>\" for a ticket of this run whose open pull request needs a code fix" in text
-    )
+    assert "The owner's \"also #<n>\" for a ticket whose open pull request needs a code fix" in text
     assert "You write no code for it: the ticket goes back to a ticket session, on the same pull request." in text
     briefing = _section(text, "**Its briefing.**", "**The fix is there**")
     for part in (
@@ -98,14 +96,11 @@ def test_also_for_a_code_fix_requeues_the_ticket_with_its_pull_request_in_the_br
         "the session merges, arms auto-merge, queues or says it's ready only once a commit carrying the fix is pushed and a review covers it",
     ):
         assert part in briefing, part
-    going_on = _flat(_row(5))
+    going_on = _flat(_row(6))
     for part in (
-        "The hold, then requeue it.",
-        "Stop any session of it safely, adding no attempt and never labelling it `needs-human`",
-        "once that session is archived, set `requeued_head` to the branch's head as it is then",
-        "Mark it `queued` with `attempts: 0` and no `asked_at`, `base_merged`, `queue_heads`, `queue_failed` or `queue_result`",
-        "with `ready-for-agent` and `workflow:in-progress` on it: it starts at check-in step 5 like any queued ticket",
-        "A ticket already requeued is requeued again, `requeued_head` set to the pull request's head at the new \"also\", and its briefing gives every fix asked for.",
+        "The hold, then requeue it:",
+        "once no session of it runs, mark it `queued` with `attempts: 0` and no `asked_at`, with `ready-for-agent` and `workflow:in-progress` on it, so it starts at check-in step 5 like any queued ticket",
+        "A ticket already requeued is requeued again the same way, its briefing giving every fix asked for.",
     ):
         assert part in going_on, part
     # The briefing's slot says so.
@@ -123,13 +118,28 @@ def test_an_in_review_ticket_is_requeued_too_and_the_entry_points_lead_here():
     ) in step3
     named = _section(text, "**A run in progress that this session conducts**", "**A run in progress that another session conducts")
     assert "When its open pull request needs a code fix, whatever its status, \"A pull request that needs a code fix\" says what follows." in named
-    # Row 5 has no status of its own: queued, running, in-review and set-aside tickets all take it.
-    assert "| 5 | **The run going on** |" in _row(5)
+    # Row 6 has no status of its own: queued, running, in-review and set-aside tickets all take it.
+    assert "| 6 | **The run going on** |" in _row(6)
+
+
+def test_an_earlier_runs_leftover_is_adopted_then_held():
+    row = _flat(_row(3))
+    for part in (
+        "**Not in this run's state,** its open pull request on a `run.ticket_branch` branch (an earlier run's leftover)",
+        "Adopt it, as the kick-off adopts a leftover: add it to the state's tickets as `in-review`, with its `pr` and `attempts: 0`, and `workflow:in-progress` on it.",
+        "Then rows 4 to 6, as for any ticket of the run.",
+        "On any other branch, it isn't this section's: the \"also\" adds it to the plan as usual.",
+    ):
+        assert part in row, part
+    # Merged before it was read comes first, for a leftover too.
+    assert _requeue().index("| 2 |") < _requeue().index("| 3 |")
 
 
 def test_a_needs_human_ticket_stays_an_owners_answer():
-    assert "Not this section's: its fix is an owner's answer (check-in step 2's \"When the owner answers\")." in _row(1)
-    assert "(a `set-aside` ticket labelled `needs-human` included)" in _row(1)
+    row = _flat(_row(1))
+    assert "Not this section's, and no hold: its fix is an owner's answer (check-in step 2's \"When the owner answers\")." in row
+    assert "(a `set-aside` ticket labelled `needs-human` included)" in row
+    assert "A ticket already held keeps its hold (row 11)." in row
     step3 = _section(_conductor(), "**3. The owner's words.**", "**4. Each ticket in flight.**")
     assert "A `needs-human` ticket's fix (a `set-aside` one labelled `needs-human` included) is an owner's answer" in step3
 
@@ -137,15 +147,37 @@ def test_a_needs_human_ticket_stays_an_owners_answer():
 # ---------- the hold: nothing merges or settles before a review covers the fix ----------
 
 
+def _hold():
+    return _section(_flat(_requeue()), "**The hold,**", "**Its briefing.**")
+
+
 def test_the_hold_starts_as_soon_as_the_also_is_read():
-    hold = _section(_flat(_requeue()), "**The hold.**", "**Its briefing.**")
+    hold = _hold()
     for part in (
-        "As soon as you read it, before anything else: record the pull request's head, its full SHA, as the ticket's `requeued_head` and write the state",
+        "which rows 4 to 6 begin with, at once, before anything else at that check-in",
+        "record the pull request's head, its full SHA, as the ticket's `requeued_head`",
+        "and write the state",
         "disarm auto-merge if it is armed",
         "if it is in the merge queue, take it out (GitHub's **Remove from queue**), or, where that can't be done here, say so on the tracking issue",
         "check-in step 4's held row",
     ):
         assert part in hold, part
+    # Rows 1 and 2 take no hold.
+    assert "no hold" in _row(1) and "No hold" in _row(2)
+
+
+def test_a_session_stopped_by_the_hold_pushes_nothing_that_counts_as_the_fix():
+    hold = _hold()
+    for part in (
+        "if a session of it runs, stop it safely (\"Stopping a stuck session safely\", or \"Stop the run\" step 2 while the run stops), adding no attempt and never labelling it `needs-human`",
+        "The ticket keeps its status until that session is archived; then set `requeued_head` to the branch's head as it is then, so nothing that session pushed counts as the fix.",
+    ):
+        assert part in hold, part
+    fix = _section(_flat(_requeue()), "**The fix is there**", "**Its `for_owner` lines.**")
+    assert "Never judge it while a session stopped by the hold is still being stopped." in fix
+    # Rows 5 and 6 change the status only once no session runs, so no second session starts beside it.
+    assert "Once no session of it runs, mark it `in-review` rather than `queued`" in _row(5)
+    assert "once no session of it runs, mark it `queued`" in _row(6)
 
 
 def test_the_held_row_wins_over_every_row_that_merges():
@@ -155,6 +187,7 @@ def test_the_held_row_wins_over_every_row_that_merges():
         "This row wins over the `ready` rows, `owner_review`, the path-filtered row, the merge queue row, \"behind the base\", `not_yet`'s `update_branch` and \"The merge queue's state\"'s `ready`",
         "never merge it, update its branch, arm auto-merge on it or queue it, and disarm auto-merge if it is armed",
         "The other rows apply as usual.",
+        "If it merged, that section's row 7; while the run winds down with the ticket `queued`, its row 8.",
         "Once the fix is there (that section), clear `requeued_head` and take the rows as usual.",
     ):
         assert part in held, part
@@ -170,7 +203,7 @@ def test_the_fix_is_there_only_with_a_commit_of_its_own_and_a_review_over_it():
         "`WF merge-check` on the pull request gives no reason whose `action` is `review` and no \"couldn't read\" reason",
         "the branch has a commit of its own since `requeued_head`",
         "`git log --first-parent --no-merges --oneline <requeued_head>..origin/<branch>` lists one (a merge of the base brings no fix)",
-        "Then clear `requeued_head`",
+        "Then clear `requeued_head` and take its fix line out of `for_owner`",
     ):
         assert part in fix, part
 
@@ -180,10 +213,10 @@ def test_the_fix_is_there_only_with_a_commit_of_its_own_and_a_review_over_it():
 
 def test_the_table_has_one_row_for_each_case():
     rows = [ln for ln in _requeue().splitlines() if re.match(r"\| \d+ \| ", ln)]
-    assert [int(ln.split("|")[1]) for ln in rows] == list(range(1, 11))
+    assert [int(ln.split("|")[1]) for ln in rows] == list(range(1, 12))
     text = _flat(_requeue())
-    assert "When you read the \"also\", take the first of rows 1 to 5 that fits" in text
-    assert "Rows 6 to 10 cover what happens later, while `requeued_head` is set." in text
+    assert "When you read the \"also\", take the first of rows 1 to 6 that fits" in text
+    assert "Rows 7 to 11 cover what happens later, while `requeued_head` is set." in text
 
 
 def test_rows_are_judged_with_every_charter_change_in():
@@ -195,86 +228,94 @@ def test_rows_are_judged_with_every_charter_change_in():
 
 
 def test_winding_down_holds_it_and_starts_nothing():
-    row = _flat(_row(4))
+    row = _flat(_row(5))
     for part in (
         "**The run winding down** (check-in step 2's **Wind down**)",
         "The hold, starting nothing.",
-        "Stop any session of it safely (\"Stopping a stuck session safely\"), adding no attempt and never labelling it `needs-human`",
-        "Once none runs, mark it `in-review` rather than `queued` (a `set-aside` one stays `set-aside`), so it counts as settled for \"Done\"",
-        "replace its merge lines with the fix line, and reply that it won't start in this run",
+        "Once no session of it runs, mark it `in-review` rather than `queued` (a `set-aside` one stays `set-aside`), so \"Done\" doesn't wait for a session that won't come",
+        "write the fix line, and reply that it won't start in this run",
     ):
         assert part in row, part
     # A ticket requeued before the wind-down began, and not started, is held the same way.
-    assert "| 7 | **The run winds down while it is `queued`** (no session of it started yet) | Row 4. |" in _requeue()
-    held = next(ln for ln in _text("skills/conductor/SKILL.md").splitlines() if ln.startswith("| **A held pull request**"))
-    assert "while the run winds down with the ticket `queued`, its row 7" in held
+    assert "| 8 | **The run winds down while it is `queued`** (no session of it started yet) | Row 5. |" in _requeue()
 
 
 def test_the_run_stopping_holds_it_and_says_so():
-    row = _flat(_row(3))
+    row = _flat(_row(4))
     for part in (
-        "**The run stopping** (its `status` is `stopping`: read in this chat, or at \"Stop the run\" step 4)",
-        "The hold, starting nothing: \"Stop the run\" step 2 stops any session of it.",
-        "Replace its merge lines with the fix line, and reply that the run is stopping",
+        "**The run stopping** (its `status` is `stopping`, or check-in step 2's **Stop now** holds)",
+        "The hold, starting nothing.",
+        "Write the fix line, and reply that the run is stopping",
     ):
         assert part in row, part
     report = _section(_conductor(), "4. **The report.**", "5. **Wind up.**")
     assert (
         "Before the rest too, read the owner's comments not read yet (check-in step 3's *Comments*, setting "
         "`comments_read_through`), applying none (an \"also #<n>\" for a pull request needing a code fix takes "
-        "\"A pull request that needs a code fix\"'s row 3; any other change gets the reply that the run has stopped)"
+        "\"A pull request that needs a code fix\"'s row 4; any other change gets the reply that the run has stopped)"
     ) in report
     assert (
-        "and after them look again at each ticket with `requeued_head`: that section's row 6 if its pull request "
-        "merged, else its merge lines replaced with the fix line."
+        "and after them look again at each ticket with `requeued_head`: that section's row 7 if its pull request "
+        "merged, else its fix line written."
     ) in report
     # The sentences #349's tests pin stay, in their order.
     assert report.index("look again at each revert still `opened`") < report.index("Before the rest too") < report.index("First look again at each ticket still marked `cap_unknown_at`")
 
 
-def test_the_owners_stop_and_the_end_time_always_stop():
-    row = _flat(_row(8))
-    assert "**The owner's stop, or the end time** (the `workflow:stop` label, \"stop the run\" in this chat, `limits.ends_at` passed)" in row
+@pytest.mark.parametrize("stop", ["the `workflow:stop` label", "\"stop the run\" in this chat", "`limits.ends_at` passed"])
+def test_each_owners_stop_and_the_end_time_always_stop(stop):
+    row = _flat(_row(9))
+    assert "**The owner's stop, or the end time**" in row and stop in row
     assert "The run stops all the same: a held ticket never keeps it going." in row
-    # "Stop now" is judged as before: nothing the requeue adds reads comments before it, or judges it again.
-    step2 = _section(_conductor(), "**2. Stop or wind down?**", "**Asking about a `needs-human` ticket.**")
-    stop_now = _section(step2, "- **Stop now**", "- **Wind down**")
-    assert "comments" not in stop_now
-    stop = _section(_conductor(), "## Stop the run", "2. **Sessions.**")
-    assert "1. **Status.** Set `status: \"stopping\"` and the reason" in stop
-    step0 = _section(_conductor(), "**0. Stopping already?**", "**1. Read the state.**")
+    text = _conductor()
+    # Each goes straight to "Stop the run", whose step 1 reads no comments and judges nothing again.
+    stop_run = _section(text, "## Stop the run", "2. **Sessions.**")
+    assert "1. **Status.** Set `status: \"stopping\"` and the reason: `owner` (the `workflow:stop` label, or \"stop the run\" here), `ends_at`" in stop_run
+    if "chat" not in stop:
+        # The label and the end time are step 2's "Stop now", judged before any comment is read.
+        step2 = _section(text, "**2. Stop or wind down?**", "**Asking about a `needs-human` ticket.**")
+        stop_now = _section(step2, "- **Stop now**", "- **Wind down**")
+        assert ("`workflow:stop` label" if "label" in stop else "`limits.ends_at` has passed") in stop_now
+        assert "comments" not in stop_now
+    step0 = _section(text, "**0. Stopping already?**", "**1. Read the state.**")
     assert step0.strip().startswith("If the state's `status` is `stopping`, skip to \"Stop the run\", step 2")
 
 
 def test_done_waits_for_a_requeue_and_reads_the_owners_comments_first():
-    row = _flat(_row(9))
+    row = _flat(_row(10))
     assert "Never while a requeued ticket is `queued` or `running`." in row
-    assert "A held ticket marked `in-review` (row 4) counts as settled." in row
+    assert "A ticket row 5 marked `in-review` doesn't hold it up." in row
     done = _section(_conductor(), "- **Done** (stop the run)", "**Asking about a `needs-human` ticket.**")
     assert (
         "Before stopping for Done, read the owner's new comments (step 3's *Comments*) and judge again with their "
-        "changes in: an \"also #<n>\" among them may requeue a ticket (\"A pull request that needs a code fix\", row 9)."
+        "changes in: an \"also #<n>\" among them may requeue a ticket (\"A pull request that needs a code fix\", row 10)."
     ) in done
 
 
 def test_the_merge_queue_hold_and_drop_rule_and_a_merge_while_held():
-    hold = _section(_flat(_requeue()), "**The hold.**", "**Its briefing.**")
+    hold = _hold()
     assert "take it out (GitHub's **Remove from queue**)" in hold
-    # The drop rule starts afresh on the requeued pull request.
-    assert "so the merge queue's drop rule starts afresh" in _row(5)
+    # The drop rule starts afresh, and leaving the queue while held is never a drop.
+    assert "with no `base_merged`, `queue_heads`, `queue_failed` or `queue_result`, so the merge queue's drop rule starts afresh" in hold
+    assert (
+        "Leaving the queue, by your hand or GitHub's, is never a drop: a held pull request is never queued, so nothing "
+        "goes to `WF state drop` for it"
+    ) in hold
     # One the queue merged anyway is told apart.
-    assert "**Its pull request merged while held** (the merge queue took it, auto-merge armed before the hold, or the owner)" in _row(6)
+    assert "**Its pull request merged while held** (the merge queue took it, auto-merge armed before the hold, or the owner)" in _row(7)
     held = next(ln for ln in _text("skills/conductor/SKILL.md").splitlines() if ln.startswith("| **A held pull request**"))
     assert "the merge queue row" in held and "\"The merge queue's state\"'s `ready`" in held
 
 
 def test_merged_before_or_while_held():
-    assert "Requeue nothing. Replace the ticket's `for_owner` lines with the merged line, and say so in your reply." in _row(2)
-    row = _flat(_row(6))
-    assert "The **Merged** row's steps, then clear `requeued_head`." in row
     assert (
-        "If the branch has no commit of its own since `requeued_head` (as \"The fix is there\" reads it), replace the "
-        "ticket's `for_owner` lines with the merged line."
+        "No hold, and requeue nothing. Replace the ticket's `for_owner` lines with \"#n merged before its fix (#PR): "
+        "the fix needs a ticket of its own\", and say so in your reply."
+    ) in _row(2)
+    row = _flat(_row(7))
+    assert (
+        "The **Merged** row's steps, then clear `requeued_head` and replace the ticket's `for_owner` lines with "
+        "\"#n merged while held for its code fix (#PR): if the fix isn't in it, the fix needs a ticket of its own\"."
     ) in row
 
 
@@ -283,14 +324,13 @@ def test_for_owner_lines_added_replaced_and_taken_out():
     for part in (
         "Its merge lines are the ones that leave its pull request to the owner to merge: \"ready for you to merge\", a protected path, a path-filtered check, a merge-queue rule the kit can't judge.",
         "The fix line is \"#n's pull request is held for a code fix (#PR): <the fix asked for>; merge it only once a review covers the fix\".",
-        "The merged line is \"#n merged before its fix (#PR): the fix needs a ticket of its own\".",
-        "Each is written once, never twice.",
+        "To write the fix line, take its merge lines out and put the fix line in, once, whether or not there were any.",
     ):
         assert part in lines, part
-    # A requeue takes them out; a hold with no session puts the fix line in their place.
-    assert "Take its merge lines and any fix line out of `for_owner`, and reply that it is requeued." in _row(5)
-    for n in (3, 4):
-        assert "replace its merge lines with the fix line" in _row(n).lower()
+    # A requeue takes them out, with any line asking for the fix; a hold with no session writes the fix line.
+    assert "Take its merge lines, any fix line and any line asking for its fix (step 7's) out of `for_owner`, and reply that it is requeued." in _row(6)
+    for n in (4, 5, 9):
+        assert "write the fix line" in _row(n).lower(), n
     # Each merge line named matches the line its row writes.
     raw = _text("skills/conductor/SKILL.md")
     for written in (
@@ -303,7 +343,7 @@ def test_for_owner_lines_added_replaced_and_taken_out():
 
 
 def test_a_requeued_ticket_that_ends_needs_human_keeps_its_hold():
-    row = _flat(_row(10))
+    row = _flat(_row(11))
     assert "As for any ticket, and the hold stays" in row
     assert "a ticket at the cap takes its steps instead (check-in step 2's \"A ticket at the cap\")" in row
 
