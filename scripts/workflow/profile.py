@@ -323,13 +323,17 @@ def _plain_values(text: str | None) -> set[str]:
     return {v for v in _CODE_WRITERS_LINE.findall((text or "").lstrip("\ufeff")) if v in CODE_WRITERS}
 
 
+def _stricter(*answers: str | None) -> str | None:
+    """The stricter `code_writers`: "ticket" beats "any", which beats None."""
+    return "ticket" if "ticket" in answers else "any" if "any" in answers else None
+
+
 def plain_code_writers(text: str | None) -> str | None:
     """`code_writers` from the profile's plain `code_writers = "…"` lines,
     whatever else the profile holds (it may not parse): "ticket" when any says
     it, else "any" when one does, else None. A line can't be placed in its
     table without the TOML, so the stricter answer wins."""
-    values = _plain_values(text)
-    return "ticket" if "ticket" in values else "any" if "any" in values else None
+    return _stricter(*_plain_values(text))
 
 
 def parse(data: dict, root: Path) -> Profile:
@@ -681,10 +685,6 @@ def _rule_fields(data: dict) -> dict:
     return out
 
 
-def _stricter(a: str | None, b: str | None) -> str | None:
-    return "ticket" if "ticket" in (a, b) else "any" if "any" in (a, b) else None
-
-
 def _tree_text(root: Path) -> str | None:
     """The working tree's profile, or None: never a pipe or a device, whose
     read could block or never end (as `workflow status` reads it)."""
@@ -708,13 +708,13 @@ def code_rule(root: Path | None = None) -> CodeRule:
 def _code_rule(root: Path) -> CodeRule:
     tree: Profile | None = None
     tree_data = None
-    text = _tree_text(root)
+    tree_text = _tree_text(root)
     # Anything a profile makes the parser raise (an invalid key, TOML that
     # doesn't parse, a regex too large to compile, nesting too deep) makes it
     # unreadable here, never an error: a session's own copy can't drop the
     # base's answer by breaking itself.
     try:
-        tree_data = tomllib.loads(text) if text is not None else None
+        tree_data = tomllib.loads(tree_text) if tree_text is not None else None
         tree = parse(tree_data, root) if tree_data is not None else None
     except Exception:
         tree = None
@@ -723,21 +723,21 @@ def _code_rule(root: Path) -> CodeRule:
         base_branch = tree.base_branch
     elif isinstance(tree_data, dict):
         base_branch = _rule_fields(tree_data).get("base_branch", "main")
-    ref, text = _base_text(root, base_branch)
+    ref, base_text = _base_text(root, base_branch)
     base: Profile | None = None
     fields: dict = {}
-    if text is not None:
+    if base_text is not None:
         try:
-            data = tomllib.loads(text)
+            data = tomllib.loads(base_text)
         except Exception:
-            fields = {"code_writers": plain_code_writers(text)}  # TOML that doesn't parse: its plain line
+            fields = {"code_writers": plain_code_writers(base_text)}  # TOML that doesn't parse: its plain line
         else:
             fields = _rule_fields(data)
             try:
                 base = parse(data, root)
             except Exception:
                 pass
-    rule = CodeRule(sources=[ref] if text is not None else [])
+    rule = CodeRule(sources=[ref] if base_text is not None else [])
     if tree is None:
         rule.code_writers = fields.get("code_writers")
         rule.code_paths = list(fields.get("code_paths", []))

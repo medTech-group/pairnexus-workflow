@@ -471,3 +471,20 @@ def test_uncommenting_the_templates_key_leaves_a_valid_profile(tmp_path):
     on = tpl.replace('# code_writers = "ticket"', 'code_writers = "ticket"').replace("# code_paths = [", "code_paths = [")
     prof = profile_mod.parse(tomllib.loads(on), tmp_path)
     assert prof.code_writers == "ticket" and prof.code_paths
+
+
+# Round 2's findings
+
+
+def test_the_conductor_follows_a_planning_sessions_rules_and_isnt_called_one():
+    """Spec #338: every session other than a ticket session and the conductor
+    is a planning session; the conductor follows a planning session's rules."""
+    doc = (KIT / "docs/profile.md").read_text()
+    tpl = (KIT / "templates/profile.toml").read_text()
+    row = _row(doc, "code_writers")
+    assert "the conductor included, is a planning session" not in row
+    assert "the conductor follows a planning session's rules" in row
+    at = tpl.index('# code_writers = "ticket"')
+    assert "the conductor follows a planning session's rules" in " ".join(
+        line.lstrip("# ").strip() for line in tpl[:at].splitlines()[-6:]
+    )
