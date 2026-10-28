@@ -6234,10 +6234,14 @@ def _patched_files(seg: Seg, g: tuple[list[str], list[str], str | None], root: P
     top = _git_out(d, "rev-parse", "--show-toplevel") if d else None
     if unknown or not top:
         return []
-    # A git diff's paths, and `git am`'s, are from the top level; `git apply`'s plain patch's, from where it runs.
+    # A git diff's paths, and `git am`'s, are from the top level. `git apply` places a plain
+    # patch's from where it runs, unless they already name that folder: both are judged.
     # The paths with their `a/` and `b/` dropped first, so a refusal names the file git writes.
-    here = d if args[0] == "apply" else top
-    return [os.path.join(top if "diff --git " in txt else here, p) for txt in texts for p in reversed(_patch_paths(txt))]
+    out: list[str] = []
+    for txt in texts:
+        bases = [top] if "diff --git " in txt or args[0] == "am" else [top, d]
+        out += [os.path.join(b, p) for b in bases for p in reversed(_patch_paths(txt))]
+    return out
 
 
 def _named_code(names: list[str], nocase: bool, own: bool, start: str, root: Path, code: _Code) -> _Hit | None:

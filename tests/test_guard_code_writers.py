@@ -412,6 +412,10 @@ def test_a_plain_patch_from_a_subdirectory(proj, monkeypatch, capsys):
     d, why = hook(monkeypatch, capsys, proj, bash("git apply ../plain.patch"), cwd=proj / "src")
     assert d == "deny" and "code path `src/app.py`" in why, why
     assert hook(monkeypatch, capsys, proj, bash("git apply plain.patch"))[0] == "allow"  # `app.py` at the top: not code
+    # A plain patch naming the folder it runs in: git applies it from the top level.
+    for command in ("git apply ../fix.patch", "git -C src apply ../fix.patch"):
+        d, why = hook(monkeypatch, capsys, proj, bash(command), cwd=proj / ("src" if command.startswith("git apply") else ""))
+        assert d == "deny" and "code path `src/app.py`" in why, (command, why)
 
 
 def test_a_search_above_the_project_is_refused(proj, monkeypatch, capsys):
