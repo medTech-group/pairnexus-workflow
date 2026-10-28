@@ -13,9 +13,10 @@ import tomllib
 
 import pytest
 
+from changelog_notes import since_0110
 from conftest import KIT
 from test_doctor import _lines, _prof, _project, _report
-from workflow import doctor
+from workflow import doctor, vendor
 from workflow.profile import parse
 
 SETUP = KIT / "skills/setup-workflow/SKILL.md"
@@ -135,6 +136,21 @@ def test_setup_pushes_in_a_command_of_its_own():
     assert "push the branch in a command of its own" in write and CHAINED in write
 
 
+def test_setup_names_the_question_in_its_description():
+    head = _text(SETUP).split("---", 2)[1]
+    assert "the owner, who writes code)" in head
+
+
+def test_with_only_ticket_sessions_set_up_unattended_runs_is_what_lets_code_be_written():
+    # Vendored, "only ticket sessions": nothing writes code until a ticket environment exists.
+    body = _section(_text(SETUP), "4. The pull request")
+    runs = _para(body, '  - **"Set up unattended runs"**')
+    assert "With only ticket sessions writing code" in runs and "what lets code be written at all" in runs
+    after = _section(_text(SETUP), "5. After the merge")
+    assert "or answered **Only ticket sessions** in vendored mode" in after
+    assert "`set_up_unattended_runs`" in after and 'after "Protect `main`"' in after
+
+
 def test_setup_pull_request_and_checklist_name_who_writes_code():
     body = _section(_text(SETUP), "4. The pull request")
     assert "who writes code" in body.lower() and f'"{NAME}"' in body
@@ -234,8 +250,14 @@ def test_choose_who_writes_code_ends_in_a_pull_request_the_owner_merges():
     assert "in a command of its own" in pr and CHAINED in pr
     assert "open the pull request" in pr.lower() and '("Pushing")' in pr
     assert "never merge it, or enable auto-merge on it, yourself" in pr
-    # A loosening counts only once it merges: the base's "ticket" wins until then.
-    assert "**Loosening waits for the merge.**" in pr
+    # A loosening counts only once it merges, and in a branch only once the merged
+    # base is in it: the stricter of the working tree's answer and the base's counts.
+    loosening = _para(pr, "**Loosening waits for the merge.**")
+    assert "not only fetched" in loosening and "the stricter of the working tree's answer and the base's" in loosening
+    assert "once it has the merged base branch in it" in _section(_part(), "5. Where it ends")
+    # Nothing to change is judged after the code paths, against the base's profile.
+    assert "When the answer and the confirmed code paths are what `origin/<base>`'s profile says already" in pr
+    assert "already" not in _section(_part(), "2. The question").replace("already that", "")
 
 
 def test_choose_who_writes_code_proposes_code_paths_as_set_up_does():
@@ -258,8 +280,10 @@ def test_every_upgrade_path_pushes_in_a_command_of_its_own():
 # ---------- check-setup ----------
 
 
-def _doctor_writers_line(tmp_path, guard=""):
-    root = _project(tmp_path, profile=_prof("ruleset = true\n", guard))
+def _doctor_writers_line(tmp_path, guard="", vendored=True):
+    tmp_path.mkdir(exist_ok=True)
+    settings = {} if vendored else {"enabledPlugins": {vendor.PLUGIN_KEY: True}}
+    root = _project(tmp_path, profile=_prof("ruleset = true\n", guard), vendored=vendored, settings=settings or None)
     return _lines(_report(tmp_path, root))["kit.code_writers"]
 
 
@@ -268,19 +292,24 @@ def test_check_setup_offers_it_on_doctors_unanswered_note(tmp_path):
     para = _para(offers, "**Who writes code.**")
     # Keyed on the line as doctor gives it: its id, its status and its fix.
     assert "`kit.code_writers`" in para and "`note`" in para and f'"{NAME}"' in para
+    # Only the unanswered line has no offer: under "ticket" with no ticket environment it offers runs.
+    assert "While `guard.code_writers` is unanswered, doctor's `kit.code_writers` line carries no `offer`" in para
     assert f"**{NAME}**" in para and "**Not now**" in para
     assert "upgrade-setup" in para
     assert "plugin mode" in para
-    # Doctor's line is that: a note, no offer of its own, its fix naming the step.
-    ln = _doctor_writers_line(tmp_path)
-    assert (ln["status"], ln["offer"]) == ("note", None), ln
-    assert NAME in ln["fix"], ln
+    # Doctor's line is that, in both modes: a note, no offer of its own, its fix naming the step.
+    for vendored in (True, False):
+        ln = _doctor_writers_line(tmp_path / str(vendored), vendored=vendored)
+        assert (ln["status"], ln["offer"]) == ("note", None), ln
+        assert NAME in ln["fix"], ln
 
 
 @pytest.mark.parametrize("answer", ["ticket", "any"])
 def test_check_setup_does_not_offer_it_once_answered(tmp_path, answer):
     # Doctor's fix names the step only while unanswered, which is what the offer keys on.
     ln = _doctor_writers_line(tmp_path, f'[guard]\ncode_writers = "{answer}"\ncode_paths = ["src/**"]\n')
+    # Answered, with a ticket environment named: fine, not a line doctor couldn't read.
+    assert ln["status"] == "fine", ln
     assert NAME not in (ln["fix"] or ""), ln
 
 
@@ -305,9 +334,10 @@ def test_install_names_the_question_and_the_upgrade():
 
 def test_changelog_notes_it_under_unreleased():
     log = _text(KIT / "CHANGELOG.md")
+    # Read as the other notes are, so a release that moves them under its heading still passes.
+    assert "#345" in since_0110(log) and NAME in since_0110(log)
     start = log.index("## Unreleased\n")
     end = log.index("\n## ", start + 1)
-    assert "#345" in log[start:end] and NAME in log[start:end]
     # No version bump: VERSION is still the last release's.
     released = log[end + 4:].split("\n", 1)[0].strip()
     assert (KIT / "VERSION").read_text().strip() == released

@@ -635,15 +635,13 @@ One choice, with `AskUserQuestion`: "Who writes code in this project?"
 
 Word the two answers, and what "only ticket sessions" means while the profile names no ticket environment (`run.ticket_environment` empty) or in plugin mode, in set-up's words: its "Who writes code", in `.claude/skills/setup-workflow/SKILL.md` (vendored) or `<this skill's directory>/../setup-workflow/SKILL.md` (plugin).
 
-An answer that is the profile's already, with the code paths unchanged: say so, and stop. Nothing to change.
-
 ## 3. The code paths
 
 With **Only ticket sessions**, propose `code_paths` as set-up does (its "The code paths"), for the person to confirm or change, with the profile's own list as the default when it has one. With **Any session**, keep the list as it is.
 
 ## 4. One pull request
 
-First look for one already open (from `workflow/code-writers`, or any open pull request changing `code_writers` in the profile): if there is one, point at it rather than opening another.
+First look for one already open (from `workflow/code-writers`, or any open pull request changing `code_writers` in the profile): if there is one, point at it rather than opening another. When the answer and the confirmed code paths are what `origin/<base>`'s profile says already, the branch would change nothing: say so, and stop.
 
 1. A branch from the base branch, such as `workflow/code-writers`.
 2. In `.claude/workflow/profile.toml`'s `[guard]` table, a plain `code_writers = "ticket"` or `code_writers = "any"` line on its own, in place of the `code_writers` line there, or of the template's commented `# code_writers = "ticket"`, or at the end of `[guard]` when neither is there; and `code_paths` with the confirmed globs, the same way. Change nothing else.
@@ -651,7 +649,7 @@ First look for one already open (from `workflow/code-writers`, or any open pull 
 4. Commit, then push the branch in a command of its own, never chained with the commit (`git commit … && git push`) ("Pushing"): under `"ticket"` that counts in this session as soon as its working tree says so.
 5. Open the pull request. Its body: the answer, the code paths, and what changes once it merges (with only ticket sessions: no other session, the conductor included, writes code, and where it is built instead, as the question said).
 
-**Loosening waits for the merge.** From `"ticket"` to `"any"`, nothing changes until the pull request merges and sessions fetch the base branch: the base's `"ticket"` counts over a working tree that says less. Say so.
+**Loosening waits for the merge.** From `"ticket"` to `"any"`, nothing changes until the pull request merges: the stricter of the working tree's answer and the base's counts, so a session's branch stays under `"ticket"` until the merged base is in it (pulled or merged in, not only fetched). Say so.
 
 It changes `.claude/`, so merging it is the owner's: never merge it, or enable auto-merge on it, yourself.
 
@@ -659,6 +657,6 @@ It changes `.claude/`, so merging it is the owner's: never merge it, or enable a
 
 Say where it stands in one line:
 - "Only ticket sessions write code once #<n> merges.", adding, while no ticket environment is named, "Until a ticket environment exists, nothing writes code: \"Set up unattended runs\" makes one." (in plugin mode, "Code is then written only in a session on your computer with `WORKFLOW_ROLE=ticket`.");
-- "Any session writes code once #<n> merges and sessions fetch it.";
+- "Any session writes code once #<n> merges, in each branch once it has the merged base branch in it.";
 - "It is that already: nothing to change.";
 - "Nothing was changed." after **Not now**.
