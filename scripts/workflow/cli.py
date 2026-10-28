@@ -1343,8 +1343,9 @@ def _budget(seconds: float):
             signal.signal(signal.SIGALRM, previous)
 
 
-def _cant_decide(event, why: str, solo: bool | None = None, fixes: str = fallback.FIXES) -> int:
-    """The can't-decide fallback (`fallback`, #53) in an attended session: a push
+def _cant_decide(event, why: str, solo: bool | None = None, fixes: str = fallback.FIXES, planning: bool = False) -> int:
+    """The can't-decide fallback (`fallback`, #53) in an attended session (or,
+    with `planning`, a session `_planning` treats as one): a push
     or a merge is asked, or refused in solo mode or where nobody is asked;
     anything else is left alone. A missing profile (the kit isn't set up) is
     left alone too. Always 0, and never raises: a hook that exits non-zero
@@ -1357,7 +1358,7 @@ def _cant_decide(event, why: str, solo: bool | None = None, fixes: str = fallbac
             solo = fallback.solo(root)
         d = fallback.decide(event, solo, why, fixes)
         if d:
-            out = fallback.output(d[0], f"[workflow guard, {_role_label('attended')}] {d[1]}")
+            out = fallback.output(d[0], f"[workflow guard, {_planning_label() if planning else _role_label('attended')}] {d[1]}")
             print(json.dumps(out))
     except Exception:
         pass
@@ -1374,26 +1375,55 @@ def _ticket_branch_without_the_kit(event: dict) -> bool:
         return False
 
 
+def _planning(role: str | None, firm: str | None, root=None) -> bool:
+    """Whether the can't-decide fallback treats this session as a planning
+    session (#342): under `code_writers = "ticket"`, read from a plain line of
+    the working tree's profile or the base's (`fallback.ticket_rule`), a
+    session that is a ticket session only by its branch (`firm` None) or by a
+    WORKFLOW_ROLE that isn't a role. Never one with WORKFLOW_ROLE=ticket, nor
+    one without a working tree's profile."""
+    if role != "ticket" or (firm is not None and roles.unrecognised() is None):
+        return False
+    try:
+        root = Path(root or project_root())
+        # Without a working tree's profile the CLI refuses as before (restore it).
+        return (root / PROFILE_PATH).is_file() and fallback.ticket_rule(root)
+    except Exception:
+        return False
+
+
+def _role_without_the_kit(event, firm: str | None) -> tuple[str | None, bool]:
+    """(the role, whether `_planning` makes it a planning session) where the
+    profile can't be read: WORKFLOW_ROLE's, else "ticket" on a branch matching
+    `run.ticket_branch` as the old-Python fallback reads it, else None."""
+    role = firm or ("ticket" if _ticket_branch_without_the_kit(event if isinstance(event, dict) else {}) else None)
+    return role, _planning(role, firm)
+
+
+def _planning_label() -> str:
+    odd = roles.unrecognised()
+    why = f"WORKFLOW_ROLE={odd!r} isn't a role" if odd else "WORKFLOW_ROLE isn't set"
+    return f'planning session ({why}, and only ticket sessions write code: code_writers = "ticket")'
+
+
 def _hook_guard(event, raw: str = "") -> int:
     firm = roles.env_role()
     if not isinstance(event, dict):  # malformed: nothing can be checked
-        if firm is None and _ticket_branch_without_the_kit({}):
-            firm = "ticket"
-        if firm in ("ticket", "conductor"):
-            _deny_json(f"[workflow guard, {_role_label(firm)}] the hook's event wasn't a JSON object, so nothing could be checked and this was refused")
+        role, planning = _role_without_the_kit({}, firm)
+        if role in ("ticket", "conductor") and not planning:
+            _deny_json(f"[workflow guard, {_role_label(role)}] the hook's event wasn't a JSON object, so nothing could be checked and this was refused")
             return 0
-        return _cant_decide(fallback.read_event(raw), "the hook's event couldn't be read as a JSON object")
+        return _cant_decide(fallback.read_event(raw), "the hook's event couldn't be read as a JSON object", planning=planning)
     try:
         prof = load(required=False)
     except ProfileError as e:
-        if firm is None and _ticket_branch_without_the_kit(event):
-            firm = "ticket"
-        if firm in ("ticket", "conductor"):
+        role, planning = _role_without_the_kit(event, firm)
+        if role in ("ticket", "conductor") and not planning:
             if not _is_restore(event):
-                _deny_json(f"[workflow guard, {_role_label(firm)}] the profile is invalid, so nothing can be checked: {e}. Fix .claude/workflow/profile.toml in a PR from an attended session, or restore it: git checkout -- .claude/workflow")
+                _deny_json(f"[workflow guard, {_role_label(role)}] the profile is invalid, so nothing can be checked: {e}. Fix .claude/workflow/profile.toml in a PR from an attended session, or restore it: git checkout -- .claude/workflow")
             return 0
         print(f"workflow guard hook: the profile is invalid, so the guard can't check anything: {e}", file=sys.stderr)
-        return _cant_decide(event, f"the profile is invalid ({e})")
+        return _cant_decide(event, f"the profile is invalid ({e})", planning=planning)
     if prof is None:
         if firm in ("ticket", "conductor") and not _is_restore(event):
             _deny_json(
@@ -1410,22 +1440,29 @@ def _hook_guard(event, raw: str = "") -> int:
             role = roles.role(cwd, prof.ticket_branch, fallback=root)
             d = guard_mod.decide(event, prof, role, root, roles.current_branch(cwd), role_from_env=firm is not None, cwd=event.get("cwd") or None)
     except _OverBudget:
-        role = role or firm or "ticket"  # a role not read in time: the strictest
+        # A role not read in time is the strictest, unless the rule says that
+        # without WORKFLOW_ROLE=ticket no session gets more than a planning session's.
+        strictest = role or firm or "ticket"
+        planning = _planning(strictest, firm, root)
+        role = "attended" if planning else strictest
+        label = _planning_label() if planning else _role_label(role)
         # Solo mode refuses what touches the base branch, so a check not finished in time is refused too.
         if role in ("ticket", "conductor") or (role == "attended" and prof.ruleset is False):
-            _deny_json(f"[workflow guard, {_role_label(role)}] the guard ran out of time ({GUARD_BUDGET:g} seconds) checking this, so it was refused; split the command, or give it smaller files")
+            _deny_json(f"[workflow guard, {label}] the guard ran out of time ({GUARD_BUDGET:g} seconds) checking this, so it was refused; split the command, or give it smaller files")
             return 0
         return _cant_decide(
             event,
             f"it ran out of time ({GUARD_BUDGET:g} seconds) checking this",
             prof.ruleset is False,
             "To have it checked, split the command, or give it smaller files.",
+            planning=planning,
         )
     except Exception as e:  # fail closed where a person isn't there to notice
-        if role in ("ticket", "conductor") or (role is None and firm in ("ticket", "conductor")):
+        planning = _planning(role or firm, firm, root)
+        if not planning and (role in ("ticket", "conductor") or (role is None and firm in ("ticket", "conductor"))):
             _deny_json(f"[workflow guard, {_role_label(role or firm)}] the guard failed ({type(e).__name__}: {e}), so this was refused; rephrase the command more simply")
             return 0
-        return _cant_decide(event, f"it failed ({type(e).__name__}: {e})", prof.ruleset is False)
+        return _cant_decide(event, f"it failed ({type(e).__name__}: {e})", prof.ruleset is False, planning=planning)
     if d.action == "allow":
         return 0  # never force "allow": the normal permission rules still apply
     reason = f"[workflow guard, {_role_label(role)}] {d.reason}"
@@ -1539,14 +1576,13 @@ def cmd_hook(a) -> int:
     except Exception as e:  # a bug in a hook must not stop the session; say so
         if a.name == "guard":
             firm = roles.env_role()
-            if firm is None and _ticket_branch_without_the_kit(event if isinstance(event, dict) else {}):
-                firm = "ticket"
-            if firm in ("ticket", "conductor"):
+            role, planning = _role_without_the_kit(event, firm)
+            if role in ("ticket", "conductor") and not planning:
                 _deny_json(f"[workflow guard] the guard failed ({type(e).__name__}: {e}), so this was refused")
                 return 0
             print(f"workflow guard hook failed ({type(e).__name__}: {e})", file=sys.stderr)
             why = f"the profile is invalid ({e})" if isinstance(e, ProfileError) else f"it failed ({type(e).__name__}: {e})"
-            return _cant_decide(event if isinstance(event, dict) else fallback.read_event(raw), why)
+            return _cant_decide(event if isinstance(event, dict) else fallback.read_event(raw), why, planning=planning)
         if isinstance(e, ProfileError):
             print(f"workflow {a.name} hook: the profile is invalid, so the hook did nothing: {e}", file=sys.stderr)
             return 1

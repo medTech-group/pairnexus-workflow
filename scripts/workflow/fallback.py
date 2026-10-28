@@ -8,6 +8,12 @@ attended session gets this one rule:
   where nobody is asked (see `modes`);
 - everything else is left alone: no decision.
 Ticket and conductor sessions are refused every tool instead, by the callers.
+Under `code_writers = "ticket"` (#342), a session that is a ticket session
+only by its branch, or by a `WORKFLOW_ROLE` that isn't a role, gets this rule
+too, as a planning session: `ticket_rule` reads the answer from a plain line of
+the working tree's profile, or of the base's (`origin/<base_branch>`, else
+`origin/HEAD`). `WORKFLOW_ROLE=ticket` is still refused every tool, and so is
+every ticket session under "any" or with `code_writers` absent.
 
 "A push or a merge" is one definition, used by the CLI's error paths and by
 the old-Python fallback alike: `git … push`, `gh … pr … merge`, and the GitHub
@@ -17,12 +23,16 @@ Keep it to the standard library and `modes`, and to syntax Python 3.7 reads (a
 test checks): the old-Python fallback runs it on exactly the interpreters the
 rest of the kit can't, and the CLI runs it when the kit's own code has failed,
 so it reads nothing through the kit (the profile's `ruleset` from its first
-plain line, as `_old_python` reads `ticket_branch`).
+plain line, as `_old_python` reads `ticket_branch`; `code_writers` and
+`base_branch` from their plain lines, as `profile.plain_code_writers` reads
+the first).
 """
 
 import json
 import os
 import re
+import subprocess
+import time
 
 from . import modes
 
@@ -38,6 +48,11 @@ MCP_PUSH = ("merge_pull_request", "push_files", "create_or_update_file", "delete
 # The tools that run a command: Monitor runs it as Bash does, PowerShell in PowerShell.
 COMMAND_TOOLS = ("Bash", "Monitor", "PowerShell")
 _RULESET = re.compile(r"^[ \t]*ruleset[ \t]*=[ \t]*(\w+)", re.M)
+_TICKET_RULE = re.compile(r'^[ \t]*code_writers[ \t]*=[ \t]*"ticket"', re.M)
+_BASE_BRANCH = re.compile(r'^[ \t]*base_branch[ \t]*=[ \t]*(?:"([^"\n]*)"|\'([^\'\n]*)\')', re.M)
+# How long `ticket_rule` may spend in git, all its calls together: it can run
+# after the guard's own budget is spent, with 5 seconds left of the hook's.
+GIT_SECONDS = 2.0
 PROFILE = os.path.join(".claude", "workflow", "profile.toml")
 FIXES = (
     "To fix it: run `python3 .claude/workflow/bin/workflow.py profile check`, check that `python3 --version` "
@@ -128,11 +143,60 @@ def solo_from_text(text):
 def solo(root):
     """Solo mode, read from the profile under `root` without the kit; False
     when it can't be read."""
+    return solo_from_text(_profile_text(root))
+
+
+def _profile_text(root):
     try:
         with open(os.path.join(str(root), PROFILE), encoding="utf-8", errors="replace") as f:
-            return solo_from_text(f.read())
+            return f.read()
     except (OSError, ValueError):
-        return False
+        return None
+
+
+def _git(root, deadline, *args):
+    """git's output, or None when it fails or `deadline` (a time.monotonic()) passes.
+    Never a fetch: a partial clone's missing object is a failure, not a download."""
+    left = deadline - time.monotonic()
+    if left <= 0:
+        return None
+    try:
+        p = subprocess.run(("git",) + args, cwd=str(root), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=left,
+                           env=dict(os.environ, GIT_NO_LAZY_FETCH="1"))
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    return p.stdout.decode("utf-8", "replace") if p.returncode == 0 else None
+
+
+def ticket_rule_from_text(text):
+    """True when a plain `code_writers = "ticket"` line is in the profile's
+    text, whatever else it holds (it may not parse)."""
+    return bool(_TICKET_RULE.search((text or "").lstrip("\ufeff")))
+
+
+def ticket_rule(root):
+    """Whether only ticket sessions write code (`code_writers = "ticket"`),
+    read without the kit: a plain line in the working tree's profile under
+    `root`, or in the base's as last fetched, `origin/<base>` (`<base>` from
+    the working tree's plain `base_branch` line, default main), else
+    `origin/HEAD`. False when neither says so or neither can be read, or git
+    takes longer than `GIT_SECONDS` in all."""
+    text = _profile_text(root)
+    if ticket_rule_from_text(text):
+        return True
+    m = _BASE_BRANCH.search((text or "").lstrip("\ufeff"))
+    base = (m and (m.group(1) or m.group(2))) or "main"
+    deadline = time.monotonic() + GIT_SECONDS
+    for name in (base, "HEAD"):
+        ref = "refs/remotes/origin/" + name
+        # A branch's name only, as `profile.code_rule` takes it: "main~1" or
+        # "main@{1}" would read an older base.
+        if _git(root, deadline, "check-ref-format", ref) is None:
+            continue
+        shown = _git(root, deadline, "show", ref + ":" + PROFILE.replace(os.sep, "/"))
+        if shown is not None or _git(root, deadline, "rev-parse", "--verify", "--quiet", ref + "^{commit}") is not None:
+            return ticket_rule_from_text(shown)
+    return False
 
 
 def _shown(mode):
