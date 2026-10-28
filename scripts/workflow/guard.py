@@ -120,6 +120,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from . import fallback, modes
+from . import profile as profile_mod
+from . import roles as roles_mod
 from .posts import AGENT_MARKER
 from .profile import Profile, resolve_experience
 
@@ -159,6 +161,7 @@ class Decision:
     action: str  # "allow", "deny" or "ask"
     reason: str = ""
     sensitive: bool = False  # the input holds sensitive data: never repeat it, nor say to post it by hand
+    label: str | None = None  # the session as the refusal names it, when not by its role alone (#340)
 
 
 ALLOW = Decision("allow")
@@ -5686,9 +5689,15 @@ def check_bash(
     current_branch: str | None,
     role_from_env: bool = True,
     cwd: str | os.PathLike | None = None,
+    code: "_Code | None" = None,
 ) -> Decision:
     start = _start_cwd(root, cwd)
     segs = segments(command, root, start)
+    if code is not None:
+        # Refused wherever it sits in the command: an ask earlier on never hides it.
+        p = _shell_code(segs, code, root)
+        if p:
+            return Decision("deny", p)
     protected = list(profile.protected_paths) + (GIT_INTERNALS if role == "ticket" else [])
     # Solo mode: no ruleset protects the base branch, so what touches it is
     # refused, not asked, wherever it sits in the command (an ask earlier on
@@ -5813,7 +5822,9 @@ def _added_skips(old: str, new: str) -> int:
     return len(_SKIP.findall(new or "")) - len(_SKIP.findall(old or ""))
 
 
-def check_write(tool: str, inp: dict, profile: Profile, role: str, root: Path, cwd: str | os.PathLike | None = None) -> Decision:
+def check_write(
+    tool: str, inp: dict, profile: Profile, role: str, root: Path, cwd: str | os.PathLike | None = None, code: "_Code | None" = None
+) -> Decision:
     path = inp.get("file_path") or inp.get("notebook_path") or ""
     start = _start_cwd(root, cwd)
     a = _abspath(path, start) if path else None
@@ -5822,6 +5833,9 @@ def check_write(tool: str, inp: dict, profile: Profile, role: str, root: Path, c
         hit = global_config_hit(a)
         if hit:
             return Decision("deny", f"`{path}` is the global git config ({hit}), which can hold aliases, hooks and push settings; it isn't changed in {role} sessions")
+    hit = _code_at(a, code, root) if code is not None and a else None
+    if hit:
+        return Decision("deny", f"{_shown(hit)} is a code path ({hit.pattern}); {code.instead}")
     if _outside(rel):  # outside the project: never one of its protected paths or tests
         return ALLOW
     if role == "ticket" and rel:
@@ -5904,11 +5918,19 @@ def check_mcp(tool: str, inp: dict, profile: Profile, role: str, root: Path) -> 
 POWERSHELL_REFUSAL = "the guard can't read PowerShell; use Bash"
 
 
-def check_powershell(inp: dict, profile: Profile, role: str, root: Path) -> Decision:
+def check_powershell(inp: dict, profile: Profile, role: str, root: Path, cwd: str | os.PathLike | None = None, code: "_Code | None" = None) -> Decision:
     """The guard can't read PowerShell, and never tries to parse it. Ticket and
     conductor sessions are refused it; an attended session gets the can't-decide
     rule (#53) on its text: a push or a merge is asked (refused in solo mode),
-    anything else is left alone."""
+    anything else is left alone. A session that doesn't write code (#340) is
+    refused any PowerShell whose text names a code path, even to read it."""
+    hit = _powershell_code(inp, code, root, cwd) if code is not None else None
+    if hit:
+        return Decision(
+            "deny",
+            f"this PowerShell names the code path {_shown(hit)} ({hit.pattern}), and the guard can't read PowerShell "
+            f"to tell whether it writes it, so run it through Bash, where the guard can tell; {code.writes_none}",
+        )
     if role != "attended":
         return Decision("deny", POWERSHELL_REFUSAL)
     what = fallback.push_or_merge({"tool_name": "PowerShell", "tool_input": inp})
@@ -5923,6 +5945,288 @@ def check_powershell(inp: dict, profile: Profile, role: str, root: Path) -> Deci
         f"the guard can't read PowerShell, so it can't check this {what} (which branch, which pull request); "
         "allow it only if you mean to, or run it through Bash, which the guard can check",
     )
+
+
+# ---------- who writes code (#340) ----------
+#
+# Under `code_writers = "ticket"` (#339's rule, from `profile.code_rule`), only
+# a session with `WORKFLOW_ROLE=ticket` writes code. Every other session is
+# refused, never asked, a write the guard places on a code path: the file
+# tools, the shell's writes it reads as it reads a ticket session's writes to
+# protected paths, `git apply` and `git am`, and PowerShell that names one. A
+# target it can't place is left alone (a commit or push carrying it is #341's).
+# What a code path is: a match of `code_paths`, unless it is protected too,
+# under `.workflow/`, or an untracked file git ignores, judged in the checkout
+# it belongs to (the project, or one of Claude Code's worktrees of it).
+
+
+@dataclass
+class _Code:
+    """A session that writes no code: the code paths, the protected paths
+    (which win), and what its refusals say to do instead."""
+
+    paths: list[str]
+    protected: list[str]
+    instead: str  # what to do instead, after the path
+    writes_none: str  # PowerShell's: the session writes no code
+
+
+@dataclass
+class _Hit:
+    path: str  # relative to its checkout's top level
+    pattern: str  # the code path it matches
+    worktree: str = ""  # the worktree's folder, relative to the project, when not the project itself
+
+
+def _shown(hit: _Hit) -> str:
+    return f"`{hit.path}`" + (f" (in the worktree `{hit.worktree}`)" if hit.worktree else "")
+
+
+_CODE_TOOLS = WRITE_TOOLS | {"Bash", "Monitor", "PowerShell"}
+
+
+def _code_session(event: dict, profile: Profile, role: str, root: Path, role_from_env: bool) -> tuple[str, _Code | None, str | None]:
+    """(the role to decide by, the code rule when this session writes no code,
+    the session's name in a refusal when not its role's). Under "ticket", a
+    session that is a ticket session only by its branch, or by a value of
+    `WORKFLOW_ROLE` that isn't a role, gets an attended session's rules."""
+    tool = event.get("tool_name") or ""
+    if not isinstance(tool, str):
+        return role, None, None
+    odd = roles_mod.unrecognised()
+    firm_ticket = role == "ticket" and role_from_env and odd is None
+    if firm_ticket or not (tool in _CODE_TOOLS or (role == "ticket" and tool.startswith("mcp__"))):
+        return role, None, None
+    rule = profile_mod.code_rule(root)
+    writers = "ticket" if "ticket" in (rule.code_writers, profile.code_writers) else rule.code_writers
+    if writers != "ticket" or rule.writes_code():
+        return role, None, None
+    label = None
+    if role == "ticket":
+        if odd is not None:
+            label = f'attended session (WORKFLOW_ROLE={odd!r} isn\'t a role, so under `code_writers = "ticket"` it isn\'t a ticket session)'
+        else:
+            label = f'attended session (a ticket session only by its branch, `{profile.ticket_branch}`, which under `code_writers = "ticket"` isn\'t a ticket session)'
+        role = "attended"
+    paths = list(rule.code_paths) + [p for p in profile.code_paths if p not in rule.code_paths]
+    if not paths:
+        return role, None, label
+    return role, _Code(paths, list(profile.protected_paths), _instead(role, profile, root), _writes_none(role)), label
+
+
+def _writes_none(role: str) -> str:
+    if role == "conductor":
+        return 'under `code_writers = "ticket"` the conductor writes no code'
+    return 'under `code_writers = "ticket"` only ticket sessions (`WORKFLOW_ROLE=ticket`) write code, and this session isn\'t one'
+
+
+def _instead(role: str, profile: Profile, root: Path) -> str:
+    """What a refusal says to do instead, worded as the skills offer it."""
+    if role == "conductor":
+        fixes = _conductor_fixes(root)
+        if fixes is True:
+            way = "file the fix as a `workflow:infra` ticket, for a ticket session, instead"
+        elif fixes is False:
+            way = "add the fix to `for_owner`, for the report, instead"
+        else:
+            way = "with the charter's `conductor_fixes` on, file the fix as a `workflow:infra` ticket, for a ticket session; with it off, add it to `for_owner`, for the report"
+        return f"{_writes_none(role)}: {way}"
+    if not (root / ".claude/workflow/lock.json").exists():  # plugin mode: no unattended runs
+        way = "build it in a session on your own computer started with `WORKFLOW_ROLE=ticket` instead"
+    elif profile.ticket_environment:
+        way = "hand it to a conductor run instead (**Run it unattended**), as a ticket, or a quick ticket for a small change"
+    else:
+        way = (
+            "hand it to a conductor run instead, once unattended runs are set up (**Set up unattended runs**): "
+            "until a ticket environment is named, no session writes code"
+        )
+    return f"{_writes_none(role)}: {way}. Or, to let every session write code, change `guard.code_writers` in a pull request, for the owner to merge"
+
+
+def _conductor_fixes(root: Path) -> bool | None:
+    """The charter's `conductor_fixes`, from the state block of the run's local
+    body file, or None when it can't be read."""
+    from . import state as state_mod
+
+    try:
+        text = (root / ".workflow/run/body.md").read_text(encoding="utf-8")
+        v = (state_mod.get(text) or {}).get("charter", {}).get("conductor_fixes")
+    except Exception:
+        return None
+    return v if isinstance(v, bool) else None
+
+
+def _git_lines(top: str, *args: str, sep: str = "\n") -> list[str] | None:
+    try:
+        p = subprocess.run(["git", "-C", top, *args], capture_output=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None
+    if p.returncode != 0:
+        return None
+    return [x for x in p.stdout.decode("utf-8", errors="replace").split(sep) if x]
+
+
+def _common_dir(top: str) -> str | None:
+    out = _git_lines(top, "rev-parse", "--show-toplevel", "--git-common-dir")
+    if not out or len(out) != 2 or os.path.realpath(out[0]) != os.path.realpath(top):
+        return None
+    return os.path.realpath(os.path.join(top, out[1]))
+
+
+def _checkout_of(abspath: str, root: Path) -> tuple[str, str, str] | None:
+    """(the checkout's top level, the path relative to it, the worktree's
+    folder or "") for a path in the project or in one of Claude Code's
+    worktrees of it (`.claude/worktrees/<name>`); None elsewhere."""
+    rel = _rel(abspath, root)
+    if _outside(rel):
+        return None
+    parts = rel.split("/")
+    if [x.casefold() for x in parts[:2]] == [".claude", "worktrees"]:
+        if len(parts) < 3:
+            return None
+        top = os.path.join(os.path.realpath(str(root)), *parts[:3])
+        mine = _common_dir(top)
+        if mine is None or mine != _common_dir(os.path.realpath(str(root))):
+            return None  # not a worktree of this project: another clone, left to the push rule
+        return top, "/".join(parts[3:]), "/".join(parts[:3])
+    return os.path.realpath(str(root)), rel, ""
+
+
+def _listed_code(rel: str, code: _Code) -> str | None:
+    """The code path `rel` matches, by its name alone: protected wins, and
+    `.workflow/` is never code."""
+    r = rel.casefold().rstrip("/")
+    if not r or r == "." or r == ".workflow" or r.startswith(".workflow/") or matches(rel, code.protected):
+        return None
+    return matches(rel, code.paths)
+
+
+def _ignored(top: str, rel: str) -> bool:
+    """An untracked path git ignores (`check-ignore` never names a tracked one)."""
+    try:
+        p = subprocess.run(["git", "-C", top, "check-ignore", "-q", "--", rel], capture_output=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return False
+    return p.returncode == 0
+
+
+def _code_files(top: str, rel: str, untracked_only: bool = False) -> list[str]:
+    """The files git tracks under `rel` in the checkout, and the untracked ones
+    it doesn't ignore."""
+    spec = rel or "."
+    out = [] if untracked_only else (_git_lines(top, "ls-files", "-z", "--", spec, sep="\0") or [])
+    return out + (_git_lines(top, "ls-files", "-z", "-o", "--exclude-standard", "--", spec, sep="\0") or [])
+
+
+def _code_at(abspath: str | None, code: _Code, root: Path, tree: bool = False, untracked_only: bool = False) -> _Hit | None:
+    """The code path `abspath` is, or (`tree`) one inside it that a write into,
+    removal or move of it changes."""
+    co = _checkout_of(abspath, root) if abspath else None
+    if co is None:
+        return None
+    top, rel, wt = co
+    if wt and not rel:
+        return None  # a worktree as a whole is a checkout, not a code path
+    if not untracked_only:
+        m = _listed_code(rel, code)
+        if m and not _ignored(top, rel):
+            return _Hit(rel, m, wt)
+    if tree and (not rel or os.path.isdir(abspath)):
+        for f in _code_files(top, rel, untracked_only):
+            m = _listed_code(f, code)
+            if m:
+                return _Hit(f, m, wt)
+    return None
+
+
+_CHECKS_OUT = {"switch", "checkout", "restore", "merge", "pull", "reset", "stash", "revert", "cherry-pick", "clone", "worktree"}
+
+
+def _code_targets(seg: Seg, root: Path) -> tuple[_Targets, _Targets]:
+    """(what one command writes, what of it is only untracked files): git
+    found behind wrappers, as in ticket sessions; git commands that check out
+    committed content write nothing here; `git clean` removes untracked files
+    only."""
+    t = _Targets(files=list(seg.redirects))
+    loose = _Targets()
+    k = _vcs_index(seg.words, "ticket")
+    for s in ([seg] if not k else [seg, replace(seg, words=seg.words[k:], redirects=[])]):
+        g = _git(s.words)
+        sub = g[1][0] if g and g[1] else None
+        if sub in _CHECKS_OUT:
+            continue
+        if sub == "clean":
+            _git_targets(g[1], loose)
+            continue
+        w = _write_targets(s, root)
+        t.files += [x for x in w.files if x not in t.files]
+        t.trees += w.trees
+        t.searched += w.searched
+        t.named_from_root += w.named_from_root
+    return t, loose
+
+
+def _shell_code(segs: list[Seg], code: _Code, root: Path) -> str | None:
+    """Why a command writes a code path, or None. Only what the guard places
+    counts: a target relative to a directory it can't follow, a patch it
+    can't read, an interpreter's own writes, are left alone."""
+    for seg in segs:
+        t, loose = _code_targets(seg, root)
+        for tgt in t.files:
+            for c in _candidates(tgt, seg.cwd):
+                hit = _code_at(_abspath(c, seg.cwd), code, root) if c.strip() else None
+                if hit:
+                    return f"writing `{tgt}` writes the code path {_shown(hit)} ({hit.pattern}); {code.instead}"
+        for tgt in t.trees:
+            for c in _candidates(tgt, seg.cwd):
+                hit = _code_at(_abspath(c, seg.cwd), code, root, tree=True) if c.strip() else None
+                if hit:
+                    return f"writing into, removing or moving `{tgt}` changes the code path {_shown(hit)} ({hit.pattern}); {code.instead}"
+        for tgt in loose.trees:
+            hit = _code_at(_abspath(tgt, seg.cwd), code, root, tree=True, untracked_only=True)
+            if hit:
+                return f"`git clean` of `{tgt}` removes the code path {_shown(hit)} ({hit.pattern}); {code.instead}"
+        for r, cwd in t.searched:
+            hit = _code_at(_abspath(r, cwd), code, root, tree=True)
+            if hit:
+                return (
+                    f"this changes the files a search of `{r}` finds, which can be code paths ({hit.pattern}), "
+                    f"so the guard can't see which files change; name the files. If they are code, {code.instead}"
+                )
+        for names, nocase, _own, start in t.named_from_root:
+            co = _checkout_of(start, root)
+            if co is None:
+                continue
+            top, rel, wt = co
+            for f in _code_files(top, rel):
+                base = posixpath.basename(f)
+                if any(fnmatch.fnmatchcase(base.casefold() if nocase else base, n.casefold() if nocase else n) for n in names):
+                    m = _listed_code(f, code)
+                    if m:
+                        return f"this find matches the code path {_shown(_Hit(f, m, wt))} ({m}) by name; {code.instead}"
+    return None
+
+
+_PS_WORDS = re.compile(r"[^\s;|&(){}<>,=\"'`]+")
+_WINDOWS_ABS = re.compile(r"^[A-Za-z]:/")
+
+
+def _powershell_code(inp: dict, code: _Code, root: Path, cwd: str | os.PathLike | None) -> _Hit | None:
+    """A code path PowerShell's text names (`\\` read as `/`, any case)."""
+    text = inp.get("command") if isinstance(inp.get("command"), str) else ""
+    top = os.path.realpath(str(root)).replace("\\", "/").rstrip("/")
+    start = _start_cwd(root, cwd)
+    for w in _PS_WORDS.findall(text.replace("\\", "/")):
+        if w.casefold().startswith(top.casefold() + "/"):
+            a = _abspath(top + w[len(top) :], start)
+        elif _WINDOWS_ABS.match(w):
+            continue  # another drive's path: never this project's
+        else:
+            a = _abspath(w, start)
+        hit = _code_at(a, code, root) if a else None
+        if hit:
+            return hit
+    return None
 
 
 def _text_holds_sensitive(text: str, profile: Profile) -> bool:
@@ -5941,12 +6245,16 @@ def decide(
     """The guard's decision on one PreToolUse event. `cwd` is the shell's
     directory (the event's `cwd`, which is used when it isn't given). In an
     attended session, an `ask` becomes a `deny` where nobody is asked (the
-    event's `permission_mode`, see `modes`)."""
-    d = _decide(event, profile, role, root, current_branch, role_from_env, cwd)
+    event's `permission_mode`, see `modes`). Under `code_writers = "ticket"`,
+    a session that is a ticket session only by its branch or by a mistyped
+    `WORKFLOW_ROLE` is decided as an attended one, and a session that doesn't
+    write code is refused writing it (#340)."""
+    role, code, label = _code_session(event, profile, role, root, role_from_env)
+    d = _decide(event, profile, role, root, current_branch, role_from_env, cwd, code)
     mode = event.get("permission_mode")
     if d.action == "ask" and role == "attended" and modes.never_asks(mode):
-        return Decision("deny", d.reason + "\n" + _nobody_asked(event, mode, d.sensitive, profile, root, cwd), d.sensitive)
-    return d
+        d = Decision("deny", d.reason + "\n" + _nobody_asked(event, mode, d.sensitive, profile, root, cwd), d.sensitive)
+    return replace(d, label=label) if label else d
 
 
 def _nobody_asked(event: dict, mode, sensitive: bool, profile: Profile, root: Path, cwd: str | os.PathLike | None) -> str:
@@ -5996,6 +6304,7 @@ def _decide(
     current_branch: str | None,
     role_from_env: bool = True,
     cwd: str | os.PathLike | None = None,
+    code: "_Code | None" = None,
 ) -> Decision:
     tool = event.get("tool_name") or ""
     inp = event.get("tool_input") or {}
@@ -6005,11 +6314,11 @@ def _decide(
         cwd = event.get("cwd") or None
     if tool in ("Bash", "Monitor"):
         # Monitor runs its command as Bash does; a WebSocket watch (`ws`, no command) runs nothing.
-        return check_bash(inp.get("command") or "", profile, role, root, current_branch, role_from_env, cwd)
+        return check_bash(inp.get("command") or "", profile, role, root, current_branch, role_from_env, cwd, code)
     if tool == "PowerShell":
-        return check_powershell(inp, profile, role, root)
+        return check_powershell(inp, profile, role, root, cwd, code)
     if tool in WRITE_TOOLS:
-        return check_write(tool, inp, profile, role, root, cwd)
+        return check_write(tool, inp, profile, role, root, cwd, code)
     if tool.startswith("mcp__"):
         return check_mcp(tool, inp, profile, role, root)
     return ALLOW
