@@ -360,6 +360,46 @@ def test_git_clean_judged_by_the_untracked_files_it_removes(proj, monkeypatch, c
         assert hook(monkeypatch, capsys, proj, bash(command))[0] == "allow", command
 
 
+def test_git_clean_in_another_checkout_a_worktree_or_of_one_file(proj, tmp_path, monkeypatch, capsys):
+    (proj / "src/new.py").write_text("n = 1\n")  # untracked, not ignored: code
+    other = tmp_path / "other"
+    other.mkdir()
+    git(other, "init", "-q", "-b", "main")
+    for command in (f"git -C {other} clean -fd", f"git -C {other} rm src/app.py", "git clean -f docs", "git clean -fdx -evenv -n"):
+        assert hook(monkeypatch, capsys, proj, bash(command))[0] == "allow", command
+    for command in ("git clean -f src/new.py", "git clean -f 'src/*.py'", "git clean -fdx -evenv", "git -C src clean -fd", "git clean -fd -e venv"):
+        d, why = hook(monkeypatch, capsys, proj, bash(command))
+        assert d == "deny" and "src/new.py" in why, (command, why)
+    wt = proj / ".claude/worktrees/side"
+    git(proj, "worktree", "add", "-q", "-b", "side", str(wt))
+    assert hook(monkeypatch, capsys, proj, bash("git clean -fd"), cwd=wt)[0] == "allow"
+    (wt / "src/w.py").write_text("w = 1\n")
+    d, why = hook(monkeypatch, capsys, proj, bash("git clean -fd"), cwd=wt)
+    assert d == "deny" and "in the worktree" in why, why
+
+
+def test_a_plain_patch_from_a_subdirectory(proj, monkeypatch, capsys):
+    (proj / "plain.patch").write_text("--- a/app.py\n+++ b/app.py\n@@ -1 +1 @@\n-a = 1\n+a = 2\n")
+    d, why = hook(monkeypatch, capsys, proj, bash("git apply ../plain.patch"), cwd=proj / "src")
+    assert d == "deny" and "code path `src/" in why, why
+    assert hook(monkeypatch, capsys, proj, bash("git apply plain.patch"))[0] == "allow"  # `app.py` at the top: not code
+
+
+def test_a_search_above_the_project_is_refused(proj, monkeypatch, capsys):
+    d, why = hook(monkeypatch, capsys, proj, bash("grep -rl a .. | xargs sed -i s/a/b/"))
+    assert d == "deny" and "code path" in why, why
+
+
+def test_powershell_globs_from_a_code_folder(proj, monkeypatch, capsys):
+    d, why = hook(monkeypatch, capsys, proj, powershell("Remove-Item * -Recurse"), cwd=proj / "src")
+    assert d == "deny" and "run it through Bash" in why, why
+
+
+def test_a_find_whose_start_matches_by_name(proj, monkeypatch, capsys):
+    d, why = hook(monkeypatch, capsys, proj, bash("find src -name 's*' -exec rm -rf {} +"))
+    assert d == "deny" and "code path" in why, why
+
+
 def test_a_find_limited_by_name_reaches_code_in_a_matching_folder(proj, monkeypatch, capsys):
     (proj / "src/subpkg").mkdir()
     (proj / "src/subpkg/m.py").write_text("m = 1\n")
