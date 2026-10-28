@@ -472,8 +472,10 @@ def test_an_also_is_read_before_the_run_stops():
     assert "only when nothing is left to finish does it stop" in stop
     assert "reply to a change it won't act on that the run is stopping, never that it is applied" in stop
     report = _section(text, "4. **The report.**", "5. **Wind up.**")
-    assert "and at each revert still `opened`" in report
-    assert "at each ticket with `requeued_head` (its row's \"merged anyway\")" in report
+    assert (
+        "Before anything else, look again at each ticket with `requeued_head` (its row's \"merged anyway\") and each "
+        "revert still `opened`"
+    ) in report
 
 
 def test_a_requeued_pull_request_never_merges_before_its_fix():
