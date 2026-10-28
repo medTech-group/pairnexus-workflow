@@ -319,12 +319,17 @@ def _code_paths(guard: dict) -> list[str]:
     return list(v)
 
 
+def _plain_values(text: str | None) -> set[str]:
+    return {v for v in _CODE_WRITERS_LINE.findall((text or "").lstrip("\ufeff")) if v in CODE_WRITERS}
+
+
 def plain_code_writers(text: str | None) -> str | None:
-    """`code_writers` from the profile's first plain `code_writers = "…"` line,
-    whatever else the profile holds (it may not parse): "ticket", "any", or
-    None when there is no such line or it holds neither."""
-    m = _CODE_WRITERS_LINE.search((text or "").lstrip("\ufeff"))
-    return m.group(1) if m and m.group(1) in CODE_WRITERS else None
+    """`code_writers` from the profile's plain `code_writers = "…"` lines,
+    whatever else the profile holds (it may not parse): "ticket" when any says
+    it, else "any" when one does, else None. A line can't be placed in its
+    table without the TOML, so the stricter answer wins."""
+    values = _plain_values(text)
+    return "ticket" if "ticket" in values else "any" if "any" in values else None
 
 
 def parse(data: dict, root: Path) -> Profile:
@@ -425,8 +430,7 @@ def parse(data: dict, root: Path) -> Profile:
     preset = run.get("preset", presets_mod.DEFAULT)
     if not (isinstance(preset, str) and preset in presets_mod.PRESETS):
         names = ", ".join(presets_mod.PRESETS[:-1]) + f" or {presets_mod.PRESETS[-1]}"
-        shown = repr(preset) if len(repr(preset)) <= 40 else repr(preset)[:39] + "…"
-        raise ProfileError(f"run.preset must be {names}, not {shown}; leave it out for {presets_mod.DEFAULT}")
+        raise ProfileError(f"run.preset must be {names}, not {_shown(preset)}; leave it out for {presets_mod.DEFAULT}")
     guided = proj.get("guided_start", True)
     if not isinstance(guided, bool):
         raise ProfileError("project.guided_start must be true or false")
@@ -630,9 +634,9 @@ class CodeRule:
         return roles_mod.env_role() == "ticket" and roles_mod.unrecognised() is None
 
 
-def _git(root: Path, *args: str) -> str | None:
+def _git(root: Path, *args: str, timeout: int = 5) -> str | None:
     try:
-        p = subprocess.run(["git", *args], cwd=root, capture_output=True, timeout=5)
+        p = subprocess.run(["git", *args], cwd=root, capture_output=True, timeout=timeout)
     except (OSError, subprocess.TimeoutExpired, ValueError):
         return None
     return p.stdout.decode("utf-8", errors="replace") if p.returncode == 0 else None
@@ -644,6 +648,10 @@ def _base_text(root: Path, base: str) -> tuple[str | None, str | None]:
     (ref, None) when the ref has no profile."""
     for name in (base, "HEAD"):
         ref = f"refs/remotes/origin/{name}"
+        # Only a branch's name: "main~1" or "main@{1}" in a session's own copy
+        # would read an older base.
+        if _git(root, "check-ref-format", ref) is None:
+            continue
         if _git(root, "rev-parse", "--verify", "--quiet", ref + "^{commit}") is not None:
             return f"origin/{name}", _git(root, "show", f"{ref}:{PROFILE_PATH.as_posix()}")
     return None, None
@@ -677,18 +685,39 @@ def _stricter(a: str | None, b: str | None) -> str | None:
     return "ticket" if "ticket" in (a, b) else "any" if "any" in (a, b) else None
 
 
+def _tree_text(root: Path) -> str | None:
+    """The working tree's profile, or None: never a pipe or a device, whose
+    read could block or never end (as `workflow status` reads it)."""
+    path = root / PROFILE_PATH
+    try:
+        return path.read_text(encoding="utf-8") if path.is_file() else None
+    except (OSError, ValueError):
+        return None
+
+
 def code_rule(root: Path | None = None) -> CodeRule:
     """Which profile counts for who writes code: the one helper the guard,
     the hooks, doctor and status call. Never raises; with neither profile
     readable, a rule with nothing answered (as before)."""
-    root = root or project_root()
+    try:
+        return _code_rule(root or project_root())
+    except Exception:  # a last resort: each read below is caught on its own
+        return CodeRule()
+
+
+def _code_rule(root: Path) -> CodeRule:
     tree: Profile | None = None
     tree_data = None
+    text = _tree_text(root)
+    # Anything a profile makes the parser raise (an invalid key, TOML that
+    # doesn't parse, a regex too large to compile, nesting too deep) makes it
+    # unreadable here, never an error: a session's own copy can't drop the
+    # base's answer by breaking itself.
     try:
-        tree_data = tomllib.loads((root / PROFILE_PATH).read_text(encoding="utf-8"))
-        tree = parse(tree_data, root)
-    except (OSError, ValueError):  # missing, not UTF-8, TOML that doesn't parse, or invalid
-        pass
+        tree_data = tomllib.loads(text) if text is not None else None
+        tree = parse(tree_data, root) if tree_data is not None else None
+    except Exception:
+        tree = None
     base_branch = "main"
     if tree is not None:
         base_branch = tree.base_branch
@@ -700,16 +729,14 @@ def code_rule(root: Path | None = None) -> CodeRule:
     if text is not None:
         try:
             data = tomllib.loads(text)
-        except ValueError:
-            data = None
-        if isinstance(data, dict):
+        except Exception:
+            fields = {"code_writers": plain_code_writers(text)}  # TOML that doesn't parse: its plain line
+        else:
             fields = _rule_fields(data)
             try:
                 base = parse(data, root)
-            except ProfileError:
+            except Exception:
                 pass
-        if fields.get("code_writers") is None and plain_code_writers(text):
-            fields["code_writers"] = plain_code_writers(text)  # a base that doesn't parse, or doesn't validate
     rule = CodeRule(sources=[ref] if text is not None else [])
     if tree is None:
         rule.code_writers = fields.get("code_writers")
@@ -762,39 +789,35 @@ def matches(root: Path, pattern: str) -> bool:
 # The vendored kit's own folder, whose files are expected to be both code and
 # protected (its scripts match a project's code paths), so never listed.
 _KIT_FOLDER = ".claude/"
-_LISTED = 10
+_OVERLAPS_LISTED = 10
 
 
 def _code_warnings(profile: Profile) -> list[str]:
     """`profile check`'s warnings about `code_writers` and `code_paths`."""
     w: list[str] = []
     if profile.code_writers == "ticket" and not profile.code_paths:
-        w.append('guard.code_writers is "ticket" but guard.code_paths is empty: no file counts as code, so the rule refuses nothing')
+        w.append('guard.code_writers is "ticket" but guard.code_paths is empty: no file counts as code, so no write is refused as code')
     if profile.code_writers is not None:
-        try:
-            text = (profile.root / PROFILE_PATH).read_text(encoding="utf-8")
-        except (OSError, ValueError):
-            text = None
-        if text is not None and plain_code_writers(text) != profile.code_writers:
+        text = _tree_text(profile.root)
+        if text is not None and profile.code_writers not in _plain_values(text):
             w.append(
                 f'guard.code_writers: write it as a plain line, code_writers = "{profile.code_writers}", under [guard]: '
                 "it is read from that line when the profile doesn't parse"
             )
     if profile.code_paths:
-        from .guard import matches  # the guard's own matching, as for protected_paths
+        from .guard import matches as path_matches  # the guard's own matching, as for protected_paths
 
-        tracked = _git(profile.root, "ls-files", "-z") or ""
+        tracked = _git(profile.root, "ls-files", "-z", timeout=20) or ""
         both = [
             f
             for f in tracked.split("\0")
-            if f and not f.startswith(_KIT_FOLDER) and matches(f, profile.code_paths) and matches(f, profile.protected_paths)
+            if f and not f.startswith(_KIT_FOLDER) and path_matches(f, profile.code_paths) and path_matches(f, profile.protected_paths)
         ]
         if both:
-            listed = ", ".join(both[:_LISTED]) + (f" and {len(both) - _LISTED} more" if len(both) > _LISTED else "")
-            w.append(
-                f"guard.code_paths and guard.protected_paths both match {len(both)} tracked file{'s' if len(both) > 1 else ''}, "
-                f"which count as protected, not code: {listed}"
-            )
+            n = _OVERLAPS_LISTED
+            listed = ", ".join(both[:n]) + (f" and {len(both) - n} more" if len(both) > n else "")
+            files = "1 tracked file, which counts" if len(both) == 1 else f"{len(both)} tracked files, which count"
+            w.append(f"guard.code_paths and guard.protected_paths both match {files} as protected, not code: {listed}")
     return w
 
 

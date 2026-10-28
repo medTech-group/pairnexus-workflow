@@ -184,8 +184,8 @@ commands = []                           # e.g. ["pgrep dockerd || (nohup dockerd
 
 [run]
 # Ticket sessions' branches: a session on one counts as a ticket session
-# without WORKFLOW_ROLE (the role fallback), except with
-# code_writers = "ticket", where such a branch alone makes a planning session.
+# without WORKFLOW_ROLE (the role fallback). With guard.code_writers set to
+# "ticket", such a branch alone makes a planning session instead.
 ticket_branch = "claude/build-*"        # ticket sessions' branches (role fallback)
 check_in_minutes = 20
 max_parallel = 2

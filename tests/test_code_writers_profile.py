@@ -368,7 +368,7 @@ def test_the_template_has_both_keys_commented_with_code_writers_absent():
     assert not [line for line in lines if line.lstrip().startswith(("code_writers", "code_paths"))]
     at = next(i for i, line in enumerate(lines) if line.startswith("ticket_branch"))
     note = "\n".join(lines[at - 3 : at + 1])
-    assert 'code_writers = "ticket"' in note and "planning session" in note
+    assert "code_writers" in note and '"ticket"' in note and "planning session" in note
 
 
 def test_the_template_still_parses_without_the_keys(tmp_path):
@@ -379,3 +379,95 @@ def test_the_template_still_parses_without_the_keys(tmp_path):
 def test_changelog_note():
     notes = since_0110()
     assert "`code_writers`" in notes and "`code_paths`" in notes and "#339" in notes
+
+
+# Round 1's findings
+
+
+@pytest.mark.parametrize(
+    "tree",
+    [
+        HEAD + "[sensitive]\npatterns = ['a{4294967295}']\n",  # re.compile raises OverflowError, not re.error
+        HEAD + "[ui]\nnotes = " + "[" * 1200 + "]" * 1200 + "\n",  # tomllib's recursion
+    ],
+    ids=["regex overflow", "deep nesting"],
+)
+def test_code_rule_never_raises_and_the_bases_ticket_still_counts(tmp_path, monkeypatch, tree):
+    root = _checkout(tmp_path, base=TICKET, tree=tree)
+    _env(monkeypatch, root)
+    rule = profile_mod.code_rule(root)
+    assert rule.code_writers == "ticket" and rule.code_paths == ["src/**"]
+    (tmp_path / "b").mkdir()
+    root2 = _checkout(tmp_path / "b", base=tree, tree=TICKET)
+    assert profile_mod.code_rule(root2).code_writers == "ticket"
+
+
+def test_a_pipe_at_the_profiles_path_is_never_read(tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    root = _checkout(tmp_path, base=TICKET, tree=None)
+    os.mkfifo(root / PROFILE)
+    env = {k: v for k, v in os.environ.items() if k not in ("WORKFLOW_ROLE", "WORKFLOW_EXPERIENCE")}
+    env.update(CLAUDE_PROJECT_DIR=str(root), WORKFLOW_UPDATE_CHECK="off")
+    p = subprocess.run([sys.executable, "-B", str(KIT / "scripts/workflow.py"), "status", "--json"], cwd=root, env=env,
+                       capture_output=True, text=True, timeout=60)
+    assert p.returncode == 0, p.stderr
+    assert json.loads(p.stdout)["code_writers"] == "ticket"
+
+
+@pytest.mark.parametrize("base_branch", ["main~1", "main@{1}", "-main", "main:x"])
+def test_a_base_branch_that_isnt_a_branch_name_reads_no_base_by_that_name(tmp_path, monkeypatch, base_branch):
+    """A session's own copy can't point the base read at an older commit."""
+    root = _checkout(tmp_path, base=_guard('code_writers = "any"'), tree=None)
+    _write(root, TICKET)
+    git(root, "add", "-A")
+    git(root, "commit", "-q", "-m", "ticket")
+    git(root, "update-ref", "refs/remotes/origin/main", "HEAD")
+    tree = HEAD.replace('repo = "acme/demo"\n', f'repo = "acme/demo"\nbase_branch = "{base_branch}"\n') + "[guard]\n"
+    _write(root, tree)
+    _env(monkeypatch, root)
+    assert profile_mod.code_rule(root).code_writers is None
+
+
+def test_the_plain_line_counts_only_for_a_base_whose_toml_doesnt_parse(tmp_path, monkeypatch):
+    base = HEAD + '[ui]\nnotes = """\ncode_writers = "ticket"\n"""\n'
+    root = _checkout(tmp_path, base=base, tree=None)
+    _env(monkeypatch, root)
+    assert profile_mod.code_rule(root).code_writers is None
+
+
+def test_in_a_base_that_doesnt_parse_any_plain_ticket_line_wins(tmp_path, monkeypatch):
+    base = HEAD + '[ui]\nnotes = """\ncode_writers = "any"\n"""\n[guard\ncode_writers = "ticket"\n'
+    root = _checkout(tmp_path, base=base, tree=None)
+    _env(monkeypatch, root)
+    assert profile_mod.code_rule(root).code_writers == "ticket"
+
+
+def test_no_spelling_warning_when_the_plain_line_is_there_beside_another(tmp_path, monkeypatch, capsys):
+    tree = HEAD + '[ui]\nnotes = """\ncode_writers = "any"\n"""\n[guard]\ncode_writers = "ticket"\ncode_paths = ["src/**"]\n'
+    root = _checkout(tmp_path, tree=tree)
+    assert not [w for w in _warnings(monkeypatch, capsys, root) if "plain line" in w]
+
+
+def test_one_overlapping_file_is_worded_as_one(tmp_path, monkeypatch, capsys):
+    tree = _guard('code_paths = ["lib/**"]', 'protected_paths = [".claude/**", ".github/workflows/**", "lib/x.py"]')
+    root = _checkout(tmp_path, tree=tree, files=("lib/x.py",))
+    git(root, "add", "-A")
+    git(root, "commit", "-q", "-m", "tree")
+    (w,) = _overlap(_warnings(monkeypatch, capsys, root))
+    assert "1 tracked file, which counts as protected" in w
+
+
+def test_the_empty_list_warning_says_only_what_is_true(tmp_path, monkeypatch, capsys):
+    root = _checkout(tmp_path, tree=_guard('code_writers = "ticket"'))
+    (w,) = [w for w in _warnings(monkeypatch, capsys, root) if "code_paths is empty" in w]
+    assert "refuses nothing" not in w
+
+
+def test_uncommenting_the_templates_key_leaves_a_valid_profile(tmp_path):
+    tpl = (KIT / "templates/profile.toml").read_text()
+    on = tpl.replace('# code_writers = "ticket"', 'code_writers = "ticket"').replace("# code_paths = [", "code_paths = [")
+    prof = profile_mod.parse(tomllib.loads(on), tmp_path)
+    assert prof.code_writers == "ticket" and prof.code_paths
