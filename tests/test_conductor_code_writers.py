@@ -438,9 +438,13 @@ def test_a_code_fix_on_an_open_run_pull_request_goes_in_for_owner():
         "if it merges without the fix, the fix needs a ticket of its own\" to `for_owner`, so the report lists it, and say so in your reply.",
         "The pull request goes on as any other and may merge before its fix: holding it for its fix is #361's.",
         # An answer to a `needs-human` ticket still requeues it, as before.
-        "A `needs-human` or `set-aside` ticket's fix is an owner's answer (step 2's \"When the owner answers\"), not this.",
+        "A `needs-human` ticket's fix (a `set-aside` one labelled `needs-human` included) is an owner's answer "
+        "(step 2's \"When the owner answers\"), not this.",
     ):
         assert part in step3, part
+    # A ticket set aside without `needs-human` (the not-a-ticket-session row) has no owner's answer to wait for:
+    # its open pull request's fix gets the `for_owner` line like any other.
+    assert "A `needs-human` or `set-aside` ticket's fix" not in step3
     assert (
         "A code fix an open run pull request needs is neither yours nor an infra ticket: until #361 lands, it goes in "
         "`for_owner` and the final report (check-in step 3's \"also #<n>\")."
