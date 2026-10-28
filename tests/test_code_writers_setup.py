@@ -290,7 +290,10 @@ def test_an_open_pull_request_is_found_before_asking():
     assert where.index("If there is one, ask nothing") < where.index("this session's branch is behind")
     assert "`git merge-base --is-ancestor origin/<base> HEAD` fails" in where
     # No profile on the base yet: set-up's pull request merges first.
-    assert "When the base has no profile yet (set-up's pull request hasn't merged)" in where
+    # A base the fetch didn't reach isn't a base without a profile.
+    assert "`git rev-parse --verify origin/<base>` fails" in where
+    assert "When it is but has no profile yet (set-up's pull request hasn't merged)" in where
+    assert where.index("has no profile yet") < where.index("If there is one, ask nothing")
     step = _update_step("Who writes code")
     assert "an open pull request changing `code_writers` in the profile" in step and "an earlier kit update's among them" in step
     # Looked for before the question is asked.
