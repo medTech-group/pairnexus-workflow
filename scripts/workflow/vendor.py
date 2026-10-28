@@ -107,16 +107,27 @@ _ROLE = (
     """R=$(printf '%s' "${WORKFLOW_ROLE:-}" | tr '[:upper:]' '[:lower:]' """
     """| sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'); """
 )
+# A value that isn't a role is a ticket session, as roles.env_role reads it,
+# but only by a mistake: W says so.
+_MISTYPED = 'W=; case "$R" in ""|ticket|conductor|attended) ;; *) W=1;; esac; '
 # With WORKFLOW_ROLE unset and the kit set up: the project directory's branch
 # matching the profile's run.ticket_branch (its first `ticket_branch = "…"`
-# line, as _old_python reads it) means a ticket session. Without Python the
-# event's cwd can't be read, so a worktree's own branch isn't seen.
+# line, as _old_python reads it) means a ticket session, only by its branch
+# (W). Without Python the event's cwd can't be read, so a worktree's own
+# branch isn't seen.
 _BRANCH = (
     'P="$CLAUDE_PROJECT_DIR/.claude/workflow/profile.toml"; '
     'if [ -z "$R" ] && [ -f "$P" ]; then '
     'B=$(git -C "$CLAUDE_PROJECT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null); '
     """T=$(sed -n 's/^[[:space:]]*ticket_branch[[:space:]]*=[[:space:]]*["'"'"']\\([^"'"'"']*\\)["'"'"'].*/\\1/p' "$P" | head -n 1); """
-    'case "$B" in HEAD|"") ;; ${T:-claude/build-*}) R=ticket;; esac; fi; '
+    'case "$B" in HEAD|"") ;; ${T:-claude/build-*}) R=ticket; W=1;; esac; fi; '
+)
+# Under code_writers = "ticket" (`fallback.sh --ticket-rule`, #342), a session
+# that is a ticket session only by its branch or a mistyped WORKFLOW_ROLE gets
+# the attended fallback, as a planning session.
+_PLANNING = (
+    'if [ -n "$W" ] && [ -f "${F%.py}/fallback.sh" ] && sh "${F%.py}/fallback.sh" --ticket-rule </dev/null; '
+    'then R=attended; fi; '
 )
 
 
@@ -160,7 +171,10 @@ def hook_command(sub: str, plugin: bool = False) -> str:
     a ticket or conductor session (WORKFLOW_ROLE, or with it unset a branch
     matching the profile's run.ticket_branch), and an attended session gets
     the can't-decide fallback without Python (`fallback.sh`, #56): a push or a
-    merge is asked, or refused in solo mode and where nobody is asked. An
+    merge is asked, or refused in solo mode and where nobody is asked. Under
+    `code_writers = "ticket"` (`fallback.sh --ticket-rule`, #342), a session
+    that is a ticket session only by its branch, or by a WORKFLOW_ROLE that
+    isn't a role, gets that fallback too, as a planning session. An
     attended session's guard always exits 0. SessionStart says so to everyone
     (#22). The CLI itself exits 0 whenever it has decided, so a non-zero exit
     means it couldn't.
@@ -214,7 +228,8 @@ def hook_command(sub: str, plugin: bool = False) -> str:
     return (
         run
         + _ROLE
-        + 'if [ -f "$F" ]; then ' + _BRANCH + 'fi; '
+        + _MISTYPED
+        + 'if [ -f "$F" ]; then ' + _BRANCH + _PLANNING + 'fi; '
         + 'if [ -z "$R" ] || [ "$R" = attended ]; then ' + fallback + '; fi; '
         + f"if [ -f \"$F\" ]; then printf '%s\\n' '{deny('Refused: ' + NO_PYTHON_REASON + '.')}'; exit 0; fi; "
         + f"""if command -v python3 >/dev/null 2>&1 && printf '%s\\n' "$E" | python3 -c '{restore}' 2>/dev/null; then exit 0; fi; """

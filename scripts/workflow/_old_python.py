@@ -10,7 +10,10 @@ which fails closed where the kit would:
   profile's `run.ticket_branch`, read roughly) is refused every tool; an
   attended session gets the can't-decide fallback (`fallback`, #53): a push or
   a merge is asked, or refused in solo mode and in a mode where nobody is
-  asked, and everything else is left alone;
+  asked, and everything else is left alone. Under `code_writers = "ticket"`
+  (`fallback.ticket_rule`, #342), a session that is a ticket session only by
+  its branch, or by a WORKFLOW_ROLE that isn't a role, gets that fallback too,
+  as a planning session;
 - `hook repair` (SessionStart): says what is wrong and how to fix it;
 - `hook gate` and `hook context`: nothing (nothing to check without the kit);
 - `doctor`: a short report (#61): the `python3` running it as a gap with its
@@ -84,6 +87,24 @@ def _firm(env, cwd):
     return bool(b) and fnmatch.fnmatchcase(b, pattern)
 
 
+def _hard(env):
+    """True when WORKFLOW_ROLE itself says ticket or conductor."""
+    return (env.get("WORKFLOW_ROLE") or "").strip().lower() in ("ticket", "conductor")
+
+
+def _refused(env, cwd):
+    """True when every tool is refused: a ticket or conductor session, but
+    under `code_writers = "ticket"` not one that is a ticket session only by
+    its branch or by a WORKFLOW_ROLE that isn't a role (#342)."""
+    if not _firm(env, cwd):
+        return False
+    if _hard(env):
+        return True
+    from . import fallback  # as in _guard
+
+    return not fallback.ticket_rule(env.get("CLAUDE_PROJECT_DIR") or cwd)
+
+
 def _needs(version):
     return "workflow needs Python {} or newer (for tomllib); python3 here is {}\n".format(NEEDS, version)
 
@@ -148,7 +169,7 @@ def main(argv, stdin_text=None, env=None, version=None, cwd=None):
 
 
 def _hook(sub, stdin_text, env, version, cwd):
-    if sub == "guard" and _env_firm(env):  # nothing to read: every tool is refused
+    if sub == "guard" and _hard(env):  # nothing to read: every tool is refused
         return _guard(None, True, version)
     from . import fallback  # here, inside main's try, as in _guard
 
@@ -156,7 +177,7 @@ def _hook(sub, stdin_text, env, version, cwd):
     event = fallback.read_event(text) if text.strip() else {}
     here = event.get("cwd") if isinstance(event, dict) and isinstance(event.get("cwd"), str) else None
     where = here or (str(cwd) if cwd else os.getcwd())
-    firm = _firm(env, where)
+    firm = _refused(env, where)
     if sub != "guard":
         return _repair(firm, version)
     return _guard(event, firm, version, env.get("CLAUDE_PROJECT_DIR") or where)

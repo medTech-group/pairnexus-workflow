@@ -238,7 +238,7 @@ def test_the_fallback_parses_as_python_3_7_and_imports_only_the_standard_library
             imported |= {a.name for a in node.names}
         elif isinstance(node, ast.ImportFrom):
             imported |= {f"{'.' * node.level}{node.module or ''}:{a.name}" for a in node.names}
-    assert imported == {"json", "os", "re", ".:modes"}
+    assert imported == {"json", "os", "re", "subprocess", ".:modes"}
 
 
 @pytest.mark.parametrize("text", [
