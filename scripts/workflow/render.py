@@ -75,58 +75,63 @@ class RenderError(ValueError):
     pass
 
 
-# The label, after any list, quote or heading marker, bold or italic, the colon
+# The label on a line of its own: after any quote marker, an indent of at most 3
+# columns, then any list, checkbox or heading marker, bold or italic, the colon
 # inside or outside them, in any case.
 _STARTS_FROM = re.compile(
-    r"^[ \t]*(?:>[ \t]*|(?:[-*+]|\d+[.)]|#{1,6})[ \t]+)*[*_]{0,3}starts[ \t]+from[*_]{0,3}[ \t]*[:：][*_]{0,3}[ \t]*(.*)$",
+    r"^(?:> ?)* {0,3}(?:(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?|#{1,6}[ \t]+)*"
+    r"[*_]{0,3}starts[ \t]+from[*_]{0,3}[ \t]*[:：][*_]{0,3}[ \t]*(.*)$",
     re.I,
 )
 # A branch name or `pull/<n>/head`: no option, no `..`, nothing a shell reads.
-_REF = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._/-]*")
-_REF_WORDS = "a branch name of letters, digits and `._/-`, or `pull/<n>/head`"
+_REF = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._/-]{0,199}")
+_REF_WORDS = "one branch name of letters, digits and `._/-` (at most 200), or `pull/<n>/head`"
+_PLACEHOLDERS = {"none", "n/a", "na", "tbd", "todo", "head", "same", "base"}
 
 
 def _prose_lines(body: str):
-    """The body's lines outside code and HTML comments: fenced blocks (closed by
-    a fence of the same kind at least as long, or the end), indented blocks."""
-    body = re.sub(r"<!--.*?(-->|\Z)", "", body.replace("\r\n", "\n").replace("\r", "\n"), flags=re.S)
-    fence, prev_blank = None, True
-    for line in body.split("\n"):
+    """The body's lines outside fenced code and HTML comments that start a line.
+    A fence opens with three or more backticks (none in its info string) or
+    tildes, indented at most 3 columns, and closes on a fence of the same kind at
+    least as long, or at the end."""
+    fence, comment = None, False
+    for line in body.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        line = line.expandtabs(4)
+        bare = re.sub(r"^(?:> ?)*", "", line)  # a fence or comment in a quote counts too
+        if comment:
+            comment = "-->" not in line
+            continue
         if fence:
-            m = re.match(r" {0,3}(`{3,}|~{3,})[ \t]*$", line)
+            m = re.match(r" {0,3}(`{3,}|~{3,})[ \t]*$", bare)
             if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence):
                 fence = None
             continue
-        m = re.match(r" {0,3}(`{3,}|~{3,})", line)
+        m = re.match(r" {0,3}(`{3,}(?=[^`]*$)|~{3,})", bare)
         if m:
             fence = m.group(1)
             continue
-        indented = re.match(r"( {4}|\t)", line) is not None
-        if indented and prev_blank:
-            continue  # an indented code block runs while lines are indented or blank
-        prev_blank = not line.strip() or (indented and prev_blank)
+        if re.match(r" {0,3}<!--", bare):
+            comment = "-->" not in bare.split("<!--", 1)[1]
+            continue
         yield line
 
 
 def _ref_of(value: str) -> str | None:
-    """The branch a "Starts from:" line's value names, or None when it names none:
-    `ref` in backticks, or a first word that the rest doesn't carry on as prose."""
-    quoted = re.match(r"`([^`]+)`", value)
-    if quoted:
-        ref = quoted.group(1).strip()
-    else:
-        m = re.match(r"(\S+?)([.,;:]?)(?:\s+(.*))?$", value)
-        if not m:
-            return None
-        ref, punct, after = m.group(1), m.group(2), (m.group(3) or "")
-        if after and not punct and not after.startswith(("(", "-", "–", "—")):
-            return None  # prose ("the contributor's branch"), not a branch
-    parts = ref.split("/")
+    """The one branch a "Starts from:" line's value names, or None: a word, or a
+    word in backticks, then nothing but a full stop or a remark in brackets."""
+    value = value.strip("*_ \t")
+    m = re.fullmatch(r"(?:`([^`\s]+)`|([^`\s]+?))\.?(?:[ \t]+\(.*\))?", value)
+    if not m:
+        return None
+    ref = m.group(1) or m.group(2)
+    if ref.startswith("refs/heads/"):
+        ref = ref[len("refs/heads/"):]
     if (
         not _REF.fullmatch(ref)
+        or ref.lower() in _PLACEHOLDERS
         or ".." in ref
         or ref.endswith(".")
-        or any(not c or c.startswith(".") or c.endswith(".lock") for c in parts)
+        or any(not c or c.startswith(".") or c.endswith(".lock") for c in ref.split("/"))
     ):
         return None
     return ref

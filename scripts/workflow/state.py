@@ -174,7 +174,7 @@ def validate(s: Any) -> list[str]:
     for i, e in enumerate(s.get("ledger") or []):
         if not isinstance(e, dict) or not e.get("what") or not e.get("at") or not e.get("grant"):
             p.append(f"ledger[{i}] needs what, at and grant (the charter line or owner message allowing it)")
-        if isinstance(e, dict) and (e.get("what") == "revert" or "revert" in e) and not is_head(e.get("revert")):
+        if isinstance(e, dict) and (str(e.get("what")).strip().lower() == "revert" or "revert" in e) and not is_head(e.get("revert")):
             p.append(f"ledger[{i}].revert must be the full commit SHA of the change reverted, in lower case")
     return p
 
