@@ -1,6 +1,6 @@
 ---
 name: upgrade-setup
-description: Move a project from solo mode to the full set-up, one upgrade at a time. "Protect `main`" makes a ruleset and the merge settings on the base branch with `gh` after one confirmation on the owner's own computer, or guides the clicks elsewhere, reads them back with `workflow protection`, and opens the pull request that leaves solo mode. "Require these checks", once CI has run, adds the ticked checks to the ruleset (with "up to date" on, unless a merge queue meets it) and to `ci.required_checks`. "Set up unattended runs" asks the questions only runs need, guides the two cloud environments, and writes the answers to the profile. "Add try-it links" guides Cloudflare, then turns previews on in a pull request showing its own link. "Use a merge queue" adds `merge_group` to the workflows in a pull request, then the merge-queue rule with "up to date" off. Use when the person asks to protect main, require the checks, set up unattended runs, add try-it links or use a merge queue, or picks one where the kit offers it.
+description: Move a project from solo mode to the full set-up, one upgrade at a time. "Protect `main`" makes a ruleset and the merge settings on the base branch with `gh` after one confirmation on the owner's own computer, or guides the clicks elsewhere, reads them back with `workflow protection`, and opens the pull request that leaves solo mode. "Require these checks", once CI has run, adds the ticked checks to the ruleset and to `ci.required_checks`. "Set up unattended runs" asks what only runs need, guides the two cloud environments, and writes the answers to the profile. "Add try-it links" guides Cloudflare, then turns previews on in a pull request showing its own link. "Use a merge queue" adds `merge_group` to the workflows, then the merge-queue rule. "Choose who writes code" sets `guard.code_writers` in a pull request. Use when the person asks to protect main, require the checks, set up unattended runs, add try-it links, use a merge queue or choose who writes code, or picks one where the kit offers it.
 ---
 
 # Upgrade the set-up
@@ -11,9 +11,10 @@ A project set up in solo mode (`project.ruleset = false`) works attended from th
 - **"Set up unattended runs"**: the questions only runs need, the two cloud environments, and a pull request that writes the answers to the profile. The second part.
 - **"Require these checks"**: once CI has run on the base branch, the checks that ran, ticked, added to the ruleset protecting it and listed in the profile's `ci.required_checks`, so failing tests stop merges and the two agree. The third part.
 - **"Add try-it links"**: a try-it link on each pull request, from Cloudflare, with no live site: the steps in Cloudflare one screen at a time, then a pull request that turns previews on and shows its own link working. The fourth part.
-- **"Use a merge queue"**: GitHub's merge queue in place of "up to date": a pull request adding `merge_group` to the workflows behind the required checks first, then the ruleset's merge-queue rule with "up to date" off. The fifth part, last.
+- **"Use a merge queue"**: GitHub's merge queue in place of "up to date": a pull request adding `merge_group` to the workflows behind the required checks first, then the ruleset's merge-queue rule with "up to date" off. The fifth part.
+- **"Choose who writes code"**: who writes code in this project, only ticket sessions or any session, with the code paths, in a pull request changing the profile. The sixth part, last.
 
-"Where things are" and "When it's offered" are shared by all five.
+"Where things are" and "When it's offered" are shared by all six.
 
 Below, `main` stands for the profile's `project.base_branch`: use its real name in everything you show.
 
@@ -31,7 +32,7 @@ The read-back needs GitHub's own JSON: the repository (`GET repos/<repo>`, with 
 
 **Choices** use the `AskUserQuestion` tool, the recommended option first; without it (a headless session), the same choices as a numbered list.
 
-**Only in attended sessions.** When `WORKFLOW_ROLE` is `ticket`, don't run it or offer it: there's nobody to click. For "Protect `main`", say in the ticket's report that the base branch isn't protected, and carry on. The conductor runs it only at its kick-off, with the owner there, and never runs "Require these checks": its kick-off sends the owner to an attended session for that (the `conductor` skill). It never runs "Add try-it links" or "Use a merge queue" either.
+**Only in attended sessions.** When `WORKFLOW_ROLE` is `ticket`, don't run it or offer it: there's nobody to click. For "Protect `main`", say in the ticket's report that the base branch isn't protected, and carry on. The conductor runs it only at its kick-off, with the owner there, and never runs "Require these checks": its kick-off sends the owner to an attended session for that (the `conductor` skill). It never runs "Add try-it links" or "Use a merge queue" either. Nor "Choose who writes code".
 
 ## When it's offered
 
@@ -49,6 +50,7 @@ The offers have names, which `workflow doctor` and the other skills use:
 - **`set_up_unattended_runs`**: the person wants Claude to work while nobody is watching, and the profile names no environments yet (`run.ticket_environment` empty). The second path, "Set up unattended runs".
 - **`use_merge_queue`**: doctor's `github.merge_queue` line suggests a merge queue (an organisation's repository that can have one, protected, with checks required). The fifth path, "Use a merge queue". Like `require_checks` it has its own, narrower rule: offered only through `workflow doctor`'s `use_merge_queue` offer (which `check-setup` shows), or when the person asks ("use a merge queue"). Never while a run is in progress, never in a ticket or conductor session, and never as a nag.
 - **`add_try_it_links`**: the project has a Wrangler config and no `[previews]` section in the profile. The fourth path, "Add try-it links". Like `require_checks` it has its own, narrower rule: offered only from the quickstart's next steps, from `workflow doctor`'s `add_try_it_links` offer (which `check-setup` shows), and when the person asks ("add try-it links", "set up previews"). Never at session start, never as a nag, and never to a project whose `[previews]` section turned them off: doctor makes no offer there.
+- **"Choose who writes code"** has no offer name: doctor's `kit.code_writers` note names it in its fix while `guard.code_writers` is unanswered, and `check-setup` offers it from that note. The sixth path. Also when the person asks ("choose who writes code", "let my sessions write code again"). Never in a ticket or conductor session, and never as a nag.
 
 # Protect `main`
 
@@ -613,3 +615,48 @@ Say where it stands in one line:
 - "Once the run has ended, ask Claude to \"Use a merge queue\"." while a run is in progress;
 - "<what was done>; <what's left>: the clicks for it are above." after a failure;
 - or, not an admin, "The message for the owner is above."
+
+# Choose who writes code
+
+The sixth path. It answers, or changes, who writes code in this project: the profile's `guard.code_writers` (`"ticket"`, only ticket sessions, or `"any"`, any session) with `guard.code_paths`, in a pull request for the owner to merge. Asked for in an attended session ("choose who writes code", "only ticket sessions should write code", "let my sessions write code again"), or picked where `check-setup` offers it, while doctor's `kit.code_writers` note says it is unanswered. A ticket session never runs it, and the conductor never runs it. Both modes: the plugin has no kit update to ask it, so in plugin mode this is where it is asked.
+
+## 1. Where it stands
+
+`git fetch origin <base>`, then read `WF status --json`: its `code_writers` is the answer that counts, the stricter of the working tree's profile and the base branch's as last fetched, `null` while unanswered. `WF profile check` gives the profile's own `code_writers` and `code_paths`. Say where it stands in one line: "Not answered yet: any session writes code, as before.", "Only ticket sessions write code." or "Any session writes code."
+
+## 2. The question
+
+One choice, with `AskUserQuestion`: "Who writes code in this project?"
+- **Only ticket sessions (Recommended)**, always first, whatever the answer now: "Only sessions started with `WORKFLOW_ROLE=ticket` write code, normally an unattended run's. Every other session is a planning session: it plans, writes specs, tickets and docs, and runs the tests, and the kit's guard refuses its writes to code.";
+- **Any session**: "Any session may write code, as before.";
+- **Not now**: nothing is changed.
+
+While the profile names no ticket environment (`run.ticket_environment` empty), say what "only ticket sessions" means then: nothing writes code until one exists ("Set up unattended runs" makes one), and a ticket can be built in a session the person starts in the ticket environment, with them there, ending in a pull request they merge. In plugin mode, which has no unattended runs, say instead that code is written only in a session started on their computer with `WORKFLOW_ROLE=ticket`, and that the rule holds only where the plugin is installed: a cloud session has no kit and no guard.
+
+An answer that is the profile's already, with the code paths unchanged: say so, and stop. Nothing to change.
+
+## 3. The code paths
+
+With **Only ticket sessions**, propose `code_paths` as set-up does ("The code paths" in the kit's `setup-workflow` skill), for the person to confirm or change: the profile's own list as the default when it has one, else globs for the folders that hold the project's source and its tests, leaving out docs, CI config, the kit (`.claude/`) and anything `guard.protected_paths` matches (a path that is both counts as protected, not code). With no code yet, the source and test folders its stack uses, or ask which folders will hold code. With **Any session**, keep the list as it is.
+
+## 4. One pull request
+
+First look for one already open (from `workflow/code-writers`, or any open pull request changing `code_writers` in the profile): if there is one, point at it rather than opening another.
+
+1. A branch from the base branch, such as `workflow/code-writers`.
+2. In `.claude/workflow/profile.toml`'s `[guard]` table, a plain `code_writers = "ticket"` or `code_writers = "any"` line on its own, in place of the `code_writers` line there, or of the template's commented `# code_writers = "ticket"`, or at the end of `[guard]` when neither is there; and `code_paths` with the confirmed globs, the same way. Change nothing else.
+3. `WF profile check` passes. Under `"ticket"`, its warning that `guard.code_paths` is empty stays only when the person named no folders.
+4. Commit, then push the branch in a command of its own, never chained with the commit (`git commit … && git push`): the guard refuses that under `code_writers = "ticket"`, which counts in this session as soon as its working tree says so.
+5. Open the pull request. Its body: the answer, the code paths, and what changes once it merges (with only ticket sessions: planning sessions and the conductor write no code, and where it is built instead, as the question said).
+
+**Loosening waits for the merge.** From `"ticket"` to `"any"`, nothing changes until the pull request merges and sessions fetch the base branch: the base's `"ticket"` counts over a working tree that says less. Say so.
+
+It changes `.claude/`, so merging it is the owner's: never merge it, or enable auto-merge on it, yourself.
+
+## 5. Where it ends
+
+Say where it stands in one line:
+- "Only ticket sessions write code once #<n> merges.", adding, while no ticket environment is named, "Until a ticket environment exists, nothing writes code: \"Set up unattended runs\" makes one." (in plugin mode, "Code is then written only in a session on your computer with `WORKFLOW_ROLE=ticket`.");
+- "Any session writes code once #<n> merges and sessions fetch it.";
+- "It is that already: nothing to change.";
+- "Nothing was changed." after **Not now**.

@@ -40,7 +40,7 @@ def test_the_fifth_path_is_named_with_its_offer():
     head = text.split("---", 2)[1]
     assert f'"{NAME}"' in head
     assert f'**"{NAME}"**' in text.split("\n## ", 1)[0]
-    assert "The fifth part, last." in text and "shared by all five" in text
+    assert "The fifth part." in text and "shared by all six" in text  # "Choose who writes code" is the sixth, last (#345)
     assert text.index("\n# Add try-it links\n") < text.index(f"\n# {NAME}\n")
     assert "The fifth path (offer `use_merge_queue`)." in _part(NAME)
     offers = re.search(r"^## When it's offered\n(.*?)(?=^#{1,2} )", text, re.M | re.S).group(1)

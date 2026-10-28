@@ -32,7 +32,7 @@ def _asked_topics():
 
 
 def test_setup_asks_only_what_attended_work_needs():
-    assert _asked_topics() == ["Experience", "Mode", "Owner", "Sensitive data", "Explorer", "Deploy commands", "Earlier flow"]
+    assert _asked_topics() == ["Experience", "Mode", "Owner", "Sensitive data", "Explorer", "Who writes code", "Deploy commands", "Earlier flow"]
     ask = _section(SETUP, "Ask")
     # The experience default's two levels, as the profile names them.
     assert "*new to building*" in ask and "*developer*" in ask

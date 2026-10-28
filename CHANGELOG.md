@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+**Set-up and the kit's update ask who writes code; "Choose who writes code" changes it** (#345, part of #338).
+
+- **`setup-workflow`** asks "Who writes code in this project?", **Only ticket sessions (Recommended)** first and **Any session** second, and with only ticket sessions proposes `code_paths` from the project's layout (for a project with no code yet, its stack's source and test folders, or it asks which folders will hold code). It says what "only ticket sessions" means while no ticket environment exists: nothing writes code until one does, and a new project's first ticket is built in a session the owner starts in the ticket environment (in plugin mode, a session on the owner's computer with `WORKFLOW_ROLE=ticket`). A skipped question writes nothing.
+- **`update-workflow`** asks the same once, for a profile without `code_writers`, and writes the answer in the update's pull request; a skipped question writes nothing, as its experience question does, and each later update asks once again.
+- **`upgrade-setup`** gains its sixth path, "Choose who writes code": the question and the code paths, then a pull request changing `guard.code_writers` and `guard.code_paths` for the owner to merge. A loosening counts only once it merges, since the base branch's `"ticket"` wins.
+- **`check-setup`** offers "Choose who writes code" while doctor's `kit.code_writers` note says it is unanswered (in plugin mode, that is where it is asked), and its ticket-session line says that under `code_writers = "ticket"` a session that is a ticket session only by its branch or a mistyped `WORKFLOW_ROLE` is a planning session, which may run it.
+- Set-up, the update and "Choose who writes code" push in a command of their own, never chained with the commit (answer 41 on #338).
+- Tests: `tests/test_code_writers_setup.py`.
+- **For projects updating:** the update asks who writes code once, while the profile doesn't answer it.
+
 **The conductor writes no code under `code_writers = "ticket"`** (#349, part of #338). Under `"any"`, or with `code_writers` absent, its steps read as before.
 
 - **Its own fixes:** with `conductor_fixes` on, its "small fix of your own" is only for fixes outside code paths (CI config, docs); a fix in a code path becomes a `workflow:infra` ticket for a ticket session. With it off, a code fix it finds goes in `for_owner` and the report. Flow §4's infra ticket for a red base suite stays. Its fixes and reverts push in a command of their own, never chained with a commit, and so does `run-report`'s revert offer. The charter's `conductor_fixes` question says so.
