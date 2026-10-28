@@ -427,46 +427,22 @@ def test_a_not_a_ticket_session_post_sets_the_row_aside_and_winds_down():
     assert "the state's `wind_down` is set (a session that wasn't a ticket session, check-in step 4)" in wind
 
 
-def test_a_code_fix_on_an_open_run_pull_request_goes_in_for_owner():
-    """Until #361 lands, an "also #<n>" asking a code fix requeues nothing: the fix goes in `for_owner`."""
+def test_a_code_fix_on_an_open_run_pull_request():
+    """A `needs-human` ticket's fix stays an owner's answer; the requeue itself is #361's (test_conductor_requeue.py)."""
     text = _conductor()
     step3 = _section(text, "**3. The owner's words.**", "**4. Each ticket in flight.**")
     for part in (
         '**"also #<n>" for a ticket whose open pull request needs a code fix**',
-        "an `in-review` ticket's too: until #361 lands, a run requeues nothing for it.",
-        "Add \"#n's pull request needs a code fix (#PR): <the fix asked for, or the link to the comment that asks for it>; "
-        "if it merges without the fix, the fix needs a ticket of its own\" to `for_owner`, so the report lists it, and say so in your reply.",
-        "The pull request goes on as any other and may merge before its fix: holding it for its fix is #361's.",
         # An answer to a `needs-human` ticket still requeues it, as before.
         "A `needs-human` ticket's fix (a `set-aside` one labelled `needs-human` included) is an owner's answer "
         "(step 2's \"When the owner answers\"), not this.",
     ):
         assert part in step3, part
-    # A ticket set aside without `needs-human` (the not-a-ticket-session row) has no owner's answer to wait for:
-    # its open pull request's fix gets the `for_owner` line like any other.
+    # A ticket set aside without `needs-human` (the not-a-ticket-session row) has no owner's answer to wait for.
     assert "A `needs-human` or `set-aside` ticket's fix" not in step3
-    assert (
-        "A code fix an open run pull request needs is neither yours nor an infra ticket: until #361 lands, it goes in "
-        "`for_owner` and the final report (check-in step 3's \"also #<n>\")."
-    ) in _step7()
     named = _section(text, "**A run in progress that this session conducts**", "**A run in progress that another session conducts")
     assert "Say so instead when it is already in the plan or running, and when the run is stopping or winding down" in named
     assert "(`max_sessions` reached, a `stop_run_on` condition met, or the state's `wind_down` set)" in named
-    assert "When its open pull request needs a code fix, check-in step 3's \"also #<n>\" for one says what follows." in named
-
-
-def test_the_requeue_is_left_to_361():
-    """No requeue, no `requeued_head`, and stopping reads as before #349."""
-    raw = _text("skills/conductor/SKILL.md")
-    text = _flat(raw)
-    assert "requeued_head" not in raw
-    assert "is requeued or adopted instead" not in text
-    step0 = _section(text, "**0. Stopping already?**", "**1. Read the state.**")
-    assert step0.strip().startswith("If the state's `status` is `stopping`, skip to \"Stop the run\", step 2")
-    stop = _section(text, "## Stop the run", "2. **Sessions.**")
-    assert "1. **Status.** Set `status: \"stopping\"` and the reason" in stop
-    assert "First read the owner's new comments" not in stop
-    assert "requeued_head" not in state.TICKET_FIELDS
 
 
 def test_the_report_looks_again_at_each_revert_opened():
