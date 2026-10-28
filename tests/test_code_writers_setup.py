@@ -267,7 +267,12 @@ def test_choose_who_writes_code_ends_in_a_pull_request_the_owner_merges():
     # base is in it: the stricter of the working tree's answer and the base's counts.
     loosening = _para(pr, "**Loosening waits for the merge.**")
     assert "or removing code paths" in loosening
-    assert "this session's branch is behind" in pr
+    # Where it stands, and the default code paths, are the base's: the branch starts there.
+    where = _section(_part(), "1. Where it stands")
+    assert "`git show origin/<base>:.claude/workflow/profile.toml`" in where
+    assert "this session's branch is behind" in where and "not only fetched" in where
+    paths = _section(_part(), "3. The code paths")
+    assert "with the base's list (step 1) as the default" in paths and "keep the base's list as it is" in paths
     assert "not only fetched" in loosening and "the stricter of the working tree's answer and the base's" in loosening
     assert "once it has the merged base branch in it" in _section(_part(), "5. Where it ends")
     # Nothing to change is judged after the code paths, against the base's profile.
@@ -297,7 +302,7 @@ def test_set_up_offers_runs_after_the_merge_among_upgrade_setups_moments():
 def test_choose_who_writes_code_proposes_code_paths_as_set_up_does():
     paths = _section(_part(), "3. The code paths")
     assert "as set-up does" in paths and "for the person to confirm" in paths and "The code paths" in paths
-    assert "the profile's own list" in paths
+    assert "the base's list" in paths
 
 
 def test_every_upgrade_path_pushes_in_a_command_of_its_own():

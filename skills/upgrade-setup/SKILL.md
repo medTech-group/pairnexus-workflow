@@ -624,7 +624,9 @@ The sixth path. It answers, or changes, who writes code in this project: the pro
 
 ## 1. Where it stands
 
-`git fetch origin <base>`, then read `WF status --json`: its `code_writers` is the answer that counts, the stricter of the working tree's profile and the base branch's as last fetched, `null` while unanswered. `WF profile check` gives the profile's own `code_writers` and `code_paths`. Say where it stands in one line: "Not answered yet: any session writes code, as before.", "Only ticket sessions write code." or "Any session writes code."
+The pull request's branch starts from the base branch, so where it stands is the base's profile: `git fetch origin <base>`, then read `code_writers` and `code_paths` from `git show origin/<base>:.claude/workflow/profile.toml`. Say where it stands in one line: "Not answered yet: any session writes code, as before.", "Only ticket sessions write code." or "Any session writes code."
+
+Then read `WF status --json`: its `code_writers` is the answer that counts in this session, the stricter of the working tree's profile and the base's. When it is stricter than the base's (`"ticket"` where the base says `"any"` or nothing), or the working tree's `code_paths` (`WF profile check`) list paths the base doesn't, this session's branch is behind: say that the base's answer applies here once it is merged in (pulled or merged, not only fetched).
 
 Then look for an open pull request changing `code_writers` in the profile (from `workflow/code-writers`, or any other, the kit's update among them). If there is one, ask nothing: say what it sets and point at it, to merge or close before asking again, and stop. A second answer beside it would be lost, or merged into a profile with two `code_writers` lines.
 
@@ -639,11 +641,11 @@ Word the two answers, and what "only ticket sessions" means while the profile na
 
 ## 3. The code paths
 
-With **Only ticket sessions**, propose `code_paths` as set-up does (its "The code paths"), for the person to confirm or change, with the profile's own list as the default when it has one. With **Any session**, keep the list as it is.
+With **Only ticket sessions**, propose `code_paths` as set-up does (its "The code paths"), for the person to confirm or change, with the base's list (step 1) as the default when it has one. With **Any session**, keep the base's list as it is.
 
 ## 4. One pull request
 
-When the answer and the confirmed code paths are what `origin/<base>`'s profile says already, the branch would change nothing: say so, and stop. If step 1's answer that counts was stricter than that (`"ticket"` where the base says `"any"`, or code paths the base no longer lists), this session's branch is behind: say that the base's answer applies here once it is merged in (pulled or merged, not only fetched).
+When the answer and the confirmed code paths are what `origin/<base>`'s profile says already, the branch would change nothing: say so, and stop.
 
 1. A branch from the base branch, such as `workflow/code-writers`.
 2. In `.claude/workflow/profile.toml`'s `[guard]` table, a plain `code_writers = "ticket"` or `code_writers = "any"` line on its own, in place of the `code_writers` line there, or of the template's commented `# code_writers = "ticket"`, or at the end of `[guard]` when neither is there; and `code_paths` with the confirmed globs, the same way. Change nothing else.
