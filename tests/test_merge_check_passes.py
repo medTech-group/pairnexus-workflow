@@ -428,7 +428,7 @@ def test_with_its_profile_unreadable_a_ticket_is_marked_and_checked_again_until_
     # A stopping run skips step 2 (step 0), so the report looks again too.
     report = conductor.split("4. **The report.**", 1)[1].split("\n", 1)[0]
     # The report reads the state from the issue, so the state is written first.
-    assert "First look again at each ticket still marked `cap_unknown_at`, as check-in step 2 begins, and write the state to the issue. Then write the final report" in report
+    assert "Then look again at each ticket still marked `cap_unknown_at`, as check-in step 2 begins, and write the state to the issue. Then write the final report" in report
     # A stuck ticket out of tries is labelled by the conductor: it goes through the definition too, so it gets
     # the steps, or the mark.
     out_of_tries = next(ln for ln in conductor.splitlines() if ln.startswith("3. A ticket whose `attempts`"))
