@@ -155,8 +155,8 @@ QUESTIONS: list[dict[str, Any]] = [
     {
         "key": "conductor_fixes",
         "ask": "May the conductor open its own PRs for test, CI or deploy-script problems (each reviewed and logged)? "
-        'Under `code_writers = "ticket"` they stay outside code paths: a code fix becomes a `workflow:infra` ticket '
-        "(and, when you answer no, a line for you in the run's report).",
+        'Under `code_writers = "ticket"` they stay outside code paths: a code fix becomes a `workflow:infra` ticket, '
+        "or, when you answer no, only a line for you in the run's report.",
         "default": True,
     },
     {
