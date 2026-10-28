@@ -153,7 +153,7 @@ def test_the_hold_starts_as_soon_as_the_also_is_read():
     hold = _hold()
     for part in (
         "which rows 4 to 6 begin with, at once, before anything else at that check-in",
-        "then, once no session of it runs, record the pull request's head (`pull/<PR>/head`), its full SHA, as the ticket's `requeued_head`",
+        "then record the pull request's head (`pull/<PR>/head`), its full SHA, as the ticket's `requeued_head`",
         "and write the state",
         "disarm auto-merge if it is armed",
         "if it is in the merge queue, take it out (GitHub's **Remove from queue**), or, where that can't be done here, say so on the tracking issue",
@@ -174,8 +174,10 @@ def test_a_session_stopped_by_the_hold_pushes_nothing_that_counts_as_the_fix():
     ):
         assert part in hold, part
     # The head is recorded only once the session is archived, so nothing it pushed counts: no step waits for a later check-in.
-    hold = _hold()
     assert hold.index("archive it at once") < hold.index("record the pull request's head")
+    # The session goes first, before auto-merge is disarmed, so the disarm's event can't wake it to arm or merge again.
+    assert "in this order, so a session never wakes between the steps to merge, arm or queue the old head" in hold
+    assert hold.index("archive it at once") < hold.index("disarm auto-merge") < hold.index("take it out (GitHub's")
     assert "next check-in" not in _requeue() and "First, a held ticket still `running`" not in _conductor()
     # Rows 5 and 6 change the status straight after the hold, so no second session starts beside the first.
     assert "The hold, starting nothing; then mark it `in-review` rather than `queued`" in _row(5)

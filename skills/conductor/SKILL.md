@@ -387,11 +387,11 @@ Whatever `conductor_fixes` says:
 
 The owner's "also #<n>" for a ticket whose open pull request needs a code fix (the owner found one, as a planning session's `merge-check` hands code fixes to a run), read in a comment (check-in step 3) or in this chat. You write no code for it: the ticket goes back to a ticket session, on the same pull request.
 
-**The hold,** which rows 4 to 6 begin with, at once, before anything else at that check-in:
+**The hold,** which rows 4 to 6 begin with, at once, before anything else at that check-in, in this order, so a session never wakes between the steps to merge, arm or queue the old head:
+- if a session of it runs, interrupt it, delete its pending check-ins and archive it at once, rather than "Stopping a stuck session safely", so it never wakes to merge, arm or queue the old head; it adds no attempt and never labels the ticket `needs-human`. This replaces a stuck session's safe stop already under way (check-in step 4's): clear the ticket's `stopped_head`. While the run stops, leave the one "Stop the run" step 2 recorded;
 - disarm auto-merge if it is armed (`disable_pr_auto_merge`, or `gh pr merge <n> --disable-auto`);
 - if it is in the merge queue, take it out (GitHub's **Remove from queue**), or, where that can't be done here, say so on the tracking issue. Leaving the queue, by your hand or GitHub's, is never a drop: a held pull request is never queued, so nothing goes to `WF state drop` for it;
-- if a session of it runs, interrupt it, delete its pending check-ins and archive it at once, rather than "Stopping a stuck session safely", so it never wakes to merge, arm or queue the old head; it adds no attempt and never labels the ticket `needs-human`. This replaces a stuck session's safe stop already under way (check-in step 4's): clear the ticket's `stopped_head`. While the run stops, leave the one "Stop the run" step 2 recorded;
-- then, once no session of it runs, record the pull request's head (`pull/<PR>/head`), its full SHA, as the ticket's `requeued_head`, with no `base_merged`, `queue_heads`, `queue_failed` or `queue_result`, so the merge queue's drop rule starts afresh, and write the state. Nothing an archived session pushed counts as the fix.
+- then record the pull request's head (`pull/<PR>/head`), its full SHA, as the ticket's `requeued_head`, with no `base_merged`, `queue_heads`, `queue_failed` or `queue_result`, so the merge queue's drop rule starts afresh, and write the state. Nothing an archived session pushed counts as the fix.
 
 While `requeued_head` is set the pull request is held: check-in step 4's held row.
 
