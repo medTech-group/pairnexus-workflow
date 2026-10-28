@@ -155,8 +155,9 @@ def _starts_from(ticket: dict) -> str | None:
                 f"give {_REF_WORDS}, in backticks"
             )
         refs.append(ref)
-    if len(set(refs)) > 1:
-        raise RenderError(f'#{ticket.get("number")}\'s "Starts from:" lines name different branches: ' + ", ".join(sorted(set(refs))))
+    distinct = sorted(set(refs))
+    if len(distinct) > 1:
+        raise RenderError(f'#{ticket.get("number")}\'s "Starts from:" lines name different branches: ' + ", ".join(distinct))
     return refs[0] if refs else None
 
 
