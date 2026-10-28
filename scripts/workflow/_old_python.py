@@ -217,6 +217,7 @@ _DOCTOR_LINES = (
     ("The kit", "kit.vendor", "vendored", _Words("whether the kit's copy in this project is as the kit wrote it", "`vendor verify`")),
     ("The kit", "kit.experience", None, _Words("the project's default for how much you know about building", "project.experience")),
     ("The kit", "kit.ruleset", None, _Words("whether the project means its main branch to be protected", "project.ruleset")),
+    ("The kit", "kit.code_writers", None, _Words("who writes code in this project", "guard.code_writers")),
     ("GitHub", "github.ruleset", None, _Words("whether the main branch is protected on GitHub", "The base branch's ruleset")),
     ("GitHub", "github.required_checks", None, _Words("whether GitHub requires the checks the kit's profile lists", "Required checks")),
     ("GitHub", "github.up_to_date", None, _Words("whether pull requests must be up to date with the main branch", '"Require branches to be up to date"')),

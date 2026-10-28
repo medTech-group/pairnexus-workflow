@@ -221,7 +221,8 @@ def test_a_healthy_vendored_project_is_fine_throughout(tmp_path):
 
 
 def test_text_output_groups_the_lines(tmp_path):
-    root = _project(tmp_path)
+    # Who writes code answered, so the kit's lines are as serious as the computer's (#344).
+    root = _project(tmp_path, profile=_prof('experience = "new"\nruleset = true\n', '[guard]\ncode_writers = "any"\n'))
     p = _doctor(tmp_path, root)
     assert p.returncode == 0, p.stderr
     out = p.stdout.splitlines()
