@@ -378,6 +378,35 @@ def test_git_clean_in_another_checkout_a_worktree_or_of_one_file(proj, tmp_path,
     assert d == "deny" and "in the worktree" in why, why
 
 
+def test_git_clean_pathspecs_as_git_reads_them(proj, monkeypatch, capsys):
+    (proj / "src/new.py").write_text("n = 1\n")
+    for command, cwd in (("git clean -f '*.py'", proj), ("git clean -fd :/", proj / "docs"), ("git clean -f -- src/new.py", proj)):
+        d, why = hook(monkeypatch, capsys, proj, bash(command), cwd=cwd)
+        assert d == "deny" and "src/new.py" in why, (command, why)
+    assert hook(monkeypatch, capsys, proj, bash("git clean -f '*.md'"))[0] == "allow"
+
+
+def test_git_minus_c_rm_and_mv_in_the_project(proj, monkeypatch, capsys):
+    for command in ("git -C src rm app.py", "git -C src mv app.py b.py"):
+        d, why = hook(monkeypatch, capsys, proj, bash(command))
+        assert d == "deny" and "`src/app.py`" in why, (command, why)
+    # The shell's redirect stays where the shell writes it.
+    assert hook(monkeypatch, capsys, proj, bash("git -C src rm --cached protected/keep.py > log.txt"))[0] == "allow"
+
+
+def test_git_am_applies_from_the_top_level(proj, monkeypatch, capsys):
+    d, why = hook(monkeypatch, capsys, proj, bash("git am ../fix.patch"), cwd=proj / "docs")
+    assert d == "deny" and "`src/app.py`" in why, why
+
+
+def test_powershell_globs_are_judged_by_what_they_match(proj, monkeypatch, capsys):
+    for command in ("Remove-Item src* -Recurse", "Remove-Item * -Recurse", "Remove-Item ./* -Recurse"):
+        d, why = hook(monkeypatch, capsys, proj, powershell(command))
+        assert d == "deny" and "run it through Bash" in why, (command, why)
+    for command in ("Get-Process | Select-Object *", "[int]$x = 1"):
+        assert hook(monkeypatch, capsys, proj, powershell(command), cwd=proj / "docs")[0] == "allow", command
+
+
 def test_a_plain_patch_from_a_subdirectory(proj, monkeypatch, capsys):
     (proj / "plain.patch").write_text("--- a/app.py\n+++ b/app.py\n@@ -1 +1 @@\n-a = 1\n+a = 2\n")
     d, why = hook(monkeypatch, capsys, proj, bash("git apply ../plain.patch"), cwd=proj / "src")
@@ -428,7 +457,7 @@ def test_git_apply_is_judged_in_the_checkout_it_runs_in(proj, tmp_path, monkeypa
     assert d == "deny" and "in the worktree `.claude/worktrees/side`" in why, why
     d, why = hook(monkeypatch, capsys, proj, bash("git -C .claude/worktrees/side apply ../../../fix.patch"))
     assert d == "deny" and "in the worktree `.claude/worktrees/side`" in why, why
-    assert why.startswith("[workflow guard, attended session] this writes the code path `src/app.py`"), why
+    assert why.startswith("[workflow guard, attended session] this patch writes the code path `src/app.py`"), why
 
 
 def test_a_shell_code_write_is_refused_even_after_an_ask(proj, monkeypatch, capsys):

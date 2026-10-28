@@ -6067,9 +6067,9 @@ def _conductor_fixes(root: Path) -> bool | None:
     return v if isinstance(v, bool) else None
 
 
-def _git_lines(top: str, *args: str, sep: str = "\n") -> list[str] | None:
+def _git_lines(top: str, *args: str, sep: str = "\n", literal: bool = True) -> list[str] | None:
     try:
-        p = subprocess.run(["git", "--literal-pathspecs", "-C", top, *args], capture_output=True, timeout=5)
+        p = subprocess.run(["git", *(["--literal-pathspecs"] if literal else []), "-C", top, *args], capture_output=True, timeout=5)
     except (OSError, subprocess.TimeoutExpired, ValueError):
         return None
     if p.returncode != 0:
@@ -6122,29 +6122,28 @@ def _ignored(top: str, rel: str) -> bool:
     return p.returncode == 0
 
 
-def _code_files(top: str, rel: str, untracked_only: bool = False) -> list[str]:
+def _code_files(top: str, rel: str) -> list[str]:
     """The files git tracks under `rel` in the checkout, and the untracked ones
     it doesn't ignore."""
     spec = rel or "."
-    out = [] if untracked_only else (_git_lines(top, "ls-files", "-z", "--", spec, sep="\0") or [])
+    out = _git_lines(top, "ls-files", "-z", "--", spec, sep="\0") or []
     return out + (_git_lines(top, "ls-files", "-z", "-o", "--exclude-standard", "--", spec, sep="\0") or [])
 
 
-def _code_at(abspath: str | None, code: _Code, root: Path, tree: bool = False, untracked_only: bool = False) -> _Hit | None:
+def _code_at(abspath: str | None, code: _Code, root: Path, tree: bool = False) -> _Hit | None:
     """The code path `abspath` is, or (`tree`) one inside it that a write into,
     removal or move of it changes."""
     co = _checkout_of(abspath, root) if abspath else None
     if co is None:
         return None
     top, rel, wt = co
-    if wt and not rel and not untracked_only:
+    if wt and not rel:
         return None  # a worktree as a whole is a checkout, not a code path
-    if not untracked_only:
-        m = _listed_code(rel, code)
-        if m and not _ignored(top, rel):
-            return _Hit(rel, m, wt)
-    if tree and (not rel or untracked_only or os.path.isdir(abspath)):
-        for f in _code_files(top, rel, untracked_only):
+    m = _listed_code(rel, code)
+    if m and not _ignored(top, rel):
+        return _Hit(rel, m, wt)
+    if tree and (not rel or os.path.isdir(abspath)):
+        for f in _code_files(top, rel):
             m = _listed_code(f, code)
             if m:
                 return _Hit(f, m, wt)
@@ -6154,13 +6153,25 @@ def _code_at(abspath: str | None, code: _Code, root: Path, tree: bool = False, u
 _CHECKS_OUT = {"switch", "checkout", "restore", "merge", "pull", "reset", "stash", "revert", "cherry-pick", "clone", "worktree"}
 
 
-def _code_targets(seg: Seg, root: Path) -> tuple[_Targets, _Targets]:
-    """(what one command writes, what of it is only untracked files): git
-    found behind wrappers, as in ticket sessions; git commands that check out
-    committed content write nothing here; `git clean` removes untracked files
-    only."""
+@dataclass
+class _CodeTargets:
+    """What one command writes, as the code rule reads it."""
+
+    t: _Targets  # its writes, read as ticket sessions' writes to protected paths are
+    patched: list[str] = field(default_factory=list)  # the files `git apply`/`git am` writes, absolute
+    cleans: list[tuple[str, list[str]]] = field(default_factory=list)  # `git clean`: (its directory, its pathspecs)
+
+
+def _from(d: str, paths: list[str]) -> list[str]:
+    return [x if os.path.isabs(x) else os.path.join(d, x) for x in paths]
+
+
+def _code_targets(seg: Seg, root: Path) -> _CodeTargets:
+    """What one command writes: git found behind wrappers, as in ticket
+    sessions; git commands that check out committed content write nothing
+    here; `git clean` removes the untracked files git lists for it."""
     t = _Targets(files=list(seg.redirects))
-    loose = _Targets()
+    out = _CodeTargets(t)
     k = _vcs_index(seg.words, "ticket")
     for s in ([seg] if not k else [seg, replace(seg, words=seg.words[k:], redirects=[])]):
         g = _git(s.words)
@@ -6170,25 +6181,27 @@ def _code_targets(seg: Seg, root: Path) -> tuple[_Targets, _Targets]:
         if sub in ("clean", "rm", "mv") and g[2]:  # their paths are from `git -C`'s directory
             s = replace(s, cwd=_git_dir_of(root, s.cwd, g[2]))
         if sub == "clean":
-            loose.trees += [x if os.path.isabs(x) else os.path.join(s.cwd, x) for x in _clean_trees(g[1][1:]) if s.cwd or os.path.isabs(x)]
+            specs = _clean_trees(g[1][1:])
+            if s.cwd and specs:
+                out.cleans.append((s.cwd, specs))
             continue
         if sub in ("apply", "am"):
-            t.files += _patched_files(s, g, root)
+            out.patched += _patched_files(s, g, root)
             continue
         w = _write_targets(s, root)
-        if s.cwd != seg.cwd and s.cwd:  # read from `git -C`'s directory: placed from there
-            w.files = [x if os.path.isabs(x) else os.path.join(s.cwd, x) for x in w.files]
-            w.trees = [x if os.path.isabs(x) else os.path.join(s.cwd, x) for x in w.trees]
+        if s.cwd != seg.cwd and s.cwd:  # read from `git -C`'s directory: placed from there, the shell's redirects aside
+            w.files = [x if x in seg.redirects else _from(s.cwd, [x])[0] for x in w.files]
+            w.trees = _from(s.cwd, w.trees)
         t.files += [x for x in w.files if x not in t.files]
         t.trees += w.trees
         t.searched += w.searched
         t.named_from_root += w.named_from_root
-    return t, loose
+    return out
 
 
 def _clean_trees(args: list[str]) -> list[str]:
-    """What `git clean` removes from: its paths, else the whole checkout;
-    nothing for a dry run or `-X`, which removes only ignored files."""
+    """The pathspecs `git clean` removes from, as written: else `.`, its
+    directory; none for a dry run or `-X`, which removes only ignored files."""
     flags, paths, i = "", [], 0
     while i < len(args):
         a = args[i]
@@ -6221,9 +6234,10 @@ def _patched_files(seg: Seg, g: tuple[list[str], list[str], str | None], root: P
     top = _git_out(d, "rev-parse", "--show-toplevel") if d else None
     if unknown or not top:
         return []
-    # A git diff's paths are from the top level; a plain patch's, from where it runs.
+    # A git diff's paths, and `git am`'s, are from the top level; `git apply`'s plain patch's, from where it runs.
     # The paths with their `a/` and `b/` dropped first, so a refusal names the file git writes.
-    return [os.path.join(top if "diff --git " in txt else d, p) for txt in texts for p in reversed(_patch_paths(txt))]
+    here = d if args[0] == "apply" else top
+    return [os.path.join(top if "diff --git " in txt else here, p) for txt in texts for p in reversed(_patch_paths(txt))]
 
 
 def _named_code(names: list[str], nocase: bool, own: bool, start: str, root: Path, code: _Code) -> _Hit | None:
@@ -6253,13 +6267,17 @@ def _shell_code(segs: list[Seg], code: _Code, root: Path) -> str | None:
     counts: a target relative to a directory it can't follow, a patch it
     can't read, an interpreter's own writes, are left alone."""
     for seg in segs:
-        t, loose = _code_targets(seg, root)
+        ct = _code_targets(seg, root)
+        t = ct.t
+        for f in ct.patched:
+            hit = _code_at(_abspath(f, seg.cwd), code, root)
+            if hit:
+                return f"this patch writes the code path {_shown(hit)} ({hit.pattern}); {code.instead}"
         for tgt in t.files:
             for c in _candidates(tgt, seg.cwd):
                 hit = _code_at(_abspath(c, seg.cwd), code, root) if c.strip() else None
                 if hit:
-                    what = "this" if os.path.isabs(tgt) else f"writing `{tgt}`"  # a patch's files: named once, below
-                    return f"{what} writes the code path {_shown(hit)} ({hit.pattern}); {code.instead}"
+                    return f"writing `{tgt}` writes the code path {_shown(hit)} ({hit.pattern}); {code.instead}"
         top = os.path.realpath(str(root))
         for tgt in t.trees:
             for c in _candidates(tgt, seg.cwd):
@@ -6269,12 +6287,15 @@ def _shell_code(segs: list[Seg], code: _Code, root: Path) -> str | None:
                 hit = _code_at(a, code, root, tree=True)
                 if hit:
                     return f"writing into, removing or moving `{tgt}` changes the code path {_shown(hit)} ({hit.pattern}); {code.instead}"
-        for tgt in loose.trees:
-            for c in _candidates(tgt, seg.cwd):
-                hit = _code_at(_abspath(c, seg.cwd), code, root, tree=True, untracked_only=True)
-                if hit:
-                    shown = os.path.relpath(tgt, seg.cwd) if seg.cwd else tgt
-                    return f"`git clean` of `{shown}` removes the code path {_shown(hit)} ({hit.pattern}); {code.instead}"
+        for d, specs in ct.cleans:
+            co = _checkout_of(os.path.realpath(d), root)
+            # What git itself lists for these pathspecs: its globs cross folders, `:/` is the top level.
+            listed = _git_lines(d, "ls-files", "-z", "-o", "--exclude-standard", "--full-name", "--", *specs, sep="\0", literal=False) if co else None
+            for f in listed or []:
+                m = _listed_code(f, code)
+                if m:
+                    hit = _Hit(f, m, co[2])
+                    return f"`git clean` of `{' '.join(specs)}` removes the code path {_shown(hit)} ({hit.pattern}); {code.instead}"
         for r, cwd in t.searched:
             a = _abspath(r, cwd)
             hit = _code_at(top if a and _holds_root(a, root) else a, code, root, tree=True)
@@ -6306,14 +6327,16 @@ def _powershell_code(inp: dict, code: _Code, root: Path, cwd: str | os.PathLike 
         if w.startswith("-") or not ("/" in w or "." in w or _GLOB_CHARS.search(w) or os.path.lexists(os.path.join(start or top, w))):
             continue  # a parameter, or a bare word naming nothing there (`Get-Date`)
         if w.casefold().startswith(top.casefold() + "/"):
-            a = _abspath(top + w[len(top) :], start)
+            w = top + w[len(top) :]
         elif _WINDOWS_ABS.match(w):
             continue  # another drive's path: never this project's
-        else:
-            a = _abspath(w, start)
-        hit = _code_at(a, code, root) if a else None
-        if hit:
-            return hit
+        # A glob is judged by what it matches there, never by its own text.
+        names = [c for c in _candidates(w, start) if c != w] if _GLOB_CHARS.search(w) else [w]
+        for c in names:
+            a = _abspath(c, start)
+            hit = _code_at(a, code, root) if a else None
+            if hit:
+                return hit
     return None
 
 
