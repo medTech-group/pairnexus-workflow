@@ -175,7 +175,7 @@ def test_the_briefing_names_the_tickets_starts_from_line(profile, line, ref):
 
 
 def test_a_retry_carries_on_from_its_own_branch(profile):
-    """A retried or requeued session finds its branch on GitHub and carries on from it."""
+    """A retried session finds its branch on GitHub and carries on from it."""
     out = _briefing(profile, "Starts from: dependabot/x\n")
     assert (
         "If `claude/build-7` is already on GitHub (`git ls-remote --exit-code origin refs/heads/claude/build-7`: "
@@ -427,84 +427,48 @@ def test_a_not_a_ticket_session_post_sets_the_row_aside_and_winds_down():
     assert "the state's `wind_down` is set (a session that wasn't a ticket session, check-in step 4)" in wind
 
 
-def test_also_requeues_a_ticket_whose_pull_request_needs_a_code_fix():
+def test_a_code_fix_on_an_open_run_pull_request_goes_in_for_owner():
+    """Until #361 lands, an "also #<n>" asking a code fix requeues nothing: the fix goes in `for_owner`."""
     text = _conductor()
     step3 = _section(text, "**3. The owner's words.**", "**4. Each ticket in flight.**")
     for part in (
         '**"also #<n>" for a ticket whose open pull request needs a code fix**',
-        "A ticket of an earlier run, not in this run's state, whose open pull request is on a `run.ticket_branch` branch, is adopted the same way",
-        "take out of `for_owner` its lines that leave its pull request to the owner to merge (\"ready for you to merge\", a protected path, a path-filtered check, a merge-queue rule the kit can't judge) and an earlier hold's \"needs a code fix\" line, since they no longer hold; a line saying it couldn't be taken out of the queue stays",
-        "take out of `for_owner` its lines that leave its pull request to the owner to merge, as a requeue does, and add \"#n's pull request needs a code fix (#PR)\"",
-        "requeue it all the same (that `for_owner` line stays)",
-        "a `queued`, `running` or `in-review` ticket of the run alike",
-        "if it is in the merge queue, take it out (GitHub's **Remove from queue**",
-        "A ticket that merged before this check-in read the comment isn't requeued: replace the ticket's `for_owner` lines with \"#n merged before its fix (#PR): the fix needs a ticket of its own\"",
-        "it will need the owner's \"One more pass\"",
-        "At once, before anything else at this check-in, record its pull request's head SHA as the ticket's `requeued_head` and write the state",
-        "disarm auto-merge on it if it is armed",
-        "once it is archived set `requeued_head` to the branch's head then; that stop adds no attempt and never labels it `needs-human`",
-        "While the run is stopping or winding down (judged once all of this check-in's comments' charter changes are applied, whatever their order, so a raised limit read in the same check-in counts)",
-        "once any session of it is archived, mark the ticket `in-review` rather than `queued` (no attempt added, never `needs-human`; it counts as settled for \"Done\")",
-        "Where that can't be done here, say so on the tracking issue and in `for_owner`, and requeue it all the same",
-        "the fix asked for (the owner's words, or the link to the comment or finding that asks for it)",
-        "merges, arms auto-merge, queues or says it's ready only once that fix is pushed and reviewed",
-        "requeue it",
-        "that pull request as what a previous attempt left (its branch, number and head SHA)",
-        "the fix lands on the same pull request",
+        "an `in-review` ticket's too: until #361 lands, a run requeues nothing for it.",
+        "Add \"#n's pull request needs a code fix (#PR): <the fix asked for, or the link to the comment that asks for it>; "
+        "if it merges without the fix, the fix needs a ticket of its own\" to `for_owner`, so the report lists it, and say so in your reply.",
+        "The pull request goes on as any other and may merge before its fix: holding it for its fix is #361's.",
     ):
         assert part in step3, part
+    assert (
+        "A code fix an open run pull request needs is neither yours nor an infra ticket: until #361 lands, it goes in "
+        "`for_owner` and the final report (check-in step 3's \"also #<n>\")."
+    ) in _step7()
     named = _section(text, "**A run in progress that this session conducts**", "**A run in progress that another session conducts")
-    assert "when it is already in the plan or running" in named
-    assert (
-        "A ticket whose pull request needs a code fix, an `in-review` one too, or an earlier run's leftover, is requeued "
-        "or adopted instead (check-in step 3's \"also #<n>\")."
-    ) in named
+    assert "Say so instead when it is already in the plan or running, and when the run is stopping or winding down" in named
+    assert "(`max_sessions` reached, a `stop_run_on` condition met, or the state's `wind_down` set)" in named
+    assert "When its open pull request needs a code fix, check-in step 3's \"also #<n>\" for one says what follows." in named
 
 
-def test_an_also_is_read_before_the_run_stops():
-    text = _flat(_text("skills/conductor/SKILL.md"))
+def test_the_requeue_is_left_to_361():
+    """No requeue, no `requeued_head`, and stopping reads as before #349."""
+    raw = _text("skills/conductor/SKILL.md")
+    text = _flat(raw)
+    assert "requeued_head" not in raw
+    assert "is requeued or adopted instead" not in text
     step0 = _section(text, "**0. Stopping already?**", "**1. Read the state.**")
-    assert "first read the owner's new comments as step 3's *Comments* does (applying each amendment, and setting `comments_read_through`)" in step0
-    assert "A run already stopping doesn't start again: reply to a change it won't act on" in step0
+    assert step0.strip().startswith("If the state's `status` is `stopping`, skip to \"Stop the run\", step 2")
     stop = _section(text, "## Stop the run", "2. **Sessions.**")
-    assert "First read the owner's new comments as check-in step 3's *Comments* does" in stop
-    assert "unless the reason is `owner` (the `workflow:stop` label, or \"stop the run\" here), which always stops" in stop
-    assert "`ends_at` still passed stops" in stop
-    assert "only when nothing is left to finish does it stop" in stop
-    # A wind-down that still holds starts nothing, so what the comments add never keeps it going.
-    assert "`ends_at` still passed stops, and so does any other reason while check-in step 2's **Wind down** still holds" in stop
-    # Otherwise step 2 judges it again: a lifted wind-down with ready tickets left, or an extended end time, goes on.
-    assert "otherwise the run goes on, from step 4 of this check-in (ready tickets a raised limit lets start, a ticket added or requeued), unless step 2's **Done** holds" in stop
-    # Whether an also is held or requeued is judged with all the comments' charter changes in, whatever their order.
-    assert "an \"also #<n>\" asking a code fix is held or requeued (check-in step 3) only once all their charter changes are applied" in stop
-    assert "(a ticket added won't start in this run)" in stop
-    assert "reply to a change it won't act on that the run is stopping, never that it is applied" in stop
-    report = _section(text, "4. **The report.**", "5. **Wind up.**")
-    assert (
-        "Before anything else, look again at each ticket with `requeued_head` (its row's \"merged anyway\") and each "
-        "revert still `opened`"
-    ) in report
-
-
-def test_a_requeued_pull_request_never_merges_before_its_fix():
-    row = _section(_text("skills/conductor/SKILL.md"), "| **A requeued ticket whose fix hasn't landed**", "\n")
-    for part in (
-        "Otherwise the `ready`, `owner_review`, path-filtered, merge-queue and \"behind the base\" rows don't apply",
-        "nor \"The merge queue's state\"'s handling of `ready`",
-        "never merge it, update its branch, arm auto-merge or queue it, and disarm auto-merge if it is armed",
-        "Clear `requeued_head` only once the fix is there",
-        "If its pull request merged anyway (the merge queue took it, or a session merged it), take the **Merged** row's steps",
-        "(it stays `merged`: interrupt and archive any session of it as that row does, never through \"Stopping a stuck session safely\"), clear `requeued_head`, and replace the ticket's `for_owner` lines with \"#n merged before its fix (#PR): the fix needs a ticket of its own\"",
-        "`WF merge-check` gives no review reason on the head (a clean review covers it, carried over a merge of the base or not)",
-        "`git log --first-parent --no-merges --oneline <requeued_head>..origin/<branch>` lists one",
-        "the base's commits brought in by a merge never count",
-    ):
-        assert part in row, part
+    assert "1. **Status.** Set `status: \"stopping\"` and the reason" in stop
+    assert "First read the owner's new comments" not in stop
     s = state.empty(_charter())
     s["tickets"] = {"12": {"status": "queued", "requeued_head": SHA}}
-    assert state.validate(s) == []
-    s["tickets"]["12"]["requeued_head"] = "abc1234"
-    assert "tickets[12].requeued_head must be a full commit SHA in lower case" in state.validate(s)
+    assert "tickets[12].requeued_head" not in " ".join(state.validate(s))
+
+
+def test_the_report_looks_again_at_each_revert_opened():
+    report = _section(_conductor(), "4. **The report.**", "5. **Wind up.**")
+    assert "Before anything else, look again at each revert still `opened` (\"Reverting a merged change\", step 3)." in report
+    assert "First look again at each ticket still marked `cap_unknown_at`, as check-in step 2 begins, and write the state to the issue." in report
 
 
 def test_the_briefing_section_names_the_starts_from_line():
@@ -516,7 +480,7 @@ def test_the_briefing_section_names_the_starts_from_line():
         "say so on the ticket, mark it `set-aside`, label it `needs-human` (removing `workflow:in-progress` and "
         "`ready-for-agent`, so no later check-in picks it again)"
     ) in text
-    assert "an \"also #<n>\" requeue's pull request" in text
+    assert "an \"also #<n>\" requeue" not in text
 
 
 # ---------- run-report, docs/charter.md, the changelog ----------
