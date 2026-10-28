@@ -1465,7 +1465,7 @@ def _hook_guard(event, raw: str = "") -> int:
         return _cant_decide(event, f"it failed ({type(e).__name__}: {e})", prof.ruleset is False, planning=planning)
     if d.action == "allow":
         return 0  # never force "allow": the normal permission rules still apply
-    reason = f"[workflow guard, {_role_label(role)}] {d.reason}"
+    reason = f"[workflow guard, {d.label or _role_label(role)}] {d.reason}"
     print(
         json.dumps(
             {
