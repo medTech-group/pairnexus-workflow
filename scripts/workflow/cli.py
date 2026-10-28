@@ -1389,17 +1389,24 @@ def _planning(role: str | None, firm: str | None, root=None) -> bool:
         return False
 
 
+def _role_without_the_kit(event, firm: str | None) -> tuple[str | None, bool]:
+    """(the role, whether `_planning` makes it a planning session) where the
+    profile can't be read: WORKFLOW_ROLE's, else "ticket" on a branch matching
+    `run.ticket_branch` as the old-Python fallback reads it, else None."""
+    role = firm or ("ticket" if _ticket_branch_without_the_kit(event if isinstance(event, dict) else {}) else None)
+    return role, _planning(role, firm)
+
+
 def _planning_label() -> str:
     odd = roles.unrecognised()
-    why = f"WORKFLOW_ROLE={odd!r} isn't a role" if odd else "a ticket session only by its branch"
+    why = f"WORKFLOW_ROLE={odd!r} isn't a role" if odd else "WORKFLOW_ROLE isn't set"
     return f'planning session ({why}, and only ticket sessions write code: code_writers = "ticket")'
 
 
 def _hook_guard(event, raw: str = "") -> int:
     firm = roles.env_role()
     if not isinstance(event, dict):  # malformed: nothing can be checked
-        role = firm or ("ticket" if _ticket_branch_without_the_kit({}) else None)
-        planning = _planning(role, firm)
+        role, planning = _role_without_the_kit({}, firm)
         if role in ("ticket", "conductor") and not planning:
             _deny_json(f"[workflow guard, {_role_label(role)}] the hook's event wasn't a JSON object, so nothing could be checked and this was refused")
             return 0
@@ -1407,8 +1414,7 @@ def _hook_guard(event, raw: str = "") -> int:
     try:
         prof = load(required=False)
     except ProfileError as e:
-        role = firm or ("ticket" if _ticket_branch_without_the_kit(event) else None)
-        planning = _planning(role, firm)
+        role, planning = _role_without_the_kit(event, firm)
         if role in ("ticket", "conductor") and not planning:
             if not _is_restore(event):
                 _deny_json(f"[workflow guard, {_role_label(role)}] the profile is invalid, so nothing can be checked: {e}. Fix .claude/workflow/profile.toml in a PR from an attended session, or restore it: git checkout -- .claude/workflow")
@@ -1431,8 +1437,10 @@ def _hook_guard(event, raw: str = "") -> int:
             role = roles.role(cwd, prof.ticket_branch, fallback=root)
             d = guard_mod.decide(event, prof, role, root, roles.current_branch(cwd), role_from_env=firm is not None, cwd=event.get("cwd") or None)
     except _OverBudget:
-        planning = _planning(role or firm, firm, root)
-        role = "attended" if planning else role or firm or "ticket"  # a role not read in time: the strictest
+        # A role not read in time is the strictest, unless the rule says that
+        # without WORKFLOW_ROLE=ticket no session gets more than a planning session's.
+        planning = _planning(role or firm or "ticket", firm, root)
+        role = "attended" if planning else role or firm or "ticket"
         label = _planning_label() if planning else _role_label(role)
         # Solo mode refuses what touches the base branch, so a check not finished in time is refused too.
         if role in ("ticket", "conductor") or (role == "attended" and prof.ruleset is False):
@@ -1443,7 +1451,7 @@ def _hook_guard(event, raw: str = "") -> int:
             f"it ran out of time ({GUARD_BUDGET:g} seconds) checking this",
             prof.ruleset is False,
             "To have it checked, split the command, or give it smaller files.",
-            planning,
+            planning=planning,
         )
     except Exception as e:  # fail closed where a person isn't there to notice
         planning = _planning(role or firm, firm, root)
@@ -1564,8 +1572,7 @@ def cmd_hook(a) -> int:
     except Exception as e:  # a bug in a hook must not stop the session; say so
         if a.name == "guard":
             firm = roles.env_role()
-            role = firm or ("ticket" if _ticket_branch_without_the_kit(event if isinstance(event, dict) else {}) else None)
-            planning = _planning(role, firm)
+            role, planning = _role_without_the_kit(event, firm)
             if role in ("ticket", "conductor") and not planning:
                 _deny_json(f"[workflow guard] the guard failed ({type(e).__name__}: {e}), so this was refused")
                 return 0

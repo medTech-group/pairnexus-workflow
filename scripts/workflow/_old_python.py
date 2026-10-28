@@ -87,7 +87,7 @@ def _firm(env, cwd):
     return bool(b) and fnmatch.fnmatchcase(b, pattern)
 
 
-def _hard(env):
+def _env_ticket_or_conductor(env):
     """True when WORKFLOW_ROLE itself says ticket or conductor."""
     return (env.get("WORKFLOW_ROLE") or "").strip().lower() in ("ticket", "conductor")
 
@@ -98,7 +98,7 @@ def _refused(env, cwd):
     its branch or by a WORKFLOW_ROLE that isn't a role (#342)."""
     if not _firm(env, cwd):
         return False
-    if _hard(env):
+    if _env_ticket_or_conductor(env):
         return True
     from . import fallback  # as in _guard
 
@@ -169,7 +169,7 @@ def main(argv, stdin_text=None, env=None, version=None, cwd=None):
 
 
 def _hook(sub, stdin_text, env, version, cwd):
-    if sub == "guard" and _hard(env):  # nothing to read: every tool is refused
+    if sub == "guard" and _env_ticket_or_conductor(env):  # nothing to read: every tool is refused
         return _guard(None, True, version)
     from . import fallback  # here, inside main's try, as in _guard
 

@@ -108,8 +108,10 @@ _ROLE = (
     """| sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'); """
 )
 # A value that isn't a role is a ticket session, as roles.env_role reads it,
-# but only by a mistake: W says so.
-_MISTYPED = 'W=; case "$R" in ""|ticket|conductor|attended) ;; *) W=1;; esac; '
+# but only by a mistake: W says so. Only a plain name counts, since sed trims
+# less than Python's strip (a no-break space, a leading newline): "ticket"
+# with one is ticket to the CLI, and stays refused here.
+_MISTYPED = 'W=; case "$R" in ""|ticket|conductor|attended|*[!a-z0-9_-]*) ;; *) W=1;; esac; '
 # With WORKFLOW_ROLE unset and the kit set up: the project directory's branch
 # matching the profile's run.ticket_branch (its first `ticket_branch = "…"`
 # line, as _old_python reads it) means a ticket session, only by its branch
@@ -126,7 +128,7 @@ _BRANCH = (
 # that is a ticket session only by its branch or a mistyped WORKFLOW_ROLE gets
 # the attended fallback, as a planning session.
 _PLANNING = (
-    'if [ -n "$W" ] && [ -f "${F%.py}/fallback.sh" ] && sh "${F%.py}/fallback.sh" --ticket-rule </dev/null; '
+    'if [ -n "$W" ] && [ -f "${F%.py}/fallback.sh" ] && [ "$(sh "${F%.py}/fallback.sh" --ticket-rule </dev/null)" = ticket ]; '
     'then R=attended; fi; '
 )
 

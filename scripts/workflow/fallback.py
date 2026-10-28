@@ -32,6 +32,7 @@ import json
 import os
 import re
 import subprocess
+import time
 
 from . import modes
 
@@ -49,8 +50,9 @@ COMMAND_TOOLS = ("Bash", "Monitor", "PowerShell")
 _RULESET = re.compile(r"^[ \t]*ruleset[ \t]*=[ \t]*(\w+)", re.M)
 _TICKET_RULE = re.compile(r'^[ \t]*code_writers[ \t]*=[ \t]*"ticket"', re.M)
 _BASE_BRANCH = re.compile(r'^[ \t]*base_branch[ \t]*=[ \t]*"([^"\n]*)"', re.M)
-# A branch's name only: "main~1" or "main@{1}" would read an older base.
-_BRANCH_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._/-]*\Z")
+# How long `ticket_rule` may spend in git, all its calls together: it can run
+# after the guard's own budget is spent, with 5 seconds left of the hook's.
+GIT_SECONDS = 2.0
 PROFILE = os.path.join(".claude", "workflow", "profile.toml")
 FIXES = (
     "To fix it: run `python3 .claude/workflow/bin/workflow.py profile check`, check that `python3 --version` "
@@ -152,18 +154,16 @@ def _profile_text(root):
         return None
 
 
-def _git_show(root, ref):
-    """The profile at `ref` (a full ref), None when git can't show it; and
-    whether `ref` exists, read only when it can't."""
-    def git(*args):
-        try:
-            p = subprocess.run(("git",) + args, cwd=str(root), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=2)
-        except (OSError, subprocess.SubprocessError, ValueError):
-            return None
-        return p.stdout.decode("utf-8", "replace") if p.returncode == 0 else None
-
-    text = git("show", ref + ":" + PROFILE.replace(os.sep, "/"))
-    return text, text is not None or git("rev-parse", "--verify", "--quiet", ref + "^{commit}") is not None
+def _git(root, deadline, *args):
+    """git's output, or None when it fails or `deadline` (a time.monotonic()) passes."""
+    left = deadline - time.monotonic()
+    if left <= 0:
+        return None
+    try:
+        p = subprocess.run(("git",) + args, cwd=str(root), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=left)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    return p.stdout.decode("utf-8", "replace") if p.returncode == 0 else None
 
 
 def ticket_rule_from_text(text):
@@ -177,17 +177,22 @@ def ticket_rule(root):
     read without the kit: a plain line in the working tree's profile under
     `root`, or in the base's as last fetched, `origin/<base>` (`<base>` from
     the working tree's plain `base_branch` line, default main), else
-    `origin/HEAD`. False when neither says so or neither can be read."""
+    `origin/HEAD`. False when neither says so or neither can be read, or git
+takes longer than `GIT_SECONDS` in all."""
     text = _profile_text(root)
     if ticket_rule_from_text(text):
         return True
     m = _BASE_BRANCH.search((text or "").lstrip("\ufeff"))
     base = (m.group(1) if m else "") or "main"
+    deadline = time.monotonic() + GIT_SECONDS
     for name in (base, "HEAD"):
-        if not _BRANCH_NAME.match(name) or ".." in name:
+        ref = "refs/remotes/origin/" + name
+        # A branch's name only, as `profile.code_rule` takes it: "main~1" or
+        # "main@{1}" would read an older base.
+        if _git(root, deadline, "check-ref-format", ref) is None:
             continue
-        shown, exists = _git_show(root, "refs/remotes/origin/" + name)
-        if exists:
+        shown = _git(root, deadline, "show", ref + ":" + PROFILE.replace(os.sep, "/"))
+        if shown is not None or _git(root, deadline, "rev-parse", "--verify", "--quiet", ref + "^{commit}") is not None:
             return ticket_rule_from_text(shown)
     return False
 

@@ -37,12 +37,16 @@ SOLO = "ruleset = false\n"  # under [project]
 BRANCH_ONLY = ("branch-only", None, "claude/build-1")
 MISTYPED = ("mistyped", " Tikcet ", "feature")
 TICKET_ROLE = ("ticket", "ticket", "claude/build-1")
+TICKET_SPACED = ("spaced ticket", " Ticket ", "feature")
+CONDUCTOR = ("conductor", "conductor", "feature")
 PLANNING = [BRANCH_ONLY, MISTYPED]
 # (the working tree's profile, the base's) where nothing makes them planning sessions
 NOT_TICKET = {"any": (VALID + ANY, None), "absent": (VALID, None), "any on the base": (VALID, VALID + ANY)}
 # Every session that keeps today's fallback: WORKFLOW_ROLE=ticket under any answer,
 # and the branch-only and mistyped ones under "any" or with no answer.
-STILL_REFUSED = [(TICKET_ROLE, "ticket")] + [(s, a) for s in [TICKET_ROLE] + PLANNING for a in NOT_TICKET]
+STILL_REFUSED = [(s, "ticket") for s in (TICKET_ROLE, TICKET_SPACED, CONDUCTOR)] + [
+    (s, a) for s in [TICKET_ROLE] + PLANNING for a in NOT_TICKET]
+WHERE = ["tree", "base", "base over any"]
 
 
 def _git(root, *args):
@@ -71,8 +75,11 @@ def _project(root, tree, base=None, branch="claude/build-1"):
 
 
 def _rule_placed(where, tree=VALID, base=VALID):
-    """(the working tree's profile, the base's) with the ticket line in `where`."""
-    return (tree + TICKET, None) if where == "tree" else (tree, base + TICKET)
+    """(the working tree's profile, the base's) with the ticket line in `where`;
+    "base over any": the working tree's says "any", and the base's, stricter, wins."""
+    if where == "tree":
+        return tree + TICKET, None
+    return tree + (ANY if where == "base over any" else ""), base + TICKET
 
 
 def _answer(answer):
@@ -111,7 +118,7 @@ def _tree_for(failure, tree):
 
 
 @pytest.mark.parametrize("failure", ["error", "budget", "invalid", "malformed"])
-@pytest.mark.parametrize("where", ["tree", "base"])
+@pytest.mark.parametrize("where", WHERE)
 @pytest.mark.parametrize("session,role,branch", PLANNING)
 def test_a_branch_only_or_mistyped_session_gets_a_planning_sessions_fallback(tmp_path, monkeypatch, capsys, failure, where, session, role, branch):
     # With the line only in the base's, the base's profile doesn't parse when the
@@ -163,17 +170,34 @@ def test_workflow_role_ticket_is_refused_with_the_line_only_on_the_base(tmp_path
         assert _hook(monkeypatch, capsys, root, failure, WRITE, "ticket")["permissionDecision"] == "deny", failure
 
 
-def test_a_failure_outside_the_guard_takes_the_planning_fallback_too(tmp_path, monkeypatch, capsys):
-    root = _project(tmp_path / "proj", VALID + TICKET)
+@pytest.mark.parametrize("session,role,branch", PLANNING)
+def test_a_failure_outside_the_guard_takes_the_planning_fallback_too(tmp_path, monkeypatch, capsys, session, role, branch):
+    root = _project(tmp_path / "proj", VALID + TICKET, branch=branch)
 
     def boom(*a, **k):
         raise RuntimeError("disk-went-away")
 
     monkeypatch.setattr(cli, "_hook_guard", boom)
-    out = _hook(monkeypatch, capsys, root, None, PUSH, None)
+    out = _hook(monkeypatch, capsys, root, None, PUSH, role)
     assert out["permissionDecision"] == "ask" and "disk-went-away" in out["permissionDecisionReason"]
-    assert _hook(monkeypatch, capsys, root, None, WRITE, None) is None
+    assert _hook(monkeypatch, capsys, root, None, WRITE, role) is None
     assert _hook(monkeypatch, capsys, root, None, WRITE, "ticket")["permissionDecision"] == "deny"
+
+
+@pytest.mark.parametrize("role,answer,want", [
+    (None, "ticket", "ask"),  # without WORKFLOW_ROLE=ticket, at most a planning session either way
+    (None, "any", "deny"),  # the strictest, as before
+    ("ticket", "ticket", "deny"),
+])
+def test_a_budget_spent_before_the_role_is_read(tmp_path, monkeypatch, capsys, role, answer, want):
+    root = _project(tmp_path / "proj", _answer(answer)[0])
+
+    def slow(*a, **k):
+        raise cli._OverBudget()
+
+    monkeypatch.setattr(cli.roles, "role", slow)
+    out = _hook(monkeypatch, capsys, root, None, PUSH, role)
+    assert out["permissionDecision"] == want and "ran out of time" in out["permissionDecisionReason"]
 
 
 # The old-Python fallback's own entry ------------------------------------------
@@ -188,7 +212,7 @@ def _old(capsys, root, event, role):
     return json.loads(out)["hookSpecificOutput"] if out.strip() else None
 
 
-@pytest.mark.parametrize("where", ["tree", "base"])
+@pytest.mark.parametrize("where", WHERE)
 @pytest.mark.parametrize("session,role,branch", PLANNING)
 def test_old_python_gives_them_a_planning_sessions_fallback(tmp_path, capsys, where, session, role, branch):
     root = _project(tmp_path / "proj", *_rule_placed(where), branch=branch)
@@ -242,13 +266,29 @@ def _shell(tmp_path, kind, tree, base, branch):
 
 
 @pytest.mark.parametrize("kind", ["missing", "failing"])
-@pytest.mark.parametrize("where", ["tree", "base"])
+@pytest.mark.parametrize("where", WHERE)
 @pytest.mark.parametrize("session,role,branch", PLANNING)
 def test_without_python_they_get_a_planning_sessions_fallback(tmp_path, kind, where, session, role, branch):
     run = _shell(tmp_path, kind, *_rule_placed(where), branch)
     assert run(PUSH, role) == "ask", session
     assert run(dict(PUSH, permission_mode="dontAsk"), role) == "deny", session
     assert run(WRITE, role) is None, session
+
+
+@pytest.mark.parametrize("role", ["ticket\u00a0", "\nticket", "conductor\u00a0", "ticket\x1f"])
+def test_without_python_a_role_the_shell_trims_less_than_python_stays_refused(tmp_path, role):
+    # Python's strip reads each of these as a real role; sed doesn't trim them.
+    run = _shell(tmp_path, "missing", VALID + TICKET, None, "feature")
+    for event in (PUSH, WRITE):
+        assert run(event, role) == "deny", (role, event)
+
+
+def test_without_python_a_fallback_sh_from_before_the_rule_never_loosens(tmp_path):
+    # It ignores --ticket-rule and exits 0 silently: no word, no planning session.
+    run = _shell(tmp_path, "missing", VALID + TICKET, None, "claude/build-1")
+    (tmp_path / "proj" / vendor.HOOK_TAG).with_suffix("").joinpath("fallback.sh").write_text("cat >/dev/null; exit 0\n")
+    for event in (PUSH, WRITE):
+        assert run(event, None) == "deny", event
 
 
 @pytest.mark.parametrize("kind", ["missing", "failing"])
@@ -288,10 +328,17 @@ def test_the_line_is_read_as_the_profile_reads_it_with_and_without_python(tmp_pa
     root = _project(tmp_path / "proj", text, branch="main")
     assert fallback.ticket_rule(root) is want
     p = _shell_rule(root)
-    assert (p.returncode == 0, p.stdout) == (want, "")
+    assert (p.returncode, p.stdout, p.stderr) == (0, "ticket\n" if want else "", "")
 
 
-def _commit_with(root, profile):
+def test_the_shell_says_nothing_without_a_profile(tmp_path):
+    root = tmp_path / "proj"
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    p = _shell_rule(root)
+    assert (p.returncode, p.stdout, p.stderr) == (0, "", "")
+
+
+def _commit_with(root, profile, parent=None):
     """A commit whose tree holds only `.claude/workflow/profile.toml` as `profile`."""
     def git(stdin, *args):
         return subprocess.run(["git", "-C", str(root), *args], input=stdin, capture_output=True, text=True, check=True).stdout.strip()
@@ -299,30 +346,36 @@ def _commit_with(root, profile):
     obj = git(profile, "hash-object", "-w", "--stdin")
     for name, mode in (("profile.toml", "100644 blob"), ("workflow", "040000 tree"), (".claude", "040000 tree")):
         obj = git(f"{mode} {obj}\t{name}\n", "mktree")
-    return git(None, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit-tree", obj, "-m", "base")
+    return git(None, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit-tree", obj, "-m", "base",
+               *(["-p", parent] if parent else []))
 
 
-@pytest.mark.parametrize("base_line,ticket_on,others,want", [
-    ('base_branch = "trunk"\n', "trunk", [], True),  # the plain base_branch line names the base
-    ("", "main", [], True),  # default main
-    ('base_branch = ""\n', "main", [], True),  # empty: main
-    ('base_branch = "trunk"\n', "HEAD", [], True),  # no origin/trunk: origin/HEAD
-    ('base_branch = "main~1"\n', "HEAD", ["main"], True),  # not a branch's name: never read
-    ('base_branch = "trunk"\n', "main", ["trunk"], False),  # origin/trunk is the base, and it doesn't say so
-    ('base_branch = "trunk"\n', "HEAD", ["trunk"], False),  # nor does origin/HEAD count once origin/trunk exists
+@pytest.mark.parametrize("base_line,refs,want", [
+    # refs: each origin/<name> as last fetched, and whether its profile says "ticket"
+    ('base_branch = "trunk"\n', {"trunk": True}, True),  # the plain base_branch line names the base
+    ("", {"main": True}, True),  # default main
+    ('base_branch = ""\n', {"main": True}, True),  # empty: main
+    ('base_branch = "trunk"\n', {"HEAD": True}, True),  # no origin/trunk: origin/HEAD
+    # Not a branch's name: never read, though origin/main~1 exists and doesn't say so.
+    ('base_branch = "main~1"\n', {"main": "parent without", "HEAD": True}, True),
+    ('base_branch = "trunk"\n', {"main": True, "trunk": False}, False),  # origin/trunk is the base, and it doesn't say so
+    ('base_branch = "trunk"\n', {"HEAD": True, "trunk": False}, False),  # nor does origin/HEAD count once origin/trunk exists
+    ('base_branch = "главная"\n', {"главная": False, "HEAD": True}, False),  # a branch's name in any script
 ])
-def test_the_base_is_read_where_the_profile_names_it(tmp_path, base_line, ticket_on, others, want):
+def test_the_base_is_read_where_the_profile_names_it(tmp_path, base_line, refs, want):
     root = _project(tmp_path / "proj", VALID + base_line, branch="main")
-    ticket = _commit_with(root, VALID + TICKET)
-    if ticket_on == "HEAD":
-        _git(root, "update-ref", "refs/remotes/origin/elsewhere", ticket)
-        _git(root, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/elsewhere")
-    else:
-        _git(root, "update-ref", f"refs/remotes/origin/{ticket_on}", ticket)
-    for name in others:
-        _git(root, "update-ref", f"refs/remotes/origin/{name}", _commit_with(root, VALID))
+    for name, says in refs.items():
+        if says == "parent without":
+            sha = _commit_with(root, VALID + TICKET, parent=_commit_with(root, VALID))
+        else:
+            sha = _commit_with(root, VALID + (TICKET if says else ""))
+        if name == "HEAD":
+            _git(root, "update-ref", "refs/remotes/origin/elsewhere", sha)
+            _git(root, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/elsewhere")
+        else:
+            _git(root, "update-ref", f"refs/remotes/origin/{name}", sha)
     assert fallback.ticket_rule(root) is want
-    assert (_shell_rule(root).returncode == 0) is want
+    assert (_shell_rule(root).stdout == "ticket\n") is want
 
 
 def test_the_fallbacks_say_so():
