@@ -17,11 +17,51 @@
 # - everything else is left alone: nothing is printed.
 # Only the command is read, never the words elsewhere in the event (a file's
 # content). Matched word by word (split, then compare), so it stays linear on
-# any input. POSIX sh and awk only: it runs where nothing else of the kit can.
+# any input. POSIX sh, awk and git only: it runs where nothing else of the kit can.
 # It never prints anything but a decision, and the hook command exits 0 after it.
+#
+# `fallback.sh --ticket-rule` (#342) reads no event: it prints `ticket` when
+# only ticket sessions write code, as `fallback.ticket_rule` reads it (a plain
+# `code_writers = "ticket"` line in the working tree's profile, or in the
+# base's as last fetched: `origin/<base_branch>`, `<base_branch>` from its
+# first plain line, default main, else `origin/HEAD`), and nothing otherwise.
+# The hook command asks it before refusing every tool to a session that is a
+# ticket session only by its branch, or by a WORKFLOW_ROLE that isn't a role:
+# on `ticket` that session gets this fallback, as a planning session. A word,
+# not the exit status, since a fallback.sh from before #342 exits 0 here too.
 
 PROFILE_TOML="${CLAUDE_PROJECT_DIR:-.}/.claude/workflow/profile.toml"
 export PROFILE_TOML
+if [ "${1:-}" = --ticket-rule ]; then
+    # A profile on stdin: "ticket" when a plain line says so, else "base <its first plain base_branch>".
+    plain() {
+        awk '
+        BEGIN { bom = "\357\273\277" }
+        NR == 1 { while (index($0, bom) == 1) $0 = substr($0, length(bom) + 1) }
+        /^[ \t]*code_writers[ \t]*=[ \t]*"ticket"/ { ticket = 1 }
+        !seen && /^[ \t]*base_branch[ \t]*=[ \t]*("[^"]*"|\047[^\047]*\047)/ {
+            base = $0; sub(/^[ \t]*base_branch[ \t]*=[ \t]*/, "", base)
+            q = substr(base, 1, 1); base = substr(base, 2); base = substr(base, 1, index(base, q) - 1); seen = 1
+        }
+        END { if (ticket) print "ticket"; else print "base " base }'
+    }
+    HERE=$({ plain < "$PROFILE_TOML"; } 2>/dev/null) || HERE="base "
+    [ "$HERE" = ticket ] && { echo ticket; exit 0; }
+    BASE=${HERE#base }
+    for NAME in "${BASE:-main}" HEAD; do
+        REF="refs/remotes/origin/$NAME"
+        # A branch's name only, as `profile.code_rule` takes it: "main~1" or
+        # "main@{1}" would read an older base.
+        git check-ref-format "$REF" 2>/dev/null || continue
+        # Never a fetch: a partial clone's missing object is a failure, not a download.
+        if THERE=$(GIT_NO_LAZY_FETCH=1 git -C "${CLAUDE_PROJECT_DIR:-.}" show "$REF:.claude/workflow/profile.toml" 2>/dev/null); then
+            [ "$(printf '%s\n' "$THERE" | plain)" = ticket ] && echo ticket
+            exit 0
+        fi
+        git -C "${CLAUDE_PROJECT_DIR:-.}" rev-parse --verify --quiet "$REF^{commit}" >/dev/null 2>&1 && exit 0
+    done
+    exit 0
+fi
 exec awk '
 BEGIN { RS = "\001" }  # a JSON event holds no raw control characters: read it whole
 { ev = ev $0 }
