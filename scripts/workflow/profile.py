@@ -796,7 +796,10 @@ def _code_warnings(profile: Profile) -> list[str]:
     """`profile check`'s warnings about `code_writers` and `code_paths`."""
     w: list[str] = []
     if profile.code_writers == "ticket" and not profile.code_paths:
-        w.append('guard.code_writers is "ticket" but guard.code_paths is empty: no file counts as code, so no write is refused as code')
+        w.append(
+            'guard.code_writers is "ticket" but guard.code_paths is empty: this profile names no code '
+            "(only the base branch's code paths, if any, count)"
+        )
     if profile.code_writers is not None:
         text = _tree_text(profile.root)
         if text is not None and profile.code_writers not in _plain_values(text):

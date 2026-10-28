@@ -14,6 +14,9 @@ from conftest import KIT, git
 from workflow import cli
 from workflow import profile as profile_mod
 
+# The tests' repositories never see the developer's own git configuration.
+pytestmark = pytest.mark.usefixtures("_no_user_git_config")
+
 HEAD = '[project]\nname = "demo"\nrepo = "acme/demo"\n'
 PROFILE = ".claude/workflow/profile.toml"
 
@@ -488,3 +491,22 @@ def test_the_conductor_follows_a_planning_sessions_rules_and_isnt_called_one():
     assert "the conductor follows a planning session's rules" in " ".join(
         line.lstrip("# ").strip() for line in tpl[:at].splitlines()[-6:]
     )
+
+
+# Round 3's findings
+
+
+def test_the_empty_list_warning_is_about_this_profile_alone(tmp_path, monkeypatch, capsys):
+    """The base's code paths still count (they are joined), so the warning
+    says only that this profile names none."""
+    root = _checkout(tmp_path, base=TICKET, tree=_guard('code_writers = "ticket"'))
+    (w,) = [w for w in _warnings(monkeypatch, capsys, root) if "code_paths is empty" in w]
+    assert "this profile names no code" in w and "no write is refused" not in w
+    assert profile_mod.code_rule(root).code_paths == ["src/**"]
+    assert "nothing counts as code" not in _row((KIT / "docs/profile.md").read_text(), "code_paths")
+
+
+def test_an_invalid_working_trees_base_branch_still_names_the_base(tmp_path, monkeypatch, capsys):
+    tree = HEAD.replace('repo = "acme/demo"\n', 'repo = "acme/demo"\nbase_branch = "trunk"\n') + "[guard]\nunknown_key = 1\n"
+    root = _checkout(tmp_path, base=TICKET, tree=tree, base_ref="trunk")
+    assert _status(monkeypatch, capsys, root)["code_writers"] == "ticket"
