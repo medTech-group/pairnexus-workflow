@@ -144,6 +144,10 @@ def test_the_briefing_starts_from_the_base_branch_by_default(profile):
         ("Starts from: _feature/x_", "feature/x"),
         ("Starts from: deps/bump_", "deps/bump_"),
         ("Starts from: _deps/bump", "_deps/bump"),
+        ("_Starts from_: fix_", "fix_"),
+        ("Starts from: ` feature/x `", "feature/x"),
+        ("<!-- old -->Starts from: feature/x", "feature/x"),
+        ("<!--\nold\n-->Starts from: feature/x", "feature/x"),
         # Near misses read all the same, never a silent start from the base branch.
         ("**Starts from**: feature/x", "feature/x"),
         ("- Starts from: feature/x", "feature/x"),
@@ -227,11 +231,22 @@ def test_a_body_that_isnt_text_starts_from_the_base(profile, body):
     ["", "-x", "a..b", "`a b;rm`", "`$(x)`", "refs/heads/../x", "x.lock", "pull/12/", "the base branch",
      "the contributor's branch", "feature/.hidden", "feature//x", "`feature/x.`", "feature/café", "``x``",
      "none", "n/a", "N/A", "TBD", "HEAD", "the, base branch", "see: the PR", "`a` or `b`", "`feature/x`, `feature/y`",
-     "feature/x, the contributor's branch", "x" * 201],
+     "feature/x, the contributor's branch", "x" * 201, "release*"],
 )
 def test_a_starts_from_line_naming_no_branch_is_refused(profile, value):
     with pytest.raises(RenderError, match='"Starts from:" line names no branch'):
         _briefing(profile, f"Starts from: {value}\n")
+
+
+def test_nested_quote_markers_are_read_in_linear_time(profile):
+    """A line of many `> ` markers that isn't the label never backtracks: 60 levels
+    took minutes when the quote markers sat inside the label's pattern."""
+    import time
+
+    body = "Area: build\n\n" + "> " * 60 + "quoted reply text\n" + "> " * 20000 + "x\n"
+    started = time.monotonic()
+    assert "**Starts from:** `main`, the base branch." in _briefing(profile, body)
+    assert time.monotonic() - started < 5
 
 
 def test_two_starts_from_lines_naming_different_branches_are_refused(profile):

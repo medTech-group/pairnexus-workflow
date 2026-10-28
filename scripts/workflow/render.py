@@ -75,14 +75,17 @@ class RenderError(ValueError):
     pass
 
 
-# The label on a line of its own: after any quote marker, an indent of at most 3
-# columns, then any list, checkbox or heading marker, bold or italic, the colon
-# inside or outside them, in any case.
+# The label on a line of its own (quote markers already taken off): an indent of
+# at most 3 columns, then any list, checkbox or heading marker, bold or italic,
+# the colon inside or outside them, in any case.
 _STARTS_FROM = re.compile(
-    r"^(?: {0,3}> ?)* {0,3}(?:(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?|#{1,6}[ \t]+)*"
-    r"([*_]{0,3})starts[ \t]+from[*_]{0,3}[ \t]*[:：][*_]{0,3}[ \t]*(.*)$",
+    r"^ {0,3}(?:(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?|#{1,6}[ \t]+)*"
+    r"([*_]{0,3})starts[ \t]+from([*_]{0,3})[ \t]*[:\uff1a]([*_]{0,3})[ \t]*(.*)$",
     re.I,
 )
+# The quote markers that open a line, up to the last `>` and one space after it:
+# one pass, never backtracking more than the line's length.
+_QUOTE = re.compile(r"^[ >]*>[ ]?")
 # A branch name or `pull/<n>/head`: no option, no `..`, nothing a shell reads.
 _REF = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._/-]{0,199}")
 _REF_WORDS = "one branch name of letters, digits and `._/-` (at most 200), or `pull/<n>/head`"
@@ -90,46 +93,49 @@ _PLACEHOLDERS = {"none", "n/a", "na", "tbd", "todo", "head", "same", "base"}
 
 
 def _prose_lines(body: str):
-    """The body's lines outside fenced code and HTML comments that start a line.
-    A fence opens with three or more backticks (none in its info string) or
-    tildes, indented at most 3 columns, and closes on a fence of the same kind at
-    least as long, or at the end."""
+    """The body's lines outside fenced code and HTML comments that start a line,
+    each without its quote markers. A fence opens with three or more backticks
+    (none in its info string) or tildes, indented at most 3 columns, and closes
+    on a fence of the same kind at least as long, or at the end. Text after a
+    comment's `-->` on its own line is read."""
     fence, comment = None, False
     for line in body.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
-        line = line.expandtabs(4)
-        bare = re.sub(r"^(?: {0,3}> ?)*", "", line)  # a fence or comment in a quote counts too
+        line = _QUOTE.sub("", line.expandtabs(4))  # a fence or comment in a quote counts too
         if comment:
-            comment = "-->" not in line
-            continue
+            if "-->" not in line:
+                continue
+            comment, line = False, line.split("-->", 1)[1]
         if fence:
-            m = re.match(r" {0,3}(`{3,}|~{3,})[ \t]*$", bare)
+            m = re.match(r" {0,3}(`{3,}|~{3,})[ \t]*$", line)
             if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence):
                 fence = None
             continue
-        m = re.match(r" {0,3}(`{3,}(?=[^`]*$)|~{3,})", bare)
+        m = re.match(r" {0,3}(`{3,}(?=[^`]*$)|~{3,})", line)
         if m:
             fence = m.group(1)
             continue
-        if re.match(r" {0,3}<!--", bare):
-            comment = "-->" not in bare.split("<!--", 1)[1]
-            continue
+        if re.match(r" {0,3}<!--", line):
+            rest = line.split("<!--", 1)[1]
+            if "-->" not in rest:
+                comment = True
+                continue
+            line = rest.split("-->", 1)[1]
         yield line
 
 
 def _ref_of(value: str, emphasis: str = "") -> str | None:
     """The one branch a "Starts from:" line's value names, or None: a word, or a
     word in backticks, then nothing but a full stop or a remark in brackets.
-    `emphasis` is the bold or italic opened before the label, closed after the
-    value; a value in a pair of its own is unwrapped too. A `_` at either end of
-    a branch name otherwise stays: it is part of the name."""
+    `emphasis` is a bold or italic opened before the label and left open by it,
+    so closed after the value; a value in a pair of its own is unwrapped too. A
+    `_` at either end of a branch name otherwise stays: it is part of the name."""
     value = value.strip()
     if emphasis and value.endswith(emphasis):
         value = value[: -len(emphasis)].rstrip()
     wrapped = re.fullmatch(r"([*_]{1,3})(.+)\1", value)
     if wrapped:
-        value = wrapped.group(2)
-    value = value.strip(" \t*")  # a `*` is never in a branch name
-    m = re.fullmatch(r"(?:`([^`\s]+)`|([^`\s]+?))\.?(?:[ \t]+\(.*\))?", value)
+        value = wrapped.group(2).strip()
+    m = re.fullmatch(r"(?:`[ \t]*([^`\s]+)[ \t]*`|([^`\s]+?))\.?(?:[ \t]+\(.*\))?", value)
     if not m:
         return None
     ref = m.group(1) or m.group(2)
@@ -156,8 +162,9 @@ def _starts_from(ticket: dict) -> str | None:
         m = _STARTS_FROM.match(line)
         if not m:
             continue
-        value = m.group(2).strip()
-        ref = _ref_of(value, m.group(1))
+        value = m.group(4).strip()
+        # Emphasis opened before the label and not closed around it closes after the value.
+        ref = _ref_of(value, "" if m.group(2) or m.group(3) else m.group(1))
         if ref is None:
             raise RenderError(
                 f'#{ticket.get("number")}\'s "Starts from:" line names no branch: {value[:80]!r}; '
