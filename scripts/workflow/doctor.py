@@ -10,7 +10,8 @@ Doctor never changes anything (#27): it reads files and runs `python3`,
 `claude --version`, `gh api` (GETs only, when no file is given: for the
 GitHub lines, the checks that ran on the base branch, the open pull requests,
 whether a run has been made, and the merge queue's inputs) and `git rev-parse`
-and `git show` (the workflow files as they are on `origin/<base>`, #246),
+and `git show` (the workflow files as they are on `origin/<base>`, #246, and
+the base's profile, with `git check-ref-format`, for who writes code, #344),
 nothing else. It reads files only through
 `_read_text` (and `_read_value`, `_read_json` on it), `_file` and
 `_hash_file`, which never raise and never wait on a pipe; only a file given as
@@ -77,6 +78,8 @@ LABELS = {"gap": "gap", "cant_check": "can't check", "note": "note", "fine": "fi
 # names: "Protect `main`" is the upgrade's name whatever the base branch).
 OFFERS = {"protect_main": "Protect `main`", "restore_protection": "Restore protection", "set_up_unattended_runs": "Set up unattended runs",
           "require_checks": "Require these checks", "add_try_it_links": "Add try-it links", "use_merge_queue": "Use a merge queue"}
+# The upgrade-setup step that answers `guard.code_writers` (#338), named by a fix, not offered.
+CHOOSE_WRITERS = "Choose who writes code"
 
 PYTHON_MIN = (3, 11)
 # The oldest Claude Code that honours the guard's `onFailure: "block"` (#57,
@@ -963,6 +966,54 @@ def check_ruleset(i: Inputs) -> list[Line]:
         f"Nothing to do; ask Claude to \"{upgrade}\" if GitHub doesn't protect `{base}` yet.",
         "Nothing to do; set project.ruleset to true or false to say which.",
     ))]
+
+
+@_check("The kit", "kit.code_writers")
+def check_code_writers(i: Inputs) -> list[Line]:
+    """Who writes code, by the profile that counts (`profile.code_rule`, #339):
+    a note while unanswered, and under "ticket" while no ticket environment
+    is named, worded for plugin mode, which has no unattended runs (#344)."""
+    g, id_ = "The kit", "kit.code_writers"
+    rule = profile_mod.code_rule(i.root)
+    if rule.code_writers is None and i.profile is None:
+        return [Line(g, id_, "cant_check", Words(
+            "Can't tell who writes code in this project until the kit's profile can be read.",
+            "guard.code_writers unknown: no readable profile.",
+        ), PROFILE_FIRST if i.profile_error else SET_UP_FIRST)]
+    if rule.code_writers is None:
+        return [Line(g, id_, "note", Words(
+            "Nobody has chosen who writes code in this project yet, so any session may, as before.",
+            "guard.code_writers: not set (any session writes code, as before).",
+        ), Words(
+            f"Ask Claude to \"{CHOOSE_WRITERS}\": only ticket sessions (recommended), or any session.",
+            f"Run the upgrade-setup skill's \"{CHOOSE_WRITERS}\": a pull request setting guard.code_writers to \"ticket\" or \"any\".",
+        ))]
+    counts = rule.profile or i.profile
+    env = counts.ticket_environment if counts else ""
+    if rule.code_writers == "any" or env:
+        return [Line(g, id_, "fine", Words(
+            "Any session may write code in this project, chosen on purpose." if rule.code_writers == "any"
+            else f"Only ticket sessions write code in this project (their cloud environment is {_named(env)}).",
+            f"guard.code_writers = \"{rule.code_writers}\"" + (f"; run.ticket_environment = {_named(env)}." if env and rule.code_writers == "ticket" else "."),
+        ))]
+    if not i.vendored:
+        return [Line(g, id_, "note", Words(
+            "Only ticket sessions write code in this project, and with the kit as a plugin there are no unattended runs, "
+            "so code is written only in a session you start on your computer with `WORKFLOW_ROLE=ticket`. "
+            "The rule holds only where the plugin is installed: a cloud session has no kit and no guard.",
+            "guard.code_writers = \"ticket\" in plugin mode (unattended runs need the vendored kit): code is written only in a local session "
+            "with WORKFLOW_ROLE=ticket, and the rule holds only where the plugin is installed (a cloud session has no kit and no guard).",
+        ), Words(
+            "To build a ticket, start Claude on your computer, in this project's folder, with `WORKFLOW_ROLE=ticket` set.",
+            "Build tickets in a local session started with WORKFLOW_ROLE=ticket.",
+        ))]
+    return [Line(g, id_, "note", Words(
+        "Only ticket sessions write code in this project, and no cloud environment for them is named yet, so nothing writes code until one exists.",
+        "guard.code_writers = \"ticket\" and run.ticket_environment is empty: nothing writes code until a ticket environment exists.",
+    ), Words(
+        f"Ask Claude to \"{SET_UP_RUNS}\": it walks you through making that environment. Or make it by hand (docs/enforcement.md §2).",
+        f"upgrade-setup's \"{SET_UP_RUNS}\", or by hand (docs/enforcement.md §2), then set run.ticket_environment.",
+    ), offer="set_up_unattended_runs")]
 
 
 # ---------- GitHub ----------
@@ -3380,8 +3431,8 @@ def _previews_block(i: Inputs, page: str, configs: list[str]) -> Line:
 # Every check, in the order its lines show when they are equally serious: the
 # profile first, since setting the kit up comes before anything it then checks.
 CHECKS = [check_python, check_claude_code, check_profile, check_install, check_vendor, check_experience, check_ruleset,
-          check_protection, check_required_checks, check_ruleset_rules, check_merge_settings, check_codeowners,
-          check_environments, check_environment_contents, check_previews]
+          check_code_writers, check_protection, check_required_checks, check_ruleset_rules, check_merge_settings,
+          check_codeowners, check_environments, check_environment_contents, check_previews]
 # The checks that read only this computer and the checkout: no `gh`, no
 # network, and nothing a session hands in. `workflow status` runs these (#62),
 # so the guided start can tell, with no network call, whether to offer "check
