@@ -146,6 +146,8 @@ def test_the_briefing_starts_from_the_base_branch_by_default(profile):
         ("Starts from: _deps/bump", "_deps/bump"),
         ("__Starts from: feature/x__ (the PR's)", "feature/x"),
         ("_Starts from: feature/x_.", "feature/x"),
+        ("_Starts from: `fix_`_", "fix_"),
+        ("_Starts from: `deps/bump_`", "deps/bump_"),
         ("_Starts from_: fix_", "fix_"),
         ("Starts from: ` feature/x `", "feature/x"),
         ("<!-- old -->Starts from: feature/x", "feature/x"),
@@ -395,7 +397,8 @@ def test_the_revert_pushes_in_a_command_of_its_own():
     assert "Push it in a command of its own, never chained with the revert" in text
     assert "A revert that doesn't apply cleanly you never resolve: resolving it is writing code" in text
     assert 'Add `"result": "not made: <why>"` to its ledger entry and the same to `for_owner`' in text
-    assert 'add `"result": "opened: #<PR>"` to its ledger entry (`"made: #<PR>"` once it merges)' in text
+    assert 'add `"result": "opened: #<PR>"` to its ledger entry; at each check-in, and before the report' in text
+    assert 'once its pull request has merged, by you or the owner, change it to `"made: #<PR>"`' in text
 
 
 def test_a_not_a_ticket_session_post_sets_the_row_aside_and_winds_down():
@@ -429,17 +432,20 @@ def test_also_requeues_a_ticket_whose_pull_request_needs_a_code_fix():
         '**"also #<n>" for a ticket whose open pull request needs a code fix**',
         "A ticket of an earlier run, not in this run's state, whose open pull request is on a `run.ticket_branch` branch, is adopted the same way",
         "take its line out of `for_owner`",
-        "any ticket of the run that isn't merged, `queued`, `running` or `in-review` alike",
+        "a `queued`, `running` or `in-review` ticket of the run alike",
+        "if it is in the merge queue, take it out (GitHub's **Remove from queue**",
+        "A ticket that merged before this check-in read the comment isn't requeued: add \"#n merged before its fix (#PR): the fix needs a ticket of its own\" to `for_owner`",
+        "it will need the owner's \"One more pass\"",
         "At once, before anything else at this check-in, record its pull request's head SHA as the ticket's `requeued_head` and write the state",
-        "and disarm auto-merge on it if it is armed",
+        "disarm auto-merge on it if it is armed",
         "once it is archived set `requeued_head` to the branch's head then; that stop adds no attempt and never labels it `needs-human`",
-        "While the run is stopping or winding down, set `requeued_head` and disarm auto-merge all the same, stop a running session safely, but start none: mark the ticket `in-review`",
+        "While the run is stopping or winding down, hold it all the same",
+        "once any session of it is archived, mark the ticket `in-review` rather than `queued` (no attempt added, never `needs-human`)",
         "the fix asked for (the owner's words, or the link to the comment or finding that asks for it)",
         "merges, arms auto-merge, queues or says it's ready only once that fix is pushed and reviewed",
         "requeue it",
         "that pull request as what a previous attempt left (its branch, number and head SHA)",
         "the fix lands on the same pull request",
-        "nor is one at the cap",
     ):
         assert part in step3, part
     named = _section(text, "**A run in progress that this session conducts**", "**A run in progress that another session conducts")
@@ -450,6 +456,14 @@ def test_also_requeues_a_ticket_whose_pull_request_needs_a_code_fix():
     ) in named
 
 
+def test_an_also_is_read_before_the_run_stops():
+    text = _flat(_text("skills/conductor/SKILL.md"))
+    step0 = _section(text, "**0. Stopping already?**", "**1. Read the state.**")
+    assert "first read the owner's new comments (step 3's *Comments*) for an \"also #<n>\" asking a code fix" in step0
+    stop = _section(text, "## Stop the run", "2. **Sessions.**")
+    assert "First read the owner's new comments (check-in step 3's *Comments*) for an \"also #<n>\" asking a code fix" in stop
+
+
 def test_a_requeued_pull_request_never_merges_before_its_fix():
     row = _section(_text("skills/conductor/SKILL.md"), "| **A requeued ticket whose fix hasn't landed**", "\n")
     for part in (
@@ -458,7 +472,8 @@ def test_a_requeued_pull_request_never_merges_before_its_fix():
         "never merge it, update its branch, arm auto-merge or queue it, and disarm auto-merge if it is armed",
         "Clear `requeued_head` only once the fix is there",
         "`WF merge-check` gives no review reason on the head (a clean review covers it, carried over a merge of the base or not)",
-        "`gh api repos/<repo>/compare/<requeued_head>...<head> --jq '[.commits[] | select(.parents | length == 1)] | length'` is above 0",
+        "`git log --first-parent --no-merges --oneline <requeued_head>..origin/<branch>` lists one",
+        "the base's commits brought in by a merge never count",
     ):
         assert part in row, part
     s = state.empty(_charter())
@@ -496,7 +511,7 @@ def test_run_reports_revert_line():
 def test_run_report_lists_a_revert_not_made_as_not_made():
     text = _flat(_text("skills/run-report/SKILL.md"))
     assert (
-        'A revert entry gives its `result`: only one whose `result` says "made" is a change to confirm or undo; any other '
+        'A revert entry gives its `result`: only one whose `result` starts with "made" is a change to confirm or undo; any other '
         '("opened", "not made") is listed as not made'
     ) in text
 

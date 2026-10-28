@@ -130,7 +130,8 @@ def _ref_of(value: str, emphasis: str = "") -> str | None:
     so closed after the value; a value in a pair of its own is unwrapped too. A
     `_` at either end of a branch name otherwise stays: it is part of the name."""
     value = value.strip()
-    if emphasis and value.endswith(emphasis):
+    closed = bool(emphasis) and value.endswith(emphasis)
+    if closed:
         value = value[: -len(emphasis)].rstrip()
     wrapped = re.fullmatch(r"([*_]{1,3})(.+)\1", value)
     if wrapped:
@@ -139,7 +140,7 @@ def _ref_of(value: str, emphasis: str = "") -> str | None:
     if not m:
         return None
     ref = m.group(1) or m.group(2)
-    if emphasis and ref.endswith(emphasis):  # closed before a full stop or a remark
+    if emphasis and not closed and m.group(2) and ref.endswith(emphasis):  # closed before a full stop or a remark
         ref = ref[: -len(emphasis)]
     if ref.startswith("refs/heads/"):
         ref = ref[len("refs/heads/"):]
