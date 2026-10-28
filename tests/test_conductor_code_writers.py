@@ -443,7 +443,7 @@ def test_also_requeues_a_ticket_whose_pull_request_needs_a_code_fix():
         "once it is archived set `requeued_head` to the branch's head then; that stop adds no attempt and never labels it `needs-human`",
         "While the run is stopping or winding down, hold it all the same",
         "once any session of it is archived, mark the ticket `in-review` rather than `queued` (no attempt added, never `needs-human`; it counts as settled for \"Done\")",
-        "Where that can't be done here, say so on the tracking issue and don't requeue it yet: while it stays in the queue, start no session for it",
+        "Where that can't be done here, say so on the tracking issue and in `for_owner`, and requeue it all the same: the session's first push takes it out of the queue",
         "the fix asked for (the owner's words, or the link to the comment or finding that asks for it)",
         "merges, arms auto-merge, queues or says it's ready only once that fix is pushed and reviewed",
         "requeue it",
@@ -463,11 +463,16 @@ def test_an_also_is_read_before_the_run_stops():
     text = _flat(_text("skills/conductor/SKILL.md"))
     step0 = _section(text, "**0. Stopping already?**", "**1. Read the state.**")
     assert "first read the owner's new comments as step 3's *Comments* does (applying each amendment, and setting `comments_read_through`)" in step0
+    assert "A run already stopping doesn't start again: reply to a change it won't act on" in step0
     stop = _section(text, "## Stop the run", "2. **Sessions.**")
     assert "First read the owner's new comments as check-in step 3's *Comments* does" in stop
-    assert "but when the reason would be `done`, it requeues the ticket instead and the run goes on (no stop)" in stop
+    assert (
+        "Then check step 2's \"Stop now\", \"Wind down\" and \"Done\" again with what they changed (an extended end time, "
+        "a ticket added or requeued), and stop only if one still holds"
+    ) in stop
     report = _section(text, "4. **The report.**", "5. **Wind up.**")
     assert "and at each revert still `opened`" in report
+    assert "at each ticket with `requeued_head` (its row's \"merged anyway\")" in report
 
 
 def test_a_requeued_pull_request_never_merges_before_its_fix():
@@ -478,6 +483,7 @@ def test_a_requeued_pull_request_never_merges_before_its_fix():
         "never merge it, update its branch, arm auto-merge or queue it, and disarm auto-merge if it is armed",
         "Clear `requeued_head` only once the fix is there",
         "If its pull request merged anyway (the merge queue took it, or a session merged it), take the **Merged** row's steps",
+        "(it stays `merged`: interrupt and archive any session of it as that row does, never through \"Stopping a stuck session safely\"), clear `requeued_head`, and add \"#n merged before its fix (#PR): the fix needs a ticket of its own\" to `for_owner`",
         "`WF merge-check` gives no review reason on the head (a clean review covers it, carried over a merge of the base or not)",
         "`git log --first-parent --no-merges --oneline <requeued_head>..origin/<branch>` lists one",
         "the base's commits brought in by a merge never count",
