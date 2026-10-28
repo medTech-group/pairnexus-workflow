@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+**The guard refuses code writes outside ticket sessions under `code_writers = "ticket"`** (#340, part of #338). Under `"any"`, or with `code_writers` absent, nothing changes.
+
+- **Refused, never asked, in every permission mode,** in every session but one with `WORKFLOW_ROLE=ticket` (the conductor included): `Write`, `Edit`, `MultiEdit` and `NotebookEdit` on a code path of the project or of one of Claude Code's worktrees of it; a Bash write whose target the guard places on a code path (redirects, `tee`, `sed -i`, `cp`, `mv`, `rm` and the rest), and `git apply` and `git am`; PowerShell whose text names a code path, even to read it ("run it through Bash").
+- **A code path** is a match of `code_paths` that isn't protected too, under `.workflow/`, or an untracked file git ignores (judged in its own checkout). A target the guard can't place is left alone, and so are git commands that check out committed content (`switch`, `checkout`, `restore`, `merge`, `pull` …), docs, protected paths, running commands, and GitHub's direct file changes.
+- **The refusal** names the path and the way instead: a conductor run (**Run it unattended**), **Set up unattended runs** while no ticket environment is named, in plugin mode a session on the owner's computer with `WORKFLOW_ROLE=ticket`, or changing `guard.code_writers` in a pull request. The conductor's names a `workflow:infra` ticket with `conductor_fixes` on, else `for_owner`.
+- **A session that is a ticket session only by its branch, or by a mistyped `WORKFLOW_ROLE`,** gets an attended session's rules in full under `"ticket"`: it may write protected paths, but not code, and its refusals call it an attended session.
+- **Docs:** `docs/enforcement.md` §4, "Who writes code", with the seatbelt's limits. Tests: `tests/test_guard_code_writers.py`.
+- **For projects updating:** nothing to do until the profile says `code_writers = "ticket"`.
+
 **The profile can say who writes code: `code_writers` and `code_paths`** (#339, part of #338). Nothing reads them yet to refuse anything: the guard, the hooks and the skills that follow them come in #340 to #349.
 
 - **`[guard] code_writers`:** `"ticket"` (only ticket sessions, `WORKFLOW_ROLE=ticket`) or `"any"`; absent means not answered, as before. Any other value or type is a `profile check` error. Written as a plain `code_writers = "ticket"` line, since it is read from that line when the profile doesn't parse; `profile check` warns on any other spelling.

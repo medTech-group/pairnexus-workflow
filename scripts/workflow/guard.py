@@ -97,6 +97,13 @@ Labels, state changes, `--delete-last` and merges aren't posts. The marker is
 looked for in the command's texts as a whole: a seatbelt, not proof per post.
 Attended sessions are not asked.
 
+**Who writes code** (#340): under `code_writers = "ticket"` (`profile.code_rule`,
+the stricter of the working tree's and the base's profile), only a session with
+`WORKFLOW_ROLE=ticket` writes code. Every other session is refused, never asked,
+a write the guard places on a code path (`_code_session`, `_shell_code`); a
+session that is a ticket session only by its branch or a mistyped role gets an
+attended session's rules.
+
 What it can't see (a script file written then run, a program's own network
 calls, variables' values, obfuscation it doesn't recognise) is why the ruleset
 and the environment come first.
