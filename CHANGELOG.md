@@ -8,7 +8,7 @@
 - **`update-workflow`** asks the same once, for a profile without `code_writers`, and writes the answer in the update's pull request; a skipped question writes nothing, as its experience question does, and each later update asks once again.
 - **`upgrade-setup`** gains its sixth path, "Choose who writes code": the question and the code paths, then a pull request changing `guard.code_writers` and `guard.code_paths` for the owner to merge. A loosening counts only once it merges, since the base branch's `"ticket"` wins.
 - **`check-setup`** offers "Choose who writes code" while doctor's `kit.code_writers` note says it is unanswered (in plugin mode, that is where it is asked), and its ticket-session line says that under `code_writers = "ticket"` a session that is a ticket session only by its branch or a mistyped `WORKFLOW_ROLE` is a planning session, which may run it.
-- Set-up, the update and "Choose who writes code" push in a command of their own, never chained with the commit (answer 41 on #338).
+- Set-up, the update and every `upgrade-setup` path push in a command of their own, never chained with the commit (answer 41 on #338).
 - Tests: `tests/test_code_writers_setup.py`.
 - **For projects updating:** the update asks who writes code once, while the profile doesn't answer it.
 

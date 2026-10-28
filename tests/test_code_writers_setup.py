@@ -13,7 +13,6 @@ import tomllib
 
 import pytest
 
-from changelog_notes import since_0110
 from conftest import KIT
 from test_doctor import _lines, _prof, _project, _report
 from workflow import doctor
@@ -203,7 +202,27 @@ def test_choose_who_writes_code_asks_the_same_question_recommending_ticket_sessi
     _asks_first_ticket_sessions(q)
     assert "always first, whatever the answer now" in q
     assert "**Not now**" in q
-    assert "no ticket environment" in q and "In plugin mode" in q
+    # Worded once, in set-up's words, which ship beside it (vendored and plugin).
+    assert "no ticket environment" in q and "plugin mode" in q and "in set-up's words" in q
+    assert "`.claude/skills/setup-workflow/SKILL.md` (vendored)" in q
+    assert "`<this skill's directory>/../setup-workflow/SKILL.md` (plugin)" in q
+    assert (KIT / "skills/upgrade-setup/../setup-workflow/SKILL.md").is_file()
+
+
+def test_the_answers_are_worded_in_one_place():
+    # Set-up words the answers; the update and "Choose who writes code" point at them.
+    setup = _setup_writers()
+    for text in (_update_step("Who writes code"), _section(_part(), "2. The question")):
+        assert "in set-up's words" in text
+        assert "may write code" not in text  # the answers' words aren't copied
+    assert "Any session may write code, as before." in setup
+
+
+def test_what_a_person_reads_never_says_planning_session_yet():
+    # The glossary has no "Planning session" until #275 raises its cap (spec #338).
+    for text in (_setup_writers(), _update_step("Who writes code"), _part(), _para(_text(SETUP), "**The code paths,**"),
+                 _section(_text(SETUP), "4. The pull request")):
+        assert "planning session" not in text.lower()
 
 
 def test_choose_who_writes_code_ends_in_a_pull_request_the_owner_merges():
@@ -213,7 +232,7 @@ def test_choose_who_writes_code_ends_in_a_pull_request_the_owner_merges():
     assert "`code_paths`" in pr and "Change nothing else" in pr
     assert "`WF profile check` passes" in pr
     assert "in a command of its own" in pr and CHAINED in pr
-    assert "open the pull request" in pr.lower()
+    assert "open the pull request" in pr.lower() and '("Pushing")' in pr
     assert "never merge it, or enable auto-merge on it, yourself" in pr
     # A loosening counts only once it merges: the base's "ticket" wins until then.
     assert "**Loosening waits for the merge.**" in pr
@@ -221,15 +240,26 @@ def test_choose_who_writes_code_ends_in_a_pull_request_the_owner_merges():
 
 def test_choose_who_writes_code_proposes_code_paths_as_set_up_does():
     paths = _section(_part(), "3. The code paths")
-    assert "as set-up does" in paths and "for the person to confirm" in paths
+    assert "as set-up does" in paths and "for the person to confirm" in paths and "The code paths" in paths
     assert "the profile's own list" in paths
+
+
+def test_every_upgrade_path_pushes_in_a_command_of_its_own():
+    text = _text(UPGRADE)
+    pushing = _para(text, "**Pushing.**")
+    assert "in a command of its own" in pushing and CHAINED in pushing
+    assert text.index("**Pushing.**") < text.index("\n# Protect `main`\n")
+    steps = [ln for ln in text.splitlines() if re.match(r"^\d+\. (Push|Commit)", ln)]
+    assert len(steps) == 6, steps  # each of the six paths' pull requests
+    for ln in steps:
+        assert "in a command of its own" in ln and '"Pushing"' in ln, ln
 
 
 # ---------- check-setup ----------
 
 
-def _doctor_writers_line(tmp_path, **kw):
-    root = _project(tmp_path, profile=_prof("ruleset = true\n"), **kw)
+def _doctor_writers_line(tmp_path, guard=""):
+    root = _project(tmp_path, profile=_prof("ruleset = true\n", guard))
     return _lines(_report(tmp_path, root))["kit.code_writers"]
 
 
@@ -250,8 +280,7 @@ def test_check_setup_offers_it_on_doctors_unanswered_note(tmp_path):
 @pytest.mark.parametrize("answer", ["ticket", "any"])
 def test_check_setup_does_not_offer_it_once_answered(tmp_path, answer):
     # Doctor's fix names the step only while unanswered, which is what the offer keys on.
-    root = _project(tmp_path, profile=_prof("ruleset = true\n", f'[guard]\ncode_writers = "{answer}"\ncode_paths = ["src/**"]\n'))
-    ln = _lines(_report(tmp_path, root))["kit.code_writers"]
+    ln = _doctor_writers_line(tmp_path, f'[guard]\ncode_writers = "{answer}"\ncode_paths = ["src/**"]\n')
     assert NAME not in (ln["fix"] or ""), ln
 
 
@@ -275,7 +304,10 @@ def test_install_names_the_question_and_the_upgrade():
 
 
 def test_changelog_notes_it_under_unreleased():
-    notes = since_0110()
-    unreleased = notes[:notes.index("\n## 0.1.16")]
-    assert "#345" in unreleased and NAME in unreleased
-    assert (KIT / "VERSION").read_text().strip() == "0.1.16"
+    log = _text(KIT / "CHANGELOG.md")
+    start = log.index("## Unreleased\n")
+    end = log.index("\n## ", start + 1)
+    assert "#345" in log[start:end] and NAME in log[start:end]
+    # No version bump: VERSION is still the last release's.
+    released = log[end + 4:].split("\n", 1)[0].strip()
+    assert (KIT / "VERSION").read_text().strip() == released

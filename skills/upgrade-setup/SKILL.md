@@ -30,6 +30,8 @@ Below, `main` stands for the profile's `project.base_branch`: use its real name 
 
 The read-back needs GitHub's own JSON: the repository (`GET repos/<repo>`, with `permissions`, `default_branch` and the merge settings) and each ruleset by its id. Use a tool that returns those responses as they are, `gh api` where it is signed in. When no tool here gives them, treat the rulesets as unreadable ("Protect `main`", step 2).
 
+**Pushing.** Each path that opens a pull request commits, then pushes the branch in a command of its own, never chained with the commit (`git commit … && git push`): the guard refuses that under `code_writers = "ticket"`.
+
 **Choices** use the `AskUserQuestion` tool, the recommended option first; without it (a headless session), the same choices as a numbered list.
 
 **Only in attended sessions.** When `WORKFLOW_ROLE` is `ticket`, don't run it or offer it: there's nobody to click. For "Protect `main`", say in the ticket's report that the base branch isn't protected, and carry on. The conductor runs it only at its kick-off, with the owner there, and never runs "Require these checks": its kick-off sends the owner to an attended session for that (the `conductor` skill). It never runs "Add try-it links" or "Use a merge queue" either. Nor "Choose who writes code".
@@ -207,7 +209,7 @@ Only for `protect_main`, and only once the read-back says `"protected": true`. F
    - When names were ticked on the automatic path, the same pull request adds the ticked names it doesn't already list to `ci.required_checks`, after the names already there, never removing a name the profile already lists and never listing one twice.
    - Change nothing else.
 3. `WF profile check` passes, and `WF status --json` gives `solo_mode: false` on the branch.
-4. Push the branch and open the pull request. Its body: what the read-back found (the report, "checks not required yet" if so), and that merging it takes the project out of solo mode. When it adds at least one new required check, it names them and carries this marker on a line of its own, so `workflow doctor` can name the pull request while it's open:
+4. Push the branch in a command of its own ("Pushing"), and open the pull request. Its body: what the read-back found (the report, "checks not required yet" if so), and that merging it takes the project out of solo mode. When it adds at least one new required check, it names them and carries this marker on a line of its own, so `workflow doctor` can name the pull request while it's open:
 
    ```
    <!-- workflow:required-checks -->
@@ -286,7 +288,7 @@ All the answers go in one pull request. First look for one already open (from `w
 1. A branch from the base branch, such as `workflow/unattended-runs`.
 2. In `.claude/workflow/profile.toml`, the answers: `[areas]`, `run.ticket_environment`, `run.conductor_environment`, `run.permission_mode`, `run.environment_setup`, `guard.deploy_commands`, `[[release.steps]]` and `[repair]`. Change nothing else; `ruleset` is the first path's.
 3. `WF profile check` passes.
-4. Push the branch and open the pull request. Its body: the answers, the two environments as the person made them, and that the conductor's pre-flight confirms the environments by name at the start of every run.
+4. Push the branch in a command of its own ("Pushing"), and open the pull request. Its body: the answers, the two environments as the person made them, and that the conductor's pre-flight confirms the environments by name at the start of every run.
 
 It changes `.claude/`, so merging it is the owner's: never merge it, or enable auto-merge on it, yourself.
 
@@ -390,7 +392,7 @@ When the profile's `ci.required_checks` already lists every one of them, no pull
 1. A branch from the base branch, such as `workflow/required-checks`.
 2. In `.claude/workflow/profile.toml`'s `[ci]` table, add the required names the profile doesn't list to `ci.required_checks`, after the names already there, never removing one and never listing one twice; and set `ci.none = false` when it was `true`. Change nothing else.
 3. `WF profile check` passes.
-4. Push the branch and open the pull request. Its body: the names now required, the read-back's report, and this marker on a line of its own, so `workflow doctor` can name the pull request while it's open:
+4. Push the branch in a command of its own ("Pushing"), and open the pull request. Its body: the names now required, the read-back's report, and this marker on a line of its own, so `workflow doctor` can name the pull request while it's open:
 
    ```
    <!-- workflow:required-checks -->
@@ -501,7 +503,7 @@ Once the steps are done (and, with sensitive data, screen 7 confirmed): one pull
    The `access = true` line only when screen 7 was confirmed; without sensitive data, leave it out. When the profile has a `[previews]` section already, change its lines in place: never a second `[previews]` table. Change nothing else in the profile.
 3. In the Wrangler config, whichever of the Wrangler lines is missing, a line saying otherwise changed rather than a second one added (`workers_dev = true` becomes `false`, `preview_urls = false` becomes `true`), placed as the page's step 6 says: the two settings near the top, above its first line that starts with `[`, and `[previews]` at its end, since a setting below a line in square brackets belongs to that block. Only the top-level settings count: a `workers_dev` under an `[env.…]` table is another environment's. In a JSON config, say that doctor's `previews.setup` line is `cant_check` once this merges, since doctor reads only a `wrangler.toml`. Change nothing else.
 4. `WF profile check` passes. It refuses `on = true` without `access = true` in a profile with `[sensitive]` patterns, so a project with sensitive data never gets here without screen 7.
-5. Push the branch and open the pull request. Its body: what it turns on, which steps were done (and which were done already), and, with sensitive data, that the owner confirmed Cloudflare Access guards the preview links, which the kit can't check. No email address, token or other detail from Cloudflare's screens goes in it.
+5. Push the branch in a command of its own ("Pushing"), and open the pull request. Its body: what it turns on, which steps were done (and which were done already), and, with sensitive data, that the owner confirmed Cloudflare Access guards the preview links, which the kit can't check. No email address, token or other detail from Cloudflare's screens goes in it.
 
 The profile is a protected path, so merging it is the owner's. Never merge it, or enable auto-merge on it, yourself. Its own link works before it merges; once it merges, every session knows previews are on.
 
@@ -570,7 +572,7 @@ Doctor's `merge_queue.merge_group` names what to change:
 
 Otherwise:
 1. A branch from the base branch, such as `workflow/merge-group`, with only those changes.
-2. Push it and open the pull request. Its body: what the queue is, in one plain sentence; each workflow changed; anything left for the owner (above); and that CI files are a protected path, so the owner reviews and merges it. GitHub refuses a push that changes `.github/workflows/` from a token without the `workflow` scope (or an app without the workflows permission), as a cloud session's often is: then say so, and give the owner each change to make by hand, in a code block per file.
+2. Push it in a command of its own ("Pushing"), and open the pull request. Its body: what the queue is, in one plain sentence; each workflow changed; anything left for the owner (above); and that CI files are a protected path, so the owner reviews and merges it. GitHub refuses a push that changes `.github/workflows/` from a token without the `workflow` scope (or an app without the workflows permission), as a cloud session's often is: then say so, and give the owner each change to make by hand, in a code block per file.
 3. Never merge it, or enable auto-merge on it, yourself.
 
 The ruleset waits until it has merged and doctor's check is clean on the base branch: once the owner says it merged, fetch and read doctor again ("Where it stands"), and go on to step 2 only when `merge_group.clean` is `true`.
@@ -627,17 +629,17 @@ The sixth path. It answers, or changes, who writes code in this project: the pro
 ## 2. The question
 
 One choice, with `AskUserQuestion`: "Who writes code in this project?"
-- **Only ticket sessions (Recommended)**, always first, whatever the answer now: "Only sessions started with `WORKFLOW_ROLE=ticket` write code, normally an unattended run's. Every other session is a planning session: it plans, writes specs, tickets and docs, and runs the tests, and the kit's guard refuses its writes to code.";
-- **Any session**: "Any session may write code, as before.";
+- **Only ticket sessions (Recommended)**, always first, whatever the answer now;
+- **Any session**;
 - **Not now**: nothing is changed.
 
-While the profile names no ticket environment (`run.ticket_environment` empty), say what "only ticket sessions" means then: nothing writes code until one exists ("Set up unattended runs" makes one), and a ticket can be built in a session the person starts in the ticket environment, with them there, ending in a pull request they merge. In plugin mode, which has no unattended runs, say instead that code is written only in a session started on their computer with `WORKFLOW_ROLE=ticket`, and that the rule holds only where the plugin is installed: a cloud session has no kit and no guard.
+Word the two answers, and what "only ticket sessions" means while the profile names no ticket environment (`run.ticket_environment` empty) or in plugin mode, in set-up's words: its "Who writes code", in `.claude/skills/setup-workflow/SKILL.md` (vendored) or `<this skill's directory>/../setup-workflow/SKILL.md` (plugin).
 
 An answer that is the profile's already, with the code paths unchanged: say so, and stop. Nothing to change.
 
 ## 3. The code paths
 
-With **Only ticket sessions**, propose `code_paths` as set-up does ("The code paths" in the kit's `setup-workflow` skill), for the person to confirm or change: the profile's own list as the default when it has one, else globs for the folders that hold the project's source and its tests, leaving out docs, CI config, the kit (`.claude/`) and anything `guard.protected_paths` matches (a path that is both counts as protected, not code). With no code yet, the source and test folders its stack uses, or ask which folders will hold code. With **Any session**, keep the list as it is.
+With **Only ticket sessions**, propose `code_paths` as set-up does (its "The code paths"), for the person to confirm or change, with the profile's own list as the default when it has one. With **Any session**, keep the list as it is.
 
 ## 4. One pull request
 
@@ -646,8 +648,8 @@ First look for one already open (from `workflow/code-writers`, or any open pull 
 1. A branch from the base branch, such as `workflow/code-writers`.
 2. In `.claude/workflow/profile.toml`'s `[guard]` table, a plain `code_writers = "ticket"` or `code_writers = "any"` line on its own, in place of the `code_writers` line there, or of the template's commented `# code_writers = "ticket"`, or at the end of `[guard]` when neither is there; and `code_paths` with the confirmed globs, the same way. Change nothing else.
 3. `WF profile check` passes. Under `"ticket"`, its warning that `guard.code_paths` is empty stays only when the person named no folders.
-4. Commit, then push the branch in a command of its own, never chained with the commit (`git commit … && git push`): the guard refuses that under `code_writers = "ticket"`, which counts in this session as soon as its working tree says so.
-5. Open the pull request. Its body: the answer, the code paths, and what changes once it merges (with only ticket sessions: planning sessions and the conductor write no code, and where it is built instead, as the question said).
+4. Commit, then push the branch in a command of its own, never chained with the commit (`git commit … && git push`) ("Pushing"): under `"ticket"` that counts in this session as soon as its working tree says so.
+5. Open the pull request. Its body: the answer, the code paths, and what changes once it merges (with only ticket sessions: no other session, the conductor included, writes code, and where it is built instead, as the question said).
 
 **Loosening waits for the merge.** From `"ticket"` to `"any"`, nothing changes until the pull request merges and sessions fetch the base branch: the base's `"ticket"` counts over a working tree that says less. Say so.
 
