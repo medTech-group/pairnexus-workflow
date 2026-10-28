@@ -448,7 +448,7 @@ def test_a_needs_human_tickets_code_fix_stays_an_owners_answer():
 def test_the_report_looks_again_at_each_revert_opened():
     report = _section(_conductor(), "4. **The report.**", "5. **Wind up.**")
     assert "Before the rest of this step, look again at each revert still `opened` (\"Reverting a merged change\", step 3), so the state it writes carries their results." in report
-    assert "First look again at each ticket still marked `cap_unknown_at`, as check-in step 2 begins, and write the state to the issue." in report
+    assert "Then look again at each ticket still marked `cap_unknown_at`, as check-in step 2 begins, and write the state to the issue." in report
 
 
 def test_the_briefing_section_names_the_starts_from_line():
