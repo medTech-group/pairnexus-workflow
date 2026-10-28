@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+**The conductor writes no code under `code_writers = "ticket"`** (#349, part of #338). Under `"any"`, or with `code_writers` absent, its steps read as before.
+
+- **Its own fixes:** with `conductor_fixes` on, its "small fix of your own" is only for fixes outside code paths (CI config, docs); a fix in a code path becomes a `workflow:infra` ticket for a ticket session. With it off, a code fix it finds goes in `for_owner` and the report. Flow §4's infra ticket for a red base suite stays. Its fixes and reverts push in a command of their own, never chained with a commit, and so does `run-report`'s revert offer.
+- **Reverts:** the conductor never reverts on its own. It asks the owner, records their yes in the ledger as `{"what": "revert", "revert": "<the full sha>", "at": …, "grant": …}`, then reverts. `workflow state put` refuses a revert entry without a full commit SHA.
+- **A session that isn't a ticket session** ("not a ticket session: `WORKFLOW_ROLE` is …", #347's post) has its ticket set aside rather than retried; the conductor puts the environment's `WORKFLOW_ROLE` in `for_owner`, records the state's new `wind_down`, starts no further sessions and winds the run down, its report naming the fix.
+- **"also #<n>"** requeues a ticket in the plan whose pull request needs a code fix, an `in-review` one too, with that pull request as what a previous attempt left (#348's hand-off).
+- **The briefing's "Starts from:" line** names the branch a ticket session starts from: the base branch, or the branch a ticket's own "Starts from:" line names (`pull/<n>/head` for a fork's). `workflow render` reads the ticket's body, so `ticket.json` may be the issue as GitHub returns it.
+- **For projects updating:** nothing to do. Tests: `tests/test_conductor_code_writers.py`.
+
 **The guard refuses code writes outside ticket sessions under `code_writers = "ticket"`** (#340, part of #338). Under `"any"`, or with `code_writers` absent, nothing changes.
 
 - **Refused, never asked, in every permission mode,** in every session but one with `WORKFLOW_ROLE=ticket` (the conductor included): `Write`, `Edit`, `MultiEdit` and `NotebookEdit` on a code path of the project or of one of Claude Code's worktrees of it; a Bash write whose target the guard places on a code path (redirects, `tee`, `sed -i`, `cp`, `mv`, `rm` and the rest), and `git apply` and `git am`; PowerShell whose text names a code path, even to read it ("run it through Bash").

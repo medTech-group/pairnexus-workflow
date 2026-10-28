@@ -7,6 +7,10 @@ empty, or a slot still says SEE_BELOW/TODO_FILL, so a session can never be sent
 a briefing with a hole in it. Values are inserted as they are: a value holding
 braces ("Fix {{x}} binding") renders.
 
+A ticket's "Starts from:" line (a quick ticket for another pull request's fix,
+#348) names the branch its session starts from, in place of the base branch;
+the briefing's "Starts from:" line gives it, or the base branch without one.
+
 `seal` ends a rendered briefing with `Briefing <hash>`, the first 12 hex
 characters of the SHA-256 of the text above it. The session echoes that line in
 its first comment, so the conductor sees the briefing arrived intact.
@@ -69,6 +73,37 @@ LEFTOVER = re.compile(r"\{\{.*?\}\}|\{\{|\}\}")
 
 class RenderError(ValueError):
     pass
+
+
+_FENCE = re.compile(r"^[ \t]*(```|~~~).*?^[ \t]*\1", re.M | re.S)
+_STARTS_FROM = re.compile(r"^[ \t]*(?:\*\*)?Starts from:(?:\*\*)?[ \t]*(.*)$", re.M)
+# A branch name or `pull/<n>/head`: no option, no `..`, nothing a shell reads.
+_REF = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._/-]*")
+
+
+def _starts_from(ticket: dict) -> str | None:
+    """The branch a ticket's "Starts from:" line names, outside fenced code, or
+    None without one. A line naming no branch is a RenderError."""
+    m = _STARTS_FROM.search(_FENCE.sub("", ticket.get("body") or ""))
+    if not m:
+        return None
+    rest = m.group(1).strip()
+    quoted = re.match(r"`([^`]*)`", rest)
+    ref = quoted.group(1).strip() if quoted else (rest.split() or [""])[0].rstrip(".,;:")
+    if not _REF.fullmatch(ref) or ".." in ref or ref.endswith(("/", ".lock")):
+        raise RenderError(f'#{ticket.get("number")}\'s "Starts from:" line names no branch: {rest[:80]!r}')
+    return ref
+
+
+def _starts_from_words(ticket: dict, profile: Profile, branch: str) -> str:
+    ref = _starts_from(ticket)
+    if ref is None:
+        return f"`{profile.base_branch}`, the base branch."
+    return (
+        f'`{ref}`, as the ticket\'s "Starts from:" line names it: fetch it (`git fetch origin {ref}`) and create '
+        f"`{branch}` from what it fetched (`git switch -c {branch} FETCH_HEAD`). Then open your own pull request "
+        "(closing the old one's ticket too, if it has one), and close the old pull request with a comment linking yours."
+    )
 
 
 def _code(cmd: str) -> str:
@@ -136,10 +171,12 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
     merge = charter.get("merge") or {}
     review = presets_mod.review_of(charter, profile)
     waived = merge.get("waived_checks") or []
+    branch = profile.ticket_branch.replace("*", str(ticket["number"]))
     v = {
         "ticket.number": str(ticket["number"]),
         "ticket.title": ticket.get("title") or "",
-        "ticket.branch": profile.ticket_branch.replace("*", str(ticket["number"])),
+        "ticket.branch": branch,
+        "ticket.starts_from": _starts_from_words(ticket, profile, branch),
         "project.name": profile.name,
         "project.repo": profile.repo,
         "project.base_branch": profile.base_branch,

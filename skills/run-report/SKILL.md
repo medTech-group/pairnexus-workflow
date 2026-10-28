@@ -31,13 +31,13 @@ One comment on the tracking issue, written for the owner to act on. Build it onl
    - `solo mode:`: "Protect `main`";
    - `removed protection:`: first say the profile says `main` is protected but the conductor's read-back didn't find it protected (the protection was removed, or couldn't be confirmed without admin access), then "Restore protection".
 2. **Merged.** A table of ticket, title, PR, review rounds, wall time (from `started_at` to `merged_at`) and attempts.
-3. **Set aside.** Each `needs-human` or set-aside ticket, with exactly what it needs and from whom.
+3. **Set aside.** Each `needs-human` or set-aside ticket, with exactly what it needs and from whom. A run wound down because a session wasn't a ticket session (the state's `wind_down`) says so first, with the environment's fix: `WORKFLOW_ROLE=ticket` in the ticket environment's variables (`docs/enforcement.md` §2), before the next run.
 4. **What's live.** Each release step in the ledger: what ran, from which commit, and the smoke test's result. A release skipped because the owner stopped the run says so, and that the owner can release by hand.
 5. **Changes outside the repo.** The ledger, as a list for the owner to **confirm or undo**. Each line gives the change, when it happened, and the charter line or owner comment that allowed it.
 6. **For you:**
    - the decisions sessions took that the owner should confirm, each with its PR;
    - `for_owner`;
-   - each PR that merged with a request made after it was queued: changes requested, or an open review thread, from after it was last added to the queue. The queue doesn't stop for one (flow §4), so flag it with the request's link, and offer a revert: a pull request reverting its merge commit (`git revert -m 1 <merge commit>`), for the owner to decide;
+   - each PR that merged with a request made after it was queued: changes requested, or an open review thread, from after it was last added to the queue. The queue doesn't stop for one (flow §4), so flag it with the request's link, and offer a revert: a pull request reverting its merge commit (`git revert -m 1 <merge commit>`), for the owner to decide. The conductor makes it only once the owner allows it, recorded in the ledger first (the `conductor` skill's "Reverting a merged change"), and pushes it in a command of its own, never chained with the revert;
    - the owner tasks still open;
    - the by-hand issue's open checkboxes, counted, with a link.
 7. **Follow-ups.** What the reviews found that wasn't this run's to fix, each with a suggested ticket.
