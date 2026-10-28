@@ -6252,6 +6252,8 @@ def _patched_files(seg: Seg, g: tuple[list[str], list[str], str | None], root: P
             if "/" in raw:
                 rest = raw.split("/", 1)[1]
                 out.append(os.path.join(top if rest.startswith(here + "/") else d, rest))
+            else:  # a bare name: nothing to strip, so from where it runs
+                out.append(os.path.join(d, raw))
             out.append(os.path.join(top, raw))
     return out
 

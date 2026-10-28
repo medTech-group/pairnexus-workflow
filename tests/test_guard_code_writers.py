@@ -400,6 +400,12 @@ def test_a_plain_patch_onto_a_protected_path_from_a_subdirectory(proj, monkeypat
     assert hook(monkeypatch, capsys, proj, bash("git apply ../keep.patch"), cwd=proj / "src")[0] == "allow"
 
 
+def test_a_plain_patch_naming_a_bare_file_from_a_subdirectory(proj, monkeypatch, capsys):
+    (proj / "src/new.patch").write_text("--- /dev/null\n+++ new.py\n@@ -0,0 +1 @@\n+x = 1\n")
+    d, why = hook(monkeypatch, capsys, proj, bash("git apply new.patch"), cwd=proj / "src")
+    assert d == "deny" and "code path `src/new.py`" in why, why
+
+
 def test_git_minus_c_rm_and_mv_in_the_project(proj, monkeypatch, capsys):
     for command in ("git -C src rm app.py", "git -C src mv app.py b.py"):
         d, why = hook(monkeypatch, capsys, proj, bash(command))
