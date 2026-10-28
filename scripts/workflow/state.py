@@ -19,9 +19,9 @@ Optional: `wind_down`, why the run winds down for good (#349: a session that
 wasn't a ticket session, so every other would fail the same way).
 
 A ledger entry naming a revert (`"what": "revert"`, or any entry with a
-`revert` field) gives the reverted commit's full SHA in `revert`: the guard
-lets the conductor revert only a commit the ledger records the owner allowing
-(#338, answer 40).
+`revert` field) gives the reverted commit's full SHA in `revert`: the guard's
+commit and push rule (#341) lets the conductor revert only a commit the ledger
+records the owner allowing (#338, answer 40).
 
 With the queue on, `drop` decides each answer GitHub gives to queueing a
 ticket's pull request (#243), and keeps on the ticket what it needs: the heads
@@ -119,6 +119,9 @@ TICKET_FIELDS = {
     "queue_failed": (_counts, "an object of commit SHAs and whole numbers"),
     "base_merged": (lambda v: isinstance(v, bool), "true or false"),
     "queue_result": (lambda v: isinstance(v, str) and v in DROP_RESULTS, "one of " + ", ".join(sorted(DROP_RESULTS))),
+    # The pull request's head when "also #<n>" requeued it for a code fix (#349): nothing merges or
+    # settles it until its head moves.
+    "requeued_head": (is_head, "a full commit SHA in lower case"),
 }
 
 

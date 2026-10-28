@@ -106,10 +106,13 @@ def test_the_wind_down_reason_is_kept_in_the_state():
 SLOTS = {"alongside": "none", "read_first": "none", "owner_decisions": "none", "briefing": "none", "wake_trigger": "trig_01abc"}
 
 
-def _briefing(profile, body=None):
+_NO_BODY = object()
+
+
+def _briefing(profile, body=_NO_BODY):
     tpl = _text("templates/ticket-session-prompt.md")
     ticket = {"number": 7, "title": "Bump left-pad"}
-    if body is not None:
+    if body is not _NO_BODY:
         ticket["body"] = body
     return render(tpl, values(profile, ticket, _charter(), SLOTS, 232, 233))
 
@@ -128,26 +131,77 @@ def test_the_briefing_starts_from_the_base_branch_by_default(profile):
         ("Starts from: `pull/12/head`", "pull/12/head"),
         ("**Starts from:** `contrib/fix` (#12, a fork's)", "contrib/fix"),
         ("  Starts from: feature/x.", "feature/x"),
+        ("Starts from: feature/x, the contributor's branch", "feature/x"),
+        # Near misses read all the same, never a silent start from the base branch.
+        ("**Starts from**: feature/x", "feature/x"),
+        ("- Starts from: feature/x", "feature/x"),
+        ("> Starts from: feature/x", "feature/x"),
+        ("_Starts from:_ feature/x", "feature/x"),
+        ("## Starts from: feature/x", "feature/x"),
+        ("starts from: feature/x", "feature/x"),
+        ("Starts From: feature/x", "feature/x"),
+        ("Starts from： feature/x", "feature/x"),
     ],
 )
 def test_the_briefing_names_the_tickets_starts_from_line(profile, line, ref):
-    out = _briefing(profile, f"Area: deps\n{line}\n\n## What to build\n\nFix #12's pull request.")
-    assert f"**Starts from:** `{ref}`, as the ticket's \"Starts from:\" line names it:" in out
+    out = _briefing(profile, f"Area: deps\r\n{line}\r\n\r\n## What to build\r\n\r\nFix #12's pull request.")
+    assert f"**Starts from:** `{ref}`, as the ticket's \"Starts from:\" line names it." in out
     assert f"`git fetch origin {ref}`" in out and "`git switch -c claude/build-7 FETCH_HEAD`" in out
-    assert "open your own pull request" in out
+    assert "Open your own pull request" in out
     assert "close the old pull request with a comment linking yours" in out
     assert "`main`, the base branch" not in out
 
 
-def test_a_starts_from_line_in_fenced_code_is_not_the_tickets(profile):
-    body = "Area: deps\n\n```\nStarts from: not/this\n```\n"
+def test_a_retry_carries_on_from_its_own_branch(profile):
+    """A retried or requeued session finds its branch on GitHub and carries on from it."""
+    out = _briefing(profile, "Starts from: dependabot/x\n")
+    assert (
+        "If `claude/build-7` is already on GitHub (`git ls-remote --exit-code origin refs/heads/claude/build-7`: "
+        "an earlier attempt's), carry on from it and its pull request instead. Otherwise fetch it"
+    ) in out
+    assert "unless that is done already" in out
+
+
+def test_a_line_naming_the_base_or_its_own_branch(profile):
+    assert "**Starts from:** `main`, the base branch." in _briefing(profile, "Starts from: main\n")
+    own = _briefing(profile, "Starts from: claude/build-7\n")
+    assert "`claude/build-7`, your own branch" in own and "close the old pull request" not in own
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Area: deps\n\n```\nStarts from: not/this\n```\n",
+        "````\n```\nStarts from: in/code\n```\n````\n",
+        "```\nStarts from: never/closed\n",
+        "Text.\n\n    Starts from: indented/code\n",
+        "<!--\nStarts from: in/comment\n-->\n",
+        "Somebody wrote that it starts from: x\n",
+    ],
+)
+def test_a_starts_from_line_in_code_or_prose_is_not_the_tickets(profile, body):
     assert "**Starts from:** `main`, the base branch." in _briefing(profile, body)
 
 
-@pytest.mark.parametrize("value", ["", "-x", "a..b", "`a b;rm`", "`$(x)`", "refs/heads/../x", "x.lock", "pull/12/"])
+@pytest.mark.parametrize("body", [None, 5, ["Starts from: x"], ""])
+def test_a_body_that_isnt_text_starts_from_the_base(profile, body):
+    assert "**Starts from:** `main`, the base branch." in _briefing(profile, body)
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["", "-x", "a..b", "`a b;rm`", "`$(x)`", "refs/heads/../x", "x.lock", "pull/12/", "the base branch",
+     "the contributor's branch", "feature/.hidden", "feature//x", "`feature/x.`", "feature/café", "``x``"],
+)
 def test_a_starts_from_line_naming_no_branch_is_refused(profile, value):
-    with pytest.raises(RenderError, match='"Starts from:" line'):
+    with pytest.raises(RenderError, match='"Starts from:" line names no branch'):
         _briefing(profile, f"Starts from: {value}\n")
+
+
+def test_two_starts_from_lines_naming_different_branches_are_refused(profile):
+    with pytest.raises(RenderError, match="name different branches: feature/a, feature/b"):
+        _briefing(profile, "Starts from: feature/a\nStarts from: feature/b\n")
+    assert "`feature/a`" in _briefing(profile, "Starts from: feature/a\n**Starts from:** `feature/a`\n")
 
 
 def test_render_reads_the_issue_as_github_returns_it(tmp_path):
@@ -187,7 +241,8 @@ def test_a_ticket_named_in_chat_never_means_code_of_yours_under_ticket():
 
 
 def _step7():
-    return _section(_conductor(), "**7. Infra problems**", "**8. Write the state**")
+    text = _conductor()
+    return text[text.index("**7. Infra problems**"):text.index("**8. Write the state**")]
 
 
 def test_step_7_with_conductor_fixes_on_under_ticket():
@@ -202,13 +257,20 @@ def test_step_7_with_conductor_fixes_on_under_ticket():
 
 
 def test_step_7_with_conductor_fixes_off_under_ticket():
-    text = _flat(_text("skills/conductor/SKILL.md"))
-    assert (
-        "With `conductor_fixes` off, as before, this step files nothing; under `\"ticket\"`, a code fix you find "
-        "goes in `for_owner` and the final report instead."
-    ) in text
-    # Off, the step's heading still opens it to nothing but the ticket's lines.
+    text = _step7()
     assert "**7. Infra problems** (CI time creeping, a flaky test, a broken deploy script), when `conductor_fixes` is true" in text
+    # Off, the line sits outside the part `conductor_fixes` gates.
+    either = text.split("Whatever `conductor_fixes` says:", 1)[1]
+    assert (
+        "**With `conductor_fixes` false,** as before, this step files nothing; under `code_writers = \"ticket\"`, a "
+        "code fix you find goes in `for_owner` and the final report instead."
+    ) in either
+    assert "**A red base suite:**" in either
+
+
+def test_the_charter_question_says_so():
+    ask = next(q for q in charter.QUESTIONS if q["key"] == "conductor_fixes")["ask"]
+    assert 'Under `code_writers = "ticket"` they stay outside code paths: a code fix becomes a `workflow:infra` ticket' in ask
 
 
 def test_step_7_reads_as_today_under_any():
@@ -238,7 +300,7 @@ def test_the_red_base_suites_infra_ticket_stays():
 def test_the_small_fix_pushes_in_a_command_of_its_own():
     assert (
         "4. pushed in a command of its own, never chained with the commit (`git commit … && git push`), which the "
-        "guard refuses under `code_writers = \"ticket\"`;"
+        "guard's commit and push rule (#341) refuses under `code_writers = \"ticket\"`;"
     ) in _step7()
 
 
@@ -266,7 +328,7 @@ def test_the_revert_is_recorded_where_the_guard_reads_it():
     text = _reverting()
     assert "`WF state put --body .workflow/run/body.md --state .workflow/run/state.json --out .workflow/run/body.md`" in text
     assert "which refuses a `revert` that isn't a full commit SHA" in text
-    assert "The guard reads the allowance from `.workflow/run/body.md`'s state block" in text
+    assert "The guard's commit and push rule (#341) reads the allowance from `.workflow/run/body.md`'s state block" in text
 
 
 def test_the_revert_pushes_in_a_command_of_its_own():
@@ -274,6 +336,7 @@ def test_the_revert_pushes_in_a_command_of_its_own():
     assert "`git revert --no-edit <sha>` (for a merge commit, `git revert --no-edit -m 1 <sha>`)" in text
     assert "Push it in a command of its own, never chained with the revert" in text
     assert "A revert that doesn't apply cleanly you never resolve: resolving it is writing code" in text
+    assert 'Add `"result": "not made: <why>"` to its ledger entry and the same to `for_owner`' in text
 
 
 def test_a_not_a_ticket_session_post_sets_the_row_aside_and_winds_down():
@@ -292,6 +355,9 @@ def test_a_not_a_ticket_session_post_sets_the_row_aside_and_winds_down():
         "its report names the environment's fix",
     ):
         assert part in row, part
+    assert "This row wins over the briefing row and the stuck row." in row
+    assert "carrying the agents' marker under `project.owner`'s account" in row
+    assert "`get_session` shows it no longer `working`" in row
     wind = _section(text, "**Wind down**", "**Waiting on the owner**")
     assert "the state's `wind_down` is set (a session that wasn't a ticket session, check-in step 4)" in wind
 
@@ -300,7 +366,10 @@ def test_also_requeues_a_ticket_whose_pull_request_needs_a_code_fix():
     text = _conductor()
     step3 = _section(text, "**3. The owner's words.**", "**4. Each ticket in flight.**")
     for part in (
-        '**"also #<n>" for a ticket already in the plan** whose open pull request needs a code fix',
+        '**"also #<n>" for a ticket whose open pull request needs a code fix**',
+        "record its pull request's head SHA as the ticket's `requeued_head`",
+        "A ticket of an earlier run, not in this run's state, whose open pull request is on a `run.ticket_branch` branch, is adopted the same way",
+        "nothing starts while the run is stopping or winding down",
         "an `in-review` one too",
         "requeue it",
         "that pull request as what a previous attempt left (its branch, number and head SHA)",
@@ -313,11 +382,27 @@ def test_also_requeues_a_ticket_whose_pull_request_needs_a_code_fix():
     assert "A ticket in the plan whose pull request needs a code fix, an `in-review` one too, is requeued instead (check-in step 3)." in named
 
 
+def test_a_requeued_pull_request_never_merges_before_its_fix():
+    row = _section(_text("skills/conductor/SKILL.md"), "| **A requeued ticket's pull request is still at its `requeued_head`**", "\n")
+    for part in (
+        "the `ready`, `owner_review`, path-filtered and merge-queue rows don't apply",
+        "never merge it, arm auto-merge or queue it, and disarm auto-merge if it is armed",
+        "Once its head moves, clear `requeued_head`",
+    ):
+        assert part in row, part
+    s = state.empty(_charter())
+    s["tickets"] = {"12": {"status": "queued", "requeued_head": SHA}}
+    assert state.validate(s) == []
+    s["tickets"]["12"]["requeued_head"] = "abc1234"
+    assert "tickets[12].requeued_head must be a full commit SHA in lower case" in state.validate(s)
+
+
 def test_the_briefing_section_names_the_starts_from_line():
     text = _section(_conductor(), "## A ticket session's briefing", " ## ")
     assert "`gh api repos/<repo>/issues/<n> > ticket.json`" in text
     assert 'A line in its body starting `Starts from:`' in text
     assert "fills the briefing's \"Starts from:\" line" in text
+    assert "say so on the ticket, set it aside and remove `workflow:in-progress`" in text
     assert "an \"also #<n>\" requeue's pull request" in text
 
 
@@ -351,6 +436,7 @@ def test_the_charter_docs_conductor_fixes_line():
         "each reviewed and logged |"
     ) in text
     assert '`{"what": "revert", "revert": "<the full sha>", "at": …, "grant": …}`' in text
+    assert "The guard's commit and push rule (#341) reads that entry" in text
 
 
 def test_the_changelog_notes_it():

@@ -75,34 +75,98 @@ class RenderError(ValueError):
     pass
 
 
-_FENCE = re.compile(r"^[ \t]*(```|~~~).*?^[ \t]*\1", re.M | re.S)
-_STARTS_FROM = re.compile(r"^[ \t]*(?:\*\*)?Starts from:(?:\*\*)?[ \t]*(.*)$", re.M)
+# The label, after any list, quote or heading marker, bold or italic, the colon
+# inside or outside them, in any case.
+_STARTS_FROM = re.compile(
+    r"^[ \t]*(?:>[ \t]*|(?:[-*+]|\d+[.)]|#{1,6})[ \t]+)*[*_]{0,3}starts[ \t]+from[*_]{0,3}[ \t]*[:：][*_]{0,3}[ \t]*(.*)$",
+    re.I,
+)
 # A branch name or `pull/<n>/head`: no option, no `..`, nothing a shell reads.
 _REF = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._/-]*")
+_REF_WORDS = "a branch name of letters, digits and `._/-`, or `pull/<n>/head`"
+
+
+def _prose_lines(body: str):
+    """The body's lines outside code and HTML comments: fenced blocks (closed by
+    a fence of the same kind at least as long, or the end), indented blocks."""
+    body = re.sub(r"<!--.*?(-->|\Z)", "", body.replace("\r\n", "\n").replace("\r", "\n"), flags=re.S)
+    fence, prev_blank = None, True
+    for line in body.split("\n"):
+        if fence:
+            m = re.match(r" {0,3}(`{3,}|~{3,})[ \t]*$", line)
+            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence):
+                fence = None
+            continue
+        m = re.match(r" {0,3}(`{3,}|~{3,})", line)
+        if m:
+            fence = m.group(1)
+            continue
+        indented = re.match(r"( {4}|\t)", line) is not None
+        if indented and prev_blank:
+            continue  # an indented code block runs while lines are indented or blank
+        prev_blank = not line.strip() or (indented and prev_blank)
+        yield line
+
+
+def _ref_of(value: str) -> str | None:
+    """The branch a "Starts from:" line's value names, or None when it names none:
+    `ref` in backticks, or a first word that the rest doesn't carry on as prose."""
+    quoted = re.match(r"`([^`]+)`", value)
+    if quoted:
+        ref = quoted.group(1).strip()
+    else:
+        m = re.match(r"(\S+?)([.,;:]?)(?:\s+(.*))?$", value)
+        if not m:
+            return None
+        ref, punct, after = m.group(1), m.group(2), (m.group(3) or "")
+        if after and not punct and not after.startswith(("(", "-", "–", "—")):
+            return None  # prose ("the contributor's branch"), not a branch
+    parts = ref.split("/")
+    if (
+        not _REF.fullmatch(ref)
+        or ".." in ref
+        or ref.endswith(".")
+        or any(not c or c.startswith(".") or c.endswith(".lock") for c in parts)
+    ):
+        return None
+    return ref
 
 
 def _starts_from(ticket: dict) -> str | None:
-    """The branch a ticket's "Starts from:" line names, outside fenced code, or
-    None without one. A line naming no branch is a RenderError."""
-    m = _STARTS_FROM.search(_FENCE.sub("", ticket.get("body") or ""))
-    if not m:
-        return None
-    rest = m.group(1).strip()
-    quoted = re.match(r"`([^`]*)`", rest)
-    ref = quoted.group(1).strip() if quoted else (rest.split() or [""])[0].rstrip(".,;:")
-    if not _REF.fullmatch(ref) or ".." in ref or ref.endswith(("/", ".lock")):
-        raise RenderError(f'#{ticket.get("number")}\'s "Starts from:" line names no branch: {rest[:80]!r}')
-    return ref
+    """The branch a ticket's "Starts from:" lines name, outside code, or None
+    without one. A line naming no branch, or two naming different ones, is a
+    RenderError."""
+    body = ticket.get("body")
+    refs = []
+    for line in _prose_lines(body if isinstance(body, str) else ""):
+        m = _STARTS_FROM.match(line)
+        if not m:
+            continue
+        value = m.group(1).strip()
+        ref = _ref_of(value)
+        if ref is None:
+            raise RenderError(
+                f'#{ticket.get("number")}\'s "Starts from:" line names no branch: {value[:80]!r}; '
+                f"give {_REF_WORDS}, in backticks"
+            )
+        refs.append(ref)
+    if len(set(refs)) > 1:
+        raise RenderError(f'#{ticket.get("number")}\'s "Starts from:" lines name different branches: ' + ", ".join(sorted(set(refs))))
+    return refs[0] if refs else None
 
 
 def _starts_from_words(ticket: dict, profile: Profile, branch: str) -> str:
     ref = _starts_from(ticket)
-    if ref is None:
+    if ref is None or ref == profile.base_branch:
         return f"`{profile.base_branch}`, the base branch."
+    if ref == branch:
+        return f"`{branch}`, your own branch, as the ticket's \"Starts from:\" line names it: carry on from it and its pull request."
     return (
-        f'`{ref}`, as the ticket\'s "Starts from:" line names it: fetch it (`git fetch origin {ref}`) and create '
-        f"`{branch}` from what it fetched (`git switch -c {branch} FETCH_HEAD`). Then open your own pull request "
-        "(closing the old one's ticket too, if it has one), and close the old pull request with a comment linking yours."
+        f'`{ref}`, as the ticket\'s "Starts from:" line names it. If `{branch}` is already on GitHub '
+        f"(`git ls-remote --exit-code origin refs/heads/{branch}`: an earlier attempt's), carry on from it and its "
+        f"pull request instead. Otherwise fetch it (`git fetch origin {ref}`) and create `{branch}` from what it "
+        f"fetched (`git switch -c {branch} FETCH_HEAD`). Open your own pull request (closing the old one's ticket "
+        "too, if it has one), and close the old pull request with a comment linking yours, unless that is done already."
     )
 
 
