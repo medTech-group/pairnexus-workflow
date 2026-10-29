@@ -10,6 +10,7 @@ name: release gate
 on:
   pull_request:
     types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+  merge_group:
   issue_comment:
     types: [created, edited, deleted]
 
