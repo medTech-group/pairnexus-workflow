@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+**Set-up and the kit's update ask who writes code; "Choose who writes code" changes it** (#345, part of #338).
+
+- **`setup-workflow`** asks "Who writes code in this project?", **Only ticket sessions (Recommended)** first and **Any session** second, and with only ticket sessions proposes `code_paths` from the project's layout (for a project with no code yet, its stack's source and test folders, or it asks which folders will hold code). It says what "only ticket sessions" means while no ticket environment exists: nothing writes code until one does, and a new project's first ticket is built in a session the owner starts in the ticket environment (in plugin mode, a session on the owner's computer with `WORKFLOW_ROLE=ticket`). A skipped question writes nothing.
+- **`update-workflow`** asks the same once, for a profile without `code_writers`, and writes the answer in the update's pull request; a skipped question writes nothing, as its experience question does, and each later update asks once again.
+- **`upgrade-setup`** gains its sixth path, "Choose who writes code": the question and the code paths, then a pull request changing `guard.code_writers` and `guard.code_paths` for the owner to merge. A loosening counts only once it merges, since the base branch's `"ticket"` wins.
+- **`check-setup`** offers "Choose who writes code" while doctor's `kit.code_writers` note says it is unanswered (in plugin mode, that is where it is asked), and its ticket-session line says that under `code_writers = "ticket"` a session that is a ticket session only by its branch or a mistyped `WORKFLOW_ROLE` is a planning session, which may run it.
+- Set-up, the update and every `upgrade-setup` path push in a command of their own, never chained with the commit (answer 41 on #338).
+- Tests: `tests/test_code_writers_setup.py`.
+- **For projects updating:** the update asks who writes code once, while the profile doesn't answer it.
+
 **The owner's "also #<n>" sends a pull request that needs a code fix back to a ticket session** (#361, part of #338), an `in-review` one too, on the same pull request.
 
 - **The hold:** from the moment the conductor reads it, the pull request's head is kept as the ticket's `requeued_head` (`workflow state put` refuses one that isn't a full commit SHA), auto-merge is disarmed and the pull request is taken out of the merge queue. Nothing merges, queues or arms it, and its branch isn't updated, until a commit carrying the fix is pushed and a review covers it. The ticket's briefing names the pull request, its head and the fix.
