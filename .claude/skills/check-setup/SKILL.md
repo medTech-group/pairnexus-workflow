@@ -19,7 +19,7 @@ One report of what's set up and what isn't, each line with its fix: `workflow do
 
 **Cloud or local.** A cloud session has `CLAUDE_CODE_REMOTE` set to `true`. Anything else is a local session.
 
-**Only in attended sessions.** In a ticket or conductor session (`WORKFLOW_ROLE` set to anything but `attended`, or a branch named like the profile's `run.ticket_branch`) don't run it: there's nobody to answer its offers, and the conductor's pre-flight runs doctor itself.
+**Only in attended sessions.** In a ticket or conductor session (`WORKFLOW_ROLE` set to anything but `attended`, or a branch named like the profile's `run.ticket_branch`) don't run it: there's nobody to answer its offers, and the conductor's pre-flight runs doctor itself. That reading holds with `code_writers` absent or `"any"` (`WF status --json`'s `code_writers` is `null` or `"any"`). Under `code_writers = "ticket"`, a session that would be a ticket session only by its branch, or by a `WORKFLOW_ROLE` that isn't a role, is a planning session, an attended one: run it there.
 
 ## 1. Gather, then run doctor
 
@@ -150,6 +150,8 @@ Each line with an `offer` is an upgrade one tap away. Offer each one the report 
 **Protecting comes first.** When the report offers `protect_main` or `restore_protection` as well as `require_checks`, ask the protecting one first, and on yes to both, finish "Protect `main`" before starting "Require these checks": checks are only added to a protected base branch. Today's doctor offers `require_checks` only once the base branch is protected, so it never offers both in one report; the order holds for any report that does.
 
 **Not now** ends that offer for now: nothing is changed, and the next check still names it.
+
+**Who writes code.** While `guard.code_writers` is unanswered, doctor's `kit.code_writers` line carries no `offer`. While it is a `note` whose fix names "Choose who writes code", offer **Choose who writes code** as a choice with **Not now**, among the others and in the same way, without "(Recommended)" (a note). On yes, load `upgrade-setup` for "Choose who writes code", from its "Where it stands": its question comes next, so ask no other first. In plugin mode, which has no kit update to ask it, this is where it is asked. Once answered, the line's fix no longer names it, and it isn't offered.
 
 **Any other offer** doctor names that isn't in the table (a later kit adds them) is named as text, not offered as a choice: "Doctor also suggests `<offer>`: <the line's fix>." Start only the upgrades in the table.
 

@@ -140,6 +140,16 @@ deploy_commands = []                    # e.g. ["scripts/deploy.sh", "terraform 
 # Test files: where a new skip marker is refused in ticket sessions.
 test_paths = ["**/test_*.py", "**/*_test.py", "**/*.test.*", "**/*.spec.*", "**/*_test.dart", "**/*_test.go", "**/conftest.py"]
 allow_new_skips = false
+# Who writes code: "ticket" (only ticket sessions, WORKFLOW_ROLE=ticket; every
+# other session is a planning session, which writes no code, and the conductor
+# follows a planning session's rules) or "any" (any session). Left out: not
+# answered yet, as before. Keep it a plain line: it is read from that line when
+# the profile doesn't parse. The stricter of this file's answer and the base
+# branch's (as last fetched) counts.
+# code_writers = "ticket"
+# The globs that are code (matched as protected_paths is; a path that is both
+# counts as protected). No defaults.
+# code_paths = ["src/**", "tests/**"]
 
 [sensitive]
 # What must never appear in issues, comments, PR bodies or notifications.
@@ -174,6 +184,9 @@ commands = []                           # e.g. ["pgrep dockerd || (nohup dockerd
 # smoke = "scripts/smoke.sh staging"
 
 [run]
+# Ticket sessions' branches: a session on one counts as a ticket session
+# without WORKFLOW_ROLE (the role fallback). With guard.code_writers set to
+# "ticket", such a branch alone makes a planning session instead.
 ticket_branch = "claude/build-*"        # ticket sessions' branches (role fallback)
 check_in_minutes = 20
 max_parallel = 2
