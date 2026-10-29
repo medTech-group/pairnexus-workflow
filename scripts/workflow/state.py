@@ -15,6 +15,13 @@ Optional: `estimate`, the estimate the owner approved (`charter estimate
 Optional: `merge_queue`, whether the ruleset required a merge queue on the base
 when last seen (`state init --queue`, then `queue_seen` at each change), used
 only to notice a change; null when not known.
+Optional: `wind_down`, why the run winds down for good (#349: a session that
+wasn't a ticket session, so every other would fail the same way).
+
+A ledger entry naming a revert (`"what": "revert"`, or any entry with a
+`revert` field) gives the reverted commit's full SHA in `revert`: the guard's
+commit and push rule (#341) lets the conductor revert only a commit the ledger
+records the owner allowing (#338, answer 40).
 
 With the queue on, `drop` decides each answer GitHub gives to queueing a
 ticket's pull request (#243), and keeps on the ticket what it needs: the heads
@@ -112,6 +119,9 @@ TICKET_FIELDS = {
     "queue_failed": (_counts, "an object of commit SHAs and whole numbers"),
     "base_merged": (lambda v: isinstance(v, bool), "true or false"),
     "queue_result": (lambda v: isinstance(v, str) and v in DROP_RESULTS, "one of " + ", ".join(sorted(DROP_RESULTS))),
+    # The pull request's head when the owner's "also #<n>" asked for a code fix (#361): it is held, never merged,
+    # queued or armed, until a commit carrying the fix is pushed and reviewed.
+    "requeued_head": (is_head, "a full commit SHA in lower case"),
 }
 
 
@@ -156,11 +166,16 @@ def validate(s: Any) -> list[str]:
         p.append("estimate must be `workflow charter estimate --json`'s output or null")
     if s.get("merge_queue") is not None and not isinstance(s["merge_queue"], bool):
         p.append("merge_queue must be true, false or null")
+    wd = s.get("wind_down")
+    if wd is not None and not (isinstance(wd, str) and wd.strip()):
+        p.append("wind_down must be why the run winds down (words) or null")
     if "status" in s and not (isinstance(s["status"], str) and s["status"] in RUN_STATUSES):
         p.append(f"status must be one of {sorted(RUN_STATUSES)}")
     for i, e in enumerate(s.get("ledger") or []):
         if not isinstance(e, dict) or not e.get("what") or not e.get("at") or not e.get("grant"):
             p.append(f"ledger[{i}] needs what, at and grant (the charter line or owner message allowing it)")
+        if isinstance(e, dict) and (str(e.get("what")).strip().lower() == "revert" or "revert" in e) and not is_head(e.get("revert")):
+            p.append(f"ledger[{i}].revert must be the full commit SHA of the change reverted, in lower case")
     return p
 
 
