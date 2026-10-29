@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.1.17
+
+**A project can say that only ticket sessions write code.** Spec #338, #339, #340, #342, #344, #345, #349 and #361: set-up and the kit's update ask "Who writes code in this project?" (only ticket sessions, recommended, or any session) and which folders hold code; under "only ticket sessions", the guard refuses an edit to a code file in any other session (a planning session, the conductor, a session that is a ticket session only by its branch), doctor and "check the set-up" say who writes code, and the conductor of an unattended run writes no code itself: a code fix becomes a ticket for a ticket session, and it reverts a merged change only when the owner allows it. Nothing changes until a project answers. Each change's own note is below.
+
+- **For projects updating to 0.1.17:**
+  - The update asks who writes code once, while the profile doesn't answer it; skipping it changes nothing (from #345).
+  - The vendored guard hook in `.claude/settings.json` changes with the update (from #342).
+- **Known limit:** under "only ticket sessions", a commit or push that carries code made some other way isn't refused yet; the guard refuses the edits themselves. Refusing such commits and pushes, and a push chained with a commit, comes with #341.
+
 **Set-up and the kit's update ask who writes code; "Choose who writes code" changes it** (#345, part of #338).
 
 - **`setup-workflow`** asks "Who writes code in this project?", **Only ticket sessions (Recommended)** first and **Any session** second, and with only ticket sessions proposes `code_paths` from the project's layout (for a project with no code yet, its stack's source and test folders, or it asks which folders will hold code). It says what "only ticket sessions" means while no ticket environment exists: nothing writes code until one does, and a new project's first ticket is built in a session the owner starts in the ticket environment (in plugin mode, a session on the owner's computer with `WORKFLOW_ROLE=ticket`). A skipped question writes nothing.
