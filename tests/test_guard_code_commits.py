@@ -14,6 +14,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -83,6 +84,7 @@ def hook(monkeypatch, capsys, root, command, role=None, mode=None, cwd=None):
     """`workflow hook guard` given a Bash event: (decision, reason), the
     decision "allow" when the hook prints nothing."""
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    monkeypatch.setattr(cli, "_STARTED", time.monotonic())  # each call its own time budget
     monkeypatch.delenv("WORKFLOW_EXPERIENCE", raising=False)
     if role is None:
         monkeypatch.delenv("WORKFLOW_ROLE", raising=False)
@@ -155,6 +157,12 @@ REFUSED = [
     (_changed_code, "git commit -qam x"),
     (_changed_code, "git commit --all -m x"),
     (_changed_code, "git commit --inc -m x src/app.py"),
+    (_changed_code, "printf 'y\\n' | git commit -p -m x"),
+    (_changed_code, "git commit --patch -m x"),
+    (_changed_code, "git commit -m x src/{app,util}.py"),
+    (_changed_code, "git commit -m x {docs/guide.md,src/app.py}"),
+    (_changed_code, "git commit -uno -m x src/app.py"),
+    (_changed_code, "GIT_ICASE_PATHSPECS=1 git commit -m x SRC/APP.PY"),
     (_staged_code, "git commit --mess x"),
     (_changed_code, "git commit -m x src/app.py"),
     (_changed_code, "git commit -m x -- src"),
@@ -171,6 +179,9 @@ REFUSED = [
     (_staged_code, "git merge --continue"),
     (_staged_code, "git cherry-pick --continue"),
     (_staged_code, "git revert --continue"),
+    (_staged_code, "git rebase --continue"),
+    (_staged_code, "git am --continue"),
+    (_staged_code, "git merge --contin"),
 ]
 
 
@@ -246,7 +257,9 @@ def _nothing(root):
 
 ALLOWED = [
     (_docs_only, "git commit -m d"),
-    (_docs_only, "git commit -m src/app.py"),
+    (_changed_code, "git commit -m src/app.py"),
+    (_changed_code, "git commit -F src/app.py"),
+    (_changed_code, "git commit -C HEAD src/app.py --dry-run"),
     (_docs_with_unstaged_code, "git commit -m d"),
     (_docs_with_untracked_code, "git commit -m d"),
     (_docs_with_untracked_code, "git commit -am d"),
@@ -257,7 +270,9 @@ ALLOWED = [
     (_staged_protected_inside_code, "git commit -m p"),
     (_staged_workflow_file, "git commit -m w"),
     (_nothing, "git commit --allow-empty -m e"),
-    (_changed_code, "git commit -F docs/guide.md"),
+    (_docs_with_staged_code, "git commit --short"),
+    (_docs_with_staged_code, "git commit --porcelain"),
+    (_docs_with_staged_code, "git commit -h"),
     (_changed_code, "git commit -m x docs"),
     (_staged_code, "git merge --abort"),
     (_staged_code, "git log -1 --format=%s"),
@@ -331,6 +346,86 @@ def test_a_ticket_session_commits_code_as_today(proj, monkeypatch, capsys):
         for role in ("ticket", " Ticket "):
             d, why = hook(monkeypatch, capsys, proj, command, role)
             assert d == "allow" and "code path" not in why, (command, role, why)
+
+
+# Options whose value is the next word: a code path there is never a pathspec.
+VALUE_OPTIONS = ["-F", "-C", "-c", "-t", "--author", "--date", "--trailer", "--cleanup", "--template", "--fixup", "--squash", "--reuse-message", "--file"]
+
+
+@pytest.mark.parametrize("option", VALUE_OPTIONS)
+def test_an_options_value_is_not_a_pathspec(proj, monkeypatch, capsys, option):
+    _changed_code(proj)
+    d, why = hook(monkeypatch, capsys, proj, f"git commit {option} src/app.py -m x")
+    assert d == "allow", (option, why)
+    # The word after the value is a pathspec again.
+    d, why = hook(monkeypatch, capsys, proj, f"git commit {option} docs/guide.md -m x src/app.py")
+    assert d == "deny" and "`src/app.py`" in why, (option, why)
+
+
+UNREAD_SPECS = [
+    'F=src/app.py; git commit -m x "$F"',
+    "git commit -m x $(echo src/app.py)",
+    "git commit -m x ~/src/app.py",
+    "echo src/app.py | xargs git commit -m x",
+    "find src -name app.py -exec git commit -m x {} +",
+    "echo src/app.py | git commit -m x --pathspec-from-file=/dev/stdin",
+]
+
+
+@pytest.mark.parametrize("command", UNREAD_SPECS)
+def test_pathspecs_the_guard_cant_read_are_asked_when_code_could_be_carried(proj, monkeypatch, capsys, command):
+    _changed_code(proj)
+    d, why = hook(monkeypatch, capsys, proj, command)
+    assert d == "ask" and "can't tell" in why and "`src/app.py`" in why, (command, why)
+    d, why = hook(monkeypatch, capsys, proj, command, "conductor")
+    assert d == "deny" and "can't tell" in why, (command, why)
+
+
+@pytest.mark.parametrize("command", UNREAD_SPECS)
+def test_pathspecs_the_guard_cant_read_go_through_when_no_code_changed(proj, monkeypatch, capsys, command):
+    _docs_with_untracked_code(proj)
+    assert hook(monkeypatch, capsys, proj, command)[0] == "allow", command
+
+
+def test_a_process_substitution_pathspec_file(proj, monkeypatch, capsys):
+    _changed_code(proj)
+    d, why = hook(monkeypatch, capsys, proj, "git commit -m x --pathspec-from-file=<(echo src/app.py)")
+    assert d == "ask" and "process substitution" in why, why
+
+
+@pytest.mark.parametrize("var", ["GIT_INDEX_FILE", "GIT_DIR", "GIT_WORK_TREE"])
+def test_a_variable_that_moves_what_git_reads(proj, monkeypatch, capsys, var):
+    _docs_only(proj)
+    d, why = hook(monkeypatch, capsys, proj, f"{var}=.git/alt git commit -m x")
+    assert d == "ask" and f"`{var}`" in why, why
+    d, why = hook(monkeypatch, capsys, proj, f"{var}=.git/alt git commit -m x", "conductor")
+    assert d == "deny" and f"`{var}`" in why, why
+    # Other variables change nothing.
+    assert hook(monkeypatch, capsys, proj, "GIT_EDITOR=true git commit -m x")[0] == "allow"
+
+
+def test_a_work_tree_elsewhere_still_commits_to_the_project(proj, tmp_path, monkeypatch, capsys):
+    """`--work-tree` outside the project commits into the project's own
+    repository: judged from that work tree."""
+    w = tmp_path / "w"
+    (w / "src").mkdir(parents=True)
+    (w / CODE).write_text("other\n")
+    d, why = hook(monkeypatch, capsys, proj, f"git --work-tree={w} commit -a -m x")
+    assert d == "deny" and "`src/app.py`" in why, why
+
+
+def test_the_can_t_tell_reason_reads_as_one_sentence(proj, monkeypatch, capsys):
+    _unreadable(proj)
+    d, why = hook(monkeypatch, capsys, proj, "git commit -m x")
+    assert "). under" not in why and "; under `code_writers" in why, why
+
+
+def test_in_solo_mode_a_refusal_elsewhere_stands_over_the_ask(tmp_path, monkeypatch, capsys):
+    root = _clone(tmp_path)
+    (root / PROFILE).write_text(_toml().replace('base_branch = "main"\n', 'base_branch = "main"\nruleset = false\n'))
+    _unreadable(root)
+    d, why = hook(monkeypatch, capsys, root, "git commit -m x; git push origin HEAD:main")
+    assert d == "deny" and "index file" not in why, why
 
 
 # ---------- a commit whose contents can't be read ----------
