@@ -6613,13 +6613,38 @@ def _written_before(segs: list[Seg], seg: Seg, name: str, d: str, root: Path) ->
     return False
 
 
+def _commit_git(words: list[str]) -> tuple[list[str], list[str], str | None] | None:
+    """`_git`'s reading of a command, found behind wrappers as in ticket
+    sessions, with git's dashed `git-commit` read as `git commit`."""
+    k = _vcs_index(words, "ticket")
+    if k is not None:
+        return _git(words[k:])
+    for i, w in enumerate(words):
+        if posixpath.basename(w) == "git-commit":
+            return [], ["commit", *words[i + 1 :]], None
+    return None
+
+
+def _made_by(segs: list[Seg], seg: Seg) -> str | None:
+    """The git command earlier than `seg` that makes a repository or a
+    worktree (`init`, `clone`, `worktree`), the last of them, if any."""
+    found = None
+    for s in segs:
+        if s is seg:
+            break
+        g = _commit_git(s.words)
+        sub = g[1][:2] if g else []
+        if sub[:1] in (["init"], ["clone"]) or sub == ["worktree", "add"]:
+            found = sub[0]
+    return found
+
+
 def _commit_code(segs: list[Seg], code: _Code, root: Path) -> tuple[str | None, str | None]:
     """(why a commit in the command carries a code path, why the guard can't
     tell what one carries), each None when it doesn't apply."""
     unsure, project = None, None
     for seg in segs:
-        k = _vcs_index(seg.words, "ticket")
-        g = _git(seg.words[k:]) if k is not None else None
+        g = _commit_git(seg.words)
         if not g or not g[1]:
             continue
         glob, args, cdir = g
@@ -6637,6 +6662,12 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path) -> tuple[str | None, 
             made, d = made or d, os.path.dirname(d)
         inside = _checkout_of(d, root) is not None
         cant = f"the guard can't tell what `git {args[0]}` would commit"
+        made_by = _made_by(segs, seg) if made else None
+        if made_by in ("init", "clone"):
+            continue  # a repository of its own, made earlier in the command: left to the push rule
+        if made_by == "worktree":
+            unsure = unsure or f"{cant}: it runs in `{made}`, a worktree the command adds first"
+            continue
         assigned = _assigned(seg)
         env = sorted(set(assigned) & _GIT_REPO_ENV)
         if env:

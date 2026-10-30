@@ -182,6 +182,8 @@ REFUSED = [
     (_staged_code, "git rebase --continue"),
     (_staged_code, "git am --continue"),
     (_staged_code, "git merge --contin"),
+    (_changed_code, "/usr/lib/git-core/git-commit -am x"),
+    (_changed_code, 'PATH="$(git --exec-path):$PATH" git-commit -am x'),
 ]
 
 
@@ -480,7 +482,7 @@ def test_a_pathspec_file_written_earlier_in_the_command(proj, monkeypatch, capsy
 def test_a_directory_made_earlier_in_the_command(proj, monkeypatch, capsys):
     """Never read from its parent: a repository made there would be another one."""
     _changed_code(proj)
-    for command in ("mkdir -p new && cd new && git commit -am x", "git init -q sub && cd sub && git commit -am x"):
+    for command in ("mkdir -p new && cd new && git commit -am x", "mkdir -p docs/new && cd docs/new && git commit -m x a.md"):
         d, why = hook(monkeypatch, capsys, proj, command)
         assert d == "ask" and "doesn't exist yet" in why, (command, why)
     git(proj, "checkout", "-q", "--", CODE)
@@ -488,6 +490,16 @@ def test_a_directory_made_earlier_in_the_command(proj, monkeypatch, capsys):
     assert hook(monkeypatch, capsys, proj, "mkdir -p new && cd new && git commit -m d")[0] == "allow"
     # Outside the project, nothing to judge.
     assert hook(monkeypatch, capsys, proj, "cd /nonexistent/x && git commit -am x")[0] == "allow"
+    # A repository made there earlier in the command is another one; a worktree added there is the project's.
+    for command in (
+        "mkdir -p scratch && cd scratch && git init -q && echo a > a.txt && git add -A && git commit -qam init",
+        "git init -q scratch2 && git -C scratch2 commit -qam init",
+        "git init -q sub && cd sub && git commit -am x",
+        "git clone -q ../proj-remote/acme/demo.git vendor/x && cd vendor/x && git commit -qam x",
+    ):
+        assert hook(monkeypatch, capsys, proj, command)[0] == "allow", command
+    d, why = hook(monkeypatch, capsys, proj, "git worktree add -q -b wtb .claude/worktrees/w && cd .claude/worktrees/w && git commit -am x")
+    assert d == "ask" and "a worktree the command adds first" in why, why
 
 
 def test_a_later_no_option_cancels_a_dry_run(proj, monkeypatch, capsys):
