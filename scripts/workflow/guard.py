@@ -6602,9 +6602,10 @@ def _written_before(segs: list[Seg], seg: Seg, name: str, d: str, root: Path) ->
     target = _abspath(name, d)
     for s in segs:
         t = _write_targets(s, root) if s is not seg else _Targets(files=list(s.redirects))
-        for f in t.files:
+        for f, tree in [(f, False) for f in t.files] + [(f, True) for f in t.trees]:  # `mv` and `cp -r` write trees
             if os.path.isabs(f) or s.cwd is not None:
-                if _abspath(f, s.cwd) == target:
+                a = _abspath(f, s.cwd)
+                if a and (a == target or (tree and target and target.startswith(a.rstrip("/") + "/"))):
                     return True
             elif posixpath.basename(f) == posixpath.basename(name):
                 return True
@@ -6615,27 +6616,80 @@ def _written_before(segs: list[Seg], seg: Seg, name: str, d: str, root: Path) ->
 
 def _commit_git(words: list[str]) -> tuple[list[str], list[str], str | None] | None:
     """`_git`'s reading of a command, found behind wrappers as in ticket
-    sessions, with git's dashed `git-commit` read as `git commit`."""
+    sessions, with git's dashed `git-commit` read as `git commit` when it is
+    the command word (`grep git-commit` only reads)."""
     k = _vcs_index(words, "ticket")
     if k is not None:
         return _git(words[k:])
-    for i, w in enumerate(words):
-        if posixpath.basename(w) == "git-commit":
-            return [], ["commit", *words[i + 1 :]], None
+    if words and posixpath.basename(words[0]) == "git-commit":
+        return [], ["commit", *words[1:]], None
     return None
 
 
-def _made_by(segs: list[Seg], seg: Seg) -> str | None:
-    """The git command earlier than `seg` that makes a repository or a
-    worktree (`init`, `clone`, `worktree`), the last of them, if any."""
+# The options of `git init`, `git clone` and `git worktree add` that take the next word as their value.
+_MAKES_VALUES = {
+    "init": {"--template", "--separate-git-dir", "-b", "--initial-branch", "--object-format", "--ref-format"},
+    "clone": {"-b", "--branch", "-o", "--origin", "--depth", "-c", "--config", "--reference", "--reference-if-able",
+              "--template", "-u", "--upload-pack", "-j", "--jobs", "--separate-git-dir", "--filter", "--shallow-since",
+              "--shallow-exclude", "--server-option", "--bundle-uri", "--ref-format"},
+    "worktree": {"-b", "-B", "--reason"},
+}  # fmt: skip
+
+
+def _made_where(s: Seg) -> tuple[str, str] | None:
+    """(what `s` makes, "init", "clone" or "worktree", and where, absolute)
+    when it is `git init`, `git clone`, `git worktree add` or `gh repo clone`
+    at a place the guard can follow; else None."""
+    if s.cwd is None:
+        return None
+    if s.words[:1] and posixpath.basename(s.words[0]) == "gh" and s.words[1:3] == ["repo", "clone"]:
+        kind, rest = "clone", s.words[3:]
+    else:
+        g = _commit_git(s.words)
+        args = g[1] if g else []
+        if args[:1] in (["init"], ["clone"]):
+            kind, rest = args[0], args[1:]
+        elif args[:2] == ["worktree", "add"]:
+            kind, rest = "worktree", args[2:]
+        else:
+            return None
+        s = replace(s, cwd=_git_dir_of(Path("/"), s.cwd, g[2]))
+    words, i, values = [], 0, _MAKES_VALUES.get(kind, set())
+    while i < len(rest):
+        w = rest[i]
+        i += 1
+        if w == "--":
+            words += rest[i:]
+            break
+        if w.startswith("-"):
+            i += 1 if w in values else 0
+            continue
+        words.append(w)
+    if kind == "init":
+        at = words[0] if words else "."
+    elif kind == "clone":
+        if not words:
+            return None
+        at = words[1] if len(words) > 1 else posixpath.basename(words[0].rstrip("/")).removesuffix(".git")
+    else:
+        if not words:
+            return None
+        at = words[0]
+    a = _abspath(at, s.cwd)
+    return (kind, a) if a else None
+
+
+def _made_by(segs: list[Seg], seg: Seg, where: str) -> str | None:
+    """What an earlier part of the command made at `where` (a directory that
+    doesn't exist yet) or a folder holding it: "init" or "clone" (another
+    repository) or "worktree" (one of the project's), the last of them."""
     found = None
     for s in segs:
         if s is seg:
             break
-        g = _commit_git(s.words)
-        sub = g[1][:2] if g else []
-        if sub[:1] in (["init"], ["clone"]) or sub == ["worktree", "add"]:
-            found = sub[0]
+        m = _made_where(s)
+        if m and (where == m[1] or where.startswith(m[1].rstrip("/") + "/")):
+            found = m[0]
     return found
 
 
@@ -6662,7 +6716,7 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path) -> tuple[str | None, 
             made, d = made or d, os.path.dirname(d)
         inside = _checkout_of(d, root) is not None
         cant = f"the guard can't tell what `git {args[0]}` would commit"
-        made_by = _made_by(segs, seg) if made else None
+        made_by = _made_by(segs, seg, made) if made else None
         if made_by in ("init", "clone"):
             continue  # a repository of its own, made earlier in the command: left to the push rule
         if made_by == "worktree":

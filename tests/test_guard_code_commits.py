@@ -280,6 +280,11 @@ ALLOWED = [
     (_changed_code, "git commit -m x docs"),
     (_staged_code, "git merge --abort"),
     (_staged_code, "git log -1 --format=%s"),
+    (_changed_code, "grep -rn git-commit src"),
+    (_staged_code, "man git-commit"),
+    (_staged_code, "which git-commit"),
+    (_docs_with_staged_code, "git commit --help-all"),
+    (_docs_with_staged_code, "git commit -z --no-porcelain -m d"),
 ]
 
 
@@ -397,7 +402,7 @@ def test_a_process_substitution_pathspec_file(proj, monkeypatch, capsys):
     assert d == "ask" and "process substitution" in why, why
 
 
-@pytest.mark.parametrize("var", ["GIT_INDEX_FILE", "GIT_DIR", "GIT_WORK_TREE"])
+@pytest.mark.parametrize("var", ["GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"])
 def test_a_variable_that_moves_what_git_reads(proj, monkeypatch, capsys, var):
     _docs_only(proj)
     d, why = hook(monkeypatch, capsys, proj, f"{var}=.git/alt git commit -m x")
@@ -472,6 +477,9 @@ def test_a_pathspec_file_written_earlier_in_the_command(proj, monkeypatch, capsy
     for command in (
         "printf 'src/app.py\\n' | tee .workflow/l.txt; git commit -m x --pathspec-from-file=.workflow/l.txt",
         "cp .workflow/other.txt .workflow/l.txt; git commit -m x --pathspec-from-file=.workflow/l.txt",
+        "mv .workflow/other.txt .workflow/l.txt; git commit -m x --pathspec-from-file=.workflow/l.txt",
+        "cp -r .workflow/other.txt .workflow/l.txt; git commit -m x --pathspec-from-file=.workflow/l.txt",
+        "rsync -a .workflow/ .workflow/; git commit -m x --pathspec-from-file=.workflow/l.txt",
         f"(cd $SOMEWHERE; echo src/app.py > {proj}/.workflow/l.txt); git commit -m x --pathspec-from-file=.workflow/l.txt",
         "git commit -m x --pathspec-from-file=.workflow/l.txt > .workflow/l.txt",
     ):
@@ -491,6 +499,7 @@ def test_a_directory_made_earlier_in_the_command(proj, monkeypatch, capsys):
     # Outside the project, nothing to judge.
     assert hook(monkeypatch, capsys, proj, "cd /nonexistent/x && git commit -am x")[0] == "allow"
     # A repository made there earlier in the command is another one; a worktree added there is the project's.
+    _changed_code(proj)
     for command in (
         "mkdir -p scratch && cd scratch && git init -q && echo a > a.txt && git add -A && git commit -qam init",
         "git init -q scratch2 && git -C scratch2 commit -qam init",
@@ -500,6 +509,14 @@ def test_a_directory_made_earlier_in_the_command(proj, monkeypatch, capsys):
         assert hook(monkeypatch, capsys, proj, command)[0] == "allow", command
     d, why = hook(monkeypatch, capsys, proj, "git worktree add -q -b wtb .claude/worktrees/w && cd .claude/worktrees/w && git commit -am x")
     assert d == "ask" and "a worktree the command adds first" in why, why
+    assert hook(monkeypatch, capsys, proj, "gh repo clone acme/other && cd other && git commit -am x")[0] == "allow"
+    assert hook(monkeypatch, capsys, proj, "git clone -q -b main ../proj-remote/acme/demo.git vendor/y && cd vendor/y && git commit -qam x")[0] == "allow"
+    # What another part made elsewhere doesn't decide this commit: it is the project's own.
+    d, why = hook(monkeypatch, capsys, proj, "git init -q /tmp/scratch-389 && mkdir -p d && cd d && git commit -am x")
+    assert d == "ask" and "doesn't exist yet" in why, why
+    git(proj, "checkout", "-q", "--", CODE)
+    _docs_only(proj)
+    assert hook(monkeypatch, capsys, proj, "git worktree add ../wt-389 && mkdir -p docs/n && cd docs/n && git commit -m d")[0] == "allow"
 
 
 def test_a_later_no_option_cancels_a_dry_run(proj, monkeypatch, capsys):
