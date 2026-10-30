@@ -184,6 +184,7 @@ REFUSED = [
     (_staged_code, "git merge --contin"),
     (_changed_code, "/usr/lib/git-core/git-commit -am x"),
     (_changed_code, 'PATH="$(git --exec-path):$PATH" git-commit -am x'),
+    (_changed_code, "taskset -c 0 /usr/lib/git-core/git-commit -am x"),
 ]
 
 
@@ -514,6 +515,25 @@ def test_a_directory_made_earlier_in_the_command(proj, monkeypatch, capsys):
     # What another part made elsewhere doesn't decide this commit: it is the project's own.
     d, why = hook(monkeypatch, capsys, proj, "git init -q /tmp/scratch-389 && mkdir -p d && cd d && git commit -am x")
     assert d == "ask" and "doesn't exist yet" in why, why
+    for command in (
+        "git init -q && mkdir -p docs/new && cd docs/new && git commit -am x",  # reinitialises the project's own
+        "git clone -q ../x docs; mkdir -p docs/new && cd docs/new && git commit -am x",  # `docs` is there: no clone
+        "git init -q scratch && mkdir -p scratchy && cd scratchy && git commit -am x",  # beside it, not in it
+    ):
+        d, why = hook(monkeypatch, capsys, proj, command)
+        assert d == "ask" and "doesn't exist yet" in why, (command, why)
+    for command in (
+        "git -C vendor init -q lib && cd vendor/lib && git commit -am x",
+        "git clone -q git@github.com:acme/other.git && cd other && git commit -am x",
+        "git clone -q file:///srv/repos/other.git/ && cd other && git commit -am x",
+        "git clone -q git@host:other.git && cd other && git commit -am x",
+        "git clone -q ../repos/other/.git && cd other && git commit -am x",
+        "git clone -q --bare ../repos/other && cd other.git && git commit -am x",
+        "git clone -q ../b/other.bundle && cd other && git commit -am x",
+        "gh repo clone acme/other mine -- --depth 1 && cd mine && git commit -am x",
+        "gh repo clone acme/other -- --depth 1 && cd other && git commit -am x",
+    ):
+        assert hook(monkeypatch, capsys, proj, command)[0] == "allow", command
     git(proj, "checkout", "-q", "--", CODE)
     _docs_only(proj)
     assert hook(monkeypatch, capsys, proj, "git worktree add ../wt-389 && mkdir -p docs/n && cd docs/n && git commit -m d")[0] == "allow"

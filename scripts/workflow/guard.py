@@ -6616,13 +6616,15 @@ def _written_before(segs: list[Seg], seg: Seg, name: str, d: str, root: Path) ->
 
 def _commit_git(words: list[str]) -> tuple[list[str], list[str], str | None] | None:
     """`_git`'s reading of a command, found behind wrappers as in ticket
-    sessions, with git's dashed `git-commit` read as `git commit` when it is
-    the command word (`grep git-commit` only reads)."""
+    sessions, with git's dashed `git-commit` read as `git commit`, behind any
+    command word but one that only reads (`grep git-commit`)."""
     k = _vcs_index(words, "ticket")
     if k is not None:
         return _git(words[k:])
-    if words and posixpath.basename(words[0]) == "git-commit":
-        return [], ["commit", *words[1:]], None
+    if words and Path(words[0]).name not in _DATA_ONLY:
+        for i, w in enumerate(words):
+            if posixpath.basename(w) == "git-commit":
+                return [], ["commit", *words[i + 1 :]], None
     return None
 
 
@@ -6631,7 +6633,7 @@ _MAKES_VALUES = {
     "init": {"--template", "--separate-git-dir", "-b", "--initial-branch", "--object-format", "--ref-format"},
     "clone": {"-b", "--branch", "-o", "--origin", "--depth", "-c", "--config", "--reference", "--reference-if-able",
               "--template", "-u", "--upload-pack", "-j", "--jobs", "--separate-git-dir", "--filter", "--shallow-since",
-              "--shallow-exclude", "--server-option", "--bundle-uri", "--ref-format"},
+              "--shallow-exclude", "--server-option", "--bundle-uri", "--ref-format", "--revision"},
     "worktree": {"-b", "-B", "--reason"},
 }  # fmt: skip
 
@@ -6642,7 +6644,9 @@ def _made_where(s: Seg) -> tuple[str, str] | None:
     at a place the guard can follow; else None."""
     if s.cwd is None:
         return None
-    if s.words[:1] and posixpath.basename(s.words[0]) == "gh" and s.words[1:3] == ["repo", "clone"]:
+    gh = bool(s.words[:1]) and posixpath.basename(s.words[0]) == "gh" and s.words[1:3] == ["repo", "clone"]
+    bare = False
+    if gh:
         kind, rest = "clone", s.words[3:]
     else:
         g = _commit_git(s.words)
@@ -6659,9 +6663,10 @@ def _made_where(s: Seg) -> tuple[str, str] | None:
         w = rest[i]
         i += 1
         if w == "--":
-            words += rest[i:]
+            words += [] if gh else rest[i:]  # after `gh repo clone`'s `--` come git's own flags
             break
         if w.startswith("-"):
+            bare = bare or w in ("--bare", "--mirror")
             i += 1 if w in values else 0
             continue
         words.append(w)
@@ -6670,13 +6675,26 @@ def _made_where(s: Seg) -> tuple[str, str] | None:
     elif kind == "clone":
         if not words:
             return None
-        at = words[1] if len(words) > 1 else posixpath.basename(words[0].rstrip("/")).removesuffix(".git")
+        at = words[1] if len(words) > 1 else _clone_name(words[0], bare)
+        if not at:
+            return None
     else:
         if not words:
             return None
         at = words[0]
     a = _abspath(at, s.cwd)
     return (kind, a) if a else None
+
+
+def _clone_name(source: str, bare: bool) -> str:
+    """The directory `git clone <source>` makes with none named: the source's
+    last part, without `/.git`, `.git` or `.bundle` (`.git` added for a bare
+    clone)."""
+    name = source.rstrip("/").removesuffix("/.git").rstrip("/")
+    name = re.split(r"[/:]", name)[-1]
+    for suffix in (".git", ".bundle"):
+        name = name.removesuffix(suffix)
+    return name + ".git" if name and bare else name
 
 
 def _made_by(segs: list[Seg], seg: Seg, where: str) -> str | None:
@@ -6688,7 +6706,9 @@ def _made_by(segs: list[Seg], seg: Seg, where: str) -> str | None:
         if s is seg:
             break
         m = _made_where(s)
-        if m and (where == m[1] or where.startswith(m[1].rstrip("/") + "/")):
+        if not m or not (where == m[1] or where.startswith(m[1].rstrip("/") + "/")):
+            continue
+        if m[0] == "worktree" or not os.path.exists(m[1]):  # an init or clone where something is already makes no new repository there
             found = m[0]
     return found
 
