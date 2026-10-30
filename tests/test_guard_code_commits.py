@@ -1,0 +1,452 @@
+"""#389 (spec #338, split from #341): under `code_writers = "ticket"`, a
+session that doesn't write code is refused a `git commit` in a checkout of
+`project.repo` that would carry a code path: what is staged, plus what `-a`
+or a pathspec adds. Code written where the guard couldn't see it
+(`python3 -c …`) is caught before it is committed. A commit whose contents
+can't be read is asked in a planning session and refused in the conductor.
+
+Through `workflow hook guard`, run as Claude Code runs it (a JSON event on
+stdin, the decision on stdout), in temporary git repositories cloned from a
+bare remote. The commands are data given to the hook; only the set-up runs."""
+
+import io
+import json
+import os
+import subprocess
+import sys
+
+import pytest
+
+from changelog_notes import since_0110
+from conftest import KIT, git
+from workflow import cli
+
+# The tests' repositories never see the developer's own git configuration.
+pytestmark = pytest.mark.usefixtures("_no_user_git_config")
+
+PROFILE = ".claude/workflow/profile.toml"
+CODE = "src/app.py"
+
+
+def _toml(code_writers="ticket"):
+    line = "" if code_writers is None else f'code_writers = "{code_writers}"\n'
+    return (
+        '[project]\nname = "demo"\nrepo = "acme/demo"\nbase_branch = "main"\n'
+        "[guard]\n"
+        f"{line}"
+        'code_paths = ["src/**", "tests/**"]\n'
+        'protected_paths = [".claude/**", ".github/workflows/**", "src/protected/**"]\n'
+        "[run]\n"
+        'ticket_environment = "workflow-ticket"\n'
+        'conductor_environment = "workflow-conductor"\n'
+    )
+
+
+def _clone(tmp_path, code_writers="ticket", branch="feature", name="proj"):
+    """A clone of a bare remote (`…/acme/demo.git`) on `branch`, with code
+    (`src/`, `tests/`), docs and a protected folder inside a code path."""
+    seed = tmp_path / f"{name}-seed"
+    seed.mkdir(parents=True)
+    git(seed, "init", "-q", "-b", "main")
+    files = {
+        PROFILE: _toml(code_writers),
+        ".claude/workflow/lock.json": '{"kit_version": "0.1.17"}\n',
+        CODE: "a = 1\n",
+        "src/protected/keep.py": "k = 1\n",
+        "tests/test_app.py": "def test_a():\n    pass\n",
+        "docs/guide.md": "# Guide\n",
+        ".gitignore": "src/build/\n",
+    }
+    for f, text in files.items():
+        (seed / f).parent.mkdir(parents=True, exist_ok=True)
+        (seed / f).write_text(text)
+    git(seed, "add", "-A")
+    git(seed, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "init")
+    bare = tmp_path / f"{name}-remote" / "acme" / "demo.git"
+    bare.parent.mkdir(parents=True)
+    git(tmp_path, "clone", "-q", "--bare", str(seed), str(bare))
+    root = tmp_path / name
+    git(tmp_path, "clone", "-q", str(bare), str(root))
+    git(root, "config", "user.email", "t@example.com")
+    git(root, "config", "user.name", "t")
+    if branch != "main":
+        git(root, "checkout", "-q", "-b", branch)
+    return root
+
+
+@pytest.fixture
+def proj(tmp_path):
+    return _clone(tmp_path)
+
+
+def hook(monkeypatch, capsys, root, command, role=None, mode=None, cwd=None):
+    """`workflow hook guard` given a Bash event: (decision, reason), the
+    decision "allow" when the hook prints nothing."""
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    monkeypatch.delenv("WORKFLOW_EXPERIENCE", raising=False)
+    if role is None:
+        monkeypatch.delenv("WORKFLOW_ROLE", raising=False)
+    else:
+        monkeypatch.setenv("WORKFLOW_ROLE", role)
+    monkeypatch.chdir(root)
+    event = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(cwd or root)}
+    if mode is not None:
+        event["permission_mode"] = mode
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(event).encode()), encoding="utf-8"))
+    assert cli.main(["hook", "guard"]) == 0
+    out = capsys.readouterr().out
+    if not out.strip():
+        return "allow", ""
+    h = json.loads(out)["hookSpecificOutput"]
+    return h["permissionDecision"], h["permissionDecisionReason"]
+
+
+# A session that doesn't write code under "ticket": (WORKFLOW_ROLE, branch).
+NOT_TICKET = {
+    "attended": (None, "feature"),
+    "conductor": ("conductor", "feature"),
+    "branch-only ticket session": (None, "claude/build-1"),
+    "mistyped WORKFLOW_ROLE": ("tikcet", "feature"),
+}
+
+
+def _on(root, branch):
+    if branch != "feature":
+        git(root, "checkout", "-q", "-B", branch)
+
+
+def _change(root, path, text="changed\n"):
+    (root / path).parent.mkdir(parents=True, exist_ok=True)
+    (root / path).write_text(text)
+
+
+# What each case sets up in the checkout, then the commit it judges.
+def _staged_code(root):
+    _change(root, CODE)
+    git(root, "add", CODE)
+
+
+def _staged_new_code(root):
+    _change(root, "src/new/mod.py")
+    git(root, "add", "src/new/mod.py")
+
+
+def _staged_removal(root):
+    git(root, "rm", "-q", "tests/test_app.py")
+
+
+def _staged_rename_out_of_code(root):
+    git(root, "mv", CODE, "docs/app.md")
+
+
+def _changed_code(root):
+    _change(root, CODE)
+
+
+REFUSED = [
+    (_staged_code, "git commit -m x"),
+    (_staged_code, "git commit -qm 'a message naming docs/guide.md'"),
+    (_staged_code, "git commit --amend --no-edit"),
+    (_staged_new_code, "git commit -m x"),
+    (_staged_removal, "git commit -m x"),
+    (_staged_rename_out_of_code, "git commit -m x"),
+    (_changed_code, "git commit -a -m x"),
+    (_changed_code, "git commit -am x"),
+    (_changed_code, "git commit -qam x"),
+    (_changed_code, "git commit --all -m x"),
+    (_changed_code, "git commit --inc -m x src/app.py"),
+    (_staged_code, "git commit --mess x"),
+    (_changed_code, "git commit -m x src/app.py"),
+    (_changed_code, "git commit -m x -- src"),
+    (_changed_code, "git commit -m x 'src/*.py'"),
+    (_changed_code, "git commit -o -m x src/app.py"),
+    (_changed_code, "git commit -i -m x src/app.py"),
+    (_changed_code, "git commit --message=x --only src/app.py"),
+    (_changed_code, "cd src && git commit -m x app.py"),
+    (_changed_code, "cd docs && git commit -m x ../src/app.py"),
+    (_changed_code, "git -C src commit -m x app.py"),
+    (_staged_code, "timeout 60 git commit -m x"),
+    (_staged_code, "bash -c 'git commit -m x'"),
+    (_staged_code, "echo ok; git commit -m x"),
+    (_staged_code, "git merge --continue"),
+    (_staged_code, "git cherry-pick --continue"),
+    (_staged_code, "git revert --continue"),
+]
+
+
+@pytest.mark.parametrize("setup,command", REFUSED, ids=[f"{s.__name__}: {c}" for s, c in REFUSED])
+@pytest.mark.parametrize("who", list(NOT_TICKET))
+def test_a_commit_carrying_a_code_path_is_refused(tmp_path, monkeypatch, capsys, setup, command, who):
+    role, branch = NOT_TICKET[who]
+    root = _clone(tmp_path)
+    _on(root, branch)
+    setup(root)
+    for mode in (None, "default", "bypassPermissions", "dontAsk"):
+        d, why = hook(monkeypatch, capsys, root, command, role, mode)
+        assert d == "deny", (who, mode, command, d, why)
+        assert "commit" in why and "code path" in why and ("src/**" in why or "tests/**" in why), why
+        assert "src/" in why or "tests/" in why, why
+
+
+def test_the_refusal_names_the_path_and_what_to_do_instead(proj, monkeypatch, capsys):
+    """Worded as the file tools' refusals (#340): the path, the code path it
+    matches, and the way the skills offer instead."""
+    _staged_code(proj)
+    d, why = hook(monkeypatch, capsys, proj, "git commit -m x")
+    assert d == "deny" and why.startswith("[workflow guard, attended session]"), why
+    assert "carries the code path `src/app.py` (src/**)" in why, why
+    assert "**Run it unattended**" in why and "guard.code_writers" in why, why
+    d, why = hook(monkeypatch, capsys, proj, "git commit -m x", "conductor")
+    assert d == "deny" and "the conductor writes no code" in why, why
+    assert "`workflow:infra`" in why and "`for_owner`" in why, why
+    _on(proj, "claude/build-1")
+    d, why = hook(monkeypatch, capsys, proj, "git commit -m x")
+    assert d == "deny" and "only by its branch, `claude/build-1`" in why, why
+
+
+def test_a_code_commit_is_refused_even_after_an_ask(proj, monkeypatch, capsys):
+    _staged_code(proj)
+    d, why = hook(monkeypatch, capsys, proj, "git push --force origin feature; git commit -m x")
+    assert d == "deny" and "code path" in why, why
+
+
+def _docs_only(root):
+    _change(root, "docs/guide.md")
+    git(root, "add", "docs/guide.md")
+
+
+def _docs_with_unstaged_code(root):
+    _docs_only(root)
+    _change(root, CODE)
+
+
+def _docs_with_untracked_code(root):
+    _docs_only(root)
+    _change(root, "src/new.py")
+
+
+def _docs_with_staged_code(root):
+    _change(root, "docs/guide.md")
+    _staged_code(root)
+
+
+def _staged_protected_inside_code(root):
+    _change(root, "src/protected/keep.py")
+    git(root, "add", "src/protected/keep.py")
+
+
+def _staged_workflow_file(root):
+    _change(root, ".workflow/notes.md")
+    git(root, "add", "-f", ".workflow/notes.md")
+
+
+def _nothing(root):
+    pass
+
+
+ALLOWED = [
+    (_docs_only, "git commit -m d"),
+    (_docs_only, "git commit -m src/app.py"),
+    (_docs_with_unstaged_code, "git commit -m d"),
+    (_docs_with_untracked_code, "git commit -m d"),
+    (_docs_with_untracked_code, "git commit -am d"),
+    (_docs_with_unstaged_code, "git commit -m d docs/guide.md"),
+    (_docs_with_staged_code, "git commit -m d docs/guide.md"),
+    (_docs_with_staged_code, "git commit -m d -- docs"),
+    (_docs_with_staged_code, "git commit --dry-run -m d"),
+    (_staged_protected_inside_code, "git commit -m p"),
+    (_staged_workflow_file, "git commit -m w"),
+    (_nothing, "git commit --allow-empty -m e"),
+    (_changed_code, "git commit -F docs/guide.md"),
+    (_changed_code, "git commit -m x docs"),
+    (_staged_code, "git merge --abort"),
+    (_staged_code, "git log -1 --format=%s"),
+]
+
+
+@pytest.mark.parametrize("setup,command", ALLOWED, ids=[f"{s.__name__}: {c}" for s, c in ALLOWED])
+@pytest.mark.parametrize("who", list(NOT_TICKET))
+def test_a_commit_carrying_no_code_path_goes_through(tmp_path, monkeypatch, capsys, setup, command, who):
+    role, branch = NOT_TICKET[who]
+    root = _clone(tmp_path)
+    _on(root, branch)
+    setup(root)
+    d, why = hook(monkeypatch, capsys, root, command, role)
+    assert d == "allow", (who, command, why)
+
+
+def test_staged_code_counts_with_include_and_not_with_only(proj, monkeypatch, capsys):
+    """A pathspec commits only what it names (`--only`, git's default),
+    unless `-i` adds the staged files to it."""
+    _docs_with_staged_code(proj)
+    assert hook(monkeypatch, capsys, proj, "git commit -m d docs/guide.md")[0] == "allow"
+    d, why = hook(monkeypatch, capsys, proj, "git commit -i -m d docs/guide.md")
+    assert d == "deny" and "`src/app.py`" in why, why
+    d, why = hook(monkeypatch, capsys, proj, "git commit --include -m d docs/guide.md")
+    assert d == "deny" and "`src/app.py`" in why, why
+
+
+def test_a_pathspec_from_a_file(proj, monkeypatch, capsys):
+    _changed_code(proj)
+    _change(proj, ".workflow/specs.txt", "src/app.py\n")
+    _change(proj, ".workflow/docs.txt", "docs/guide.md\n")
+    d, why = hook(monkeypatch, capsys, proj, "git commit -m x --pathspec-from-file=.workflow/specs.txt")
+    assert d == "deny" and "`src/app.py`" in why, why
+    assert hook(monkeypatch, capsys, proj, "git commit -m x --pathspec-from-file .workflow/docs.txt")[0] == "allow"
+
+
+def test_a_commit_in_a_claude_code_worktree(proj, monkeypatch, capsys):
+    wt = proj / ".claude/worktrees/side"
+    git(proj, "worktree", "add", "-q", "-b", "side", str(wt))
+    _staged_code(wt)
+    d, why = hook(monkeypatch, capsys, proj, "git commit -m x", cwd=wt)
+    assert d == "deny" and "`src/app.py` (in the worktree `.claude/worktrees/side`)" in why, why
+    d, why = hook(monkeypatch, capsys, proj, f"git -C {wt} commit -m x")
+    assert d == "deny" and "code path" in why, why
+    d, why = hook(monkeypatch, capsys, proj, "cd .claude/worktrees/side && git commit -m x")
+    assert d == "deny" and "code path" in why, why
+
+
+def test_a_commit_in_another_clone_is_left_to_the_push_rule(proj, tmp_path, monkeypatch, capsys):
+    other = _clone(tmp_path, name="other")
+    _staged_code(other)
+    assert hook(monkeypatch, capsys, proj, f"git -C {other} commit -m x")[0] == "allow"
+    assert hook(monkeypatch, capsys, proj, f"cd {other} && git commit -m x")[0] == "allow"
+    assert hook(monkeypatch, capsys, proj, "git commit -m x", cwd=other)[0] == "allow"
+    # Nor a repository of its own nested inside the project.
+    nested = proj / "vendor/lib"
+    nested.mkdir(parents=True)
+    git(nested, "init", "-q", "-b", "main")
+    _change(nested, CODE)
+    git(nested, "add", CODE)
+    assert hook(monkeypatch, capsys, proj, "cd vendor/lib && git commit -m x")[0] == "allow"
+
+
+def test_a_ticket_session_commits_code_as_today(proj, monkeypatch, capsys):
+    _on(proj, "claude/build-1")
+    for setup, command in REFUSED:
+        git(proj, "reset", "-q", "--hard")
+        git(proj, "clean", "-qfd")
+        setup(proj)
+        for role in ("ticket", " Ticket "):
+            d, why = hook(monkeypatch, capsys, proj, command, role)
+            assert d == "allow" and "code path" not in why, (command, role, why)
+
+
+# ---------- a commit whose contents can't be read ----------
+
+
+def _unreadable(root):
+    """Staged code, then an index git can't read: every read of what the
+    commit carries fails."""
+    _staged_code(root)
+    (root / ".git/index").write_bytes(b"garbage")
+
+
+def test_an_unreadable_commit_is_asked_in_a_planning_session(proj, monkeypatch, capsys):
+    _unreadable(proj)
+    for command in ("git commit -m x", "git commit -am x", "git commit -m x src/app.py"):
+        d, why = hook(monkeypatch, capsys, proj, command)
+        assert d == "ask", (command, d, why)
+        assert "can't tell" in why and "index file" in why and "git diff" in why, why
+    # Asked of a branch-only or mistyped session too.
+    d, why = hook(monkeypatch, capsys, proj, "git commit -m x", "tikcet")
+    assert d == "ask" and "index file" in why, why
+
+
+@pytest.mark.parametrize("mode", ["bypassPermissions", "dontAsk"])
+def test_an_unreadable_commit_is_refused_where_nobody_is_asked(proj, monkeypatch, capsys, mode):
+    _unreadable(proj)
+    d, why = hook(monkeypatch, capsys, proj, "git commit -m x", mode=mode)
+    assert d == "deny" and "index file" in why, why
+
+
+def test_an_unreadable_commit_is_refused_in_the_conductor(proj, monkeypatch, capsys):
+    _unreadable(proj)
+    for mode in (None, "default", "bypassPermissions"):
+        d, why = hook(monkeypatch, capsys, proj, "git commit -m x", "conductor", mode)
+        assert d == "deny", (mode, why)
+        assert "can't tell" in why and "index file" in why and "the conductor" in why, why
+
+
+def test_an_unreadable_commits_ask_never_hides_a_refusal(proj, monkeypatch, capsys):
+    _unreadable(proj)
+    d, why = hook(monkeypatch, capsys, proj, "git commit -m x; echo x > src/new.py")
+    assert d == "deny" and "code path" in why, why
+    # Another ask in the command joins it.
+    d, why = hook(monkeypatch, capsys, proj, "git commit -m x; git push origin HEAD:main")
+    assert d == "ask" and "base branch" in why and "index file" in why, why
+
+
+def test_an_unreadable_pathspec_file(proj, monkeypatch, capsys):
+    _changed_code(proj)
+    d, why = hook(monkeypatch, capsys, proj, "git commit -m x --pathspec-from-file=missing.txt")
+    assert d == "ask" and "missing.txt" in why, why
+    d, why = hook(monkeypatch, capsys, proj, "git commit -m x --pathspec-from-file=missing.txt", "conductor")
+    assert d == "deny" and "missing.txt" in why, why
+
+
+def test_a_ticket_session_commits_what_it_cant_read_as_today(proj, monkeypatch, capsys):
+    _on(proj, "claude/build-1")
+    _unreadable(proj)
+    assert hook(monkeypatch, capsys, proj, "git commit -m x", "ticket")[0] == "allow"
+
+
+# ---------- under "any" and unanswered ----------
+
+
+@pytest.mark.parametrize("code_writers", ["any", None])
+def test_any_and_unanswered_decide_as_today(tmp_path, monkeypatch, capsys, code_writers):
+    root = _clone(tmp_path, code_writers)
+    cases = REFUSED + [(_unreadable, "git commit -m x"), (_changed_code, "git commit -m x --pathspec-from-file=missing.txt")]
+    for setup, command in cases:
+        for role in (None, "conductor", "tikcet"):
+            git(root, "reset", "-q", "--hard")
+            git(root, "clean", "-qfd")
+            setup(root)
+            d, why = hook(monkeypatch, capsys, root, command, role)
+            assert d == "allow" and "code path" not in why and "can't tell" not in why, (command, role, why)
+            (root / ".git/index").unlink(missing_ok=True)
+    # A branch-only ticket session keeps a ticket session's rules.
+    git(root, "reset", "-q", "--hard")
+    git(root, "clean", "-qfd")
+    _on(root, "claude/build-1")
+    _staged_code(root)
+    assert hook(monkeypatch, capsys, root, "git commit -m x")[0] == "allow"
+
+
+def test_with_no_code_paths_nothing_is_code(tmp_path, monkeypatch, capsys):
+    root = _clone(tmp_path)
+    (root / PROFILE).write_text(_toml().replace('code_paths = ["src/**", "tests/**"]\n', ""))
+    git(root, "commit", "-qam", "no code paths")
+    git(root, "push", "-q", "origin", "HEAD:main")
+    git(root, "fetch", "-q")
+    _staged_code(root)
+    assert hook(monkeypatch, capsys, root, "git commit -m x")[0] == "allow"
+
+
+def test_the_hook_as_a_process(proj):
+    """The same refusal from `workflow hook guard` started as Claude Code starts it."""
+    _staged_code(proj)
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(proj)}
+    env.pop("WORKFLOW_ROLE", None)
+    event = {"tool_name": "Bash", "tool_input": {"command": "git commit -m x"}, "cwd": str(proj), "permission_mode": "bypassPermissions"}
+    p = subprocess.run([sys.executable, str(KIT / "scripts/workflow.py"), "hook", "guard"], input=json.dumps(event), capture_output=True, text=True, cwd=proj, env=env)
+    assert p.returncode == 0, p.stderr
+    out = json.loads(p.stdout)["hookSpecificOutput"]
+    assert out["permissionDecision"] == "deny" and "code path" in out["permissionDecisionReason"]
+
+
+# ---------- docs ----------
+
+
+def test_enforcement_doc_lists_the_commit_rule():
+    doc = (KIT / "docs/enforcement.md").read_text()
+    section = doc[doc.index("**Who writes code**") :]
+    for phrase in ("`git commit`", "`-a`", "pathspec", "can't tell", "asked", "the conductor", "#389"):
+        assert phrase in section, phrase
+
+
+def test_changelog_note():
+    notes = since_0110()
+    assert "#389" in notes and "commit" in notes

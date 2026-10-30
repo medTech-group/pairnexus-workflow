@@ -102,7 +102,10 @@ the stricter of the working tree's and the base's profile), only a session with
 `WORKFLOW_ROLE=ticket` writes code. Every other session is refused, never asked,
 a write the guard places on a code path (`_code_session`, `_shell_code`); a
 session that is a ticket session only by its branch or a mistyped role gets an
-attended session's rules.
+attended session's rules. It is refused too a `git commit` in the project or
+one of its worktrees that carries a code path (`_commit_code`, #389): what is
+staged, plus what `-a` or a pathspec adds. When git can't read what a commit
+carries, a planning session is asked and the conductor refused.
 
 What it can't see (a script file written then run, a program's own network
 calls, variables' values, obfuscation it doesn't recognise) is why the ruleset
@@ -5709,6 +5712,16 @@ def check_bash(
         p = _shell_code(segs, code, root)
         if p:
             return Decision("deny", p)
+        p, unsure = _commit_code(segs, code, root)
+        if p:
+            return Decision("deny", p)
+        if unsure:
+            # The rest of the command first: its refusal stands over this ask, and its ask joins it.
+            d = check_bash(command, profile, role, root, current_branch, role_from_env, cwd)
+            u = _unsure_commit(unsure, role, code)
+            if d.action == "deny" or u.action == "deny":
+                return d if d.action == "deny" else u
+            return replace(u, reason=f"{d.reason}\n{u.reason}", sensitive=d.sensitive) if d.action == "ask" else u
     protected = list(profile.protected_paths) + (GIT_INTERNALS if role == "ticket" else [])
     # Solo mode: no ruleset protects the base branch, so what touches it is
     # refused, not asked, wherever it sits in the command (an ask earlier on
@@ -6330,6 +6343,215 @@ def _shell_code(segs: list[Seg], code: _Code, root: Path) -> str | None:
             if hit:
                 return f"this find reaches the code path {_shown(hit)} ({hit.pattern}) by name; {code.instead}"
     return None
+
+
+# ---------- commits that carry code (#389) ----------
+#
+# A `git commit` in the project or one of Claude Code's worktrees of it is
+# judged by the files it would carry: what is staged, plus what `-a` or a
+# pathspec adds (a pathspec alone commits only what it names, unless `-i`).
+# Finishing a merge, a cherry-pick or a revert (`--continue`) is judged as
+# any commit. A commit in another clone is left to the push rule. When git
+# can't read what it carries, a planning session is asked and the conductor
+# refused.
+
+# git commit's long options (`git commit --git-completion-helper`): name ->
+# takes a separate value. Their `--no-` forms take none. Unique prefixes are
+# accepted, as git does.
+_COMMIT_LONG: dict[str, bool] = {
+    "quiet": False, "verbose": False, "file": True, "author": True, "date": True, "message": True,
+    "reedit-message": True, "reuse-message": True, "fixup": True, "squash": True, "reset-author": False,
+    "trailer": True, "signoff": False, "template": True, "edit": False, "cleanup": True, "status": False,
+    "gpg-sign": False, "all": False, "include": False, "interactive": False, "patch": False, "only": False,
+    "no-verify": False, "dry-run": False, "short": False, "branch": False, "ahead-behind": False,
+    "porcelain": False, "long": False, "null": False, "amend": False, "no-post-rewrite": False,
+    "untracked-files": False, "pathspec-from-file": True, "pathspec-file-nul": False, "allow-empty": False,
+    "allow-empty-message": False, "verify": False, "post-rewrite": False,
+}  # fmt: skip
+_COMMIT_LONGS = sorted(set(_COMMIT_LONG) | {"no-" + k for k in _COMMIT_LONG})
+_COMMIT_SHORT_VALUE = "mFcCt"  # the value is the rest of the word, else the next word
+_COMMIT_SHORT_OPTIONAL = "Su"  # the value, if any, is the rest of the word
+_FINISHES = ("merge", "cherry-pick", "revert")  # `git <sub> --continue` commits what is staged
+# Global options that change which repository or how pathspecs read, passed to the guard's reads.
+_GIT_REPO_GLOBALS = {"--git-dir", "--work-tree"}
+_GIT_PATHSPEC_GLOBALS = {"--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs"}
+
+
+@dataclass
+class _Commit:
+    """What a `git commit` would carry, as its arguments say."""
+
+    all: bool = False  # `-a`: the tracked files changed in the working tree too
+    include: bool = False  # `-i`: the staged files as well as the pathspec's
+    specs: list[str] = field(default_factory=list)
+    spec_file: str | None = None  # `--pathspec-from-file`
+    spec_nul: bool = False
+    dry_run: bool = False
+
+
+def _commit_long(name: str) -> str | None:
+    if name in _COMMIT_LONGS:
+        return name
+    cands = [o for o in _COMMIT_LONGS if o.startswith(name)] if name else []
+    return cands[0] if len(cands) == 1 else None
+
+
+def _commit_args(args: list[str]) -> _Commit:
+    c, i = _Commit(), 0
+    while i < len(args):
+        a = args[i]
+        i += 1
+        if a == "--":
+            c.specs += args[i:]
+            break
+        if a.startswith("--"):
+            name, eq, value = a[2:].partition("=")
+            full = _commit_long(name)
+            if full is None:
+                continue
+            if _COMMIT_LONG.get(full) and not eq:
+                value = args[i] if i < len(args) else ""
+                i += 1
+            if full == "all":
+                c.all = True
+            elif full == "include":
+                c.include = True
+            elif full == "only":
+                c.include = False
+            elif full == "dry-run":
+                c.dry_run = True
+            elif full == "pathspec-from-file":
+                c.spec_file = value
+            elif full == "pathspec-file-nul":
+                c.spec_nul = True
+            continue
+        if a.startswith("-") and len(a) > 1:
+            for j, ch in enumerate(a[1:], 1):
+                if ch in _COMMIT_SHORT_VALUE:
+                    if j == len(a) - 1:
+                        i += 1
+                    break
+                if ch in _COMMIT_SHORT_OPTIONAL:
+                    break
+                if ch == "a":
+                    c.all = True
+                elif ch == "i":
+                    c.include = True
+                elif ch == "o":
+                    c.include = False
+            continue
+        c.specs.append(a)
+    return c
+
+
+def _git_read(d: str, glob: list[str], *args: str, sep: str = "\0") -> tuple[list[str] | None, str]:
+    """(git's output split on `sep`, else None; what failed, with git's own
+    words). `glob` is the command's own options that change the repository
+    or how pathspecs read."""
+    cmd = ["git", *glob, *args]
+    shown = "`git " + " ".join(args[:2]) + "`"
+    try:
+        p = subprocess.run(cmd, cwd=d, capture_output=True, timeout=5)
+    except subprocess.TimeoutExpired:
+        return None, f"{shown} took too long in `{d}`"
+    except (OSError, ValueError) as e:
+        return None, f"{shown} couldn't run in `{d}` ({e})"
+    if p.returncode != 0:
+        err = p.stderr.decode("utf-8", errors="replace").strip().splitlines()
+        return None, f"{shown} failed in `{d}`" + (f" ({err[0]})" if err else "")
+    return [x for x in p.stdout.decode("utf-8", errors="replace").split(sep) if x], ""
+
+
+def _passed_globals(glob: list[str]) -> list[str]:
+    out, i = [], 0
+    while i < len(glob):
+        o = glob[i]
+        name = o.split("=", 1)[0]
+        if name in _GIT_REPO_GLOBALS:
+            out += [o] if "=" in o else glob[i : i + 2]
+            i += 1 if "=" in o else 2
+            continue
+        if o in _GIT_PATHSPEC_GLOBALS:
+            out.append(o)
+        i += 2 if o in _GIT_GLOBAL_VALUE else 1
+    return out
+
+
+def _carried(d: str, glob: list[str], c: _Commit) -> tuple[list[str] | None, str]:
+    """The files (from the top level) a commit run in `d` would carry, or
+    (None, what couldn't be read)."""
+    specs = list(c.specs)
+    if c.spec_file is not None:
+        if c.spec_file == "-":
+            return None, "the pathspecs it reads from its stdin (`--pathspec-from-file=-`)"
+        try:
+            text = Path(_abspath(c.spec_file, d) or c.spec_file).read_text(encoding="utf-8")
+        except (OSError, ValueError) as e:
+            return None, f"its pathspec file `{c.spec_file}` ({e.__class__.__name__})"
+        specs += [x for x in text.split("\0" if c.spec_nul else "\n") if x.strip()]
+    diff = ["diff", "--name-only", "-z", "--no-renames", "--no-relative"]
+    reads = []
+    if not specs or c.include or c.all:
+        reads.append([*diff, "--cached"])
+    if c.all:
+        reads.append(diff)
+    if specs:
+        reads += [[*diff, "--cached", "--", *specs], [*diff, "--", *specs]]
+    out: list[str] = []
+    for args in reads:
+        got, err = _git_read(d, glob, *args)
+        if got is None:
+            return None, err
+        out += [x for x in got if x not in out]
+    return out, ""
+
+
+def _commit_code(segs: list[Seg], code: _Code, root: Path) -> tuple[str | None, str | None]:
+    """(why a commit in the command carries a code path, why the guard can't
+    tell what one carries), each None when it doesn't apply."""
+    unsure = None
+    for seg in segs:
+        k = _vcs_index(seg.words, "ticket")
+        g = _git(seg.words[k:]) if k is not None else None
+        if not g or not g[1]:
+            continue
+        glob, args, cdir = g
+        if args[0] == "commit":
+            c = _commit_args(args[1:])
+        elif args[0] in _FINISHES and "--continue" in args[1:]:
+            c = _Commit()
+        else:
+            continue
+        d = _git_dir_of(root, seg.cwd, cdir)
+        if c.dry_run or not d or not os.path.isdir(d):
+            continue  # a directory the guard can't follow: left to the push rule
+        d = os.path.realpath(d)
+        if _checkout_of(d, root) is None:
+            continue  # outside the project and its worktrees: another clone, left to the push rule
+        glob = _passed_globals(glob)
+        top, err = _git_read(d, glob, "rev-parse", "--show-toplevel", sep="\n")
+        co = _checkout_of(os.path.realpath(top[0]), root) if top else None
+        if top and (co is None or co[0] != os.path.realpath(top[0]) or co[1]):
+            continue  # a repository of its own nested in the project, or another one `--git-dir` names
+        files, err = _carried(d, glob, c) if top else (None, err)
+        if files is None:
+            unsure = unsure or f"the guard can't tell what `{' '.join(['git', *args[:1]])}` would commit: it couldn't read {err}"
+            continue
+        for f in files:
+            m = _listed_code(f, code)
+            if m:
+                hit = _Hit(f, m, co[2])
+                what = "this commit" if args[0] == "commit" else f"the commit finishing this `git {args[0]}`"
+                return f"{what} carries the code path {_shown(hit)} ({hit.pattern}); {code.instead}", None
+    return None, unsure
+
+
+def _unsure_commit(unsure: str, role: str, code: _Code) -> Decision:
+    """The decision on a commit whose contents the guard can't read: the
+    conductor, which nobody is there to ask, is refused; others are asked."""
+    if role == "conductor":
+        return Decision("deny", f"{unsure}. {code.writes_none}, and commits nothing the guard can't read; fix what stops git reading it, then commit again")
+    return Decision("ask", f"{unsure}. {code.writes_none}: allow it only if it carries no code path")
 
 
 _PS_WORDS = re.compile(r"[^\s;|&(){}<>,=\"'`]+")
