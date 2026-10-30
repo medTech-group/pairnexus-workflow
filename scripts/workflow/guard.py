@@ -6389,6 +6389,7 @@ _SPEC_FILE_CAP = 1_000_000  # the most of a pathspec file the guard reads
 _SHELL_EXPANDS = re.compile(r"[$`]|^~|\{\}")
 _BRACE_SEQUENCE = re.compile(r"\{[^{}]*\.\.[^{}]*\}")  # `{1..3}`, which `_braces` leaves as it is
 _BRACE_LIMIT = 64
+_AM_RESOLVED = re.compile(r"-[3kmnqsu]*r[3kmnqsu]*")  # `-r` among `git am`'s flags that take no value
 _LITERAL_GLOBALS = {"--literal-pathspecs", "--noglob-pathspecs"}
 _LITERAL_ENV = {"GIT_LITERAL_PATHSPECS", "GIT_NOGLOB_PATHSPECS"}
 
@@ -6560,7 +6561,7 @@ def _expanded_specs(seg: Seg, c: _Commit, literal: bool) -> tuple[list[str], str
         if _SHELL_EXPANDS.search(s) or len(words) > _BRACE_LIMIT or any(_BRACE_SEQUENCE.search(w) for w in words):
             return [], f"its pathspec `{s}`, which the shell expands"
         if literal and any(_GLOB_CHARS.search(w) for w in words):
-            return [], f"its pathspec `{s}`, a glob the shell expands where git reads pathspecs literally"
+            return [], f"its pathspec `{s}`, a glob the shell may expand where git reads pathspecs literally"
         specs += words
     return specs, None
 
@@ -6579,7 +6580,19 @@ def _continues(sub: str, a: str) -> bool:
     `--con` on, as git takes it, and for `git am` its `--resolved` and `-r`."""
     if len(a) >= 5 and "--continue".startswith(a):
         return True
-    return sub == "am" and (a == "-r" or (len(a) >= 5 and "--resolved".startswith(a)))
+    return sub == "am" and (bool(_AM_RESOLVED.fullmatch(a)) or (len(a) >= 5 and "--resolved".startswith(a)))
+
+
+def _written_before(segs: list[Seg], seg: Seg, name: str, d: str) -> bool:
+    """Whether a part of the command before `seg` redirects into the file `name`
+    (from `d`), which the guard would otherwise read as it was."""
+    target = _abspath(name, d)
+    for s in segs:
+        if s is seg:
+            return False
+        if s.cwd is not None and any(_abspath(r, s.cwd) == target for r in s.redirects):
+            return True
+    return False
 
 
 def _commit_code(segs: list[Seg], code: _Code, root: Path) -> tuple[str | None, str | None]:
@@ -6632,6 +6645,8 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path) -> tuple[str | None, 
         if not unread and made and (specs or c.spec_file is not None):
             unread = f"its pathspecs, from `{made}`, which doesn't exist yet"
         c = replace(c, specs=specs)
+        if not unread and c.spec_file is not None and _written_before(segs, seg, c.spec_file, d):
+            unread = f"its pathspec file `{c.spec_file}`, which the command writes before it"
         if not unread and c.spec_file is not None:
             more, unread = _spec_file(c, d)
             c = replace(c, specs=c.specs + (more or []), spec_file=None)

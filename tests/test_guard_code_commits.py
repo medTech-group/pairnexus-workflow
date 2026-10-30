@@ -452,6 +452,14 @@ def test_more_pathspecs_the_guard_cant_read(proj, monkeypatch, capsys):
     assert d == "deny" and "`src/app.py`" in why, why
 
 
+def test_a_pathspec_file_written_earlier_in_the_command(proj, monkeypatch, capsys):
+    _changed_code(proj)
+    _change(proj, ".workflow/l.txt", "docs/guide.md\n")
+    d, why = hook(monkeypatch, capsys, proj, "echo src/app.py > .workflow/l.txt; git commit -m x --pathspec-from-file=.workflow/l.txt")
+    assert d == "ask" and "writes before it" in why and "`src/app.py`" in why, why
+    assert hook(monkeypatch, capsys, proj, "echo src/app.py > .workflow/other.txt; git commit -m x --pathspec-from-file=.workflow/l.txt")[0] == "allow"
+
+
 def test_a_directory_made_earlier_in_the_command(proj, monkeypatch, capsys):
     _changed_code(proj)
     d, why = hook(monkeypatch, capsys, proj, "mkdir -p new && cd new && git commit -am x")
@@ -466,7 +474,7 @@ def test_a_later_no_option_cancels_a_dry_run(proj, monkeypatch, capsys):
     assert hook(monkeypatch, capsys, proj, "git commit -am x --no-dry-run --dry-run")[0] == "allow"
 
 
-@pytest.mark.parametrize("command", ["git am -r", "git am --resolved", "git am --resol"])
+@pytest.mark.parametrize("command", ["git am -r", "git am -3r", "git am --resolved", "git am --resol"])
 def test_git_am_resolved_finishes_a_commit(proj, monkeypatch, capsys, command):
     _staged_code(proj)
     d, why = hook(monkeypatch, capsys, proj, command)
