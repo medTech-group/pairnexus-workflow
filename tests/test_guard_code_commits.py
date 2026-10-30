@@ -349,6 +349,7 @@ def test_an_unreadable_commit_is_asked_in_a_planning_session(proj, monkeypatch, 
         d, why = hook(monkeypatch, capsys, proj, command)
         assert d == "ask", (command, d, why)
         assert "can't tell" in why and "index file" in why and "git diff" in why, why
+        assert "would commit: `git diff --name-only` failed in `" in why, why
     # Asked of a branch-only or mistyped session too.
     d, why = hook(monkeypatch, capsys, proj, "git commit -m x", "tikcet")
     assert d == "ask" and "index file" in why, why

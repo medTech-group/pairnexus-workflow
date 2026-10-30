@@ -105,7 +105,7 @@ session that is a ticket session only by its branch or a mistyped role gets an
 attended session's rules. It is refused too a `git commit` in the project or
 one of its worktrees that carries a code path (`_commit_code`, #389): what is
 staged, plus what `-a` or a pathspec adds. When git can't read what a commit
-carries, a planning session is asked and the conductor refused.
+carries, an attended session is asked and the conductor refused.
 
 What it can't see (a script file written then run, a program's own network
 calls, variables' values, obfuscation it doesn't recognise) is why the ruleset
@@ -5719,9 +5719,11 @@ def check_bash(
             # The rest of the command first: its refusal stands over this ask, and its ask joins it.
             d = check_bash(command, profile, role, root, current_branch, role_from_env, cwd)
             u = _unsure_commit(unsure, role, code)
-            if d.action == "deny" or u.action == "deny":
-                return d if d.action == "deny" else u
-            return replace(u, reason=f"{d.reason}\n{u.reason}", sensitive=d.sensitive) if d.action == "ask" else u
+            if d.action == "deny":
+                return d
+            if d.action == "ask" and u.action == "ask":
+                return Decision("ask", f"{d.reason}\n{u.reason}", d.sensitive)
+            return u
     protected = list(profile.protected_paths) + (GIT_INTERNALS if role == "ticket" else [])
     # Solo mode: no ruleset protects the base branch, so what touches it is
     # refused, not asked, wherever it sits in the command (an ask earlier on
@@ -6352,7 +6354,7 @@ def _shell_code(segs: list[Seg], code: _Code, root: Path) -> str | None:
 # pathspec adds (a pathspec alone commits only what it names, unless `-i`).
 # Finishing a merge, a cherry-pick or a revert (`--continue`) is judged as
 # any commit. A commit in another clone is left to the push rule. When git
-# can't read what it carries, a planning session is asked and the conductor
+# can't read what it carries, an attended session is asked and the conductor
 # refused.
 
 # git commit's long options (`git commit --git-completion-helper`): name ->
@@ -6371,7 +6373,7 @@ _COMMIT_LONG: dict[str, bool] = {
 _COMMIT_LONGS = sorted(set(_COMMIT_LONG) | {"no-" + k for k in _COMMIT_LONG})
 _COMMIT_SHORT_VALUE = "mFcCt"  # the value is the rest of the word, else the next word
 _COMMIT_SHORT_OPTIONAL = "Su"  # the value, if any, is the rest of the word
-_FINISHES = ("merge", "cherry-pick", "revert")  # `git <sub> --continue` commits what is staged
+_CONTINUE_COMMITS = ("merge", "cherry-pick", "revert")  # `git <sub> --continue` commits what is staged
 # Global options that change which repository or how pathspecs read, passed to the guard's reads.
 _GIT_REPO_GLOBALS = {"--git-dir", "--work-tree"}
 _GIT_PATHSPEC_GLOBALS = {"--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs"}
@@ -6483,11 +6485,11 @@ def _carried(d: str, glob: list[str], c: _Commit) -> tuple[list[str] | None, str
     specs = list(c.specs)
     if c.spec_file is not None:
         if c.spec_file == "-":
-            return None, "the pathspecs it reads from its stdin (`--pathspec-from-file=-`)"
+            return None, "it couldn't read the pathspecs it takes from its stdin (`--pathspec-from-file=-`)"
         try:
             text = Path(_abspath(c.spec_file, d) or c.spec_file).read_text(encoding="utf-8")
         except (OSError, ValueError) as e:
-            return None, f"its pathspec file `{c.spec_file}` ({e.__class__.__name__})"
+            return None, f"it couldn't read its pathspec file `{c.spec_file}` ({e.__class__.__name__})"
         specs += [x for x in text.split("\0" if c.spec_nul else "\n") if x.strip()]
     diff = ["diff", "--name-only", "-z", "--no-renames", "--no-relative"]
     reads = []
@@ -6518,7 +6520,7 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path) -> tuple[str | None, 
         glob, args, cdir = g
         if args[0] == "commit":
             c = _commit_args(args[1:])
-        elif args[0] in _FINISHES and "--continue" in args[1:]:
+        elif args[0] in _CONTINUE_COMMITS and "--continue" in args[1:]:
             c = _Commit()
         else:
             continue
@@ -6535,7 +6537,7 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path) -> tuple[str | None, 
             continue  # a repository of its own nested in the project, or another one `--git-dir` names
         files, err = _carried(d, glob, c) if top else (None, err)
         if files is None:
-            unsure = unsure or f"the guard can't tell what `{' '.join(['git', *args[:1]])}` would commit: it couldn't read {err}"
+            unsure = unsure or f"the guard can't tell what `git {args[0]}` would commit: {err}"
             continue
         for f in files:
             m = _listed_code(f, code)
