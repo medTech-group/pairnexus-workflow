@@ -430,6 +430,89 @@ def test_in_solo_mode_a_refusal_elsewhere_stands_over_the_ask(tmp_path, monkeypa
     assert d == "deny" and "index file" not in why, why
 
 
+def test_more_pathspecs_the_guard_cant_read(proj, monkeypatch, capsys):
+    """Brace sequences, brace lists past the guard's limit, globs where git
+    reads pathspecs literally, quoted lines in a pathspec file, and pathspecs
+    from a directory made earlier in the command: widened, and asked."""
+    _changed_code(proj)
+    many = ",".join(f"docs/a{n}" for n in range(70)) + ",src/app.py"
+    _change(proj, ".workflow/quoted.txt", '"src/app.py"\n')
+    for command in (
+        "git commit -m x src/app{1..3}.py",
+        f"git commit -m x {{{many}}}",
+        "git --literal-pathspecs commit -m x src/*.py",
+        "GIT_NOGLOB_PATHSPECS=1 git commit -m x src/*.py",
+        "git commit -m x --pathspec-from-file=.workflow/quoted.txt",
+        "mkdir -p new && cd new && git commit -m x ../src/app.py",
+    ):
+        d, why = hook(monkeypatch, capsys, proj, command)
+        assert d == "ask" and "can't tell" in why and "`src/app.py`" in why, (command, why)
+    # A brace list within the limit is read.
+    d, why = hook(monkeypatch, capsys, proj, "git commit -m x {" + ",".join(f"docs/a{n}" for n in range(10)) + ",src/app.py}")
+    assert d == "deny" and "`src/app.py`" in why, why
+
+
+def test_a_directory_made_earlier_in_the_command(proj, monkeypatch, capsys):
+    _changed_code(proj)
+    d, why = hook(monkeypatch, capsys, proj, "mkdir -p new && cd new && git commit -am x")
+    assert d == "deny" and "`src/app.py`" in why, why
+
+
+def test_a_later_no_option_cancels_a_dry_run(proj, monkeypatch, capsys):
+    _changed_code(proj)
+    for command in ("git commit -am x --dry-run --no-dry-run", "git commit -am x --short --no-short", "git commit -am x --porcelain --no-porcelain"):
+        d, why = hook(monkeypatch, capsys, proj, command)
+        assert d == "deny" and "`src/app.py`" in why, (command, why)
+    assert hook(monkeypatch, capsys, proj, "git commit -am x --no-dry-run --dry-run")[0] == "allow"
+
+
+@pytest.mark.parametrize("command", ["git am -r", "git am --resolved", "git am --resol"])
+def test_git_am_resolved_finishes_a_commit(proj, monkeypatch, capsys, command):
+    _staged_code(proj)
+    d, why = hook(monkeypatch, capsys, proj, command)
+    assert d == "deny" and "`src/app.py`" in why, why
+
+
+def test_a_repository_moved_by_variables_from_outside_the_project(proj, tmp_path, monkeypatch, capsys):
+    w = tmp_path / "w"
+    w.mkdir()
+    d, why = hook(monkeypatch, capsys, proj, f"cd {w} && GIT_DIR={proj / '.git'} GIT_WORK_TREE={w} git commit -a -m x")
+    assert d == "ask" and "`GIT_DIR`" in why, why
+
+
+def test_core_worktree_is_read_as_git_reads_it(proj, tmp_path, monkeypatch, capsys):
+    """The guard's reads take `-c core.worktree` as the commit does: in a
+    repository git found itself, it keeps the project's own work tree."""
+    w = tmp_path / "w"
+    (w / "src").mkdir(parents=True)
+    (w / CODE).write_text("other\n")
+    assert hook(monkeypatch, capsys, proj, f"git -c core.worktree={w} commit -a -m x")[0] == "allow"
+    _changed_code(proj)
+    d, why = hook(monkeypatch, capsys, proj, f"git -c core.worktree={w} commit -a -m x")
+    assert d == "deny" and "`src/app.py`" in why, why
+
+
+def test_a_worktree_outside_claude_codes_folder(proj, tmp_path, monkeypatch, capsys):
+    wt = tmp_path / "wt"
+    git(proj, "worktree", "add", "-q", "-b", "side", str(wt))
+    _staged_code(wt)
+    d, why = hook(monkeypatch, capsys, proj, f"git -C {wt} commit -m x")
+    assert d == "deny" and "`src/app.py`" in why and str(wt) in why, why
+
+
+def test_a_code_file_touched_but_unchanged_isnt_carried(proj, monkeypatch, capsys):
+    (proj / CODE).write_text((proj / CODE).read_text())
+    os.utime(proj / CODE, (time.time() + 5, time.time() + 5))
+    assert hook(monkeypatch, capsys, proj, "git commit -am x")[0] == "allow"
+
+
+def test_a_repository_git_cant_place_is_asked(proj, monkeypatch, capsys):
+    """`rev-parse` failing inside the project: asked, naming what failed."""
+    _staged_code(proj)
+    d, why = hook(monkeypatch, capsys, proj, "git --git-dir=nowhere commit -m x")
+    assert d == "ask" and "`git rev-parse" in why, why
+
+
 # ---------- a commit whose contents can't be read ----------
 
 

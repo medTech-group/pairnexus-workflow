@@ -6376,7 +6376,7 @@ _COMMIT_LONGS = sorted(set(_COMMIT_LONG) | {"no-" + k for k in _COMMIT_LONG})
 _COMMIT_SHORT_VALUE = "mFcCt"  # the value is the rest of the word, else the next word
 _COMMIT_SHORT_OPTIONAL = "Su"  # the value, if any, is the rest of the word
 _COMMIT_PICKS = {"interactive", "patch"}  # chooses among the working tree's changes, as `-a` may carry them
-_COMMIT_DRY = {"dry-run", "short", "porcelain", "long"}  # each implies `--dry-run`: nothing is committed
+_COMMIT_STATUS = {"short", "porcelain", "long"}  # each implies `--dry-run`: nothing is committed
 _CONTINUE_COMMITS = ("merge", "cherry-pick", "revert", "rebase", "am")  # `git <sub> --continue` commits what is staged
 # Global options that change which repository or how pathspecs read, passed to the guard's reads.
 _GIT_REPO_GLOBALS = {"--git-dir", "--work-tree"}
@@ -6387,6 +6387,10 @@ _GIT_REPO_ENV = {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
 _GIT_PATHSPEC_ENV = {"GIT_LITERAL_PATHSPECS", "GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS"}
 _SPEC_FILE_CAP = 1_000_000  # the most of a pathspec file the guard reads
 _SHELL_EXPANDS = re.compile(r"[$`]|^~|\{\}")
+_BRACE_SEQUENCE = re.compile(r"\{[^{}]*\.\.[^{}]*\}")  # `{1..3}`, which `_braces` leaves as it is
+_BRACE_LIMIT = 64
+_LITERAL_GLOBALS = {"--literal-pathspecs", "--noglob-pathspecs"}
+_LITERAL_ENV = {"GIT_LITERAL_PATHSPECS", "GIT_NOGLOB_PATHSPECS"}
 
 
 @dataclass
@@ -6398,7 +6402,13 @@ class _Commit:
     specs: list[str] = field(default_factory=list)
     spec_file: str | None = None  # `--pathspec-from-file`
     spec_nul: bool = False
-    dry_run: bool = False
+    dry: bool = False  # `--dry-run`, the last of it and `--no-dry-run`
+    status: bool = False  # `--short`, `--porcelain` or `--long`, which imply it, the last of them and their `--no-` forms
+    usage: bool = False  # `-h`
+
+    @property
+    def dry_run(self) -> bool:
+        return self.dry or self.status or self.usage
 
 
 def _commit_long(name: str) -> str | None:
@@ -6430,8 +6440,10 @@ def _commit_args(args: list[str]) -> _Commit:
                 c.include = True
             elif full == "only":
                 c.include = False
-            elif full in _COMMIT_DRY:
-                c.dry_run = True
+            elif full == "dry-run" or full == "no-dry-run":
+                c.dry = full == "dry-run"
+            elif full.removeprefix("no-") in _COMMIT_STATUS:
+                c.status = not full.startswith("no-")
             elif full == "pathspec-from-file":
                 c.spec_file = value
             elif full == "pathspec-file-nul":
@@ -6452,7 +6464,7 @@ def _commit_args(args: list[str]) -> _Commit:
                 elif ch == "o":
                     c.include = False
                 elif ch == "h":  # its usage, and no commit
-                    c.dry_run = True
+                    c.usage = True
             continue
         c.specs.append(a)
     return c
@@ -6488,6 +6500,8 @@ def _passed_globals(glob: list[str]) -> list[str]:
             continue
         if o in _GIT_PATHSPEC_GLOBALS:
             out.append(o)
+        if o == "-c" and i + 1 < len(glob) and glob[i + 1].split("=", 1)[0].casefold() == "core.worktree":
+            out += glob[i : i + 2]  # where the work tree is; no other setting, so the reads run nothing
         i += 2 if o in _GIT_GLOBAL_VALUE else 1
     return out
 
@@ -6507,7 +6521,10 @@ def _spec_file(c: _Commit, d: str) -> tuple[list[str] | None, str]:
         text = Path(p).read_text(encoding="utf-8")
     except (OSError, ValueError) as e:
         return None, f"its pathspec file `{c.spec_file}` ({e.__class__.__name__})"
-    return [x for x in text.split("\0" if c.spec_nul else "\n") if x.strip()], ""
+    lines = [x for x in text.split("\0" if c.spec_nul else "\n") if x.strip()]
+    if not c.spec_nul and any(x.startswith('"') for x in lines):
+        return None, f"its pathspec file `{c.spec_file}`, whose quoted lines git unquotes"
+    return lines, ""
 
 
 def _carried(d: str, glob: list[str], c: _Commit, env: dict[str, str] | None = None) -> tuple[list[str] | None, str]:
@@ -6531,17 +6548,20 @@ def _carried(d: str, glob: list[str], c: _Commit, env: dict[str, str] | None = N
     return out, ""
 
 
-def _expanded_specs(seg: Seg, c: _Commit) -> tuple[list[str], str | None]:
+def _expanded_specs(seg: Seg, c: _Commit, literal: bool) -> tuple[list[str], str | None]:
     """(the commit's pathspecs with their brace lists expanded, what the guard
-    can't read among them: the file names `xargs` gives it, or a word the
-    shell expands)."""
+    can't read among them: the file names `xargs` gives it, a word the shell
+    expands, or, where git reads pathspecs literally, a glob the shell may)."""
     if seg.fed:
         return [], "the file names `xargs` gives it"
     specs: list[str] = []
     for s in c.specs:
-        if _SHELL_EXPANDS.search(s):
+        words = _braces(s, _BRACE_LIMIT + 1)
+        if _SHELL_EXPANDS.search(s) or len(words) > _BRACE_LIMIT or any(_BRACE_SEQUENCE.search(w) for w in words):
             return [], f"its pathspec `{s}`, which the shell expands"
-        specs += _braces(s)
+        if literal and any(_GLOB_CHARS.search(w) for w in words):
+            return [], f"its pathspec `{s}`, a glob the shell expands where git reads pathspecs literally"
+        specs += words
     return specs, None
 
 
@@ -6552,6 +6572,14 @@ def _assigned(seg: Seg) -> dict[str, str]:
         name, _, value = a.partition("=")
         out[name.removesuffix("+")] = value
     return out
+
+
+def _continues(sub: str, a: str) -> bool:
+    """Whether `a` finishes a `git <sub>` in progress: `--continue` from
+    `--con` on, as git takes it, and for `git am` its `--resolved` and `-r`."""
+    if len(a) >= 5 and "--continue".startswith(a):
+        return True
+    return sub == "am" and (a == "-r" or (len(a) >= 5 and "--resolved".startswith(a)))
 
 
 def _commit_code(segs: list[Seg], code: _Code, root: Path) -> tuple[str | None, str | None]:
@@ -6566,21 +6594,22 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path) -> tuple[str | None, 
         glob, args, cdir = g
         if args[0] == "commit":
             c = _commit_args(args[1:])
-        elif args[0] in _CONTINUE_COMMITS and any(len(a) >= 5 and "--continue".startswith(a) for a in args[1:]):  # `--con` and on, as git takes it
+        elif args[0] in _CONTINUE_COMMITS and any(_continues(args[0], a) for a in args[1:]):
             c = _Commit()
         else:
             continue
         d = _git_dir_of(root, seg.cwd, cdir)
-        if c.dry_run or not d or not os.path.isdir(d):
+        if c.dry_run or not d:
             continue  # a directory the guard can't follow: left to the push rule
-        d = os.path.realpath(d)
+        d, made = os.path.realpath(d), ""
+        while not os.path.isdir(d) and d != os.path.dirname(d):  # made earlier in the command: git runs from there
+            made, d = made or d, os.path.dirname(d)
         inside = _checkout_of(d, root) is not None
         cant = f"the guard can't tell what `git {args[0]}` would commit"
         assigned = _assigned(seg)
         env = sorted(set(assigned) & _GIT_REPO_ENV)
         if env:
-            if inside:
-                unsure = unsure or f"{cant}: it sets `{env[0]}`, which changes what git reads"
+            unsure = unsure or f"{cant}: it sets `{env[0]}`, which changes what git reads"
             continue
         glob = _passed_globals(glob)
         where, err = _git_read(d, glob, "rev-parse", "--show-toplevel", "--git-common-dir", sep="\n")
@@ -6590,11 +6619,18 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path) -> tuple[str | None, 
             continue
         if project is None:
             project = _common_dir(os.path.realpath(str(root))) or ""
+        if not project:
+            if inside:
+                unsure = unsure or f"{cant}: it couldn't read the project's own repository"
+            continue
         if os.path.realpath(os.path.join(d, where[1])) != project:
             continue  # another repository: another clone, or one nested in the project, left to the push rule
         top = os.path.realpath(where[0])
         wt = "" if top == os.path.realpath(str(root)) else _rel(top, root)
-        specs, unread = _expanded_specs(seg, c)
+        literal = bool(_LITERAL_GLOBALS & set(glob)) or any(assigned.get(v, "0") not in ("", "0", "false") for v in _LITERAL_ENV)
+        specs, unread = _expanded_specs(seg, c, literal)
+        if not unread and made and (specs or c.spec_file is not None):
+            unread = f"its pathspecs, from `{made}`, which doesn't exist yet"
         c = replace(c, specs=specs)
         if not unread and c.spec_file is not None:
             more, unread = _spec_file(c, d)
