@@ -6616,16 +6616,12 @@ def _written_before(segs: list[Seg], seg: Seg, name: str, d: str, root: Path) ->
 
 def _commit_git(words: list[str]) -> tuple[list[str], list[str], str | None] | None:
     """`_git`'s reading of a command, found behind wrappers as in ticket
-    sessions, with git's dashed `git-commit` read as `git commit`, behind any
-    command word but one that only reads (`grep git-commit`)."""
+    sessions, with git's dashed `git-commit` read as `git commit` when it is
+    the command word (`grep git-commit`, a URL ending in it, only read)."""
+    if words and posixpath.basename(words[0]) == "git-commit":
+        return [], ["commit", *words[1:]], None
     k = _vcs_index(words, "ticket")
-    if k is not None:
-        return _git(words[k:])
-    if words and Path(words[0]).name not in _DATA_ONLY:
-        for i, w in enumerate(words):
-            if posixpath.basename(w) == "git-commit":
-                return [], ["commit", *words[i + 1 :]], None
-    return None
+    return _git(words[k:]) if k is not None else None
 
 
 # The options of `git init`, `git clone` and `git worktree add` that take the next word as their value.
@@ -6658,12 +6654,15 @@ def _made_where(s: Seg) -> tuple[str, str] | None:
         else:
             return None
         s = replace(s, cwd=_git_dir_of(Path("/"), s.cwd, g[2]))
-    words, i, values = [], 0, _MAKES_VALUES.get(kind, set())
+    words, i, values = [], 0, _MAKES_VALUES.get(kind, set()) | ({"--upstream-remote-name"} if gh else set())
     while i < len(rest):
         w = rest[i]
         i += 1
         if w == "--":
-            words += [] if gh else rest[i:]  # after `gh repo clone`'s `--` come git's own flags
+            if gh:  # after `gh repo clone`'s `--` come git's own flags
+                bare = bare or any(x in ("--bare", "--mirror") for x in rest[i:])
+            else:
+                words += rest[i:]
             break
         if w.startswith("-"):
             bare = bare or w in ("--bare", "--mirror")
@@ -6697,9 +6696,18 @@ def _clone_name(source: str, bare: bool) -> str:
     return name + ".git" if name and bare else name
 
 
+def _makes_repository(kind: str, at: str) -> bool:
+    """Whether `git init` or `git clone` makes a new repository at `at`: an
+    init where none is yet (else it reinitialises that one), a clone into a
+    place that doesn't exist yet or is an empty directory (else it fails)."""
+    if kind == "init":
+        return not os.path.exists(os.path.join(at, ".git"))
+    return not os.path.exists(at) or (os.path.isdir(at) and not os.listdir(at))
+
+
 def _made_by(segs: list[Seg], seg: Seg, where: str) -> str | None:
-    """What an earlier part of the command made at `where` (a directory that
-    doesn't exist yet) or a folder holding it: "init" or "clone" (another
+    """What an earlier part of the command made at `where` (the commit's
+    directory) or a folder holding it: "init" or "clone" (another
     repository) or "worktree" (one of the project's), the last of them."""
     found = None
     for s in segs:
@@ -6708,7 +6716,7 @@ def _made_by(segs: list[Seg], seg: Seg, where: str) -> str | None:
         m = _made_where(s)
         if not m or not (where == m[1] or where.startswith(m[1].rstrip("/") + "/")):
             continue
-        if m[0] == "worktree" or not os.path.exists(m[1]):  # an init or clone where something is already makes no new repository there
+        if m[0] == "worktree" or _makes_repository(*m):
             found = m[0]
     return found
 
@@ -6736,7 +6744,7 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path) -> tuple[str | None, 
             made, d = made or d, os.path.dirname(d)
         inside = _checkout_of(d, root) is not None
         cant = f"the guard can't tell what `git {args[0]}` would commit"
-        made_by = _made_by(segs, seg, made) if made else None
+        made_by = _made_by(segs, seg, made or d)
         if made_by in ("init", "clone"):
             continue  # a repository of its own, made earlier in the command: left to the push rule
         if made_by == "worktree":

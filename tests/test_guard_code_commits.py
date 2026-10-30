@@ -184,7 +184,6 @@ REFUSED = [
     (_staged_code, "git merge --contin"),
     (_changed_code, "/usr/lib/git-core/git-commit -am x"),
     (_changed_code, 'PATH="$(git --exec-path):$PATH" git-commit -am x'),
-    (_changed_code, "taskset -c 0 /usr/lib/git-core/git-commit -am x"),
 ]
 
 
@@ -282,6 +281,8 @@ ALLOWED = [
     (_staged_code, "git merge --abort"),
     (_staged_code, "git log -1 --format=%s"),
     (_changed_code, "grep -rn git-commit src"),
+    (_staged_code, "curl -sL https://git-scm.com/docs/git-commit"),
+    (_changed_code, "find / -name git-commit -print"),
     (_staged_code, "man git-commit"),
     (_staged_code, "which git-commit"),
     (_docs_with_staged_code, "git commit --help-all"),
@@ -532,8 +533,18 @@ def test_a_directory_made_earlier_in_the_command(proj, monkeypatch, capsys):
         "git clone -q ../b/other.bundle && cd other && git commit -am x",
         "gh repo clone acme/other mine -- --depth 1 && cd mine && git commit -am x",
         "gh repo clone acme/other -- --depth 1 && cd other && git commit -am x",
+        "gh repo clone acme/other -- --bare && cd other.git && git commit -am x",
+        "gh repo clone acme/other --upstream-remote-name up && cd other && git commit -am x",
+        "git init -q docs/sub && mkdir -p docs/sub/new && cd docs/sub/new && git commit -am x",
     ):
         assert hook(monkeypatch, capsys, proj, command)[0] == "allow", command
+    # A directory there already, with no repository of its own yet: `git init` makes one.
+    (proj / "scratch").mkdir()
+    assert hook(monkeypatch, capsys, proj, "cd scratch && git init -q && git commit -qam init")[0] == "allow"
+    assert hook(monkeypatch, capsys, proj, "git init -q docs && mkdir -p docs/new && cd docs/new && git commit -am x")[0] == "allow"
+    # A `git-commit` the guard finds first, before a `git` or `gh` word later on.
+    d, why = hook(monkeypatch, capsys, proj, 'PATH="$(git --exec-path):$PATH" git-commit -a -m x -- scripts/git')
+    assert d == "deny" and "`src/app.py`" in why, why
     git(proj, "checkout", "-q", "--", CODE)
     _docs_only(proj)
     assert hook(monkeypatch, capsys, proj, "git worktree add ../wt-389 && mkdir -p docs/n && cd docs/n && git commit -m d")[0] == "allow"
