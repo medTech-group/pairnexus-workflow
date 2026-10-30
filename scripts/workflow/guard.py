@@ -6382,11 +6382,12 @@ _CONTINUE_COMMITS = ("merge", "cherry-pick", "revert", "rebase", "am")  # `git <
 _GIT_REPO_GLOBALS = {"--git-dir", "--work-tree"}
 _GIT_PATHSPEC_GLOBALS = {"--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs"}
 # Variables that change which repository, index or work tree git reads: the guard's reads wouldn't match.
-_GIT_REPO_ENV = {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY"}
+_GIT_REPO_ENV = {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"}  # which repository
+_GIT_INDEX_ENV = {"GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY"}  # what it reads there
 # Variables that change how pathspecs read: their values are passed to the guard's reads.
 _GIT_PATHSPEC_ENV = {"GIT_LITERAL_PATHSPECS", "GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS"}
 _SPEC_FILE_CAP = 1_000_000  # the most of a pathspec file the guard reads
-_SHELL_EXPANDS = re.compile(r"[$`]|^~|\{\}")
+_SHELL_EXPANDS = re.compile(r"[$`]|^~")
 _BRACE_SEQUENCE = re.compile(r"\{[^{}]*\.\.[^{}]*\}")  # `{1..3}`, which `_braces` leaves as it is
 _BRACE_LIMIT = 64
 _AM_RESOLVED = re.compile(r"-[3kmnqsu]*r[3kmnqsu]*")  # `-r` among `git am`'s flags that take no value
@@ -6405,11 +6406,12 @@ class _Commit:
     spec_nul: bool = False
     dry: bool = False  # `--dry-run`, the last of it and `--no-dry-run`
     status: bool = False  # `--short`, `--porcelain` or `--long`, which imply it, the last of them and their `--no-` forms
-    usage: bool = False  # `-h`
+    usage: bool = False  # `-h`, `--help`
+    null: bool = False  # `-z`, which implies `--porcelain` where no format is given
 
     @property
     def dry_run(self) -> bool:
-        return self.dry or self.status or self.usage
+        return self.dry or self.status or self.null or self.usage
 
 
 def _commit_long(name: str) -> str | None:
@@ -6429,6 +6431,9 @@ def _commit_args(args: list[str]) -> _Commit:
             break
         if a.startswith("--"):
             name, eq, value = a[2:].partition("=")
+            if name in ("help", "help-all"):
+                c.usage = True
+                continue
             full = _commit_long(name)
             if full is None:
                 continue
@@ -6445,6 +6450,8 @@ def _commit_args(args: list[str]) -> _Commit:
                 c.dry = full == "dry-run"
             elif full.removeprefix("no-") in _COMMIT_STATUS:
                 c.status = not full.startswith("no-")
+            elif full == "null" or full == "no-null":
+                c.null = full == "null"
             elif full == "pathspec-from-file":
                 c.spec_file = value
             elif full == "pathspec-file-nul":
@@ -6466,6 +6473,8 @@ def _commit_args(args: list[str]) -> _Commit:
                     c.include = False
                 elif ch == "h":  # its usage, and no commit
                     c.usage = True
+                elif ch == "z":
+                    c.null = True
             continue
         c.specs.append(a)
     return c
@@ -6557,6 +6566,8 @@ def _expanded_specs(seg: Seg, c: _Commit, literal: bool) -> tuple[list[str], str
         return [], "the file names `xargs` gives it"
     specs: list[str] = []
     for s in c.specs:
+        if "{}" in s:
+            return [], "the file names `find -exec` gives it"
         words = _braces(s, _BRACE_LIMIT + 1)
         if _SHELL_EXPANDS.search(s) or len(words) > _BRACE_LIMIT or any(_BRACE_SEQUENCE.search(w) for w in words):
             return [], f"its pathspec `{s}`, which the shell expands"
@@ -6583,15 +6594,22 @@ def _continues(sub: str, a: str) -> bool:
     return sub == "am" and (bool(_AM_RESOLVED.fullmatch(a)) or (len(a) >= 5 and "--resolved".startswith(a)))
 
 
-def _written_before(segs: list[Seg], seg: Seg, name: str, d: str) -> bool:
-    """Whether a part of the command before `seg` redirects into the file `name`
-    (from `d`), which the guard would otherwise read as it was."""
+def _written_before(segs: list[Seg], seg: Seg, name: str, d: str, root: Path) -> bool:
+    """Whether the command writes the file `name` (from `d`) before `git
+    commit` reads it: an earlier part, or the commit's own redirect, which the
+    shell opens first. A target relative to a directory the guard can't
+    follow counts when its name is the file's."""
     target = _abspath(name, d)
     for s in segs:
+        t = _write_targets(s, root) if s is not seg else _Targets(files=list(s.redirects))
+        for f in t.files:
+            if os.path.isabs(f) or s.cwd is not None:
+                if _abspath(f, s.cwd) == target:
+                    return True
+            elif posixpath.basename(f) == posixpath.basename(name):
+                return True
         if s is seg:
             return False
-        if s.cwd is not None and any(_abspath(r, s.cwd) == target for r in s.redirects):
-            return True
     return False
 
 
@@ -6638,14 +6656,18 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path) -> tuple[str | None, 
             continue
         if os.path.realpath(os.path.join(d, where[1])) != project:
             continue  # another repository: another clone, or one nested in the project, left to the push rule
+        moved = sorted(set(assigned) & _GIT_INDEX_ENV)
+        if moved:
+            unsure = unsure or f"{cant}: it sets `{moved[0]}`, which changes what git reads"
+            continue
         top = os.path.realpath(where[0])
         wt = "" if top == os.path.realpath(str(root)) else _rel(top, root)
         literal = bool(_LITERAL_GLOBALS & set(glob)) or any(assigned.get(v, "0") not in ("", "0", "false") for v in _LITERAL_ENV)
         specs, unread = _expanded_specs(seg, c, literal)
-        if not unread and made and (specs or c.spec_file is not None):
-            unread = f"its pathspecs, from `{made}`, which doesn't exist yet"
+        if not unread and made:
+            unread = f"what it carries from `{made}`, which doesn't exist yet (a repository made there would be another one)"
         c = replace(c, specs=specs)
-        if not unread and c.spec_file is not None and _written_before(segs, seg, c.spec_file, d):
+        if not unread and c.spec_file is not None and _written_before(segs, seg, c.spec_file, d, root):
             unread = f"its pathspec file `{c.spec_file}`, which the command writes before it"
         if not unread and c.spec_file is not None:
             more, unread = _spec_file(c, d)

@@ -273,6 +273,8 @@ ALLOWED = [
     (_docs_with_staged_code, "git commit --short"),
     (_docs_with_staged_code, "git commit --porcelain"),
     (_docs_with_staged_code, "git commit -h"),
+    (_docs_with_staged_code, "git commit --help"),
+    (_docs_with_staged_code, "git commit -z -m d"),
     (_changed_code, "git commit -m x docs"),
     (_staged_code, "git merge --abort"),
     (_staged_code, "git log -1 --format=%s"),
@@ -406,6 +408,13 @@ def test_a_variable_that_moves_what_git_reads(proj, monkeypatch, capsys, var):
     assert hook(monkeypatch, capsys, proj, "GIT_EDITOR=true git commit -m x")[0] == "allow"
 
 
+def test_an_index_variable_in_another_repository_is_left_alone(proj, tmp_path, monkeypatch, capsys):
+    other = _clone(tmp_path, name="other")
+    _staged_code(other)
+    for var in ("GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY"):
+        assert hook(monkeypatch, capsys, proj, f"cd {other} && {var}=/tmp/idx git commit -m x")[0] == "allow", var
+
+
 def test_a_work_tree_elsewhere_still_commits_to_the_project(proj, tmp_path, monkeypatch, capsys):
     """`--work-tree` outside the project commits into the project's own
     repository: judged from that work tree."""
@@ -458,12 +467,27 @@ def test_a_pathspec_file_written_earlier_in_the_command(proj, monkeypatch, capsy
     d, why = hook(monkeypatch, capsys, proj, "echo src/app.py > .workflow/l.txt; git commit -m x --pathspec-from-file=.workflow/l.txt")
     assert d == "ask" and "writes before it" in why and "`src/app.py`" in why, why
     assert hook(monkeypatch, capsys, proj, "echo src/app.py > .workflow/other.txt; git commit -m x --pathspec-from-file=.workflow/l.txt")[0] == "allow"
+    for command in (
+        "printf 'src/app.py\\n' | tee .workflow/l.txt; git commit -m x --pathspec-from-file=.workflow/l.txt",
+        "cp .workflow/other.txt .workflow/l.txt; git commit -m x --pathspec-from-file=.workflow/l.txt",
+        f"(cd $SOMEWHERE; echo src/app.py > {proj}/.workflow/l.txt); git commit -m x --pathspec-from-file=.workflow/l.txt",
+        "git commit -m x --pathspec-from-file=.workflow/l.txt > .workflow/l.txt",
+    ):
+        d, why = hook(monkeypatch, capsys, proj, command)
+        assert d == "ask" and "writes before it" in why, (command, why)
 
 
 def test_a_directory_made_earlier_in_the_command(proj, monkeypatch, capsys):
+    """Never read from its parent: a repository made there would be another one."""
     _changed_code(proj)
-    d, why = hook(monkeypatch, capsys, proj, "mkdir -p new && cd new && git commit -am x")
-    assert d == "deny" and "`src/app.py`" in why, why
+    for command in ("mkdir -p new && cd new && git commit -am x", "git init -q sub && cd sub && git commit -am x"):
+        d, why = hook(monkeypatch, capsys, proj, command)
+        assert d == "ask" and "doesn't exist yet" in why, (command, why)
+    git(proj, "checkout", "-q", "--", CODE)
+    _docs_with_untracked_code(proj)
+    assert hook(monkeypatch, capsys, proj, "mkdir -p new && cd new && git commit -m d")[0] == "allow"
+    # Outside the project, nothing to judge.
+    assert hook(monkeypatch, capsys, proj, "cd /nonexistent/x && git commit -am x")[0] == "allow"
 
 
 def test_a_later_no_option_cancels_a_dry_run(proj, monkeypatch, capsys):
