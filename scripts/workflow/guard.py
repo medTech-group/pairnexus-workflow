@@ -6499,7 +6499,7 @@ def _spec_file(c: _Commit, d: str) -> tuple[list[str] | None, str]:
         return None, "the pathspecs it takes from its stdin (`--pathspec-from-file=-`)"
     if not c.spec_file:
         return None, "its pathspec file, which the shell names (a process substitution, `<(…)`)"
-    p = _abspath(c.spec_file or "", d) or c.spec_file or ""
+    p = _abspath(c.spec_file, d) or c.spec_file
     try:
         st = os.stat(p)
         if not stat.S_ISREG(st.st_mode) or st.st_size > _SPEC_FILE_CAP:
@@ -6531,18 +6531,27 @@ def _carried(d: str, glob: list[str], c: _Commit, env: dict[str, str] | None = N
     return out, ""
 
 
-def _unread_specs(seg: Seg, c: _Commit) -> str | None:
-    """What the guard can't read among the commit's pathspecs: the file names
-    `xargs` gives it, or words the shell expands. Brace lists are expanded."""
+def _expanded_specs(seg: Seg, c: _Commit) -> tuple[list[str], str | None]:
+    """(the commit's pathspecs with their brace lists expanded, what the guard
+    can't read among them: the file names `xargs` gives it, or a word the
+    shell expands)."""
     if seg.fed:
-        return "the file names `xargs` gives it"
+        return [], "the file names `xargs` gives it"
     specs: list[str] = []
     for s in c.specs:
         if _SHELL_EXPANDS.search(s):
-            return f"its pathspec `{s}`, which the shell expands"
+            return [], f"its pathspec `{s}`, which the shell expands"
         specs += _braces(s)
-    c.specs = specs
-    return None
+    return specs, None
+
+
+def _assigned(seg: Seg) -> dict[str, str]:
+    """The variables a command's `NAME=value` (or `NAME+=value`) prefixes set."""
+    out: dict[str, str] = {}
+    for a in seg.assigns:
+        name, _, value = a.partition("=")
+        out[name.removesuffix("+")] = value
+    return out
 
 
 def _commit_code(segs: list[Seg], code: _Code, root: Path) -> tuple[str | None, str | None]:
@@ -6567,7 +6576,8 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path) -> tuple[str | None, 
         d = os.path.realpath(d)
         inside = _checkout_of(d, root) is not None
         cant = f"the guard can't tell what `git {args[0]}` would commit"
-        env = sorted({a.split("=", 1)[0] for a in seg.assigns} & _GIT_REPO_ENV)
+        assigned = _assigned(seg)
+        env = sorted(set(assigned) & _GIT_REPO_ENV)
         if env:
             if inside:
                 unsure = unsure or f"{cant}: it sets `{env[0]}`, which changes what git reads"
@@ -6584,13 +6594,14 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path) -> tuple[str | None, 
             continue  # another repository: another clone, or one nested in the project, left to the push rule
         top = os.path.realpath(where[0])
         wt = "" if top == os.path.realpath(str(root)) else _rel(top, root)
-        unread = _unread_specs(seg, c)
+        specs, unread = _expanded_specs(seg, c)
+        c = replace(c, specs=specs)
         if not unread and c.spec_file is not None:
             more, unread = _spec_file(c, d)
             c = replace(c, specs=c.specs + (more or []), spec_file=None)
         if unread:
             c = replace(c, all=True, include=True, specs=[], spec_file=None)  # every change it could carry
-        files, err = _carried(d, glob, c, dict(a.split("=", 1) for a in seg.assigns if a.split("=", 1)[0] in _GIT_PATHSPEC_ENV))
+        files, err = _carried(d, glob, c, {k: v for k, v in assigned.items() if k in _GIT_PATHSPEC_ENV})
         if files is None:
             unsure = unsure or f"{cant}: {err}"
             continue

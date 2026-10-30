@@ -3,7 +3,7 @@ session that doesn't write code is refused a `git commit` in a checkout of
 `project.repo` that would carry a code path: what is staged, plus what `-a`
 or a pathspec adds. Code written where the guard couldn't see it
 (`python3 -c …`) is caught before it is committed. A commit whose contents
-can't be read is asked in a planning session and refused in the conductor.
+can't be read is asked in an attended session and refused in the conductor.
 
 Through `workflow hook guard`, run as Claude Code runs it (a JSON event on
 stdin, the decision on stdout), in temporary git repositories cloned from a
@@ -400,6 +400,8 @@ def test_a_variable_that_moves_what_git_reads(proj, monkeypatch, capsys, var):
     assert d == "ask" and f"`{var}`" in why, why
     d, why = hook(monkeypatch, capsys, proj, f"{var}=.git/alt git commit -m x", "conductor")
     assert d == "deny" and f"`{var}`" in why, why
+    d, why = hook(monkeypatch, capsys, proj, f"{var}+=x git commit -m x")
+    assert d == "ask" and f"`{var}`" in why, why
     # Other variables change nothing.
     assert hook(monkeypatch, capsys, proj, "GIT_EDITOR=true git commit -m x")[0] == "allow"
 
