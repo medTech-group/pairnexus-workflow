@@ -6697,12 +6697,25 @@ def _clone_name(source: str, bare: bool) -> str:
 
 
 def _makes_repository(kind: str, at: str) -> bool:
-    """Whether `git init` or `git clone` makes a new repository at `at`: an
-    init where none is yet (else it reinitialises that one), a clone into a
-    place that doesn't exist yet or is an empty directory (else it fails)."""
+    """Whether `git init`, `git clone` or `git worktree add` makes a new
+    repository or worktree at `at`: an init where none is yet (else it
+    reinitialises that one), a clone or worktree into a place that doesn't
+    exist yet or is an empty directory (else it fails)."""
     if kind == "init":
         return not os.path.exists(os.path.join(at, ".git"))
     return not os.path.exists(at) or (os.path.isdir(at) and not os.listdir(at))
+
+
+def _nearer_repository(where: str, at: str) -> bool:
+    """Whether a folder from `where` up to `at` (not included) already holds a
+    `.git`, which git finds first: what is made at `at` is then not where
+    the commit goes."""
+    p = where
+    while p != at and p != os.path.dirname(p):
+        if os.path.exists(os.path.join(p, ".git")):
+            return True
+        p = os.path.dirname(p)
+    return False
 
 
 def _made_by(segs: list[Seg], seg: Seg, where: str) -> str | None:
@@ -6716,7 +6729,7 @@ def _made_by(segs: list[Seg], seg: Seg, where: str) -> str | None:
         m = _made_where(s)
         if not m or not (where == m[1] or where.startswith(m[1].rstrip("/") + "/")):
             continue
-        if m[0] == "worktree" or _makes_repository(*m):
+        if _makes_repository(*m) and not _nearer_repository(where, m[1]):
             found = m[0]
     return found
 
@@ -6748,7 +6761,7 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path) -> tuple[str | None, 
         if made_by in ("init", "clone"):
             continue  # a repository of its own, made earlier in the command: left to the push rule
         if made_by == "worktree":
-            unsure = unsure or f"{cant}: it runs in `{made}`, a worktree the command adds first"
+            unsure = unsure or f"{cant}: it runs in `{made or d}`, a worktree the command adds first"
             continue
         assigned = _assigned(seg)
         env = sorted(set(assigned) & _GIT_REPO_ENV)

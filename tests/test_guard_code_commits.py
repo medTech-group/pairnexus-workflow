@@ -542,6 +542,18 @@ def test_a_directory_made_earlier_in_the_command(proj, monkeypatch, capsys):
     (proj / "scratch").mkdir()
     assert hook(monkeypatch, capsys, proj, "cd scratch && git init -q && git commit -qam init")[0] == "allow"
     assert hook(monkeypatch, capsys, proj, "git init -q docs && mkdir -p docs/new && cd docs/new && git commit -am x")[0] == "allow"
+    # What is made above, beside or on top of the project's own repository doesn't take its commits.
+    for command in (
+        "git init -q .. && git commit -am x",
+        "git init -q / ; git commit -am x",
+        "git init -q .. && mkdir -p new && cd new && git commit -am x",
+        "git init -q /tmp/scratch-389 && git commit -am x",
+        "git worktree add ../wt-389 && git commit -am x",
+        "git worktree add docs; cd docs && git commit -am x",
+    ):
+        d, why = hook(monkeypatch, capsys, proj, command)
+        assert d == "deny" or (d == "ask" and "doesn't exist yet" in why), (command, d, why)
+        assert "worktree the command adds first" not in why, (command, why)
     # A `git-commit` the guard finds first, before a `git` or `gh` word later on.
     d, why = hook(monkeypatch, capsys, proj, 'PATH="$(git --exec-path):$PATH" git-commit -a -m x -- scripts/git')
     assert d == "deny" and "`src/app.py`" in why, why
