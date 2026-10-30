@@ -497,13 +497,18 @@ def test_a_ticket_session_commits_what_it_cant_read_as_today(proj, monkeypatch, 
 def test_any_and_unanswered_decide_as_today(tmp_path, monkeypatch, capsys, code_writers):
     root = _clone(tmp_path, code_writers)
     cases = REFUSED + [(_unreadable, "git commit -m x"), (_changed_code, "git commit -m x --pathspec-from-file=missing.txt")]
+    cases += [(_changed_code, c) for c in UNREAD_SPECS]
+    cases += [(_staged_code, f"{v}=.git/alt git commit -m x") for v in ("GIT_INDEX_FILE", "GIT_DIR", "GIT_WORK_TREE")]
+    cases += [(_changed_code, f"git --work-tree={tmp_path / 'w'} commit -a -m x")]
     for setup, command in cases:
         for role in (None, "conductor", "tikcet"):
             git(root, "reset", "-q", "--hard")
             git(root, "clean", "-qfd")
             setup(root)
             d, why = hook(monkeypatch, capsys, root, command, role)
-            assert d == "allow" and "code path" not in why and "can't tell" not in why, (command, role, why)
+            assert "code path" not in why and "can't tell" not in why, (command, role, why)
+            # `GIT_DIR=`-style prefixes are refused today in the conductor and a ticket session (a mistyped role is one here), by their own rule.
+            assert d == "allow" or (role in ("conductor", "tikcet") and command.startswith("GIT_") and "setting `GIT_" in why), (command, role, why)
             (root / ".git/index").unlink(missing_ok=True)
     # A branch-only ticket session keeps a ticket session's rules.
     git(root, "reset", "-q", "--hard")
