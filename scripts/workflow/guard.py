@@ -6637,11 +6637,12 @@ _MAKES_VALUES = {
 def _made_where(s: Seg) -> tuple[str, str] | None:
     """(what `s` makes, "init", "clone" or "worktree", and where, absolute)
     when it is `git init`, `git clone`, `git worktree add` or `gh repo clone`
-    at a place the guard can follow; else None, as for an init or clone that
-    sets `GIT_DIR` or `--git-dir`, which puts the repository elsewhere."""
+    at a place the guard can follow; else None, as for an init whose
+    `GIT_DIR` or `--git-dir` puts the repository elsewhere (git reads a
+    relative one from the place it makes; a clone ignores both)."""
     if s.cwd is None:
         return None
-    moved = "GIT_DIR" in _assigned(s)
+    git_dir = _assigned(s).get("GIT_DIR")
     gh = bool(s.words[:1]) and posixpath.basename(s.words[0]) == "gh" and s.words[1:3] == ["repo", "clone"]
     bare = False
     if gh:
@@ -6649,7 +6650,11 @@ def _made_where(s: Seg) -> tuple[str, str] | None:
     else:
         g = _commit_git(s.words)
         args = g[1] if g else []
-        moved = moved or bool(g) and any(w == "--git-dir" or w.startswith("--git-dir=") for w in g[0])
+        for k, w in enumerate(g[0] if g else []):
+            if w.startswith("--git-dir="):
+                git_dir = w.partition("=")[2]
+            elif w == "--git-dir" and k + 1 < len(g[0]):
+                git_dir = g[0][k + 1]
         if args[:1] in (["init"], ["clone"]):
             kind, rest = args[0], args[1:]
         elif args[:2] == ["worktree", "add"]:
@@ -6657,8 +6662,6 @@ def _made_where(s: Seg) -> tuple[str, str] | None:
         else:
             return None
         s = replace(s, cwd=_git_dir_of(Path("/"), s.cwd, g[2]))
-    if moved and kind != "worktree":
-        return None
     words, i, values = [], 0, _MAKES_VALUES.get(kind, set()) | ({"--upstream-remote-name"} if gh else set())
     while i < len(rest):
         w = rest[i]
@@ -6687,6 +6690,8 @@ def _made_where(s: Seg) -> tuple[str, str] | None:
             return None
         at = words[0]
     a = _abspath(at, s.cwd)
+    if a and kind == "init" and git_dir is not None and _abspath(git_dir, a) != os.path.join(a, ".git"):
+        return None
     return (kind, a) if a else None
 
 
@@ -6737,6 +6742,21 @@ def _made_earlier(segs: list[Seg], seg: Seg, where: str) -> bool:
     return False
 
 
+_DOT_GIT = re.compile(r"(^|[/=])\.git(/|$)")  # a `.git` as a path's part, `GIT_DIR=.git`'s too
+
+
+def _names_dot_git(segs: list[Seg], seg: Seg) -> str | None:
+    """A word of an earlier part of the command that names a `.git` (one it
+    may write, link, move or remove, changing where git commits), or None."""
+    for s in segs:
+        if s is seg:
+            return None
+        for w in [*s.assigns, *s.words, *s.redirects]:
+            if _DOT_GIT.search(w):
+                return w if len(w) <= 80 else w[:79] + "…"
+    return None
+
+
 def _commit_code(segs: list[Seg], code: _Code, root: Path) -> tuple[str | None, str | None]:
     """(why a commit in the command carries a code path, why the guard can't
     tell what one carries), each None when it doesn't apply."""
@@ -6757,6 +6777,9 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path) -> tuple[str | None, 
             continue  # a directory the guard can't follow: left to the push rule
         d = os.path.realpath(d)
         cant = f"the guard can't tell what `git {args[0]}` would commit"
+        named = _names_dot_git(segs, seg)
+        if named:  # judged still, so a refusal stands; otherwise asked
+            unsure = unsure or f"{cant}: an earlier part of the command names `{named}`, which can change where git commits"
         if not os.path.isdir(d):  # made earlier in the command (a folder, a link, a repository), or never
             unsure = unsure or f"{cant}: it runs in `{d}`, which doesn't exist yet"
             continue

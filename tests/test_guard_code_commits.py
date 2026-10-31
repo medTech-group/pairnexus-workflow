@@ -533,19 +533,34 @@ def test_a_directory_made_earlier_in_the_command(proj, tmp_path, monkeypatch, ca
             f"git --git-dir={proj}/.git worktree add -q -b wtg scratch && cd scratch && git commit -am x",
             f"git init -q --separate-git-dir {proj}/.git {out}-empty && git -C {out}-empty commit -m x",
             f"git init -q {wt}/docs && cd {wt}/docs && git commit -am x",  # in a worktree of the project's, outside it
+            # A relative `--git-dir` is read from the place an init makes; a clone ignores it.
+            "git --git-dir=.git init -q docs && cd docs && git commit -am x",
+            "git --git-dir=/tmp/x-389 clone -q ../proj-remote/acme/demo.git scratch && cd scratch && git commit -am x",
+        ),
+        # A `.git` an earlier part writes, links, moves or removes can send the commit anywhere.
+        "can change where git commits": (
+            f"ln -s {proj}/.git {tmp_path}/.git && git -C {tmp_path} --work-tree={proj} commit -am x",
+            f"printf 'gitdir: {proj}/.git' > {tmp_path}/.git && git -C {tmp_path} --work-tree={proj} commit -am x",
+            "rm -rf vendor/lib/.git && cd vendor/lib && git commit -m x ../../src/app.py",
+            "cat .git/HEAD && git commit -m d docs/a.md",
         ),
     }
     (proj / "scratch").mkdir()
     (tmp_path / "scratch-out-empty").mkdir()
+    (proj / "vendor/lib").mkdir(parents=True)
+    git(proj / "vendor/lib", "init", "-q")  # a repository nested in the project: its commits are another one's
+    assert hook(monkeypatch, capsys, proj, "cd vendor/lib && git commit -m x ../../src/app.py") == ("allow", "")
     git(proj, "worktree", "add", "-q", "-b", "outside", str(wt))
     _change(wt, CODE)
     for reason, commands in unsure.items():
         for command in commands:
+            # A command that names a `.git` may give that reason first.
+            reasons = (reason, "can change where git commits") if ".git" in command else (reason,)
             d, why = hook(monkeypatch, capsys, proj, command)
-            assert d == "ask" and "can't tell" in why and reason in why, (command, why)
+            assert d == "ask" and "can't tell" in why and any(r in why for r in reasons), (command, why)
             d, why = hook(monkeypatch, capsys, proj, command, "conductor")
             # The conductor refuses a `GIT_DIR=` prefix by its own rule, before the commit rule.
-            assert d == "deny" and (reason in why and "the conductor" in why or "setting `GIT_DIR`" in why), (command, why)
+            assert d == "deny" and (any(r in why for r in reasons) and "the conductor" in why or "setting `GIT_DIR`" in why), (command, why)
     # The directory named is where the commit runs.
     d, why = hook(monkeypatch, capsys, proj, "git worktree add -q -b wte scratch && cd scratch && git commit -am x")
     assert f"`{os.path.realpath(proj / 'scratch')}`, {made}" in why, why
@@ -553,11 +568,14 @@ def test_a_directory_made_earlier_in_the_command(proj, tmp_path, monkeypatch, ca
     for command in ("GIT_DIR=/tmp/x-389 git init -q docs && cd docs && git commit -am x", "git --git-dir=/tmp/x-389 init -q docs && cd docs && git commit -am x"):
         d, why = hook(monkeypatch, capsys, proj, command)
         assert d == "deny" and "`src/app.py`" in why, (command, why)
-    # An asked commit doesn't hide a later one that carries code.
-    d, why = hook(monkeypatch, capsys, proj, "git init -q s && git -C s commit -qam i; git commit -am x")
-    assert d == "deny" and "`src/app.py`" in why, why
+    # An asked commit doesn't hide a later one that carries code, nor does a `.git` named earlier.
+    for command in ("git init -q s && git -C s commit -qam i; git commit -am x", "cat .git/HEAD && git commit -am x"):
+        d, why = hook(monkeypatch, capsys, proj, command)
+        assert d == "deny" and "`src/app.py`" in why, (command, why)
     # What is made above, beside or on top of the project's own repository doesn't take its commits.
     for command in (
+        "git init -q && git commit -am x",  # reinitialises the project's own
+        "git init -q && cd docs && git commit -am x",
         "git init -q .. && git commit -am x",
         "git init -q / ; git commit -am x",
         "git init -q /tmp/scratch-389 && git commit -am x",
