@@ -256,15 +256,15 @@ def test_stashed_code_sent_by_a_pattern(proj, monkeypatch, capsys):
     assert d == "deny" and "src/app.py" in why, why
 
 
-def test_a_negative_refspec_leaves_out_nothing_the_guard_judges(proj, monkeypatch, capsys):
-    git(proj, "checkout", "-q", "-b", "code2")
+def test_a_negative_refspec_is_a_push_the_guard_cant_tell_about(proj, monkeypatch, capsys):
+    """It doesn't read what a negative refspec leaves out, so it neither
+    refuses for a commit that may not be sent nor lets one through."""
     _code_commit(proj)
+    git(proj, "checkout", "-q", "-b", "docsonly", "origin/main")
     _docs_commit(proj)
-    git(proj, "checkout", "-q", "feature")
-    git(proj, "merge", "-q", "--ff-only", "code2")
-    git(proj, "checkout", "-q", "code2")
     d, why = hook(monkeypatch, capsys, proj, "git push origin 'refs/heads/*:refs/heads/*' '^refs/heads/feature'")
-    assert d == "deny" and "src/app.py" in why, why
+    assert d == "ask" and "negative refspec" in why, why
+    assert hook(monkeypatch, capsys, proj, "git push origin 'refs/heads/*:refs/heads/*' '^refs/heads/feature'", "conductor")[0] == "deny"
 
 
 @pytest.mark.parametrize("value", ["true", "yes", "on", "1"])
@@ -341,6 +341,126 @@ def test_a_docs_only_bare_push(proj, monkeypatch, capsys):
     _docs_commit(proj)
     assert hook(monkeypatch, capsys, proj, "git push") == ("allow", "")
     assert hook(monkeypatch, capsys, proj, "git push", "conductor") == ("allow", "")
+
+
+def test_the_shells_branch_in_another_repository(proj, tmp_path, monkeypatch, capsys):
+    other = tmp_path / "elsewhere"
+    git(tmp_path, "clone", "-q", str(tmp_path / "proj-remote/acme/demo.git"), str(other))
+    _docs_commit(proj)
+    d, why = hook(monkeypatch, capsys, proj, f"git -C {other} push origin $(git branch --show-current)")
+    assert d == "ask" and "the shell's branch" in why, why
+    # The same repository, from a folder of it: HEAD.
+    assert hook(monkeypatch, capsys, proj, "git -C docs push origin $(git branch --show-current)") == ("allow", "")
+
+
+def test_a_bare_push_beside_another_push(proj, monkeypatch, capsys):
+    git(proj, "tag", "vdocs")
+    _docs_commit(proj)
+    git(proj, "config", "branch.feature.remote", "origin")
+    for command in ("git push && git push --tags", "git push -u origin HEAD; git push", "git push origin feature && git push"):
+        assert hook(monkeypatch, capsys, proj, command) == ("allow", ""), command
+    git(proj, "remote", "add", "self", ".")
+    git(proj, "config", "branch.feature.pushRemote", "self")
+    d, why = hook(monkeypatch, capsys, proj, "git push && git push origin feature")
+    assert d == "ask" and "can't tell" in why, why
+
+
+def test_a_remote_named_like_a_url(proj, monkeypatch, capsys):
+    """git looks a word up as a remote before reading it as a URL."""
+    git(proj, "config", "remote.https://github.com/acme/sandbox.url", "git@github.com:acme/demo.git")
+    _code_commit(proj)
+    d, why = hook(monkeypatch, capsys, proj, "git push https://github.com/acme/sandbox feature")
+    assert d == "deny" and "src/app.py" in why, why
+
+
+@pytest.mark.parametrize("command", ["git push . HEAD:wip", "git push -u . HEAD:wip", "git push .. feature", "git push '' feature"])
+def test_a_push_into_a_path_that_isnt_project_repo_decides_as_today(proj, monkeypatch, capsys, command):
+    (proj / ".git/branches").mkdir(exist_ok=True)
+    _docs_commit(proj)
+    for role in (None, "conductor"):
+        d, why = hook(monkeypatch, capsys, proj, command, role)
+        with monkeypatch.context() as m:
+            m.setattr(guard_mod, "_push_code", lambda *a, **k: (None, None))
+            today = hook(monkeypatch, capsys, proj, command, role)
+        assert (d, why) == today, (command, role, why)
+
+
+def test_no_tags_cancels_tags(proj, monkeypatch, capsys):
+    git(proj, "tag", "vdocs")
+    git(proj, "push", "-q", "origin", "feature")
+    _code_commit(proj)
+    d, why = hook(monkeypatch, capsys, proj, "git push --tags --no-tags origin")
+    assert d == "deny" and "src/app.py" in why, why
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git config --remove-section branch.feature && git push",
+        "git config remove-section branch.feature && git push",
+        "git config --rename-section branch.feature branch.old && git push",
+    ],
+)
+def test_a_config_section_dropped_before_a_bare_push(proj, tmp_path, monkeypatch, capsys, command):
+    other = _other_remote(tmp_path)
+    git(proj, "remote", "add", "side", str(other))
+    git(proj, "config", "branch.feature.pushRemote", "side")
+    _code_commit(proj)
+    d, why = hook(monkeypatch, capsys, proj, command)
+    assert d == "ask" and "can't tell" in why, (command, why)
+
+
+def test_a_switch_before_a_bare_push_that_seems_to_go_elsewhere(proj, tmp_path, monkeypatch, capsys):
+    other = _other_remote(tmp_path)
+    git(proj, "remote", "add", "side", str(other))
+    git(proj, "config", "branch.feature.pushRemote", "side")
+    git(proj, "checkout", "-q", "-b", "codeb")
+    _code_commit(proj)
+    git(proj, "checkout", "-q", "feature")
+    d, why = hook(monkeypatch, capsys, proj, "git switch codeb && git push")
+    assert d == "ask" and "can't tell" in why, why
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git config --local remote.origin.url && git push origin feature",
+        "git config --global push.default; git push origin feature",
+        "git config --show-origin remote.origin.url && git push origin feature",
+        "git config -z remote.origin.url && git push origin feature",
+        "git -c push.autoSetupRemote=true push origin feature",
+        "git config push.autoSetupRemote true && git push origin feature",
+        "git branch --contains HEAD && git push origin feature",
+        "git branch --merged main && git push origin feature",
+        "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=x git push https://github.com/acme/sandbox feature",
+    ],
+)
+def test_reads_and_other_settings_beside_a_push(proj, monkeypatch, capsys, command):
+    """Decided as without the push rule (some are asked or refused by today's own rules)."""
+    _docs_commit(proj)
+    for role in (None, "conductor"):
+        d, why = hook(monkeypatch, capsys, proj, command, role)
+        with monkeypatch.context() as m:
+            m.setattr(guard_mod, "_push_code", lambda *a, **k: (None, None))
+            today = hook(monkeypatch, capsys, proj, command, role)
+        assert (d, why) == today, (command, role, why)
+
+
+def test_a_tag_on_a_tree_is_a_push_the_guard_cant_tell_about(proj, monkeypatch, capsys):
+    _change(proj, CODE)
+    git(proj, "add", CODE)
+    tree = git(proj, "write-tree").strip()
+    git(proj, "reset", "-q")
+    git(proj, "tag", "treetag", tree)
+    for command in ("git push origin treetag", "git push origin --tags"):
+        d, why = hook(monkeypatch, capsys, proj, command)
+        assert d == "ask" and "isn't a commit" in why, (command, why)
+
+
+def test_the_push_rules_own_time_limit(proj, monkeypatch, capsys):
+    monkeypatch.setattr(guard_mod, "_PUSH_RULE_SECONDS", -1)
+    d, why = hook(monkeypatch, capsys, proj, "git push origin feature")
+    assert d == "ask" and "too many to read in time" in why, why
 
 
 def test_follow_tags_sends_no_commit_the_push_doesnt(proj, monkeypatch, capsys):
@@ -429,7 +549,7 @@ def test_many_pushes_in_one_command_stay_within_time(proj, monkeypatch, capsys):
     _docs_commit(proj)
     t = time.monotonic()
     d, why = hook(monkeypatch, capsys, proj, " && ".join(["git push origin feature"] * 300))
-    assert time.monotonic() - t < 15 and d == "allow", why[:300]
+    assert time.monotonic() - t < 10 and d == "allow", why[:300]
 
 
 def test_a_config_value_isnt_a_key(proj, monkeypatch, capsys):
@@ -437,10 +557,10 @@ def test_a_config_value_isnt_a_key(proj, monkeypatch, capsys):
     for command in (
         "git config user.email remote.ops@acme.example && git push origin feature",
         "git config branch.feature.description hi && git push origin feature",
-        "git config --file x.cfg remote.x.url y && git push origin feature",
     ):
-        d, why = hook(monkeypatch, capsys, proj, command)
-        assert ("can't tell" in why) == command.startswith("git config --file"), (command, why)
+        assert hook(monkeypatch, capsys, proj, command) == ("allow", ""), command
+    d, why = hook(monkeypatch, capsys, proj, "git config --file x.cfg remote.x.url y && git push origin feature")
+    assert d == "ask" and "can't tell" in why, why
 
 
 @pytest.mark.parametrize("command", ["git send-pack {url} feature", "git http-push {url} feature", "git-send-pack {url} feature"])
@@ -456,8 +576,8 @@ def test_send_pack_and_http_push_are_judged(proj, tmp_path, monkeypatch, capsys,
     "command",
     [
         "rm -f {.claude/settings.json," + "{}" * 65 + "}",
-        "tee {" + ",".join(f"a{i}" for i in range(1, 65)) + ",.claude/workflow/profile.toml} < /dev/null",
         "rm -f {.claude/settings.json,x}" + "{a,b}" * 30,
+        "rm -f x" + "{a,b}" * 129,
     ],
 )
 def test_a_brace_list_too_long_to_expand_is_a_target_the_guard_cant_place(proj, monkeypatch, capsys, command):
@@ -470,7 +590,18 @@ def test_a_brace_list_too_long_to_expand_is_a_target_the_guard_cant_place(proj, 
     t = time.monotonic()
     d, why = hook(monkeypatch, capsys, proj, command, "ticket")
     assert time.monotonic() - t < 5
-    assert d == "deny" and ("brace list" in why or "protected path" in why), why
+    assert d == "deny" and ("brace lists than the guard expands" in why) == command.startswith("rm -f x"), why
+    assert "brace lists than the guard expands" in why or "protected path" in why, why
+
+
+@pytest.mark.parametrize("role", ["ticket", "conductor"])
+@pytest.mark.parametrize("code_writers", ["ticket", "any", None])
+def test_a_brace_list_the_guard_expands_decides_as_today(tmp_path, monkeypatch, capsys, role, code_writers):
+    """One list of 70 docs paths, or 30 lists: as on main (the first 64 paths checked)."""
+    root = _clone(tmp_path, code_writers)
+    _on(root, "claude/build-1")
+    for command in ("touch docs/{" + ",".join(f"a{i}" for i in range(70)) + "}.md", "mkdir -p docs/x" + "{a,b}" * 30):
+        assert hook(monkeypatch, capsys, root, command, role) == ("allow", ""), (command[:40], role, code_writers)
 
 
 # ---------- which remote is project.repo ----------
@@ -635,7 +766,6 @@ def test_a_push_whose_commits_cant_be_read_is_asked(proj, monkeypatch, capsys):
         "git push ${R:-origin} feature",
         "git push $(echo origin) feature",
         "git push `echo origin` feature",
-        "git -C docs push origin $(git branch --show-current)",
         "GIT_CONFIG_PARAMETERS=\"'url.x.pushinsteadof'='y'\" git push https://github.com/acme/sandbox feature",
         "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=url.x.pushInsteadOf GIT_CONFIG_VALUE_0=y git push https://github.com/acme/sandbox feature",
         "git config branch.feature.pushRemote origin && git push sandbox feature",
