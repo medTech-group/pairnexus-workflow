@@ -488,7 +488,6 @@ def test_the_push_rules_own_time_limit(proj, monkeypatch, capsys):
         "git -c 'remote.x:y.url=git@github.com:acme/demo.git' push x:y codeb",
         "git config remote.x:y.url git@github.com:acme/demo.git && git push x:y codeb",
         "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.x:y.url GIT_CONFIG_VALUE_0=git@github.com:acme/demo.git git push x:y codeb",
-        "git remote add x:y git@github.com:acme/demo.git && git push x:y codeb",
     ],
 )
 def test_what_changes_where_a_push_by_a_remotes_name_goes(proj, tmp_path, monkeypatch, capsys, command):
@@ -574,6 +573,11 @@ def test_a_code_push_beside_a_named_dot_git_or_an_upstream_is_still_refused(proj
         "git branch --sort committerdate && git push origin feature",
         "git config get --show-names --all --regexp '^remote\\.' && git push https://github.com/acme/sandbox x",
         "git push -u origin feature && git push origin HEAD:refs/heads/feature-2",
+        "git branch --sort -committerdate && git push origin feature",
+        "git remote prune origin && git push https://github.com/acme/sandbox x",
+        "git remote update && git push origin feature",
+        "git --config-env=http.extraHeader=AUTH push https://github.com/acme/sandbox x",
+        "GIT_CONFIG_PARAMETERS=\"'http.extraheader'='Bearer $T'\" git push https://github.com/acme/sandbox x",
     ],
 )
 def test_more_ordinary_parts_beside_a_push_decide_as_without_the_rule(proj, monkeypatch, capsys, command):
@@ -584,6 +588,19 @@ def test_more_ordinary_parts_beside_a_push_decide_as_without_the_rule(proj, monk
             m.setattr(guard_mod, "_push_code", lambda *a, **k: (None, None))
             today = hook(monkeypatch, capsys, proj, command, role)
         assert (d, why) == today, (command, role, why)
+
+
+def test_a_tag_made_beside_a_push_of_tags(proj, monkeypatch, capsys):
+    """`--column` takes no next word: `vcode` is the tag git makes."""
+    _code_commit(proj)
+    d, why = hook(monkeypatch, capsys, proj, "git tag --column vcode && git push origin --tags")
+    assert d == "ask" and "can't tell" in why, why
+
+
+def test_a_code_push_beside_another_remote_added(proj, monkeypatch, capsys):
+    _code_commit(proj)
+    d, why = hook(monkeypatch, capsys, proj, "git remote add fork https://github.com/me/fork && git push git@github.com:acme/demo.git feature")
+    assert d == "deny" and "src/app.py" in why, why
 
 
 def test_a_long_option_cluster_doesnt_slow_the_rule(proj, monkeypatch, capsys):
