@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.1.18
+
+**A run can keep reviewing a ticket until it is clean.** #402: the pass cap takes `until-clean`, so after the last review round a run fixes and reviews again until a Correctness pass is clean, within its end time, instead of stopping the ticket at a number. Numbers 0 to 10 behave as before.
+
+- **For projects updating to 0.1.18:** nothing to do; choose `until-clean` at a run's kick-off, or write `run.review_passes = "until-clean"` in the profile.
+- **Known limit:** as in 0.1.17, a commit or push that carries code made some other way isn't refused yet under "only ticket sessions"; that comes with #389 to #394.
+
 **A run can keep reviewing a ticket until it is clean: the pass cap `until-clean`** (#402). After run #400 stopped when #389 reached its pass cap with findings still open.
 
 - **`review.passes = "until-clean"`** in the charter, or `run.review_passes = "until-clean"` in the profile, sets no pass cap: after the last review round, each Correctness pass that isn't clean is fixed and followed by another, bounded only by the run's end time (`limits.ends_at`): the passes run within one ticket session, so `limits.max_sessions` doesn't bound them. `workflow merge-check --review-passes until-clean` never says `passes_used_up`; a clean pass on the head reads `ready` as before. `charter validate` and the profile refuse any other string.
