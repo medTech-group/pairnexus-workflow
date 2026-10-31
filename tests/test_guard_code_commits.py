@@ -528,7 +528,6 @@ def test_a_directory_made_earlier_in_the_command(proj, tmp_path, monkeypatch, ca
             "mkdir -p scratch && cd scratch && git init -q && echo a > a.txt && git add -A && git commit -qam init",
             "git init -q docs && cd docs && git commit -am x",
             "git init -q docs && git -C docs/../docs commit -am x",
-            "(cd docs && sleep 1 && git commit -am x) & git init -q docs; wait",  # the init may run first
             "git worktree add -q -b wte scratch && cd scratch && git commit -am x",
             f"GIT_DIR={proj}/.git git worktree add -q -b wtg scratch && cd scratch && git commit -am x",
             f"git --git-dir={proj}/.git worktree add -q -b wtg scratch && cd scratch && git commit -am x",
@@ -551,6 +550,9 @@ def test_a_directory_made_earlier_in_the_command(proj, tmp_path, monkeypatch, ca
             f"sleep 1 && git -C {out}-empty --work-tree={proj} commit -qam x & ln -s {proj}/.git {out}-empty/.git; wait",
             f"ln -s {proj}/.GIT {out}-empty/.GIT && git -C {out}-empty --work-tree={proj} commit -qam x",
             f'D={out}-empty/.git; ln -s {proj}/.git "$D"; git -C {out}-empty --work-tree={proj} commit -qam x',
+            # Split by quotes or a backslash.
+            f'ln -s "{proj}/.g"it {out}-empty/.g"it"; git -C {out}-empty --work-tree={proj} commit -qam x',
+            f"ln -s {proj}/.g\\it {out}-empty/'.'git; git -C {out}-empty --work-tree={proj} commit -qam x",
         ),
     }
     (proj / "scratch").mkdir()
@@ -563,13 +565,21 @@ def test_a_directory_made_earlier_in_the_command(proj, tmp_path, monkeypatch, ca
     _change(wt, CODE)
     for reason, commands in unsure.items():
         for command in commands:
-            # A command that names a `.git` may give that reason first.
-            reasons = (reason, "can change where git commits") if ".git" in command else (reason,)
+            reasons = (reason,)
             d, why = hook(monkeypatch, capsys, proj, command)
             assert d == "ask" and "can't tell" in why and any(r in why for r in reasons), (command, why)
             d, why = hook(monkeypatch, capsys, proj, command, "conductor")
             # The conductor refuses a `GIT_DIR=` prefix by its own rule, before the commit rule.
             assert d == "deny" and (any(r in why for r in reasons) and "the conductor" in why or "setting `GIT_DIR`" in why), (command, why)
+    # A part after the commit that makes its repository (it may run first): the commit is judged
+    # where it is now, so a refusal stands, and otherwise asked.
+    for command in (
+        "(cd docs && sleep 1 && git commit -am x) & git init -q docs; wait",
+        f"git -C {out}-empty --git-dir={proj}/.git --work-tree={proj} commit -am x; git init -q {out}-empty",
+    ):
+        for role in (None, "conductor"):
+            d, why = hook(monkeypatch, capsys, proj, command, role)
+            assert d == "deny" and "`src/app.py`" in why, (command, role, why)
     # The directory named is where the commit runs.
     d, why = hook(monkeypatch, capsys, proj, "git worktree add -q -b wte scratch && cd scratch && git commit -am x")
     assert f"`{os.path.realpath(proj / 'scratch')}`, {made}" in why, why
@@ -600,6 +610,12 @@ def test_a_directory_made_earlier_in_the_command(proj, tmp_path, monkeypatch, ca
     git(proj, "checkout", "-q", "--", CODE)
     _docs_only(proj)
     assert hook(monkeypatch, capsys, proj, "git worktree add ../wt-389 && cd docs && git commit -m d")[0] == "allow"
+    later = "where a later part of the command makes a repository or worktree, which may run first"
+    command = "(cd docs && sleep 1 && git commit -m d) & git init -q docs; wait"
+    d, why = hook(monkeypatch, capsys, proj, command)
+    assert d == "ask" and later in why, why
+    d, why = hook(monkeypatch, capsys, proj, command, "conductor")
+    assert d == "deny" and later in why, why
     # Names like `.git`'s aren't a `.git`.
     for command in (
         "cat .gitignore && git commit -m d",
@@ -607,6 +623,24 @@ def test_a_directory_made_earlier_in_the_command(proj, tmp_path, monkeypatch, ca
         "git clone -q ../proj-remote/acme/demo.git /tmp/c-389; git clone -q git@github.com:acme/x.git /tmp/d-389; git commit -m d",
     ):
         assert hook(monkeypatch, capsys, proj, command) == ("allow", ""), command
+
+
+@pytest.mark.parametrize("word", ["x" * 200_000, "x" * 200_000 + "/.git", ".git/" + "x" * 200_000])
+def test_a_long_word_doesnt_slow_the_guard(proj, monkeypatch, capsys, word):
+    """The `.git` search costs the word's length, not its square, so a long
+    word (minified JSON, base64) never runs the hook past its timeout."""
+    _changed_code(proj)
+    started = time.monotonic()
+    d, why = hook(monkeypatch, capsys, proj, f"echo {word} > /dev/null; git commit -am x")
+    assert time.monotonic() - started < 5
+    assert d == "deny" and "`src/app.py`" in why, why
+    git(proj, "checkout", "-q", "--", CODE)
+    _docs_only(proj)
+    d, why = hook(monkeypatch, capsys, proj, f"echo {word} > /dev/null; git commit -m d")
+    if ".git" in word:
+        assert d == "ask" and "can change where git commits" in why and len(why) < 1000, why
+    else:
+        assert (d, why) == ("allow", "")
 
 
 def test_a_later_no_option_cancels_a_dry_run(proj, monkeypatch, capsys):
