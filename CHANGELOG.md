@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**The guard refuses a push that carries code to the project's repository outside ticket sessions under `code_writers = "ticket"`** (#390, part of #338). Under `"any"`, or with `code_writers` absent, nothing changes.
+
+- **A `git push`** (or `git send-pack`, `git http-push`) to `project.repo`, from any directory (another clone included), in a planning session or the conductor, is refused when the commits it would send carry a code path: the commits its refs reach that are on no tracking ref of a remote fetching from `project.repo`, each judged by the files it changes (a merge against its first parent, until #391). A remote is `project.repo` when a push URL of it, with a trailing `/` and `.git` stripped and compared in any case, is `project.repo` or ends in it after a `/` or `:` (`git@github.com:<owner>/<repo>.git`); a push given a URL is judged by that URL. Pushes to other repositories (the release gate's sandbox) are as before.
+- **When the guard can't read what a push sends** (a ref that doesn't resolve or that the shell expands, a directory it can't follow, a remote whose URL it can't read, a setting or variable that changes where git pushes or what it reads, or another part of the command that may move a branch or HEAD or change git's config), a planning session is asked, naming what couldn't be read (a refusal in a permission mode that never asks), and the conductor is refused. When the guard can't decide at all, a push is asked, as before.
+- **For projects updating:** nothing to do. Tests: `tests/test_guard_code_pushes.py`.
+
 **The guard refuses a commit that carries code outside ticket sessions under `code_writers = "ticket"`** (#389, part of #338). Under `"any"`, or with `code_writers` absent, nothing changes.
 
 - **A `git commit`** in a planning session or the conductor, in the project's own repository (the project or a worktree of it), is refused when what it would carry includes a code path: what is staged, plus the changed tracked files with `-a`, or what a pathspec names (`-i` adds the staged files to a pathspec's). So code written where the guard couldn't see it (`python3 -c …`) is caught before it is committed. The refusal is worded as the file tools' (#340). Finishing a merge, a cherry-pick, a revert, a rebase or `git am` is judged as any commit for now; #391 and #392 narrow what counts for merges, cherry-picks and reverts.
