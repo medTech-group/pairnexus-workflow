@@ -9,6 +9,9 @@ small threshold (`review.passes`, `review.small_max_lines` and
 the one place the presets' numbers live: the charter's questions, defaults,
 validation and one page read them.
 
+The pass cap is a whole number from 0 to 10, or `UNTIL_CLEAN` (#402): no cap,
+Correctness passes until one is clean, bounded only by the run's end time.
+
 `profile` is a loaded profile (`profile.load`), or None for the profile's
 defaults. Normal is the profile's own numbers; "has an explorer" means the
 profile's `ui.explorer` isn't `none`, and with none, `review.explorer` is
@@ -25,13 +28,18 @@ DEFAULT = "normal"
 LABELS = {"light": "Light", "normal": "Normal", "thorough": "Thorough"}
 
 NO_EXPLORER = "no UI explorer (the project has none)"
+# The pass cap that isn't one (#402): `review.passes` and `run.review_passes` may say it.
+UNTIL_CLEAN = "until-clean"
+UNTIL_CLEAN_SHORT = "Correctness passes until one is clean"
+UNTIL_CLEAN_WORDS = f"{UNTIL_CLEAN_SHORT}, within the run's end time"
 LIGHT_NO_EXPLORER = "no UI explorer (one round is the light review)"
 
 
-def _run(profile: Any, key: str) -> int:
-    """The profile's [run] number, or its default without a profile."""
+def _run(profile: Any, key: str) -> int | str:
+    """The profile's [run] number (or its pass cap `until-clean`), or its
+    default without a profile."""
     v = getattr(profile, key, None)
-    if isinstance(v, int) and not isinstance(v, bool):
+    if (isinstance(v, int) and not isinstance(v, bool)) or (key == "review_passes" and v == UNTIL_CLEAN):
         return v
     from .profile import Profile  # here, not at the top: profile.py imports this module
 
@@ -93,11 +101,23 @@ def threshold_words(review: dict) -> str:
 
 
 def passes_words(review: dict) -> str:
-    """ "at most 2 Correctness passes", or "no Correctness passes" for 0: the
-    pass cap of a review (`review_of`)."""
+    """ "at most 2 Correctness passes", "no Correctness passes" for 0, or
+    `UNTIL_CLEAN_WORDS`: the pass cap of a review (`review_of`)."""
+    if review["passes"] == UNTIL_CLEAN:
+        return UNTIL_CLEAN_WORDS
     if review["passes"] == 0:
         return "no Correctness passes"
     return f"at most {plural(review['passes'], 'Correctness pass', 'Correctness passes')}"
+
+
+def pass_cap_words(review: dict) -> str:
+    """The pass cap after the last round, as the one page and the briefing
+    begin it: "at most 2 Correctness passes after the last review round", or
+    for `until-clean` "none: after the last review round, Correctness passes
+    until one is clean, within the run's end time"."""
+    if review["passes"] == UNTIL_CLEAN:
+        return f"none: after the last review round, {UNTIL_CLEAN_WORDS}"
+    return f"{passes_words(review)} after the last review round"
 
 
 def past_small(review: dict) -> str:
@@ -150,6 +170,21 @@ def _whole(v: Any, lo: int, hi: int) -> bool:
     return isinstance(v, int) and not isinstance(v, bool) and lo <= v <= hi
 
 
+def valid_review(key: str, v: Any, lo: int, hi: int) -> bool:
+    """A charter's value for one of `PROFILE_REVIEW`'s keys is valid: a whole
+    number from `lo` to `hi`, or for `passes`, `UNTIL_CLEAN` too."""
+    return _whole(v, lo, hi) or (key == "passes" and v == UNTIL_CLEAN)
+
+
+def pass_cap_choices(profile: Any = None) -> list[dict]:
+    """The pass caps the limits question offers beside the presets, each
+    `{value, words}`: the profile's first, then `until-clean`, or, when the
+    profile's is `until-clean`, the profile's default number."""
+    own = _run(profile, "review_passes")
+    other = _run(None, "review_passes") if own == UNTIL_CLEAN else UNTIL_CLEAN
+    return [{"value": v, "words": passes_words({"passes": v})} for v in (own, other)]
+
+
 def review_of(c: dict, profile: Any = None) -> dict:
     """The review a run takes from its charter, `{rounds, explorer, small,
     passes, small_max_lines, small_max_files}`. Rounds and explorer: the
@@ -169,7 +204,7 @@ def review_of(c: dict, profile: Any = None) -> dict:
         out = {"rounds": _run(profile, "review_rounds"), "explorer": has_explorer(profile)}
     out["small"] = r.get("small") is True
     for key, run_key, lo, hi in PROFILE_REVIEW:
-        out[key] = r[key] if _whole(r.get(key), lo, hi) else _run(profile, run_key)
+        out[key] = r[key] if valid_review(key, r.get(key), lo, hi) else _run(profile, run_key)
     return out
 
 
@@ -209,7 +244,7 @@ def changes(c: dict, profile: Any = None) -> list[str]:
     if isinstance(rev, dict) and profile is not None:
         got, usual = review_of(c, profile), review_of({"preset": c["preset"]}, profile)
         if got["passes"] != usual["passes"]:
-            out.append(plural(got["passes"], "pass", "passes"))
+            out.append(UNTIL_CLEAN_SHORT if got["passes"] == UNTIL_CLEAN else plural(got["passes"], "pass", "passes"))
         if (got["small_max_lines"], got["small_max_files"]) != (usual["small_max_lines"], usual["small_max_files"]):
             out.append(f"a small threshold of {threshold_words(got)} outside tests")
     return out

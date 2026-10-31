@@ -176,6 +176,7 @@ check_in_minutes = 20
 max_parallel = 2
 max_retries = 1
 review_rounds = 3
+review_passes = "until-clean"           # Correctness passes after the last round until one is clean, within a run's end time
 # The claude.ai environments, by name (docs/enforcement.md section 2).
 ticket_environment = "workflow-ticket"  # no credentials; WORKFLOW_ROLE=ticket
 conductor_environment = "workflow-conductor" # WORKFLOW_ROLE=conductor; release credentials only if wanted
