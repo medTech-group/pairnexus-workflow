@@ -645,9 +645,8 @@ def _size_lines(c: dict, profile: Any, estimate: Any = None) -> list[str]:
 def _pass_cap(rv: dict) -> str:
     """The one page's pass cap: a number's, or `until-clean`'s (#402)."""
     if rv["passes"] == presets_mod.UNTIL_CLEAN:
-        return (f"none: {presets_mod.UNTIL_CLEAN_WORDS}, after the last review round; "
-                "a ticket still not clean at the end time is set aside (`needs-human`)")
-    return f"{presets_mod.passes_words(rv)} after the last review round, then `needs-human`"
+        return f"{presets_mod.pass_cap_words(rv)}; a ticket still not clean at the end time is set aside (`needs-human`)"
+    return f"{presets_mod.pass_cap_words(rv)}, then `needs-human`"
 
 
 def to_markdown(c: dict, plan: list[tuple[int, str | None]] | None = None, profile: Any = None, estimate: Any = None) -> str:

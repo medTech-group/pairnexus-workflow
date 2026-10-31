@@ -85,7 +85,7 @@ PREVIEWS_DOC = Path(__file__).resolve().parents[2] / "docs/previews.md"
 DEFAULT_REVIEW_ROUNDS = 3  # the profile's run.review_rounds when it can't be read
 REVIEW_ROUNDS = range(1, 11)  # what --review-rounds accepts, as profile.py's run.review_rounds
 DEFAULT_REVIEW_PASSES = 2  # the profile's run.review_passes when it can't be read
-REVIEW_PASSES = range(0, 11)  # what --review-passes accepts, as profile.py's run.review_passes, or "until-clean" (#402)
+REVIEW_PASSES = range(0, 11)  # the numbers --review-passes accepts, as profile.py's run.review_passes; it takes "until-clean" too (#402)
 
 
 class Unreadable(Exception):
@@ -1153,7 +1153,7 @@ def _panel(ctx: Context, add) -> None:
 
     after = [(i - 1, r) for i, r in enumerate(counted) if i > rounds[-1] and r.kind == "pass"]
     used = [r for i, r in after if not free(i, r.commit, r.lines)]
-    if len(after) > len(used):
+    if len(after) > len(used) and ctx.review_passes != presets_mod.UNTIL_CLEAN:
         _note(ctx, "free_passes", f"{_plural(len(after) - len(used), 'Correctness pass', 'Correctness passes')} after a merge of the base that left the pull request's changed lines as they were didn't count toward the pass cap.")
     passes = [r for _, r in after if on_head(r)]
     cap = ctx.review_passes

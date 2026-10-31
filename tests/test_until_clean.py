@@ -158,7 +158,7 @@ def test_the_one_page_words_until_clean(tmp_path):
     c["review"]["passes"] = "until-clean"
     line = _line(_page(tmp_path, c), "- **Pass cap:**")
     assert line == (
-        f"- **Pass cap:** none: {WORDS}, after the last review round; "
+        f"- **Pass cap:** none: after the last review round, {WORDS}; "
         "a ticket still not clean at the end time is set aside (`needs-human`)."
     )
 
@@ -185,7 +185,7 @@ def test_until_clean_in_the_profile_reads_into_the_presets_and_the_page(tmp_path
     c = _preset(tmp_path, "normal")
     page = _page(tmp_path, c)
     assert "**Size:** **Normal**." in page
-    assert _line(page, "- **Pass cap:**").startswith(f"- **Pass cap:** none: {WORDS}")
+    assert _line(page, "- **Pass cap:**").startswith(f"- **Pass cap:** none: after the last review round, {WORDS}")
 
 
 def test_the_limits_question_offers_until_clean_beside_the_presets(tmp_path):
@@ -202,9 +202,12 @@ def test_the_limits_question_offers_until_clean_beside_the_presets(tmp_path):
         assert "at most 3 Correctness passes" in q["presets"][name]["words"]
 
 
-def test_the_limits_question_with_until_clean_in_the_profile_offers_it_once(tmp_path):
+def test_the_limits_question_with_until_clean_in_the_profile_offers_a_number_too(tmp_path):
     _project(tmp_path, 'review_passes = "until-clean"\n')
-    assert _limits_q(tmp_path)["pass_cap"] == [{"value": "until-clean", "words": WORDS}]
+    assert _limits_q(tmp_path)["pass_cap"] == [
+        {"value": "until-clean", "words": WORDS},
+        {"value": 2, "words": "at most 2 Correctness passes"},
+    ]
 
 
 def test_the_briefing_words_until_clean(tmp_path):
@@ -213,11 +216,35 @@ def test_the_briefing_words_until_clean(tmp_path):
     c["review"]["passes"] = "until-clean"
     brief = _brief(tmp_path, c)
     line = _line(brief, "- **Pass cap:**")
-    assert line.startswith(f"- **Pass cap:** none: {WORDS}, after the last review round")
+    assert line.startswith(f"- **Pass cap:** none: after the last review round, {WORDS}: fix each pass's findings")
     assert "at most" not in line
     assert "`merge-check` never says `passes_used_up`" in line
     assert "findings table" in line
     assert "--review-passes until-clean --small-max-lines 60 --small-max-files 4`" in _merge_check(brief)
+
+
+def test_the_briefing_takes_until_clean_from_the_profile(tmp_path):
+    # A charter from a preset leaves review.passes out: the profile's cap then reaches the briefing.
+    _project(tmp_path, 'review_passes = "until-clean"\n')
+    c = _preset(tmp_path, "normal")
+    assert "passes" not in c["review"]
+    brief = _brief(tmp_path, c)
+    assert _line(brief, "- **Pass cap:**").startswith(f"- **Pass cap:** none: after the last review round, {WORDS}")
+    assert "--review-passes until-clean " in _merge_check(brief)
+
+
+def test_no_free_passes_note_without_a_cap(project, capsys):
+    # A pass after a merge of the base that didn't count toward the cap: with no cap, nothing to say about it.
+    from test_merge_check import note_ids
+    from test_merge_check_carry_over import BASE_TIP, CONTEXT, FORK_POINT, MIDDLE, RESOLVED, REVIEWED, hashed, hashes_of, pr
+
+    reviewed, context = hashes_of(project, capsys, REVIEWED), hashes_of(project, capsys, CONTEXT)
+    data = pr(RESOLVED, (EARLIER, [FORK_POINT]), (MIDDLE, [EARLIER, BASE_TIP]), (HEAD, [MIDDLE]))
+    data["comments"] = records(hashed(rnd=1, commit=EARLIER, hashes=reviewed), hashed("pass", rnd=1, commit=MIDDLE, hashes=context))
+    got, _ = check(project, capsys, data, "--review-passes", "1")
+    assert "free_passes" in note_ids(got)
+    got, _ = check(project, capsys, data, "--review-passes", "until-clean")
+    assert ids(got) == ["review_stale"] and "free_passes" not in note_ids(got)
 
 
 def test_the_briefing_with_a_number_reads_as_before(tmp_path):
@@ -239,10 +266,14 @@ def test_the_conductor_skill_says_what_until_clean_does():
     assert "`until-clean`" in cap and "never" in cap.split("`until-clean`", 1)[1]
     stop = skill.split("## Stop the run", 1)[1].split("\n## ", 1)[0]
     assert "`until-clean`" in stop and "set aside at the end time" in stop and "needs-human" in stop
+    # The run's cap, from the charter or the profile; the state and the claim label too.
+    aside = next(ln for ln in stop.splitlines() if "**Set aside at the end time**" in ln)
+    assert "else the profile's `run.review_passes`" in aside and "else the profile's `run.review_passes`" in cap
+    assert "mark it `needs-human` in the state" in aside and "remove `workflow:in-progress` and `ready-for-agent`" in aside
     assert "`pass_cap`" in skill.split("**The size, presets first.**", 1)[1].split("\n", 1)[0]
 
 
-@pytest.mark.parametrize("rel", ["skills/build-ticket/SKILL.md", "skills/review-panel/SKILL.md", "docs/charter.md", "docs/profile.md"])
+@pytest.mark.parametrize("rel", ["docs/flow.md", "skills/build-ticket/SKILL.md", "skills/review-panel/SKILL.md", "docs/charter.md", "docs/profile.md"])
 def test_the_skills_and_docs_name_until_clean(rel):
     assert "until-clean" in _read(rel), rel
 
