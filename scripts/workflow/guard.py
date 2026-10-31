@@ -6798,8 +6798,8 @@ def _makes_repository(kind: str, at: str) -> bool:
         return not os.path.exists(os.path.join(at, ".git"))
     try:
         return not os.path.exists(at) or (os.path.isdir(at) and not os.listdir(at))
-    except OSError:  # a folder it can't list: it may be made there
-        return True
+    except OSError:  # a folder it can't list: made there unless it holds a repository already
+        return not os.path.exists(os.path.join(at, ".git"))
 
 
 def _nearer_repository(where: str, at: str) -> bool:
