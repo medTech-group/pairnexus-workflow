@@ -10,7 +10,7 @@ the one place the presets' numbers live: the charter's questions, defaults,
 validation and one page read them.
 
 The pass cap is a whole number from 0 to 10, or `UNTIL_CLEAN` (#402): no cap,
-Correctness passes until one is clean, bounded only by the run's own limits.
+Correctness passes until one is clean, bounded only by the run's end time.
 
 `profile` is a loaded profile (`profile.load`), or None for the profile's
 defaults. Normal is the profile's own numbers; "has an explorer" means the

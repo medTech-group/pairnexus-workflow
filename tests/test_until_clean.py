@@ -1,5 +1,5 @@
 """#402: the pass cap `until-clean`. A run can keep reviewing a ticket until a
-Correctness pass is clean, bounded only by its own limits.
+Correctness pass is clean, bounded only by the run's end time.
 
 `review.passes = "until-clean"` in the charter, or `run.review_passes =
 "until-clean"` in the profile: `charter validate` and `profile check` accept it
