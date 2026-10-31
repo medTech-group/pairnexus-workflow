@@ -8,6 +8,7 @@
 - **When the guard can't read what a push sends** (a ref that doesn't resolve or that the shell expands, a directory it can't follow, a remote whose URL it can't read, a variable that changes which repository git reads, or another part of the command that may move a branch or HEAD), a planning session is asked, naming what couldn't be read (a refusal in a permission mode that never asks), and the conductor is refused. So is any push whose remote or URL settings the command changes. When the guard can't decide at all, a push is asked, as before.
 - **The release gate's sandbox pushes** (`git -C "$SANDBOX" push -u origin …`) are asked under `"ticket"`: a remote's name in a directory the guard can't follow is a push it can't tell about. Pushing by URL, or from a directory the guard can follow, keeps them as before.
 - `git push --recurse-submodules <value>` is read as git reads it, the value not taken for the repository, in every role.
+- **A write whose brace list names more than 64 paths** (`rm -f {.claude/settings.json,…}`) is a target the guard can't place: a ticket session is refused it, where the guard checked only the first 64 before. Brace lists no longer slow the guard down (30 lists took it past its time limit).
 - **For projects updating:** nothing to do. Tests: `tests/test_guard_code_pushes.py`.
 
 **The guard refuses a commit that carries code outside ticket sessions under `code_writers = "ticket"`** (#389, part of #338). Under `"any"`, or with `code_writers` absent, nothing changes.

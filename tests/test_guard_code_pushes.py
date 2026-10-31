@@ -343,6 +343,134 @@ def test_a_docs_only_bare_push(proj, monkeypatch, capsys):
     assert hook(monkeypatch, capsys, proj, "git push", "conductor") == ("allow", "")
 
 
+def test_follow_tags_sends_no_commit_the_push_doesnt(proj, monkeypatch, capsys):
+    """Only annotated tags on commits the push already sends: a tag on
+    another branch's code doesn't count."""
+    git(proj, "checkout", "-q", "-b", "code")
+    _code_commit(proj)
+    git(proj, "tag", "-a", "-m", "t", "vcode")
+    git(proj, "checkout", "-q", "feature")
+    _docs_commit(proj)
+    assert hook(monkeypatch, capsys, proj, "git push --follow-tags origin feature") == ("allow", "")
+    assert hook(monkeypatch, capsys, proj, "git push --tags origin feature")[0] == "deny"
+
+
+def test_tags_alone_send_only_tags(proj, monkeypatch, capsys):
+    git(proj, "tag", "vdocs")
+    _code_commit(proj)
+    for command in ("git push --tags", "git push origin --tags"):
+        assert hook(monkeypatch, capsys, proj, command) == ("allow", ""), command
+    git(proj, "tag", "vcode")
+    assert hook(monkeypatch, capsys, proj, "git push --tags")[0] == "deny"
+
+
+def test_a_remote_with_a_slash_in_its_name(proj, monkeypatch, capsys):
+    git(proj, "remote", "add", "up/stream", "git@github.com:acme/demo.git")
+    _code_commit(proj)
+    d, why = hook(monkeypatch, capsys, proj, "git push up/stream feature")
+    assert d == "deny" and "src/app.py" in why, why
+
+
+def test_a_remote_nested_in_another_remotes_name_isnt_on_project_repo(proj, tmp_path, monkeypatch, capsys):
+    """`origin/fork`'s tracking refs sit under `refs/remotes/origin/`, but it
+    fetches from the fork."""
+    fork = tmp_path / "fork"
+    git(tmp_path, "clone", "-q", str(tmp_path / "proj-remote/acme/demo.git"), str(fork))
+    git(fork, "config", "user.email", "t@example.com")
+    git(fork, "config", "user.name", "t")
+    _code_commit(fork)
+    git(proj, "remote", "add", "origin/fork", str(fork))
+    git(proj, "fetch", "-q", "origin/fork")
+    d, why = hook(monkeypatch, capsys, proj, "git push origin origin/fork/main:refs/heads/fromfork")
+    assert d == "deny" and "src/app.py" in why, why
+
+
+def test_a_remote_from_gits_old_remote_files(proj, monkeypatch, capsys):
+    _code_commit(proj)
+    (proj / ".git/branches").mkdir(exist_ok=True)
+    (proj / ".git/branches/oldbr").write_text("git@github.com:acme/demo.git\n")
+    d, why = hook(monkeypatch, capsys, proj, "git push oldbr feature")
+    assert d == "ask" and "`.git/remotes` or `.git/branches`" in why, why
+
+
+def test_a_push_into_another_repository_on_this_machine_doesnt_count(proj, tmp_path, monkeypatch, capsys):
+    """Only a push into the repository being judged moves its refs."""
+    other = _other_remote(tmp_path)
+    git(proj, "remote", "add", "self", ".")
+    _docs_commit(proj)
+    assert hook(monkeypatch, capsys, proj, f"git push {other} HEAD:refs/heads/x && git push origin feature") == ("allow", "")
+    d, why = hook(monkeypatch, capsys, proj, "git push self HEAD:refs/heads/y && git push origin feature")
+    assert d == "ask" and "can't tell" in why, why
+
+
+def test_replacement_objects_dont_hide_what_is_sent(proj, monkeypatch, capsys):
+    _code_commit(proj)
+    code = git(proj, "rev-parse", "HEAD").strip()
+    git(proj, "checkout", "-q", "-b", "d", "origin/main")
+    _docs_commit(proj)
+    git(proj, "replace", code, git(proj, "rev-parse", "HEAD").strip())
+    git(proj, "checkout", "-q", "feature")
+    d, why = hook(monkeypatch, capsys, proj, "git push origin feature")
+    assert d == "deny" and "src/app.py" in why, why
+
+
+def test_a_read_that_takes_too_long_is_asked(proj, monkeypatch, capsys):
+    _code_commit(proj)
+    monkeypatch.setattr(guard_mod, "_GIT_READ_SECONDS", 0)
+    d, why = hook(monkeypatch, capsys, proj, "git push origin feature")
+    assert d == "ask" and "took too long" in why, why
+
+
+def test_many_pushes_in_one_command_stay_within_time(proj, monkeypatch, capsys):
+    import time
+
+    _docs_commit(proj)
+    t = time.monotonic()
+    d, why = hook(monkeypatch, capsys, proj, " && ".join(["git push origin feature"] * 300))
+    assert time.monotonic() - t < 15 and d == "allow", why[:300]
+
+
+def test_a_config_value_isnt_a_key(proj, monkeypatch, capsys):
+    _docs_commit(proj)
+    for command in (
+        "git config user.email remote.ops@acme.example && git push origin feature",
+        "git config branch.feature.description hi && git push origin feature",
+        "git config --file x.cfg remote.x.url y && git push origin feature",
+    ):
+        d, why = hook(monkeypatch, capsys, proj, command)
+        assert ("can't tell" in why) == command.startswith("git config --file"), (command, why)
+
+
+@pytest.mark.parametrize("command", ["git send-pack {url} feature", "git http-push {url} feature", "git-send-pack {url} feature"])
+def test_send_pack_and_http_push_are_judged(proj, tmp_path, monkeypatch, capsys, command):
+    url = str(tmp_path / "proj-remote/acme/demo.git")
+    _code_commit(proj)
+    d, why = hook(monkeypatch, capsys, proj, command.format(url=url))
+    assert d == "deny" and "src/app.py" in why, why
+    assert hook(monkeypatch, capsys, proj, command.format(url="https://github.com/acme/sandbox")) == ("allow", "")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rm -f {.claude/settings.json," + "{}" * 65 + "}",
+        "tee {" + ",".join(f"a{i}" for i in range(1, 65)) + ",.claude/workflow/profile.toml} < /dev/null",
+        "rm -f {.claude/settings.json,x}" + "{a,b}" * 30,
+    ],
+)
+def test_a_brace_list_too_long_to_expand_is_a_target_the_guard_cant_place(proj, monkeypatch, capsys, command):
+    """A ticket session's write whose brace list names more paths than the
+    guard expands is refused, never checked by part of its list (#390's
+    change to `_braces`, which stops expanding past its limit)."""
+    import time
+
+    _on(proj, "claude/build-1")
+    t = time.monotonic()
+    d, why = hook(monkeypatch, capsys, proj, command, "ticket")
+    assert time.monotonic() - t < 5
+    assert d == "deny" and ("brace list" in why or "protected path" in why), why
+
+
 # ---------- which remote is project.repo ----------
 
 
@@ -432,6 +560,7 @@ def test_pushes_elsewhere_beside_other_settings_decide_as_today(proj, tmp_path, 
         "git config user.email bot@example.com && git push https://github.com/acme/sandbox feature",
         "git config user.email bot@example.com && git push sandbox feature",
         "HOME=/tmp git push https://github.com/acme/sandbox feature",
+        "git config branch.feature.description hi && git push sandbox feature",
         'cd "$X" && git push https://github.com/acme/sandbox HEAD:refs/heads/x',
     ):
         assert hook(monkeypatch, capsys, proj, command) == ("allow", ""), command
@@ -496,6 +625,18 @@ def test_a_push_whose_commits_cant_be_read_is_asked(proj, monkeypatch, capsys):
         "git config remote.origin.pushurl /tmp/x && git push origin feature",
         "git push origin 'heads/*:refs/heads/*'",
         "for d in docs; do git -C $d push origin feature; done",
+        "git push -o x . HEAD:feature && git push origin feature",
+        "git push --receive-pack x . HEAD:feature && git push origin feature",
+        "gh pr checkout 12 && git push origin HEAD:refs/heads/x",
+        "git push {origin,} feature",
+        "git push $R feature",
+        "git push ${R:-origin} feature",
+        "git push $(echo origin) feature",
+        "git push `echo origin` feature",
+        "git -C docs push origin $(git branch --show-current)",
+        "GIT_CONFIG_PARAMETERS=\"'url.x.pushinsteadof'='y'\" git push https://github.com/acme/sandbox feature",
+        "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=url.x.pushInsteadOf GIT_CONFIG_VALUE_0=y git push https://github.com/acme/sandbox feature",
+        "git config branch.feature.pushRemote origin && git push sandbox feature",
     ],
 )
 def test_more_pushes_the_guard_cant_read(proj, monkeypatch, capsys, command):
