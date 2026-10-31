@@ -639,8 +639,62 @@ def test_a_long_config_parameters_value_doesnt_slow_the_rule(proj, monkeypatch, 
     import time
 
     t = time.monotonic()
-    d, why = hook(monkeypatch, capsys, proj, "GIT_CONFIG_PARAMETERS=\"'" + "\\'" * 50_000 + "\" git push https://github.com/acme/sandbox x")
-    assert time.monotonic() - t < 5 and d == "ask", why[:200]
+    d, why = hook(monkeypatch, capsys, proj, "GIT_CONFIG_PARAMETERS=\"" + "'a'\\''" * 20_000 + "\" git push https://github.com/acme/sandbox x")
+    assert time.monotonic() - t < 5, why[:200]
+
+
+def test_config_parameters_are_read_as_git_reads_them():
+    keys = guard_mod._config_params_keys
+    assert keys("'http.x'='y'") == ["http.x"]
+    assert keys("'http.x=y'") == ["http.x"]
+    assert keys("'core.bare'=") == ["core.bare"]  # git's own spelling of a key set to true
+    assert keys("'http.x=a\\' 'url.a.pushinsteadof=b'") == ["http.x", "url.a.pushinsteadof"]
+    assert keys("'http.x'='a'\\''b' 'url.y.pushinsteadof'='z'") == ["http.x", "url.y.pushinsteadof"]
+    assert keys("'http.x'='remote.y'") == ["http.x"]
+    assert keys("not quoted") is None and keys("'unterminated") is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "V=https://github.com/acme/sandbox git --config-env=u{r,r}l.git@github.com:acme/demo.git.pushInsteadOf=V push https://github.com/acme/sandbox codeb",
+        "env GIT_CONFIG_PARAMETERS=\\'u{r,r}l.git@github.com:acme/demo.git.pushInsteadOf=https://github.com/acme/sandbox\\' git push https://github.com/acme/sandbox codeb",
+        "env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=u{r,r}l.x.pushInsteadOf GIT_CONFIG_VALUE_0=y git push https://github.com/acme/sandbox codeb",
+    ],
+)
+def test_a_config_key_the_shell_spells_counts(proj, monkeypatch, capsys, command):
+    git(proj, "checkout", "-q", "-b", "codeb")
+    _code_commit(proj)
+    d, why = hook(monkeypatch, capsys, proj, command)
+    assert d == "ask" and "can't tell" in why, (command, d, why)
+
+
+def test_settings_variables_are_judged_by_their_keys(proj, monkeypatch, capsys):
+    git(proj, "checkout", "-q", "-b", "codeb")
+    _code_commit(proj)
+    d, why = hook(monkeypatch, capsys, proj, "GIT_CONFIG_PARAMETERS=\"'core.x'='y'\" git push origin codeb")
+    assert d == "deny" and "src/app.py" in why, why
+    d, why = hook(monkeypatch, capsys, proj, "GIT_CONFIG_PARAMETERS=\"'branch.codeb.pushRemote'='origin'\" git push")
+    assert d == "ask" and "can't tell" in why, why
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git config push.default current && git push {bak} main",
+        'cd "$X" && git push {bak} main',
+        "GIT_CONFIG_PARAMETERS=\"'core.bare'=\" git push https://github.com/acme/sandbox x",
+    ],
+)
+def test_a_push_to_a_path_elsewhere_decides_as_today(proj, tmp_path, monkeypatch, capsys, command):
+    command = command.format(bak=_other_remote(tmp_path))
+    _code_commit(proj)
+    for role in (None, "conductor"):
+        d, why = hook(monkeypatch, capsys, proj, command, role)
+        with monkeypatch.context() as m:
+            m.setattr(guard_mod, "_push_code", lambda *a, **k: (None, None))
+            today = hook(monkeypatch, capsys, proj, command, role)
+        assert (d, why) == today, (command, role, why)
 
 
 def test_a_tag_made_beside_a_push_of_tags(proj, monkeypatch, capsys):

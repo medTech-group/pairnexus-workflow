@@ -7089,7 +7089,8 @@ _CONFIG_LONGS = [
 _CONFIG_VALUES = {"-f", "--file", "--blob", "--type", "--default", "--comment", "--value", "-t", "--url"}
 # Variables that set config as `-c` does, and those that change which repository, refs or config files git reads.
 _PUSH_ENV_CONFIG = re.compile(r"GIT_CONFIG_(PARAMETERS|KEY_\w*)")  # read by the settings they name
-_PUSH_ENV = re.compile(r"GIT_(DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|NAMESPACE|CONFIG\w*)|HOME|XDG_CONFIG_HOME")
+# (`GIT_CONFIG_PARAMETERS` and `GIT_CONFIG_KEY_<n>` are judged by the keys they set, as `-c` is.)
+_PUSH_ENV = re.compile(r"GIT_(DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|NAMESPACE|CONFIG|CONFIG_GLOBAL|CONFIG_SYSTEM|CONFIG_NOSYSTEM)|HOME|XDG_CONFIG_HOME")
 _PUSH_ENV_REPO = re.compile(r"GIT_(DIR|WORK_TREE|COMMON_DIR|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|NAMESPACE)")  # which repository or refs
 _GH_MOVES = (["pr", "checkout"], ["pr", "co"], ["repo", "sync"])  # gh commands that move a branch or HEAD
 
@@ -7133,12 +7134,12 @@ def _config_changes(rest: list[str]) -> str | None:
         return "url"
     if {"--rename-section", "--remove-section"} & opts or sub in ("rename-section", "remove-section"):
         names = keys[:2] if "--rename-section" in opts or sub == "rename-section" else keys[:1]
-        hit = [k for k in names if _PUSH_CONFIG_SECTIONS.match(k) or _SHELL_EXPANDS.search(k)]
+        hit = [k for k in names if _PUSH_CONFIG_SECTIONS.match(k) or _shell_spelled(k)]
     else:
-        hit = [k for k in keys[:1] if _PUSH_CONFIG_KEYS.match(k) or _SHELL_EXPANDS.search(k)]
+        hit = [k for k in keys[:1] if _PUSH_CONFIG_KEYS.match(k) or _shell_spelled(k)]
     if not hit:
         return None  # another setting (`user.email`): no push reads it
-    return "url" if any(_URL_CONFIG_KEYS.match(k) or _SHELL_EXPANDS.search(k) for k in hit) else "config"
+    return "url" if any(_URL_CONFIG_KEYS.match(k) or _shell_spelled(k) for k in hit) else "config"
 
 
 def _other_git(words: list[str]) -> list[str] | None:
@@ -7374,9 +7375,16 @@ def _push_env(segs: list[Seg], seg: Seg, pattern: re.Pattern) -> str | None:
     return next((n for n in names if pattern.fullmatch(n)), None)
 
 
-def _push_env_config(segs: list[Seg], seg: Seg) -> str | None:
-    """A config variable (`GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_KEY_<n>`) that
-    sets a push setting for the push, or anywhere in the command."""
+def _shell_spelled(word: str) -> bool:
+    """A word the shell may turn into others: a variable or a substitution,
+    a brace list or sequence, a glob, a tilde."""
+    return bool(_SHELL_EXPANDS.search(word) or _GLOB_CHARS.search(word) or re.search(r"[=:]~", word) or _brace_sequence(word) or len(_braces(word, 2)) > 1)
+
+
+def _push_env_config(segs: list[Seg], seg: Seg, keys_re: re.Pattern) -> str | None:
+    """A config variable (`GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_KEY_<n>`), set
+    for the push or anywhere in the command, that sets a key matching
+    `keys_re`, one the shell spells, or a value it can't read."""
     pairs = [a.partition("=") for a in seg.assigns]
     for s in segs:
         if not s.words:
@@ -7389,14 +7397,14 @@ def _push_env_config(segs: list[Seg], seg: Seg) -> str | None:
             continue
         # Only a key that may send a URL push elsewhere counts here: any other config variable is judged with the push's remote.
         if name == "GIT_CONFIG_PARAMETERS":
-            if _SHELL_EXPANDS.search(value):
+            if _shell_spelled(value):
                 return name  # git reads it after the shell: anything can come in
             keys = _config_params_keys(value)
             if keys is None:
                 return name  # not git's format: it can't be read
         else:
             keys = [value.strip("'\"")]
-        if any(_SHELL_EXPANDS.search(k) or _URL_CONFIG_KEYS.match(k.strip()) for k in keys):
+        if any(_shell_spelled(k) or keys_re.match(k.strip()) for k in keys):
             return name
     return None
 
@@ -7405,7 +7413,7 @@ def _config_params_keys(value: str) -> list[str] | None:
     """The keys `GIT_CONFIG_PARAMETERS` sets, read in one pass as git reads
     it: items `'key'='value'` or the older `'key=value'`, quoted as git
     quotes (a backslash inside quotes is itself; `'\\''` and `'\\!'`
-    between quoted parts); None when git would find it malformed."""
+    between quoted parts); None when it can't read it as git would."""
     n, i, keys = len(value), 0, []
 
     def word() -> str | None:
@@ -7436,8 +7444,8 @@ def _config_params_keys(value: str) -> list[str] | None:
             return None
         if value[i : i + 1] == "=":
             i += 1
-            if word() is None:
-                return None
+            if i < n and not value[i].isspace() and word() is None:
+                return None  # (`'key'=` alone is git's own spelling of a key set to true)
             keys.append(w)
         else:
             keys.append(w.partition("=")[0])
@@ -7608,22 +7616,23 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
             continue
         cant = f"the guard can't tell what `git {kind}` would send"
         named = p.repo
-        if named is not None and (_SHELL_EXPANDS.search(named) or len(_braces(named, 2)) > 1):
+        if named is not None and _shell_spelled(named):
             unsure = unsure or f"{cant}: its repository `{_brief(named)}` is one the shell expands"
             continue
         # A setting that may rewrite a URL (`url.<base>.pushInsteadOf`) can send any push anywhere, `project.repo` among them.
         # `-c key=value` and `--config-env key=VAR`, each as its `key=…`.
         cs = [glob[j + 1] for j, o in enumerate(glob[:-1]) if o in ("-c", "--config-env")]
         cs += [o.partition("=")[2] for o in glob if o.startswith("--config-env=")]
-        rewrites = [k for k in cs if _URL_CONFIG_KEYS.match(k) or _SHELL_EXPANDS.search(k.partition("=")[0])]
-        env = _push_env_config(segs, seg)
+        rewrites = [k for k in cs if _URL_CONFIG_KEYS.match(k) or _shell_spelled(k.partition("=")[0])]
+        env = _push_env_config(segs, seg, _URL_CONFIG_KEYS)
         other = changers.first(seg, "url")
         if rewrites or env or other:
             what = f"`{env}`" if env else f"`{_brief(rewrites[0].partition('=')[0])}`" if rewrites else ""
             how = f"it sets {what}" if what else f"another part of the command runs `{other}`"
             unsure = unsure or f"{cant}: {how}, which can change where it goes"
             continue
-        url_given = named is not None and (kind != "push" or ":" in named)  # a remote's name rarely holds a `:`
+        # A remote's name rarely holds a `:` and never starts a path (`/`, `.`, `~`).
+        url_given = named is not None and (kind != "push" or ":" in named or named.startswith(("/", ".", "~")))
         elsewhere = url_given and not _project_url(named, code.repo)
         d = _git_dir_of(root, seg.cwd, cdir)
         if not d or "$" in d or "`" in d or not os.path.isdir(d):
@@ -7667,7 +7676,7 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
         # config says: only which repository git reads counts. Without refs, `push.default` says what it sends.
         fixed = url_given and not is_remote and bool(p.refspecs or p.branches or p.mirror or p.tags)
         keys = [k for k in cs if _PUSH_CONFIG_KEYS.match(k)] if not fixed else []
-        env = _push_env(segs, seg, _PUSH_ENV if not fixed else _PUSH_ENV_REPO)
+        env = _push_env(segs, seg, _PUSH_ENV if not fixed else _PUSH_ENV_REPO) or (None if fixed else _push_env_config(segs, seg, _PUSH_CONFIG_KEYS))
         other = changers.first(seg, "config") if not fixed else None
         made = _made_by(segs, seg, d)
         if keys or env or other or made:
