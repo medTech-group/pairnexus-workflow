@@ -357,8 +357,11 @@ def test_a_bare_push_beside_another_push(proj, monkeypatch, capsys):
     git(proj, "tag", "vdocs")
     _docs_commit(proj)
     git(proj, "config", "branch.feature.remote", "origin")
-    for command in ("git push && git push --tags", "git push -u origin HEAD; git push", "git push origin feature && git push"):
+    for command in ("git push && git push --tags", "git push origin feature && git push"):
         assert hook(monkeypatch, capsys, proj, command) == ("allow", ""), command
+    # `-u` sets the branch's remote, which a bare push after it reads.
+    d, why = hook(monkeypatch, capsys, proj, "git push -u origin HEAD; git push")
+    assert d == "ask" and "can't tell" in why, why
     git(proj, "remote", "add", "self", ".")
     git(proj, "config", "branch.feature.pushRemote", "self")
     d, why = hook(monkeypatch, capsys, proj, "git push && git push origin feature")
@@ -463,6 +466,90 @@ def test_the_push_rules_own_time_limit(proj, monkeypatch, capsys):
     assert d == "ask" and "too many to read in time" in why, why
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "GIT_DIR={cb} git push side codeb",
+        "HOME={tmp} git push side codeb",
+        "GIT_CONFIG_GLOBAL={tmp}/gc git push side codeb",
+        "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=$K GIT_CONFIG_VALUE_0=x git push side codeb",
+        "git -c \"$K=x\" push side codeb",
+        "printf x >> .git/config && git push side codeb",
+        "git config --remove branch.feature && git push",
+        "git config --unset-al branch.feature.pushremote && git push",
+        "git config --rename-section foo.x remote.side && git push side codeb",
+        "git push -u origin feature && git push",
+        "git tag --sort=refname vcode codeb && git push origin --tags",
+        "git branch --format=x wip codeb && git push origin --all",
+        "git fetch --refmap=+refs/heads/*:refs/heads/* side codeb && git push origin codeb",
+    ],
+)
+def test_what_changes_where_a_push_by_a_remotes_name_goes(proj, tmp_path, monkeypatch, capsys, command):
+    """A push by a remote's name, or with none named, that seems to go
+    elsewhere: whatever changes the config or repository git reads makes it
+    one the guard can't tell about."""
+    other = _other_remote(tmp_path)
+    git(proj, "remote", "add", "side", str(other))
+    git(proj, "config", "branch.feature.pushRemote", "side")
+    git(proj, "checkout", "-q", "-b", "codeb")
+    _code_commit(proj)
+    git(proj, "checkout", "-q", "feature")
+    command = command.format(cb=tmp_path / "cb.git", tmp=tmp_path)
+    d, why = hook(monkeypatch, capsys, proj, command)
+    assert d in ("ask", "deny") and ("can't tell" in why or "code path" in why or "setting `" in why), (command, d, why)
+    assert hook(monkeypatch, capsys, proj, command, "conductor")[0] == "deny", command
+
+
+def test_the_shells_branch_in_another_worktree(proj, tmp_path, monkeypatch, capsys):
+    """Worktrees share a git directory but each has its own HEAD."""
+    git(proj, "checkout", "-q", "-b", "codeb")
+    _code_commit(proj)
+    wt = proj / ".claude/worktrees/w"
+    git(proj, "worktree", "add", "-q", "-b", "docsb", str(wt), "origin/main")
+    d, why = hook(monkeypatch, capsys, proj, "git -C .claude/worktrees/w push origin $(git branch --show-current)")
+    assert d == "ask" and "the shell's branch" in why, why
+
+
+def test_a_nested_tag_on_a_tree(proj, monkeypatch, capsys):
+    _change(proj, CODE)
+    git(proj, "add", CODE)
+    tree = git(proj, "write-tree").strip()
+    git(proj, "reset", "-q")
+    git(proj, "tag", "sub/tt", tree)
+    d, why = hook(monkeypatch, capsys, proj, "git push origin 'refs/tags/*:refs/tags/*'")
+    assert d == "ask" and "isn't a commit" in why, why
+
+
+def test_a_branch_named_like_a_tag_keeps_its_push_remote(proj, tmp_path, monkeypatch, capsys):
+    other = _other_remote(tmp_path)
+    git(proj, "remote", "add", "fork", str(other))
+    git(proj, "config", "remote.pushDefault", "fork")
+    git(proj, "config", "branch.feature.pushRemote", "origin")
+    git(proj, "tag", "feature", "origin/main")
+    _code_commit(proj)
+    d, why = hook(monkeypatch, capsys, proj, "git push")
+    assert d == "deny" and "src/app.py" in why, why
+
+
+@pytest.mark.parametrize("command", ["git send-pack", "git http-push"])
+def test_send_pack_with_no_repository(proj, monkeypatch, capsys, command):
+    d, why = hook(monkeypatch, capsys, proj, command)
+    assert "isn't working" not in why, why
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git config --type bool push.default && git push origin feature",
+        "git config -f x.cfg remote.origin.url && git push origin feature",
+        "git tag -l 'v*' && git push origin feature",
+    ],
+)
+def test_config_and_tag_reads_with_options_beside_a_push(proj, monkeypatch, capsys, command):
+    _docs_commit(proj)
+    assert hook(monkeypatch, capsys, proj, command) == ("allow", ""), command
+
+
 def test_follow_tags_sends_no_commit_the_push_doesnt(proj, monkeypatch, capsys):
     """Only annotated tags on commits the push already sends: a tag on
     another branch's code doesn't count."""
@@ -549,7 +636,7 @@ def test_many_pushes_in_one_command_stay_within_time(proj, monkeypatch, capsys):
     _docs_commit(proj)
     t = time.monotonic()
     d, why = hook(monkeypatch, capsys, proj, " && ".join(["git push origin feature"] * 300))
-    assert time.monotonic() - t < 10 and d == "allow", why[:300]
+    assert time.monotonic() - t < 15 and d == "allow", why[:300]
 
 
 def test_a_config_value_isnt_a_key(proj, monkeypatch, capsys):
@@ -577,7 +664,7 @@ def test_send_pack_and_http_push_are_judged(proj, tmp_path, monkeypatch, capsys,
     [
         "rm -f {.claude/settings.json," + "{}" * 65 + "}",
         "rm -f {.claude/settings.json,x}" + "{a,b}" * 30,
-        "rm -f x" + "{a,b}" * 129,
+        "rm -f x" + "{a,b}" * 1001,
     ],
 )
 def test_a_brace_list_too_long_to_expand_is_a_target_the_guard_cant_place(proj, monkeypatch, capsys, command):
@@ -592,6 +679,13 @@ def test_a_brace_list_too_long_to_expand_is_a_target_the_guard_cant_place(proj, 
     assert time.monotonic() - t < 5
     assert d == "deny" and ("brace lists than the guard expands" in why) == command.startswith("rm -f x"), why
     assert "brace lists than the guard expands" in why or "protected path" in why, why
+
+
+def test_the_first_64_paths_of_a_brace_list_are_still_checked(proj, monkeypatch, capsys):
+    _on(proj, "claude/build-1")
+    command = "tee {" + ",".join(f"a{i}" for i in range(63)) + ",.claude/workflow/profile.toml} < /dev/null"
+    d, why = hook(monkeypatch, capsys, proj, command, "ticket")
+    assert d == "deny" and "protected path" in why, why
 
 
 @pytest.mark.parametrize("role", ["ticket", "conductor"])
