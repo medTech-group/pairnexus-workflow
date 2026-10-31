@@ -7416,7 +7416,7 @@ def _push_env_config(segs: list[Seg], seg: Seg, keys_re: re.Pattern) -> str | No
             return n.removesuffix("+")
         if n.startswith("GIT_CONFIG_VALUE_") and n.removeprefix("GIT_CONFIG_VALUE_") not in keys_set:
             return n
-        if n == "GIT_CONFIG_COUNT" and not (v.isdigit() and all(str(k) in keys_set for k in range(min(int(v), 1000)))):
+        if n == "GIT_CONFIG_COUNT" and not (re.fullmatch(r"[0-9]{1,4}", v) and all(str(k) in keys_set for k in range(int(v)))):
             return n
     for name, _, value in pairs:
         name = name.removesuffix("+")
