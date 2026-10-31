@@ -83,6 +83,7 @@ Repeat on the new diff until a round finds nothing to fix, at most the briefing'
 - Anything still open after the last round goes to the owner in the PR body, never silently.
 - Any commit after the last round gets a Correctness pass on just those commits before merging, except a merge of the base that leaves the pull request's own changes identical, which needs CI only: after pushing a merge of the base, run `workflow merge-check` (`--fetch <PR> --json`, in a ticket session with the briefing's flags) and run a pass only when it asks for one. Before a pass starts, `mkdir -p /tmp/review-<ticket>-pass<k>` (its scratch directory, `k` counting the passes from 1) and write `git rev-parse HEAD` to `commit.txt` there: the commit it covers, never one made after. Then post its record (section 4).
 - **Passes stop at the pass cap:** at most the briefing's pass cap in a ticket session, else the profile's `run.review_passes`, counting every pass after the last round, each record once, on any commit, except a pass on a merge of the base after a clean review that left the pull request's changed lines as they were, which `merge-check` asks for even at the cap (a pass that rechecks open findings always counts). When one more pass would be needed past it, `workflow merge-check` says `passes_used_up`: run no further pass. What's still open goes to the owner in the PR body, and the owner decides (in attended work they can choose "One more pass").
+- **The pass cap `until-clean`** (a briefing's or the profile's, #402) is no cap: after the last round, fix each pass's findings and run another, until one is clean. `merge-check` never says `passes_used_up`. Keep the PR body's findings table current after each pass: in a run, the end time can come first, and the conductor then sets the ticket aside with its open findings there.
 
 ## 6. The light review
 
@@ -126,7 +127,7 @@ The review of a ticket marked `Review: small` while its diff stays within the sm
   (`correctness,security`, `correctness,explorer` or `correctness,security,explorer` when those ran; `--not-clean` when it found something to fix.)
 - **Fixes after it** are covered by Correctness passes (section 5), under the pass cap. There are no further rounds: when the round isn't clean, fix its findings as in section 3, and a clean pass on the head lifts them.
 - **Past the small threshold,** measured before reviewing or as `merge-check`'s `past_small_threshold`, the ticket doesn't get the small review: run the full panel (section 5), or the light review (section 6) in a 1-round run. The pull request's body says the diff overruled the mark. After a small round already ran, that is one full-panel round (the light review's round 1 in a 1-round run, without the explorer) with the next round number, allowed past the round limit; if it isn't clean, fix its findings and run a Correctness pass, with no further round.
-- **Anything still open** after the pass cap goes to the owner in the PR body, never silently.
+- **Anything still open** after the pass cap (or, with `until-clean`, at the run's end time) goes to the owner in the PR body, never silently.
 
 ## 8. The planning review
 
