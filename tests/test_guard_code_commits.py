@@ -516,13 +516,27 @@ def test_a_directory_made_earlier_in_the_command(proj, monkeypatch, capsys):
         "git init -q scratch && git -C scratch --git-dir=../.git --work-tree=.. commit -am x",
         # A worktree made nearer the commit than the repository made above it (finding 2).
         "git worktree add ../wt-389 && git init -q .. && cd ../wt-389 && git commit -am x",
-        # An init whose repository goes elsewhere (finding 3).
-        "GIT_DIR=/tmp/x-389 git init -q scratch && cd scratch && git commit -am x",
     ):
         d, why = hook(monkeypatch, capsys, proj, command)
         assert d == "ask" and made in why, (command, why)
         d, why = hook(monkeypatch, capsys, proj, command, "conductor")
+        # The conductor refuses any `GIT_DIR=` prefix by its own rule, before the commit rule.
         assert d == "deny" and (made in why and "the conductor" in why or "setting `GIT_DIR`" in why), (command, why)
+    # An init whose repository goes elsewhere makes none there (finding 3): the commit is the project's.
+    for command in ("GIT_DIR=/tmp/x-389 git init -q docs && cd docs && git commit -am x", "git --git-dir=/tmp/x-389 init -q docs && cd docs && git commit -am x"):
+        d, why = hook(monkeypatch, capsys, proj, command)
+        assert d == "deny" and "`src/app.py`" in why, (command, why)
+    d, why = hook(monkeypatch, capsys, proj, "GIT_DIR=/tmp/x-389 git init -q scratch && cd scratch && git commit -am x")
+    assert d == "ask" and "doesn't exist yet" in why, why
+    # An asked commit doesn't hide a later one that carries code.
+    d, why = hook(monkeypatch, capsys, proj, "git init -q s && git -C s commit -qam i; git commit -am x")
+    assert d == "deny" and "`src/app.py`" in why, why
+    # A repository made outside the project is another one, left alone; a worktree added there is the project's.
+    out = proj.parent / "scratch-out-389"
+    for command in (f"git init -q {out} && git -C {out} commit -qam i", f"git clone -q ../proj-remote/acme/demo.git {out} && cd {out} && git commit -qam x"):
+        assert hook(monkeypatch, capsys, proj, command) == ("allow", ""), command
+    d, why = hook(monkeypatch, capsys, proj, f"git worktree add -q -b wto {out} && cd {out} && git commit -am x")
+    assert d == "ask" and made in why, why
     # A worktree added into an empty directory already there (finding 4) names that directory.
     (proj / "empty").mkdir()
     d, why = hook(monkeypatch, capsys, proj, "git worktree add -q -b wte empty && cd empty && git commit -am x")

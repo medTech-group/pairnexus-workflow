@@ -6637,8 +6637,9 @@ _MAKES_VALUES = {
 def _made_where(s: Seg) -> tuple[str, str] | None:
     """(what `s` makes, "init", "clone" or "worktree", and where, absolute)
     when it is `git init`, `git clone`, `git worktree add` or `gh repo clone`
-    at a place the guard can follow; else None."""
-    if s.cwd is None:
+    at a place the guard can follow; else None, as for one that sets
+    `GIT_DIR` or `--git-dir`, which puts the repository elsewhere."""
+    if s.cwd is None or "GIT_DIR" in _assigned(s):
         return None
     gh = bool(s.words[:1]) and posixpath.basename(s.words[0]) == "gh" and s.words[1:3] == ["repo", "clone"]
     bare = False
@@ -6647,6 +6648,8 @@ def _made_where(s: Seg) -> tuple[str, str] | None:
     else:
         g = _commit_git(s.words)
         args = g[1] if g else []
+        if g and any(w == "--git-dir" or w.startswith("--git-dir=") for w in g[0]):
+            return None
         if args[:1] in (["init"], ["clone"]):
             kind, rest = args[0], args[1:]
         elif args[:2] == ["worktree", "add"]:
@@ -6718,18 +6721,20 @@ def _nearer_repository(where: str, at: str) -> bool:
     return False
 
 
-def _made_earlier(segs: list[Seg], seg: Seg, where: str) -> bool:
-    """Whether an earlier part of the command makes a repository or worktree
-    (`git init`, `git clone`, `gh repo clone`, `git worktree add`) at `where`
-    (the commit's directory) or a folder holding it, with no repository
-    already nearer: what git would commit into there isn't on disk yet."""
+def _made_earlier(segs: list[Seg], seg: Seg, where: str) -> str | None:
+    """What an earlier part of the command makes at `where` (the commit's
+    directory) or a folder holding it, with no repository already nearer, so
+    that what git would commit into isn't on disk yet: "worktree" when a
+    `git worktree add` does (one of the project's), else "repository" when
+    `git init`, `git clone` or `gh repo clone` does; None when none does."""
+    found = None
     for s in segs:
         if s is seg:
-            return False
+            break
         m = _made_where(s)
         if m and (where == m[1] or where.startswith(m[1].rstrip("/") + "/")) and _makes_repository(*m) and not _nearer_repository(where, m[1]):
-            return True
-    return False
+            found = "worktree" if m[0] == "worktree" else found or "repository"
+    return found
 
 
 def _commit_code(segs: list[Seg], code: _Code, root: Path) -> tuple[str | None, str | None]:
@@ -6755,7 +6760,8 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path) -> tuple[str | None, 
             made, d = made or d, os.path.dirname(d)
         inside = _checkout_of(d, root) is not None
         cant = f"the guard can't tell what `git {args[0]}` would commit"
-        if _made_earlier(segs, seg, made or d):
+        made_kind = _made_earlier(segs, seg, made or d)
+        if made_kind == "worktree" or (made_kind and inside):  # a repository made outside the project is another one
             unsure = unsure or f"{cant}: it runs in `{made or d}`, where the command makes a repository or worktree first"
             continue
         assigned = _assigned(seg)
