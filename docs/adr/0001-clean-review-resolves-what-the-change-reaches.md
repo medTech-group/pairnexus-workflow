@@ -1,5 +1,7 @@
 # A clean review resolves everything the change touches or reaches; old bugs outside it get a ticket to fix them
 
+ADR 0002 changes one part of this: from round 2, a finding on lines unchanged since a review that covered them gets a ticket to fix it rather than blocking, unless it is a safety breach or loses data.
+
 A build review round or pass is clean when it leaves no blocking finding open, not when it finds nothing. A round or pass that reports a blocking finding is not clean, even once the finding is fixed: the next round or pass checks the fix.
 
 A finding blocks, whatever its severity, when it is:
