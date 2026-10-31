@@ -272,7 +272,9 @@ def test_the_conductor_skill_says_what_until_clean_does():
     assert "mark it `needs-human` in the state" in aside and "remove `workflow:in-progress` and `ready-for-agent`" in aside
     # Once every session is archived, outside the per-session loop, a retry not yet started is set aside too.
     assert "once every session is archived (at once, when none was running at the stop)" in aside
-    assert not aside.startswith("   -") and "or that is still `queued` (a retry not yet started)" in aside
+    assert "\n\n   **Set aside at the end time**" in stop  # its own paragraph, not the bullet above's continuation
+    # Only the tickets this stop leaves behind, never one set aside or asked about before: a resume takes none twice.
+    assert "the state still holds `running` (its session archived by this step) or `queued` (not yet started: a retry, an answered ticket or an adopted leftover), not labelled `needs-human`" in aside
     assert "an open pull request on its ticket branch" in aside
     # The kick-off recommends until-clean for a ticket set aside at an earlier run's end time.
     size = skill.split("**The size, presets first.**", 1)[1].split("\n", 1)[0]
