@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**A run can keep reviewing a ticket until it is clean: the pass cap `until-clean`** (#402). After run #400 stopped when #389 reached its pass cap with findings still open.
+
+- **`review.passes = "until-clean"`** in the charter, or `run.review_passes = "until-clean"` in the profile, sets no pass cap: after the last review round, each Correctness pass that isn't clean is fixed and followed by another, bounded only by the run's own limits (`limits.ends_at`, `limits.max_sessions`). `workflow merge-check --review-passes until-clean` never says `passes_used_up`; a clean pass on the head reads `ready` as before. `charter validate` and the profile refuse any other string.
+- **Wording:** the one page and the ticket session's briefing say "Correctness passes until one is clean, within the run's end time" in place of "at most N"; the limits question offers it beside the presets in its `pass_cap`, and the presets' numbers stay as they are.
+- **The end time:** a ticket still not clean when the run ends is set aside for the end time (`needs-human`, its open findings in its PR body), never at the cap, so a later run requeues it on the owner's answer (the `conductor` skill's "Stop the run", step 2).
+- Numbers 0 to 10, and an absent value, behave as before.
+- **For projects updating:** nothing to do; choose `until-clean` at a run's kick-off, or write it in the profile. Tests: `tests/test_until_clean.py`.
+
 ## 0.1.17
 
 **A project can say that only ticket sessions write code.** Spec #338, #339, #340, #342, #344, #345, #349 and #361: set-up and the kit's update ask "Who writes code in this project?" (only ticket sessions, recommended, or any session) and which folders hold code; under "only ticket sessions", the guard refuses an edit to a code file in any other session (a planning session, the conductor, a session that is a ticket session only by its branch), doctor and "check the set-up" say who writes code, and the conductor of an unattended run writes no code itself: a code fix becomes a ticket for a ticket session, and it reverts a merged change only when the owner allows it. Nothing changes until a project answers. Each change's own note is below.

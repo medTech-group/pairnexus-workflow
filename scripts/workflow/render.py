@@ -284,6 +284,7 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
         "review.rounds": str(review["rounds"]),  # the bare number, for merge-check's --review-rounds
         "review.small": _small(review, profile),
         "review.passes_words": presets_mod.passes_words(review),
+        "review.pass_cap": _pass_cap(review),
         # The bare numbers, for merge-check's --review-passes, --small-max-lines and --small-max-files.
         "review.passes": str(review["passes"]),
         "review.small_max_lines": str(review["small_max_lines"]),
@@ -302,6 +303,22 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
     for k, val in slots.items():
         v.setdefault(k, val)
     return v
+
+
+def _pass_cap(review: dict) -> str:
+    """The briefing's pass cap line after "**Pass cap:**": a number's, or
+    `until-clean`'s (#402), which never stops at `passes_used_up`."""
+    if review["passes"] == presets_mod.UNTIL_CLEAN:
+        return (
+            f"none: {presets_mod.UNTIL_CLEAN_WORDS}, after the last review round: fix each pass's findings and run "
+            "another. `merge-check` never says `passes_used_up`. Keep the PR body's findings table current after each "
+            "pass, so the open findings are there if the run's end time comes first: the conductor then sets the "
+            "ticket aside."
+        )
+    return (
+        f"{presets_mod.passes_words(review)} after the last review round. "
+        "When `merge-check` says `passes_used_up`, the cap is reached: stop (below)."
+    )
 
 
 def render(template: str, vals: dict) -> str:
