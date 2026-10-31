@@ -102,7 +102,10 @@ the stricter of the working tree's and the base's profile), only a session with
 `WORKFLOW_ROLE=ticket` writes code. Every other session is refused, never asked,
 a write the guard places on a code path (`_code_session`, `_shell_code`); a
 session that is a ticket session only by its branch or a mistyped role gets an
-attended session's rules.
+attended session's rules. It is refused too a `git commit` in the project's
+own repository that carries a code path (`_commit_code`, #389): what is
+staged, plus what `-a` or a pathspec adds. When the guard can't read what a
+commit carries, an attended session is asked and the conductor refused.
 
 What it can't see (a script file written then run, a program's own network
 calls, variables' values, obfuscation it doesn't recognise) is why the ruleset
@@ -119,6 +122,7 @@ import os
 import posixpath
 import re
 import shlex
+import stat
 import subprocess
 import tarfile
 import urllib.parse
@@ -5709,6 +5713,18 @@ def check_bash(
         p = _shell_code(segs, code, root)
         if p:
             return Decision("deny", p)
+        p, unsure = _commit_code(segs, code, root, command)
+        if p:
+            return Decision("deny", p)
+        if unsure:
+            # The rest of the command first: its refusal stands over this ask, and its ask joins it.
+            d = check_bash(command, profile, role, root, current_branch, role_from_env, cwd)
+            u = _unsure_commit(unsure, role, code)
+            if d.action == "deny":
+                return d
+            if d.action == "ask" and u.action == "ask":
+                return Decision("ask", f"{d.reason}\n{u.reason}", d.sensitive)
+            return u
     protected = list(profile.protected_paths) + (GIT_INTERNALS if role == "ticket" else [])
     # Solo mode: no ruleset protects the base branch, so what touches it is
     # refused, not asked, wherever it sits in the command (an ask earlier on
@@ -6330,6 +6346,507 @@ def _shell_code(segs: list[Seg], code: _Code, root: Path) -> str | None:
             if hit:
                 return f"this find reaches the code path {_shown(hit)} ({hit.pattern}) by name; {code.instead}"
     return None
+
+
+# ---------- commits that carry code (#389) ----------
+#
+# A `git commit` in the project's own repository (the project, or a worktree
+# of it) is judged by the files it would carry: what is staged, plus what
+# `-a` or a pathspec adds (a pathspec alone commits only what it names, unless
+# `-i`). Finishing a merge, a cherry-pick, a revert, a rebase or `git am`
+# (`--continue`) is judged as any commit. A commit in another clone is left to
+# the push rule. When the guard can't read what it carries (a git read fails,
+# a pathspec the shell expands), an attended session is asked and the
+# conductor refused.
+
+# git commit's long options (`git commit --git-completion-helper`): name ->
+# takes a separate value. Their `--no-` forms take none. Unique prefixes are
+# accepted, as git does.
+_COMMIT_LONG: dict[str, bool] = {
+    "quiet": False, "verbose": False, "file": True, "author": True, "date": True, "message": True,
+    "reedit-message": True, "reuse-message": True, "fixup": True, "squash": True, "reset-author": False,
+    "trailer": True, "signoff": False, "template": True, "edit": False, "cleanup": True, "status": False,
+    "gpg-sign": False, "all": False, "include": False, "interactive": False, "patch": False, "only": False,
+    "no-verify": False, "dry-run": False, "short": False, "branch": False, "ahead-behind": False,
+    "porcelain": False, "long": False, "null": False, "amend": False, "no-post-rewrite": False,
+    "untracked-files": False, "pathspec-from-file": True, "pathspec-file-nul": False, "allow-empty": False,
+    "allow-empty-message": False, "verify": False, "post-rewrite": False,
+}  # fmt: skip
+_COMMIT_LONGS = sorted(set(_COMMIT_LONG) | {"no-" + k for k in _COMMIT_LONG})
+_COMMIT_SHORT_VALUE = "mFcCt"  # the value is the rest of the word, else the next word
+_COMMIT_SHORT_OPTIONAL = "Su"  # the value, if any, is the rest of the word
+_COMMIT_PICKS = {"interactive", "patch"}  # chooses among the working tree's changes, as `-a` may carry them
+_COMMIT_STATUS = {"short", "porcelain", "long"}  # each implies `--dry-run`: nothing is committed
+_CONTINUE_COMMITS = ("merge", "cherry-pick", "revert", "rebase", "am")  # `git <sub> --continue` commits what is staged
+# Global options that change which repository or how pathspecs read, passed to the guard's reads.
+_GIT_REPO_GLOBALS = {"--git-dir", "--work-tree"}
+_GIT_PATHSPEC_GLOBALS = {"--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs"}
+# Variables that change which repository, index or work tree git reads: the guard's reads wouldn't match.
+_GIT_REPO_ENV = {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"}  # which repository
+_GIT_INDEX_ENV = {"GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY"}  # what it reads there
+# Variables that change how pathspecs read: their values are passed to the guard's reads.
+_GIT_PATHSPEC_ENV = {"GIT_LITERAL_PATHSPECS", "GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS"}
+_SPEC_FILE_CAP = 1_000_000  # the most of a pathspec file the guard reads
+_SHELL_EXPANDS = re.compile(r"[$`]|^~")
+_BRACE_SEQUENCE = re.compile(r"\{[^{}]*\.\.[^{}]*\}")  # `{1..3}`, which `_braces` leaves as it is
+_BRACE_LIMIT = 64
+_AM_RESOLVED = re.compile(r"-[3kmnqsu]*r[3kmnqsu]*")  # `-r` among `git am`'s flags that take no value
+_LITERAL_GLOBALS = {"--literal-pathspecs", "--noglob-pathspecs"}
+_LITERAL_ENV = {"GIT_LITERAL_PATHSPECS", "GIT_NOGLOB_PATHSPECS"}
+
+
+@dataclass
+class _Commit:
+    """What a `git commit` would carry, as its arguments say."""
+
+    all: bool = False  # `-a`: the tracked files changed in the working tree too
+    include: bool = False  # `-i`: the staged files as well as the pathspec's
+    specs: list[str] = field(default_factory=list)
+    spec_file: str | None = None  # `--pathspec-from-file`
+    spec_nul: bool = False
+    dry: bool = False  # `--dry-run`, the last of it and `--no-dry-run`
+    status: bool = False  # `--short`, `--porcelain` or `--long`, which imply it, the last of them and their `--no-` forms
+    usage: bool = False  # `-h`, `--help`
+    null: bool = False  # `-z`, which implies `--porcelain` where no format is given
+
+    @property
+    def dry_run(self) -> bool:
+        return self.dry or self.status or self.null or self.usage
+
+
+def _commit_long(name: str) -> str | None:
+    if name in _COMMIT_LONGS:
+        return name
+    cands = [o for o in _COMMIT_LONGS if o.startswith(name)] if name else []
+    return cands[0] if len(cands) == 1 else None
+
+
+def _commit_args(args: list[str]) -> _Commit:
+    c, i = _Commit(), 0
+    while i < len(args):
+        a = args[i]
+        i += 1
+        if a == "--":
+            c.specs += args[i:]
+            break
+        if a.startswith("--"):
+            name, eq, value = a[2:].partition("=")
+            if name in ("help", "help-all"):
+                c.usage = True
+                continue
+            full = _commit_long(name)
+            if full is None:
+                continue
+            if _COMMIT_LONG.get(full) and not eq:
+                value = args[i] if i < len(args) else ""
+                i += 1
+            if full == "all" or full in _COMMIT_PICKS:
+                c.all = True
+            elif full == "include":
+                c.include = True
+            elif full == "only":
+                c.include = False
+            elif full == "dry-run" or full == "no-dry-run":
+                c.dry = full == "dry-run"
+            elif full.removeprefix("no-") in _COMMIT_STATUS:
+                c.status = not full.startswith("no-")
+            elif full == "null" or full == "no-null":
+                c.null = full == "null"
+            elif full == "pathspec-from-file":
+                c.spec_file = value
+            elif full == "pathspec-file-nul":
+                c.spec_nul = True
+            continue
+        if a.startswith("-") and len(a) > 1:
+            for j, ch in enumerate(a[1:], 1):
+                if ch in _COMMIT_SHORT_VALUE:
+                    if j == len(a) - 1:
+                        i += 1
+                    break
+                if ch in _COMMIT_SHORT_OPTIONAL:
+                    break
+                if ch in "ap":
+                    c.all = True
+                elif ch == "i":
+                    c.include = True
+                elif ch == "o":
+                    c.include = False
+                elif ch == "h":  # its usage, and no commit
+                    c.usage = True
+                elif ch == "z":
+                    c.null = True
+            continue
+        c.specs.append(a)
+    return c
+
+
+def _git_read(d: str, glob: list[str], *args: str, sep: str = "\0", env: dict[str, str] | None = None) -> tuple[list[str] | None, str]:
+    """(git's output split on `sep`, else None; what failed, with git's own
+    words). `glob` is the command's own options that change the repository
+    or how pathspecs read, `env` the variables it sets for them. No fsmonitor
+    runs, and paths are from the top level."""
+    cmd = ["git", "-c", "core.fsmonitor=false", "-c", "diff.relative=false", *glob, *args]
+    shown = "`git " + " ".join(args[:2]) + "`"
+    try:
+        p = subprocess.run(cmd, cwd=d, capture_output=True, timeout=5, env={**os.environ, **env} if env else None)
+    except subprocess.TimeoutExpired:
+        return None, f"{shown} took too long in `{d}`"
+    except (OSError, ValueError) as e:
+        return None, f"{shown} couldn't run in `{d}` ({e})"
+    if p.returncode != 0:
+        err = p.stderr.decode("utf-8", errors="replace").strip().splitlines()
+        return None, f"{shown} failed in `{d}`" + (f" ({err[0]})" if err else "")
+    return [x for x in p.stdout.decode("utf-8", errors="replace").split(sep) if x], ""
+
+
+def _passed_globals(glob: list[str]) -> list[str]:
+    out, i = [], 0
+    while i < len(glob):
+        o = glob[i]
+        name = o.split("=", 1)[0]
+        if name in _GIT_REPO_GLOBALS:
+            out += [o] if "=" in o else glob[i : i + 2]
+            i += 1 if "=" in o else 2
+            continue
+        if o in _GIT_PATHSPEC_GLOBALS:
+            out.append(o)
+        if o == "-c" and i + 1 < len(glob) and glob[i + 1].split("=", 1)[0].casefold() == "core.worktree":
+            out += glob[i : i + 2]  # where the work tree is; no other setting, so the reads run nothing
+        i += 2 if o in _GIT_GLOBAL_VALUE else 1
+    return out
+
+
+def _spec_file(c: _Commit, d: str) -> tuple[list[str] | None, str]:
+    """The pathspecs `--pathspec-from-file` reads, or (None, what the guard
+    couldn't read): only a regular file, and only so much of it."""
+    if c.spec_file == "-":
+        return None, "the pathspecs it takes from its stdin (`--pathspec-from-file=-`)"
+    if not c.spec_file:
+        return None, "its pathspec file, which the shell names (a process substitution, `<(…)`)"
+    p = _abspath(c.spec_file, d) or c.spec_file
+    try:
+        st = os.stat(p)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > _SPEC_FILE_CAP:
+            return None, f"its pathspec file `{c.spec_file}` (not a file of at most {_SPEC_FILE_CAP:,} bytes)"
+        text = Path(p).read_text(encoding="utf-8")
+    except (OSError, ValueError) as e:
+        return None, f"its pathspec file `{c.spec_file}` ({e.__class__.__name__})"
+    lines = [x for x in text.split("\0" if c.spec_nul else "\n") if x.strip()]
+    if not c.spec_nul and any(x.startswith('"') for x in lines):
+        return None, f"its pathspec file `{c.spec_file}`, whose quoted lines git unquotes"
+    return lines, ""
+
+
+def _carried(d: str, glob: list[str], c: _Commit, env: dict[str, str] | None = None) -> tuple[list[str] | None, str]:
+    """The files (from the top level) a commit run in `d` would carry, or
+    (None, what couldn't be read)."""
+    specs = c.specs
+    diff = ["diff", "--name-only", "-z", "--no-renames"]
+    reads = []
+    if not specs or c.include or c.all:
+        reads.append([*diff, "--cached"])
+    if c.all:
+        reads.append(diff)
+    if specs:
+        reads += [[*diff, "--cached", "--", *specs], [*diff, "--", *specs]]
+    out: list[str] = []
+    for args in reads:
+        got, err = _git_read(d, glob, *args, env=env)
+        if got is None:
+            return None, err
+        out += [x for x in got if x not in out]
+    return out, ""
+
+
+def _expanded_specs(seg: Seg, c: _Commit, literal: bool) -> tuple[list[str], str | None]:
+    """(the commit's pathspecs with their brace lists expanded, what the guard
+    can't read among them: the file names `xargs` gives it, a word the shell
+    expands, or, where git reads pathspecs literally, a glob the shell may)."""
+    if seg.fed:
+        return [], "the file names `xargs` gives it"
+    specs: list[str] = []
+    for s in c.specs:
+        if "{}" in s:
+            return [], "the file names `find -exec` gives it"
+        words = _braces(s, _BRACE_LIMIT + 1)
+        if _SHELL_EXPANDS.search(s) or len(words) > _BRACE_LIMIT or any(_BRACE_SEQUENCE.search(w) for w in words):
+            return [], f"its pathspec `{s}`, which the shell expands"
+        if literal and any(_GLOB_CHARS.search(w) for w in words):
+            return [], f"its pathspec `{s}`, a glob the shell may expand where git reads pathspecs literally"
+        specs += words
+    return specs, None
+
+
+def _assigned(seg: Seg) -> dict[str, str]:
+    """The variables a command's `NAME=value` (or `NAME+=value`) prefixes set."""
+    out: dict[str, str] = {}
+    for a in seg.assigns:
+        name, _, value = a.partition("=")
+        out[name.removesuffix("+")] = value
+    return out
+
+
+def _continues(sub: str, a: str) -> bool:
+    """Whether `a` finishes a `git <sub>` in progress: `--continue` from
+    `--con` on, as git takes it, and for `git am` its `--resolved` and `-r`."""
+    if len(a) >= 5 and "--continue".startswith(a):
+        return True
+    return sub == "am" and (bool(_AM_RESOLVED.fullmatch(a)) or (len(a) >= 5 and "--resolved".startswith(a)))
+
+
+def _written_before(segs: list[Seg], seg: Seg, name: str, d: str, root: Path) -> bool:
+    """Whether the command writes the file `name` (from `d`) before `git
+    commit` reads it: an earlier part, or the commit's own redirect, which the
+    shell opens first. A target relative to a directory the guard can't
+    follow counts when its name is the file's."""
+    target = _abspath(name, d)
+    for s in segs:
+        t = _write_targets(s, root) if s is not seg else _Targets(files=list(s.redirects))
+        for f, tree in [(f, False) for f in t.files] + [(f, True) for f in t.trees]:  # `mv` and `cp -r` write trees
+            if os.path.isabs(f) or s.cwd is not None:
+                a = _abspath(f, s.cwd)
+                if a and (a == target or (tree and target and target.startswith(a.rstrip("/") + "/"))):
+                    return True
+            elif posixpath.basename(f) == posixpath.basename(name):
+                return True
+        if s is seg:
+            return False
+    return False
+
+
+def _commit_git(words: list[str]) -> tuple[list[str], list[str], str | None] | None:
+    """`_git`'s reading of a command, found behind wrappers as in ticket
+    sessions, with git's dashed `git-commit` read as `git commit` when it is
+    the command word (`grep git-commit`, a URL ending in it, only read)."""
+    if words and posixpath.basename(words[0]) == "git-commit":
+        return [], ["commit", *words[1:]], None
+    k = _vcs_index(words, "ticket")
+    return _git(words[k:]) if k is not None else None
+
+
+# The options of `git init`, `git clone` and `git worktree add` that take the next word as their value.
+_MAKES_VALUES = {
+    "init": {"--template", "--separate-git-dir", "-b", "--initial-branch", "--object-format", "--ref-format"},
+    "clone": {"-b", "--branch", "-o", "--origin", "--depth", "-c", "--config", "--reference", "--reference-if-able",
+              "--template", "-u", "--upload-pack", "-j", "--jobs", "--separate-git-dir", "--filter", "--shallow-since",
+              "--shallow-exclude", "--server-option", "--bundle-uri", "--ref-format", "--revision"},
+    "worktree": {"-b", "-B", "--reason"},
+}  # fmt: skip
+
+
+def _made_where(s: Seg) -> tuple[str, str] | None:
+    """(what `s` makes, "init", "clone" or "worktree", and where, absolute)
+    when it is `git init`, `git clone`, `git worktree add` or `gh repo clone`
+    at a place the guard can follow; else None, as for an init whose
+    `GIT_DIR` or `--git-dir` puts the repository elsewhere (git reads a
+    relative one from the place it makes; a clone ignores both)."""
+    if s.cwd is None:
+        return None
+    git_dir = _assigned(s).get("GIT_DIR")
+    gh = bool(s.words[:1]) and posixpath.basename(s.words[0]) == "gh" and s.words[1:3] == ["repo", "clone"]
+    bare = False
+    if gh:
+        kind, rest = "clone", s.words[3:]
+    else:
+        g = _commit_git(s.words)
+        args = g[1] if g else []
+        for k, w in enumerate(g[0] if g else []):
+            if w.startswith("--git-dir="):
+                git_dir = w.partition("=")[2]
+            elif w == "--git-dir" and k + 1 < len(g[0]):
+                git_dir = g[0][k + 1]
+        if args[:1] in (["init"], ["clone"]):
+            kind, rest = args[0], args[1:]
+        elif args[:2] == ["worktree", "add"]:
+            kind, rest = "worktree", args[2:]
+        else:
+            return None
+        s = replace(s, cwd=_git_dir_of(Path("/"), s.cwd, g[2]))
+    words, i, values = [], 0, _MAKES_VALUES.get(kind, set()) | ({"--upstream-remote-name"} if gh else set())
+    while i < len(rest):
+        w = rest[i]
+        i += 1
+        if w == "--":
+            if gh:  # after `gh repo clone`'s `--` come git's own flags
+                bare = bare or any(x in ("--bare", "--mirror") for x in rest[i:])
+            else:
+                words += rest[i:]
+            break
+        if w.startswith("-"):
+            bare = bare or w in ("--bare", "--mirror")
+            i += 1 if w in values else 0
+            continue
+        words.append(w)
+    if kind == "init":
+        at = words[0] if words else "."
+    elif kind == "clone":
+        if not words:
+            return None
+        at = words[1] if len(words) > 1 else _clone_name(words[0], bare)
+        if not at:
+            return None
+    else:
+        if not words:
+            return None
+        at = words[0]
+    a = _abspath(at, s.cwd)
+    if a and kind == "init" and git_dir is not None and _abspath(git_dir, a) != os.path.join(a, ".git"):
+        return None
+    return (kind, a) if a else None
+
+
+def _clone_name(source: str, bare: bool) -> str:
+    """The directory `git clone <source>` makes with none named: the source's
+    last part, without `/.git`, `.git` or `.bundle` (`.git` added for a bare
+    clone)."""
+    name = source.rstrip("/").removesuffix("/.git").rstrip("/")
+    name = re.split(r"[/:]", name)[-1]
+    for suffix in (".git", ".bundle"):
+        name = name.removesuffix(suffix)
+    return name + ".git" if name and bare else name
+
+
+def _makes_repository(kind: str, at: str) -> bool:
+    """Whether `git init`, `git clone` or `git worktree add` makes a new
+    repository or worktree at `at`: an init where none is yet (else it
+    reinitialises that one), a clone or worktree into a place that doesn't
+    exist yet or is an empty directory (else it fails)."""
+    if kind == "init":
+        return not os.path.exists(os.path.join(at, ".git"))
+    return not os.path.exists(at) or (os.path.isdir(at) and not os.listdir(at))
+
+
+def _nearer_repository(where: str, at: str) -> bool:
+    """Whether a folder from `where` up to `at` (not included) already holds a
+    `.git`, which git finds first: what is made at `at` is then not where
+    the commit goes."""
+    p = where
+    while p != at and p != os.path.dirname(p):
+        if os.path.exists(os.path.join(p, ".git")):
+            return True
+        p = os.path.dirname(p)
+    return False
+
+
+def _made_earlier(segs: list[Seg], seg: Seg, where: str) -> bool:
+    """Whether another part of the command (earlier, or one that may run
+    first, in the background) makes a repository or worktree (`git init`,
+    `git clone`, `gh repo clone`, `git worktree add`) at `where` (the
+    commit's directory) or a folder holding it, with no repository already
+    nearer: what git would commit into there isn't on disk yet."""
+    for s in segs:
+        if s is seg:
+            continue
+        m = _made_where(s)
+        if m and (where == m[1] or where.startswith(m[1].rstrip("/") + "/")) and _makes_repository(*m) and not _nearer_repository(where, m[1]):
+            return True
+    return False
+
+
+# A `.git` (any case, as a case-insensitive file system finds it) as a word or a path's part, not `.gitignore` or `demo.git`.
+_DOT_GIT = re.compile(r"\S*(?<![\w.-])\.git(?![\w.-])\S*", re.IGNORECASE)
+
+
+def _names_dot_git(command: str) -> str | None:
+    """The word of the command, anywhere in its text (a loop's list, a
+    here-string, a part that runs first in the background), that names a
+    `.git`: one it may read, write, link, move or remove, which can change
+    where git commits; else None."""
+    m = _DOT_GIT.search(command)
+    if not m:
+        return None
+    w = m.group(0)
+    return w if len(w) <= 80 else w[:79] + "…"
+
+
+def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tuple[str | None, str | None]:
+    """(why a commit in the command carries a code path, why the guard can't
+    tell what one carries), each None when it doesn't apply."""
+    unsure, project, note = None, None, None
+    for seg in segs:
+        g = _commit_git(seg.words)
+        if not g or not g[1]:
+            continue
+        glob, args, cdir = g
+        if args[0] == "commit":
+            c = _commit_args(args[1:])
+        elif args[0] in _CONTINUE_COMMITS and any(_continues(args[0], a) for a in args[1:]):
+            c = _Commit()
+        else:
+            continue
+        d = _git_dir_of(root, seg.cwd, cdir)
+        if c.dry_run or not d:
+            continue  # a directory the guard can't follow: left to the push rule
+        d = os.path.realpath(d)
+        cant = f"the guard can't tell what `git {args[0]}` would commit"
+        named = _names_dot_git(command)
+        if named:  # judged still, so a refusal stands; otherwise asked, when nothing more telling is
+            note = note or f"{cant}: the command names `{named}`, which can change where git commits"
+        if not os.path.isdir(d):  # made earlier in the command (a folder, a link, a repository), or never
+            unsure = unsure or f"{cant}: it runs in `{d}`, which doesn't exist yet"
+            continue
+        if _made_earlier(segs, seg, d):
+            unsure = unsure or f"{cant}: it runs in `{d}`, where the command makes a repository or worktree first"
+            continue
+        inside = _checkout_of(d, root) is not None
+        assigned = _assigned(seg)
+        env = sorted(set(assigned) & _GIT_REPO_ENV)
+        if env:
+            unsure = unsure or f"{cant}: it sets `{env[0]}`, which changes what git reads"
+            continue
+        glob = _passed_globals(glob)
+        where, err = _git_read(d, glob, "rev-parse", "--show-toplevel", "--git-common-dir", sep="\n")
+        if where is None or len(where) != 2:
+            if inside:
+                unsure = unsure or f"{cant}: {err or 'git named no top level'}"
+            continue
+        if project is None:
+            project = _common_dir(os.path.realpath(str(root))) or ""
+        if not project:
+            if inside:
+                unsure = unsure or f"{cant}: it couldn't read the project's own repository"
+            continue
+        if os.path.realpath(os.path.join(d, where[1])) != project:
+            continue  # another repository: another clone, or one nested in the project, left to the push rule
+        moved = sorted(set(assigned) & _GIT_INDEX_ENV)
+        if moved:
+            unsure = unsure or f"{cant}: it sets `{moved[0]}`, which changes what git reads"
+            continue
+        top = os.path.realpath(where[0])
+        wt = "" if top == os.path.realpath(str(root)) else _rel(top, root)
+        literal = bool(_LITERAL_GLOBALS & set(glob)) or any(assigned.get(v, "0") not in ("", "0", "false") for v in _LITERAL_ENV)
+        specs, unread = _expanded_specs(seg, c, literal)
+        c = replace(c, specs=specs)
+        if not unread and c.spec_file is not None and _written_before(segs, seg, c.spec_file, d, root):
+            unread = f"its pathspec file `{c.spec_file}`, which the command writes before it"
+        if not unread and c.spec_file is not None:
+            more, unread = _spec_file(c, d)
+            c = replace(c, specs=c.specs + (more or []), spec_file=None)
+        if unread:
+            c = replace(c, all=True, include=True, specs=[], spec_file=None)  # every change it could carry
+        files, err = _carried(d, glob, c, {k: v for k, v in assigned.items() if k in _GIT_PATHSPEC_ENV})
+        if files is None:
+            unsure = unsure or f"{cant}: {err}"
+            continue
+        for f in files:
+            m = _listed_code(f, code)
+            if not m:
+                continue
+            hit = _Hit(f, m, wt)
+            if unread:
+                unsure = unsure or f"{cant}: it couldn't read {unread}, and the changes it could carry include the code path {_shown(hit)} ({hit.pattern})"
+                break
+            what = "this commit" if args[0] == "commit" else f"the commit finishing this `git {args[0]}`"
+            return f"{what} carries the code path {_shown(hit)} ({hit.pattern}); {code.instead}", None
+    return None, unsure or note
+
+
+def _unsure_commit(unsure: str, role: str, code: _Code) -> Decision:
+    """The decision on a commit whose contents the guard can't read: the
+    conductor, which nobody is there to ask, is refused; others are asked."""
+    if role == "conductor":
+        return Decision("deny", f"{unsure}; {code.writes_none}, and commits nothing the guard can't read; fix what stops git reading it, then commit again")
+    return Decision("ask", f"{unsure}; {code.writes_none}: allow it only if it carries no code path")
 
 
 _PS_WORDS = re.compile(r"[^\s;|&(){}<>,=\"'`]+")

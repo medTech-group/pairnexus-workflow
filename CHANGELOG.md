@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**The guard refuses a commit that carries code outside ticket sessions under `code_writers = "ticket"`** (#389, part of #338). Under `"any"`, or with `code_writers` absent, nothing changes.
+
+- **A `git commit`** in a planning session or the conductor, in the project's own repository (the project or a worktree of it), is refused when what it would carry includes a code path: what is staged, plus the changed tracked files with `-a`, or what a pathspec names (`-i` adds the staged files to a pathspec's). So code written where the guard couldn't see it (`python3 -c …`) is caught before it is committed. The refusal is worded as the file tools' (#340). Finishing a merge, a cherry-pick, a revert, a rebase or `git am` is judged as any commit for now; #391 and #392 narrow what counts for merges, cherry-picks and reverts.
+- **When the guard can't read what a commit carries** (a git read fails, the command sets `GIT_INDEX_FILE` or another variable that moves what git reads, or it commits in a directory that doesn't exist yet, where it first makes a repository or worktree, or when the command names a `.git`), a planning session is asked, naming what couldn't be read (a refusal in a permission mode that never asks), and the conductor is refused. A commit is asked or refused the same way when a pathspec can't be read (such as one the shell expands, the names `xargs` or `find -exec` gives, or a pathspec file it can't read) and the changes it could carry include a code path.
+- A commit in another repository already there (another clone, or one nested in the project) is left to the push rule (#390). Ticket sessions' commits are as before.
+- **For projects updating:** nothing to do. Tests: `tests/test_guard_code_commits.py`.
+
 ## 0.1.17
 
 **A project can say that only ticket sessions write code.** Spec #338, #339, #340, #342, #344, #345, #349 and #361: set-up and the kit's update ask "Who writes code in this project?" (only ticket sessions, recommended, or any session) and which folders hold code; under "only ticket sessions", the guard refuses an edit to a code file in any other session (a planning session, the conductor, a session that is a ticket session only by its branch), doctor and "check the set-up" say who writes code, and the conductor of an unattended run writes no code itself: a code fix becomes a ticket for a ticket session, and it reverts a merged change only when the owner allows it. Nothing changes until a project answers. Each change's own note is below.
