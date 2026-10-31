@@ -553,6 +553,12 @@ def test_a_directory_made_earlier_in_the_command(proj, tmp_path, monkeypatch, ca
             # Split by quotes or a backslash.
             f'ln -s "{proj}/.g"it {out}-empty/.g"it"; git -C {out}-empty --work-tree={proj} commit -qam x',
             f"ln -s {proj}/.g\\it {out}-empty/'.'git; git -C {out}-empty --work-tree={proj} commit -qam x",
+            # Decoded by the shell, in a loop's list or a part's words, or behind `sh -c`.
+            f'for n in .g$"it"; do ln -s "$PWD/$n" "{out}-empty/$n"; done; git -C {out}-empty --work-tree={proj} commit -qam x',
+            f"for n in .g$'i't; do ln -s \"$PWD/$n\" \"{out}-empty/$n\"; done; git -C {out}-empty --work-tree={proj} commit -qam x",
+            f'for n in .g\\\nit; do ln -s "$PWD/$n" "{out}-empty/$n"; done; git -C {out}-empty --work-tree={proj} commit -qam x',
+            f"ln -s {proj}/.g$'i't {out}-empty/.g$'\\x69't; git -C {out}-empty --work-tree={proj} commit -qam x",
+            f'sh -c "ln -s {proj}/.g\\$\'i\'t {out}-empty/.g\\$\'i\'t"; git -C {out}-empty --work-tree={proj} commit -qam x',
         ),
     }
     (proj / "scratch").mkdir()

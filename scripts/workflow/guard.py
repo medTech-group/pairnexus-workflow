@@ -6758,9 +6758,11 @@ def _names_dot_git(command: str, segs: list[Seg]) -> str | None:
     link, move or remove, which can change where git commits; else None.
     Searched in the command's whole text (a loop's list, a here-string, a
     part that runs first in the background), that text with its quotes and
-    backslashes taken out (`.g"it"`), and each part's words as the guard
-    reads them."""
+    backslashes taken out (`.g"it"`), the command's words as the shell
+    decodes them (`.g$'i't`, a loop's list among them), and each part's
+    words as the guard reads them (`sh -c`'s, `eval`'s)."""
     texts = [command, command.translate(_QUOTING)]
+    texts += [t for t in _tokens(command) if isinstance(t, str)]  # every word, a loop's list too, as the shell decodes it
     for s in segs:
         texts += [*s.words, *s.assigns, *s.redirects, *s.inputs, s.stdin or "", s.heredoc or ""]
     for t in texts:
