@@ -679,6 +679,9 @@ def test_a_config_key_the_shell_spells_counts(proj, monkeypatch, capsys, command
         "read -r GIT_CONFIG_KEY_0 <<< remote.side.pushurl; export GIT_CONFIG_KEY_0 GIT_CONFIG_COUNT=1 GIT_CONFIG_VALUE_0=git@github.com:acme/demo.git; git push side codeb",
         "GIT_CONFIG_VALUE_0=git@github.com:acme/demo.git git push side codeb",
         "GIT_CONFIG_COUNT=1 git push side codeb",
+        "GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=x GIT_CONFIG_VALUE_1=git@github.com:acme/demo.git git push side codeb",
+        "git config [r]emote.side.pushurl git@github.com:acme/demo.git && git push side codeb",
+        "git -c [r]emote.side.pushurl=git@github.com:acme/demo.git push side codeb",
     ],
 )
 def test_config_variables_the_guard_cant_read_whole(proj, tmp_path, monkeypatch, capsys, command):
@@ -718,6 +721,16 @@ def test_a_code_push_beside_a_glob_in_a_setting_is_refused(proj, monkeypatch, ca
     ):
         d, why = hook(monkeypatch, capsys, proj, command)
         assert d == "deny" and "src/app.py" in why, (command, why)
+
+
+def test_a_config_variable_named_in_text_changes_nothing(proj, monkeypatch, capsys):
+    """Only a variable the command sets counts, not one a message names."""
+    git(proj, "checkout", "-q", "-b", "codeb")
+    _code_commit(proj)
+    d, why = hook(monkeypatch, capsys, proj, 'echo "see GIT_CONFIG_COUNT" && git push origin codeb')
+    assert d == "deny" and "src/app.py" in why, why
+    command = 'echo "docs: GIT_CONFIG_KEY_<n>" && git push https://github.com/acme/sandbox x'
+    assert hook(monkeypatch, capsys, proj, command) == ("allow", "")
 
 
 def test_settings_variables_are_judged_by_their_keys(proj, monkeypatch, capsys):
