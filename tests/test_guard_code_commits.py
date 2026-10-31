@@ -538,27 +538,40 @@ def test_a_directory_made_earlier_in_the_command(proj, tmp_path, monkeypatch, ca
             "git --git-dir=.git init -q docs && cd docs && git commit -am x",
             "git --git-dir=/tmp/x-389 clone -q ../proj-remote/acme/demo.git scratch && cd scratch && git commit -am x",
         ),
-        # A `.git` an earlier part writes, links, moves or removes can send the commit anywhere.
-        "can change where git commits": (
+        # A directory that isn't a repository yet: git commits there only once the command makes it one,
+        # however it spells the `.git` (a brace list, a variable, an interpreter).
+        "failed in": (
             f"ln -s {proj}/.git {tmp_path}/.git && git -C {tmp_path} --work-tree={proj} commit -am x",
             f"printf 'gitdir: {proj}/.git' > {tmp_path}/.git && git -C {tmp_path} --work-tree={proj} commit -am x",
+            f"sleep 1 && git -C {out}-empty --work-tree={proj} commit -qam x & ln -s {proj}/.git {out}-empty/.git; wait",
+            f"ln -s {proj}/.g{{i,}}t {out}-empty/; git -C {out}-empty --work-tree={proj} commit -qam x",
+            f'for n in .g{{i,}}t; do ln -s "{proj}/$n" "{out}-empty/$n"; done; git -C {out}-empty --work-tree={proj} commit -qam x',
+            f"ln -s {proj}/${{x:-.git}} {out}-empty/; git -C {out}-empty --work-tree={proj} commit -qam x",
+            f"python3 -c \"import os; os.symlink('{proj}/.g' + 'it', '{out}-empty/.g' + 'it')\"; git -C {out}-empty --work-tree={proj} commit -qam x",
+            f"git -C {out}-empty commit -qam x",
+        ),
+        # A `.git` an earlier part writes, links, moves or removes can send the commit anywhere: here,
+        # out of a repository nested in the project, into the project's own.
+        "can change where git commits": (
             "rm -rf vendor/lib/.git && cd vendor/lib && git commit -m x ../../src/app.py",
             "cat .git/HEAD && git commit -m d docs/a.md",
             # Named anywhere in the command's text, in any case.
-            f'for n in .git; do ln -s "$PWD/$n" "{out}-empty/$n"; done; git -C {out}-empty --work-tree={proj} commit -qam x',
-            f'IFS= read -r n <<< .git; ln -s "$PWD/$n" "{out}-empty/$n"; git -C {out}-empty --work-tree={proj} commit -qam x',
-            f"sleep 1 && git -C {out}-empty --work-tree={proj} commit -qam x & ln -s {proj}/.git {out}-empty/.git; wait",
-            f"ln -s {proj}/.GIT {out}-empty/.GIT && git -C {out}-empty --work-tree={proj} commit -qam x",
-            f'D={out}-empty/.git; ln -s {proj}/.git "$D"; git -C {out}-empty --work-tree={proj} commit -qam x',
+            'for n in .git; do rm -rf "vendor/lib/$n"; done; git -C vendor/lib commit -m x ../../src/app.py',
+            'IFS= read -r n <<< .git; rm -rf "vendor/lib/$n"; git -C vendor/lib commit -m x ../../src/app.py',
+            "sleep 1 && git -C vendor/lib commit -m x ../../src/app.py & rm -rf vendor/lib/.git; wait",
+            "rm -rf vendor/lib/.GIT && git -C vendor/lib commit -m x ../../src/app.py",
+            'D=vendor/lib/.git; rm -rf "$D"; git -C vendor/lib commit -m x ../../src/app.py',
+            "rm -rf vendor/lib/${x:-.git}; git -C vendor/lib commit -m x ../../src/app.py",
             # Split by quotes or a backslash.
-            f'ln -s "{proj}/.g"it {out}-empty/.g"it"; git -C {out}-empty --work-tree={proj} commit -qam x',
-            f"ln -s {proj}/.g\\it {out}-empty/'.'git; git -C {out}-empty --work-tree={proj} commit -qam x",
+            'rm -rf vendor/lib/.g"it"; git -C vendor/lib commit -m x ../../src/app.py',
+            "rm -rf vendor/lib/.g\\it; git -C vendor/lib commit -m x ../../src/app.py",
+            "rm -rf vendor/lib/'.'git; git -C vendor/lib commit -m x ../../src/app.py",
             # Decoded by the shell, in a loop's list or a part's words, or behind `sh -c`.
-            f'for n in .g$"it"; do ln -s "$PWD/$n" "{out}-empty/$n"; done; git -C {out}-empty --work-tree={proj} commit -qam x',
-            f"for n in .g$'i't; do ln -s \"$PWD/$n\" \"{out}-empty/$n\"; done; git -C {out}-empty --work-tree={proj} commit -qam x",
-            f'for n in .g\\\nit; do ln -s "$PWD/$n" "{out}-empty/$n"; done; git -C {out}-empty --work-tree={proj} commit -qam x',
-            f"ln -s {proj}/.g$'i't {out}-empty/.g$'\\x69't; git -C {out}-empty --work-tree={proj} commit -qam x",
-            f'sh -c "ln -s {proj}/.g\\$\'i\'t {out}-empty/.g\\$\'i\'t"; git -C {out}-empty --work-tree={proj} commit -qam x',
+            'for n in .g$"it"; do rm -rf "vendor/lib/$n"; done; git -C vendor/lib commit -m x ../../src/app.py',
+            "for n in .g$'i't; do rm -rf \"vendor/lib/$n\"; done; git -C vendor/lib commit -m x ../../src/app.py",
+            'for n in .g\\\nit; do rm -rf "vendor/lib/$n"; done; git -C vendor/lib commit -m x ../../src/app.py',
+            "rm -rf vendor/lib/.g$'\\x69't; git -C vendor/lib commit -m x ../../src/app.py",
+            'sh -c "rm -rf vendor/lib/.g\\$\'i\'t"; git -C vendor/lib commit -m x ../../src/app.py',
         ),
     }
     (proj / "scratch").mkdir()

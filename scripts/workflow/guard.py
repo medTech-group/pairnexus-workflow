@@ -6749,7 +6749,7 @@ def _made_by(segs: list[Seg], seg: Seg, where: str) -> str | None:
 
 # A `.git` (any case, as a case-insensitive file system finds it) as a word or a path's part, not `.gitignore` or `demo.git`.
 # Only the name itself: the word around it is found by hand, so a long word costs no more than its length.
-_DOT_GIT = re.compile(r"(?<![\w.-])\.git(?![\w.-])", re.IGNORECASE)
+_DOT_GIT = re.compile(r"(?<![\w.])\.git(?![\w.-])", re.IGNORECASE)  # `${x:-.git}` is one
 _QUOTING = str.maketrans("", "", "\"'\\")
 
 
@@ -6823,8 +6823,9 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tupl
         glob = _passed_globals(glob)
         where, err = _git_read(d, glob, "rev-parse", "--show-toplevel", "--git-common-dir", sep="\n")
         if where is None or len(where) != 2:
-            if inside:
-                unsure = unsure or f"{cant}: {err or 'git named no top level'}"
+            # Inside the project or not: git commits nothing there unless the command first makes
+            # it a repository (a `.git` linked or written, in any spelling), so it is never left alone.
+            unsure = unsure or f"{cant}: {err or 'git named no top level'}"
             continue
         if project is None:
             project = _common_dir(os.path.realpath(str(root))) or ""
