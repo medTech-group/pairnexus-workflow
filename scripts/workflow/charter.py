@@ -17,8 +17,9 @@ the scope and not excluded.
 
 `preset` (optional) is the run's size, `light`, `normal` or `thorough`, and
 `review` (optional) its review: `rounds` and `explorer`, and optionally
-`small` (the small review on or off), `passes` (the pass cap) and the small
-threshold, `small_max_lines` and `small_max_files`. The presets' numbers are in
+`small` (the small review on or off), `passes` (the pass cap, 0 to 10, or
+"until-clean": passes until one is clean, within the run's end time) and the
+small threshold, `small_max_lines` and `small_max_files`. The presets' numbers are in
 presets.py. A charter written before presets has neither, and reads as Normal:
 the profile's review rounds and UI explorer. A missing `small` reads as off, and
 a missing pass cap or threshold value as the profile's (`presets.review_of`).
@@ -132,7 +133,9 @@ QUESTIONS: list[dict[str, Any]] = [
         "note": "limits.ends_at must be given by the owner: an ISO time with its zone, e.g. 2026-10-13T03:30:00Z. "
         "Choosing a preset sets preset, limits (but ends_at and check_in_minutes) and review from presets[name]. "
         "review.passes (the pass cap) and the small threshold (review.small_max_lines, review.small_max_files) are "
-        "the profile's in every preset: add one to review only when the owner changes it.",
+        "the profile's in every preset: add one to review only when the owner changes it. The pass cap is offered "
+        "beside the presets (pass_cap): the profile's first, then review.passes \"until-clean\" (Correctness passes "
+        "until one is clean, within the run's end time), or 2, run.review_passes's default, when the profile's is \"until-clean\".",
         "options": list(presets_mod.PRESETS),
         "default": {"ends_at": None, **presets_mod.numbers(presets_mod.DEFAULT)["limits"], "check_in_minutes": 20},
     },
@@ -237,6 +240,7 @@ def questions(
             q["options"] = [rec] + [o for o in q["options"] if o != rec]
             q["recommended"] = rec
             q["presets"] = presets_mod.table(profile)
+            q["pass_cap"] = presets_mod.pass_cap_choices(profile)
         if q["key"] == "merge" and why:
             q["options"] = [o for o in q["options"] if o != "auto-merge"]
             q["note"] = (
@@ -472,8 +476,9 @@ def validate(c: Any, require_approval: bool = False, now: datetime | None = None
             if "small" in rv and not isinstance(rv["small"], bool):
                 p.append("review.small must be true or false, or absent (off)")
             for k, _, lo, hi in presets_mod.PROFILE_REVIEW:
-                if k in rv and not _pos_int(rv[k], lo, hi):
-                    p.append(f"review.{k} must be a whole number from {lo} to {hi}, or absent (the profile's)")
+                if k in rv and not presets_mod.valid_review(k, rv[k], lo, hi):
+                    also = f', or "{presets_mod.UNTIL_CLEAN}" (no cap)' if k == "passes" else ""
+                    p.append(f"review.{k} must be a whole number from {lo} to {hi}{also}, or absent (the profile's)")
     p += validate_amendments(c.get("amendments", []))
     plan = c.get("plan")
     if plan is not None:
@@ -633,8 +638,15 @@ def _size_lines(c: dict, profile: Any, estimate: Any = None) -> list[str]:
         f"- **Review:** up to {rounds} per ticket; {presets_mod.explorer_words(c, profile)}.",
         *(_estimate_lines(estimate) if estimate is not None else []),
         f"- **Small review:** {small}.",
-        f"- **Pass cap:** {presets_mod.passes_words(rv)} after the last review round, then `needs-human`.",
+        f"- **Pass cap:** {_pass_cap(rv)}.",
     ]
+
+
+def _pass_cap(rv: dict) -> str:
+    """The one page's pass cap: a number's, or `until-clean`'s (#402)."""
+    if rv["passes"] == presets_mod.UNTIL_CLEAN:
+        return f"{presets_mod.pass_cap_words(rv)}; a ticket still not clean at the end time is set aside (`needs-human`)"
+    return f"{presets_mod.pass_cap_words(rv)}, then `needs-human`"
 
 
 def to_markdown(c: dict, plan: list[tuple[int, str | None]] | None = None, profile: Any = None, estimate: Any = None) -> str:

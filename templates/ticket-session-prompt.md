@@ -29,7 +29,7 @@ Follow the `build-ticket` skill from start to finish. First, with the Write tool
 - **Tests first** at the spec's seams. They are already agreed, so never stop to ask about them.
 - **Review:** the `review-panel` skill, in rounds until clean, at most {{run.review_rounds}}. UI explorer: {{ui.explorer}}. With `none`, run no explorer, even if the profile names one.
 - **Small review:** {{review.small}}.
-- **Pass cap:** {{review.passes_words}} after the last review round. When `merge-check` says `passes_used_up`, the cap is reached: stop (below).
+- **Pass cap:** {{review.pass_cap}}
 - **Check-ins:** while CI runs, subscribe to the PR's activity and schedule a check-in with `send_later` about every {{run.check_in_minutes}} minutes. End that turn with `WORKFLOW-STATUS: waiting`.
 
 ### Merging

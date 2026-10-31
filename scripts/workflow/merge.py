@@ -44,7 +44,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import charter as charter_mod
-from . import own_changes, protection, reviews, small, state
+from . import own_changes, presets as presets_mod, protection, reviews, small, state
 from .evidence import is_full, read_headline
 from .guard import matches
 from .posts import CommentsError, _login, _number, comments_from, decode_values
@@ -85,7 +85,7 @@ PREVIEWS_DOC = Path(__file__).resolve().parents[2] / "docs/previews.md"
 DEFAULT_REVIEW_ROUNDS = 3  # the profile's run.review_rounds when it can't be read
 REVIEW_ROUNDS = range(1, 11)  # what --review-rounds accepts, as profile.py's run.review_rounds
 DEFAULT_REVIEW_PASSES = 2  # the profile's run.review_passes when it can't be read
-REVIEW_PASSES = range(0, 11)  # what --review-passes accepts, as profile.py's run.review_passes
+REVIEW_PASSES = range(0, 11)  # the numbers --review-passes accepts, as profile.py's run.review_passes; it takes "until-clean" too (#402)
 
 
 class Unreadable(Exception):
@@ -127,7 +127,7 @@ class Result:
     files: list[str] = field(default_factory=list)
     preview: dict | None = None
     review_rounds: int = DEFAULT_REVIEW_ROUNDS  # the allowed review rounds the review rule used
-    review_passes: int = DEFAULT_REVIEW_PASSES  # the pass cap the review rule used
+    review_passes: int | str = DEFAULT_REVIEW_PASSES  # the pass cap the review rule used, or "until-clean"
     small_max_lines: int = small.DEFAULT_MAX_LINES  # the small threshold the review rule used (#257)
     small_max_files: int = small.DEFAULT_MAX_FILES
     measured: dict | None = None  # the diff against it, where the small review's condition applies
@@ -524,7 +524,7 @@ class Context:
     """The inputs as the rules read them. Each reader raises Unreadable (the
     same one each time) for an input it can't read."""
 
-    def __init__(self, inputs: dict, profile, profile_error: str | None, waivable: frozenset = frozenset(), logs: dict | None = None, review_rounds: int | None = None, review_passes: int | None = None,
+    def __init__(self, inputs: dict, profile, profile_error: str | None, waivable: frozenset = frozenset(), logs: dict | None = None, review_rounds: int | None = None, review_passes: int | str | None = None,
                  small_max_lines: int | None = None, small_max_files: int | None = None):
         self.inputs = inputs
         self.profile = profile
@@ -533,7 +533,7 @@ class Context:
         self.logs = logs or {}  # --check-logs: file name -> the log's tail
         # The allowed review rounds: --review-rounds, else the profile's run.review_rounds.
         self.review_rounds = review_rounds or (profile.review_rounds if profile else DEFAULT_REVIEW_ROUNDS)
-        # The pass cap: --review-passes, else the profile's run.review_passes (0 is a cap).
+        # The pass cap: --review-passes, else the profile's run.review_passes (0 is a cap; "until-clean", #402, none).
         self.review_passes = review_passes if review_passes is not None else (profile.review_passes if profile else DEFAULT_REVIEW_PASSES)
         # The small threshold (#257): the flags, else the profile's run.small_max_lines and run.small_max_files.
         self.small_max_lines = small_max_lines or (profile.small_max_lines if profile else small.DEFAULT_MAX_LINES)
@@ -1074,7 +1074,8 @@ def _panel(ctx: Context, add) -> None:
     lifts its findings, and no further round is asked for. Where a pass is what
     comes next and the counted passes after the last round (on any commit of the
     PR, each record counted) number `ctx.review_passes`, the pass cap (#256)
-    gives `passes_used_up` instead: the owner decides. Records from accounts
+    gives `passes_used_up` instead: the owner decides. With the cap `until-clean`
+    (#402) there is none: it never does. Records from accounts
     without write access, or naming a commit outside the PR, are ignored.
 
     The small review (#257): when no counted round ran `spec`, the diff must be
@@ -1152,7 +1153,7 @@ def _panel(ctx: Context, add) -> None:
 
     after = [(i - 1, r) for i, r in enumerate(counted) if i > rounds[-1] and r.kind == "pass"]
     used = [r for i, r in after if not free(i, r.commit, r.lines)]
-    if len(after) > len(used):
+    if len(after) > len(used) and ctx.review_passes != presets_mod.UNTIL_CLEAN:
         _note(ctx, "free_passes", f"{_plural(len(after) - len(used), 'Correctness pass', 'Correctness passes')} after a merge of the base that left the pull request's changed lines as they were didn't count toward the pass cap.")
     passes = [r for _, r in after if on_head(r)]
     cap = ctx.review_passes
@@ -1160,7 +1161,7 @@ def _panel(ctx: Context, add) -> None:
     def needs_pass(rid, **more):
         # A pass the head needs that wouldn't count doesn't meet the cap (answer 23: no false needs-human). It is
         # judged on GitHub's `lines` hash; the pass's record names git's, so where they differ, that pass counts.
-        if len(used) >= cap and not free(len(counted) - 1, head, hashes.lines):
+        if cap != presets_mod.UNTIL_CLEAN and len(used) >= cap and not free(len(counted) - 1, head, hashes.lines):
             posted = " posted" if len(used) == len(after) else f" counted of {len(after)} posted"
             add("passes_used_up", next="owner", passes=_plural(len(used), "Correctness pass", "Correctness passes") + posted, cap=cap, **details)
         else:
@@ -1387,7 +1388,7 @@ def evaluate(
     logs: dict | None = None,
     role: str | None = None,
     review_rounds: int | None = None,
-    review_passes: int | None = None,
+    review_passes: int | str | None = None,
     small_max_lines: int | None = None,
     small_max_files: int | None = None,
 ) -> Result:
@@ -1397,7 +1398,7 @@ def evaluate(
     `charter_input` and `role` (see `waivers`) and `logs` (the checks' logs,
     by file name) are for the run's waivers. `review_rounds` is the allowed
     review rounds (`--review-rounds`); None takes the profile's `run.review_rounds`.
-    `review_passes` is the pass cap (`--review-passes`); None takes the profile's
+    `review_passes` is the pass cap (`--review-passes`, a number or "until-clean"); None takes the profile's
     `run.review_passes`. `small_max_lines` and `small_max_files` are the small
     threshold (`--small-max-lines`, `--small-max-files`); None takes the profile's."""
     waivable, charter_notes = waivers(charter_input, role, profile)

@@ -214,8 +214,9 @@ class Profile:
     max_parallel: int = 2
     max_retries: int = 1
     review_rounds: int = 3
-    # The Correctness passes allowed after the last counted round (#256).
-    review_passes: int = 2
+    # The Correctness passes allowed after the last counted round (#256), or
+    # "until-clean" (#402): no cap, passes until one is clean.
+    review_passes: int | str = 2
     # The small threshold (#257): a review in which no counted round ran Spec
     # counts only while the diff, outside tests, is within both.
     small_max_lines: int = 60
@@ -256,6 +257,16 @@ def _int(v, where: str, default: int, lo: int = 0, hi: int = 10_000) -> int:
     if not isinstance(v, int) or isinstance(v, bool) or not lo <= v <= hi:
         raise ProfileError(f"{where}: expected a whole number from {lo} to {hi}")
     return v
+
+
+def _review_passes(v) -> int | str:
+    """`run.review_passes`: a whole number from 0 to 10, or "until-clean" (#402)."""
+    if v == presets_mod.UNTIL_CLEAN:
+        return v
+    try:
+        return _int(v, "run.review_passes", 2, 0, 10)
+    except ProfileError:
+        raise ProfileError(f'run.review_passes: expected a whole number from 0 to 10, or "{presets_mod.UNTIL_CLEAN}" (no cap)') from None
 
 
 def _cwd(v, where: str) -> str:
@@ -496,7 +507,7 @@ def parse(data: dict, root: Path) -> Profile:
         max_parallel=_int(run.get("max_parallel"), "run.max_parallel", 2, 1, 16),
         max_retries=_int(run.get("max_retries"), "run.max_retries", 1, 0, 5),
         review_rounds=_int(run.get("review_rounds"), "run.review_rounds", 3, 1, 10),
-        review_passes=_int(run.get("review_passes"), "run.review_passes", 2, 0, 10),
+        review_passes=_review_passes(run.get("review_passes")),
         small_max_lines=_int(run.get("small_max_lines"), "run.small_max_lines", 60, 1, 1000),
         small_max_files=_int(run.get("small_max_files"), "run.small_max_files", 4, 1, 50),
         ticket_environment=str(run.get("ticket_environment") or ""),
