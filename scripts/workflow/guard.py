@@ -7391,14 +7391,58 @@ def _push_env_config(segs: list[Seg], seg: Seg) -> str | None:
         if name == "GIT_CONFIG_PARAMETERS":
             if _SHELL_EXPANDS.search(value):
                 return name  # git reads it after the shell: anything can come in
-            # git's items: `'key'='value'`, or the older `'key=value'`.
-            items = re.findall(r"'((?:[^'\\]|\\.)*)'(=?)", value)
-            keys = [k if eq else k.partition("=")[0] for k, eq in items] or [value]
+            keys = _config_params_keys(value)
+            if keys is None:
+                return name  # not git's format: it can't be read
         else:
             keys = [value.strip("'\"")]
         if any(_SHELL_EXPANDS.search(k) or _URL_CONFIG_KEYS.match(k.strip()) for k in keys):
             return name
     return None
+
+
+def _config_params_keys(value: str) -> list[str] | None:
+    """The keys `GIT_CONFIG_PARAMETERS` sets, read in one pass as git reads
+    it: items `'key'='value'` or the older `'key=value'`, quoted as git
+    quotes (a backslash inside quotes is itself; `'\\''` and `'\\!'`
+    between quoted parts); None when git would find it malformed."""
+    n, i, keys = len(value), 0, []
+
+    def word() -> str | None:
+        nonlocal i
+        if i >= n or value[i] != "'":
+            return None
+        out = []
+        i += 1
+        while True:
+            j = value.find("'", i)
+            if j < 0:
+                return None
+            out.append(value[i:j])
+            i = j + 1
+            if value[i : i + 1] == "\\" and value[i + 1 : i + 2] in ("'", "!") and value[i + 2 : i + 3] == "'":
+                out.append(value[i + 1])
+                i += 3
+                continue
+            return "".join(out)
+
+    while True:
+        while i < n and value[i].isspace():
+            i += 1
+        if i >= n:
+            return keys
+        w = word()
+        if w is None:
+            return None
+        if value[i : i + 1] == "=":
+            i += 1
+            if word() is None:
+                return None
+            keys.append(w)
+        else:
+            keys.append(w.partition("=")[0])
+        if i < n and not value[i].isspace():
+            return None
 
 
 def _push_config(d: str, glob: list[str]) -> tuple[dict[str, list[str]] | None, str]:

@@ -599,6 +599,9 @@ def test_more_ordinary_parts_beside_a_push_decide_as_without_the_rule(proj, monk
         "GIT_CONFIG_PARAMETERS=\"'url.git@github.com:acme/demo.git.pushInsteadOf=https://github.com/acme/sandbox'\" git push https://github.com/acme/sandbox codeb",
         "GIT_CONFIG_PARAMETERS=\"'http.x'='$T'\" git push https://github.com/acme/sandbox codeb",
         "git remote set-url --push x:y git@github.com:acme/demo.git && git push x:y codeb",
+        "GIT_CONFIG_PARAMETERS=\"'http.x=a\\' 'url.git@github.com:acme/demo.git.pushInsteadOf=https://github.com/acme/sandbox'\" git push https://github.com/acme/sandbox codeb",
+        "GIT_CONFIG_PARAMETERS=\"'http.x'='a'\\''b' 'url.git@github.com:acme/demo.git.pushInsteadOf'='https://github.com/acme/sandbox'\" git push https://github.com/acme/sandbox codeb",
+        "GIT_CONFIG_PARAMETERS=\"not git's format\" git push https://github.com/acme/sandbox codeb",
     ],
 )
 def test_what_changes_what_a_url_push_sends(proj, tmp_path, monkeypatch, capsys, command):
@@ -613,6 +616,31 @@ def test_what_changes_what_a_url_push_sends(proj, tmp_path, monkeypatch, capsys,
     git(proj, "checkout", "-q", "feature")
     d, why = hook(monkeypatch, capsys, proj, command.format(cb=tmp_path / "cb.git"))
     assert d == "ask" and "can't tell" in why, (command, d, why)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git -c push.default=matching push git@github.com:acme/demo.git codeb",
+        "HOME=/tmp git push git@github.com:acme/demo.git codeb",
+        "GIT_CONFIG_PARAMETERS=\"'push.default'='matching'\" git push git@github.com:acme/demo.git codeb",
+        "git config push.default matching && git push git@github.com:acme/demo.git codeb",
+    ],
+)
+def test_a_url_push_naming_its_refs_is_judged_beside_settings(proj, monkeypatch, capsys, command):
+    """Given project.repo's URL and what it sends, settings don't change it: judged, so a code push is refused."""
+    git(proj, "checkout", "-q", "-b", "codeb")
+    _code_commit(proj)
+    d, why = hook(monkeypatch, capsys, proj, command)
+    assert d == "deny" and "src/app.py" in why, (command, why)
+
+
+def test_a_long_config_parameters_value_doesnt_slow_the_rule(proj, monkeypatch, capsys):
+    import time
+
+    t = time.monotonic()
+    d, why = hook(monkeypatch, capsys, proj, "GIT_CONFIG_PARAMETERS=\"'" + "\\'" * 50_000 + "\" git push https://github.com/acme/sandbox x")
+    assert time.monotonic() - t < 5 and d == "ask", why[:200]
 
 
 def test_a_tag_made_beside_a_push_of_tags(proj, monkeypatch, capsys):
