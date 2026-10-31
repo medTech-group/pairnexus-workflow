@@ -7075,20 +7075,39 @@ _PUSH_CONFIG_SECTIONS = re.compile(r"(?i)(remote|url|include|includeif|push|bran
 _CONFIG_WRITES = {"--add", "--replace-all", "--unset", "--unset-all", "--rename-section", "--remove-section", "-e", "--edit", "--append"}
 _CONFIG_READS = {"--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "-l", "--get-color", "--get-colorbool"}
 _BRANCH_LISTS = {"-l", "--list", "--contains", "--no-contains", "--merged", "--no-merged", "--points-at"}
-# Keys that rewrite a URL a push is given (`url.<base>.pushInsteadOf`), or bring in config that may.
-_URL_CONFIG_KEYS = re.compile(r"(?i)(url|include|includeif)(\.|$)")
+# Keys that can send a push given what looks like a URL elsewhere: a rewrite (`url.<base>.pushInsteadOf`), a remote
+# of that name (git looks a word up as a remote first, and a remote's name may hold a `:`), or config brought in.
+_URL_CONFIG_KEYS = re.compile(r"(?i)(url|remote|include|includeif)(\.|$)")
 # `git config`'s long options (git takes a unique prefix of each), and those that take the next word as their value.
 _CONFIG_LONGS = [
     "global", "system", "local", "worktree", "file", "blob", "get", "get-all", "get-regexp", "get-urlmatch", "replace-all",
     "add", "unset", "unset-all", "rename-section", "remove-section", "list", "fixed-value", "type", "bool", "int",
     "bool-or-int", "path", "expiry-date", "no-type", "null", "name-only", "includes", "no-includes", "show-origin",
     "show-scope", "get-color", "get-colorbool", "edit", "default", "comment", "value", "all", "regexp", "url", "append",
+    "bool-or-str", "show-names", "no-show-names", "no-value", "no-comment", "no-all", "no-regexp", "no-fixed-value",
 ]  # fmt: skip
 _CONFIG_VALUES = {"-f", "--file", "--blob", "--type", "--default", "--comment", "--value", "-t", "--url"}
 # Variables that set config as `-c` does, and those that change which repository, refs or config files git reads.
 _PUSH_ENV_CONFIG = re.compile(r"GIT_CONFIG_(PARAMETERS|KEY_\w*)")  # read by the settings they name
 _PUSH_ENV = re.compile(r"GIT_(DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|NAMESPACE|CONFIG\w*)|HOME|XDG_CONFIG_HOME")
 _GH_MOVES = (["pr", "checkout"], ["pr", "co"], ["repo", "sync"])  # gh commands that move a branch or HEAD
+
+
+# `git branch`'s and `git tag`'s options that take the next word as their value (not a ref's name).
+_REF_LIST_VALUES = {"--format", "--sort", "--contains", "--no-contains", "--merged", "--no-merged", "--points-at", "--column", "-m", "-F", "--message", "--file", "-u", "--local-user", "--cleanup", "--set-upstream-to"}
+
+
+def _ref_words(rest: list[str]) -> list[str]:
+    """`git branch`'s or `git tag`'s words that aren't options or options' values."""
+    words, i = [], 0
+    while i < len(rest):
+        a = rest[i]
+        i += 1
+        if a.startswith("-"):
+            i += 1 if a in _REF_LIST_VALUES else 0
+            continue
+        words.append(a)
+    return words
 
 
 def _config_changes(rest: list[str]) -> str | None:
@@ -7181,7 +7200,9 @@ def _git_changes(args: list[str]) -> str | None:
     if sub == "config":
         return _config_changes(rest)
     if sub == "remote":
-        return None if not words or words[0] in ("show", "get-url") else "config"
+        return None if not words or words[0] in ("show", "get-url") else "url"  # a remote of any name, a URL among them
+    if sub in ("branch", "tag"):
+        words = _ref_words(rest)
     if sub == "branch":
         if set(o.split("=", 1)[0] for o in opts) & _BRANCH_LISTS and not any(_BRANCH_WRITES.match(o) for o in opts):
             return None  # it lists branches
@@ -7272,6 +7293,27 @@ def _pushes_into(s: Seg, args: list[str], root: Path, common: str | None) -> boo
     return False
 
 
+def _sets_upstream(args: list[str]) -> bool:
+    """`git push -u` (`--set-upstream`, or a prefix of it git takes)."""
+    for a in args:
+        if a == "--":
+            return False
+        if a.startswith("--"):
+            if _expand_long(a)[0] == "set-upstream":
+                return True
+        elif a.startswith("-") and a[1:].isalpha() and "u" in a.partition("o")[0]:
+            return True
+    return False
+
+
+def _global_config_write(s: Seg, root: Path) -> bool:
+    """A part of the command whose shell write the guard places on the global git config."""
+    try:
+        return bool(_global_config_problem(s, _write_targets(s, root)))
+    except Exception:  # a write it can't read: the commit and push rules' own reads still stand
+        return False
+
+
 class _Changers:
     """The parts of one command that may change what a push reads, each
     classified once: "config" (where pushes go), "refs" (a branch, a tag or
@@ -7291,8 +7333,10 @@ class _Changers:
             label = "git " + " ".join(_brief(a) for a in args[:2]) if args else ""
             if what:
                 self.parts.append((s, what, label, args))
-            if args and args[0] == "push" and any(a in ("-u", "--set-upstream") or re.fullmatch(r"-[a-zA-Z]*u[a-zA-Z]*", a) for a in args[1:]):
-                self.parts.append((s, "config", label, args))  # `-u` sets the branch's remote
+            if args and args[0] == "push" and _sets_upstream(args[1:]):
+                self.parts.append((s, "upstream", label, args))  # `-u` sets a branch's remote, which a push with none named reads
+            if _global_config_write(s, root):
+                self.parts.append((s, "url", posixpath.basename(s.words[0]), None))
         self.into: dict[tuple, bool] = {}
 
     def first(self, seg: Seg, kind: str, common: str | None = None) -> str | None:
@@ -7337,7 +7381,7 @@ def _push_env_config(segs: list[Seg], seg: Seg) -> str | None:
         if not _PUSH_ENV_CONFIG.fullmatch(name):
             continue
         # Only a key that may rewrite a URL counts here: any other config variable is judged with the push's remote.
-        if _SHELL_EXPANDS.search(value) or re.search(r"(?i)(^|['\"\s])(url|include|includeif)\.", value):
+        if _SHELL_EXPANDS.search(value) or re.search(r"(?i)(^|['\"\s])(url|remote|include|includeif)\.", value):
             return name
     return None
 
@@ -7488,6 +7532,7 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
 
     unsure, note, started = None, None, time.monotonic()
     changers: _Changers | None = None
+    dot_git: str | None = None  # the `.git` the command names, read once
     for seg in segs:
         g = _commit_git(seg.words)
         if not g or not g[1] or g[1][0] not in _PUSH_CMDS:
@@ -7509,7 +7554,7 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
             continue
         # A setting that may rewrite a URL (`url.<base>.pushInsteadOf`) can send any push anywhere, `project.repo` among them.
         cs = [glob[j + 1] for j, o in enumerate(glob[:-1]) if o == "-c"] + [o for o in glob if o.startswith("--config-env")]
-        rewrites = [k for k in cs if k.startswith("--config-env") or _URL_CONFIG_KEYS.match(k) or _SHELL_EXPANDS.search(k)]
+        rewrites = [k for k in cs if k.startswith("--config-env") or _URL_CONFIG_KEYS.match(k) or _SHELL_EXPANDS.search(k.partition("=")[0])]
         env = _push_env_config(segs, seg)
         other = changers.first(seg, "url")
         if rewrites or env or other:
@@ -7548,29 +7593,30 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
         def last(key: str) -> str:
             return (cfg.get(key) or [""])[-1]
 
+        if dot_git is None:
+            dot_git = _names_dot_git(command, segs) or ""
         is_remote = kind == "push" and named in remotes  # git looks a word up as a remote first
         if elsewhere and not is_remote:
-            continue  # another repository, by URL: as today
+            if dot_git:  # a `.git` written can rewrite the URL (`pushInsteadOf` in its config)
+                unsure = unsure or f"{cant}: the command names `{dot_git}`, which can change where it goes"
+            continue  # else another repository, by URL: as today
         # A push by a remote's name, or with none named, goes where the config of the repository git reads says:
         # what changes that config, or which repository git reads, makes it one the guard can't tell about.
         keys = [k for k in cs if not k.startswith("--config-env") and _PUSH_CONFIG_KEYS.match(k)]
         env = _push_env(segs, seg, _PUSH_ENV)
         other = changers.first(seg, "config")
         made = _made_by(segs, seg, d)
-        dot_git = (_names_dot_git(command, segs) or "") if not url_given else ""
-        if keys or env or other or made or dot_git:
+        if keys or env or other or made:
             if keys or env:
                 how = f"it sets `-c {_brief(keys[0])}`" if keys else f"the command sets `{env}`"
             elif other:
                 how = f"another part of the command runs `{other}`"
-            elif made:
-                how = f"it runs in `{_brief(d)}`, where another part of the command makes a repository or worktree"
             else:
-                how = f"the command names `{dot_git}`"
+                how = f"it runs in `{_brief(d)}`, where another part of the command makes a repository or worktree"
             unsure = unsure or f"{cant}: {how}, which can change where it goes or what it sends"
             continue
         if named is None and kind == "push":
-            moves = changers.first(seg, "refs", _git_common(d, pglob))
+            moves = changers.first(seg, "refs", _git_common(d, pglob)) or changers.first(seg, "upstream")
             if moves:  # git picks a bare push's remote by the branch checked out when it runs
                 unsure = unsure or f"{cant}: another part of the command runs `{moves}`, which can change where it goes and what it sends"
                 continue
@@ -7593,7 +7639,9 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
                 continue
             urls = [named]
         if not any(_project_url(u, code.repo) for u in urls):
-            continue  # another repository: as today
+            if dot_git:  # a `.git` written can change the remote's URL
+                unsure = unsure or f"{cant}: the command names `{dot_git}`, which can change where it goes"
+            continue  # else another repository: as today
         to = f"`{code.repo}`" if code.repo else f"`{_brief(named)}`"
         cant = f"the guard can't tell what `git {kind}` would send to {to}"
         common = _git_common(d, pglob)
@@ -7634,8 +7682,7 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
         if not srcs and not pseudo:
             continue  # it sends nothing
         if note is None:
-            note = _names_dot_git(command, segs) or ""
-            note = note and f"{cant}: the command names `{note}`, which can change what git reads"
+            note = dot_git and f"{cant}: the command names `{dot_git}`, which can change what git reads"
         # On the remote already: what a tracking ref of a remote fetching from `project.repo` holds,
         # not a remote's nested inside its name (`origin/fork`), which fetches from wherever it does.
         known = []

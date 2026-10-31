@@ -482,6 +482,13 @@ def test_the_push_rules_own_time_limit(proj, monkeypatch, capsys):
         "git tag --sort=refname vcode codeb && git push origin --tags",
         "git branch --format=x wip codeb && git push origin --all",
         "git fetch --refmap=+refs/heads/*:refs/heads/* side codeb && git push origin codeb",
+        "git push --set-up origin feature && git push",
+        "printf x >> ~/.gitconfig && git push side codeb",
+        "printf x >> .git/config && git push https://github.com/acme/sandbox codeb",
+        "git -c 'remote.x:y.url=git@github.com:acme/demo.git' push x:y codeb",
+        "git config remote.x:y.url git@github.com:acme/demo.git && git push x:y codeb",
+        "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.x:y.url GIT_CONFIG_VALUE_0=git@github.com:acme/demo.git git push x:y codeb",
+        "git remote add x:y git@github.com:acme/demo.git && git push x:y codeb",
     ],
 )
 def test_what_changes_where_a_push_by_a_remotes_name_goes(proj, tmp_path, monkeypatch, capsys, command):
@@ -495,8 +502,9 @@ def test_what_changes_where_a_push_by_a_remotes_name_goes(proj, tmp_path, monkey
     _code_commit(proj)
     git(proj, "checkout", "-q", "feature")
     command = command.format(cb=tmp_path / "cb.git", tmp=tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     d, why = hook(monkeypatch, capsys, proj, command)
-    assert d in ("ask", "deny") and ("can't tell" in why or "code path" in why or "setting `" in why), (command, d, why)
+    assert d == "ask" and "can't tell" in why, (command, d, why)
     assert hook(monkeypatch, capsys, proj, command, "conductor")[0] == "deny", command
 
 
@@ -548,6 +556,42 @@ def test_send_pack_with_no_repository(proj, monkeypatch, capsys, command):
 def test_config_and_tag_reads_with_options_beside_a_push(proj, monkeypatch, capsys, command):
     _docs_commit(proj)
     assert hook(monkeypatch, capsys, proj, command) == ("allow", ""), command
+
+
+def test_a_code_push_beside_a_named_dot_git_or_an_upstream_is_still_refused(proj, monkeypatch, capsys):
+    git(proj, "checkout", "-q", "-b", "codeb")
+    _code_commit(proj)
+    for command in ("git push origin codeb && echo see .git/remotes", "git push -u origin feature && git push origin codeb"):
+        d, why = hook(monkeypatch, capsys, proj, command)
+        assert d == "deny" and "src/app.py" in why, (command, why)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git -c http.extraHeader=\"Authorization: Bearer $TOKEN\" push https://github.com/acme/sandbox feature",
+        "git branch --format '%(refname:short)' && git push origin feature",
+        "git branch --sort committerdate && git push origin feature",
+        "git config get --show-names --all --regexp '^remote\\.' && git push https://github.com/acme/sandbox x",
+        "git push -u origin feature && git push origin HEAD:refs/heads/feature-2",
+    ],
+)
+def test_more_ordinary_parts_beside_a_push_decide_as_without_the_rule(proj, monkeypatch, capsys, command):
+    _docs_commit(proj)
+    for role in (None, "conductor"):
+        d, why = hook(monkeypatch, capsys, proj, command, role)
+        with monkeypatch.context() as m:
+            m.setattr(guard_mod, "_push_code", lambda *a, **k: (None, None))
+            today = hook(monkeypatch, capsys, proj, command, role)
+        assert (d, why) == today, (command, role, why)
+
+
+def test_a_long_option_cluster_doesnt_slow_the_rule(proj, monkeypatch, capsys):
+    import time
+
+    t = time.monotonic()
+    hook(monkeypatch, capsys, proj, "git push -" + "u" * 200_000 + "! origin x && git push origin feature")
+    assert time.monotonic() - t < 5
 
 
 def test_follow_tags_sends_no_commit_the_push_doesnt(proj, monkeypatch, capsys):
