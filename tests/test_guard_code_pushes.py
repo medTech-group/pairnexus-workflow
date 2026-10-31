@@ -639,8 +639,11 @@ def test_a_long_config_parameters_value_doesnt_slow_the_rule(proj, monkeypatch, 
     import time
 
     t = time.monotonic()
-    d, why = hook(monkeypatch, capsys, proj, "GIT_CONFIG_PARAMETERS=\"" + "'a'\\''" * 20_000 + "\" git push https://github.com/acme/sandbox x")
-    assert time.monotonic() - t < 5, why[:200]
+    value = "'" + "x'\\''" * 20_000 + "x'='y'"  # one long valid key, read to its end
+    assert guard_mod._config_params_keys(value) == ["x'" * 20_000 + "x"]
+    t = time.monotonic()
+    d, why = hook(monkeypatch, capsys, proj, f"GIT_CONFIG_PARAMETERS=\"{value}\" git push https://github.com/acme/sandbox x")
+    assert time.monotonic() - t < 5 and d == "allow", why[:200]
 
 
 def test_config_parameters_are_read_as_git_reads_them():
@@ -667,6 +670,54 @@ def test_a_config_key_the_shell_spells_counts(proj, monkeypatch, capsys, command
     _code_commit(proj)
     d, why = hook(monkeypatch, capsys, proj, command)
     assert d == "ask" and "can't tell" in why, (command, d, why)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "export GIT_CONFIG_KEY_0=remot; export GIT_CONFIG_KEY_0+=e.side.pushurl GIT_CONFIG_COUNT=1 GIT_CONFIG_VALUE_0=git@github.com:acme/demo.git; git push side codeb",
+        "read -r GIT_CONFIG_KEY_0 <<< remote.side.pushurl; export GIT_CONFIG_KEY_0 GIT_CONFIG_COUNT=1 GIT_CONFIG_VALUE_0=git@github.com:acme/demo.git; git push side codeb",
+        "GIT_CONFIG_VALUE_0=git@github.com:acme/demo.git git push side codeb",
+        "GIT_CONFIG_COUNT=1 git push side codeb",
+    ],
+)
+def test_config_variables_the_guard_cant_read_whole(proj, tmp_path, monkeypatch, capsys, command):
+    git(proj, "remote", "add", "side", str(_other_remote(tmp_path)))
+    git(proj, "checkout", "-q", "-b", "codeb")
+    _code_commit(proj)
+    d, why = hook(monkeypatch, capsys, proj, command)
+    assert d == "ask" and "can't tell" in why, (command, d, why)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git push me@backup.example:~/proj.git main",
+        "GIT_CONFIG_PARAMETERS=\"'http.extraheader'='Accept: */*'\" git push https://github.com/acme/sandbox x",
+        "git -c 'http.https://*.corp.example.proxy=http://p' push https://github.com/acme/sandbox x",
+        'cd "$X" && git push ./elsewhere.git main',
+        'cd "$X" && git push ../elsewhere.git main',
+    ],
+)
+def test_more_pushes_elsewhere_decide_as_today(proj, monkeypatch, capsys, command):
+    _code_commit(proj)
+    for role in (None, "conductor"):
+        d, why = hook(monkeypatch, capsys, proj, command, role)
+        with monkeypatch.context() as m:
+            m.setattr(guard_mod, "_push_code", lambda *a, **k: (None, None))
+            today = hook(monkeypatch, capsys, proj, command, role)
+        assert (d, why) == today, (command, role, why)
+
+
+def test_a_code_push_beside_a_glob_in_a_setting_is_refused(proj, monkeypatch, capsys):
+    git(proj, "checkout", "-q", "-b", "codeb")
+    _code_commit(proj)
+    for command in (
+        "git -c 'http.https://*.corp.example.proxy=http://p' push origin codeb",
+        "GIT_CONFIG_PARAMETERS=\"'http.extraheader'='Accept: */*'\" git push https://github.com/acme/demo codeb",
+    ):
+        d, why = hook(monkeypatch, capsys, proj, command)
+        assert d == "deny" and "src/app.py" in why, (command, why)
 
 
 def test_settings_variables_are_judged_by_their_keys(proj, monkeypatch, capsys):

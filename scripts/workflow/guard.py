@@ -7375,29 +7375,46 @@ def _push_env(segs: list[Seg], seg: Seg, pattern: re.Pattern) -> str | None:
     return next((n for n in names if pattern.fullmatch(n)), None)
 
 
-def _shell_spelled(word: str) -> bool:
+def _shell_spelled(word: str, globs: bool = False, assignment: bool = False) -> bool:
     """A word the shell may turn into others: a variable or a substitution,
-    a brace list or sequence, a glob, a tilde."""
-    return bool(_SHELL_EXPANDS.search(word) or _GLOB_CHARS.search(word) or re.search(r"[=:]~", word) or _brace_sequence(word) or len(_braces(word, 2)) > 1)
+    a leading tilde, a brace list or sequence; with `globs`, a glob (not in a
+    config key or value, where `*` is ordinary: `http.<url>.*`, `Accept: */*`);
+    in an `assignment`'s value, a tilde after `=` or `:` too."""
+    if _SHELL_EXPANDS.search(word) or _brace_sequence(word) or len(_braces(word, 2)) > 1:
+        return True
+    return bool((globs and _GLOB_CHARS.search(word)) or (assignment and re.search(r"[=:]~", word)))
 
 
-def _push_env_config(segs: list[Seg], seg: Seg, keys_re: re.Pattern) -> str | None:
+_CONFIG_VAR = re.compile(r"\bGIT_CONFIG_(PARAMETERS|COUNT|KEY_\w*|VALUE_\w*)\b")
+
+
+def _push_env_config(segs: list[Seg], seg: Seg, keys_re: re.Pattern, command: str) -> str | None:
     """A config variable (`GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_KEY_<n>`), set
     for the push or anywhere in the command, that sets a key matching
-    `keys_re`, one the shell spells, or a value it can't read."""
+    `keys_re`, one the shell spells, or a value it can't read. One the
+    command names other than as a whole `NAME=value` the guard reads (added
+    to with `+=`, exported bare, set by `read` or `printf -v`), or a count
+    or value for keys it doesn't set (inherited ones), counts whatever its keys."""
     pairs = [a.partition("=") for a in seg.assigns]
     for s in segs:
         if not s.words:
             pairs += [a.partition("=") for a in s.assigns]
         elif s.words[0] in _DECLARES:
             pairs += [w.partition("=") for w in s.words[1:] if not w.startswith("-")]
+    pairs = [(n, eq, v) for n, eq, v in pairs if _CONFIG_VAR.fullmatch(n.removesuffix("+"))]
+    mentioned = _CONFIG_VAR.findall(command)
+    if len(mentioned) > len(pairs) or any(n.endswith("+") or not eq for n, eq, _ in pairs):
+        return "GIT_CONFIG_" + mentioned[0] if mentioned else pairs[0][0].removesuffix("+")
+    named = {n for n, _, _ in pairs}
+    if any(n.startswith(("GIT_CONFIG_VALUE_", "GIT_CONFIG_COUNT")) for n in named) and not any(n.startswith("GIT_CONFIG_KEY_") for n in named):
+        return next(n for n in named if n.startswith(("GIT_CONFIG_VALUE_", "GIT_CONFIG_COUNT")))
     for name, _, value in pairs:
         name = name.removesuffix("+")
         if not _PUSH_ENV_CONFIG.fullmatch(name):
             continue
         # Only a key that may send a URL push elsewhere counts here: any other config variable is judged with the push's remote.
         if name == "GIT_CONFIG_PARAMETERS":
-            if _shell_spelled(value):
+            if _shell_spelled(value, assignment=True):
                 return name  # git reads it after the shell: anything can come in
             keys = _config_params_keys(value)
             if keys is None:
@@ -7616,7 +7633,7 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
             continue
         cant = f"the guard can't tell what `git {kind}` would send"
         named = p.repo
-        if named is not None and _shell_spelled(named):
+        if named is not None and _shell_spelled(named, globs=True):
             unsure = unsure or f"{cant}: its repository `{_brief(named)}` is one the shell expands"
             continue
         # A setting that may rewrite a URL (`url.<base>.pushInsteadOf`) can send any push anywhere, `project.repo` among them.
@@ -7624,15 +7641,15 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
         cs = [glob[j + 1] for j, o in enumerate(glob[:-1]) if o in ("-c", "--config-env")]
         cs += [o.partition("=")[2] for o in glob if o.startswith("--config-env=")]
         rewrites = [k for k in cs if _URL_CONFIG_KEYS.match(k) or _shell_spelled(k.partition("=")[0])]
-        env = _push_env_config(segs, seg, _URL_CONFIG_KEYS)
+        env = _push_env_config(segs, seg, _URL_CONFIG_KEYS, command)
         other = changers.first(seg, "url")
         if rewrites or env or other:
             what = f"`{env}`" if env else f"`{_brief(rewrites[0].partition('=')[0])}`" if rewrites else ""
             how = f"it sets {what}" if what else f"another part of the command runs `{other}`"
             unsure = unsure or f"{cant}: {how}, which can change where it goes"
             continue
-        # A remote's name rarely holds a `:` and never starts a path (`/`, `.`, `~`).
-        url_given = named is not None and (kind != "push" or ":" in named or named.startswith(("/", ".", "~")))
+        # A remote's name rarely holds a `:` and never starts a path (`/`, `.`).
+        url_given = named is not None and (kind != "push" or ":" in named or named.startswith(("/", ".")))
         elsewhere = url_given and not _project_url(named, code.repo)
         d = _git_dir_of(root, seg.cwd, cdir)
         if not d or "$" in d or "`" in d or not os.path.isdir(d):
@@ -7676,7 +7693,7 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
         # config says: only which repository git reads counts. Without refs, `push.default` says what it sends.
         fixed = url_given and not is_remote and bool(p.refspecs or p.branches or p.mirror or p.tags)
         keys = [k for k in cs if _PUSH_CONFIG_KEYS.match(k)] if not fixed else []
-        env = _push_env(segs, seg, _PUSH_ENV if not fixed else _PUSH_ENV_REPO) or (None if fixed else _push_env_config(segs, seg, _PUSH_CONFIG_KEYS))
+        env = _push_env(segs, seg, _PUSH_ENV if not fixed else _PUSH_ENV_REPO) or (None if fixed else _push_env_config(segs, seg, _PUSH_CONFIG_KEYS, command))
         other = changers.first(seg, "config") if not fixed else None
         made = _made_by(segs, seg, d)
         if keys or env or other or made:
