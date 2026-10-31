@@ -379,8 +379,10 @@ def test_a_remote_nested_in_another_remotes_name_isnt_on_project_repo(proj, tmp_
     git(fork, "config", "user.email", "t@example.com")
     git(fork, "config", "user.name", "t")
     _code_commit(fork)
-    git(proj, "remote", "add", "origin/fork", str(fork))
-    git(proj, "fetch", "-q", "origin/fork")
+    # Written as config: a newer git's `remote add` refuses a name nested in another remote's, but reads one written so.
+    git(proj, "config", "remote.origin/fork.url", str(fork))
+    git(proj, "config", "remote.origin/fork.fetch", "+refs/heads/*:refs/remotes/origin/fork/*")
+    git(proj, "fetch", "-q", str(fork), "+refs/heads/main:refs/remotes/origin/fork/main")
     d, why = hook(monkeypatch, capsys, proj, "git push origin origin/fork/main:refs/heads/fromfork")
     assert d == "deny" and "src/app.py" in why, why
 
