@@ -270,11 +270,13 @@ def test_the_conductor_skill_says_what_until_clean_does():
     aside = next(ln for ln in stop.splitlines() if "**Set aside at the end time**" in ln)
     assert "else the profile's `run.review_passes`" in aside and "else the profile's `run.review_passes`" in cap
     assert "mark it `needs-human` in the state" in aside and "remove `workflow:in-progress` and `ready-for-agent`" in aside
-    # A retry not yet started at the end time is set aside too.
-    assert "or one still `queued` with an open pull request from this run" in aside
+    # Once every session is archived, outside the per-session loop, a retry not yet started is set aside too.
+    assert "once every session is archived (at once, when none was running at the stop)" in aside
+    assert not aside.startswith("   -") and "or that is still `queued` (a retry not yet started)" in aside
+    assert "an open pull request on its ticket branch" in aside
     # The kick-off recommends until-clean for a ticket set aside at an earlier run's end time.
     size = skill.split("**The size, presets first.**", 1)[1].split("\n", 1)[0]
-    assert "set aside at an earlier run's end time" in size and "recommend `until-clean`" in size
+    assert "When a leftover adopted in step 1 is a ticket set aside at an earlier run's end time" in size and "recommend `until-clean`" in size
     assert "`pass_cap`" in skill.split("**The size, presets first.**", 1)[1].split("\n", 1)[0]
 
 
