@@ -6718,20 +6718,18 @@ def _nearer_repository(where: str, at: str) -> bool:
     return False
 
 
-def _made_by(segs: list[Seg], seg: Seg, where: str) -> str | None:
-    """What an earlier part of the command made at `where` (the commit's
-    directory) or a folder holding it: "init" or "clone" (another
-    repository) or "worktree" (one of the project's), the last of them."""
-    found = None
+def _made_earlier(segs: list[Seg], seg: Seg, where: str) -> bool:
+    """Whether an earlier part of the command makes a repository or worktree
+    (`git init`, `git clone`, `gh repo clone`, `git worktree add`) at `where`
+    (the commit's directory) or a folder holding it, with no repository
+    already nearer: what git would commit into there isn't on disk yet."""
     for s in segs:
         if s is seg:
-            break
+            return False
         m = _made_where(s)
-        if not m or not (where == m[1] or where.startswith(m[1].rstrip("/") + "/")):
-            continue
-        if _makes_repository(*m) and not _nearer_repository(where, m[1]):
-            found = m[0]
-    return found
+        if m and (where == m[1] or where.startswith(m[1].rstrip("/") + "/")) and _makes_repository(*m) and not _nearer_repository(where, m[1]):
+            return True
+    return False
 
 
 def _commit_code(segs: list[Seg], code: _Code, root: Path) -> tuple[str | None, str | None]:
@@ -6757,11 +6755,8 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path) -> tuple[str | None, 
             made, d = made or d, os.path.dirname(d)
         inside = _checkout_of(d, root) is not None
         cant = f"the guard can't tell what `git {args[0]}` would commit"
-        made_by = _made_by(segs, seg, made or d)
-        if made_by in ("init", "clone"):
-            continue  # a repository of its own, made earlier in the command: left to the push rule
-        if made_by == "worktree":
-            unsure = unsure or f"{cant}: it runs in `{made or d}`, a worktree the command adds first"
+        if _made_earlier(segs, seg, made or d):
+            unsure = unsure or f"{cant}: it runs in `{made or d}`, where the command makes a repository or worktree first"
             continue
         assigned = _assigned(seg)
         env = sorted(set(assigned) & _GIT_REPO_ENV)

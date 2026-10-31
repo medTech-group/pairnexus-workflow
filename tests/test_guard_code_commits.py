@@ -500,19 +500,34 @@ def test_a_directory_made_earlier_in_the_command(proj, monkeypatch, capsys):
     assert hook(monkeypatch, capsys, proj, "mkdir -p new && cd new && git commit -m d")[0] == "allow"
     # Outside the project, nothing to judge.
     assert hook(monkeypatch, capsys, proj, "cd /nonexistent/x && git commit -am x")[0] == "allow"
-    # A repository made there earlier in the command is another one; a worktree added there is the project's.
+    # A repository or worktree made there earlier in the command: what git would commit into isn't on disk yet.
     _changed_code(proj)
+    made = "where the command makes a repository or worktree first"
     for command in (
         "mkdir -p scratch && cd scratch && git init -q && echo a > a.txt && git add -A && git commit -qam init",
         "git init -q scratch2 && git -C scratch2 commit -qam init",
         "git init -q sub && cd sub && git commit -am x",
         "git clone -q ../proj-remote/acme/demo.git vendor/x && cd vendor/x && git commit -qam x",
+        "git worktree add -q -b wtb .claude/worktrees/w && cd .claude/worktrees/w && git commit -am x",
+        "gh repo clone acme/other && cd other && git commit -am x",
+        "git clone -q -b main ../proj-remote/acme/demo.git vendor/y && cd vendor/y && git commit -qam x",
+        # A variable or option that moves the repository back to the project's own (#401 finding 1).
+        "git init -q scratch && cd scratch && GIT_DIR=../.git GIT_WORK_TREE=.. git commit -am x",
+        "git init -q scratch && git -C scratch --git-dir=../.git --work-tree=.. commit -am x",
+        # A worktree made nearer the commit than the repository made above it (finding 2).
+        "git worktree add ../wt-389 && git init -q .. && cd ../wt-389 && git commit -am x",
+        # An init whose repository goes elsewhere (finding 3).
+        "GIT_DIR=/tmp/x-389 git init -q scratch && cd scratch && git commit -am x",
     ):
-        assert hook(monkeypatch, capsys, proj, command)[0] == "allow", command
-    d, why = hook(monkeypatch, capsys, proj, "git worktree add -q -b wtb .claude/worktrees/w && cd .claude/worktrees/w && git commit -am x")
-    assert d == "ask" and "a worktree the command adds first" in why, why
-    assert hook(monkeypatch, capsys, proj, "gh repo clone acme/other && cd other && git commit -am x")[0] == "allow"
-    assert hook(monkeypatch, capsys, proj, "git clone -q -b main ../proj-remote/acme/demo.git vendor/y && cd vendor/y && git commit -qam x")[0] == "allow"
+        d, why = hook(monkeypatch, capsys, proj, command)
+        assert d == "ask" and made in why, (command, why)
+        d, why = hook(monkeypatch, capsys, proj, command, "conductor")
+        assert d == "deny" and (made in why and "the conductor" in why or "setting `GIT_DIR`" in why), (command, why)
+    # A worktree added into an empty directory already there (finding 4) names that directory.
+    (proj / "empty").mkdir()
+    d, why = hook(monkeypatch, capsys, proj, "git worktree add -q -b wte empty && cd empty && git commit -am x")
+    assert d == "ask" and f"`{os.path.realpath(proj / 'empty')}`, {made}" in why, why
+    (proj / "empty").rmdir()
     # What another part made elsewhere doesn't decide this commit: it is the project's own.
     d, why = hook(monkeypatch, capsys, proj, "git init -q /tmp/scratch-389 && mkdir -p d && cd d && git commit -am x")
     assert d == "ask" and "doesn't exist yet" in why, why
@@ -537,11 +552,13 @@ def test_a_directory_made_earlier_in_the_command(proj, monkeypatch, capsys):
         "gh repo clone acme/other --upstream-remote-name up && cd other && git commit -am x",
         "git init -q docs/sub && mkdir -p docs/sub/new && cd docs/sub/new && git commit -am x",
     ):
-        assert hook(monkeypatch, capsys, proj, command)[0] == "allow", command
+        d, why = hook(monkeypatch, capsys, proj, command)
+        assert d == "ask" and made in why, (command, why)
     # A directory there already, with no repository of its own yet: `git init` makes one.
     (proj / "scratch").mkdir()
-    assert hook(monkeypatch, capsys, proj, "cd scratch && git init -q && git commit -qam init")[0] == "allow"
-    assert hook(monkeypatch, capsys, proj, "git init -q docs && mkdir -p docs/new && cd docs/new && git commit -am x")[0] == "allow"
+    for command in ("cd scratch && git init -q && git commit -qam init", "git init -q docs && mkdir -p docs/new && cd docs/new && git commit -am x"):
+        d, why = hook(monkeypatch, capsys, proj, command)
+        assert d == "ask" and made in why, (command, why)
     # What is made above, beside or on top of the project's own repository doesn't take its commits.
     for command in (
         "git init -q .. && git commit -am x",
@@ -553,7 +570,7 @@ def test_a_directory_made_earlier_in_the_command(proj, monkeypatch, capsys):
     ):
         d, why = hook(monkeypatch, capsys, proj, command)
         assert d == "deny" or (d == "ask" and "doesn't exist yet" in why), (command, d, why)
-        assert "worktree the command adds first" not in why, (command, why)
+        assert made not in why, (command, why)
     # A `git-commit` the guard finds first, before a `git` or `gh` word later on.
     d, why = hook(monkeypatch, capsys, proj, 'PATH="$(git --exec-path):$PATH" git-commit -a -m x -- scripts/git')
     assert d == "deny" and "`src/app.py`" in why, why
