@@ -270,6 +270,10 @@ def test_the_conductor_skill_says_what_until_clean_does():
     aside = next(ln for ln in stop.splitlines() if "**Set aside at the end time**" in ln)
     assert "else the profile's `run.review_passes`" in aside and "else the profile's `run.review_passes`" in cap
     assert "mark it `needs-human` in the state" in aside and "remove `workflow:in-progress` and `ready-for-agent`" in aside
+    # The state is written first, so an interrupted stop is finished on a resume; a held ticket is step 4's.
+    assert aside.index("write the state to the issue") < aside.index("then label it `needs-human`")
+    assert "On a resume, a ticket with that `for_owner` line gets whichever of these steps it still lacks." in aside
+    assert "without `requeued_head`" in aside
     # Once every session is archived, outside the per-session loop, a retry not yet started is set aside too.
     assert "once every session is archived (at once, when none was running at the stop)" in aside
     assert "\n\n   **Set aside at the end time**" in stop  # its own paragraph, not the bullet above's continuation
