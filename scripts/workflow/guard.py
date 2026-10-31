@@ -7388,9 +7388,14 @@ def _push_env_config(segs: list[Seg], seg: Seg) -> str | None:
         if not _PUSH_ENV_CONFIG.fullmatch(name):
             continue
         # Only a key that may send a URL push elsewhere counts here: any other config variable is judged with the push's remote.
-        keys = re.findall(r"'([^']*)'=", value) if name == "GIT_CONFIG_PARAMETERS" else [value.strip("'\"")]
-        if name == "GIT_CONFIG_PARAMETERS" and not keys:
-            keys = [value]  # not git's quoting: read as a whole
+        if name == "GIT_CONFIG_PARAMETERS":
+            if _SHELL_EXPANDS.search(value):
+                return name  # git reads it after the shell: anything can come in
+            # git's items: `'key'='value'`, or the older `'key=value'`.
+            items = re.findall(r"'((?:[^'\\]|\\.)*)'(=?)", value)
+            keys = [k if eq else k.partition("=")[0] for k, eq in items] or [value]
+        else:
+            keys = [value.strip("'\"")]
         if any(_SHELL_EXPANDS.search(k) or _URL_CONFIG_KEYS.match(k.strip()) for k in keys):
             return name
     return None
@@ -7614,10 +7619,12 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
             continue  # else another repository, by URL: as today
         # A push by a remote's name, or with none named, goes where the config of the repository git reads says:
         # what changes that config, or which repository git reads, makes it one the guard can't tell about.
-        # A push given `project.repo`'s URL goes there whatever the config: only which repository git reads counts.
-        keys = [k for k in cs if _PUSH_CONFIG_KEYS.match(k)] if not url_given else []
-        env = _push_env(segs, seg, _PUSH_ENV if not url_given else _PUSH_ENV_REPO)
-        other = changers.first(seg, "config") if not url_given else None
+        # A push given `project.repo`'s URL (not a remote's name) and its refs goes there and sends those whatever the
+        # config says: only which repository git reads counts. Without refs, `push.default` says what it sends.
+        fixed = url_given and not is_remote and bool(p.refspecs or p.branches or p.mirror or p.tags)
+        keys = [k for k in cs if _PUSH_CONFIG_KEYS.match(k)] if not fixed else []
+        env = _push_env(segs, seg, _PUSH_ENV if not fixed else _PUSH_ENV_REPO)
+        other = changers.first(seg, "config") if not fixed else None
         made = _made_by(segs, seg, d)
         if keys or env or other or made:
             if keys or env:

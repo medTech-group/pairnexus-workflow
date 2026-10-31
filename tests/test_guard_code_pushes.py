@@ -577,7 +577,6 @@ def test_a_code_push_beside_a_named_dot_git_or_an_upstream_is_still_refused(proj
         "git remote prune origin && git push https://github.com/acme/sandbox x",
         "git remote update && git push origin feature",
         "git --config-env=http.extraHeader=AUTH push https://github.com/acme/sandbox x",
-        "GIT_CONFIG_PARAMETERS=\"'http.extraheader'='Bearer $T'\" git push https://github.com/acme/sandbox x",
     ],
 )
 def test_more_ordinary_parts_beside_a_push_decide_as_without_the_rule(proj, monkeypatch, capsys, command):
@@ -588,6 +587,32 @@ def test_more_ordinary_parts_beside_a_push_decide_as_without_the_rule(proj, monk
             m.setattr(guard_mod, "_push_code", lambda *a, **k: (None, None))
             today = hook(monkeypatch, capsys, proj, command, role)
         assert (d, why) == today, (command, role, why)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git -c push.default=matching push git@github.com:acme/demo.git",
+        "git config push.default matching && git push git@github.com:acme/demo.git",
+        "GIT_CONFIG_PARAMETERS=\"'push.default'='matching'\" git push git@github.com:acme/demo.git",
+        "GIT_DIR={cb} git push git@github.com:acme/demo.git feature",
+        "GIT_CONFIG_PARAMETERS=\"'url.git@github.com:acme/demo.git.pushInsteadOf=https://github.com/acme/sandbox'\" git push https://github.com/acme/sandbox codeb",
+        "GIT_CONFIG_PARAMETERS=\"'http.x'='$T'\" git push https://github.com/acme/sandbox codeb",
+        "git remote set-url --push x:y git@github.com:acme/demo.git && git push x:y codeb",
+    ],
+)
+def test_what_changes_what_a_url_push_sends(proj, tmp_path, monkeypatch, capsys, command):
+    """A push given a URL: with no refs, `push.default` says what it sends;
+    a remote of that name is looked up first; GIT_CONFIG_PARAMETERS is read
+    as git reads it, after the shell."""
+    git(proj, "config", "remote.x:y.url", str(_other_remote(tmp_path)))
+    git(proj, "checkout", "-q", "-b", "codeb")
+    _code_commit(proj)
+    git(proj, "checkout", "-q", "main")
+    git(proj, "merge", "-q", "--ff-only", "codeb")
+    git(proj, "checkout", "-q", "feature")
+    d, why = hook(monkeypatch, capsys, proj, command.format(cb=tmp_path / "cb.git"))
+    assert d == "ask" and "can't tell" in why, (command, d, why)
 
 
 def test_a_tag_made_beside_a_push_of_tags(proj, monkeypatch, capsys):
