@@ -6796,7 +6796,10 @@ def _makes_repository(kind: str, at: str) -> bool:
     exist yet or is an empty directory (else it fails)."""
     if kind == "init":
         return not os.path.exists(os.path.join(at, ".git"))
-    return not os.path.exists(at) or (os.path.isdir(at) and not os.listdir(at))
+    try:
+        return not os.path.exists(at) or (os.path.isdir(at) and not os.listdir(at))
+    except OSError:  # a folder it can't list: it may be made there
+        return True
 
 
 def _nearer_repository(where: str, at: str) -> bool:
@@ -7295,7 +7298,10 @@ def _pushes_into(s: Seg, args: list[str], root: Path, common: str | None) -> boo
         if not _local_url(u):
             continue  # elsewhere: only its tracking refs move
         path = re.sub(r"(?i)^file://", "", u.strip())
-        target = _git_common(os.path.join(d, os.path.expanduser(path)), [])
+        try:
+            target = _git_common(os.path.join(d, os.path.expanduser(path)), [])
+        except (ValueError, UnicodeError, OSError):  # a path it can't place (a NUL, a lone surrogate)
+            return True
         if target is None or common is None or target == common:
             return True
     return False
@@ -7705,7 +7711,10 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
         keys = [k for k in cs if _PUSH_CONFIG_KEYS.match(k)] if not fixed else []
         env = _push_env(segs, seg, _PUSH_ENV if not fixed else _PUSH_ENV_REPO) or (None if fixed else _push_env_config(segs, seg, _PUSH_CONFIG_KEYS))
         other = changers.first(seg, "config") if not fixed else None
-        made = _made_by(segs, seg, d)
+        try:
+            made = _made_by(segs, seg, d)
+        except (ValueError, UnicodeError, OSError):  # a path it can't place: something may be made there
+            made = "earlier"
         if keys or env or other or made:
             if keys or env:
                 how = f"it sets `-c {_brief(keys[0])}`" if keys else f"the command sets `{env}`"

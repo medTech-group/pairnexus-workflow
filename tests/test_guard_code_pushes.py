@@ -764,6 +764,15 @@ def test_a_push_to_a_path_elsewhere_decides_as_today(proj, tmp_path, monkeypatch
         assert (d, why) == today, (command, role, why)
 
 
+@pytest.mark.parametrize("word", ["~a\x00b", "~\udc80"])
+def test_a_path_the_guard_cant_place_beside_a_push(proj, monkeypatch, capsys, word):
+    """Asked as a push it can't tell about, never as the guard breaking."""
+    _docs_commit(proj)
+    for command in (f"git push '{word}' main && git push origin feature", f"git clone x '{word}' && git push origin feature"):
+        d, why = hook(monkeypatch, capsys, proj, command)
+        assert "isn't working" not in why, why
+
+
 def test_a_tag_made_beside_a_push_of_tags(proj, monkeypatch, capsys):
     """`--column` takes no next word: `vcode` is the tag git makes."""
     _code_commit(proj)
