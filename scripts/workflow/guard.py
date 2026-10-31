@@ -5713,7 +5713,7 @@ def check_bash(
         p = _shell_code(segs, code, root)
         if p:
             return Decision("deny", p)
-        p, unsure = _commit_code(segs, code, root)
+        p, unsure = _commit_code(segs, code, root, command)
         if p:
             return Decision("deny", p)
         if unsure:
@@ -6729,38 +6729,40 @@ def _nearer_repository(where: str, at: str) -> bool:
 
 
 def _made_earlier(segs: list[Seg], seg: Seg, where: str) -> bool:
-    """Whether an earlier part of the command makes a repository or worktree
-    (`git init`, `git clone`, `gh repo clone`, `git worktree add`) at `where`
-    (the commit's directory) or a folder holding it, with no repository
-    already nearer: what git would commit into there isn't on disk yet."""
+    """Whether another part of the command (earlier, or one that may run
+    first, in the background) makes a repository or worktree (`git init`,
+    `git clone`, `gh repo clone`, `git worktree add`) at `where` (the
+    commit's directory) or a folder holding it, with no repository already
+    nearer: what git would commit into there isn't on disk yet."""
     for s in segs:
         if s is seg:
-            return False
+            continue
         m = _made_where(s)
         if m and (where == m[1] or where.startswith(m[1].rstrip("/") + "/")) and _makes_repository(*m) and not _nearer_repository(where, m[1]):
             return True
     return False
 
 
-_DOT_GIT = re.compile(r"(^|[/=])\.git(/|$)")  # a `.git` as a path's part, `GIT_DIR=.git`'s too
+# A `.git` (any case, as a case-insensitive file system finds it) as a word or a path's part, not `.gitignore` or `demo.git`.
+_DOT_GIT = re.compile(r"\S*(?<![\w.-])\.git(?![\w.-])\S*", re.IGNORECASE)
 
 
-def _names_dot_git(segs: list[Seg], seg: Seg) -> str | None:
-    """A word of an earlier part of the command that names a `.git` (one it
-    may write, link, move or remove, changing where git commits), or None."""
-    for s in segs:
-        if s is seg:
-            return None
-        for w in [*s.assigns, *s.words, *s.redirects]:
-            if _DOT_GIT.search(w):
-                return w if len(w) <= 80 else w[:79] + "…"
-    return None
+def _names_dot_git(command: str) -> str | None:
+    """The word of the command, anywhere in its text (a loop's list, a
+    here-string, a part that runs first in the background), that names a
+    `.git`: one it may read, write, link, move or remove, which can change
+    where git commits; else None."""
+    m = _DOT_GIT.search(command)
+    if not m:
+        return None
+    w = m.group(0)
+    return w if len(w) <= 80 else w[:79] + "…"
 
 
-def _commit_code(segs: list[Seg], code: _Code, root: Path) -> tuple[str | None, str | None]:
+def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tuple[str | None, str | None]:
     """(why a commit in the command carries a code path, why the guard can't
     tell what one carries), each None when it doesn't apply."""
-    unsure, project = None, None
+    unsure, project, note = None, None, None
     for seg in segs:
         g = _commit_git(seg.words)
         if not g or not g[1]:
@@ -6777,9 +6779,9 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path) -> tuple[str | None, 
             continue  # a directory the guard can't follow: left to the push rule
         d = os.path.realpath(d)
         cant = f"the guard can't tell what `git {args[0]}` would commit"
-        named = _names_dot_git(segs, seg)
-        if named:  # judged still, so a refusal stands; otherwise asked
-            unsure = unsure or f"{cant}: an earlier part of the command names `{named}`, which can change where git commits"
+        named = _names_dot_git(command)
+        if named:  # judged still, so a refusal stands; otherwise asked, when nothing more telling is
+            note = note or f"{cant}: the command names `{named}`, which can change where git commits"
         if not os.path.isdir(d):  # made earlier in the command (a folder, a link, a repository), or never
             unsure = unsure or f"{cant}: it runs in `{d}`, which doesn't exist yet"
             continue
@@ -6836,7 +6838,7 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path) -> tuple[str | None, 
                 break
             what = "this commit" if args[0] == "commit" else f"the commit finishing this `git {args[0]}`"
             return f"{what} carries the code path {_shown(hit)} ({hit.pattern}); {code.instead}", None
-    return None, unsure
+    return None, unsure or note
 
 
 def _unsure_commit(unsure: str, role: str, code: _Code) -> Decision:

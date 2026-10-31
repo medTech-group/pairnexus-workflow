@@ -528,10 +528,12 @@ def test_a_directory_made_earlier_in_the_command(proj, tmp_path, monkeypatch, ca
             "mkdir -p scratch && cd scratch && git init -q && echo a > a.txt && git add -A && git commit -qam init",
             "git init -q docs && cd docs && git commit -am x",
             "git init -q docs && git -C docs/../docs commit -am x",
+            "(cd docs && sleep 1 && git commit -am x) & git init -q docs; wait",  # the init may run first
             "git worktree add -q -b wte scratch && cd scratch && git commit -am x",
             f"GIT_DIR={proj}/.git git worktree add -q -b wtg scratch && cd scratch && git commit -am x",
             f"git --git-dir={proj}/.git worktree add -q -b wtg scratch && cd scratch && git commit -am x",
             f"git init -q --separate-git-dir {proj}/.git {out}-empty && git -C {out}-empty commit -m x",
+            f"git init -q --separate-git-dir {tmp_path}/pg {out}-empty && git -C {out}-empty commit -m x",  # a link to it
             f"git init -q {wt}/docs && cd {wt}/docs && git commit -am x",  # in a worktree of the project's, outside it
             # A relative `--git-dir` is read from the place an init makes; a clone ignores it.
             "git --git-dir=.git init -q docs && cd docs && git commit -am x",
@@ -543,10 +545,17 @@ def test_a_directory_made_earlier_in_the_command(proj, tmp_path, monkeypatch, ca
             f"printf 'gitdir: {proj}/.git' > {tmp_path}/.git && git -C {tmp_path} --work-tree={proj} commit -am x",
             "rm -rf vendor/lib/.git && cd vendor/lib && git commit -m x ../../src/app.py",
             "cat .git/HEAD && git commit -m d docs/a.md",
+            # Named anywhere in the command's text, in any case.
+            f'for n in .git; do ln -s "$PWD/$n" "{out}-empty/$n"; done; git -C {out}-empty --work-tree={proj} commit -qam x',
+            f'IFS= read -r n <<< .git; ln -s "$PWD/$n" "{out}-empty/$n"; git -C {out}-empty --work-tree={proj} commit -qam x',
+            f"sleep 1 && git -C {out}-empty --work-tree={proj} commit -qam x & ln -s {proj}/.git {out}-empty/.git; wait",
+            f"ln -s {proj}/.GIT {out}-empty/.GIT && git -C {out}-empty --work-tree={proj} commit -qam x",
+            f'D={out}-empty/.git; ln -s {proj}/.git "$D"; git -C {out}-empty --work-tree={proj} commit -qam x',
         ),
     }
     (proj / "scratch").mkdir()
     (tmp_path / "scratch-out-empty").mkdir()
+    (tmp_path / "pg").symlink_to(proj / ".git")
     (proj / "vendor/lib").mkdir(parents=True)
     git(proj / "vendor/lib", "init", "-q")  # a repository nested in the project: its commits are another one's
     assert hook(monkeypatch, capsys, proj, "cd vendor/lib && git commit -m x ../../src/app.py") == ("allow", "")
@@ -591,6 +600,13 @@ def test_a_directory_made_earlier_in_the_command(proj, tmp_path, monkeypatch, ca
     git(proj, "checkout", "-q", "--", CODE)
     _docs_only(proj)
     assert hook(monkeypatch, capsys, proj, "git worktree add ../wt-389 && cd docs && git commit -m d")[0] == "allow"
+    # Names like `.git`'s aren't a `.git`.
+    for command in (
+        "cat .gitignore && git commit -m d",
+        "ls .github .gitattributes .git-blame-ignore-revs .GitHub; git commit -m d",
+        "git clone -q ../proj-remote/acme/demo.git /tmp/c-389; git clone -q git@github.com:acme/x.git /tmp/d-389; git commit -m d",
+    ):
+        assert hook(monkeypatch, capsys, proj, command) == ("allow", ""), command
 
 
 def test_a_later_no_option_cancels_a_dry_run(proj, monkeypatch, capsys):
