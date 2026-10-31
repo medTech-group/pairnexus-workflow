@@ -216,7 +216,7 @@ def test_the_briefing_words_until_clean(tmp_path):
     c["review"]["passes"] = "until-clean"
     brief = _brief(tmp_path, c)
     line = _line(brief, "- **Pass cap:**")
-    assert line.startswith(f"- **Pass cap:** none: after the last review round, {WORDS}: fix each pass's findings")
+    assert line.startswith(f"- **Pass cap:** none: after the last review round, {WORDS}. Fix each pass's findings")
     assert "at most" not in line
     assert "`merge-check` never says `passes_used_up`" in line
     assert "findings table" in line

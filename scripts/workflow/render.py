@@ -311,9 +311,9 @@ def _pass_cap(review: dict) -> str:
     `until-clean`'s (#402), which never stops at `passes_used_up`."""
     if review["passes"] == presets_mod.UNTIL_CLEAN:
         return (
-            f"{presets_mod.pass_cap_words(review)}: fix each pass's findings and run another. `merge-check` never "
+            f"{presets_mod.pass_cap_words(review)}. Fix each pass's findings and run another; `merge-check` never "
             "says `passes_used_up`. Keep the PR body's findings table current after each pass, so the open findings "
-            "are there if the run's end time comes first: the conductor then sets the ticket aside."
+            "are there if the run's end time comes first (the conductor then sets the ticket aside)."
         )
     return f"{presets_mod.pass_cap_words(review)}. When `merge-check` says `passes_used_up`, the cap is reached: stop (below)."
 

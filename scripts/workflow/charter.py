@@ -134,8 +134,8 @@ QUESTIONS: list[dict[str, Any]] = [
         "Choosing a preset sets preset, limits (but ends_at and check_in_minutes) and review from presets[name]. "
         "review.passes (the pass cap) and the small threshold (review.small_max_lines, review.small_max_files) are "
         "the profile's in every preset: add one to review only when the owner changes it. The pass cap is offered "
-        "beside the presets (pass_cap): the profile's first, then the other, review.passes \"until-clean\" (Correctness "
-        "passes until one is clean, within the run's end time) or, when the profile's is \"until-clean\", a number.",
+        "beside the presets (pass_cap): the profile's first, then review.passes \"until-clean\" (Correctness passes "
+        "until one is clean, within the run's end time), or 2, the profile's default, when the profile's is \"until-clean\".",
         "options": list(presets_mod.PRESETS),
         "default": {"ends_at": None, **presets_mod.numbers(presets_mod.DEFAULT)["limits"], "check_in_minutes": 20},
     },
