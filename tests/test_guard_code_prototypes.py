@@ -1172,12 +1172,12 @@ def test_a_remote_defined_in_a_file_of_its_own_beside_a_ref_move(tmp_path, monke
 
         return lister
 
-    monkeypatch.setattr(guard_mod.os, "scandir", unlistable(guard_mod.os.scandir))
-    monkeypatch.setattr(guard_mod.os, "listdir", unlistable(guard_mod.os.listdir))
     _change(root, CODE)
-    d, why = hook(monkeypatch, capsys, root, "git commit -am x && git push")
+    with monkeypatch.context() as m:
+        m.setattr(guard_mod.os, "scandir", unlistable(guard_mod.os.scandir))
+        m.setattr(guard_mod.os, "listdir", unlistable(guard_mod.os.listdir))
+        d, why = hook(monkeypatch, capsys, root, "git commit -am x && git push")
     assert d == "deny" and "unjudged" in why, why
-    monkeypatch.undo()
     # A relative path to another repository is one.
     root = _prototype(tmp_path / "c")
     git(root, "init", "-q", "--bare", "backups/b.git")
