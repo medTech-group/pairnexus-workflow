@@ -14,6 +14,7 @@ Through `workflow hook guard`, run as Claude Code runs it, in temporary git
 repositories cloned from a bare remote (`…/acme/demo.git`). The commands are
 data given to the hook; only the set-up runs."""
 
+import os
 import subprocess
 
 import pytest
@@ -572,3 +573,75 @@ def test_a_push_leaves_the_object_store_as_it_was(proj, monkeypatch, capsys):
     before = sorted(str(p.relative_to(proj)) for p in (proj / ".git/objects").rglob("*"))
     assert hook(monkeypatch, capsys, proj, "git push origin feature")[0] == "deny"
     assert sorted(str(p.relative_to(proj)) for p in (proj / ".git/objects").rglob("*")) == before
+
+
+def test_a_pushed_octopus_merge_is_judged_by_its_own_changes(proj, monkeypatch, capsys):
+    _on_base(proj, lambda r: _edit(r, CODE, "v5 = 5", "v5 = 'base'"))
+    git(proj, "checkout", "-q", "-b", "two", "origin/main")
+    _commit(proj, lambda r: _edit(r, CODE, "v1 = 1", "v1 = 'two'"))
+    git(proj, "push", "-q", "origin", "two")
+    git(proj, "checkout", "-q", "feature")
+    _commit(proj, lambda r: _change(r, DOC, "# Branch\n"))
+    assert _merge(proj, "--no-commit", "origin/main", "origin/two") == 0
+    _finish(proj)
+    assert hook(monkeypatch, capsys, proj, "git push origin feature", "conductor") == ("allow", "")
+    git(proj, "reset", "-q", "--hard", "HEAD^")
+    assert _merge(proj, "--no-commit", "origin/main", "origin/two") == 0
+    _change(proj, "src/new.py", "x = 1\n")
+    git(proj, "add", "-A")
+    _finish(proj)
+    d, why = hook(monkeypatch, capsys, proj, "git push origin feature", "conductor")
+    assert d == "deny" and "merge commit" in why and "src/new.py" in why, why
+
+
+def test_a_name_holding_a_space_and_b_slash_is_read_whole(proj, monkeypatch, capsys):
+    """git's `diff --git a/<path> b/<path>` header, unquoted, is split at its middle."""
+    name = "src/a b/c.py"
+    _base_code(proj)
+    _commit(proj, lambda r: _change(r, DOC, "# Branch\n"))
+    assert _merge(proj, "--no-commit", "origin/main") == 0
+    _change(proj, name, "x = 1\n")
+    git(proj, "add", "-A")
+    d, why = hook(monkeypatch, capsys, proj, "git commit --no-edit")
+    assert d == "deny" and f"`{name}`" in why, why
+    _finish(proj)
+    d, why = hook(monkeypatch, capsys, proj, "git push origin feature")
+    assert d == "deny" and f"`{name}`" in why, why
+
+
+def test_a_long_line_in_a_merge_s_own_change_is_passed_over(proj, monkeypatch, capsys):
+    """A patch's content line longer than the guard keeps doesn't hide the code path after it."""
+    _base_code(proj)
+    _commit(proj, lambda r: _change(r, DOC, "# Branch\n"))
+    assert _merge(proj, "--no-commit", "origin/main") == 0
+    _change(proj, "docs/bundle.txt", "x" * 300_000 + "\n")
+    _change(proj, "src/extra.py", "x = 1\n")
+    git(proj, "add", "-A")
+    d, why = hook(monkeypatch, capsys, proj, "git commit --no-edit")
+    assert d == "deny" and "src/extra.py" in why, why
+
+
+def test_keeping_the_branch_s_version_when_the_merge_can_t_be_read_is_asked(proj, monkeypatch, capsys):
+    """With the merge unread, what is staged is compared with every parent:
+    a code conflict resolved to `HEAD`'s version still differs from the base's."""
+    _code_conflict(proj, resolved="v5 = 'branch'\n")
+    git(proj, "config", "merge.mine.driver", "true")
+    d, why = hook(monkeypatch, capsys, proj, "git commit --no-edit")
+    assert d == "ask" and "merge driver" in why and "src/app.py" in why, why
+    d, why = hook(monkeypatch, capsys, proj, "git commit --no-edit", "conductor")
+    assert d == "deny" and "can't tell" in why, why
+
+
+def test_with_a_git_older_than_2_36_a_push_is_asked(proj, monkeypatch, capsys, tmp_path):
+    import shutil
+
+    real = shutil.which("git")
+    fake = tmp_path / "old-git" / "git"
+    fake.parent.mkdir()
+    fake.write_text(f'#!/bin/sh\ncase "$*" in *--diff-merges=remerge*) echo "fatal: unknown value for --diff-merges" >&2; exit 128;; esac\nexec {real} "$@"\n')
+    fake.chmod(0o755)
+    _docs_conflict(proj)
+    _finish(proj)
+    monkeypatch.setenv("PATH", f"{fake.parent}{os.pathsep}{os.environ['PATH']}")
+    d, why = hook(monkeypatch, capsys, proj, "git push origin feature")
+    assert d == "ask" and "can't tell" in why and "--diff-merges" in why, why

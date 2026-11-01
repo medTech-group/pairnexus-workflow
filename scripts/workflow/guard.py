@@ -6556,7 +6556,7 @@ def _commit_args(args: list[str]) -> _Commit:
     return c
 
 
-# How the guard runs its own git reads: no fsmonitor, signature check or replacement objects run or count, and a root commit's changes are shown.
+# How the guard runs its own git reads: no fsmonitor, hook, signature check or replacement objects run or count, and a root commit's changes are shown.
 _GIT_READ = ["git", "--no-replace-objects", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "diff.relative=false", "-c", "log.showSignature=false", "-c", "log.showRoot=true"]
 _GIT_READ_SECONDS = 5  # the most one git read may take
 
@@ -6671,6 +6671,8 @@ _C_ESCAPES = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 3
 _OCTAL = re.compile(r"[0-3][0-7][0-7]")
 _FULL_INDEX = ["-c", "core.splitIndex=false"]  # the guard's copy of the index is written whole, adding no shared index
 _UNMERGED_CAP = 1000  # the most unmerged files the guard settles in its copy of the index
+_PATCH_LINE_CAP = 1 << 16  # a longer line of a patch that starts no header is passed over, not kept
+_DRIVER_RUNS = "git's config names a merge driver (`{}`), which merging the parents again would run"
 
 
 def _c_unquoted(name: str) -> tuple[str, str]:
@@ -6744,8 +6746,9 @@ def _merge_driver(d: str, glob: list[str]) -> tuple[str, str]:
 def _scratch_store(d: str, glob: list[str], index: bool = True):
     """(the environment of a temporary object store that reads the
     repository's objects as alternates, with a copy of its index when
-    `index`, else None; what failed). git's own temporary objects (a merge made again) go there,
-    and go with it, so the repository is left as it was."""
+    `index`, else None; what failed). git's own temporary objects (a
+    merge's parents merged again) go there, and go with it, so the
+    repository is left as it was."""
     import tempfile  # here, not at the top: only a read of a merge needs it, and the hook starts on every tool
 
     got, err = _memo_read(d, glob, "rev-parse", "--git-path", "index", "--git-path", "objects", sep="\n")
@@ -6816,7 +6819,7 @@ def _merge_own_code(d: str, glob: list[str], heads: list[str], code: _Code) -> t
     if len(heads) == 1:
         driver, err = _merge_driver(d, glob)
         if driver or err:
-            return None, err or f"git's config names a merge driver (`{driver}`), which merging the parents again would run"
+            return None, err or _DRIVER_RUNS.format(driver)
     with _scratch_store(d, glob) as (env, err):
         if env is None:
             return None, err
@@ -7154,11 +7157,14 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tupl
                 break
             what = finishing if heads or args[0] != "commit" else "this commit"
             return f"{what} carries the code path {_shown(hit)} ({hit.pattern}); {code.instead}", None
-        if own_err:  # it couldn't read the merge's own changes: asked when what is staged includes code
-            staged, _ = _carried(d, glob, _Commit(), pathspec_env)
+        if own_err:  # it couldn't read the merge's own changes: asked when what is staged differs from a parent in code
+            staged: list[str] | None = []
+            for parent in ["HEAD", *heads]:
+                got, _ = _git_read(d, glob, "diff", "--name-only", "-z", "--no-renames", "--cached", "--end-of-options", parent, "--", env=pathspec_env)
+                staged = None if got is None or staged is None else staged + got
             hit = next((_Hit(f, m, wt) for f in staged or [] for m in [_listed_code(f, code)] if m), None)
             if hit or staged is None:
-                shown = f", and what is staged includes the code path {_shown(hit)} ({hit.pattern})" if hit else ""
+                shown = f", and what is staged differs from a parent in the code path {_shown(hit)} ({hit.pattern})" if hit else ""
                 unsure = unsure or f"{cant}: it couldn't read the merge's own changes ({own_err}){shown}"
     return None, unsure or note
 
@@ -7759,7 +7765,7 @@ def _sent_code(
     `patch`, `git log` writes patches (merges' own changes, #391), whose paths
     are their file headers' rather than `--name-only`'s. `env` adds to git's
     environment."""
-    # Imported here, not at the top: only a push to `project.repo` needs them, and the hook starts on every tool.
+    # Imported here, not at the top: only a push to `project.repo`, or a commit finishing a merge, needs them, and the hook starts on every tool.
     import queue
     import tempfile
     import threading
@@ -7792,7 +7798,7 @@ def _sent_code(
 
     reader = threading.Thread(target=pump, daemon=True)
     reader.start()
-    pending, sha, sep = bytearray(), "", b"\n" if patch else b"\0"
+    pending, sha, sep, skipping = bytearray(), "", b"\n" if patch else b"\0", False
     try:
         while True:
             try:
@@ -7803,10 +7809,16 @@ def _sent_code(
                 break
             items, start = [], 0
             while (end := b.find(sep, start)) != -1:  # only the new chunk is searched: a long line stays linear
-                items.append(bytes(pending) + b[start:end])
+                if not skipping:
+                    items.append(bytes(pending) + b[start:end])
+                skipping = False
                 pending.clear()
                 start = end + 1
-            pending += b[start:]
+            if not skipping:
+                pending += b[start:]
+                if patch and len(pending) > _PATCH_LINE_CAP and not pending.startswith((b"diff --", b"\x01\x02")):
+                    pending.clear()  # a patch's content line: never a file header, so not kept
+                    skipping = True
             for raw in items:
                 item = raw.decode("utf-8", errors="replace").removeprefix("\n")
                 m = _COMMIT_HEADER.fullmatch(item)
@@ -8026,28 +8038,31 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
         # Each commit but a merge by the files it changes, a merge of more parents, then of two, by its own changes (#391).
         memo = _PUSH_MEMO if _PUSH_MEMO is not None else {}
         driver, err = _merge_driver(d, pglob)
-        found, kind = None, ""
+        found, a_merge = None, False
         sends = ["--not", *known, "--not", *sorted(pseudo), "--end-of-options", *srcs, "--"]
-        for kind, args in [("files", _FILES), ("octopus", _OCTOPUS)] + ([] if driver else [("remerge", _REMERGE)]):
+        # (what it reads, how: `git log`'s options, a patch, in a temporary object store of its own)
+        reads = [("files", _FILES, False, False), ("octopus", _OCTOPUS, True, False)] + ([] if driver else [("remerge", _REMERGE, True, True)])
+        for read, log_args, patch, scratch in reads:
             if err:
                 break
-            key = ("log", kind, d, tuple(pglob), tuple(known), tuple(sorted(pseudo)), tuple(srcs))
+            key = ("log", read, d, tuple(pglob), tuple(known), tuple(sorted(pseudo)), tuple(srcs))
             if key not in memo:
-                if kind == "remerge":  # git merges each again in a temporary object store, the guard's own
-                    with _scratch_store(d, pglob, index=False) as (env, e):
-                        memo[key] = _sent_code(d, [*pglob, *_REMERGE_CONFIG], ["log", *args, *sends], code, True, env) if env else (None, e)
+                if scratch:  # git merges each again in a temporary object store, the guard's own
+                    with _scratch_store(d, pglob, index=False) as (store, e):
+                        memo[key] = _sent_code(d, [*pglob, *_REMERGE_CONFIG], ["log", *log_args, *sends], code, patch, store) if store else (None, e)
                 else:
-                    memo[key] = _sent_code(d, pglob, ["log", *args, *sends], code, kind == "octopus")
+                    memo[key] = _sent_code(d, pglob, ["log", *log_args, *sends], code, patch)
             found, err = memo[key]
+            a_merge = patch  # only merges are read as patches
             if found:
                 break
         if driver and not found and not err:  # a merge of two parents it doesn't merge again
             merges, err = _memo_read(d, pglob, "rev-list", "--merges", "--max-parents=2", "-1", *sends, sep="\n")
             if merges:
-                err = f"it sends merge commit {merges[0][:7]}, and git's config names a merge driver (`{driver}`), which merging its parents again would run"
+                err = f"it sends merge commit {merges[0][:7]}, and {_DRIVER_RUNS.format(driver)}"
         if found:
             sha, hit = found
-            if kind != "files":
+            if a_merge:
                 return f"this push sends merge commit {sha}, which carries the code path {_shown(hit)} ({hit.pattern}), {_MERGE_OWN}, to {to}; {code.instead}", None
             return f"this push sends commit {sha}, which carries the code path {_shown(hit)} ({hit.pattern}), to {to}; {code.instead}", None
         if not err:
