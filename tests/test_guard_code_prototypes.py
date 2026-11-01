@@ -16,6 +16,8 @@ Through `workflow hook guard`, run as Claude Code runs it, in temporary git
 repositories cloned from a bare remote (`…/acme/demo.git`). The commands are
 data given to the hook; only the set-up runs."""
 
+import subprocess
+
 import pytest
 
 from changelog_notes import since_0110
@@ -219,7 +221,6 @@ def test_a_push_of_prototype_code_to_another_branch_is_refused(tmp_path, monkeyp
         "git push origin prototype/x:refs/heads/feature",
         "git push origin prototype/x prototype/x:feature",
         "git push origin prototype/x:heads/prototype/y",
-        "git push origin prototype/x:prototype/y",
         "git push origin prototype/x:refs/tags/prototype/x",
         "git push origin origin/prototype/x:refs/heads/feature" if pushed else "git push origin prototype/x:feature",
     ):
@@ -314,12 +315,51 @@ def test_a_push_with_prototype_push_settings_goes_through(tmp_path, monkeypatch,
     assert hook(monkeypatch, capsys, root, "git push origin")[0] == "allow"
 
 
-@pytest.mark.parametrize("command", ['git push origin "prototype/x:$B"', "git push origin prototype/x:{prototype/y,main}", "git push --all origin", "git push --mirror origin"])
-def test_a_destination_it_cant_read_is_judged_as_any_push(tmp_path, monkeypatch, capsys, command):
+@pytest.mark.parametrize(
+    "command, why",
+    [
+        ('git push origin "prototype/x:$B"', "the shell may expand `prototype/x:$B`"),
+        ("git push origin prototype/x:{prototype/y,main}", "the shell may expand"),
+        ("git push --all origin", "it pushes more than named branches"),
+        ("git push --mirror origin", "it pushes more than named branches"),
+        ("git push origin prototype/x:prototype/y", "isn't written in full: write it `refs/heads/prototype/y`"),
+    ],
+)
+def test_a_destination_it_cant_read_is_judged_as_any_push(tmp_path, monkeypatch, capsys, command, why):
+    root = _prototype(tmp_path)
+    _code_commit(root)
+    d, reason = hook(monkeypatch, capsys, root, command)
+    assert d == "deny" and "carries the code path" in reason and why in reason, (command, reason)
+    assert "prototype code goes to `prototype/*` branches only" in reason, reason
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["git status && git push origin prototype/x", "cd . && git push origin prototype/x", "git push origin prototype/x; git log -1 --oneline"],
+)
+def test_reads_beside_a_prototype_push_are_fine(tmp_path, monkeypatch, capsys, command):
+    root = _prototype(tmp_path)
+    _code_commit(root)
+    assert hook(monkeypatch, capsys, root, command) == ("allow", ""), command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "printf '[remote \"origin\"]\\n\\tpush = refs/heads/prototype/x:refs/heads/main\\n' >> .gi?/config && git push origin prototype/x",
+        "./prep.sh; git push origin",
+        "./prep.sh && git push origin HEAD",
+        "git fetch && git push origin prototype/x",
+        "git config --get remote.origin.url && git push origin prototype/x",
+    ],
+)
+def test_a_prototype_push_beside_anything_but_reads_is_judged(tmp_path, monkeypatch, capsys, command):
+    """Another part of the command may change git's config or HEAD before
+    the push runs, in ways the guard can't see (a glob naming `.git`, a script)."""
     root = _prototype(tmp_path)
     _code_commit(root)
     d, why = hook(monkeypatch, capsys, root, command)
-    assert d in ("deny", "ask") and ("carries the code path" in why or "can't tell" in why), (command, why)
+    assert d == "deny" and "carries the code path" in why and "run the push in a command of its own" in why, (command, why)
 
 
 # ---------- as today ----------
@@ -384,18 +424,18 @@ def test_a_symbolic_ref_or_a_tag_named_prototype_isnt_a_prototype_branch(tmp_pat
 
 
 @pytest.mark.parametrize(
-    "command, setting",
+    "command, setting, decision, why",
     [
-        ("git push --follow-tags origin prototype/x", None),
-        ("git push origin prototype/x", "push.followTags"),
-        ("git -c push.followTags=true push origin prototype/x", None),
-        ("git config push.followTags true; git push origin prototype/x", None),
-        ("git tag v9 && git push origin prototype/x", None),
-        ("GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=push.followTags GIT_CONFIG_VALUE_0=true git push origin prototype/x", None),
-        ("HOME=/tmp/elsewhere git push origin prototype/x", None),
+        ("git push --follow-tags origin prototype/x", None, "deny", "it sends the tags on its commits too"),
+        ("git push origin prototype/x", "push.followTags", "deny", "it sends the tags on its commits too"),
+        ("git -c push.followTags=true push origin prototype/x", None, "deny", "a setting or variable of its own"),
+        ("GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=push.followTags GIT_CONFIG_VALUE_0=true git push origin prototype/x", None, "deny", "a setting or variable of its own"),
+        ("git config push.followTags true; git push origin prototype/x", None, "deny", "run the push in a command of its own"),
+        ("git tag v9 && git push origin prototype/x", None, "ask", "can't tell"),
+        ("HOME=/tmp/elsewhere git push origin prototype/x", None, "ask", "can't tell"),
     ],
 )
-def test_a_push_that_may_send_tags_or_be_remapped_is_judged(tmp_path, monkeypatch, capsys, command, setting):
+def test_a_push_that_may_send_tags_or_be_remapped_is_judged(tmp_path, monkeypatch, capsys, command, setting, decision, why):
     """Tags it follows reach the remote as tags, and a setting or another
     part of the command can change where git maps the push."""
     root = _prototype(tmp_path)
@@ -403,8 +443,10 @@ def test_a_push_that_may_send_tags_or_be_remapped_is_judged(tmp_path, monkeypatc
     git(root, "tag", "-a", "v1", "-m", "v1")
     if setting:
         git(root, "config", setting, "true")
-    d, why = hook(monkeypatch, capsys, root, command)
-    assert d in ("deny", "ask") and ("carries the code path" in why or "can't tell" in why), (command, why)
+    d, reason = hook(monkeypatch, capsys, root, command)
+    assert d == decision and why in reason, (command, reason)
+    if decision == "deny":
+        assert "carries the code path" in reason, reason
 
 
 def test_a_fetch_refspec_with_a_short_destination_is_read_as_git_stores_it(tmp_path, monkeypatch, capsys):
@@ -431,6 +473,105 @@ def test_the_refusals_say_how_a_prototype_works(tmp_path, monkeypatch, capsys):
     assert d == "deny" and "prototype code goes to `prototype/*` branches only" in why, why
     d, why = hook(monkeypatch, capsys, root, "git push origin prototype/x:main", "conductor")
     assert d == "deny" and "prototype" not in why.partition("main")[2], why
+
+
+def _pushed_away(root):
+    """A code commit on `prototype/x`, pushed, then the branch and its own tracking ref gone here."""
+    _code_commit(root)
+    sha = git(root, "rev-parse", "--short", "HEAD").strip()
+    git(root, "push", "-q", "origin", "prototype/x", "HEAD:refs/pull/7/head")
+    git(root, "checkout", "-q", "feature")
+    git(root, "branch", "-q", "-D", "prototype/x")
+    git(root, "update-ref", "-d", "refs/remotes/origin/prototype/x")
+    return sha
+
+
+@pytest.mark.parametrize(
+    "spec, ref",
+    [
+        ("+refs/pull/*/head:refs/remotes/origin/pr/*", "origin/pr/7"),
+        ("+refs/*:refs/remotes/origin/all/*", "origin/all/pull/7/head"),
+        ("+refs/heads/*/x:refs/remotes/origin/p/*/x", "origin/p/prototype/x"),
+        ("+refs/heads/pro*/x:refs/remotes/origin/c*/x", "origin/ctotype/x"),
+        ("+refs/heads/*type/x:refs/remotes/origin/t/*", "origin/t/proto"),
+    ],
+)
+def test_only_tracking_refs_of_other_branches_count_as_on_the_remote(tmp_path, monkeypatch, capsys, spec, ref):
+    """A pull request's ref, every ref, and patterns whose `*` stands for part
+    of a prototype branch's name: none counts as on the remote."""
+    root = _prototype(tmp_path)
+    sha = _pushed_away(root)
+    git(root, "config", "--add", "remote.origin.fetch", spec)
+    git(root, "fetch", "-q", "origin")
+    git(root, "merge", "-q", "--no-ff", "--no-edit", ref)
+    d, why = hook(monkeypatch, capsys, root, "git push origin feature")
+    assert d == "deny" and f"commit {sha}" in why, (spec, why)
+
+
+def test_a_remote_without_fetch_refspecs_has_nothing_on_it(tmp_path, monkeypatch, capsys):
+    root = _clone(tmp_path)
+    _code_commit(root)
+    git(root, "push", "-q", "origin", "feature")
+    assert hook(monkeypatch, capsys, root, "git push origin feature")[0] == "allow"
+    git(root, "config", "--unset-all", "remote.origin.fetch")
+    d, why = hook(monkeypatch, capsys, root, "git push origin feature")
+    assert d == "deny" and "carries the code path" in why, why
+
+
+def test_a_tracking_ref_of_a_prototype_branch_in_another_case_doesnt_count(tmp_path, monkeypatch, capsys):
+    """A case-insensitive file system can store `prototype/x` under a folder
+    named `Prototype`: the name is left out in any case."""
+    root = _prototype(tmp_path)
+    sha = _pushed_away(root)
+    git(root, "update-ref", "refs/remotes/origin/Prototype/x", sha)
+    git(root, "merge", "-q", "--no-ff", "--no-edit", "origin/Prototype/x")
+    d, why = hook(monkeypatch, capsys, root, "git push origin feature")
+    assert d == "deny" and f"commit {sha}" in why, why
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["grep -rl a . | xargs sed -i s/a/b/", "find . -name app.py -exec sed -i s/a/b/ {} +", "rm -rf src .claude/worktrees/side/src"],
+)
+def test_a_tree_write_from_a_prototype_checkout_into_a_worktree_on_another_branch(tmp_path, monkeypatch, capsys, command):
+    root = _prototype(tmp_path)
+    wt = root / ".claude/worktrees/side"
+    git(root, "worktree", "add", "-q", "-b", "side", str(wt))
+    d, why = hook(monkeypatch, capsys, root, command)
+    assert d == "deny" and "code path" in why, (command, why)
+    git(wt, "checkout", "-q", "-b", "prototype/side")
+    assert hook(monkeypatch, capsys, root, command)[0] == "allow", command
+
+
+def _rebase_conflict(root):
+    """`prototype/x` being rebased onto `other`, stopped at a conflict in a code path."""
+    git(root, "checkout", "-q", "-b", "other", "main")
+    _code_commit(root, CODE, "other\n")
+    git(root, "checkout", "-q", "prototype/x")
+    _code_commit(root, CODE, "mine\n")
+    subprocess.run(["git", "rebase", "other"], cwd=root, capture_output=True)
+    assert git(root, "status").startswith("interactive rebase") or "rebase" in git(root, "status")
+    _change(root, CODE, "both\n")
+    git(root, "add", CODE)
+
+
+def test_finishing_a_prototype_branchs_rebase(tmp_path, monkeypatch, capsys):
+    root = _prototype(tmp_path)
+    _rebase_conflict(root)
+    for command in ("git rebase --continue", "git commit -m x", "git -c core.editor=true rebase --continue"):
+        assert hook(monkeypatch, capsys, root, command)[0] == "allow", command
+    d, why = hook(monkeypatch, capsys, root, "git rebase --continue", "conductor")
+    assert d == "deny" and "carries the code path" in why, why
+    d, why = hook(monkeypatch, capsys, root, "git rebase --quit && echo x > src/app.py")
+    assert d == "deny" and "code path" in why, why
+
+
+def test_the_note_names_a_worktree_on_a_prototype_branch(tmp_path, monkeypatch, capsys):
+    root = _clone(tmp_path)
+    wt = root / ".claude/worktrees/side"
+    git(root, "worktree", "add", "-q", "-b", "prototype/y", str(wt))
+    d, why = hook(monkeypatch, capsys, root, "git stash && echo x > .claude/worktrees/side/src/app.py")
+    assert d == "deny" and "this one runs `git stash`" in why, why
 
 
 def test_the_changelog_notes_it():

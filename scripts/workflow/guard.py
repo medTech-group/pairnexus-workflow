@@ -6034,7 +6034,7 @@ def check_powershell(inp: dict, profile: Profile, role: str, root: Path, cwd: st
     anything else is left alone. A session that doesn't write code (#340) is
     refused any PowerShell whose text names a code path, even to read it."""
     # The guard can't read PowerShell, so it can't tell the branch stays as it is: no prototype exception (#393).
-    hit = _powershell_code(inp, replace(code, head_moves="PowerShell"), root, cwd) if code is not None else None
+    hit = _powershell_code(inp, replace(code, no_prototype="PowerShell"), root, cwd) if code is not None else None
     if hit:
         return Decision(
             "deny",
@@ -6085,9 +6085,10 @@ class _Code:
     profile: Profile | None = None
     root: Path | None = None
     _ledger: frozenset[str] | None = field(default=None, repr=False)  # read once, when a revert is judged
-    # What may change the branch a checkout is on before a write or commit runs (another part of the command,
-    # PowerShell), so its branch as the command starts says nothing: no prototype exception (#393).
-    head_moves: str | None = None
+    # Why this command gets no prototype exception (#393): what in it may change the branch a checkout is on
+    # before a write or commit runs, or that it is PowerShell, which the guard can't read.
+    no_prototype: str | None = None
+    changers: "_Changers | None" = field(default=None, repr=False)  # the command's, built once for its rules
     _heads: dict[tuple[str, tuple[str, ...]], bool] = field(default_factory=dict, repr=False)  # read once per event
 
     def conductor(self) -> bool:
@@ -6099,10 +6100,19 @@ class _Code:
 
     def on_prototype(self, top: str, glob: list[str] | tuple[str, ...] = ()) -> bool:
         """Whether the checkout `top` (git run there with `glob`) is on a
-        branch named `prototype/*`, as it is now."""
+        branch named `prototype/*`, as it is now: HEAD names it, or, while
+        a rebase runs on a detached HEAD, the branch it will finish on."""
         key = (top, tuple(glob))
         if key not in self._heads:
             got, _ = _git_read(top, list(glob), "symbolic-ref", "-q", "HEAD", sep="\n", ok=(0, 1))
+            if got == []:  # detached
+                got = []
+                for name in ("rebase-merge/head-name", "rebase-apply/head-name"):
+                    path, _ = _git_read(top, list(glob), "rev-parse", "--git-path", name, sep="\n")
+                    text = _read_text(os.path.join(top, path[0]), None, 4096) if path else None
+                    if text:
+                        got = [text.strip()]
+                        break
             self._heads[key] = bool(got) and _prototype_branch(got[0])
         return self._heads[key]
 
@@ -6110,7 +6120,7 @@ class _Code:
         """Whether this session may write and commit code in the checkout
         `top`: a planning session's, not the conductor's, on a branch named
         `prototype/*` that nothing in the command may change first (#393)."""
-        return self.planning() and self.head_moves is None and self.on_prototype(top, glob)
+        return self.planning() and self.no_prototype is None and self.on_prototype(top, glob)
 
     def allowed_reverts(self) -> frozenset[str]:
         """The commits the conductor's run's ledger allows it to revert (#392)."""
@@ -6337,7 +6347,24 @@ def _code_at(abspath: str | None, code: _Code, root: Path, tree: bool = False) -
             if m:
                 hit = _Hit(f, m, wt)
                 break
-    return None if hit and code.prototype_here(top) else hit
+    if not hit or not code.prototype_here(top):
+        return hit
+    return _worktree_code(abspath, code, root) if tree and not wt else None
+
+
+def _worktree_code(abspath: str, code: _Code, root: Path) -> _Hit | None:
+    """A code path in one of Claude Code's worktrees inside `abspath`, a
+    folder of a checkout on a `prototype/*` branch: each worktree is judged
+    by its own branch (#393)."""
+    for w in _claude_worktrees(abspath, root):
+        co = _checkout_of(w, root)
+        if co is None or code.prototype_here(co[0]):
+            continue
+        for f in _code_files(co[0], ""):
+            m = _listed_code(f, code)
+            if m and not _ignored(co[0], f):
+                return _Hit(f, m, co[2])
+    return None
 
 
 _CHECKS_OUT = {"switch", "checkout", "restore", "merge", "pull", "reset", "stash", "revert", "cherry-pick", "clone", "worktree"}
@@ -6461,8 +6488,10 @@ def _named_code(names: list[str], nocase: bool, own: bool, start: str, root: Pat
         parts = f.split("/")[skip:]
         if any(fnmatch.fnmatchcase(fold(x), n) for x in parts for n in globs):
             m = _listed_code(f, code)
-            if m:
-                return None if code.prototype_here(top) else _Hit(f, m, wt)
+            if m and not code.prototype_here(top):
+                return _Hit(f, m, wt)
+    if code.prototype_here(top) and not wt:  # it reaches into Claude Code's worktrees too, each on its own branch
+        return next((h for w in _claude_worktrees(start, root) for h in [_named_code(names, nocase, False, w, root, code)] if h), None)
     return None
 
 
@@ -7700,15 +7729,20 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tupl
 #
 # A planning session (not the conductor) may try an idea in code on a branch
 # named `prototype/*`: it may write and commit code paths in a checkout on
-# such a branch, and push to `project.repo` when every ref the push updates
-# there is one. The branch is read as it is when the command starts, so a
-# command that may change which branch HEAD names first gets no exception.
-# Its code can't then reach another branch unjudged: what a tracking ref git
-# fills from a `prototype/*` branch holds isn't counted as on the remote.
+# such a branch, and push to `project.repo` from one when every ref git would
+# update there is one. The branch is read as it is when the command starts,
+# so a command that may change which branch HEAD names first gets no
+# exception; each place that finds a code path (`_code_at`, `_named_code`,
+# `git clean` in `_shell_code`, `_commit_code`) asks `_Code.prototype_here`
+# of the checkout it found it in. Its code can't then reach another branch
+# unjudged: the push rule counts as on the remote only the tracking refs git
+# fills from a branch that isn't `prototype/*` (`_known_refs`).
 
 _PROTOTYPE = "refs/heads/prototype/"
 # git commands that never change which branch HEAD names, though they may move a branch's tip.
 _KEEPS_HEAD = {"commit", "merge", "cherry-pick", "revert", "am", "reset", "tag", "notes", "fetch", "config", "remote", *_PUSH_CMDS}
+# What finishes a rebase, on the branch it started on (`--quit` leaves HEAD detached).
+_REBASE_ENDS = (["--continue"], ["--skip"], ["--abort"])
 
 
 def _prototype_branch(ref: str) -> bool:
@@ -7716,27 +7750,48 @@ def _prototype_branch(ref: str) -> bool:
     return ref.startswith(_PROTOTYPE) and len(ref) > len(_PROTOTYPE)
 
 
-def _moves_head(segs: list[Seg], root: Path, command: str) -> str | None:
+def _moves_head(changers: "_Changers", segs: list[Seg], command: str) -> str | None:
     """What in the command may change which branch a checkout's HEAD names
-    (`git switch`, `checkout`, `rebase`, `symbolic-ref`, a branch renamed, an
-    alias, `gh pr checkout`, a `.git` it names), else None. The parts that
-    may move a ref are the push rule's (`_Changers`); of those, only the git
-    commands that move a branch's tip but never HEAD don't count."""
-    for _s, what, label, args in _Changers(segs, root).parts:
-        if what in ("refs", "push") and (args is None or args[0] not in _KEEPS_HEAD):
-            return label
+    (`git switch`, `checkout`, `rebase`, `stash`, `symbolic-ref`, a branch
+    renamed, an alias, `gh pr checkout`, a `.git` it names), else None. The
+    parts that may move a ref are the push rule's (`_Changers`); of those,
+    only the git commands that move a branch's tip but never which branch
+    HEAD names don't count, nor a rebase finished on the branch it started on."""
+    for _s, what, label, args in changers.parts:
+        if what not in ("refs", "push") or (args is not None and args[0] in _KEEPS_HEAD):
+            continue
+        if args is not None and args[0] == "rebase" and args[1:] in _REBASE_ENDS:
+            continue
+        return label
     return _names_dot_git(command, segs)
+
+
+def _claude_worktrees(abspath: str, root: Path) -> list[str]:
+    """Claude Code's worktrees of the project (`.claude/worktrees/<name>`) inside
+    `abspath`, a folder of the project: each a checkout with a branch of its own."""
+    top = os.path.realpath(str(root))
+    wts = os.path.join(top, ".claude", "worktrees")
+    if not os.path.isdir(wts) or not (abspath == wts or _holds_root(abspath, root) or wts.startswith(abspath.rstrip("/") + "/")):
+        return []
+    try:
+        return [os.path.join(wts, n) for n in sorted(os.listdir(wts)) if os.path.isdir(os.path.join(wts, n))]
+    except OSError:
+        return []
 
 
 def _prototype_rule(code: _Code, segs: list[Seg], root: Path, command: str) -> _Code:
     """A planning session's rule for one command: no prototype exception when
-    the command may change the branch first, and then its refusals say why,
-    when the project is on a `prototype/*` branch."""
-    moves = _moves_head(segs, root, command)
+    the command may change the branch first, and then its refusals say why
+    when the project or one of Claude Code's worktrees is on a `prototype/*`
+    branch. Its `_Changers` are kept for the push rule."""
+    changers = _Changers(segs, root)
+    code = replace(code, changers=changers)
+    moves = _moves_head(changers, segs, command)
     if moves is None:
         return code
-    code = replace(code, head_moves=moves)
-    if not code.on_prototype(os.path.realpath(str(root))):
+    code = replace(code, no_prototype=moves)
+    top = os.path.realpath(str(root))
+    if not any(code.on_prototype(t) for t in [top, *_claude_worktrees(top, root)]):
         return code
     note = (
         f"on a `prototype/*` branch, a planning session's code write or commit goes through only in a command "
@@ -7745,16 +7800,15 @@ def _prototype_rule(code: _Code, segs: list[Seg], root: Path, command: str) -> _
     return replace(code, instead=note + code.instead)
 
 
-_PROTOTYPE_PUSH = "a planning session's prototype code goes to `prototype/*` branches only, pushed from one; "
-
-
-def _alone(segs: list[Seg], seg: Seg) -> bool:
-    """No other part of the command runs git but to read or push (a config
-    write, a ref moved, an alias), which could change where a push goes."""
+def _only_reads_beside(segs: list[Seg]) -> bool:
+    """Every part of the command is a push or only reads (`_reads_only`), so
+    nothing in it can change git's config, HEAD or refs before a push runs:
+    not a `git config`, a write to a file (`.git/config` spelled by a glob
+    included), a script or program."""
     for s in segs:
-        args = _other_git(s.words) if s is not seg and s.words else None
-        if args and args[0] not in _PUSH_CMDS and (args[0] == "config" or _git_changes(args) is not None):
-            return False  # `git config` even when it writes no push setting: `push.followTags` is one that counts here
+        g = _commit_git(s.words) if s.words else None
+        if not (g and g[1] and g[1][0] in _PUSH_CMDS) and not _reads_only(s):
+            return False
     return True
 
 
@@ -7766,84 +7820,117 @@ def _fetch_dst(dst: str) -> str:
 
 
 def _any_case(pattern: str) -> str:
-    """A ref pattern (`refs/…`) whose letters after `refs/` match in any case, as `--exclude` reads it."""
+    """A ref pattern (`refs/…`) whose letters after `refs/` match in any case,
+    as a case-insensitive file system stores loose refs."""
     return "refs/" + "".join(f"[{ch.lower()}{ch.upper()}]" if ch.isascii() and ch.isalpha() else ch for ch in pattern[5:])
 
 
-def _to_prototypes(p: _Push, remote: str, cfg: dict[str, list[str]], d: str, glob: list[str], here: bool) -> bool:
-    """Whether every ref a `git push` run on a `prototype/*` branch updates
-    on its remote is a `prototype/*` branch, read as git maps it: a refspec's
-    destination, written `refs/heads/prototype/<name>`; without one, the ref
-    the source names (`HEAD`, a branch, a symbolic ref followed), unless the
-    remote's `push` refspecs or `push.default = upstream` could map it
-    elsewhere; with none, the remote's `push` refspecs, or `HEAD` where
-    `push.default` sends a bare push to its own name (`simple`, `current`).
-    Never with `--follow-tags` (or `push.followTags`), `--tags`, `--all`,
-    `--mirror`, or a refspec the shell may expand."""
+def _exactly(ref: str) -> str:
+    """`--glob`'s pattern for this one ref: a bracket, so git adds no `/*`."""
+    return ref[:-1] + "[" + ref[-1] + "]"
+
+
+def _known_refs(ours: list[str], remotes: list[str], fetch: dict[str, list[str]]) -> list[str]:
+    """`git log`'s options naming the tracking refs that count as on the
+    remote, for the remotes fetching from `project.repo`: the refs each
+    remote's `fetch` refspecs fill from a branch (`refs/heads/…`) other than
+    a `prototype/*` one. Not the refs filled from anything else (a pull
+    request's `refs/pull/…`, `refs/*`, a short name git may read as a tag),
+    whose names are left out wherever another refspec's would hold them,
+    nor `<remote>/HEAD`, which may point at a prototype branch's, nor a
+    remote's nested inside another's name (`origin/fork`), which fetches from
+    wherever it does. Every name left out matches in any case."""
+    ours = [r for r in ours if not _GLOB_CHARS.search(r) and "\\" not in r]
+    out = [f"--exclude=refs/remotes/{o}/*" for r in ours for o in remotes if o.startswith(r + "/") and not _GLOB_CHARS.search(o)]
+    branch: list[str] = []  # the destinations of refspecs fetching branches, a `*` for any name
+    left_out: list[str] = []  # the destinations of everything else, and where a prototype branch is stored
+    for r in ours:
+        left_out.append(f"refs/remotes/{r}/HEAD")
+        for spec in fetch.get(r) or []:
+            src, colon, dst = spec.removeprefix("+").partition(":")
+            if not colon or not dst or src.startswith("^"):
+                continue  # stored under no tracking ref, or a negative refspec, which stores nothing
+            if "*" in src:
+                if not dst.startswith("refs/") or "*" not in dst:
+                    continue  # git stores no pattern's refs there
+                before, _, after = dst.partition("*")
+                prefix, _, rest = src.partition("*")
+                if not src.startswith("refs/heads/"):
+                    left_out.append(before + "*" + after)  # what isn't a branch, or may be one of every kind
+                    continue
+                branch.append(dst)
+                if _PROTOTYPE.startswith(prefix) and not rest:  # the `*` stands for `prototype/<name>`, and more
+                    left_out.append(before + _PROTOTYPE[len(prefix) :] + "*" + after)
+                elif _PROTOTYPE.startswith(prefix) or prefix.startswith(_PROTOTYPE):  # may stand for part of one
+                    left_out.append(before + "*" + after)
+                continue
+            where = _fetch_dst(dst)
+            if src.startswith("refs/heads/") and not _prototype_branch(src):
+                branch.append(where)
+            else:  # a prototype branch, or a short name git may find among tags too
+                left_out.append(where)
+    out += [f"--exclude={_any_case(p)}" for p in dict.fromkeys(left_out)]
+    globs = [f"--glob={p if '*' in p else _exactly(p)}" for p in dict.fromkeys(branch)]
+    # `--exclude` holds until the next `--glob`: given again before each.
+    return [x for g in globs for x in (*out, g)]
+
+
+def _to_prototypes(
+    p: _Push, remote: str, cfg: dict[str, list[str]], d: str, glob: list[str], here: bool, code: _Code
+) -> tuple[bool, str]:
+    """(whether every ref a `git push` updates on its remote is a
+    `prototype/*` branch, else why it isn't counted as one), read as git maps
+    it, run on a `prototype/*` branch: a refspec's destination, written
+    `refs/heads/prototype/<name>`; without one, the ref the source names
+    (`HEAD`, a branch, a symbolic ref followed), unless the remote's `push`
+    refspecs or `push.default = upstream` could map it elsewhere; with none,
+    the remote's `push` refspecs, or `HEAD` where `push.default` sends a bare
+    push to its own name (`simple`, `current`). Never with `--follow-tags`
+    (or `push.followTags`), `--tags`, `--all`, `--mirror`, or a refspec the
+    shell may expand."""
     if p.branches or p.mirror or p.tags or p.delete:
-        return False
+        return False, "it pushes more than named branches"
     if p.follow_tags or (p.follow_tags is None and (cfg.get("push.followtags") or ["false"])[-1].lower() not in _FALSE):
-        return False  # it sends the tags on the commits it sends too
-    head, _ = _memo_read(d, glob, "symbolic-ref", "-q", "HEAD", sep="\n", ok=(0, 1))
-    if not head or not _prototype_branch(head[0]):
-        return False  # run from a `prototype/*` branch only
+        return False, "it sends the tags on its commits too (`--follow-tags`, `push.followTags`)"
+    if not code.on_prototype(d, glob):
+        return False, "it isn't run on a `prototype/*` branch"
     pushes = cfg.get(f"remote.{remote}.push") if remote else None
     default = (cfg.get("push.default") or [""])[-1].lower()
+    mapped = "the remote's `push` refspecs or `push.default = upstream` could send it elsewhere"
     specs, shell = p.refspecs, True
     if not specs:
         mirror = cfg.get(f"remote.{remote}.mirror") if remote else None
         if mirror and mirror[-1].lower() not in _FALSE:
-            return False
+            return False, "its remote mirrors every ref"
         if pushes:
             specs, shell = pushes, False
         elif default in ("", "simple", "current"):
             specs = ["HEAD"]
         else:
-            return False  # `upstream` sends it to the branch's upstream, `matching` every branch
+            return False, mapped  # `upstream` sends it to the branch's upstream, `matching` every branch
     for r in specs:
         if shell:
             if _CURRENT_BRANCH.search(r):
                 if not here:
-                    return False
+                    return False, "its branch is the shell's, while git runs elsewhere"
                 r = _CURRENT_BRANCH.sub("HEAD", r)
-            if r == "tag" or _shell_spelled(r, globs=True):
-                return False
+            if r == "tag":
+                return False, "it pushes a tag"
+            if _shell_spelled(r, globs=True):
+                return False, f"the shell may expand `{_brief(r)}`"
         src, colon, dst = r.removeprefix("+").partition(":")
         if colon:
             if not _prototype_branch(dst):
-                return False  # a short destination git places by the source's kind, or on a ref the remote has
+                # A short destination git places by the source's kind, or on a ref the remote has.
+                full = f"`refs/heads/{_brief(dst)}`" if _prototype_branch("refs/heads/" + dst) else "`refs/heads/prototype/<name>`"
+                return False, f"its destination `{_brief(dst)}` isn't written in full: write it {full}"
             continue
-        if pushes or default in ("upstream", "tracking") or not src or src.startswith("-"):
-            return False  # git maps a source without a destination through those settings
-        full, _ = _memo_read(d, glob, "rev-parse", "--symbolic-full-name", src, sep="\n")
+        if pushes or default in ("upstream", "tracking"):
+            return False, mapped  # git maps a source without a destination through them
+        full, _ = _memo_read(d, glob, "rev-parse", "--symbolic-full-name", src, sep="\n") if src and not src.startswith("-") else (None, "")
         if not full or len(full) != 1 or not _prototype_branch(full[0]):
-            return False  # a tag, a symbolic ref to another branch, or a name it can't read
-    return True
-
-
-def _prototype_tracking(remote: str, fetch: list[str]) -> list[str]:
-    """The `--exclude` patterns of the tracking refs git fills from a
-    `prototype/*` branch of `remote`: its own name under the remote's (as
-    git's default refspec maps it), whatever the remote's `fetch` refspecs
-    map one to, and `<remote>/HEAD`, which may point at one. Letters match in
-    any case, as a case-insensitive file system stores loose refs."""
-    out = [f"refs/remotes/{remote}/prototype/*", f"refs/remotes/{remote}/HEAD"]
-    for spec in fetch:
-        src, colon, dst = spec.removeprefix("+").partition(":")
-        if not colon or not dst or src.startswith("^"):
-            continue  # stored under no tracking ref, or a negative refspec, which maps nothing
-        if "*" in src:
-            if not dst.startswith("refs/"):
-                continue  # git stores no pattern's refs outside `refs/`
-            before, _, after = dst.partition("*")
-            prefix = src.partition("*")[0]  # what the source has before its `*`
-            if _PROTOTYPE.startswith(prefix):  # the `*` stands for `prototype/<name>`, and more
-                out.append(before + _PROTOTYPE[len(prefix) :] + "*" + after)
-            elif prefix.startswith(_PROTOTYPE):  # every ref it maps is one
-                out.append(before + "*" + after)
-        elif _prototype_branch(src) or _prototype_branch("refs/heads/" + src) or _prototype_branch("refs/" + src):
-            out.append(_fetch_dst(dst))
-    return [f"--exclude={_any_case(p)}" for p in dict.fromkeys(out)]
+            return False, f"`{_brief(src)}` isn't a `prototype/*` branch here"  # a tag, a symbolic ref elsewhere, a name it can't read
+    return True, ""
 
 
 # ---------- the push rule (#390) ----------
@@ -8566,6 +8653,7 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
 
     unsure, note, started = None, None, time.monotonic()
     changers: _Changers | None = None
+    reads_only: bool | None = None  # every other part of the command only reads, read once (#393)
     dot_git: str | None = None  # the `.git` the command names, read once
     for seg in segs:
         g = _commit_git(seg.words)
@@ -8575,7 +8663,7 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
             unsure = unsure or "the guard can't tell what the command's pushes would send: there are too many to read in time"
             break
         if changers is None:
-            changers = _Changers(segs, root)
+            changers = code.changers or _Changers(segs, root)
         glob, args, cdir = g
         kind = args[0]
         p = _push_args(args)
@@ -8702,9 +8790,21 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
         here = seg.cwd is not None and os.path.isdir(seg.cwd) and _git_dir_abs(seg.cwd, []) == _git_dir_abs(d, pglob)
         # A planning session's push to `prototype/*` branches only (#393), with no setting of its own and nothing
         # else in the command but reads and other pushes, which could change where git maps it or what it sends.
-        plain = not cs and not dot_git and not _push_env(segs, seg, _PUSH_ENV) and not _push_env(segs, seg, _PUSH_ENV_CONFIG)
-        if code.planning() and plain and _alone(segs, seg) and _to_prototypes(p, named if named in remotes else "", cfg, d, pglob, here):
-            continue
+        proto_why = ""  # why a planning session's push named or run on a prototype branch isn't let through as one
+        if code.planning():
+            if reads_only is None:
+                reads_only = _only_reads_beside(segs)
+            settings = cs or dot_git or _push_env(segs, seg, _PUSH_ENV) or _push_env(segs, seg, _PUSH_ENV_CONFIG)
+            if settings:
+                why = "it sets a setting or variable of its own, or the command names a `.git`"
+            elif not reads_only:
+                why = "another part of the command does more than read: run the push in a command of its own"
+            else:
+                ok, why = _to_prototypes(p, named if named in remotes else "", cfg, d, pglob, here, code)
+                if ok:
+                    continue
+            if code.on_prototype(d, pglob) or "prototype/" in " ".join(p.refspecs):
+                proto_why = why
         srcs, pseudo, bad = _refspec_sources([] if p.delete else p.refspecs, True, here)
         if p.branches:
             pseudo.add("--branches")
@@ -8734,12 +8834,8 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
         # On the remote already: what a tracking ref of a remote fetching from `project.repo` holds,
         # not a remote's nested inside its name (`origin/fork`), which fetches from wherever it does.
         # Nor what a tracking ref of a `prototype/*` branch holds (#393), so its code reaches no other branch unjudged.
-        ours = [r for r, url in sorted(fetch_urls.items()) if _project_url(url, code.repo) and not _GLOB_CHARS.search(r) and "\\" not in r]
-        protos = list(dict.fromkeys(x for r in ours for x in _prototype_tracking(r, cfg.get(f"remote.{r}.fetch") or [])))
-        known = []
-        for r in ours:
-            known += [f"--exclude=refs/remotes/{o}/*" for o in sorted(remotes) if o.startswith(r + "/") and not _GLOB_CHARS.search(o)]
-            known += [*protos, f"--glob=refs/remotes/{r}/*"]
+        ours = [r for r, url in sorted(fetch_urls.items()) if _project_url(url, code.repo)]
+        known = _known_refs(ours, sorted(remotes), {r: cfg.get(f"remote.{r}.fetch") or [] for r in ours})
         # Each commit but a merge by the files it changes, a merge of more parents, then of two, by its own changes (#391).
         memo = _PUSH_MEMO if _PUSH_MEMO is not None else {}
         driver, err = _merge_driver(d, pglob)
@@ -8778,7 +8874,8 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
                 err = f"it sends merge commit {merges[0][:7]}, and {_DRIVER_RUNS.format(driver)}"
         if found:
             sha, hit, full = found
-            instead = (_PROTOTYPE_PUSH if code.planning() else "") + code.instead
+            proto = f"a planning session's prototype code goes to `prototype/*` branches only, pushed from one, and {proto_why}; " if proto_why else ""
+            instead = proto + code.instead
             if a_merge:
                 return f"this push sends merge commit {sha}, which carries the code path {_shown(hit)} ({hit.pattern}), {_MERGE_OWN}, to {to}; {instead}", None
             v = _commit_revert(d, pglob, full, code)
