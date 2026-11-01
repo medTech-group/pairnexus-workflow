@@ -7911,28 +7911,46 @@ def _compound_or_cd(segs: list[Seg], command: str) -> str | None:
         return f"it runs a command the shell spells (`{_brief(spelled)}`), which the guard can't follow{alone}"
     # Only the shell's own builtins and assignments change its state (its directory, variables, what later words run);
     # a program it starts can't, and a script's own changes are a script's (unseen, as any).
-    changes = next((s.words[0] for s in segs if s.words and s.words[0] in _BUILTINS and s.words[0] not in _STATELESS_BUILTINS), None)
+    changes = next((s.words[0] for s in segs if s.words and s.words[0] in _BUILTINS and not _stateless_builtin(s.words)), None)
     if changes:
         return f"it runs the shell's `{changes}`, which can change what the command's later words do{alone}"
-    assigned = next((s.assigns[0].partition("=")[0] for s in segs if not s.words and s.assigns), None)
+    assigned = next((s.assigns[0].partition("=")[0].removesuffix("+") for s in segs if not s.words and s.assigns), None)
     if assigned:
         return f"it sets `{_brief(assigned)}` for the rest of the command{alone}"
-    if _CURRENT_SHELL_SUB.search(command) or any(_CURRENT_SHELL_SUB.search(s.heredoc or "") for s in segs):
-        return f"it runs a command substitution in the shell itself (`${{ …; }}`){alone}"
+    joined = command.replace("\\\n", "")  # bash joins a backslash-newline before it reads anything
+    if _CURRENT_SHELL_SUB.search(joined):
+        return f"it runs a command substitution in the shell itself (`${{ …; }}`){alone}, or write the file with the file tools"
+    if _ASSIGNING_EXPANSION.search(joined):
+        return f"it may set a variable in the shell itself (`$((…))`, `$[…]`, `${{X:=…}}`){alone}, or write the file with the file tools"
     return None
 
 
 # bash's builtins, and those that change nothing in the shell (its directory, variables, options, what words run).
 _BUILTINS = {
+    # zsh's too, where its precommand modifiers (`noglob cd …`) and option or variable builtins change the shell.
+    "noglob", "nocorrect", "-", "setopt", "unsetopt", "emulate", "zmodload", "autoload", "functions", "integer", "float",
+    "print", "chdir", "bindkey", "zstyle", "vared", "pushln", "rehash", "unhash", "zle", "zparseopts", "sched",
     ".", ":", "[", "alias", "bg", "bind", "break", "builtin", "caller", "cd", "command", "compgen", "complete", "compopt",
     "continue", "declare", "dirs", "disown", "echo", "enable", "eval", "exec", "exit", "export", "false", "fc", "fg",
     "getopts", "hash", "help", "history", "jobs", "kill", "let", "local", "logout", "mapfile", "popd", "printf", "pushd",
     "pwd", "read", "readarray", "readonly", "return", "set", "shift", "shopt", "source", "suspend", "test", "times",
     "trap", "true", "type", "typeset", "ulimit", "umask", "unalias", "unset", "wait", "[[",
 }  # fmt: skip
-_STATELESS_BUILTINS = {":", "[", "[[", "echo", "printf", "pwd", "test", "true", "false", "type", "help", "jobs", "times", "dirs", "wait"}
+# (Not `[[`, whose `-eq X=1` assigns; `printf`, `wait` and `jobs` only without the option that sets or runs.)
+_STATELESS_BUILTINS = {":", "[", "echo", "pwd", "test", "true", "false", "type", "help", "times", "dirs"}
+_STATEFUL_OPTION = {"printf": "v", "wait": "p", "jobs": "x"}  # `printf -v VAR`, `wait -p VAR`, `jobs -x CMD`
+
+
+def _stateless_builtin(words: list[str]) -> bool:
+    """A builtin that changes nothing in the shell as it is given here."""
+    if words[0] in _STATELESS_BUILTINS:
+        return True
+    opt = _STATEFUL_OPTION.get(words[0])
+    return opt is not None and not any(w.startswith("-") and opt in w for w in words[1:])
 # bash 5.3's `${ cmd; }` and `${| cmd; }`, which run in the shell itself (a `cd` there stays).
 _CURRENT_SHELL_SUB = re.compile(r"\$\{[\s|]")
+# Arithmetic and `${X=…}`/`${X:=…}` expansions, which can assign a variable in the shell itself.
+_ASSIGNING_EXPANSION = re.compile(r"\$\(\(|\$\[|\(\(|\$\{[^}]*?:?=")
 
 
 def _spelled_command(word: str) -> bool:

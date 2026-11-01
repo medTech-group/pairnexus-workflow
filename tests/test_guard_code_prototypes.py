@@ -1010,6 +1010,16 @@ def test_a_write_or_commit_in_a_command_that_changes_directory(tmp_path, monkeyp
         ("HOME=/tmp/h; git commit -am x", "sets `HOME` for the rest of the command"),
         ("mapfile -C 'cd src;:' -c 1 a <<< x; echo x > src/app.py", "runs the shell's `mapfile`"),
         (': "${ cd src; }"; echo x > src/app.py', "a command substitution in the shell itself"),
+        ("jobs -x cd src; git commit -am x", "runs the shell's `jobs`"),
+        (": $\\\n{ cd src; }; git commit -am x", "a command substitution in the shell itself"),
+        (": ${\\\n cd src; }; echo x > src/app.py", "a command substitution in the shell itself"),
+        ("noglob cd src; git commit -am x", "runs the shell's `noglob`"),
+        ("setopt allexport; git commit -am x", "runs the shell's `setopt`"),
+        ("printf -v HOME %s /tmp/h; git commit -am x", "runs the shell's `printf`"),
+        ("echo $((HOME=0)); git commit -am x", "sets `HOME` for the rest of the command"),
+        ("echo $[HOME=0]; git commit -am x", "may set a variable in the shell itself"),
+        (": ${GIT_DIR:=/tmp/g}; git commit -am x", "may set a variable in the shell itself"),
+        ("X+=1; git commit -am x", "sets `X` for the rest of the command"),
         ("sh -c 'echo for'; for HOME in /tmp/h; do git commit -am x; done", "the compound command `for`"),
     ):
         _change(root, CODE)
