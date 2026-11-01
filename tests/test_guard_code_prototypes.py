@@ -101,7 +101,7 @@ def test_a_code_write_in_a_claude_code_worktree_on_a_prototype_branch(tmp_path, 
     assert event_hook(monkeypatch, capsys, root, write(str(wt / CODE)))[0] == "allow"
     assert hook(monkeypatch, capsys, root, "echo x > .claude/worktrees/side/src/app.py")[0] == "allow"
     _change(wt, CODE)
-    assert hook(monkeypatch, capsys, root, "cd .claude/worktrees/side && git commit -am x")[0] == "allow"
+    assert hook(monkeypatch, capsys, root, "git -C .claude/worktrees/side commit -am x")[0] == "allow"
     d, why = event_hook(monkeypatch, capsys, root, write(str(root / CODE)))
     assert d == "deny" and "code path" in why, why
     git(root, "checkout", "-q", "-b", "prototype/x")
@@ -336,7 +336,12 @@ def test_a_destination_it_cant_read_is_judged_as_any_push(tmp_path, monkeypatch,
 
 @pytest.mark.parametrize(
     "command",
-    ["git status && git push origin prototype/x", "cd . && git push origin prototype/x", "git push origin prototype/x; git log -1 --oneline"],
+    [
+        "git status && git push origin prototype/x",
+        "git push origin prototype/x; git log -1 --oneline",
+        "git log --grep for -1 && git push origin prototype/x",
+        "grep -n if src/app.py; git push origin prototype/x",
+    ],
 )
 def test_reads_beside_a_prototype_push_are_fine(tmp_path, monkeypatch, capsys, command):
     root = _prototype(tmp_path)
@@ -953,21 +958,36 @@ def test_a_dot_git_option_in_a_variable_and_a_branch_change_both_named(tmp_path,
 
 
 @pytest.mark.parametrize(
-    "command",
+    "command, why",
     [
-        "for HOME in /tmp/h; do git push origin; done",
-        "for PATH in /tmp/x:/usr/bin; do git push origin prototype/x; done",
-        "case $[HOME=0] in *) git push origin;; esac",
-        "while false; do :; done; git push origin prototype/x",
+        ("for HOME in /tmp/h; do git push origin; done", "it holds the compound command `for`"),
+        ("for PATH in /tmp/x:/usr/bin; do git push origin prototype/x; done", "it holds the compound command `for`"),
+        ("case $[HOME=0] in *) git push origin;; esac", "it holds the compound command `case`"),
+        ("select HOME in /tmp/h; do git push origin; break; done", "it holds the compound command `select`"),
+        ("until git push origin prototype/x; do :; done", "it holds the compound command `until`"),
+        ("cd . && git push origin prototype/x", "it changes directory with `cd`"),
+        ("pushd /tmp > /dev/null; popd -n > /dev/null; git push origin HEAD", "can't tell"),  # elsewhere: asked
     ],
 )
-def test_a_prototype_push_in_a_command_with_a_compound_command_is_judged(tmp_path, monkeypatch, capsys, command):
-    """A loop's variable or a `case` word can set what git reads, and no part shows it."""
+def test_a_prototype_push_in_a_command_the_guard_cant_follow_is_judged(tmp_path, monkeypatch, capsys, command, why):
+    """A loop's variable or a `case` word can set what git reads, and the
+    guard follows a change of directory only so far: no part shows either."""
     root = _prototype(tmp_path)
     _code_commit(root)
-    d, why = hook(monkeypatch, capsys, root, command)
-    assert d in ("deny", "ask") and ("carries the code path" in why or "can't tell" in why), (command, why)
-    assert d == "ask" or "run the push in a command of its own" in why, why
+    d, reason = hook(monkeypatch, capsys, root, command)
+    if why == "can't tell":
+        assert d == "ask" and why in reason, (command, reason)
+    else:
+        assert d == "deny" and "carries the code path" in reason and why in reason, (command, reason)
+
+
+def test_a_write_or_commit_in_a_command_that_changes_directory(tmp_path, monkeypatch, capsys):
+    root = _prototype(tmp_path)
+    for command in ("cd src && echo x > app.py", "cd . && git commit -am x"):
+        _change(root, CODE)
+        d, why = hook(monkeypatch, capsys, root, command)
+        assert d == "deny" and "this one changes directory with `cd`" in why and "`git -C`" in why, (command, why)
+    assert hook(monkeypatch, capsys, root, "git -C . commit -am x")[0] == "allow"
 
 
 def test_an_appending_variable_is_named_plainly(tmp_path, monkeypatch, capsys):

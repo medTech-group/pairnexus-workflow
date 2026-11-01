@@ -7824,13 +7824,16 @@ def _prototype_rule(code: _Code, segs: list[Seg], root: Path, command: str) -> _
     code = replace(code, changers=changers)
     moves = _moves_head(changers)
     named = _dot_git_named(command, segs)  # in a commit's message or a file's text too
-    if moves is None and named is None:
+    unfollowed = _compound_or_cd(segs, command)
+    if moves is None and named is None and unfollowed is None:
         return code
-    code = replace(code, no_prototype=moves or named)
+    code = replace(code, no_prototype=moves or named or unfollowed)
     top = os.path.realpath(str(root))
     if not any(code.on_prototype(t) for t in [top, *_claude_worktrees(top, root)]):
         return code
     hows = [f"runs `{moves}`: run them in commands of their own"] if moves else []
+    if unfollowed:
+        hows.append(unfollowed.removeprefix("it "))
     if named:
         hows.append(
             f"names `{named}`, which could: name no `.git` in it (run what names it in a command of its own, "
@@ -7880,16 +7883,36 @@ def _push_own_part(segs: list[Seg], seg: Seg, glob: list[str], dot_git: str) -> 
 _COMPOUND_WORDS = {"for", "select", "case", "while", "until", "if", "function", "coproc"}
 
 
-def _busy_parts(segs: list[Seg], command: str) -> list[Seg] | None:
-    """The parts of the command that do more than read (`_reads_only`); None
-    when it holds a compound command (`for HOME in …; do …`, `case $[…]`),
-    whose header can set a variable or run a program no part shows. A push
-    to `prototype/*` branches is let through only as the one part beside
-    reads, so nothing in the command can change git's config, HEAD or refs,
-    or run a program, before it runs."""
-    if any(isinstance(t, str) and t in _COMPOUND_WORDS for t in _tokens(command)):
-        return None
-    return [s for s in segs if not _reads_only(s)]
+# The words after which a shell word is in command position, as well as after an operator.
+_COMMAND_AFTER = {"then", "do", "else", "elif", "{", "!", "time"}
+
+
+def _compound_or_cd(segs: list[Seg], command: str) -> str | None:
+    """Why the guard can't follow the command as the shell runs it, for a
+    prototype's exception: a compound command (`for HOME in …; do …`, `case
+    $[…]`, `if`, `function`), whose header can set a variable or run a program
+    no part shows; or a change of directory (`cd`, `pushd`, `popd`), which
+    the guard follows only so far (`popd -n`, a logical `..` after a link, a
+    `--show-toplevel` from elsewhere). Else None."""
+    toks = _tokens(command)
+    for k, t in enumerate(toks):
+        if isinstance(t, str) and not isinstance(t, Op) and t in _COMPOUND_WORDS:
+            before = toks[k - 1] if k else None
+            if before is None or isinstance(before, Op) or before in _COMMAND_AFTER:
+                return f"it holds the compound command `{t}`, whose words the guard doesn't follow"
+    moved = next((s.words[0] for s in segs if s.words and s.words[0] in _CHANGES_DIR), None)
+    if moved:
+        return f"it changes directory with `{moved}`, which the guard follows only so far: run it from that directory, or with `git -C`"
+    return None
+
+
+def _busy_parts(segs: list[Seg], command: str) -> tuple[list[Seg], str | None]:
+    """(the parts of the command that do more than read, `_reads_only`; why
+    the guard can't follow the command, `_compound_or_cd`). A push to
+    `prototype/*` branches is let through only as the one part beside reads,
+    in a command it can follow, so nothing in the command can change git's
+    config, HEAD, refs or directory, or run a program, before it runs."""
+    return [s for s in segs if not _reads_only(s)], _compound_or_cd(segs, command)
 
 
 def _fetch_dst(dst: str) -> str:
@@ -8749,7 +8772,7 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
 
     unsure, note, started = None, None, time.monotonic()
     changers: _Changers | None = None
-    reads_only: list[Seg] | None | bool = False  # the parts that do more than read, read once (#393); False: not read yet
+    reads_only: tuple[list[Seg], str | None] | None = None  # `_busy_parts`, read once (#393)
     dot_git: str | None = None  # the `.git` the command names, read once
     for seg in segs:
         g = _commit_git(seg.words)
@@ -8888,12 +8911,14 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
         # else in the command but reads and other pushes, which could change where git maps it or what it sends.
         proto_why = ""  # why a planning session's push named or run on a prototype branch isn't let through as one
         if code.planning():
-            if reads_only is False:
+            if reads_only is None:
                 reads_only = _busy_parts(segs, command)
             own = _push_own_part(segs, seg, glob, dot_git)
             if own:
                 why = f"it runs with {own[0]}, which could change where git sends it"
-            elif reads_only is None or any(s is not seg for s in reads_only):
+            elif reads_only[1]:
+                why = reads_only[1]
+            elif any(s is not seg for s in reads_only[0]):
                 why = "another part of the command does more than read: run the push in a command of its own"
             else:
                 ok, why = _to_prototypes(p, named if named in remotes else "", cfg, d, pglob, here, code)
