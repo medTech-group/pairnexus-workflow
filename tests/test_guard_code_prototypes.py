@@ -705,7 +705,7 @@ def test_a_push_that_may_push_submodules_too_is_judged(tmp_path, monkeypatch, ca
     for k in range(0, len(setting or ()), 2):
         git(root, "config", setting[k], setting[k + 1])
     d, why = hook(monkeypatch, capsys, root, command)
-    assert d == "deny" and "git may push submodules too" in why, (command, why)
+    assert d == "deny" and "git may push submodules too" in why and "push with `--no-recurse-submodules`" in why, (command, why)
 
 
 @pytest.mark.parametrize(

@@ -7905,7 +7905,7 @@ def _to_prototypes(
     # winning, and an option over both: counted only when every value it could read means no recursion.
     values = [p.recurse.lower() or "no"] if p.recurse is not None else (cfg.get("push.recursesubmodules") or []) + (cfg.get("submodule.recurse") or [])
     if any(v.lower() not in ("no", "check", *_FALSE) for v in values):
-        return False, "git may push submodules too (`--recurse-submodules`, `push.recurseSubmodules`, `submodule.recurse`)"
+        return False, "git may push submodules too (`--recurse-submodules`, `push.recurseSubmodules`, `submodule.recurse`): push with `--no-recurse-submodules`"
     pushes = cfg.get(f"remote.{remote}.push") if remote else None
     default = (cfg.get("push.default") or [""])[-1].lower()
     mapped = "the remote's `push` refspecs or `push.default = upstream` could send it elsewhere"
