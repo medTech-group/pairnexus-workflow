@@ -6135,6 +6135,13 @@ class _Code:
         `prototype/*` that nothing in the command may change first (#393)."""
         return self.planning() and self.no_prototype is None and self.on_prototype(top, glob)
 
+    def prototyping(self, root: Path) -> bool:
+        """A planning session whose project, or one of Claude Code's
+        worktrees, is on a `prototype/*` branch: where its code commits go
+        through unjudged (#393)."""
+        top = os.path.realpath(str(root))
+        return self.planning() and any(self.on_prototype(t) for t in [top, *_claude_worktrees(top, root)])
+
     def allowed_reverts(self) -> frozenset[str]:
         """The commits the conductor's run's ledger allows it to revert (#392)."""
         if self._ledger is None:
@@ -7828,8 +7835,7 @@ def _prototype_rule(code: _Code, segs: list[Seg], root: Path, command: str) -> _
     if moves is None and named is None:
         return code
     code = replace(code, no_prototype=moves or named)
-    top = os.path.realpath(str(root))
-    if not any(code.on_prototype(t) for t in [top, *_claude_worktrees(top, root)]):
+    if not code.prototyping(root):
         return code
     hows = [f"runs `{moves}`: run them in commands of their own"] if moves else []
     if named:
@@ -8943,6 +8949,8 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
         if named is None and kind == "push":
             moves = changers.first(seg, "refs", _git_common(d, pglob)) or changers.first(seg, "upstream")
             if moves:  # git picks a bare push's remote by the branch checked out when it runs
+                if code.prototyping(root):
+                    return _beside_prototype(cant, moves, code), None
                 unsure = unsure or f"{cant}: another part of the command runs `{moves}`, which can change where it goes and what it sends"
                 continue
             named = _default_remote(d, pglob)
@@ -8972,6 +8980,8 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
         common = _git_common(d, pglob)
         moves = changers.first(seg, "refs", common)
         if moves:
+            if code.prototyping(root):
+                return _beside_prototype(cant, moves, code), None
             unsure = unsure or f"{cant}: another part of the command runs `{moves}`, which can change what it sends"
             continue
         if seg.fed:
@@ -9113,6 +9123,18 @@ def _not_commits(d: str, glob: list[str], srcs: list[str], pseudo: set[str]) -> 
     return ""
 
 
+def _beside_prototype(cant: str, moves: str, code: _Code) -> str:
+    """The refusal of a planning session's push beside a part that may move
+    a ref, where a checkout is on a `prototype/*` branch: a code commit
+    there goes through unjudged, so asking would ask about prototype code
+    that could go anywhere (#393; #338's answer 41)."""
+    return (
+        f"{cant}: another part of the command runs `{moves}`, which can change what it sends, and on a `prototype/*` "
+        f"branch a planning session's code commits go through unjudged, so its push is refused beside them: run the "
+        f"push in a command of its own; {code.instead}"
+    )
+
+
 def _unsure_code(unsure: str, role: str, code: _Code) -> Decision:
     """The decision on a commit or push whose contents the guard can't read:
     the conductor, which nobody is there to ask, is refused; others are asked."""
@@ -9123,7 +9145,8 @@ def _unsure_code(unsure: str, role: str, code: _Code) -> Decision:
     return Decision(
         "ask",
         f"{unsure}; {code.writes_none}: allow it only if it carries no code path, or only a revert that exactly undoes a commit "
-        "on the base" + (", or only a prototype's code on or to `prototype/*` branches" if code.planning() else ""),
+        "on the base"
+        + (", or only a push from a `prototype/*` branch whose every destination is one" if code.root and code.prototyping(code.root) else ""),
     )
 
 

@@ -371,7 +371,8 @@ def test_a_prototype_push_beside_anything_but_reads_is_judged(tmp_path, monkeypa
     if d == "ask":  # a push into a repository on this machine: one the guard can't tell about
         assert "can't tell" in why, (command, why)
     else:
-        assert d == "deny" and "carries the code path" in why and "run the push in a command of its own" in why, (command, why)
+        # Its contents judged, or, beside a part that may move a ref, refused unread (a commit goes through here).
+        assert d == "deny" and ("carries the code path" in why or "can't tell" in why) and "run the push in a command of its own" in why, (command, why)
 
 
 # ---------- as today ----------
@@ -443,7 +444,7 @@ def test_a_symbolic_ref_or_a_tag_named_prototype_isnt_a_prototype_branch(tmp_pat
         ("git -c push.followTags=true push origin prototype/x", None, "deny", "it runs with `-c` `push.followTags=true`"),
         ("GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=push.followTags GIT_CONFIG_VALUE_0=true git push origin prototype/x", None, "deny", "it runs with the variable `GIT_CONFIG_COUNT`"),
         ("git config push.followTags true; git push origin prototype/x", None, "deny", "run the push in a command of its own"),
-        ("git tag v9 && git push origin prototype/x", None, "ask", "can't tell"),
+        ("git tag v9 && git push origin prototype/x", None, "deny", "run the push in a command of its own"),
         ("HOME=/tmp/elsewhere git push origin prototype/x", None, "ask", "can't tell"),
     ],
 )
@@ -458,7 +459,7 @@ def test_a_push_that_may_send_tags_or_be_remapped_is_judged(tmp_path, monkeypatc
     d, reason = hook(monkeypatch, capsys, root, command)
     assert d == decision and why in reason, (command, reason)
     if decision == "deny":
-        assert "carries the code path" in reason, reason
+        assert "carries the code path" in reason or "can't tell" in reason, reason
 
 
 def test_a_fetch_refspec_with_a_short_destination_is_read_as_git_stores_it(tmp_path, monkeypatch, capsys):
@@ -1067,10 +1068,47 @@ def test_a_commit_left_on_another_branch_by_the_shell_is_judged_at_its_push(tmp_
     assert d == "deny" and "carries the code path" in why, why
 
 
-def test_ordinary_prototype_writes_and_commits_go_through(tmp_path, monkeypatch, capsys):
+def test_a_heredoc_before_a_compound_word_beside_a_prototype_push(tmp_path, monkeypatch, capsys):
+    """A heredoc just before a word like `if` (here `cat`'s argument) is read
+    by the push's shell-state rule, never a crash (which would ask)."""
     root = _prototype(tmp_path)
-    # A heredoc just before a word like `if` (here `cat`'s argument): read, never a crash (which would ask).
-    assert hook(monkeypatch, capsys, root, "cat <<'EOF' if\nx\nEOF\necho x > src/app.py") == ("allow", "")
+    _code_commit(root)
+    assert hook(monkeypatch, capsys, root, "cat <<'EOF' if\nx\nEOF\ngit push origin prototype/x") == ("allow", "")
+
+
+def test_a_push_beside_a_part_that_may_move_a_ref_while_prototyping(tmp_path, monkeypatch, capsys):
+    """On a prototype branch a code commit goes through unjudged, so a push
+    beside it (or any part that may move a ref) is refused, not asked:
+    asking would ask about prototype code that could go anywhere."""
+    root = _prototype(tmp_path)
+    _code_commit(root)
+    for command in (
+        "git commit -am wip && git push origin HEAD:feature",
+        "git commit -am wip && git push origin prototype/x",
+        "git commit -am wip; git push",
+        "git tag v9 && git push origin HEAD:refs/heads/prototype/y",
+    ):
+        _change(root, CODE)
+        d, why = hook(monkeypatch, capsys, root, command)
+        assert d == "deny" and "run the push in a command of its own" in why, (command, why)
+    # The same from a worktree on a prototype branch while the project is on another.
+    git(root, "checkout", "-q", "main")
+    git(root, "worktree", "add", "-q", "-b", "prototype/w", str(root / ".claude" / "worktrees" / "w"))
+    d, why = hook(monkeypatch, capsys, root, "git -C .claude/worktrees/w commit -am wip && git push origin prototype/w:feature")
+    assert d == "deny" and "run the push in a command of its own" in why, why
+
+
+def test_the_can_t_tell_ask_names_a_prototype_push_only_while_prototyping(tmp_path, monkeypatch, capsys):
+    root = _clone(tmp_path)
+    _code_commit(root)
+    d, why = hook(monkeypatch, capsys, root, "git tag v9 && git push origin HEAD:refs/heads/feature")
+    assert d == "ask" and "can't tell" in why and "prototype" not in why, why
+
+
+def test_ordinary_prototype_writes_and_commits_go_through(tmp_path, monkeypatch, capsys):
+    """Writes and commits that once met the shell-state rules (passes 10 to
+    30, now the push's alone): still plain allows."""
+    root = _prototype(tmp_path)
     _change(root, CODE)
     assert hook(monkeypatch, capsys, root, "git -C . commit -am x")[0] == "allow"
     for ok in (
