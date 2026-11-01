@@ -243,6 +243,7 @@ def test_a_push_after_merging_a_pushed_prototype_branch_is_refused(tmp_path, mon
     for command in ("git push origin feature", "git push origin HEAD", "git push -u origin feature"):
         d, why = hook(monkeypatch, capsys, root, command)
         assert d == "deny" and f"commit {sha}" in why and "src/app.py" in why, (command, why)
+    assert "is on `origin/prototype/x`, a `prototype/*` branch, whose code doesn't count as on the remote" in why, why
 
 
 def test_a_prototype_branch_fetched_under_another_name_isnt_on_the_remote(tmp_path, monkeypatch, capsys):
@@ -508,14 +509,26 @@ def test_only_tracking_refs_of_other_branches_count_as_on_the_remote(tmp_path, m
     assert d == "deny" and f"commit {sha}" in why, (spec, why)
 
 
-def test_a_remote_without_fetch_refspecs_has_nothing_on_it(tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize("setup", ["no fetch refspec", "single branch, another fetched by hand", "many refspecs"])
+def test_tracking_refs_count_as_on_the_remote_as_before(tmp_path, monkeypatch, capsys, setup):
+    """Every other tracking ref of a remote fetching from `project.repo`
+    counts, as #390 counts it: a remote with no `fetch` refspec, a branch a
+    single-branch clone fetched by hand, and hundreds of refspecs."""
     root = _clone(tmp_path)
     _code_commit(root)
-    git(root, "push", "-q", "origin", "feature")
-    assert hook(monkeypatch, capsys, root, "git push origin feature")[0] == "allow"
-    git(root, "config", "--unset-all", "remote.origin.fetch")
-    d, why = hook(monkeypatch, capsys, root, "git push origin feature")
-    assert d == "deny" and "carries the code path" in why, why
+    git(root, "push", "-q", "origin", "feature:build-7")
+    if setup == "no fetch refspec":
+        git(root, "config", "--unset-all", "remote.origin.fetch")
+    elif setup == "single branch, another fetched by hand":
+        git(root, "config", "--replace-all", "remote.origin.fetch", "+refs/heads/main:refs/remotes/origin/main")
+        git(root, "update-ref", "-d", "refs/remotes/origin/build-7")
+        git(root, "fetch", "-q", "origin", "build-7:refs/remotes/origin/build-7")
+    else:
+        for k in range(300):
+            git(root, "config", "--add", "remote.origin.fetch", f"+refs/pull/{k}/head:refs/remotes/origin/pr/{k}")
+    _change(root, "docs/guide.md")
+    git(root, "commit", "-qam", "d")
+    assert hook(monkeypatch, capsys, root, "git push origin feature:fix-7") == ("allow", ""), setup
 
 
 def test_a_tracking_ref_of_a_prototype_branch_in_another_case_doesnt_count(tmp_path, monkeypatch, capsys):

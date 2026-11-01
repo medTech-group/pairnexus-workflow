@@ -7831,30 +7831,22 @@ def _any_case(pattern: str) -> str:
     return "refs/" + "".join(f"[{ch.lower()}{ch.upper()}]" if ch.isascii() and ch.isalpha() else ch for ch in pattern[5:])
 
 
-def _one_ref_glob(ref: str) -> str:
-    """`--glob`'s pattern for this one ref (`refs/[r]emotes/…`): with a
-    bracket, git adds no `/*`."""
-    return "refs/[" + ref[5] + "]" + ref[6:]
-
-
 def _known_refs(ours: list[str], remotes: list[str], fetch: dict[str, list[str]]) -> list[str]:
     """`git log`'s options naming the tracking refs that count as on the
-    remote: the refs that the `fetch` refspecs of the remotes fetching from
-    `project.repo` (`ours`) fill, under `refs/remotes/<one of ours>/`, from
-    a branch (`refs/heads/…`) other than a `prototype/*` one. Left out,
-    wherever another refspec's names would hold them: what any refspec, of
-    any remote, stores from anything else (a pull request's `refs/pull/…`,
-    `refs/*`, a short name git may read as a tag) or from a prototype branch
-    (where its `*` may stand for part of that name, all it stores);
-    `<remote>/HEAD`, which may point at a prototype branch's; and the refs of
-    a remote nested in one of ours by name (`origin/fork`) that fetches from
-    wherever it does. Every name left out matches in any case. git splits a
-    refspec at its last `:`."""
+    remote: those under `refs/remotes/<r>/` of each remote `r` fetching from
+    `project.repo` (`ours`), as #390 counts them, less the names that a
+    `prototype/*` branch's code can be stored under: `<r>/prototype/…` (git's
+    default refspec's), what the `fetch` refspecs of ours store from a
+    prototype branch (where a `*` may stand for part of that name, all they
+    store), what any refspec of any remote stores from anything but a branch
+    (a pull request's `refs/pull/…`, `refs/*`, a short name git may read as a
+    tag) or, for a remote not ours, at all, and `<r>/HEAD`, which may point at
+    one. A remote nested in one of ours by name (`origin/fork`) that isn't
+    ours fetches from elsewhere: its refs are left out. Every name left out
+    matches in any case. git splits a refspec at its last `:`."""
     ours = [r for r in ours if not _GLOB_CHARS.search(r) and "\\" not in r]
-    homes = tuple(f"refs/remotes/{r}/" for r in ours)
     out = [f"--exclude=refs/remotes/{o}/*" for o in remotes if o not in ours and o.startswith(tuple(r + "/" for r in ours)) and not _GLOB_CHARS.search(o)]
-    branch: list[str] = []  # where ours store branches, a `*` for any name
-    left_out = [f"refs/remotes/{r}/HEAD" for r in ours]  # where anything else, and a prototype branch, is stored
+    left_out = [p for r in ours for p in (f"refs/remotes/{r}/HEAD", f"refs/remotes/{r}/prototype/*")]
     for r in remotes:
         for spec in fetch.get(r) or []:
             src, colon, dst = spec.removeprefix("+").rpartition(":")
@@ -7866,24 +7858,19 @@ def _known_refs(ours: list[str], remotes: list[str], fetch: dict[str, list[str]]
                     continue  # git stores no pattern's refs there
                 before, _, after = dst.partition("*")
                 prefix, _, rest = src.partition("*")
-                if not branchy or not before.startswith(homes):
-                    left_out.append(before + "*" + after)
-                    continue
-                branch.append(dst)
-                if _PROTOTYPE.startswith(prefix) and not rest:  # the `*` stands for `prototype/<name>`, and more
+                if not branchy or (prefix.startswith(_PROTOTYPE) or (_PROTOTYPE.startswith(prefix) and rest)):
+                    left_out.append(before + "*" + after)  # all it stores
+                elif _PROTOTYPE.startswith(prefix):  # the `*` stands for `prototype/<name>`, and more
                     left_out.append(before + _PROTOTYPE[len(prefix) :] + "*" + after)
-                elif _PROTOTYPE.startswith(prefix) or prefix.startswith(_PROTOTYPE):  # may stand for part of one
-                    left_out.append(before + "*" + after)
-                continue
-            where = _fetch_dst(dst)
-            if branchy and not _prototype_branch(src) and where.startswith(homes) and len(where) > 5:
-                branch.append(where)
-            else:
-                left_out.append(where)
-    out += [f"--exclude={_any_case(p)}" for p in dict.fromkeys(left_out)]
-    globs = [f"--glob={p if '*' in p else _one_ref_glob(p)}" for p in dict.fromkeys(branch)]
+            elif not branchy or _prototype_branch(src):
+                left_out.append(_fetch_dst(dst))
+    out += [f"--exclude={_any_case(p)}" for p in dict.fromkeys(left_out) if p.startswith("refs/")]
     # `--exclude` holds until the next `--glob`: given again before each.
-    return [x for g in globs for x in (*out, g)]
+    return [x for r in ours for x in (*out, f"--glob=refs/remotes/{r}/*")]
+
+
+# Where a prototype branch's commits are: its local branches, and its tracking refs by git's default refspec.
+_PROTOTYPE_REFS = ("refs/heads/prototype", "refs/remotes/*/prototype/**")
 
 
 # What git's ref names can't hold (`git check-ref-format`), a pattern's one `*` aside.
@@ -7926,8 +7913,8 @@ def _to_prototypes(
             specs, shell = pushes, False
         elif default in ("", "simple", "current"):
             specs = ["HEAD"]
-        else:
-            return False, mapped  # `upstream` sends it to the branch's upstream, `matching` every branch
+        else:  # `upstream` sends it to the branch's upstream, `matching` every branch, `nothing` nothing
+            return False, f"`push.default = {default}` decides where a bare push goes"
     for r in specs:
         if shell:
             if _CURRENT_BRANCH.search(r):
@@ -8894,6 +8881,9 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
                 err = f"it sends merge commit {merges[0][:7]}, and {_DRIVER_RUNS.format(driver)}"
         if found:
             sha, hit, full = found
+            if code.planning() and not proto_why:  # the code of a prototype branch, which doesn't count as on the remote
+                held, _ = _memo_read(d, pglob, "for-each-ref", "--count=1", "--format=%(refname:short)", f"--contains={full}", *_PROTOTYPE_REFS, sep="\n")
+                proto_why = f"commit {sha} is on `{held[0]}`, a `prototype/*` branch, whose code doesn't count as on the remote" if held else ""
             proto = f"a planning session's prototype code goes to `prototype/*` branches only, pushed from one, and {proto_why}; " if proto_why else ""
             instead = proto + code.instead
             if a_merge:
