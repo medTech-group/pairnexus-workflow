@@ -613,6 +613,7 @@ def _lex(
     a `(` glued to a word is open, which zsh reads as its pattern's; with
     `zsh`, such a `#` is read so, as a word's (`segments` reads both)."""
     out: list = []
+    lex_start = i  # where this text starts (a substitution's, after its `$(`)
     cmd_start = 0
     word: list[str] = []
     unquoted: list[str] = []  # the word's text outside quotes ("\0" for an unquoted substitution)
@@ -656,6 +657,55 @@ def _lex(
         word.append(s[start : j + 1])
         hoist(_lex(_unbacktick(s[start + 1 : j], in_dquotes), hashes=hashes, zsh=zsh)[0])
         return j + 1
+
+    def dquoted(i: int) -> int:
+        """A double-quoted string's text from s[i] into the word; the index
+        after its closing `"`. Inside it a `${…}` is read whole, as the shell
+        reads it: a `"…"` there is a string of its own (`"${x:-"a b"}"`). A
+        `'` there, which bash and zsh read differently, is recorded in
+        `hashes`, as where the guard can't be sure."""
+        nonlocal expands
+        params = 0  # `${` opened in this string, not yet closed
+        while i < n:
+            ch = s[i]
+            if ch == '"':
+                if not params:
+                    return i + 1
+                i = dquoted(i + 1)
+                continue
+            if ch == "\\" and i + 1 < n:
+                nx = s[i + 1]
+                if nx == "\n":
+                    i += 2
+                elif nx in '$`"\\':
+                    word.append(nx)
+                    i += 2
+                else:
+                    word.append(ch)
+                    i += 1
+                continue
+            if ch in "$`":
+                expands = True
+            if s.startswith("$(", i):
+                i = substitution(i, i + 2)
+                continue
+            if ch == "`":
+                i = backtick(i, in_dquotes=True)
+                continue
+            if ch == "$" and re.match(r"\$(?:@|\{!|\{[^}]*\[@\])", s[i : i + 256]):
+                unquoted.append("\0")  # "$@", "${A[@]}", "${!p@}": several words, quoted or not
+            if s.startswith("${", i):
+                params += 1
+                word.append("${")
+                i += 2
+                continue
+            if ch == "}" and params:
+                params -= 1
+            elif ch == "'" and params and hashes is not None:
+                hashes.append(i)
+            word.append(ch)
+            i += 1
+        return n
 
     def read_heredocs(pos: int) -> int:
         """Bodies of the pending heredocs, from the line after pos."""
@@ -725,34 +775,8 @@ def _lex(
             i = j + 1
             continue
         if c == '"' or s.startswith('$"', i):
-            i += 1 if c == '"' else 2
             in_word = quoted = True
-            while i < n and s[i] != '"':
-                ch = s[i]
-                if ch == "\\" and i + 1 < n:
-                    nx = s[i + 1]
-                    if nx == "\n":
-                        i += 2
-                    elif nx in '$`"\\':
-                        word.append(nx)
-                        i += 2
-                    else:
-                        word.append(ch)
-                        i += 1
-                    continue
-                if ch in "$`":
-                    expands = True
-                if s.startswith("$(", i):
-                    i = substitution(i, i + 2)
-                    continue
-                if ch == "`":
-                    i = backtick(i, in_dquotes=True)
-                    continue
-                if ch == "$" and re.match(r"\$(?:@|\{!|\{[^}]*\[@\])", s[i : i + 256]):
-                    unquoted.append("\0")  # "$@", "${A[@]}", "${!p@}": several words, quoted or not
-                word.append(ch)
-                i += 1
-            i += 1
+            i = dquoted(i + (1 if c == '"' else 2))
             continue
         if s.startswith("$(", i):
             in_word = True
@@ -774,10 +798,15 @@ def _lex(
         # may read as part of a word, where the lexer starts a comment: recorded (`check_bash` asks), and read so
         # in the reading `zsh` asks for.
         if c == "#" and not in_word:
-            k = i - 1
-            while k > 0 and s[k] == "\n" and s[k - 1] == "\\":
+            k = i - 1  # the character before it, backslash-newlines skipped (an odd run of backslashes)
+            while k > lex_start and s[k] == "\n":
+                m = k - 1
+                while m >= lex_start and s[m] == "\\":
+                    m -= 1
+                if (k - 1 - m) % 2 == 0:
+                    break
                 k -= 2
-            either = bool(globs) or braces > 0 or k >= 0 and s[k] not in " \t\n"
+            either = bool(globs) or braces > 0 or k >= lex_start and s[k] not in " \t\n"
             if not (zsh and either):
                 if either and hashes is not None:
                     hashes.append(i)

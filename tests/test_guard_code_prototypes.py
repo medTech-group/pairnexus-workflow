@@ -176,6 +176,34 @@ def test_a_hash_inside_a_glob_group_is_no_comment(tmp_path, monkeypatch, capsys)
     _change(root, CODE)
     d, why = hook(monkeypatch, capsys, root, "true;# x\ngit status")
     assert d == "ask" and unsure in why, why
+    # A ticket session too.
+    d, why = hook(monkeypatch, capsys, root, "true;# x\ngit status", "ticket")
+    assert d == "deny" and unsure in why, why
+    # A `"…"` inside a double-quoted `${…}` is a string of its own, as the shell reads it.
+    _change(root, CODE)
+    d, why = hook(monkeypatch, capsys, root, 'echo "${x:-"a #"}"; git commit -am x')
+    assert d == "deny" and "carries the code path" in why, why
+    d, why = hook(monkeypatch, capsys, root, 'echo "${x:-"b"}"; git push origin HEAD:main')
+    assert d == "ask" and "the base branch `main`" in why, why
+    # A `'` there, read differently by bash and zsh: unsure.
+    d, why = hook(monkeypatch, capsys, root, "echo \"${x:-\"'\"}\"; git push origin HEAD:main; echo \"'\"")
+    assert d in ("ask", "deny") and ("the base branch `main`" in why or unsure in why), why
+    # Ordinary `#`s stay allowed, in every role.
+    for role in (None, "ticket", "conductor"):
+        for ok in (
+            "echo $#",
+            "echo ${#x}",
+            "echo ${x##*/} ${x#y}",
+            "curl -s https://example.com/p#frag",
+            "git log --format=%H#",
+            "printf '%s\\n' \"#\"",
+            "make # note",
+            "echo a\\\\\n# note\ngit status",
+            "x=$(# list the files\nls)",
+            "echo \"${x:-\"default\"}\"",
+        ):
+            d, why = hook(monkeypatch, capsys, root, ok, role)
+            assert d == "allow" or unsure not in why, (role, ok, why)
 
 
 def test_a_qualifier_only_zsh_s_reading_shows_keeps_no_exception(tmp_path, monkeypatch, capsys):
