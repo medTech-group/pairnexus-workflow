@@ -894,6 +894,7 @@ class Seg:
     stdins: int = 0  # how many inputs it was given on stdin (heredocs, here-strings, `<` files)
     stdin_unseen: bool = False  # stdin from another descriptor (`<&3`) or closed
     inputs: list[str] = field(default_factory=list)  # every `<` file, whatever its descriptor
+    wrappers: list[str] = field(default_factory=list)  # the wrappers stripped from its words (`time`, `env`, `sudo`, …)
 
 
 _KEYWORDS = {"{", "}", "!", "if", "then", "else", "elif", "fi", "do", "done", "while", "until", "esac", "coproc"}
@@ -1096,7 +1097,7 @@ def _segments_of(toks: list, root: Path, cwd: str | None, depth: int) -> list[Se
             seg_cwd = _cd_target([chdir], root, cwd)
         if not toks2 and not item.redirects and not assigns and item.stdin is None and item.heredoc is None:
             continue
-        seg = Seg(toks2, item.redirects, seg_cwd, item.stdin, item.heredoc, prev if piped else None, assigns, stdins=item.stdins, stdin_unseen=item.stdin_unseen, inputs=item.inputs)
+        seg = Seg(toks2, item.redirects, seg_cwd, item.stdin, item.heredoc, prev if piped else None, assigns, stdins=item.stdins, stdin_unseen=item.stdin_unseen, inputs=item.inputs, wrappers=stripped)
         if "xargs" in stripped:
             seg.fed = True
             # A list read from a file (`-a f`, `< f`), not the pipe: anywhere in the words, to be safe.
@@ -6643,20 +6644,22 @@ _GIT_READ_SECONDS = 5  # the most one git read may take
 
 def _git_read(
     d: str, glob: list[str], *args: str, sep: str = "\0", env: dict[str, str] | None = None, ok: tuple[int, ...] = (0,), raw: bool = False,
-    timeout: float = _GIT_READ_SECONDS,
+    timeout: float = _GIT_READ_SECONDS, isolated: bool = False,
 ) -> tuple[list[str] | None, str]:
     """(git's output split on `sep`, else None; what failed, with git's own
     words). `glob` is the command's own options that change the repository
     or how pathspecs read, `env` the variables it sets for them, `ok` the
     exit codes that aren't a failure (`git config --get` exits 1 when it
     finds nothing), `raw` keeps bytes that aren't UTF-8 as they are (for
-    names given back to git), `timeout` the most it may take. No fsmonitor,
-    hook or signature check runs, a root commit's changes are shown, and
-    paths are from the top level."""
+    names given back to git), `timeout` the most it may take, `isolated`
+    that none of the session's own `GIT_*` variables reach git. No
+    fsmonitor, hook or signature check runs, a root commit's changes are
+    shown, and paths are from the top level."""
     cmd = [*_GIT_READ, *glob, *args]
     shown = "`git " + " ".join(args[:2]) + "`"
+    base = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")} if isolated else os.environ
     try:
-        p = subprocess.run(cmd, cwd=d, capture_output=True, timeout=timeout, env={**os.environ, **env} if env else None)
+        p = subprocess.run(cmd, cwd=d, capture_output=True, timeout=timeout, env={**base, **env} if env or isolated else None)
     except subprocess.TimeoutExpired:
         return None, f"{shown} took too long in `{d}`"
     except (OSError, ValueError) as e:
@@ -6959,15 +6962,15 @@ _PR_SUBJECT = re.compile(r"^Merge pull request #(\d+) from |\(#(\d+)\)$")  # Git
 _REVERSING = re.compile(r"reversing\s+changes made to ([0-9a-f]{7,64})\b")  # `git revert -m <n>` names the parent it reverted against
 _REVERT_CAP = 64  # the most reverts one command's pushes read
 _REVERT_SECONDS = 8  # the most time one command spends reading reverts
-_ATTR_CAP = 1000  # the most code paths whose `merge` attribute one revert's read looks up
 _GIT_FETCH_HINT = "if it merged since this repository last fetched, run `git fetch` and try again"
 # What may run beside a commit finishing a revert, which the guard reads as the index is when the command starts: what changes no file.
 _SHELL_READS = {*_CHANGES_DIR, "echo", "printf", "true", ":", "pwd", "test", "[", "ls", "cat", "head", "tail", "wc", "grep"}
 _GIT_READS = {
     "status", "diff", "log", "show", "rev-parse", "ls-files", "ls-tree", "describe", "shortlog", "whatchanged", "cat-file",
-    "remote", "branch", "for-each-ref", "rev-list", "merge-base", "blame", "grep",
+    "for-each-ref", "rev-list", "merge-base", "blame",
 }  # fmt: skip
-_BRANCH_WRITES = re.compile(r"-[a-zA-Z]*[dDmMcCf]|--(delete|move|copy|set-upstream|unset-upstream|edit-description|force|create-reflog|track|no-track)")  # `git branch`'s writing options
+_GIT_LISTS = {"branch": {"--show-current", "--list", "-l", "-a", "--all", "-r", "--remotes", "-v", "-vv", "--verbose"}, "remote": {"-v", "--verbose"}}  # listing, never writing
+_GIT_READ_GLOBALS = {"--no-pager", "-P", "--no-optional-locks", "--literal-pathspecs"}  # global options that run nothing (and `-C <dir>`)
 
 
 def _revert_head(d: str, glob: list[str]) -> str:
@@ -7016,13 +7019,14 @@ def _pr_of(d: str, glob: list[str], sha: str, ref: str) -> str:
     """The pull request whose merge `sha` is, by its subject, else "": a
     merge commit "Merge pull request #<n> from …", or a commit "… (#<n>)" on
     the first-parent line of `ref`, the base, as a squash merge is (a commit
-    inside a merged pull request may name an issue so)."""
+    inside a merged pull request may name an issue so); either on the
+    base's first-parent line, where a pull request into it merged."""
     subject, _ = _memo_read(d, glob, "log", "-1", "--format=%s", sha, "--", sep="\n")
     m = _PR_SUBJECT.search(subject[0]) if subject else None
-    if not m or m.group(1):
-        return m.group(1) if m else ""
+    if not m:
+        return ""
     line, _ = _memo_read(d, glob, "rev-list", "--first-parent", ref, "--not", f"{sha}^@", "--", sep="\n")
-    return m.group(2) if line and sha in line else ""
+    return (m.group(1) or m.group(2)) if line and sha in line else ""
 
 
 def _undone_by_git(d: str, glob: list[str], sha: str, first: str, parent: str, after: str | None, code: _Code, deadline: float) -> tuple[str, str]:
@@ -7031,63 +7035,54 @@ def _undone_by_git(d: str, glob: list[str], sha: str, first: str, parent: str, a
     ("same", ""), ("differs", the first code path that isn't the same),
     ("conflict", a code path that conflicts there, or is unmerged in the
     index), ("unmerged", "") for an index with only other files unmerged,
-    ("driver", a merge driver git's config names), ("attribute", a code
-    path and the `merge` attribute that merges it its own way), or
-    ("unsure", what failed). git's revert is merged as `git revert` merges
-    it (`git merge-tree`), in a temporary object store of the guard's own,
-    with no clean filter; where a merge driver, or a `merge` attribute
-    other than git's text and binary merges (`union`), would decide the
-    lines, the guard doesn't say. The revert is the commit `after`, or with
-    None the index. Each read ends by `deadline`."""
+    or ("unsure", what failed). git's revert is merged as `git revert`
+    merges it (`git merge-tree`), with git's own text merge only: in an
+    empty repository of the guard's own that borrows the project's objects,
+    so no config, attribute, merge driver or `merge.default` of the
+    project's, the session's or the system's decides a line, and nothing is
+    written to the project. The revert is the commit `after`, or with None
+    the index. Each read ends by `deadline`."""
     import time
-
-    driver, err = _merge_driver(d, glob)
-    if driver or err:
-        return ("driver", driver) if driver else ("unsure", err)
 
     def left() -> float:
         return max(0.1, min(_GIT_READ_SECONDS, deadline - time.monotonic()))
 
-    def read(*args: str, **kw) -> tuple[list[str] | None, str]:
-        return _git_read(d, kw.pop("glob", glob), *args, env={**env, **kw.pop("more_env", {})}, raw=True, timeout=left(), **kw)
-
-    names = ["diff-tree", "-r", "-z", "--name-only", "--no-renames", "--ignore-submodules=none"]
+    found, err = _memo_read(d, glob, "rev-parse", "--verify", "--quiet", "--show-object-format", f"{parent}^{{commit}}", sep="\n")
+    if not found or len(found) != 2:
+        return "unsure", err or f"`git rev-parse` couldn't name `{parent}`"
+    fmt, parent = found
     with _scratch_store(d, glob, index=after is None) as (env, err):
         if env is None:
             return "unsure", err
         if after is None:
             plain = [g for g in glob if g not in _GIT_PATHSPEC_GLOBALS]  # `:/` is read as git's magic
-            unmerged, err = read("ls-files", "-u", "-z", "--full-name", "--", ":/", glob=plain, more_env={"GIT_LITERAL_PATHSPECS": "0"})
+            unmerged, err = _git_read(d, plain, "ls-files", "-u", "-z", "--full-name", "--", ":/", env={**env, "GIT_LITERAL_PATHSPECS": "0"}, raw=True, timeout=left())
             if unmerged is None:
                 return "unsure", err
             if unmerged:
                 paths = [item.partition("\t")[2] for item in unmerged]
                 hit = next((x for x in paths if _listed_code(x, code)), None)
                 return ("conflict", hit) if hit else ("unmerged", "")
-            tree, err = read("write-tree", sep="\n", glob=[*_FULL_INDEX, *glob])
+            tree, err = _git_read(d, [*_FULL_INDEX, *glob], "write-tree", sep="\n", env=env, timeout=left())
             if not tree:
                 return "unsure", err or "`git write-tree` named no tree"
             after = tree[0]
-        undone, err = read("merge-tree", "--write-tree", "-z", "--name-only", "--no-messages", f"--merge-base={sha}", parent, first, glob=[*glob, *_REMERGE_CONFIG], ok=(0, 1))
+        home = os.path.dirname(env["GIT_OBJECT_DIRECTORY"])
+        iso = {
+            "GIT_DIR": os.path.join(home, "empty.git"), "GIT_OBJECT_DIRECTORY": env["GIT_OBJECT_DIRECTORY"],
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": env["GIT_ALTERNATE_OBJECT_DIRECTORIES"], "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1", "GIT_ATTR_NOSYSTEM": "1", "GIT_NO_LAZY_FETCH": "1", "HOME": home, "XDG_CONFIG_HOME": home,
+        }  # fmt: skip
+        made, err = _git_read(home, [], "init", "--bare", "-q", "--template=", f"--object-format={fmt}", iso["GIT_DIR"], env={k: v for k, v in iso.items() if k != "GIT_DIR"}, isolated=True, timeout=left())
+        if made is None:
+            return "unsure", err
+        undone, err = _git_read(home, [], "merge-tree", "--write-tree", "-z", "--name-only", "--no-messages", f"--merge-base={sha}", parent, first, env=iso, ok=(0, 1), raw=True, isolated=True, timeout=left())
         if not undone:
             return "unsure", err or "`git merge-tree` named no tree"
-        theirs, err = read(*names, first, sha, "--")
-        ours, err2 = read(*names, parent, undone[0], "--") if theirs is not None else (None, err)
-        if theirs is None or ours is None:
-            return "unsure", err or err2
-        merged = sorted({x for x in theirs + ours + undone[1:] if _listed_code(x, code)})
-        if len(merged) > _ATTR_CAP:
-            return "unsure", f"it reads the `merge` attribute of at most {_ATTR_CAP:,} code paths, and the revert merges more"
-        attrs, err = read("check-attr", "-z", "merge", "--", *merged) if merged else ([], "")
-        if attrs is None:
-            return "unsure", err
-        for path, value in zip(attrs[::3], attrs[2::3]):
-            if value not in ("unspecified", "set", "unset", "text", "binary"):
-                return "attribute", f"{path}\0{value}"
         hit = next((x for x in undone[1:] if _listed_code(x, code)), None)
         if hit:
             return "conflict", hit
-        differs, err = read(*names, undone[0], after, "--")
+        differs, err = _git_read(home, [], "diff-tree", "-r", "-z", "--name-only", "--no-renames", "--ignore-submodules=none", undone[0], after, "--", env=iso, raw=True, isolated=True, timeout=left())
         if differs is None:
             return "unsure", err
     hit = next((x for x in differs if _listed_code(x, code)), None)
@@ -7131,18 +7126,13 @@ def _revert_rule(d: str, glob: list[str], named: str, parent: str, after: str | 
     exact = f"it doesn't exactly undo {short}"
     how, path = _undone_by_git(d, glob, sha, ids[0], parent, after, code, deadline)
     if how == "unmerged":
-        return _Revert("unmatched", sha, "files outside the code paths are still unmerged: `git add` them once resolved, then finish it with `git commit --no-edit`", step=True)
+        return _Revert("unmatched", sha, "files outside the code paths are still unmerged: `git add` them once resolved, then finish it with `git commit --no-edit`, each in a command of its own", step=True)
     if how == "conflict":  # GitHub's **Revert** button would meet the same conflict
         return _Revert("unmatched", sha, f"{exact}: undoing it conflicts in `{_brief(path)}`, and resolving that is writing code", "", path)
     if how == "differs":
         other = mainline and len(ids) > 1 and not ids[0].startswith(mainline)  # its message says it was made against another parent
         hint = f": a merge is reverted against its first parent, as `git revert -m 1 {short}` does" if other else ""
         return _Revert("unmatched", sha, f"{exact}: `{_brief(path)}` isn't as `git revert` of {short} leaves it{hint}", pr, path)
-    if how == "driver":
-        return _Revert("unsure", sha, f"git's config names a merge driver, `{_brief(path)}`, which undoing {short} as `git revert` does would run; the guard runs none", pr)
-    if how == "attribute":
-        where, _, value = path.partition("\0")
-        return _Revert("unsure", sha, f"`{_brief(where)}` has the `merge={_brief(value)}` attribute, which merges it its own way rather than marking a conflict", pr)
     if how == "unsure":
         return _Revert("unsure", sha, f"it couldn't undo {short} as `git revert` does: {path}", pr)
     if code.conductor() and sha not in code.allowed_reverts():
@@ -7433,21 +7423,31 @@ def _names_dot_git(command: str, segs: list[Seg]) -> str | None:
 
 def _reads_only(s: Seg) -> bool:
     """Whether a part of the command changes no file, index or ref: a shell
-    word that only reads or moves the shell, or a git command that only reads
-    (`status`, `diff` without `--output`, `branch` without a writing option,
-    …), run without settings or variables of its own (`-c core.fsmonitor=…`
-    runs a program), with no redirect other than to `/dev/null`."""
-    if s.fed or not s.words or s.assigns or any(r != "/dev/null" for r in s.redirects):
+    word that only reads or moves the shell, or git itself (its own command
+    word) running a read (`status`, `diff` without `--output`, `branch
+    --show-current`, …) with no global option that runs or points at a
+    program (`-c`, `--exec-path`), all with no wrapper (`time -o`), variable
+    or redirect other than to `/dev/null`."""
+    if s.fed or not s.words or s.assigns or s.wrappers or any(r != "/dev/null" for r in s.redirects):
         return False
     if s.words[0] in _SHELL_READS:
         return True
-    g = _commit_git(s.words)
-    if not g or not g[1] or g[1][0] not in _GIT_READS or any(o in ("-c", "--config-env") or o.startswith("--config-env=") for o in g[0]):
+    if Path(s.words[0]).name != "git":
         return False
-    rest = g[1][1:]
-    if g[1][0] in ("branch", "remote"):  # listing, not writing
-        return all(a.startswith("-") and not _BRANCH_WRITES.match(a) for a in rest) if g[1][0] == "branch" else rest in ([], ["-v"], ["--verbose"])
-    return not any(a.startswith("--output") for a in rest)
+    g = _commit_git(s.words)
+    if not g or not g[1]:
+        return False
+    glob, (sub, *rest), i = g[0], g[1], 0
+    while i < len(glob):
+        if glob[i] == "-C":
+            i += 2
+            continue
+        if glob[i] not in _GIT_READ_GLOBALS:
+            return False
+        i += 1
+    if sub in _GIT_LISTS:
+        return all(a in _GIT_LISTS[sub] for a in rest)
+    return sub in _GIT_READS and not any(a.startswith("--output") for a in rest)
 
 
 def _finishing_revert(segs: list[Seg], seg: Seg, d: str, glob: list[str], c: _Commit, env: dict[str, str], reverting: str, code: _Code) -> _Revert:
@@ -7485,7 +7485,15 @@ def _finishing_revert(segs: list[Seg], seg: Seg, d: str, glob: list[str], c: _Co
             return _Revert("unmatched", reverting, why, step=True, path=wt_code)
     if why:
         return _Revert("unmatched", reverting, why, step=True)
-    return _revert_rule(d, glob, reverting, "HEAD", None, code, time.monotonic() + _REVERT_SECONDS)
+    msg, _ = _git_read(d, glob, "rev-parse", "--git-path", "MERGE_MSG", sep="\n")  # the message `git revert` wrote
+    to = None
+    if msg and len(msg) == 1:
+        try:
+            with open(os.path.join(d, msg[0]), encoding="utf-8", errors="replace") as f:
+                to = _REVERSING.search(f.read(64 * 1024))
+        except OSError:
+            pass
+    return _revert_rule(d, glob, reverting, "HEAD", None, code, time.monotonic() + _REVERT_SECONDS, to.group(1) if to else "")
 
 
 def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tuple[str | None, str | None]:

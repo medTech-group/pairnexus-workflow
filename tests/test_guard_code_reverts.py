@@ -152,6 +152,11 @@ def test_a_revert_in_progress_is_judged_by_the_revert_rule(proj, monkeypatch, ca
         ("git commit --no-edit && git checkout origin/main -- src/app.py", "the command also runs `git checkout origin/main -- src/app.py`"),
         ("git -c core.fsmonitor=./x.sh status && git commit --no-edit", "the command also runs `git -c core.fsmonitor=./x.sh status`"),
         ("git branch gone && git commit --no-edit", "the command also runs `git branch gone`"),
+        ("git branch -uorigin/main && git commit --no-edit", "the command also runs `git branch -uorigin/main`"),
+        ("sh x.sh git status && git commit --no-edit", "the command also runs `sh x.sh git status`"),
+        ("git grep -Otrue -e v5 && git commit --no-edit", "the command also runs `git grep -Otrue -e v5`"),
+        ("git --exec-path=/tmp status && git commit --no-edit", "the command also runs `git --exec-path=/tmp status`"),
+        ("time -o src/app.py git status && git commit -a --no-edit", "the command also runs `git status`"),
     ],
 )
 def test_finishing_a_revert_other_than_as_it_stands_is_refused(proj, monkeypatch, capsys, command, why):
@@ -266,30 +271,41 @@ def test_a_revert_stopped_on_a_docs_conflict_says_to_add_it(proj, monkeypatch, c
     assert hook(monkeypatch, capsys, proj, "git commit --no-edit") == ("allow", "")
 
 
-def test_a_merge_attribute_that_merges_its_own_way_is_asked(proj, monkeypatch, capsys):
-    """`merge=union` keeps both sides' lines rather than marking a conflict:
-    git's revert after a later change to the same line would pass for exact."""
+@pytest.mark.parametrize(
+    "setting",
+    [
+        pytest.param(lambda r: _change(r, ".gitattributes", "src/app.py merge=union\n"), id="an attribute"),
+        pytest.param(lambda r: _change(r, ".git/info/attributes", "*.py merge=union\n"), id="info/attributes"),
+        pytest.param(lambda r: git(r, "config", "merge.default", "union"), id="merge.default"),
+    ],
+)
+def test_a_merge_that_keeps_both_sides_lines_isn_t_git_s_own_revert(proj, monkeypatch, capsys, setting):
+    """`union` keeps both sides' lines rather than marking a conflict, so the
+    revert after a later change to the same line merges "cleanly". The guard
+    merges with git's own text merge, whatever the repository says: a conflict."""
     merge = _merge_pr(proj)
     _on_base(proj, lambda r: _edit(r, CODE, "v5 = 'pr'", "v5 = 'later'"), "later")
     _feature(proj)
-    _change(proj, ".gitattributes", "src/app.py merge=union\n")  # left uncommitted
+    setting(proj)  # left uncommitted
     assert _revert(proj, merge) == 0
     assert "v5 = 'later'" in (proj / CODE).read_text() and "v5 = 5" in (proj / CODE).read_text()
-    d, why = hook(monkeypatch, capsys, proj, PUSH)
-    assert d == "ask" and "`merge=union` attribute" in why, why
-    d, why = hook(monkeypatch, capsys, proj, PUSH, "conductor")
-    assert d == "deny" and "`merge=union` attribute" in why, why
+    for command in (PUSH, "cd src && git push origin feature", "git -C src push origin feature"):
+        for role in (None, "conductor"):
+            d, why = hook(monkeypatch, capsys, proj, command, role)
+            assert d == "deny" and "undoing it conflicts in `src/app.py`" in why, (command, role, why)
 
 
 def test_a_merge_driver_in_git_s_config_is_never_run(proj, monkeypatch, capsys, tmp_path):
+    """The guard merges in an empty repository of its own: the project's
+    merge driver never runs, and a revert git makes without needing it
+    goes through."""
     ran = tmp_path / "ran"
     merge = _merge_pr(proj)
     _feature(proj)
-    assert _revert(proj, merge) == 0
     git(proj, "config", "merge.mine.driver", f"touch {ran} && cp %B %A")
     _change(proj, ".git/info/attributes", "src/* merge=mine\n")
-    d, why = hook(monkeypatch, capsys, proj, PUSH)
-    assert d == "ask" and "names a merge driver, `merge.mine.driver`" in why, why
+    assert _revert(proj, merge) == 0
+    assert hook(monkeypatch, capsys, proj, PUSH) == ("allow", "")
     assert not ran.exists()
 
 
@@ -301,6 +317,14 @@ def test_with_no_remote_ref_of_the_base_it_says_to_fetch(proj, monkeypatch, caps
     git(proj, "update-ref", "-d", "refs/remotes/origin/main")
     d, why = hook(monkeypatch, capsys, proj, "git commit --no-edit")
     assert d == "ask" and "no remote ref of the base branch `main`" in why and "run `git fetch`" in why, why
+
+
+def test_a_squash_merge_s_revert_button(proj, monkeypatch, capsys):
+    squash = _on_base(proj, lambda r: _edit(r, CODE, "v5 = 5", "v5 = 'squash'"), "Fix login (#17)")
+    _feature(proj)
+    _forged(proj, squash, lambda r: _edit(r, CODE, "v9 = 9", "v9 = 'extra'"))
+    d, why = hook(monkeypatch, capsys, proj, PUSH)
+    assert d == "deny" and "GitHub's own **Revert** button on pull request #17" in why, why
 
 
 def test_a_commit_inside_a_merged_pull_request_isn_t_taken_for_a_squash_merge(proj, monkeypatch, capsys):
