@@ -7698,7 +7698,7 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tupl
         # A planning session's commit on a `prototype/*` branch, in the project or a Claude Code worktree, with the git
         # directory that checkout's own HEAD is in (not another's, by `--git-dir`) (#393).
         co = _checkout_of(top, root)
-        if co is not None and co[0] == top and code.prototype_here(top) and _git_dir_abs(d, glob) == _git_dir_abs(top, []):
+        if co is not None and co[0] == top and code.prototype_here(top) and (gd := _git_dir_abs(d, glob)) and gd == _git_dir_abs(top, []):
             continue
         literal = bool(_LITERAL_GLOBALS & set(glob)) or any(assigned.get(v, "0") not in ("", "0", "false") for v in _LITERAL_ENV)
         specs, unread = _expanded_specs(seg, c, literal)
@@ -8855,6 +8855,7 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
     import time  # here, as `_sent_code`'s: only a command that pushes needs it
 
     unsure, note, started = None, None, time.monotonic()
+    can_t: list[Seg] = []  # the pushes it can't tell about that may go to `project.repo` (#393)
     changers: _Changers | None = None
     reads_only: tuple[list[Seg], str | None] | None = None  # `_busy_parts`, read once (#393)
     dot_git: str | None = None  # the `.git` the command names, read once
@@ -8863,7 +8864,7 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
         if not g or not g[1] or g[1][0] not in _PUSH_CMDS:
             continue
         if time.monotonic() - started > _PUSH_RULE_SECONDS:
-            unsure = unsure or "the guard can't tell what the command's pushes would send: there are too many to read in time"
+            unsure = _held(can_t, seg, unsure, "the guard can't tell what the command's pushes would send: there are too many to read in time")
             break
         if changers is None:
             changers = code.changers or _Changers(segs, root)
@@ -8875,7 +8876,7 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
         cant = f"the guard can't tell what `git {kind}` would send"
         named = p.repo
         if named is not None and _shell_spelled(named, globs=True):
-            unsure = unsure or f"{cant}: its repository `{_brief(named)}` is one the shell expands"
+            unsure = _held(can_t, seg, unsure, f"{cant}: its repository `{_brief(named)}` is one the shell expands")
             continue
         # A setting that may rewrite a URL (`url.<base>.pushInsteadOf`) can send any push anywhere, `project.repo` among them.
         # `-c key=value` and `--config-env key=VAR`, each as its `key=…`.
@@ -8887,7 +8888,7 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
         if rewrites or env or other:
             what = f"`{env}`" if env else f"`{_brief(rewrites[0].partition('=')[0])}`" if rewrites else ""
             how = f"it sets {what}" if what else f"another part of the command runs `{other}`"
-            unsure = unsure or f"{cant}: {how}, which can change where it goes"
+            unsure = _held(can_t, seg, unsure, f"{cant}: {how}, which can change where it goes")
             continue
         # A remote's name rarely holds a `:` and never starts a path (`/`, `.`).
         url_given = named is not None and (kind != "push" or ":" in named or named.startswith(("/", ".")))
@@ -8897,9 +8898,9 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
             if elsewhere:
                 continue  # another repository, by URL: as today
             if not d or "$" in d or "`" in d:
-                unsure = unsure or f"{cant}: it runs in a directory the guard can't follow"
+                unsure = _held(can_t, seg, unsure, f"{cant}: it runs in a directory the guard can't follow")
             else:
-                unsure = unsure or f"{cant}: it runs in `{_brief(d)}`, which " + ("isn't a directory" if os.path.exists(d) else "doesn't exist yet")
+                unsure = _held(can_t, seg, unsure, f"{cant}: it runs in `{_brief(d)}`, which " + ("isn't a directory" if os.path.exists(d) else "doesn't exist yet"))
             continue
         d = os.path.realpath(d)
         pglob = _passed_globals(glob)
@@ -8908,7 +8909,7 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
         if cfg is None or listed is None:
             if elsewhere:
                 continue
-            unsure = unsure or f"{cant}: {err or err2}"
+            unsure = _held(can_t, seg, unsure, f"{cant}: {err or err2}")
             continue
         fetch_urls: dict[str, str] = {}  # each remote's URL as git fetches from it (`insteadOf` applied)
         for line in listed:
@@ -8926,7 +8927,7 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
         is_remote = kind == "push" and named in remotes  # git looks a word up as a remote first
         if elsewhere and not is_remote:
             if dot_git:  # a `.git` written can rewrite the URL (`pushInsteadOf` in its config)
-                unsure = unsure or f"{cant}: the command names `{dot_git}`, which can change where it goes"
+                unsure = _held(can_t, seg, unsure, f"{cant}: the command names `{dot_git}`, which can change where it goes")
             continue  # else another repository, by URL: as today
         # A push by a remote's name, or with none named, goes where the config of the repository git reads says:
         # what changes that config, or which repository git reads, makes it one the guard can't tell about.
@@ -8947,37 +8948,37 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
                 how = f"another part of the command runs `{other}`"
             else:
                 how = f"it runs in `{_brief(d)}`, where another part of the command makes a repository or worktree"
-            unsure = unsure or f"{cant}: {how}, which can change where it goes or what it sends"
+            unsure = _held(can_t, seg, unsure, f"{cant}: {how}, which can change where it goes or what it sends")
             continue
         if named is None and kind == "push":
             refs = changers.first(seg, "refs", _git_common(d, pglob))
             moves = refs or changers.first(seg, "upstream")
-            if moves:  # git picks a bare push's remote by the branch checked out when it runs
+            if moves:  # git picks a bare push's remote by the branch checked out when it runs (asked when not ours)
                 if refs and code.prototyping(root) and _a_remote_of_ours(d, pglob, remotes, cfg, code):
                     return _beside_prototype(cant, refs, code), None
                 unsure = unsure or f"{cant}: another part of the command runs `{moves}`, which can change where it goes and what it sends"
                 continue
             named = _default_remote(d, pglob)
             if named is None:
-                unsure = unsure or f"{cant}: it couldn't read which remote git picks"
+                unsure = _held(can_t, seg, unsure, f"{cant}: it couldn't read which remote git picks")
                 continue
         is_remote = kind == "push" and named in remotes
         if is_remote:
             urls, err = _memo_read(d, pglob, "remote", "get-url", "--push", "--all", named, sep="\n")
             if urls is None:
-                unsure = unsure or f"{cant}: it couldn't read the URL of the remote `{_brief(named)}`: {err}"
+                unsure = _held(can_t, seg, unsure, f"{cant}: it couldn't read the URL of the remote `{_brief(named)}`: {err}")
                 continue
         else:
             common = _git_common(d, pglob)
             named = named or ""  # send-pack and http-push without a repository fail
             legacy = common and named not in ("", ".", "..") and "/" not in named and kind == "push"
             if legacy and any(os.path.isfile(os.path.join(common, sub, named)) for sub in ("remotes", "branches")):
-                unsure = unsure or f"{cant}: its remote `{_brief(named)}` is defined in a file under `.git/remotes` or `.git/branches`, which the guard doesn't read"
+                unsure = _held(can_t, seg, unsure, f"{cant}: its remote `{_brief(named)}` is defined in a file under `.git/remotes` or `.git/branches`, which the guard doesn't read")
                 continue
             urls = [named]
         if not any(_project_url(u, code.repo) for u in urls):
             if dot_git:  # a `.git` written can change the remote's URL
-                unsure = unsure or f"{cant}: the command names `{dot_git}`, which can change where it goes"
+                unsure = _held(can_t, seg, unsure, f"{cant}: the command names `{dot_git}`, which can change where it goes")
             continue  # else another repository: as today
         to = f"`{code.repo}`" if code.repo else f"`{_brief(named)}`"
         cant = f"the guard can't tell what `git {kind}` would send to {to}"
@@ -8986,13 +8987,13 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
         if moves:
             if code.prototyping(root):
                 return _beside_prototype(cant, moves, code), None
-            unsure = unsure or f"{cant}: another part of the command runs `{moves}`, which can change what it sends"
+            unsure = _held(can_t, seg, unsure, f"{cant}: another part of the command runs `{moves}`, which can change what it sends")
             continue
         if seg.fed:
-            unsure = unsure or f"{cant}: `xargs` gives it its refs"
+            unsure = _held(can_t, seg, unsure, f"{cant}: `xargs` gives it its refs")
             continue
         if p.unread:
-            unsure = unsure or f"{cant}: it couldn't read {p.unread}"
+            unsure = _held(can_t, seg, unsure, f"{cant}: it couldn't read {p.unread}")
             continue
         # `$(git branch --show-current)` is the shell's branch: HEAD where git runs in the same repository.
         here = seg.cwd is not None and os.path.isdir(seg.cwd) and _git_dir_abs(seg.cwd, []) == _git_dir_abs(d, pglob)
@@ -9035,7 +9036,7 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
             else:
                 srcs.append("HEAD")
         if bad:
-            unsure = unsure or f"{cant}: it couldn't read {bad}"
+            unsure = _held(can_t, seg, unsure, f"{cant}: it couldn't read {bad}")
             continue
         if not srcs and not pseudo:
             continue  # it sends nothing
@@ -9102,7 +9103,15 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
         if not err:
             err = _not_commits(d, pglob, srcs, pseudo)
         if err:
-            unsure = unsure or f"{cant}: {err}"
+            unsure = _held(can_t, seg, unsure, f"{cant}: {err}")
+    if can_t and code.prototyping(root):
+        # A push it can't tell about beside a part that may move a ref, whatever stopped it reading: refused, not
+        # asked, since a code commit goes through unjudged on a `prototype/*` branch (#393).
+        changers = changers or code.changers or _Changers(segs, root)
+        for s in can_t:
+            moves = changers.first(s, "refs")
+            if moves:
+                return _beside_prototype(unsure or "the guard can't tell what a push would send", moves, code), None
     return None, unsure or note or None
 
 
@@ -9139,6 +9148,13 @@ def _a_remote_of_ours(d: str, glob: list[str], remotes: set[str], cfg: dict[str,
             return True
     named = (v for k, vs in cfg.items() if k == "remote.pushdefault" or k.startswith("branch.") and k.endswith((".pushremote", ".remote")) for v in vs)
     return any(v not in remotes and v != "." and _project_url(v, code.repo) for v in named)
+
+
+def _held(can_t: list[Seg], seg: Seg, unsure: str | None, why: str) -> str:
+    """`unsure` as it stands, else `why`; `seg` noted among the pushes the
+    guard can't tell about (`_judge_pushes`)."""
+    can_t.append(seg)
+    return unsure or why
 
 
 def _beside_prototype(cant: str, moves: str, code: _Code) -> str:

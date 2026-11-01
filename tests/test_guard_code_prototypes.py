@@ -1087,6 +1087,10 @@ def test_a_push_beside_a_part_that_may_move_a_ref_while_prototyping(tmp_path, mo
         "git commit -am wip && git push origin prototype/x",
         "git commit -am wip; git push",
         "git tag v9 && git push origin HEAD:refs/heads/prototype/y",
+        # Whatever else stops the guard reading the push: refused, not asked, beside a ref move.
+        "git commit -am wip && git -c remote.origin.push=HEAD:refs/heads/feature push origin",
+        "git commit -am wip && HOME=/tmp/h git push origin HEAD:feature",
+        "git commit -am wip && git -c push.default=upstream push origin",
     ):
         _change(root, CODE)
         d, why = hook(monkeypatch, capsys, root, command)
@@ -1140,6 +1144,13 @@ def test_a_commit_given_another_worktrees_git_directory_is_judged(tmp_path, monk
     _change(root, CODE)
     d, why = hook(monkeypatch, capsys, root, f"git --git-dir={gd} --work-tree=. commit -am x")
     assert d != "allow" and "unjudged" not in why, why
+    # The other way round: a Claude Code worktree on a prototype branch as the work tree, the project's git directory.
+    w = root / ".claude" / "worktrees" / "w"
+    git(root, "worktree", "add", "-q", "-b", "prototype/w", str(w))
+    _change(w, CODE)
+    for command in ("git --work-tree=.claude/worktrees/w commit -am x", f"git -c core.worktree={w} commit -am x"):
+        d, why = hook(monkeypatch, capsys, root, command)
+        assert d != "allow" and "unjudged" not in why, (command, why)
 
 
 def test_the_can_t_tell_ask_names_a_prototype_push_only_while_prototyping(tmp_path, monkeypatch, capsys):
