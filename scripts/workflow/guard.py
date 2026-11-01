@@ -7695,8 +7695,9 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tupl
             continue
         top = os.path.realpath(where[0])
         wt = "" if top == os.path.realpath(str(root)) else _rel(top, root)
-        if code.prototype_here(d, glob):
-            continue  # a planning session's commit on a `prototype/*` branch (#393)
+        co = _checkout_of(top, root)
+        if co is not None and co[0] == top and code.prototype_here(d, glob):
+            continue  # a planning session's commit on a `prototype/*` branch, in the project or a Claude Code worktree (#393)
         literal = bool(_LITERAL_GLOBALS & set(glob)) or any(assigned.get(v, "0") not in ("", "0", "false") for v in _LITERAL_ENV)
         specs, unread = _expanded_specs(seg, c, literal)
         c = replace(c, specs=specs)
@@ -8947,10 +8948,11 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
             unsure = unsure or f"{cant}: {how}, which can change where it goes or what it sends"
             continue
         if named is None and kind == "push":
-            moves = changers.first(seg, "refs", _git_common(d, pglob)) or changers.first(seg, "upstream")
+            refs = changers.first(seg, "refs", _git_common(d, pglob))
+            moves = refs or changers.first(seg, "upstream")
             if moves:  # git picks a bare push's remote by the branch checked out when it runs
-                if code.prototyping(root):
-                    return _beside_prototype(cant, moves, code), None
+                if refs and code.prototyping(root) and _a_remote_of_ours(d, pglob, remotes, code):
+                    return _beside_prototype(cant, refs, code), None
                 unsure = unsure or f"{cant}: another part of the command runs `{moves}`, which can change where it goes and what it sends"
                 continue
             named = _default_remote(d, pglob)
@@ -9123,6 +9125,17 @@ def _not_commits(d: str, glob: list[str], srcs: list[str], pseudo: set[str]) -> 
     return ""
 
 
+def _a_remote_of_ours(d: str, glob: list[str], remotes: set[str], code: _Code) -> bool:
+    """Whether any remote of the repository at `d` pushes to `project.repo`
+    (a bare push's, whichever branch git finds checked out); one it can't
+    read counts as one that does."""
+    for r in sorted(remotes):
+        urls, _ = _memo_read(d, glob, "remote", "get-url", "--push", "--all", r, sep="\n")
+        if urls is None or any(_project_url(u, code.repo) for u in urls):
+            return True
+    return False
+
+
 def _beside_prototype(cant: str, moves: str, code: _Code) -> str:
     """The refusal of a planning session's push beside a part that may move
     a ref, where a checkout is on a `prototype/*` branch: a code commit
@@ -9146,7 +9159,7 @@ def _unsure_code(unsure: str, role: str, code: _Code) -> Decision:
         "ask",
         f"{unsure}; {code.writes_none}: allow it only if it carries no code path, or only a revert that exactly undoes a commit "
         "on the base"
-        + (", or only a push from a `prototype/*` branch whose every destination is one" if code.root and code.prototyping(code.root) else ""),
+        + (", or only a commit on a `prototype/*` branch, or a push from one whose every destination is one" if code.root and code.prototyping(code.root) else ""),
     )
 
 

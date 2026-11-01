@@ -445,7 +445,7 @@ def test_a_symbolic_ref_or_a_tag_named_prototype_isnt_a_prototype_branch(tmp_pat
         ("GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=push.followTags GIT_CONFIG_VALUE_0=true git push origin prototype/x", None, "deny", "it runs with the variable `GIT_CONFIG_COUNT`"),
         ("git config push.followTags true; git push origin prototype/x", None, "deny", "run the push in a command of its own"),
         ("git tag v9 && git push origin prototype/x", None, "deny", "run the push in a command of its own"),
-        ("HOME=/tmp/elsewhere git push origin prototype/x", None, "ask", "can't tell"),
+        ("HOME=/tmp/elsewhere git push origin prototype/x", None, "ask", "or only a commit on a `prototype/*` branch, or a push from one whose every destination is one"),
     ],
 )
 def test_a_push_that_may_send_tags_or_be_remapped_is_judged(tmp_path, monkeypatch, capsys, command, setting, decision, why):
@@ -1096,6 +1096,32 @@ def test_a_push_beside_a_part_that_may_move_a_ref_while_prototyping(tmp_path, mo
     git(root, "worktree", "add", "-q", "-b", "prototype/w", str(root / ".claude" / "worktrees" / "w"))
     d, why = hook(monkeypatch, capsys, root, "git -C .claude/worktrees/w commit -am wip && git push origin prototype/w:feature")
     assert d == "deny" and "run the push in a command of its own" in why, why
+
+
+def test_a_bare_push_beside_a_ref_move_elsewhere_or_an_upstream_set_is_asked_as_before(tmp_path, monkeypatch, capsys):
+    """While prototyping, the refusal beside a ref move holds only for a push
+    that may go to `project.repo`, and only beside a ref move: another
+    repository's bare push, or one after `push -u`, is asked as before."""
+    root = _prototype(tmp_path)
+    _code_commit(root)
+    other = _clone(tmp_path, name="other")
+    git(other, "remote", "set-url", "origin", str(tmp_path / "elsewhere.git"))
+    _change(other, CODE)
+    d, why = hook(monkeypatch, capsys, root, f"git -C {other} commit -am x && git -C {other} push")
+    assert d == "ask" and "can't tell" in why and "unjudged" not in why, why
+    d, why = hook(monkeypatch, capsys, root, "git push -u origin prototype/x && git push")
+    assert d != "allow" and "unjudged" not in why, why  # its first push is judged beside the second
+
+
+def test_a_commit_in_another_worktree_of_the_repository_on_a_prototype_branch_is_judged(tmp_path, monkeypatch, capsys):
+    """The exception holds in the project and Claude Code's worktrees, the
+    checkouts whose branches the push's refusal beside a ref move reads."""
+    root = _clone(tmp_path)
+    wt = tmp_path / "wt"
+    git(root, "worktree", "add", "-q", "-b", "prototype/z", str(wt))
+    _change(wt, CODE)
+    d, why = hook(monkeypatch, capsys, root, f"git -C {wt} commit -am x")
+    assert d == "deny" and "carries the code path" in why, why
 
 
 def test_the_can_t_tell_ask_names_a_prototype_push_only_while_prototyping(tmp_path, monkeypatch, capsys):
