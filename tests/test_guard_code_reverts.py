@@ -24,27 +24,13 @@ import pytest
 from changelog_notes import since_0110
 from conftest import KIT, git
 from test_guard_code_commits import CODE, NOT_TICKET, _change, _clone, _on, hook
+from test_guard_code_merges import DOC, LINES, _commit, _edit
 from workflow import guard as guard_mod
 from workflow import state as state_mod
 
 pytestmark = pytest.mark.usefixtures("_no_user_git_config")
 
-LINES = "".join(f"v{i} = {i}\n" for i in range(1, 11))
-DOC = "docs/guide.md"
 PUSH = "git push origin feature"
-
-
-def _edit(root, path, old, new):
-    p = root / path
-    text = p.read_text()
-    assert old in text, (path, old)
-    p.write_text(text.replace(old, new, 1))
-
-
-def _commit(root, change, msg="x"):
-    change(root)
-    git(root, "add", "-A")
-    git(root, "commit", "-qm", msg)
 
 
 def _on_base(root, change, msg="base", pr=None):
@@ -117,9 +103,9 @@ def test_a_revert_of_a_merge_on_the_base_committed_and_pushed_goes_through(proj,
     merge = _merged_pr(proj)
     _feature(proj)
     _on(proj, branch)
+    assert hook(monkeypatch, capsys, proj, f"git revert --no-edit -m 1 {merge}", role) == ("allow", "")  # it checks out content already committed
     assert _revert(proj, merge) == 0
-    target = "feature" if branch == "feature" else branch
-    assert hook(monkeypatch, capsys, proj, f"git push origin {target}", role) == ("allow", "")
+    assert hook(monkeypatch, capsys, proj, f"git push origin {branch}", role) == ("allow", "")
 
 
 def test_a_revert_after_a_later_change_two_lines_away_goes_through(proj, monkeypatch, capsys):
@@ -145,8 +131,34 @@ def test_a_revert_in_progress_is_judged_by_the_revert_rule(proj, monkeypatch, ca
     _on_base(proj, lambda r: _edit(r, CODE, "v7 = 7", "v7 = 'later'"), "later")
     _feature(proj)
     assert _revert(proj, merge, "--no-commit") == 0
-    for command in ("git commit --no-edit", "git commit -m 'Undo #12'", "git commit -a --no-edit", "git revert --continue"):
+    keeps = f"git commit -m 'Undo #12' -m 'This reverts commit {merge}.'"
+    for command in ("git commit --no-edit", "git commit -a --no-edit", "git revert --continue", "cd src && git commit --no-edit", keeps):
         assert hook(monkeypatch, capsys, proj, command) == ("allow", ""), command
+    git(proj, "commit", "-q", "-m", "Undo #12", "-m", f"This reverts commit {merge}.")
+    assert hook(monkeypatch, capsys, proj, PUSH) == ("allow", "")
+
+
+@pytest.mark.parametrize(
+    "command, why",
+    [
+        ("git commit -m 'Undo #12'", 'leaves out the "This reverts commit'),
+        ("git commit -F msg.txt", "`-F` takes its message from elsewhere"),
+        ("git commit --amend --no-edit", "`--amend` folds it into the commit before it"),
+        ("git commit --no-edit -- src/app.py", "a pathspec commits only part of it"),
+        ("git add -A && git commit --no-edit", "the command runs `git add -A` before it"),
+        ("python3 -c 'pass'; git commit -a --no-edit", "the command runs `python3 -c pass` before it"),
+    ],
+)
+def test_finishing_a_revert_other_than_as_it_stands_is_refused(proj, monkeypatch, capsys, command, why):
+    """The revert is read from the index as it is, with the message `git
+    revert` wrote: a push reads a revert by its "This reverts commit" line."""
+    merge = _merged_pr(proj)
+    _feature(proj)
+    assert _revert(proj, merge, "--no-commit") == 0
+    d, msg = hook(monkeypatch, capsys, proj, command)
+    assert d == "deny" and why in msg and f"doesn't exactly undo {merge[:7]} as it stands" in msg, msg
+    assert "`git revert --abort`" in msg, msg
+    assert hook(monkeypatch, capsys, proj, "git commit --no-edit") == ("allow", "")
 
 
 def test_a_revert_beside_other_commits_is_judged_with_them(proj, monkeypatch, capsys):
@@ -157,10 +169,13 @@ def test_a_revert_beside_other_commits_is_judged_with_them(proj, monkeypatch, ca
     assert _revert(proj, merge) == 0
     _commit(proj, lambda r: _change(r, "docs/more.md", "# More\n"))
     assert hook(monkeypatch, capsys, proj, PUSH) == ("allow", "")
-    _commit(proj, lambda r: _edit(r, CODE, "v9 = 9", "v9 = 'mine'"))
+    # A code commit older than the revert, which `git log` lists after it, still counts.
+    git(proj, "reset", "-q", "--hard", "HEAD~2")
+    _commit(proj, lambda r: _change(r, "src/mine.py", "m = 1\n"))
     code = git(proj, "rev-parse", "--short", "HEAD").strip()
+    assert _revert(proj, merge) == 0
     d, why = hook(monkeypatch, capsys, proj, PUSH)
-    assert d == "deny" and f"commit {code}," in why and "src/app.py" in why, why
+    assert d == "deny" and f"commit {code}," in why and "src/mine.py" in why, why
 
 
 # ---------- an unmatched revert is refused ----------
@@ -237,16 +252,84 @@ def test_a_revert_that_differs_only_in_whitespace_is_refused(proj, monkeypatch, 
     assert d == "deny" and f"doesn't exactly undo {merge[:7]}" in why, why
 
 
-@pytest.mark.parametrize("command", ["git commit --amend --no-edit", "git commit --no-edit -- src/app.py"])
-def test_finishing_a_revert_as_only_part_of_a_commit_is_refused(proj, monkeypatch, capsys, command):
-    """An `--amend` folds the revert into the commit before it, and a
-    pathspec commits only part of it: neither is the revert as it stands."""
+def _audits(root):
+    """The base calls `audit()` after v2; pull request #41 adds another call
+    after v8. Returns #41's merge commit."""
+    _on_base(root, lambda r: _edit(r, CODE, "v2 = 2\n", "v2 = 2\naudit()\n"), "audit")
+    return _on_base(root, lambda r: _edit(r, CODE, "v8 = 8\n", "v8 = 8\naudit()\n"), "audit v8 too", pr=41)
+
+
+def test_a_revert_that_removes_another_identical_line_is_refused(proj, monkeypatch, capsys):
+    """A patch id reads the lines, not where they are: the revert must leave
+    the code as `git revert` would, so deleting the base's own `audit()`
+    instead of #41's is refused."""
+    merge = _audits(proj)
+    _feature(proj)
+    _change(proj, CODE, (proj / CODE).read_text().replace("v2 = 2\naudit()\n", "v2 = 2\n", 1))
+    git(proj, "commit", "-qam", f"Revert #41\n\nThis reverts commit {merge}.")
+    for role in (None, "conductor"):
+        d, why = hook(monkeypatch, capsys, proj, PUSH, role)
+        assert d == "deny" and f"doesn't exactly undo {merge[:7]}" in why and "isn't as `git revert` leaves it" in why, (role, why)
+
+
+def test_lines_put_back_elsewhere_are_refused(proj, monkeypatch, capsys):
+    """A revert of a commit that removed a line, putting the line back at
+    the top rather than where it was."""
+    sha = _on_base(proj, lambda r: _edit(r, CODE, "v4 = 4\n", ""))
+    _feature(proj)
+    assert _revert(proj, sha, "--no-commit") == 0
+    _change(proj, CODE, "v4 = 4\n" + (proj / CODE).read_text().replace("v4 = 4\n", ""))
+    d, why = hook(monkeypatch, capsys, proj, "git commit -a --no-edit")
+    assert d == "deny" and f"doesn't exactly undo {sha[:7]}" in why, why
+    git(proj, "add", CODE)
+    d, why = hook(monkeypatch, capsys, proj, "git commit --no-edit")
+    assert d == "deny" and "isn't as `git revert` leaves it" in why, why
+
+
+def _binary(root):
+    (root / "src/logo.bin").write_bytes(b"\x00\x01" * 50)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        pytest.param(lambda r: _change(r, "src/new.py", "n = 1\n"), id="a new file"),
+        pytest.param(lambda r: (r / "tests/test_app.py").unlink(), id="a file removed"),
+        pytest.param(lambda r: (r / CODE).chmod(0o755), id="a mode"),
+        pytest.param(_binary, id="a binary file"),
+        pytest.param(lambda r: _change(r, "src/a b/ünï.py", "u = 1\n"), id="an odd name"),
+    ],
+)
+def test_reverts_of_every_kind_of_change_go_through(proj, monkeypatch, capsys, change):
+    sha = _on_base(proj, change)
+    _feature(proj)
+    assert _revert(proj, sha) == 0
+    assert hook(monkeypatch, capsys, proj, PUSH) == ("allow", "")
+
+
+def test_a_revert_naming_its_commit_by_reference_goes_through(proj, monkeypatch, capsys):
+    """`git revert --reference` names the commit by an abbreviated name."""
     merge = _merged_pr(proj)
     _feature(proj)
-    assert _revert(proj, merge, "--no-commit") == 0
-    d, why = hook(monkeypatch, capsys, proj, command)
-    assert d == "deny" and f"doesn't exactly undo {merge[:7]}" in why, why
-    assert hook(monkeypatch, capsys, proj, "git commit --no-edit") == ("allow", "")
+    assert _revert(proj, merge, "--reference") == 0
+    assert f"This reverts commit {merge[:7]}" in git(proj, "log", "-1", "--format=%B")
+    assert hook(monkeypatch, capsys, proj, PUSH) == ("allow", "")
+
+
+def test_a_file_named_like_a_commit_header_hides_no_commit(proj, monkeypatch, capsys):
+    """git's log of a push names each commit with a header line of the
+    guard's own; a file named like one, beside code, changes nothing."""
+    merge = _merged_pr(proj)
+    git(proj, "checkout", "-q", "-b", "real", "origin/main")
+    assert _revert(proj, merge) == 0
+    real = git(proj, "rev-parse", "HEAD").strip()
+    _feature(proj)
+    _change(proj, "\x01\x02abcd\x03" + real, "x\n")
+    _change(proj, "src/evil.py", "e = 1\n")
+    git(proj, "add", "-A")
+    git(proj, "commit", "-qm", "sneak")
+    d, why = hook(monkeypatch, capsys, proj, PUSH)
+    assert d == "deny" and "src/evil.py" in why, why
 
 
 def test_a_revert_of_a_commit_not_on_the_base_is_refused(proj, monkeypatch, capsys):
@@ -262,7 +345,25 @@ def test_a_revert_of_a_commit_not_on_the_base_is_refused(proj, monkeypatch, caps
     git(proj, "push", "-q", "origin", "feature")
     assert _revert(proj, side) == 0
     d, why = hook(monkeypatch, capsys, proj, PUSH)
-    assert d == "deny" and "src/app.py" in why and f"{side[:7]}" in why and "isn't on" in why, why
+    assert d == "deny" and "src/app.py" in why and f"{side[:7]} isn't on `origin/main`" in why, why
+    assert "run `git fetch`" in why and "**Revert** button" not in why, why
+
+
+def test_a_revert_of_a_commit_merged_since_the_last_fetch_says_to_fetch(proj, monkeypatch, capsys, tmp_path):
+    other = tmp_path / "other"
+    git(tmp_path, "clone", "-q", git(proj, "remote", "get-url", "origin").strip(), str(other))
+    _edit(other, CODE, "v5 = 5", "v5 = 'other'")
+    git(other, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qam", "elsewhere")
+    git(other, "push", "-q", "origin", "HEAD:main")
+    sha = git(other, "rev-parse", "HEAD").strip()
+    git(proj, "fetch", "-q", str(other), "main")  # the commit is here, but `origin/main` is as last fetched
+    _feature(proj)
+    git(proj, "merge", "-q", "--ff-only", sha)
+    assert _revert(proj, sha) == 0
+    d, why = hook(monkeypatch, capsys, proj, "git push origin HEAD:refs/heads/feature")
+    assert d == "deny" and "run `git fetch` and try again" in why, why
+    git(proj, "fetch", "-q", "origin")
+    assert hook(monkeypatch, capsys, proj, "git push origin HEAD:refs/heads/feature") == ("allow", "")
 
 
 def test_a_ref_named_like_a_commit_doesn_t_stand_in_for_it(proj, monkeypatch, capsys):
@@ -298,7 +399,9 @@ def test_the_conductor_s_matched_revert_needs_the_ledger_entry(proj, monkeypatch
     assert "ask the owner" in why and '{"what": "revert", "revert": "' + merge + '"' in why, why
     assert "`.workflow/run/body.md`" in why, why
     # An entry without a `revert` field, or for another commit, doesn't count.
-    for ledger in ([{"what": "revert", "at": "2026-11-01T00:00:00Z", "grant": "yes"}], [_allowed("ab" * 20)], [{"what": "revert", "sha": merge, "at": "x", "grant": "y"}]):
+    # So does an entry whose `what` isn't "revert", or that doesn't give the full SHA in lower case.
+    unread = [{"what": "revert", "at": "2026-11-01T00:00:00Z", "grant": "yes"}], [_allowed("ab" * 20)], [{"what": "revert", "sha": merge, "at": "x", "grant": "y"}]
+    for ledger in (*unread, [_allowed(merge, what="merge")], [_allowed(merge[:7])], [_allowed(merge.upper())]):
         _run_body(proj, ledger)
         d, why = hook(monkeypatch, capsys, proj, PUSH, "conductor")
         assert d == "deny" and "ask the owner" in why, (ledger, why)
@@ -324,6 +427,9 @@ def test_the_conductor_s_unmatched_revert_is_refused_even_when_allowed(proj, mon
     d, why = hook(monkeypatch, capsys, proj, PUSH, "conductor")
     assert d == "deny" and f"doesn't exactly undo {merge[:7]}" in why, why
     assert '"result": "not made: <why>"' in why and "**Revert** button on pull request #12" in why, why
+    _run_body(proj, [])
+    d, why = hook(monkeypatch, capsys, proj, PUSH, "conductor")
+    assert d == "deny" and "tell the owner" in why and "not made" not in why, why  # no entry to mark
 
 
 def test_a_body_file_that_can_t_be_read_allows_nothing(proj, monkeypatch, capsys):
