@@ -100,9 +100,23 @@ def test_a_hash_inside_a_glob_group_is_no_comment(tmp_path, monkeypatch, capsys)
         _change(root, CODE)
         d, why = hook(monkeypatch, capsys, root, command)
         assert d == "deny" and "carries the code path" in why, (command, why)
+    # Where the shell reads a comment in a glued `(` group (an array, bash's `time -p (…)`), a quote in it
+    # hides nothing after it.
+    for command in (
+        "A=(\n  x  # don't\n)\ngit commit -am x",
+        "time -p (\n  make  # don't\n); git commit -am x",
+        "A=(\n  x  # see (1\n)\necho y # it's\ngit commit -am x",
+        "echo (a|#) don't\ngit commit -am x",
+    ):
+        _change(root, CODE)
+        d, why = hook(monkeypatch, capsys, root, command)
+        assert d == "deny" and "carries the code path" in why, (command, why)
+    d, why = hook(monkeypatch, capsys, root, "A=(\n  x  # don't\n)\ngit push origin HEAD:main")
+    assert d == "ask" and "the base branch `main`" in why, why  # seen, so judged as any push to the base
     # A comment is still one where the shell reads it.
     _change(root, CODE)
     assert hook(monkeypatch, capsys, root, "echo hi # (src|#); git commit -am x") == ("allow", "")
+    assert hook(monkeypatch, capsys, root, "A=(\n  x  # git commit -am x\n)") == ("allow", "")
 
 
 def test_a_code_write_in_a_claude_code_worktree_on_a_prototype_branch(tmp_path, monkeypatch, capsys):

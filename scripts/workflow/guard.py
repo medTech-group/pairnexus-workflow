@@ -758,9 +758,15 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
             in_word = True
             i = substitution(i, i + 2)
             continue
-        if c == "#" and not in_word and not globs:  # inside `(src|#)` a `#` is the pattern's
+        if c == "#" and not in_word:
             j = s.find("\n", i)
-            i = n if j < 0 else j
+            j = n if j < 0 else j
+            if globs:
+                # Inside a `(` group glued to a word, zsh's pattern (`(src|#); git commit …`) holds the `#`, and
+                # an array or a bash subshell (`time -p (`) starts a comment: both readings, the rest of the
+                # line read as commands too.
+                hoist(_lex(s[i + 1 : j])[0])
+            i = j
             continue
         if c in " \t":
             end_word()
@@ -782,6 +788,7 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
                 c == "(" and (in_word or close_end == i or len(out) > cmd_start and not _leads_subshell(out[cmd_start:]))
                 or c == "<" and bool(re.match(r"<\d*-\d*>\(", s[i : i + 64]))
             )
+            opens_array = c == "(" and in_word and not quoted and bool(_ARRAY_OPEN.match("".join(word)))
             fd = ""
             if c in "<>" and in_word and not quoted and word and "".join(word).isdigit():
                 fd = "".join(word)
@@ -809,7 +816,7 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
                 return out, i
             if op == "(":
                 depth += 1
-                if glued:
+                if glued and not opens_array:  # `A=(…)`: an array's words, comments too
                     globs.append(depth)
             elif op == ")":
                 if globs and globs[-1] == depth:
@@ -832,6 +839,8 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
     return out, n
 
 
+# A word that opens an array, before its `(`: `A=`, `A+=`, `A[1]=`.
+_ARRAY_OPEN = re.compile(r"[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=\Z")
 # Words after which a `(` still opens a subshell, as at a command's start: `{ (…); }`, `! (…)`, `time (…)`.
 _SUBSHELL_LEADERS = {"{", "!", "if", "then", "else", "elif", "do", "while", "until", "time"}
 
