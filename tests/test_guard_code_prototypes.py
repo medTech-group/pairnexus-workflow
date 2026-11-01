@@ -352,7 +352,7 @@ def test_reads_beside_a_prototype_push_are_fine(tmp_path, monkeypatch, capsys, c
 @pytest.mark.parametrize(
     "command",
     [
-        "printf '[remote \"origin\"]\\n\\tpush = refs/heads/prototype/x:refs/heads/main\\n' >> .gi?/config && git push origin prototype/x",
+        "echo '[remote \"origin\"] push = refs/heads/prototype/x:refs/heads/main' >> .gi?/config && git push origin prototype/x",
         "./prep.sh; git push origin",
         "./prep.sh && git push origin HEAD",
         "git fetch && git push origin prototype/x",
@@ -371,7 +371,7 @@ def test_a_prototype_push_beside_anything_but_reads_is_judged(tmp_path, monkeypa
     if d == "ask":  # a push into a repository on this machine: one the guard can't tell about
         assert "can't tell" in why, (command, why)
     else:
-        assert d == "deny" and "carries the code path" in why and "in a command of its own" in why, (command, why)
+        assert d == "deny" and "carries the code path" in why and "run the push in a command of its own" in why, (command, why)
 
 
 # ---------- as today ----------
@@ -1027,6 +1027,13 @@ def test_a_write_or_commit_in_a_command_that_changes_directory(tmp_path, monkeyp
         ("foreach HOME (/tmp/h) git commit -am x; end", "the compound command `foreach`"),
         ("echo *(e:'cd src':); git commit -am x", "zsh's"),
         ("echo ${(e):-x}; git commit -am x", "zsh's"),
+        ("echo .(e:'cd src':) >/dev/null; git commit -am x", "zsh's"),
+        ("echo src/(e:'cd src':); echo x > src/app.py", "zsh's"),
+        ("echo {src,lib}(e:'cd src':); git commit -am x", "zsh's"),
+        ("echo 'src'(e:'cd src':); git commit -am x", "zsh's"),
+        ("echo *(e_'cd src'_); git commit -am x", "zsh's"),
+        ("echo *(P:'(':e:'cd src':); git commit -am x", "zsh's"),
+        ("echo ${~X:-x}; git commit -am x", "zsh's"),
         ("sh -c 'echo for'; for HOME in /tmp/h; do git commit -am x; done", "the compound command `for`"),
     ):
         _change(root, CODE)
@@ -1040,6 +1047,9 @@ def test_a_write_or_commit_in_a_command_that_changes_directory(tmp_path, monkeyp
         "printf '%s\\n' x > src/app.py",
         "wait; jobs; echo x > src/app.py",
         "git commit -am 'Add the reader (#393)'",
+        'git commit -am "fix(release-gate): print(date.today())"',
+        "printf '[section]\\n' > src/x.cfg",
+        "cat > src/app.py <<'EOF'\nprint(range(n+1))\nEOF",
     ):
         assert hook(monkeypatch, capsys, root, ok) == ("allow", ""), ok
 

@@ -7920,8 +7920,12 @@ def _compound_or_cd(segs: list[Seg], command: str) -> str | None:
     joined = command.replace("\\\n", "")  # bash joins a backslash-newline before it reads anything
     if _CURRENT_SHELL_SUB.search(joined):
         return f"it runs a command substitution in the shell itself (`${{ …; }}`){alone}, or write the file with the file tools"
-    if _ZSH_EVAL.search(joined):
-        return f"it may run code in the shell itself (zsh's `*(e:…:)` or `*(+…)` glob qualifiers, `${{(e)…}}`){alone}, or write the file with the file tools"
+    bare = _unquoted_text(joined, segs)
+    if _ZSH_EVAL.search(joined) or _ZSH_QUALIFIER.search(bare):
+        return (
+            f"it may run code in the shell itself (zsh's glob qualifiers such as `*(e:…:)`, a `(` right after a word, "
+            f"or `${{(e)…}}`, `${{~…}}`){alone}: give a commit's message with `-F <file>`, or write the file with the file tools"
+        )
     if _ASSIGNING_EXPANSION.search(joined):
         return f"it may set a variable in the shell itself (`$((…))`, `$[…]`, `${{X:=…}}`){alone}, or write the file with the file tools"
     return None
@@ -7932,7 +7936,7 @@ _BUILTINS = {
     # zsh's too, where its precommand modifiers (`noglob cd …`) and option or variable builtins change the shell.
     "noglob", "nocorrect", "-", "setopt", "unsetopt", "emulate", "zmodload", "autoload", "functions", "integer", "float",
     "print", "chdir", "bindkey", "zstyle", "vared", "pushln", "rehash", "unhash", "zle", "zparseopts", "sched",
-    "getln", "zformat", "zregexparse", "strftime", "zstat", "sysread", "disable", "unfunction", "noglob",
+    "getln", "zformat", "zregexparse", "strftime", "zstat", "sysread", "disable", "unfunction",
     ".", ":", "[", "alias", "bg", "bind", "break", "builtin", "caller", "cd", "command", "compgen", "complete", "compopt",
     "continue", "declare", "dirs", "disown", "echo", "enable", "eval", "exec", "exit", "export", "false", "fc", "fg",
     "getopts", "hash", "help", "history", "jobs", "kill", "let", "local", "logout", "mapfile", "popd", "printf", "pushd",
@@ -7955,11 +7959,43 @@ def _stateless_builtin(words: list[str]) -> bool:
     opt = _STATEFUL_OPTION.get(words[0])
     if opt is None:
         return False
-    return not any(w.startswith("-") and opt in w or _spelled_command(w) for w in words[1:])
+    # An argument the shell may turn into others (the lexer's `splits`, unquoted); a word built elsewhere: may.
+    return not any(w.startswith("-") and opt in w or getattr(w, "splits", True) for w in words[1:])
 # bash 5.3's `${ cmd; }` and `${| cmd; }`, which run in the shell itself (a `cd` there stays).
 _CURRENT_SHELL_SUB = re.compile(r"\$\{[\s|]")
 # zsh's glob qualifiers that run code (`*(e:…:)`, `*(+fn)`) and parameter flags (`${(e)…}`), in the shell itself.
-_ZSH_EVAL = re.compile(r"[\w*?\]]\([^()]*?(?:e[^\w\s()]|\+)|\$\{\(")
+_ZSH_EVAL = re.compile(r"\$\{[(~]|\$~")  # `${(e)…}`, `${~…}`, `$~X`, live in double quotes too
+# A `(` right after a word, in the command's unquoted text: zsh's glob qualifiers (`*(e:…:)`, `.(+fn)`), whatever
+# they hold; bash reads it as an error outside a function's name or extglob.
+_ZSH_QUALIFIER = re.compile(r"[^\s$<>=(|&;`]\(")
+
+
+def _unquoted_text(command: str, segs: list[Seg]) -> str:
+    """The command's text with its heredocs' bodies blanked out and its
+    quoted spans (single, double, `$'…'`) and escapes filled with a letter,
+    so a quoted word still touches what follows it: what the shell reads as
+    words and globs."""
+    for s in segs:
+        for body in (s.heredoc, s.expanded):
+            if body:
+                command = command.replace(body, " ")
+    out, i, n = [], 0, len(command)
+    while i < n:
+        ch = command[i]
+        if ch == "\\":
+            out.append("qq")
+            i += 2
+        elif ch in "'\"":
+            end = command.find(ch, i + 1)
+            while ch == '"' and end > 0 and command[end - 1] == "\\":
+                end = command.find(ch, end + 1)
+            end = n if end < 0 else end
+            out.append("q" * (end + 1 - i))
+            i = end + 1
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
 # Arithmetic and `${X=…}`/`${X:=…}` expansions, which can assign a variable in the shell itself.
 _ASSIGNING_EXPANSION = re.compile(r"\$\(\(|\$\[|\(\(|\$\{[^}]*?:?=")
 
