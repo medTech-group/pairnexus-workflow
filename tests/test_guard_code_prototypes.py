@@ -42,10 +42,6 @@ def _code_commit(root, path=CODE, text="changed\n"):
     git(root, "commit", "-qm", "x")
 
 
-def _bash(monkeypatch, capsys, root, command, role=None, mode=None, cwd=None):
-    return hook(monkeypatch, capsys, root, command, role, mode, cwd)
-
-
 # ---------- a planning session on `prototype/*` ----------
 
 
@@ -58,11 +54,11 @@ def test_a_planning_session_writes_commits_and_pushes_code_on_a_prototype_branch
             d, why = event_hook(monkeypatch, capsys, root, {**write(str(root / CODE), tool), "permission_mode": mode} if mode else write(str(root / CODE), tool), role)
             assert d == "allow", (who, tool, mode, why)
     for command in ("echo 'b = 2' > src/app.py", "printf x >> src/new.py", "sed -i s/a/b/ src/app.py", "rm -f tests/test_app.py"):
-        d, why = _bash(monkeypatch, capsys, root, command, role)
+        d, why = hook(monkeypatch, capsys, root, command, role)
         assert d == "allow", (who, command, why)
     _change(root, CODE)
     for command in ("git commit -am x", "git add -A && git commit -m x", "git commit -m x -- src/app.py"):
-        d, why = _bash(monkeypatch, capsys, root, command, role)
+        d, why = hook(monkeypatch, capsys, root, command, role)
         assert d == "allow", (who, command, why)
     git(root, "commit", "-qam", "x")
     for command in (
@@ -74,23 +70,24 @@ def test_a_planning_session_writes_commits_and_pushes_code_on_a_prototype_branch
         "git push",
         "git push origin",
         "git push origin HEAD:refs/heads/prototype/x",
-        "git push origin prototype/x:prototype/y",
+        "git push origin prototype/x:refs/heads/prototype/y",
         "git push origin prototype/x:refs/heads/prototype/y/z",
-        "git push origin prototype/x prototype/x:prototype/y",
+        "git push origin prototype/x prototype/x:refs/heads/prototype/y",
+        "git push --no-follow-tags origin prototype/x",
     ):
-        d, why = _bash(monkeypatch, capsys, root, command, role)
+        d, why = hook(monkeypatch, capsys, root, command, role)
         assert d == "allow", (who, command, why)
 
 
-def test_a_push_to_a_prototype_branch_from_another_branch_goes_through(tmp_path, monkeypatch, capsys):
-    """Where a push goes decides it, not the branch it is run from: a
-    prototype branch is never merged, and its tracking refs never count."""
+def test_a_push_to_a_prototype_branch_from_another_branch_is_judged(tmp_path, monkeypatch, capsys):
+    """A push to `prototype/*` goes through only when run on a `prototype/*`
+    branch, as the spec groups it."""
     root = _clone(tmp_path)
     _code_commit(root)
-    for command in ("git push origin feature:prototype/x", "git push origin HEAD:refs/heads/prototype/x"):
-        assert _bash(monkeypatch, capsys, root, command)[0] == "allow", command
-        d, why = _bash(monkeypatch, capsys, root, command, "conductor")
-        assert d == "deny" and "the conductor writes no code" in why, (command, why)
+    for command in ("git push origin feature:refs/heads/prototype/x", "git push origin HEAD:refs/heads/prototype/x"):
+        for role in (None, "conductor"):
+            d, why = hook(monkeypatch, capsys, root, command, role)
+            assert d == "deny" and "carries the code path" in why, (command, role, why)
 
 
 def test_a_code_write_in_a_claude_code_worktree_on_a_prototype_branch(tmp_path, monkeypatch, capsys):
@@ -100,9 +97,9 @@ def test_a_code_write_in_a_claude_code_worktree_on_a_prototype_branch(tmp_path, 
     wt = root / ".claude/worktrees/side"
     git(root, "worktree", "add", "-q", "-b", "prototype/y", str(wt))
     assert event_hook(monkeypatch, capsys, root, write(str(wt / CODE)))[0] == "allow"
-    assert _bash(monkeypatch, capsys, root, "echo x > .claude/worktrees/side/src/app.py")[0] == "allow"
+    assert hook(monkeypatch, capsys, root, "echo x > .claude/worktrees/side/src/app.py")[0] == "allow"
     _change(wt, CODE)
-    assert _bash(monkeypatch, capsys, root, "cd .claude/worktrees/side && git commit -am x")[0] == "allow"
+    assert hook(monkeypatch, capsys, root, "cd .claude/worktrees/side && git commit -am x")[0] == "allow"
     d, why = event_hook(monkeypatch, capsys, root, write(str(root / CODE)))
     assert d == "deny" and "code path" in why, why
     git(root, "checkout", "-q", "-b", "prototype/x")
@@ -121,10 +118,10 @@ def test_only_a_branch_named_prototype_slash_something_counts(tmp_path, monkeypa
     d, why = event_hook(monkeypatch, capsys, root, write(str(root / CODE)))
     assert d == "deny" and "code path" in why, (branch, why)
     _change(root, CODE)
-    d, why = _bash(monkeypatch, capsys, root, "git commit -am x")
+    d, why = hook(monkeypatch, capsys, root, "git commit -am x")
     assert d == "deny" and "carries the code path" in why, (branch, why)
     git(root, "commit", "-qam", "x")
-    d, why = _bash(monkeypatch, capsys, root, f"git push origin {branch}")
+    d, why = hook(monkeypatch, capsys, root, f"git push origin {branch}")
     assert d == "deny" and "carries the code path" in why, (branch, why)
 
 
@@ -134,7 +131,7 @@ def test_a_detached_head_isnt_on_a_prototype_branch(tmp_path, monkeypatch, capsy
     d, why = event_hook(monkeypatch, capsys, root, write(str(root / CODE)))
     assert d == "deny" and "code path" in why, why
     _change(root, CODE)
-    d, why = _bash(monkeypatch, capsys, root, "git commit -am x")
+    d, why = hook(monkeypatch, capsys, root, "git commit -am x")
     assert d == "deny" and "carries the code path" in why, why
 
 
@@ -158,7 +155,7 @@ def test_a_command_that_may_change_the_branch_writes_no_code(tmp_path, monkeypat
     command that may change which branch HEAD names (or names a `.git`)
     gets no prototype exception."""
     root = _prototype(tmp_path)
-    d, why = _bash(monkeypatch, capsys, root, command)
+    d, why = hook(monkeypatch, capsys, root, command)
     assert d == "deny" and "code path" in why, (command, why)
 
 
@@ -174,7 +171,7 @@ def test_a_command_that_may_change_the_branch_writes_no_code(tmp_path, monkeypat
 def test_a_commit_after_a_branch_change_in_the_same_command_is_judged(tmp_path, monkeypatch, capsys, command):
     root = _prototype(tmp_path)
     _change(root, CODE)
-    d, why = _bash(monkeypatch, capsys, root, command)
+    d, why = hook(monkeypatch, capsys, root, command)
     assert d == "deny" and "carries the code path" in why, (command, why)
 
 
@@ -193,14 +190,14 @@ def test_the_conductor_writes_commits_and_pushes_no_code_on_a_prototype_branch(t
     for tool in ("Write", "Edit"):
         d, why = event_hook(monkeypatch, capsys, root, write(str(root / CODE), tool), "conductor")
         assert d == "deny" and "the conductor writes no code" in why, why
-    d, why = _bash(monkeypatch, capsys, root, "echo x > src/app.py", "conductor")
+    d, why = hook(monkeypatch, capsys, root, "echo x > src/app.py", "conductor")
     assert d == "deny" and "the conductor writes no code" in why, why
     _change(root, CODE)
-    d, why = _bash(monkeypatch, capsys, root, "git commit -am x", "conductor")
+    d, why = hook(monkeypatch, capsys, root, "git commit -am x", "conductor")
     assert d == "deny" and "carries the code path" in why and "the conductor writes no code" in why, why
     git(root, "commit", "-qam", "x")
     for command in ("git push origin prototype/x", "git push origin HEAD", "git push"):
-        d, why = _bash(monkeypatch, capsys, root, command, "conductor")
+        d, why = hook(monkeypatch, capsys, root, command, "conductor")
         assert d == "deny" and "carries the code path" in why, (command, why)
 
 
@@ -222,10 +219,11 @@ def test_a_push_of_prototype_code_to_another_branch_is_refused(tmp_path, monkeyp
         "git push origin prototype/x:refs/heads/feature",
         "git push origin prototype/x prototype/x:feature",
         "git push origin prototype/x:heads/prototype/y",
+        "git push origin prototype/x:prototype/y",
         "git push origin prototype/x:refs/tags/prototype/x",
         "git push origin origin/prototype/x:refs/heads/feature" if pushed else "git push origin prototype/x:feature",
     ):
-        d, why = _bash(monkeypatch, capsys, root, command, role)
+        d, why = hook(monkeypatch, capsys, root, command, role)
         assert d == "deny" and f"commit {sha}" in why and "src/app.py" in why, (command, why)
 
 
@@ -242,7 +240,7 @@ def test_a_push_after_merging_a_pushed_prototype_branch_is_refused(tmp_path, mon
     git(root, "fetch", "-q", "origin")
     git(root, "merge", "-q", ff, "--no-edit", "origin/prototype/x")
     for command in ("git push origin feature", "git push origin HEAD", "git push -u origin feature"):
-        d, why = _bash(monkeypatch, capsys, root, command)
+        d, why = hook(monkeypatch, capsys, root, command)
         assert d == "deny" and f"commit {sha}" in why and "src/app.py" in why, (command, why)
 
 
@@ -265,7 +263,7 @@ def test_a_prototype_branch_fetched_under_another_name_isnt_on_the_remote(tmp_pa
         git(root, "fetch", "-q", "origin")
         git(root, "reset", "-q", "--hard", "origin/main")
         git(root, "merge", "-q", "--no-ff", "--no-edit", ref)
-        d, why = _bash(monkeypatch, capsys, root, "git push origin feature")
+        d, why = hook(monkeypatch, capsys, root, "git push origin feature")
         assert d == "deny" and f"commit {sha}" in why, (spec, why)
         git(root, "config", "--unset-all", "remote.origin.fetch", spec.replace("*", r"\*").replace("+", r"\+"))
         git(root, "update-ref", "-d", "refs/remotes/" + ref)
@@ -279,7 +277,7 @@ def test_a_remote_head_pointing_at_a_prototype_branch_doesnt_count(tmp_path, mon
     git(root, "remote", "set-head", "origin", "prototype/x")
     git(root, "checkout", "-q", "feature")
     git(root, "merge", "-q", "--no-ff", "--no-edit", "origin/prototype/x")
-    d, why = _bash(monkeypatch, capsys, root, "git push origin feature")
+    d, why = hook(monkeypatch, capsys, root, "git push origin feature")
     assert d == "deny" and f"commit {sha}" in why, why
 
 
@@ -292,7 +290,7 @@ def test_code_merged_into_the_base_from_a_prototype_counts_as_on_the_remote(tmp_
     git(root, "checkout", "-q", "feature")
     git(root, "fetch", "-q", "origin")
     git(root, "merge", "-q", "--no-ff", "--no-edit", "origin/main")
-    assert _bash(monkeypatch, capsys, root, "git push origin feature")[0] == "allow"
+    assert hook(monkeypatch, capsys, root, "git push origin feature")[0] == "allow"
 
 
 @pytest.mark.parametrize(
@@ -305,7 +303,7 @@ def test_a_bare_push_is_read_by_where_its_settings_send_it(tmp_path, monkeypatch
     git(root, "config", "branch.prototype/x.remote", "origin")
     git(root, "config", "branch.prototype/x.merge", "refs/heads/main")
     git(root, "config", setting, value)
-    d, why = _bash(monkeypatch, capsys, root, "git push origin")
+    d, why = hook(monkeypatch, capsys, root, "git push origin")
     assert d == "deny" and "carries the code path" in why, why
 
 
@@ -313,14 +311,14 @@ def test_a_push_with_prototype_push_settings_goes_through(tmp_path, monkeypatch,
     root = _prototype(tmp_path)
     _code_commit(root)
     git(root, "config", "remote.origin.push", "refs/heads/prototype/*:refs/heads/prototype/*")
-    assert _bash(monkeypatch, capsys, root, "git push origin")[0] == "allow"
+    assert hook(monkeypatch, capsys, root, "git push origin")[0] == "allow"
 
 
 @pytest.mark.parametrize("command", ['git push origin "prototype/x:$B"', "git push origin prototype/x:{prototype/y,main}", "git push --all origin", "git push --mirror origin"])
 def test_a_destination_it_cant_read_is_judged_as_any_push(tmp_path, monkeypatch, capsys, command):
     root = _prototype(tmp_path)
     _code_commit(root)
-    d, why = _bash(monkeypatch, capsys, root, command)
+    d, why = hook(monkeypatch, capsys, root, command)
     assert d in ("deny", "ask") and ("carries the code path" in why or "can't tell" in why), (command, why)
 
 
@@ -332,16 +330,107 @@ def test_a_destination_it_cant_read_is_judged_as_any_push(tmp_path, monkeypatch,
 def test_under_any_or_absent_every_case_decides_as_today(tmp_path, monkeypatch, capsys, code_writers, role):
     root = _prototype(tmp_path, code_writers)
     assert event_hook(monkeypatch, capsys, root, write(str(root / CODE)), role)[0] == "allow"
-    assert _bash(monkeypatch, capsys, root, "echo x > src/app.py", role)[0] == "allow"
+    assert hook(monkeypatch, capsys, root, "echo x > src/app.py", role)[0] == "allow"
     _change(root, CODE)
-    assert _bash(monkeypatch, capsys, root, "git commit -am x", role)[0] == "allow"
+    assert hook(monkeypatch, capsys, root, "git commit -am x", role)[0] == "allow"
     git(root, "commit", "-qam", "x")
-    assert _bash(monkeypatch, capsys, root, "git push origin prototype/x", role)[0] == "allow"
+    assert hook(monkeypatch, capsys, root, "git push origin prototype/x", role)[0] == "allow"
     git(root, "push", "-q", "origin", "prototype/x")
     git(root, "checkout", "-q", "feature")
     git(root, "merge", "-q", "--no-ff", "--no-edit", "origin/prototype/x")
-    assert _bash(monkeypatch, capsys, root, "git push origin feature", role)[0] == "allow"
-    assert _bash(monkeypatch, capsys, root, "git push origin origin/prototype/x:refs/heads/feature-2", role)[0] == "allow"
+    assert hook(monkeypatch, capsys, root, "git push origin feature", role)[0] == "allow"
+    assert hook(monkeypatch, capsys, root, "git push origin origin/prototype/x:refs/heads/feature-2", role)[0] == "allow"
+
+
+@pytest.mark.parametrize(
+    "setting, value",
+    [
+        ("remote.origin.push", "refs/heads/prototype/x:refs/heads/main"),
+        ("push.default", "upstream"),
+        ("push.default", "tracking"),
+    ],
+)
+@pytest.mark.parametrize("command", ["git push origin prototype/x", "git push origin HEAD"])
+def test_a_source_without_a_destination_is_read_as_git_maps_it(tmp_path, monkeypatch, capsys, setting, value, command):
+    """git maps `git push origin prototype/x` through the remote's `push`
+    refspecs, or to the branch's upstream under `push.default = upstream`."""
+    root = _prototype(tmp_path)
+    _code_commit(root)
+    git(root, "config", "branch.prototype/x.remote", "origin")
+    git(root, "config", "branch.prototype/x.merge", "refs/heads/main")
+    git(root, "config", setting, value)
+    d, why = hook(monkeypatch, capsys, root, command)
+    assert d == "deny" and "carries the code path" in why, why
+
+
+def test_a_symbolic_ref_or_a_tag_named_prototype_isnt_a_prototype_branch(tmp_path, monkeypatch, capsys):
+    root = _prototype(tmp_path)
+    _code_commit(root)
+    git(root, "symbolic-ref", "refs/heads/prototype/alias", "refs/heads/feature")
+    git(root, "branch", "-q", "-f", "feature", "prototype/x")
+    git(root, "tag", "prototype/t")
+    git(root, "tag", "v9")
+    git(root, "update-ref", "refs/prototype/r", "HEAD")
+    for command in (
+        "git push origin prototype/alias",
+        "git push origin prototype/t",
+        "git push origin prototype/r",
+        "git push origin prototype/t:prototype/u",
+        "git push origin v9:prototype/u",
+        "git push origin prototype/x prototype/t",
+    ):
+        d, why = hook(monkeypatch, capsys, root, command)
+        assert d == "deny" and "carries the code path" in why, (command, why)
+
+
+@pytest.mark.parametrize(
+    "command, setting",
+    [
+        ("git push --follow-tags origin prototype/x", None),
+        ("git push origin prototype/x", "push.followTags"),
+        ("git -c push.followTags=true push origin prototype/x", None),
+        ("git config push.followTags true; git push origin prototype/x", None),
+        ("git tag v9 && git push origin prototype/x", None),
+        ("GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=push.followTags GIT_CONFIG_VALUE_0=true git push origin prototype/x", None),
+        ("HOME=/tmp/elsewhere git push origin prototype/x", None),
+    ],
+)
+def test_a_push_that_may_send_tags_or_be_remapped_is_judged(tmp_path, monkeypatch, capsys, command, setting):
+    """Tags it follows reach the remote as tags, and a setting or another
+    part of the command can change where git maps the push."""
+    root = _prototype(tmp_path)
+    _code_commit(root)
+    git(root, "tag", "-a", "v1", "-m", "v1")
+    if setting:
+        git(root, "config", setting, "true")
+    d, why = hook(monkeypatch, capsys, root, command)
+    assert d in ("deny", "ask") and ("carries the code path" in why or "can't tell" in why), (command, why)
+
+
+def test_a_fetch_refspec_with_a_short_destination_is_read_as_git_stores_it(tmp_path, monkeypatch, capsys):
+    root = _prototype(tmp_path)
+    _code_commit(root)
+    sha = git(root, "rev-parse", "--short", "HEAD").strip()
+    git(root, "push", "-q", "origin", "prototype/x")
+    git(root, "checkout", "-q", "feature")
+    git(root, "branch", "-q", "-D", "prototype/x")
+    git(root, "update-ref", "-d", "refs/remotes/origin/prototype/x")
+    git(root, "config", "--add", "remote.origin.fetch", "+refs/heads/prototype/x:remotes/origin/feature-p")
+    git(root, "fetch", "-q", "origin")
+    git(root, "merge", "-q", "--no-ff", "--no-edit", "origin/feature-p")
+    d, why = hook(monkeypatch, capsys, root, "git push origin feature")
+    assert d == "deny" and f"commit {sha}" in why, why
+
+
+def test_the_refusals_say_how_a_prototype_works(tmp_path, monkeypatch, capsys):
+    root = _prototype(tmp_path)
+    d, why = hook(monkeypatch, capsys, root, "git stash && echo x > src/app.py")
+    assert d == "deny" and "this one runs `git stash`" in why and "commands of their own" in why, why
+    _code_commit(root)
+    d, why = hook(monkeypatch, capsys, root, "git push origin prototype/x:main")
+    assert d == "deny" and "prototype code goes to `prototype/*` branches only" in why, why
+    d, why = hook(monkeypatch, capsys, root, "git push origin prototype/x:main", "conductor")
+    assert d == "deny" and "prototype" not in why.partition("main")[2], why
 
 
 def test_the_changelog_notes_it():

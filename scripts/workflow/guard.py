@@ -110,8 +110,8 @@ So is a `git push` to `project.repo`, from any directory, whose commits not
 on a tracking ref of a remote fetching from it carry a code path
 (`_push_code`, #390), with the same can't-tell rule. A planning session (not
 the conductor) may write and commit code on a `prototype/*` branch, and push
-to `prototype/*` branches only; their tracking refs don't count as on the
-remote (#393).
+from one to `prototype/*` branches only; their tracking refs don't count as
+on the remote (#393).
 
 What it can't see (a script file written then run, a program's own network
 calls, variables' values, obfuscation it doesn't recognise) is why the ruleset
@@ -5785,8 +5785,8 @@ def check_bash(
     start = _start_cwd(root, cwd)
     segs = segments(command, root, start)
     if code is not None:
-        if code.role == "attended":  # the prototype exception holds only while nothing may change the branch (#393)
-            code = replace(code, head_moves=_moves_head(segs, command))
+        if code.planning():  # the prototype exception holds only while nothing may change the branch (#393)
+            code = _prototype_rule(code, segs, root, command)
         # Refused wherever it sits in the command: an ask earlier on never hides it.
         p = _shell_code(segs, code, root)
         if p:
@@ -6088,23 +6088,29 @@ class _Code:
     # What may change the branch a checkout is on before a write or commit runs (another part of the command,
     # PowerShell), so its branch as the command starts says nothing: no prototype exception (#393).
     head_moves: str | None = None
-    _heads: dict = field(default_factory=dict, repr=False)  # a checkout's branch, read once per event
+    _heads: dict[tuple[str, tuple[str, ...]], bool] = field(default_factory=dict, repr=False)  # read once per event
 
     def conductor(self) -> bool:
         return self.role == "conductor"
 
-    def prototype_here(self, top: str, glob: tuple[str, ...] = ()) -> bool:
-        """Whether this session may write and commit code in the checkout
-        `top` (git run there with `glob`): a planning session's, not the
-        conductor's, on a branch named `prototype/*` that nothing in the
-        command may change first (#393)."""
-        if self.role != "attended" or self.head_moves is not None:
-            return False
-        key = (top, glob)
+    def planning(self) -> bool:
+        """A planning session's rule: the only one with the prototype exception (#393)."""
+        return self.role == "attended"
+
+    def on_prototype(self, top: str, glob: list[str] | tuple[str, ...] = ()) -> bool:
+        """Whether the checkout `top` (git run there with `glob`) is on a
+        branch named `prototype/*`, as it is now."""
+        key = (top, tuple(glob))
         if key not in self._heads:
             got, _ = _git_read(top, list(glob), "symbolic-ref", "-q", "HEAD", sep="\n", ok=(0, 1))
             self._heads[key] = bool(got) and _prototype_branch(got[0])
         return self._heads[key]
+
+    def prototype_here(self, top: str, glob: list[str] | tuple[str, ...] = ()) -> bool:
+        """Whether this session may write and commit code in the checkout
+        `top`: a planning session's, not the conductor's, on a branch named
+        `prototype/*` that nothing in the command may change first (#393)."""
+        return self.planning() and self.head_moves is None and self.on_prototype(top, glob)
 
     def allowed_reverts(self) -> frozenset[str]:
         """The commits the conductor's run's ledger allows it to revert (#392)."""
@@ -7633,7 +7639,7 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tupl
             continue
         top = os.path.realpath(where[0])
         wt = "" if top == os.path.realpath(str(root)) else _rel(top, root)
-        if code.prototype_here(d, tuple(glob)):
+        if code.prototype_here(d, glob):
             continue  # a planning session's commit on a `prototype/*` branch (#393)
         literal = bool(_LITERAL_GLOBALS & set(glob)) or any(assigned.get(v, "0") not in ("", "0", "false") for v in _LITERAL_ENV)
         specs, unread = _expanded_specs(seg, c, literal)
@@ -7710,43 +7716,87 @@ def _prototype_branch(ref: str) -> bool:
     return ref.startswith(_PROTOTYPE) and len(ref) > len(_PROTOTYPE)
 
 
-def _moves_head(segs: list[Seg], command: str) -> str | None:
+def _moves_head(segs: list[Seg], root: Path, command: str) -> str | None:
     """What in the command may change which branch a checkout's HEAD names
     (`git switch`, `checkout`, `rebase`, `symbolic-ref`, a branch renamed, an
-    alias, `gh pr checkout`, a `.git` it names), else None."""
-    for s in segs:
-        if not s.words:
-            continue
-        if posixpath.basename(s.words[0]) == "gh" and s.words[1:3] in _GH_MOVES:
-            return "gh " + " ".join(s.words[1:3])
-        args = _other_git(s.words)
-        if args and args[0] not in _KEEPS_HEAD and _git_changes(args):
-            return "git " + " ".join(_brief(a) for a in args[:2])
+    alias, `gh pr checkout`, a `.git` it names), else None. The parts that
+    may move a ref are the push rule's (`_Changers`); of those, only the git
+    commands that move a branch's tip but never HEAD don't count."""
+    for _s, what, label, args in _Changers(segs, root).parts:
+        if what in ("refs", "push") and (args is None or args[0] not in _KEEPS_HEAD):
+            return label
     return _names_dot_git(command, segs)
 
 
-def _short_prototype(name: str) -> bool:
-    """A short destination git places under `refs/heads/`, or a source it finds there: `prototype/<name>`."""
-    return not name.startswith("refs/") and _prototype_branch("refs/heads/" + name)
+def _prototype_rule(code: _Code, segs: list[Seg], root: Path, command: str) -> _Code:
+    """A planning session's rule for one command: no prototype exception when
+    the command may change the branch first, and then its refusals say why,
+    when the project is on a `prototype/*` branch."""
+    moves = _moves_head(segs, root, command)
+    if moves is None:
+        return code
+    code = replace(code, head_moves=moves)
+    if not code.on_prototype(os.path.realpath(str(root))):
+        return code
+    note = (
+        f"on a `prototype/*` branch, a planning session's code write or commit goes through only in a command "
+        f"that can't change the branch first, and this one runs `{moves}`: run them in commands of their own. Otherwise, "
+    )
+    return replace(code, instead=note + code.instead)
+
+
+_PROTOTYPE_PUSH = "a planning session's prototype code goes to `prototype/*` branches only, pushed from one; "
+
+
+def _alone(segs: list[Seg], seg: Seg) -> bool:
+    """No other part of the command runs git but to read or push (a config
+    write, a ref moved, an alias), which could change where a push goes."""
+    for s in segs:
+        args = _other_git(s.words) if s is not seg and s.words else None
+        if args and args[0] not in _PUSH_CMDS and (args[0] == "config" or _git_changes(args) is not None):
+            return False  # `git config` even when it writes no push setting: `push.followTags` is one that counts here
+    return True
+
+
+def _fetch_dst(dst: str) -> str:
+    """Where a fetch refspec's destination (one with no pattern) is stored, as git places it."""
+    if dst.startswith("refs/"):
+        return dst
+    return ("refs/" if dst.startswith(("heads/", "tags/", "remotes/")) else "refs/heads/") + dst
+
+
+def _any_case(pattern: str) -> str:
+    """A ref pattern (`refs/…`) whose letters after `refs/` match in any case, as `--exclude` reads it."""
+    return "refs/" + "".join(f"[{ch.lower()}{ch.upper()}]" if ch.isascii() and ch.isalpha() else ch for ch in pattern[5:])
 
 
 def _to_prototypes(p: _Push, remote: str, cfg: dict[str, list[str]], d: str, glob: list[str], here: bool) -> bool:
-    """Whether every ref a `git push` updates on its remote is a
-    `prototype/*` branch: its refspecs' destinations (a source's own name
-    without one; for `HEAD`, the branch checked out), or, with none, those of
-    the remote's `push` refspecs, or the branch checked out where
+    """Whether every ref a `git push` run on a `prototype/*` branch updates
+    on its remote is a `prototype/*` branch, read as git maps it: a refspec's
+    destination, written `refs/heads/prototype/<name>`; without one, the ref
+    the source names (`HEAD`, a branch, a symbolic ref followed), unless the
+    remote's `push` refspecs or `push.default = upstream` could map it
+    elsewhere; with none, the remote's `push` refspecs, or `HEAD` where
     `push.default` sends a bare push to its own name (`simple`, `current`).
-    A destination the shell may expand, or one it can't read, isn't."""
+    Never with `--follow-tags` (or `push.followTags`), `--tags`, `--all`,
+    `--mirror`, or a refspec the shell may expand."""
     if p.branches or p.mirror or p.tags or p.delete:
         return False
+    if p.follow_tags or (p.follow_tags is None and (cfg.get("push.followtags") or ["false"])[-1].lower() not in _FALSE):
+        return False  # it sends the tags on the commits it sends too
+    head, _ = _memo_read(d, glob, "symbolic-ref", "-q", "HEAD", sep="\n", ok=(0, 1))
+    if not head or not _prototype_branch(head[0]):
+        return False  # run from a `prototype/*` branch only
+    pushes = cfg.get(f"remote.{remote}.push") if remote else None
+    default = (cfg.get("push.default") or [""])[-1].lower()
     specs, shell = p.refspecs, True
     if not specs:
         mirror = cfg.get(f"remote.{remote}.mirror") if remote else None
         if mirror and mirror[-1].lower() not in _FALSE:
             return False
-        if remote and cfg.get(f"remote.{remote}.push"):
-            specs, shell = cfg[f"remote.{remote}.push"], False
-        elif (cfg.get("push.default") or [""])[-1].lower() in ("", "simple", "current"):
+        if pushes:
+            specs, shell = pushes, False
+        elif default in ("", "simple", "current"):
             specs = ["HEAD"]
         else:
             return False  # `upstream` sends it to the branch's upstream, `matching` every branch
@@ -7759,13 +7809,15 @@ def _to_prototypes(p: _Push, remote: str, cfg: dict[str, list[str]], d: str, glo
             if r == "tag" or _shell_spelled(r, globs=True):
                 return False
         src, colon, dst = r.removeprefix("+").partition(":")
-        if not colon:
-            dst = src
-        if not colon and dst in ("HEAD", "@"):
-            head, _ = _memo_read(d, glob, "symbolic-ref", "-q", "HEAD", sep="\n", ok=(0, 1))
-            dst = head[0] if head else ""
-        if not (_prototype_branch(dst) or _short_prototype(dst)):
-            return False
+        if colon:
+            if not _prototype_branch(dst):
+                return False  # a short destination git places by the source's kind, or on a ref the remote has
+            continue
+        if pushes or default in ("upstream", "tracking") or not src or src.startswith("-"):
+            return False  # git maps a source without a destination through those settings
+        full, _ = _memo_read(d, glob, "rev-parse", "--symbolic-full-name", src, sep="\n")
+        if not full or len(full) != 1 or not _prototype_branch(full[0]):
+            return False  # a tag, a symbolic ref to another branch, or a name it can't read
     return True
 
 
@@ -7778,18 +7830,20 @@ def _prototype_tracking(remote: str, fetch: list[str]) -> list[str]:
     out = [f"refs/remotes/{remote}/prototype/*", f"refs/remotes/{remote}/HEAD"]
     for spec in fetch:
         src, colon, dst = spec.removeprefix("+").partition(":")
-        if not colon or not dst.startswith("refs/") or src.startswith("^"):
+        if not colon or not dst or src.startswith("^"):
             continue  # stored under no tracking ref, or a negative refspec, which maps nothing
         if "*" in src:
-            a, c = src.partition("*")[0], dst.partition("*")
-            if _PROTOTYPE.startswith(a):  # the `*` stands for `prototype/<name>`, and more
-                out.append(c[0] + _PROTOTYPE[len(a) :] + "*" + c[2])
-            elif a.startswith(_PROTOTYPE):  # every ref it maps is one
-                out.append(c[0] + "*" + c[2])
-        elif _prototype_branch(src) or _short_prototype(src) or _prototype_branch("refs/" + src):
-            out.append(dst)
-    fold = lambda p: "refs/" + "".join(f"[{ch.lower()}{ch.upper()}]" if ch.isascii() and ch.isalpha() else ch for ch in p[5:])  # noqa: E731
-    return [f"--exclude={fold(p)}" for p in dict.fromkeys(out)]
+            if not dst.startswith("refs/"):
+                continue  # git stores no pattern's refs outside `refs/`
+            before, _, after = dst.partition("*")
+            prefix = src.partition("*")[0]  # what the source has before its `*`
+            if _PROTOTYPE.startswith(prefix):  # the `*` stands for `prototype/<name>`, and more
+                out.append(before + _PROTOTYPE[len(prefix) :] + "*" + after)
+            elif prefix.startswith(_PROTOTYPE):  # every ref it maps is one
+                out.append(before + "*" + after)
+        elif _prototype_branch(src) or _prototype_branch("refs/heads/" + src) or _prototype_branch("refs/" + src):
+            out.append(_fetch_dst(dst))
+    return [f"--exclude={_any_case(p)}" for p in dict.fromkeys(out)]
 
 
 # ---------- the push rule (#390) ----------
@@ -7813,6 +7867,7 @@ class _Push:
     mirror: bool = False  # `--mirror`: every ref
     tags: bool = False  # `--tags` (`--follow-tags` sends no commit the push doesn't already)
     delete: bool = False  # `-d`, `--delete`: the refspecs name what it deletes
+    follow_tags: bool | None = None  # `--follow-tags`, `--no-follow-tags`; None: `push.followTags` decides
     dry: bool = False
     unread: str | None = None  # what the guard can't read among its arguments
 
@@ -7840,6 +7895,8 @@ def _push_args(args: list[str]) -> _Push:
                 p.tags = name == "tags"
             elif name in ("delete", "no-delete"):
                 p.delete = name == "delete"
+            elif name in ("follow-tags", "no-follow-tags"):
+                p.follow_tags = name == "follow-tags"
             elif name in ("dry-run", "no-dry-run"):
                 p.dry = name == "dry-run"
             elif name == "stdin":
@@ -8329,7 +8386,7 @@ def _push_config(d: str, glob: list[str]) -> tuple[dict[str, list[str]] | None, 
     """The settings that say where a push goes and what it sends, by key
     (section and name in lower case, a remote's name as written), else
     (None, what failed)."""
-    pattern = r"^(push\.default|remote\.pushdefault|remote\..*\.(url|pushurl|push|mirror|fetch)|branch\..*\.(remote|pushremote))$"
+    pattern = r"^(push\.default|remote\.pushdefault|remote\..*\.(url|pushurl|push|mirror|fetch)|push\.followtags|branch\..*\.(remote|pushremote))$"
     got, err = _memo_read(d, glob, "config", "-z", "--get-regexp", pattern, ok=(0, 1))
     if got is None:
         return None, err
@@ -8643,8 +8700,11 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
             continue
         # `$(git branch --show-current)` is the shell's branch: HEAD where git runs in the same repository.
         here = seg.cwd is not None and os.path.isdir(seg.cwd) and _git_dir_abs(seg.cwd, []) == _git_dir_abs(d, pglob)
-        if code.role == "attended" and not dot_git and _to_prototypes(p, named if named in remotes else "", cfg, d, pglob, here):
-            continue  # a planning session's push to `prototype/*` branches only (#393)
+        # A planning session's push to `prototype/*` branches only (#393), with no setting of its own and nothing
+        # else in the command but reads and other pushes, which could change where git maps it or what it sends.
+        plain = not cs and not dot_git and not _push_env(segs, seg, _PUSH_ENV) and not _push_env(segs, seg, _PUSH_ENV_CONFIG)
+        if code.planning() and plain and _alone(segs, seg) and _to_prototypes(p, named if named in remotes else "", cfg, d, pglob, here):
+            continue
         srcs, pseudo, bad = _refspec_sources([] if p.delete else p.refspecs, True, here)
         if p.branches:
             pseudo.add("--branches")
@@ -8718,12 +8778,13 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
                 err = f"it sends merge commit {merges[0][:7]}, and {_DRIVER_RUNS.format(driver)}"
         if found:
             sha, hit, full = found
+            instead = (_PROTOTYPE_PUSH if code.planning() else "") + code.instead
             if a_merge:
-                return f"this push sends merge commit {sha}, which carries the code path {_shown(hit)} ({hit.pattern}), {_MERGE_OWN}, to {to}; {code.instead}", None
+                return f"this push sends merge commit {sha}, which carries the code path {_shown(hit)} ({hit.pattern}), {_MERGE_OWN}, to {to}; {instead}", None
             v = _commit_revert(d, pglob, full, code)
             if v.kind in ("unmatched", "ungranted"):
                 return _revert_refusal(f"this push sends commit {sha}, which", hit, v, code, f", to {to}"), None
-            return f"this push sends commit {sha}, which carries the code path {_shown(hit)} ({hit.pattern}), to {to}; {code.instead}", None
+            return f"this push sends commit {sha}, which carries the code path {_shown(hit)} ({hit.pattern}), to {to}; {instead}", None
         if not err and unread:
             err = f"it couldn't tell whether {unread[0]}"
         if not err:
@@ -8761,7 +8822,11 @@ def _unsure_code(unsure: str, role: str, code: _Code) -> Decision:
         return Decision(
             "deny", f"{unsure}; {code.writes_none}, and commits or pushes nothing the guard can't read; fix what stops git reading it, then try again"
         )
-    return Decision("ask", f"{unsure}; {code.writes_none}: allow it only if it carries no code path, or only a revert that exactly undoes a commit on the base")
+    return Decision(
+        "ask",
+        f"{unsure}; {code.writes_none}: allow it only if it carries no code path, only a revert that exactly undoes a commit "
+        "on the base, or a prototype's code on or to `prototype/*` branches only",
+    )
 
 
 _PS_WORDS = re.compile(r"[^\s;|&(){}<>,=\"'`]+")
