@@ -134,7 +134,14 @@ def test_a_revert_in_progress_is_judged_by_the_revert_rule(proj, monkeypatch, ca
     assert _revert(proj, merge, "--no-commit") == 0
     keeps = f"git commit -m 'Undo #12' -m 'This reverts commit {merge}.'"
     heredoc = f"git commit -m \"$(cat <<'EOF'\nUndo #12, which cost $5\n\nThis reverts commit {merge}.\nEOF\n)\""  # as Claude Code writes a message
-    for command in ("git commit --no-edit", "git commit -a --no-edit", "git revert --continue", "cd src && git commit --no-edit", keeps, heredoc):
+    forms = [
+        f"git commit -m \"$(cat <<'EOF'\nRevert \"Fix `x`\"\n\nThis reverts commit {merge}.\nEOF\n)\"",
+        f"git commit -m \"$(cat <<-'EOF'\n\tUndo $5\n\n\tThis reverts commit {merge}.\n\tEOF\n\t)\"",
+        f"git commit -m \"$(cat <<\"EOF\"\nUndo $5\n\nThis reverts commit {merge}.\nEOF\n)\"",
+        f"git commit -m \"$(cat <<'EOF'\nUndo $5\nEOFError handling goes too.\n\nThis reverts commit {merge}.\nEOF)\"",
+        "cat <<'EOF'\n$[HOME=1]\nEOF\ngit commit --no-edit",  # a quoted heredoc: the shell expands nothing in it
+    ]
+    for command in ("git commit --no-edit", "git commit -a --no-edit", "git revert --continue", "cd src && git commit --no-edit", keeps, heredoc, *forms):
         assert hook(monkeypatch, capsys, proj, command) == ("allow", ""), command
     git(proj, "commit", "-q", "-m", "Undo #12", "-m", f"This reverts commit {merge}.")
     assert hook(monkeypatch, capsys, proj, PUSH) == ("allow", "")
@@ -172,6 +179,10 @@ def test_a_revert_in_progress_is_judged_by_the_revert_rule(proj, monkeypatch, ca
         ("echo <<EOF\n$[HOME=1]\nEOF\ngit commit --no-edit", "the command also runs `echo`"),
         ("cat <<EOF\n$[HOME=1]\nEOF\ngit commit --no-edit", "the command also runs `cat`"),  # `cat` may be a function the command defines
         ("cat() { :; }; cat <<EOF\n$[HOME=1]\nEOF\ngit commit --no-edit", "the command also runs"),
+        (
+            "cat() { :; }; cat <<EOF\n$[HOME=1]\nEOF\ngit commit -m \"$(cat <<'EOF'\n$[HOME=1]\nEOF\n)\" -m 'This reverts commit x.'",
+            "the command also runs `cat`",
+        ),  # the same text as the message's, but unquoted: expanded
         ("git status <<< $[HOME=1]; git commit --no-edit", "the command also runs `git status`"),
         ('ls "docs/$[HOME=1]" && git commit --no-edit', "the command also runs `ls"),
         (": <<< $[HOME=1]; git commit --no-edit", "the command also runs `:`"),

@@ -809,6 +809,7 @@ class _Cmd:
     inputs: list[str] = field(default_factory=list)  # every `<` file, whatever its descriptor
     stdins: int = 0  # heredocs, here-strings and `<` files given: bash reads only the last
     stdin_unseen: bool = False  # stdin from another descriptor (`<&3`), closed, or not what `stdin`/`heredoc` hold (`3<f`)
+    expanded: str = ""  # the text of its unquoted heredocs and here-strings, which the shell expands (a quoted heredoc it never does)
 
 
 _REDIR = re.compile(r"(\d*)(>>|>\||&>>|&>|>&|<&|<>|<<<|<<|<|>)")
@@ -830,6 +831,7 @@ def _simple(toks: list) -> list:
         t = toks[i]
         if isinstance(t, Heredoc):
             cur.heredoc = (cur.heredoc or "") + t.body  # read by the other checks, whatever its descriptor
+            cur.expanded += "" if t.quoted else t.body
             if t.fd in ("", "0"):
                 cur.stdins += 1
             else:
@@ -859,6 +861,7 @@ def _simple(toks: list) -> list:
                     cur.stdin_unseen = cur.stdin_unseen or not on_stdin  # `3<f`: so stdin isn't this file
                 elif op == "<<<":
                     cur.heredoc = (cur.heredoc or "") + nxt
+                    cur.expanded += nxt
                     cur.stdins += on_stdin
                     cur.stdin_unseen = cur.stdin_unseen or not on_stdin
                 else:
@@ -895,6 +898,7 @@ class Seg:
     stdin_unseen: bool = False  # stdin from another descriptor (`<&3`) or closed
     inputs: list[str] = field(default_factory=list)  # every `<` file, whatever its descriptor
     wrappers: list[str] = field(default_factory=list)  # the wrappers stripped from its words (`time`, `env`, `sudo`, …)
+    expanded: str = ""  # the text of its unquoted heredocs and here-strings, which the shell expands
 
 
 _KEYWORDS = {"{", "}", "!", "if", "then", "else", "elif", "fi", "do", "done", "while", "until", "esac", "coproc"}
@@ -1088,7 +1092,7 @@ def _segments_of(toks: list, root: Path, cwd: str | None, depth: int) -> list[Se
                 if toks2[0] == "pushd":
                     dirs.append(cwd)
             oldpwd, cwd = cwd, new
-            seg = Seg(toks2, item.redirects, cwd, item.stdin, item.heredoc, prev if piped else None, assigns, stdins=item.stdins, stdin_unseen=item.stdin_unseen, inputs=item.inputs)
+            seg = Seg(toks2, item.redirects, cwd, item.stdin, item.heredoc, prev if piped else None, assigns, stdins=item.stdins, stdin_unseen=item.stdin_unseen, inputs=item.inputs, expanded=item.expanded)
             segs.append(seg)
             prev = seg
             continue
@@ -1097,7 +1101,7 @@ def _segments_of(toks: list, root: Path, cwd: str | None, depth: int) -> list[Se
             seg_cwd = _cd_target([chdir], root, cwd)
         if not toks2 and not item.redirects and not assigns and item.stdin is None and item.heredoc is None:
             continue
-        seg = Seg(toks2, item.redirects, seg_cwd, item.stdin, item.heredoc, prev if piped else None, assigns, stdins=item.stdins, stdin_unseen=item.stdin_unseen, inputs=item.inputs, wrappers=stripped)
+        seg = Seg(toks2, item.redirects, seg_cwd, item.stdin, item.heredoc, prev if piped else None, assigns, stdins=item.stdins, stdin_unseen=item.stdin_unseen, inputs=item.inputs, wrappers=stripped, expanded=item.expanded)
         if "xargs" in stripped:
             seg.fed = True
             # A list read from a file (`-a f`, `< f`), not the pipe: anywhere in the words, to be safe.
@@ -7428,31 +7432,16 @@ def _names_dot_git(command: str, segs: list[Seg]) -> str | None:
     return None
 
 
-def _heredoc_body(word: str) -> str | None:
-    """The text of the quoted heredoc a `_literal_heredoc` word passes, as
-    the lexer gives a part's heredoc, else None."""
-    if not _literal_heredoc(word):
-        return None
-    first, _, rest = word.partition("\n")
-    delim = re.match(r"\$\(\s*cat\s+<<-?\s*(['\"])([A-Za-z_][\w.-]*)\1", first)
-    lines = rest.split("\n")
-    k = next((i for i, line in enumerate(lines) if line.lstrip("\t").startswith(delim.group(2))), len(lines)) if delim else len(lines)
-    return "\n".join(lines[:k]) + "\n"
-
-
 def _expands(s: Seg, literal: list[str] = ()) -> bool:
     """Whether the shell expands something in a part (a `$` or a backtick in
-    its words, its variables' values, its redirects' targets, its heredoc or
-    here-string, or its `<` files), which can set a variable (`$[HOME=1]`) or
-    run a command; or feeds it stdin it can't read. The `literal` words (a
-    commit's message given as a quoted heredoc, `$(cat <<'EOF' … EOF)` in
-    double quotes) expand nothing, nor does the `cat` inside one: a part
-    that is `cat` alone with exactly that heredoc."""
+    its words, its variables' values, its redirects' targets, its unquoted
+    heredocs or here-strings, or its `<` files), which can set a variable
+    (`$[HOME=1]`) or run a command; or feeds it stdin it can't read. A
+    heredoc whose delimiter is quoted (`<<'EOF'`) the shell never expands,
+    whatever runs it; nor the `literal` words (a commit's message given as a
+    quoted heredoc, `$(cat <<'EOF' … EOF)` in double quotes)."""
     words = [w for w in s.words if not any(w is x for x in literal)]
-    heredoc = s.heredoc or ""
-    if heredoc and s.words == ["cat"] and not (s.assigns or s.redirects or s.stdin or s.inputs) and heredoc in {_heredoc_body(w) for w in literal}:
-        heredoc = ""
-    texts = [*words, *(a.partition("=")[2] for a in s.assigns), *s.redirects, heredoc, s.stdin or "", *s.inputs]
+    texts = [*words, *(a.partition("=")[2] for a in s.assigns), *s.redirects, s.expanded, s.stdin or "", *s.inputs]
     return s.stdin_unseen or any("$" in t or "`" in t for t in texts)
 
 
@@ -7503,7 +7492,9 @@ def _finishing_revert(segs: list[Seg], seg: Seg, d: str, glob: list[str], c: _Co
     # A message given as a quoted heredoc in double quotes (`-m "$(cat <<'EOF' … EOF)"`), as Claude Code writes one: its text, as written.
     literal = [w for w in seg.words if isinstance(w, Word) and not w.splits and w in c.messages and _literal_heredoc(w)]
     other = next((s for s in segs if s is not seg and not _reads_only(s, literal)), None)
-    m = _REVERTS.search("\n\n".join(c.messages))
+    # A message given as `$(cat <<-'EOF' …)` reaches git with each line's leading tabs stripped, as the shell strips them.
+    told = [("\n".join(x.lstrip("\t") for x in t.split("\n")) if _literal_heredoc(t) and re.match(r"\$\(\s*cat\s+<<-", t) else t) for t in c.messages]
+    m = _REVERTS.search("\n\n".join(told))
     line = f'the "This reverts commit {reverting}." line, which tells a push it is a revert'
     raw = _commit_git(seg.words)
     own = [o for o in (raw[0] if raw else []) if o in ("-c", "--config-env", "--exec-path") or o.startswith(("--config-env=", "--exec-path"))]
