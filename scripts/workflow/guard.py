@@ -8824,8 +8824,8 @@ def _unsure_code(unsure: str, role: str, code: _Code) -> Decision:
         )
     return Decision(
         "ask",
-        f"{unsure}; {code.writes_none}: allow it only if it carries no code path, only a revert that exactly undoes a commit "
-        "on the base, or a prototype's code on or to `prototype/*` branches only",
+        f"{unsure}; {code.writes_none}: allow it only if it carries no code path, or only a revert that exactly undoes a commit "
+        "on the base" + (", or only a prototype's code on or to `prototype/*` branches" if code.planning() else ""),
     )
 
 
