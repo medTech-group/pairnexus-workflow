@@ -549,8 +549,8 @@ def _rebase_conflict(root):
     _code_commit(root, CODE, "other\n")
     git(root, "checkout", "-q", "prototype/x")
     _code_commit(root, CODE, "mine\n")
-    subprocess.run(["git", "rebase", "other"], cwd=root, capture_output=True)
-    assert git(root, "status").startswith("interactive rebase") or "rebase" in git(root, "status")
+    assert subprocess.run(["git", "rebase", "other"], cwd=root, capture_output=True).returncode != 0
+    assert "rebase" in git(root, "status")
     _change(root, CODE, "both\n")
     git(root, "add", CODE)
 
@@ -572,6 +572,90 @@ def test_the_note_names_a_worktree_on_a_prototype_branch(tmp_path, monkeypatch, 
     git(root, "worktree", "add", "-q", "-b", "prototype/y", str(wt))
     d, why = hook(monkeypatch, capsys, root, "git stash && echo x > .claude/worktrees/side/src/app.py")
     assert d == "deny" and "this one runs `git stash`" in why, why
+
+
+@pytest.mark.parametrize(
+    "command, why",
+    [
+        ("git push origin prototype/x:main", "its destination `main` isn't a `prototype/*` branch"),
+        ("git push origin prototype/x:refs/heads/main", "its destination `refs/heads/main` isn't a `prototype/*` branch"),
+        ("git push origin 'HEAD^{/.|:refs/heads/prototype/y}:refs/heads/feature'", "its destination `refs/heads/feature` isn't"),
+        ("git push origin 'HEAD:refs/heads/prototype/a..b'", "its destination"),
+    ],
+)
+def test_a_refspec_is_split_at_its_last_colon(tmp_path, monkeypatch, capsys, command, why):
+    """git splits a refspec at its last `:`; a source may hold one
+    (`HEAD^{/<regex>}`, `<rev>:<path>`)."""
+    root = _prototype(tmp_path)
+    _code_commit(root)
+    d, reason = hook(monkeypatch, capsys, root, command)
+    assert d == "deny" and "carries the code path" in reason and why in reason, (command, reason)
+    # A source naming a path in a commit (a gitlink there, or nothing): read whole, as git reads it.
+    d, reason = hook(monkeypatch, capsys, root, "git push origin HEAD:refs/heads/prototype/y:refs/heads/feature")
+    assert d == "ask" and "can't tell" in reason, reason
+
+
+def test_code_already_on_a_single_branch_clones_remote_counts(tmp_path, monkeypatch, capsys):
+    """A single-branch clone's refspec names one tracking ref, which counts."""
+    seed = _clone(tmp_path, name="seed")
+    _code_commit(seed)
+    git(seed, "push", "-q", "origin", "HEAD:main")
+    root = tmp_path / "single"
+    git(tmp_path, "clone", "-q", "--single-branch", "-b", "main", str(tmp_path / "seed-remote/acme/demo.git"), str(root))
+    git(root, "config", "user.email", "t@example.com")
+    git(root, "config", "user.name", "t")
+    assert git(root, "config", "--get-all", "remote.origin.fetch").strip() == "+refs/heads/main:refs/remotes/origin/main"
+    git(root, "checkout", "-q", "-b", "feature")
+    _change(root, "docs/guide.md")
+    git(root, "commit", "-qam", "d")
+    assert hook(monkeypatch, capsys, root, "git push origin feature") == ("allow", "")
+
+
+def test_a_fetch_refspec_storing_outside_its_remotes_tracking_refs_doesnt_count(tmp_path, monkeypatch, capsys):
+    """Only `refs/remotes/<a remote fetching from project.repo>/…` can be on the remote."""
+    root = _prototype(tmp_path)
+    _code_commit(root)
+    sha = git(root, "rev-parse", "--short", "HEAD").strip()
+    git(root, "config", "--add", "remote.origin.fetch", "+refs/heads/main:refs/heads/prototype/x")
+    git(root, "config", "--add", "remote.origin.fetch", "+refs/heads/main:refs/heads/elsewhere")
+    git(root, "branch", "-q", "elsewhere")
+    git(root, "checkout", "-q", "feature")
+    git(root, "merge", "-q", "--no-ff", "--no-edit", "elsewhere")
+    for command in ("git push origin prototype/x:refs/heads/feature", "git push origin feature"):
+        d, why = hook(monkeypatch, capsys, root, command)
+        assert d == "deny" and f"commit {sha}" in why, (command, why)
+
+
+def test_another_remotes_refspec_storing_among_ours_doesnt_count(tmp_path, monkeypatch, capsys):
+    root = _prototype(tmp_path)
+    _code_commit(root)
+    sha = git(root, "rev-parse", "--short", "HEAD").strip()
+    other = tmp_path / "fork-remote" / "acme" / "fork.git"
+    other.parent.mkdir(parents=True)
+    git(tmp_path, "init", "-q", "--bare", str(other))
+    git(root, "remote", "add", "fork", str(other))
+    git(root, "config", "--replace-all", "remote.fork.fetch", "+refs/heads/*:refs/remotes/origin/zz/*")
+    git(root, "push", "-q", "fork", "prototype/x")
+    git(root, "fetch", "-q", "fork")
+    git(root, "checkout", "-q", "feature")
+    git(root, "merge", "-q", "--no-ff", "--no-edit", "origin/zz/prototype/x")
+    d, why = hook(monkeypatch, capsys, root, "git push origin feature")
+    assert d == "deny" and f"commit {sha}" in why, why
+
+
+def test_a_remote_nested_in_ours_and_fetching_from_project_repo_counts(tmp_path, monkeypatch, capsys):
+    """`origin` and `origin/x` both fetch from `project.repo`: what `origin/x` stores counts."""
+    root = _clone(tmp_path)
+    _code_commit(root)
+    git(root, "push", "-q", "origin", "feature")
+    git(root, "update-ref", "-d", "refs/remotes/origin/feature")
+    url = git(root, "remote", "get-url", "origin").strip()
+    git(root, "config", "remote.origin/x.url", url)
+    git(root, "config", "remote.origin/x.fetch", "+refs/heads/*:refs/remotes/origin/x/*")
+    git(root, "fetch", "-q", "origin/x")
+    _change(root, "docs/guide.md")
+    git(root, "commit", "-qam", "d")
+    assert hook(monkeypatch, capsys, root, "git push origin feature") == ("allow", "")
 
 
 def test_the_changelog_notes_it():

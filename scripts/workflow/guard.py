@@ -1509,7 +1509,7 @@ def _push_problem(
             if r == ":":
                 return SoloRefusal(f"a bare `:` pushes every matching branch, `{base}` among them")
             forced_msg, this_forced = forced_msg or msg, True
-        raw_dst = r.split(":", 1)[1] if ":" in r else r
+        raw_dst = r.rpartition(":")[2]  # git splits a refspec at its last `:`
         if (role != "attended" or solo) and raw_dst not in ("@", "HEAD") and (_SOLO_UNSAFE_REF if solo else _UNSAFE_REF).search(raw_dst):
             if solo:
                 return SoloRefusal(f"the branch {_code_span(raw_dst)} is {_unsafe_kind(raw_dst)}", "unknown")
@@ -6106,7 +6106,6 @@ class _Code:
         if key not in self._heads:
             got, _ = _git_read(top, list(glob), "symbolic-ref", "-q", "HEAD", sep="\n", ok=(0, 1))
             if got == []:  # detached
-                got = []
                 for name in ("rebase-merge/head-name", "rebase-apply/head-name"):
                     path, _ = _git_read(top, list(glob), "rev-parse", "--git-path", name, sep="\n")
                     text = _read_text(os.path.join(top, path[0]), None, 4096) if path else None
@@ -6342,11 +6341,7 @@ def _code_at(abspath: str | None, code: _Code, root: Path, tree: bool = False) -
     if m and not _ignored(top, rel):
         hit = _Hit(rel, m, wt)
     elif tree and (not rel or os.path.isdir(abspath)):
-        for f in _code_files(top, rel):
-            m = _listed_code(f, code)
-            if m:
-                hit = _Hit(f, m, wt)
-                break
+        hit = _first_code(top, rel, code, wt)
     if not hit or not code.prototype_here(top):
         return hit
     return _worktree_code(abspath, code, root) if tree and not wt else None
@@ -6360,10 +6355,18 @@ def _worktree_code(abspath: str, code: _Code, root: Path) -> _Hit | None:
         co = _checkout_of(w, root)
         if co is None or code.prototype_here(co[0]):
             continue
-        for f in _code_files(co[0], ""):
-            m = _listed_code(f, code)
-            if m and not _ignored(co[0], f):
-                return _Hit(f, m, co[2])
+        hit = _first_code(co[0], "", code, co[2])
+        if hit:
+            return hit
+    return None
+
+
+def _first_code(top: str, rel: str, code: _Code, wt: str) -> _Hit | None:
+    """The first code path git lists under `rel` in the checkout `top`."""
+    for f in _code_files(top, rel):
+        m = _listed_code(f, code)
+        if m:
+            return _Hit(f, m, wt)
     return None
 
 
@@ -6491,7 +6494,10 @@ def _named_code(names: list[str], nocase: bool, own: bool, start: str, root: Pat
             if m and not code.prototype_here(top):
                 return _Hit(f, m, wt)
     if code.prototype_here(top) and not wt:  # it reaches into Claude Code's worktrees too, each on its own branch
-        return next((h for w in _claude_worktrees(start, root) for h in [_named_code(names, nocase, False, w, root, code)] if h), None)
+        for w in _claude_worktrees(start, root):
+            hit = _named_code(names, nocase, False, w, root, code)
+            if hit:
+                return hit
     return None
 
 
@@ -7825,38 +7831,43 @@ def _any_case(pattern: str) -> str:
     return "refs/" + "".join(f"[{ch.lower()}{ch.upper()}]" if ch.isascii() and ch.isalpha() else ch for ch in pattern[5:])
 
 
-def _exactly(ref: str) -> str:
-    """`--glob`'s pattern for this one ref: a bracket, so git adds no `/*`."""
-    return ref[:-1] + "[" + ref[-1] + "]"
+def _one_ref_glob(ref: str) -> str:
+    """`--glob`'s pattern for this one ref (`refs/[r]emotes/…`): with a
+    bracket, git adds no `/*`."""
+    return "refs/[" + ref[5] + "]" + ref[6:]
 
 
 def _known_refs(ours: list[str], remotes: list[str], fetch: dict[str, list[str]]) -> list[str]:
     """`git log`'s options naming the tracking refs that count as on the
-    remote, for the remotes fetching from `project.repo`: the refs each
-    remote's `fetch` refspecs fill from a branch (`refs/heads/…`) other than
-    a `prototype/*` one. Not the refs filled from anything else (a pull
-    request's `refs/pull/…`, `refs/*`, a short name git may read as a tag),
-    whose names are left out wherever another refspec's would hold them,
-    nor `<remote>/HEAD`, which may point at a prototype branch's, nor a
-    remote's nested inside another's name (`origin/fork`), which fetches from
-    wherever it does. Every name left out matches in any case."""
+    remote: the refs that the `fetch` refspecs of the remotes fetching from
+    `project.repo` (`ours`) fill, under `refs/remotes/<one of ours>/`, from
+    a branch (`refs/heads/…`) other than a `prototype/*` one. Left out,
+    wherever another refspec's names would hold them: what any refspec, of
+    any remote, stores from anything else (a pull request's `refs/pull/…`,
+    `refs/*`, a short name git may read as a tag) or from a prototype branch
+    (where its `*` may stand for part of that name, all it stores);
+    `<remote>/HEAD`, which may point at a prototype branch's; and the refs of
+    a remote nested in one of ours by name (`origin/fork`) that fetches from
+    wherever it does. Every name left out matches in any case. git splits a
+    refspec at its last `:`."""
     ours = [r for r in ours if not _GLOB_CHARS.search(r) and "\\" not in r]
-    out = [f"--exclude=refs/remotes/{o}/*" for r in ours for o in remotes if o.startswith(r + "/") and not _GLOB_CHARS.search(o)]
-    branch: list[str] = []  # the destinations of refspecs fetching branches, a `*` for any name
-    left_out: list[str] = []  # the destinations of everything else, and where a prototype branch is stored
-    for r in ours:
-        left_out.append(f"refs/remotes/{r}/HEAD")
+    homes = tuple(f"refs/remotes/{r}/" for r in ours)
+    out = [f"--exclude=refs/remotes/{o}/*" for o in remotes if o not in ours and o.startswith(tuple(r + "/" for r in ours)) and not _GLOB_CHARS.search(o)]
+    branch: list[str] = []  # where ours store branches, a `*` for any name
+    left_out = [f"refs/remotes/{r}/HEAD" for r in ours]  # where anything else, and a prototype branch, is stored
+    for r in remotes:
         for spec in fetch.get(r) or []:
-            src, colon, dst = spec.removeprefix("+").partition(":")
+            src, colon, dst = spec.removeprefix("+").rpartition(":")
             if not colon or not dst or src.startswith("^"):
-                continue  # stored under no tracking ref, or a negative refspec, which stores nothing
+                continue  # stored under no ref, or a negative refspec, which stores nothing
+            branchy = r in ours and src.startswith("refs/heads/")
             if "*" in src:
                 if not dst.startswith("refs/") or "*" not in dst:
                     continue  # git stores no pattern's refs there
                 before, _, after = dst.partition("*")
                 prefix, _, rest = src.partition("*")
-                if not src.startswith("refs/heads/"):
-                    left_out.append(before + "*" + after)  # what isn't a branch, or may be one of every kind
+                if not branchy or not before.startswith(homes):
+                    left_out.append(before + "*" + after)
                     continue
                 branch.append(dst)
                 if _PROTOTYPE.startswith(prefix) and not rest:  # the `*` stands for `prototype/<name>`, and more
@@ -7865,14 +7876,23 @@ def _known_refs(ours: list[str], remotes: list[str], fetch: dict[str, list[str]]
                     left_out.append(before + "*" + after)
                 continue
             where = _fetch_dst(dst)
-            if src.startswith("refs/heads/") and not _prototype_branch(src):
+            if branchy and not _prototype_branch(src) and where.startswith(homes) and len(where) > 5:
                 branch.append(where)
-            else:  # a prototype branch, or a short name git may find among tags too
+            else:
                 left_out.append(where)
     out += [f"--exclude={_any_case(p)}" for p in dict.fromkeys(left_out)]
-    globs = [f"--glob={p if '*' in p else _exactly(p)}" for p in dict.fromkeys(branch)]
+    globs = [f"--glob={p if '*' in p else _one_ref_glob(p)}" for p in dict.fromkeys(branch)]
     # `--exclude` holds until the next `--glob`: given again before each.
     return [x for g in globs for x in (*out, g)]
+
+
+# What git's ref names can't hold (`git check-ref-format`), a pattern's one `*` aside.
+_NOT_IN_REFS = re.compile(r"[\x00-\x20\x7f:~^?\[\\]|\.\.|@\{|//|\.lock(/|$)|/\.|\.$|/$")
+
+
+def _prototype_dst(ref: str) -> bool:
+    """A refspec's destination that is a `prototype/*` branch, written in full and well formed."""
+    return _prototype_branch(ref) and not _NOT_IN_REFS.search(ref) and ref.count("*") <= 1
 
 
 def _to_prototypes(
@@ -7918,13 +7938,14 @@ def _to_prototypes(
                 return False, "it pushes a tag"
             if _shell_spelled(r, globs=True):
                 return False, f"the shell may expand `{_brief(r)}`"
-        src, colon, dst = r.removeprefix("+").partition(":")
+        src, colon, dst = r.removeprefix("+").rpartition(":")  # git splits a refspec at its last `:`
         if colon:
-            if not _prototype_branch(dst):
-                # A short destination git places by the source's kind, or on a ref the remote has.
-                full = f"`refs/heads/{_brief(dst)}`" if _prototype_branch("refs/heads/" + dst) else "`refs/heads/prototype/<name>`"
-                return False, f"its destination `{_brief(dst)}` isn't written in full: write it {full}"
-            continue
+            if _prototype_dst(dst):
+                continue
+            if _prototype_dst("refs/heads/" + dst):  # a short one git places by the source's kind, or on a ref the remote has
+                return False, f"its destination `{_brief(dst)}` isn't written in full: write it `refs/heads/{_brief(dst)}`"
+            return False, f"its destination `{_brief(dst)}` isn't a `prototype/*` branch"
+        src = dst
         if pushes or default in ("upstream", "tracking"):
             return False, mapped  # git maps a source without a destination through them
         full, _ = _memo_read(d, glob, "rev-parse", "--symbolic-full-name", src, sep="\n") if src and not src.startswith("-") else (None, "")
@@ -8505,7 +8526,7 @@ def _refspec_sources(specs: list[str], shell: bool, here: bool = True) -> tuple[
         if r == ":":
             pseudo |= {"--branches", "--tags"}  # every matching branch
             continue
-        src = r.split(":", 1)[0]
+        src = r.rpartition(":")[0] if ":" in r else r  # git splits a refspec at its last `:`
         if not src:
             continue  # a deletion
         words = _braces(src, _BRACE_LIMIT + 1) if shell else [src]
@@ -8831,11 +8852,10 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
             continue  # it sends nothing
         if note is None:
             note = dot_git and f"{cant}: the command names `{dot_git}`, which can change what git reads"
-        # On the remote already: what a tracking ref of a remote fetching from `project.repo` holds,
-        # not a remote's nested inside its name (`origin/fork`), which fetches from wherever it does.
-        # Nor what a tracking ref of a `prototype/*` branch holds (#393), so its code reaches no other branch unjudged.
+        # On the remote already: what the tracking refs that the fetch refspecs of the remotes fetching from `project.repo`
+        # fill from a branch hold, but a `prototype/*` branch's (#393), so its code reaches no other branch unjudged.
         ours = [r for r, url in sorted(fetch_urls.items()) if _project_url(url, code.repo)]
-        known = _known_refs(ours, sorted(remotes), {r: cfg.get(f"remote.{r}.fetch") or [] for r in ours})
+        known = _known_refs(ours, sorted(remotes), {r: cfg.get(f"remote.{r}.fetch") or [] for r in sorted(remotes)})
         # Each commit but a merge by the files it changes, a merge of more parents, then of two, by its own changes (#391).
         memo = _PUSH_MEMO if _PUSH_MEMO is not None else {}
         driver, err = _merge_driver(d, pglob)
