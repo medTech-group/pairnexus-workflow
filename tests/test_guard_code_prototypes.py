@@ -132,8 +132,10 @@ def test_a_hash_inside_a_glob_group_is_no_comment(tmp_path, monkeypatch, capsys)
         # A heredoc where a command word would stand; a substitution in a later `case` pattern.
         "<<EOF A=(x)\nhi\nEOF\ngit commit -am x",
         "case a in x) true;; $(git commit -am x)) true;; esac",
-        # One reading of zsh's, however many groups.
-        "echo " + "(a|#) " * 2000 + "; git commit -am x",
+        # A quote or escape in a name: a command word, not an assignment.
+        "A''=1 B=(src|#)(N); git commit -am x",
+        "A\\B=1 B=(src|#)(N); git commit -am x",
+        'A"B"=1 B=(src|#)(N); git commit -am x',
     ):
         _change(root, CODE)
         d, why = hook(monkeypatch, capsys, root, command)
@@ -146,6 +148,27 @@ def test_a_hash_inside_a_glob_group_is_no_comment(tmp_path, monkeypatch, capsys)
     assert hook(monkeypatch, capsys, root, "A=(\n  x  # git commit -am x\n)") == ("allow", "")
     assert hook(monkeypatch, capsys, root, "B=1 A=(\n  x  # git commit -am x\n)") == ("allow", "")
     assert hook(monkeypatch, capsys, root, "local A=(\n  x  # git commit -am x\n)") == ("allow", "")
+
+
+def test_zsh_s_reading_is_one_pass(tmp_path, monkeypatch, capsys):
+    """However many glob groups a line holds, the command is lexed a few
+    times as a whole, never once per group."""
+    from workflow import guard as guard_mod
+
+    root = _clone(tmp_path)
+    command = "echo " + "(a|#) " * 2000 + "; git commit -am x"
+    real, whole = guard_mod._lex, []
+
+    def counting(s, *args, **kwargs):
+        if len(s) == len(command):
+            whole.append(1)
+        return real(s, *args, **kwargs)
+
+    monkeypatch.setattr(guard_mod, "_lex", counting)
+    _change(root, CODE)
+    d, why = hook(monkeypatch, capsys, root, command)
+    assert d == "deny" and "carries the code path" in why, why
+    assert 0 < len(whole) < 20, len(whole)
 
 
 def test_a_code_write_in_a_claude_code_worktree_on_a_prototype_branch(tmp_path, monkeypatch, capsys):

@@ -619,6 +619,7 @@ def _lex(
     in_word = False
     quoted = False
     expands = False  # an expansion in double quotes
+    name_quoted = -1  # how many unquoted characters the word held at its first quote or escape (-1: none)
     close_end = -1  # where the last `)` operator ended (a backslash-newline after it skipped)
     pending: list[tuple[str, bool, Heredoc]] = []
     depth = 0
@@ -626,16 +627,18 @@ def _lex(
     n = len(s)
 
     def end_word() -> None:
-        nonlocal word, in_word, quoted, unquoted, expands
+        nonlocal word, in_word, quoted, unquoted, expands, name_quoted
         if in_word:
             w = Word("".join(word))
             bare = "".join(unquoted)
             w.splits = "\0" in bare or bool(_UNQUOTED_SPLITS.search(bare)) or _brace_list(bare)
             w.expands = expands
             w.quoted = quoted
-            w.assigns = bool(_ASSIGNMENT.match(bare))
+            # `A=1`, not `A''=1` or `A\B=1` (a quote before its `=`: a command's name)
+            m = _ASSIGNMENT.match(bare)
+            w.assigns = bool(m) and (name_quoted < 0 or name_quoted >= m.end())
             out.append(w)
-        word, in_word, quoted, unquoted, expands = [], False, False, [], False
+        word, in_word, quoted, unquoted, expands, name_quoted = [], False, False, [], False, -1
 
     def hoist(inner: list) -> None:
         nonlocal cmd_start
@@ -707,6 +710,7 @@ def _lex(
             if i + 1 < n:
                 word.append(s[i + 1])
                 in_word = quoted = True
+                name_quoted = name_quoted if name_quoted >= 0 else len(unquoted)
             i += 2
             continue
         if c == "'":
@@ -714,6 +718,7 @@ def _lex(
             j = n if j < 0 else j
             word.append(s[i + 1 : j])
             in_word = quoted = True
+            name_quoted = name_quoted if name_quoted >= 0 else len(unquoted)
             i = j + 1
             continue
         if s.startswith("$'", i):
@@ -722,11 +727,13 @@ def _lex(
                 j += 2 if s[j] == "\\" else 1
             word.append(_ansi_c(s[i + 2 : min(j, n)]))
             in_word = quoted = True
+            name_quoted = name_quoted if name_quoted >= 0 else len(unquoted)
             i = j + 1
             continue
         if c == '"' or s.startswith('$"', i):
             i += 1 if c == '"' else 2
             in_word = quoted = True
+            name_quoted = name_quoted if name_quoted >= 0 else len(unquoted)
             while i < n and s[i] != '"':
                 ch = s[i]
                 if ch == "\\" and i + 1 < n:
@@ -794,22 +801,22 @@ def _lex(
             # A `(` inside a word, right after a `)`, or after a word of the command (zsh: `*(e:…:)`, `(src)(e:…:)`,
             # `echo (…)`), or zsh's numeric glob before one (`<->(…)`).
             glued = (
-                c == "(" and (in_word or close_end == i or len(out) > cmd_start and not _leads_subshell(out[cmd_start:]))
+                c == "(" and (in_word or close_end == i or len(out) > cmd_start and not _leads_subshell(out, cmd_start))
                 or c == "<" and bool(re.match(r"<\d*-\d*>\(", s[i : i + 64]))
             )
             # An array's `(`: `A=(` where an assignment stands (after assignments, or `typeset`'s and the like).
-            before = out[cmd_start:]
             opens_array = (
                 c == "(" and in_word and not quoted and bool(_ARRAY_OPEN.match("".join(word)))
                 and (
-                    all(type(t) is Word and t.assigns for t in before)
-                    or bool(before) and type(before[0]) is Word and not before[0].quoted and before[0] in _DECLARES
+                    all(type(out[k]) is Word and out[k].assigns for k in range(cmd_start, len(out)))
+                    or len(out) > cmd_start and type(out[cmd_start]) is Word and not out[cmd_start].quoted
+                    and out[cmd_start] in _DECLARES
                 )
             )
             fd = ""
             if c in "<>" and in_word and not quoted and word and "".join(word).isdigit():
                 fd = "".join(word)
-                word, in_word, quoted, unquoted = [], False, False, []
+                word, in_word, quoted, unquoted, name_quoted = [], False, False, [], -1
             else:
                 end_word()
             if s.startswith("<<", i) and not s.startswith("<<<", i):
@@ -872,13 +879,15 @@ _ARRAY_OPEN = re.compile(r"[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=\Z")
 _SUBSHELL_LEADERS = {"{", "!", "if", "then", "else", "elif", "do", "while", "until", "time"}
 
 
-def _leads_subshell(toks: list) -> bool:
+def _leads_subshell(toks: list, start: int = 0) -> bool:
     """The tokens so far of a simple command are only unquoted words after
     which a `(` opens a subshell: anything else there (another word, a
     quoted `"time"`, `time -p`, whose `-p` zsh runs as the command, a
     redirect, a heredoc) makes zsh read a `(` as part of a word, a pattern
-    with glob qualifiers."""
-    return all(type(t) is Word and not t.quoted and t in _SUBSHELL_LEADERS for t in toks)
+    with glob qualifiers. From toks[start], so nothing is copied."""
+    return all(
+        type(toks[k]) is Word and not toks[k].quoted and toks[k] in _SUBSHELL_LEADERS for k in range(start, len(toks))
+    )
 
 
 def _tokens(command: str) -> list:
