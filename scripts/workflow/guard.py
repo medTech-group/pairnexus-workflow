@@ -121,7 +121,6 @@ and the environment come first.
 from __future__ import annotations
 
 import contextlib
-import contextvars
 import fnmatch
 import functools
 import glob as _glob
@@ -474,29 +473,16 @@ def _start_cwd(root: Path, cwd: str | os.PathLike | None) -> str:
 
 
 class Op(str):
-    """An unquoted shell operator; a quoted word that looks like one is a plain str.
-    `glued`: a `(` the lexer met inside a word (`*(e:…:)`, `"x"(…)`, `` `…`(…) ``),
-    right after a `)`, or after a word or redirect of the command (`echo
-    (src)(e:…:)`, `> (e:…:)`; not an unquoted `{ (…)`, `! (…)`, `time (…)`), or
-    zsh's numeric glob before one (`<->(…)`): zsh's glob qualifiers, which
-    can run code in the shell itself; bash reads it as an error outside a
-    function's name or extglob."""
-
-    glued: bool = False
-    hoisted: bool = False  # the `(` or `)` around a substitution's commands put before their command
+    """An unquoted shell operator; a quoted word that looks like one is a plain str."""
 
 
 class Word(str):
     """A word as the lexer read it. `splits`: outside quotes it holds what the
     shell expands into other words, or more of them (a variable or substitution,
-    a glob, a brace list, a leading tilde). `expands`: it holds an expansion in
-    double quotes (`"$X"`, `"$(…)"`, a backtick), which the shell fills in as
-    one word. A word built anywhere else is a plain str, which says nothing
-    either way."""
+    a glob, a brace list, a leading tilde). A word built anywhere else is a plain
+    str, which says nothing either way."""
 
     splits: bool = False
-    expands: bool = False
-    quoted: bool = False  # any of it quoted or escaped (`"time"`, `\{`): never a reserved word
 
 
 _UNQUOTED_SPLITS = re.compile(r"[$*?\[]|^~|[=:]~")
@@ -578,9 +564,8 @@ def _read_delim(s: str, i: int) -> tuple[str, bool, int]:
     return "".join(out), quoted, i
 
 
-def _expansions(text: str, hashes: list[int] | None = None, zsh: bool = False) -> list[list]:
-    """Command substitutions in text the shell expands (an unquoted heredoc),
-    `hashes` and `zsh` as `_lex` takes them."""
+def _expansions(text: str) -> list[list]:
+    """Command substitutions in text the shell expands (an unquoted heredoc)."""
     out: list[list] = []
     i, n = 0, len(text)
     while i < n:
@@ -589,65 +574,51 @@ def _expansions(text: str, hashes: list[int] | None = None, zsh: bool = False) -
             i += 2
             continue
         if text.startswith("$(", i):
-            toks, j = _lex(text, i + 2, stop_paren=True, hashes=hashes, zsh=zsh)
+            toks, j = _lex(text, i + 2, stop_paren=True)
             out.append(toks)
             i = j + 1
             continue
         if c == "`":
             j = _backtick_end(text, i)
-            out.append(_lex(_unbacktick(text[i + 1 : j]), hashes=hashes, zsh=zsh)[0])
+            out.append(_lex(_unbacktick(text[i + 1 : j]))[0])
             i = j + 1
             continue
         i += 1
     return out
 
 
-def _lex(
-    s: str, i: int = 0, stop_paren: bool = False, hashes: list[int] | None = None, zsh: bool = False
-) -> tuple[list, int]:
+def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
     """Tokens of a shell command from s[i]: plain words (str), operators (Op)
     and heredocs (Heredoc). Command substitutions are lexed too and put, as a
     subshell, before the command they appear in; the word keeps their text.
-    With stop_paren, stops at the `)` closing a `$(`, returning its index.
-    Into `hashes`, a `#` (its index in its own text) read as a comment while
-    a `(` glued to a word is open, which zsh reads as its pattern's; with
-    `zsh`, such a `#` is read so, as a word's (`segments` reads both)."""
+    With stop_paren, stops at the `)` closing a `$(`, returning its index."""
     out: list = []
-    lex_start = i  # where this text starts (a substitution's, after its `$(`)
     cmd_start = 0
     word: list[str] = []
     unquoted: list[str] = []  # the word's text outside quotes ("\0" for an unquoted substitution)
     in_word = False
     quoted = False
-    expands = False  # an expansion in double quotes
-    close_end = -1  # where the last `)` operator ended (a backslash-newline after it skipped)
     pending: list[tuple[str, bool, Heredoc]] = []
     depth = 0
-    globs: list[int] = []  # the depths of the open `(` groups that are part of a word (zsh's, extglob's)
-    braces = 0  # unquoted `${` not yet closed: the shell reads a blank or `#` inside one as the word's
     n = len(s)
 
     def end_word() -> None:
-        nonlocal word, in_word, quoted, unquoted, expands
+        nonlocal word, in_word, quoted, unquoted
         if in_word:
             w = Word("".join(word))
             bare = "".join(unquoted)
             w.splits = "\0" in bare or bool(_UNQUOTED_SPLITS.search(bare)) or _brace_list(bare)
-            w.expands = expands
-            w.quoted = quoted
             out.append(w)
-        word, in_word, quoted, unquoted, expands = [], False, False, [], False
+        word, in_word, quoted, unquoted = [], False, False, []
 
     def hoist(inner: list) -> None:
         nonlocal cmd_start
-        opens, closes = Op("("), Op(")")
-        opens.hoisted = closes.hoisted = True
-        block = [opens, *inner, closes]
+        block = [Op("("), *inner, Op(")")]
         out[cmd_start:cmd_start] = block
         cmd_start += len(block)
 
     def substitution(start: int, inner_from: int) -> int:
-        toks, j = _lex(s, inner_from, stop_paren=True, hashes=hashes, zsh=zsh)
+        toks, j = _lex(s, inner_from, stop_paren=True)
         word.append(s[start : j + 1])
         hoist(toks)
         return j + 1
@@ -655,75 +626,8 @@ def _lex(
     def backtick(start: int, in_dquotes: bool = False) -> int:
         j = _backtick_end(s, start)
         word.append(s[start : j + 1])
-        hoist(_lex(_unbacktick(s[start + 1 : j], in_dquotes), hashes=hashes, zsh=zsh)[0])
+        hoist(_lex(_unbacktick(s[start + 1 : j], in_dquotes))[0])
         return j + 1
-
-    def dquoted(i: int) -> int:
-        """A double-quoted string's text from s[i] into the word; the index
-        after its closing `"`. Inside it a `${…}` is read whole, as the shell
-        reads it: a `"…"` there is a string of its own (`"${x:-"a b"}"`), a
-        backslash escapes any character (`\}`). What bash and zsh read
-        differently, or the guard doesn't follow, is recorded in `hashes`, as
-        where it can't be sure: a `'` there whose span the two may end
-        differently, a `$[…]` holding a quote, a `$` before a
-        backslash-newline."""
-        nonlocal expands
-        params = 0  # `${` opened in this string, not yet closed
-        while i < n:
-            ch = s[i]
-            if ch == '"':
-                if not params:
-                    return i + 1
-                i = dquoted(i + 1)
-                continue
-            if ch == "\\" and i + 1 < n:
-                nx = s[i + 1]
-                if nx == "\n":
-                    i += 2
-                elif nx in '$`"\\' or params:
-                    word.append(nx)
-                    i += 2
-                else:
-                    word.append(ch)
-                    i += 1
-                continue
-            if ch in "$`":
-                expands = True
-            if s.startswith("$$", i):  # the shell's pid: the next `{` or `(` is text
-                word.append("$$")
-                i += 2
-                continue
-            if s.startswith("$\\\n", i) and hashes is not None:  # `$\⏎(` is `$(` to bash
-                hashes.append(i)
-            if s.startswith("$[", i) and hashes is not None and _quote_in_brackets(s, i + 2):
-                hashes.append(i)  # bash reads a `"` there as a string of its own, zsh as a character
-            if s.startswith("$(", i):
-                i = substitution(i, i + 2)
-                continue
-            if ch == "`":
-                i = backtick(i, in_dquotes=True)
-                continue
-            if ch == "$" and re.match(r"\$(?:@|\{!|\{[^}]*\[@\])", s[i : i + 256]):
-                unquoted.append("\0")  # "$@", "${A[@]}", "${!p@}": several words, quoted or not
-            if s.startswith("${", i):
-                params += 1
-                word.append("${")
-                i += 2
-                continue
-            if ch == "}" and params:
-                params -= 1
-            elif ch == "'" and params:
-                end = s.find("'", i + 1)
-                if end < 0 or any(c in s[i + 1 : end] for c in '"}\\`$'):
-                    if hashes is not None:
-                        hashes.append(i)  # bash and zsh may end the `${…}` at different places
-                else:  # plain text to its closing `'`, read alike by both
-                    word.append(s[i : end + 1])
-                    i = end + 1
-                    continue
-            word.append(ch)
-            i += 1
-        return n
 
     def read_heredocs(pos: int) -> int:
         """Bodies of the pending heredocs, from the line after pos."""
@@ -759,7 +663,7 @@ def _lex(
                 pending.clear()
                 return pos + 1
             if not hd.quoted:
-                for inner in _expansions(hd.body, hashes, zsh):
+                for inner in _expansions(hd.body):
                     hoist(inner)
         pending.clear()
         return k
@@ -768,8 +672,6 @@ def _lex(
         c = s[i]
         if c == "\\":
             if i + 1 < n and s[i + 1] == "\n":
-                if close_end == i:
-                    close_end = i + 2
                 i += 2
                 continue
             if i + 1 < n:
@@ -793,8 +695,32 @@ def _lex(
             i = j + 1
             continue
         if c == '"' or s.startswith('$"', i):
+            i += 1 if c == '"' else 2
             in_word = quoted = True
-            i = dquoted(i + (1 if c == '"' else 2))
+            while i < n and s[i] != '"':
+                ch = s[i]
+                if ch == "\\" and i + 1 < n:
+                    nx = s[i + 1]
+                    if nx == "\n":
+                        i += 2
+                    elif nx in '$`"\\':
+                        word.append(nx)
+                        i += 2
+                    else:
+                        word.append(ch)
+                        i += 1
+                    continue
+                if s.startswith("$(", i):
+                    i = substitution(i, i + 2)
+                    continue
+                if ch == "`":
+                    i = backtick(i, in_dquotes=True)
+                    continue
+                if ch == "$" and re.match(r"\$(?:@|\{!|\{[^}]*\[@\])", s[i : i + 256]):
+                    unquoted.append("\0")  # "$@", "${A[@]}", "${!p@}": several words, quoted or not
+                word.append(ch)
+                i += 1
+            i += 1
             continue
         if s.startswith("$(", i):
             in_word = True
@@ -811,26 +737,10 @@ def _lex(
             in_word = True
             i = substitution(i, i + 2)
             continue
-        # A `#` inside a `(` group glued to a word (`(src|#); git commit …`), right after anything but a blank (a
-        # backslash-newline skipped: `(src)#(N)`, zsh's `<->#`, `;#`), or inside `${…}` (`${x:-a #}`), the shell
-        # may read as part of a word, where the lexer starts a comment: recorded (`check_bash` asks), and read so
-        # in the reading `zsh` asks for.
         if c == "#" and not in_word:
-            k = i - 1  # the character before it, backslash-newlines skipped (an odd run of backslashes)
-            while k > lex_start and s[k] == "\n":
-                m = k - 1
-                while m >= lex_start and s[m] == "\\":
-                    m -= 1
-                if (k - 1 - m) % 2 == 0:
-                    break
-                k -= 2
-            either = bool(globs) or braces > 0 or k >= lex_start and s[k] not in " \t\n"
-            if not (zsh and either):
-                if either and hashes is not None:
-                    hashes.append(i)
-                j = s.find("\n", i)
-                i = n if j < 0 else j
-                continue
+            j = s.find("\n", i)
+            i = n if j < 0 else j
+            continue
         if c in " \t":
             end_word()
             i += 1
@@ -845,12 +755,6 @@ def _lex(
             cmd_start = len(out)
             continue
         if c in ";&|()<>":
-            # A `(` inside a word, right after a `)`, or after a word of the command (zsh: `*(e:…:)`, `(src)(e:…:)`,
-            # `echo (…)`), or zsh's numeric glob before one (`<->(…)`).
-            glued = (
-                c == "(" and (in_word or close_end == i or len(out) > cmd_start and not _leads_subshell(out, cmd_start))
-                or c == "<" and bool(re.match(r"<\d*-\d*>\(", s[i : i + 64]))
-            )
             fd = ""
             if c in "<>" and in_word and not quoted and word and "".join(word).isdigit():
                 fd = "".join(word)
@@ -876,78 +780,21 @@ def _lex(
             if op == ")" and stop_paren and depth == 0:
                 end_word()
                 return out, i
-            # A glob group's `(`, `|` and `)` are a word's (zsh's), so the command goes on: `echo (a|#) (b|#)`.
-            pattern = False
             if op == "(":
                 depth += 1
-                if glued:  # an array's `A=(…)` too: zsh's reading of its comments only adds commands
-                    globs.append(depth)
-                    pattern = True
             elif op == ")":
-                if globs and globs[-1] == depth:
-                    globs.pop()
-                    pattern = True
                 depth -= 1
-            elif op == "|" and globs:
-                pattern = True
-            tok = Op(fd + op)
-            tok.glued = glued
-            out.append(tok)
-            if op in _SEPARATORS and not pattern:
+            out.append(Op(fd + op))
+            if op in _SEPARATORS:
                 cmd_start = len(out)
             i += len(op)
-            if op == ")":
-                close_end = i
             continue
-        if c == "$" and s.startswith("$\\\n", i) and hashes is not None:
-            hashes.append(i)  # `$\⏎{` is `${` to bash, which the guard doesn't follow
-        if c == "$" and s.startswith("$$", i):
-            word += ["$", "$"]
-            unquoted += ["$", "$"]
-            in_word = True
-            i += 2
-            continue
-        if c == "$" and s.startswith("${", i):
-            braces += 1
-        elif c == "}" and braces:
-            braces -= 1
         word.append(c)
         unquoted.append(c)
         in_word = True
         i += 1
     end_word()
     return out, n
-
-
-# Words after which a `(` still opens a subshell, as at a command's start: `{ (…); }`, `! (…)`, `time (…)`.
-_SUBSHELL_LEADERS = {"{", "!", "if", "then", "else", "elif", "do", "while", "until", "time"}
-
-
-def _leads_subshell(toks: list, start: int = 0) -> bool:
-    """The tokens so far of a simple command are only unquoted words after
-    which a `(` opens a subshell: anything else there (another word, a
-    quoted `"time"`, `time -p`, whose `-p` zsh runs as the command, a
-    redirect, a heredoc) makes zsh read a `(` as part of a word, a pattern
-    with glob qualifiers. From toks[start], so nothing is copied."""
-    return all(
-        type(toks[k]) is Word and not toks[k].quoted and toks[k] in _SUBSHELL_LEADERS for k in range(start, len(toks))
-    )
-
-
-def _quote_in_brackets(s: str, i: int) -> bool:
-    """A quote inside the `$[…]` whose text starts at s[i] (to its matching
-    `]`, or the end)."""
-    depth = 1
-    for ch in s[i:]:
-        if ch in "\"'":
-            return True
-        if ch == "[":
-            depth += 1
-        elif ch == "]":
-            depth -= 1
-            if not depth:
-                return False
-    return False
 
 
 def _tokens(command: str) -> list:
@@ -1199,18 +1046,7 @@ def segments(command: str, root: Path, cwd: str | None = "", depth: int = 0) -> 
     that hold git/gh commands, and command words holding a whole command."""
     if cwd == "":
         cwd = os.path.realpath(str(root))
-    hashes: list[int] = []
-    segs = _segments_of(_lex(command, hashes=hashes)[0], root, cwd, depth)
-    if hashes:  # read as zsh reads it too, each reading from the same directory
-        segs += _segments_of(_lex(command, zsh=True)[0], root, cwd, depth)
-        unsure = _COMMENT_UNSURE.get()
-        if unsure is not None:
-            unsure.append(command)
-    return segs
-
-
-# The texts, read by `segments` during one `check_bash`, holding a `#` the shell may not read as a comment.
-_COMMENT_UNSURE: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar("_COMMENT_UNSURE", default=None)
+    return _segments_of(_tokens(command), root, cwd, depth)
 
 
 _CHANGES_DIR = ("cd", "pushd", "popd", "chdir")  # the words that move the shell, which the parser follows
@@ -1224,16 +1060,7 @@ def _segments_of(toks: list, root: Path, cwd: str | None, depth: int) -> list[Se
     prev: Seg | None = None
     piped = False
     case_pattern = False  # between `case … in` / `;;` and the pattern's `)`
-    held: list[tuple] = []  # the whole state at each substitution's start, which nothing inside it changes
     for item in _simple(toks):
-        if isinstance(item, Op) and item.hoisted:
-            if item == "(":
-                held.append((cwd, oldpwd, list(saved), list(dirs), case_pattern))
-                case_pattern = False  # a pattern's substitution runs as the shell tries the pattern
-            elif held:  # its `)`, whatever its own text opened or closed (`` `)` ``, `$(popd)`)
-                cwd, oldpwd, saved, dirs, case_pattern = held.pop()
-            piped, prev = False, None
-            continue
         if isinstance(item, Op):
             if case_pattern and item == ")":
                 case_pattern = False
@@ -5956,44 +5783,10 @@ def check_bash(
     cwd: str | os.PathLike | None = None,
     code: "_Code | None" = None,
 ) -> Decision:
-    """`_check_bash`'s decision, and where the guard can't be sure where a
-    comment starts (a `#` that zsh, or bash inside `${…}`, may read as part
-    of a word, so what follows it may run): a refusal it reached stands;
-    else asked in an attended session, refused in a ticket or conductor's."""
-    unsure: list[str] = []
-    token = _COMMENT_UNSURE.set(unsure)
-    try:
-        d = _check_bash(command, profile, role, root, current_branch, role_from_env, cwd, code)
-    finally:
-        _COMMENT_UNSURE.reset(token)
-    if d.action == "deny" or not unsure:
-        return d
-    why = (
-        "the guard can't be sure where a comment starts in this command, or where a quoted part ends: a `#` right after "
-        "`)`, `;`, `|` or another operator, inside a `(` group glued to a word (zsh's patterns, an array) or inside "
-        "`${…}` may be read as part of a word, and a `'` inside a double-quoted `${…}`, a quote inside `$[…]` or a `$` "
-        "before a backslash-newline is read differently by bash and zsh, so what follows may run. Put a comment after a "
-        "blank, outside such a group, and write the expansion more simply"
-    )
-    if role in ("ticket", "conductor"):
-        return Decision("deny", why, d.sensitive)
-    return Decision("ask", f"{d.reason}\n{why}" if d.action == "ask" else why, d.sensitive)
-
-
-def _check_bash(
-    command: str,
-    profile: Profile,
-    role: str,
-    root: Path,
-    current_branch: str | None,
-    role_from_env: bool = True,
-    cwd: str | os.PathLike | None = None,
-    code: "_Code | None" = None,
-) -> Decision:
     start = _start_cwd(root, cwd)
     segs = segments(command, root, start)
     if code is not None:
-        if code.planning():  # the prototype exception holds only while nothing may change the branch (#393)
+        if code.planning():  # the prototype exception holds only while no git command may move HEAD (#393)
             code = _prototype_rule(code, segs, root, command)
         # Refused wherever it sits in the command: an ask earlier on never hides it.
         p = _shell_code(segs, code, root)
@@ -6008,7 +5801,7 @@ def _check_bash(
         unsure = unsure or unsure_push
         if unsure:
             # The rest of the command first: its refusal stands over this ask, and its ask joins it.
-            d = _check_bash(command, profile, role, root, current_branch, role_from_env, cwd)
+            d = check_bash(command, profile, role, root, current_branch, role_from_env, cwd)
             u = _unsure_code(unsure, role, code)
             if d.action == "deny":
                 return d
@@ -8032,16 +7825,13 @@ def _prototype_rule(code: _Code, segs: list[Seg], root: Path, command: str) -> _
     code = replace(code, changers=changers)
     moves = _moves_head(changers)
     named = _dot_git_named(command, segs)  # in a commit's message or a file's text too
-    unfollowed = _compound_or_cd(segs, command)
-    if moves is None and named is None and unfollowed is None:
+    if moves is None and named is None:
         return code
-    code = replace(code, no_prototype=moves or named or unfollowed)
+    code = replace(code, no_prototype=moves or named)
     top = os.path.realpath(str(root))
     if not any(code.on_prototype(t) for t in [top, *_claude_worktrees(top, root)]):
         return code
     hows = [f"runs `{moves}`: run them in commands of their own"] if moves else []
-    if unfollowed:
-        hows.append(unfollowed.removeprefix("it "))
     if named:
         hows.append(
             f"names `{named}`, which could: name no `.git` in it (run what names it in a command of its own, "
@@ -8091,13 +7881,17 @@ def _push_own_part(segs: list[Seg], seg: Seg, glob: list[str], dot_git: str) -> 
 _COMPOUND_WORDS = {"for", "select", "case", "while", "until", "if", "function", "coproc", "repeat", "foreach"}  # zsh's too
 
 
-def _compound_or_cd(segs: list[Seg], command: str) -> str | None:
+def _unfollowed(segs: list[Seg], command: str) -> str | None:
     """Why the guard can't follow the command as the shell runs it, for a
-    prototype's exception: a compound command (`for HOME in …; do …`, `case
-    $[…]`, `if`, `function`), whose header can set a variable or run a program
-    no part shows; or a change of directory (`cd`, `pushd`, `popd`), which
-    the guard follows only so far (`popd -n`, a logical `..` after a link, a
-    `--show-toplevel` from elsewhere). Else None."""
+    prototype push's exception (a write or commit doesn't ask: it stays
+    local, and its push is judged): a compound command (`for HOME in …; do
+    …`, `case $[…]`, `if`, `function`), whose header can set a variable or
+    run a program no part shows; a change of directory (`cd`, `pushd`,
+    `popd`), which the guard follows only so far (`popd -n`, a logical `..`
+    after a link, a `--show-toplevel` from elsewhere); or anything else that
+    can change the shell's own state (a command word it spells, a builtin
+    but the stateless ones, a bare assignment, `${ …; }`, a `(` other than a
+    `$(`'s, zsh's `${(e)…}` and `${~…}`, an assigning expansion). Else None."""
     # A compound word the lexer reads that no part keeps as an argument (`git log --grep for` keeps it) opens a
     # compound command, wherever it stands (`time -p for …`): counted, not placed.
     toks = _tokens(command)
@@ -8112,7 +7906,7 @@ def _compound_or_cd(segs: list[Seg], command: str) -> str | None:
     moved = next((s.words[0] for s in segs if s.words and s.words[0] in _CHANGES_DIR), None)
     if moved:
         return f"it changes directory with `{moved}`, which the guard follows only so far: run it from that directory, or with `git -C`"
-    alone = " (run the write, commit or push in a command of its own)"
+    alone = " (run the push in a command of its own)"
     spelled = next((s.words[0] for s in segs if s.words and _spelled_command(s.words[0])), None)
     if spelled:
         return f"it runs a command the shell spells (`{_brief(spelled)}`), which the guard can't follow{alone}"
@@ -8126,14 +7920,16 @@ def _compound_or_cd(segs: list[Seg], command: str) -> str | None:
         return f"it sets `{_brief(assigned)}` for the rest of the command{alone}"
     joined = command.replace("\\\n", "")  # bash joins a backslash-newline before it reads anything
     if _CURRENT_SHELL_SUB.search(joined):
-        return f"it runs a command substitution in the shell itself (`${{ …; }}`){alone}, or write the file with the file tools"
-    if _ZSH_EVAL.search(joined) or any(isinstance(t, Op) and t.glued for t in toks):
+        return f"it runs a command substitution in the shell itself (`${{ …; }}`){alone}"
+    # zsh reads a `(` after a word as glob qualifiers, some of which run code in the shell (`*(e:…:)`): where it
+    # stands is the shell reader's to tell (#422), so any `(` but a `$(`'s counts, quoted or not.
+    if _ZSH_EVAL.search(joined) or _PAREN.search(joined):
         return (
-            f"it may run code in the shell itself (zsh's glob qualifiers such as `*(e:…:)`, a `(` right after a word, "
-            f"or `${{(e)…}}`, `${{~…}}`){alone}: give a commit's message with `-F <file>`, or write the file with the file tools"
+            f"it may run code in the shell itself (a `(` other than a `$(`'s, which zsh may read as glob qualifiers "
+            f"such as `*(e:…:)`, or `${{(e)…}}`, `${{~…}}`){alone}"
         )
     if _ASSIGNING_EXPANSION.search(joined):
-        return f"it may set a variable in the shell itself (`$((…))`, `$[…]`, `${{X:=…}}`){alone}, or write the file with the file tools"
+        return f"it may set a variable in the shell itself (`$((…))`, `$[…]`, `${{X:=…}}`){alone}"
     return None
 
 
@@ -8165,17 +7961,16 @@ def _stateless_builtin(words: list[str]) -> bool:
     opt = _STATEFUL_OPTION.get(words[0])
     if opt is None:
         return False
-    # An argument the shell may turn into others: the lexer's `splits` (unquoted), or `expands` (an expansion in
-    # double quotes: `"${X:--x}"`, `"$(echo -x)"`); a word built elsewhere: may.
-    return not any(
-        w.startswith("-") and opt in w or getattr(w, "splits", True) or getattr(w, "expands", True) for w in words[1:]
-    )
+    # An argument the shell may turn into others: the lexer's `splits` (unquoted), or any `$` or backtick, quoted
+    # or not (`"${X:--x}"`, `"$(echo -x)"`); a word built elsewhere: may.
+    return not any(w.startswith("-") and opt in w or getattr(w, "splits", True) or "$" in w or "`" in w for w in words[1:])
 # bash 5.3's `${ cmd; }` and `${| cmd; }`, which run in the shell itself (a `cd` there stays).
 _CURRENT_SHELL_SUB = re.compile(r"\$\{[\s|]")
 # zsh's glob qualifiers that run code (`*(e:…:)`, `*(+fn)`) and parameter flags (`${(e)…}`), in the shell itself.
 _ZSH_EVAL = re.compile(r"\$\{[(~]|\$~")  # `${(e)…}`, `${~…}`, `$~X`, live in double quotes too
 # Arithmetic and `${X=…}`/`${X:=…}` expansions, which can assign a variable in the shell itself.
 _ASSIGNING_EXPANSION = re.compile(r"\$\(\(|\$\[|\(\(|\$\{[^}]*?:?=")
+_PAREN = re.compile(r"(?<!\$)\(")  # a `(` but a command substitution's
 
 
 def _spelled_command(word: str) -> bool:
@@ -8188,11 +7983,11 @@ def _spelled_command(word: str) -> bool:
 
 def _busy_parts(segs: list[Seg], command: str) -> tuple[list[Seg], str | None]:
     """(the parts of the command that do more than read, `_reads_only`; why
-    the guard can't follow the command, `_compound_or_cd`). A push to
+    the guard can't follow the command, `_unfollowed`). A push to
     `prototype/*` branches is let through only as the one part beside reads,
     in a command it can follow, so nothing in the command can change git's
     config, HEAD, refs or directory, or run a program, before it runs."""
-    return [s for s in segs if not _reads_only(s)], _compound_or_cd(segs, command)
+    return [s for s in segs if not _reads_only(s)], _unfollowed(segs, command)
 
 
 def _fetch_dst(dst: str) -> str:

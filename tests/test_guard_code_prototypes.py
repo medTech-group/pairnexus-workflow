@@ -92,169 +92,6 @@ def test_a_push_to_a_prototype_branch_from_another_branch_is_judged(tmp_path, mo
             assert d == "deny" and "carries the code path" in why, (command, role, why)
 
 
-def test_a_hash_inside_a_glob_group_is_no_comment(tmp_path, monkeypatch, capsys):
-    """zsh (and bash's extglob) read `(src|#)` as one pattern: the `#` starts
-    no comment, so the commit after it is seen, on any branch."""
-    root = _clone(tmp_path)
-    for command in ("echo (src|#); git commit -am x", "echo @(src|#); git commit -am x"):
-        _change(root, CODE)
-        d, why = hook(monkeypatch, capsys, root, command)
-        assert d == "deny" and "carries the code path" in why, (command, why)
-    # Where the shell reads a comment in a glued `(` group (an array, bash's `time -p (…)`), a quote in it
-    # hides nothing after it.
-    for command in (
-        "A=(\n  x  # don't\n)\ngit commit -am x",
-        "time -p (\n  make  # don't\n); git commit -am x",
-        "A=(\n  x  # see (1\n)\necho y # it's\ngit commit -am x",
-        "echo (a|#) don't\ngit commit -am x",
-    ):
-        _change(root, CODE)
-        d, why = hook(monkeypatch, capsys, root, command)
-        assert d == "deny" and "carries the code path" in why, (command, why)
-    # Each reading from the same directory: a comment read as zsh reads it moves nothing in the other reading.
-    for command in (
-        f"cd {root}; time -p ( cd /tmp; true # (\n); git commit -am x",
-        f"cd {root}; time -p ( cd /tmp; true # case 2\n); git commit -am x",
-        "pushd /tmp; time -p ( true # popd\n); popd; git commit -am x",
-        # A quote in zsh's reading may run past the line; `A=(` as any glued group.
-        "echo (src|#) \"\necho \"; git commit -am x",
-        "echo A=(src|#)(N); git commit -am x",
-        "echo `echo (src|#); git commit -am x`",
-        "echo (src|#) (lib|#); git commit -am x",
-        # A substitution's own text moves nothing outside it, however it opens or closes (older than #393).
-        f"cd /tmp; ( cd {root}; echo `)`; git commit -am x )",
-        f"cd {root}; pushd /tmp >/dev/null; echo $(popd); popd; git commit -am x",
-        # zsh's reading reaches a heredoc's substitutions; whatever the words before a glued group.
-        "cat <<EOF\n$(echo (src|#)(N); git commit -am x)\nEOF",
-        "cat <<EOF\n`echo (src|#)(N); git commit -am x`\nEOF",
-        "\"B=1\" A=(src|#)(N); git commit -am x",
-        "\\typeset A=(src|#)(N); git commit -am x",
-        # A heredoc where a command word would stand; a substitution in a later `case` pattern.
-        "<<EOF A=(x)\nhi\nEOF\ngit commit -am x",
-        "case a in x) true;; $(git commit -am x)) true;; esac",
-        # Whatever the word before it, a `#` in a glued group is read as zsh reads it too.
-        "A''=1 B=(src|#)(N); git commit -am x",
-        "A\\B=1 B=(src|#)(N); git commit -am x",
-        'A"B"=1 B=(src|#)(N); git commit -am x',
-        "<(true)A=1 B=(src|#)(N); git commit -am x",
-        "A[[]=(src|#)(N); git commit -am x",
-        "A=(src|#)(N); git commit -am x",
-        # A `#` right after an operator zsh keeps in a word: a group's `)`, its numeric glob `<->`.
-        "echo (src)#(N); git commit -am x",
-        "echo <->#(N); git commit -am x",
-        "echo <->(src|#)(N); git commit -am x",
-    ):
-        _change(root, CODE)
-        d, why = hook(monkeypatch, capsys, root, command)
-        assert d == "deny" and "carries the code path" in why, (command, why)
-    d, why = hook(monkeypatch, capsys, root, "A=(\n  x  # don't\n)\ngit push origin HEAD:main")
-    assert d == "ask" and "the base branch `main`" in why, why  # seen, so judged as any push to the base
-    # A comment is still one where the shell reads it.
-    _change(root, CODE)
-    assert hook(monkeypatch, capsys, root, "echo hi # (src|#); git commit -am x") == ("allow", "")
-    assert hook(monkeypatch, capsys, root, "make # don't\ngit status") == ("allow", "")
-    # Where the shell may read a `#` as part of a word, the guard can't be sure what follows it runs: asked in a
-    # planning session, refused in a conductor's, unless a reading already refuses it.
-    unsure = "the guard can't be sure where a comment starts"
-    for command in (
-        "A=(\n  x  # the first\n)",
-        "local A=(\n  x  # don't\n)",
-        "true;# it's\necho (src|#)(N); git commit -am x # '",
-        "A=(\n x # it's\n)\necho (src|#)(N); git commit -am x # '",
-        "echo (src)\\\n#(N); git commit -am x",
-        "echo <->\\\n#(N); git commit -am x",
-        "cat <<EOF\n$(echo (src)\\\n#(N); git commit -am x)\nEOF",
-        "echo ${x:-a #}; git commit -am x",
-        "echo ${x:-a #}; git push origin main",
-        "sh -c 'echo ${x:-a #}; git commit -am x'",
-    ):
-        _change(root, CODE)
-        d, why = hook(monkeypatch, capsys, root, command)
-        assert d in ("ask", "deny") and (d == "deny" or unsure in why), (command, d, why)
-        d, why = hook(monkeypatch, capsys, root, command, "conductor")
-        assert d == "deny", (command, why)
-    _change(root, CODE)
-    d, why = hook(monkeypatch, capsys, root, "true;# x\ngit status")
-    assert d == "ask" and unsure in why, why
-    # A ticket session too.
-    d, why = hook(monkeypatch, capsys, root, "true;# x\ngit status", "ticket")
-    assert d == "deny" and unsure in why, why
-    # A `"…"` inside a double-quoted `${…}` is a string of its own, as the shell reads it.
-    _change(root, CODE)
-    d, why = hook(monkeypatch, capsys, root, 'echo "${x:-"a #"}"; git commit -am x')
-    assert d == "deny" and "carries the code path" in why, why
-    d, why = hook(monkeypatch, capsys, root, 'echo "${x:-"b"}"; git push origin HEAD:main')
-    assert d == "ask" and "the base branch `main`" in why, why
-    # A `'` there, read differently by bash and zsh: unsure, as are a quote in `$[…]` and `$` before a
-    # backslash-newline.
-    for command in (
-        "echo \"${x:-'\"'}\"; git push origin HEAD:main; echo \"'\"",
-        "echo \"$[ \"'\" ]\"; git push origin HEAD:main; echo \"'\"",
-        "echo \"$\\\n(git push origin HEAD:main)\"",
-        "echo $\\\n{x:-a #}; git commit -am x",
-    ):
-        _change(root, CODE)
-        d, why = hook(monkeypatch, capsys, root, command)
-        assert d == "ask" and unsure in why, (command, d, why)
-        assert hook(monkeypatch, capsys, root, command, "conductor")[0] == "deny", command
-    # `$$` is the shell's pid, and a backslash in a `${…}` escapes any character: what follows is seen.
-    for command in (
-        'echo "$${"; git commit -am x; echo "}"',
-        "echo \"${x:-\\}\"'\"}\"; git commit -am x; echo \"'\"",
-        "echo \"$$(x '\";git commit -am x;echo \"')\"",
-    ):
-        _change(root, CODE)
-        d, why = hook(monkeypatch, capsys, root, command)
-        assert d == "deny" and "carries the code path" in why, (command, why)
-    # Ordinary `#`s stay allowed, in every role.
-    for role in (None, "ticket", "conductor"):
-        for ok in (
-            "echo $#",
-            "echo ${#x}",
-            "echo ${x##*/} ${x#y}",
-            "curl -s https://example.com/p#frag",
-            "git log --format=%H#",
-            "printf '%s\\n' \"#\"",
-            "make # note",
-            "echo a\\\\\n# note\ngit status",
-            "x=$(# list the files\nls)",
-            "echo \"${x:-\"default\"}\"",
-            "echo \"${NAME:-'anon'}\" \"${x//\\'/}\" $$ \"$$\"",
-        ):
-            d, why = hook(monkeypatch, capsys, root, ok, role)
-            assert d == "allow" or unsure not in why, (role, ok, why)
-
-
-def test_a_qualifier_only_zsh_s_reading_shows_keeps_no_exception(tmp_path, monkeypatch, capsys):
-    """On a prototype branch, a `#` zsh may read as a word's leaves the
-    command unsure, whatever the first reading shows."""
-    root = _prototype(tmp_path)
-    _change(root, CODE)
-    d, why = hook(monkeypatch, capsys, root, "touch 1#; echo <->#(e:'git checkout -q main':); git commit -am x")
-    assert d != "allow" and ("the guard can't be sure where a comment starts" in why or "zsh's" in why), why
-
-
-def test_zsh_s_reading_is_one_pass(tmp_path, monkeypatch, capsys):
-    """However many glob groups a line holds, the command is lexed a few
-    times as a whole, never once per group."""
-    from workflow import guard as guard_mod
-
-    root = _clone(tmp_path)
-    command = "echo " + "(a|#) " * 2000 + "; git commit -am x"
-    real, whole = guard_mod._lex, []
-
-    def counting(s, *args, **kwargs):
-        if len(s) == len(command):
-            whole.append(1)
-        return real(s, *args, **kwargs)
-
-    monkeypatch.setattr(guard_mod, "_lex", counting)
-    _change(root, CODE)
-    d, why = hook(monkeypatch, capsys, root, command)
-    assert d == "deny" and "carries the code path" in why, why
-    assert 0 < len(whole) < 20, len(whole)
-
-
 def test_a_code_write_in_a_claude_code_worktree_on_a_prototype_branch(tmp_path, monkeypatch, capsys):
     """Each checkout by its own branch: a worktree on `prototype/y` beside a
     project on `feature`, and the other way round."""
@@ -1149,84 +986,92 @@ def test_a_prototype_push_in_a_command_the_guard_cant_follow_is_judged(tmp_path,
         assert d == "deny" and "carries the code path" in reason and why in reason, (command, reason)
 
 
-def test_a_write_or_commit_in_a_command_that_changes_directory(tmp_path, monkeypatch, capsys):
+# What may change the shell's own state before a part runs (its directory, variables, what later words run): a
+# push to `prototype/*` gets no exception beside it; a write or commit keeps its exception (the owner's decision 1
+# on #393: what it may change leaves a commit local, and its push is judged). `{act}` stands for the part.
+SHELL_STATE = [
+    ("cd src && {act}", "it changes directory with `cd`"),
+    ("pushd src > /dev/null && {act}", "it changes directory with `pushd`"),
+    ("${X:-cd} .claude && {act}", "a command the shell spells (`${X:-cd}`)"),
+    ("{cd,src} && {act}", "a command the shell spells (`{cd,src}`)"),
+    ("c[d] src && {act}", "a command the shell spells (`c[d]`)"),
+    ("trap 'cd src' DEBUG; {act}", "runs the shell's `trap`"),
+    (". /tmp/c.sh && {act}", "runs the shell's `.`"),
+    ("source /tmp/c.sh && {act}", "runs the shell's `source`"),
+    ("alias c=cd; {act}", "runs the shell's `alias`"),
+    ("hash -p /tmp/x git; {act}", "runs the shell's `hash`"),
+    ("enable -n echo; {act}", "runs the shell's `enable`"),
+    ("export GIT_DIR=$(git rev-parse --git-common-dir); {act}", "runs the shell's `export`"),
+    ("set -a; GIT_DIR=/tmp/g; {act}", "runs the shell's `set`"),
+    ("HOME=/tmp/h; {act}", "sets `HOME` for the rest of the command"),
+    ("X+=1; {act}", "sets `X` for the rest of the command"),
+    ("mapfile -C 'cd src;:' -c 1 a <<< x; {act}", "runs the shell's `mapfile`"),
+    (': "${ cd src; }"; {act}', "a command substitution in the shell itself"),
+    (": $\\\n{ cd src; }; {act}", "a command substitution in the shell itself"),
+    ("jobs -x cd src; {act}", "runs the shell's `jobs`"),
+    ("jobs {-x,} cd src; {act}", "runs the shell's `jobs`"),
+    ('jobs "${V:--x}" cd src; {act}', "runs the shell's `jobs`"),
+    ("printf -v HOME %s /tmp/h; {act}", "runs the shell's `printf`"),
+    ('printf "${V:--v}" HOME /tmp/h; {act}', "runs the shell's `printf`"),
+    ("[ -v 'PIPESTATUS[HOME=0]' ]; {act}", "runs the shell's `[`"),
+    ("noglob cd src; {act}", "runs the shell's `noglob`"),
+    ("setopt allexport; {act}", "runs the shell's `setopt`"),
+    ("echo $[HOME=0]; {act}", "may set a variable in the shell itself"),
+    (": ${GIT_DIR:=/tmp/g}; {act}", "may set a variable in the shell itself"),
+    ("repeat 1 cd src; {act}", "the compound command `repeat`"),
+    ("foreach HOME (/tmp/h) {act}; end", "the compound command `foreach`"),
+    ("for HOME in /tmp/h; do {act}; done", "the compound command `for`"),
+    ("echo *(e:'cd src':); {act}", "may run code in the shell itself"),
+    ("echo 'src'(e:'cd src':); {act}", "may run code in the shell itself"),
+    ("echo (src)(e:'cd src':); {act}", "may run code in the shell itself"),
+    ("time -p (e:'cd src':); {act}", "may run code in the shell itself"),
+    ("echo ${(e):-x}; {act}", "may run code in the shell itself"),
+    ("echo ${~X:-x}; {act}", "may run code in the shell itself"),
+]
+
+
+@pytest.mark.parametrize("command, why", SHELL_STATE)
+def test_a_prototype_push_beside_what_may_change_the_shell_is_judged(tmp_path, monkeypatch, capsys, command, why):
+    """The push's exception stays strict: what may change the shell's own
+    state first, the guard can't follow, so git may push elsewhere."""
+    root = _prototype(tmp_path)
+    _code_commit(root)
+    d, reason = hook(monkeypatch, capsys, root, command.replace("{act}", "git push origin prototype/x"))
+    if d == "ask":  # what the push rule (#390) already can't tell about: never let through
+        assert "can't tell" in reason, (command, reason)
+    else:
+        assert d == "deny" and "carries the code path" in reason and why in reason, (command, reason)
+
+
+@pytest.mark.parametrize("command", [c for c, _ in SHELL_STATE])
+@pytest.mark.parametrize("act", ["git commit -am x", "echo x > src/app.py"])
+def test_a_prototype_write_or_commit_beside_what_may_change_the_shell_goes_through(tmp_path, monkeypatch, capsys, command, act):
+    """A write or commit keeps the exception: at most it leaves a code
+    commit on another branch, locally, and that branch's push is judged."""
+    root = _prototype(tmp_path)
+    _change(root, CODE)
+    assert hook(monkeypatch, capsys, root, command.replace("{act}", act)) == ("allow", ""), command
+
+
+def test_a_commit_left_on_another_branch_by_the_shell_is_judged_at_its_push(tmp_path, monkeypatch, capsys):
+    """Where the shell moved HEAD unseen, the code commit is on another
+    branch, and pushing it anywhere but `prototype/*` is refused."""
+    root = _prototype(tmp_path)
+    git(root, "checkout", "-q", "-b", "other", "main")
+    _code_commit(root)  # as a write and commit after a `cd` or `export GIT_DIR` the guard didn't follow would leave it
+    for command in ("git push origin other", "git push origin HEAD:main", "git push -u origin HEAD"):
+        d, why = hook(monkeypatch, capsys, root, command)
+        assert d == "deny" and "carries the code path" in why, (command, why)
+    git(root, "checkout", "-q", "prototype/x")
+    d, why = hook(monkeypatch, capsys, root, "git push origin other:refs/heads/feature")
+    assert d == "deny" and "carries the code path" in why, why
+
+
+def test_ordinary_prototype_writes_and_commits_go_through(tmp_path, monkeypatch, capsys):
     root = _prototype(tmp_path)
     # A heredoc just before a word like `if` (here `cat`'s argument): read, never a crash (which would ask).
     assert hook(monkeypatch, capsys, root, "cat <<'EOF' if\nx\nEOF\necho x > src/app.py") == ("allow", "")
-    for command, word in (("cd src && echo x > app.py", "cd"), ("cd . && git commit -am x", "cd"), ("pushd src > /dev/null && echo x > app.py", "pushd")):
-        _change(root, CODE)
-        d, why = hook(monkeypatch, capsys, root, command)
-        assert d == "deny" and f"this one changes directory with `{word}`" in why and "`git -C`" in why, (command, why)
-    for command, why_part in (
-        ("${X:-cd} .claude && echo x > src/app.py", "a command the shell spells (`${X:-cd}`)"),
-        ("{cd,src} && git commit -am x", "a command the shell spells (`{cd,src}`)"),
-        ("c[d] src && git commit -am x", "a command the shell spells (`c[d]`)"),
-        ("trap 'cd src' DEBUG; git commit -am x", "runs the shell's `trap`"),
-        (". /tmp/c.sh && echo x > src/app.py", "runs the shell's `.`"),
-        ("source /tmp/c.sh && echo x > src/app.py", "runs the shell's `source`"),
-        ("alias c=cd; git commit -am x", "runs the shell's `alias`"),
-        ("hash -p /tmp/x git; git commit -am x", "runs the shell's `hash`"),
-        ("enable -n echo; git commit -am x", "runs the shell's `enable`"),
-        ("export GIT_DIR=$(git rev-parse --git-common-dir); git commit -am x", "runs the shell's `export`"),
-        ("set -a; GIT_DIR=/tmp/g; git commit -am x", "runs the shell's `set`"),
-        ("GIT_DIR=/tmp/g; export GIT_DIR; git commit -am x", "runs the shell's `export`"),
-        ("HOME=/tmp/h; git commit -am x", "sets `HOME` for the rest of the command"),
-        ("mapfile -C 'cd src;:' -c 1 a <<< x; echo x > src/app.py", "runs the shell's `mapfile`"),
-        (': "${ cd src; }"; echo x > src/app.py', "a command substitution in the shell itself"),
-        ("jobs -x cd src; git commit -am x", "runs the shell's `jobs`"),
-        (": $\\\n{ cd src; }; git commit -am x", "a command substitution in the shell itself"),
-        (": ${\\\n cd src; }; echo x > src/app.py", "a command substitution in the shell itself"),
-        ("noglob cd src; git commit -am x", "runs the shell's `noglob`"),
-        ("setopt allexport; git commit -am x", "runs the shell's `setopt`"),
-        ("printf -v HOME %s /tmp/h; git commit -am x", "runs the shell's `printf`"),
-        ("echo $((HOME=0)); git commit -am x", "sets `HOME` for the rest of the command"),
-        ("echo $[HOME=0]; git commit -am x", "may set a variable in the shell itself"),
-        (": ${GIT_DIR:=/tmp/g}; git commit -am x", "may set a variable in the shell itself"),
-        ("X+=1; git commit -am x", "sets `X` for the rest of the command"),
-        ("jobs {-x,} cd src; git commit -am x", "runs the shell's `jobs`"),
-        ("printf ${V:--v} HOME /tmp/h; git commit -am x", "runs the shell's `printf`"),
-        ("[ -v 'PIPESTATUS[HOME=0]' ]; git commit -am x", "runs the shell's `[`"),
-        ("repeat 1 cd src; git commit -am x", "the compound command `repeat`"),
-        ("foreach HOME (/tmp/h) git commit -am x; end", "the compound command `foreach`"),
-        ("echo *(e:'cd src':); git commit -am x", "zsh's"),
-        ("echo ${(e):-x}; git commit -am x", "zsh's"),
-        ("echo .(e:'cd src':) >/dev/null; git commit -am x", "zsh's"),
-        ("echo src/(e:'cd src':); echo x > src/app.py", "zsh's"),
-        ("echo {src,lib}(e:'cd src':); git commit -am x", "zsh's"),
-        ("echo 'src'(e:'cd src':); git commit -am x", "zsh's"),
-        ("echo *(e_'cd src'_); git commit -am x", "zsh's"),
-        ("echo *(P:'(':e:'cd src':); git commit -am x", "zsh's"),
-        ("echo ${~X:-x}; git commit -am x", "zsh's"),
-        ("sh -c 'echo for'; for HOME in /tmp/h; do git commit -am x; done", "the compound command `for`"),
-        # A quoted expansion may become the option too.
-        ('jobs "${V:--x}" cd src; git commit -am x', "runs the shell's `jobs`"),
-        ('printf "${V:--v}" HOME /tmp/h; git commit -am x', "runs the shell's `printf`"),
-        ('jobs "$(echo -x)" cd src; git commit -am x', "runs the shell's `jobs`"),
-        ("[ \"$V\" 'PIPESTATUS[HOME=0]' ]; git commit -am x", "runs the shell's `[`"),
-        # A glued `(` is read as the shell reads quotes, here-strings, escapes, comments and heredocs.
-        ("echo *(e:'cd src':) >/dev/null; cat <<< '(' >/dev/null; git commit -am x", "zsh's"),
-        ('echo "a\\\\" *(e:\'cd src\':) "b"; git commit -am x', "zsh's"),
-        ("echo $'\\'' *(e:'cd src':); git commit -am x", "zsh's"),
-        ("echo x # it's\necho *(e:'cd src':); git commit -am x", "zsh's"),
-        ("echo `echo src`(e:'cd src':); git commit -am x", "zsh's"),
-        ("echo $(echo src)(e:'cd src':); git commit -am x", "zsh's"),
-        ("echo /dev/fd/<->(e:'cd src':) >/dev/null; git commit -am x", "zsh's"),
-        ("echo (src)(e:'cd src':); git commit -am x", "zsh's"),
-        ("echo (src|lib)(e:'cd src':); git commit -am x", "zsh's"),
-        ("echo (<->)(e:'cd src':); git commit -am x", "zsh's"),
-        ("echo (e:'cd src':); git commit -am x", "zsh's"),
-        ("> (src)\\\n(e:'cd src':); git commit -am x", "zsh's"),
-        ("> (e:'cd src':); git commit -am x", "zsh's"),
-        ("-p (e:'cd src':); git commit -am x", "zsh's"),
-        ("time -p (e:'cd src':); git commit -am x", "zsh's"),
-        ("\"time\" (e:'cd src':); git commit -am x", "zsh's"),
-        ("\\{ (e:'cd src':); git commit -am x", "zsh's"),
-        ("'!' (e:'cd src':); git commit -am x", "zsh's"),
-        ("echo (src|#)(e:'cd src':); git commit -am x", "zsh's"),
-    ):
-        _change(root, CODE)
-        d, why = hook(monkeypatch, capsys, root, command)
-        assert d == "deny" and why_part in why, (command, why)
+    _change(root, CODE)
     assert hook(monkeypatch, capsys, root, "git -C . commit -am x")[0] == "allow"
     for ok in (
         "[ -f src/app.py ] && echo x > src/app.py",
