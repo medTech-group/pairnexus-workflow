@@ -9164,14 +9164,23 @@ def _a_remote_of_ours(d: str, glob: list[str], remotes: set[str], cfg: dict[str,
         urls, _ = _memo_read(d, glob, "remote", "get-url", "--push", "--all", r, sep="\n")
         if urls is None or any(_project_url(u, code.repo) for u in urls):
             return True
+    # A remote git reads from `.git/remotes` or `.git/branches` (`origin` too, by default), which `git remote` doesn't list.
+    common = _git_common(d, glob)
+    if common is None or any(os.path.isdir(os.path.join(common, sub)) and os.listdir(os.path.join(common, sub)) for sub in _LEGACY_REMOTES):
+        return True
     named = (v for k, vs in cfg.items() if k == "remote.pushdefault" or k.startswith("branch.") and k.endswith((".pushremote", ".remote")) for v in vs)
-    # A name that isn't a remote `git remote` lists nor a URL may be one git reads from `.git/remotes` or `.git/branches`.
-    return any(v not in remotes and v != "." and (not _url_like(v) or _project_url(v, code.repo)) for v in named)
+    return any(v not in remotes and v != "." and _project_url(v, code.repo) for v in named)
 
 
-def _url_like(name: str) -> bool:
-    """A push's repository written as a URL or path, not a remote's name (which rarely holds a `:` and never starts a path)."""
-    return ":" in name or name.startswith(("/", "."))
+_LEGACY_REMOTES = ("remotes", "branches")  # under the git directory: remotes defined in files of their own
+
+
+def _legacy_remote(common: str | None, name: str) -> bool:
+    """Whether git may read the remote `name` from a file under `.git/remotes` or `.git/branches` (a name with no `/`,
+    not `.` or `..`); a git directory it can't read counts as may."""
+    if name in ("", ".", "..") or "/" in name:
+        return False
+    return common is None or any(os.path.isfile(os.path.join(common, sub, name)) for sub in _LEGACY_REMOTES)
 
 
 def _may_reach(d: str, glob: list[str], named: str | None, remotes: set[str], cfg: dict[str, list[str]], code: _Code) -> bool:
@@ -9183,7 +9192,7 @@ def _may_reach(d: str, glob: list[str], named: str | None, remotes: set[str], cf
     if named in remotes:
         urls, _ = _memo_read(d, glob, "remote", "get-url", "--push", "--all", named, sep="\n")
         return urls is None or any(_project_url(u, code.repo) for u in urls)
-    return not _url_like(named) or _project_url(named, code.repo)  # a name it can't read (`.git/remotes/<name>`): may
+    return _legacy_remote(_git_common(d, glob), named) or _project_url(named, code.repo)
 
 
 def _beside_prototype(cant: str, moves: str, code: _Code) -> str:

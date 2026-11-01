@@ -1140,6 +1140,35 @@ def test_a_bare_push_beside_a_ref_move_elsewhere_or_an_upstream_set_is_asked_as_
     assert d == "deny" and "unjudged" in why, why
 
 
+def test_a_remote_defined_in_a_file_of_its_own_beside_a_ref_move(tmp_path, monkeypatch, capsys):
+    """A remote git reads from `.git/remotes` (which `git remote` doesn't
+    list) may reach `project.repo`: named by `pushRemote`, or `origin` by
+    default. A path that names no such file is a path, as git reads it."""
+    project = tmp_path / "proj-remote" / "acme" / "demo.git"
+    root = _prototype(tmp_path)
+    (root / ".git" / "remotes").mkdir()
+    (root / ".git" / "remotes" / "gh").write_text(f"URL: {project}\n")
+    git(root, "remote", "set-url", "--push", "origin", str(tmp_path / "elsewhere.git"))
+    git(root, "config", "branch.prototype/x.pushRemote", "gh")
+    _change(root, CODE)
+    d, why = hook(monkeypatch, capsys, root, "git commit -am x && git push")
+    assert d == "deny" and "unjudged" in why, why
+    # `origin` itself only in a file of its own.
+    root = _prototype(tmp_path / "b")
+    git(root, "remote", "remove", "origin")
+    (root / ".git" / "remotes").mkdir()
+    (root / ".git" / "remotes" / "origin").write_text(f"URL: {project}\nPush: refs/heads/prototype/x:refs/heads/main\n")
+    _change(root, CODE)
+    d, why = hook(monkeypatch, capsys, root, "git commit -am x && git push")
+    assert d == "deny" and "unjudged" in why, why
+    # A relative path to another repository is one.
+    root = _prototype(tmp_path / "c")
+    git(root, "init", "-q", "--bare", "backups/b.git")
+    _change(root, CODE)
+    d, why = hook(monkeypatch, capsys, root, "git commit -am wip && git -c push.default=current push backups/b.git HEAD:refs/heads/x")
+    assert "unjudged" not in why, (d, why)
+
+
 def test_a_commit_in_another_worktree_of_the_repository_on_a_prototype_branch_is_judged(tmp_path, monkeypatch, capsys):
     """The exception holds in the project and Claude Code's worktrees, the
     checkouts whose branches the push's refusal beside a ref move reads."""
