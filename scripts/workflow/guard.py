@@ -106,6 +106,9 @@ attended session's rules. It is refused too a `git commit` in the project's
 own repository that carries a code path (`_commit_code`, #389): what is
 staged, plus what `-a` or a pathspec adds. When the guard can't read what a
 commit carries, an attended session is asked and the conductor refused.
+So is a `git push` to `project.repo`, from any directory, whose commits not
+on a tracking ref of a remote fetching from it carry a code path
+(`_push_code`, #390), with the same can't-tell rule.
 
 What it can't see (a script file written then run, a program's own network
 calls, variables' values, obfuscation it doesn't recognise) is why the ruleset
@@ -1339,7 +1342,7 @@ _PUSH_LONG: dict[str, bool] = {
     "follow-tags": False, "dry-run": False, "porcelain": False, "force": False, "force-with-lease": False,
     "force-if-includes": False, "atomic": False, "signed": False, "push-option": True, "receive-pack": True,
     "exec": True, "repo": True, "set-upstream": False, "thin": False, "quiet": False, "verbose": False,
-    "progress": False, "recurse-submodules": False, "verify": False, "ipv4": False, "ipv6": False,
+    "progress": False, "recurse-submodules": True, "verify": False, "ipv4": False, "ipv6": False,
     "stdin": False, "remote": True, "helper-status": False,
 }  # fmt: skip
 _PUSH_LONGS = sorted(set(_PUSH_LONG) | {"no-" + k for k in _PUSH_LONG})
@@ -4155,11 +4158,34 @@ def _named_files(files: list[str], seg: Seg, root: Path, t: _Targets) -> None:
             t.searched.append((r, cwd))
 
 
-def _braces(word: str, limit: int = 64) -> list[str]:
-    """Bash brace expansion of `{a,b}` lists (not `{1..3}`)."""
-    m = None
+def _brief(text: str) -> str:
+    return text if len(text) <= 80 else text[:79] + "…"
+
+
+def _brace_overflow(target: str) -> str | None:
+    """Why the guard can't place a write target: more brace expanding than
+    it does, which main's guard couldn't decide either (it ran out of time)."""
+    if _brace_words(target, _BRACE_LIMIT + 1)[1]:
+        return f"can't tell which files `{_brief(target)}` names (more brace lists than the guard expands); name them"
+    return None
+
+
+# How much brace expansion the guard does for one word: past it (main's guard ran out of time from about
+# 30 lists, and broke at about 1,000), the word is one it can't place.
+_BRACE_STEPS_READ = 1_000  # brace lists opened
+_BRACE_WORK_READ = 20_000_000  # characters scanned
+
+
+def _first_brace_list(word: str) -> tuple[tuple[int, int, list[str]] | None, int]:
+    """((start, end, parts) of the word's first top-level `{a,b}` list, or
+    None; how many characters were scanned to find it)."""
+    first = word.find("{")
+    if first < 0:
+        return None, 0
     depth = 0
-    for i, c in enumerate(word):
+    start = 0
+    for i in range(first, len(word)):
+        c = word[i]
         if c == "{":
             if depth == 0:
                 start = i
@@ -4178,17 +4204,47 @@ def _braces(word: str, limit: int = 64) -> list[str]:
                     cur += ch
                 parts.append(cur)
                 if len(parts) > 1:
-                    m = (start, i, parts)
-                    break
-    if not m:
-        return [word]
-    s, e, parts = m
+                    return (start, i, parts), i + 1
+    return None, len(word)
+
+
+@functools.lru_cache(maxsize=256)
+def _brace_words(word: str, limit: int) -> tuple[tuple[str, ...], bool]:
+    """(the first `limit` words, in bash's order; whether the word needs more
+    expanding than the guard does)."""
     out: list[str] = []
+    stack = [iter((word,))]  # each level makes its words only as they are needed
+    steps = work = 0
+    while stack and len(out) < limit:
+        w = next(stack[-1], None)
+        if w is None:
+            stack.pop()
+            continue
+        m, scanned = _first_brace_list(w)
+        work += scanned
+        if m is None:
+            out.append(w)
+            continue
+        steps += 1
+        if steps > _BRACE_STEPS_READ or work > _BRACE_WORK_READ:
+            return (), True
+        stack.append(_brace_choices(w, *m))
+    return tuple(out), False
+
+
+def _brace_choices(word: str, s: int, e: int, parts: list[str]):
+    """The words a brace list at `word[s:e + 1]` stands for, one at a time."""
     for p in parts:
-        out += _braces(word[:s] + p + word[e + 1 :], limit)
-        if len(out) > limit:
-            break
-    return out[:limit]
+        yield word[:s] + p + word[e + 1 :]
+
+
+def _braces(word: str, limit: int = 64) -> list[str]:
+    """Bash brace expansion of `{a,b}` lists (not `{1..3}`): the first
+    `limit` words, in bash's order. A word with more lists than the guard
+    expands comes back as more than `limit` copies of itself, which a caller
+    checking for more reads as too many."""
+    words, too_big = _brace_words(word, limit)
+    return [word] * (limit + 1) if too_big else list(words)
 
 
 def _candidates(target: str, cwd: str | None) -> list[str]:
@@ -4257,6 +4313,9 @@ def _global_config_problem(seg: Seg, t: _Targets) -> str | None:
     $GIT_CONFIG_GLOBAL names), which can hold aliases, hooks and push settings."""
     named = [(x, False) for x in t.files] + [(x, True) for x in t.trees + t.links]
     for tgt, tree in named:
+        over = _brace_overflow(_expand_known(tgt))
+        if over:
+            return f"{over}, since it may write the global git config, which can hold aliases, hooks and push settings"
         for c in _candidates(_expand_known(tgt), seg.cwd):
             if not c.strip():
                 continue
@@ -4290,6 +4349,10 @@ def _shell_protected(seg: Seg, patterns: list[str], root: Path, t: _Targets | No
                 "(to delete what a find matches, use `find … -delete`)"
             )
     unknown_dir = "; the shell's directory can't be followed here (after `cd -`, `cd ~` or `cd $X`), so use a path from the project root"
+    for tgt in t.files + t.trees + t.links:
+        over = _brace_overflow(tgt)
+        if over:
+            return over
     for tgt in t.files:
         hit = _protected_hit(tgt, seg, root, patterns, tree=False)
         if hit:
@@ -5716,10 +5779,14 @@ def check_bash(
         p, unsure = _commit_code(segs, code, root, command)
         if p:
             return Decision("deny", p)
+        p, unsure_push = _push_code(segs, code, root, command)
+        if p:
+            return Decision("deny", p)
+        unsure = unsure or unsure_push
         if unsure:
             # The rest of the command first: its refusal stands over this ask, and its ask joins it.
             d = check_bash(command, profile, role, root, current_branch, role_from_env, cwd)
-            u = _unsure_commit(unsure, role, code)
+            u = _unsure_code(unsure, role, code)
             if d.action == "deny":
                 return d
             if d.action == "ask" and u.action == "ask":
@@ -5996,6 +6063,7 @@ class _Code:
     protected: list[str]
     instead: str  # what to do instead, after the path
     writes_none: str  # PowerShell's: the session writes no code
+    repo: str | None = None  # `project.repo`, whose pushes are judged (#390); None: every push is
 
 
 @dataclass
@@ -6040,7 +6108,8 @@ def _code_session(
         role = "attended"
     if not rule.code_paths:
         return role, None, label
-    return role, _Code(list(rule.code_paths), list(rule.protected_paths), _instead(role, profile, root), _writes_none(role)), label
+    code = _Code(list(rule.code_paths), list(rule.protected_paths), _instead(role, profile, root), _writes_none(role), rule.repo)
+    return role, code, label
 
 
 def _writes_none(role: str) -> str:
@@ -6388,11 +6457,16 @@ _GIT_INDEX_ENV = {"GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY"}  # what it reads the
 _GIT_PATHSPEC_ENV = {"GIT_LITERAL_PATHSPECS", "GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS"}
 _SPEC_FILE_CAP = 1_000_000  # the most of a pathspec file the guard reads
 _SHELL_EXPANDS = re.compile(r"[$`]|^~")
-_BRACE_SEQUENCE = re.compile(r"\{[^{}]*\.\.[^{}]*\}")  # `{1..3}`, which `_braces` leaves as it is
+_BRACE_GROUP = re.compile(r"\{[^{}]*\}")  # linear: each try stops at the next brace
 _BRACE_LIMIT = 64
 _AM_RESOLVED = re.compile(r"-[3kmnqsu]*r[3kmnqsu]*")  # `-r` among `git am`'s flags that take no value
 _LITERAL_GLOBALS = {"--literal-pathspecs", "--noglob-pathspecs"}
 _LITERAL_ENV = {"GIT_LITERAL_PATHSPECS", "GIT_NOGLOB_PATHSPECS"}
+
+
+def _brace_sequence(word: str) -> bool:
+    """A `{1..3}` in the word, which `_braces` leaves as it is."""
+    return any(".." in g for g in _BRACE_GROUP.findall(word))
 
 
 @dataclass
@@ -6480,20 +6554,29 @@ def _commit_args(args: list[str]) -> _Commit:
     return c
 
 
-def _git_read(d: str, glob: list[str], *args: str, sep: str = "\0", env: dict[str, str] | None = None) -> tuple[list[str] | None, str]:
+# How the guard runs its own git reads: no fsmonitor, signature check or replacement objects run or count, and a root commit's changes are shown.
+_GIT_READ = ["git", "--no-replace-objects", "-c", "core.fsmonitor=false", "-c", "diff.relative=false", "-c", "log.showSignature=false", "-c", "log.showRoot=true"]
+_GIT_READ_SECONDS = 5  # the most one git read may take
+
+
+def _git_read(
+    d: str, glob: list[str], *args: str, sep: str = "\0", env: dict[str, str] | None = None, ok: tuple[int, ...] = (0,)
+) -> tuple[list[str] | None, str]:
     """(git's output split on `sep`, else None; what failed, with git's own
     words). `glob` is the command's own options that change the repository
-    or how pathspecs read, `env` the variables it sets for them. No fsmonitor
-    runs, and paths are from the top level."""
-    cmd = ["git", "-c", "core.fsmonitor=false", "-c", "diff.relative=false", *glob, *args]
+    or how pathspecs read, `env` the variables it sets for them, `ok` the
+    exit codes that aren't a failure (`git config --get` exits 1 when it
+    finds nothing). No fsmonitor or signature check runs, a root commit's
+    changes are shown, and paths are from the top level."""
+    cmd = [*_GIT_READ, *glob, *args]
     shown = "`git " + " ".join(args[:2]) + "`"
     try:
-        p = subprocess.run(cmd, cwd=d, capture_output=True, timeout=5, env={**os.environ, **env} if env else None)
+        p = subprocess.run(cmd, cwd=d, capture_output=True, timeout=_GIT_READ_SECONDS, env={**os.environ, **env} if env else None)
     except subprocess.TimeoutExpired:
         return None, f"{shown} took too long in `{d}`"
     except (OSError, ValueError) as e:
         return None, f"{shown} couldn't run in `{d}` ({e})"
-    if p.returncode != 0:
+    if p.returncode not in ok:
         err = p.stderr.decode("utf-8", errors="replace").strip().splitlines()
         return None, f"{shown} failed in `{d}`" + (f" ({err[0]})" if err else "")
     return [x for x in p.stdout.decode("utf-8", errors="replace").split(sep) if x], ""
@@ -6569,7 +6652,7 @@ def _expanded_specs(seg: Seg, c: _Commit, literal: bool) -> tuple[list[str], str
         if "{}" in s:
             return [], "the file names `find -exec` gives it"
         words = _braces(s, _BRACE_LIMIT + 1)
-        if _SHELL_EXPANDS.search(s) or len(words) > _BRACE_LIMIT or any(_BRACE_SEQUENCE.search(w) for w in words):
+        if _SHELL_EXPANDS.search(s) or len(words) > _BRACE_LIMIT or any(_brace_sequence(w) for w in words):
             return [], f"its pathspec `{s}`, which the shell expands"
         if literal and any(_GLOB_CHARS.search(w) for w in words):
             return [], f"its pathspec `{s}`, a glob the shell may expand where git reads pathspecs literally"
@@ -6713,7 +6796,10 @@ def _makes_repository(kind: str, at: str) -> bool:
     exist yet or is an empty directory (else it fails)."""
     if kind == "init":
         return not os.path.exists(os.path.join(at, ".git"))
-    return not os.path.exists(at) or (os.path.isdir(at) and not os.listdir(at))
+    try:
+        return not os.path.exists(at) or (os.path.isdir(at) and not os.listdir(at))
+    except OSError:  # a folder it can't list: made there unless it holds a repository already
+        return not os.path.exists(os.path.join(at, ".git"))
 
 
 def _nearer_repository(where: str, at: str) -> bool:
@@ -6868,11 +6954,896 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tupl
     return None, unsure or note
 
 
-def _unsure_commit(unsure: str, role: str, code: _Code) -> Decision:
-    """The decision on a commit whose contents the guard can't read: the
-    conductor, which nobody is there to ask, is refused; others are asked."""
+# ---------- the push rule (#390) ----------
+#
+# A push to `project.repo` is judged by what git would send: the commits its
+# sources reach that are on no tracking ref of a remote fetching from
+# `project.repo`, each read as a commit is (a merge against its first parent,
+# until #391). The guard reads them as the repository is when the command
+# starts, so another part of the command that may move a branch or HEAD, or
+# change where pushes go, makes it a push it can't tell about.
+
+
+@dataclass
+class _Push:
+    """What a `git push` (or `send-pack`, `http-push`) names, as git reads it."""
+
+    repo: str | None = None  # the repository: a remote's name or a URL (send-pack's and http-push's always a URL)
+    refspecs: list[str] = field(default_factory=list)
+    branches: bool = False  # `--all`, `--branches`: every branch
+    mirror: bool = False  # `--mirror`: every ref
+    tags: bool = False  # `--tags` (`--follow-tags` sends no commit the push doesn't already)
+    delete: bool = False  # `-d`, `--delete`: the refspecs name what it deletes
+    dry: bool = False
+    unread: str | None = None  # what the guard can't read among its arguments
+
+
+def _push_args(args: list[str]) -> _Push:
+    kind, rest = args[0], args[1:]
+    p, pos, repo_opt, i = _Push(), [], None, 0
+    while i < len(rest):
+        a = rest[i]
+        i += 1
+        if a == "--":
+            pos += rest[i:]
+            break
+        if a.startswith("--"):
+            name, cands = _expand_long(a)
+            if name is None:
+                if cands:
+                    p.unread = p.unread or f"the option `{_brief(a)}`, which git could read as any of {', '.join('`--' + c + '`' for c in cands)}"
+                continue
+            if name in ("all", "branches", "no-all", "no-branches"):
+                p.branches = not name.startswith("no-")
+            elif name in ("mirror", "no-mirror"):
+                p.mirror = name == "mirror"
+            elif name in ("tags", "no-tags"):
+                p.tags = name == "tags"
+            elif name in ("delete", "no-delete"):
+                p.delete = name == "delete"
+            elif name in ("dry-run", "no-dry-run"):
+                p.dry = name == "dry-run"
+            elif name == "stdin":
+                p.unread = p.unread or "the refs it reads from its stdin (`--stdin`)"
+            elif _PUSH_LONG.get(name) and "=" not in a:
+                value = rest[i] if i < len(rest) else ""
+                i += 1
+                if name == "repo":
+                    repo_opt = value
+            elif name == "repo":
+                repo_opt = a.partition("=")[2]
+            continue
+        if a.startswith("-") and a != "-":
+            cluster = a[1:]
+            for k, ch in enumerate(cluster):
+                if ch == "n":
+                    p.dry = True
+                elif ch == "d":
+                    p.delete = True
+                elif ch == "o":
+                    i += 1 if k == len(cluster) - 1 else 0
+                    break
+            continue
+        pos.append(a)
+    p.repo = pos[0] if pos else repo_opt
+    p.refspecs = pos[1:]
+    if kind != "push" and not p.refspecs:
+        p.branches = True  # send-pack and http-push without refs push every matching branch
+    return p
+
+
+def _project_url(url: str, repo: str | None) -> bool:
+    """Whether a push URL is `project.repo`'s: each with a trailing `/`,
+    then `.git`, then a `/` stripped, in any case, the URL is the repo or
+    ends in it with a `/` or `:` just before it. Unlike `_repo_name`, which
+    reads a GitHub URL's `OWNER/REPO` exactly, any host or path counts (a
+    local clone's, a proxy's). Every URL is, when `repo` isn't known."""
+    if not repo:
+        return True
+
+    def bare(x: str) -> str:
+        x = x.strip().rstrip("/")
+        if x.casefold().endswith(".git"):
+            x = x[:-4].rstrip("/")
+        return x.casefold()
+
+    u, r = bare(url), bare(repo).lstrip("/")
+    return bool(r) and (u == r or (u.endswith(r) and u[-len(r) - 1] in "/:"))
+
+
+def _local_url(url: str) -> bool:
+    """A repository on this machine (`.`, a path, `file://`), as opposed to a
+    URL with a scheme or scp's `host:path`."""
+    u = url.strip()
+    if u.casefold().startswith("file:"):
+        return True
+    return "://" not in u and not re.match(r"[^/]+:", u)
+
+
+# Git subcommands that change no ref, HEAD or config: another part of the command running one leaves a push's reading as it is.
+_KEEPS_REFS = {
+    "add", "annotate", "apply", "archive", "blame", "bundle", "cat-file", "check-attr", "check-ignore", "check-mailmap",
+    "check-ref-format", "cherry", "clean", "count-objects", "describe", "diff", "diff-files", "diff-index", "diff-tree",
+    "for-each-ref", "format-patch", "fsck", "gc", "grep", "hash-object", "help", "log", "ls-files", "ls-remote",
+    "ls-tree", "maintenance", "merge-base", "merge-file", "merge-tree", "mv", "name-rev", "pack-refs", "prune",
+    "range-diff", "reflog", "repack", "restore", "rev-list", "rev-parse", "rm", "shortlog", "show", "show-branch",
+    "show-ref", "status", "stripspace", "var", "verify-commit", "verify-pack", "verify-tag", "version", "whatchanged",
+}  # fmt: skip
+_BRANCH_WRITES = re.compile(r"-[a-zA-Z]*[fdDmMcCu]|--(f|fo|for|forc|force|d|de|del|dele|delet|delete|m|mo|mov|move|c|co|cop|copy|set-upstream-to|u|un|uns|unset-upstream|edit-description)(=.*)?$", re.S)
+# Settings that change where a push goes (`remote.`, `url.`, a branch's remote, includes) or what a bare one sends (`push.default`).
+_PUSH_CONFIG_KEYS = re.compile(r"(?i)(remote|url|include|includeif)\.|push\.default(=|$)|branch\..*\.(remote|pushremote)(=|$)", re.S)
+# Sections whose removal or renaming can drop such a setting.
+_PUSH_CONFIG_SECTIONS = re.compile(r"(?i)(remote|url|include|includeif|push|branch)(\.|$)")
+# `git config`'s options that write, and those of `git branch` that only list.
+_CONFIG_WRITES = {"--add", "--replace-all", "--unset", "--unset-all", "--rename-section", "--remove-section", "-e", "--edit", "--append"}
+_CONFIG_READS = {"--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "-l", "--get-color", "--get-colorbool"}
+_BRANCH_LISTS = {"-l", "--list", "--contains", "--no-contains", "--merged", "--no-merged", "--points-at"}
+# Keys that can send a push given what looks like a URL elsewhere: a rewrite (`url.<base>.pushInsteadOf`), a remote
+# of that name (git looks a word up as a remote first, and a remote's name may hold a `:`), or config brought in.
+_URL_CONFIG_KEYS = re.compile(r"(?i)(url|remote|include|includeif)(\.|$)")
+# `git config`'s long options (git takes a unique prefix of each), and those that take the next word as their value.
+_CONFIG_LONGS = [
+    "global", "system", "local", "worktree", "file", "blob", "get", "get-all", "get-regexp", "get-urlmatch", "replace-all",
+    "add", "unset", "unset-all", "rename-section", "remove-section", "list", "fixed-value", "type", "bool", "int",
+    "bool-or-int", "path", "expiry-date", "no-type", "null", "name-only", "includes", "no-includes", "show-origin",
+    "show-scope", "get-color", "get-colorbool", "edit", "default", "comment", "value", "all", "regexp", "url", "append",
+    "bool-or-str", "show-names", "no-show-names", "no-value", "no-comment", "no-all", "no-regexp", "no-fixed-value",
+]  # fmt: skip
+_CONFIG_VALUES = {"-f", "--file", "--blob", "--type", "--default", "--comment", "--value", "-t", "--url"}
+# Variables that set config as `-c` does, and those that change which repository, refs or config files git reads.
+_PUSH_ENV_CONFIG = re.compile(r"GIT_CONFIG_(PARAMETERS|KEY_\w*)")  # read by the settings they name
+# (`GIT_CONFIG_PARAMETERS` and `GIT_CONFIG_KEY_<n>` are judged by the keys they set, as `-c` is.)
+_PUSH_ENV = re.compile(r"GIT_(DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|NAMESPACE|CONFIG|CONFIG_GLOBAL|CONFIG_SYSTEM|CONFIG_NOSYSTEM)|HOME|XDG_CONFIG_HOME")
+_PUSH_ENV_REPO = re.compile(r"GIT_(DIR|WORK_TREE|COMMON_DIR|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|NAMESPACE)")  # which repository or refs
+_GH_MOVES = (["pr", "checkout"], ["pr", "co"], ["repo", "sync"])  # gh commands that move a branch or HEAD
+
+
+# `git branch`'s and `git tag`'s options that take the next word as their value (not a ref's name).
+# (`--column` takes a value only after `=`.)
+_REF_LIST_VALUES = {"--format", "--sort", "--contains", "--no-contains", "--merged", "--no-merged", "--points-at", "-m", "-F", "--message", "--file", "-u", "--local-user", "--cleanup", "--set-upstream-to"}
+
+
+def _ref_args(rest: list[str]) -> tuple[list[str], list[str]]:
+    """(`git branch`'s or `git tag`'s options, its other words), options' values in neither."""
+    opts, words, i = [], [], 0
+    while i < len(rest):
+        a = rest[i]
+        i += 1
+        if a == "--":
+            words += rest[i:]
+            break
+        if a.startswith("-"):
+            opts.append(a)
+            i += 1 if a in _REF_LIST_VALUES else 0
+            continue
+        words.append(a)
+    return opts, words
+
+
+def _config_changes(rest: list[str]) -> str | None:
+    """What a `git config` command may change that a push reads: "url" (a
+    setting that may rewrite a URL a push is given, or one the guard can't
+    read), "config" (another push setting), else None."""
+    opts, words = _config_args(rest)
+    if opts is None:
+        return "url"  # an option it can't read: anything
+    sub = words[0] if words and words[0] in ("get", "list", "set", "unset", "edit", "rename-section", "remove-section") else None
+    if _CONFIG_READS & opts or sub in ("get", "list"):
+        return None
+    keys = words[1:] if sub else words
+    if not (_CONFIG_WRITES & opts) and sub is None and len(keys) == 1:
+        return None  # a key alone: a read, whatever scope or format options it takes
+    if {"-e", "--edit"} & opts or sub == "edit" or not keys:
+        return "url"
+    if {"--rename-section", "--remove-section"} & opts or sub in ("rename-section", "remove-section"):
+        names = keys[:2] if "--rename-section" in opts or sub == "rename-section" else keys[:1]
+        hit = [k for k in names if _PUSH_CONFIG_SECTIONS.match(k) or _key_spelled(k)]
+    else:
+        hit = [k for k in keys[:1] if _PUSH_CONFIG_KEYS.match(k) or _key_spelled(k)]
+    if not hit:
+        return None  # another setting (`user.email`): no push reads it
+    return "url" if any(_URL_CONFIG_KEYS.match(k) or _key_spelled(k) for k in hit) else "config"
+
+
+def _other_git(words: list[str]) -> list[str] | None:
+    """The subcommand and arguments of a git command in another part of the
+    command: found behind wrappers, or git's dashed `git-<sub>` command word."""
+    g = _commit_git(words)
+    if g:
+        return g[1] or None
+    name = posixpath.basename(words[0]) if words else ""
+    return [name[4:], *words[1:]] if name.startswith("git-") and len(name) > 4 else None
+
+
+def _config_args(rest: list[str]) -> tuple[set[str] | None, list[str]]:
+    """(`git config`'s options, each long one spelled out as git reads a
+    unique prefix, or None when one is ambiguous or unknown; its other
+    words, options' values left out)."""
+    opts: set[str] = set()
+    words, i, ok = [], 0, True
+    while i < len(rest):
+        a = rest[i]
+        i += 1
+        if a == "--":
+            words += rest[i:]
+            break
+        if a.startswith("--"):
+            name, eq, _ = a[2:].partition("=")
+            cands = [o for o in _CONFIG_LONGS if o == name] or [o for o in _CONFIG_LONGS if o.startswith(name)] if name else []
+            if len(cands) != 1:
+                ok = False
+                continue
+            o = "--" + cands[0]
+            opts.add(o)
+            i += 1 if o in _CONFIG_VALUES and not eq else 0
+            continue
+        if a.startswith("-") and len(a) > 1:
+            for k, ch in enumerate(a[1:], 1):
+                opts.add("-" + ch)
+                if "-" + ch in _CONFIG_VALUES:
+                    i += 1 if k == len(a) - 1 else 0
+                    break
+            continue
+        words.append(a)
+    return (opts if ok else None), words
+
+
+def _git_changes(args: list[str]) -> str | None:
+    """What `git <args>`, run by another part of the command, may change that
+    a push reads: "config" (where pushes go, or what a bare push sends),
+    "refs" (a branch, a tag or HEAD), "push" (refs, when its repository is
+    on this machine: `_other_changes` reads where it goes), else None."""
+    if not args:
+        return None
+    sub, rest = args[0], args[1:]
+    opts = [a for a in rest if a.startswith("-")]
+    words = [a for a in rest if not a.startswith("-")]
+    if sub in _KEEPS_REFS:
+        return None
+    if sub in _PUSH_CMDS:
+        repo = _push_args(args).repo
+        return "push" if repo is None or _local_url(repo) else None  # `_pushes_into` reads where it goes
+    if sub == "fetch":
+        # Moves a local ref when an argument after its repository names a destination (`a:b`, `--refmap=…:…`).
+        repo = next((w for w in rest if not w.startswith("-")), None)
+        return "refs" if any(":" in a for a in rest if a is not repo) else None
+    if sub == "config":
+        return _config_changes(rest)
+    if sub == "remote":
+        # git refuses a remote's name with a `:`, so a remote it adds or renames never looks like a URL.
+        return None if not words or words[0] in ("show", "get-url", "update", "prune", "set-head") else "config"
+    if sub in ("branch", "tag"):
+        opts, words = _ref_args(rest)
+    if sub == "branch":
+        if set(o.split("=", 1)[0] for o in opts) & _BRANCH_LISTS and not any(_BRANCH_WRITES.match(o) for o in opts):
+            return None  # it lists branches
+        return "refs" if words or any(_BRANCH_WRITES.match(o) for o in opts) else None
+    if sub == "tag":
+        listing = {"-l", "--list", "-n", "--contains", "--no-contains", "--merged", "--no-merged", "--points-at"}
+        return "refs" if words and not (set(o.split("=", 1)[0] for o in opts) & listing) else None
+    if sub == "symbolic-ref":
+        return "refs" if len(words) > 1 or any(o in ("-d", "--delete") for o in opts) else None
+    if sub in ("stash", "worktree", "notes"):
+        return None if words[:1] in (["list"], ["show"]) else "refs"
+    return "refs"
+
+
+# While the push rule runs: its git reads by their arguments, so many pushes in one command read each thing once.
+_PUSH_MEMO: dict | None = None
+_PUSH_RULE_SECONDS = 15  # the most the push rule spends on one command's pushes
+
+
+def _memo_read(d: str, glob: list[str], *args: str, **kw) -> tuple[list[str] | None, str]:
+    if _PUSH_MEMO is None:
+        return _git_read(d, glob, *args, **kw)
+    key = (d, tuple(glob), args, tuple(sorted(kw.items())))
+    if key not in _PUSH_MEMO:
+        _PUSH_MEMO[key] = _git_read(d, glob, *args, **kw)
+    return _PUSH_MEMO[key]
+
+
+def _git_common(path: str, glob: list[str]) -> str | None:
+    """The real path of the git directory `path` (with the command's
+    `--git-dir`-style options) belongs to, else None."""
+    got, _ = _memo_read(path, glob, "rev-parse", "--git-common-dir", sep="\n") if os.path.isdir(path) else (None, "")
+    return os.path.realpath(os.path.join(path, got[0])) if got else None
+
+
+def _git_dir_abs(path: str, glob: list[str]) -> str | None:
+    """The git directory of the worktree `path` is in (each worktree has its own HEAD), else None."""
+    got, _ = _memo_read(path, glob, "rev-parse", "--absolute-git-dir", sep="\n")
+    return os.path.realpath(got[0]) if got else None
+
+
+def _default_remote(d: str, glob: list[str]) -> str | None:
+    """The remote a push with none named goes to, as git picks it; None
+    when the guard can't read it."""
+    cfg, _ = _push_config(d, glob)
+    head, _ = _memo_read(d, glob, "symbolic-ref", "-q", "HEAD", sep="\n", ok=(0, 1))
+    if cfg is None or head is None:
+        return None
+    branch = head[0].removeprefix("refs/heads/") if head else ""
+
+    def last(key: str) -> str:
+        return (cfg.get(key) or [""])[-1]
+
+    return (branch and last(f"branch.{branch}.pushremote")) or last("remote.pushdefault") or (branch and last(f"branch.{branch}.remote")) or "origin"
+
+
+def _pushes_into(s: Seg, args: list[str], root: Path, common: str | None) -> bool:
+    """Whether another part's push may move a ref of the repository whose git
+    directory is `common`: its repository (a remote's push URLs read, the
+    remote git picks when none is named) is on this machine and is that one,
+    or one the guard can't place."""
+    g = _commit_git(s.words)
+    glob = _passed_globals(g[0]) if g else []
+    d = _git_dir_of(root, s.cwd, g[2] if g else None)
+    if not d or not os.path.isdir(d):
+        return True
+    repo = _push_args(args).repo
+    if repo is None:
+        repo = _default_remote(d, glob)
+        if repo is None:
+            return True
+    names, _ = _memo_read(d, glob, "remote", sep="\n")
+    if names is None:
+        return True
+    urls = [repo]
+    if repo in names:
+        got, _ = _memo_read(d, glob, "remote", "get-url", "--push", "--all", repo, sep="\n")
+        if got is None:
+            return True
+        urls = got
+    for u in urls:
+        if not _local_url(u):
+            continue  # elsewhere: only its tracking refs move
+        path = re.sub(r"(?i)^file://", "", u.strip())
+        try:
+            target = _git_common(os.path.join(d, os.path.expanduser(path)), [])
+        except (ValueError, UnicodeError, OSError):  # a path it can't place (a NUL, a lone surrogate)
+            return True
+        if target is None or common is None or target == common:
+            return True
+    return False
+
+
+def _sets_upstream(args: list[str]) -> bool:
+    """`git push -u` (`--set-upstream`, or a prefix of it git takes)."""
+    for a in args:
+        if a == "--":
+            return False
+        if a.startswith("--"):
+            if _expand_long(a)[0] == "set-upstream":
+                return True
+        elif a.startswith("-") and a[1:].isalnum() and "u" in a.partition("o")[0]:
+            return True
+    return False
+
+
+def _global_config_write(s: Seg, root: Path) -> bool:
+    """A part of the command whose shell write the guard places on the global git config."""
+    try:
+        return bool(_global_config_problem(s, _write_targets(s, root)))
+    except Exception:  # a write it can't read: the commit and push rules' own reads still stand
+        return False
+
+
+class _Changers:
+    """The parts of one command that may change what a push reads, each
+    classified once: "config" (where pushes go), "refs" (a branch, a tag or
+    HEAD), "push" (refs, when it pushes into the judged repository)."""
+
+    def __init__(self, segs: list[Seg], root: Path):
+        self.root = root
+        self.parts: list[tuple[Seg, str, str, list[str] | None]] = []
+        for s in segs:
+            if not s.words:
+                continue
+            if posixpath.basename(s.words[0]) == "gh" and s.words[1:3] in _GH_MOVES:
+                self.parts.append((s, "refs", "gh " + " ".join(s.words[1:3]), None))
+                continue
+            args = _other_git(s.words)
+            what = _git_changes(args) if args else None
+            label = "git " + " ".join(_brief(a) for a in args[:2]) if args else ""
+            if what:
+                self.parts.append((s, what, label, args))
+            if args and args[0] == "push" and _sets_upstream(args[1:]):
+                self.parts.append((s, "upstream", label, args))  # `-u` sets a branch's remote, which a push with none named reads
+            if _global_config_write(s, root):
+                self.parts.append((s, "url", posixpath.basename(s.words[0]), None))
+        self.into: dict[tuple, bool] = {}
+
+    def first(self, seg: Seg, kind: str, common: str | None = None) -> str | None:
+        """`git <sub>` of the first other part that may change `kind`."""
+        for s, what, label, args in self.parts:
+            if s is seg:
+                continue
+            if what == "push" and kind == "refs":
+                g = _commit_git(s.words)
+                key = (s.cwd, g[2] if g else None, tuple(g[0]) if g else (), _push_args(args).repo, common)
+                if key not in self.into:
+                    self.into[key] = _pushes_into(s, args, self.root, common)
+                what = "refs" if self.into[key] else ""
+            if what == kind or (kind == "config" and what == "url"):
+                return label
+        return None
+
+
+def _push_env(segs: list[Seg], seg: Seg, pattern: re.Pattern) -> str | None:
+    """A variable matching `pattern` set for the push or anywhere in the
+    command (exported, declared, or alone)."""
+    names = list(_assigned(seg))
+    for s in segs:
+        if not s.words:
+            names += [a.partition("=")[0].removesuffix("+") for a in s.assigns]
+        elif s.words[0] in _DECLARES:
+            names += [w.partition("=")[0].removesuffix("+") for w in s.words[1:] if not w.startswith("-")]
+    return next((n for n in names if pattern.fullmatch(n)), None)
+
+
+def _shell_spelled(word: str, globs: bool = False, assignment: bool = False) -> bool:
+    """A word the shell may turn into others: a variable or a substitution,
+    a leading tilde, a brace list or sequence; with `globs`, a glob (not in a
+    config key or value, where `*` is ordinary: `http.<url>.*`, `Accept: */*`);
+    in an `assignment`'s value, a tilde after `=` or `:` too."""
+    if _SHELL_EXPANDS.search(word) or _brace_sequence(word) or len(_braces(word, 2)) > 1:
+        return True
+    return bool((globs and _GLOB_CHARS.search(word)) or (assignment and re.search(r"[=:]~", word)))
+
+
+_CONFIG_VAR = re.compile(r"GIT_CONFIG_(PARAMETERS|COUNT|KEY_\w*|VALUE_\w*)")
+
+
+def _key_spelled(key: str) -> bool:
+    """A config key (`-c`'s, `git config`'s, a variable's) the shell may
+    turn into another: one `_shell_spelled` reads so, or a glob in its
+    section or name, where git allows none (a subsection's `*`, as in
+    `http.<url>.*`, is git's own)."""
+    k = key.partition("=")[0]
+    return _shell_spelled(k) or bool(_GLOB_CHARS.search(k.partition(".")[0]) or _GLOB_CHARS.search(k.rpartition(".")[2]))
+
+
+def _push_env_config(segs: list[Seg], seg: Seg, keys_re: re.Pattern) -> str | None:
+    """A config variable (`GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_KEY_<n>`), set
+    by a `NAME=value` the guard reads, for the push or anywhere in the
+    command, that sets a key matching `keys_re`, one the shell spells, or a
+    value it can't read. One added to (`+=`) or exported bare, or a count or
+    value whose keys it doesn't set (inherited), counts whatever its keys."""
+    pairs = [a.partition("=") for a in seg.assigns]
+    for s in segs:
+        if not s.words:
+            pairs += [a.partition("=") for a in s.assigns]
+        elif s.words[0] in _DECLARES:
+            pairs += [w.partition("=") for w in s.words[1:] if not w.startswith("-")]
+    pairs = [(n, eq, v) for n, eq, v in pairs if _CONFIG_VAR.fullmatch(n.removesuffix("+"))]
+    keys_set = {n.removeprefix("GIT_CONFIG_KEY_") for n, eq, _ in pairs if n.startswith("GIT_CONFIG_KEY_") and eq}
+    for n, eq, v in pairs:
+        if n.endswith("+") or not eq:
+            return n.removesuffix("+")
+        if n.startswith("GIT_CONFIG_VALUE_") and n.removeprefix("GIT_CONFIG_VALUE_") not in keys_set:
+            return n
+        if n == "GIT_CONFIG_COUNT" and not (re.fullmatch(r"[0-9]{1,4}", v) and all(str(k) in keys_set for k in range(int(v)))):
+            return n
+    for name, _, value in pairs:
+        name = name.removesuffix("+")
+        if not _PUSH_ENV_CONFIG.fullmatch(name):
+            continue
+        # Only a key that may send a URL push elsewhere counts here: any other config variable is judged with the push's remote.
+        if name == "GIT_CONFIG_PARAMETERS":
+            if _shell_spelled(value, assignment=True):
+                return name  # git reads it after the shell: anything can come in
+            keys = _config_params_keys(value)
+            if keys is None:
+                return name  # not git's format: it can't be read
+        else:
+            keys = [value.strip("'\"")]
+        if any(_key_spelled(k) or keys_re.match(k.strip()) for k in keys):
+            return name
+    return None
+
+
+def _config_params_keys(value: str) -> list[str] | None:
+    """The keys `GIT_CONFIG_PARAMETERS` sets, read in one pass as git reads
+    it: items `'key'='value'` or the older `'key=value'`, quoted as git
+    quotes (a backslash inside quotes is itself; `'\\''` and `'\\!'`
+    between quoted parts); None when it can't read it as git would."""
+    n, i, keys = len(value), 0, []
+
+    def word() -> str | None:
+        nonlocal i
+        if i >= n or value[i] != "'":
+            return None
+        out = []
+        i += 1
+        while True:
+            j = value.find("'", i)
+            if j < 0:
+                return None
+            out.append(value[i:j])
+            i = j + 1
+            if value[i : i + 1] == "\\" and value[i + 1 : i + 2] in ("'", "!") and value[i + 2 : i + 3] == "'":
+                out.append(value[i + 1])
+                i += 3
+                continue
+            return "".join(out)
+
+    while True:
+        while i < n and value[i].isspace():
+            i += 1
+        if i >= n:
+            return keys
+        w = word()
+        if w is None:
+            return None
+        if value[i : i + 1] == "=":
+            i += 1
+            if i < n and not value[i].isspace() and word() is None:
+                return None  # (`'key'=` alone is git's own spelling of a key set to true)
+            keys.append(w)
+        else:
+            keys.append(w.partition("=")[0])
+        if i < n and not value[i].isspace():
+            return None
+
+
+def _push_config(d: str, glob: list[str]) -> tuple[dict[str, list[str]] | None, str]:
+    """The settings that say where a push goes and what it sends, by key
+    (section and name in lower case, a remote's name as written), else
+    (None, what failed)."""
+    pattern = r"^(push\.default|remote\.pushdefault|remote\..*\.(url|pushurl|push|mirror)|branch\..*\.(remote|pushremote))$"
+    got, err = _memo_read(d, glob, "config", "-z", "--get-regexp", pattern, ok=(0, 1))
+    if got is None:
+        return None, err
+    out: dict[str, list[str]] = {}
+    for item in got:
+        key, _, value = item.partition("\n")
+        out.setdefault(key, []).append(value)
+    return out, ""
+
+
+def _refspec_sources(specs: list[str], shell: bool, here: bool = True) -> tuple[list[str], set[str], str | None]:
+    """(the revisions, the `git log` options naming every ref a pattern could
+    match, what the guard can't read) for what refspecs send. `shell`: they
+    are a command's words, which the shell may expand; `here`: git runs in
+    the shell's own directory, where `$(git branch --show-current)` is HEAD."""
+    srcs, pseudo, k = [], set(), 0
+    while k < len(specs):
+        r = specs[k]
+        k += 1
+        if shell and _CURRENT_BRANCH.search(r):
+            if not here:
+                return [], set(), f"the ref `{_brief(r)}`, the shell's branch, while git runs in another directory"
+            r = _CURRENT_BRANCH.sub("HEAD", r)
+        if r == "tag" and k < len(specs):
+            r, k = "refs/tags/" + specs[k], k + 1
+        r = r.removeprefix("+")
+        if r.startswith("^"):
+            return [], set(), f"the negative refspec `{_brief(r)}`, as it doesn't read what that leaves out"
+        if r == ":":
+            pseudo |= {"--branches", "--tags"}  # every matching branch
+            continue
+        src = r.split(":", 1)[0]
+        if not src:
+            continue  # a deletion
+        words = _braces(src, _BRACE_LIMIT + 1) if shell else [src]
+        if shell and (_SHELL_EXPANDS.search(src) or len(words) > _BRACE_LIMIT or any(_brace_sequence(w) for w in words)):
+            return [], set(), f"the ref `{_brief(src)}`, which the shell expands"
+        for w in words:
+            if "*" not in w:
+                srcs.append("HEAD" if w == "@" else w)
+            elif w.startswith("refs/"):
+                pseudo.add(f"--glob={w}")  # every ref the pattern could match
+            else:
+                return [], set(), f"the pattern `{_brief(w)}`, which isn't a full ref"
+    return srcs, pseudo, None
+
+
+_COMMIT_HEADER = re.compile(r"\x01\x02([0-9a-f]{4,64})")
+
+
+def _sent_code(d: str, glob: list[str], args: list[str], code: _Code) -> tuple[tuple[str, _Hit] | None, str]:
+    """((the commit, the code path) of the first code path `git log <args>`
+    lists, else None; what failed). Read as git writes it, so a long history
+    stops at its first code path, within the time a git read has."""
+    # Imported here, not at the top: only a push to `project.repo` needs them, and the hook starts on every tool.
+    import queue
+    import tempfile
+    import threading
+    import time
+
+    shown, deadline = "`git log`", time.monotonic() + _GIT_READ_SECONDS
+    err_file = tempfile.TemporaryFile()  # git's messages, read only at the end, so they never fill a pipe
+    try:
+        proc = subprocess.Popen(
+            [*_GIT_READ, *glob, *args], cwd=d, stdout=subprocess.PIPE, stderr=err_file, stdin=subprocess.DEVNULL,
+            env={**os.environ, "GIT_NO_LAZY_FETCH": "1"},  # a partial clone fetches nothing for the guard
+        )  # fmt: skip
+    except (OSError, ValueError) as e:
+        err_file.close()
+        return None, f"{shown} couldn't run in `{d}` ({e})"
+    chunks: "queue.Queue[bytes]" = queue.Queue()
+
+    def pump() -> None:
+        try:
+            while True:
+                b = proc.stdout.read1(1 << 16)
+                chunks.put(b)
+                if not b:
+                    return
+        except (OSError, ValueError):
+            chunks.put(b"")
+
+    reader = threading.Thread(target=pump, daemon=True)
+    reader.start()
+    buf, sha = b"", ""
+    try:
+        while True:
+            try:
+                b = chunks.get(timeout=max(0.0, deadline - time.monotonic()))
+            except queue.Empty:
+                return None, f"{shown} took too long in `{d}`"
+            if not b:
+                break
+            *items, buf = (buf + b).split(b"\0")
+            for raw in items:
+                item = raw.decode("utf-8", errors="replace").removeprefix("\n")
+                m = _COMMIT_HEADER.fullmatch(item)
+                if m:
+                    sha = m.group(1)
+                    continue
+                hit = _listed_code(item, code) if item else None
+                if hit:
+                    return (sha, _Hit(item, hit)), ""
+        try:
+            rc = proc.wait(timeout=max(0.1, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            return None, f"{shown} took too long in `{d}`"
+        if rc != 0:
+            err_file.seek(0)
+            err = err_file.read(4096).decode("utf-8", errors="replace").strip().splitlines()
+            return None, f"{shown} failed in `{d}`" + (f" ({_brief(err[0])})" if err else "")
+        return None, ""
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        try:
+            proc.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            pass
+        reader.join(timeout=1)
+        if not reader.is_alive():  # else a process git started still holds the pipe: the daemon thread keeps it
+            proc.stdout.close()
+        err_file.close()
+
+
+def _push_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tuple[str | None, str | None]:
+    """(why a push in the command sends a code path to `project.repo`, why
+    the guard can't tell what one sends), each None when it doesn't apply."""
+    global _PUSH_MEMO
+    _PUSH_MEMO = {}
+    try:
+        return _judge_pushes(segs, code, root, command)
+    finally:
+        _PUSH_MEMO = None
+
+
+def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tuple[str | None, str | None]:
+    import time  # here, as `_sent_code`'s: only a command that pushes needs it
+
+    unsure, note, started = None, None, time.monotonic()
+    changers: _Changers | None = None
+    dot_git: str | None = None  # the `.git` the command names, read once
+    for seg in segs:
+        g = _commit_git(seg.words)
+        if not g or not g[1] or g[1][0] not in _PUSH_CMDS:
+            continue
+        if time.monotonic() - started > _PUSH_RULE_SECONDS:
+            unsure = unsure or "the guard can't tell what the command's pushes would send: there are too many to read in time"
+            break
+        if changers is None:
+            changers = _Changers(segs, root)
+        glob, args, cdir = g
+        kind = args[0]
+        p = _push_args(args)
+        if p.dry:
+            continue
+        cant = f"the guard can't tell what `git {kind}` would send"
+        named = p.repo
+        if named is not None and _shell_spelled(named, globs=True):
+            unsure = unsure or f"{cant}: its repository `{_brief(named)}` is one the shell expands"
+            continue
+        # A setting that may rewrite a URL (`url.<base>.pushInsteadOf`) can send any push anywhere, `project.repo` among them.
+        # `-c key=value` and `--config-env key=VAR`, each as its `key=…`.
+        cs = [glob[j + 1] for j, o in enumerate(glob[:-1]) if o in ("-c", "--config-env")]
+        cs += [o.partition("=")[2] for o in glob if o.startswith("--config-env=")]
+        rewrites = [k for k in cs if _URL_CONFIG_KEYS.match(k) or _key_spelled(k)]
+        env = _push_env_config(segs, seg, _URL_CONFIG_KEYS)
+        other = changers.first(seg, "url")
+        if rewrites or env or other:
+            what = f"`{env}`" if env else f"`{_brief(rewrites[0].partition('=')[0])}`" if rewrites else ""
+            how = f"it sets {what}" if what else f"another part of the command runs `{other}`"
+            unsure = unsure or f"{cant}: {how}, which can change where it goes"
+            continue
+        # A remote's name rarely holds a `:` and never starts a path (`/`, `.`).
+        url_given = named is not None and (kind != "push" or ":" in named or named.startswith(("/", ".")))
+        elsewhere = url_given and not _project_url(named, code.repo)
+        d = _git_dir_of(root, seg.cwd, cdir)
+        if not d or "$" in d or "`" in d or not os.path.isdir(d):
+            if elsewhere:
+                continue  # another repository, by URL: as today
+            if not d or "$" in d or "`" in d:
+                unsure = unsure or f"{cant}: it runs in a directory the guard can't follow"
+            else:
+                unsure = unsure or f"{cant}: it runs in `{_brief(d)}`, which " + ("isn't a directory" if os.path.exists(d) else "doesn't exist yet")
+            continue
+        d = os.path.realpath(d)
+        pglob = _passed_globals(glob)
+        cfg, err = _push_config(d, pglob)
+        listed, err2 = _memo_read(d, pglob, "remote", "-v", sep="\n") if cfg is not None else (None, err)
+        if cfg is None or listed is None:
+            if elsewhere:
+                continue
+            unsure = unsure or f"{cant}: {err or err2}"
+            continue
+        fetch_urls: dict[str, str] = {}  # each remote's URL as git fetches from it (`insteadOf` applied)
+        for line in listed:
+            name, _, rest = line.partition("\t")
+            if rest.endswith(" (fetch)"):
+                fetch_urls.setdefault(name, rest[: -len(" (fetch)")])
+        remotes = {line.partition("\t")[0] for line in listed}
+        remotes |= {k[len("remote.") :].rpartition(".")[0] for k in cfg if k.startswith("remote.") and k.count(".") >= 2}
+
+        def last(key: str) -> str:
+            return (cfg.get(key) or [""])[-1]
+
+        if dot_git is None:
+            dot_git = _names_dot_git(command, segs) or ""
+        is_remote = kind == "push" and named in remotes  # git looks a word up as a remote first
+        if elsewhere and not is_remote:
+            if dot_git:  # a `.git` written can rewrite the URL (`pushInsteadOf` in its config)
+                unsure = unsure or f"{cant}: the command names `{dot_git}`, which can change where it goes"
+            continue  # else another repository, by URL: as today
+        # A push by a remote's name, or with none named, goes where the config of the repository git reads says:
+        # what changes that config, or which repository git reads, makes it one the guard can't tell about.
+        # A push given `project.repo`'s URL (not a remote's name) and its refs goes there and sends those whatever the
+        # config says: only which repository git reads counts. Without refs, `push.default` says what it sends.
+        fixed = url_given and not is_remote and bool(p.refspecs or p.branches or p.mirror or p.tags)
+        keys = [k for k in cs if _PUSH_CONFIG_KEYS.match(k)] if not fixed else []
+        env = _push_env(segs, seg, _PUSH_ENV if not fixed else _PUSH_ENV_REPO) or (None if fixed else _push_env_config(segs, seg, _PUSH_CONFIG_KEYS))
+        other = changers.first(seg, "config") if not fixed else None
+        try:
+            made = _made_by(segs, seg, d)
+        except (ValueError, UnicodeError, OSError):  # a path it can't place: something may be made there
+            made = "earlier"
+        if keys or env or other or made:
+            if keys or env:
+                how = f"it sets `-c {_brief(keys[0])}`" if keys else f"the command sets `{env}`"
+            elif other:
+                how = f"another part of the command runs `{other}`"
+            else:
+                how = f"it runs in `{_brief(d)}`, where another part of the command makes a repository or worktree"
+            unsure = unsure or f"{cant}: {how}, which can change where it goes or what it sends"
+            continue
+        if named is None and kind == "push":
+            moves = changers.first(seg, "refs", _git_common(d, pglob)) or changers.first(seg, "upstream")
+            if moves:  # git picks a bare push's remote by the branch checked out when it runs
+                unsure = unsure or f"{cant}: another part of the command runs `{moves}`, which can change where it goes and what it sends"
+                continue
+            named = _default_remote(d, pglob)
+            if named is None:
+                unsure = unsure or f"{cant}: it couldn't read which remote git picks"
+                continue
+        is_remote = kind == "push" and named in remotes
+        if is_remote:
+            urls, err = _memo_read(d, pglob, "remote", "get-url", "--push", "--all", named, sep="\n")
+            if urls is None:
+                unsure = unsure or f"{cant}: it couldn't read the URL of the remote `{_brief(named)}`: {err}"
+                continue
+        else:
+            common = _git_common(d, pglob)
+            named = named or ""  # send-pack and http-push without a repository fail
+            legacy = common and named not in ("", ".", "..") and "/" not in named and kind == "push"
+            if legacy and any(os.path.isfile(os.path.join(common, sub, named)) for sub in ("remotes", "branches")):
+                unsure = unsure or f"{cant}: its remote `{_brief(named)}` is defined in a file under `.git/remotes` or `.git/branches`, which the guard doesn't read"
+                continue
+            urls = [named]
+        if not any(_project_url(u, code.repo) for u in urls):
+            if dot_git:  # a `.git` written can change the remote's URL
+                unsure = unsure or f"{cant}: the command names `{dot_git}`, which can change where it goes"
+            continue  # else another repository: as today
+        to = f"`{code.repo}`" if code.repo else f"`{_brief(named)}`"
+        cant = f"the guard can't tell what `git {kind}` would send to {to}"
+        common = _git_common(d, pglob)
+        moves = changers.first(seg, "refs", common)
+        if moves:
+            unsure = unsure or f"{cant}: another part of the command runs `{moves}`, which can change what it sends"
+            continue
+        if seg.fed:
+            unsure = unsure or f"{cant}: `xargs` gives it its refs"
+            continue
+        if p.unread:
+            unsure = unsure or f"{cant}: it couldn't read {p.unread}"
+            continue
+        # `$(git branch --show-current)` is the shell's branch: HEAD where git runs in the same repository.
+        here = seg.cwd is not None and os.path.isdir(seg.cwd) and _git_dir_abs(seg.cwd, []) == _git_dir_abs(d, pglob)
+        srcs, pseudo, bad = _refspec_sources([] if p.delete else p.refspecs, True, here)
+        if p.branches:
+            pseudo.add("--branches")
+        if p.mirror:
+            pseudo.add("--all")
+        if p.tags:
+            pseudo.add("--tags")
+        if kind == "push" and not p.refspecs and not (p.branches or p.mirror or p.tags):
+            r = named if named in remotes else ""
+            mirror = cfg.get(f"remote.{r}.mirror") if r else None
+            if mirror and mirror[-1].lower() not in _FALSE:
+                pseudo.add("--all")  # its settings mirror every ref
+            elif r and cfg.get(f"remote.{r}.push"):
+                more, extra, bad = _refspec_sources(cfg[f"remote.{r}.push"], False)
+                srcs, pseudo = srcs + more, pseudo | extra
+            elif last("push.default").lower() == "matching":
+                pseudo.add("--branches")
+            else:
+                srcs.append("HEAD")
+        if bad:
+            unsure = unsure or f"{cant}: it couldn't read {bad}"
+            continue
+        if not srcs and not pseudo:
+            continue  # it sends nothing
+        if note is None:
+            note = dot_git and f"{cant}: the command names `{dot_git}`, which can change what git reads"
+        # On the remote already: what a tracking ref of a remote fetching from `project.repo` holds,
+        # not a remote's nested inside its name (`origin/fork`), which fetches from wherever it does.
+        known = []
+        for r, url in sorted(fetch_urls.items()):
+            if _project_url(url, code.repo) and not _GLOB_CHARS.search(r) and "\\" not in r:
+                known += [f"--exclude=refs/remotes/{o}/*" for o in sorted(remotes) if o.startswith(r + "/") and not _GLOB_CHARS.search(o)]
+                known.append(f"--glob=refs/remotes/{r}/*")
+        log = ["log", "--name-only", "-z", "--format=%x01%x02%h", "--no-renames", "--no-ext-diff", "--no-textconv", "--no-color"]
+        log += ["--ignore-submodules=none", "--diff-merges=first-parent"]
+        key = ("log", d, tuple(pglob), tuple(known), tuple(sorted(pseudo)), tuple(srcs))
+        memo = _PUSH_MEMO if _PUSH_MEMO is not None else {}
+        if key not in memo:
+            memo[key] = _sent_code(d, pglob, [*log, "--not", *known, "--not", *sorted(pseudo), "--end-of-options", *srcs, "--"], code)
+        found, err = memo[key]
+        if found:
+            sha, hit = found
+            return f"this push sends commit {sha}, which carries the code path {_shown(hit)} ({hit.pattern}), to {to}; {code.instead}", None
+        if not err:
+            err = _not_commits(d, pglob, srcs, pseudo)
+        if err:
+            unsure = unsure or f"{cant}: {err}"
+    return None, unsure or note or None
+
+
+def _not_commits(d: str, glob: list[str], srcs: list[str], pseudo: set[str]) -> str:
+    """What a push sends that isn't a commit (a tag on a tree or a blob),
+    which `git log` passes over, so the guard can't read it; else ""."""
+    for src in srcs:
+        got, _ = _memo_read(d, glob, "cat-file", "-t", f"{src}^{{commit}}", sep="\n") if not src.startswith("-") else (None, "")
+        if got is None:
+            return f"`{_brief(src)}` names something that isn't a commit, which it can't read"
+    patterns = ["refs/tags"] if "--tags" in pseudo else []
+    # for-each-ref's `*` doesn't cross a `/`, a refspec's does: the pattern's literal folder instead.
+    patterns += [re.split(r"[*?\[]", g.partition("=")[2], maxsplit=1)[0].rpartition("/")[0] or "refs" for g in pseudo if g.startswith("--glob=")]
+    if "--all" in pseudo:
+        patterns = ["refs"]
+    if patterns:
+        got, err = _memo_read(d, glob, "for-each-ref", "--format=%(objecttype) %(*objecttype)", *patterns, sep="\n")
+        if got is None:
+            return err
+        if any(line.split()[-1] != "commit" for line in got if line.strip()):
+            return "a tag it sends names something that isn't a commit, which it can't read"
+    return ""
+
+
+def _unsure_code(unsure: str, role: str, code: _Code) -> Decision:
+    """The decision on a commit or push whose contents the guard can't read:
+    the conductor, which nobody is there to ask, is refused; others are asked."""
     if role == "conductor":
-        return Decision("deny", f"{unsure}; {code.writes_none}, and commits nothing the guard can't read; fix what stops git reading it, then commit again")
+        return Decision(
+            "deny", f"{unsure}; {code.writes_none}, and commits or pushes nothing the guard can't read; fix what stops git reading it, then try again"
+        )
     return Decision("ask", f"{unsure}; {code.writes_none}: allow it only if it carries no code path")
 
 
