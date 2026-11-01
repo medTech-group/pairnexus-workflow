@@ -807,6 +807,12 @@ def test_a_dot_git_named_in_a_commits_message(tmp_path, monkeypatch, capsys):
     d, why = hook(monkeypatch, capsys, root, 'git commit -am "read .git/HEAD in the reader"')
     assert d == "deny" and "this one names `.git/HEAD" in why and "`-F`" in why, why
     assert hook(monkeypatch, capsys, root, 'git commit -am "read the HEAD file in the reader"') == ("allow", "")
+    (root / "msg.txt").write_text("read .git/HEAD in the reader\n")
+    assert hook(monkeypatch, capsys, root, "git commit -a -F msg.txt") == ("allow", "")
+    d, why = hook(monkeypatch, capsys, root, "echo 'GIT = \".git\"' >> src/app.py")
+    assert d == "deny" and "write a file with the file tools" in why, why
+    d, why = hook(monkeypatch, capsys, root, 'git stash && git commit -am "fix .git handling"')
+    assert d == "deny" and "runs `git stash`" in why and "names `.git`" in why, why
 
 
 def test_the_changelog_notes_it():
