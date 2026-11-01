@@ -143,15 +143,19 @@ def test_a_protected_path_inside_a_code_path_isnt_code(proj, monkeypatch, capsys
     assert hook(monkeypatch, capsys, proj, "git push origin feature")[0] == "allow"
 
 
-def test_a_merge_commit_is_judged_as_any_commit(proj, monkeypatch, capsys):
-    """Until #391 narrows it: a merge's change against its first parent counts."""
+def test_a_merge_commit_is_judged_by_its_own_changes(proj, monkeypatch, capsys):
+    """#391: a merge counts only what it changes itself, so this clean merge
+    carries nothing; the merged branch's code commit, which isn't on the
+    remote, is sent with it and judged as any commit. More in
+    tests/test_guard_code_merges.py."""
     git(proj, "checkout", "-q", "-b", "side")
     _code_commit(proj)
+    side = git(proj, "rev-parse", "--short", "HEAD").strip()
     git(proj, "checkout", "-q", "feature")
     git(proj, "merge", "-q", "--no-ff", "--no-edit", "side")
     git(proj, "branch", "-q", "-D", "side")
     d, why = hook(monkeypatch, capsys, proj, "git push origin feature")
-    assert d == "deny" and "src/app.py" in why, why
+    assert d == "deny" and f"commit {side}," in why and "src/app.py" in why, why
 
 
 def test_only_the_named_branch_counts(proj, monkeypatch, capsys):
