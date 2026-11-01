@@ -243,7 +243,7 @@ def test_a_push_after_merging_a_pushed_prototype_branch_is_refused(tmp_path, mon
     for command in ("git push origin feature", "git push origin HEAD", "git push -u origin feature"):
         d, why = hook(monkeypatch, capsys, root, command)
         assert d == "deny" and f"commit {sha}" in why and "src/app.py" in why, (command, why)
-    assert "is on `origin/prototype/x`, a `prototype/*` branch, whose code doesn't count as on the remote" in why, why
+    assert "is on `origin/prototype/x`, a `prototype/*` branch's tracking ref, which doesn't count as on the remote" in why, why
 
 
 def test_a_prototype_branch_fetched_under_another_name_isnt_on_the_remote(tmp_path, monkeypatch, capsys):
@@ -669,6 +669,60 @@ def test_a_remote_nested_in_ours_and_fetching_from_project_repo_counts(tmp_path,
     _change(root, "docs/guide.md")
     git(root, "commit", "-qam", "d")
     assert hook(monkeypatch, capsys, root, "git push origin feature") == ("allow", "")
+
+
+@pytest.mark.parametrize("code_writers", ["ticket", "any"])
+@pytest.mark.parametrize("role", [None, "conductor"])
+def test_a_push_to_the_base_from_a_source_holding_a_colon(tmp_path, monkeypatch, capsys, code_writers, role):
+    """git splits a refspec at its last `:`, so this pushes to `main`: the
+    base-branch rule decides it as it decides `HEAD:main`."""
+    root = _clone(tmp_path, code_writers)
+    _change(root, "docs/guide.md")
+    git(root, "commit", "-qam", "a:b")
+    plain = hook(monkeypatch, capsys, root, "git push origin HEAD:main", role)
+    d, why = hook(monkeypatch, capsys, root, "git push origin 'HEAD^{/a:b}:main'", role)
+    assert plain[0] != "allow" and d == plain[0] and "main" in why, (plain, d, why)
+
+
+@pytest.mark.parametrize(
+    "command, setting",
+    [
+        ("git push --recurse-submodules=on-demand origin prototype/x", None),
+        ("git push --recurse-submodules only origin prototype/x", None),
+        ("git push origin prototype/x", ("push.recurseSubmodules", "on-demand")),
+        ("git push origin prototype/x", ("submodule.recurse", "true")),
+    ],
+)
+def test_a_push_that_may_push_submodules_too_is_judged(tmp_path, monkeypatch, capsys, command, setting):
+    """git pushes each submodule's commits with the same refspecs, which can
+    send another branch of `project.repo` (a submodule cloned from it)."""
+    root = _prototype(tmp_path)
+    _code_commit(root)
+    if setting:
+        git(root, "config", *setting)
+    d, why = hook(monkeypatch, capsys, root, command)
+    assert d == "deny" and "git may push submodules too" in why, (command, why)
+
+
+def test_a_push_that_checks_submodules_or_pushes_none_goes_through(tmp_path, monkeypatch, capsys):
+    root = _prototype(tmp_path)
+    _code_commit(root)
+    git(root, "config", "push.recurseSubmodules", "on-demand")
+    for command in ("git push --recurse-submodules=check origin prototype/x", "git push --no-recurse-submodules origin prototype/x"):
+        assert hook(monkeypatch, capsys, root, command) == ("allow", ""), command
+
+
+def test_the_refusal_names_where_the_prototype_code_is(tmp_path, monkeypatch, capsys):
+    root = _prototype(tmp_path)
+    _code_commit(root)
+    sha = git(root, "rev-parse", "--short", "HEAD").strip()
+    git(root, "checkout", "-q", "feature")
+    git(root, "merge", "-q", "--no-ff", "--no-edit", "prototype/x")
+    d, why = hook(monkeypatch, capsys, root, "git push origin feature")
+    assert d == "deny" and f"commit {sha} is on `prototype/x`, a `prototype/*` branch, and isn't on the remote yet" in why, why
+    git(root, "checkout", "-q", "prototype/x")
+    d, why = hook(monkeypatch, capsys, root, "git push origin prototype/x:heads/prototype/y")
+    assert d == "deny" and "isn't written in full: write it `refs/heads/prototype/y`" in why, why
 
 
 def test_the_changelog_notes_it():
