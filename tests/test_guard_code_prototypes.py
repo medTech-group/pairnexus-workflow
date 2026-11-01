@@ -1095,6 +1095,12 @@ def test_a_push_beside_a_part_that_may_move_a_ref_while_prototyping(tmp_path, mo
         _change(root, CODE)
         d, why = hook(monkeypatch, capsys, root, command)
         assert d == "deny" and "run the push in a command of its own" in why, (command, why)
+    # The refusal gives the refused push's own reason.
+    _change(root, CODE)
+    other = _clone(tmp_path, name="other")
+    git(other, "remote", "set-url", "origin", str(tmp_path / "elsewhere.git"))
+    d, why = hook(monkeypatch, capsys, root, f"git commit -am wip && git -C {other} push && HOME=/tmp/h git push origin HEAD:feature")
+    assert d == "deny" and "`HOME`" in why, why
     # The same from a worktree on a prototype branch while the project is on another.
     git(root, "checkout", "-q", "main")
     git(root, "worktree", "add", "-q", "-b", "prototype/w", str(root / ".claude" / "worktrees" / "w"))
@@ -1111,8 +1117,13 @@ def test_a_bare_push_beside_a_ref_move_elsewhere_or_an_upstream_set_is_asked_as_
     other = _clone(tmp_path, name="other")
     git(other, "remote", "set-url", "origin", str(tmp_path / "elsewhere.git"))
     _change(other, CODE)
-    d, why = hook(monkeypatch, capsys, root, f"git -C {other} commit -am x && git -C {other} push")
-    assert d == "ask" and "can't tell" in why and "unjudged" not in why, why
+    for command in (f"git -C {other} commit -am x && git -C {other} push", f"git -C {other} commit -am x && git -C {other} -c push.default=current push"):
+        d, why = hook(monkeypatch, capsys, root, command)
+        assert d == "ask" and "can't tell" in why and "unjudged" not in why, (command, why)
+    # A push into another local repository moves none of this one's refs.
+    git(tmp_path, "init", "-q", "--bare", str(tmp_path / "backup.git"))
+    d, why = hook(monkeypatch, capsys, root, f"git push {tmp_path / 'backup.git'} prototype/x && HOME=/tmp/h git push origin HEAD:feature")
+    assert d == "ask" and "unjudged" not in why, why
     d, why = hook(monkeypatch, capsys, root, "git push && git push -u origin prototype/x")
     assert d != "allow" and "unjudged" not in why, why
     # A URL where git takes a bare push's remote's name is read too.
