@@ -371,7 +371,7 @@ def test_a_prototype_push_beside_anything_but_reads_is_judged(tmp_path, monkeypa
     if d == "ask":  # a push into a repository on this machine: one the guard can't tell about
         assert "can't tell" in why, (command, why)
     else:
-        assert d == "deny" and "carries the code path" in why and "run the push in a command of its own" in why, (command, why)
+        assert d == "deny" and "carries the code path" in why and "in a command of its own" in why, (command, why)
 
 
 # ---------- as today ----------
@@ -1020,13 +1020,27 @@ def test_a_write_or_commit_in_a_command_that_changes_directory(tmp_path, monkeyp
         ("echo $[HOME=0]; git commit -am x", "may set a variable in the shell itself"),
         (": ${GIT_DIR:=/tmp/g}; git commit -am x", "may set a variable in the shell itself"),
         ("X+=1; git commit -am x", "sets `X` for the rest of the command"),
+        ("jobs {-x,} cd src; git commit -am x", "runs the shell's `jobs`"),
+        ("printf ${V:--v} HOME /tmp/h; git commit -am x", "runs the shell's `printf`"),
+        ("[ -v 'PIPESTATUS[HOME=0]' ]; git commit -am x", "runs the shell's `[`"),
+        ("repeat 1 cd src; git commit -am x", "the compound command `repeat`"),
+        ("foreach HOME (/tmp/h) git commit -am x; end", "the compound command `foreach`"),
+        ("echo *(e:'cd src':); git commit -am x", "zsh's"),
+        ("echo ${(e):-x}; git commit -am x", "zsh's"),
         ("sh -c 'echo for'; for HOME in /tmp/h; do git commit -am x; done", "the compound command `for`"),
     ):
         _change(root, CODE)
         d, why = hook(monkeypatch, capsys, root, command)
         assert d == "deny" and why_part in why, (command, why)
     assert hook(monkeypatch, capsys, root, "git -C . commit -am x")[0] == "allow"
-    for ok in ("[ -f src/app.py ] && echo x > src/app.py", "test -f src/app.py && echo x >> src/app.py", "echo hi; pwd; echo x > src/app.py"):
+    for ok in (
+        "[ -f src/app.py ] && echo x > src/app.py",
+        "test -f src/app.py && echo x >> src/app.py",
+        "echo hi; pwd; echo x > src/app.py",
+        "printf '%s\\n' x > src/app.py",
+        "wait; jobs; echo x > src/app.py",
+        "git commit -am 'Add the reader (#393)'",
+    ):
         assert hook(monkeypatch, capsys, root, ok) == ("allow", ""), ok
 
 

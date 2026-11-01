@@ -7881,7 +7881,7 @@ def _push_own_part(segs: list[Seg], seg: Seg, glob: list[str], dot_git: str) -> 
 
 
 # Shell words that open a compound command, whose header (a loop's variable, a `case` word) no part of the command keeps.
-_COMPOUND_WORDS = {"for", "select", "case", "while", "until", "if", "function", "coproc"}
+_COMPOUND_WORDS = {"for", "select", "case", "while", "until", "if", "function", "coproc", "repeat", "foreach"}  # zsh's too
 
 
 def _compound_or_cd(segs: list[Seg], command: str) -> str | None:
@@ -7920,6 +7920,8 @@ def _compound_or_cd(segs: list[Seg], command: str) -> str | None:
     joined = command.replace("\\\n", "")  # bash joins a backslash-newline before it reads anything
     if _CURRENT_SHELL_SUB.search(joined):
         return f"it runs a command substitution in the shell itself (`${{ …; }}`){alone}, or write the file with the file tools"
+    if _ZSH_EVAL.search(joined):
+        return f"it may run code in the shell itself (zsh's `*(e:…:)` or `*(+…)` glob qualifiers, `${{(e)…}}`){alone}, or write the file with the file tools"
     if _ASSIGNING_EXPANSION.search(joined):
         return f"it may set a variable in the shell itself (`$((…))`, `$[…]`, `${{X:=…}}`){alone}, or write the file with the file tools"
     return None
@@ -7930,6 +7932,7 @@ _BUILTINS = {
     # zsh's too, where its precommand modifiers (`noglob cd …`) and option or variable builtins change the shell.
     "noglob", "nocorrect", "-", "setopt", "unsetopt", "emulate", "zmodload", "autoload", "functions", "integer", "float",
     "print", "chdir", "bindkey", "zstyle", "vared", "pushln", "rehash", "unhash", "zle", "zparseopts", "sched",
+    "getln", "zformat", "zregexparse", "strftime", "zstat", "sysread", "disable", "unfunction", "noglob",
     ".", ":", "[", "alias", "bg", "bind", "break", "builtin", "caller", "cd", "command", "compgen", "complete", "compopt",
     "continue", "declare", "dirs", "disown", "echo", "enable", "eval", "exec", "exit", "export", "false", "fc", "fg",
     "getopts", "hash", "help", "history", "jobs", "kill", "let", "local", "logout", "mapfile", "popd", "printf", "pushd",
@@ -7937,18 +7940,26 @@ _BUILTINS = {
     "trap", "true", "type", "typeset", "ulimit", "umask", "unalias", "unset", "wait", "[[",
 }  # fmt: skip
 # (Not `[[`, whose `-eq X=1` assigns; `printf`, `wait` and `jobs` only without the option that sets or runs.)
-_STATELESS_BUILTINS = {":", "[", "echo", "pwd", "test", "true", "false", "type", "help", "times", "dirs"}
-_STATEFUL_OPTION = {"printf": "v", "wait": "p", "jobs": "x"}  # `printf -v VAR`, `wait -p VAR`, `jobs -x CMD`
+_STATELESS_BUILTINS = {":", "echo", "pwd", "true", "false", "type", "help", "times", "dirs"}
+# `printf -v VAR`, `wait -p VAR`, `jobs -x CMD`, `test -v 'A[X=1]'` (an arithmetic subscript): stateless without them.
+_STATEFUL_OPTION = {"printf": "v", "wait": "p", "jobs": "x", "test": "v", "[": "v"}
 
 
 def _stateless_builtin(words: list[str]) -> bool:
-    """A builtin that changes nothing in the shell as it is given here."""
+    """A builtin that changes nothing in the shell as it is given here: one
+    of `_STATELESS_BUILTINS`, or one of `_STATEFUL_OPTION`'s without its
+    option, written out (no argument the shell may turn into it: `{-x,}`,
+    `${X:--x}`, a glob)."""
     if words[0] in _STATELESS_BUILTINS:
         return True
     opt = _STATEFUL_OPTION.get(words[0])
-    return opt is not None and not any(w.startswith("-") and opt in w for w in words[1:])
+    if opt is None:
+        return False
+    return not any(w.startswith("-") and opt in w or _spelled_command(w) for w in words[1:])
 # bash 5.3's `${ cmd; }` and `${| cmd; }`, which run in the shell itself (a `cd` there stays).
 _CURRENT_SHELL_SUB = re.compile(r"\$\{[\s|]")
+# zsh's glob qualifiers that run code (`*(e:…:)`, `*(+fn)`) and parameter flags (`${(e)…}`), in the shell itself.
+_ZSH_EVAL = re.compile(r"[\w*?\]]\([^()]*?(?:e[^\w\s()]|\+)|\$\{\(")
 # Arithmetic and `${X=…}`/`${X:=…}` expansions, which can assign a variable in the shell itself.
 _ASSIGNING_EXPANSION = re.compile(r"\$\(\(|\$\[|\(\(|\$\{[^}]*?:?=")
 
