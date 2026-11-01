@@ -519,3 +519,56 @@ def test_the_guard_runs_no_merge_driver(proj, monkeypatch, capsys, tmp_path):
     git(proj, "reset", "-q", "--hard", "origin/feature")
     _commit(proj, lambda r: _change(r, DOC, "# Branch\n"))
     assert hook(monkeypatch, capsys, proj, "git push origin feature") == ("allow", "")
+
+
+def test_the_guard_runs_no_hook(proj, monkeypatch, capsys, tmp_path):
+    """Writing its copy of the index runs no `post-index-change` hook."""
+    marker = tmp_path / "hook-ran"
+    hook_file = proj / ".git/hooks/post-index-change"
+    hook_file.write_text(f"#!/bin/sh\ntouch {marker}\n")
+    hook_file.chmod(0o755)
+    _docs_conflict(proj)
+    marker.unlink(missing_ok=True)
+    assert hook(monkeypatch, capsys, proj, "git commit -a --no-edit") == ("allow", "")
+    assert hook(monkeypatch, capsys, proj, "git commit --no-edit") == ("allow", "")
+    assert not marker.exists()
+
+
+def test_a_merge_finished_from_a_folder_settles_every_unmerged_file(proj, monkeypatch, capsys):
+    _on_base(proj, lambda r: (_edit(r, CODE, "v5 = 5", "v5 = 'base'"), _change(r, DOC, "# Base\n"), _change(r, "README.md", "# Base\n")))
+    _commit(proj, lambda r: (_change(r, DOC, "# Branch\n"), _change(r, "README.md", "# Branch\n")))
+    assert _merge(proj, "origin/main") == 1
+    _change(proj, DOC, "# Both\n")
+    _change(proj, "README.md", "# Both\n")
+    for command in ("cd docs && git commit -a --no-edit", "git -C docs commit -am x"):
+        assert hook(monkeypatch, capsys, proj, command, "conductor") == ("allow", ""), command
+
+
+def test_a_binary_conflict_resolved_by_taking_one_parent_s_version_is_refused(proj, monkeypatch, capsys):
+    """git notes a conflict that changed no content only in a patch's
+    headers: the commit and the push still count it."""
+    data = "src/model.bin"
+    _on_base(proj, lambda r: (r / data).write_bytes(b"\0base0"))
+    git(proj, "merge", "-q", "--ff-only", "origin/main")
+    git(proj, "push", "-q", "origin", "feature")
+    _on_base(proj, lambda r: (r / data).write_bytes(b"\0base1"))
+    _commit(proj, lambda r: (r / data).write_bytes(b"\0branch"))
+    git(proj, "push", "-q", "origin", "feature")
+    assert _merge(proj, "origin/main") == 1
+    git(proj, "checkout", "-q", "--ours", "--", data)
+    git(proj, "add", data)
+    d, why = hook(monkeypatch, capsys, proj, "git commit --no-edit")
+    assert d == "deny" and "code path `src/model.bin` (src/**)" in why, why
+    _finish(proj)
+    d, why = hook(monkeypatch, capsys, proj, "git push origin feature")
+    assert d == "deny" and "merge commit" in why and "src/model.bin" in why, why
+
+
+def test_a_push_leaves_the_object_store_as_it_was(proj, monkeypatch, capsys):
+    """git merges again in the guard's own temporary object store, so a
+    push read, even one stopped at its first code path, leaves nothing."""
+    _code_conflict(proj)
+    _finish(proj)
+    before = sorted(str(p.relative_to(proj)) for p in (proj / ".git/objects").rglob("*"))
+    assert hook(monkeypatch, capsys, proj, "git push origin feature")[0] == "deny"
+    assert sorted(str(p.relative_to(proj)) for p in (proj / ".git/objects").rglob("*")) == before

@@ -117,6 +117,7 @@ and the environment come first.
 
 from __future__ import annotations
 
+import contextlib
 import fnmatch
 import functools
 import glob as _glob
@@ -6556,7 +6557,7 @@ def _commit_args(args: list[str]) -> _Commit:
 
 
 # How the guard runs its own git reads: no fsmonitor, signature check or replacement objects run or count, and a root commit's changes are shown.
-_GIT_READ = ["git", "--no-replace-objects", "-c", "core.fsmonitor=false", "-c", "diff.relative=false", "-c", "log.showSignature=false", "-c", "log.showRoot=true"]
+_GIT_READ = ["git", "--no-replace-objects", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "diff.relative=false", "-c", "log.showSignature=false", "-c", "log.showRoot=true"]
 _GIT_READ_SECONDS = 5  # the most one git read may take
 
 
@@ -6650,16 +6651,21 @@ def _carried(d: str, glob: list[str], c: _Commit, env: dict[str, str] | None = N
 # changes. A merge of two parents is compared with those parents merged again
 # (`--diff-merges=remerge`): what git merges cleanly isn't counted, whatever
 # lines or renames it spans, while a conflict resolved (taking one parent's
-# version included) or a change neither parent has is. git skips that for a
-# merge of more parents, which is read as `git diff-tree --cc -U0` reads it.
+# version included) or a change neither parent has is. Read as a patch, whose
+# headers also name a conflict that changed no content (a binary file, a
+# rename against a deletion). git skips that for a merge of more parents,
+# which is read as `git diff-tree --cc -U0` reads it.
 
 _MERGE_OWN = "the merge's own change (a conflict resolved there, or a change neither parent has)"
 _LOG_PLAIN = ["--no-renames", "--no-ext-diff", "--no-textconv", "--no-color", "--ignore-submodules=none"]  # no helper program, as git stores it
 _COMMIT_FORMAT = "--format=%x01%x02%h"
-_REMERGE = ["--name-only", "-z", _COMMIT_FORMAT, "--diff-merges=remerge", *_LOG_PLAIN]  # a merge of two parents, and any other commit by its files
-_NO_REMERGE = [a if a != "--diff-merges=remerge" else "--diff-merges=off" for a in _REMERGE]  # every commit but a merge, by its files
-_REMERGE_CONFIG = ["-c", "merge.renormalize=false"]  # merging again runs no clean filter
+_FILES = ["--name-only", "-z", _COMMIT_FORMAT, "--diff-merges=off", *_LOG_PLAIN]  # every commit but a merge, by its files
+_REMERGE = [
+    "--min-parents=2", "--max-parents=2", _COMMIT_FORMAT, "--diff-merges=remerge", "-p", "-U0",
+    "--src-prefix=a/", "--dst-prefix=b/", *_LOG_PLAIN,
+]  # fmt: skip
 _OCTOPUS = ["--min-parents=3", _COMMIT_FORMAT, "--cc", "-U0", "--inter-hunk-context=0", "--text", "--diff-algorithm=myers", "--no-indent-heuristic", *_LOG_PLAIN]
+_REMERGE_CONFIG = ["-c", "merge.renormalize=false"]  # merging again runs no clean filter
 _OBJECT_NAME = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 _C_ESCAPES = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92}
 _OCTAL = re.compile(r"[0-3][0-7][0-7]")
@@ -6667,30 +6673,42 @@ _FULL_INDEX = ["-c", "core.splitIndex=false"]  # the guard's copy of the index i
 _UNMERGED_CAP = 1000  # the most unmerged files the guard settles in its copy of the index
 
 
-def _cc_path(line: str) -> str | None:
-    """The path of a combined diff's `diff --cc <path>` header, which git
-    writes in C quotes (octal escapes for bytes) when the name needs them."""
-    if not line.startswith("diff --cc "):
-        return None
-    name = line[len("diff --cc ") :]
-    if not (len(name) >= 2 and name[0] == name[-1] == '"'):
-        return name
-    out, i, body = bytearray(), 0, name[1:-1]
-    while i < len(body):
-        ch = body[i]
-        if ch == "\\" and i + 1 < len(body):
-            nxt = body[i + 1]
+def _c_unquoted(name: str) -> tuple[str, str]:
+    """(the C-quoted name `name` starts with, unquoted; the rest after it),
+    as git quotes a path that needs it (octal escapes for bytes)."""
+    out, i = bytearray(), 1
+    while i < len(name) and name[i] != '"':
+        ch = name[i]
+        if ch == "\\" and i + 1 < len(name):
+            nxt = name[i + 1]
             if nxt in _C_ESCAPES:
                 out.append(_C_ESCAPES[nxt])
                 i += 2
                 continue
-            if _OCTAL.fullmatch(body[i + 1 : i + 4]):
-                out.append(int(body[i + 1 : i + 4], 8))
+            if _OCTAL.fullmatch(name[i + 1 : i + 4]):
+                out.append(int(name[i + 1 : i + 4], 8))
                 i += 4
                 continue
         out += ch.encode("utf-8", errors="surrogateescape")
         i += 1
-    return out.decode("utf-8", errors="replace")
+    return out.decode("utf-8", errors="replace"), name[i + 1 :]
+
+
+def _patch_path(line: str) -> str | None:
+    """The path a patch's file header names: a combined diff's `diff --cc
+    <path>`, or `diff --git a/<path> b/<path>` (renames off, so both are one
+    path), each C-quoted when the name needs it; else None."""
+    if line.startswith("diff --cc "):
+        name = line[len("diff --cc ") :]
+        return _c_unquoted(name)[0] if name.startswith('"') else name
+    if not line.startswith("diff --git "):
+        return None
+    rest = line[len("diff --git ") :]
+    if rest.startswith('"'):
+        name = _c_unquoted(rest)[0]
+        return name[2:] if name.startswith("a/") else None
+    half = (len(rest) - 5) // 2  # `a/<path> b/<path>`
+    return rest[2 : 2 + half] if rest.startswith("a/") and half > 0 else None
 
 
 def _c_quoted(path: str) -> str:
@@ -6714,11 +6732,47 @@ def _merge_heads(d: str, glob: list[str]) -> list[str]:
 
 
 def _merge_driver(d: str, glob: list[str]) -> tuple[str, str]:
-    """(a merge driver the repository configures, `merge.<name>.driver`, else
-    ""; what failed). Merging a merge's parents again would run it, so the
-    guard doesn't: such a merge is one it can't tell about."""
+    """(a merge driver git's config names, `merge.<name>.driver`, in any file
+    git reads, the global one included, else ""; what failed). Merging a
+    merge's parents again would run it, so the guard doesn't: such a merge is
+    one it can't tell about."""
     got, err = _memo_read(d, glob, "config", "--name-only", "--get-regexp", r"^merge\..*\.driver$", sep="\n", ok=(0, 1))
     return (got[0] if got else ""), ("" if got is not None else err)
+
+
+@contextlib.contextmanager
+def _scratch_store(d: str, glob: list[str], index: bool = True):
+    """(the environment of a temporary object store that reads the
+    repository's objects as alternates, with a copy of its index when
+    `index`, else None; what failed). git's own temporary objects (a merge made again) go there,
+    and go with it, so the repository is left as it was."""
+    import tempfile  # here, not at the top: only a read of a merge needs it, and the hook starts on every tool
+
+    got, err = _memo_read(d, glob, "rev-parse", "--git-path", "index", "--git-path", "objects", sep="\n")
+    if not got or len(got) != 2:
+        yield None, err or "git named no object store"
+        return
+    index_path, objects = (os.path.abspath(os.path.join(d, x)) for x in got)
+    try:
+        tmp = tempfile.TemporaryDirectory(prefix="workflow-guard-")
+    except OSError as e:
+        yield None, f"it couldn't make a temporary folder ({e.__class__.__name__})"
+        return
+    with tmp:
+        alternates = [_c_quoted(objects)] + ([os.environ["GIT_ALTERNATE_OBJECT_DIRECTORIES"]] if os.environ.get("GIT_ALTERNATE_OBJECT_DIRECTORIES") else [])
+        env = {
+            "GIT_INDEX_FILE": os.path.join(tmp.name, "index"), "GIT_OBJECT_DIRECTORY": os.path.join(tmp.name, "objects"),
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": ":".join(alternates), "GIT_NO_LAZY_FETCH": "1",
+        }  # fmt: skip
+        try:
+            os.mkdir(env["GIT_OBJECT_DIRECTORY"])
+            if index and os.path.exists(index_path):
+                with open(index_path, "rb") as src, open(env["GIT_INDEX_FILE"], "wb") as dst:
+                    dst.write(src.read())
+        except OSError as e:
+            yield None, f"it couldn't copy the index ({e.__class__.__name__})"
+            return
+        yield env, ""
 
 
 def _settle_unmerged(d: str, glob: list[str], env: dict[str, str]) -> str:
@@ -6727,7 +6781,8 @@ def _settle_unmerged(d: str, glob: list[str], env: dict[str, str]) -> str:
     index can be written as a tree. git commits none of them as they are
     (`-a` takes the working tree's, which count as they are): only the other
     files' changes are read from that tree. Returns what failed, else ""."""
-    got, err = _git_read(d, glob, "ls-files", "-u", "-z", env=env)
+    plain = [g for g in glob if g not in _GIT_PATHSPEC_GLOBALS]  # `:/` is read as git's magic
+    got, err = _git_read(d, plain, "ls-files", "-u", "-z", "--full-name", "--", ":/", env={**env, "GIT_LITERAL_PATHSPECS": "0"})
     if got is None:
         return err
     stages: dict[str, dict[str, tuple[str, str]]] = {}
@@ -6737,10 +6792,14 @@ def _settle_unmerged(d: str, glob: list[str], env: dict[str, str]) -> str:
         stages.setdefault(path, {})[stage] = (mode, sha)
     if len(stages) > _UNMERGED_CAP:
         return f"more than {_UNMERGED_CAP:,} unmerged files"
-    keep = [f"{v[0]},{v[1]},{path}" for path, by in stages.items() for v in [by.get("2") or by.get("3")] if v]
+    keep = [f"{v[0]},{v[1]},{path}" for path, by in stages.items() for v in [by.get("2") or by.get("3")] if v]  # from the top level
     gone = [path for path, by in stages.items() if not (by.get("2") or by.get("3"))]
     reads = [[a for k in keep for a in ("--cacheinfo", k)]] if keep else []
-    reads += [["--force-remove", "--", *gone]] if gone else []
+    if gone:
+        prefix, err = _git_read(d, glob, "rev-parse", "--show-cdup", sep="\n", env=env)
+        if prefix is None:
+            return err
+        reads.append(["--force-remove", "--", *(os.path.join(prefix[0] if prefix else "", g) for g in gone)])  # from `d`
     for args in reads:
         done, err = _git_read(d, [*_FULL_INDEX, *glob], "update-index", *args, sep="\n", env=env)
         if done is None:
@@ -6752,30 +6811,16 @@ def _merge_own_code(d: str, glob: list[str], heads: list[str], code: _Code) -> t
     """(the first code path among what the merge in progress in `d` would
     change of its own, committed from the index now, else None; what
     couldn't be read). The index is written as a merge commit with `HEAD`
-    and `heads` as its parents, from a copy of the index into a temporary
-    object store, so the repository is left as it was; then read as a pushed
-    merge is."""
-    # Imported here, not at the top: only a commit finishing a merge needs them, and the hook starts on every tool.
-    import shutil
-    import tempfile
-
-    got, err = _git_read(d, glob, "rev-parse", "--git-path", "index", "--git-path", "objects", sep="\n")
-    if not got or len(got) != 2:
-        return None, err or "git named no index"
-    index, objects = (os.path.abspath(os.path.join(d, x)) for x in got)
-    with tempfile.TemporaryDirectory(prefix="workflow-guard-") as tmp:
-        alternates = [_c_quoted(objects)] + ([os.environ["GIT_ALTERNATE_OBJECT_DIRECTORIES"]] if os.environ.get("GIT_ALTERNATE_OBJECT_DIRECTORIES") else [])
-        env = {
-            "GIT_INDEX_FILE": os.path.join(tmp, "index"), "GIT_OBJECT_DIRECTORY": os.path.join(tmp, "objects"),
-            "GIT_ALTERNATE_OBJECT_DIRECTORIES": ":".join(alternates), "GIT_NO_LAZY_FETCH": "1",
-            "GIT_AUTHOR_NAME": "workflow guard", "GIT_AUTHOR_EMAIL": "guard@invalid",
-            "GIT_COMMITTER_NAME": "workflow guard", "GIT_COMMITTER_EMAIL": "guard@invalid",
-        }  # fmt: skip
-        try:
-            shutil.copyfile(index, env["GIT_INDEX_FILE"])
-            os.mkdir(env["GIT_OBJECT_DIRECTORY"])
-        except OSError as e:
-            return None, f"it couldn't copy the index ({e.__class__.__name__})"
+    and `heads` as its parents, into a temporary object store, then read as
+    a pushed merge is."""
+    if len(heads) == 1:
+        driver, err = _merge_driver(d, glob)
+        if driver or err:
+            return None, err or f"git's config names a merge driver (`{driver}`), which merging the parents again would run"
+    with _scratch_store(d, glob) as (env, err):
+        if env is None:
+            return None, err
+        env |= {"GIT_AUTHOR_NAME": "workflow guard", "GIT_AUTHOR_EMAIL": "guard@invalid", "GIT_COMMITTER_NAME": "workflow guard", "GIT_COMMITTER_EMAIL": "guard@invalid"}
         err = _settle_unmerged(d, glob, env)
         if err:
             return None, err
@@ -6786,12 +6831,8 @@ def _merge_own_code(d: str, glob: list[str], heads: list[str], code: _Code) -> t
         merge, err = _git_read(d, glob, "commit-tree", "--no-gpg-sign", "-m", "merge", *parents, tree[0], sep="\n", env=env)
         if not merge or len(merge) != 1:
             return None, err or "`git commit-tree` named no commit"
-        if len(heads) == 1:
-            driver, err = _merge_driver(d, glob)
-            if driver or err:
-                return None, err or f"the repository configures a merge driver (`{driver}`), which merging the parents again would run"
         args = _REMERGE if len(heads) == 1 else _OCTOPUS
-        found, err = _sent_code(d, [*glob, *_REMERGE_CONFIG], ["log", "-1", *args, "--end-of-options", merge[0], "--"], code, len(heads) > 1, env)
+        found, err = _sent_code(d, [*glob, *_REMERGE_CONFIG], ["log", "-1", *args, "--end-of-options", merge[0], "--"], code, True, env)
     return (found[1] if found else None), err
 
 
@@ -7710,14 +7751,14 @@ _COMMIT_HEADER = re.compile(r"\x01\x02([0-9a-f]{4,64})")
 
 
 def _sent_code(
-    d: str, glob: list[str], args: list[str], code: _Code, cc: bool = False, env: dict[str, str] | None = None
+    d: str, glob: list[str], args: list[str], code: _Code, patch: bool = False, env: dict[str, str] | None = None
 ) -> tuple[tuple[str, _Hit] | None, str]:
     """((the commit, the code path) of the first code path `git log <args>`
     lists, else None; what failed). Read as git writes it, so a long history
-    stops at its first code path, within the time a git read has. With `cc`,
-    `git log` writes combined diffs (merges' own changes, #391), whose paths
-    are its `diff --cc` headers' rather than `--name-only`'s. `env` adds to
-    git's environment."""
+    stops at its first code path, within the time a git read has. With
+    `patch`, `git log` writes patches (merges' own changes, #391), whose paths
+    are their file headers' rather than `--name-only`'s. `env` adds to git's
+    environment."""
     # Imported here, not at the top: only a push to `project.repo` needs them, and the hook starts on every tool.
     import queue
     import tempfile
@@ -7725,7 +7766,10 @@ def _sent_code(
     import time
 
     shown, deadline = "`git log`", time.monotonic() + _GIT_READ_SECONDS
-    err_file = tempfile.TemporaryFile()  # git's messages, read only at the end, so they never fill a pipe
+    try:
+        err_file = tempfile.TemporaryFile()  # git's messages, read only at the end, so they never fill a pipe
+    except OSError as e:
+        return None, f"{shown} couldn't run in `{d}`: no temporary file ({e.__class__.__name__})"
     try:
         proc = subprocess.Popen(
             [*_GIT_READ, *glob, *args], cwd=d, stdout=subprocess.PIPE, stderr=err_file, stdin=subprocess.DEVNULL,
@@ -7748,7 +7792,7 @@ def _sent_code(
 
     reader = threading.Thread(target=pump, daemon=True)
     reader.start()
-    pending, sha, sep = bytearray(), "", b"\n" if cc else b"\0"
+    pending, sha, sep = bytearray(), "", b"\n" if patch else b"\0"
     try:
         while True:
             try:
@@ -7769,8 +7813,8 @@ def _sent_code(
                 if m:
                     sha = m.group(1)
                     continue
-                if cc:
-                    item = _cc_path(item) or ""
+                if patch:
+                    item = _patch_path(item) or ""
                 hit = _listed_code(item, code) if item else None
                 if hit:
                     return (sha, _Hit(item, hit)), ""
@@ -7794,12 +7838,6 @@ def _sent_code(
         if not reader.is_alive():  # else a process git started still holds the pipe: the daemon thread keeps it
             proc.stdout.close()
         err_file.close()
-
-
-def _is_merge(d: str, glob: list[str], sha: str) -> bool:
-    """Whether the commit `sha` has more than one parent (for the refusal's wording)."""
-    got, _ = _git_read(d, glob, "rev-parse", "--verify", "--quiet", "--end-of-options", f"{sha}^2", sep="\n")
-    return bool(got)
 
 
 def _push_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tuple[str | None, str | None]:
@@ -7985,27 +8023,31 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
             if _project_url(url, code.repo) and not _GLOB_CHARS.search(r) and "\\" not in r:
                 known += [f"--exclude=refs/remotes/{o}/*" for o in sorted(remotes) if o.startswith(r + "/") and not _GLOB_CHARS.search(o)]
                 known.append(f"--glob=refs/remotes/{r}/*")
-        # Each commit by the files it changes, a merge of two parents by its own changes; then a merge of more parents (#391).
+        # Each commit but a merge by the files it changes, a merge of more parents, then of two, by its own changes (#391).
         memo = _PUSH_MEMO if _PUSH_MEMO is not None else {}
         driver, err = _merge_driver(d, pglob)
-        found, octopus = None, False
+        found, kind = None, ""
         sends = ["--not", *known, "--not", *sorted(pseudo), "--end-of-options", *srcs, "--"]
-        for octopus, args in ((False, _NO_REMERGE if driver else _REMERGE), (True, _OCTOPUS)):
+        for kind, args in [("files", _FILES), ("octopus", _OCTOPUS)] + ([] if driver else [("remerge", _REMERGE)]):
             if err:
                 break
-            key = ("log", octopus, d, tuple(pglob), tuple(args), tuple(known), tuple(sorted(pseudo)), tuple(srcs))
+            key = ("log", kind, d, tuple(pglob), tuple(known), tuple(sorted(pseudo)), tuple(srcs))
             if key not in memo:
-                memo[key] = _sent_code(d, [*pglob, *_REMERGE_CONFIG], ["log", *args, *sends], code, octopus)
+                if kind == "remerge":  # git merges each again in a temporary object store, the guard's own
+                    with _scratch_store(d, pglob, index=False) as (env, e):
+                        memo[key] = _sent_code(d, [*pglob, *_REMERGE_CONFIG], ["log", *args, *sends], code, True, env) if env else (None, e)
+                else:
+                    memo[key] = _sent_code(d, pglob, ["log", *args, *sends], code, kind == "octopus")
             found, err = memo[key]
             if found:
                 break
         if driver and not found and not err:  # a merge of two parents it doesn't merge again
             merges, err = _memo_read(d, pglob, "rev-list", "--merges", "--max-parents=2", "-1", *sends, sep="\n")
             if merges:
-                err = f"it sends merge commit {merges[0][:7]}, and the repository configures a merge driver (`{driver}`), which merging its parents again would run"
+                err = f"it sends merge commit {merges[0][:7]}, and git's config names a merge driver (`{driver}`), which merging its parents again would run"
         if found:
             sha, hit = found
-            if octopus or _is_merge(d, pglob, sha):
+            if kind != "files":
                 return f"this push sends merge commit {sha}, which carries the code path {_shown(hit)} ({hit.pattern}), {_MERGE_OWN}, to {to}; {code.instead}", None
             return f"this push sends commit {sha}, which carries the code path {_shown(hit)} ({hit.pattern}), to {to}; {code.instead}", None
         if not err:
