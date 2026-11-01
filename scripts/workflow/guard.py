@@ -473,7 +473,13 @@ def _start_cwd(root: Path, cwd: str | os.PathLike | None) -> str:
 
 
 class Op(str):
-    """An unquoted shell operator; a quoted word that looks like one is a plain str."""
+    """An unquoted shell operator; a quoted word that looks like one is a plain str.
+    `glued`: a `(` the lexer met inside a word (`*(e:…:)`, `"x"(…)`, `` `…`(…) ``),
+    or zsh's numeric glob before one (`<->(…)`): zsh's glob qualifiers, which
+    can run code in the shell itself; bash reads it as an error outside a
+    function's name or extglob."""
+
+    glued: bool = False
 
 
 class Word(str):
@@ -755,6 +761,7 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
             cmd_start = len(out)
             continue
         if c in ";&|()<>":
+            glued = c == "(" and in_word or c == "<" and bool(re.match(r"<\d*-\d*>\(", s[i : i + 64]))
             fd = ""
             if c in "<>" and in_word and not quoted and word and "".join(word).isdigit():
                 fd = "".join(word)
@@ -784,7 +791,9 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
                 depth += 1
             elif op == ")":
                 depth -= 1
-            out.append(Op(fd + op))
+            tok = Op(fd + op)
+            tok.glued = glued
+            out.append(tok)
             if op in _SEPARATORS:
                 cmd_start = len(out)
             i += len(op)
@@ -7920,8 +7929,7 @@ def _compound_or_cd(segs: list[Seg], command: str) -> str | None:
     joined = command.replace("\\\n", "")  # bash joins a backslash-newline before it reads anything
     if _CURRENT_SHELL_SUB.search(joined):
         return f"it runs a command substitution in the shell itself (`${{ …; }}`){alone}, or write the file with the file tools"
-    bare = _unquoted_text(joined, segs)
-    if _ZSH_EVAL.search(joined) or _ZSH_QUALIFIER.search(bare):
+    if _ZSH_EVAL.search(joined) or any(isinstance(t, Op) and t.glued for t in toks):
         return (
             f"it may run code in the shell itself (zsh's glob qualifiers such as `*(e:…:)`, a `(` right after a word, "
             f"or `${{(e)…}}`, `${{~…}}`){alone}: give a commit's message with `-F <file>`, or write the file with the file tools"
@@ -7953,49 +7961,21 @@ def _stateless_builtin(words: list[str]) -> bool:
     """A builtin that changes nothing in the shell as it is given here: one
     of `_STATELESS_BUILTINS`, or one of `_STATEFUL_OPTION`'s without its
     option, written out (no argument the shell may turn into it: `{-x,}`,
-    `${X:--x}`, a glob)."""
+    `${X:--x}` or `"${X:--x}"`, a glob)."""
     if words[0] in _STATELESS_BUILTINS:
         return True
     opt = _STATEFUL_OPTION.get(words[0])
     if opt is None:
         return False
-    # An argument the shell may turn into others (the lexer's `splits`, unquoted); a word built elsewhere: may.
-    return not any(w.startswith("-") and opt in w or getattr(w, "splits", True) for w in words[1:])
+    # An argument the shell may turn into others: the lexer's `splits` (unquoted), or an expansion in quotes
+    # (`"${X:--x}"`, `"$(echo -x)"`); a word built elsewhere: may.
+    return not any(
+        w.startswith("-") and opt in w or getattr(w, "splits", True) or "$" in w or "`" in w for w in words[1:]
+    )
 # bash 5.3's `${ cmd; }` and `${| cmd; }`, which run in the shell itself (a `cd` there stays).
 _CURRENT_SHELL_SUB = re.compile(r"\$\{[\s|]")
 # zsh's glob qualifiers that run code (`*(e:…:)`, `*(+fn)`) and parameter flags (`${(e)…}`), in the shell itself.
 _ZSH_EVAL = re.compile(r"\$\{[(~]|\$~")  # `${(e)…}`, `${~…}`, `$~X`, live in double quotes too
-# A `(` right after a word, in the command's unquoted text: zsh's glob qualifiers (`*(e:…:)`, `.(+fn)`), whatever
-# they hold; bash reads it as an error outside a function's name or extglob.
-_ZSH_QUALIFIER = re.compile(r"[^\s$<>=(|&;`]\(")
-
-
-def _unquoted_text(command: str, segs: list[Seg]) -> str:
-    """The command's text with its heredocs' bodies blanked out and its
-    quoted spans (single, double, `$'…'`) and escapes filled with a letter,
-    so a quoted word still touches what follows it: what the shell reads as
-    words and globs."""
-    for s in segs:
-        for body in (s.heredoc, s.expanded):
-            if body:
-                command = command.replace(body, " ")
-    out, i, n = [], 0, len(command)
-    while i < n:
-        ch = command[i]
-        if ch == "\\":
-            out.append("qq")
-            i += 2
-        elif ch in "'\"":
-            end = command.find(ch, i + 1)
-            while ch == '"' and end > 0 and command[end - 1] == "\\":
-                end = command.find(ch, end + 1)
-            end = n if end < 0 else end
-            out.append("q" * (end + 1 - i))
-            i = end + 1
-        else:
-            out.append(ch)
-            i += 1
-    return "".join(out)
 # Arithmetic and `${X=…}`/`${X:=…}` expansions, which can assign a variable in the shell itself.
 _ASSIGNING_EXPANSION = re.compile(r"\$\(\(|\$\[|\(\(|\$\{[^}]*?:?=")
 

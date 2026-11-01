@@ -1035,6 +1035,19 @@ def test_a_write_or_commit_in_a_command_that_changes_directory(tmp_path, monkeyp
         ("echo *(P:'(':e:'cd src':); git commit -am x", "zsh's"),
         ("echo ${~X:-x}; git commit -am x", "zsh's"),
         ("sh -c 'echo for'; for HOME in /tmp/h; do git commit -am x; done", "the compound command `for`"),
+        # A quoted expansion may become the option too.
+        ('jobs "${V:--x}" cd src; git commit -am x', "runs the shell's `jobs`"),
+        ('printf "${V:--v}" HOME /tmp/h; git commit -am x', "runs the shell's `printf`"),
+        ('jobs "$(echo -x)" cd src; git commit -am x', "runs the shell's `jobs`"),
+        ("[ \"$V\" 'PIPESTATUS[HOME=0]' ]; git commit -am x", "runs the shell's `[`"),
+        # A glued `(` is read as the shell reads quotes, here-strings, escapes, comments and heredocs.
+        ("echo *(e:'cd src':) >/dev/null; cat <<< '(' >/dev/null; git commit -am x", "zsh's"),
+        ('echo "a\\\\" *(e:\'cd src\':) "b"; git commit -am x', "zsh's"),
+        ("echo $'\\'' *(e:'cd src':); git commit -am x", "zsh's"),
+        ("echo x # it's\necho *(e:'cd src':); git commit -am x", "zsh's"),
+        ("echo `echo src`(e:'cd src':); git commit -am x", "zsh's"),
+        ("echo $(echo src)(e:'cd src':); git commit -am x", "zsh's"),
+        ("echo /dev/fd/<->(e:'cd src':) >/dev/null; git commit -am x", "zsh's"),
     ):
         _change(root, CODE)
         d, why = hook(monkeypatch, capsys, root, command)
@@ -1050,6 +1063,10 @@ def test_a_write_or_commit_in_a_command_that_changes_directory(tmp_path, monkeyp
         'git commit -am "fix(release-gate): print(date.today())"',
         "printf '[section]\\n' > src/x.cfg",
         "cat > src/app.py <<'EOF'\nprint(range(n+1))\nEOF",
+        "git commit -am x  # fix(scope)",
+        "cat <<< 'f(x)' > src/app.py",
+        "echo 'x' \\( > src/app.py",
+        "cat > src/app.py <<EOF\nf(x) \\\ny\nEOF",
     ):
         assert hook(monkeypatch, capsys, root, ok) == ("allow", ""), ok
 
