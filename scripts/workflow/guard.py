@@ -6105,13 +6105,13 @@ class _Code:
         key = (top, tuple(glob))
         if key not in self._heads:
             got, _ = _git_read(top, list(glob), "symbolic-ref", "-q", "HEAD", sep="\n", ok=(0, 1))
-            if got == []:  # detached
-                for name in ("rebase-merge/head-name", "rebase-apply/head-name"):
-                    path, _ = _git_read(top, list(glob), "rev-parse", "--git-path", name, sep="\n")
-                    text = _read_text(os.path.join(top, path[0]), None, 4096) if path else None
-                    if text:
-                        got = [text.strip()]
-                        break
+            # A rebase in progress finishes on the branch it started on (`head-name`), whatever HEAD names meanwhile.
+            paths, _ = _git_read(top, list(glob), "rev-parse", "--git-path", "rebase-merge/head-name", "--git-path", "rebase-apply/head-name", sep="\n")
+            for path in paths or []:
+                text = _read_text(os.path.join(top, path), None, 4096)
+                if text and text.strip() != "detached HEAD":
+                    got = [text.strip()] if got == [] or (got and got[0] == text.strip()) else ["(a rebase of another branch)"]
+                    break
             self._heads[key] = bool(got) and _prototype_branch(got[0])
         return self._heads[key]
 
@@ -7756,7 +7756,11 @@ def _prototype_branch(ref: str) -> bool:
     return ref.startswith(_PROTOTYPE) and len(ref) > len(_PROTOTYPE)
 
 
-def _moves_head(changers: "_Changers", segs: list[Seg], command: str) -> str | None:
+# A `.git` given as a short option's value, attached (`cp -t.git`, `tar -C.git`), which `_DOT_GIT` reads as part of a word.
+_DOT_GIT_OPTION = re.compile(r"-[A-Za-z0-9]+\.git(?![\w.-])", re.IGNORECASE)
+
+
+def _moves_head(changers: "_Changers", segs: list[Seg], command: str, named: str | None) -> str | None:
     """What in the command may change which branch a checkout's HEAD names
     (`git switch`, `checkout`, `rebase`, `stash`, `symbolic-ref`, a branch
     renamed, an alias, `gh pr checkout`, a `.git` it names), else None. The
@@ -7769,7 +7773,9 @@ def _moves_head(changers: "_Changers", segs: list[Seg], command: str) -> str | N
         if args is not None and args[0] == "rebase" and args[1:] in _REBASE_ENDS:
             continue
         return label
-    return _names_dot_git(command, segs)
+    if named:
+        return named
+    return next((w for s in segs for w in [*s.words, *s.redirects] if _DOT_GIT_OPTION.match(w)), None)
 
 
 def _claude_worktrees(abspath: str, root: Path) -> list[str]:
@@ -7792,19 +7798,20 @@ def _prototype_rule(code: _Code, segs: list[Seg], root: Path, command: str) -> _
     branch. Its `_Changers` are kept for the push rule."""
     changers = _Changers(segs, root)
     code = replace(code, changers=changers)
-    moves = _moves_head(changers, segs, command)
+    named = _names_dot_git(command, segs)  # in a commit's message or a file's text too
+    moves = _moves_head(changers, segs, command, named)
     if moves is None:
         return code
     code = replace(code, no_prototype=moves)
     top = os.path.realpath(str(root))
     if not any(code.on_prototype(t) for t in [top, *_claude_worktrees(top, root)]):
         return code
-    named = _names_dot_git(command, segs)  # in a commit's message or a file's text too
+    named = named or (moves if _DOT_GIT_OPTION.match(moves) else None)
     hows = [f"runs `{moves}`: run them in commands of their own"] if moves != named else []
     if named:
         hows.append(
             f"names `{named}`, which could: name no `.git` in it (run what names it in a command of its own, "
-            "give a commit's message with `-F`, write a file with the file tools)"
+            "give a commit's message with `-F <file>`, or write a file with the file tools)"
         )
     how = ", and ".join(hows)
     note = (
@@ -8823,9 +8830,10 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
         if code.planning():
             if reads_only is None:
                 reads_only = _only_reads_beside(segs)
-            settings = cs or dot_git or _push_env(segs, seg, _PUSH_ENV) or _push_env(segs, seg, _PUSH_ENV_CONFIG)
+            own = [w for w in seg.wrappers if w not in ("command", "timeout")] + [r for r in seg.redirects if r != "/dev/null"]
+            settings = cs or dot_git or own or _push_env(segs, seg, _PUSH_ENV) or _push_env(segs, seg, _PUSH_ENV_CONFIG)
             if settings:
-                why = "it sets a setting or variable of its own, or the command names a `.git`"
+                why = "it sets a setting or variable of its own, runs under a wrapper or writes a file, or the command names a `.git`"
             elif not reads_only:
                 why = "another part of the command does more than read: run the push in a command of its own"
             else:

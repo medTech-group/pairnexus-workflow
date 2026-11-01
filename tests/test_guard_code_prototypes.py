@@ -805,7 +805,7 @@ def test_a_dot_git_named_in_a_commits_message(tmp_path, monkeypatch, capsys):
     root = _prototype(tmp_path)
     _change(root, CODE)
     d, why = hook(monkeypatch, capsys, root, 'git commit -am "read .git/HEAD in the reader"')
-    assert d == "deny" and "this one names `.git/HEAD" in why and "`-F`" in why, why
+    assert d == "deny" and "this one names `.git/HEAD" in why and "`-F <file>`" in why, why
     assert hook(monkeypatch, capsys, root, 'git commit -am "read the HEAD file in the reader"') == ("allow", "")
     (root / "msg.txt").write_text("read .git/HEAD in the reader\n")
     assert hook(monkeypatch, capsys, root, "git commit -a -F msg.txt") == ("allow", "")
@@ -813,6 +813,44 @@ def test_a_dot_git_named_in_a_commits_message(tmp_path, monkeypatch, capsys):
     assert d == "deny" and "write a file with the file tools" in why, why
     d, why = hook(monkeypatch, capsys, root, 'git stash && git commit -am "fix .git handling"')
     assert d == "deny" and "runs `git stash`" in why and "names `.git`" in why, why
+
+
+def test_a_rebase_of_another_branch_in_progress_isnt_on_a_prototype_branch(tmp_path, monkeypatch, capsys):
+    """git finishes a rebase on the branch it started on, whatever HEAD names meanwhile."""
+    root = _clone(tmp_path)
+    git(root, "branch", "-q", "prototype/x")
+    git(root, "checkout", "-q", "-b", "other", "main")
+    _code_commit(root, CODE, "other\n")
+    git(root, "checkout", "-q", "feature")
+    _code_commit(root, CODE, "mine\n")
+    assert subprocess.run(["git", "rebase", "other"], cwd=root, capture_output=True).returncode != 0
+    git(root, "checkout", "-q", "-f", "prototype/x")
+    _change(root, CODE, "both\n")
+    for command in ("git rebase --abort && echo x > src/app.py", "git commit -am wip"):
+        d, why = hook(monkeypatch, capsys, root, command)
+        assert d == "deny" and "code path" in why, (command, why)
+
+
+def test_a_dot_git_attached_to_a_short_option(tmp_path, monkeypatch, capsys):
+    root = _prototype(tmp_path)
+    _change(root, CODE)
+    for command in ("cp -t.git HEAD && git commit -am x", "tar -C.git -xf h.tar; git commit -am x"):
+        d, why = hook(monkeypatch, capsys, root, command)
+        assert d == "deny" and "code path" in why, (command, why)
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["env -u HOME git push origin", "git push origin prototype/x 2>/tmp/elsewhere.cfg", "nice git push origin prototype/x"],
+)
+def test_a_prototype_push_under_a_wrapper_or_writing_a_file_is_judged(tmp_path, monkeypatch, capsys, command):
+    root = _prototype(tmp_path)
+    _code_commit(root)
+    d, why = hook(monkeypatch, capsys, root, command)
+    assert d in ("deny", "ask") and ("runs under a wrapper or writes a file" in why or "can't tell" in why), (command, why)
+    assert d == "ask" or "carries the code path" in why, why
+    for ok in ("command git push origin prototype/x", "timeout 60 git push origin prototype/x", "git push origin prototype/x >/dev/null 2>&1"):
+        assert hook(monkeypatch, capsys, root, ok) == ("allow", ""), ok
 
 
 def test_the_changelog_notes_it():
