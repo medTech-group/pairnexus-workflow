@@ -7799,9 +7799,13 @@ def _prototype_rule(code: _Code, segs: list[Seg], root: Path, command: str) -> _
     top = os.path.realpath(str(root))
     if not any(code.on_prototype(t) for t in [top, *_claude_worktrees(top, root)]):
         return code
+    if moves == _names_dot_git(command, segs):  # named only, perhaps in a message: splitting the command can't help
+        how = f"names `{moves}`, which could: name no `.git` in it (a commit's message from a file, `-F`)"
+    else:
+        how = f"runs `{moves}`: run them in commands of their own"
     note = (
         f"on a `prototype/*` branch, a planning session's code write or commit goes through only in a command "
-        f"that can't change the branch first, and this one runs `{moves}`: run them in commands of their own. Otherwise, "
+        f"that can't change the branch first, and this one {how}. Otherwise, "
     )
     return replace(code, instead=note + code.instead)
 

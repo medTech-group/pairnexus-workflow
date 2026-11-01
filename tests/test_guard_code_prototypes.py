@@ -790,6 +790,25 @@ def test_finishing_a_prototype_branchs_rebase_by_the_apply_backend(tmp_path, mon
     assert d == "deny" and "carries the code path" in why, why
 
 
+def test_git_clean_on_a_prototype_checkout(tmp_path, monkeypatch, capsys):
+    root = _prototype(tmp_path)
+    _change(root, "src/new.py")
+    assert hook(monkeypatch, capsys, root, "git clean -fd") == ("allow", "")
+    wt = root / ".claude/worktrees/side"
+    git(root, "worktree", "add", "-q", "-b", "side", str(wt))
+    _change(wt, "src/new.py")
+    d, why = hook(monkeypatch, capsys, root, "git -C .claude/worktrees/side clean -fd")
+    assert d == "deny" and "removes the code path" in why, why
+
+
+def test_a_dot_git_named_in_a_commits_message(tmp_path, monkeypatch, capsys):
+    root = _prototype(tmp_path)
+    _change(root, CODE)
+    d, why = hook(monkeypatch, capsys, root, 'git commit -am "read .git/HEAD in the reader"')
+    assert d == "deny" and "this one names `.git/HEAD" in why and "`-F`" in why, why
+    assert hook(monkeypatch, capsys, root, 'git commit -am "read the HEAD file in the reader"') == ("allow", "")
+
+
 def test_the_changelog_notes_it():
     text = since_0110()
     assert "#393" in text and "`prototype/*`" in text
