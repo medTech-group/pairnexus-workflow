@@ -67,7 +67,7 @@ def _feature(root):
     git(root, "checkout", "-q", "-B", "feature", "origin/main")
 
 
-def _merged_pr(root, pr=12):
+def _merge_pr(root, pr=12):
     """A pull request merged into the base, changing line 5 of the code file
     and the guide; returns its merge commit."""
     return _on_base(root, lambda r: (_edit(r, CODE, "v5 = 5", "v5 = 'pr'"), _change(r, DOC, "# PR\n")), "fix", pr=pr)
@@ -100,7 +100,7 @@ PLANNING = {k: v for k, v in NOT_TICKET.items() if k != "conductor"}
 @pytest.mark.parametrize("who", PLANNING)
 def test_a_revert_of_a_merge_on_the_base_committed_and_pushed_goes_through(proj, monkeypatch, capsys, who):
     role, branch = PLANNING[who]
-    merge = _merged_pr(proj)
+    merge = _merge_pr(proj)
     _feature(proj)
     _on(proj, branch)
     assert hook(monkeypatch, capsys, proj, f"git revert --no-edit -m 1 {merge}", role) == ("allow", "")  # it checks out content already committed
@@ -109,7 +109,7 @@ def test_a_revert_of_a_merge_on_the_base_committed_and_pushed_goes_through(proj,
 
 
 def test_a_revert_after_a_later_change_two_lines_away_goes_through(proj, monkeypatch, capsys):
-    merge = _merged_pr(proj)
+    merge = _merge_pr(proj)
     _on_base(proj, lambda r: _edit(r, CODE, "v7 = 7", "v7 = 'later'"), "later")
     _feature(proj)
     assert _revert(proj, merge) == 0
@@ -127,7 +127,7 @@ def test_a_revert_of_a_plain_commit_on_the_base_goes_through(proj, monkeypatch, 
 def test_a_revert_in_progress_is_judged_by_the_revert_rule(proj, monkeypatch, capsys):
     """`git revert --no-commit` leaves `REVERT_HEAD`: finishing it is judged
     by the revert rule, the commit's own message aside."""
-    merge = _merged_pr(proj)
+    merge = _merge_pr(proj)
     _on_base(proj, lambda r: _edit(r, CODE, "v7 = 7", "v7 = 'later'"), "later")
     _feature(proj)
     assert _revert(proj, merge, "--no-commit") == 0
@@ -142,7 +142,8 @@ def test_a_revert_in_progress_is_judged_by_the_revert_rule(proj, monkeypatch, ca
     "command, why",
     [
         ("git commit -m 'Undo #12'", 'leaves out the "This reverts commit'),
-        ("git commit -F msg.txt", "`-F` takes its message from elsewhere"),
+        ("git commit -m 'Undo' -m 'This reverts commit 0123456789abcdef0123456789abcdef01234567.'", 'leaves out the "This reverts commit'),
+        ("git commit -F msg.txt", "`-F` takes its message from elsewhere, which the guard doesn't read"),
         ("git commit --amend --no-edit", "`--amend` folds it into the commit before it"),
         ("git commit --no-edit -- src/app.py", "a pathspec commits only part of it"),
         ("git add -A && git commit --no-edit", "the command runs `git add -A` before it"),
@@ -152,18 +153,27 @@ def test_a_revert_in_progress_is_judged_by_the_revert_rule(proj, monkeypatch, ca
 def test_finishing_a_revert_other_than_as_it_stands_is_refused(proj, monkeypatch, capsys, command, why):
     """The revert is read from the index as it is, with the message `git
     revert` wrote: a push reads a revert by its "This reverts commit" line."""
-    merge = _merged_pr(proj)
+    merge = _merge_pr(proj)
     _feature(proj)
     assert _revert(proj, merge, "--no-commit") == 0
     d, msg = hook(monkeypatch, capsys, proj, command)
-    assert d == "deny" and why in msg and f"doesn't exactly undo {merge[:7]} as it stands" in msg, msg
-    assert "`git revert --abort`" in msg, msg
+    assert d == "deny" and why in msg and f"it finishes a revert of {merge[:7]}, but not as it stands" in msg, msg
+    assert "`git revert --abort` cancels the revert" in msg, msg
+    assert "**Revert** button" not in msg and "quick ticket" not in msg, msg  # the plain step is the way forward
     assert hook(monkeypatch, capsys, proj, "git commit --no-edit") == ("allow", "")
+
+
+@pytest.mark.parametrize("command", ["git status && git commit --no-edit", "echo ok && git commit --no-edit", "true; git commit --no-edit", "git diff --cached --stat; git commit --no-edit"])
+def test_reads_before_finishing_a_revert_change_nothing(proj, monkeypatch, capsys, command):
+    merge = _merge_pr(proj)
+    _feature(proj)
+    assert _revert(proj, merge, "--no-commit") == 0
+    assert hook(monkeypatch, capsys, proj, command) == ("allow", "")
 
 
 def test_a_revert_beside_other_commits_is_judged_with_them(proj, monkeypatch, capsys):
     """Only the revert is let through: a code commit sent with it still counts."""
-    merge = _merged_pr(proj)
+    merge = _merge_pr(proj)
     _feature(proj)
     _commit(proj, lambda r: _change(r, "docs/branch.md", "# Branch\n"))
     assert _revert(proj, merge) == 0
@@ -191,7 +201,7 @@ def _forged(root, sha, extra):
 
 
 def test_an_unmatched_revert_of_a_pull_request_offers_github_s_revert_button(proj, monkeypatch, capsys):
-    merge = _merged_pr(proj, pr=12)
+    merge = _merge_pr(proj, pr=12)
     _feature(proj)
     _forged(proj, merge, lambda r: _edit(r, CODE, "v9 = 9", "v9 = 'extra'"))
     sha = git(proj, "rev-parse", "--short", "HEAD").strip()
@@ -216,7 +226,7 @@ def test_an_unmatched_revert_of_a_plain_commit_offers_a_quick_ticket(proj, monke
 def test_a_revert_resolved_after_a_later_change_to_the_same_lines_is_refused(proj, monkeypatch, capsys):
     """The base changed line 5 again after the pull request: the revert
     conflicts, and resolving it is writing code (answer 23)."""
-    merge = _merged_pr(proj)
+    merge = _merge_pr(proj)
     _on_base(proj, lambda r: _edit(r, CODE, "v5 = 'pr'", "v5 = 'later'"), "later")
     _feature(proj)
     assert _revert(proj, merge) != 0  # it conflicts: `REVERT_HEAD` is left
@@ -232,12 +242,12 @@ def test_a_revert_resolved_after_a_later_change_to_the_same_lines_is_refused(pro
 
 
 def test_a_revert_in_progress_with_more_code_staged_is_refused(proj, monkeypatch, capsys):
-    merge = _merged_pr(proj)
+    merge = _merge_pr(proj)
     _feature(proj)
     assert _revert(proj, merge, "--no-commit") == 0
     _edit(proj, CODE, "v9 = 9", "v9 = 'extra'")
     d, why = hook(monkeypatch, capsys, proj, "git commit -a --no-edit")
-    assert d == "deny" and "src/app.py" in why and f"doesn't exactly undo {merge[:7]}" in why, why
+    assert d == "deny" and "`-a` adds the working tree's change to `src/app.py`" in why, why
     git(proj, "add", CODE)
     d, why = hook(monkeypatch, capsys, proj, "git commit --no-edit")
     assert d == "deny" and f"doesn't exactly undo {merge[:7]}" in why, why
@@ -245,7 +255,7 @@ def test_a_revert_in_progress_with_more_code_staged_is_refused(proj, monkeypatch
 
 def test_a_revert_that_differs_only_in_whitespace_is_refused(proj, monkeypatch, capsys):
     """Compared verbatim: indentation is code too."""
-    merge = _merged_pr(proj)
+    merge = _merge_pr(proj)
     _feature(proj)
     _forged(proj, merge, lambda r: _edit(r, CODE, "v5 = 5", "    v5 = 5"))
     d, why = hook(monkeypatch, capsys, proj, PUSH)
@@ -269,7 +279,7 @@ def test_a_revert_that_removes_another_identical_line_is_refused(proj, monkeypat
     git(proj, "commit", "-qam", f"Revert #41\n\nThis reverts commit {merge}.")
     for role in (None, "conductor"):
         d, why = hook(monkeypatch, capsys, proj, PUSH, role)
-        assert d == "deny" and f"doesn't exactly undo {merge[:7]}" in why and "isn't as `git revert` leaves it" in why, (role, why)
+        assert d == "deny" and f"doesn't exactly undo {merge[:7]}" in why and f"isn't as `git revert` of {merge[:7]} leaves it" in why, (role, why)
 
 
 def test_lines_put_back_elsewhere_are_refused(proj, monkeypatch, capsys):
@@ -280,10 +290,10 @@ def test_lines_put_back_elsewhere_are_refused(proj, monkeypatch, capsys):
     assert _revert(proj, sha, "--no-commit") == 0
     _change(proj, CODE, "v4 = 4\n" + (proj / CODE).read_text().replace("v4 = 4\n", ""))
     d, why = hook(monkeypatch, capsys, proj, "git commit -a --no-edit")
-    assert d == "deny" and f"doesn't exactly undo {sha[:7]}" in why, why
+    assert d == "deny" and "`-a` adds the working tree's change" in why, why
     git(proj, "add", CODE)
     d, why = hook(monkeypatch, capsys, proj, "git commit --no-edit")
-    assert d == "deny" and "isn't as `git revert` leaves it" in why, why
+    assert d == "deny" and f"isn't as `git revert` of {sha[:7]} leaves it" in why, why
 
 
 def _binary(root):
@@ -307,9 +317,54 @@ def test_reverts_of_every_kind_of_change_go_through(proj, monkeypatch, capsys, c
     assert hook(monkeypatch, capsys, proj, PUSH) == ("allow", "")
 
 
+def test_a_revert_after_a_later_rename_goes_through(proj, monkeypatch, capsys):
+    """git's revert follows a file the base moved since: so does the guard."""
+    merge = _merge_pr(proj)
+    _on_base(proj, lambda r: (r / "src/core").mkdir() or git(r, "mv", CODE, "src/core/app.py"), "move")
+    _feature(proj)
+    assert _revert(proj, merge) == 0
+    assert "v5 = 5" in (proj / "src/core/app.py").read_text()
+    assert hook(monkeypatch, capsys, proj, PUSH) == ("allow", "")
+
+
+def test_a_revert_of_a_rename_edited_since_goes_through(proj, monkeypatch, capsys):
+    merge = _on_base(proj, lambda r: git(r, "mv", CODE, "src/moved.py"), "rename", pr=30)
+    _on_base(proj, lambda r: _edit(r, "src/moved.py", "v9 = 9", "v9 = 'later'"), "later")
+    _feature(proj)
+    assert _revert(proj, merge) == 0
+    assert "v9 = 'later'" in (proj / CODE).read_text()
+    assert hook(monkeypatch, capsys, proj, PUSH) == ("allow", "")
+
+
+def test_a_merge_reverted_against_its_second_parent_is_refused(proj, monkeypatch, capsys):
+    """Both parents changed the code file: `-m 2` undoes the base's side."""
+    git(proj, "checkout", "-q", "-b", "pr-work", "origin/main")
+    _commit(proj, lambda r: _edit(r, CODE, "v5 = 5", "v5 = 'pr'"))
+    git(proj, "checkout", "-q", "-B", "base-work", "origin/main")
+    _commit(proj, lambda r: _edit(r, CODE, "v8 = 8", "v8 = 'base'"))
+    git(proj, "merge", "-q", "--no-ff", "-m", "Merge pull request #12 from acme/fix", "pr-work")
+    merge = git(proj, "rev-parse", "HEAD").strip()
+    git(proj, "push", "-q", "origin", "base-work:main")
+    _feature(proj)
+    assert subprocess.run(["git", "revert", "--no-edit", "-m", "2", merge], cwd=proj, capture_output=True).returncode == 0
+    d, why = hook(monkeypatch, capsys, proj, PUSH)
+    assert d == "deny" and f"`git revert -m 1 {merge[:7]}`" in why, why
+
+
+def test_a_file_git_doesn_t_diff_is_read_as_git_merges_it(proj, monkeypatch, capsys):
+    """A code file marked `-diff` still merges as text: a revert after a later
+    change elsewhere in it goes through."""
+    _on_base(proj, lambda r: _change(r, ".gitattributes", "src/app.py -diff\n"), "attributes")
+    merge = _merge_pr(proj)
+    _on_base(proj, lambda r: _edit(r, CODE, "v8 = 8", "v8 = 'later'"), "later")
+    _feature(proj)
+    assert _revert(proj, merge) == 0
+    assert hook(monkeypatch, capsys, proj, PUSH) == ("allow", "")
+
+
 def test_a_revert_naming_its_commit_by_reference_goes_through(proj, monkeypatch, capsys):
     """`git revert --reference` names the commit by an abbreviated name."""
-    merge = _merged_pr(proj)
+    merge = _merge_pr(proj)
     _feature(proj)
     assert _revert(proj, merge, "--reference") == 0
     assert f"This reverts commit {merge[:7]}" in git(proj, "log", "-1", "--format=%B")
@@ -319,7 +374,7 @@ def test_a_revert_naming_its_commit_by_reference_goes_through(proj, monkeypatch,
 def test_a_file_named_like_a_commit_header_hides_no_commit(proj, monkeypatch, capsys):
     """git's log of a push names each commit with a header line of the
     guard's own; a file named like one, beside code, changes nothing."""
-    merge = _merged_pr(proj)
+    merge = _merge_pr(proj)
     git(proj, "checkout", "-q", "-b", "real", "origin/main")
     assert _revert(proj, merge) == 0
     real = git(proj, "rev-parse", "HEAD").strip()
@@ -369,7 +424,7 @@ def test_a_revert_of_a_commit_merged_since_the_last_fetch_says_to_fetch(proj, mo
 def test_a_ref_named_like_a_commit_doesn_t_stand_in_for_it(proj, monkeypatch, capsys):
     """The push rule reads each commit by its full name: a branch named like
     a pushed commit's short name, pointing at an exact revert, changes nothing."""
-    merge = _merged_pr(proj)
+    merge = _merge_pr(proj)
     git(proj, "checkout", "-q", "-b", "real", "origin/main")
     assert _revert(proj, merge) == 0
     _feature(proj)
@@ -391,7 +446,7 @@ def test_a_message_naming_no_commit_here_is_refused(proj, monkeypatch, capsys):
 
 
 def test_the_conductor_s_matched_revert_needs_the_ledger_entry(proj, monkeypatch, capsys):
-    merge = _merged_pr(proj)
+    merge = _merge_pr(proj)
     _feature(proj)
     assert _revert(proj, merge) == 0
     d, why = hook(monkeypatch, capsys, proj, PUSH, "conductor")
@@ -399,7 +454,7 @@ def test_the_conductor_s_matched_revert_needs_the_ledger_entry(proj, monkeypatch
     assert "ask the owner" in why and '{"what": "revert", "revert": "' + merge + '"' in why, why
     assert "`.workflow/run/body.md`" in why, why
     # An entry without a `revert` field, or for another commit, doesn't count.
-    # So does an entry whose `what` isn't "revert", or that doesn't give the full SHA in lower case.
+    # Nor does an entry whose `what` isn't "revert", or that doesn't give the full SHA in lower case.
     unread = [{"what": "revert", "at": "2026-11-01T00:00:00Z", "grant": "yes"}], [_allowed("ab" * 20)], [{"what": "revert", "sha": merge, "at": "x", "grant": "y"}]
     for ledger in (*unread, [_allowed(merge, what="merge")], [_allowed(merge[:7])], [_allowed(merge.upper())]):
         _run_body(proj, ledger)
@@ -410,7 +465,7 @@ def test_the_conductor_s_matched_revert_needs_the_ledger_entry(proj, monkeypatch
 
 
 def test_the_conductor_s_revert_in_progress_needs_the_ledger_entry(proj, monkeypatch, capsys):
-    merge = _merged_pr(proj)
+    merge = _merge_pr(proj)
     _feature(proj)
     assert _revert(proj, merge, "--no-commit") == 0
     d, why = hook(monkeypatch, capsys, proj, "git commit --no-edit", "conductor")
@@ -420,7 +475,7 @@ def test_the_conductor_s_revert_in_progress_needs_the_ledger_entry(proj, monkeyp
 
 
 def test_the_conductor_s_unmatched_revert_is_refused_even_when_allowed(proj, monkeypatch, capsys):
-    merge = _merged_pr(proj)
+    merge = _merge_pr(proj)
     _feature(proj)
     _forged(proj, merge, lambda r: _edit(r, CODE, "v9 = 9", "v9 = 'extra'"))
     _run_body(proj, [_allowed(merge)])
@@ -432,8 +487,16 @@ def test_the_conductor_s_unmatched_revert_is_refused_even_when_allowed(proj, mon
     assert d == "deny" and "tell the owner" in why and "not made" not in why, why  # no entry to mark
 
 
+def test_the_conductor_s_refusal_of_a_plain_commit_s_revert(proj, monkeypatch, capsys):
+    plain = _on_base(proj, lambda r: _edit(r, CODE, "v5 = 5", "v5 = 'plain'"))
+    _feature(proj)
+    _forged(proj, plain, lambda r: _edit(r, CODE, "v9 = 9", "v9 = 'extra'"))
+    d, why = hook(monkeypatch, capsys, proj, PUSH, "conductor")
+    assert d == "deny" and "tell the owner, who can have it filed as a ticket" in why, why
+
+
 def test_a_body_file_that_can_t_be_read_allows_nothing(proj, monkeypatch, capsys):
-    merge = _merged_pr(proj)
+    merge = _merge_pr(proj)
     _feature(proj)
     assert _revert(proj, merge) == 0
     (proj / ".workflow/run").mkdir(parents=True)
@@ -446,22 +509,38 @@ def test_a_body_file_that_can_t_be_read_allows_nothing(proj, monkeypatch, capsys
 
 
 def test_a_revert_it_can_t_read_is_asked(proj, monkeypatch, capsys):
-    merge = _merged_pr(proj)
+    merge = _merge_pr(proj)
     _feature(proj)
     assert _revert(proj, merge) == 0
-    monkeypatch.setattr(guard_mod, "_patch_id", lambda *a, **k: (None, "`git patch-id` took too long"))
+    monkeypatch.setattr(guard_mod, "_undone_by_git", lambda *a, **k: ("unsure", "`git merge-tree` took too long"))
     d, why = hook(monkeypatch, capsys, proj, PUSH)
     assert d == "ask" and "can't tell" in why and "took too long" in why, why
+    assert "or only a revert that exactly undoes a commit on the base" in why, why
     d, why = hook(monkeypatch, capsys, proj, PUSH, "conductor")
     assert d == "deny" and "can't tell" in why, why
 
 
 def test_an_unread_revert_doesn_t_hide_a_code_commit(proj, monkeypatch, capsys):
-    merge = _merged_pr(proj)
+    merge = _merge_pr(proj)
     _feature(proj)
     _commit(proj, lambda r: _change(r, "src/mine.py", "m = 1\n"))
     assert _revert(proj, merge) == 0
-    monkeypatch.setattr(guard_mod, "_patch_id", lambda *a, **k: (None, "`git patch-id` took too long"))
+    monkeypatch.setattr(guard_mod, "_undone_by_git", lambda *a, **k: ("unsure", "`git merge-tree` took too long"))
+    d, why = hook(monkeypatch, capsys, proj, PUSH)
+    assert d == "deny" and "src/mine.py" in why, why
+
+
+def test_past_the_revert_cap_a_plain_code_commit_is_still_refused(proj, monkeypatch, capsys):
+    monkeypatch.setattr(guard_mod, "_REVERT_CAP", 1)
+    first = _on_base(proj, lambda r: _edit(r, CODE, "v5 = 5", "v5 = 'one'"))
+    second = _on_base(proj, lambda r: _edit(r, CODE, "v8 = 8", "v8 = 'two'"))
+    _feature(proj)
+    assert _revert(proj, second) == 0 and _revert(proj, first) == 0
+    d, why = hook(monkeypatch, capsys, proj, PUSH)
+    assert d == "ask" and "more than 1 reverts to read" in why, why
+    git(proj, "reset", "-q", "--hard", "origin/main")
+    _commit(proj, lambda r: _change(r, "src/mine.py", "m = 1\n"))
+    assert _revert(proj, second) == 0 and _revert(proj, first) == 0
     d, why = hook(monkeypatch, capsys, proj, PUSH)
     assert d == "deny" and "src/mine.py" in why, why
 
@@ -477,7 +556,7 @@ def test_any_and_unanswered_decide_as_today(tmp_path, monkeypatch, capsys, code_
     for name in ("_commit_code", "_push_code"):
         real = getattr(guard_mod, name)
         monkeypatch.setattr(guard_mod, name, lambda *a, _real=real, **k: calls.append(a) or _real(*a, **k))
-    merge = _merged_pr(root)
+    merge = _merge_pr(root)
     _feature(root)
     assert _revert(root, merge, "--no-commit") == 0
     _edit(root, CODE, "v9 = 9", "v9 = 'extra'")
@@ -491,7 +570,7 @@ def test_any_and_unanswered_decide_as_today(tmp_path, monkeypatch, capsys, code_
 
 
 def test_a_ticket_session_s_revert_is_as_today(proj, monkeypatch, capsys):
-    merge = _merged_pr(proj)
+    merge = _merge_pr(proj)
     _feature(proj)
     _forged(proj, merge, lambda r: _edit(r, CODE, "v9 = 9", "v9 = 'extra'"))
     git(proj, "checkout", "-q", "-b", "claude/build-7")
@@ -504,7 +583,7 @@ def test_a_ticket_session_s_revert_is_as_today(proj, monkeypatch, capsys):
 def test_enforcement_doc_says_how_reverts_are_read():
     doc = (KIT / "docs/enforcement.md").read_text()
     section = doc[doc.index("**Who writes code**") :]
-    for phrase in ("#392", "This reverts commit", "patch id", "REVERT_HEAD", "**Revert** button", '"revert"'):
+    for phrase in ("#392", "This reverts commit", "`git merge-tree`", "REVERT_HEAD", "**Revert** button", '"revert"'):
         assert phrase in section, phrase
 
 
