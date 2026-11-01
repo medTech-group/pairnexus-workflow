@@ -6850,9 +6850,13 @@ def _scratch_store(d: str, glob: list[str], index: bool = True):
         yield None, f"it couldn't make a temporary folder ({e.__class__.__name__})"
         return
     with tmp:
-        # The session's own alternates, each from where git reads them (`d`), since the guard's reads may run elsewhere.
-        theirs = [e if e.startswith('"') or os.path.isabs(e) else os.path.join(d, e) for e in (os.environ.get("GIT_ALTERNATE_OBJECT_DIRECTORIES") or "").split(":") if e]
-        alternates = [_c_quoted(objects), *theirs]
+        # The session's own alternates, a relative one from the top level as git reads it, since the guard's reads may run elsewhere.
+        theirs = os.environ.get("GIT_ALTERNATE_OBJECT_DIRECTORIES") or ""
+        if theirs and '"' not in theirs:  # a C-quoted list is passed on as git reads it
+            top, _ = _memo_read(d, glob, "rev-parse", "--show-toplevel", sep="\n")
+            base = top[0] if top else d
+            theirs = ":".join(e if os.path.isabs(e) else os.path.join(base, e) for e in theirs.split(":") if e)
+        alternates = [_c_quoted(objects), *([theirs] if theirs else [])]
         env = {
             "GIT_INDEX_FILE": os.path.join(tmp.name, "index"), "GIT_OBJECT_DIRECTORY": os.path.join(tmp.name, "objects"),
             "GIT_ALTERNATE_OBJECT_DIRECTORIES": ":".join(alternates), "GIT_NO_LAZY_FETCH": "1",
@@ -6966,7 +6970,8 @@ _REVERT_CAP = 64  # the most reverts one command's pushes read
 _REVERT_SECONDS = 8  # the most time one command spends reading reverts
 _GIT_FETCH_HINT = "if it merged since this repository last fetched, run `git fetch` and try again"
 # What may run beside a commit finishing a revert, which the guard reads as the index is when the command starts: what changes no file.
-_SHELL_READS = {*_CHANGES_DIR, "echo", "true", ":", "pwd", "test", "[", "ls", "cat", "head", "tail", "wc", "grep"}  # not `printf -v`, which sets a variable
+_SHELL_READS = {*_CHANGES_DIR, "echo", "true", ":", "pwd", "ls", "cat", "head", "tail", "wc", "grep"}  # not `printf -v` or `test -v`, which set or evaluate variables
+_EDITOR_ENV = {"GIT_EDITOR", "EDITOR", "VISUAL"}  # set to `true` or `:` beside a finishing commit: no editor runs
 _GIT_READS = {
     "status", "diff", "log", "show", "rev-parse", "ls-files", "ls-tree", "describe", "shortlog", "whatchanged", "cat-file",
     "for-each-ref", "rev-list", "merge-base", "blame",
@@ -7423,16 +7428,28 @@ def _names_dot_git(command: str, segs: list[Seg]) -> str | None:
     return None
 
 
+def _expands(s: Seg) -> bool:
+    """Whether the shell expands something in a part (a `$` or a backtick in
+    its words, its heredoc or here-string, or its `<` files), which can set
+    a variable (`$[HOME=1]`) or run a command; or feeds it stdin it can't read."""
+    texts = [*s.words, s.heredoc or "", s.stdin or "", *s.inputs]
+    return s.stdin_unseen or any("$" in t or "`" in t for t in texts)
+
+
 def _reads_only(s: Seg) -> bool:
     """Whether a part of the command changes no file, index or ref: a shell
-    word that only reads or moves the shell, or git itself (its own command
-    word) running a read (`status`, `diff` without `--output`, `branch
-    --show-current`, …) with no global option that runs or points at a
-    program (`-c`, `--exec-path`), all with no wrapper (`time -o`), variable
-    or redirect other than to `/dev/null`."""
+    word that only reads or moves the shell (`cd` to the project's top
+    level, as `$(git rev-parse --show-toplevel)` names it, included), or git
+    itself (its own command word) running a read (`status`, `diff` without
+    `--output`, `branch --show-current`, …) with no global option that runs
+    or points at a program (`-c`, `--exec-path`), all with no wrapper (`time
+    -o`), variable, expansion (`_expands`) or redirect other than to
+    `/dev/null`."""
     if s.fed or not s.words or s.assigns or s.wrappers or any(r != "/dev/null" for r in s.redirects):
         return False
-    if any("$" in w or "`" in w for w in s.words):  # `$((HOME=1))` sets a variable; a substitution runs a command
+    if s.words[0] in _CHANGES_DIR and all(_TOPLEVEL.match(w) for w in s.words[1:] if "$" in w or "`" in w):
+        return not (s.heredoc or s.stdin or s.inputs or s.stdin_unseen)
+    if _expands(s):
         return False
     if s.words[0] in _SHELL_READS:
         return True
@@ -7468,12 +7485,20 @@ def _finishing_revert(segs: list[Seg], seg: Seg, d: str, glob: list[str], c: _Co
     line = f'the "This reverts commit {reverting}." line, which tells a push it is a revert'
     raw = _commit_git(seg.words)
     own = [o for o in (raw[0] if raw else []) if o in ("-c", "--config-env", "--exec-path") or o.startswith(("--config-env=", "--exec-path"))]
-    own += [a.partition("=")[0] for a in seg.assigns if a.partition("=")[0].removesuffix("+") not in _GIT_PATHSPEC_ENV]
-    if own:  # a setting or variable of its own can run a hook that stages more (`-c core.hooksPath=…`, `HOME=…`)
-        why = f"it sets `{_brief(own[0])}` for itself, which can change what it commits: finish it with plain `git commit --no-edit`"
+    for a in seg.assigns:
+        name, _, value = a.partition("=")
+        name = name.removesuffix("+")
+        if name not in _GIT_PATHSPEC_ENV and not (name in _EDITOR_ENV and value in ("true", ":")):
+            own.append(name)
+    if _expands(seg):
+        own.append("a value the shell expands")
+    if own:  # a setting or variable of its own can run a hook that stages more (`-c core.hooksPath=…`, `HOME=…`, `$[HOME=1]`)
+        what = own[0] if own[0].startswith("a value") else f"`{_brief(own[0])}`"
+        why = f"it sets {what} for itself, which can change what it commits: finish it with plain `git commit --no-edit`"
     elif other is not None:
+        shown = " ".join(other.words) or " ".join(other.assigns) or "a part the shell runs first"
         why = (
-            f"the command also runs `{_brief(' '.join(other.words))}`, which may change what it commits (only reads, such as `git status`, "
+            f"the command also runs `{_brief(shown)}`, which may change what it commits (only reads, such as `git status`, "
             "may run beside it): finish the revert in a command of its own"
         )
     elif c.amend:

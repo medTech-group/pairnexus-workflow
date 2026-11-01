@@ -159,9 +159,15 @@ def test_a_revert_in_progress_is_judged_by_the_revert_rule(proj, monkeypatch, ca
         ("time -o src/app.py git status && git commit -a --no-edit", "the command also runs `git status`"),
         ("./git status && git commit --no-edit", "the command also runs `./git status`"),
         ("printf -v HOME /tmp/h && git commit --no-edit", "the command also runs `printf -v HOME /tmp/h`"),
-        (": $((HOME=1)) && git commit --no-edit", "the command also runs"),
+        (": $((HOME=1)) && git commit --no-edit", "the command also runs `"),
+        (": <<< $[HOME=1]; git commit --no-edit", "the command also runs `:`"),
+        ("[ -v 'BASH_VERSINFO[HOME=1]' ] && git commit --no-edit", "the command also runs `[ -v BASH_VERSINFO[HOME=1] ]`"),
         ("git -c core.hooksPath=/tmp/h commit --no-edit", "it sets `-c` for itself"),
+        ("git --config-env=core.hooksPath=H commit --no-edit", "it sets `--config-env=core.hooksPath=H` for itself"),
+        ("git --exec-path=/tmp commit --no-edit", "it sets `--exec-path=/tmp` for itself"),
+        ("git -c core.hooksPath=/tmp/h revert --continue", "it sets `-c` for itself"),
         ("HOME=/tmp/h git commit --no-edit", "it sets `HOME` for itself"),
+        ("git commit -m Undo -m 'This reverts commit x.'$[HOME=1]", "it sets a value the shell expands for itself"),
     ],
 )
 def test_finishing_a_revert_other_than_as_it_stands_is_refused(proj, monkeypatch, capsys, command, why):
@@ -172,6 +178,7 @@ def test_finishing_a_revert_other_than_as_it_stands_is_refused(proj, monkeypatch
     assert _revert(proj, merge, "--no-commit") == 0
     d, msg = hook(monkeypatch, capsys, proj, command)
     assert d == "deny" and why in msg and f"it finishes a revert of {merge[:7]}, but not as it stands" in msg, msg
+    assert "runs ``" not in msg, msg
     assert "`git revert --abort` cancels the revert" in msg, msg
     assert "**Revert** button" not in msg and "quick ticket" not in msg, msg  # the plain step is the way forward
     assert hook(monkeypatch, capsys, proj, "git commit --no-edit") == ("allow", "")
@@ -183,6 +190,8 @@ def test_finishing_a_revert_other_than_as_it_stands_is_refused(proj, monkeypatch
         "git status && git commit --no-edit", "echo ok && git commit --no-edit", "true; git commit --no-edit", "git diff --cached --stat; git commit --no-edit",
         "git branch --show-current && git commit --no-edit", "git log --oneline | head -3; git commit --no-edit", "ls src && git commit --no-edit",
         "git diff > /dev/null; git commit --no-edit", "git commit --no-edit; git status",
+        'cd "$CLAUDE_PROJECT_DIR" && git commit --no-edit', 'cd "$(git rev-parse --show-toplevel)" && git commit --no-edit',
+        "GIT_EDITOR=true git revert --continue", "GIT_LITERAL_PATHSPECS=1 git commit --no-edit",
     ],
 )  # fmt: skip
 def test_reads_before_finishing_a_revert_change_nothing(proj, monkeypatch, capsys, command):
