@@ -111,12 +111,31 @@ def test_a_hash_inside_a_glob_group_is_no_comment(tmp_path, monkeypatch, capsys)
         _change(root, CODE)
         d, why = hook(monkeypatch, capsys, root, command)
         assert d == "deny" and "carries the code path" in why, (command, why)
+    # Each reading from the same directory: a comment read as zsh reads it moves nothing in the other reading.
+    for command in (
+        f"cd {root}; time -p ( cd /tmp; true # (\n); git commit -am x",
+        f"cd {root}; time -p ( cd /tmp; true # case 2\n); git commit -am x",
+        "pushd /tmp; time -p ( true # popd\n); popd; git commit -am x",
+        # A quote in zsh's reading may run past the line; an `A=(` that isn't an array is a pattern.
+        "echo (src|#) \"\necho \"; git commit -am x",
+        "echo A=(src|#)(N); git commit -am x",
+        "echo `echo (src|#); git commit -am x`",
+        "echo (src|#) (lib|#); git commit -am x",
+        # A substitution's own text moves nothing outside it, however it opens or closes (older than #393).
+        f"cd /tmp; ( cd {root}; echo `)`; git commit -am x )",
+        f"cd {root}; pushd /tmp >/dev/null; echo $(popd); popd; git commit -am x",
+    ):
+        _change(root, CODE)
+        d, why = hook(monkeypatch, capsys, root, command)
+        assert d == "deny" and "carries the code path" in why, (command, why)
     d, why = hook(monkeypatch, capsys, root, "A=(\n  x  # don't\n)\ngit push origin HEAD:main")
     assert d == "ask" and "the base branch `main`" in why, why  # seen, so judged as any push to the base
     # A comment is still one where the shell reads it.
     _change(root, CODE)
     assert hook(monkeypatch, capsys, root, "echo hi # (src|#); git commit -am x") == ("allow", "")
     assert hook(monkeypatch, capsys, root, "A=(\n  x  # git commit -am x\n)") == ("allow", "")
+    assert hook(monkeypatch, capsys, root, "B=1 A=(\n  x  # git commit -am x\n)") == ("allow", "")
+    assert hook(monkeypatch, capsys, root, "local A=(\n  x  # git commit -am x\n)") == ("allow", "")
 
 
 def test_a_code_write_in_a_claude_code_worktree_on_a_prototype_branch(tmp_path, monkeypatch, capsys):

@@ -482,6 +482,7 @@ class Op(str):
     function's name or extglob."""
 
     glued: bool = False
+    hoisted: bool = False  # the `(` or `)` around a substitution's commands put before their command
 
 
 class Word(str):
@@ -599,11 +600,13 @@ def _expansions(text: str) -> list[list]:
     return out
 
 
-def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
+def _lex(s: str, i: int = 0, stop_paren: bool = False, hashes: list[int] | None = None) -> tuple[list, int]:
     """Tokens of a shell command from s[i]: plain words (str), operators (Op)
     and heredocs (Heredoc). Command substitutions are lexed too and put, as a
     subshell, before the command they appear in; the word keeps their text.
-    With stop_paren, stops at the `)` closing a `$(`, returning its index."""
+    With stop_paren, stops at the `)` closing a `$(`, returning its index.
+    Into `hashes`, the index of each `#` read as a comment while a `(` glued
+    to a word is open, which zsh reads as its pattern's (`_zsh_reading`)."""
     out: list = []
     cmd_start = 0
     word: list[str] = []
@@ -630,12 +633,14 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
 
     def hoist(inner: list) -> None:
         nonlocal cmd_start
-        block = [Op("("), *inner, Op(")")]
+        opens, closes = Op("("), Op(")")
+        opens.hoisted = closes.hoisted = True
+        block = [opens, *inner, closes]
         out[cmd_start:cmd_start] = block
         cmd_start += len(block)
 
     def substitution(start: int, inner_from: int) -> int:
-        toks, j = _lex(s, inner_from, stop_paren=True)
+        toks, j = _lex(s, inner_from, stop_paren=True, hashes=hashes)
         word.append(s[start : j + 1])
         hoist(toks)
         return j + 1
@@ -643,7 +648,11 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
     def backtick(start: int, in_dquotes: bool = False) -> int:
         j = _backtick_end(s, start)
         word.append(s[start : j + 1])
-        hoist(_lex(_unbacktick(s[start + 1 : j], in_dquotes))[0])
+        inner = _unbacktick(s[start + 1 : j], in_dquotes)
+        found: list[int] = []
+        hoist(_lex(inner, hashes=found)[0])
+        if found:  # its own text: both readings of it here (a substitution's block holds its directory)
+            hoist(_lex(_zsh_reading(inner, found))[0])
         return j + 1
 
     def read_heredocs(pos: int) -> int:
@@ -761,11 +770,10 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
         if c == "#" and not in_word:
             j = s.find("\n", i)
             j = n if j < 0 else j
-            if globs:
-                # Inside a `(` group glued to a word, zsh's pattern (`(src|#); git commit …`) holds the `#`, and
-                # an array or a bash subshell (`time -p (`) starts a comment: both readings, the rest of the
-                # line read as commands too.
-                hoist(_lex(s[i + 1 : j])[0])
+            if globs and hashes is not None:
+                # Inside a `(` group glued to a word, zsh's pattern (`(src|#); git commit …`) holds the `#`, where
+                # an array or a bash subshell (`time -p (`) starts a comment: the other reading is `segments`'s.
+                hashes.append(i)
             i = j
             continue
         if c in " \t":
@@ -788,7 +796,12 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
                 c == "(" and (in_word or close_end == i or len(out) > cmd_start and not _leads_subshell(out[cmd_start:]))
                 or c == "<" and bool(re.match(r"<\d*-\d*>\(", s[i : i + 64]))
             )
-            opens_array = c == "(" and in_word and not quoted and bool(_ARRAY_OPEN.match("".join(word)))
+            # An array's `(`: `A=(` where an assignment stands (after assignments, or `typeset`'s and the like).
+            before = out[cmd_start:]
+            opens_array = (
+                c == "(" and in_word and not quoted and bool(_ARRAY_OPEN.match("".join(word)))
+                and (all(type(t) is Word and _ASSIGNMENT.match(t) for t in before) or bool(before) and before[0] in _DECLARES)
+            )
             fd = ""
             if c in "<>" and in_word and not quoted and word and "".join(word).isdigit():
                 fd = "".join(word)
@@ -814,18 +827,24 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
             if op == ")" and stop_paren and depth == 0:
                 end_word()
                 return out, i
+            # A glob group's `(`, `|` and `)` are a word's (zsh's), so the command goes on: `echo (a|#) (b|#)`.
+            pattern = False
             if op == "(":
                 depth += 1
                 if glued and not opens_array:  # `A=(…)`: an array's words, comments too
                     globs.append(depth)
+                    pattern = True
             elif op == ")":
                 if globs and globs[-1] == depth:
                     globs.pop()
+                    pattern = True
                 depth -= 1
+            elif op == "|" and globs:
+                pattern = True
             tok = Op(fd + op)
             tok.glued = glued
             out.append(tok)
-            if op in _SEPARATORS:
+            if op in _SEPARATORS and not pattern:
                 cmd_start = len(out)
             i += len(op)
             if op == ")":
@@ -839,6 +858,10 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
     return out, n
 
 
+# The builtins whose arguments may be arrays (`typeset A=(…)`), and an assignment word, which may stand before an
+# array's (`A=1 B=(…)`).
+_DECLARES = {"declare", "typeset", "local", "export", "readonly", "integer", "float"}
+_ASSIGNMENT = re.compile(r"[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=")
 # A word that opens an array, before its `(`: `A=`, `A+=`, `A[1]=`.
 _ARRAY_OPEN = re.compile(r"[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=\Z")
 # Words after which a `(` still opens a subshell, as at a command's start: `{ (…); }`, `! (…)`, `time (…)`.
@@ -1103,7 +1126,30 @@ def segments(command: str, root: Path, cwd: str | None = "", depth: int = 0) -> 
     that hold git/gh commands, and command words holding a whole command."""
     if cwd == "":
         cwd = os.path.realpath(str(root))
-    return _segments_of(_tokens(command), root, cwd, depth)
+    hashes: list[int] = []
+    segs = _segments_of(_lex(command, hashes=hashes)[0], root, cwd, depth)
+    if hashes:  # read as zsh reads it too, each reading from the same directory
+        segs += _segments_of(_tokens(_zsh_reading(command, hashes)), root, cwd, depth)
+    return segs
+
+
+def _zsh_reading(command: str, hashes: list[int]) -> str:
+    """The command as zsh (or bash's extglob) reads it where a `#` stands
+    inside a `(` glued to a word (`echo (src|#); git commit …`): part of
+    the pattern, not a comment (bash's reading of an array or a subshell).
+    Each such `#` is replaced by a word character, until the lexer finds no
+    more (a `#` the first reading hid may stand in another group)."""
+    text = command
+    for _ in range(command.count("#")):
+        if not hashes:
+            break
+        chars = list(text)
+        for k in hashes:
+            chars[k] = "\x01"
+        text = "".join(chars)
+        hashes = []
+        _lex(text, hashes=hashes)
+    return text
 
 
 _CHANGES_DIR = ("cd", "pushd", "popd", "chdir")  # the words that move the shell, which the parser follows
@@ -1117,7 +1163,15 @@ def _segments_of(toks: list, root: Path, cwd: str | None, depth: int) -> list[Se
     prev: Seg | None = None
     piped = False
     case_pattern = False  # between `case … in` / `;;` and the pattern's `)`
+    held: list[tuple] = []  # the whole state at each substitution's start, which nothing inside it changes
     for item in _simple(toks):
+        if isinstance(item, Op) and item.hoisted:
+            if item == "(":
+                held.append((cwd, oldpwd, list(saved), list(dirs), case_pattern))
+            elif held:  # its `)`, whatever its own text opened or closed (`` `)` ``, `$(popd)`)
+                cwd, oldpwd, saved, dirs, case_pattern = held.pop()
+            piped, prev = False, None
+            continue
         if isinstance(item, Op):
             if case_pattern and item == ")":
                 case_pattern = False
