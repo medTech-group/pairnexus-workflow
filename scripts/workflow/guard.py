@@ -134,6 +134,7 @@ import subprocess
 import tarfile
 import urllib.parse
 import zipfile
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -7883,10 +7884,6 @@ def _push_own_part(segs: list[Seg], seg: Seg, glob: list[str], dot_git: str) -> 
 _COMPOUND_WORDS = {"for", "select", "case", "while", "until", "if", "function", "coproc"}
 
 
-# The words after which a shell word is in command position, as well as after an operator.
-_COMMAND_AFTER = {"then", "do", "else", "elif", "{", "!", "time"}
-
-
 def _compound_or_cd(segs: list[Seg], command: str) -> str | None:
     """Why the guard can't follow the command as the shell runs it, for a
     prototype's exception: a compound command (`for HOME in …; do …`, `case
@@ -7894,15 +7891,19 @@ def _compound_or_cd(segs: list[Seg], command: str) -> str | None:
     no part shows; or a change of directory (`cd`, `pushd`, `popd`), which
     the guard follows only so far (`popd -n`, a logical `..` after a link, a
     `--show-toplevel` from elsewhere). Else None."""
-    toks = _tokens(command)
-    for k, t in enumerate(toks):
-        if isinstance(t, str) and not isinstance(t, Op) and t in _COMPOUND_WORDS:
-            before = toks[k - 1] if k else None
-            if before is None or isinstance(before, Op) or before in _COMMAND_AFTER:
-                return f"it holds the compound command `{t}`, whose words the guard doesn't follow"
+    # A compound word the lexer reads that no part keeps as an argument (`git log --grep for` keeps it) opens a
+    # compound command, wherever it stands (`time -p for …`): counted, not placed.
+    seen = Counter(t for t in _tokens(command) if isinstance(t, str) and not isinstance(t, Op) and t in _COMPOUND_WORDS)
+    kept = Counter(w for s in segs for w in s.words[1:] if w in _COMPOUND_WORDS)
+    opened = next((w for w in seen if seen[w] > kept[w]), None)
+    if opened:
+        return f"it holds the compound command `{opened}`, whose words the guard doesn't follow"
     moved = next((s.words[0] for s in segs if s.words and s.words[0] in _CHANGES_DIR), None)
     if moved:
         return f"it changes directory with `{moved}`, which the guard follows only so far: run it from that directory, or with `git -C`"
+    spelled = next((s.words[0] for s in segs if s.words and ("$" in s.words[0] or "`" in s.words[0])), None)
+    if spelled:
+        return f"it runs a command the shell spells (`{_brief(spelled)}`), which the guard can't follow"
     return None
 
 

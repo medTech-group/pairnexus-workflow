@@ -967,6 +967,11 @@ def test_a_dot_git_option_in_a_variable_and_a_branch_change_both_named(tmp_path,
         ("until git push origin prototype/x; do :; done", "it holds the compound command `until`"),
         ("cd . && git push origin prototype/x", "it changes directory with `cd`"),
         ("pushd /tmp > /dev/null; popd -n > /dev/null; git push origin HEAD", "can't tell"),  # elsewhere: asked
+        ("time -p for HOME in /tmp/h; do git push origin; done", "it holds the compound command `for`"),
+        ("time -- for HOME in /tmp/h; do git push origin; done", "it holds the compound command `for`"),
+        ("time -p case $[HOME=0] in *) git push origin;; esac", "it holds the compound command `case`"),
+        ("echo for; for HOME in /tmp/h; do git push origin; done", "it holds the compound command `for`"),
+        ("${X:-cd} src && git push origin prototype/x", "it runs a command the shell spells"),
     ],
 )
 def test_a_prototype_push_in_a_command_the_guard_cant_follow_is_judged(tmp_path, monkeypatch, capsys, command, why):
@@ -983,10 +988,12 @@ def test_a_prototype_push_in_a_command_the_guard_cant_follow_is_judged(tmp_path,
 
 def test_a_write_or_commit_in_a_command_that_changes_directory(tmp_path, monkeypatch, capsys):
     root = _prototype(tmp_path)
-    for command in ("cd src && echo x > app.py", "cd . && git commit -am x"):
+    # A heredoc just before a word like `if` (here `cat`'s argument): read, never a crash (which would ask).
+    assert hook(monkeypatch, capsys, root, "cat <<'EOF' if\nx\nEOF\necho x > src/app.py") == ("allow", "")
+    for command, word in (("cd src && echo x > app.py", "cd"), ("cd . && git commit -am x", "cd"), ("pushd src > /dev/null && echo x > app.py", "pushd")):
         _change(root, CODE)
         d, why = hook(monkeypatch, capsys, root, command)
-        assert d == "deny" and "this one changes directory with `cd`" in why and "`git -C`" in why, (command, why)
+        assert d == "deny" and f"this one changes directory with `{word}`" in why and "`git -C`" in why, (command, why)
     assert hook(monkeypatch, capsys, root, "git -C . commit -am x")[0] == "allow"
 
 
