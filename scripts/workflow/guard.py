@@ -9166,13 +9166,24 @@ def _a_remote_of_ours(d: str, glob: list[str], remotes: set[str], cfg: dict[str,
             return True
     # A remote git reads from `.git/remotes` or `.git/branches` (`origin` too, by default), which `git remote` doesn't list.
     common = _git_common(d, glob)
-    if common is None or any(os.path.isdir(os.path.join(common, sub)) and os.listdir(os.path.join(common, sub)) for sub in _LEGACY_REMOTES):
+    if common is None or any(_holds_entries(os.path.join(common, sub)) for sub in _LEGACY_REMOTES):
         return True
     named = (v for k, vs in cfg.items() if k == "remote.pushdefault" or k.startswith("branch.") and k.endswith((".pushremote", ".remote")) for v in vs)
     return any(v not in remotes and v != "." and _project_url(v, code.repo) for v in named)
 
 
 _LEGACY_REMOTES = ("remotes", "branches")  # under the git directory: remotes defined in files of their own
+
+
+def _holds_entries(path: str) -> bool:
+    """Whether the folder `path` holds anything; one it can't list counts as holding something."""
+    if not os.path.isdir(path):
+        return False
+    try:
+        with os.scandir(path) as entries:
+            return next(entries, None) is not None
+    except OSError:
+        return True
 
 
 def _legacy_remote(common: str | None, name: str) -> bool:

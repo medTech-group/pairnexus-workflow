@@ -1161,6 +1161,23 @@ def test_a_remote_defined_in_a_file_of_its_own_beside_a_ref_move(tmp_path, monke
     _change(root, CODE)
     d, why = hook(monkeypatch, capsys, root, "git commit -am x && git push")
     assert d == "deny" and "unjudged" in why, why
+    # A folder of them it can't list counts as holding one, never a crash (which would ask).
+    from workflow import guard as guard_mod
+
+    def unlistable(real):
+        def lister(path="."):
+            if str(path).endswith(("remotes", "branches")):
+                raise PermissionError(13, "Permission denied", str(path))
+            return real(path)
+
+        return lister
+
+    monkeypatch.setattr(guard_mod.os, "scandir", unlistable(guard_mod.os.scandir))
+    monkeypatch.setattr(guard_mod.os, "listdir", unlistable(guard_mod.os.listdir))
+    _change(root, CODE)
+    d, why = hook(monkeypatch, capsys, root, "git commit -am x && git push")
+    assert d == "deny" and "unjudged" in why, why
+    monkeypatch.undo()
     # A relative path to another repository is one.
     root = _prototype(tmp_path / "c")
     git(root, "init", "-q", "--bare", "backups/b.git")
