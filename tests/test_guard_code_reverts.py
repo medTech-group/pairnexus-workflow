@@ -169,7 +169,7 @@ def test_a_revert_in_progress_is_judged_by_the_revert_rule(proj, monkeypatch, ca
         ("env -u XDG_CONFIG_HOME git commit --no-edit", "it runs under `env`, which"),
         ("git commit -m 'This reverts commit x.' -m $(cat <<'EOF'\nUndo -a\nEOF\n)", "it sets a value the shell expands for itself"),
         ("git diff \"$(cat <<'EOF'\n--output=src/app.py\nEOF\n)\" && git commit -a --no-edit", "the command also runs `git diff"),
-        ("cat <<EOF\n$[HOME=1]\nEOF\ngit commit --no-edit", "the command also runs `cat`"),
+        ("echo <<EOF\n$[HOME=1]\nEOF\ngit commit --no-edit", "the command also runs `echo`"),  # a builtin: the shell expands it itself
         (": <<< $[HOME=1]; git commit --no-edit", "the command also runs `:`"),
         ("[ -v 'BASH_VERSINFO[HOME=1]' ] && git commit --no-edit", "the command also runs `[ -v BASH_VERSINFO[HOME=1] ]`"),
         ("git -c core.hooksPath=/tmp/h commit --no-edit", "it sets `-c` for itself"),
@@ -202,6 +202,7 @@ def test_finishing_a_revert_other_than_as_it_stands_is_refused(proj, monkeypatch
         "git diff > /dev/null; git commit --no-edit", "git commit --no-edit; git status",
         'cd "$CLAUDE_PROJECT_DIR" && git commit --no-edit', 'cd "$(git rev-parse --show-toplevel)" && git commit --no-edit',
         "GIT_EDITOR=true git revert --continue", "EDITOR=: git commit --no-edit", "GIT_LITERAL_PATHSPECS=1 git commit --no-edit",
+        "cat <<EOF\n$[HOME=1]\nEOF\ngit commit --no-edit",  # a program: its heredoc is expanded in its own process
     ],
 )  # fmt: skip
 def test_reads_before_finishing_a_revert_change_nothing(proj, monkeypatch, capsys, command):
