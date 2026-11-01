@@ -1,11 +1,12 @@
 """#391 (spec #338, split from #341): under `code_writers = "ticket"`, #389's
 commit rule and #390's push rule judge a merge by its own changes, so
 bringing a pull request up to date with its base goes through in a planning
-session. For a merge commit, and a commit finishing a merge, only what the
-merge itself changed counts, read line by line with no context lines
-(`git diff-tree --cc -U0`): a line taken cleanly from one parent isn't
-counted; a conflict resolved in a code path, or a change of the merge's
-own, is. A cherry-pick in progress counts everything staged, and a pushed
+session. For a merge commit, and a commit finishing a merge, only the
+merge's own changes count: a merge of two parents against its parents
+merged again (`--diff-merges=remerge`), so what git merges cleanly isn't
+counted, while a conflict resolved in a code path (taking one parent's
+version included), or a change neither parent has, is; a merge of more
+parents as `git diff-tree --cc -U0` reads it. A cherry-pick in progress counts everything staged, and a pushed
 cherry-pick's new commits are judged as any commit. Under `"any"` or with
 `code_writers` absent, as today.
 
@@ -129,14 +130,72 @@ def test_a_conflict_resolved_in_a_code_path_is_refused(proj, monkeypatch, capsys
             d, why = hook(monkeypatch, capsys, proj, command, role)
             assert d == "deny", (command, role, why)
             assert "merge" in why and "code path `src/app.py` (src/**)" in why, why
-            assert "the merge itself" in why, why
+            assert "the merge's own change" in why, why
 
 
-def test_a_conflict_resolved_by_taking_one_side_is_the_side_s_change(proj, monkeypatch, capsys):
-    """Taking the base's whole version changes nothing of the merge's own
-    (`--cc` shows no hunk), so it goes through, as a clean merge does."""
-    _code_conflict(proj, resolved="v5 = 'base'\n")
+@pytest.mark.parametrize("side", ["base", "branch"])
+def test_a_conflict_resolved_by_taking_one_parent_s_version_is_refused(proj, monkeypatch, capsys, side):
+    """A conflict resolved is the merge's own change, whichever version it keeps:
+    keeping the branch's drops the base's change from the pull request."""
+    _code_conflict(proj, resolved=f"v5 = '{side}'\n")
+    d, why = hook(monkeypatch, capsys, proj, "git commit --no-edit")
+    assert d == "deny" and "code path `src/app.py` (src/**)" in why, why
+    _finish(proj)
+    assert hook(monkeypatch, capsys, proj, "git push origin feature")[0] == "deny"
+
+
+def test_a_merge_keeping_the_branch_s_side_is_refused(proj, monkeypatch, capsys):
+    """`-s ours` and `-X ours` record no conflict, but differ from the parents merged again."""
+    _base_code(proj)
+    _commit(proj, lambda r: _edit(r, CODE, "v5 = 5", "v5 = 'branch'"))
+    git(proj, "push", "-q", "origin", "feature")
+    for strategy in (["-s", "ours"], ["-X", "ours"]):
+        git(proj, "reset", "-q", "--hard", "origin/feature")
+        assert _merge(proj, *strategy, "origin/main") == 0
+        d, why = hook(monkeypatch, capsys, proj, "git push origin feature")
+        assert d == "deny" and "merge commit" in why and "src/app.py" in why, (strategy, why)
+
+
+CLEAN = {
+    "a deletion just before the other side's change": (("v3 = 3\n", ""), ("v5 = 5", "v5 = 'branch'")),
+    "an insertion just after it": (("v4 = 4\n", "v4 = 4\nv4b = 4\n"), ("v6 = 6", "v6 = 'branch'")),
+    "changes one line apart": (("v5 = 5", "v5 = 'base'"), ("v3 = 3", "v3 = 'branch'")),
+}
+
+
+@pytest.mark.parametrize("case", list(CLEAN))
+def test_any_merge_git_makes_cleanly_goes_through(proj, monkeypatch, capsys, case):
+    base, branch = CLEAN[case]
+    _on_base(proj, lambda r: _edit(r, CODE, *base))
+    _commit(proj, lambda r: _edit(r, CODE, *branch))
+    git(proj, "push", "-q", "origin", "feature")
+    assert _merge(proj, "--no-commit", "origin/main") == 0
+    assert hook(monkeypatch, capsys, proj, "git commit --no-edit", "conductor") == ("allow", ""), case
+    _finish(proj)
+    assert hook(monkeypatch, capsys, proj, "git push origin feature", "conductor") == ("allow", ""), case
+
+
+@pytest.mark.parametrize("who", ["base", "branch"])
+def test_a_clean_merge_across_a_rename_goes_through(proj, monkeypatch, capsys, who):
+    rename = lambda r: git(r, "mv", CODE, "src/app2.py")  # noqa: E731
+    edit = lambda r: _edit(r, CODE, "v3 = 3", "v3 = 'edit'")  # noqa: E731
+    _on_base(proj, rename if who == "base" else edit)
+    _commit(proj, edit if who == "base" else rename)
+    git(proj, "push", "-q", "origin", "feature")
+    assert _merge(proj, "--no-commit", "origin/main") == 0
     assert hook(monkeypatch, capsys, proj, "git commit --no-edit") == ("allow", "")
+    _finish(proj)
+    assert hook(monkeypatch, capsys, proj, "git push origin feature") == ("allow", "")
+
+
+def test_a_clean_merge_of_a_file_git_diffs_as_binary_goes_through(proj, monkeypatch, capsys):
+    _on_base(proj, lambda r: _change(r, ".gitattributes", "src/*.py -diff\n"))
+    git(proj, "merge", "-q", "--ff-only", "origin/main")
+    git(proj, "push", "-q", "origin", "feature")
+    _two_sided(proj)
+    assert hook(monkeypatch, capsys, proj, "git commit --no-edit") == ("allow", "")
+    _finish(proj)
+    assert hook(monkeypatch, capsys, proj, "git push origin feature") == ("allow", "")
 
 
 def test_a_change_of_the_merge_s_own_in_a_code_path_is_refused(proj, monkeypatch, capsys):
@@ -178,14 +237,74 @@ def test_an_octopus_merge_is_judged_by_its_own_changes(proj, monkeypatch, capsys
     assert hook(monkeypatch, capsys, proj, "git commit --no-edit")[0] == "deny"
 
 
-def test_a_merge_with_files_still_unmerged_counts_everything_staged(proj, monkeypatch, capsys):
-    """git won't finish it (`git commit -a` would take the conflict markers):
-    with no merge result to read, everything staged counts, as before."""
+def test_a_conflict_resolved_but_not_staged_is_read_from_the_working_tree(proj, monkeypatch, capsys):
+    """`git commit -a` takes the resolved files from the working tree: a docs
+    conflict resolved there goes through, a code one doesn't."""
     _on_base(proj, lambda r: (_edit(r, CODE, "v5 = 5", "v5 = 'base'"), _change(r, DOC, "# Base\n")))
     _commit(proj, lambda r: _change(r, DOC, "# Branch\n"))
     assert _merge(proj, "origin/main") == 1
-    d, why = hook(monkeypatch, capsys, proj, "git commit -a --no-edit", "conductor")
-    assert d == "deny" and "code path `src/app.py` (src/**)" in why, why
+    _change(proj, DOC, "# Both\n")
+    for command in ("git commit -a --no-edit", "git commit -am x"):
+        for role in ROLES:
+            assert hook(monkeypatch, capsys, proj, command, role) == ("allow", ""), (command, role)
+
+
+def test_a_code_conflict_not_staged_counts_with_a(proj, monkeypatch, capsys):
+    _code_conflict(proj)
+    git(proj, "checkout", "-q", "-m", "--", CODE)  # unmerged again, its markers in the working tree
+    for role in ROLES:
+        d, why = hook(monkeypatch, capsys, proj, "git commit -a --no-edit", role)
+        assert d == "deny" and "code path `src/app.py` (src/**)" in why, (role, why)
+
+
+def test_when_the_merge_can_t_be_read_it_is_asked(proj, monkeypatch, capsys):
+    """A read that fails or takes too long: asked when what is staged includes
+    code (refused in the conductor, as any commit it can't tell about)."""
+    monkeypatch.setattr(guard_mod, "_merge_own_code", lambda *a: (None, "`git write-tree` took too long"))
+    _docs_conflict(proj)
+    d, why = hook(monkeypatch, capsys, proj, "git commit --no-edit")
+    assert d == "ask" and "can't tell" in why and "took too long" in why and "src/app.py" in why, why
+    d, why = hook(monkeypatch, capsys, proj, "git commit --no-edit", "conductor")
+    assert d == "deny" and "can't tell" in why, why
+
+
+def test_a_merge_finished_in_a_linked_worktree(proj, monkeypatch, capsys):
+    wt = proj / ".claude/worktrees/w"
+    git(proj, "worktree", "add", "-q", "-b", "wt", str(wt), "origin/main")
+    _base_code(proj)
+    _commit(wt, lambda r: _change(r, DOC, "# Branch\n"))
+    assert _merge(wt, "--no-commit", "origin/main") == 0
+    assert hook(monkeypatch, capsys, proj, f"git -C {wt} commit --no-edit") == ("allow", "")
+    assert hook(monkeypatch, capsys, proj, f"cd {wt} && git commit --no-edit") == ("allow", "")
+    _change(wt, "src/extra.py", "x = 1\n")
+    git(wt, "add", "src/extra.py")
+    d, why = hook(monkeypatch, capsys, proj, f"git -C {wt} commit --no-edit")
+    assert d == "deny" and "src/extra.py" in why and ".claude/worktrees/w" in why, why
+
+
+CONFIG = [
+    ("core.splitIndex", "true"), ("core.quotePath", "false"), ("diff.algorithm", "histogram"), ("diff.context", "10"),
+    ("diff.interHunkContext", "10"), ("color.ui", "always"), ("log.diffMerges", "first-parent"), ("diff.renames", "copies"),
+    ("index.sparse", "true"), ("diff.noprefix", "true"), ("merge.conflictStyle", "zdiff3"),
+]  # fmt: skip
+
+
+def test_the_repository_s_settings_don_t_change_the_reading(proj, monkeypatch, capsys):
+    for k, v in CONFIG:
+        git(proj, "config", k, v)
+    git(proj, "update-index", "--split-index")
+    _two_sided(proj)
+    shared = sorted(p.name for p in (proj / ".git").glob("sharedindex.*"))
+    assert hook(monkeypatch, capsys, proj, "git commit --no-edit") == ("allow", "")
+    assert sorted(p.name for p in (proj / ".git").glob("sharedindex.*")) == shared
+    _change(proj, 'src/n\u00e4me "x".py', "x = 1\n")
+    git(proj, "add", "-A")
+    d, why = hook(monkeypatch, capsys, proj, "git commit --no-edit")
+    assert d == "deny" and 'src/n\u00e4me "x".py' in why, why
+    git(proj, "rm", "-q", "--cached", "--", 'src/n\u00e4me "x".py')
+    (proj / 'src/n\u00e4me "x".py').unlink()
+    _finish(proj)
+    assert hook(monkeypatch, capsys, proj, "git push origin feature") == ("allow", "")
 
 
 def test_the_guard_s_read_leaves_the_repository_as_it_was(proj, monkeypatch, capsys):
@@ -264,7 +383,7 @@ def test_a_push_after_a_conflict_resolved_in_a_code_path_is_refused(proj, monkey
         d, why = hook(monkeypatch, capsys, proj, "git push origin feature", role)
         assert d == "deny", (role, why)
         assert f"merge commit {sha}" in why and "code path `src/app.py` (src/**)" in why, why
-        assert "the merge itself" in why, why
+        assert "the merge's own change" in why, why
 
 
 def test_a_push_of_a_merge_with_a_change_of_its_own_is_refused(proj, monkeypatch, capsys):

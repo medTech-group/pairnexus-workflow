@@ -6621,23 +6621,21 @@ def _spec_file(c: _Commit, d: str) -> tuple[list[str] | None, str]:
     return lines, ""
 
 
-def _carried(
-    d: str, glob: list[str], c: _Commit, env: dict[str, str] | None = None, merged: list[str] | None = None
-) -> tuple[list[str] | None, str]:
+def _carried(d: str, glob: list[str], c: _Commit, env: dict[str, str] | None = None, staged: bool = True) -> tuple[list[str] | None, str]:
     """The files (from the top level) a commit run in `d` would carry, or
-    (None, what couldn't be read). `merged` is what the merge it finishes
-    changes of its own (#391), which stands for what is staged: the working
-    tree's changes that `-a` or a pathspec adds count as they are."""
+    (None, what couldn't be read). Without `staged`, only the working tree's
+    changes that `-a` or a pathspec adds: a commit finishing a merge counts
+    the merge's own changes in place of what is staged (#391)."""
     specs = c.specs
     diff = ["diff", "--name-only", "-z", "--no-renames"]
     reads = []
-    if merged is None and (not specs or c.include or c.all):
+    if staged and (not specs or c.include or c.all):
         reads.append([*diff, "--cached"])
     if c.all:
         reads.append(diff)
     if specs:
-        reads += [[*diff, "--", *specs]] if merged is not None else [[*diff, "--cached", "--", *specs], [*diff, "--", *specs]]
-    out: list[str] = list(merged or [])
+        reads += [[*diff, "--cached", "--", *specs], [*diff, "--", *specs]] if staged else [[*diff, "--", *specs]]
+    out: list[str] = []
     for args in reads:
         got, err = _git_read(d, glob, *args, env=env)
         if got is None:
@@ -6646,13 +6644,23 @@ def _carried(
     return out, ""
 
 
-# A merge's own changes (#391): what the commit finishing it changes against
-# every parent, read as `git diff-tree --cc -U0` reads a merge commit. A line
-# taken cleanly from one parent isn't counted; a conflict resolved, or a change
-# neither parent has, is.
-_CC_DIFF = ["--cc", "-U0", "--inter-hunk-context=0", "--no-renames", "--no-ext-diff", "--no-textconv", "--no-color", "--ignore-submodules=none"]
+# ---------- a merge's own changes (#391) ----------
+#
+# A merge commit, and the commit finishing a merge, count only the merge's own
+# changes. A merge of two parents is compared with those parents merged again
+# (`--diff-merges=remerge`): what git merges cleanly isn't counted, whatever
+# lines or renames it spans, while a conflict resolved (taking one parent's
+# version included) or a change neither parent has is. git skips that for a
+# merge of more parents, which is read as `git diff-tree --cc -U0` reads it.
+
+_MERGE_OWN = "the merge's own change (a conflict resolved there, or a change neither parent has)"
+_LOG_SAFE = ["--no-renames", "--no-ext-diff", "--no-textconv", "--no-color", "--ignore-submodules=none"]
+_COMMIT_FORMAT = "--format=%x01%x02%h"
+_REMERGE = ["--name-only", "-z", _COMMIT_FORMAT, "--diff-merges=remerge", *_LOG_SAFE]  # a merge of two parents, and any other commit by its files
+_OCTOPUS = ["--min-parents=3", _COMMIT_FORMAT, "--cc", "-U0", "--inter-hunk-context=0", "--text", "--diff-algorithm=myers", "--no-indent-heuristic", *_LOG_SAFE]
 _OBJECT_NAME = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 _C_ESCAPES = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92}
+_UNMERGED_CAP = 1000  # the most unmerged files the guard settles in its copy of the index
 
 
 def _cc_path(line: str) -> str | None:
@@ -6681,9 +6689,15 @@ def _cc_path(line: str) -> str | None:
     return out.decode("utf-8", errors="replace")
 
 
+def _c_quoted(path: str) -> str:
+    """`path` in the C quotes git reads in `GIT_ALTERNATE_OBJECT_DIRECTORIES`,
+    whose entries a `:` separates."""
+    return '"' + path.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def _merge_heads(d: str, glob: list[str]) -> list[str]:
     """The commits a merge in progress in `d` merges (its `MERGE_HEAD`), else
-    []: none in progress, or a file the guard can't read as git writes it."""
+    []: none in progress, or a file git couldn't read either."""
     got, _ = _git_read(d, glob, "rev-parse", "--git-path", "MERGE_HEAD", sep="\n")
     if not got or len(got) != 1:
         return []
@@ -6695,36 +6709,74 @@ def _merge_heads(d: str, glob: list[str]) -> list[str]:
     return heads if heads and all(_OBJECT_NAME.fullmatch(h) for h in heads) else []
 
 
-def _merge_own(d: str, glob: list[str], heads: list[str]) -> list[str] | None:
-    """The files (from the top level) that the merge in progress in `d`
-    changes of its own, if it were committed from the index now: the index
-    written as a tree, compared with `HEAD` and `heads` by a dense combined
-    diff with no context lines. None when that can't be read (files still
-    unmerged, a git read that fails): then everything staged counts. The
-    tree is written from a copy of the index into a temporary object store,
-    so the repository is left as it was."""
+def _settle_unmerged(d: str, glob: list[str], env: dict[str, str]) -> str:
+    """Settles each unmerged file in the index copy `env` names on one
+    version (its own side's, else the other's; removed with neither), so the
+    index can be written as a tree. git commits none of them as they are
+    (`-a` takes the working tree's, which count as they are): only the other
+    files' changes are read from that tree. Returns what failed, else ""."""
+    got, err = _git_read(d, glob, "ls-files", "-u", "-z", env=env)
+    if got is None:
+        return err
+    stages: dict[str, dict[str, tuple[str, str]]] = {}
+    for item in got:
+        info, _, path = item.partition("\t")
+        mode, sha, stage = (info.split() + ["", "", ""])[:3]
+        stages.setdefault(path, {})[stage] = (mode, sha)
+    if len(stages) > _UNMERGED_CAP:
+        return f"more than {_UNMERGED_CAP:,} unmerged files"
+    keep = [f"{v[0]},{v[1]},{path}" for path, by in stages.items() for v in [by.get("2") or by.get("3")] if v]
+    gone = [path for path, by in stages.items() if not (by.get("2") or by.get("3"))]
+    reads = [[a for k in keep for a in ("--cacheinfo", k)]] if keep else []
+    reads += [["--force-remove", "--", *gone]] if gone else []
+    for args in reads:
+        done, err = _git_read(d, ["-c", "core.splitIndex=false", *glob], "update-index", *args, sep="\n", env=env)
+        if done is None:
+            return err
+    return ""
+
+
+def _merge_own_code(d: str, glob: list[str], heads: list[str], code: _Code) -> tuple[_Hit | None, str]:
+    """(the first code path among what the merge in progress in `d` would
+    change of its own, committed from the index now, else None; what
+    couldn't be read). The index is written as a merge commit with `HEAD`
+    and `heads` as its parents, from a copy of the index into a temporary
+    object store, so the repository is left as it was; then read as a pushed
+    merge is."""
+    # Imported here, not at the top: only a commit finishing a merge needs them, and the hook starts on every tool.
     import shutil
     import tempfile
 
-    got, _ = _git_read(d, glob, "rev-parse", "--git-path", "index", "--git-path", "objects", sep="\n")
+    got, err = _git_read(d, glob, "rev-parse", "--git-path", "index", "--git-path", "objects", sep="\n")
     if not got or len(got) != 2:
-        return None
+        return None, err or "git named no index"
     index, objects = (os.path.abspath(os.path.join(d, x)) for x in got)
     with tempfile.TemporaryDirectory(prefix="workflow-guard-") as tmp:
-        env = {"GIT_INDEX_FILE": os.path.join(tmp, "index"), "GIT_OBJECT_DIRECTORY": os.path.join(tmp, "objects")}
-        env["GIT_ALTERNATE_OBJECT_DIRECTORIES"] = objects
+        alternates = [_c_quoted(objects)] + ([os.environ["GIT_ALTERNATE_OBJECT_DIRECTORIES"]] if os.environ.get("GIT_ALTERNATE_OBJECT_DIRECTORIES") else [])
+        env = {
+            "GIT_INDEX_FILE": os.path.join(tmp, "index"), "GIT_OBJECT_DIRECTORY": os.path.join(tmp, "objects"),
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": ":".join(alternates), "GIT_NO_LAZY_FETCH": "1",
+            "GIT_AUTHOR_NAME": "workflow guard", "GIT_AUTHOR_EMAIL": "guard@invalid",
+            "GIT_COMMITTER_NAME": "workflow guard", "GIT_COMMITTER_EMAIL": "guard@invalid",
+        }  # fmt: skip
         try:
             shutil.copyfile(index, env["GIT_INDEX_FILE"])
             os.mkdir(env["GIT_OBJECT_DIRECTORY"])
-        except OSError:
-            return None
-        tree, _ = _git_read(d, ["-c", "core.splitIndex=false", *glob], "write-tree", sep="\n", env=env)
+        except OSError as e:
+            return None, f"it couldn't copy the index ({e.__class__.__name__})"
+        err = _settle_unmerged(d, glob, env)
+        if err:
+            return None, err
+        tree, err = _git_read(d, ["-c", "core.splitIndex=false", *glob], "write-tree", sep="\n", env=env)
         if not tree or len(tree) != 1:
-            return None
-        out, _ = _git_read(d, glob, "diff", *_CC_DIFF, "--end-of-options", tree[0], "HEAD", *heads, "--", sep="\n", env=env)
-    if out is None:
-        return None
-    return [p for p in (_cc_path(x) for x in out) if p]
+            return None, err or "`git write-tree` named no tree"
+        parents = [a for h in ["HEAD", *heads] for a in ("-p", h)]
+        merge, err = _git_read(d, glob, "commit-tree", "--no-gpg-sign", "-m", "merge", *parents, tree[0], sep="\n", env=env)
+        if not merge or len(merge) != 1:
+            return None, err or "`git commit-tree` named no commit"
+        args = _REMERGE if len(heads) == 1 else _OCTOPUS
+        found, err = _sent_code(d, glob, ["log", "-1", *args, "--end-of-options", merge[0], "--"], code, len(heads) > 1, env)
+    return (found[1] if found else None), err
 
 
 def _expanded_specs(seg: Seg, c: _Commit, literal: bool) -> tuple[list[str], str | None]:
@@ -7025,8 +7077,13 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tupl
             c = replace(c, all=True, include=True, specs=[], spec_file=None)  # every change it could carry
         # A commit finishing a merge (`git commit` while one is in progress, `git merge --continue`) counts the merge's own changes.
         heads = _merge_heads(d, glob) if args[0] in ("commit", "merge") else []
-        merged = _merge_own(d, glob, heads) if heads else None
-        files, err = _carried(d, glob, c, {k: v for k, v in assigned.items() if k in _GIT_PATHSPEC_ENV}, merged)
+        own, own_err = _merge_own_code(d, glob, heads, code) if heads else (None, "")
+        finishing = "the commit finishing this merge" if args[0] == "commit" else f"the commit finishing this `git {args[0]}`"
+        if own:
+            hit = replace(own, worktree=wt)
+            return f"{finishing} carries the code path {_shown(hit)} ({hit.pattern}), {_MERGE_OWN}; {code.instead}", None
+        pathspec_env = {k: v for k, v in assigned.items() if k in _GIT_PATHSPEC_ENV}
+        files, err = _carried(d, glob, c, pathspec_env, staged=not heads)
         if files is None:
             unsure = unsure or f"{cant}: {err}"
             continue
@@ -7038,12 +7095,14 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tupl
             if unread:
                 unsure = unsure or f"{cant}: it couldn't read {unread}, and the changes it could carry include the code path {_shown(hit)} ({hit.pattern})"
                 break
-            what = "this commit" if args[0] == "commit" else f"the commit finishing this `git {args[0]}`"
-            if merged is not None and f in merged:
-                what = "the commit finishing this merge" if args[0] == "commit" else what
-                why = "a change of the merge itself (a conflict resolved there, or a change neither side has)"
-                return f"{what} carries the code path {_shown(hit)} ({hit.pattern}), {why}; {code.instead}", None
+            what = finishing if heads else "this commit" if args[0] == "commit" else f"the commit finishing this `git {args[0]}`"
             return f"{what} carries the code path {_shown(hit)} ({hit.pattern}); {code.instead}", None
+        if own_err:  # it couldn't read the merge's own changes: asked when what is staged includes code
+            staged, _ = _carried(d, glob, _Commit(), pathspec_env)
+            hit = next((_Hit(f, m, wt) for f in staged or [] for m in [_listed_code(f, code)] if m), None)
+            if hit or staged is None:
+                shown = f", and what is staged includes the code path {_shown(hit)} ({hit.pattern})" if hit else ""
+                unsure = unsure or f"{cant}: it couldn't read the merge's own changes ({own_err}){shown}"
     return None, unsure or note
 
 
@@ -7052,9 +7111,9 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tupl
 # A push to `project.repo` is judged by what git would send: the commits its
 # sources reach that are on no tracking ref of a remote fetching from
 # `project.repo`, each read as a commit is: a merge by its own changes, as the
-# commit rule reads one (#391). The guard reads them as the repository is when the command
-# starts, so another part of the command that may move a branch or HEAD, or
-# change where pushes go, makes it a push it can't tell about.
+# commit rule reads one (#391). The guard reads them as the repository is when
+# the command starts, so another part of the command that may move a branch or
+# HEAD, or change where pushes go, makes it a push it can't tell about.
 
 
 @dataclass
@@ -7634,12 +7693,15 @@ def _refspec_sources(specs: list[str], shell: bool, here: bool = True) -> tuple[
 _COMMIT_HEADER = re.compile(r"\x01\x02([0-9a-f]{4,64})")
 
 
-def _sent_code(d: str, glob: list[str], args: list[str], code: _Code, cc: bool = False) -> tuple[tuple[str, _Hit] | None, str]:
+def _sent_code(
+    d: str, glob: list[str], args: list[str], code: _Code, cc: bool = False, env: dict[str, str] | None = None
+) -> tuple[tuple[str, _Hit] | None, str]:
     """((the commit, the code path) of the first code path `git log <args>`
     lists, else None; what failed). Read as git writes it, so a long history
     stops at its first code path, within the time a git read has. With `cc`,
     `git log` writes combined diffs (merges' own changes, #391), whose paths
-    are its `diff --cc` headers' rather than `--name-only`'s."""
+    are its `diff --cc` headers' rather than `--name-only`'s. `env` adds to
+    git's environment."""
     # Imported here, not at the top: only a push to `project.repo` needs them, and the hook starts on every tool.
     import queue
     import tempfile
@@ -7651,7 +7713,7 @@ def _sent_code(d: str, glob: list[str], args: list[str], code: _Code, cc: bool =
     try:
         proc = subprocess.Popen(
             [*_GIT_READ, *glob, *args], cwd=d, stdout=subprocess.PIPE, stderr=err_file, stdin=subprocess.DEVNULL,
-            env={**os.environ, "GIT_NO_LAZY_FETCH": "1"},  # a partial clone fetches nothing for the guard
+            env={**os.environ, **(env or {}), "GIT_NO_LAZY_FETCH": "1"},  # a partial clone fetches nothing for the guard
         )  # fmt: skip
     except (OSError, ValueError) as e:
         err_file.close()
@@ -7670,7 +7732,7 @@ def _sent_code(d: str, glob: list[str], args: list[str], code: _Code, cc: bool =
 
     reader = threading.Thread(target=pump, daemon=True)
     reader.start()
-    buf, sha = b"", ""
+    pending, sha, sep = bytearray(), "", b"\n" if cc else b"\0"
     try:
         while True:
             try:
@@ -7679,7 +7741,12 @@ def _sent_code(d: str, glob: list[str], args: list[str], code: _Code, cc: bool =
                 return None, f"{shown} took too long in `{d}`"
             if not b:
                 break
-            *items, buf = (buf + b).split(b"\n" if cc else b"\0")
+            items, start = [], 0
+            while (end := b.find(sep, start)) != -1:  # only the new chunk is searched: a long line stays linear
+                items.append(bytes(pending) + b[start:end])
+                pending.clear()
+                start = end + 1
+            pending += b[start:]
             for raw in items:
                 item = raw.decode("utf-8", errors="replace").removeprefix("\n")
                 m = _COMMIT_HEADER.fullmatch(item)
@@ -7711,6 +7778,12 @@ def _sent_code(d: str, glob: list[str], args: list[str], code: _Code, cc: bool =
         if not reader.is_alive():  # else a process git started still holds the pipe: the daemon thread keeps it
             proc.stdout.close()
         err_file.close()
+
+
+def _is_merge(d: str, glob: list[str], sha: str) -> bool:
+    """Whether the commit `sha` has more than one parent (for the refusal's wording)."""
+    got, _ = _git_read(d, glob, "rev-parse", "--verify", "--quiet", "--end-of-options", f"{sha}^2", sep="\n")
+    return bool(got)
 
 
 def _push_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tuple[str | None, str | None]:
@@ -7896,24 +7969,20 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
             if _project_url(url, code.repo) and not _GLOB_CHARS.search(r) and "\\" not in r:
                 known += [f"--exclude=refs/remotes/{o}/*" for o in sorted(remotes) if o.startswith(r + "/") and not _GLOB_CHARS.search(o)]
                 known.append(f"--glob=refs/remotes/{r}/*")
-        # Each commit but a merge by the files it changes; then each merge by its own changes (#391).
-        log = ["log", "--name-only", "-z", "--format=%x01%x02%h", "--no-renames", "--no-ext-diff", "--no-textconv", "--no-color"]
-        log += ["--ignore-submodules=none", "--diff-merges=off"]
-        merges = ["log", "--merges", "--format=%x01%x02%h", *_CC_DIFF]
+        # Each commit by the files it changes, a merge of two parents by its own changes; then a merge of more parents (#391).
         memo = _PUSH_MEMO if _PUSH_MEMO is not None else {}
-        found, err, merge = None, "", False
-        for merge, args in ((False, log), (True, merges)):
-            key = ("log", merge, d, tuple(pglob), tuple(known), tuple(sorted(pseudo)), tuple(srcs))
+        found, err, octopus = None, "", False
+        for octopus, args in ((False, _REMERGE), (True, _OCTOPUS)):
+            key = ("log", octopus, d, tuple(pglob), tuple(known), tuple(sorted(pseudo)), tuple(srcs))
             if key not in memo:
-                memo[key] = _sent_code(d, pglob, [*args, "--not", *known, "--not", *sorted(pseudo), "--end-of-options", *srcs, "--"], code, merge)
+                memo[key] = _sent_code(d, pglob, ["log", *args, "--not", *known, "--not", *sorted(pseudo), "--end-of-options", *srcs, "--"], code, octopus)
             found, err = memo[key]
             if found or err:
                 break
         if found:
             sha, hit = found
-            if merge:
-                why = "a change of the merge itself (a conflict resolved there, or a change neither side has)"
-                return f"this push sends merge commit {sha}, which carries the code path {_shown(hit)} ({hit.pattern}), {why}, to {to}; {code.instead}", None
+            if octopus or _is_merge(d, pglob, sha):
+                return f"this push sends merge commit {sha}, which carries the code path {_shown(hit)} ({hit.pattern}), {_MERGE_OWN}, to {to}; {code.instead}", None
             return f"this push sends commit {sha}, which carries the code path {_shown(hit)} ({hit.pattern}), to {to}; {code.instead}", None
         if not err:
             err = _not_commits(d, pglob, srcs, pseudo)
