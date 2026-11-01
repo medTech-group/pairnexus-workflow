@@ -152,10 +152,39 @@ def test_a_hash_inside_a_glob_group_is_no_comment(tmp_path, monkeypatch, capsys)
     # A comment is still one where the shell reads it.
     _change(root, CODE)
     assert hook(monkeypatch, capsys, root, "echo hi # (src|#); git commit -am x") == ("allow", "")
-    assert hook(monkeypatch, capsys, root, "A=(\n  x  # the first\n)") == ("allow", "")
-    assert hook(monkeypatch, capsys, root, "local A=(\n  x  # don't\n)") == ("allow", "")
-    # An array's comment is read as zsh reads a pattern's too, erring safe: a command in it is judged.
-    assert hook(monkeypatch, capsys, root, "A=(\n  x  # git commit -am x\n)")[0] == "deny"
+    assert hook(monkeypatch, capsys, root, "make # don't\ngit status") == ("allow", "")
+    # Where the shell may read a `#` as part of a word, the guard can't be sure what follows it runs: asked in a
+    # planning session, refused in a conductor's, unless a reading already refuses it.
+    unsure = "the guard can't be sure where a comment starts"
+    for command in (
+        "A=(\n  x  # the first\n)",
+        "local A=(\n  x  # don't\n)",
+        "true;# it's\necho (src|#)(N); git commit -am x # '",
+        "A=(\n x # it's\n)\necho (src|#)(N); git commit -am x # '",
+        "echo (src)\\\n#(N); git commit -am x",
+        "echo <->\\\n#(N); git commit -am x",
+        "cat <<EOF\n$(echo (src)\\\n#(N); git commit -am x)\nEOF",
+        "echo ${x:-a #}; git commit -am x",
+        "echo ${x:-a #}; git push origin main",
+        "sh -c 'echo ${x:-a #}; git commit -am x'",
+    ):
+        _change(root, CODE)
+        d, why = hook(monkeypatch, capsys, root, command)
+        assert d in ("ask", "deny") and (d == "deny" or unsure in why), (command, d, why)
+        d, why = hook(monkeypatch, capsys, root, command, "conductor")
+        assert d == "deny", (command, why)
+    _change(root, CODE)
+    d, why = hook(monkeypatch, capsys, root, "true;# x\ngit status")
+    assert d == "ask" and unsure in why, why
+
+
+def test_a_qualifier_only_zsh_s_reading_shows_keeps_no_exception(tmp_path, monkeypatch, capsys):
+    """On a prototype branch, a `#` zsh may read as a word's leaves the
+    command unsure, whatever the first reading shows."""
+    root = _prototype(tmp_path)
+    _change(root, CODE)
+    d, why = hook(monkeypatch, capsys, root, "touch 1#; echo <->#(e:'git checkout -q main':); git commit -am x")
+    assert d != "allow" and ("the guard can't be sure where a comment starts" in why or "zsh's" in why), why
 
 
 def test_zsh_s_reading_is_one_pass(tmp_path, monkeypatch, capsys):

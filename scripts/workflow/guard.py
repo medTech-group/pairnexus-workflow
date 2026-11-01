@@ -121,6 +121,7 @@ and the environment come first.
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import fnmatch
 import functools
 import glob as _glob
@@ -622,6 +623,7 @@ def _lex(
     pending: list[tuple[str, bool, Heredoc]] = []
     depth = 0
     globs: list[int] = []  # the depths of the open `(` groups that are part of a word (zsh's, extglob's)
+    braces = 0  # unquoted `${` not yet closed: the shell reads a blank or `#` inside one as the word's
     n = len(s)
 
     def end_word() -> None:
@@ -767,11 +769,15 @@ def _lex(
             in_word = True
             i = substitution(i, i + 2)
             continue
-        # A `#` inside a `(` group glued to a word (`(src|#); git commit …`), or right after an operator with no blank
-        # before it (`(src)#(N)`, zsh's `<->#`, `|#`), zsh may read as part of a word, where bash (an array, a
-        # subshell such as `time -p (`) starts a comment: the reading `zsh` asks for, else a comment.
+        # A `#` inside a `(` group glued to a word (`(src|#); git commit …`), right after anything but a blank (a
+        # backslash-newline skipped: `(src)#(N)`, zsh's `<->#`, `;#`), or inside `${…}` (`${x:-a #}`), the shell
+        # may read as part of a word, where the lexer starts a comment: recorded (`check_bash` asks), and read so
+        # in the reading `zsh` asks for.
         if c == "#" and not in_word:
-            either = bool(globs) or i > 0 and s[i - 1] not in " \t\n"
+            k = i - 1
+            while k > 0 and s[k] == "\n" and s[k - 1] == "\\":
+                k -= 2
+            either = bool(globs) or braces > 0 or k >= 0 and s[k] not in " \t\n"
             if not (zsh and either):
                 if either and hashes is not None:
                     hashes.append(i)
@@ -846,6 +852,10 @@ def _lex(
             if op == ")":
                 close_end = i
             continue
+        if c == "$" and s.startswith("${", i):
+            braces += 1
+        elif c == "}" and braces:
+            braces -= 1
         word.append(c)
         unquoted.append(c)
         in_word = True
@@ -1122,7 +1132,14 @@ def segments(command: str, root: Path, cwd: str | None = "", depth: int = 0) -> 
     segs = _segments_of(_lex(command, hashes=hashes)[0], root, cwd, depth)
     if hashes:  # read as zsh reads it too, each reading from the same directory
         segs += _segments_of(_lex(command, zsh=True)[0], root, cwd, depth)
+        unsure = _COMMENT_UNSURE.get()
+        if unsure is not None:
+            unsure.append(command)
     return segs
+
+
+# The texts, read by `segments` during one `check_bash`, holding a `#` the shell may not read as a comment.
+_COMMENT_UNSURE: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar("_COMMENT_UNSURE", default=None)
 
 
 _CHANGES_DIR = ("cd", "pushd", "popd", "chdir")  # the words that move the shell, which the parser follows
@@ -5868,6 +5885,38 @@ def check_bash(
     cwd: str | os.PathLike | None = None,
     code: "_Code | None" = None,
 ) -> Decision:
+    """`_check_bash`'s decision, and where the guard can't be sure where a
+    comment starts (a `#` that zsh, or bash inside `${…}`, may read as part
+    of a word, so what follows it may run): a refusal it reached stands;
+    else asked in an attended session, refused in a ticket or conductor's."""
+    unsure: list[str] = []
+    token = _COMMENT_UNSURE.set(unsure)
+    try:
+        d = _check_bash(command, profile, role, root, current_branch, role_from_env, cwd, code)
+    finally:
+        _COMMENT_UNSURE.reset(token)
+    if d.action == "deny" or not unsure:
+        return d
+    why = (
+        "the guard can't be sure where a comment starts in this command: a `#` right after `)`, `;`, `|` or another "
+        "operator, inside a `(` group glued to a word (zsh's patterns, an array) or inside `${…}` may be read as part of "
+        "a word, so what follows it may run. Put a comment after a blank, outside such a group, or leave it out"
+    )
+    if role in ("ticket", "conductor"):
+        return Decision("deny", why, d.sensitive)
+    return Decision("ask", f"{d.reason}\n{why}" if d.action == "ask" else why, d.sensitive)
+
+
+def _check_bash(
+    command: str,
+    profile: Profile,
+    role: str,
+    root: Path,
+    current_branch: str | None,
+    role_from_env: bool = True,
+    cwd: str | os.PathLike | None = None,
+    code: "_Code | None" = None,
+) -> Decision:
     start = _start_cwd(root, cwd)
     segs = segments(command, root, start)
     if code is not None:
@@ -5886,7 +5935,7 @@ def check_bash(
         unsure = unsure or unsure_push
         if unsure:
             # The rest of the command first: its refusal stands over this ask, and its ask joins it.
-            d = check_bash(command, profile, role, root, current_branch, role_from_env, cwd)
+            d = _check_bash(command, profile, role, root, current_branch, role_from_env, cwd)
             u = _unsure_code(unsure, role, code)
             if d.action == "deny":
                 return d
