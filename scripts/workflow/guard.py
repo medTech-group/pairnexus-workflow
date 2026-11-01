@@ -7893,18 +7893,37 @@ def _compound_or_cd(segs: list[Seg], command: str) -> str | None:
     `--show-toplevel` from elsewhere). Else None."""
     # A compound word the lexer reads that no part keeps as an argument (`git log --grep for` keeps it) opens a
     # compound command, wherever it stands (`time -p for …`): counted, not placed.
-    seen = Counter(t for t in _tokens(command) if isinstance(t, str) and not isinstance(t, Op) and t in _COMPOUND_WORDS)
-    kept = Counter(w for s in segs for w in s.words[1:] if w in _COMPOUND_WORDS)
+    toks = _tokens(command)
+    seen = Counter(t for t in toks if isinstance(t, str) and not isinstance(t, Op) and t in _COMPOUND_WORDS)
+    # Kept by the command's own parts, not by text read again within one (`sh -c 'echo for'`, `eval`), which the
+    # top-level words never hold.
+    tops = [_strip_prefix(list(c.words))[0] for c in _simple(toks) if isinstance(c, _Cmd)]
+    kept = Counter(w for words in tops for w in words[1:] if w in _COMPOUND_WORDS)
     opened = next((w for w in seen if seen[w] > kept[w]), None)
     if opened:
         return f"it holds the compound command `{opened}`, whose words the guard doesn't follow"
     moved = next((s.words[0] for s in segs if s.words and s.words[0] in _CHANGES_DIR), None)
     if moved:
         return f"it changes directory with `{moved}`, which the guard follows only so far: run it from that directory, or with `git -C`"
-    spelled = next((s.words[0] for s in segs if s.words and ("$" in s.words[0] or "`" in s.words[0])), None)
+    spelled = next((s.words[0] for s in segs if s.words and _spelled_command(s.words[0])), None)
     if spelled:
         return f"it runs a command the shell spells (`{_brief(spelled)}`), which the guard can't follow"
+    changes = next((s.words[0] for s in segs if s.words and s.words[0] in _CHANGES_COMMANDS), None)
+    if changes:
+        return f"it runs `{changes}`, which can change what the command's later words do"
     return None
+
+
+# Shell commands that change what later words run or where (a trap's command, an alias, a sourced file, a hashed path).
+_CHANGES_COMMANDS = {"trap", "alias", "source", ".", "hash", "enable"}
+
+
+def _spelled_command(word: str) -> bool:
+    """A command word the shell turns into another (an expansion, a glob, a
+    brace list: `${X:-cd}`, `c[d]`, `{cd,dir}`); `[` and `[[` are commands."""
+    if word in ("[", "[["):
+        return False
+    return "$" in word or "`" in word or bool(_GLOB_CHARS.search(word)) or _brace_list(word)
 
 
 def _busy_parts(segs: list[Seg], command: str) -> tuple[list[Seg], str | None]:

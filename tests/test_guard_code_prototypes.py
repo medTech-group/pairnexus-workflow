@@ -994,6 +994,17 @@ def test_a_write_or_commit_in_a_command_that_changes_directory(tmp_path, monkeyp
         _change(root, CODE)
         d, why = hook(monkeypatch, capsys, root, command)
         assert d == "deny" and f"this one changes directory with `{word}`" in why and "`git -C`" in why, (command, why)
+    for command, why_part in (
+        ("${X:-cd} .claude && echo x > src/app.py", "a command the shell spells (`${X:-cd}`)"),
+        ("{cd,src} && git commit -am x", "a command the shell spells (`{cd,src}`)"),
+        ("c[d] src && git commit -am x", "a command the shell spells (`c[d]`)"),
+        ("trap 'cd src' DEBUG; git commit -am x", "runs `trap`"),
+        (". /tmp/c.sh && echo x > src/app.py", "runs `.`"),
+        ("sh -c 'echo for'; for HOME in /tmp/h; do git commit -am x; done", "the compound command `for`"),
+    ):
+        _change(root, CODE)
+        d, why = hook(monkeypatch, capsys, root, command)
+        assert d == "deny" and why_part in why, (command, why)
     assert hook(monkeypatch, capsys, root, "git -C . commit -am x")[0] == "allow"
 
 
