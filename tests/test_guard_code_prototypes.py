@@ -1052,6 +1052,9 @@ def test_a_write_or_commit_in_a_command_that_changes_directory(tmp_path, monkeyp
         ("echo (src|lib)(e:'cd src':); git commit -am x", "zsh's"),
         ("echo (<->)(e:'cd src':); git commit -am x", "zsh's"),
         ("echo (e:'cd src':); git commit -am x", "zsh's"),
+        ("> (src)\\\n(e:'cd src':); git commit -am x", "zsh's"),
+        ("> (e:'cd src':); git commit -am x", "zsh's"),
+        ("-p (e:'cd src':); git commit -am x", "zsh's"),
     ):
         _change(root, CODE)
         d, why = hook(monkeypatch, capsys, root, command)
@@ -1072,6 +1075,11 @@ def test_a_write_or_commit_in_a_command_that_changes_directory(tmp_path, monkeyp
         "test '$X' && echo x > src/app.py",
         "(echo x) > src/app.py",
         "echo a; (echo x > src/app.py)",
+        "{ (echo x > src/app.py); }",
+        "! (echo x > src/app.py)",
+        "time -p (echo x > src/app.py)",
+        "git commit -am \"$(cat <<'EOF'\nfix(scope): x\nEOF\n)\"",
+        "git commit -am \"$(cat <<'EOF'\nfix(scope): x\nEOF)\"",
         "cat <<< 'f(x)' > src/app.py",
         "echo 'x' \\( > src/app.py",
         "cat > src/app.py <<EOF\nf(x) \\\ny\nEOF",

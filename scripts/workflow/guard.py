@@ -475,7 +475,8 @@ def _start_cwd(root: Path, cwd: str | os.PathLike | None) -> str:
 class Op(str):
     """An unquoted shell operator; a quoted word that looks like one is a plain str.
     `glued`: a `(` the lexer met inside a word (`*(e:…:)`, `"x"(…)`, `` `…`(…) ``),
-    right after a `)` or after a word of the command (`echo (src)(e:…:)`), or
+    right after a `)`, or after a word or redirect of the command (`echo
+    (src)(e:…:)`, `> (e:…:)`; not `{ (…)`, `! (…)`, `time (…)`), or
     zsh's numeric glob before one (`<->(…)`): zsh's glob qualifiers, which
     can run code in the shell itself; bash reads it as an error outside a
     function's name or extglob."""
@@ -609,6 +610,7 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
     in_word = False
     quoted = False
     expands = False  # an expansion in double quotes
+    close_end = -1  # where the last `)` operator ended (a backslash-newline after it skipped)
     pending: list[tuple[str, bool, Heredoc]] = []
     depth = 0
     n = len(s)
@@ -684,6 +686,8 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
         c = s[i]
         if c == "\\":
             if i + 1 < n and s[i + 1] == "\n":
+                if close_end == i:
+                    close_end = i + 2
                 i += 2
                 continue
             if i + 1 < n:
@@ -772,7 +776,7 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
             # A `(` inside a word, right after a `)`, or after a word of the command (zsh: `*(e:…:)`, `(src)(e:…:)`,
             # `echo (…)`), or zsh's numeric glob before one (`<->(…)`).
             glued = (
-                c == "(" and (in_word or s[i - 1 : i] == ")" or any(not isinstance(t, Op) for t in out[cmd_start:]))
+                c == "(" and (in_word or close_end == i or len(out) > cmd_start and not _leads_subshell(out[cmd_start:]))
                 or c == "<" and bool(re.match(r"<\d*-\d*>\(", s[i : i + 64]))
             )
             fd = ""
@@ -810,6 +814,8 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
             if op in _SEPARATORS:
                 cmd_start = len(out)
             i += len(op)
+            if op == ")":
+                close_end = i
             continue
         word.append(c)
         unquoted.append(c)
@@ -817,6 +823,21 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
         i += 1
     end_word()
     return out, n
+
+
+# Words after which a `(` still opens a subshell, as at a command's start: `{ (…); }`, `! (…)`, `time -p (…)`.
+_SUBSHELL_LEADERS = {"{", "!", "if", "then", "else", "elif", "do", "while", "until", "time"}
+
+
+def _leads_subshell(toks: list) -> bool:
+    """The tokens so far of a simple command are only words after which a
+    `(` opens a subshell (`time`'s `-p` right after it): anything else there
+    (a word, a redirect, a heredoc) makes zsh read a `(` as part of a word,
+    a pattern with glob qualifiers."""
+    return all(
+        type(t) is Word and (t in _SUBSHELL_LEADERS or t == "-p" and k > 0 and toks[k - 1] == "time")
+        for k, t in enumerate(toks)
+    )
 
 
 def _tokens(command: str) -> list:
