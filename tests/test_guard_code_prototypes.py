@@ -429,8 +429,8 @@ def test_a_symbolic_ref_or_a_tag_named_prototype_isnt_a_prototype_branch(tmp_pat
     [
         ("git push --follow-tags origin prototype/x", None, "deny", "it sends the tags on its commits too"),
         ("git push origin prototype/x", "push.followTags", "deny", "it sends the tags on its commits too"),
-        ("git -c push.followTags=true push origin prototype/x", None, "deny", "a setting or variable of its own"),
-        ("GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=push.followTags GIT_CONFIG_VALUE_0=true git push origin prototype/x", None, "deny", "a setting or variable of its own"),
+        ("git -c push.followTags=true push origin prototype/x", None, "deny", "it runs with `-c push.followTags=true`"),
+        ("GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=push.followTags GIT_CONFIG_VALUE_0=true git push origin prototype/x", None, "deny", "it runs with the variable `GIT_CONFIG_KEY_0`"),
         ("git config push.followTags true; git push origin prototype/x", None, "deny", "run the push in a command of its own"),
         ("git tag v9 && git push origin prototype/x", None, "ask", "can't tell"),
         ("HOME=/tmp/elsewhere git push origin prototype/x", None, "ask", "can't tell"),
@@ -834,23 +834,87 @@ def test_a_rebase_of_another_branch_in_progress_isnt_on_a_prototype_branch(tmp_p
 def test_a_dot_git_attached_to_a_short_option(tmp_path, monkeypatch, capsys):
     root = _prototype(tmp_path)
     _change(root, CODE)
-    for command in ("cp -t.git HEAD && git commit -am x", "tar -C.git -xf h.tar; git commit -am x"):
-        d, why = hook(monkeypatch, capsys, root, command)
-        assert d == "deny" and "code path" in why, (command, why)
+    d, why = hook(monkeypatch, capsys, root, "tar -C.git -xf h.tar; git commit -am x")
+    assert d == "deny" and "code path" in why and "names `-C.git`" in why, why
+    d, why = hook(monkeypatch, capsys, root, "cp -t.git HEAD && git commit -am x")
+    assert d == "deny" and "code path" in why, why
 
 
 @pytest.mark.parametrize(
-    "command",
-    ["env -u HOME git push origin", "git push origin prototype/x 2>/tmp/elsewhere.cfg", "nice git push origin prototype/x"],
+    "command, culprit",
+    [
+        ("env -u HOME git push origin", "the wrapper `env`"),
+        ("git push origin prototype/x 2>/tmp/elsewhere.cfg", "a redirect to `/tmp/elsewhere.cfg`"),
+        ("git push origin prototype/x > push.log", "a redirect to `push.log`"),
+        ("nice git push origin prototype/x", "the wrapper `nice`"),
+        ("/tmp/e GIT_CONFIG_PARAMETERS=x git push origin prototype/x", "`/tmp/e` before git"),
+        ("busybox env HOME=/tmp/h git push origin prototype/x", "`busybox` before git"),
+        ("/usr/bin/git push origin prototype/x", "`/usr/bin/git` before git"),
+        ("git --exec-path=/tmp/x push origin prototype/x", "`--exec-path=/tmp/x`"),
+        ("GIT_SSH_COMMAND=/tmp/ssh git push origin prototype/x", "the variable `GIT_SSH_COMMAND`"),
+    ],
 )
-def test_a_prototype_push_under_a_wrapper_or_writing_a_file_is_judged(tmp_path, monkeypatch, capsys, command):
+def test_a_prototype_push_with_settings_of_its_own_is_judged(tmp_path, monkeypatch, capsys, command, culprit):
+    """Only git itself as the command word, with nothing that could change which
+    config it reads or where it pushes, gets the exception; the refusal names the culprit."""
     root = _prototype(tmp_path)
     _code_commit(root)
     d, why = hook(monkeypatch, capsys, root, command)
-    assert d in ("deny", "ask") and ("runs under a wrapper or writes a file" in why or "can't tell" in why), (command, why)
-    assert d == "ask" or "carries the code path" in why, why
+    assert d == "deny" and "carries the code path" in why and f"it runs with {culprit}" in why, (command, why)
+
+
+def test_a_prototype_push_under_command_or_timeout_goes_through(tmp_path, monkeypatch, capsys):
+    root = _prototype(tmp_path)
+    _code_commit(root)
     for ok in ("command git push origin prototype/x", "timeout 60 git push origin prototype/x", "git push origin prototype/x >/dev/null 2>&1"):
         assert hook(monkeypatch, capsys, root, ok) == ("allow", ""), ok
+
+
+def _rebasing(root, start, other="other"):
+    """A rebase of `start` onto `other` stopped at a conflict in a code path."""
+    git(root, "checkout", "-q", "-b", other, "main")
+    _code_commit(root, CODE, "other\n")
+    git(root, "checkout", "-q", start)
+    _code_commit(root, CODE, "mine\n")
+    assert subprocess.run(["git", "rebase", other], cwd=root, capture_output=True).returncode != 0
+
+
+def test_which_branch_a_rebase_counts_on(tmp_path, monkeypatch, capsys):
+    root = _prototype(tmp_path)
+    _rebasing(root, "prototype/x")
+    _change(root, CODE, "both\n")
+    git(root, "add", CODE)
+    assert hook(monkeypatch, capsys, root, "git commit -m x")[0] == "allow"  # detached, finishing on prototype/x
+    git(root, "checkout", "-q", "-b", "prototype/y")  # attached to another prototype branch meanwhile
+    assert hook(monkeypatch, capsys, root, "git commit -m x")[0] == "allow"
+    git(root, "symbolic-ref", "HEAD", "refs/heads/prototype/x")  # attached to the branch it finishes on
+    assert hook(monkeypatch, capsys, root, "git commit -m x")[0] == "allow"
+    git(root, "symbolic-ref", "HEAD", "refs/heads/feature")
+    d, why = hook(monkeypatch, capsys, root, "git commit -m x")
+    assert d == "deny" and "carries the code path" in why, why
+
+
+def test_a_detached_rebase_counts_on_no_branch(tmp_path, monkeypatch, capsys):
+    root = _prototype(tmp_path)
+    git(root, "checkout", "-q", "-b", "other", "main")
+    _code_commit(root, CODE, "other\n")
+    git(root, "checkout", "-q", "--detach", "prototype/x")
+    _code_commit(root, CODE, "mine\n")
+    assert subprocess.run(["git", "rebase", "other"], cwd=root, capture_output=True).returncode != 0
+    assert (root / ".git" / "rebase-merge" / "head-name").read_text().strip() == "detached HEAD"
+    _change(root, CODE, "both\n")
+    git(root, "add", CODE)
+    d, why = hook(monkeypatch, capsys, root, "git commit -m x")
+    assert d == "deny" and "carries the code path" in why, why
+
+
+def test_a_dot_git_option_in_a_variable_and_a_branch_change_both_named(tmp_path, monkeypatch, capsys):
+    root = _prototype(tmp_path)
+    _change(root, CODE)
+    d, why = hook(monkeypatch, capsys, root, "o=-t.git; cp $o HEAD && git commit -am x")
+    assert d == "deny" and "names `-t.git`" in why, why
+    d, why = hook(monkeypatch, capsys, root, "git stash && cp -t.git HEAD && git commit -am x")
+    assert d == "deny" and "runs `git stash`" in why, why
 
 
 def test_the_changelog_notes_it():
