@@ -7432,11 +7432,11 @@ def _expands(s: Seg, literal: list[str] = ()) -> bool:
     """Whether the shell expands something in a part (a `$` or a backtick in
     its words, its variables' values, its redirects' targets, its heredoc or
     here-string, or its `<` files), which can set a variable (`$[HOME=1]`) or
-    run a command; or feeds it stdin it can't read. A word that is a quoted
-    heredoc's text as written (`$(cat <<'EOF' … EOF)`, `_literal_heredoc`)
-    expands nothing, nor does the heredoc of the `cat` inside it, one of
-    the command's `literal` words."""
-    words = [w for w in s.words if not _literal_heredoc(w)]
+    run a command; or feeds it stdin it can't read. The `literal` words (a
+    commit's message given as a quoted heredoc, `$(cat <<'EOF' … EOF)` in
+    double quotes) expand nothing, nor does the heredoc of the `cat` inside
+    one."""
+    words = [w for w in s.words if not any(w is x for x in literal)]
     heredoc = s.heredoc or ""
     if heredoc and s.words[:1] == ["cat"] and any(heredoc in w for w in literal):
         heredoc = ""
@@ -7488,7 +7488,8 @@ def _finishing_revert(segs: list[Seg], seg: Seg, d: str, glob: list[str], c: _Co
     import time
 
     why = ""
-    literal = [w for x in segs for w in x.words if _literal_heredoc(w)]  # a commit message passed as a quoted heredoc
+    # A message given as a quoted heredoc in double quotes (`-m "$(cat <<'EOF' … EOF)"`), as Claude Code writes one: its text, as written.
+    literal = [w for w in seg.words if isinstance(w, Word) and not w.splits and w in c.messages and _literal_heredoc(w)]
     other = next((s for s in segs if s is not seg and not _reads_only(s, literal)), None)
     m = _REVERTS.search("\n\n".join(c.messages))
     line = f'the "This reverts commit {reverting}." line, which tells a push it is a revert'
@@ -7504,8 +7505,8 @@ def _finishing_revert(segs: list[Seg], seg: Seg, d: str, glob: list[str], c: _Co
     own += [f"`{w}`" for w in seg.wrappers if w != "command"]  # `env -u …`, `sudo`: what it runs under
     if own:  # a setting or variable of its own can run a hook that stages more (`-c core.hooksPath=…`, `HOME=…`, `$[HOME=1]`)
         what = own[0] if own[0].startswith(("a value", "`")) else f"`{_brief(own[0])}`"
-        how = "runs under" if own[0].startswith("`") else "sets"
-        why = f"it {how} {what} for itself, which can change what it commits: finish it with plain `git commit --no-edit`"
+        how = f"runs under {what}" if own[0].startswith("`") else f"sets {what} for itself"
+        why = f"it {how}, which can change what it commits: finish it with plain `git commit --no-edit`"
     elif other is not None:
         shown = " ".join(other.words) or " ".join(other.assigns) or " ".join(f"> {r}" for r in other.redirects)
         part = f"`{_brief(shown)}`" if shown else "another part"
