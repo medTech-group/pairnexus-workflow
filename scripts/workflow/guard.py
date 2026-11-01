@@ -6562,14 +6562,15 @@ _GIT_READ_SECONDS = 5  # the most one git read may take
 
 
 def _git_read(
-    d: str, glob: list[str], *args: str, sep: str = "\0", env: dict[str, str] | None = None, ok: tuple[int, ...] = (0,)
+    d: str, glob: list[str], *args: str, sep: str = "\0", env: dict[str, str] | None = None, ok: tuple[int, ...] = (0,), raw: bool = False
 ) -> tuple[list[str] | None, str]:
     """(git's output split on `sep`, else None; what failed, with git's own
     words). `glob` is the command's own options that change the repository
     or how pathspecs read, `env` the variables it sets for them, `ok` the
     exit codes that aren't a failure (`git config --get` exits 1 when it
-    finds nothing). No fsmonitor or signature check runs, a root commit's
-    changes are shown, and paths are from the top level."""
+    finds nothing), `raw` keeps bytes that aren't UTF-8 as they are (for
+    names given back to git). No fsmonitor, hook or signature check runs, a
+    root commit's changes are shown, and paths are from the top level."""
     cmd = [*_GIT_READ, *glob, *args]
     shown = "`git " + " ".join(args[:2]) + "`"
     try:
@@ -6581,7 +6582,7 @@ def _git_read(
     if p.returncode not in ok:
         err = p.stderr.decode("utf-8", errors="replace").strip().splitlines()
         return None, f"{shown} failed in `{d}`" + (f" ({err[0]})" if err else "")
-    return [x for x in p.stdout.decode("utf-8", errors="replace").split(sep) if x], ""
+    return [x for x in p.stdout.decode("utf-8", errors="surrogateescape" if raw else "replace").split(sep) if x], ""
 
 
 def _passed_globals(glob: list[str]) -> list[str]:
@@ -6785,7 +6786,8 @@ def _settle_unmerged(d: str, glob: list[str], env: dict[str, str]) -> str:
     (`-a` takes the working tree's, which count as they are): only the other
     files' changes are read from that tree. Returns what failed, else ""."""
     plain = [g for g in glob if g not in _GIT_PATHSPEC_GLOBALS]  # `:/` is read as git's magic
-    got, err = _git_read(d, plain, "ls-files", "-u", "-z", "--full-name", "--", ":/", env={**env, "GIT_LITERAL_PATHSPECS": "0"})
+    # Names kept byte for byte (`raw`), since they are given back to git.
+    got, err = _git_read(d, plain, "ls-files", "-u", "-z", "--full-name", "--", ":/", env={**env, "GIT_LITERAL_PATHSPECS": "0"}, raw=True)
     if got is None:
         return err
     stages: dict[str, dict[str, tuple[str, str]]] = {}

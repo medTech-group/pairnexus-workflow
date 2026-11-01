@@ -40,7 +40,7 @@ def _edit(root, path, old, new):
 
 def _merge(root, *args):
     """`git merge`, which exits 1 on a conflict: the set-up expects it."""
-    p = subprocess.run(["git", "merge", "-q", "--no-edit", *args], cwd=root, capture_output=True, text=True)
+    p = subprocess.run(["git", "merge", "-q", "--no-edit", *args], cwd=root, capture_output=True)
     return p.returncode
 
 
@@ -645,3 +645,17 @@ def test_with_a_git_older_than_2_36_a_push_is_asked(proj, monkeypatch, capsys, t
     monkeypatch.setenv("PATH", f"{fake.parent}{os.pathsep}{os.environ['PATH']}")
     d, why = hook(monkeypatch, capsys, proj, "git push origin feature")
     assert d == "ask" and "can't tell" in why and "--diff-merges" in why, why
+
+
+def test_an_unmerged_name_that_isn_t_utf8_is_settled(proj, monkeypatch, capsys):
+    """git's names are given back to it byte for byte."""
+    bad = os.fsdecode(b"docs/bad\xff\xfe.md")
+    _on_base(proj, lambda r: _change(r, bad, "# Seed\n"))
+    git(proj, "merge", "-q", "--ff-only", "origin/main")
+    git(proj, "push", "-q", "origin", "feature")
+    _on_base(proj, lambda r: (_edit(r, CODE, "v9 = 9", "v9 = 'base'"), _change(r, bad, "# Base\n")))
+    _commit(proj, lambda r: _change(r, bad, "# Branch\n"))
+    assert _merge(proj, "origin/main") == 1
+    _change(proj, bad, "# Both\n")
+    for command in ("git commit -a --no-edit", "cd docs && git commit -a --no-edit"):
+        assert hook(monkeypatch, capsys, proj, command, "conductor") == ("allow", ""), command
