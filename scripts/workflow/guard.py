@@ -6110,6 +6110,10 @@ class _Code:
                 top, list(glob), "rev-parse", "--symbolic-full-name", "HEAD",
                 "--git-path", "rebase-merge/head-name", "--git-path", "rebase-apply/head-name", sep="\n",
             )  # fmt: skip
+            if got is None:  # an unborn branch, which `rev-parse` can't name: read HEAD as a symbolic ref
+                head, _ = _git_read(top, list(glob), "symbolic-ref", "-q", "HEAD", sep="\n", ok=(0, 1))
+                paths, _ = _git_read(top, list(glob), "rev-parse", "--git-path", "rebase-merge/head-name", "--git-path", "rebase-apply/head-name", sep="\n")
+                got = [head[0], *paths] if head and paths else None
             on = False
             if got and len(got) == 3:
                 head, ends = got[0], []
@@ -7766,7 +7770,7 @@ def _prototype_branch(ref: str) -> bool:
 
 
 # A `.git` given as a short option's value, attached (`cp -t.git`, `tar -C.git`), which `_DOT_GIT` reads as part of a word.
-_DOT_GIT_OPTION = re.compile(r"(?:^|(?<=[\s=;|&(]))-[A-Za-z0-9]+\.git(?![\w.-])", re.IGNORECASE)
+_DOT_GIT_OPTION = re.compile(r"(?:^|(?<=[\s=;|&({,]))-[A-Za-z0-9]+\.git(?![\w.-])", re.IGNORECASE)
 
 
 def _moves_head(changers: "_Changers") -> str | None:
@@ -7791,11 +7795,10 @@ def _dot_git_named(command: str, segs: list[Seg]) -> str | None:
     named = _names_dot_git(command, segs)
     if named:
         return named
-    for s in segs:
-        for t in [*s.words, *s.assigns, *s.redirects, *s.inputs, s.stdin or "", s.heredoc or "", command]:
-            m = _DOT_GIT_OPTION.search(t)
-            if m:
-                return m.group(0).strip()
+    for t in [command, *(t for s in segs for t in (*s.words, *s.assigns, *s.redirects, *s.inputs, s.stdin or "", s.heredoc or ""))]:
+        m = _DOT_GIT_OPTION.search(t)
+        if m:
+            return m.group(0).strip()
     return None
 
 
@@ -7839,6 +7842,38 @@ def _prototype_rule(code: _Code, segs: list[Seg], root: Path, command: str) -> _
         f"that can't change the branch first, and this one {how}. Otherwise, "
     )
     return replace(code, instead=note + code.instead)
+
+
+def _push_own_part(segs: list[Seg], seg: Seg, glob: list[str], dot_git: str) -> list[str]:
+    """What in a push's own part could change which config git reads, where
+    it sends the push or what program runs for it, so a planning session's
+    push to `prototype/*` branches isn't let through as one: anything but
+    plain `git` as its command word (a wrapper, a program before it, a path
+    to git), a variable set for it or anywhere in the command that git or
+    the shell reads, a global option but `-C` and those that run nothing
+    (`--no-pager`), a redirect but to `/dev/null`, a value the shell expands
+    but `$(git branch --show-current)`, or a `.git` the command names."""
+    own = [f"`{_brief(w)}` before git" for w in seg.words[:1] if w != "git"]
+    own += [f"the wrapper `{w}`" for w in seg.wrappers]
+    names = [a.partition("=")[0] for a in seg.assigns] + list(_assigned(seg))
+    var = names[0] if names else _push_env(segs, seg, _PUSH_ENV) or _push_env(segs, seg, _PUSH_ENV_CONFIG) or _push_env(segs, seg, _PUSH_ENV_PROGRAMS)
+    own += [f"the variable `{_brief(var)}`"] if var else []
+    i = 0
+    while i < len(glob):
+        if glob[i] == "-C":
+            i += 2
+            continue
+        if glob[i] not in _GIT_READ_GLOBALS:
+            own.append(f"`{_brief(glob[i])}`" + (f" `{_brief(glob[i + 1])}`" if glob[i] in ("-c", "--config-env") and i + 1 < len(glob) else ""))
+            break
+        i += 1
+    own += [f"a redirect to `{_brief(r)}`" for r in seg.redirects if r != "/dev/null"]
+    current = [w for w in seg.words if ("$" in w or "`" in w) and not re.search(r"[$`]", _CURRENT_BRANCH.sub("", w))]
+    if _expands(seg, current):
+        own.append("a value the shell expands")
+    if dot_git:
+        own.append(f"`{dot_git}` named in the command")
+    return own
 
 
 def _only_reads_beside(segs: list[Seg]) -> bool:
@@ -8851,20 +8886,7 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
         if code.planning():
             if reads_only is None:
                 reads_only = _only_reads_beside(segs)
-            # Its own part: git itself the command word, with no setting, variable, wrapper or redirect that could
-            # change which config git reads or where it pushes; and no `.git` named in the command.
-            own = (
-                [f"`{_brief(w)}` before git" for w in seg.words[:1] if w != "git"]
-                + [f"the wrapper `{w}`" for w in seg.wrappers if w not in ("command", "timeout")]
-                + [f"a redirect to `{_brief(r)}`" for r in seg.redirects if r != "/dev/null"]
-                + [f"`{_brief(o)}`" for o in glob if o == "--exec-path" or o.startswith("--exec-path=")]
-                + [f"`-c {_brief(k)}`" for k in cs]
-            )
-            var = _push_env(segs, seg, _PUSH_ENV) or _push_env(segs, seg, _PUSH_ENV_CONFIG) or _push_env(segs, seg, _PUSH_ENV_PROGRAMS)
-            if var:
-                own.append(f"the variable `{var}`")
-            if dot_git:
-                own.append(f"`{dot_git}` named in the command")
+            own = _push_own_part(segs, seg, glob, dot_git)
             if own:
                 why = f"it runs with {own[0]}, which could change where git sends it"
             elif not reads_only:

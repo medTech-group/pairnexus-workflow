@@ -319,7 +319,7 @@ def test_a_push_with_prototype_push_settings_goes_through(tmp_path, monkeypatch,
 @pytest.mark.parametrize(
     "command, why",
     [
-        ('git push origin "prototype/x:$B"', "the shell may expand `prototype/x:$B`"),
+        ('git push origin "prototype/x:$B"', "a value the shell expands"),
         ("git push origin prototype/x:{prototype/y,main}", "the shell may expand"),
         ("git push --all origin", "it pushes more than named branches"),
         ("git push --mirror origin", "it pushes more than named branches"),
@@ -429,8 +429,8 @@ def test_a_symbolic_ref_or_a_tag_named_prototype_isnt_a_prototype_branch(tmp_pat
     [
         ("git push --follow-tags origin prototype/x", None, "deny", "it sends the tags on its commits too"),
         ("git push origin prototype/x", "push.followTags", "deny", "it sends the tags on its commits too"),
-        ("git -c push.followTags=true push origin prototype/x", None, "deny", "it runs with `-c push.followTags=true`"),
-        ("GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=push.followTags GIT_CONFIG_VALUE_0=true git push origin prototype/x", None, "deny", "it runs with the variable `GIT_CONFIG_KEY_0`"),
+        ("git -c push.followTags=true push origin prototype/x", None, "deny", "it runs with `-c` `push.followTags=true`"),
+        ("GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=push.followTags GIT_CONFIG_VALUE_0=true git push origin prototype/x", None, "deny", "it runs with the variable `GIT_CONFIG_COUNT`"),
         ("git config push.followTags true; git push origin prototype/x", None, "deny", "run the push in a command of its own"),
         ("git tag v9 && git push origin prototype/x", None, "ask", "can't tell"),
         ("HOME=/tmp/elsewhere git push origin prototype/x", None, "ask", "can't tell"),
@@ -852,6 +852,13 @@ def test_a_dot_git_attached_to_a_short_option(tmp_path, monkeypatch, capsys):
         ("/usr/bin/git push origin prototype/x", "`/usr/bin/git` before git"),
         ("git --exec-path=/tmp/x push origin prototype/x", "`--exec-path=/tmp/x`"),
         ("GIT_SSH_COMMAND=/tmp/ssh git push origin prototype/x", "the variable `GIT_SSH_COMMAND`"),
+        ("X=$[HOME=0] git push origin prototype/x", "the variable `X`"),
+        ("git push -o \"$[HOME=0]\" origin prototype/x", "a value the shell expands"),
+        ("PATH=/tmp/x:/usr/bin git push origin prototype/x", "the variable `PATH`"),
+        ("GIT_ASKPASS=/tmp/x git push origin prototype/x", "the variable `GIT_ASKPASS`"),
+        ("/tmp/x/timeout 60 git push origin prototype/x", "the wrapper `timeout`"),
+        ("command git push origin prototype/x", "the wrapper `command`"),
+        ("git -p push origin prototype/x", "`-p`"),
     ],
 )
 def test_a_prototype_push_with_settings_of_its_own_is_judged(tmp_path, monkeypatch, capsys, command, culprit):
@@ -863,11 +870,31 @@ def test_a_prototype_push_with_settings_of_its_own_is_judged(tmp_path, monkeypat
     assert d == "deny" and "carries the code path" in why and f"it runs with {culprit}" in why, (command, why)
 
 
-def test_a_prototype_push_under_command_or_timeout_goes_through(tmp_path, monkeypatch, capsys):
+def test_a_plain_prototype_push_goes_through(tmp_path, monkeypatch, capsys):
     root = _prototype(tmp_path)
     _code_commit(root)
-    for ok in ("command git push origin prototype/x", "timeout 60 git push origin prototype/x", "git push origin prototype/x >/dev/null 2>&1"):
+    for ok in (
+        "git push origin prototype/x >/dev/null 2>&1",
+        "git -C . push origin prototype/x",
+        "git --no-pager push origin $(git branch --show-current)",
+        "git push origin HEAD",
+    ):
         assert hook(monkeypatch, capsys, root, ok) == ("allow", ""), ok
+
+
+def test_an_unborn_prototype_branch(tmp_path, monkeypatch, capsys):
+    root = _clone(tmp_path)
+    git(root, "switch", "-q", "--orphan", "prototype/new")
+    assert hook(monkeypatch, capsys, root, "echo x > src/app.py") == ("allow", "")
+    d, why = hook(monkeypatch, capsys, root, "echo x > src/app.py", "conductor")
+    assert d == "deny", why
+
+
+def test_rebase_state_it_cant_read_counts_as_no_prototype(tmp_path, monkeypatch, capsys):
+    root = _prototype(tmp_path)
+    (root / ".git" / "rebase-merge" / "head-name").mkdir(parents=True)  # a folder: unreadable as a file
+    d, why = hook(monkeypatch, capsys, root, "echo x > src/app.py")
+    assert d == "deny" and "code path" in why, why
 
 
 def _rebasing(root, start, other="other"):
@@ -912,6 +939,8 @@ def test_a_dot_git_option_in_a_variable_and_a_branch_change_both_named(tmp_path,
     root = _prototype(tmp_path)
     _change(root, CODE)
     d, why = hook(monkeypatch, capsys, root, "o=-t.git; cp $o HEAD && git commit -am x")
+    assert d == "deny" and "names `-t.git`" in why, why
+    d, why = hook(monkeypatch, capsys, root, "cp {-t.git,HEAD} && git commit -am x")
     assert d == "deny" and "names `-t.git`" in why, why
     d, why = hook(monkeypatch, capsys, root, "git stash && cp -t.git HEAD && git commit -am x")
     assert d == "deny" and "runs `git stash`" in why, why
