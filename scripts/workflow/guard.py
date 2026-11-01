@@ -7428,15 +7428,23 @@ def _names_dot_git(command: str, segs: list[Seg]) -> str | None:
     return None
 
 
-def _expands(s: Seg) -> bool:
+def _expands(s: Seg, literal: list[str] = ()) -> bool:
     """Whether the shell expands something in a part (a `$` or a backtick in
-    its words, its heredoc or here-string, or its `<` files), which can set
-    a variable (`$[HOME=1]`) or run a command; or feeds it stdin it can't read."""
-    texts = [*s.words, s.heredoc or "", s.stdin or "", *s.inputs]
+    its words, its variables' values, its redirects' targets, its heredoc or
+    here-string, or its `<` files), which can set a variable (`$[HOME=1]`) or
+    run a command; or feeds it stdin it can't read. A word that is a quoted
+    heredoc's text as written (`$(cat <<'EOF' … EOF)`, `_literal_heredoc`)
+    expands nothing, nor does the heredoc of the `cat` inside it, one of
+    the command's `literal` words."""
+    words = [w for w in s.words if not _literal_heredoc(w)]
+    heredoc = s.heredoc or ""
+    if heredoc and s.words[:1] == ["cat"] and any(heredoc in w for w in literal):
+        heredoc = ""
+    texts = [*words, *(a.partition("=")[2] for a in s.assigns), *s.redirects, heredoc, s.stdin or "", *s.inputs]
     return s.stdin_unseen or any("$" in t or "`" in t for t in texts)
 
 
-def _reads_only(s: Seg) -> bool:
+def _reads_only(s: Seg, literal: list[str] = ()) -> bool:
     """Whether a part of the command changes no file, index or ref: a shell
     word that only reads or moves the shell (`cd` to the project's top
     level, as `$(git rev-parse --show-toplevel)` names it, included), or git
@@ -7449,7 +7457,7 @@ def _reads_only(s: Seg) -> bool:
         return False
     if s.words[0] in _CHANGES_DIR and all(_TOPLEVEL.match(w) for w in s.words[1:] if "$" in w or "`" in w):
         return not (s.heredoc or s.stdin or s.inputs or s.stdin_unseen)
-    if _expands(s):
+    if _expands(s, literal):
         return False
     if s.words[0] in _SHELL_READS:
         return True
@@ -7480,7 +7488,8 @@ def _finishing_revert(segs: list[Seg], seg: Seg, d: str, glob: list[str], c: _Co
     import time
 
     why = ""
-    other = next((s for s in segs if s is not seg and not _reads_only(s)), None)
+    literal = [w for x in segs for w in x.words if _literal_heredoc(w)]  # a commit message passed as a quoted heredoc
+    other = next((s for s in segs if s is not seg and not _reads_only(s, literal)), None)
     m = _REVERTS.search("\n\n".join(c.messages))
     line = f'the "This reverts commit {reverting}." line, which tells a push it is a revert'
     raw = _commit_git(seg.words)
@@ -7490,15 +7499,18 @@ def _finishing_revert(segs: list[Seg], seg: Seg, d: str, glob: list[str], c: _Co
         name = name.removesuffix("+")
         if name not in _GIT_PATHSPEC_ENV and not (name in _EDITOR_ENV and value in ("true", ":")):
             own.append(name)
-    if _expands(seg):
+    if _expands(seg, literal):
         own.append("a value the shell expands")
+    own += [f"`{w}`" for w in seg.wrappers if w != "command"]  # `env -u …`, `sudo`: what it runs under
     if own:  # a setting or variable of its own can run a hook that stages more (`-c core.hooksPath=…`, `HOME=…`, `$[HOME=1]`)
-        what = own[0] if own[0].startswith("a value") else f"`{_brief(own[0])}`"
-        why = f"it sets {what} for itself, which can change what it commits: finish it with plain `git commit --no-edit`"
+        what = own[0] if own[0].startswith(("a value", "`")) else f"`{_brief(own[0])}`"
+        how = "runs under" if own[0].startswith("`") else "sets"
+        why = f"it {how} {what} for itself, which can change what it commits: finish it with plain `git commit --no-edit`"
     elif other is not None:
-        shown = " ".join(other.words) or " ".join(other.assigns) or "a part the shell runs first"
+        shown = " ".join(other.words) or " ".join(other.assigns) or " ".join(f"> {r}" for r in other.redirects)
+        part = f"`{_brief(shown)}`" if shown else "another part"
         why = (
-            f"the command also runs `{_brief(shown)}`, which may change what it commits (only reads, such as `git status`, "
+            f"the command also runs {part}, which may change what it commits (only reads, such as `git status`, "
             "may run beside it): finish the revert in a command of its own"
         )
     elif c.amend:

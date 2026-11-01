@@ -133,7 +133,8 @@ def test_a_revert_in_progress_is_judged_by_the_revert_rule(proj, monkeypatch, ca
     _feature(proj)
     assert _revert(proj, merge, "--no-commit") == 0
     keeps = f"git commit -m 'Undo #12' -m 'This reverts commit {merge}.'"
-    for command in ("git commit --no-edit", "git commit -a --no-edit", "git revert --continue", "cd src && git commit --no-edit", keeps):
+    heredoc = f"git commit -m \"$(cat <<'EOF'\nUndo #12, which cost $5\n\nThis reverts commit {merge}.\nEOF\n)\""  # as Claude Code writes a message
+    for command in ("git commit --no-edit", "git commit -a --no-edit", "git revert --continue", "cd src && git commit --no-edit", keeps, heredoc):
         assert hook(monkeypatch, capsys, proj, command) == ("allow", ""), command
     git(proj, "commit", "-q", "-m", "Undo #12", "-m", f"This reverts commit {merge}.")
     assert hook(monkeypatch, capsys, proj, PUSH) == ("allow", "")
@@ -159,7 +160,13 @@ def test_a_revert_in_progress_is_judged_by_the_revert_rule(proj, monkeypatch, ca
         ("time -o src/app.py git status && git commit -a --no-edit", "the command also runs `git status`"),
         ("./git status && git commit --no-edit", "the command also runs `./git status`"),
         ("printf -v HOME /tmp/h && git commit --no-edit", "the command also runs `printf -v HOME /tmp/h`"),
-        (": $((HOME=1)) && git commit --no-edit", "the command also runs `"),
+        (": $((HOME=1)) && git commit --no-edit", "the command also runs `HOME=1`"),
+        ("> docs/x.md; git commit --no-edit", "the command also runs `> docs/x.md`"),
+        ('cd "$CLAUDE_PROJECT_DIR" <<< $[HOME=1]; git commit --no-edit', "the command also runs `cd"),
+        ("GIT_LITERAL_PATHSPECS=$[HOME=1] git commit --no-edit", "it sets a value the shell expands for itself"),
+        ('git commit --no-edit 2>"docs/log$[HOME=1]"', "it sets a value the shell expands for itself"),
+        ("GIT_EDITOR=vim git commit --no-edit", "it sets `GIT_EDITOR` for itself"),
+        ("env -u XDG_CONFIG_HOME git commit --no-edit", "it runs under `env` for itself"),
         (": <<< $[HOME=1]; git commit --no-edit", "the command also runs `:`"),
         ("[ -v 'BASH_VERSINFO[HOME=1]' ] && git commit --no-edit", "the command also runs `[ -v BASH_VERSINFO[HOME=1] ]`"),
         ("git -c core.hooksPath=/tmp/h commit --no-edit", "it sets `-c` for itself"),
@@ -191,7 +198,7 @@ def test_finishing_a_revert_other_than_as_it_stands_is_refused(proj, monkeypatch
         "git branch --show-current && git commit --no-edit", "git log --oneline | head -3; git commit --no-edit", "ls src && git commit --no-edit",
         "git diff > /dev/null; git commit --no-edit", "git commit --no-edit; git status",
         'cd "$CLAUDE_PROJECT_DIR" && git commit --no-edit', 'cd "$(git rev-parse --show-toplevel)" && git commit --no-edit',
-        "GIT_EDITOR=true git revert --continue", "GIT_LITERAL_PATHSPECS=1 git commit --no-edit",
+        "GIT_EDITOR=true git revert --continue", "EDITOR=: git commit --no-edit", "GIT_LITERAL_PATHSPECS=1 git commit --no-edit",
     ],
 )  # fmt: skip
 def test_reads_before_finishing_a_revert_change_nothing(proj, monkeypatch, capsys, command):
