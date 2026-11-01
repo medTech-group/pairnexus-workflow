@@ -116,7 +116,7 @@ def test_a_hash_inside_a_glob_group_is_no_comment(tmp_path, monkeypatch, capsys)
         f"cd {root}; time -p ( cd /tmp; true # (\n); git commit -am x",
         f"cd {root}; time -p ( cd /tmp; true # case 2\n); git commit -am x",
         "pushd /tmp; time -p ( true # popd\n); popd; git commit -am x",
-        # A quote in zsh's reading may run past the line; an `A=(` that isn't an array is a pattern.
+        # A quote in zsh's reading may run past the line; `A=(` as any glued group.
         "echo (src|#) \"\necho \"; git commit -am x",
         "echo A=(src|#)(N); git commit -am x",
         "echo `echo (src|#); git commit -am x`",
@@ -124,7 +124,7 @@ def test_a_hash_inside_a_glob_group_is_no_comment(tmp_path, monkeypatch, capsys)
         # A substitution's own text moves nothing outside it, however it opens or closes (older than #393).
         f"cd /tmp; ( cd {root}; echo `)`; git commit -am x )",
         f"cd {root}; pushd /tmp >/dev/null; echo $(popd); popd; git commit -am x",
-        # zsh's reading reaches a heredoc's substitutions; a quoted word assigns or declares nothing.
+        # zsh's reading reaches a heredoc's substitutions; whatever the words before a glued group.
         "cat <<EOF\n$(echo (src|#)(N); git commit -am x)\nEOF",
         "cat <<EOF\n`echo (src|#)(N); git commit -am x`\nEOF",
         "\"B=1\" A=(src|#)(N); git commit -am x",
@@ -139,6 +139,10 @@ def test_a_hash_inside_a_glob_group_is_no_comment(tmp_path, monkeypatch, capsys)
         "<(true)A=1 B=(src|#)(N); git commit -am x",
         "A[[]=(src|#)(N); git commit -am x",
         "A=(src|#)(N); git commit -am x",
+        # A `#` right after an operator zsh keeps in a word: a group's `)`, its numeric glob `<->`.
+        "echo (src)#(N); git commit -am x",
+        "echo <->#(N); git commit -am x",
+        "echo <->(src|#)(N); git commit -am x",
     ):
         _change(root, CODE)
         d, why = hook(monkeypatch, capsys, root, command)

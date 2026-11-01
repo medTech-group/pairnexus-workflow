@@ -767,14 +767,17 @@ def _lex(
             in_word = True
             i = substitution(i, i + 2)
             continue
-        # Inside a `(` group glued to a word, zsh's pattern (`(src|#); git commit …`) holds the `#`, where an
-        # array or a bash subshell (`time -p (`) starts a comment: the reading `zsh` asks for, else a comment.
-        if c == "#" and not in_word and not (zsh and globs):
-            if globs and hashes is not None:
-                hashes.append(i)
-            j = s.find("\n", i)
-            i = n if j < 0 else j
-            continue
+        # A `#` inside a `(` group glued to a word (`(src|#); git commit …`), or right after an operator with no blank
+        # before it (`(src)#(N)`, zsh's `<->#`, `|#`), zsh may read as part of a word, where bash (an array, a
+        # subshell such as `time -p (`) starts a comment: the reading `zsh` asks for, else a comment.
+        if c == "#" and not in_word:
+            either = bool(globs) or i > 0 and s[i - 1] not in " \t\n"
+            if not (zsh and either):
+                if either and hashes is not None:
+                    hashes.append(i)
+                j = s.find("\n", i)
+                i = n if j < 0 else j
+                continue
         if c in " \t":
             end_word()
             i += 1
