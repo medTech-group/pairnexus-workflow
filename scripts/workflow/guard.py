@@ -6971,7 +6971,6 @@ _REVERT_SECONDS = 8  # the most time one command spends reading reverts
 _GIT_FETCH_HINT = "if it merged since this repository last fetched, run `git fetch` and try again"
 # What may run beside a commit finishing a revert, which the guard reads as the index is when the command starts: what changes no file.
 _SHELL_READS = {*_CHANGES_DIR, "echo", "true", ":", "pwd", "ls", "cat", "head", "tail", "wc", "grep"}  # not `printf -v` or `test -v`, which set or evaluate variables
-_EXTERNAL_READS = {"ls", "cat", "head", "tail", "wc", "grep", "git"}  # programs, not shell builtins: the shell forks before their redirects
 _EDITOR_ENV = {"GIT_EDITOR", "EDITOR", "VISUAL"}  # set to `true` or `:` beside a finishing commit: no editor runs
 _GIT_READS = {
     "status", "diff", "log", "show", "rev-parse", "ls-files", "ls-tree", "describe", "shortlog", "whatchanged", "cat-file",
@@ -7429,20 +7428,31 @@ def _names_dot_git(command: str, segs: list[Seg]) -> str | None:
     return None
 
 
-def _expands(s: Seg, literal: list[str] = (), beside: bool = False) -> bool:
+def _heredoc_body(word: str) -> str | None:
+    """The text of the quoted heredoc a `_literal_heredoc` word passes, as
+    the lexer gives a part's heredoc, else None."""
+    if not _literal_heredoc(word):
+        return None
+    first, _, rest = word.partition("\n")
+    delim = re.match(r"\$\(\s*cat\s+<<-?\s*(['\"])([A-Za-z_][\w.-]*)\1", first)
+    lines = rest.split("\n")
+    k = next((i for i, line in enumerate(lines) if line.lstrip("\t").startswith(delim.group(2))), len(lines)) if delim else len(lines)
+    return "\n".join(lines[:k]) + "\n"
+
+
+def _expands(s: Seg, literal: list[str] = ()) -> bool:
     """Whether the shell expands something in a part (a `$` or a backtick in
     its words, its variables' values, its redirects' targets, its heredoc or
     here-string, or its `<` files), which can set a variable (`$[HOME=1]`) or
     run a command; or feeds it stdin it can't read. The `literal` words (a
     commit's message given as a quoted heredoc, `$(cat <<'EOF' … EOF)` in
-    double quotes) expand nothing. `beside` a commit, a program that isn't a
-    shell builtin (`_EXTERNAL_READS`) has its redirects and heredoc expanded
-    in its own process, which sets nothing for the commit: only its words,
-    which the shell expands, count."""
+    double quotes) expand nothing, nor does the `cat` inside one: a part
+    that is `cat` alone with exactly that heredoc."""
     words = [w for w in s.words if not any(w is x for x in literal)]
-    if beside and s.words[:1] and s.words[0] in _EXTERNAL_READS:
-        return any("$" in t or "`" in t for t in words)
-    texts = [*words, *(a.partition("=")[2] for a in s.assigns), *s.redirects, s.heredoc or "", s.stdin or "", *s.inputs]
+    heredoc = s.heredoc or ""
+    if heredoc and s.words == ["cat"] and not (s.assigns or s.redirects or s.stdin or s.inputs) and heredoc in {_heredoc_body(w) for w in literal}:
+        heredoc = ""
+    texts = [*words, *(a.partition("=")[2] for a in s.assigns), *s.redirects, heredoc, s.stdin or "", *s.inputs]
     return s.stdin_unseen or any("$" in t or "`" in t for t in texts)
 
 
@@ -7459,7 +7469,7 @@ def _reads_only(s: Seg, literal: list[str] = ()) -> bool:
         return False
     if s.words[0] in _CHANGES_DIR and all(_TOPLEVEL.match(w) for w in s.words[1:] if "$" in w or "`" in w):
         return not (s.heredoc or s.stdin or s.inputs or s.stdin_unseen)
-    if _expands(s, literal, beside=True):
+    if _expands(s, literal):
         return False
     if s.words[0] in _SHELL_READS:
         return True
