@@ -6850,7 +6850,9 @@ def _scratch_store(d: str, glob: list[str], index: bool = True):
         yield None, f"it couldn't make a temporary folder ({e.__class__.__name__})"
         return
     with tmp:
-        alternates = [_c_quoted(objects)] + ([os.environ["GIT_ALTERNATE_OBJECT_DIRECTORIES"]] if os.environ.get("GIT_ALTERNATE_OBJECT_DIRECTORIES") else [])
+        # The session's own alternates, each from where git reads them (`d`), since the guard's reads may run elsewhere.
+        theirs = [e if e.startswith('"') or os.path.isabs(e) else os.path.join(d, e) for e in (os.environ.get("GIT_ALTERNATE_OBJECT_DIRECTORIES") or "").split(":") if e]
+        alternates = [_c_quoted(objects), *theirs]
         env = {
             "GIT_INDEX_FILE": os.path.join(tmp.name, "index"), "GIT_OBJECT_DIRECTORY": os.path.join(tmp.name, "objects"),
             "GIT_ALTERNATE_OBJECT_DIRECTORIES": ":".join(alternates), "GIT_NO_LAZY_FETCH": "1",
@@ -6964,7 +6966,7 @@ _REVERT_CAP = 64  # the most reverts one command's pushes read
 _REVERT_SECONDS = 8  # the most time one command spends reading reverts
 _GIT_FETCH_HINT = "if it merged since this repository last fetched, run `git fetch` and try again"
 # What may run beside a commit finishing a revert, which the guard reads as the index is when the command starts: what changes no file.
-_SHELL_READS = {*_CHANGES_DIR, "echo", "printf", "true", ":", "pwd", "test", "[", "ls", "cat", "head", "tail", "wc", "grep"}
+_SHELL_READS = {*_CHANGES_DIR, "echo", "true", ":", "pwd", "test", "[", "ls", "cat", "head", "tail", "wc", "grep"}  # not `printf -v`, which sets a variable
 _GIT_READS = {
     "status", "diff", "log", "show", "rev-parse", "ls-files", "ls-tree", "describe", "shortlog", "whatchanged", "cat-file",
     "for-each-ref", "rev-list", "merge-base", "blame",
@@ -7430,9 +7432,11 @@ def _reads_only(s: Seg) -> bool:
     or redirect other than to `/dev/null`."""
     if s.fed or not s.words or s.assigns or s.wrappers or any(r != "/dev/null" for r in s.redirects):
         return False
+    if any("$" in w or "`" in w for w in s.words):  # `$((HOME=1))` sets a variable; a substitution runs a command
+        return False
     if s.words[0] in _SHELL_READS:
         return True
-    if Path(s.words[0]).name != "git":
+    if s.words[0] != "git":  # git itself, not a program of that name elsewhere
         return False
     g = _commit_git(s.words)
     if not g or not g[1]:
@@ -7462,7 +7466,12 @@ def _finishing_revert(segs: list[Seg], seg: Seg, d: str, glob: list[str], c: _Co
     other = next((s for s in segs if s is not seg and not _reads_only(s)), None)
     m = _REVERTS.search("\n\n".join(c.messages))
     line = f'the "This reverts commit {reverting}." line, which tells a push it is a revert'
-    if other is not None:
+    raw = _commit_git(seg.words)
+    own = [o for o in (raw[0] if raw else []) if o in ("-c", "--config-env", "--exec-path") or o.startswith(("--config-env=", "--exec-path"))]
+    own += [a.partition("=")[0] for a in seg.assigns if a.partition("=")[0].removesuffix("+") not in _GIT_PATHSPEC_ENV]
+    if own:  # a setting or variable of its own can run a hook that stages more (`-c core.hooksPath=…`, `HOME=…`)
+        why = f"it sets `{_brief(own[0])}` for itself, which can change what it commits: finish it with plain `git commit --no-edit`"
+    elif other is not None:
         why = (
             f"the command also runs `{_brief(' '.join(other.words))}`, which may change what it commits (only reads, such as `git status`, "
             "may run beside it): finish the revert in a command of its own"

@@ -157,6 +157,11 @@ def test_a_revert_in_progress_is_judged_by_the_revert_rule(proj, monkeypatch, ca
         ("git grep -Otrue -e v5 && git commit --no-edit", "the command also runs `git grep -Otrue -e v5`"),
         ("git --exec-path=/tmp status && git commit --no-edit", "the command also runs `git --exec-path=/tmp status`"),
         ("time -o src/app.py git status && git commit -a --no-edit", "the command also runs `git status`"),
+        ("./git status && git commit --no-edit", "the command also runs `./git status`"),
+        ("printf -v HOME /tmp/h && git commit --no-edit", "the command also runs `printf -v HOME /tmp/h`"),
+        (": $((HOME=1)) && git commit --no-edit", "the command also runs"),
+        ("git -c core.hooksPath=/tmp/h commit --no-edit", "it sets `-c` for itself"),
+        ("HOME=/tmp/h git commit --no-edit", "it sets `HOME` for itself"),
     ],
 )
 def test_finishing_a_revert_other_than_as_it_stands_is_refused(proj, monkeypatch, capsys, command, why):
@@ -297,16 +302,29 @@ def test_a_merge_that_keeps_both_sides_lines_isn_t_git_s_own_revert(proj, monkey
 
 def test_a_merge_driver_in_git_s_config_is_never_run(proj, monkeypatch, capsys, tmp_path):
     """The guard merges in an empty repository of its own: the project's
-    merge driver never runs, and a revert git makes without needing it
-    goes through."""
+    merge driver never runs, even where the merge isn't trivial (the base
+    changed the file since), and git's own text merge decides."""
     ran = tmp_path / "ran"
     merge = _merge_pr(proj)
+    _on_base(proj, lambda r: _edit(r, CODE, "v8 = 8", "v8 = 'later'"), "later")
     _feature(proj)
+    assert _revert(proj, merge) == 0
     git(proj, "config", "merge.mine.driver", f"touch {ran} && cp %B %A")
     _change(proj, ".git/info/attributes", "src/* merge=mine\n")
-    assert _revert(proj, merge) == 0
     assert hook(monkeypatch, capsys, proj, PUSH) == ("allow", "")
     assert not ran.exists()
+
+
+def test_the_session_s_own_git_settings_don_t_reach_the_guard_s_merge(proj, monkeypatch, capsys):
+    """`GIT_CONFIG_PARAMETERS` in the session's environment, as `git -c`
+    passes settings on: the guard's merge reads none of them."""
+    merge = _merge_pr(proj)
+    _on_base(proj, lambda r: _edit(r, CODE, "v5 = 'pr'", "v5 = 'later'"), "later")
+    _feature(proj)
+    monkeypatch.setenv("GIT_CONFIG_PARAMETERS", "'merge.default'='union'")
+    assert _revert(proj, merge) == 0
+    d, why = hook(monkeypatch, capsys, proj, PUSH)
+    assert d == "deny" and "undoing it conflicts in `src/app.py`" in why, why
 
 
 def test_with_no_remote_ref_of_the_base_it_says_to_fetch(proj, monkeypatch, capsys):
@@ -446,7 +464,10 @@ def test_a_merge_reverted_against_its_second_parent_is_refused(proj, monkeypatch
     merge = git(proj, "rev-parse", "HEAD").strip()
     git(proj, "push", "-q", "origin", "base-work:main")
     _feature(proj)
-    assert subprocess.run(["git", "revert", "--no-edit", "-m", "2", merge], cwd=proj, capture_output=True).returncode == 0
+    assert subprocess.run(["git", "revert", "--no-commit", "-m", "2", merge], cwd=proj, capture_output=True).returncode == 0
+    d, why = hook(monkeypatch, capsys, proj, "git commit --no-edit")  # in progress: read from `MERGE_MSG`
+    assert d == "deny" and f"`git revert -m 1 {merge[:7]}`" in why, why
+    git(proj, "commit", "-q", "--no-edit")
     d, why = hook(monkeypatch, capsys, proj, PUSH)
     assert d == "deny" and f"`git revert -m 1 {merge[:7]}`" in why, why
 
