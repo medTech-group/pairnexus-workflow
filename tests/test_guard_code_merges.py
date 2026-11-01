@@ -6,9 +6,9 @@ merge's own changes count: a merge of two parents against its parents
 merged again (`--diff-merges=remerge`), so what git merges cleanly isn't
 counted, while a conflict resolved in a code path (taking one parent's
 version included), or a change neither parent has, is; a merge of more
-parents as `git diff-tree --cc -U0` reads it. A cherry-pick in progress counts everything staged, and a pushed
-cherry-pick's new commits are judged as any commit. Under `"any"` or with
-`code_writers` absent, as today.
+parents as `git diff-tree --cc -U0` reads it. A cherry-pick in progress
+counts everything staged, and a pushed cherry-pick's new commits are judged
+as any commit. Under `"any"` or with `code_writers` absent, as today.
 
 Through `workflow hook guard`, run as Claude Code runs it, in temporary git
 repositories cloned from a bare remote (`…/acme/demo.git`). The commands are
@@ -99,8 +99,8 @@ def _code_conflict(root, resolved="v5 = 'both'\n"):
 
 
 def _two_sided(root):
-    """Both sides changed the code file two lines apart (the branch's change
-    pushed already): git merges it cleanly, stopping before the commit."""
+    """Both parents changed the code file two lines apart (the branch's
+    change pushed already): git merges it cleanly, stopping before the commit."""
     _base_code(root)
     _commit(root, lambda r: _edit(r, CODE, "v3 = 3", "v3 = 'branch'"))
     git(root, "push", "-q", "origin", "feature")
@@ -116,7 +116,7 @@ FINISHING = ["git commit --no-edit", "git commit -m 'Merge main'", "git merge --
 
 @pytest.mark.parametrize("setup", [_docs_conflict, _two_sided])
 def test_finishing_a_merge_of_the_base_goes_through(proj, monkeypatch, capsys, setup):
-    """Code taken cleanly from either side isn't the merge's own change."""
+    """Code taken cleanly from either parent isn't the merge's own change."""
     setup(proj)
     for command in FINISHING:
         for role in ROLES:
@@ -133,18 +133,18 @@ def test_a_conflict_resolved_in_a_code_path_is_refused(proj, monkeypatch, capsys
             assert "the merge's own change" in why, why
 
 
-@pytest.mark.parametrize("side", ["base", "branch"])
-def test_a_conflict_resolved_by_taking_one_parent_s_version_is_refused(proj, monkeypatch, capsys, side):
+@pytest.mark.parametrize("parent", ["base", "branch"])
+def test_a_conflict_resolved_by_taking_one_parent_s_version_is_refused(proj, monkeypatch, capsys, parent):
     """A conflict resolved is the merge's own change, whichever version it keeps:
     keeping the branch's drops the base's change from the pull request."""
-    _code_conflict(proj, resolved=f"v5 = '{side}'\n")
+    _code_conflict(proj, resolved=f"v5 = '{parent}'\n")
     d, why = hook(monkeypatch, capsys, proj, "git commit --no-edit")
     assert d == "deny" and "code path `src/app.py` (src/**)" in why, why
     _finish(proj)
     assert hook(monkeypatch, capsys, proj, "git push origin feature")[0] == "deny"
 
 
-def test_a_merge_keeping_the_branch_s_side_is_refused(proj, monkeypatch, capsys):
+def test_a_merge_keeping_the_branch_s_version_is_refused(proj, monkeypatch, capsys):
     """`-s ours` and `-X ours` record no conflict, but differ from the parents merged again."""
     _base_code(proj)
     _commit(proj, lambda r: _edit(r, CODE, "v5 = 5", "v5 = 'branch'"))
@@ -157,7 +157,7 @@ def test_a_merge_keeping_the_branch_s_side_is_refused(proj, monkeypatch, capsys)
 
 
 CLEAN = {
-    "a deletion just before the other side's change": (("v3 = 3\n", ""), ("v5 = 5", "v5 = 'branch'")),
+    "a deletion just before the other parent's change": (("v3 = 3\n", ""), ("v5 = 5", "v5 = 'branch'")),
     "an insertion just after it": (("v4 = 4\n", "v4 = 4\nv4b = 4\n"), ("v6 = 6", "v6 = 'branch'")),
     "changes one line apart": (("v5 = 5", "v5 = 'base'"), ("v3 = 3", "v3 = 'branch'")),
 }
@@ -249,7 +249,7 @@ def test_a_conflict_resolved_but_not_staged_is_read_from_the_working_tree(proj, 
             assert hook(monkeypatch, capsys, proj, command, role) == ("allow", ""), (command, role)
 
 
-def test_a_code_conflict_not_staged_counts_with_a(proj, monkeypatch, capsys):
+def test_a_code_conflict_not_staged_counts_with_dash_a(proj, monkeypatch, capsys):
     _code_conflict(proj)
     git(proj, "checkout", "-q", "-m", "--", CODE)  # unmerged again, its markers in the working tree
     for role in ROLES:
@@ -398,8 +398,8 @@ def test_a_push_of_a_merge_with_a_change_of_its_own_is_refused(proj, monkeypatch
 
 
 def test_a_merged_branch_not_on_the_remote_sends_its_own_code(proj, monkeypatch, capsys):
-    """The merge itself is clean, but the merged branch's code commit isn't on
-    the remote: the push sends it, and it is judged as any commit."""
+    """The merge has no change of its own, but the merged branch's code
+    commit isn't on the remote: the push sends it, judged as any commit."""
     git(proj, "checkout", "-q", "-b", "side")
     _commit(proj, lambda r: _edit(r, CODE, "v9 = 9", "v9 = 'side'"))
     side = git(proj, "rev-parse", "--short", "HEAD").strip()
@@ -492,3 +492,30 @@ def test_enforcement_doc_says_how_merges_are_read():
 def test_changelog_note():
     notes = since_0110()
     assert "(#391, part of #338)" in notes and "test_guard_code_merges.py" in notes
+
+
+def test_the_guard_runs_no_merge_driver(proj, monkeypatch, capsys, tmp_path):
+    """Merging the parents again runs no program the repository configures:
+    a merge driver (`merge=<name>` with `merge.<name>.driver`) never runs."""
+    marker = tmp_path / "driver-ran"
+    _on_base(proj, lambda r: _change(r, ".gitattributes", "src/*.py merge=mine\n"))
+    git(proj, "merge", "-q", "--ff-only", "origin/main")
+    git(proj, "push", "-q", "origin", "feature")
+    git(proj, "config", "merge.mine.driver", f"touch {marker}; git merge-file %A %O %B")
+    git(proj, "config", "merge.default", "mine")
+    _two_sided(proj)
+    marker.unlink(missing_ok=True)
+    d, why = hook(monkeypatch, capsys, proj, "git commit --no-edit")
+    assert d == "ask" and "merge driver (`merge.mine.driver`)" in why and "src/app.py" in why, why
+    assert not marker.exists()
+    _finish(proj)
+    marker.unlink(missing_ok=True)
+    d, why = hook(monkeypatch, capsys, proj, "git push origin feature")
+    assert d == "ask" and "merge driver (`merge.mine.driver`)" in why and "merge commit" in why, why
+    d, why = hook(monkeypatch, capsys, proj, "git push origin feature", "conductor")
+    assert d == "deny" and "can't tell" in why, why
+    assert not marker.exists()
+    # A push with no merge in it is judged as before.
+    git(proj, "reset", "-q", "--hard", "origin/feature")
+    _commit(proj, lambda r: _change(r, DOC, "# Branch\n"))
+    assert hook(monkeypatch, capsys, proj, "git push origin feature") == ("allow", "")

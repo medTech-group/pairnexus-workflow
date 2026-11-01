@@ -6654,12 +6654,16 @@ def _carried(d: str, glob: list[str], c: _Commit, env: dict[str, str] | None = N
 # merge of more parents, which is read as `git diff-tree --cc -U0` reads it.
 
 _MERGE_OWN = "the merge's own change (a conflict resolved there, or a change neither parent has)"
-_LOG_SAFE = ["--no-renames", "--no-ext-diff", "--no-textconv", "--no-color", "--ignore-submodules=none"]
+_LOG_PLAIN = ["--no-renames", "--no-ext-diff", "--no-textconv", "--no-color", "--ignore-submodules=none"]  # no helper program, as git stores it
 _COMMIT_FORMAT = "--format=%x01%x02%h"
-_REMERGE = ["--name-only", "-z", _COMMIT_FORMAT, "--diff-merges=remerge", *_LOG_SAFE]  # a merge of two parents, and any other commit by its files
-_OCTOPUS = ["--min-parents=3", _COMMIT_FORMAT, "--cc", "-U0", "--inter-hunk-context=0", "--text", "--diff-algorithm=myers", "--no-indent-heuristic", *_LOG_SAFE]
+_REMERGE = ["--name-only", "-z", _COMMIT_FORMAT, "--diff-merges=remerge", *_LOG_PLAIN]  # a merge of two parents, and any other commit by its files
+_NO_REMERGE = [a if a != "--diff-merges=remerge" else "--diff-merges=off" for a in _REMERGE]  # every commit but a merge, by its files
+_REMERGE_CONFIG = ["-c", "merge.renormalize=false"]  # merging again runs no clean filter
+_OCTOPUS = ["--min-parents=3", _COMMIT_FORMAT, "--cc", "-U0", "--inter-hunk-context=0", "--text", "--diff-algorithm=myers", "--no-indent-heuristic", *_LOG_PLAIN]
 _OBJECT_NAME = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 _C_ESCAPES = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92}
+_OCTAL = re.compile(r"[0-3][0-7][0-7]")
+_FULL_INDEX = ["-c", "core.splitIndex=false"]  # the guard's copy of the index is written whole, adding no shared index
 _UNMERGED_CAP = 1000  # the most unmerged files the guard settles in its copy of the index
 
 
@@ -6680,7 +6684,7 @@ def _cc_path(line: str) -> str | None:
                 out.append(_C_ESCAPES[nxt])
                 i += 2
                 continue
-            if re.fullmatch(r"[0-3][0-7][0-7]", body[i + 1 : i + 4]):
+            if _OCTAL.fullmatch(body[i + 1 : i + 4]):
                 out.append(int(body[i + 1 : i + 4], 8))
                 i += 4
                 continue
@@ -6709,9 +6713,17 @@ def _merge_heads(d: str, glob: list[str]) -> list[str]:
     return heads if heads and all(_OBJECT_NAME.fullmatch(h) for h in heads) else []
 
 
+def _merge_driver(d: str, glob: list[str]) -> tuple[str, str]:
+    """(a merge driver the repository configures, `merge.<name>.driver`, else
+    ""; what failed). Merging a merge's parents again would run it, so the
+    guard doesn't: such a merge is one it can't tell about."""
+    got, err = _memo_read(d, glob, "config", "--name-only", "--get-regexp", r"^merge\..*\.driver$", sep="\n", ok=(0, 1))
+    return (got[0] if got else ""), ("" if got is not None else err)
+
+
 def _settle_unmerged(d: str, glob: list[str], env: dict[str, str]) -> str:
     """Settles each unmerged file in the index copy `env` names on one
-    version (its own side's, else the other's; removed with neither), so the
+    version (`HEAD`'s, else the merged commit's; removed with neither), so the
     index can be written as a tree. git commits none of them as they are
     (`-a` takes the working tree's, which count as they are): only the other
     files' changes are read from that tree. Returns what failed, else ""."""
@@ -6730,7 +6742,7 @@ def _settle_unmerged(d: str, glob: list[str], env: dict[str, str]) -> str:
     reads = [[a for k in keep for a in ("--cacheinfo", k)]] if keep else []
     reads += [["--force-remove", "--", *gone]] if gone else []
     for args in reads:
-        done, err = _git_read(d, ["-c", "core.splitIndex=false", *glob], "update-index", *args, sep="\n", env=env)
+        done, err = _git_read(d, [*_FULL_INDEX, *glob], "update-index", *args, sep="\n", env=env)
         if done is None:
             return err
     return ""
@@ -6767,15 +6779,19 @@ def _merge_own_code(d: str, glob: list[str], heads: list[str], code: _Code) -> t
         err = _settle_unmerged(d, glob, env)
         if err:
             return None, err
-        tree, err = _git_read(d, ["-c", "core.splitIndex=false", *glob], "write-tree", sep="\n", env=env)
+        tree, err = _git_read(d, [*_FULL_INDEX, *glob], "write-tree", sep="\n", env=env)
         if not tree or len(tree) != 1:
             return None, err or "`git write-tree` named no tree"
         parents = [a for h in ["HEAD", *heads] for a in ("-p", h)]
         merge, err = _git_read(d, glob, "commit-tree", "--no-gpg-sign", "-m", "merge", *parents, tree[0], sep="\n", env=env)
         if not merge or len(merge) != 1:
             return None, err or "`git commit-tree` named no commit"
+        if len(heads) == 1:
+            driver, err = _merge_driver(d, glob)
+            if driver or err:
+                return None, err or f"the repository configures a merge driver (`{driver}`), which merging the parents again would run"
         args = _REMERGE if len(heads) == 1 else _OCTOPUS
-        found, err = _sent_code(d, glob, ["log", "-1", *args, "--end-of-options", merge[0], "--"], code, len(heads) > 1, env)
+        found, err = _sent_code(d, [*glob, *_REMERGE_CONFIG], ["log", "-1", *args, "--end-of-options", merge[0], "--"], code, len(heads) > 1, env)
     return (found[1] if found else None), err
 
 
@@ -7095,7 +7111,7 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tupl
             if unread:
                 unsure = unsure or f"{cant}: it couldn't read {unread}, and the changes it could carry include the code path {_shown(hit)} ({hit.pattern})"
                 break
-            what = finishing if heads else "this commit" if args[0] == "commit" else f"the commit finishing this `git {args[0]}`"
+            what = finishing if heads or args[0] != "commit" else "this commit"
             return f"{what} carries the code path {_shown(hit)} ({hit.pattern}); {code.instead}", None
         if own_err:  # it couldn't read the merge's own changes: asked when what is staged includes code
             staged, _ = _carried(d, glob, _Commit(), pathspec_env)
@@ -7971,14 +7987,22 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
                 known.append(f"--glob=refs/remotes/{r}/*")
         # Each commit by the files it changes, a merge of two parents by its own changes; then a merge of more parents (#391).
         memo = _PUSH_MEMO if _PUSH_MEMO is not None else {}
-        found, err, octopus = None, "", False
-        for octopus, args in ((False, _REMERGE), (True, _OCTOPUS)):
-            key = ("log", octopus, d, tuple(pglob), tuple(known), tuple(sorted(pseudo)), tuple(srcs))
-            if key not in memo:
-                memo[key] = _sent_code(d, pglob, ["log", *args, "--not", *known, "--not", *sorted(pseudo), "--end-of-options", *srcs, "--"], code, octopus)
-            found, err = memo[key]
-            if found or err:
+        driver, err = _merge_driver(d, pglob)
+        found, octopus = None, False
+        sends = ["--not", *known, "--not", *sorted(pseudo), "--end-of-options", *srcs, "--"]
+        for octopus, args in ((False, _NO_REMERGE if driver else _REMERGE), (True, _OCTOPUS)):
+            if err:
                 break
+            key = ("log", octopus, d, tuple(pglob), tuple(args), tuple(known), tuple(sorted(pseudo)), tuple(srcs))
+            if key not in memo:
+                memo[key] = _sent_code(d, [*pglob, *_REMERGE_CONFIG], ["log", *args, *sends], code, octopus)
+            found, err = memo[key]
+            if found:
+                break
+        if driver and not found and not err:  # a merge of two parents it doesn't merge again
+            merges, err = _memo_read(d, pglob, "rev-list", "--merges", "--max-parents=2", "-1", *sends, sep="\n")
+            if merges:
+                err = f"it sends merge commit {merges[0][:7]}, and the repository configures a merge driver (`{driver}`), which merging its parents again would run"
         if found:
             sha, hit = found
             if octopus or _is_merge(d, pglob, sha):
