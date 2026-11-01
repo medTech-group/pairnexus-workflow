@@ -131,6 +131,7 @@ import subprocess
 import tarfile
 import urllib.parse
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -808,6 +809,7 @@ class _Cmd:
     inputs: list[str] = field(default_factory=list)  # every `<` file, whatever its descriptor
     stdins: int = 0  # heredocs, here-strings and `<` files given: bash reads only the last
     stdin_unseen: bool = False  # stdin from another descriptor (`<&3`), closed, or not what `stdin`/`heredoc` hold (`3<f`)
+    expanded: str = ""  # the text of its unquoted heredocs and here-strings, which the shell expands (a quoted heredoc it never does)
 
 
 _REDIR = re.compile(r"(\d*)(>>|>\||&>>|&>|>&|<&|<>|<<<|<<|<|>)")
@@ -829,6 +831,7 @@ def _simple(toks: list) -> list:
         t = toks[i]
         if isinstance(t, Heredoc):
             cur.heredoc = (cur.heredoc or "") + t.body  # read by the other checks, whatever its descriptor
+            cur.expanded += "" if t.quoted else t.body
             if t.fd in ("", "0"):
                 cur.stdins += 1
             else:
@@ -858,6 +861,7 @@ def _simple(toks: list) -> list:
                     cur.stdin_unseen = cur.stdin_unseen or not on_stdin  # `3<f`: so stdin isn't this file
                 elif op == "<<<":
                     cur.heredoc = (cur.heredoc or "") + nxt
+                    cur.expanded += nxt
                     cur.stdins += on_stdin
                     cur.stdin_unseen = cur.stdin_unseen or not on_stdin
                 else:
@@ -893,6 +897,8 @@ class Seg:
     stdins: int = 0  # how many inputs it was given on stdin (heredocs, here-strings, `<` files)
     stdin_unseen: bool = False  # stdin from another descriptor (`<&3`) or closed
     inputs: list[str] = field(default_factory=list)  # every `<` file, whatever its descriptor
+    wrappers: list[str] = field(default_factory=list)  # the wrappers stripped from its words (`time`, `env`, `sudo`, …)
+    expanded: str = ""  # the text of its unquoted heredocs and here-strings, which the shell expands
 
 
 _KEYWORDS = {"{", "}", "!", "if", "then", "else", "elif", "fi", "do", "done", "while", "until", "esac", "coproc"}
@@ -1039,6 +1045,9 @@ def segments(command: str, root: Path, cwd: str | None = "", depth: int = 0) -> 
     return _segments_of(_tokens(command), root, cwd, depth)
 
 
+_CHANGES_DIR = ("cd", "pushd", "popd", "chdir")  # the words that move the shell, which the parser follows
+
+
 def _segments_of(toks: list, root: Path, cwd: str | None, depth: int) -> list[Seg]:
     segs: list[Seg] = []
     saved: list[tuple[str | None, str | None]] = []
@@ -1074,7 +1083,7 @@ def _segments_of(toks: list, root: Path, cwd: str | None, depth: int) -> list[Se
         if toks2 and toks2[0] == "case":
             case_pattern = True
             continue
-        if toks2 and toks2[0] in ("cd", "pushd", "popd", "chdir"):
+        if toks2 and toks2[0] in _CHANGES_DIR:
             if toks2[0] == "popd":
                 new = dirs.pop() if dirs else None
             else:
@@ -1083,7 +1092,7 @@ def _segments_of(toks: list, root: Path, cwd: str | None, depth: int) -> list[Se
                 if toks2[0] == "pushd":
                     dirs.append(cwd)
             oldpwd, cwd = cwd, new
-            seg = Seg(toks2, item.redirects, cwd, item.stdin, item.heredoc, prev if piped else None, assigns, stdins=item.stdins, stdin_unseen=item.stdin_unseen, inputs=item.inputs)
+            seg = Seg(toks2, item.redirects, cwd, item.stdin, item.heredoc, prev if piped else None, assigns, stdins=item.stdins, stdin_unseen=item.stdin_unseen, inputs=item.inputs, expanded=item.expanded)
             segs.append(seg)
             prev = seg
             continue
@@ -1092,7 +1101,7 @@ def _segments_of(toks: list, root: Path, cwd: str | None, depth: int) -> list[Se
             seg_cwd = _cd_target([chdir], root, cwd)
         if not toks2 and not item.redirects and not assigns and item.stdin is None and item.heredoc is None:
             continue
-        seg = Seg(toks2, item.redirects, seg_cwd, item.stdin, item.heredoc, prev if piped else None, assigns, stdins=item.stdins, stdin_unseen=item.stdin_unseen, inputs=item.inputs)
+        seg = Seg(toks2, item.redirects, seg_cwd, item.stdin, item.heredoc, prev if piped else None, assigns, stdins=item.stdins, stdin_unseen=item.stdin_unseen, inputs=item.inputs, wrappers=stripped, expanded=item.expanded)
         if "xargs" in stripped:
             seg.fed = True
             # A list read from a file (`-a f`, `< f`), not the pipe: anywhere in the words, to be safe.
@@ -6065,6 +6074,20 @@ class _Code:
     instead: str  # what to do instead, after the path
     writes_none: str  # PowerShell's: the session writes no code
     repo: str | None = None  # `project.repo`, whose pushes are judged (#390); None: every push is
+    base: str = "main"  # the base branch: a revert of a commit on its remote ref goes through (#392)
+    role: str = "attended"  # the role it decides by, for a revert's refusal
+    profile: Profile | None = None
+    root: Path | None = None
+    _ledger: frozenset[str] | None = field(default=None, repr=False)  # read once, when a revert is judged
+
+    def conductor(self) -> bool:
+        return self.role == "conductor"
+
+    def allowed_reverts(self) -> frozenset[str]:
+        """The commits the conductor's run's ledger allows it to revert (#392)."""
+        if self._ledger is None:
+            self._ledger = _ledger_reverts(self.root) if self.root is not None else frozenset()
+        return self._ledger
 
 
 @dataclass
@@ -6109,7 +6132,10 @@ def _code_session(
         role = "attended"
     if not rule.code_paths:
         return role, None, label
-    code = _Code(list(rule.code_paths), list(rule.protected_paths), _instead(role, profile, root), _writes_none(role), rule.repo)
+    code = _Code(
+        list(rule.code_paths), list(rule.protected_paths), _instead(role, profile, root), _writes_none(role), rule.repo,
+        rule.base_branch, role, profile, root,
+    )  # fmt: skip
     return role, code, label
 
 
@@ -6122,7 +6148,8 @@ def _writes_none(role: str) -> str:
 def _instead(role: str, profile: Profile, root: Path) -> str:
     """What a refusal says to do instead, worded as the skills offer it."""
     if role == "conductor":
-        fixes = _conductor_fixes(root)
+        charter = _run_state(root).get("charter")
+        fixes = charter.get("conductor_fixes") if isinstance(charter, dict) else None  # the charter's, else unread
         if fixes is True:
             way = "file the fix as a `workflow:infra` ticket, for a ticket session, instead"
         elif fixes is False:
@@ -6141,20 +6168,62 @@ def _instead(role: str, profile: Profile, root: Path) -> str:
             "hand it to a conductor run instead, once unattended runs are set up (**Set up unattended runs**): "
             "until a ticket environment is named, no session writes code"
         )
-    return f"{_writes_none(role)}: {way}. Or, to let every session write code, change `guard.code_writers` in a pull request, for the owner to merge"
+    return f"{_writes_none(role)}: {way}. {_ANY_WRITES}"
 
 
-def _conductor_fixes(root: Path) -> bool | None:
-    """The charter's `conductor_fixes`, from the state block of the run's local
-    body file, or None when it can't be read."""
+_ANY_WRITES = "Or, to let every session write code, change `guard.code_writers` in a pull request, for the owner to merge"
+
+
+def _revert_way(code: _Code, pr: str, entry: bool) -> str:
+    """What a refusal of a revert that doesn't go through says to do instead
+    (#392): GitHub's own **Revert** button where it can revert the pull
+    request (`pr`), else a quick ticket, worded as the skills offer a run.
+    The conductor's tells the owner, and marks its ledger `entry` not made."""
+    button = f"GitHub's own **Revert** button on pull request #{pr}" if pr else ""
+    if code.conductor():
+        made = ', and add `"result": "not made: <why>"` to its ledger entry and the same to `for_owner`' if entry else ""
+        can = f"use {button} or have it filed as a ticket" if pr else "have it filed as a ticket"
+        return f"never resolve a revert that doesn't apply exactly: tell the owner, who can {can}{made}"
+    from . import updates as updates_mod
+
+    if code.root is not None and updates_mod.mode(code.root) == "plugin":
+        way = "make the revert in a session on your own computer started with `WORKFLOW_ROLE=ticket`"
+    elif code.profile is not None and code.profile.ticket_environment:
+        way = "have a ticket session make it: file a quick ticket for the revert and hand it to a conductor run (**Run it unattended**)"
+    else:
+        way = (
+            "have a ticket session make it, once unattended runs are set up (**Set up unattended runs**): file a quick ticket that makes the revert, "
+            "for a conductor run; until a ticket environment is named, no session writes code"
+        )
+    if pr:
+        way = f"use {button}, which undoes it exactly; where GitHub can't revert it, {way}"
+    return f"{code.writes_none}: {way}. {_ANY_WRITES}"
+
+
+def _run_state(root: Path) -> dict:
+    """The state block of the run's local body file (`.workflow/run/body.md`),
+    {} when there is none or it can't be read."""
     from . import state as state_mod
 
     try:
-        text = (root / ".workflow/run/body.md").read_text(encoding="utf-8")
-        v = (state_mod.get(text) or {}).get("charter", {}).get("conductor_fixes")
+        got = state_mod.get((root / ".workflow/run/body.md").read_text(encoding="utf-8"))
     except Exception:
-        return None
-    return v if isinstance(v, bool) else None
+        return {}
+    return got if isinstance(got, dict) else {}
+
+
+def _ledger_reverts(root: Path) -> frozenset[str]:
+    """The commits the run's ledger records the owner as allowing the
+    conductor to revert (#392): each entry `{"what": "revert", "revert": "<the
+    full sha>", …}`. Entries without a `revert` field don't count; none when
+    the body file can't be read."""
+    from . import state as state_mod
+
+    ledger = _run_state(root).get("ledger")
+    entries = ledger if isinstance(ledger, list) else []
+    return frozenset(
+        e["revert"] for e in entries if isinstance(e, dict) and str(e.get("what")).strip().lower() == "revert" and state_mod.is_head(e.get("revert"))
+    )
 
 
 def _git_lines(top: str, *args: str, sep: str = "\n", literal: bool = True) -> list[str] | None:
@@ -6424,8 +6493,9 @@ def _shell_code(segs: list[Seg], code: _Code, root: Path) -> str | None:
 # of it) is judged by the files it would carry: what is staged, plus what
 # `-a` or a pathspec adds (a pathspec alone commits only what it names, unless
 # `-i`). A commit finishing a merge carries only the merge's own changes
-# (#391, below); finishing a cherry-pick, a revert, a rebase or `git am`
-# (`--continue`) is judged as any commit. A commit in another clone is left to
+# (#391, below), and one finishing a revert is judged by the revert rule
+# (#392, below); finishing a cherry-pick, a rebase or `git am` (`--continue`)
+# is judged as any commit. A commit in another clone is left to
 # the push rule. When the guard can't read what it carries (a git read fails,
 # a pathspec the shell expands), an attended session is asked and the
 # conductor refused.
@@ -6484,6 +6554,9 @@ class _Commit:
     status: bool = False  # `--short`, `--porcelain` or `--long`, which imply it, the last of them and their `--no-` forms
     usage: bool = False  # `-h`, `--help`
     null: bool = False  # `-z`, which implies `--porcelain` where no format is given
+    amend: bool = False  # `--amend`: the commit replaces HEAD
+    messages: list[str] = field(default_factory=list)  # `-m` values, which git joins as paragraphs
+    message_from: str = ""  # an option that takes the message from elsewhere (`-F`, `-C`, `-c`, `--fixup`, `--squash`)
 
     @property
     def dry_run(self) -> bool:
@@ -6516,6 +6589,10 @@ def _commit_args(args: list[str]) -> _Commit:
             if _COMMIT_LONG.get(full) and not eq:
                 value = args[i] if i < len(args) else ""
                 i += 1
+            if full == "message":
+                c.messages.append(value)
+            elif full in ("file", "reuse-message", "reedit-message", "fixup", "squash"):
+                c.message_from = f"--{full}"
             if full == "all" or full in _COMMIT_PICKS:
                 c.all = True
             elif full == "include":
@@ -6532,12 +6609,20 @@ def _commit_args(args: list[str]) -> _Commit:
                 c.spec_file = value
             elif full == "pathspec-file-nul":
                 c.spec_nul = True
+            elif full in ("amend", "no-amend"):
+                c.amend = full == "amend"
             continue
         if a.startswith("-") and len(a) > 1:
             for j, ch in enumerate(a[1:], 1):
                 if ch in _COMMIT_SHORT_VALUE:
+                    value = a[j + 1 :]
                     if j == len(a) - 1:
+                        value = args[i] if i < len(args) else ""
                         i += 1
+                    if ch == "m":
+                        c.messages.append(value)
+                    elif ch in "FCc":
+                        c.message_from = f"-{ch}"
                     break
                 if ch in _COMMIT_SHORT_OPTIONAL:
                     break
@@ -6562,19 +6647,23 @@ _GIT_READ_SECONDS = 5  # the most one git read may take
 
 
 def _git_read(
-    d: str, glob: list[str], *args: str, sep: str = "\0", env: dict[str, str] | None = None, ok: tuple[int, ...] = (0,), raw: bool = False
+    d: str, glob: list[str], *args: str, sep: str = "\0", env: dict[str, str] | None = None, ok: tuple[int, ...] = (0,), raw: bool = False,
+    timeout: float = _GIT_READ_SECONDS, isolated: bool = False,
 ) -> tuple[list[str] | None, str]:
     """(git's output split on `sep`, else None; what failed, with git's own
     words). `glob` is the command's own options that change the repository
     or how pathspecs read, `env` the variables it sets for them, `ok` the
     exit codes that aren't a failure (`git config --get` exits 1 when it
     finds nothing), `raw` keeps bytes that aren't UTF-8 as they are (for
-    names given back to git). No fsmonitor, hook or signature check runs, a
-    root commit's changes are shown, and paths are from the top level."""
+    names given back to git), `timeout` the most it may take, `isolated`
+    that none of the session's own `GIT_*` variables reach git. No
+    fsmonitor, hook or signature check runs, a root commit's changes are
+    shown, and paths are from the top level."""
     cmd = [*_GIT_READ, *glob, *args]
     shown = "`git " + " ".join(args[:2]) + "`"
+    base = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")} if isolated else os.environ
     try:
-        p = subprocess.run(cmd, cwd=d, capture_output=True, timeout=_GIT_READ_SECONDS, env={**os.environ, **env} if env else None)
+        p = subprocess.run(cmd, cwd=d, capture_output=True, timeout=timeout, env={**base, **env} if env or isolated else None)
     except subprocess.TimeoutExpired:
         return None, f"{shown} took too long in `{d}`"
     except (OSError, ValueError) as e:
@@ -6659,8 +6748,9 @@ def _carried(d: str, glob: list[str], c: _Commit, env: dict[str, str] | None = N
 
 _MERGE_OWN = "the merge's own change (a conflict resolved there, or a change neither parent has)"
 _LOG_PLAIN = ["--no-renames", "--no-ext-diff", "--no-textconv", "--no-color", "--ignore-submodules=none"]  # no helper program, as git stores it
-_COMMIT_FORMAT = "--format=%x01%x02%h"
-_FILES = ["--name-only", "-z", _COMMIT_FORMAT, "--diff-merges=off", *_LOG_PLAIN]  # every commit but a merge, by its files
+_COMMIT_FORMAT = "--format=%x01%x02%h%x03%H"  # shown short; read by its full name, which no ref can shadow
+# Every commit but a merge, by its files: `--raw`, so each path follows its `:<modes> …` item and a name never reads as a header.
+_FILES = ["--raw", "-z", _COMMIT_FORMAT, "--diff-merges=off", *_LOG_PLAIN]
 _REMERGE = [
     "--min-parents=2", "--max-parents=2", _COMMIT_FORMAT, "--diff-merges=remerge", "-p", "-U0",
     "--src-prefix=a/", "--dst-prefix=b/", *_LOG_PLAIN,
@@ -6720,10 +6810,11 @@ def _c_quoted(path: str) -> str:
     return '"' + path.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def _merge_heads(d: str, glob: list[str]) -> list[str]:
-    """The commits a merge in progress in `d` merges (its `MERGE_HEAD`), else
-    []: none in progress, or a file git couldn't read either."""
-    got, _ = _git_read(d, glob, "rev-parse", "--git-path", "MERGE_HEAD", sep="\n")
+def _heads_in_progress(d: str, glob: list[str], name: str = "MERGE_HEAD") -> list[str]:
+    """The commits named by the file `name` of an operation in progress in
+    `d` (`MERGE_HEAD`, what a merge merges; `REVERT_HEAD`, what a revert
+    undoes), else []: none in progress, or a file git couldn't read either."""
+    got, _ = _git_read(d, glob, "rev-parse", "--git-path", name, sep="\n")
     if not got or len(got) != 1:
         return []
     try:
@@ -6763,7 +6854,13 @@ def _scratch_store(d: str, glob: list[str], index: bool = True):
         yield None, f"it couldn't make a temporary folder ({e.__class__.__name__})"
         return
     with tmp:
-        alternates = [_c_quoted(objects)] + ([os.environ["GIT_ALTERNATE_OBJECT_DIRECTORIES"]] if os.environ.get("GIT_ALTERNATE_OBJECT_DIRECTORIES") else [])
+        # The session's own alternates, a relative one from the top level as git reads it, since the guard's reads may run elsewhere.
+        theirs = os.environ.get("GIT_ALTERNATE_OBJECT_DIRECTORIES") or ""
+        if theirs and '"' not in theirs:  # a C-quoted list is passed on as git reads it
+            top, _ = _memo_read(d, glob, "rev-parse", "--show-toplevel", sep="\n")
+            base = top[0] if top else d
+            theirs = ":".join(e if os.path.isabs(e) else os.path.join(base, e) for e in theirs.split(":") if e)
+        alternates = [_c_quoted(objects), *([theirs] if theirs else [])]
         env = {
             "GIT_INDEX_FILE": os.path.join(tmp.name, "index"), "GIT_OBJECT_DIRECTORY": os.path.join(tmp.name, "objects"),
             "GIT_ALTERNATE_OBJECT_DIRECTORIES": ":".join(alternates), "GIT_NO_LAZY_FETCH": "1",
@@ -6839,6 +6936,276 @@ def _merge_own_code(d: str, glob: list[str], heads: list[str], code: _Code) -> t
         args = _REMERGE if len(heads) == 1 else _OCTOPUS
         found, err = _sent_code(d, [*glob, *_REMERGE_CONFIG], ["log", "-1", *args, "--end-of-options", merge[0], "--"], code, True, env)
     return (found[1] if found else None), err
+
+
+# ---------- a revert of a commit on the base (#392) ----------
+#
+# A commit made by `git revert` names the commit it reverts ("This reverts
+# commit <sha>"). When that commit is on the base branch's remote ref
+# (`<remote>/<base>` of a remote fetching from `project.repo`) and the
+# revert's code paths are as git's own revert of it leaves them (for a merge,
+# of its change against its first parent, as `git revert -m 1` makes it), it
+# is a revert, not code. git's own revert is that change undone on the
+# revert's parent, merged as `git revert` merges (`git merge-tree`, in a
+# temporary object store of the guard's own), with no conflict in a code
+# path. So a later change a few lines away (or a rename since) doesn't count,
+# while a line changed, put back elsewhere or left out, or a conflict
+# resolved, does. A revert in progress (`REVERT_HEAD`) is read from the
+# index the same way. The conductor reverts only a commit its run's ledger
+# records the owner as allowing.
+
+
+@dataclass
+class _Revert:
+    """What the revert rule makes of a commit that carries code."""
+
+    kind: str  # "" (it names no commit it reverts), "allowed", "ungranted" (the conductor's, not in its ledger), "unmatched" or "unsure"
+    named: str = ""  # the commit it reverts: its full SHA once found, else as the message names it
+    why: str = ""  # unmatched: why it doesn't go through, after "but"; unsure: what the guard couldn't read
+    pr: str = ""  # the pull request the reverted commit (on the base) merged, which GitHub's own **Revert** button can revert
+    path: str = ""  # the code path where it isn't as git's revert leaves it, when it names one
+    step: bool = False  # `why` ends with the plain step that fixes it (a revert in progress finished other than as it stands)
+
+
+_REVERTS = re.compile(r"^This reverts commit ([0-9a-f]{7,64})\b", re.M)  # as `git revert` writes it, `--reference` included
+_PR_SUBJECT = re.compile(r"^Merge pull request #(\d+) from |\(#(\d+)\)$")  # GitHub's merge commit, or a squash merge's subject
+_REVERSING = re.compile(r"reversing\s+changes made to ([0-9a-f]{7,64})\b")  # `git revert -m <n>` names the parent it reverted against
+_REVERT_CAP = 64  # the most reverts one command's pushes read
+_REVERT_SECONDS = 8  # the most time one command spends reading reverts
+_GIT_FETCH_HINT = "if it merged since this repository last fetched, run `git fetch` and try again"
+# What may run beside a commit finishing a revert, which the guard reads as the index is when the command starts: what changes no file.
+_SHELL_READS = {*_CHANGES_DIR, "echo", "true", ":", "pwd", "ls", "cat", "head", "tail", "wc", "grep"}  # not `printf -v` or `test -v`, which set or evaluate variables
+_EDITOR_ENV = {"GIT_EDITOR", "EDITOR", "VISUAL"}  # set to `true` or `:` beside a finishing commit: no editor runs
+_GIT_READS = {
+    "status", "diff", "log", "show", "rev-parse", "ls-files", "ls-tree", "describe", "shortlog", "whatchanged", "cat-file",
+    "for-each-ref", "rev-list", "merge-base", "blame",
+}  # fmt: skip
+_GIT_LISTS = {"branch": {"--show-current", "--list", "-l", "-a", "--all", "-r", "--remotes", "-v", "-vv", "--verbose"}, "remote": {"-v", "--verbose"}}  # listing, never writing
+_GIT_READ_GLOBALS = {"--no-pager", "-P", "--no-optional-locks", "--literal-pathspecs"}  # global options that run nothing (and `-C <dir>`)
+
+
+def _revert_head(d: str, glob: list[str]) -> str:
+    """The commit a revert in progress in `d` undoes (its `REVERT_HEAD`), else ""."""
+    got = _heads_in_progress(d, glob, "REVERT_HEAD")
+    return got[0] if len(got) == 1 else ""
+
+
+def _base_refs(d: str, glob: list[str], code: _Code) -> tuple[list[str] | None, str]:
+    """(the base branch's remote refs here, `refs/remotes/<remote>/<base>` of
+    each remote fetching from `project.repo` (`origin`'s, without one); what
+    failed)."""
+    if code.repo:
+        listed, err = _memo_read(d, glob, "remote", "-v", sep="\n")
+        if listed is None:
+            return None, err
+        remotes = sorted({line.partition("\t")[0] for line in listed if line.endswith(" (fetch)") and _project_url(line.partition("\t")[2][: -len(" (fetch)")], code.repo)})
+    else:
+        remotes = ["origin"]
+    wanted = [f"refs/remotes/{r}/{code.base}" for r in remotes]
+    if not wanted:
+        return [], ""
+    refs, err = _memo_read(d, glob, "for-each-ref", "--format=%(refname)", *wanted, sep="\n")
+    return (None, err) if refs is None else ([r for r in refs if r in wanted], "")
+
+
+def _on_base(d: str, glob: list[str], sha: str, code: _Code) -> tuple[str, str]:
+    """Whether `sha` is on the base branch's remote ref: ("on", the ref
+    holding it), ("off", the ref shown, `origin/main`), ("none", "") when
+    there is no such ref here, or ("unsure", what failed)."""
+    refs, err = _base_refs(d, glob, code)
+    if refs is None:
+        return "unsure", err
+    if not refs:
+        return "none", ""
+    for ref in refs:
+        outside, err = _memo_read(d, glob, "rev-list", "-1", sha, "--not", ref, "--", sep="\n")
+        if outside is None:
+            return "unsure", err
+        if not outside:
+            return "on", ref
+    return "off", refs[0].removeprefix("refs/remotes/")
+
+
+def _pr_of(d: str, glob: list[str], sha: str, ref: str) -> str:
+    """The pull request whose merge `sha` is, by its subject, else "": a
+    merge commit "Merge pull request #<n> from …", or a commit "… (#<n>)" on
+    the first-parent line of `ref`, the base, as a squash merge is (a commit
+    inside a merged pull request may name an issue so); either on the
+    base's first-parent line, where a pull request into it merged."""
+    subject, _ = _memo_read(d, glob, "log", "-1", "--format=%s", sha, "--", sep="\n")
+    m = _PR_SUBJECT.search(subject[0]) if subject else None
+    if not m:
+        return ""
+    line, _ = _memo_read(d, glob, "rev-list", "--first-parent", ref, "--not", f"{sha}^@", "--", sep="\n")
+    return (m.group(1) or m.group(2)) if line and sha in line else ""
+
+
+def _undone_by_git(d: str, glob: list[str], sha: str, first: str, parent: str, after: str | None, code: _Code, deadline: float) -> tuple[str, str]:
+    """How the revert stands against git's own revert of `sha` (against
+    `first`, its first parent) made on `parent`, the revert's parent:
+    ("same", ""), ("differs", the first code path that isn't the same),
+    ("conflict", a code path that conflicts there, or is unmerged in the
+    index), ("unmerged", "") for an index with only other files unmerged,
+    or ("unsure", what failed). git's revert is merged as `git revert`
+    merges it (`git merge-tree`), with git's own text merge only: in an
+    empty repository of the guard's own that borrows the project's objects,
+    so no config, attribute, merge driver or `merge.default` of the
+    project's, the session's or the system's decides a line, and nothing is
+    written to the project. The revert is the commit `after`, or with None
+    the index. Each read ends by `deadline`."""
+    import time
+
+    def left() -> float:
+        return max(0.1, min(_GIT_READ_SECONDS, deadline - time.monotonic()))
+
+    found, err = _memo_read(d, glob, "rev-parse", "--verify", "--quiet", "--show-object-format", f"{parent}^{{commit}}", sep="\n")
+    if not found or len(found) != 2:
+        return "unsure", err or f"`git rev-parse` couldn't name `{parent}`"
+    fmt, parent = found
+    with _scratch_store(d, glob, index=after is None) as (env, err):
+        if env is None:
+            return "unsure", err
+        if after is None:
+            plain = [g for g in glob if g not in _GIT_PATHSPEC_GLOBALS]  # `:/` is read as git's magic
+            unmerged, err = _git_read(d, plain, "ls-files", "-u", "-z", "--full-name", "--", ":/", env={**env, "GIT_LITERAL_PATHSPECS": "0"}, raw=True, timeout=left())
+            if unmerged is None:
+                return "unsure", err
+            if unmerged:
+                paths = [item.partition("\t")[2] for item in unmerged]
+                hit = next((x for x in paths if _listed_code(x, code)), None)
+                return ("conflict", hit) if hit else ("unmerged", "")
+            tree, err = _git_read(d, [*_FULL_INDEX, *glob], "write-tree", sep="\n", env=env, timeout=left())
+            if not tree:
+                return "unsure", err or "`git write-tree` named no tree"
+            after = tree[0]
+        home = os.path.dirname(env["GIT_OBJECT_DIRECTORY"])
+        iso = {
+            "GIT_DIR": os.path.join(home, "empty.git"), "GIT_OBJECT_DIRECTORY": env["GIT_OBJECT_DIRECTORY"],
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": env["GIT_ALTERNATE_OBJECT_DIRECTORIES"], "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1", "GIT_ATTR_NOSYSTEM": "1", "GIT_NO_LAZY_FETCH": "1", "HOME": home, "XDG_CONFIG_HOME": home,
+        }  # fmt: skip
+        made, err = _git_read(home, [], "init", "--bare", "-q", "--template=", f"--object-format={fmt}", iso["GIT_DIR"], env={k: v for k, v in iso.items() if k != "GIT_DIR"}, isolated=True, timeout=left())
+        if made is None:
+            return "unsure", err
+        undone, err = _git_read(home, [], "merge-tree", "--write-tree", "-z", "--name-only", "--no-messages", f"--merge-base={sha}", parent, first, env=iso, ok=(0, 1), raw=True, isolated=True, timeout=left())
+        if not undone:
+            return "unsure", err or "`git merge-tree` named no tree"
+        hit = next((x for x in undone[1:] if _listed_code(x, code)), None)
+        if hit:
+            return "conflict", hit
+        differs, err = _git_read(home, [], "diff-tree", "-r", "-z", "--name-only", "--no-renames", "--ignore-submodules=none", undone[0], after, "--", env=iso, raw=True, isolated=True, timeout=left())
+        if differs is None:
+            return "unsure", err
+    hit = next((x for x in differs if _listed_code(x, code)), None)
+    return ("differs", hit) if hit else ("same", "")
+
+
+def _revert_rule(d: str, glob: list[str], named: str, parent: str, after: str | None, code: _Code, deadline: float, mainline: str = "") -> _Revert:
+    """What the revert rule makes of a revert of the commit `named`, on
+    `parent`: the commit `after`, or with None the index (a revert in
+    progress). `mainline` is the parent its message says a merge was
+    reverted against ("reversing changes made to <sha>"). Reading it ends by
+    `deadline`."""
+    import time
+
+    if time.monotonic() > deadline:
+        return _Revert("unsure", named, f"it ran out of time ({_REVERT_SECONDS} seconds for the command's reverts)")
+    found, err = _memo_read(d, glob, "rev-parse", "--verify", "--quiet", f"{named}^{{commit}}", sep="\n", ok=(0, 1))
+    if found is None:
+        return _Revert("unsure", named, f"it couldn't read the commit it names ({err})")
+    if len(found) != 1 or not found[0].startswith(named):  # a ref of that name isn't the commit
+        return _Revert("unmatched", named, f"no commit here is named {named[:12]}: {_GIT_FETCH_HINT}")
+    sha = found[0]
+    short = sha[:7]
+    on, ref = _on_base(d, glob, sha, code)
+    if on == "unsure":
+        return _Revert("unsure", sha, f"it couldn't read whether {short} is on the base branch ({ref})")
+    if on == "none":
+        return _Revert("unsure", sha, f"there is no remote ref of the base branch `{code.base}` here to find {short} on: run `git fetch` and try again")
+    if on == "off":
+        return _Revert("unmatched", sha, f"{short} isn't on `{ref}`, the base branch as last fetched: {_GIT_FETCH_HINT}; if it never merged, there is nothing on the base to revert")
+    pr = _pr_of(d, glob, sha, ref)
+    parents, err = _memo_read(d, glob, "rev-list", "--parents", "-n1", sha, "--", sep="\n")
+    if parents is None:
+        return _Revert("unsure", sha, f"it couldn't read the parents of {short} ({err})", pr)
+    ids = parents[0].split()[1:] if parents else []
+    if not ids:
+        shallow, _ = _memo_read(d, glob, "rev-parse", "--is-shallow-repository", sep="\n")
+        if shallow == ["true"]:
+            return _Revert("unsure", sha, f"{short}'s parent isn't in this shallow clone: run `git fetch --unshallow` and try again", pr)
+        return _Revert("unmatched", sha, f"{short} is the first commit, with no change to undo against a parent", pr)
+    exact = f"it doesn't exactly undo {short}"
+    how, path = _undone_by_git(d, glob, sha, ids[0], parent, after, code, deadline)
+    if how == "unmerged":
+        return _Revert("unmatched", sha, "files outside the code paths are still unmerged: `git add` them once resolved, then finish it with `git commit --no-edit`, each in a command of its own", step=True)
+    if how == "conflict":  # GitHub's **Revert** button would meet the same conflict
+        return _Revert("unmatched", sha, f"{exact}: undoing it conflicts in `{_brief(path)}`, and resolving that is writing code", "", path)
+    if how == "differs":
+        other = mainline and len(ids) > 1 and not ids[0].startswith(mainline)  # its message says it was made against another parent
+        hint = f": a merge is reverted against its first parent, as `git revert -m 1 {short}` does" if other else ""
+        return _Revert("unmatched", sha, f"{exact}: `{_brief(path)}` isn't as `git revert` of {short} leaves it{hint}", pr, path)
+    if how == "unsure":
+        return _Revert("unsure", sha, f"it couldn't undo {short} as `git revert` does: {path}", pr)
+    if code.conductor() and sha not in code.allowed_reverts():
+        return _Revert("ungranted", sha, "", pr)
+    return _Revert("allowed", sha, "", pr)
+
+
+def _commit_revert(d: str, glob: list[str], commit: str, code: _Code) -> _Revert:
+    """What the revert rule makes of `commit` (its full name), read once for
+    each command: "" when its message names no commit it reverts."""
+    import time
+
+    memo = _PUSH_MEMO if _PUSH_MEMO is not None else {}
+    key = ("revert", d, tuple(glob), commit)
+    if key in memo:
+        return memo[key]
+    msg, err = _memo_read(d, glob, "log", "-1", "--format=%B", commit, "--", sep="\0")
+    m = _REVERTS.search("".join(msg)) if msg is not None else None
+    deadline = memo.setdefault("reverts end", time.monotonic() + _REVERT_SECONDS)
+    if msg is None:
+        v = _Revert("unsure", "", f"it couldn't read the message of commit {commit[:7]} ({err})")
+    elif not m:
+        v = _Revert("")
+    elif memo.setdefault("reverts read", 0) >= _REVERT_CAP:
+        v = _Revert("unsure", m.group(1), f"there are more than {_REVERT_CAP} reverts to read")
+    else:
+        memo["reverts read"] += 1
+        parents, err = _memo_read(d, glob, "rev-list", "--parents", "-n1", commit, "--", sep="\n")
+        ids = parents[0].split() if parents else []
+        if parents is None:
+            v = _Revert("unsure", m.group(1), f"it couldn't read the parents of commit {commit[:7]} ({err})")
+        elif len(ids) != 2:
+            v = _Revert("unmatched", m.group(1), f"a revert has one parent, and commit {commit[:7]} has " + ("none" if len(ids) < 2 else f"{len(ids) - 1}"))
+        else:
+            to = _REVERSING.search("".join(msg))
+            v = _revert_rule(d, glob, m.group(1), ids[1], ids[0], code, deadline, to.group(1) if to else "")
+    memo[key] = v
+    return v
+
+
+def _revert_refusal(what: str, hit: _Hit, v: _Revert, code: _Code, to: str = "", abort: bool = False) -> str:
+    """A refusal of a revert the rule doesn't let through: `what` is what
+    carries the code path ("this commit", "this push sends commit 1a2b3c4,
+    which"), `to` where a push goes, `abort` whether a revert is in progress."""
+    short = v.named[:7]
+    if v.path and v.path != hit.path and _listed_code(v.path, code):
+        hit = _Hit(v.path, _listed_code(v.path, code) or "", hit.worktree)
+    carries = f"{what} carries the code path {_shown(hit)} ({hit.pattern}){to}"
+    if v.kind == "ungranted":
+        entry = f'{{"what": "revert", "revert": "{v.named}", "at": …, "grant": "<the owner\'s words and where they were given>"}}'
+        if len(v.named) != 40:  # `WF state put` takes a 40-character SHA: a SHA-256 repository's ledger can't name it
+            return f"{carries}: it reverts {short} exactly, but the conductor reverts only a commit its ledger names, and the ledger takes 40-character SHAs, not this repository's: tell the owner, who can make this revert"
+        return (
+            f"{carries}: it reverts {short} exactly, but the conductor reverts only a commit the owner allowed: ask the owner first, on the "
+            f"tracking issue or in your chat, and once they allow it record their yes in the run's ledger, `{entry}`, in `.workflow/run/body.md` "
+            "(`WF state put`, then the tracking issue's body), then try again"
+        )
+    cancel = " (or `git revert --abort` cancels the revert)" if abort else ""
+    if v.step:
+        return f"{carries}: it finishes a revert of {short}, but not as it stands: {v.why}{cancel}"
+    entry = code.conductor() and v.named in code.allowed_reverts()
+    return f"{carries}: it names itself a revert of {short}, but {v.why}{cancel}. Only a revert that exactly undoes a commit on the base goes through; {_revert_way(code, v.pr, entry)}"
 
 
 def _expanded_specs(seg: Seg, c: _Commit, literal: bool) -> tuple[list[str], str | None]:
@@ -7065,6 +7432,120 @@ def _names_dot_git(command: str, segs: list[Seg]) -> str | None:
     return None
 
 
+def _expands(s: Seg, literal: list[str] = ()) -> bool:
+    """Whether the shell expands something in a part (a `$` or a backtick in
+    its words, its variables' values, its redirects' targets, its unquoted
+    heredocs or here-strings, or its `<` files), which can set a variable
+    (`$[HOME=1]`) or run a command; or feeds it stdin it can't read. A
+    heredoc whose delimiter is quoted (`<<'EOF'`) the shell never expands,
+    whatever runs it; nor the `literal` words (a commit's message given as a
+    quoted heredoc, `$(cat <<'EOF' … EOF)` in double quotes)."""
+    words = [w for w in s.words if not any(w is x for x in literal)]
+    texts = [*words, *(a.partition("=")[2] for a in s.assigns), *s.redirects, s.expanded, s.stdin or "", *s.inputs]
+    return s.stdin_unseen or any("$" in t or "`" in t for t in texts)
+
+
+def _reads_only(s: Seg, literal: list[str] = ()) -> bool:
+    """Whether a part of the command changes no file, index or ref: a shell
+    word that only reads or moves the shell (`cd` to the project's top
+    level, as `$(git rev-parse --show-toplevel)` names it, included), or git
+    itself (its own command word) running a read (`status`, `diff` without
+    `--output`, `branch --show-current`, …) with no global option that runs
+    or points at a program (`-c`, `--exec-path`), all with no wrapper (`time
+    -o`), variable, expansion (`_expands`) or redirect other than to
+    `/dev/null`."""
+    if s.fed or not s.words or s.assigns or s.wrappers or any(r != "/dev/null" for r in s.redirects):
+        return False
+    if s.words[0] in _CHANGES_DIR and all(_TOPLEVEL.match(w) for w in s.words[1:] if "$" in w or "`" in w):
+        return not (s.heredoc or s.stdin or s.inputs or s.stdin_unseen)
+    if _expands(s, literal):
+        return False
+    if s.words[0] in _SHELL_READS:
+        return True
+    if s.words[0] != "git":  # git itself, not a program of that name elsewhere
+        return False
+    g = _commit_git(s.words)
+    if not g or not g[1]:
+        return False
+    glob, (sub, *rest), i = g[0], g[1], 0
+    while i < len(glob):
+        if glob[i] == "-C":
+            i += 2
+            continue
+        if glob[i] not in _GIT_READ_GLOBALS:
+            return False
+        i += 1
+    if sub in _GIT_LISTS:
+        return all(a in _GIT_LISTS[sub] for a in rest)
+    return sub in _GIT_READS and not any(a.startswith("--output") for a in rest)
+
+
+def _finishing_revert(segs: list[Seg], seg: Seg, d: str, glob: list[str], c: _Commit, env: dict[str, str], reverting: str, code: _Code) -> _Revert:
+    """What the revert rule makes of a commit finishing a revert in progress
+    in `d`, of the commit `reverting` (#392): read from the index, so only a
+    commit of the index as it is, with the message `git revert` wrote (whose
+    "This reverts commit" line tells a push it is a revert), in a command
+    where nothing else runs but reads (`_reads_only`)."""
+    import time
+
+    why = ""
+    # A message given as a quoted heredoc in double quotes (`-m "$(cat <<'EOF' … EOF)"`), as Claude Code writes one: its text, as written.
+    literal = [w for w in seg.words if isinstance(w, Word) and not w.splits and w in c.messages and _literal_heredoc(w)]
+    other = next((s for s in segs if s is not seg and not _reads_only(s, literal)), None)
+    # A message given as `$(cat <<-'EOF' …)` reaches git with each line's leading tabs stripped, as the shell strips them.
+    told = [("\n".join(x.lstrip("\t") for x in t.split("\n")) if _literal_heredoc(t) and re.match(r"\$\(\s*cat\s+<<-", t) else t) for t in c.messages]
+    m = _REVERTS.search("\n\n".join(told))
+    line = f'the "This reverts commit {reverting}." line, which tells a push it is a revert'
+    raw = _commit_git(seg.words)
+    own = [o for o in (raw[0] if raw else []) if o in ("-c", "--config-env", "--exec-path") or o.startswith(("--config-env=", "--exec-path"))]
+    for a in seg.assigns:
+        name, _, value = a.partition("=")
+        name = name.removesuffix("+")
+        if name not in _GIT_PATHSPEC_ENV and not (name in _EDITOR_ENV and value in ("true", ":")):
+            own.append(name)
+    if _expands(seg, literal):
+        own.append("a value the shell expands")
+    own += [f"`{w}`" for w in seg.wrappers if w != "command"]  # `env -u …`, `sudo`: what it runs under
+    if own:  # a setting or variable of its own can run a hook that stages more (`-c core.hooksPath=…`, `HOME=…`, `$[HOME=1]`)
+        what = own[0] if own[0].startswith(("a value", "`")) else f"`{_brief(own[0])}`"
+        how = f"runs under {what}" if own[0].startswith("`") else f"sets {what} for itself"
+        why = f"it {how}, which can change what it commits: finish it with plain `git commit --no-edit`"
+    elif other is not None:
+        shown = " ".join(other.words) or " ".join(other.assigns) or " ".join(f"> {r}" for r in other.redirects)
+        part = f"`{_brief(shown)}`" if shown else "another part"
+        why = (
+            f"the command also runs {part}, which may change what it commits (only reads, such as `git status`, "
+            "may run beside it): finish the revert in a command of its own"
+        )
+    elif c.amend:
+        why = "`--amend` folds it into the commit before it: finish it with `git commit --no-edit` instead"
+    elif c.specs and not c.include:
+        why = "a pathspec commits only part of it: finish it with `git commit --no-edit`, naming no path"
+    elif c.message_from:
+        why = f"`{c.message_from}` takes its message from elsewhere, which the guard doesn't read: finish it with `git commit --no-edit`, which keeps {line}"
+    elif c.messages and not (m and reverting.startswith(m.group(1))):
+        why = f"its message (`-m`) leaves out {line}: finish it with `git commit --no-edit`, or keep that line"
+    else:
+        wt, err = _carried(d, glob, c, env, staged=False) if c.all or c.specs else ([], "")
+        if wt is None:
+            return _Revert("unsure", reverting, err)
+        wt_code = next((f for f in wt if _listed_code(f, code)), None)
+        if wt_code:
+            why = f"it would also take the working tree's change to `{_brief(wt_code)}`, which isn't part of it: finish it with `git commit --no-edit` alone, which leaves that change where it is"
+            return _Revert("unmatched", reverting, why, step=True, path=wt_code)
+    if why:
+        return _Revert("unmatched", reverting, why, step=True)
+    msg, _ = _git_read(d, glob, "rev-parse", "--git-path", "MERGE_MSG", sep="\n")  # the message `git revert` wrote
+    to = None
+    if msg and len(msg) == 1:
+        try:
+            with open(os.path.join(d, msg[0]), encoding="utf-8", errors="replace") as f:
+                to = _REVERSING.search(f.read(64 * 1024))
+        except OSError:
+            pass
+    return _revert_rule(d, glob, reverting, "HEAD", None, code, time.monotonic() + _REVERT_SECONDS, to.group(1) if to else "")
+
+
 def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tuple[str | None, str | None]:
     """(why a commit in the command carries a code path, why the guard can't
     tell what one carries), each None when it doesn't apply."""
@@ -7138,7 +7619,7 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tupl
         if unread:
             c = replace(c, all=True, include=True, specs=[], spec_file=None)  # every change it could carry
         # A commit finishing a merge (`git commit` while one is in progress, `git merge --continue`) counts the merge's own changes.
-        heads = _merge_heads(d, glob) if args[0] in ("commit", "merge") else []
+        heads = _heads_in_progress(d, glob) if args[0] in ("commit", "merge") else []
         own, own_err = _merge_own_code(d, glob, heads, code) if heads else (None, "")
         finishing = "the commit finishing this merge" if args[0] == "commit" else f"the commit finishing this `git {args[0]}`"
         if own:
@@ -7149,6 +7630,17 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tupl
         if files is None:
             unsure = unsure or f"{cant}: {err}"
             continue
+        # A commit finishing a revert (`git commit` while one is in progress, `git revert --continue`) is judged by the revert rule (#392).
+        hits = [_Hit(f, m, wt) for f in files for m in [_listed_code(f, code)] if m] if args[0] in ("commit", "revert") and not heads and not unread else []
+        reverting = _revert_head(d, glob) if hits else ""
+        if reverting:
+            v = _finishing_revert(segs, seg, d, glob, c, pathspec_env, reverting, code)
+            if v.kind == "allowed":
+                continue
+            if v.kind == "unsure":
+                unsure = unsure or f"{cant}: it couldn't tell whether it exactly undoes {reverting[:7]}: {v.why}"
+                continue
+            return _revert_refusal("the commit finishing this revert", hits[0], v, code, abort=True), None
         for f in files:
             m = _listed_code(f, code)
             if not m:
@@ -7176,7 +7668,8 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tupl
 # A push to `project.repo` is judged by what git would send: the commits its
 # sources reach that are on no tracking ref of a remote fetching from
 # `project.repo`, each read as a commit is: a merge by its own changes, as the
-# commit rule reads one (#391). The guard reads them as the repository is when
+# commit rule reads one (#391), and a revert of a commit on the base let
+# through (#392). The guard reads them as the repository is when
 # the command starts, so another part of the command that may move a branch or
 # HEAD, or change where pushes go, makes it a push it can't tell about.
 
@@ -7453,7 +7946,7 @@ _PUSH_RULE_SECONDS = 15  # the most the push rule spends on one command's pushes
 def _memo_read(d: str, glob: list[str], *args: str, **kw) -> tuple[list[str] | None, str]:
     if _PUSH_MEMO is None:
         return _git_read(d, glob, *args, **kw)
-    key = (d, tuple(glob), args, tuple(sorted(kw.items())))
+    key = (d, tuple(glob), args, tuple(sorted((k, tuple(sorted(v.items())) if isinstance(v, dict) else v) for k, v in kw.items())))
     if key not in _PUSH_MEMO:
         _PUSH_MEMO[key] = _git_read(d, glob, *args, **kw)
     return _PUSH_MEMO[key]
@@ -7755,18 +8248,21 @@ def _refspec_sources(specs: list[str], shell: bool, here: bool = True) -> tuple[
     return srcs, pseudo, None
 
 
-_COMMIT_HEADER = re.compile(r"\x01\x02([0-9a-f]{4,64})")
+_COMMIT_HEADER = re.compile(r"\x01\x02([0-9a-f]{4,64})\x03([0-9a-f]{40,64})")
 
 
 def _sent_code(
-    d: str, glob: list[str], args: list[str], code: _Code, patch: bool = False, env: dict[str, str] | None = None
-) -> tuple[tuple[str, _Hit] | None, str]:
-    """((the commit, the code path) of the first code path `git log <args>`
+    d: str, glob: list[str], args: list[str], code: _Code, patch: bool = False, env: dict[str, str] | None = None,
+    passes: Callable[[str], bool] | None = None,
+) -> tuple[tuple[str, _Hit, str] | None, str]:
+    """((the commit, the code path, the commit's full name) of the first code path `git log <args>`
     lists, else None; what failed). Read as git writes it, so a long history
     stops at its first code path, within the time a git read has. With
     `patch`, `git log` writes patches (merges' own changes, #391), whose paths
     are their file headers' rather than `--name-only`'s. `env` adds to git's
-    environment."""
+    environment. `passes(full name)` says whether a commit carrying a code path
+    is let through all the same (a revert, #392); the time it takes adds to
+    the read's."""
     # Imported here, not at the top: only a push to `project.repo`, or a commit finishing a merge, needs them, and the hook starts on every tool.
     import queue
     import tempfile
@@ -7800,7 +8296,7 @@ def _sent_code(
 
     reader = threading.Thread(target=pump, daemon=True)
     reader.start()
-    pending, sha, sep, skipping = bytearray(), "", b"\n" if patch else b"\0", False
+    pending, sha, full, sep, skipping, passed, path_next = bytearray(), "", "", b"\n" if patch else b"\0", False, False, False
     try:
         while True:
             try:
@@ -7822,16 +8318,30 @@ def _sent_code(
                     pending.clear()  # a patch's content line: never a file header, so not kept
                     skipping = True
             for raw in items:
-                item = raw.decode("utf-8", errors="replace").removeprefix("\n")
-                m = _COMMIT_HEADER.fullmatch(item)
-                if m:
-                    sha = m.group(1)
-                    continue
-                if patch:
-                    item = _patch_path(item) or ""
+                if path_next:  # a path, after its `:<modes> …` item: never a header, however it is spelled
+                    path_next, item = False, raw.decode("utf-8", errors="replace")
+                else:
+                    item = raw.decode("utf-8", errors="replace").removeprefix("\n")
+                    if not patch and item.startswith(":"):
+                        path_next = True
+                        continue
+                    m = _COMMIT_HEADER.fullmatch(item)
+                    if m:
+                        sha, full, passed = m.group(1), m.group(2), False
+                        continue
+                    if patch:
+                        item = _patch_path(item) or ""
+                if passed:
+                    continue  # the rest of a commit let through
                 hit = _listed_code(item, code) if item else None
                 if hit:
-                    return (sha, _Hit(item, hit)), ""
+                    if passes is not None:
+                        took = time.monotonic()
+                        passed = passes(full)
+                        deadline += time.monotonic() - took
+                        if passed:
+                            continue
+                    return (sha, _Hit(item, hit), full), ""
         try:
             rc = proc.wait(timeout=max(0.1, deadline - time.monotonic()))
         except subprocess.TimeoutExpired:
@@ -8041,6 +8551,14 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
         memo = _PUSH_MEMO if _PUSH_MEMO is not None else {}
         driver, err = _merge_driver(d, pglob)
         found, a_merge = None, False
+        unread: list[str] = []  # reverts it couldn't read, passed over so a code commit beyond them still counts
+
+        def passes(commit: str, _d: str = d, _glob: list[str] = pglob, _unread: list[str] = unread) -> bool:
+            v = _commit_revert(_d, _glob, commit, code)
+            if v.kind == "unsure":
+                _unread.append(f"commit {commit[:7]} exactly undoes " + (v.named[:7] if v.named else "the commit it names") + f": {v.why}")
+            return v.kind in ("allowed", "unsure")
+
         sends = ["--not", *known, "--not", *sorted(pseudo), "--end-of-options", *srcs, "--"]
         # (what it reads, how: `git log`'s options, a patch, in a temporary object store of its own)
         reads = [("files", _FILES, False, False), ("octopus", _OCTOPUS, True, False)] + ([] if driver else [("remerge", _REMERGE, True, True)])
@@ -8048,13 +8566,16 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
             if err:
                 break
             key = ("log", read, d, tuple(pglob), tuple(known), tuple(sorted(pseudo)), tuple(srcs))
-            if key not in memo:
+            if key not in memo:  # (found, what failed, the reverts it couldn't read)
                 if scratch:  # git merges each again in a temporary object store, the guard's own
                     with _scratch_store(d, pglob, index=False) as (store, e):
-                        memo[key] = _sent_code(d, [*pglob, *_REMERGE_CONFIG], ["log", *log_args, *sends], code, patch, store) if store else (None, e)
-                else:
-                    memo[key] = _sent_code(d, pglob, ["log", *log_args, *sends], code, patch)
-            found, err = memo[key]
+                        got = _sent_code(d, [*pglob, *_REMERGE_CONFIG], ["log", *log_args, *sends], code, patch, store) if store else (None, e)
+                else:  # a revert of a commit on the base is let through (#392); only the files pass reads commits that aren't merges
+                    got = _sent_code(d, pglob, ["log", *log_args, *sends], code, patch, passes=passes if read == "files" else None)
+                memo[key] = (*got, tuple(unread))
+            found, err, seen = memo[key]
+            if read == "files":  # a read from the memo brings back the reverts it couldn't read
+                unread[:] = seen
             a_merge = patch  # only merges are read as patches
             if found:
                 break
@@ -8063,10 +8584,15 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
             if merges:
                 err = f"it sends merge commit {merges[0][:7]}, and {_DRIVER_RUNS.format(driver)}"
         if found:
-            sha, hit = found
+            sha, hit, full = found
             if a_merge:
                 return f"this push sends merge commit {sha}, which carries the code path {_shown(hit)} ({hit.pattern}), {_MERGE_OWN}, to {to}; {code.instead}", None
+            v = _commit_revert(d, pglob, full, code)
+            if v.kind in ("unmatched", "ungranted"):
+                return _revert_refusal(f"this push sends commit {sha}, which", hit, v, code, f", to {to}"), None
             return f"this push sends commit {sha}, which carries the code path {_shown(hit)} ({hit.pattern}), to {to}; {code.instead}", None
+        if not err and unread:
+            err = f"it couldn't tell whether {unread[0]}"
         if not err:
             err = _not_commits(d, pglob, srcs, pseudo)
         if err:
@@ -8102,7 +8628,7 @@ def _unsure_code(unsure: str, role: str, code: _Code) -> Decision:
         return Decision(
             "deny", f"{unsure}; {code.writes_none}, and commits or pushes nothing the guard can't read; fix what stops git reading it, then try again"
         )
-    return Decision("ask", f"{unsure}; {code.writes_none}: allow it only if it carries no code path")
+    return Decision("ask", f"{unsure}; {code.writes_none}: allow it only if it carries no code path, or only a revert that exactly undoes a commit on the base")
 
 
 _PS_WORDS = re.compile(r"[^\s;|&(){}<>,=\"'`]+")
