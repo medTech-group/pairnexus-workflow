@@ -132,10 +132,13 @@ def test_a_hash_inside_a_glob_group_is_no_comment(tmp_path, monkeypatch, capsys)
         # A heredoc where a command word would stand; a substitution in a later `case` pattern.
         "<<EOF A=(x)\nhi\nEOF\ngit commit -am x",
         "case a in x) true;; $(git commit -am x)) true;; esac",
-        # A quote or escape in a name: a command word, not an assignment.
+        # Whatever the word before it, a `#` in a glued group is read as zsh reads it too.
         "A''=1 B=(src|#)(N); git commit -am x",
         "A\\B=1 B=(src|#)(N); git commit -am x",
         'A"B"=1 B=(src|#)(N); git commit -am x',
+        "<(true)A=1 B=(src|#)(N); git commit -am x",
+        "A[[]=(src|#)(N); git commit -am x",
+        "A=(src|#)(N); git commit -am x",
     ):
         _change(root, CODE)
         d, why = hook(monkeypatch, capsys, root, command)
@@ -145,9 +148,10 @@ def test_a_hash_inside_a_glob_group_is_no_comment(tmp_path, monkeypatch, capsys)
     # A comment is still one where the shell reads it.
     _change(root, CODE)
     assert hook(monkeypatch, capsys, root, "echo hi # (src|#); git commit -am x") == ("allow", "")
-    assert hook(monkeypatch, capsys, root, "A=(\n  x  # git commit -am x\n)") == ("allow", "")
-    assert hook(monkeypatch, capsys, root, "B=1 A=(\n  x  # git commit -am x\n)") == ("allow", "")
-    assert hook(monkeypatch, capsys, root, "local A=(\n  x  # git commit -am x\n)") == ("allow", "")
+    assert hook(monkeypatch, capsys, root, "A=(\n  x  # the first\n)") == ("allow", "")
+    assert hook(monkeypatch, capsys, root, "local A=(\n  x  # don't\n)") == ("allow", "")
+    # An array's comment is read as zsh reads a pattern's too, erring safe: a command in it is judged.
+    assert hook(monkeypatch, capsys, root, "A=(\n  x  # git commit -am x\n)")[0] == "deny"
 
 
 def test_zsh_s_reading_is_one_pass(tmp_path, monkeypatch, capsys):
