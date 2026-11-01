@@ -8256,8 +8256,9 @@ _KEEPS_REFS = {
 }  # fmt: skip
 _BRANCH_WRITES = re.compile(r"-[a-zA-Z]*[fdDmMcCu]|--(f|fo|for|forc|force|d|de|del|dele|delet|delete|m|mo|mov|move|c|co|cop|copy|set-upstream-to|u|un|uns|unset-upstream|edit-description)(=.*)?$", re.S)
 # Settings that change where a push goes (`remote.`, `url.`, a branch's remote, includes) or what a bare one sends (`push.default`).
-# Of those, the settings that change only what a push sends, never where it goes (#393).
-_SEND_ONLY_KEYS = re.compile(r"(?i)push\.default(=|$)|remote\..+\.(push|mirror)(=|$)", re.S)
+# Of those, the setting that changes only what a push sends, never where it goes (#393); `remote.<r>.*` keys are judged
+# as URL settings before.
+_SEND_ONLY_KEYS = re.compile(r"(?i)push\.default(=|$)", re.S)
 _PUSH_CONFIG_KEYS = re.compile(r"(?i)(remote|url|include|includeif)\.|push\.default(=|$)|branch\..*\.(remote|pushremote)(=|$)", re.S)
 # Sections whose removal or renaming can drop such a setting.
 _PUSH_CONFIG_SECTIONS = re.compile(r"(?i)(remote|url|include|includeif|push|branch)(\.|$)")
@@ -9102,11 +9103,11 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
         if found:
             sha, hit, full = found
             if code.planning() and not proto_why:  # the code of a prototype branch, which doesn't count as on the remote
-                held, _ = _memo_read(d, pglob, "for-each-ref", "--count=1", "--sort=-refname", "--format=%(refname)", f"--contains={full}", *_PROTOTYPE_REFS, sep="\n")
-                if held and held[0].startswith("refs/remotes/"):
-                    proto_why = f"commit {sha} is on `{held[0][13:]}`, a `prototype/*` branch's tracking ref, which doesn't count as on the remote"
-                elif held:
-                    proto_why = f"commit {sha} is on `{held[0][11:]}`, a `prototype/*` branch, and isn't on the remote yet"
+                holder, _ = _memo_read(d, pglob, "for-each-ref", "--count=1", "--sort=-refname", "--format=%(refname)", f"--contains={full}", *_PROTOTYPE_REFS, sep="\n")
+                if holder and holder[0].startswith("refs/remotes/"):
+                    proto_why = f"commit {sha} is on `{holder[0][13:]}`, a `prototype/*` branch's tracking ref, which doesn't count as on the remote"
+                elif holder:
+                    proto_why = f"commit {sha} is on `{holder[0][11:]}`, a `prototype/*` branch, and isn't on the remote yet"
             proto = f"a planning session's prototype code goes to `prototype/*` branches only, pushed from one, and {proto_why}; " if proto_why else ""
             instead = proto + code.instead
             if a_merge:
@@ -9164,7 +9165,13 @@ def _a_remote_of_ours(d: str, glob: list[str], remotes: set[str], cfg: dict[str,
         if urls is None or any(_project_url(u, code.repo) for u in urls):
             return True
     named = (v for k, vs in cfg.items() if k == "remote.pushdefault" or k.startswith("branch.") and k.endswith((".pushremote", ".remote")) for v in vs)
-    return any(v not in remotes and v != "." and _project_url(v, code.repo) for v in named)
+    # A name that isn't a remote `git remote` lists nor a URL may be one git reads from `.git/remotes` or `.git/branches`.
+    return any(v not in remotes and v != "." and (not _url_like(v) or _project_url(v, code.repo)) for v in named)
+
+
+def _url_like(name: str) -> bool:
+    """A push's repository written as a URL or path, not a remote's name (which rarely holds a `:` and never starts a path)."""
+    return ":" in name or name.startswith(("/", "."))
 
 
 def _may_reach(d: str, glob: list[str], named: str | None, remotes: set[str], cfg: dict[str, list[str]], code: _Code) -> bool:
@@ -9176,7 +9183,7 @@ def _may_reach(d: str, glob: list[str], named: str | None, remotes: set[str], cf
     if named in remotes:
         urls, _ = _memo_read(d, glob, "remote", "get-url", "--push", "--all", named, sep="\n")
         return urls is None or any(_project_url(u, code.repo) for u in urls)
-    return _project_url(named, code.repo)
+    return not _url_like(named) or _project_url(named, code.repo)  # a name it can't read (`.git/remotes/<name>`): may
 
 
 def _beside_prototype(cant: str, moves: str, code: _Code) -> str:

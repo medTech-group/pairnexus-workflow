@@ -1095,6 +1095,12 @@ def test_a_push_beside_a_part_that_may_move_a_ref_while_prototyping(tmp_path, mo
         _change(root, CODE)
         d, why = hook(monkeypatch, capsys, root, command)
         assert d == "deny" and "run the push in a command of its own" in why, (command, why)
+    # A remote git reads from `.git/remotes`, which the guard doesn't, counts as one that may reach `project.repo`.
+    (root / ".git" / "remotes").mkdir()
+    (root / ".git" / "remotes" / "gh").write_text(f"URL: {tmp_path / 'proj-remote' / 'acme' / 'demo.git'}\n")
+    _change(root, CODE)
+    d, why = hook(monkeypatch, capsys, root, "git commit -am wip && git -c push.default=current push gh HEAD:refs/heads/feature")
+    assert d == "deny" and "run the push in a command of its own" in why, why
     # The refusal gives the refused push's own reason.
     _change(root, CODE)
     other = _clone(tmp_path, name="other")
