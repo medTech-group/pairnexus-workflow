@@ -124,6 +124,16 @@ def test_a_hash_inside_a_glob_group_is_no_comment(tmp_path, monkeypatch, capsys)
         # A substitution's own text moves nothing outside it, however it opens or closes (older than #393).
         f"cd /tmp; ( cd {root}; echo `)`; git commit -am x )",
         f"cd {root}; pushd /tmp >/dev/null; echo $(popd); popd; git commit -am x",
+        # zsh's reading reaches a heredoc's substitutions; a quoted word assigns or declares nothing.
+        "cat <<EOF\n$(echo (src|#)(N); git commit -am x)\nEOF",
+        "cat <<EOF\n`echo (src|#)(N); git commit -am x`\nEOF",
+        "\"B=1\" A=(src|#)(N); git commit -am x",
+        "\\typeset A=(src|#)(N); git commit -am x",
+        # A heredoc where a command word would stand; a substitution in a later `case` pattern.
+        "<<EOF A=(x)\nhi\nEOF\ngit commit -am x",
+        "case a in x) true;; $(git commit -am x)) true;; esac",
+        # One reading of zsh's, however many groups.
+        "echo " + "(a|#) " * 2000 + "; git commit -am x",
     ):
         _change(root, CODE)
         d, why = hook(monkeypatch, capsys, root, command)

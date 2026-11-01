@@ -496,6 +496,7 @@ class Word(str):
     splits: bool = False
     expands: bool = False
     quoted: bool = False  # any of it quoted or escaped (`"time"`, `\{`): never a reserved word
+    assigns: bool = False  # an assignment as the shell reads one, its name unquoted (`B=1`, not `"B=1"`)
 
 
 _UNQUOTED_SPLITS = re.compile(r"[$*?\[]|^~|[=:]~")
@@ -577,8 +578,9 @@ def _read_delim(s: str, i: int) -> tuple[str, bool, int]:
     return "".join(out), quoted, i
 
 
-def _expansions(text: str) -> list[list]:
-    """Command substitutions in text the shell expands (an unquoted heredoc)."""
+def _expansions(text: str, hashes: list[int] | None = None, zsh: bool = False) -> list[list]:
+    """Command substitutions in text the shell expands (an unquoted heredoc),
+    `hashes` and `zsh` as `_lex` takes them."""
     out: list[list] = []
     i, n = 0, len(text)
     while i < n:
@@ -587,26 +589,29 @@ def _expansions(text: str) -> list[list]:
             i += 2
             continue
         if text.startswith("$(", i):
-            toks, j = _lex(text, i + 2, stop_paren=True)
+            toks, j = _lex(text, i + 2, stop_paren=True, hashes=hashes, zsh=zsh)
             out.append(toks)
             i = j + 1
             continue
         if c == "`":
             j = _backtick_end(text, i)
-            out.append(_lex(_unbacktick(text[i + 1 : j]))[0])
+            out.append(_lex(_unbacktick(text[i + 1 : j]), hashes=hashes, zsh=zsh)[0])
             i = j + 1
             continue
         i += 1
     return out
 
 
-def _lex(s: str, i: int = 0, stop_paren: bool = False, hashes: list[int] | None = None) -> tuple[list, int]:
+def _lex(
+    s: str, i: int = 0, stop_paren: bool = False, hashes: list[int] | None = None, zsh: bool = False
+) -> tuple[list, int]:
     """Tokens of a shell command from s[i]: plain words (str), operators (Op)
     and heredocs (Heredoc). Command substitutions are lexed too and put, as a
     subshell, before the command they appear in; the word keeps their text.
     With stop_paren, stops at the `)` closing a `$(`, returning its index.
-    Into `hashes`, the index of each `#` read as a comment while a `(` glued
-    to a word is open, which zsh reads as its pattern's (`_zsh_reading`)."""
+    Into `hashes`, a `#` (its index in its own text) read as a comment while
+    a `(` glued to a word is open, which zsh reads as its pattern's; with
+    `zsh`, such a `#` is read so, as a word's (`segments` reads both)."""
     out: list = []
     cmd_start = 0
     word: list[str] = []
@@ -628,6 +633,7 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False, hashes: list[int] | None 
             w.splits = "\0" in bare or bool(_UNQUOTED_SPLITS.search(bare)) or _brace_list(bare)
             w.expands = expands
             w.quoted = quoted
+            w.assigns = bool(_ASSIGNMENT.match(bare))
             out.append(w)
         word, in_word, quoted, unquoted, expands = [], False, False, [], False
 
@@ -640,7 +646,7 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False, hashes: list[int] | None 
         cmd_start += len(block)
 
     def substitution(start: int, inner_from: int) -> int:
-        toks, j = _lex(s, inner_from, stop_paren=True, hashes=hashes)
+        toks, j = _lex(s, inner_from, stop_paren=True, hashes=hashes, zsh=zsh)
         word.append(s[start : j + 1])
         hoist(toks)
         return j + 1
@@ -648,11 +654,7 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False, hashes: list[int] | None 
     def backtick(start: int, in_dquotes: bool = False) -> int:
         j = _backtick_end(s, start)
         word.append(s[start : j + 1])
-        inner = _unbacktick(s[start + 1 : j], in_dquotes)
-        found: list[int] = []
-        hoist(_lex(inner, hashes=found)[0])
-        if found:  # its own text: both readings of it here (a substitution's block holds its directory)
-            hoist(_lex(_zsh_reading(inner, found))[0])
+        hoist(_lex(_unbacktick(s[start + 1 : j], in_dquotes), hashes=hashes, zsh=zsh)[0])
         return j + 1
 
     def read_heredocs(pos: int) -> int:
@@ -689,7 +691,7 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False, hashes: list[int] | None 
                 pending.clear()
                 return pos + 1
             if not hd.quoted:
-                for inner in _expansions(hd.body):
+                for inner in _expansions(hd.body, hashes, zsh):
                     hoist(inner)
         pending.clear()
         return k
@@ -767,14 +769,13 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False, hashes: list[int] | None 
             in_word = True
             i = substitution(i, i + 2)
             continue
-        if c == "#" and not in_word:
-            j = s.find("\n", i)
-            j = n if j < 0 else j
+        # Inside a `(` group glued to a word, zsh's pattern (`(src|#); git commit …`) holds the `#`, where an
+        # array or a bash subshell (`time -p (`) starts a comment: the reading `zsh` asks for, else a comment.
+        if c == "#" and not in_word and not (zsh and globs):
             if globs and hashes is not None:
-                # Inside a `(` group glued to a word, zsh's pattern (`(src|#); git commit …`) holds the `#`, where
-                # an array or a bash subshell (`time -p (`) starts a comment: the other reading is `segments`'s.
                 hashes.append(i)
-            i = j
+            j = s.find("\n", i)
+            i = n if j < 0 else j
             continue
         if c in " \t":
             end_word()
@@ -800,7 +801,10 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False, hashes: list[int] | None 
             before = out[cmd_start:]
             opens_array = (
                 c == "(" and in_word and not quoted and bool(_ARRAY_OPEN.match("".join(word)))
-                and (all(type(t) is Word and _ASSIGNMENT.match(t) for t in before) or bool(before) and before[0] in _DECLARES)
+                and (
+                    all(type(t) is Word and t.assigns for t in before)
+                    or bool(before) and type(before[0]) is Word and not before[0].quoted and before[0] in _DECLARES
+                )
             )
             fd = ""
             if c in "<>" and in_word and not quoted and word and "".join(word).isdigit():
@@ -1129,27 +1133,8 @@ def segments(command: str, root: Path, cwd: str | None = "", depth: int = 0) -> 
     hashes: list[int] = []
     segs = _segments_of(_lex(command, hashes=hashes)[0], root, cwd, depth)
     if hashes:  # read as zsh reads it too, each reading from the same directory
-        segs += _segments_of(_tokens(_zsh_reading(command, hashes)), root, cwd, depth)
+        segs += _segments_of(_lex(command, zsh=True)[0], root, cwd, depth)
     return segs
-
-
-def _zsh_reading(command: str, hashes: list[int]) -> str:
-    """The command as zsh (or bash's extglob) reads it where a `#` stands
-    inside a `(` glued to a word (`echo (src|#); git commit …`): part of
-    the pattern, not a comment (bash's reading of an array or a subshell).
-    Each such `#` is replaced by a word character, until the lexer finds no
-    more (a `#` the first reading hid may stand in another group)."""
-    text = command
-    for _ in range(command.count("#")):
-        if not hashes:
-            break
-        chars = list(text)
-        for k in hashes:
-            chars[k] = "\x01"
-        text = "".join(chars)
-        hashes = []
-        _lex(text, hashes=hashes)
-    return text
 
 
 _CHANGES_DIR = ("cd", "pushd", "popd", "chdir")  # the words that move the shell, which the parser follows
@@ -1168,6 +1153,7 @@ def _segments_of(toks: list, root: Path, cwd: str | None, depth: int) -> list[Se
         if isinstance(item, Op) and item.hoisted:
             if item == "(":
                 held.append((cwd, oldpwd, list(saved), list(dirs), case_pattern))
+                case_pattern = False  # a pattern's substitution runs as the shell tries the pattern
             elif held:  # its `)`, whatever its own text opened or closed (`` `)` ``, `$(popd)`)
                 cwd, oldpwd, saved, dirs, case_pattern = held.pop()
             piped, prev = False, None
