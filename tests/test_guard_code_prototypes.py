@@ -1048,6 +1048,10 @@ def test_a_write_or_commit_in_a_command_that_changes_directory(tmp_path, monkeyp
         ("echo `echo src`(e:'cd src':); git commit -am x", "zsh's"),
         ("echo $(echo src)(e:'cd src':); git commit -am x", "zsh's"),
         ("echo /dev/fd/<->(e:'cd src':) >/dev/null; git commit -am x", "zsh's"),
+        ("echo (src)(e:'cd src':); git commit -am x", "zsh's"),
+        ("echo (src|lib)(e:'cd src':); git commit -am x", "zsh's"),
+        ("echo (<->)(e:'cd src':); git commit -am x", "zsh's"),
+        ("echo (e:'cd src':); git commit -am x", "zsh's"),
     ):
         _change(root, CODE)
         d, why = hook(monkeypatch, capsys, root, command)
@@ -1064,6 +1068,10 @@ def test_a_write_or_commit_in_a_command_that_changes_directory(tmp_path, monkeyp
         "printf '[section]\\n' > src/x.cfg",
         "cat > src/app.py <<'EOF'\nprint(range(n+1))\nEOF",
         "git commit -am x  # fix(scope)",
+        "printf 'echo $HOME\\n' > src/run.sh",
+        "test '$X' && echo x > src/app.py",
+        "(echo x) > src/app.py",
+        "echo a; (echo x > src/app.py)",
         "cat <<< 'f(x)' > src/app.py",
         "echo 'x' \\( > src/app.py",
         "cat > src/app.py <<EOF\nf(x) \\\ny\nEOF",

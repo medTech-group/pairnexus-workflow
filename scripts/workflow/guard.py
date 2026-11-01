@@ -475,7 +475,8 @@ def _start_cwd(root: Path, cwd: str | os.PathLike | None) -> str:
 class Op(str):
     """An unquoted shell operator; a quoted word that looks like one is a plain str.
     `glued`: a `(` the lexer met inside a word (`*(e:…:)`, `"x"(…)`, `` `…`(…) ``),
-    or zsh's numeric glob before one (`<->(…)`): zsh's glob qualifiers, which
+    right after a `)` or after a word of the command (`echo (src)(e:…:)`), or
+    zsh's numeric glob before one (`<->(…)`): zsh's glob qualifiers, which
     can run code in the shell itself; bash reads it as an error outside a
     function's name or extglob."""
 
@@ -485,10 +486,13 @@ class Op(str):
 class Word(str):
     """A word as the lexer read it. `splits`: outside quotes it holds what the
     shell expands into other words, or more of them (a variable or substitution,
-    a glob, a brace list, a leading tilde). A word built anywhere else is a plain
-    str, which says nothing either way."""
+    a glob, a brace list, a leading tilde). `expands`: it holds an expansion in
+    double quotes (`"$X"`, `"$(…)"`, a backtick), which the shell fills in as
+    one word. A word built anywhere else is a plain str, which says nothing
+    either way."""
 
     splits: bool = False
+    expands: bool = False
 
 
 _UNQUOTED_SPLITS = re.compile(r"[$*?\[]|^~|[=:]~")
@@ -604,18 +608,20 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
     unquoted: list[str] = []  # the word's text outside quotes ("\0" for an unquoted substitution)
     in_word = False
     quoted = False
+    expands = False  # an expansion in double quotes
     pending: list[tuple[str, bool, Heredoc]] = []
     depth = 0
     n = len(s)
 
     def end_word() -> None:
-        nonlocal word, in_word, quoted, unquoted
+        nonlocal word, in_word, quoted, unquoted, expands
         if in_word:
             w = Word("".join(word))
             bare = "".join(unquoted)
             w.splits = "\0" in bare or bool(_UNQUOTED_SPLITS.search(bare)) or _brace_list(bare)
+            w.expands = expands
             out.append(w)
-        word, in_word, quoted, unquoted = [], False, False, []
+        word, in_word, quoted, unquoted, expands = [], False, False, [], False
 
     def hoist(inner: list) -> None:
         nonlocal cmd_start
@@ -716,6 +722,8 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
                         word.append(ch)
                         i += 1
                     continue
+                if ch in "$`":
+                    expands = True
                 if s.startswith("$(", i):
                     i = substitution(i, i + 2)
                     continue
@@ -761,7 +769,12 @@ def _lex(s: str, i: int = 0, stop_paren: bool = False) -> tuple[list, int]:
             cmd_start = len(out)
             continue
         if c in ";&|()<>":
-            glued = c == "(" and in_word or c == "<" and bool(re.match(r"<\d*-\d*>\(", s[i : i + 64]))
+            # A `(` inside a word, right after a `)`, or after a word of the command (zsh: `*(e:…:)`, `(src)(e:…:)`,
+            # `echo (…)`), or zsh's numeric glob before one (`<->(…)`).
+            glued = (
+                c == "(" and (in_word or s[i - 1 : i] == ")" or any(not isinstance(t, Op) for t in out[cmd_start:]))
+                or c == "<" and bool(re.match(r"<\d*-\d*>\(", s[i : i + 64]))
+            )
             fd = ""
             if c in "<>" and in_word and not quoted and word and "".join(word).isdigit():
                 fd = "".join(word)
@@ -7967,10 +7980,10 @@ def _stateless_builtin(words: list[str]) -> bool:
     opt = _STATEFUL_OPTION.get(words[0])
     if opt is None:
         return False
-    # An argument the shell may turn into others: the lexer's `splits` (unquoted), or an expansion in quotes
-    # (`"${X:--x}"`, `"$(echo -x)"`); a word built elsewhere: may.
+    # An argument the shell may turn into others: the lexer's `splits` (unquoted), or `expands` (an expansion in
+    # double quotes: `"${X:--x}"`, `"$(echo -x)"`); a word built elsewhere: may.
     return not any(
-        w.startswith("-") and opt in w or getattr(w, "splits", True) or "$" in w or "`" in w for w in words[1:]
+        w.startswith("-") and opt in w or getattr(w, "splits", True) or getattr(w, "expands", True) for w in words[1:]
     )
 # bash 5.3's `${ cmd; }` and `${| cmd; }`, which run in the shell itself (a `cd` there stays).
 _CURRENT_SHELL_SUB = re.compile(r"\$\{[\s|]")
