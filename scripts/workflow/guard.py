@@ -7897,15 +7897,15 @@ def _to_prototypes(
     shell may expand."""
     if p.branches or p.mirror or p.tags or p.delete:
         return False, "it pushes more than named branches"
-    if p.follow_tags or (p.follow_tags is None and (cfg.get("push.followtags") or ["false"])[-1].lower() not in _FALSE):
-        return False, "it sends the tags on its commits too (`--follow-tags`, `push.followTags`)"
-    recurse = p.recurse
-    if recurse is None:  # `push.recurseSubmodules`, else `submodule.recurse` (true: on-demand)
-        recurse = (cfg.get("push.recursesubmodules") or cfg.get("submodule.recurse") or ["no"])[-1].lower()
-    if recurse not in ("no", "check", *_FALSE):
-        return False, "git may push submodules too (`--recurse-submodules`, `push.recurseSubmodules`, `submodule.recurse`)"
     if not code.on_prototype(d, glob):
         return False, "it isn't run on a `prototype/*` branch"
+    if p.follow_tags or (p.follow_tags is None and (cfg.get("push.followtags") or ["false"])[-1].lower() not in _FALSE):
+        return False, "it sends the tags on its commits too (`--follow-tags`, `push.followTags`)"
+    # git reads `push.recurseSubmodules` and `submodule.recurse` (true: on-demand) in config order, the last one set
+    # winning, and an option over both: counted only when every value it could read means no recursion.
+    values = [p.recurse.lower() or "no"] if p.recurse is not None else (cfg.get("push.recursesubmodules") or []) + (cfg.get("submodule.recurse") or [])
+    if any(v.lower() not in ("no", "check", *_FALSE) for v in values):
+        return False, "git may push submodules too (`--recurse-submodules`, `push.recurseSubmodules`, `submodule.recurse`)"
     pushes = cfg.get(f"remote.{remote}.push") if remote else None
     default = (cfg.get("push.default") or [""])[-1].lower()
     mapped = "the remote's `push` refspecs or `push.default = upstream` could send it elsewhere"
@@ -8895,7 +8895,7 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
         if found:
             sha, hit, full = found
             if code.planning() and not proto_why:  # the code of a prototype branch, which doesn't count as on the remote
-                held, _ = _memo_read(d, pglob, "for-each-ref", "--count=1", "--format=%(refname)", f"--contains={full}", *_PROTOTYPE_REFS, sep="\n")
+                held, _ = _memo_read(d, pglob, "for-each-ref", "--count=1", "--sort=-refname", "--format=%(refname)", f"--contains={full}", *_PROTOTYPE_REFS, sep="\n")
                 if held and held[0].startswith("refs/remotes/"):
                     proto_why = f"commit {sha} is on `{held[0][13:]}`, a `prototype/*` branch's tracking ref, which doesn't count as on the remote"
                 elif held:

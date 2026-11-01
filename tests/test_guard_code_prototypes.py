@@ -691,6 +691,10 @@ def test_a_push_to_the_base_from_a_source_holding_a_colon(tmp_path, monkeypatch,
         ("git push --recurse-submodules only origin prototype/x", None),
         ("git push origin prototype/x", ("push.recurseSubmodules", "on-demand")),
         ("git push origin prototype/x", ("submodule.recurse", "true")),
+        ("git push --recurse on-demand origin prototype/x", None),
+        ("git push --no-recurse-submodules --recurse-submodules=on-demand origin prototype/x", None),
+        ("git push origin prototype/x", ("push.recurseSubmodules", "no", "submodule.recurse", "true")),
+        ("git push origin prototype/x", ("submodule.recurse", "true", "push.recurseSubmodules", "no")),
     ],
 )
 def test_a_push_that_may_push_submodules_too_is_judged(tmp_path, monkeypatch, capsys, command, setting):
@@ -698,18 +702,31 @@ def test_a_push_that_may_push_submodules_too_is_judged(tmp_path, monkeypatch, ca
     send another branch of `project.repo` (a submodule cloned from it)."""
     root = _prototype(tmp_path)
     _code_commit(root)
-    if setting:
-        git(root, "config", *setting)
+    for k in range(0, len(setting or ()), 2):
+        git(root, "config", setting[k], setting[k + 1])
     d, why = hook(monkeypatch, capsys, root, command)
     assert d == "deny" and "git may push submodules too" in why, (command, why)
 
 
-def test_a_push_that_checks_submodules_or_pushes_none_goes_through(tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize(
+    "command, setting",
+    [
+        ("git push --recurse-submodules=check origin prototype/x", ("push.recurseSubmodules", "on-demand")),
+        ("git push --no-recurse-submodules origin prototype/x", ("push.recurseSubmodules", "on-demand")),
+        ("git push --recurse-submodules=on-demand --no-recurse-submodules origin prototype/x", None),
+        ("git push --recurse-submodules=No origin prototype/x", None),
+        ("git push --recurse-submodules= origin prototype/x", None),
+        ("git push origin prototype/x", ("push.recurseSubmodules", "check")),
+        ("git push origin prototype/x", ("push.recurseSubmodules", "no")),
+        ("git push origin prototype/x", ("submodule.recurse", "false")),
+    ],
+)
+def test_a_push_that_checks_submodules_or_pushes_none_goes_through(tmp_path, monkeypatch, capsys, command, setting):
     root = _prototype(tmp_path)
     _code_commit(root)
-    git(root, "config", "push.recurseSubmodules", "on-demand")
-    for command in ("git push --recurse-submodules=check origin prototype/x", "git push --no-recurse-submodules origin prototype/x"):
-        assert hook(monkeypatch, capsys, root, command) == ("allow", ""), command
+    if setting:
+        git(root, "config", *setting)
+    assert hook(monkeypatch, capsys, root, command) == ("allow", ""), command
 
 
 def test_the_refusal_names_where_the_prototype_code_is(tmp_path, monkeypatch, capsys):
@@ -720,6 +737,13 @@ def test_the_refusal_names_where_the_prototype_code_is(tmp_path, monkeypatch, ca
     git(root, "merge", "-q", "--no-ff", "--no-edit", "prototype/x")
     d, why = hook(monkeypatch, capsys, root, "git push origin feature")
     assert d == "deny" and f"commit {sha} is on `prototype/x`, a `prototype/*` branch, and isn't on the remote yet" in why, why
+    git(root, "push", "-q", "origin", "prototype/x")  # pushed, and kept here
+    d, why = hook(monkeypatch, capsys, root, "git push origin feature")
+    assert d == "deny" and f"commit {sha} is on `origin/prototype/x`, a `prototype/*` branch's tracking ref" in why, why
+    git(root, "config", "submodule.recurse", "true")  # on `feature`: the branch is the reason given first
+    d, why = hook(monkeypatch, capsys, root, "git push origin feature:refs/heads/prototype/z")
+    assert d == "deny" and "it isn't run on a `prototype/*` branch" in why and "submodules" not in why, why
+    git(root, "config", "--unset", "submodule.recurse")
     git(root, "checkout", "-q", "prototype/x")
     d, why = hook(monkeypatch, capsys, root, "git push origin prototype/x:heads/prototype/y")
     assert d == "deny" and "isn't written in full: write it `refs/heads/prototype/y`" in why, why
