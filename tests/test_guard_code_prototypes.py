@@ -185,9 +185,27 @@ def test_a_hash_inside_a_glob_group_is_no_comment(tmp_path, monkeypatch, capsys)
     assert d == "deny" and "carries the code path" in why, why
     d, why = hook(monkeypatch, capsys, root, 'echo "${x:-"b"}"; git push origin HEAD:main')
     assert d == "ask" and "the base branch `main`" in why, why
-    # A `'` there, read differently by bash and zsh: unsure.
-    d, why = hook(monkeypatch, capsys, root, "echo \"${x:-\"'\"}\"; git push origin HEAD:main; echo \"'\"")
-    assert d in ("ask", "deny") and ("the base branch `main`" in why or unsure in why), why
+    # A `'` there, read differently by bash and zsh: unsure, as are a quote in `$[…]` and `$` before a
+    # backslash-newline.
+    for command in (
+        "echo \"${x:-'\"'}\"; git push origin HEAD:main; echo \"'\"",
+        "echo \"$[ \"'\" ]\"; git push origin HEAD:main; echo \"'\"",
+        "echo \"$\\\n(git push origin HEAD:main)\"",
+        "echo $\\\n{x:-a #}; git commit -am x",
+    ):
+        _change(root, CODE)
+        d, why = hook(monkeypatch, capsys, root, command)
+        assert d == "ask" and unsure in why, (command, d, why)
+        assert hook(monkeypatch, capsys, root, command, "conductor")[0] == "deny", command
+    # `$$` is the shell's pid, and a backslash in a `${…}` escapes any character: what follows is seen.
+    for command in (
+        'echo "$${"; git commit -am x; echo "}"',
+        "echo \"${x:-\\}\"'\"}\"; git commit -am x; echo \"'\"",
+        "echo \"$$(x '\";git commit -am x;echo \"')\"",
+    ):
+        _change(root, CODE)
+        d, why = hook(monkeypatch, capsys, root, command)
+        assert d == "deny" and "carries the code path" in why, (command, why)
     # Ordinary `#`s stay allowed, in every role.
     for role in (None, "ticket", "conductor"):
         for ok in (
@@ -201,6 +219,7 @@ def test_a_hash_inside_a_glob_group_is_no_comment(tmp_path, monkeypatch, capsys)
             "echo a\\\\\n# note\ngit status",
             "x=$(# list the files\nls)",
             "echo \"${x:-\"default\"}\"",
+            "echo \"${NAME:-'anon'}\" \"${x//\\'/}\" $$ \"$$\"",
         ):
             d, why = hook(monkeypatch, capsys, root, ok, role)
             assert d == "allow" or unsure not in why, (role, ok, why)

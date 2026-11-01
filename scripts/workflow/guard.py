@@ -661,9 +661,12 @@ def _lex(
     def dquoted(i: int) -> int:
         """A double-quoted string's text from s[i] into the word; the index
         after its closing `"`. Inside it a `${…}` is read whole, as the shell
-        reads it: a `"…"` there is a string of its own (`"${x:-"a b"}"`). A
-        `'` there, which bash and zsh read differently, is recorded in
-        `hashes`, as where the guard can't be sure."""
+        reads it: a `"…"` there is a string of its own (`"${x:-"a b"}"`), a
+        backslash escapes any character (`\}`). What bash and zsh read
+        differently, or the guard doesn't follow, is recorded in `hashes`, as
+        where it can't be sure: a `'` there whose span the two may end
+        differently, a `$[…]` holding a quote, a `$` before a
+        backslash-newline."""
         nonlocal expands
         params = 0  # `${` opened in this string, not yet closed
         while i < n:
@@ -677,7 +680,7 @@ def _lex(
                 nx = s[i + 1]
                 if nx == "\n":
                     i += 2
-                elif nx in '$`"\\':
+                elif nx in '$`"\\' or params:
                     word.append(nx)
                     i += 2
                 else:
@@ -686,6 +689,14 @@ def _lex(
                 continue
             if ch in "$`":
                 expands = True
+            if s.startswith("$$", i):  # the shell's pid: the next `{` or `(` is text
+                word.append("$$")
+                i += 2
+                continue
+            if s.startswith("$\\\n", i) and hashes is not None:  # `$\⏎(` is `$(` to bash
+                hashes.append(i)
+            if s.startswith("$[", i) and hashes is not None and _quote_in_brackets(s, i + 2):
+                hashes.append(i)  # bash reads a `"` there as a string of its own, zsh as a character
             if s.startswith("$(", i):
                 i = substitution(i, i + 2)
                 continue
@@ -701,8 +712,15 @@ def _lex(
                 continue
             if ch == "}" and params:
                 params -= 1
-            elif ch == "'" and params and hashes is not None:
-                hashes.append(i)
+            elif ch == "'" and params:
+                end = s.find("'", i + 1)
+                if end < 0 or any(c in s[i + 1 : end] for c in '"}\\`$'):
+                    if hashes is not None:
+                        hashes.append(i)  # bash and zsh may end the `${…}` at different places
+                else:  # plain text to its closing `'`, read alike by both
+                    word.append(s[i : end + 1])
+                    i = end + 1
+                    continue
             word.append(ch)
             i += 1
         return n
@@ -881,6 +899,14 @@ def _lex(
             if op == ")":
                 close_end = i
             continue
+        if c == "$" and s.startswith("$\\\n", i) and hashes is not None:
+            hashes.append(i)  # `$\⏎{` is `${` to bash, which the guard doesn't follow
+        if c == "$" and s.startswith("$$", i):
+            word += ["$", "$"]
+            unquoted += ["$", "$"]
+            in_word = True
+            i += 2
+            continue
         if c == "$" and s.startswith("${", i):
             braces += 1
         elif c == "}" and braces:
@@ -906,6 +932,22 @@ def _leads_subshell(toks: list, start: int = 0) -> bool:
     return all(
         type(toks[k]) is Word and not toks[k].quoted and toks[k] in _SUBSHELL_LEADERS for k in range(start, len(toks))
     )
+
+
+def _quote_in_brackets(s: str, i: int) -> bool:
+    """A quote inside the `$[…]` whose text starts at s[i] (to its matching
+    `]`, or the end)."""
+    depth = 1
+    for ch in s[i:]:
+        if ch in "\"'":
+            return True
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+            if not depth:
+                return False
+    return False
 
 
 def _tokens(command: str) -> list:
@@ -5927,9 +5969,11 @@ def check_bash(
     if d.action == "deny" or not unsure:
         return d
     why = (
-        "the guard can't be sure where a comment starts in this command: a `#` right after `)`, `;`, `|` or another "
-        "operator, inside a `(` group glued to a word (zsh's patterns, an array) or inside `${…}` may be read as part of "
-        "a word, so what follows it may run. Put a comment after a blank, outside such a group, or leave it out"
+        "the guard can't be sure where a comment starts in this command, or where a quoted part ends: a `#` right after "
+        "`)`, `;`, `|` or another operator, inside a `(` group glued to a word (zsh's patterns, an array) or inside "
+        "`${…}` may be read as part of a word, and a `'` inside a double-quoted `${…}`, a quote inside `$[…]` or a `$` "
+        "before a backslash-newline is read differently by bash and zsh, so what follows may run. Put a comment after a "
+        "blank, outside such a group, and write the expansion more simply"
     )
     if role in ("ticket", "conductor"):
         return Decision("deny", why, d.sensitive)
