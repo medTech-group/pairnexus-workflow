@@ -352,6 +352,9 @@ def test_reads_beside_a_prototype_push_are_fine(tmp_path, monkeypatch, capsys, c
         "./prep.sh && git push origin HEAD",
         "git fetch && git push origin prototype/x",
         "git config --get remote.origin.url && git push origin prototype/x",
+        "git push -n --receive-pack=/tmp/prep.sh /tmp/b x; git push origin prototype/x",
+        "/tmp/prep.sh git push -n; git push origin",
+        "git push origin prototype/x; git push origin prototype/x:refs/heads/prototype/y",
     ],
 )
 def test_a_prototype_push_beside_anything_but_reads_is_judged(tmp_path, monkeypatch, capsys, command):
@@ -360,7 +363,10 @@ def test_a_prototype_push_beside_anything_but_reads_is_judged(tmp_path, monkeypa
     root = _prototype(tmp_path)
     _code_commit(root)
     d, why = hook(monkeypatch, capsys, root, command)
-    assert d == "deny" and "carries the code path" in why and "run the push in a command of its own" in why, (command, why)
+    if d == "ask":  # a push into a repository on this machine: one the guard can't tell about
+        assert "can't tell" in why, (command, why)
+    else:
+        assert d == "deny" and "carries the code path" in why and "run the push in a command of its own" in why, (command, why)
 
 
 # ---------- as today ----------
@@ -944,6 +950,31 @@ def test_a_dot_git_option_in_a_variable_and_a_branch_change_both_named(tmp_path,
     assert d == "deny" and "names `-t.git`" in why, why
     d, why = hook(monkeypatch, capsys, root, "git stash && cp -t.git HEAD && git commit -am x")
     assert d == "deny" and "runs `git stash`" in why, why
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "for HOME in /tmp/h; do git push origin; done",
+        "for PATH in /tmp/x:/usr/bin; do git push origin prototype/x; done",
+        "case $[HOME=0] in *) git push origin;; esac",
+        "while false; do :; done; git push origin prototype/x",
+    ],
+)
+def test_a_prototype_push_in_a_command_with_a_compound_command_is_judged(tmp_path, monkeypatch, capsys, command):
+    """A loop's variable or a `case` word can set what git reads, and no part shows it."""
+    root = _prototype(tmp_path)
+    _code_commit(root)
+    d, why = hook(monkeypatch, capsys, root, command)
+    assert d in ("deny", "ask") and ("carries the code path" in why or "can't tell" in why), (command, why)
+    assert d == "ask" or "run the push in a command of its own" in why, why
+
+
+def test_an_appending_variable_is_named_plainly(tmp_path, monkeypatch, capsys):
+    root = _prototype(tmp_path)
+    _code_commit(root)
+    d, why = hook(monkeypatch, capsys, root, "X+=1 git push origin prototype/x")
+    assert d == "deny" and "it runs with the variable `X`," in why, why
 
 
 def test_the_changelog_notes_it():

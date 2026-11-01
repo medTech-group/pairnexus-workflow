@@ -6106,11 +6106,11 @@ class _Code:
         is detached and it did. Anything it can't read counts as not."""
         key = (top, tuple(glob))
         if key not in self._heads:
-            got, _ = _git_read(
+            got, err = _git_read(
                 top, list(glob), "rev-parse", "--symbolic-full-name", "HEAD",
                 "--git-path", "rebase-merge/head-name", "--git-path", "rebase-apply/head-name", sep="\n",
             )  # fmt: skip
-            if got is None:  # an unborn branch, which `rev-parse` can't name: read HEAD as a symbolic ref
+            if got is None and "took too long" not in err:  # an unborn branch, which `rev-parse` can't name: read HEAD as a symbolic ref
                 head, _ = _git_read(top, list(glob), "symbolic-ref", "-q", "HEAD", sep="\n", ok=(0, 1))
                 paths, _ = _git_read(top, list(glob), "rev-parse", "--git-path", "rebase-merge/head-name", "--git-path", "rebase-apply/head-name", sep="\n")
                 got = [head[0], *paths] if head and paths else None
@@ -7855,7 +7855,7 @@ def _push_own_part(segs: list[Seg], seg: Seg, glob: list[str], dot_git: str) -> 
     but `$(git branch --show-current)`, or a `.git` the command names."""
     own = [f"`{_brief(w)}` before git" for w in seg.words[:1] if w != "git"]
     own += [f"the wrapper `{w}`" for w in seg.wrappers]
-    names = [a.partition("=")[0] for a in seg.assigns] + list(_assigned(seg))
+    names = list(_assigned(seg))
     var = names[0] if names else _push_env(segs, seg, _PUSH_ENV) or _push_env(segs, seg, _PUSH_ENV_CONFIG) or _push_env(segs, seg, _PUSH_ENV_PROGRAMS)
     own += [f"the variable `{_brief(var)}`"] if var else []
     i = 0
@@ -7876,16 +7876,20 @@ def _push_own_part(segs: list[Seg], seg: Seg, glob: list[str], dot_git: str) -> 
     return own
 
 
-def _only_reads_beside(segs: list[Seg]) -> bool:
-    """Every part of the command is a push or only reads (`_reads_only`), so
-    nothing in it can change git's config, HEAD or refs before a push runs:
-    not a `git config`, a write to a file (`.git/config` spelled by a glob
-    included), a script or program."""
-    for s in segs:
-        g = _commit_git(s.words) if s.words else None
-        if not (g and g[1] and g[1][0] in _PUSH_CMDS) and not _reads_only(s):
-            return False
-    return True
+# Shell words that open a compound command, whose header (a loop's variable, a `case` word) no part of the command keeps.
+_COMPOUND_WORDS = {"for", "select", "case", "while", "until", "if", "function", "coproc"}
+
+
+def _busy_parts(segs: list[Seg], command: str) -> list[Seg] | None:
+    """The parts of the command that do more than read (`_reads_only`); None
+    when it holds a compound command (`for HOME in …; do …`, `case $[…]`),
+    whose header can set a variable or run a program no part shows. A push
+    to `prototype/*` branches is let through only as the one part beside
+    reads, so nothing in the command can change git's config, HEAD or refs,
+    or run a program, before it runs."""
+    if any(isinstance(t, str) and t in _COMPOUND_WORDS for t in _tokens(command)):
+        return None
+    return [s for s in segs if not _reads_only(s)]
 
 
 def _fetch_dst(dst: str) -> str:
@@ -8745,7 +8749,7 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
 
     unsure, note, started = None, None, time.monotonic()
     changers: _Changers | None = None
-    reads_only: bool | None = None  # every other part of the command only reads, read once (#393)
+    reads_only: list[Seg] | None | bool = False  # the parts that do more than read, read once (#393); False: not read yet
     dot_git: str | None = None  # the `.git` the command names, read once
     for seg in segs:
         g = _commit_git(seg.words)
@@ -8884,12 +8888,12 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
         # else in the command but reads and other pushes, which could change where git maps it or what it sends.
         proto_why = ""  # why a planning session's push named or run on a prototype branch isn't let through as one
         if code.planning():
-            if reads_only is None:
-                reads_only = _only_reads_beside(segs)
+            if reads_only is False:
+                reads_only = _busy_parts(segs, command)
             own = _push_own_part(segs, seg, glob, dot_git)
             if own:
                 why = f"it runs with {own[0]}, which could change where git sends it"
-            elif not reads_only:
+            elif reads_only is None or any(s is not seg for s in reads_only):
                 why = "another part of the command does more than read: run the push in a command of its own"
             else:
                 ok, why = _to_prototypes(p, named if named in remotes else "", cfg, d, pglob, here, code)
