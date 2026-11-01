@@ -998,14 +998,26 @@ def test_a_write_or_commit_in_a_command_that_changes_directory(tmp_path, monkeyp
         ("${X:-cd} .claude && echo x > src/app.py", "a command the shell spells (`${X:-cd}`)"),
         ("{cd,src} && git commit -am x", "a command the shell spells (`{cd,src}`)"),
         ("c[d] src && git commit -am x", "a command the shell spells (`c[d]`)"),
-        ("trap 'cd src' DEBUG; git commit -am x", "runs `trap`"),
-        (". /tmp/c.sh && echo x > src/app.py", "runs `.`"),
+        ("trap 'cd src' DEBUG; git commit -am x", "runs the shell's `trap`"),
+        (". /tmp/c.sh && echo x > src/app.py", "runs the shell's `.`"),
+        ("source /tmp/c.sh && echo x > src/app.py", "runs the shell's `source`"),
+        ("alias c=cd; git commit -am x", "runs the shell's `alias`"),
+        ("hash -p /tmp/x git; git commit -am x", "runs the shell's `hash`"),
+        ("enable -n echo; git commit -am x", "runs the shell's `enable`"),
+        ("export GIT_DIR=$(git rev-parse --git-common-dir); git commit -am x", "runs the shell's `export`"),
+        ("set -a; GIT_DIR=/tmp/g; git commit -am x", "runs the shell's `set`"),
+        ("GIT_DIR=/tmp/g; export GIT_DIR; git commit -am x", "runs the shell's `export`"),
+        ("HOME=/tmp/h; git commit -am x", "sets `HOME` for the rest of the command"),
+        ("mapfile -C 'cd src;:' -c 1 a <<< x; echo x > src/app.py", "runs the shell's `mapfile`"),
+        (': "${ cd src; }"; echo x > src/app.py', "a command substitution in the shell itself"),
         ("sh -c 'echo for'; for HOME in /tmp/h; do git commit -am x; done", "the compound command `for`"),
     ):
         _change(root, CODE)
         d, why = hook(monkeypatch, capsys, root, command)
         assert d == "deny" and why_part in why, (command, why)
     assert hook(monkeypatch, capsys, root, "git -C . commit -am x")[0] == "allow"
+    for ok in ("[ -f src/app.py ] && echo x > src/app.py", "test -f src/app.py && echo x >> src/app.py", "echo hi; pwd; echo x > src/app.py"):
+        assert hook(monkeypatch, capsys, root, ok) == ("allow", ""), ok
 
 
 def test_an_appending_variable_is_named_plainly(tmp_path, monkeypatch, capsys):

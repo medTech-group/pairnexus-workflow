@@ -7905,17 +7905,34 @@ def _compound_or_cd(segs: list[Seg], command: str) -> str | None:
     moved = next((s.words[0] for s in segs if s.words and s.words[0] in _CHANGES_DIR), None)
     if moved:
         return f"it changes directory with `{moved}`, which the guard follows only so far: run it from that directory, or with `git -C`"
+    alone = " (run the write, commit or push in a command of its own)"
     spelled = next((s.words[0] for s in segs if s.words and _spelled_command(s.words[0])), None)
     if spelled:
-        return f"it runs a command the shell spells (`{_brief(spelled)}`), which the guard can't follow"
-    changes = next((s.words[0] for s in segs if s.words and s.words[0] in _CHANGES_COMMANDS), None)
+        return f"it runs a command the shell spells (`{_brief(spelled)}`), which the guard can't follow{alone}"
+    # Only the shell's own builtins and assignments change its state (its directory, variables, what later words run);
+    # a program it starts can't, and a script's own changes are a script's (unseen, as any).
+    changes = next((s.words[0] for s in segs if s.words and s.words[0] in _BUILTINS and s.words[0] not in _STATELESS_BUILTINS), None)
     if changes:
-        return f"it runs `{changes}`, which can change what the command's later words do"
+        return f"it runs the shell's `{changes}`, which can change what the command's later words do{alone}"
+    assigned = next((s.assigns[0].partition("=")[0] for s in segs if not s.words and s.assigns), None)
+    if assigned:
+        return f"it sets `{_brief(assigned)}` for the rest of the command{alone}"
+    if _CURRENT_SHELL_SUB.search(command) or any(_CURRENT_SHELL_SUB.search(s.heredoc or "") for s in segs):
+        return f"it runs a command substitution in the shell itself (`${{ …; }}`){alone}"
     return None
 
 
-# Shell commands that change what later words run or where (a trap's command, an alias, a sourced file, a hashed path).
-_CHANGES_COMMANDS = {"trap", "alias", "source", ".", "hash", "enable"}
+# bash's builtins, and those that change nothing in the shell (its directory, variables, options, what words run).
+_BUILTINS = {
+    ".", ":", "[", "alias", "bg", "bind", "break", "builtin", "caller", "cd", "command", "compgen", "complete", "compopt",
+    "continue", "declare", "dirs", "disown", "echo", "enable", "eval", "exec", "exit", "export", "false", "fc", "fg",
+    "getopts", "hash", "help", "history", "jobs", "kill", "let", "local", "logout", "mapfile", "popd", "printf", "pushd",
+    "pwd", "read", "readarray", "readonly", "return", "set", "shift", "shopt", "source", "suspend", "test", "times",
+    "trap", "true", "type", "typeset", "ulimit", "umask", "unalias", "unset", "wait", "[[",
+}  # fmt: skip
+_STATELESS_BUILTINS = {":", "[", "[[", "echo", "printf", "pwd", "test", "true", "false", "type", "help", "jobs", "times", "dirs", "wait"}
+# bash 5.3's `${ cmd; }` and `${| cmd; }`, which run in the shell itself (a `cd` there stays).
+_CURRENT_SHELL_SUB = re.compile(r"\$\{[\s|]")
 
 
 def _spelled_command(word: str) -> bool:
