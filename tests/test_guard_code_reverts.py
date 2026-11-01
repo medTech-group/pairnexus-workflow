@@ -2,10 +2,11 @@
 revert that exactly undoes a commit already on the base goes through #389's
 commit rule and #390's push rule in a planning session. A commit made by
 `git revert` names the commit it reverts ("This reverts commit <sha>"); when
-that commit is on the base's remote ref and the revert's code-path changes
-are its inverse (for a merge, of its change against its first parent),
-compared by patch id with no context lines, it is a revert, not code. While a
-revert is in progress (`REVERT_HEAD`), its changes are judged by that rule.
+that commit is on the base's remote ref and the revert's code paths are as
+git's own revert of it leaves them (for a merge, of its change against its
+first parent; `git merge-tree`), with no conflict in a code path, it is a
+revert, not code. While a revert is in progress (`REVERT_HEAD`), its changes
+are judged by that rule.
 Any other revert is refused, offering GitHub's own **Revert** button where
 it can revert the pull request, and otherwise a quick ticket. In the
 conductor, a matched revert is allowed only for a commit the run's ledger
@@ -146,8 +147,11 @@ def test_a_revert_in_progress_is_judged_by_the_revert_rule(proj, monkeypatch, ca
         ("git commit -F msg.txt", "`-F` takes its message from elsewhere, which the guard doesn't read"),
         ("git commit --amend --no-edit", "`--amend` folds it into the commit before it"),
         ("git commit --no-edit -- src/app.py", "a pathspec commits only part of it"),
-        ("git add -A && git commit --no-edit", "the command runs `git add -A` before it"),
-        ("python3 -c 'pass'; git commit -a --no-edit", "the command runs `python3 -c pass` before it"),
+        ("git add -A && git commit --no-edit", "the command also runs `git add -A`"),
+        ("python3 -c 'pass'; git commit -a --no-edit", "the command also runs `python3 -c pass`"),
+        ("git commit --no-edit && git checkout origin/main -- src/app.py", "the command also runs `git checkout origin/main -- src/app.py`"),
+        ("git -c core.fsmonitor=./x.sh status && git commit --no-edit", "the command also runs `git -c core.fsmonitor=./x.sh status`"),
+        ("git branch gone && git commit --no-edit", "the command also runs `git branch gone`"),
     ],
 )
 def test_finishing_a_revert_other_than_as_it_stands_is_refused(proj, monkeypatch, capsys, command, why):
@@ -163,7 +167,14 @@ def test_finishing_a_revert_other_than_as_it_stands_is_refused(proj, monkeypatch
     assert hook(monkeypatch, capsys, proj, "git commit --no-edit") == ("allow", "")
 
 
-@pytest.mark.parametrize("command", ["git status && git commit --no-edit", "echo ok && git commit --no-edit", "true; git commit --no-edit", "git diff --cached --stat; git commit --no-edit"])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git status && git commit --no-edit", "echo ok && git commit --no-edit", "true; git commit --no-edit", "git diff --cached --stat; git commit --no-edit",
+        "git branch --show-current && git commit --no-edit", "git log --oneline | head -3; git commit --no-edit", "ls src && git commit --no-edit",
+        "git diff > /dev/null; git commit --no-edit", "git commit --no-edit; git status",
+    ],
+)  # fmt: skip
 def test_reads_before_finishing_a_revert_change_nothing(proj, monkeypatch, capsys, command):
     merge = _merge_pr(proj)
     _feature(proj)
@@ -234,11 +245,77 @@ def test_a_revert_resolved_after_a_later_change_to_the_same_lines_is_refused(pro
     git(proj, "add", CODE)
     for command in ("git commit --no-edit", "git revert --continue"):
         d, why = hook(monkeypatch, capsys, proj, command)
-        assert d == "deny" and "src/app.py" in why and f"doesn't exactly undo {merge[:7]}" in why, (command, why)
-        assert "**Revert** button on pull request #12" in why, why
+        assert d == "deny" and f"doesn't exactly undo {merge[:7]}: undoing it conflicts in `src/app.py`" in why, (command, why)
+        assert "**Revert** button" not in why and "quick ticket" in why, why  # GitHub's button would meet the same conflict
     git(proj, "commit", "-q", "--no-edit")
     d, why = hook(monkeypatch, capsys, proj, PUSH)
-    assert d == "deny" and f"doesn't exactly undo {merge[:7]}" in why, why
+    assert d == "deny" and f"doesn't exactly undo {merge[:7]}: undoing it conflicts" in why, why
+
+
+def test_a_revert_stopped_on_a_docs_conflict_says_to_add_it(proj, monkeypatch, capsys):
+    """Only the guide conflicts: the code is undone exactly, and the plain
+    step is to `git add` the guide once resolved."""
+    merge = _merge_pr(proj)
+    _on_base(proj, lambda r: _change(r, DOC, "# Later\n"), "later")
+    _feature(proj)
+    assert _revert(proj, merge) != 0
+    d, why = hook(monkeypatch, capsys, proj, "git commit --no-edit")
+    assert d == "deny" and "`git add` them once resolved" in why and "**Revert** button" not in why, why
+    _change(proj, DOC, "# Later\n")
+    git(proj, "add", DOC)
+    assert hook(monkeypatch, capsys, proj, "git commit --no-edit") == ("allow", "")
+
+
+def test_a_merge_attribute_that_merges_its_own_way_is_asked(proj, monkeypatch, capsys):
+    """`merge=union` keeps both sides' lines rather than marking a conflict:
+    git's revert after a later change to the same line would pass for exact."""
+    merge = _merge_pr(proj)
+    _on_base(proj, lambda r: _edit(r, CODE, "v5 = 'pr'", "v5 = 'later'"), "later")
+    _feature(proj)
+    _change(proj, ".gitattributes", "src/app.py merge=union\n")  # left uncommitted
+    assert _revert(proj, merge) == 0
+    assert "v5 = 'later'" in (proj / CODE).read_text() and "v5 = 5" in (proj / CODE).read_text()
+    d, why = hook(monkeypatch, capsys, proj, PUSH)
+    assert d == "ask" and "`merge=union` attribute" in why, why
+    d, why = hook(monkeypatch, capsys, proj, PUSH, "conductor")
+    assert d == "deny" and "`merge=union` attribute" in why, why
+
+
+def test_a_merge_driver_in_git_s_config_is_never_run(proj, monkeypatch, capsys, tmp_path):
+    ran = tmp_path / "ran"
+    merge = _merge_pr(proj)
+    _feature(proj)
+    assert _revert(proj, merge) == 0
+    git(proj, "config", "merge.mine.driver", f"touch {ran} && cp %B %A")
+    _change(proj, ".git/info/attributes", "src/* merge=mine\n")
+    d, why = hook(monkeypatch, capsys, proj, PUSH)
+    assert d == "ask" and "names a merge driver, `merge.mine.driver`" in why, why
+    assert not ran.exists()
+
+
+def test_with_no_remote_ref_of_the_base_it_says_to_fetch(proj, monkeypatch, capsys):
+    """A push would send the base's own commits too: the commit rule's reading."""
+    merge = _merge_pr(proj)
+    _feature(proj)
+    assert _revert(proj, merge, "--no-commit") == 0
+    git(proj, "update-ref", "-d", "refs/remotes/origin/main")
+    d, why = hook(monkeypatch, capsys, proj, "git commit --no-edit")
+    assert d == "ask" and "no remote ref of the base branch `main`" in why and "run `git fetch`" in why, why
+
+
+def test_a_commit_inside_a_merged_pull_request_isn_t_taken_for_a_squash_merge(proj, monkeypatch, capsys):
+    """A commit "… (#17)" inside a pull request merged with a merge commit
+    names an issue, not a pull request GitHub can revert."""
+    git(proj, "checkout", "-q", "-b", "pr-work", "origin/main")
+    _commit(proj, lambda r: _edit(r, CODE, "v5 = 5", "v5 = 'fix'"), "Fix login (#17)")
+    inner = git(proj, "rev-parse", "HEAD").strip()
+    git(proj, "checkout", "-q", "-B", "base-work", "origin/main")
+    git(proj, "merge", "-q", "--no-ff", "-m", "Merge pull request #12 from acme/fix", "pr-work")
+    git(proj, "push", "-q", "origin", "base-work:main")
+    _feature(proj)
+    _forged(proj, inner, lambda r: _edit(r, CODE, "v9 = 9", "v9 = 'extra'"))
+    d, why = hook(monkeypatch, capsys, proj, PUSH)
+    assert d == "deny" and f"doesn't exactly undo {inner[:7]}" in why and "**Revert** button" not in why, why
 
 
 def test_a_revert_in_progress_with_more_code_staged_is_refused(proj, monkeypatch, capsys):
@@ -247,7 +324,7 @@ def test_a_revert_in_progress_with_more_code_staged_is_refused(proj, monkeypatch
     assert _revert(proj, merge, "--no-commit") == 0
     _edit(proj, CODE, "v9 = 9", "v9 = 'extra'")
     d, why = hook(monkeypatch, capsys, proj, "git commit -a --no-edit")
-    assert d == "deny" and "`-a` adds the working tree's change to `src/app.py`" in why, why
+    assert d == "deny" and "it would also take the working tree's change to `src/app.py`" in why, why
     git(proj, "add", CODE)
     d, why = hook(monkeypatch, capsys, proj, "git commit --no-edit")
     assert d == "deny" and f"doesn't exactly undo {merge[:7]}" in why, why
@@ -270,9 +347,8 @@ def _audits(root):
 
 
 def test_a_revert_that_removes_another_identical_line_is_refused(proj, monkeypatch, capsys):
-    """A patch id reads the lines, not where they are: the revert must leave
-    the code as `git revert` would, so deleting the base's own `audit()`
-    instead of #41's is refused."""
+    """The revert must leave the code as `git revert` would: deleting the
+    base's own `audit()` instead of #41's, the same line elsewhere, is refused."""
     merge = _audits(proj)
     _feature(proj)
     _change(proj, CODE, (proj / CODE).read_text().replace("v2 = 2\naudit()\n", "v2 = 2\n", 1))
@@ -290,7 +366,7 @@ def test_lines_put_back_elsewhere_are_refused(proj, monkeypatch, capsys):
     assert _revert(proj, sha, "--no-commit") == 0
     _change(proj, CODE, "v4 = 4\n" + (proj / CODE).read_text().replace("v4 = 4\n", ""))
     d, why = hook(monkeypatch, capsys, proj, "git commit -a --no-edit")
-    assert d == "deny" and "`-a` adds the working tree's change" in why, why
+    assert d == "deny" and "it would also take the working tree's change" in why, why
     git(proj, "add", CODE)
     d, why = hook(monkeypatch, capsys, proj, "git commit --no-edit")
     assert d == "deny" and f"isn't as `git revert` of {sha[:7]} leaves it" in why, why
