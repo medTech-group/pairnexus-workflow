@@ -92,6 +92,19 @@ def test_a_push_to_a_prototype_branch_from_another_branch_is_judged(tmp_path, mo
             assert d == "deny" and "carries the code path" in why, (command, role, why)
 
 
+def test_a_hash_inside_a_glob_group_is_no_comment(tmp_path, monkeypatch, capsys):
+    """zsh (and bash's extglob) read `(src|#)` as one pattern: the `#` starts
+    no comment, so the commit after it is seen, on any branch."""
+    root = _clone(tmp_path)
+    for command in ("echo (src|#); git commit -am x", "echo @(src|#); git commit -am x"):
+        _change(root, CODE)
+        d, why = hook(monkeypatch, capsys, root, command)
+        assert d == "deny" and "carries the code path" in why, (command, why)
+    # A comment is still one where the shell reads it.
+    _change(root, CODE)
+    assert hook(monkeypatch, capsys, root, "echo hi # (src|#); git commit -am x") == ("allow", "")
+
+
 def test_a_code_write_in_a_claude_code_worktree_on_a_prototype_branch(tmp_path, monkeypatch, capsys):
     """Each checkout by its own branch: a worktree on `prototype/y` beside a
     project on `feature`, and the other way round."""
@@ -1055,6 +1068,11 @@ def test_a_write_or_commit_in_a_command_that_changes_directory(tmp_path, monkeyp
         ("> (src)\\\n(e:'cd src':); git commit -am x", "zsh's"),
         ("> (e:'cd src':); git commit -am x", "zsh's"),
         ("-p (e:'cd src':); git commit -am x", "zsh's"),
+        ("time -p (e:'cd src':); git commit -am x", "zsh's"),
+        ("\"time\" (e:'cd src':); git commit -am x", "zsh's"),
+        ("\\{ (e:'cd src':); git commit -am x", "zsh's"),
+        ("'!' (e:'cd src':); git commit -am x", "zsh's"),
+        ("echo (src|#)(e:'cd src':); git commit -am x", "zsh's"),
     ):
         _change(root, CODE)
         d, why = hook(monkeypatch, capsys, root, command)
@@ -1077,7 +1095,7 @@ def test_a_write_or_commit_in_a_command_that_changes_directory(tmp_path, monkeyp
         "echo a; (echo x > src/app.py)",
         "{ (echo x > src/app.py); }",
         "! (echo x > src/app.py)",
-        "time -p (echo x > src/app.py)",
+        "time (echo x > src/app.py)",
         "git commit -am \"$(cat <<'EOF'\nfix(scope): x\nEOF\n)\"",
         "git commit -am \"$(cat <<'EOF'\nfix(scope): x\nEOF)\"",
         "cat <<< 'f(x)' > src/app.py",
