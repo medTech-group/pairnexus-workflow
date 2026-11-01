@@ -749,6 +749,47 @@ def test_the_refusal_names_where_the_prototype_code_is(tmp_path, monkeypatch, ca
     assert d == "deny" and "isn't written in full: write it `refs/heads/prototype/y`" in why, why
 
 
+def test_a_mirroring_remote_or_the_shells_branch_elsewhere_gets_no_exception(tmp_path, monkeypatch, capsys):
+    root = _prototype(tmp_path)
+    _code_commit(root)
+    git(root, "config", "remote.origin.mirror", "true")
+    d, why = hook(monkeypatch, capsys, root, "git push origin")
+    assert d == "deny" and "its remote mirrors every ref" in why, why
+    git(root, "config", "--unset", "remote.origin.mirror")
+    # The shell's branch is `feature`'s, where git runs in a worktree on `prototype/y`: git pushes `feature`.
+    git(root, "checkout", "-q", "feature")
+    _code_commit(root, CODE, "feature's\n")
+    git(root, "worktree", "add", "-q", "-b", "prototype/y", str(root / ".claude/worktrees/side"))
+    d, why = hook(monkeypatch, capsys, root, "git -C .claude/worktrees/side push origin $(git branch --show-current)")
+    assert d == "ask" and "the shell's branch" in why, why
+
+
+@pytest.mark.parametrize("value, decision", [("current", "allow"), ("simple", "allow"), ("nothing", "deny"), ("upstream", "deny")])
+def test_a_bare_push_by_push_default(tmp_path, monkeypatch, capsys, value, decision):
+    root = _prototype(tmp_path)
+    _code_commit(root)
+    git(root, "config", "push.default", value)
+    d, why = hook(monkeypatch, capsys, root, "git push origin")
+    assert d == decision, (value, why)
+    if decision == "deny":
+        assert f"`push.default = {value}` decides where a bare push goes" in why, why
+
+
+def test_finishing_a_prototype_branchs_rebase_by_the_apply_backend(tmp_path, monkeypatch, capsys):
+    root = _prototype(tmp_path)
+    git(root, "checkout", "-q", "-b", "other", "main")
+    _code_commit(root, CODE, "other\n")
+    git(root, "checkout", "-q", "prototype/x")
+    _code_commit(root, CODE, "mine\n")
+    assert subprocess.run(["git", "rebase", "--apply", "other"], cwd=root, capture_output=True).returncode != 0
+    assert (root / ".git" / "rebase-apply" / "head-name").exists()
+    _change(root, CODE, "both\n")
+    git(root, "add", CODE)
+    assert hook(monkeypatch, capsys, root, "git rebase --continue")[0] == "allow"
+    d, why = hook(monkeypatch, capsys, root, "git rebase --continue", "conductor")
+    assert d == "deny" and "carries the code path" in why, why
+
+
 def test_the_changelog_notes_it():
     text = since_0110()
     assert "#393" in text and "`prototype/*`" in text
