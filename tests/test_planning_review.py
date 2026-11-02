@@ -227,23 +227,26 @@ def test_the_planning_review_posts_both_record_kinds():
     assert "if it still differs, post no records and say so in the handover" in p
     # A cloud session's footer is left out of the hash, and nothing else is.
     assert "The hash leaves out exactly that footer at the very end" in p and "Any other difference counts" in p
-    assert "When the answers are the spec's first comment (flow §2), post them before the records" in p
+    # #442: the answers are posted round by round before the spec (flow §2), never its first comment.
+    assert "spec's first comment" not in p
     # The body is fetched, never retyped; the fixes after an unclean last round stay in the file the check reads.
     assert "never retyped (`gh api repos/<repo>/issues/<spec> --jq .body > /tmp/review-<issue>-spec-check/published.md`" in p
     assert "make the fixes in that same `spec.md`, once its `record.md` is written, and publish that" in p
     # An edit after publishing is reviewed again before tickets.
     assert "the edited body gets another planning round, its own spec record, before any tickets are written from it" in p
-    # The owner's words for the edit are posted first, and are the Spec reviewer's input.
-    assert "First post the owner's words for the change on the spec's issue, each request or answer quoted word for word" in p
+    # The edit's rounds are posted on the spec's issue, and are the Spec reviewer's input
+    # (#442: in the tagged form, `tests/test_planning_after_draft.py`)...
+    assert "Post each of its rounds on the spec's issue as soon as it's answered" in p
     # ...as well as, never instead of, the answers the spec was written from.
-    assert "An edit after publishing takes all of these as well as the owner's words for every edit so far, this one included" in p
+    assert "An edit after publishing takes all of these as well as the rounds of every edit so far, this one included" in p
     # One order for the whole file, so "later" means something.
     assert "The whole file is in the order the comments were posted, oldest first, each with its date and where it was posted" in p
     # Later words stand over earlier ones only plainly; a doubt goes to the owner.
     brief = p.split("**Spec:**", 1)[1].split("No Standards reviewer", 1)[0]
-    assert "Where the owner's later words plainly change an earlier answer, the later words stand" in brief
+    # #442: only where no confirmed line or unobjected listed fix settles it.
+    assert "the owner's later words plainly change an earlier answer" in brief
+    assert "the later words stand" in brief
     assert "where it's unclear whether they do, report it, so it goes to the owner (**Fixes**)" in brief
-    assert "(once the spec is published, its first comment)" in p
     edit = p.split("**An edit after publishing**", 1)[1]
     assert "any sensitive data (`profile.md`) left out and marked as left out" in edit
     # The read-back check's directory is made before the body is saved there.
