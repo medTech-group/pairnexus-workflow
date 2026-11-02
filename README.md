@@ -456,12 +456,13 @@ Claude interviews you in **rounds**:
   - Testing Decisions;
   - Out of Scope;
   - Further Notes.
-- **Under the kit's flow, before publishing:** Claude posts your answers, each question with your answer quoted word for word, on the item's issue (with none, as the spec's first comment once it is published). It has the spec's draft reviewed against them and against the code (the review panel's planning review), in rounds until one is clean. A fix that would change what you decided comes back to you as a question first.
+- **Under the kit's flow, before publishing:** Claude posts your answers, each question with your answer quoted word for word, on the item's issue (or, for a map's Destination item, a comment on the map) as soon as each round is answered (with neither, Claude files an issue first), each tagged as your own words or a recommendation you accepted. It has the spec's draft reviewed against them and against the code (the review panel's planning review), in rounds until one is clean. A fix that would change what you decided comes back to you as a question first.
 - **Then it publishes** the reviewed text as is, with its review records on the spec's issue. It labels the spec `ready-for-agent` and `spec`, so the readiness check never takes the spec itself for a build ticket, and it cites the decision behind each choice.
 
 **3. `/to-tickets`: the build tickets.** Type `/to-tickets`, or `/to-tickets #<spec number>` in a new session.
 - It splits the spec into **thin end-to-end slices**: each works through every layer it touches (data, API, screen, tests) and can be checked on its own, rather than one layer at a time. Any tidying the code needs first comes first.
 - It shows you the list (each ticket's title, what blocks it, and what it delivers) and asks whether the size is right, whether the blocking is right, and whether any should be merged or split. It changes the list until you approve it.
+- Under the kit's flow, Claude then checks the list against the spec (each decision in exactly one ticket, what blocks what) and asks you about anything that would move work between tickets or change what blocks what; a question you leave open keeps the tickets it affects out of `ready-for-agent`.
 - It publishes them in order, blockers first, each linked to what blocks it.
 - **The kit's flow adds to each build ticket:**
   - a written `## Blocked by` section, as well as GitHub's own links, so a blocker closed as "not planned" is still seen. The readiness check also reads a `Blocked by: #12, #14` line, "blocked by #8" in a sentence (so don't write it in passing), issue and PR links (an open PR blocks until it merges), `owner/repo#n`, and "None";
@@ -511,7 +512,7 @@ When the work is too big for one session, or too unclear to spec yet, chart it f
 **Work through it**, **one decision per session** (research questions excepted). Use `/next map`, or `/wayfinder <map link>`, or the guided start's "Carry on". Claude:
 1. takes the first decision whose blockers are settled, and claims it (the `workflow:in-progress` label, and assigned to you), so no other session takes it;
 2. settles it as its kind says: an interview with you, a prototype you react to, research, or a task;
-3. posts your answers on the decision's issue, each question with your answer quoted word for word;
+3. posts your answers on the decision's issue, each question with your answer quoted word for word, each round as soon as you answer it, tagged as your own words or a recommendation you accepted;
 4. commits any glossary or ADR change to a branch and has it reviewed against your answers and the code (the review panel's planning review), in rounds until one is clean; research notes stay on their own `research/…` branch, linked from the decision, never merged;
 5. only then writes the resolution as a comment, closes the issue, and adds one line to the map's "Decisions so far";
 6. opens new decision issues as answers make them clear, moving each from "Not yet specified" as it does;
