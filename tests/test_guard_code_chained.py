@@ -4,15 +4,17 @@ by the commit rule (#389) and the push rule (#390).
 
 - A `git push` to `project.repo` in the same command as a git command that
   makes or finishes commits (`commit`, `merge`, `pull`, `cherry-pick`,
-  `revert`, `am`, any `--continue`), or any other part that may move a ref,
-  is refused, whatever it carries, saying to push in a command of its own,
-  on a `prototype/*` branch too. A chained push to another repository is as
-  today.
+  `revert`, `am`, any `--continue`, and any git command the guard doesn't
+  know only to move refs) is refused, whatever it carries, saying to push
+  in a command of its own, on a `prototype/*` branch too. Beside one that
+  only moves a ref it is asked as before, and refused while prototyping
+  (#393). A chained push to another repository is as today.
 - A `git add` before `git commit` in the same command counts toward what
   the commit carries: its pathspec, or for `-A` the changed and untracked
   files; one the guard can't read plainly counts every changed and
-  untracked file. Any other git command before the commit that may change
-  what is staged makes it a commit the guard can't tell about.
+  untracked file. A `git add` after it that may run first, or any other git
+  command before it that may stage what the guard doesn't read, makes it a
+  commit the guard can't tell about.
 - Under `"any"` or with `code_writers` absent, as today.
 
 Through `workflow hook guard`, run as Claude Code runs it, in temporary git
@@ -105,8 +107,8 @@ def test_an_untracked_code_file_added_before_a_commit_is_refused(tmp_path, monke
         "git add -n -A && git commit -m d",
         "git add docs/guide.md && git commit -m d -- docs/guide.md",
         "git status && git add docs/guide.md && git commit -m d",
-        "git commit -m d -- docs/guide.md && git add -A",
         "git add && git commit -m d",
+        "git add -A && git commit -m d -- docs/guide.md",
     ],
 )
 def test_a_git_add_of_docs_beside_an_unrelated_code_change_goes_through(tmp_path, monkeypatch, capsys, who, command):
@@ -181,7 +183,10 @@ def test_a_git_add_on_a_prototype_branch_meets_the_prototype_exception_first(tmp
 @pytest.mark.parametrize(
     "command",
     [
-        "git rm -q --cached docs/guide.md && git commit -m x",
+        "git rm -q --cached " + DOLLAR + "F && git commit -m x",
+        "git restore --source=main --staged docs && git commit -m x",
+        "git restore -s main docs && git commit -am x",
+        "echo add -A | xargs git && git commit -m x",
         "git cherry-pick -n HEAD && git commit -m x",
         "git merge --squash main; git commit -m x",
         "git checkout main -- docs/guide.md && git commit -m x",
@@ -222,6 +227,9 @@ def test_another_git_command_that_may_change_what_is_staged_before_a_commit(proj
         "git log -1 && git diff --stat && git commit -m d",
         "git commit -m a && git commit -m d",
         "git stash list && git commit -m d",
+        "git rm -q docs/old.md && git commit -m d",
+        "git mv docs/guide.md docs/g.md && git commit -m d",
+        "git restore docs/guide.md && git restore --staged docs/x.md && git commit -m d",
     ],
 )
 def test_git_commands_that_leave_what_is_staged_before_a_commit_go_through(proj, monkeypatch, capsys, command):
@@ -230,6 +238,63 @@ def test_git_commands_that_leave_what_is_staged_before_a_commit_go_through(proj,
     git(proj, "add", "docs/guide.md")
     for role in (None, "conductor"):
         assert hook(monkeypatch, capsys, proj, command, role) == ("allow", ""), (command, role)
+
+
+def test_a_git_add_after_the_commit_that_may_run_first(proj, monkeypatch, capsys):
+    """It would stage a code path: the commit is one the guard can't tell
+    about (asked; refused in the conductor). Staging docs only: through."""
+    _change(proj, "docs/guide.md")
+    git(proj, "add", "docs/guide.md")
+    for command in ("git commit -m d -- docs/guide.md && git add -A", "for i in 1 2; do git commit -m d; git add -A; done"):
+        assert hook(monkeypatch, capsys, proj, command) == ("allow", ""), command
+    _change(proj, CODE)
+    for command in ("git commit -m d -- docs/guide.md && git add -A", "for i in 1 2; do git commit -m d; git add -A; done", "git commit -m d & git add src"):
+        d, why = hook(monkeypatch, capsys, proj, command)
+        assert d == "ask" and "a later part runs `git add`" in why and "`src/app.py`" in why, (command, why)
+        d, why = hook(monkeypatch, capsys, proj, command, "conductor")
+        assert d == "deny" and "`src/app.py`" in why, (command, why)
+
+
+def test_a_forced_add_the_guard_cant_read_counts_ignored_files(proj, monkeypatch, capsys):
+    _change(proj, "src/build/out.py")  # ignored by the fixture's `.gitignore`
+    for command in ("git -C . add -f src/build/out.py && git commit -m x", "git add -f " + DOLLAR + "F && git commit -m x", "git --no-pager add --fo src/build && git commit -m x"):
+        d, why = hook(monkeypatch, capsys, proj, command)
+        assert d == "deny" and "`src/build/out.py`" in why, (command, why)
+    # Without `-f`, git adds no ignored file.
+    assert hook(monkeypatch, capsys, proj, "git -C . add -A && git commit -m x") == ("allow", "")
+
+
+def test_a_git_add_into_the_index_a_work_tree_commit_reads(proj, tmp_path, monkeypatch, capsys):
+    """The index is the git directory's: a commit with another work tree commits what the add staged."""
+    (tmp_path / "e").mkdir()
+    _change(proj, CODE)
+    d, why = hook(monkeypatch, capsys, proj, f"git add -A && git --work-tree={tmp_path / 'e'} commit -m x")
+    assert d != "allow" and ("`src/app.py`" in why or "can't tell" in why), why
+
+
+def test_a_pathspec_commit_after_an_add_carries_only_what_it_names(proj, monkeypatch, capsys):
+    _change(proj, CODE)
+    _change(proj, "docs/guide.md")
+    assert hook(monkeypatch, capsys, proj, "git add -A && git commit -m d -- docs/guide.md") == ("allow", "")
+    _change(proj, "src/new.py")
+    d, why = hook(monkeypatch, capsys, proj, "git add -A && git commit -m x -- src/new.py")
+    assert d == "deny" and "`src/new.py`" in why, why
+    d, why = hook(monkeypatch, capsys, proj, "git add -A && git commit -i -m d -- docs/guide.md")
+    assert d == "deny" and "src/" in why, why
+
+
+def test_a_git_add_it_cant_read_at_all_is_asked(proj, monkeypatch, capsys):
+    """A read that fails counts as may, never as nothing staged."""
+    _change(proj, "docs/guide.md")
+    with monkeypatch.context() as m:
+        m.setattr(guard_mod, "_changed_and_untracked", lambda *a, **k: (None, "`git diff` took too long"))
+        d, why = hook(monkeypatch, capsys, proj, "git add -u && git commit -m d")
+        assert d == "ask" and "couldn't read what `git add` stages" in why, why
+        d, why = hook(monkeypatch, capsys, proj, "git add -u && git commit -m d", "conductor")
+        assert d == "deny" and "couldn't read what `git add` stages" in why, why
+        # A plain add it can't read counts every change, which it can't read either.
+        d, why = hook(monkeypatch, capsys, proj, "git add docs && git commit -m d")
+        assert d == "ask", why
 
 
 # ---------- push in a command of its own ----------
@@ -293,6 +358,41 @@ def test_a_push_chained_with_a_git_command_the_guard_cant_name_is_refused(proj, 
     for role in (None, "conductor"):
         d, why = hook(monkeypatch, capsys, proj, command, role)
         assert d == "deny" and OWN in why, (command, role, why)
+
+
+def test_a_push_beside_xargs_git_is_refused(proj, monkeypatch, capsys):
+    """`xargs git` takes its subcommand from its stdin: a git command the guard can't name."""
+    _change(proj, CODE)
+    for role in (None, "conductor"):
+        d, why = hook(monkeypatch, capsys, proj, "echo commit -am wip | xargs git; git push origin feature", role)
+        assert d == "deny" and OWN in why, (role, why)
+
+
+def test_a_push_beside_what_makes_no_commit_is_asked_as_before(proj, monkeypatch, capsys):
+    """Stopping a merge, a cherry-pick or a rebase, or a commit's dry run, makes no commit: beside a ref move
+    the push is asked as before (refused in the conductor)."""
+    for command in (
+        "git merge --abort && git push origin feature",
+        "git cherry-pick --quit; git push origin feature",
+        "git rebase --abo && git push origin feature",
+        "git commit --dry-run && git push origin feature",
+        "git switch -c x && git push origin x",
+        "git reset --hard HEAD && git push origin feature",
+    ):
+        d, why = hook(monkeypatch, capsys, proj, command)
+        assert d == "ask" and "can't tell" in why and OWN not in why, (command, why)
+
+
+def test_a_bare_push_beside_a_commit_after_a_branch_change(proj, tmp_path, monkeypatch, capsys):
+    """The branch git picks a bare push's remote by may change: refused when any remote of ours is one it may pick."""
+    _docs_ready(proj)
+    d, why = hook(monkeypatch, capsys, proj, "git switch -c x && git commit -m d && git push")
+    assert d == "deny" and OWN in why, why
+    # No remote of ours: as before.
+    other = _other_remote(tmp_path)
+    git(proj, "remote", "set-url", "--push", "origin", str(other))
+    d, why = hook(monkeypatch, capsys, proj, "git switch -c x && git commit -m d && git push")
+    assert d == "ask" and OWN not in why, why
 
 
 def test_a_push_beside_a_commit_it_cant_otherwise_read_is_refused(proj, monkeypatch, capsys):
@@ -388,10 +488,28 @@ AS_TODAY = [
     "git add -A && git commit -m x",
     "git add -u && git commit -m x",
     "git rm -q --cached docs/guide.md && git commit -m x",
+    "git reset --soft HEAD && git commit -m x",
+    "git commit -m d -- docs/guide.md && git add -A",
     "git commit -am x && git push origin feature",
     "git merge origin/main && git push",
     "git add -A && git commit -m x && git push",
+    "git cherry-pick main && git push",
+    "git merge --continue && git push",
+    "git add docs/guide.md && git commit -m d && git push",
+    "git ci -m d && git push origin feature",
+    "echo commit -am x | xargs git; git push origin feature",
+    "git commit -m d && git push o feature",
 ]
+
+
+@pytest.mark.parametrize("code_writers", ["any", None])
+@pytest.mark.parametrize("role", [None, "conductor"])
+def test_under_any_or_absent_a_prototype_branch_decides_as_today(tmp_path, monkeypatch, capsys, code_writers, role):
+    root = _clone(tmp_path, code_writers)
+    git(root, "checkout", "-q", "-b", "prototype/x")
+    _change(root, CODE)
+    for command in ("git commit -am x && git push origin prototype/x", "git add -A && git commit -m x; git push"):
+        assert hook(monkeypatch, capsys, root, command, role) == ("allow", ""), (code_writers, role, command)
 
 
 @pytest.mark.parametrize("code_writers", ["any", None])
@@ -399,6 +517,7 @@ AS_TODAY = [
 def test_under_any_or_absent_every_case_decides_as_today(tmp_path, monkeypatch, capsys, code_writers, role):
     root = _clone(tmp_path, code_writers)
     git(root, "config", "branch.feature.remote", "origin")
+    git(root, "remote", "add", "o", str(_other_remote(tmp_path)))
     _change(root, CODE)
     _change(root, "src/new.py")
     for command in AS_TODAY:
