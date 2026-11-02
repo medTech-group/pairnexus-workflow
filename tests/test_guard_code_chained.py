@@ -276,11 +276,22 @@ def test_a_git_add_after_the_commit_that_may_run_first(proj, monkeypatch, capsys
         assert d == "deny" and "`src/app.py`" in why, (command, why)
 
 
-def test_xargs_add_with_a_replace_word_and_docs_only_goes_through(proj, monkeypatch, capsys):
-    """Its replace word stands in its paths, not its subcommand: no push, and docs only."""
+@pytest.mark.parametrize(
+    "xargs",
+    ["xargs -I{}", "xargs -0I {}", "xargs -rI {}", "xargs --replace", "xargs -0 -r -n 1 -P 2 --null --no-run-if-empty -d x", "xargs -i", "xargs"],
+)
+def test_xargs_add_with_its_own_options_and_docs_only_goes_through(proj, monkeypatch, capsys, xargs):
+    """xargs's options read as GNU's getopt reads them: its replace word stands in its paths, not its subcommand, and
+    the rest are ordinary: no push, and docs only."""
     _change(proj, "docs/guide.md")
+    tail = " {}" if ("I" in xargs or "replace" in xargs or "-i" in xargs) else ""
     for role in (None, "conductor"):
-        assert hook(monkeypatch, capsys, proj, "git diff --name-only docs | xargs -I{} git add {} && git commit -m d", role) == ("allow", ""), role
+        command = f"git diff --name-only docs | {xargs} git add{tail} && git commit -m d"
+        assert hook(monkeypatch, capsys, proj, command, role) == ("allow", ""), (command, role)
+    # With a code change, every change counts (`xargs` gives the names), never a push.
+    _change(proj, CODE)
+    d, why = hook(monkeypatch, capsys, proj, f"git diff --name-only | {xargs} git add{tail} && git commit -m d")
+    assert d == "deny" and "may carry the code path `src/app.py`" in why and OWN not in why, why
 
 
 def test_a_reset_or_restore_before_finishing_a_merge(proj, monkeypatch, capsys):

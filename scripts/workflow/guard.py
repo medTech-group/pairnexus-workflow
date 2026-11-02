@@ -961,6 +961,10 @@ def _strip_prefix(toks: list[str], wrappers: list[str] | None = None) -> tuple[l
                 wrappers.append(name)
             takes = _WRAPPERS[name]
             toks = toks[1:]
+            if name == "xargs":  # as GNU's getopt reads them, so its command starts where xargs's does (#394)
+                toks = _xargs_options(toks)[1]
+                changed = True
+                continue
             while toks and (toks[0].startswith("-") or re.match(r"^\d+(\.\d+)?[smhd]?$", toks[0]) or _ASSIGN.match(toks[0])):
                 t = toks[0]
                 toks = toks[1:]
@@ -992,7 +996,6 @@ def _strip_prefix(toks: list[str], wrappers: list[str] | None = None) -> tuple[l
     return toks, assigns, chdir
 
 
-# xargs's short options that take a value (attached, else the next word); `-e`, `-l` and `-i` take one only attached.
 # GNU xargs's options, as getopt reads them: those taking the next word (or an attached value), those taking a value
 # only attached (`-i<word>`, `--replace=<word>`), and those taking none. A long option is read by any unique prefix.
 _XARGS_SHORT_NEXT = set("adEILnPs")
@@ -1004,6 +1007,37 @@ _XARGS_LONG = {
     "no-run-if-empty": "flag", "verbose": "flag", "interactive": "flag", "exit": "flag", "open-tty": "flag",
     "show-limits": "flag", "help": "flag", "version": "flag",
 }  # fmt: skip
+
+
+def _xargs_options(toks: list[str]) -> tuple[bool, list[str]]:
+    """(whether every option was one it knows, the words after xargs's
+    options): `toks` are the words after `xargs`, read as GNU's getopt reads
+    them, up to the first that isn't an option (or after `--`)."""
+    known, i = True, 0
+    while i < len(toks):
+        w = toks[i]
+        if w == "--":
+            return known, toks[i + 1 :]
+        if not w.startswith("-") or len(w) < 2:
+            break
+        i += 1
+        if w.startswith("--"):
+            name, eq, _ = w[2:].partition("=")
+            cands = [o for o in _XARGS_LONG if o == name] or [o for o in _XARGS_LONG if o.startswith(name)] if name else []
+            if len(cands) != 1:
+                known = False
+            elif _XARGS_LONG[cands[0]] == "next" and not eq:
+                i += 1  # its value
+            continue
+        for k, ch in enumerate(w[1:], 2):
+            if ch in _XARGS_SHORT_FLAGS:
+                continue
+            if ch in _XARGS_SHORT_NEXT and not w[k:]:
+                i += 1  # its value, the next word
+            if ch not in _XARGS_SHORT_NEXT | _XARGS_SHORT_ATTACHED:
+                known = False
+            break
+    return known, toks[i:]
 
 
 def _xargs_replace(head: list[str]) -> str | None:
