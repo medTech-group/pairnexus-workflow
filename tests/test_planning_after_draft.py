@@ -43,10 +43,10 @@ def _bullet(name: str) -> str:
 
 
 def _sentence(text: str, word: str) -> str:
-    """The one sentence of `text` that names `word`. §8 also breaks a sentence at a
-    colon before a capital, a bold name or a quote, so this splits there too
-    (`tests/test_decision_questions.py`'s splits at `.` and `;` only)."""
-    found = [s for s in re.split(r"(?<=[.;:])\s+(?=[A-Z*\"(])", text) if word in s]
+    """The one sentence of `text` that names `word`, in any case. §8 also breaks a
+    sentence at a colon before a capital, a bold name or a quote, so this splits
+    there too (`tests/test_decision_questions.py`'s splits at `.` and `;` only)."""
+    found = [s for s in re.split(r"(?<=[.;:])\s+(?=[A-Z*\"(])", text) if word.lower() in s.lower()]
     assert len(found) == 1, f"one sentence names {word!r}: {found}"
     return found[0]
 
@@ -69,7 +69,7 @@ def test_each_recommendation_carries_its_evidence_and_yes_to_all_answers_only_th
     assert "recommendation" in s
     # The rules are the flow's: §8 names them, and points there for every rule.
     assert "every rule" in _sentence(fixes, '"Decision questions"')
-    s = _sentence(fixes.lower(), '"yes to all"')
+    s = _sentence(fixes, '"yes to all"')
     assert "only" in s and "with a recommendation" in s
 
 
@@ -135,8 +135,9 @@ def test_the_re_read_is_given_what_the_planning_checker_needs():
 def test_the_re_read_makes_its_fixes_and_never_asks_its_ask_findings():
     reread = _para("The re-read:")
     assert "Make" in _sentence(reread, "**fix** findings")
-    s = _sentence(reread.replace("(its **ask** findings,", "("), "**ask** findings")
-    assert "never asked" in s
+    s = _sentence(reread, "never asked")
+    assert "**ask** findings" in s
+    assert "left open" in s
 
 
 def test_what_the_re_read_leaves_goes_in_a_comment_and_where_the_flow_says():
@@ -166,12 +167,11 @@ def test_an_edit_after_publishing_posts_its_rounds_tagged_on_the_spec_s_issue():
     edit = _para("An edit after publishing")
     assert "decision questions" in edit
     s = _sentence(edit, "on the spec's issue as soon as")
-    assert "**accepted recommendation**" in s and "**the owner's own words**" in s
-    assert "word for word" in s
-    assert "evidence" in s and "findings" in s
-    # The owner's request for the change is their own words.
-    assert "request" in s
-    assert "any sensitive data (`profile.md`) left out and marked as left out" in s
+    # The tagged form is **Fixes**'s, pointed to rather than restated.
+    assert "tagged form **Fixes** gives" in s
+    # The owner's request for the change is among the round, as their own words.
+    assert "request" in s and "word for word" in s and "**the owner's own words**" in s
+    assert "sensitive data (`profile.md`) left out and marked as left out" in s
     # The old untagged form is gone.
     assert "First post the owner's words for the change" not in edit
 
@@ -182,8 +182,6 @@ def test_an_edit_after_publishing_gets_one_re_read_before_its_planning_round():
     assert "before the planning round" in s
     # What it leaves goes in a comment on the spec's issue.
     assert "comment on the spec's issue" in s
-    # Still another planning round and its record before any tickets.
-    assert "another planning round, its own spec record, before any tickets are written from it" in edit
 
 
 # --- what the planning review reads ----------------------------------------
@@ -202,8 +200,8 @@ def test_answers_md_is_each_round_s_post_with_its_tags_and_confirmed_lines():
 
 def test_the_spec_s_first_comment_is_gone_from_the_planning_review():
     p = _planning()
-    assert "(once the spec is published, its first comment)" not in p
-    assert "When the answers are the spec's first comment" not in p
+    # Neither "(once the spec is published, its first comment)" nor "When the answers are
+    # the spec's first comment (flow §2), post them before the records" is left.
     assert "first comment" not in p
     # The answers are posted before the spec, round by round (flow §2).
     records = _para("Records:")
@@ -232,8 +230,31 @@ def test_the_later_words_stand_only_where_neither_settles_it():
     s = _sentence(brief, "the later words stand")
     assert "neither" in s
     assert "plainly" in s
-    # A doubt still goes to the owner.
-    assert "where it's unclear whether they do, report it, so it goes to the owner (**Fixes**)" in brief
+
+
+def test_a_review_after_publishing_reads_what_was_posted_on_the_spec_s_issue():
+    answers = _bullet("the owner's answers as posted, as `answers.md`")
+    s = _sentence(answers, "Once the spec is published")
+    # An edit's review and a spec session's pull request's alike.
+    assert "edit" in s and "pull request" in s
+    assert "on the spec's issue" in s
+    for words in ("question round", "confirmed line", "listing a check's fixes"):
+        assert words in s, words
+
+
+def test_an_edit_s_last_re_read_comes_before_any_tickets_are_written_from_it():
+    s = _sentence(_para("The re-read:"), "before the next planning round")
+    assert "edit after publishing" in s and "before any tickets" in s
+
+
+def test_the_re_read_s_comment_on_a_map_names_its_destination_item():
+    s = _sentence(_para("The re-read:"), "in a comment")
+    assert "map" in s and "Destination item" in s
+
+
+def test_the_re_read_s_directory_counts_re_reads_on_its_issue():
+    s = _sentence(_para("The re-read:"), "/tmp/plan-check-")
+    assert "`<n>` counting re-reads" in s
 
 
 # --- the changelog ---------------------------------------------------------

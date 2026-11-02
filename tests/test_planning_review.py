@@ -238,7 +238,8 @@ def test_the_planning_review_posts_both_record_kinds():
     # (#442: in the tagged form, `tests/test_planning_after_draft.py`)...
     assert "Post each of its question rounds on the spec's issue as soon as it's answered" in p
     # ...as well as, never instead of, the answers the spec was written from.
-    assert "An edit after publishing takes all of these as well as the rounds of every edit so far, this one included" in p
+    assert "takes all of these as well as everything of these kinds posted on the spec's issue" in p
+    assert "each edit's so far, this one included" in p
     # One order for the whole file, so "later" means something.
     assert "The whole file is in the order the comments were posted, oldest first, each with its date and where it was posted" in p
     # Later words stand over earlier ones only plainly; a doubt goes to the owner.
