@@ -192,12 +192,19 @@ def test_same_as_last_time_asks_the_merge_mode_again_while_approvals_recommend_o
     # Doctor's `github.approvals` makes **owner** the merge question's recommended
     # answer (pre-flight's "Required approvals"); a reused mode that isn't `owner`
     # is asked again, whatever today's defaults show, so the two never disagree.
-    s = _sentence(_reuse(), "`github.approvals`")
-    assert "asked again" in s and "**owner**" in s
-    assert "isn't `owner`" in s and "whatever the defaults show" in s
+    reuse = _reuse()
+    found = [s for s in re.split(r"(?<=[.;])\s+", reuse) if "`github.approvals`" in s and "again" in s]
+    assert found, "a sentence asks the merge mode again for `github.approvals`"
+    s = found[0]
+    assert "owner" in s and "reused" in s and "defaults" in s
     assert "Required approvals" in s
-    d = _sentence(_charter_reuse(), "requires approvals")
-    assert "asked again" in d and "`owner` recommended" in d
+    # The reused `auto-merge` no longer offered isn't set to the default while approvals
+    # recommend owner: it is asked again too, so the exception never overrides them.
+    ex = _sentence(reuse, "no longer offers")
+    assert "`github.approvals`" in ex and "again" in ex and "owner" in ex
+    d = [s for s in re.split(r"(?<=[.;])\s+", _charter_reuse()) if "approvals" in s]
+    assert len(d) == 1, d
+    assert "again" in d[0] and "owner" in d[0] and "auto-merge" in d[0]
     # The merge mode the merge question no longer offers keeps its own handling, named
     # as the one exception, for each reason it isn't offered.
     ex = _sentence(_reuse(), "no longer offers")
