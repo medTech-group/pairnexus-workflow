@@ -96,7 +96,7 @@ def test_start_keeps_routing_choices_out_of_the_rules():
     assert "one line" in s
 
 
-def test_the_recommended_option_needs_one_to_come_first():
+def test_an_option_comes_first_only_when_one_is_recommended():
     options = _flatten(_between(_choices(), "- **Options:**", "\n- **"))
     # Not every question has a recommendation any more: one comes first only when there is one.
     s = _sentence(options, "(Recommended)")
@@ -157,18 +157,24 @@ def test_start_posts_each_round_where_the_flow_says():
     # With nowhere to post, an item's issue is filed first.
     assert "file" in s and "first" in s
     # A map decision's on its ticket; an edit after publishing on the spec's issue.
-    assert "map decision" in _sentence(r, "decision ticket")
+    assert "decision ticket" in _sentence(r, "A map decision's rounds")
     assert "spec's issue" in _sentence(r, "edit after publishing")
 
 
 def test_start_s_round_post_has_the_flow_s_form():
-    s = _sentence(_rule(_choices(), "Each round"), "word for word")
+    r = _rule(_choices(), "Each round")
+    s = _sentence(r, "word for word")
     assert "each question" in s
-    assert "evidence" in s
-    # The recommendation itself, not only the tag that names it.
-    assert "recommendation" in s.replace("**accepted recommendation**", "")
+    # The recommendation itself, with its evidence.
+    assert "recommendation with its evidence" in s
     assert "findings" in s
+    s = _sentence(r, "tagged")
     assert "**accepted recommendation**" in s and "**the owner's own words**" in s
+
+
+def test_start_posts_the_checks_findings_only_when_a_check_ran():
+    s = _sentence(_rule(_choices(), "Each round"), "findings")
+    assert "when a check ran" in s
 
 
 def test_start_numbers_the_answers_across_issues_so_a_line_can_name_one():
@@ -195,15 +201,19 @@ def test_start_posts_confirmed_replacements_as_plain_lines():
 
 
 def test_a_reply_that_isn_t_an_accepted_recommendation_is_the_owner_s_own_words():
-    s = _sentence(_rule(_choices(), "Each round"), "word for word")
-    tag = s.split("**the owner's own words**", 1)[1]
+    s = _sentence(_rule(_choices(), "Each round"), "any reply but")
+    assert "own words" in s
     # An option picked over the recommendation, or where none was recommended, as well as one typed.
-    assert "picked" in tag and "typed" in tag and "accepted" in tag
+    assert "picked" in s and "typed" in s and "accepted" in s
 
 
-def test_a_question_a_fix_raises_is_posted_where_the_rounds_it_changes_are():
+def test_a_question_a_fix_raises_is_posted_with_the_current_rounds():
     s = _sentence(_rule(_choices(), "Each round"), "fix raises")
-    assert "where the rounds it changes" in s
+    assert "current rounds" in s
+    # Never on an issue closed when the spec was published: the spec's issue after it.
+    assert "item's issue" in s and "before the spec is published" in s
+    assert "spec's issue after" in s
+    assert "decision ticket" in s
 
 
 def test_start_s_round_posts_leave_out_sensitive_data():
@@ -235,11 +245,11 @@ def test_the_seams_carry_their_evidence_and_are_posted_as_answered():
     seams = _spec_step(2)
     s = _sentence(seams, "**These seams (Recommended)**")
     assert "evidence" in s
-    s = _sentence(seams, "Post their answers, the seams among them")
-    assert "as soon as it's answered" in s
-    assert "tagged" in s
+    post = seams.split("Post their answers, the seams among them", 1)[1].split(" - ", 1)[0]
+    assert "as soon as it's answered" in post
+    assert "tagged" in post
     # The interview's rounds are already there: only the seams' round is posted now.
-    assert "already there" in s and "seams' round" in s
+    assert "already there" in post and "seams' round" in post
 
 
 def test_a_question_a_planning_review_fix_raises_is_a_decision_question():
@@ -309,9 +319,18 @@ def test_next_points_to_the_flow_for_its_decision_questions():
     for kind in ("map decision", "interview", "seams"):
         assert kind in intro, kind
     assert "draft" in _sentence(intro, "**Fixes**")
-    # A `next` session hasn't loaded `start`: it is told where to read its "Choices".
-    s = _sentence(intro, "Choices")
+
+
+def test_next_takes_the_rules_from_start_s_decision_questions():
+    # One copy of the rules: a `next` session reads `start`'s, and is told where.
+    s = _sentence(_intro(_next()), "Choices")
     assert "`start`" in s and "SKILL.md" in s and "read" in s
+    assert '"Decision questions"' in s
+    for part in ("evidence", '"yes to all"', "post", "leaves out"):
+        assert part in s, part
+    # Not restated: no rules of its own on evidence or "yes to all".
+    block = _block(_next())
+    assert "\n- **Evidence" not in block and '\n- **"Yes to all"' not in block
 
 
 def test_next_keeps_how_to_build_it_out_of_the_rules():
@@ -319,44 +338,21 @@ def test_next_keeps_how_to_build_it_out_of_the_rules():
     assert "How to build it" in s
 
 
-def test_next_s_recommendation_carries_its_evidence():
-    s = _sentence(_rule(_next(), "Evidence"), "rests on")
-    assert "what it rests on" in s and "what it gives up" in s and "what would make it wrong" in s
-    s = _sentence(_rule(_next(), "Evidence"), "(Recommended)")
-    assert "no basis" in s
-
-
-def test_next_s_yes_to_all_answers_only_questions_with_a_recommendation():
-    r = _rule(_next(), '"Yes to all"')
-    s = _sentence(r, "only")
-    assert "with a recommendation" in s or "that have a recommendation" in s
-    assert "on its own" in _sentence(r, "without one")
-    s = _sentence(r, "own words")
-    assert "finding" in s and "on its own" in s
-
-
-def test_next_posts_each_round_tagged_and_reads_what_s_posted():
+def test_next_posts_each_round_where_the_flow_says():
     r = _rule(_next(), "Each round")
-    s = _sentence(r, "word for word")
-    assert "**accepted recommendation**" in s and "**the owner's own words**" in s
-    assert re.search(r"answer \d+ replaces \d+: confirmed", r)
-    # Where: as the flow posts the owner's answers.
     s = _sentence(r, "as soon as it's answered")
     for place in ("decision ticket", "item's issue", "map"):
         assert place in s, place
-    s = _sentence(r, "word for word")
-    assert "recommendation" in s.replace("**accepted recommendation**", "")
-    assert "picked" in s.split("**the owner's own words**", 1)[1]
-    # Before asking, it reads the rounds already posted and carries on from them.
+    s = _sentence(r, "fix raises")
+    assert "current rounds" in s and "before the spec is published" in s
+
+
+def test_next_reads_this_spec_s_or_decision_s_rounds_before_asking():
+    r = _rule(_next(), "Before asking")
     s = _sentence(r, "already posted")
-    assert "carry on" in s and "before" in s.lower()
-    # Only this spec's or decision's rounds: on a map, the comments naming its Destination item.
     assert "spec or decision" in s and "Destination item" in s
-
-
-def test_next_s_round_posts_leave_out_sensitive_data():
-    s = _sentence(_rule(_next(), "Each round"), "profile.md")
-    assert "sensitive" in s.lower() and "left out" in s
+    s = _sentence(r, "carry on")
+    assert "number on from the last answer" in s
 
 
 def test_next_s_rules_are_part_of_picking_one():
