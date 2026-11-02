@@ -210,6 +210,7 @@ def test_a_reply_that_isn_t_an_accepted_recommendation_is_the_owner_s_own_words(
 def test_a_question_a_fix_raises_is_posted_with_the_current_rounds():
     s = _sentence(_rule(_choices(), "Each round"), "fix raises")
     assert "current rounds" in s
+    assert re.search(r"\bthe map\b", s)
     # Never on an issue closed when the spec was published: the spec's issue after it.
     assert "item's issue" in s and "before the spec is published" in s
     assert "spec's issue after" in s
@@ -234,9 +235,9 @@ def test_the_interview_asks_under_the_rules_and_posts_each_round():
 
 def test_the_interview_posts_a_destination_item_s_rounds_on_the_map():
     s = _sentence(_spec_step(1), "as soon as it's answered")
-    assert "item's issue" in s and "Destination item" in s and "map" in s
+    assert "item's issue" in s and "Destination item" in s and "comment on the map" in s
     stop = _spec_step(1).split("**Stop here**", 1)[1]
-    assert "Destination item" in stop and "map" in stop
+    assert "Destination item" in stop and "comment on the map" in stop
 
 
 def test_stopping_mid_interview_finds_the_rounds_already_posted():
@@ -352,8 +353,9 @@ def test_next_posts_each_round_where_the_flow_says():
         assert place in s, place
     s = _sentence(r, "fix raises")
     assert "current rounds" in s and "before the spec is published" in s
-    # Before publishing, with the interview's rounds: the item's issue or the map.
-    assert "item's issue" in s and "map" in s
+    # Before publishing, with the interview's rounds: the item's issue or the map
+    # (not the "map" of "a map decision").
+    assert "item's issue" in s and re.search(r"\bthe map\b", s)
     # After publishing (a later planning review, such as the ADR pull request's): the spec's issue.
     assert "spec's issue after" in s
     # A map decision's on its decision ticket, whatever the spec's state.
