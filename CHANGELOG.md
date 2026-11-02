@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**The interview's recommendations carry their evidence, and each round is posted as it's answered** (#440, part of spec #436). `start` and `next` now ask their decision questions under the flow's "Decision questions": the interview's rounds, the seams, a map decision's rounds, and in `start` the questions of **Edit the spec first** and of **Add to an existing issue** on a spec. Routing choices keep their one line of why.
+
+- **Evidence:** each recommended option says what it rests on (the file, issue, ADR or earlier answer checked), what it gives up and what would make it wrong; with no basis to prefer one option, no "(Recommended)", and the options are laid out.
+- **"Yes to all"** answers only the questions with a recommendation; the others are asked again on their own, and a finding about the owner's own words is asked on its own.
+- **Each round is posted as soon as it's answered,** not only at **Stop here**: on the item's issue (or the map, or an item's issue filed first), the decision ticket, or the spec's issue for an edit after publishing, with each question, its recommendation and evidence, the checks' findings and the reply word for word, tagged **accepted recommendation** or **the owner's own words**, answers numbered, and confirmed replacements as plain lines. `start`'s "Carry on" reads these posts, confirmed lines included, and `next` reads them before asking.
+- **For projects updating:** nothing to do; the vendored skills change with the update. Tests: `tests/test_interview_evidence.py`.
+
 **The flow's rules for decision questions** (#439, part of spec #436). A new section of `docs/flow.md`, "Decision questions", right after §2, holds the rules §1 and §2 follow. `start`, `next` and `review-panel` §8 follow them, and `conductor`'s charter questions get the evidence rule only; spec #436's other tickets wire them in (until #442, `review-panel` §8 still names the spec's first comment).
 
 - **Which questions:** those whose answer is posted as the owner's: a map decision's rounds, the spec interview, the seams, the questions the planning review's **Fixes** sends once a draft exists, and edits after publishing. A quick ticket gets the end check and the "Decided for you" list, without posted answers; the run charter's questions get the evidence rule only; routing choices get neither.

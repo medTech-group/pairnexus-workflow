@@ -10,12 +10,17 @@ Guide the person from "what are we working on?" to work done, one choice at a ti
 ## Choices
 
 **Every question is a choice to click.** Use the `AskUserQuestion` tool:
-- **Options:** 2 to 4. Your recommended option comes first, its label ending "(Recommended)", with one line saying why. "Other" is always added for their own words, so never add a "something else" option.
+- **Options:** 2 to 4. When you recommend one, it comes first, its label ending "(Recommended)", with one line saying why (on a decision question, its evidence: below). "Other" is always added for their own words, so never add a "something else" option.
 - **Building a ticket:** **Build it with a light review** is always the second choice, after the full build: never first, never "(Recommended)", never chosen for them. So on a ticket marked `Review: small`, after **Build it now (Recommended)** (the small review) and before **Build it with the full panel**.
 - **Questions:** up to 4 in one call, when they don't depend on each other. More than 4 means several calls.
 - **No tool:** where `AskUserQuestion` isn't available (a headless `-p` session), ask the same choices as a numbered list.
 
 Ask in plain text only when the answer can't be a choice ("Tell me what you have in mind").
+
+**Decision questions** are the ones whose answer is posted as theirs, and they follow the flow's rules (flow, "Decision questions"): the interview's rounds and the seams (step 4, "Spec"), a map decision's rounds (step 4, "Map"), and the questions of **Edit the spec first** and of **Add to an existing issue** on a spec. Routing choices (which step comes next, such as **Write the spec** or **Build it now**) keep their one line of why.
+- **Evidence:** a recommended option's description says what it rests on (the file, issue, ADR or earlier answer you checked), what it gives up, and what would make it wrong. Where there's no basis to prefer one option, none is "(Recommended)": lay the options out, each with what it gives up.
+- **"Yes to all"** (or any reply that accepts every recommendation at once) answers only the questions that have a recommendation. Ask each question without one again, on its own. A finding about their own words (an answer they typed, not a recommendation they accepted) is asked on its own, never in a round they could answer with "yes to all".
+- **Each round** is posted as soon as it's answered, not only at **Stop here**, so a later session carries on from it. It goes on the item's issue for the interview and the seams (for a map's Destination item, a comment on the map naming it, and with neither, file an item's issue first), on the decision ticket for a map decision's rounds, and on the spec's issue for an edit after publishing. The post carries each question, your recommendation with its evidence, the checks' findings (when a check ran), and their reply quoted word for word, tagged **accepted recommendation** or **the owner's own words**. It numbers the answers on from the last post, so a later line can name one. A replacement or narrowing they confirmed is a plain line of its own ("answer 34 replaces 7: confirmed"). Sensitive data (`profile.md`) is left out of the post, and marked as left out.
 
 ## Where things are
 
@@ -129,7 +134,7 @@ Only the local look counts here: `status` makes no network call for it, and the 
 |---|---|
 | A PR waiting for them | Give its link, what it does and its checks. Ask **Check whether it's ready to merge (Recommended)**, which loads `merge-check` for it, **Review it with me**, **I'll merge it myself** or **Later**. |
 | Work claimed (`workflow:in-progress`), no run in progress | An earlier session stopped part-way. Read the issue's comments and look for its branch (an open PR that closes it, or a branch naming its number). Ask **Carry on from there (Recommended)**, then follow `build-ticket` on that branch, or **Release it**, which removes the label so `/next` can take it. |
-| A planned item | Read its body and comments. A `path=spec` item may have an interview's decisions in a comment: carry on the interview from them, or go to the spec if nothing is left open. Then step 4 for its path. |
+| A planned item | Read its body and comments. A `path=spec` item may have an interview's rounds posted in its comments ("Decision questions", above): read every one, with its tags, its evidence, the checks' findings and any confirmed replacement line, which says which answer stands. Then carry on the interview from them, numbering on from the last post, or go to the spec if nothing is left open. Then step 4 for its path. |
 | An open spec with no tickets | `to-tickets` for it (step 4, "Spec", step 3) |
 | A map decision, a clear map's next spec, or a ready ticket | Load `next` with the Skill tool, with that issue |
 
@@ -241,27 +246,27 @@ For each item, read the flow's section for its path and follow it, skipping noth
    - **Stop here**: comment on the item's issue with what you found.
 
 **Spec** (flow §2), all in one session where it fits:
-1. **The interview.** Load the `grilling` and `domain-modeling` skills with the Skill tool (that's all `grill-with-docs` does), and interview them about the item. Ask each round's questions as choices:
+1. **The interview.** Load the `grilling` and `domain-modeling` skills with the Skill tool (that's all `grill-with-docs` does), and interview them about the item. Its questions are decision questions ("Decision questions", above). Ask each round's questions as choices:
    - one question per decision;
-   - your recommended answer as the first option, with real alternatives after it;
+   - your recommended answer as the first option, with its evidence, and real alternatives after it; with no basis to prefer one, no recommendation;
    - plain text only for a question with no sensible options.
 
-   Look facts up yourself, in the background; only decisions go to them.
+   Look facts up yourself, in the background; only decisions go to them. Each round is posted on the item's issue as soon as it's answered, tagged, before the next round is asked.
 
    When nothing is left to ask, confirm your understanding in a few lines and ask:
    - **Write the spec (Recommended)**;
    - **There's more to discuss**;
-   - **Stop here**: post their answers so far on the item's issue, each question with the answer quoted word for word, so the next session carries on from them.
+   - **Stop here**: post their answers so far on the item's issue, each question with the answer quoted word for word: every answered round is already posted, so this posts only a round not yet there, and the next session carries on from them.
 2. **The spec.** Read `to-spec`'s `SKILL.md` and follow it.
-   - Ask the seams as a choice, with the seams listed above the question: **These seams (Recommended)**, **Fewer, higher seams** or **Change them**.
-   - Post their answers, the seams among them, on the item's issue (or, for a map's Destination item, a comment on the map naming it), each question with the answer quoted word for word (flow §2).
+   - Ask the seams as a choice, with the seams listed above the question: **These seams (Recommended)**, with its evidence (what each seam rests on in the code, what it leaves untested, and what would make it wrong), **Fewer, higher seams** or **Change them**.
+   - Post their answers, the seams among them, on the item's issue (or, for a map's Destination item, a comment on the map naming it), each round as soon as it's answered, tagged, each question with the answer quoted word for word (flow §2).
    - Review the draft before publishing it: `review-panel`'s planning review (§8), until a round is clean. A fix that would change what a decision means is a question for them first; anything still open after the last round is named in the handover.
    - Publish the reviewed text as is, under flow §2: labels `spec` and `ready-for-agent`, the decision behind each choice cited, and, for a map's Destination item, linked from the map. Check the published body's hash against the reviewed file (`review-panel` §8), then post each round's spec record on it, oldest first.
    - Close the item's issue as completed, with "Planned as #<spec>".
 
    Ask:
    - **Split it into tickets (Recommended)**;
-   - **Edit the spec first**: the edited body gets another planning round and its spec record (`review-panel` §8) before the tickets;
+   - **Edit the spec first**: the edited body gets another planning round and its spec record (`review-panel` §8) before the tickets, and the questions the edit raises are decision questions ("Decision questions", above), each round posted on the spec's issue as soon as it's answered, tagged;
    - **Stop here**: `/start` offers the tickets next time, from the open spec.
 3. **The tickets.** Read `to-tickets`' `SKILL.md` and follow it, with flow §2's additions. Show the breakdown and ask:
    - **Publish these (Recommended)**;
@@ -283,11 +288,11 @@ For each item, read the flow's section for its path and follow it, skipping noth
 3. Ask:
    - **Stop here: the first decision in a fresh session (Recommended)**: there, the first message offers it, or `/next map`;
    - **Next item of the plan**: only when it is light.
-4. **Each decision,** in its own session (flow §1): the owner's answers posted on its ticket, each question with the answer quoted word for word; the ADR and glossary written on a branch and given `review-panel`'s planning review (§8) until clean, before the ticket is closed and the pull request offered with its review records.
+4. **Each decision,** in its own session (flow §1): its rounds asked as decision questions ("Decision questions", above), each recommendation with its evidence, and each round posted on its ticket as soon as it's answered, tagged, each question with the answer quoted word for word. Then the ADR and glossary written on a branch and given `review-panel`'s planning review (§8) until clean, before the ticket is closed and the pull request offered with its review records.
 5. **The gate** (flow §1). None of a map's build tickets is built until every item of its Destination has a spec and tickets. `next`, this skill and the conductor's kick-off keep to it; `workflow ready` doesn't know about maps. So while a map has unspecified Destination items, don't offer to build its tickets.
 
 **Add to an existing issue:**
-1. Show the change to that issue, and ask **Make this change (Recommended)** or **Change it**.
+1. On a spec, ask the questions the change raises first: they are decision questions ("Decision questions", above), each round posted on the spec's issue as soon as it's answered, tagged. Then show the change to that issue, and ask **Make this change (Recommended)** or **Change it**.
 2. Edit it on yes.
 3. If it's a spec, its edited body gets another planning round and its spec record (`review-panel` §8). If its tickets are published, find the tickets the change touches, and change them the same way.
 4. A ticket already built (closed, or with an open PR) isn't edited: the change becomes a new quick ticket.
@@ -330,7 +335,7 @@ They can change course at any point. Take it as said, and confirm in one line:
 - **"Skip that one" / "drop it":** close its issue as not planned.
 - **"Do that one first":** reorder, and change the blockers to match.
 - **A spec or ticket to change after it's published:**
-  - edit it on GitHub, or ask you to; a spec you edit gets another planning round and its spec record (`review-panel` §8);
+  - edit it on GitHub, or ask you to; a spec you edit gets another planning round and its spec record (`review-panel` §8), and the questions the edit raises are asked as "Decision questions" (above) say;
   - removing `ready-for-agent` stops `/next` and runs picking it up;
   - closing it as not planned drops it.
 - **A decision to undo:** reopen it.
