@@ -300,13 +300,22 @@ def test_a_reset_or_restore_before_finishing_a_merge(proj, monkeypatch, capsys):
         "git checkout -b tmp && git commit -m m",
         "git checkout feature && git commit -m m",
         "git stash && git commit -m m",
+        "git switch -c tmp && git commit -m m",
     ):
         d, why = hook(monkeypatch, capsys, proj, command)
         assert d == "ask" and "may change what it commits" in why, (command, why)
         d, why = hook(monkeypatch, capsys, proj, command, "conductor")
         assert d == "deny", (command, why)
     # Finishing it as it stands (the merge's own changes carry no code), beside reads or a tag: through.
-    for command in ("git commit -m m", "git status && git diff --stat && git commit -m m", "git tag pre && git commit -m m"):
+    for command in (
+        "git commit -m m",
+        "git status && git diff --stat && git commit -m m",
+        "git tag pre && git commit -m m",
+        "git config user.name me && git commit -m m",
+        "git fetch origin && git commit -m m",
+        "git rm -q docs/guide.md && git commit -m m",
+        "git branch side && git commit -m m",
+    ):
         assert hook(monkeypatch, capsys, proj, command) == ("allow", ""), command
 
 
@@ -507,6 +516,11 @@ def test_a_push_beside_xargs_git_is_refused(proj, monkeypatch, capsys):
         "git commit -m d && echo push | xargs -0Ilog git log",
         "git commit -m d && echo push | xargs -I log env -i git log",
         "git commit -m d && echo push | xargs --r=log git log",
+        "git commit -m d && echo push | xargs --max-lines -I log git log",
+        "git commit -m d && echo push | xargs --max-a 1 -I log git log",
+        "git commit -m d && echo push | xargs -I log xargs git log",
+        "git commit -m d && echo push | env -S 'xargs -I log git log'",
+        "git commit -m d && echo push | xargs --frobnicate git log",
     ],
 )
 def test_a_git_command_that_may_itself_be_the_push_beside_a_commit_is_refused(proj, monkeypatch, capsys, command):

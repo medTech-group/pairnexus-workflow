@@ -993,39 +993,63 @@ def _strip_prefix(toks: list[str], wrappers: list[str] | None = None) -> tuple[l
 
 
 # xargs's short options that take a value (attached, else the next word); `-e`, `-l` and `-i` take one only attached.
-_XARGS_VALUES = set("adEILnPs")
+# GNU xargs's options, as getopt reads them: those taking the next word (or an attached value), those taking a value
+# only attached (`-i<word>`, `--replace=<word>`), and those taking none. A long option is read by any unique prefix.
+_XARGS_SHORT_NEXT = set("adEILnPs")
+_XARGS_SHORT_ATTACHED = set("eil")
+_XARGS_SHORT_FLAGS = set("0rtpxo")
+_XARGS_LONG = {
+    "arg-file": "next", "delimiter": "next", "max-args": "next", "max-chars": "next", "max-procs": "next",
+    "process-slot-var": "next", "eof": "attached", "max-lines": "attached", "replace": "attached", "null": "flag",
+    "no-run-if-empty": "flag", "verbose": "flag", "interactive": "flag", "exit": "flag", "open-tty": "flag",
+    "show-limits": "flag", "help": "flag", "version": "flag",
+}  # fmt: skip
 
 
 def _xargs_replace(head: list[str]) -> str | None:
-    """The word xargs replaces with its input, from its own options, read
-    from the last `xargs` word up to its command (`-I %`, `-I%`, `-0I%`, `-i`
-    or `-i<word>`, `--replace`, `--replace=<word>` or a prefix of it, the
-    last one given), else None."""
+    """The word xargs replaces with its input (`-I %`, `-I%`, `-0I%`, `-i`
+    or `-i<word>`, `--replace`, `--replace=<word>`, the last one given), read
+    from its own options up to its command; None when it replaces none; ""
+    when the guard can't read them with certainty (another `xargs` in the
+    chain, an option it doesn't know or that is ambiguous, a line `env -S`
+    splits), so any word may be replaced."""
     starts = [k for k, w in enumerate(head) if posixpath.basename(w) == "xargs"]
-    rep, i = None, (starts[-1] + 1 if starts else 0)
+    if len(starts) != 1:
+        return "" if starts or any("xargs" in w for w in head) else None
+    rep, i = None, starts[0] + 1
     while i < len(head):
         w = head[i]
         i += 1
         if w == "--" or not w.startswith("-") or len(w) < 2:
-            break  # its command starts: a wrapper's options after it aren't xargs's
+            return rep  # its command starts: a wrapper's options after it aren't xargs's
         if w.startswith("--"):
             name, eq, val = w[2:].partition("=")
-            if name and "replace".startswith(name):
+            cands = [o for o in _XARGS_LONG if o == name] or [o for o in _XARGS_LONG if o.startswith(name)] if name else []
+            if len(cands) != 1:
+                return ""
+            kind = _XARGS_LONG[cands[0]]
+            if cands[0] == "replace":
                 rep = val if eq else "{}"
-            elif not eq and name in ("max-args", "arg-file", "delimiter", "max-lines", "max-procs", "max-chars", "eof"):
+            elif kind == "next" and not eq:
                 i += 1  # its value
             continue
         for k, ch in enumerate(w[1:], 2):
-            if ch == "i":
-                rep = w[k:] or "{}"
+            if ch in _XARGS_SHORT_FLAGS:
+                continue
+            if ch in _XARGS_SHORT_ATTACHED:
+                if ch == "i":
+                    rep = w[k:] or "{}"
                 break
-            if ch in _XARGS_VALUES:
+            if ch in _XARGS_SHORT_NEXT:
                 val = w[k:]
-                if not val and i < len(head):
+                if not val:
+                    if i >= len(head):
+                        return ""
                     val, i = head[i], i + 1
                 if ch == "I":
                     rep = val
                 break
+            return ""  # an option it doesn't know
     return rep
 
 
@@ -8661,7 +8685,8 @@ def _part_git(s: Seg) -> list[str] | None:
     args = _other_git(s.words) if s.words else None
     if args is None and s.fed and s.words and posixpath.basename(s.words[0]) == "git":
         return ["<stdin>"]
-    if args and s.fed and s.fed_replace and s.fed_replace in args[0]:  # `xargs -I %`'s input stands in its subcommand
+    # `xargs -I %`'s input stands in its subcommand ("": a replace word it can't read, which may be any).
+    if args and s.fed and s.fed_replace is not None and (s.fed_replace == "" or s.fed_replace in args[0]):
         return ["<stdin>", *args[1:]]
     return args
 
