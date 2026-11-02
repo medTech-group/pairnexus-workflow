@@ -22,7 +22,7 @@ The directory holds:
 
 Read the repository files the evidence cites in place: a fact about the kit or the project is checked against its file, never against the session's summary of it.
 
-For the breakdown check, and its re-read, the directory also holds the spec, the drafted tickets with their full bodies (criteria, `## Blocked by`, `## Bar`), the owner tasks and the edits to existing issues, each edit as the edit itself. For a quick ticket's end check, and its re-read, it holds the drafted ticket and the item's issue; for the re-read, also the person's replies (each **Change it**, each reply to an **ask**), quoted word for word and tagged as the end-check rounds are.
+For the breakdown check, and its re-read, the directory also holds the spec, the drafted tickets with their full bodies (criteria, `## Blocked by`, `## Bar`), the owner tasks and the edits to existing issues, each edit as the edit itself. For a quick ticket's end check, and its re-read, it holds the drafted ticket and the item's issue; for the re-read, also the person's replies (each **Change it**, each reply to an **ask**), quoted word for word, each reply to an **ask** tagged **accepted recommendation** or **the person's own words**.
 
 **Sensitive data** (`profile.md`'s list) is left out of your inputs and marked as left out. Something missing because it was left out is not a finding. If you meet sensitive data all the same, never quote it. If it is in the scratch directory, name the file, so the session takes it out.
 
@@ -49,7 +49,7 @@ Mark each finding:
 - **ask**: it changes what an answer means, so it is the owner's to decide. The session asks the owner, or, where nothing is asked after the read (a last re-read), keeps it as left open. The breakdown check's re-read is the exception: its **ask** findings are asked, in one more short round before the tickets are published.
 - **fix**: wording, a fact or an omission that changes no answer's meaning. The session makes it and lists it where the owner can object.
 
-A finding about an answer tagged as the owner's own words is always **ask**, whatever its kind: only the owner changes their words. On a quick ticket, which posts no answers, the item's issue counts as the person's own words, and so does what they typed in their replies (a **Change it**, an answer to an **ask** that isn't an accepted recommendation): a finding that changes what they ask for is **ask**.
+A finding about an answer tagged as the owner's own words is always **ask**, whatever its kind: only the owner changes their words. On a quick ticket, which posts no answers, the item's issue counts as the person's own words, and so does what they typed in their replies (a **Change it**, a reply to an **ask** that isn't an accepted recommendation): a finding that changes what they ask for is **ask**.
 
 In the breakdown check, and its re-read, only wording is a **fix**. Anything that moves a criterion or a decision between tickets, owner tasks and edits, or changes a `## Blocked by`, is an **ask**.
 

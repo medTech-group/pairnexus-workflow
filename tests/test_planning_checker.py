@@ -197,14 +197,15 @@ def test_on_a_quick_ticket_the_persons_own_words_are_always_ask():
     # "Its ask findings are asked first" on a quick ticket.
     marks = _section("Ask or fix")
     quick = marks.split("On a quick ticket", 1)[1].split("In the breakdown check", 1)[0]
-    for part in ("the item's issue", "own words", "**Change it**", "an answer to an **ask**", "isn't an accepted recommendation", "is **ask**"):
+    for part in ("the item's issue", "own words", "**Change it**", "**ask**", "accepted", "is **ask**"):
         assert part in quick, part
 
 
 def test_a_quick_tickets_reread_gets_the_persons_replies_word_for_word():
     inputs = _section("Your inputs")
     quick = inputs.split("For a quick ticket's end check", 1)[1]
-    assert "the person's replies" in quick and "**Change it**" in quick and "word for word" in quick
+    for part in ("the person's replies", "**Change it**", "reply to an **ask**", "word for word", "tagged", "accepted recommendation", "own words"):
+        assert part in quick, part
 
 
 def test_a_reread_after_the_draft_follows_the_round_that_sent_its_questions():
