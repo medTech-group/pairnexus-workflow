@@ -7768,8 +7768,9 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tupl
             if f in guessed and f not in carried:  # only by a `git add` it can't read plainly (#394)
                 return (
                     f"{what} may carry the code path {_shown(hit)} ({hit.pattern}): an earlier `git add` that the guard can't "
-                    "read plainly counts as adding every changed and untracked file. If it adds no code path, name what it adds "
-                    f"plainly (`git add <path>`), or run it in a command of its own first; {code.instead}"
+                    "read plainly counts as adding every changed and untracked file (ignored ones too, where it may be given "
+                    "`-f`). If it adds no code path, name what it adds plainly (`git add <path>`, with no global option, "
+                    f"variable or wrapper), or run it in a command of its own first; {code.instead}"
                 ), None
             return f"{what} carries the code path {_shown(hit)} ({hit.pattern}); {code.instead}", None
         if own_err:  # it couldn't read the merge's own changes: asked when what is staged differs from a parent in code
@@ -9539,8 +9540,9 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
             unsure = held(f"{cant}: {err}")
     for s in segs:  # a git command whose subcommand the shell spells, or `xargs git`, may itself be a push (#394)
         args = _part_git(s)
-        # (`xargs -I %` may stand any word for its input: a fed subcommand that isn't one of git's own counts.)
-        if args and (args[0] == "<stdin>" or _shell_spelled(args[0], globs=True) or "{}" in args[0] or (s.fed and args[0] not in _GIT_COMMANDS)):
+        # (`xargs -I %` may stand any word for its input: a fed subcommand that isn't one of git's own counts, and any fed
+        # one where the command's `xargs` replaces a word.)
+        if args and (args[0] == "<stdin>" or _shell_spelled(args[0], globs=True) or "{}" in args[0] or (s.fed and (args[0] not in _GIT_COMMANDS or _XARGS_REPLACES.search(command)))):
             changers = changers or code.changers or _Changers(segs, root)
             made = changers.commits(s)
             if made:
@@ -9631,6 +9633,10 @@ def _may_reach(d: str, glob: list[str], named: str | None, remotes: set[str], cf
     return _legacy_remote(_git_common(d, glob), named) or _project_url(named, code.repo)
 
 
+# An `xargs` given a word to replace with its input (`-I %`, `-i`, `--replace`), which may then stand for git's subcommand.
+_XARGS_REPLACES = re.compile(r"(?<![\w./-])xargs\b[^|;&\n]*?\s(?:-[A-Za-z0-9]*[Ii]|--replace\b)")
+
+
 def _beside_ref_move(cant: str, moves: str, code: _Code, root: Path, made: bool) -> str:
     """The refusal of a push to `project.repo` (or one that may go there)
     beside `moves`: a git command that makes or finishes commits, or one the
@@ -9644,7 +9650,7 @@ def _beside_ref_move(cant: str, moves: str, code: _Code, root: Path, made: bool)
     if made:
         plain = ": " not in cant and cant.startswith("the guard can't tell what")  # only that it can't read a push beside one
         also = "" if plain else f" (besides, {cant})"  # a push it can't read for another reason says that too
-        unjudged = f" {unjudged[0].upper()}{unjudged[1:]}." if unjudged else ""
+        unjudged = f" {unjudged[0].upper()}{unjudged[1:]}, so its push is judged only in a command of its own." if unjudged else ""
         return (
             f"a push to `{code.repo or 'the project'}` in the same command as `{moves}`, which may make or finish commits, is "
             f"refused wherever it sits and whatever it carries{also}: run the push in a command of its own, after it, where "

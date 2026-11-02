@@ -287,6 +287,10 @@ def test_the_refusal_of_an_add_it_cant_read_says_so(proj, monkeypatch, capsys):
     _change(proj, "docs/guide.md")
     d, why = hook(monkeypatch, capsys, proj, "git add -u docs && git commit -m d")
     assert d == "deny" and "may carry the code path `src/app.py`" in why and "can't read plainly" in why and "`git add <path>`" in why, why
+    assert "ignored ones too" in why and "no global option, variable or wrapper" in why, why
+    # `xargs git add` on its own beside a commit: counted as every change, never taken for a push.
+    d, why = hook(monkeypatch, capsys, proj, "ls docs/*.md | xargs git add && git commit -m d")
+    assert d == "deny" and "may carry" in why and OWN not in why, why
     # A code path it reads plainly: as any refusal.
     d, why = hook(monkeypatch, capsys, proj, "git add src && git add -u docs && git commit -m d")
     assert d == "deny" and "this commit carries the code path `src/app.py`" in why, why
@@ -442,6 +446,8 @@ def test_a_push_beside_xargs_git_is_refused(proj, monkeypatch, capsys):
         "git commit -m d && echo push | xargs -I % git %",
         "git commit -m d && echo push | xargs -IX git X origin HEAD",
         "git commit -m d && echo push | xargs --replace=X git X",
+        "git commit -m d && echo push | xargs -I log git log",
+        "git commit -m d && echo push | xargs -i git {}",
     ],
 )
 def test_a_git_command_that_may_itself_be_the_push_beside_a_commit_is_refused(proj, monkeypatch, capsys, command):
@@ -543,6 +549,7 @@ def test_a_chained_push_on_a_prototype_branch_is_refused(tmp_path, monkeypatch, 
     for command in ("git commit -am x && git push origin prototype/x", "git commit -am x && git push", "git add -A && git commit -m x; git push origin HEAD"):
         d, why = hook(monkeypatch, capsys, root, command)
         assert d == "deny" and OWN in why and "unjudged" in why and "may make or finish commits" in why, (command, why)
+        assert "so its push is judged only in a command of its own" in why, why
     # Each on its own: the commit and the push to a prototype branch go through.
     assert hook(monkeypatch, capsys, root, "git commit -am x") == ("allow", "")
     git(root, "commit", "-qam", "x")
