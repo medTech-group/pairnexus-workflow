@@ -7638,6 +7638,7 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tupl
     tell what one carries), each None when it doesn't apply."""
     unsure, project, note = None, None, None
     named = None
+    staging: dict = {}  # what each `git add` in the command stages, read once (#394)
     for seg in segs:
         g = _commit_git(seg.words)
         if not g or not g[1]:
@@ -7722,6 +7723,13 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tupl
         if files is None:
             unsure = unsure or f"{cant}: {err}"
             continue
+        # What runs before it in the command: a `git add` stages more, read here; another git command may stage
+        # anything (#394).
+        more, before = _staged_before(segs, seg, d, glob, top, root, staging)
+        if before:
+            unsure = unsure or f"{cant}: {before}"
+        seen = set(files)
+        files += [f for f in more if f not in seen and not seen.add(f)]
         # A commit finishing a revert (`git commit` while one is in progress, `git revert --continue`) is judged by the revert rule (#392).
         hits = [_Hit(f, m, wt) for f in files for m in [_listed_code(f, code)] if m] if args[0] in ("commit", "revert") and not heads and not unread else []
         reverting = _revert_head(d, glob) if hits else ""
@@ -8252,7 +8260,7 @@ _KEEPS_REFS = {
     "for-each-ref", "format-patch", "fsck", "gc", "grep", "hash-object", "help", "log", "ls-files", "ls-remote",
     "ls-tree", "maintenance", "merge-base", "merge-file", "merge-tree", "mv", "name-rev", "pack-refs", "prune",
     "range-diff", "reflog", "repack", "restore", "rev-list", "rev-parse", "rm", "shortlog", "show", "show-branch",
-    "show-ref", "status", "stripspace", "var", "verify-commit", "verify-pack", "verify-tag", "version", "whatchanged",
+    "show-ref", "stage", "status", "stripspace", "var", "verify-commit", "verify-pack", "verify-tag", "version", "whatchanged",
 }  # fmt: skip
 _BRANCH_WRITES = re.compile(r"-[a-zA-Z]*[fdDmMcCu]|--(f|fo|for|forc|force|d|de|del|dele|delet|delete|m|mo|mov|move|c|co|cop|copy|set-upstream-to|u|un|uns|unset-upstream|edit-description)(=.*)?$", re.S)
 # Settings that change where a push goes (`remote.`, `url.`, a branch's remote, includes) or what a bare one sends (`push.default`).
@@ -8417,6 +8425,222 @@ def _git_changes(args: list[str]) -> str | None:
     return "refs"
 
 
+# ---------- what runs before a commit in the same command (#394) ----------
+#
+# The commit rule reads the index and the working tree as they are when the
+# command starts. A `git add` before the commit stages more: what it adds
+# counts, read as git reads it (its pathspec, or for `-A` and the like the
+# whole tree), or, when the guard can't read it plainly, every changed and
+# untracked file. Any other git command before it that may change what is
+# staged, or move HEAD to another commit under the index, makes it a commit
+# the guard can't tell about. What a script or interpreter stages, and git
+# aliases' meaning, aren't read: the push rule is the backstop.
+
+# git commands that leave what a later commit carries as the guard reads it: they write no index and move HEAD to no
+# other commit under it (a branch switched keeps what is staged; a commit made empties it).
+_KEEPS_STAGED = (_KEEPS_REFS - {"add", "stage", "apply", "merge-file", "mv", "rm", "restore"}) | {
+    "branch", "clone", "commit", "fetch", "init", "notes", "remote", "switch", "tag", "worktree", *_PUSH_CMDS,
+}  # fmt: skip
+# Settings that change what `git add` or the guard's reads of it see (the work tree, ignores, the index, filters).
+_STAGING_CONFIG = re.compile(r"(?i)(core|include|includeif|status|index|add|submodule|filter)\.")
+# `git add`'s long options (git takes a unique prefix of each, and a `no-` form of most) and those taking a value.
+_ADD_LONG = (
+    "all", "ignore-removal", "update", "dry-run", "verbose", "force", "interactive", "patch", "edit", "intent-to-add",
+    "refresh", "ignore-errors", "ignore-missing", "renormalize", "sparse", "chmod", "pathspec-from-file",
+    "pathspec-file-nul", "warn-embedded-repo",
+)  # fmt: skip
+_ADD_LONGS = sorted(set(_ADD_LONG) | {"no-" + o for o in _ADD_LONG})
+
+
+@dataclass
+class _Add:
+    """What a `git add` stages, as its arguments say; `None` from `_add_args` when it can't read them plainly."""
+
+    whole: bool = False  # `-A`, `-p` and the like: the whole tree without a pathspec
+    force: bool = False  # `-f`: ignored files too
+    dry: bool = False  # `-n`: nothing
+    tracked: bool = False  # `--chmod`, `--renormalize`: tracked files as they are
+    specs: list[str] = field(default_factory=list)
+
+
+def _add_args(args: list[str]) -> _Add | None:
+    a, i = _Add(), 0
+    while i < len(args):
+        w = args[i]
+        i += 1
+        if w == "--":
+            a.specs += args[i:]
+            break
+        if w.startswith("--"):
+            name, eq, _ = w[2:].partition("=")
+            cands = [o for o in _ADD_LONGS if o == name] or [o for o in _ADD_LONGS if o.startswith(name)] if name else []
+            if len(cands) != 1:
+                return None  # unknown or ambiguous
+            full = cands[0]
+            on, base = not full.startswith("no-"), full.removeprefix("no-")
+            if base in ("update", "pathspec-from-file") and on:
+                return None  # `-u`, or pathspecs from a file: every changed and untracked file
+            if base in ("chmod", "renormalize") and on:
+                a.tracked = True
+                i += 1 if base == "chmod" and not eq else 0
+            elif base == "all" or (base == "ignore-removal" and not on):
+                a.whole = on if base == "all" else True
+            elif base in ("interactive", "patch", "edit") and on:
+                a.whole = True
+            elif base == "dry-run":
+                a.dry = on
+            elif base == "force":
+                a.force = on
+            continue
+        if w.startswith("-") and len(w) > 1:
+            for ch in w[1:]:
+                if ch in "Aipe":
+                    a.whole = True
+                elif ch == "n":
+                    a.dry = True
+                elif ch == "f":
+                    a.force = True
+                elif ch not in "vN":
+                    return None  # `-u`, or one it doesn't know
+            continue
+        a.specs.append(w)
+    return a
+
+
+def _add_reading(s: Seg, root: Path) -> tuple[str, tuple[str, str] | None, list[str]]:
+    """What a `git add` part stages: ("checkout", (its top level, its git
+    directory), the files) when the guard reads it plainly, ("whole", None,
+    []) for every changed and untracked file when it can't, ("none", None,
+    []) when it stages nothing."""
+    whole: tuple[str, None, list[str]] = ("whole", None, [])
+    g = _commit_git(s.words)
+    args = _other_git(s.words)
+    if not args or (g is not None and (g[0] or g[2])) or s.words[0] not in ("git", "git-add", "git-stage") or s.wrappers or s.fed:
+        return whole  # a global option (`-C`), a path to git, a wrapper or the names `xargs` gives it
+    if any(x.partition("=")[0].removesuffix("+").startswith("GIT_") for x in s.assigns):
+        return whole
+    a = _add_args(args[1:])
+    if a is None:
+        return whole
+    if a.dry:
+        return ("none", None, [])
+    specs: list[str] = []
+    for w in a.specs:
+        words = _braces(w, _BRACE_LIMIT + 1)
+        if "{}" in w or _SHELL_EXPANDS.search(w) or w.startswith(":") or len(words) > _BRACE_LIMIT or any(_brace_sequence(x) for x in words):
+            return whole  # a word the shell expands, `find -exec`'s names, or a pathspec's magic (`:/`)
+        specs += words
+    if not specs and not a.whole:
+        return ("none", None, [])  # git adds nothing ("Nothing specified")
+    d = _git_dir_of(root, s.cwd, None)
+    if not d or _SPELLED_WORD.search(d) or not os.path.isdir(d):
+        return whole
+    where, _ = _git_read(d, [], "rev-parse", "--show-toplevel", "--absolute-git-dir", sep="\n")
+    if not where or len(where) != 2:
+        return whole
+    top = os.path.realpath(where[0])
+    run, tail = (d, ["--", *specs]) if specs else (top, [])
+    reads = [["diff", "--name-only", "-z", "--no-renames", *tail], ["ls-files", "-z", "--others", "--full-name", *([] if a.force else ["--exclude-standard"]), *tail]]
+    if a.tracked:
+        reads.append(["ls-files", "-z", "--full-name", *tail])
+    files: list[str] = []
+    for r in reads:
+        got, _ = _git_read(run, [], *r)
+        if got is None:
+            return whole
+        files += got
+    return ("checkout", (top, os.path.realpath(where[1])), files)
+
+
+def _keeps_staged(args: list[str]) -> bool:
+    """Whether `git <args>`, run before a commit in the same command, leaves
+    what the commit carries as the guard reads it (`_KEEPS_STAGED`; a
+    `checkout` of a branch, not of paths or `--orphan`; a `git config` but
+    of a setting that changes what is staged; a stash listed or shown)."""
+    sub, rest = args[0], args[1:]
+    if sub == "checkout":
+        words, i = 0, 0
+        while i < len(rest):
+            w = rest[i]
+            i += 1
+            if w == "--":
+                return False  # paths
+            if w.startswith("--"):
+                name = w[2:].partition("=")[0]
+                if not name or any(o.startswith(name) for o in ("orphan", "patch", "pathspec-from-file", "pathspec-file-nul")):
+                    return False
+                continue
+            if w.startswith("-") and len(w) > 1:
+                for k, ch in enumerate(w[1:], 1):
+                    if ch == "p":
+                        return False
+                    if ch in "bB":
+                        i += 1 if k == len(w) - 1 else 0  # its new branch's name
+                        break
+                continue
+            words += 1
+        return words <= 1  # a branch; a second word is a path
+    if sub == "stash":
+        return [w for w in rest if not w.startswith("-")][:1] in (["list"], ["show"])
+    if sub == "config":
+        opts, words = _config_args(rest)
+        if opts is None:
+            return False
+        verb = words[0] if words and words[0] in ("get", "list", "set", "unset", "edit", "rename-section", "remove-section") else None
+        if _CONFIG_READS & opts or verb in ("get", "list") or (not (_CONFIG_WRITES & opts) and verb is None and len(words) == 1):
+            return True
+        keys = words[1:] if verb else words
+        if {"-e", "--edit"} & opts or verb == "edit" or not keys:
+            return False
+        names = keys[:2] if "--rename-section" in opts or verb == "rename-section" else keys[:1]
+        return not any(_STAGING_CONFIG.match(k + ".") or _key_spelled(k) for k in names)
+    return sub in _KEEPS_STAGED
+
+
+def _staged_before(segs: list[Seg], seg: Seg, d: str, glob: list[str], top: str, root: Path, memo: dict) -> tuple[list[str], str]:
+    """(the files the `git add`s before the commit `seg` stage into its
+    checkout `top`, why the guard can't tell what another git command before
+    it stages, else ""). Each part is read once per command (`memo`)."""
+    files: list[str] = []
+    why = ""
+    for s in segs:
+        if s is seg:
+            break
+        args = _other_git(s.words) if s.words else None
+        if not args:
+            continue
+        label = "git " + " ".join(_brief(a) for a in args[:2])
+        if args[0] not in ("add", "stage"):
+            if not why and not _keeps_staged(args):
+                why = f"an earlier part runs `{label}`, which may change what it commits: run that in a command of its own first"
+            continue
+        if id(s) not in memo:
+            memo[id(s)] = _add_reading(s, root)
+        kind, where, names = memo[id(s)]
+        if kind == "checkout":
+            gd = memo.setdefault(("git-dir", d, tuple(glob)), _git_dir_abs(d, glob))
+            if where == (top, gd):
+                files += names
+            continue
+        if kind == "whole":  # every changed and untracked file of the commit's checkout
+            key = ("whole", top, tuple(glob))
+            if key not in memo:
+                got: list[str] | None = []
+                err = ""
+                for r in (["diff", "--name-only", "-z", "--no-renames"], ["ls-files", "-z", "--others", "--full-name", "--exclude-standard"]):
+                    more, err = _git_read(top, glob, *r)
+                    got = None if more is None or got is None else got + more
+                    if got is None:
+                        break
+                memo[key] = (got, err)
+            got, err = memo[key]
+            if got is None:
+                why = why or f"it couldn't read what the earlier `{label}` stages: {err}"
+            else:
+                files += got
+    return files, why
+
+
 # While the push rule runs: its git reads by their arguments, so many pushes in one command read each thing once.
 _PUSH_MEMO: dict | None = None
 _PUSH_RULE_SECONDS = 15  # the most the push rule spends on one command's pushes
@@ -8520,7 +8744,9 @@ def _global_config_write(s: Seg, root: Path) -> bool:
 class _Changers:
     """The parts of one command that may change what a push reads, each
     classified once: "config" (where pushes go), "refs" (a branch, a tag or
-    HEAD), "push" (refs, when it pushes into the judged repository)."""
+    HEAD), "push" (refs, when it pushes into the judged repository),
+    "unnamed" (a command word the shell spells, which may be git: counted
+    as "refs" by the push rule, never by `_moves_head`)."""
 
     def __init__(self, segs: list[Seg], root: Path):
         self.root = root
@@ -8532,6 +8758,8 @@ class _Changers:
                 self.parts.append((s, "refs", "gh " + " ".join(s.words[1:3]), None))
                 continue
             args = _other_git(s.words)
+            if args is None and _SPELLED_WORD.search(s.words[0]):  # a command word the shell spells: it may be git (#394)
+                self.parts.append((s, "unnamed", _brief(s.words[0]), None))
             what = _git_changes(args) if args else None
             label = "git " + " ".join(_brief(a) for a in args[:2]) if args else ""
             if what:
@@ -8553,9 +8781,19 @@ class _Changers:
                 if key not in self.into:
                     self.into[key] = _pushes_into(s, args, self.root, common)
                 what = "refs" if self.into[key] else ""
-            if what == kind or (kind == "config" and what == "url"):
+            if what == kind or (kind == "config" and what == "url") or (kind == "refs" and what == "unnamed"):
                 return label
         return None
+
+
+_SPELLED_WORD = re.compile(r"[$`]")  # a variable or a substitution in a command word
+
+
+def _head_kept(changers: _Changers, seg: Seg) -> bool:
+    """Whether every other part that may move a ref keeps which branch HEAD
+    names (`_KEEPS_HEAD`: a commit, a merge, a `--continue` but a rebase's),
+    so a bare push still goes where git picks its remote now."""
+    return all(args is not None and args[0] in _KEEPS_HEAD for s, what, _l, args in changers.parts if s is not seg and what in ("refs", "push", "unnamed"))
 
 
 def _push_env(segs: list[Seg], seg: Seg, pattern: re.Pattern) -> str | None:
@@ -8970,11 +9208,16 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
             continue
         if named is None and kind == "push":
             refs = changers.first(seg, "refs", _git_common(d, pglob))
-            moves = refs or changers.first(seg, "upstream")
-            if moves:  # git picks a bare push's remote by the branch checked out when it runs (asked when not ours)
-                if refs and code.prototyping(root) and _a_remote_of_ours(d, pglob, remotes, cfg, code):
-                    return _beside_prototype(cant, refs, code), None
-                unsure = unsure or f"{cant}: another part of the command runs `{moves}`, which can change where it goes and what it sends"
+            up = changers.first(seg, "upstream")
+            if refs or up:  # git picks a bare push's remote by the branch checked out when it runs (asked when not ours)
+                if refs and not up and _head_kept(changers, seg):  # that branch stays: where it goes is read now
+                    to_now = _default_remote(d, pglob)
+                    reach = to_now is None or _may_reach(d, pglob, to_now, remotes, cfg, code)
+                else:
+                    reach = bool(refs) and _a_remote_of_ours(d, pglob, remotes, cfg, code)
+                if reach:
+                    return _beside_ref_move(cant, refs or "", code, root), None
+                unsure = unsure or f"{cant}: another part of the command runs `{refs or up}`, which can change where it goes and what it sends"
                 continue
             named = _default_remote(d, pglob)
             if named is None:
@@ -9003,10 +9246,7 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
         common = _git_common(d, pglob)
         moves = changers.first(seg, "refs", common)
         if moves:
-            if code.prototyping(root):
-                return _beside_prototype(cant, moves, code), None
-            unsure = held(f"{cant}: another part of the command runs `{moves}`, which can change what it sends")
-            continue
+            return _beside_ref_move(cant, moves, code, root), None
         if seg.fed:
             unsure = held(f"{cant}: `xargs` gives it its refs")
             continue
@@ -9122,14 +9362,14 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
             err = _not_commits(d, pglob, srcs, pseudo)
         if err:
             unsure = held(f"{cant}: {err}")
-    if can_t and code.prototyping(root):
-        # A push it can't tell about beside a part that may move a ref, whatever stopped it reading: refused, not
-        # asked, since a code commit goes through unjudged on a `prototype/*` branch (#393).
+    if can_t:
+        # A push it can't tell about that may go to `project.repo`, beside a part that may move a ref, whatever stopped
+        # it reading: refused, not asked, as a push it can read is (#394).
         changers = changers or code.changers or _Changers(segs, root)
         for s, common, why in can_t:
             moves = changers.first(s, "refs", common)
             if moves:
-                return _beside_prototype(why, moves, code), None
+                return _beside_ref_move(why, moves, code, root), None
     return None, unsure or note or None
 
 
@@ -9206,15 +9446,17 @@ def _may_reach(d: str, glob: list[str], named: str | None, remotes: set[str], cf
     return _legacy_remote(_git_common(d, glob), named) or _project_url(named, code.repo)
 
 
-def _beside_prototype(cant: str, moves: str, code: _Code) -> str:
-    """The refusal of a planning session's push beside a part that may move
-    a ref, where a checkout is on a `prototype/*` branch: a code commit
-    there goes through unjudged, so asking would ask about prototype code
-    that could go anywhere (#393; #338's answer 41)."""
+def _beside_ref_move(cant: str, moves: str, code: _Code, root: Path) -> str:
+    """The refusal of a push to `project.repo` (or one that may go there)
+    beside a part that may move a ref: a git command that makes or finishes
+    commits, moves a branch, a tag or HEAD, or one the guard can't name.
+    Run apart, each is judged on its own, the push by what it sends (#394;
+    #338's answer 41). It covers #393's refusal while prototyping, where a
+    code commit goes through unjudged, which the refusal then says."""
+    proto = ", and on a `prototype/*` branch a planning session's code commits go through unjudged" if code.prototyping(root) else ""
     return (
-        f"{cant}: another part of the command runs `{moves}`, which can change what it sends, and on a `prototype/*` "
-        f"branch a planning session's code commits go through unjudged, so its push is refused beside them: run the "
-        f"push in a command of its own; {code.instead}"
+        f"{cant}: another part of the command runs `{moves}`, which can change what it sends{proto}, so a push is refused "
+        f"beside it: run the push in a command of its own, after it, where it is judged by what it sends; {code.instead}"
     )
 
 
