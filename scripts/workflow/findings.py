@@ -82,6 +82,8 @@ SECURITY = ("change", "main")
 OUTCOMES = ("contested", "fail-closed", "split")
 RULINGS = ("kept", "overturned")
 MAX_NAME = 80
+# How a finding kept after a contest is said, wherever it is listed.
+KEPT = ", kept after a contest"
 # At most this many findings, or outcomes, in one record.
 MAX_ITEMS = 999
 
@@ -136,7 +138,7 @@ class Finding:
     def text(self) -> str:
         what = {"blocks": "Blocks", "ticket": "A ticket to fix it", "note": "Note"}[self.mark]
         if self.contested:
-            what += ", kept after a contest"
+            what += KEPT
         return f"- {what}: {self.part()}."
 
     def part(self) -> str:

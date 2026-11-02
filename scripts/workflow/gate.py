@@ -11,11 +11,11 @@ Text inside ``` fences is ignored when looking for both, so a quoted status line
 or checklist doesn't count.
 `waiting` (CI running, a check-in scheduled), `needs-human`, `stopped` and
 `handed-off` (#371: the session posted the hand-off comment, and a fresh
-session carries the review on) end the turn as they are. Without a valid status the gate asks the session to add
-one, once per turn: never while a stop hook is already making it continue
-(`stop_hook_active`), so it can't trap a session in a loop. A cap of
-`MAX_BLOCKS` a session a day (UTC) is a last safety net, so a long ticket
-session keeps the gate the next day.
+session carries the review on) end the turn as they are. Without a valid
+status the gate asks the session to add one, once per turn: never while a stop
+hook is already making it continue (`stop_hook_active`), so it can't trap a
+session in a loop. A cap of `MAX_BLOCKS` a session a day (UTC) is a last
+safety net, so a long ticket session keeps the gate the next day.
 """
 
 from __future__ import annotations

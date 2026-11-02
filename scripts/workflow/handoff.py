@@ -35,6 +35,10 @@ write the comment from the record alone. The tickets filed are those given,
 the record's findings' tickets and the parts it says were split out, each
 once, in number order.
 
+The record can't be checked further than its round and kind: a pass's
+record names the round it follows, so with passes after the last round, any
+of them reads as that round's. Give the last one.
+
 The reader takes a comment only as the writer writes it: exactly one hand-off
 line, on a line of its own before any code fence, in a comment holding the
 agents' marker and no review record (`reviews`); otherwise none. It never
@@ -65,8 +69,8 @@ _ANY_REVIEW = re.compile(r"\s*<!--\s*workflow:(review|finding|outcome)\b", re.IG
 _LINE_END = re.compile(r"\r\n|\r|\n")
 
 
-NOT_RULE_2 = ("--record's review wasn't written from a findings file (a rule=2 record), so it names no findings: "
-              "a hand-off follows spec #412's rule")
+NOT_RULE_2 = ("--record's review names no findings: give the last review's record as `workflow review-record --findings` "
+              "writes it (a rule=2 record)")
 
 
 class HandOffError(ValueError):
@@ -154,11 +158,13 @@ def comment(*, head, round, passes, record: reviews_mod.Record | None = None, ti
         raise HandOffError(NOT_RULE_2)
     if record is not None and record.round != h.round:
         raise HandOffError(f"--record is round {record.round}'s, not --round {h.round}'s: give the last review's record")
+    if record is not None and record.kind == "pass" and not h.passes:
+        raise HandOffError("--record is a Correctness pass's, with --passes 0: give the last review's record, or the passes so far")
     found = record.found if record is not None else findings_mod.Findings()
     blocking = [f for f in found.findings if f.mark == "blocks"]
     if blocking:
         listed = "\n".join(["Open blocking findings:",
-                            *(f"- {f.part()}{', kept after a contest' if f.contested else ''}." for f in blocking)])
+                            *(f"- {f.part()}{findings_mod.KEPT if f.contested else ''}." for f in blocking)])
     else:
         listed = "Open blocking findings: none."
     filed = sorted({*tickets, *(f.issue for f in found.findings if f.issue), *(o.issue for o in found.outcomes if o.kind == "split")})

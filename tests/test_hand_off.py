@@ -46,7 +46,7 @@ def written(tmp_path, capsys, *args, record=None):
 
 def hand_off_comment(head=HEAD, rnd=3, passes=2, record=None, **kw):
     if record is None and rnd:
-        record = handoff.last_record(record_of([], rnd=rnd))
+        record = handoff.last_record(record_of([], rnd=rnd, kind="pass" if passes else "round"))
     return handoff.comment(head=head, round=rnd, passes=passes, record=record, **kw)
 
 
@@ -138,11 +138,18 @@ def test_the_last_record_in_the_file_counts():
     (("--commit", HEAD, "--round", "2", "--passes", "2"), "BLOCKS", "round 3's"),
     (("--commit", HEAD, "--round", "3", "--passes", "2"), "Not a record.", "holds no review record"),
     (("--commit", HEAD, "--round", "3", "--passes", "2"), "OLD", "rule=2"),
+    (("--commit", HEAD, "--round", "3", "--passes", "0"), "BLOCKS", "--passes 0"),  # a pass's record, with no pass
 ])
 def test_the_cli_refuses_a_malformed_flag(tmp_path, capsys, args, record, says):
     text = {"BLOCKS": record_of(BLOCKS), "OLD": reviews.record(kind="pass", round=3, commit=HEAD, reviewers="correctness", clean=False)}.get(record, record)
     out, err, code = written(tmp_path, capsys, *args, record=text)
     assert code == 2 and not out and says in err, err
+
+
+def test_a_rounds_own_record_goes_with_passes_after_an_earlier_round():
+    # A small review's round 1 and its passes, then a full round 2: round 2's record, with the passes so far.
+    record = handoff.last_record(record_of(BLOCKS, rnd=2, kind="round"))
+    assert "Open blocking findings:" in handoff.comment(head=HEAD, round=2, passes=3, record=record)
 
 
 def test_the_cli_refuses_a_record_it_cant_read(tmp_path, capsys):
@@ -280,6 +287,23 @@ def test_follows_means_posted_later_by_time_not_by_the_inputs_order(project, cap
     data["comments"][1]["created_at"] = "2026-10-16T08:10:00Z"  # now posted before it
     got, _ = check(project, capsys, data)
     assert got["hand_off"]["comment_id"] == 3
+
+
+def long_pr(*bodies_and_authors):
+    """A pull request of 300 commits, of which GitHub lists the oldest 250: its head isn't among them."""
+    data = with_comments(*bodies_and_authors)
+    data["pr"]["commits"] = 300
+    data["commits"] = [{"sha": EARLIER}] + [{"sha": f"{i:040x}"} for i in range(1, 250)]
+    return data
+
+
+def test_a_hand_off_of_a_head_the_commit_list_leaves_out_is_cleared_only_by_a_record_of_it(project, capsys):
+    data = long_pr((rec(rnd=3, clean=False), "owner"), (hand_off_comment(), "owner"), (rec(kind="pass", rnd=3, commit=EARLIER, clean=True), "owner"))
+    got, _ = check(project, capsys, data)
+    assert got["hand_off"]["comment_id"] == 2
+    data = long_pr((rec(rnd=3, clean=False), "owner"), (hand_off_comment(), "owner"), (rec(kind="pass", rnd=3, clean=True), "owner"))
+    got, _ = check(project, capsys, data)
+    assert got["hand_off"] is None
 
 
 def test_a_record_before_it_doesnt_clear_it(project, capsys):

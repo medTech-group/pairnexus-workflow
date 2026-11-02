@@ -899,6 +899,13 @@ def _may_review(login: str | None, perms: dict[str, str]) -> bool:
     return bool(login) and perms.get(login.casefold()) in WRITE
 
 
+def _counted(r: reviews.Record, perms: dict[str, str], shas: set[str]) -> bool:
+    """A round or pass record the review rules count: from an account with
+    write access, for a commit of the pull request (`shas`). `Context.records`
+    already leaves out spec records."""
+    return r.kind != "spec" and _may_review(r.author, perms) and r.commit in shas
+
+
 def _note(ctx: Context, nid: str, message: str) -> None:
     ctx.notes.append({"id": nid, "message": message})
 
@@ -1104,7 +1111,7 @@ def _panel(ctx: Context, add) -> None:
     perms = ctx.permissions()
     shas = ctx.commits() | {head}
     records = ctx.records()
-    counted = [r for r in records if _may_review(r.author, perms) and r.commit in shas]
+    counted = [r for r in records if _counted(r, perms, shas)]
     if len(records) > len(counted):
         left_out = _plural(len(records) - len(counted), "review record")
         _note(ctx, "records_ignored", f"Left out {left_out}: posted by an account without write access, or naming a commit outside this pull request.")
@@ -1211,11 +1218,12 @@ def _hand_off(ctx: Context) -> dict | None:
     if not trusted:
         return None
     latest = trusted[-1]
-    history = {sha: n for n, sha in enumerate(ctx.parents())}  # the PR's commits, oldest first
-    since = history.get(latest.head, -1)
+    # The PR's commits, oldest first. A trusted commit the list leaves out is the PR's head (GitHub lists
+    # at most 250): the newest, so a hand-off of it is cleared only by a record of it.
+    history = {sha: n for n, sha in enumerate(ctx.parents())}
+    since = history.get(latest.head, len(history))
     after = reviews.read(comments[latest.position + 1:])
-    if any(r.kind != "spec" and _may_review(r.author, perms) and r.commit in shas and history.get(r.commit, len(history)) >= since
-           for r in after):
+    if any(_counted(r, perms, shas) and history.get(r.commit, len(history)) >= since for r in after):
         return None
     where = f" ({_clean(latest.url)})" if latest.url else ""
     _note(ctx, "hand_off", f"Carry on in a fresh session: the comment on {_short(latest.head)}{where} hands the review on, "
