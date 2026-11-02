@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-**The flow's rules for decision questions** (#439, part of spec #436). A new section of `docs/flow.md`, "Decision questions", right after §2, holds the rules §1 and §2 follow. `start`, `next` and `review-panel` §8 follow them, and `conductor`'s charter questions the evidence rule; spec #436's other tickets wire them in (until #442, `review-panel` §8 still names the spec's first comment).
+**The flow's rules for decision questions** (#439, part of spec #436). A new section of `docs/flow.md`, "Decision questions", right after §2, holds the rules §1 and §2 follow. `start`, `next` and `review-panel` §8 follow them, and `conductor`'s charter questions get the evidence rule only; spec #436's other tickets wire them in (until #442, `review-panel` §8 still names the spec's first comment).
 
 - **Which questions:** those whose answer is posted as the owner's: a map decision's rounds, the spec interview, the seams, the questions the planning review's **Fixes** sends once a draft exists, and edits after publishing. A quick ticket gets the end check and the "Decided for you" list, without posted answers; the run charter's questions get the evidence rule only; routing choices get neither.
 - **What a recommendation carries:** what it rests on, what it gives up and what would make it wrong; no "(Recommended)" without a basis; the evidence and the checks' findings follow the sensitive-data rule (`profile.md`) before anything is posted. "Yes to all" answers only questions with a recommendation, and a finding about the owner's own words is asked on its own.
