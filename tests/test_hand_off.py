@@ -306,6 +306,14 @@ def test_a_hand_off_of_a_head_the_commit_list_leaves_out_is_cleared_only_by_a_re
     assert got["hand_off"] is None
 
 
+def test_a_hand_off_of_a_commit_past_the_listed_250_that_is_no_longer_the_head_is_left_out_saying_so(project, capsys):
+    data = long_pr((rec(rnd=3, clean=False), "owner"), (hand_off_comment(head=OUTSIDE), "owner"))
+    got, _ = check(project, capsys, data)
+    assert got["hand_off"] is None
+    [n] = [x for x in got["notes"] if x["id"] == "hand_offs_ignored"]
+    assert "past the 250 GitHub lists" in n["message"]
+
+
 def test_a_record_before_it_doesnt_clear_it(project, capsys):
     data = with_comments((rec(clean=False), "owner"), (rec(kind="pass", clean=False), "owner"), (hand_off_comment(), "owner"))
     got, _ = check(project, capsys, data)

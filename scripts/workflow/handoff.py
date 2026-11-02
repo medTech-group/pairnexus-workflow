@@ -164,7 +164,7 @@ def comment(*, head, round, passes, record: reviews_mod.Record | None = None, ti
     blocking = [f for f in found.findings if f.mark == "blocks"]
     if blocking:
         listed = "\n".join(["Open blocking findings:",
-                            *(f"- {f.part()}{findings_mod.KEPT if f.contested else ''}." for f in blocking)])
+                            *(f"- {f.part()}{findings_mod.KEPT_SAID if f.contested else ''}." for f in blocking)])
     else:
         listed = "Open blocking findings: none."
     filed = sorted({*tickets, *(f.issue for f in found.findings if f.issue), *(o.issue for o in found.outcomes if o.kind == "split")})
