@@ -171,8 +171,13 @@ def test_same_as_last_time_is_not_recommended_as_is_where_today_s_evidence_rules
     # Such an answer is asked again on its own, with its own recommendation, and only then.
     assert "again" in s and "on its own" in s and "only" in s
     assert "rules it out" in s and "doctor line" in s
-    # The cases, each from evidence the conductor has.
-    assert "`ui.explorer`" in reuse and "`github.approvals`" in reuse and "solo-mode" in reuse
+    # The cases, each from evidence the conductor has today: what validate would refuse
+    # against today's profile and queue, `github.approvals` against the reused mode,
+    # and `auto-merge` picked today for a reused `session`, whether or not it was offered then.
+    assert "charter validate" in reuse and "merge queue is on" in reuse
+    assert "`github.approvals`" in _sentence(reuse, "`github.approvals`") and "isn't `owner`" in reuse
+    s = _sentence(reuse, "reused `session`")
+    assert "`auto-merge`" in s and "can't show" in s
 
 
 def test_same_as_last_time_names_a_difference_from_the_defaults_without_asking_it_again():
