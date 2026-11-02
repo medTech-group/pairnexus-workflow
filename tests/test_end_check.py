@@ -303,8 +303,9 @@ def test_next_runs_the_end_check_as_start_does():
     s = _sentence(before, '"End check"')
     assert "rounds are over" in s and "`start`" in s
     # A map decision's rounds too, but never a planning review's fix questions.
-    assert "map decision" in s and "fix questions still come" in s
-    assert "glossary" in r
+    assert "map decision" in s
+    assert "planning review" in s and "fix" in s and "still" in s
+    assert "glossary" in r and "recorded" in r
     # A pointer, not a copy of `start`'s steps.
     assert "**Leave them open**" not in r
 
