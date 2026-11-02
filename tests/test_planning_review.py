@@ -98,7 +98,10 @@ def test_flow_2_says_where_the_answers_are_posted():
     s2 = _flatten(_flow(2))
     assert "each question with the answer quoted word for word" in s2
     assert "on the item's issue or the map's Destination item (a comment on the map naming it), when there is one" in s2
-    assert "Otherwise they are the spec's first comment once it is published, before its records" in s2
+    # #439 (spec #436, "Records"): with neither, an item's issue is filed first,
+    # in place of "Otherwise they are the spec's first comment once it is published".
+    assert "A spec with neither files an item's issue first" in s2
+    assert "spec's first comment" not in s2
     # Posted once the seams are agreed, so the seam answer is among them.
     assert s2.index("agree the test seams") < s2.index("**Post the owner's answers**")
     assert "the seams among them" in s2
