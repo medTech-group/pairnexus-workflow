@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-**The interview's recommendations carry their evidence, and each round is posted as it's answered** (#440, part of spec #436). `start` and `next` now ask their decision questions under the flow's "Decision questions": the interview's rounds, the seams, a map decision's rounds, and in `start` the questions a planning review's fixes raise and those of **Edit the spec first** and of **Add to an existing issue** on a spec. Routing choices keep their one line of why.
+**The interview's recommendations carry their evidence, and each round is posted as it's answered** (#440, part of spec #436). `start` and `next` now ask their decision questions under the flow's "Decision questions": the interview's rounds, the seams, a map decision's rounds, the questions a planning review's fixes raise, and in `start` those of **Edit the spec first** and of **Add to an existing issue** on a spec. Routing choices keep their one line of why.
 
 - **Evidence:** each recommended option says what it rests on (the file, issue, ADR or earlier answer checked), what it gives up and what would make it wrong; with no basis to prefer one option, no "(Recommended)", and the options are laid out.
 - **"Yes to all"** answers only the questions with a recommendation; the others are asked again on their own, and a finding about the owner's own words is asked on its own.

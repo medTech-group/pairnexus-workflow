@@ -326,7 +326,7 @@ def test_next_takes_the_rules_from_start_s_decision_questions():
     s = _sentence(_intro(_next()), "Choices")
     assert "`start`" in s and "SKILL.md" in s and "read" in s
     assert '"Decision questions"' in s
-    for part in ("evidence", '"yes to all"', "post", "leaves out"):
+    for part in ("evidence", '"yes to all"', "post", "leaves out", "tags", "confirmed replacement lines"):
         assert part in s, part
     # Not restated: no rules of its own on evidence or "yes to all".
     block = _block(_next())
@@ -345,6 +345,8 @@ def test_next_posts_each_round_where_the_flow_says():
         assert place in s, place
     s = _sentence(r, "fix raises")
     assert "current rounds" in s and "before the spec is published" in s
+    # After publishing (a later planning review, such as the ADR pull request's): the spec's issue.
+    assert "spec's issue after" in s
 
 
 def test_next_reads_this_spec_s_or_decision_s_rounds_before_asking():
@@ -361,6 +363,11 @@ def test_next_s_rules_are_part_of_picking_one():
 
 
 # --- changelog -----------------------------------------------------------------
+
+
+def test_the_changelog_note_gives_both_skills_the_fixes_questions():
+    note = since_0110().split("(#440, part of spec #436)", 1)[1].split("\n\n", 1)[0]
+    assert note.index("planning review's fixes") < note.index("in `start`")
 
 
 def test_the_changelog_has_a_note_and_version_is_untouched():
