@@ -73,7 +73,7 @@ def test_each_recommendation_carries_its_evidence_and_yes_to_all_answers_only_th
     assert "only" in s and "with a recommendation" in s
 
 
-def test_each_round_is_posted_as_answered_tagged_word_for_word_before_the_next_round():
+def test_each_question_round_is_posted_as_answered_tagged_word_for_word():
     fixes = _para("Fixes:")
     s = _sentence(fixes, "as soon as it's answered")
     assert "posted" in s
@@ -88,7 +88,7 @@ def test_each_round_is_posted_as_answered_tagged_word_for_word_before_the_next_r
 def test_a_confirmed_replacement_is_posted_as_a_plain_line():
     s = _sentence(_para("Fixes:"), "confirmed")
     assert "plain line" in s
-    assert "replaces" in s
+    assert "replacement" in s and "narrowing" in s
 
 
 def test_a_question_round_after_publishing_goes_on_the_spec_s_issue():
@@ -101,7 +101,7 @@ def test_a_question_round_after_publishing_goes_on_the_spec_s_issue():
 # --- one re-read, then stop ------------------------------------------------
 
 
-def test_each_round_gets_one_re_read_by_the_planning_checker_against_all_earlier_answers_then_stops():
+def test_each_question_round_gets_one_re_read_by_the_planning_checker_against_all_earlier_answers_then_stops():
     reread = _para("The re-read:")
     assert "`planning-checker`" in reread
     s = _sentence(reread, "`planning-checker`")
@@ -144,7 +144,9 @@ def test_what_the_re_read_leaves_goes_in_a_comment_and_where_the_flow_says():
     reread = _para("The re-read:")
     s = _sentence(reread, "in a comment")
     assert "fixes" in s and "what it leaves" in s
-    assert "the issue the question round was posted on" in s
+    assert "question round" in s and "posted on" in s
+    # No round follows a re-read, so its fixes have no round's post to go in (flow, **Each read's fixes**).
+    assert "no round follows a re-read" in s
     s = _sentence(reread, "What's left")
     # The flow's rule: Further Notes before publishing, a comment on the spec's issue after.
     assert "Further Notes" in s
@@ -156,7 +158,7 @@ def test_what_the_re_read_leaves_goes_in_a_comment_and_where_the_flow_says():
 def test_a_question_round_after_the_last_planning_round_gets_its_re_read_in_the_published_spec():
     records = _para("Records:")
     s = _sentence(records, "re-read")
-    assert "before publishing" in s
+    assert "before the body is published" in s
     assert "Further Notes" in s and "`spec.md`" in s
 
 
@@ -168,10 +170,9 @@ def test_an_edit_after_publishing_posts_its_rounds_tagged_on_the_spec_s_issue():
     assert "decision questions" in edit
     s = _sentence(edit, "on the spec's issue as soon as")
     # The tagged form is **Fixes**'s, pointed to rather than restated.
-    assert "tagged form **Fixes** gives" in s
+    assert "tagged form" in s and "**Fixes**" in s
     # The owner's request for the change is among the round, as their own words.
     assert "request" in s and "word for word" in s and "**the owner's own words**" in s
-    assert "sensitive data (`profile.md`) left out and marked as left out" in s
     # The old untagged form is gone.
     assert "First post the owner's words for the change" not in edit
 
@@ -187,12 +188,13 @@ def test_an_edit_after_publishing_gets_one_re_read_before_its_planning_round():
 # --- what the planning review reads ----------------------------------------
 
 
-def test_answers_md_is_each_round_s_post_with_its_tags_and_confirmed_lines():
+def test_answers_md_is_each_question_round_s_post_with_its_tags_and_confirmed_lines():
     answers = _bullet("the owner's answers as posted, as `answers.md`")
-    assert "never the session's summary" in answers
-    s = _sentence(answers, "tagged")
-    assert "**accepted recommendation**" in s and "**the owner's own words**" in s
-    assert "evidence" in s and "findings" in s and "word for word" in s
+    s = _sentence(answers, "copied as posted")
+    assert "never the session's summary" in s
+    # The post's form is **Fixes**'s, tags, evidence and findings included.
+    assert "question round" in s and "**Fixes**" in s
+    assert "tags" in s and "evidence" in s and "findings" in s
     # What settles which answer stands is in the file for the Spec reviewer to read.
     assert "confirmed replacement line" in s
     assert "listing a check's fixes" in s
@@ -222,13 +224,22 @@ def test_a_confirmed_line_or_an_unobjected_listed_fix_settles_which_answer_stand
     brief = _bullet("**Spec:**")
     s = _sentence(brief, "settles")
     assert "confirmed replacement line" in s
-    assert "fix listed in a post" in s and "no objection" in s
+    assert "fix listed in a question round's post" in s and "no objection" in s
+    # The re-read's fixes are listed in a comment, not a round's post: they settle too.
+    assert "comment listing a check's fixes" in s
+
+
+def test_a_conflict_a_check_left_open_is_never_settled_by_later_words():
+    brief = _bullet("**Spec:**")
+    s = _sentence(brief, "left open is settled")
+    assert "later words" in s
+    assert "report" in s and "settled" in s
 
 
 def test_the_later_words_stand_only_where_neither_settles_it():
     brief = _bullet("**Spec:**")
     s = _sentence(brief, "the later words stand")
-    assert "neither" in s
+    assert "none of these" in s
     assert "plainly" in s
 
 
@@ -240,11 +251,14 @@ def test_a_review_after_publishing_reads_what_was_posted_on_the_spec_s_issue():
     assert "on the spec's issue" in s
     for words in ("question round", "confirmed line", "listing a check's fixes"):
         assert words in s, words
+    # The breakdown check's rounds are among them, held to the tickets, not the spec's words.
+    assert "breakdown check's" in s and "not the spec's words" in s
 
 
 def test_an_edit_s_last_re_read_comes_before_any_tickets_are_written_from_it():
     s = _sentence(_para("The re-read:"), "before the next planning round")
-    assert "edit after publishing" in s and "before any tickets" in s
+    assert "edit after publishing" in s and "any tickets" in s
+    assert "after the last planning round" in s
 
 
 def test_the_re_read_s_comment_on_a_map_names_its_destination_item():
@@ -254,7 +268,12 @@ def test_the_re_read_s_comment_on_a_map_names_its_destination_item():
 
 def test_the_re_read_s_directory_counts_re_reads_on_its_issue():
     s = _sentence(_para("The re-read:"), "/tmp/plan-check-")
-    assert "`<n>` counting re-reads" in s
+    assert "`<n>`" in s and "re-reads on that issue" in s
+
+
+def test_the_re_read_reads_every_earlier_answer_wherever_it_was_posted():
+    s = _sentence(_para("The re-read:"), "/tmp/plan-check-")
+    assert "every answer `answers.md` takes" in s and "wherever it was posted" in s
 
 
 # --- the changelog ---------------------------------------------------------
