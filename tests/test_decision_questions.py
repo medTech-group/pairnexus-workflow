@@ -256,7 +256,7 @@ def test_the_checks_are_named_with_the_checker_that_runs_them():
     # Its round lets the owner leave a finding open, and isn't itself checked first.
     assert "**Leave them open**" in _sentence(r, "short round")
     s = _sentence(r, "before the round is asked")
-    # A check's own rounds (the end check's, the breakdown check's) aren't read first, and no round twice.
+    # A check's own rounds (the end check's, the breakdown check's) aren't read first, and a round's own check isn't repeated.
     assert "except a check's own rounds" in s and "end check" in s and "breakdown check" in s
     assert "never repeats a round's own check" in s
     s = _sentence(r, "(the re-read)")

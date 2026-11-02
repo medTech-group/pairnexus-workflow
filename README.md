@@ -462,6 +462,7 @@ Claude interviews you in **rounds**:
 **3. `/to-tickets`: the build tickets.** Type `/to-tickets`, or `/to-tickets #<spec number>` in a new session.
 - It splits the spec into **thin end-to-end slices**: each works through every layer it touches (data, API, screen, tests) and can be checked on its own, rather than one layer at a time. Any tidying the code needs first comes first.
 - It shows you the list (each ticket's title, what blocks it, and what it delivers) and asks whether the size is right, whether the blocking is right, and whether any should be merged or split. It changes the list until you approve it.
+- Under the kit's flow, Claude then checks the list against the spec (each decision in exactly one ticket, what blocks what) and asks you about anything that would move work between tickets.
 - It publishes them in order, blockers first, each linked to what blocks it.
 - **The kit's flow adds to each build ticket:**
   - a written `## Blocked by` section, as well as GitHub's own links, so a blocker closed as "not planned" is still seen. The readiness check also reads a `Blocked by: #12, #14` line, "blocked by #8" in a sentence (so don't write it in passing), issue and PR links (an open PR blocks until it merges), `owner/repo#n`, and "None";
