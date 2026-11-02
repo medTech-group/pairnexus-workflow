@@ -192,14 +192,19 @@ def test_a_finding_about_the_owners_own_words_is_always_ask():
     assert re.search(r"owner's own words[^.]*always \*\*ask\*\*", marks), marks
 
 
-def test_on_a_quick_ticket_the_items_issue_counts_as_the_persons_own_words():
-    # Answer 4, and spec #436's "Its ask findings are asked first" on a quick ticket.
+def test_on_a_quick_ticket_the_persons_own_words_are_always_ask():
+    # Answer 4 ("an answer they typed, not one they accepted"), and spec #436's
+    # "Its ask findings are asked first" on a quick ticket.
     marks = _section("Ask or fix")
-    assert re.search(
-        r"On a quick ticket[^:]*the item's issue and what the person typed \(a \*\*Change it\*\*, a reply to an \*\*ask\*\*\) "
-        r"count as the person's own words: a finding that changes what they ask for is \*\*ask\*\*",
-        marks,
-    ), marks
+    quick = marks.split("On a quick ticket", 1)[1].split("In the breakdown check", 1)[0]
+    for part in ("the item's issue", "own words", "**Change it**", "an answer to an **ask**", "isn't an accepted recommendation", "is **ask**"):
+        assert part in quick, part
+
+
+def test_a_quick_tickets_reread_gets_the_persons_replies_word_for_word():
+    inputs = _section("Your inputs")
+    quick = inputs.split("For a quick ticket's end check", 1)[1]
+    assert "the person's replies" in quick and "**Change it**" in quick and "word for word" in quick
 
 
 def test_a_reread_after_the_draft_follows_the_round_that_sent_its_questions():
