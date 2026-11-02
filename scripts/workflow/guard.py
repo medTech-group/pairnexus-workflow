@@ -7639,6 +7639,7 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tupl
     unsure, project, note = None, None, None
     named = None
     staging: dict = {}  # what each `git add` in the command stages, read once (#394)
+    reorders: bool | None = None  # whether a later part may run first, read once
     for seg in segs:
         g = _commit_git(seg.words)
         if not g or not g[1]:
@@ -7736,7 +7737,9 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tupl
                 keep = set(named)
                 more = [f for f in more if f in keep]
         hit = next((_Hit(f, m, wt) for f in later for m in [_listed_code(f, code)] if m), None)
-        if hit:
+        if hit and reorders is None:
+            reorders = _may_reorder(command)
+        if hit and reorders:
             unsure = unsure or (
                 f"{cant}: a later part runs `git add`, which may run first (in a loop, a pipeline or the background) and "
                 f"would stage the code path {_shown(hit)} ({hit.pattern})"
@@ -8543,6 +8546,23 @@ def _add_args(args: list[str]) -> _Add | None:
     return a
 
 
+# The shell's words that can run a later part first: a background job, a pipeline, a loop, a coprocess.
+_REORDERS = {"&", "|", "|&", "for", "while", "until", "select", "coproc"}
+
+
+def _may_reorder(command: str) -> bool:
+    """Whether a later part of the command may run before an earlier one: it
+    holds `&`, `|`, a loop or a coprocess, or a substitution (`$(…)`, a
+    backtick, `<(…)`), which runs before the part it is in. A plain sequence
+    (`;`, `&&`, `||`, newlines) runs in order."""
+    if "`" in command or "$(" in command or "<(" in command or ">(" in command:
+        return True
+    try:
+        return any(isinstance(t, str) and t in _REORDERS for t in _tokens(command))
+    except Exception:  # a command it can't split: may
+        return True
+
+
 def _part_git(s: Seg) -> list[str] | None:
     """A part's git subcommand and arguments (`_other_git`), or `<stdin>`
     for `xargs git`, which takes its subcommand from its stdin: a git command
@@ -8604,15 +8624,19 @@ def _add_reading(s: Seg, root: Path) -> _Staging:
     return _Staging(files + tracked, os.path.realpath(where[1]))
 
 
-def _keeps_staged(args: list[str], s: Seg) -> bool:
+def _keeps_staged(args: list[str], s: Seg, into) -> bool:
     """Whether `git <args>` (the part `s`), run before a commit in the same
     command, leaves what the commit carries as the guard reads it
     (`_KEEPS_STAGED`): a `checkout` of a branch, not of paths, `--orphan`,
     `--ours` or `-m`; a `git config` but of a setting that changes what is
-    staged; a stash listed or shown; a `fetch` naming no destination and a
-    push not into this repository; a `restore` without `--source`; a `git rm`
-    or `git mv` whose paths it reads, which the write rule judges."""
+    staged; a stash listed or shown; a `fetch` naming no destination; a push
+    that `into()` says goes elsewhere than this repository (one into it may
+    update its working tree, `updateInstead`); a `restore` without
+    `--source`; a `git rm` or `git mv` whose paths it reads, which the write
+    rule judges."""
     sub, rest = args[0], args[1:]
+    if sub in _PUSH_CMDS:
+        return _git_changes(args) is None or not into()
     if sub in ("rm", "mv", "restore"):
         if s.fed or any(_EXPANDS.search(w) or w.startswith("--pathspec-f") for w in rest):
             return False
@@ -8650,7 +8674,7 @@ def _keeps_staged(args: list[str], s: Seg) -> bool:
         return words <= 1  # a branch; a second word is a path
     if sub == "stash":
         return [w for w in rest if not w.startswith("-")][:1] in (["list"], ["show"])
-    if sub == "fetch" or sub in _PUSH_CMDS:  # not `--update-head-ok` with a destination, nor a push into this repository
+    if sub == "fetch":  # not `--update-head-ok` with a destination
         return _git_changes(args) is None
     if sub == "config":
         opts, words = _config_args(rest)
@@ -8685,7 +8709,7 @@ def _staged_before(segs: list[Seg], seg: Seg, d: str, glob: list[str], top: str,
         if not args:
             continue
         if args[0] not in ("add", "stage"):
-            if ahead and not why and not _keeps_staged(args, s):
+            if ahead and not why and not _keeps_staged(args, s, lambda: _pushes_into(s, args, root, _git_common(d, glob))):
                 label = "git " + " ".join(_brief(a) for a in args[:2])
                 why = f"an earlier part runs `{label}`, which may change what it commits: run that in a command of its own first"
             continue
@@ -8886,7 +8910,7 @@ def _refused_beside(changers: _Changers, seg: Seg, moves: str, cant: str, code: 
     while prototyping (#393); else None (asked)."""
     made = changers.commits(seg)
     if made or code.prototyping(root):
-        return _beside_ref_move(cant, made or moves, code, root)
+        return _beside_ref_move(cant, made or moves, code, root, bool(made))
     return None
 
 
@@ -9319,7 +9343,7 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
                     else:
                         reach = _a_remote_of_ours(d, pglob, remotes, cfg, code)
                     if reach:
-                        return _beside_ref_move(cant, made or refs, code, root), None
+                        return _beside_ref_move(cant, made or refs, code, root, bool(made)), None
                 unsure = unsure or f"{cant}: another part of the command runs `{refs or up}`, which can change where it goes and what it sends"
                 continue
             named = _default_remote(d, pglob)
@@ -9469,6 +9493,13 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
             err = _not_commits(d, pglob, srcs, pseudo)
         if err:
             unsure = held(f"{cant}: {err}")
+    for s in segs:  # a git command whose subcommand the shell spells, or `xargs git`, may itself be a push (#394)
+        args = _part_git(s)
+        if args and (args[0] == "<stdin>" or _EXPANDS.search(args[0])):
+            changers = changers or code.changers or _Changers(segs, root)
+            made = changers.commits(s)
+            if made:
+                return _beside_ref_move(f"the guard can't tell whether `git {_brief(args[0])}` is a push, or where it goes", made, code, root, True), None
     if can_t:
         # A push it can't tell about that may go to `project.repo`, whatever stopped it reading, beside a part that makes
         # or finishes commits (#394), or, while prototyping, any that may move a ref (#393): refused, not asked, as a
@@ -9555,14 +9586,21 @@ def _may_reach(d: str, glob: list[str], named: str | None, remotes: set[str], cf
     return _legacy_remote(_git_common(d, glob), named) or _project_url(named, code.repo)
 
 
-def _beside_ref_move(cant: str, moves: str, code: _Code, root: Path) -> str:
+def _beside_ref_move(cant: str, moves: str, code: _Code, root: Path, made: bool) -> str:
     """The refusal of a push to `project.repo` (or one that may go there)
-    beside a git command that makes or finishes commits, or one the guard
-    can't name (#394), or, while prototyping, beside any part that may move
-    a ref (#393: a code commit goes through unjudged there, which the
-    refusal then says). Run apart, each is judged on its own, the push by
-    what it sends (#338's answer 41)."""
+    beside `moves`: a git command that makes or finishes commits, or one the
+    guard can't name (`made`, #394), refused wherever it sits and whatever
+    the push carries; else, while prototyping, any part that may move a ref
+    (#393: a code commit goes through unjudged there, which the refusal then
+    says). Run apart, each is judged on its own, the push by what it sends
+    (#338's answer 41)."""
     proto = ", and on a `prototype/*` branch a planning session's code commits go through unjudged" if code.prototyping(root) else ""
+    if made:
+        return (
+            f"{cant}: another part of the command runs `{moves}`, which may make or finish commits{proto}, and a push to "
+            f"`{code.repo or 'the project'}` is refused in the same command as one, wherever it sits and whatever it carries: "
+            f"run the push in a command of its own, after it, where it is judged by what it sends ({code.writes_none})"
+        )
     return (
         f"{cant}: another part of the command runs `{moves}`, which can change what it sends{proto}, so a push is refused "
         f"beside it: run the push in a command of its own, after it, where it is judged by what it sends; {code.instead}"
