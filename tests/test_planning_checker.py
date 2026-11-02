@@ -200,7 +200,8 @@ def test_on_a_quick_ticket_the_persons_own_words_are_always_ask():
     for part in ("the item's issue", "own words", "is **ask**"):
         assert part in quick, part
     # What they typed: a Change it, and a reply to an ask unless it accepted the recommendation.
-    assert re.search(r"\*\*Change it\*\*[^)]*\*\*ask\*\*[^)]*accepted", quick), quick
+    assert re.search(r"\*\*Change it\*\*[^)]*\*\*ask\*\*[^)]*\b(?:isn't|not|never|unless|except)\b[^)]*accepted", quick), quick
+    assert not re.search(r"accepted or not|even an accepted", quick), quick
 
 
 def test_a_quick_tickets_reread_gets_the_persons_replies_word_for_word():
