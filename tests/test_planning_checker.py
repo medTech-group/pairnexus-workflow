@@ -197,8 +197,10 @@ def test_on_a_quick_ticket_the_persons_own_words_are_always_ask():
     # "Its ask findings are asked first" on a quick ticket.
     marks = _section("Ask or fix")
     quick = marks.split("On a quick ticket", 1)[1].split("In the breakdown check", 1)[0]
-    for part in ("the item's issue", "own words", "**Change it**", "**ask**", "accepted", "is **ask**"):
+    for part in ("the item's issue", "own words", "is **ask**"):
         assert part in quick, part
+    # What they typed: a Change it, and a reply to an ask unless it accepted the recommendation.
+    assert re.search(r"\*\*Change it\*\*[^)]*\*\*ask\*\*[^)]*accepted", quick), quick
 
 
 def test_a_quick_tickets_reread_gets_the_persons_replies_word_for_word():
