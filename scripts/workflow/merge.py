@@ -1088,8 +1088,8 @@ def _panel(ctx: Context, add) -> None:
     PR, each record counted) number `ctx.review_passes`, the pass cap (#256)
     gives `passes_used_up` instead: the owner decides. With the cap `until-clean`
     (#402) there is none: it never does. Records from accounts
-    without write access, or naming a commit not in the PR's commit list, are
-    ignored (`_counted`).
+    without write access, or naming a commit not in the PR's commit list (the
+    head always counts), are ignored (`_counted`).
 
     The small review (#257): when no counted round ran `spec`, the diff must be
     within the small threshold (`ctx.size`). Past it, `past_small_threshold`
