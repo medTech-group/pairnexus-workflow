@@ -159,6 +159,8 @@ def test_a_question_round_after_the_last_planning_round_gets_its_re_read_in_the_
     records = _para("Records:")
     s = _sentence(records, "re-read")
     assert "before the body is published" in s
+    # An edit's body is saved, not published.
+    assert "saved" in s
     assert "Further Notes" in s and "`spec.md`" in s
 
 
@@ -231,9 +233,17 @@ def test_a_confirmed_line_or_an_unobjected_listed_fix_settles_which_answer_stand
 
 def test_a_conflict_a_check_left_open_is_never_settled_by_later_words():
     brief = _bullet("**Spec:**")
-    s = _sentence(brief, "left open is settled")
-    assert "later words" in s
-    assert "report" in s and "settled" in s
+    s = _sentence(brief, "left open")
+    # Neither a confirmed line nor a listed fix settles it, and nor do later words...
+    assert "neither" in s and "later words" in s
+    assert "report" in s
+    # ...until the owner answers it.
+    assert "until the owner answers it" in s
+
+
+def test_the_spec_reviewer_never_holds_the_spec_to_the_breakdown_check_s_rounds():
+    s = _sentence(_bullet("**Spec:**"), "breakdown check's rounds")
+    assert "ticket" in s and "never report them as dropped" in s
 
 
 def test_the_later_words_stand_only_where_neither_settles_it():
@@ -258,6 +268,7 @@ def test_a_review_after_publishing_reads_what_was_posted_on_the_spec_s_issue():
 def test_an_edit_s_last_re_read_comes_before_any_tickets_are_written_from_it():
     s = _sentence(_para("The re-read:"), "before the next planning round")
     assert "edit after publishing" in s and "any tickets" in s
+    assert "before its body is saved" in s
     assert "after the last planning round" in s
 
 
