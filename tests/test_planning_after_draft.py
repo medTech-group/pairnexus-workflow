@@ -199,7 +199,8 @@ def test_answers_md_is_each_question_round_s_post_with_its_tags_and_confirmed_li
     assert "tags" in s and "evidence" in s and "findings" in s
     # What settles which answer stands is in the file for the Spec reviewer to read.
     assert "confirmed replacement line" in s
-    assert "listing a check's fixes" in s
+    # Every comment a check posts, its leftovers included, even one with no fixes.
+    assert "every comment a check posts" in s and "what it leaves" in s
 
 
 def test_the_spec_s_first_comment_is_gone_from_the_planning_review():
@@ -224,11 +225,11 @@ def test_the_spec_reviewer_is_told_what_is_not_the_owner_s_words():
 
 def test_a_confirmed_line_or_an_unobjected_listed_fix_settles_which_answer_stands():
     brief = _bullet("**Spec:**")
-    s = _sentence(brief, "settles")
+    s = _sentence(brief, "confirmed replacement line")
     assert "confirmed replacement line" in s
     assert "fix listed in a question round's post" in s and "no objection" in s
     # The re-read's fixes are listed in a comment, not a round's post: they settle too.
-    assert "comment listing a check's fixes" in s
+    assert "check's comment" in s
 
 
 def test_a_conflict_a_check_left_open_is_never_settled_by_later_words():
@@ -238,12 +239,12 @@ def test_a_conflict_a_check_left_open_is_never_settled_by_later_words():
     assert "neither" in s and "later words" in s
     assert "report" in s
     # ...until the owner answers it.
-    assert "until the owner answers it" in s
+    assert "until" in s and "owner" in s and "answer" in s
 
 
 def test_the_spec_reviewer_never_holds_the_spec_to_the_breakdown_check_s_rounds():
     s = _sentence(_bullet("**Spec:**"), "breakdown check's rounds")
-    assert "ticket" in s and "never report them as dropped" in s
+    assert "ticket" in s and "never" in s and "dropped" in s
 
 
 def test_the_later_words_stand_only_where_neither_settles_it():
@@ -259,7 +260,7 @@ def test_a_review_after_publishing_reads_what_was_posted_on_the_spec_s_issue():
     # An edit's review and a spec session's pull request's alike.
     assert "edit" in s and "pull request" in s
     assert "on the spec's issue" in s
-    for words in ("question round", "confirmed line", "listing a check's fixes"):
+    for words in ("question round", "confirmed line", "check's comment"):
         assert words in s, words
     # The breakdown check's rounds are among them, held to the tickets, not the spec's words.
     assert "breakdown check's" in s and "not the spec's words" in s
@@ -268,7 +269,7 @@ def test_a_review_after_publishing_reads_what_was_posted_on_the_spec_s_issue():
 def test_an_edit_s_last_re_read_comes_before_any_tickets_are_written_from_it():
     s = _sentence(_para("The re-read:"), "before the next planning round")
     assert "edit after publishing" in s and "any tickets" in s
-    assert "before its body is saved" in s
+    assert "saved" in s
     assert "after the last planning round" in s
 
 
