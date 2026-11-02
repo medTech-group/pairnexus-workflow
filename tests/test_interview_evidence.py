@@ -63,12 +63,14 @@ def _choices() -> str:
 def _path(name: str) -> str:
     """`start`'s step 4 path, from its bold name to the next path, flattened."""
     step = _between(_start(), "## 4. Work through the plan", "\n## 5.")
+    assert f"\n**{name}**" in step, f"step 4 has a **{name}** path"
     return _flatten(step.split(f"\n**{name}**", 1)[1].split("\n**", 1)[0])
 
 
 def _spec_step(n: int) -> str:
     """Step n of `start`'s Spec path, flattened."""
     spec = _between(_start(), "\n**Spec** (flow §2)", "\n**Map**")
+    assert f"\n{n}. " in spec, f"the Spec path has a step {n}"
     return _flatten(spec.split(f"\n{n}. ", 1)[1].split(f"\n{n + 1}. ", 1)[0])
 
 
@@ -99,7 +101,7 @@ def test_the_recommended_option_needs_one_to_come_first():
     # Not every question has a recommendation any more: one comes first only when there is one.
     s = _sentence(options, "(Recommended)")
     assert "recommend" in s.split('"(Recommended)"')[0].lower() and "first" in s
-    assert "when" in s.lower() or "if" in s.lower()
+    assert re.search(r"\b(when|if)\b", s, re.I)
     assert "evidence" in options
 
 
@@ -170,14 +172,14 @@ def test_start_s_round_post_has_the_flow_s_form():
 
 
 def test_start_numbers_the_answers_across_issues_so_a_line_can_name_one():
-    s = _sentence(_rule(_choices(), "Each round"), "numbers")
-    assert "answers" in s
+    s = _sentence(_rule(_choices(), "Each round"), "numbers the answers")
     # On from the last answer for the same spec or decision, wherever it was posted,
     # so an edit's first round on the spec's issue doesn't start again at 1.
     assert "spec or decision" in s
     assert "item's issue" in s and "spec's issue" in s
     # Older posts without numbers still count.
-    assert "without numbers" in s
+    s = _sentence(_rule(_choices(), "Each round"), "without numbers")
+    assert "order" in s
 
 
 def test_a_replacement_line_names_the_issue_of_an_answer_posted_elsewhere():
@@ -190,6 +192,18 @@ def test_start_posts_confirmed_replacements_as_plain_lines():
     assert "replacement" in s and "narrowing" in s
     assert "plain line" in s
     assert re.search(r"answer \d+ replaces \d+: confirmed", s)
+
+
+def test_a_reply_that_isn_t_an_accepted_recommendation_is_the_owner_s_own_words():
+    s = _sentence(_rule(_choices(), "Each round"), "word for word")
+    tag = s.split("**the owner's own words**", 1)[1]
+    # An option picked over the recommendation, or where none was recommended, as well as one typed.
+    assert "picked" in tag and "typed" in tag and "accepted" in tag
+
+
+def test_a_question_a_fix_raises_is_posted_where_the_rounds_it_changes_are():
+    s = _sentence(_rule(_choices(), "Each round"), "fix raises")
+    assert "where the rounds it changes" in s
 
 
 def test_start_s_round_posts_leave_out_sensitive_data():
@@ -231,6 +245,8 @@ def test_the_seams_carry_their_evidence_and_are_posted_as_answered():
 def test_a_question_a_planning_review_fix_raises_is_a_decision_question():
     s = _sentence(_spec_step(2), "A fix that would change what a decision means")
     assert "Decision questions" in s and "posted" in s
+    # Where the interview's rounds are: a map's Destination item has no item's issue.
+    assert "where the interview's rounds are" in s
     s = _sentence(_path("Map"), "a fix raises")
     assert "decision question" in s
 
@@ -292,6 +308,7 @@ def test_next_points_to_the_flow_for_its_decision_questions():
     assert 'flow, "Decision questions"' in intro
     for kind in ("map decision", "interview", "seams"):
         assert kind in intro, kind
+    assert "draft" in _sentence(intro, "**Fixes**")
     # A `next` session hasn't loaded `start`: it is told where to read its "Choices".
     s = _sentence(intro, "Choices")
     assert "`start`" in s and "SKILL.md" in s and "read" in s
@@ -320,18 +337,21 @@ def test_next_s_yes_to_all_answers_only_questions_with_a_recommendation():
 
 def test_next_posts_each_round_tagged_and_reads_what_s_posted():
     r = _rule(_next(), "Each round")
-    s = _sentence(r, "as soon as it's answered")
+    s = _sentence(r, "word for word")
     assert "**accepted recommendation**" in s and "**the owner's own words**" in s
-    assert "word for word" in s
     assert re.search(r"answer \d+ replaces \d+: confirmed", r)
     # Where: as the flow posts the owner's answers.
     s = _sentence(r, "as soon as it's answered")
     for place in ("decision ticket", "item's issue", "map"):
         assert place in s, place
+    s = _sentence(r, "word for word")
     assert "recommendation" in s.replace("**accepted recommendation**", "")
+    assert "picked" in s.split("**the owner's own words**", 1)[1]
     # Before asking, it reads the rounds already posted and carries on from them.
     s = _sentence(r, "already posted")
     assert "carry on" in s and "before" in s.lower()
+    # Only this spec's or decision's rounds: on a map, the comments naming its Destination item.
+    assert "spec or decision" in s and "Destination item" in s
 
 
 def test_next_s_round_posts_leave_out_sensitive_data():
