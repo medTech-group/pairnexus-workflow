@@ -17,25 +17,41 @@ import pytest
 
 from test_merge_check import EARLIER, HEAD, OUTSIDE, check, comment, inputs, note_ids, project, rec  # noqa: F401 (project is a fixture)
 from changelog_notes import since_0110
-from workflow import cli, findings, gate, handoff, merge
+from workflow import cli, findings, gate, handoff, merge, reviews
 
 LINE = f"<!-- workflow:hand-off head={HEAD} round=3 passes=2 -->"
 
 
-def written(tmp_path, capsys, *args, found=None):
-    """`workflow hand-off`'s output and exit code, with `found` as its findings file."""
+def record_of(found, rnd=3, kind="pass", commit=EARLIER):
+    """The last review's record, as `workflow review-record --findings` writes it."""
+    f = findings.load(json.dumps(found))
+    who = "correctness" if kind == "pass" else "standards,spec,correctness"
+    return reviews.record(kind=kind, round=rnd, commit=commit, reviewers=who, clean=None, findings=f)
+
+
+BLOCKS = [{"mark": "blocks", "mechanism": "the requeue order", "reproducer": "a PR dropped twice is requeued once"}]
+
+
+def written(tmp_path, capsys, *args, record=None):
+    """`workflow hand-off`'s output, errors and exit code, with `record` as its --record file."""
     argv = ["hand-off", *args]
-    if found is not None:
-        path = tmp_path / "findings.json"
-        path.write_text(json.dumps(found))
-        argv += ["--findings", str(path)]
+    if record is not None:
+        path = tmp_path / "record.md"
+        path.write_text(record)
+        argv += ["--record", str(path)]
     code = cli.main(argv)
     out = capsys.readouterr()
     return out.out, out.err, code
 
 
-def hand_off_comment(head=HEAD, rnd=3, passes=2, **kw):
-    return handoff.comment(head=head, round=rnd, passes=passes, **kw)
+def hand_off_comment(head=HEAD, rnd=3, passes=2, record=None, **kw):
+    if record is None and rnd:
+        record = handoff.last_record(record_of([], rnd=rnd))
+    return handoff.comment(head=head, round=rnd, passes=passes, record=record, **kw)
+
+
+def from_record(found, **kw):
+    return hand_off_comment(record=handoff.last_record(record_of(found)), **kw)
 
 
 # ---------- the comment ----------
@@ -51,58 +67,95 @@ def test_the_comment_has_a_plain_heading_the_head_the_reviews_and_the_machine_li
     assert "Open blocking findings: none." in text and "Tickets filed: none." in text
 
 
-def test_open_blocking_findings_are_listed_a_security_one_by_its_area_only():
-    found = findings.load(json.dumps([
-        {"mark": "blocks", "mechanism": "the requeue order", "reproducer": "a PR dropped twice is requeued once"},
+def test_open_blocking_findings_come_from_the_record_a_security_one_by_its_area_only():
+    text = from_record([
+        *BLOCKS,
         {"mark": "blocks", "mechanism": "token check", "reproducer": "SECRET-DETAIL an expired token passes", "security": "change", "area": "sign-in"},
         {"mark": "note", "mechanism": "wording"},
         {"mark": "ticket", "mechanism": "label sync", "issue": 415},
-    ]))
-    text = hand_off_comment(found=found)
-    assert "the part `the requeue order`" in text
-    assert "a security problem the change adds, in `sign-in`" in text
+    ])
+    assert "- the part `the requeue order`." in text
+    assert "- a security problem the change adds, in `sign-in`." in text
     assert "SECRET-DETAIL" not in text and "token check" not in text and "expired" not in text
-    assert "a PR dropped twice" not in text  # no reproducer is written
+    assert "a PR dropped twice" not in text  # a record carries no reproducer
     assert "wording" not in text  # a note isn't open
     assert "Tickets filed: #415." in text  # a ticket to fix it is a ticket filed
 
 
-def test_tickets_filed_join_the_findings_tickets_and_splits_once_each_in_order():
-    found = findings.load(json.dumps({
+def test_a_finding_kept_after_a_contest_says_so():
+    text = from_record({"findings": [{**BLOCKS[0], "contested": True}], "outcomes": [{"outcome": "contested", "finding": 1, "ruling": "kept"}]})
+    assert "- the part `the requeue order`, kept after a contest." in text
+
+
+def test_a_blocking_findings_own_ticket_is_a_ticket_filed():
+    text = from_record([{"mark": "blocks", "mechanism": "m", "reproducer": "r", "security": "main", "area": "sign-in", "issue": 420}])
+    assert "in `sign-in`, #420." in text and "Tickets filed: #420." in text
+
+
+def test_tickets_filed_join_the_records_tickets_and_splits_once_each_in_number_order():
+    text = from_record({
         "findings": [{"mark": "ticket", "mechanism": "label sync", "issue": 415}],
         "outcomes": [{"outcome": "split", "mechanism": "the preview reader", "issue": 416}],
-    }))
-    text = hand_off_comment(found=found, tickets=(417, 415))
+    }, tickets=(417, 415))
     assert "Tickets filed: #415, #416, #417." in text
 
 
-def test_the_cli_writes_the_comment(tmp_path, capsys):
-    out, err, code = written(tmp_path, capsys, "--commit", HEAD, "--round", "3", "--passes", "2", "--tickets", "#417,418",
-                             found=[{"mark": "blocks", "mechanism": "the requeue order", "reproducer": "x"}])
+def test_the_part_is_named_as_the_records_own_list_names_it():
+    f = findings.load(json.dumps([{"mark": "blocks", "mechanism": "m", "reproducer": "r", "covered": True, "issue": 9}])).findings[0]
+    assert f.text() == f"- Blocks: {f.part()}." and f.part() == "the part `m`, which the safe fallback covers, #9"
+
+
+def test_the_cli_writes_the_comment_from_the_record(tmp_path, capsys):
+    rec_text = record_of(BLOCKS)
+    out, err, code = written(tmp_path, capsys, "--commit", HEAD, "--round", "3", "--passes", "2", "--tickets", "#417,418", record=rec_text)
     assert code == 0 and not err
-    assert out == hand_off_comment(found=findings.load(json.dumps([{"mark": "blocks", "mechanism": "the requeue order", "reproducer": "x"}])), tickets=(417, 418))
+    assert out == hand_off_comment(record=handoff.last_record(rec_text), tickets=(417, 418))
     assert handoff.in_text(out).head == HEAD
+    # A record GitHub gives back, with `\r\n` and a cloud session's footer, reads the same.
+    crlf = (rec_text + "\n---\n_Generated by [Claude Code](https://claude.ai/code)_\n").replace("\n", "\r\n")
+    assert written(tmp_path, capsys, "--commit", HEAD, "--round", "3", "--passes", "2", "--tickets", "#417,418", record=crlf)[0] == out
 
 
-@pytest.mark.parametrize("args, says", [
-    (("--round", "3", "--passes", "2"), "--commit"),
-    (("--commit", HEAD[:7], "--round", "3", "--passes", "2"), "40-character"),
-    (("--commit", HEAD, "--passes", "2"), "--round"),
-    (("--commit", HEAD, "--round", "x", "--passes", "2"), "--round"),
-    (("--commit", HEAD, "--round", "3"), "--passes"),
-    (("--commit", HEAD, "--round", "3", "--passes", "-1"), "--passes"),
-    (("--commit", HEAD, "--round", "0", "--passes", "1"), "a pass follows a round"),
-    (("--commit", HEAD, "--round", "3", "--passes", "2", "--tickets", "x"), "--tickets"),
-    (("--commit", HEAD, "--commit", HEAD, "--round", "3", "--passes", "2"), "once"),
+def test_the_last_record_in_the_file_counts():
+    two = record_of([], rnd=3, kind="round") + record_of(BLOCKS)
+    assert handoff.last_record(two).findings[0].mechanism == "the requeue order"
+
+
+@pytest.mark.parametrize("args, record, says", [
+    (("--round", "3", "--passes", "2"), None, "--commit"),
+    (("--commit", HEAD[:7], "--round", "3", "--passes", "2"), None, "40-character"),
+    (("--commit", HEAD, "--passes", "2"), None, "--round"),
+    (("--commit", HEAD, "--round", "x", "--passes", "2"), None, "--round"),
+    (("--commit", HEAD, "--round", "3"), None, "--passes"),
+    (("--commit", HEAD, "--round", "3", "--passes", "-1"), None, "--passes"),
+    (("--commit", HEAD, "--round", "0", "--passes", "1"), None, "a pass follows a round"),
+    (("--commit", HEAD, "--round", "3", "--passes", "2", "--tickets", "x"), None, "--tickets"),
+    (("--commit", HEAD, "--round", "3", "--passes", "2", "--tickets", "##415"), None, "--tickets"),
+    (("--commit", HEAD, "--commit", HEAD, "--round", "3", "--passes", "2"), None, "once"),
+    # The open findings are named from the first round on, and never before.
+    (("--commit", HEAD, "--round", "3", "--passes", "2"), None, "give --record"),
+    (("--commit", HEAD, "--round", "0", "--passes", "0"), "BLOCKS", "--round 0"),
+    (("--commit", HEAD, "--round", "2", "--passes", "2"), "BLOCKS", "round 3's"),
+    (("--commit", HEAD, "--round", "3", "--passes", "2"), "Not a record.", "holds no review record"),
+    (("--commit", HEAD, "--round", "3", "--passes", "2"), "OLD", "rule=2"),
 ])
-def test_the_cli_refuses_a_malformed_flag(tmp_path, capsys, args, says):
-    out, err, code = written(tmp_path, capsys, *args)
-    assert code == 2 and not out and says in err
+def test_the_cli_refuses_a_malformed_flag(tmp_path, capsys, args, record, says):
+    text = {"BLOCKS": record_of(BLOCKS), "OLD": reviews.record(kind="pass", round=3, commit=HEAD, reviewers="correctness", clean=False)}.get(record, record)
+    out, err, code = written(tmp_path, capsys, *args, record=text)
+    assert code == 2 and not out and says in err, err
 
 
-def test_the_cli_refuses_a_malformed_findings_file(tmp_path, capsys):
-    out, err, code = written(tmp_path, capsys, "--commit", HEAD, "--round", "1", "--passes", "0", found=[{"mark": "blocks", "mechanism": "x"}])
-    assert code == 2 and not out and "reproducer" in err
+def test_the_cli_refuses_a_record_it_cant_read(tmp_path, capsys):
+    argv = ["hand-off", "--commit", HEAD, "--round", "1", "--passes", "0", "--record"]
+    assert cli.main([*argv, str(tmp_path / "missing.md")]) == 2
+    (tmp_path / "latin1.md").write_bytes("caf\xe9".encode("latin-1"))
+    assert cli.main([*argv, str(tmp_path / "latin1.md")]) == 2
+    assert "UTF-8" in capsys.readouterr().err
+
+
+def test_a_comment_past_githubs_limit_is_refused():
+    with pytest.raises(handoff.HandOffError, match="UTF-16"):
+        hand_off_comment(tickets=tuple(range(1_000_000, 1_008_000)))
 
 
 def test_no_review_yet_is_allowed():
@@ -161,7 +214,7 @@ def test_the_latest_trusted_hand_off_is_reported(project, capsys):
     assert {k: h[k] for k in ("head", "round", "passes", "comment_id", "author", "on_head")} == {
         "head": HEAD, "round": 3, "passes": 2, "comment_id": 3, "author": "owner", "on_head": True}
     assert h["url"].endswith("#issuecomment-3")
-    assert "hand_off" in note_ids(got)
+    assert "hand_off" in note_ids(got) and "hand_offs_ignored" not in note_ids(got)
     # It reports, and never decides: the review's own reasons stand.
     assert got["decision"] == "not_yet" and "review_not_clean" in [r["id"] for r in got["reasons"]]
 
@@ -196,6 +249,32 @@ def test_a_record_that_isnt_counted_doesnt_clear_it(project, capsys, after):
     assert got["hand_off"] is not None and got["hand_off"]["comment_id"] == 2
 
 
+def test_a_record_posted_after_it_for_an_older_commit_doesnt_clear_it(project, capsys):
+    # A record posted late for a commit before the hand-off's head is no review since.
+    data = with_comments((rec(rnd=3, clean=False), "owner"), (hand_off_comment(), "owner"), (rec(kind="pass", rnd=3, commit=EARLIER, clean=True), "owner"))
+    got, _ = check(project, capsys, data)
+    assert got["hand_off"]["comment_id"] == 2
+
+
+def test_a_record_for_a_later_commit_clears_a_hand_off_of_an_earlier_one(project, capsys):
+    data = with_comments((rec(commit=EARLIER, clean=False), "owner"), (hand_off_comment(head=EARLIER, rnd=1, passes=0), "owner"),
+                         (rec(rnd=2, clean=True), "owner"))
+    got, _ = check(project, capsys, data)
+    assert got["hand_off"] is None
+
+
+def test_follows_means_posted_later_by_time_not_by_the_inputs_order(project, capsys):
+    data = with_comments((rec(clean=False), "owner"), (rec(rnd=2, clean=True), "owner"), (hand_off_comment(rnd=1, passes=0), "owner"))
+    # The record is listed before the hand-off but was posted after it.
+    data["comments"][0]["created_at"] = "2026-10-16T08:00:00Z"
+    data["comments"][2]["created_at"] = "2026-10-16T08:30:00Z"
+    got, _ = check(project, capsys, data)
+    assert got["hand_off"] is None
+    data["comments"][1]["created_at"] = "2026-10-16T08:10:00Z"  # now posted before it
+    got, _ = check(project, capsys, data)
+    assert got["hand_off"]["comment_id"] == 3
+
+
 def test_a_record_before_it_doesnt_clear_it(project, capsys):
     data = with_comments((rec(clean=False), "owner"), (rec(kind="pass", clean=False), "owner"), (hand_off_comment(), "owner"))
     got, _ = check(project, capsys, data)
@@ -221,7 +300,7 @@ def test_an_untrusted_later_hand_off_leaves_the_trusted_one_reported(project, ca
 def test_the_text_answer_names_the_hand_off(project, capsys):
     data = with_comments((rec(clean=False), "owner"), (hand_off_comment(), "owner"))
     out, _ = check(project, capsys, data, as_json=False)
-    assert "Handed off" in out and HEAD[:7] in out
+    assert "Carry on in a fresh session" in out and "Handed off" not in out and HEAD[:7] in out
 
 
 def test_unreadable_comments_give_no_hand_off(project, capsys):
@@ -248,6 +327,7 @@ def test_the_gate_accepts_handed_off_without_the_checklist(tmp_path, monkeypatch
 
 def test_the_gate_still_asks_for_a_status_and_reads_no_status_from_a_fence(tmp_path, monkeypatch):
     monkeypatch.setenv("TMPDIR", str(tmp_path))
+    assert "handed-off" in gate.verdict("All done.")  # its request names every status it accepts
     assert gate.verdict("```\nWORKFLOW-STATUS: handed-off\n```\n")
     assert gate.verdict("WORKFLOW-STATUS: handed-offish")
     assert gate.verdict("WORKFLOW-STATUS: handed")

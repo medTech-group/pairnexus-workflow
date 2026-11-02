@@ -57,7 +57,7 @@ def verdict(message: str) -> str | None:
     m = STATUS.search(message)
     if not m:
         return (
-            "End the turn with a status line, `WORKFLOW-STATUS: done | waiting | needs-human | stopped`. "
+            "End the turn with a status line, `WORKFLOW-STATUS: done | waiting | needs-human | stopped | handed-off`. "
             "`done` also needs the flow's Building checklist, every line marked done or saying why not. "
             "Waiting on CI with a check-in scheduled is `waiting`."
         )

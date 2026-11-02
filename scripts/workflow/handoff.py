@@ -12,7 +12,7 @@ the two can't drift:
     This session stops here. A fresh session carries the review on from `3f2a9c0`, the head this covers.
 
     Open blocking findings:
-    - the part `the requeue order`.
+    - the part `the requeue order`, kept after a contest.
     - a security problem the change adds, in `sign-in`.
 
     Tickets filed: #415, #416.
@@ -26,11 +26,14 @@ the two can't drift:
 - `round`: the review rounds so far (0: no review yet);
 - `passes`: the Correctness passes so far, after any round (0 without a round).
 
-The open blocking findings are the findings file's (`findings`, the last
-review's) marked blocks, each by its part's name, a security finding by its
-area only, and never a reproducer, so no security detail crosses sessions. The
-tickets filed are those given, the findings' tickets to fix them and the parts
-split out, each once, in number order.
+The open blocking findings come from the last review's record (`reviews`, a
+`rule=2` one, as posted; given from the first round on, never before): its
+findings marked blocks, each by its part's name (`Finding.part`), a security
+finding by its area only, as the record shows them. A record carries no
+reproducer, so no security detail crosses sessions, and the conductor can
+write the comment from the record alone. The tickets filed are those given,
+the record's findings' tickets and the parts it says were split out, each
+once, in number order.
 
 The reader takes a comment only as the writer writes it: exactly one hand-off
 line, on a line of its own before any code fence, in a comment holding the
@@ -38,7 +41,7 @@ agents' marker and no review record (`reviews`); otherwise none. It never
 raises, and doesn't judge who posted it: `read` keeps each comment's author
 and position, so `merge-check` reports the latest one from an account with
 write access, for a commit of the pull request, until a counted review record
-follows it (its `hand_off`).
+of its head or a later commit follows it (its `hand_off`).
 """
 
 from __future__ import annotations
@@ -54,14 +57,16 @@ HEADING = "## Carry on in a fresh session"
 # A count, as `reviews` writes a round's number: at most six digits, 0 allowed.
 _COUNT = re.compile(r"0|[1-9][0-9]{0,5}")
 _SHA = re.compile(r"[0-9a-f]{40}")
-_ISSUE = re.compile(r"#?([1-9][0-9]{0,6})")
 _LINE = re.compile(r"<!-- workflow:hand-off (\S[^\n]*?\S) -->[ \t]*")
 # A hand-off or review line however spelt: the reader leaves out a comment
 # holding one it can't account for.
 _ANY_HAND_OFF = re.compile(r"\s*<!--\s*workflow:hand-off\b", re.IGNORECASE)
 _ANY_REVIEW = re.compile(r"\s*<!--\s*workflow:(review|finding|outcome)\b", re.IGNORECASE)
-_FENCE = ("```", "~~~")
 _LINE_END = re.compile(r"\r\n|\r|\n")
+
+
+NOT_RULE_2 = ("--record's review wasn't written from a findings file (a rule=2 record), so it names no findings: "
+              "a hand-off follows spec #412's rule")
 
 
 class HandOffError(ValueError):
@@ -111,31 +116,52 @@ def tickets_from(text) -> tuple[int, ...]:
     """`--tickets`: issue numbers, comma-separated, each as 415 or #415."""
     out = []
     for part in str(text or "").split(","):
-        m = _ISSUE.fullmatch(part.strip())
-        if not m:
+        n = findings_mod._issue_read(part.strip().removeprefix("#"))
+        if n is None:
             raise HandOffError("--tickets is the tickets filed, comma-separated, each as 415 or #415")
-        out.append(int(m.group(1)))
+        out.append(n)
     return tuple(out)
+
+
+def last_record(text) -> reviews_mod.Record:
+    """`--record`: the last review's record, as posted (its `record.md`, or
+    the comment's body): the last record in it, which must be a `rule=2` one.
+    Raises HandOffError."""
+    found = reviews_mod.records_in(text) if isinstance(text, str) else []
+    found = [r for r in found if r.kind != "spec"]
+    if not found:
+        raise HandOffError("--record holds no review record: give the last round's or pass's record as posted (its record.md)")
+    r = found[-1]
+    if r.rule is None:
+        raise HandOffError(NOT_RULE_2)
+    return r
 
 
 def _plural(n: int, one: str, many: str) -> str:
     return f"{n} {one if n == 1 else many}"
 
 
-def comment(*, head, round, passes, found: findings_mod.Findings | None = None, tickets=()) -> str:
-    """The comment's body, ending with a newline. `found` is the last review's
-    findings (`findings.from_file`); `tickets` the tickets filed so far.
-    Raises HandOffError for a malformed field."""
+def comment(*, head, round, passes, record: reviews_mod.Record | None = None, tickets=()) -> str:
+    """The comment's body, ending with a newline. `record` is the last
+    review's (`last_record`): given from the first round on, never before;
+    `tickets` the tickets filed so far. Raises HandOffError."""
     h = checked(head, round, passes)
-    found = found or findings_mod.Findings()
+    if h.round and record is None:
+        raise HandOffError("give --record: the last review's record, so the open blocking findings are named")
+    if not h.round and record is not None:
+        raise HandOffError("--record with --round 0: there is no review yet, so no record")
+    if record is not None and record.rule is None:
+        raise HandOffError(NOT_RULE_2)
+    if record is not None and record.round != h.round:
+        raise HandOffError(f"--record is round {record.round}'s, not --round {h.round}'s: give the last review's record")
+    found = record.found if record is not None else findings_mod.Findings()
     blocking = [f for f in found.findings if f.mark == "blocks"]
     if blocking:
-        # `Finding.text` names the part, or a security finding's area only; drop its "Blocks: ".
-        listed = "\n".join(["Open blocking findings:", *("- " + f.text().removeprefix("- ").split(": ", 1)[1] for f in blocking)])
+        listed = "\n".join(["Open blocking findings:",
+                            *(f"- {f.part()}{', kept after a contest' if f.contested else ''}." for f in blocking)])
     else:
         listed = "Open blocking findings: none."
-    filed = sorted({*tickets, *(f.issue for f in found.findings if f.mark == "ticket" and f.issue),
-                    *(o.issue for o in found.outcomes if o.kind == "split")})
+    filed = sorted({*tickets, *(f.issue for f in found.findings if f.issue), *(o.issue for o in found.outcomes if o.kind == "split")})
     tickets_line = "Tickets filed: " + (", ".join(f"#{n}" for n in filed) if filed else "none") + "."
     if h.round:
         so_far = _plural(h.round, "review round", "review rounds") + " and " + _plural(h.passes, "Correctness pass", "Correctness passes")
@@ -149,7 +175,12 @@ def comment(*, head, round, passes, found: findings_mod.Findings | None = None, 
         f"Reviews so far: {so_far}.",
         f"{h.line()}\n{AGENT_MARKER}",
     ]
-    return "\n\n".join(paragraphs) + "\n"
+    text = "\n\n".join(paragraphs) + "\n"
+    size = len(text.encode("utf-16-le")) // 2
+    if size > reviews_mod.RECORD_LIMIT:
+        raise HandOffError(f"the comment would come to {size} characters, counted as GitHub counts them (UTF-16 units), "
+                           f"past the {reviews_mod.RECORD_LIMIT} a comment holds with a cloud session's footer: give fewer --tickets")
+    return text
 
 
 def _parse(fields: str) -> HandOff | None:
@@ -174,7 +205,7 @@ def in_text(text) -> HandOff | None:
     if sum(1 for line in lines if _ANY_HAND_OFF.match(line)) != 1 or any(_ANY_REVIEW.match(line) for line in lines):
         return None
     for line in lines:
-        if any(f in line for f in _FENCE):
+        if any(f in line for f in reviews_mod._FENCE):
             return None
         m = _LINE.fullmatch(line)
         if m:
@@ -184,9 +215,10 @@ def in_text(text) -> HandOff | None:
 
 def read(comments) -> list[HandOff]:
     """Every hand-off in a pull request's comments, in the order given
-    (GitHub's: oldest first), each with its comment's author, id, time, link
-    and position. `comments` is any shape `posts.comments_from` reads, which
-    raises `posts.CommentsError` for any other."""
+    (`merge-check` gives them oldest first), each with its comment's author,
+    id, time, link and position in that order. `comments` is any shape
+    `posts.comments_from` reads, which raises `posts.CommentsError` for any
+    other."""
     out = []
     for i, c in enumerate(comments_from(comments)):
         h = in_text(c.get("body"))
@@ -195,9 +227,3 @@ def read(comments) -> list[HandOff]:
             out.append(HandOff(h.head, h.round, h.passes, author=_login(c) or None, comment_id=_number(c),
                                created_at=c.get("created_at") or c.get("createdAt"), url=url if isinstance(url, str) else None, position=i))
     return out
-
-
-def records_after(comments, position: int) -> list[reviews_mod.Record]:
-    """The review records in the comments after the one at `position`, each
-    with its author (`reviews.read`)."""
-    return reviews_mod.read(comments_from(comments)[position + 1:])

@@ -1188,13 +1188,16 @@ def _panel(ctx: Context, add) -> None:
 
 def _hand_off(ctx: Context) -> dict | None:
     """The latest trusted hand-off comment (#371, spec #412), until a counted
-    review record follows it: one from an account with write access whose
-    head is a commit of the pull request, as `_panel` counts a record. A
-    review record after it, counted the same way (a round's or a pass's, from
-    such an account, for such a commit), means the fresh session has reviewed,
-    so there is none. It never decides anything: a session or the conductor
-    reads it to carry the review on. Unreadable when the comments, the pull
-    request, its commits or the permissions are."""
+    review record of its head or a later commit follows it: one from an
+    account with write access whose head is a commit of the pull request, as
+    `_panel` counts a record. A review record posted after it, counted the
+    same way (a round's or a pass's, from such an account, for such a commit)
+    and not for a commit before its head by the pull request's history (a
+    record posted late for an older commit isn't a review since), means the
+    fresh session has reviewed, so there is none. It never decides anything:
+    a session or the conductor reads it to carry the review on. Unreadable
+    when the comments, the pull request, its commits or the permissions are.
+    What a person reads says "carry on in a fresh session" (#362, answer 32)."""
     head = ctx.pr().head
     perms = ctx.permissions()
     shas = ctx.commits() | {head}
@@ -1202,17 +1205,21 @@ def _hand_off(ctx: Context) -> dict | None:
     offs = handoff.read(comments)
     trusted = [h for h in offs if _may_review(h.author, perms) and h.head in shas]
     if len(offs) > len(trusted):
-        left_out = _plural(len(offs) - len(trusted), "hand-off comment")
-        _note(ctx, "hand_offs_ignored", f"Left out {left_out}: posted by an account without write access, or naming a head outside this pull request.")
+        n = len(offs) - len(trusted)
+        _note(ctx, "hand_offs_ignored", f"Left out {_plural(n, 'comment')} asking to carry on in a fresh session: "
+              "posted by an account without write access, or naming a head outside this pull request.")
     if not trusted:
         return None
     latest = trusted[-1]
-    after = handoff.records_after(comments, latest.position)
-    if any(r.kind != "spec" and _may_review(r.author, perms) and r.commit in shas for r in after):
+    history = {sha: n for n, sha in enumerate(ctx.parents())}  # the PR's commits, oldest first
+    since = history.get(latest.head, -1)
+    after = reviews.read(comments[latest.position + 1:])
+    if any(r.kind != "spec" and _may_review(r.author, perms) and r.commit in shas and history.get(r.commit, len(history)) >= since
+           for r in after):
         return None
     where = f" ({_clean(latest.url)})" if latest.url else ""
-    _note(ctx, "hand_off", f"Handed off on {_short(latest.head)}{where}: a fresh session carries the review on from that comment, "
-          "reviewing any later commits too.")
+    _note(ctx, "hand_off", f"Carry on in a fresh session: the comment on {_short(latest.head)}{where} hands the review on, "
+          "and a fresh session carries it on from there, reviewing any later commits too.")
     return {
         "head": latest.head,
         "on_head": latest.head == head,
