@@ -237,6 +237,8 @@ def test_another_git_command_that_may_change_what_is_staged_before_a_commit(proj
         "git reset && git add docs/guide.md && git commit -m d",
         "git reset -q HEAD -- docs && git add docs/guide.md && git commit -m d",
         "git commit -m d && git stash pop",
+        "git restore --staged 'docs/*.md' && git commit -m d",
+        "git commit -m \"$(cat <<'EOF'\nd\n\nmore\nEOF\n)\" && git stash pop",
     ],
 )
 def test_git_commands_that_leave_what_is_staged_before_a_commit_go_through(proj, monkeypatch, capsys, command):
@@ -264,6 +266,40 @@ def test_a_git_add_after_the_commit_that_may_run_first(proj, monkeypatch, capsys
         assert d == "ask" and "a later part runs `git add`" in why and "`src/app.py`" in why, (command, why)
         d, why = hook(monkeypatch, capsys, proj, command, "conductor")
         assert d == "deny" and "`src/app.py`" in why, (command, why)
+
+
+def test_xargs_add_with_a_replace_word_and_docs_only_goes_through(proj, monkeypatch, capsys):
+    """Its replace word stands in its paths, not its subcommand: no push, and docs only."""
+    _change(proj, "docs/guide.md")
+    for role in (None, "conductor"):
+        assert hook(monkeypatch, capsys, proj, "git diff --name-only docs | xargs -I{} git add {} && git commit -m d", role) == ("allow", ""), role
+
+
+def test_a_reset_or_restore_before_finishing_a_merge(proj, monkeypatch, capsys):
+    """During a merge, a reset may end it (the commit then carries everything staged after) or take a parent's version
+    of a path: the commit is one the guard can't tell about."""
+    git(proj, "checkout", "-q", "-b", "other")
+    _change(proj, CODE)
+    git(proj, "commit", "-qam", "code")
+    git(proj, "checkout", "-q", "feature")
+    _change(proj, "docs/guide.md")
+    git(proj, "commit", "-qam", "docs")
+    git(proj, "merge", "-q", "--no-commit", "--no-ff", "other")
+    for command in ("git reset && git add -A && git commit -m m", "git reset -- src/app.py && git commit -m m", "git restore --staged src/app.py && git commit -m m"):
+        d, why = hook(monkeypatch, capsys, proj, command)
+        assert d == "ask" and "may change what it commits" in why, (command, why)
+        d, why = hook(monkeypatch, capsys, proj, command, "conductor")
+        assert d == "deny", (command, why)
+    # Finishing it as it stands (the merge's own changes carry no code): through.
+    assert hook(monkeypatch, capsys, proj, "git commit -m m") == ("allow", "")
+
+
+def test_a_later_add_with_another_work_tree_that_may_run_first(proj, tmp_path, monkeypatch, capsys):
+    _change(proj, "docs/guide.md")
+    git(proj, "add", "docs/guide.md")
+    d, why = hook(monkeypatch, capsys, proj, f"git commit -m d & git --work-tree={tmp_path} add -A")
+    assert d == "ask" and "another work tree" in why, why
+    assert hook(monkeypatch, capsys, proj, f"git commit -m d && git --work-tree={tmp_path} add -A") == ("allow", "")
 
 
 def test_two_commits_after_an_add_each_read_on_their_own(proj, monkeypatch, capsys):
@@ -448,6 +484,9 @@ def test_a_push_beside_xargs_git_is_refused(proj, monkeypatch, capsys):
         "git commit -m d && echo push | xargs --replace=X git X",
         "git commit -m d && echo push | xargs -I log git log",
         "git commit -m d && echo push | xargs -i git {}",
+        "git commit -m d && echo push | /usr/bin/xargs -I log git log",
+        "git commit -m d && echo push | xargs --repl=log git log",
+        "git commit -m d && echo push | xargs -0I% git %",
     ],
 )
 def test_a_git_command_that_may_itself_be_the_push_beside_a_commit_is_refused(proj, monkeypatch, capsys, command):

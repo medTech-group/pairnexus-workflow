@@ -903,6 +903,7 @@ class Seg:
     inputs: list[str] = field(default_factory=list)  # every `<` file, whatever its descriptor
     wrappers: list[str] = field(default_factory=list)  # the wrappers stripped from its words (`time`, `env`, `sudo`, …)
     expanded: str = ""  # the text of its unquoted heredocs and here-strings, which the shell expands
+    fed_replace: str | None = None  # the word xargs replaces with its input (`-I %`, `-i`, `--replace`), if any (#394)
 
 
 _KEYWORDS = {"{", "}", "!", "if", "then", "else", "elif", "fi", "do", "done", "while", "until", "esac", "coproc"}
@@ -989,6 +990,41 @@ def _strip_prefix(toks: list[str], wrappers: list[str] | None = None) -> tuple[l
                     toks = toks[1:]
             changed = True
     return toks, assigns, chdir
+
+
+# xargs's short options that take a value (attached, else the next word); `-e`, `-l` and `-i` take one only attached.
+_XARGS_VALUES = set("adEILnPs")
+
+
+def _xargs_replace(head: list[str]) -> str | None:
+    """The word xargs replaces with its input, from its own options (`-I %`,
+    `-I%`, `-0I%`, `-i` or `-i<word>`, `--replace`, `--replace=<word>` or
+    a prefix of it, the last one given), else None."""
+    rep, i = None, 0
+    while i < len(head):
+        w = head[i]
+        i += 1
+        if w == "--":
+            break
+        if w.startswith("--"):
+            name, eq, val = w[2:].partition("=")
+            if len(name) >= 3 and "replace".startswith(name):
+                rep = val if eq else "{}"
+            continue
+        if not w.startswith("-") or len(w) < 2:
+            continue
+        for k, ch in enumerate(w[1:], 2):
+            if ch == "i":
+                rep = w[k:] or "{}"
+                break
+            if ch in _XARGS_VALUES:
+                val = w[k:]
+                if not val and i < len(head):
+                    val, i = head[i], i + 1
+                if ch == "I":
+                    rep = val
+                break
+    return rep
 
 
 def _shell_c(toks: list[str]) -> str | None:
@@ -1114,6 +1150,7 @@ def _segments_of(toks: list, root: Path, cwd: str | None, depth: int) -> list[Se
             seg.fed_file = bool(item.stdin or item.heredoc) or any(
                 w in ("-a", "--arg-file") or w.startswith("--arg-file=") or re.fullmatch(r"-a.+", w) is not None for w in head
             )
+            seg.fed_replace = _xargs_replace(head)
         segs.append(seg)
         prev = seg
         segs += _nested(seg, root, depth)
@@ -7725,7 +7762,7 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tupl
             continue
         # What runs before it in the command: a `git add` stages more, read here; another git command may stage
         # anything (#394).
-        staged, why_staged, later, guessed = _staged_before(segs, seg, d, glob, top, root, staging, command)
+        staged, why_staged, later, guessed = _staged_before(segs, seg, d, glob, top, root, staging, command, bool(heads))
         if why_staged:
             unsure = unsure or f"{cant}: {why_staged}"
         if staged and c.specs and not (c.include or c.all):
@@ -8555,6 +8592,7 @@ def _add_args(args: list[str]) -> _Add | None:
     return a
 
 
+_QUOTED_HEREDOC_SUB = re.compile(r"\$\(\s*cat\s+<<-?\s*(['\"])(\w+)\1\n.*?\n\s*\2\s*\)", re.S)
 # The shell's words that can run a later part first: a background job, a pipeline, a loop, a coprocess.
 _REORDERS = {"&", "|", "|&"} | (_COMPOUND_WORDS - {"if", "case", "function"})
 
@@ -8565,6 +8603,8 @@ def _may_reorder(command: str) -> bool:
     substitution (`$(…)`, a backtick, `<(…)`), which runs before the part
     it is in. A plain sequence
     (`;`, `&&`, `||`, newlines) runs in order."""
+    # A message given as a quoted heredoc (`-m "$(cat <<'EOF' … EOF)"`, as Claude Code writes one) runs nothing.
+    command = _QUOTED_HEREDOC_SUB.sub("", command)
     if "`" in command or "$(" in command or "<(" in command or ">(" in command:
         return True
     try:
@@ -8584,11 +8624,14 @@ def _reorders(memo: dict, command: str) -> bool:
 
 def _part_git(s: Seg) -> list[str] | None:
     """A part's git subcommand and arguments (`_other_git`), or `<stdin>`
-    for `xargs git`, which takes its subcommand from its stdin: a git command
-    the guard can't name."""
+    for `xargs git`, which takes its subcommand from its stdin, or whose
+    subcommand holds the word `xargs -I` replaces: a git command the guard
+    can't name."""
     args = _other_git(s.words) if s.words else None
     if args is None and s.fed and s.words and posixpath.basename(s.words[0]) == "git":
         return ["<stdin>"]
+    if args and s.fed and s.fed_replace and s.fed_replace in args[0]:  # `xargs -I %`'s input stands in its subcommand
+        return ["<stdin>", *args[1:]]
     return args
 
 
@@ -8649,7 +8692,7 @@ def _add_reading(s: Seg, root: Path) -> _Staging:
     return _Staging(files + tracked, os.path.realpath(where[1]))
 
 
-def _keeps_staged(args: list[str], s: Seg, into) -> bool:
+def _keeps_staged(args: list[str], s: Seg, into, merging: bool = False) -> bool:
     """Whether `git <args>` (the part `s`), run before a commit in the same
     command, leaves what the commit carries as the guard reads it
     (`_KEEPS_STAGED`): a `checkout` of a branch, not of paths, `--orphan`,
@@ -8662,9 +8705,14 @@ def _keeps_staged(args: list[str], s: Seg, into) -> bool:
     sub, rest = args[0], args[1:]
     if sub in _PUSH_CMDS:
         return _git_changes(args) is None or not into()
+    if merging and sub in ("reset", "restore"):  # it may end the merge, or take a parent's version of a path
+        return False
     if sub in ("rm", "mv", "restore"):
-        # A pathspec's magic (`:(top)src`) or git's own glob (`'*.py'`, which crosses `/`) the write rule doesn't place.
-        if s.fed or any(_EXPANDS.search(w) or w.startswith(("--pathspec-f", ":")) or _GLOB_CHARS.search(w) for w in rest):
+        if s.fed or any(_EXPANDS.search(w) or w.startswith("--pathspec-f") for w in rest):
+            return False
+        # A pathspec's magic (`:(top)src`) or git's own glob (`'*.py'`, which crosses `/`), which the write rule doesn't
+        # place (a restore without `--source` only drops changes, wherever).
+        if sub != "restore" and any(w.startswith(":") or _GLOB_CHARS.search(w) for w in rest):
             return False
         if sub != "restore":
             return True
@@ -8721,7 +8769,9 @@ def _keeps_staged(args: list[str], s: Seg, into) -> bool:
     return sub in _KEEPS_STAGED
 
 
-def _staged_before(segs: list[Seg], seg: Seg, d: str, glob: list[str], top: str, root: Path, memo: dict, command: str) -> tuple[list[str], str, list[str], set[str]]:
+def _staged_before(
+    segs: list[Seg], seg: Seg, d: str, glob: list[str], top: str, root: Path, memo: dict, command: str, merging: bool = False
+) -> tuple[list[str], str, list[str], set[str]]:
     """(the files the `git add`s before the commit `seg` stage into its
     index, why the guard can't tell what another git command before it
     stages (else ""), the files the `git add`s after it would stage, which
@@ -8745,9 +8795,9 @@ def _staged_before(segs: list[Seg], seg: Seg, d: str, glob: list[str], top: str,
             # After the commit, only where a later part may run first (`_may_reorder`).
             if why or not (ahead or _reorders(memo, command)):
                 continue
-            key = ("keeps", id(s), d, tuple(glob))
+            key = ("keeps", id(s), d, tuple(glob), merging)
             if key not in memo:
-                memo[key] = _keeps_staged(args, s, lambda: _pushes_into(s, args, root, _git_common(d, glob)))
+                memo[key] = _keeps_staged(args, s, lambda: _pushes_into(s, args, root, _git_common(d, glob)), merging)
             if not memo[key]:
                 label = "git " + " ".join(_brief(a) for a in args[:2])
                 where = "an earlier part" if ahead else "a later part, which may run first,"
@@ -8757,8 +8807,9 @@ def _staged_before(segs: list[Seg], seg: Seg, d: str, glob: list[str], top: str,
             memo[id(s)] = _add_reading(s, root)
         st: _Staging = memo[id(s)]
         files: list[str] = []
-        if st.elsewhere and ahead:
-            why = why or f"an earlier `git {args[0]}` runs with {st.elsewhere}, which stages from another work tree or into another index: run it in a command of its own first"
+        if st.elsewhere and (ahead or _reorders(memo, command)):
+            where = "an earlier" if ahead else "a later, which may run first,"
+            why = why or f"{where} `git {args[0]}` runs with {st.elsewhere}, which stages from another work tree or into another index: run it in a command of its own first"
         if st.whole:  # every changed and untracked file of the commit's checkout
             key = ("whole", top, tuple(glob), st.force)
             if key not in memo:
@@ -9540,9 +9591,8 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
             unsure = held(f"{cant}: {err}")
     for s in segs:  # a git command whose subcommand the shell spells, or `xargs git`, may itself be a push (#394)
         args = _part_git(s)
-        # (`xargs -I %` may stand any word for its input: a fed subcommand that isn't one of git's own counts, and any fed
-        # one where the command's `xargs` replaces a word.)
-        if args and (args[0] == "<stdin>" or _shell_spelled(args[0], globs=True) or "{}" in args[0] or (s.fed and (args[0] not in _GIT_COMMANDS or _XARGS_REPLACES.search(command)))):
+        # (A fed subcommand that isn't one of git's own may be one an alias or `xargs` makes.)
+        if args and (args[0] == "<stdin>" or _shell_spelled(args[0], globs=True) or "{}" in args[0] or (s.fed and args[0] not in _GIT_COMMANDS)):
             changers = changers or code.changers or _Changers(segs, root)
             made = changers.commits(s)
             if made:
@@ -9631,10 +9681,6 @@ def _may_reach(d: str, glob: list[str], named: str | None, remotes: set[str], cf
         urls, _ = _memo_read(d, glob, "remote", "get-url", "--push", "--all", named, sep="\n")
         return urls is None or any(_project_url(u, code.repo) for u in urls)
     return _legacy_remote(_git_common(d, glob), named) or _project_url(named, code.repo)
-
-
-# An `xargs` given a word to replace with its input (`-I %`, `-i`, `--replace`), which may then stand for git's subcommand.
-_XARGS_REPLACES = re.compile(r"(?<![\w./-])xargs\b[^|;&\n]*?\s(?:-[A-Za-z0-9]*[Ii]|--replace\b)")
 
 
 def _beside_ref_move(cant: str, moves: str, code: _Code, root: Path, made: bool) -> str:
