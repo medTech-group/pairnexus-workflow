@@ -239,6 +239,7 @@ def test_another_git_command_that_may_change_what_is_staged_before_a_commit(proj
         "git commit -m d && git stash pop",
         "git restore --staged 'docs/*.md' && git commit -m d",
         "git commit -m \"$(cat <<'EOF'\nd\n\nmore\nEOF\n)\" && git stash pop",
+        "git commit -m \"$(cat <<-'EOF'\nd\n\tEOF\n)\" && git stash pop",
     ],
 )
 def test_git_commands_that_leave_what_is_staged_before_a_commit_go_through(proj, monkeypatch, capsys, command):
@@ -247,6 +248,13 @@ def test_git_commands_that_leave_what_is_staged_before_a_commit_go_through(proj,
     git(proj, "add", "docs/guide.md")
     for role in (None, "conductor"):
         assert hook(monkeypatch, capsys, proj, command, role) == ("allow", ""), (command, role)
+
+
+def test_a_quoted_heredoc_that_doesnt_end_its_substitution_isnt_taken_out(proj, monkeypatch, capsys):
+    _change(proj, CODE)
+    command = "git commit -m \"" + DOLLAR + "(cat <<'EOF'\nd\nEOF\ntrue)\" & git add src/app.py & echo \"\nEOF\n)\""
+    d, why = hook(monkeypatch, capsys, proj, command)
+    assert d == "ask" and "a later part runs `git add`" in why, why
 
 
 def test_a_git_add_after_the_commit_that_may_run_first(proj, monkeypatch, capsys):
@@ -285,13 +293,21 @@ def test_a_reset_or_restore_before_finishing_a_merge(proj, monkeypatch, capsys):
     _change(proj, "docs/guide.md")
     git(proj, "commit", "-qam", "docs")
     git(proj, "merge", "-q", "--no-commit", "--no-ff", "other")
-    for command in ("git reset && git add -A && git commit -m m", "git reset -- src/app.py && git commit -m m", "git restore --staged src/app.py && git commit -m m"):
+    for command in (
+        "git reset && git add -A && git commit -m m",
+        "git reset -- src/app.py && git commit -m m",
+        "git restore --staged src/app.py && git commit -m m",
+        "git checkout -b tmp && git commit -m m",
+        "git checkout feature && git commit -m m",
+        "git stash && git commit -m m",
+    ):
         d, why = hook(monkeypatch, capsys, proj, command)
         assert d == "ask" and "may change what it commits" in why, (command, why)
         d, why = hook(monkeypatch, capsys, proj, command, "conductor")
         assert d == "deny", (command, why)
-    # Finishing it as it stands (the merge's own changes carry no code): through.
-    assert hook(monkeypatch, capsys, proj, "git commit -m m") == ("allow", "")
+    # Finishing it as it stands (the merge's own changes carry no code), beside reads or a tag: through.
+    for command in ("git commit -m m", "git status && git diff --stat && git commit -m m", "git tag pre && git commit -m m"):
+        assert hook(monkeypatch, capsys, proj, command) == ("allow", ""), command
 
 
 def test_a_later_add_with_another_work_tree_that_may_run_first(proj, tmp_path, monkeypatch, capsys):
@@ -299,6 +315,8 @@ def test_a_later_add_with_another_work_tree_that_may_run_first(proj, tmp_path, m
     git(proj, "add", "docs/guide.md")
     d, why = hook(monkeypatch, capsys, proj, f"git commit -m d & git --work-tree={tmp_path} add -A")
     assert d == "ask" and "another work tree" in why, why
+    d, why = hook(monkeypatch, capsys, proj, f"git commit -m d & git --work-tree={tmp_path} add -A", "conductor")
+    assert d == "deny" and "another work tree" in why, why
     assert hook(monkeypatch, capsys, proj, f"git commit -m d && git --work-tree={tmp_path} add -A") == ("allow", "")
 
 
@@ -486,7 +504,9 @@ def test_a_push_beside_xargs_git_is_refused(proj, monkeypatch, capsys):
         "git commit -m d && echo push | xargs -i git {}",
         "git commit -m d && echo push | /usr/bin/xargs -I log git log",
         "git commit -m d && echo push | xargs --repl=log git log",
-        "git commit -m d && echo push | xargs -0I% git %",
+        "git commit -m d && echo push | xargs -0Ilog git log",
+        "git commit -m d && echo push | xargs -I log env -i git log",
+        "git commit -m d && echo push | xargs --r=log git log",
     ],
 )
 def test_a_git_command_that_may_itself_be_the_push_beside_a_commit_is_refused(proj, monkeypatch, capsys, command):

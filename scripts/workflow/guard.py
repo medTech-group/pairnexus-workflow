@@ -997,21 +997,23 @@ _XARGS_VALUES = set("adEILnPs")
 
 
 def _xargs_replace(head: list[str]) -> str | None:
-    """The word xargs replaces with its input, from its own options (`-I %`,
-    `-I%`, `-0I%`, `-i` or `-i<word>`, `--replace`, `--replace=<word>` or
-    a prefix of it, the last one given), else None."""
-    rep, i = None, 0
+    """The word xargs replaces with its input, from its own options, read
+    from the last `xargs` word up to its command (`-I %`, `-I%`, `-0I%`, `-i`
+    or `-i<word>`, `--replace`, `--replace=<word>` or a prefix of it, the
+    last one given), else None."""
+    starts = [k for k, w in enumerate(head) if posixpath.basename(w) == "xargs"]
+    rep, i = None, (starts[-1] + 1 if starts else 0)
     while i < len(head):
         w = head[i]
         i += 1
-        if w == "--":
-            break
+        if w == "--" or not w.startswith("-") or len(w) < 2:
+            break  # its command starts: a wrapper's options after it aren't xargs's
         if w.startswith("--"):
             name, eq, val = w[2:].partition("=")
-            if len(name) >= 3 and "replace".startswith(name):
+            if name and "replace".startswith(name):
                 rep = val if eq else "{}"
-            continue
-        if not w.startswith("-") or len(w) < 2:
+            elif not eq and name in ("max-args", "arg-file", "delimiter", "max-lines", "max-procs", "max-chars", "eof"):
+                i += 1  # its value
             continue
         for k, ch in enumerate(w[1:], 2):
             if ch == "i":
@@ -8506,6 +8508,9 @@ def _git_changes(args: list[str]) -> str | None:
 _KEEPS_STAGED = (_KEEPS_REFS - {"add", "stage", "apply", "merge-file", "mv", "rm", "restore"}) | {
     "branch", "clone", "commit", "init", "notes", "remote", "switch", "tag", "worktree",
 }  # fmt: skip
+# While a merge is in progress, the git commands that leave it, and HEAD, as they are: reads, a ref or setting written,
+# another commit (which finishes it), a fetch, a push elsewhere, and `git rm`/`git mv` (the write rule judges their paths).
+_MERGE_KEEPS = (_KEEPS_STAGED - {"switch"}) | {"config", "fetch", "rm", "mv", *_PUSH_CMDS}
 # Settings that change what `git add` or the guard's reads of it see (the work tree, ignores, the index, filters).
 _STAGING_CONFIG = re.compile(r"(?i)(core|include|includeif|status|index|add|submodule|filter)\.")
 # `git add`'s long options; git takes a unique prefix of each, and of their `no-` forms.
@@ -8592,7 +8597,33 @@ def _add_args(args: list[str]) -> _Add | None:
     return a
 
 
-_QUOTED_HEREDOC_SUB = re.compile(r"\$\(\s*cat\s+<<-?\s*(['\"])(\w+)\1\n.*?\n\s*\2\s*\)", re.S)
+_QUOTED_HEREDOC_OPEN = re.compile(r"\$\(\s*cat\s+<<(-?)\s*(['\"])(\w+)\2\n")
+
+
+def _strip_quoted_heredocs(command: str) -> str:
+    """The command without each `$(cat <<'X' … X)` whose heredoc ends, at
+    the first line that is exactly its delimiter (leading tabs taken out for
+    `<<-`), right before the substitution's `)`; any other is left as it is."""
+    out, pos = [], 0
+    while (m := _QUOTED_HEREDOC_OPEN.search(command, pos)) is not None:
+        tabs, word, k, end = m.group(1) == "-", m.group(3), m.end(), None
+        while k <= len(command):
+            nl = command.find("\n", k)
+            line = command[k : nl if nl != -1 else len(command)]
+            if (line.lstrip("\t") if tabs else line) == word:
+                close = re.match(r"\s*\)", command[nl + 1 :] if nl != -1 else "")
+                end = nl + 1 + close.end() if close else None
+                break
+            if nl == -1:
+                break
+            k = nl + 1
+        if end is None:
+            out.append(command[pos : m.end()])
+        else:
+            out.append(command[pos : m.start()])
+        pos = end if end is not None else m.end()
+    out.append(command[pos:])
+    return "".join(out)
 # The shell's words that can run a later part first: a background job, a pipeline, a loop, a coprocess.
 _REORDERS = {"&", "|", "|&"} | (_COMPOUND_WORDS - {"if", "case", "function"})
 
@@ -8604,7 +8635,7 @@ def _may_reorder(command: str) -> bool:
     it is in. A plain sequence
     (`;`, `&&`, `||`, newlines) runs in order."""
     # A message given as a quoted heredoc (`-m "$(cat <<'EOF' … EOF)"`, as Claude Code writes one) runs nothing.
-    command = _QUOTED_HEREDOC_SUB.sub("", command)
+    command = _strip_quoted_heredocs(command)
     if "`" in command or "$(" in command or "<(" in command or ">(" in command:
         return True
     try:
@@ -8705,7 +8736,7 @@ def _keeps_staged(args: list[str], s: Seg, into, merging: bool = False) -> bool:
     sub, rest = args[0], args[1:]
     if sub in _PUSH_CMDS:
         return _git_changes(args) is None or not into()
-    if merging and sub in ("reset", "restore"):  # it may end the merge, or take a parent's version of a path
+    if merging and sub not in _MERGE_KEEPS:  # it may end the merge (`checkout`, `reset`), or resolve a path as it chooses
         return False
     if sub in ("rm", "mv", "restore"):
         if s.fed or any(_EXPANDS.search(w) or w.startswith("--pathspec-f") for w in rest):
