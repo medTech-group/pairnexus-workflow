@@ -511,7 +511,7 @@ When the work is too big for one session, or too unclear to spec yet, chart it f
 **Work through it**, **one decision per session** (research questions excepted). Use `/next map`, or `/wayfinder <map link>`, or the guided start's "Carry on". Claude:
 1. takes the first decision whose blockers are settled, and claims it (the `workflow:in-progress` label, and assigned to you), so no other session takes it;
 2. settles it as its kind says: an interview with you, a prototype you react to, research, or a task;
-3. posts your answers on the decision's issue, each question with your answer quoted word for word;
+3. posts your answers on the decision's issue, each question with your answer quoted word for word, each round as soon as you answer it, tagged as your own words or a recommendation you accepted;
 4. commits any glossary or ADR change to a branch and has it reviewed against your answers and the code (the review panel's planning review), in rounds until one is clean; research notes stay on their own `research/…` branch, linked from the decision, never merged;
 5. only then writes the resolution as a comment, closes the issue, and adds one line to the map's "Decisions so far";
 6. opens new decision issues as answers make them clear, moving each from "Not yet specified" as it does;

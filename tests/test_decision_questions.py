@@ -80,7 +80,7 @@ def test_decision_questions_are_the_ones_posted_as_the_owner_s_and_named():
     assert "**Edit the spec first**" in s and "**Add to an existing issue**" in s
 
 
-def test_the_skills_point_here_and_matt_pocock_s_stay_unedited():
+def test_the_skills_that_ask_them_follow_these_rules_and_matt_pocock_s_stay_unedited():
     s = _sentence(_intro(), "the skills that ask them")
     assert "follow these rules" in s
     for skill in ("`start`", "`next`", "`review-panel` §8", "`conductor`"):
@@ -206,6 +206,10 @@ def test_what_s_left_after_a_last_read_goes_into_further_notes_or_a_comment_on_t
     # A last read's ask findings are left, never asked; its fix findings are made.
     s = _sentence(r, "never asked")
     assert "**ask** findings" in s and "**fix** findings are made" in s
+    assert "except the breakdown check's" in s
+    # A quick ticket's leftovers go into its "Decided for you", marked open.
+    s = _sentence(r, "quick ticket")
+    assert "`## Decided for you`" in s and "marked open" in s
     assert "unanswered" in r and "left open" in r
     assert "Further Notes" in r and "before" in r and "published" in r
     assert "comment on the spec's issue" in r
@@ -231,6 +235,7 @@ def test_the_checks_are_named_and_are_not_the_planning_review():
     # A breakdown finding left open holds its tickets back, not the publish.
     s = _sentence(r, "stops the publish")
     assert "nothing it found" in s and "out of `ready-for-agent`" in s
+    assert "#363" in s
 
 
 def test_the_checks_are_named_with_the_checker_that_runs_them():
@@ -247,7 +252,10 @@ def test_the_checks_are_named_with_the_checker_that_runs_them():
     assert "all the answers" in s and "before the spec" in s and "ADR" in s
     # Its round lets the owner leave a finding open, and isn't itself checked first.
     assert "**Leave them open**" in _sentence(r, "short round")
-    assert "except the end check's own round" in _sentence(r, "before the round is asked")
+    s = _sentence(r, "before the round is asked")
+    # A check's own rounds (the end check's, the breakdown check's) aren't read first, and no round twice.
+    assert "except a check's own rounds" in s and "end check" in s and "breakdown check" in s
+    assert "never checks a round twice" in s
     s = _sentence(r, "(the re-read)")
     assert "once" in s and "only what that round changed" in s and "stops" in s
     # Rounds after a draft exists get one re-read against all earlier answers.
@@ -281,7 +289,7 @@ def test_the_breakdown_check_reads_the_tickets_against_the_spec():
 
 def test_flow_2_s_interview_and_seams_are_decision_questions():
     step1 = _step(1, "2")
-    assert "decision questions" in step1
+    assert '"Decision questions"' in step1
     assert "seams" in _intro() and "interview" in _intro()
 
 
