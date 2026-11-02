@@ -87,7 +87,7 @@ _SPEC_FIELDS = ("kind", "round", "body", "reviewers", "result")
 # A `rule=2` record's own fields, between its reviewers (or hashes) and its result.
 _RULE_FIELDS = ("rule", "findings", "outcomes", "split")
 # The rule a record written from a findings file names (#370, spec #412).
-RULE = 2
+RULE = findings_mod.RULE
 # A record line is a line of its own, at the start of the line as the writer
 # writes it, before any code fence: one quoted in a sentence, in backticks, in
 # a list or quote, or in a code block isn't read as a record. When in doubt the
@@ -364,8 +364,9 @@ def record(*, kind, round, commit=None, reviewers, clean, body=None, diff=None, 
     size = len(text.encode("utf-16-le")) // 2 + (_HASHES_ROOM if r.diff is None else 0)
     if size > RECORD_LIMIT:
         raise RecordError(
-            f"the record would be {size} characters, past the {RECORD_LIMIT} a comment holds with a cloud session's footer "
-            f"(GitHub takes {COMMENT_LIMIT}): file the lesser findings as one ticket and give its issue, or shorten the parts' names"
+            f"the record would come to {size} characters with its hashes, counted as GitHub counts them (UTF-16 units), "
+            f"past the {RECORD_LIMIT} a comment holds with a cloud session's footer (GitHub takes {COMMENT_LIMIT}): "
+            "file the lesser findings as one ticket and give its issue, or shorten the parts' names"
         )
     return text
 
@@ -405,10 +406,11 @@ def _parse(fields: str, below=()) -> Record | None:
 def records_in(text) -> list[Record]:
     """Every well-formed record line in one comment's text, in order, up to its
     first code fence. A malformed one, or text that isn't a string, yields
-    nothing; never raises. A `rule=2` record counts only when every finding
-    or outcome line in the comment, anywhere and in any spelling, is one of
-    the lines its records were read from: so one can't be read beside lines
-    it doesn't account for."""
+    nothing; never raises. A `rule=2` record counts only when every line of
+    the comment that starts as a finding or outcome line (after any spaces,
+    in any case, with or without a space after `<!--`) is one of the lines its
+    records were read from: so one can't be read beside such lines it doesn't
+    account for."""
     if not isinstance(text, str):
         return []
     out, own = [], set()
@@ -418,7 +420,7 @@ def records_in(text) -> list[Record]:
             break
         m = _LINE.fullmatch(line)
         # A `rule=2` record's own lines below it, up to the next fence.
-        r = _parse(m.group(1), _below(lines, i + 1)) if m else None
+        r = None if not m else _parse(m.group(1), _below(lines, i + 1) if " rule=" in m.group(1) else ())
         if r is not None:
             out.append(r)
             own.update(range(i + 1, i + 1 + len(r.findings) + len(r.outcomes)))

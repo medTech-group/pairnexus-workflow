@@ -4,6 +4,7 @@ result is worked out from the findings' marks, and `reviews.records_in` reads
 it back only whole."""
 
 import json
+import sys
 
 import pytest
 
@@ -13,6 +14,8 @@ from changelog_notes import since_0110
 
 SHA = "3f2a9c0b7de14a2c9e8f5d6b1a0c3e2f4d5b6a7c"
 MARKER = "<!-- workflow:agent -->"
+# What the hashes of a round's own changes add to its line (` diff=<64 hex> lines=<64 hex>`).
+HASHES_ROOM = len(" diff= lines=") + 2 * 64
 ROUND = ["--kind", "round", "--round", "2", "--commit", SHA, "--reviewers", "standards,spec,correctness"]
 
 FULL = {
@@ -214,44 +217,57 @@ def _units(text):
     return len(text.encode("utf-16-le")) // 2
 
 
-def _sized(total, **hashes):
-    """Findings whose record comes to exactly `total` UTF-16 units: fillers,
-    then one part named with `a` (2 units each, its text and its line) and `é`
-    (7: one in its text, six encoded)."""
+def _sized(total, filler="f" * 80, **hashes):
+    """Findings whose record comes to exactly `total` UTF-16 units: fillers
+    named `filler`, then one part named with `a` (2 units each, its text and
+    its line) and `é` (7: one in its text, six encoded)."""
     def text(found):
         return reviews.record(kind="round", round=1, commit=SHA, reviewers="correctness", clean=None, findings=found, **hashes)
 
     def found(fillers, a, e):
-        names = ["f" * 80] * fillers + ["a" * a + "é" * e]
+        names = [filler] * fillers + ["a" * a + "é" * e]
         return findings_mod.checked([findings_mod.Finding(mark="note", mechanism=n) for n in names], (), False)
 
-    limit = reviews.RECORD_LIMIT
-    reviews.RECORD_LIMIT = 10**9  # measured with the limit lifted, put back below
-    try:
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(reviews, "RECORD_LIMIT", 10**9)  # measured with the limit lifted
         fillers = 0
         while _units(text(found(fillers + 1, 1, 0))) <= total - 200:
             fillers += 25
         while _units(text(found(fillers, 1, 0))) > total - 200:
             fillers -= 1
         gap = total - _units(text(found(fillers, 1, 0)))
-    finally:
-        reviews.RECORD_LIMIT = limit
     e = next(e for e in range(80) if (gap - 7 * e) % 2 == 0 and 0 <= (gap - 7 * e) // 2 < 80 - e)
     return found(fillers, 1 + (gap - 7 * e) // 2, e), text
 
 
+def test_the_room_for_the_hashes_is_what_they_add():
+    assert reviews._HASHES_ROOM == HASHES_ROOM
+
+
 @pytest.mark.parametrize("hashes", [{"diff": "a" * 64, "lines": "b" * 64}, {}])
-def test_the_size_limit_holds_on_both_sides_of_it_hashed_or_not(hashes):
-    room = 0 if hashes else len(" diff= lines=") + 128
-    f, text = _sized(reviews.RECORD_LIMIT - room, **hashes)
+@pytest.mark.parametrize("filler", ["f" * 80, "😀" * 80], ids=["ascii", "emoji"])
+def test_the_size_limit_holds_on_both_sides_of_it_hashed_or_not(hashes, filler):
+    room = 0 if hashes else HASHES_ROOM
+    f, text = _sized(reviews.RECORD_LIMIT - room, filler, **hashes)
     assert _units(text(f)) == reviews.RECORD_LIMIT - room
-    f, text = _sized(reviews.RECORD_LIMIT - room + 1, **hashes)
-    with pytest.raises(reviews.RecordError, match=f"would be {reviews.RECORD_LIMIT + 1} characters, past the {reviews.RECORD_LIMIT}"):
+    f, text = _sized(reviews.RECORD_LIMIT - room + 1, filler, **hashes)
+    with pytest.raises(reviews.RecordError, match=f"would come to {reviews.RECORD_LIMIT + 1} characters with its hashes, counted as GitHub counts them \\(UTF-16 units\\), past the {reviews.RECORD_LIMIT}"):
         text(f)
 
 
+def test_the_size_limit_counts_utf16_units_not_code_points():
+    # 55 parts of 80 emoji: under the limit in code points, over it in UTF-16 units.
+    f = findings_mod.checked([findings_mod.Finding(mark="note", mechanism="😀" * 80) for _ in range(55)], (), False)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(reviews, "RECORD_LIMIT", 10**9)
+        text = reviews.record(kind="round", round=1, commit=SHA, reviewers="correctness", clean=None, findings=f, diff="a" * 64, lines="b" * 64)
+    assert len(text) < reviews.RECORD_LIMIT < _units(text)
+    with pytest.raises(reviews.RecordError, match="past the"):
+        reviews.record(kind="round", round=1, commit=SHA, reviewers="correctness", clean=None, findings=f, diff="a" * 64, lines="b" * 64)
+
+
 def test_a_record_with_room_for_its_hashes_is_read_back_whole_once_hashed():
-    f, text = _sized(reviews.RECORD_LIMIT - len(" diff= lines=") - 128)
+    f, text = _sized(reviews.RECORD_LIMIT - HASHES_ROOM)
     hashed = reviews.record(kind="round", round=1, commit=SHA, reviewers="correctness", clean=None, findings=f, diff="a" * 64, lines="b" * 64)
     assert _units(hashed) == reviews.RECORD_LIMIT
     assert _units(hashed + reviews._CLOUD_FOOTER) == reviews.COMMENT_LIMIT
@@ -266,11 +282,24 @@ def test_a_refusal_shows_the_findings_path_plainly_and_a_long_ones_end(capsys, t
     assert err.rstrip().endswith("/findings.json`") and "…" in err
 
 
-def test_a_deeply_nested_value_is_refused_in_words(capsys, tmp_path):
-    import sys
-    depth = sys.getrecursionlimit() - 100
+@pytest.mark.parametrize("depth", [50, sys.getrecursionlimit() * 2])
+def test_a_deeply_nested_value_is_refused_in_words(capsys, tmp_path, depth):
     err = refused(capsys, tmp_path, '{"findings": [], "split": ' + "[" * depth + "]" * depth + "}")
-    assert "Traceback" not in err and ("not a list" in err or "isn't JSON" in err)
+    assert "Traceback" not in err
+    # Deep past the recursion limit, the JSON reader of one Python refuses it
+    # and another reads it: either way, words.
+    assert "not a list" in err if depth == 50 else ("not a list" in err or "isn't JSON" in err)
+
+
+@pytest.mark.parametrize("number", ["1e400", "-1e400"])
+def test_a_number_too_large_to_hold_is_refused_as_written(capsys, tmp_path, number):
+    err = refused(capsys, tmp_path, '{"findings": [], "split": ' + number + "}")
+    assert f"`{number}` is too large a number" in err and "Infinity" not in err
+
+
+def test_a_backtick_in_the_findings_path_is_escaped(capsys, tmp_path):
+    code, out, err = run(capsys, *ROUND, "--findings", "/no/a`b.json")
+    assert "--findings names no file: `/no/a\\`b.json`" in err
 
 
 def test_a_file_starting_with_a_byte_order_mark_is_read(capsys, tmp_path):
@@ -517,6 +546,13 @@ def test_a_finding_or_outcome_line_anywhere_else_in_the_comment_leaves_the_recor
     assert len(reviews.records_in(text)) == 1
     extra = "<!-- workflow:finding n=2 mark=blocks mechanism=x covered=no contested=no security=no issue=none -->"
     assert reviews.records_in(where(text, extra)) == []
+
+
+def test_two_whole_records_in_one_comment_are_both_read(capsys, tmp_path):
+    a = written(capsys, tmp_path, FULL)
+    b = written(capsys, tmp_path, [{"mark": "note", "mechanism": "b"}], "--kind", "pass", "--round", "3", "--commit", SHA, "--reviewers", "correctness")
+    got = reviews.records_in(a + "\n" + b)
+    assert [(r.kind, r.rule, len(r.findings), len(r.outcomes)) for r in got] == [("round", 2, 5, 4), ("pass", 2, 1, 0)]
 
 
 def test_old_records_beside_stray_finding_lines_read_as_before(capsys):

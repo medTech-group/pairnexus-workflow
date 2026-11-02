@@ -75,6 +75,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote, unquote
 
+# The rule a record written from a findings file names (spec #412).
+RULE = 2
 MARKS = ("blocks", "ticket", "note")
 SECURITY = ("change", "main")
 OUTCOMES = ("contested", "fail-closed", "split")
@@ -101,6 +103,7 @@ _MARK_RULE = "`mark` is `blocks`, `ticket` (a ticket to fix it) or `note`"
 _SECURITY_RULE = "`security` is `change` (a security problem the change adds) or `main` (a security or safety problem in code on the base branch)"
 _OUTCOME_RULE = "`outcome` is `contested`, `fail-closed` or `split`"
 _RULING_RULE = "`ruling` is `kept` or `overturned`"
+_ISSUE_RULE = "`issue` is an issue's number, as 415 or \"#415\""
 
 _FINDING_LINE = re.compile(
     r"<!-- workflow:finding n=([0-9]+) mark=(\S+) mechanism=(\S+) covered=(yes|no) "
@@ -188,7 +191,7 @@ class Findings:
 
     def fields(self) -> str:
         """The review line's own fields, before its `result`."""
-        return f"rule=2 findings={len(self.findings)} outcomes={len(self.outcomes)} split={_yn(self.from_split)}"
+        return f"rule={RULE} findings={len(self.findings)} outcomes={len(self.outcomes)} split={_yn(self.from_split)}"
 
     def lines(self) -> list[str]:
         """The lines under the review line, in order."""
@@ -217,9 +220,9 @@ def _encoded(name: str) -> str:
 
 
 def _plain(text: str, n: int) -> str:
-    """Text as a refusal shows it: cut to `n` characters, anything that isn't
-    printable escaped."""
-    cut = "".join(c if c.isprintable() else repr(c)[1:-1] for c in text[:n])
+    """Text as a refusal shows it: cut to `n` characters, a backtick and
+    anything that isn't printable escaped."""
+    cut = "".join("\\`" if c == "`" else c if c.isprintable() else repr(c)[1:-1] for c in text[:n])
     return cut + ("…" if len(text) > n else "")
 
 
@@ -262,9 +265,6 @@ def _name(value, where: str, key: str) -> str:
     if not all(c.isprintable() for c in name):
         raise FindingsError(f"{where}: `{key}` has a control or invisible character (a line break, a tab): keep it to one line of plain text")
     return name
-
-
-_ISSUE_RULE = "`issue` is an issue's number, as 415 or \"#415\""
 
 
 def _issue_read(text: str) -> int | None:
@@ -440,12 +440,21 @@ def _no_constant(name: str):
     raise FindingsError(f"isn't JSON: `{name}` is no JSON value")
 
 
+def _finite(text: str) -> float:
+    """A number with a fraction or exponent, refused when too large to hold,
+    so a refusal never quotes it as `Infinity`."""
+    value = float(text)
+    if value in (float("inf"), float("-inf")):
+        raise FindingsError(f"isn't JSON this command reads: `{_plain(text, 30)}` is too large a number")
+    return value
+
+
 def load(text: str) -> Findings:
     """A findings file's text, read and checked. Raises FindingsError."""
     if not text.strip():
         raise FindingsError("is empty: give `[]` for a review with no findings")
     try:
-        data = json.loads(text, object_pairs_hook=_no_repeats, parse_constant=_no_constant)
+        data = json.loads(text, object_pairs_hook=_no_repeats, parse_constant=_no_constant, parse_float=_finite)
     except FindingsError:
         raise
     except (ValueError, RecursionError) as e:
@@ -553,11 +562,11 @@ def read_lines(lines, n_findings: str, n_outcomes: str, split: str) -> Findings 
     are there, in order, keeping the rules. Never raises. (`reviews.records_in`
     refuses the record when the comment holds any other finding or outcome
     line.)"""
-    many, more = _count(n_findings), _count(n_outcomes)
-    if many is None or more is None or split not in ("yes", "no") or len(lines) < many + more:
+    findings_count, outcomes_count = _count(n_findings), _count(n_outcomes)
+    if findings_count is None or outcomes_count is None or split not in ("yes", "no") or len(lines) < findings_count + outcomes_count:
         return None
-    found = [_parse_finding(lines[i], i + 1) for i in range(many)]
-    outs = [_parse_outcome(lines[many + i], i + 1) for i in range(more)]
+    found = [_parse_finding(lines[i], i + 1) for i in range(findings_count)]
+    outs = [_parse_outcome(lines[findings_count + i], i + 1) for i in range(outcomes_count)]
     if None in found or None in outs:
         return None
     try:
@@ -565,4 +574,4 @@ def read_lines(lines, n_findings: str, n_outcomes: str, split: str) -> Findings 
     except FindingsError:
         return None
     # Only exactly what the writer writes.
-    return got if got.lines() == list(lines[: many + more]) else None
+    return got if got.lines() == list(lines[: findings_count + outcomes_count]) else None
