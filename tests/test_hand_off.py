@@ -232,6 +232,13 @@ def test_a_counted_record_after_it_clears_it(project, capsys):
     assert "hand_off" not in note_ids(got)
 
 
+def test_a_rule_2_record_after_it_clears_it_whatever_its_result(project, capsys):
+    for found in ([], BLOCKS):
+        data = with_comments((rec(rnd=3, clean=False), "owner"), (hand_off_comment(), "owner"), (record_of(found, commit=HEAD), "owner"))
+        got, _ = check(project, capsys, data)
+        assert got["hand_off"] is None, found
+
+
 def test_a_counted_pass_after_it_clears_it_too(project, capsys):
     data = with_comments((rec(rnd=3, clean=False), "owner"), (hand_off_comment(), "owner"), (rec(kind="pass", rnd=3, clean=False), "keeper"))
     got, _ = check(project, capsys, data)
