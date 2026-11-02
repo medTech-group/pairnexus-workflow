@@ -1,6 +1,6 @@
 """#447: the run charter's recommended answers carry their evidence (spec #436's
 "Which questions": the charter's questions get the evidence rule only, with no
-checks; answer 19 on #433). Read as a text contract on the `conductor` skill's
+checks; answer 1 on #433, and the spec's story 19). Read as a text contract on the `conductor` skill's
 kick-off, and on `docs/charter.md` §2 where it describes asking, as
 `tests/test_decision_questions.py` reads the flow: each test reads one part of
 the text, and checks what it requires rather than its exact wording, so a later
@@ -94,10 +94,10 @@ def test_what_it_rests_on_names_the_four_sources():
     rests = _item(_evidence(), "What it rests on")
     assert "profile setting" in rests
     assert "doctor line" in rests
-    assert "default" in rests and "`WF charter defaults`" in rests
+    assert "default" in rests and "charter defaults" in rests
     assert "last run's charter" in rests
     # Named, not just pointed at: the setting by its key, the line by its id.
-    assert "key" in rests and "id" in rests
+    assert re.search(r"\bkey\b", rests) and re.search(r"\bid\b", rests)
 
 
 def test_what_it_gives_up_and_what_would_make_it_wrong_are_said():
@@ -126,21 +126,24 @@ def test_a_question_with_no_basis_has_no_recommended_answer():
     assert "end time" in none
 
 
+def _points_to_the_flow(text: str) -> bool:
+    return "flow" in text and '"Decision questions"' in text
+
+
 def test_the_kick_off_points_to_the_flow_s_rules_for_decision_questions():
-    rule = _evidence()
-    assert 'flow, "Decision questions"' in rule
+    assert _points_to_the_flow(_sentence(_evidence(), "Decision questions"))
     # And the flow's section exists, naming the charter's questions as `conductor`'s.
     flow = FLOW.read_text(encoding="utf-8")
     assert "\n## Decision questions\n" in flow
     intro = _flatten(flow.split("\n## Decision questions\n", 1)[1].split("\n- **", 1)[0])
-    assert "`conductor`" in _sentence(intro, "charter")
+    assert any("`conductor`" in s and "charter" in s for s in re.split(r"(?<=[.;])\s+", intro))
 
 
 def test_the_charter_gets_the_evidence_rule_only_with_no_checks():
     rule = _evidence()
     assert "no checks" in rule
-    # No planning check runs on the charter: the conductor never calls the checker.
-    assert "planning-checker" not in CONDUCTOR.read_text(encoding="utf-8")
+    # No planning check runs on the charter: the kick-off never calls the checker.
+    assert "planning-checker" not in _kick_off()
 
 
 def test_same_as_last_time_carries_its_evidence():
@@ -149,16 +152,31 @@ def test_same_as_last_time_carries_its_evidence():
     # It rests on the last run's charter, named by its tracking issue.
     assert "last run's charter" in s and "tracking issue" in s
     assert "gives up" in reuse
-    # What would make it wrong: what changed since, as the diff, doctor and the profile show it.
-    wrong = _sentence(reuse, "wrong")
-    assert "charter diff" in wrong
-    assert "doctor" in wrong and "profile" in wrong
+    # What would make it wrong: the old answers beside today's evidence, not the
+    # diff, which shows only what reuse cleared or filled.
+    wrong = _sentence(reuse, "make it wrong")
+    assert "diff" in wrong and "reuse" in wrong
+    assert "`run.preset`" in wrong and "`github.approvals`" in wrong and "doctor's lines" in wrong
 
 
-def test_the_existing_recommendations_keep_their_place():
-    # The defaults don't change (accepted limits): recommended answers still come first.
+def test_same_as_last_time_is_not_recommended_as_is_where_today_s_evidence_rules_an_answer_out():
+    s = _sentence(_reuse(), "rules an old answer out")
+    # That answer is asked again with its own recommendation, not reused as is.
+    assert "ask it again" in s and "own recommendation" in s
+    assert "reused as is" in s
+
+
+def test_recommended_answers_still_come_first_and_the_preset_is_still_recommended():
     assert "recommended answers first" in _flatten(_kick_off())
     assert "marked recommended (`recommended`)" in _step(2)
+
+
+def test_the_merge_queue_s_recommendation_carries_the_whole_evidence():
+    step = _step(1)
+    found = [b for b in step.split(" - ") if b.startswith("**The merge queue.**")]
+    assert len(found) == 1, found
+    s = _sentence(found[0], "with its reason")
+    assert "gives up" in s and "make it wrong" in s
 
 
 # --- docs/charter.md, where it describes asking -------------------------------
@@ -169,7 +187,9 @@ def test_the_charter_doc_says_each_recommended_answer_carries_its_evidence():
     assert "rests on" in p and "gives up" in p and "make it wrong" in p
     for source in ("profile setting", "doctor line", "default", "last run's charter"):
         assert source in p, source
-    assert 'flow, "Decision questions"' in p
+    assert _points_to_the_flow(_sentence(p, "Decision questions"))
+    # A question without a basis has no default to put first.
+    assert "first, where it has one" in p
 
 
 def test_the_charter_doc_has_no_recommendation_without_a_basis_and_no_checks():
@@ -185,6 +205,8 @@ def test_the_charter_doc_s_same_as_last_time_carries_its_evidence():
     p = _charter_reuse()
     assert "rests on" in p and "last run's charter" in p
     assert "gives up" in p and "wrong" in p
+    # The diff isn't the evidence of change: the old answers are set beside today's.
+    assert "rules an old answer out" in p and "on its own" in p
 
 
 # --- the changelog ----------------------------------------------------------
