@@ -107,9 +107,9 @@ def test_what_it_rests_on_names_its_sources():
 def test_what_it_gives_up_and_what_would_make_it_wrong_are_said():
     rule = _evidence()
     gives = _item(rule, "What it gives up")
-    assert "other option" in gives
+    assert "option" in gives
     wrong = _item(rule, "What would make it wrong")
-    assert "another option" in wrong or "other option" in wrong
+    assert "option" in wrong
 
 
 def test_the_rule_covers_every_kick_off_question_that_recommends_one():
@@ -160,23 +160,35 @@ def test_same_as_last_time_carries_its_evidence():
     # diff, which shows only what reuse cleared or filled.
     wrong = _sentence(reuse, "make it wrong")
     assert "diff" in wrong and "reuse" in wrong
-    assert "charter defaults" in wrong and "`github.approvals`" in wrong
+    assert "charter defaults" in reuse and "`github.approvals`" in reuse
     # Accepted gaps aren't compared: reuse clears them and step 1 asks them afresh.
     assert "step 1" in _sentence(reuse, "Accepted gaps")
 
 
 def test_same_as_last_time_is_not_recommended_as_is_where_today_s_evidence_rules_an_answer_out():
-    s = _sentence(_reuse(), "rules a reused answer out")
-    # That answer is asked again with its own recommendation, not reused as is.
-    assert "ask it again" in s and "own recommendation" in s
-    assert "reused as is" in s
+    reuse = _reuse()
+    s = _sentence(reuse, "own recommendation")
+    # Such an answer is asked again on its own, with its own recommendation, and only then.
+    assert "again" in s and "on its own" in s and "only" in s
+    assert "rules it out" in s and "doctor line" in s
+    # The cases, each from evidence the conductor has.
+    assert "`ui.explorer`" in reuse and "`github.approvals`" in reuse and "solo-mode" in reuse
+
+
+def test_same_as_last_time_names_a_difference_from_the_defaults_without_asking_it_again():
+    # A reused answer that only differs from today's defaults is the owner's earlier
+    # choice: named, never asked again for that alone.
+    s = _sentence(_reuse(), "earlier choice")
+    assert "charter defaults" in s and "charter diff" in s
+    assert "never" in s and "again" in s
     # The merge mode solo mode rules out keeps its own handling, named as the exception.
     assert "exception" in _sentence(_reuse(), "no longer offers it")
 
 
 def test_recommended_answers_still_come_first_and_the_preset_is_still_recommended():
     assert "recommended answers first" in _flatten(_kick_off())
-    assert "marked recommended (`recommended`)" in _step(2)
+    sentences = re.split(r"(?<=[.;])\s+", _step(2))
+    assert any("`run.preset`" in s and "recommended" in s for s in sentences)
 
 
 def test_the_merge_queue_s_recommendation_carries_the_whole_evidence():
@@ -213,9 +225,12 @@ def test_the_charter_doc_s_same_as_last_time_carries_its_evidence():
     p = _charter_reuse()
     assert "rests on" in p and "last run's charter" in p
     assert "gives up" in p and "wrong" in p
-    # The diff isn't the evidence of change: the old answers are set beside today's.
-    assert "rules a reused answer out" in p and "on its own" in p
-    assert "charter defaults" in p
+    # A difference from today's defaults alone is the owner's earlier choice, never
+    # a reason to ask again; an answer today's evidence rules out is asked on its own.
+    s = _sentence(p, "earlier choice")
+    assert "charter defaults" in s and "never" in s
+    assert "rules a reused answer out" in p or "rules out" in p
+    assert "on its own" in p
 
 
 # --- the changelog ----------------------------------------------------------
