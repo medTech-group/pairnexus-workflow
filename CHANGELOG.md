@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-**The end check: all the answers read together before the spec or ADR is written** (#441, part of spec #436). In `start`'s Spec step, once the seams' round is posted and before the draft, and in its Map step, before a decision's ADR, `planning-checker` reads every answer posted for the spec or decision together, once. It is one of the flow's checks, not the planning review: one read, one re-read, and no spec record. `next` runs it as `start` says.
+**The end check: all the answers read together before the spec or ADR is written** (#441, part of spec #436). In `start`'s Spec step, once the seams' round is posted and before the draft, and in its Map step, before a decision's ADR or glossary is written, `planning-checker` reads every answer posted for the spec or decision together, once. It is one of the flow's checks, not the planning review: one read, one re-read, and no spec record. `next` runs it as `start` says.
 
 - Its **ask** findings come back as one short round, under the flow's "Decision questions" (each with a recommendation and its evidence where there's a basis for one, a finding about the owner's own words on its own), with **Leave them open** among the options. This round gets no check of its own before it's asked. Its **fix** findings are made and listed in that round's post, or, with no round, in a comment straight after the read.
 - **Then one re-read** of only what changed (the round's answers and the fixes), against the rest, and stop. Its findings are never asked: its fixes are made, and its **ask** findings join what's left.
