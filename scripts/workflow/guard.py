@@ -7639,7 +7639,6 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tupl
     unsure, project, note = None, None, None
     named = None
     staging: dict = {}  # what each `git add` in the command stages, read once (#394)
-    reorders: bool | None = None  # whether a later part may run first, read once
     for seg in segs:
         g = _commit_git(seg.words)
         if not g or not g[1]:
@@ -7726,7 +7725,7 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tupl
             continue
         # What runs before it in the command: a `git add` stages more, read here; another git command may stage
         # anything (#394).
-        staged, why_staged, later, guessed = _staged_before(segs, seg, d, glob, top, root, staging)
+        staged, why_staged, later, guessed = _staged_before(segs, seg, d, glob, top, root, staging, command)
         if why_staged:
             unsure = unsure or f"{cant}: {why_staged}"
         if staged and c.specs and not (c.include or c.all):
@@ -7737,16 +7736,14 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tupl
                 keep = set(untracked)
                 staged = [f for f in staged if f in keep]
         hit = next((_Hit(f, m, wt) for f in later for m in [_listed_code(f, code)] if m), None)
-        if hit and reorders is None:
-            reorders = _may_reorder(command)
-        if hit and reorders:
+        if hit and _reorders(staging, command):
             unsure = unsure or (
                 f"{cant}: a later part runs `git add`, which would stage the code path {_shown(hit)} ({hit.pattern}), and may "
                 "run first, as the command holds a loop, a pipeline, the background, a function or a substitution: run the "
                 "commit in a command of its own"
             )
-        seen = set(files)
         carried = set(files)
+        seen = set(carried)
         files += [f for f in staged if f not in seen and not seen.add(f)]
         # A commit finishing a revert (`git commit` while one is in progress, `git revert --continue`) is judged by the revert rule (#392).
         hits = [_Hit(f, m, wt) for f in files for m in [_listed_code(f, code)] if m] if args[0] in ("commit", "revert") and not heads and not unread else []
@@ -7776,12 +7773,12 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tupl
                 ), None
             return f"{what} carries the code path {_shown(hit)} ({hit.pattern}); {code.instead}", None
         if own_err:  # it couldn't read the merge's own changes: asked when what is staged differs from a parent in code
-            staged: list[str] | None = []
+            differs: list[str] | None = []
             for parent in ["HEAD", *heads]:
                 got, _ = _git_read(d, glob, "diff", "--name-only", "-z", "--no-renames", "--cached", "--end-of-options", parent, "--", env=pathspec_env)
-                staged = None if got is None or staged is None else staged + got
-            hit = next((_Hit(f, m, wt) for f in staged or [] for m in [_listed_code(f, code)] if m), None)
-            if hit or staged is None:
+                differs = None if got is None or differs is None else differs + got
+            hit = next((_Hit(f, m, wt) for f in differs or [] for m in [_listed_code(f, code)] if m), None)
+            if hit or differs is None:
                 shown = f", and what is staged differs from a parent in the code path {_shown(hit)} ({hit.pattern})" if hit else ""
                 unsure = unsure or f"{cant}: it couldn't read the merge's own changes ({own_err}){shown}"
     return None, unsure or note
@@ -8564,8 +8561,8 @@ _REORDERS = {"&", "|", "|&"} | (_COMPOUND_WORDS - {"if", "case", "function"})
 def _may_reorder(command: str) -> bool:
     """Whether a later part of the command may run before an earlier one: it
     holds `&`, `|`, a loop, a coprocess or a function's definition, or a
-    substitution (`$(…)`, a backtick, `<(…)`), which runs before the part it
-    is in. A plain sequence
+    substitution (`$(…)`, a backtick, `<(…)`), which runs before the part
+    it is in. A plain sequence
     (`;`, `&&`, `||`, newlines) runs in order."""
     if "`" in command or "$(" in command or "<(" in command or ">(" in command:
         return True
@@ -8575,6 +8572,13 @@ def _may_reorder(command: str) -> bool:
         return any(t in _REORDERS or t == "function" for t in toks) or any(a == "(" and b == ")" for a, b in zip(toks, toks[1:]))
     except Exception:  # a command it can't split: may
         return True
+
+
+def _reorders(memo: dict, command: str) -> bool:
+    """`_may_reorder(command)`, read once per command (`memo`)."""
+    if ("reorders",) not in memo:
+        memo[("reorders",)] = _may_reorder(command)
+    return memo[("reorders",)]
 
 
 def _part_git(s: Seg) -> list[str] | None:
@@ -8610,8 +8614,9 @@ def _add_reading(s: Seg, root: Path) -> _Staging:
     # A word the shell expands, or an option it can't read, may be `-f`.
     force = (a.force if a is not None else any(_FORCE_WORD.fullmatch(w) for w in args[1:])) or any(_EXPANDS.search(w) for w in args[1:])
     whole = _Staging(whole=True, force=force)
-    moved = [o for o in (g[0] if g else []) if o.partition("=")[0] in _GIT_REPO_GLOBALS]
-    moved += [g[0][i + 1] for i, o in enumerate((g[0] if g else [])[:-1]) if o == "-c" and g[0][i + 1].split("=", 1)[0].casefold() == "core.worktree"]
+    opts = g[0] if g else []
+    moved = [o for o in opts if o.partition("=")[0] in _GIT_REPO_GLOBALS]
+    moved += [opts[i + 1] for i, o in enumerate(opts[:-1]) if o == "-c" and opts[i + 1].split("=", 1)[0].casefold() == "core.worktree"]
     moved += sorted(set(_assigned(s)) & (_GIT_REPO_ENV | _GIT_INDEX_ENV))
     if moved:
         return replace(whole, elsewhere=f"`{_brief(moved[0])}`")
@@ -8657,7 +8662,8 @@ def _keeps_staged(args: list[str], s: Seg, into) -> bool:
     if sub in _PUSH_CMDS:
         return _git_changes(args) is None or not into()
     if sub in ("rm", "mv", "restore"):
-        if s.fed or any(_EXPANDS.search(w) or w.startswith("--pathspec-f") for w in rest):
+        # A pathspec's magic (`:(top)src`) or git's own glob (`'*.py'`, which crosses `/`) the write rule doesn't place.
+        if s.fed or any(_EXPANDS.search(w) or w.startswith(("--pathspec-f", ":")) or _GLOB_CHARS.search(w) for w in rest):
             return False
         if sub != "restore":
             return True
@@ -8693,6 +8699,10 @@ def _keeps_staged(args: list[str], s: Seg, into) -> bool:
         return words <= 1  # a branch; a second word is a path
     if sub == "stash":
         return [w for w in rest if not w.startswith("-")][:1] in (["list"], ["show"])
+    if sub == "reset":  # one that only unstages (to HEAD, mixed), leaving less to commit
+        opts = [w for w in rest if w.startswith("-") and w != "--"]
+        tree = rest[: rest.index("--")] if "--" in rest else rest
+        return all(o in ("-q", "--quiet", "--mixed") for o in opts) and all(w == "HEAD" for w in tree if not w.startswith("-")) and ("--" in rest or len([w for w in tree if not w.startswith("-")]) <= 1)
     if sub == "fetch":  # not `--update-head-ok` with a destination
         return _git_changes(args) is None
     if sub == "config":
@@ -8710,7 +8720,7 @@ def _keeps_staged(args: list[str], s: Seg, into) -> bool:
     return sub in _KEEPS_STAGED
 
 
-def _staged_before(segs: list[Seg], seg: Seg, d: str, glob: list[str], top: str, root: Path, memo: dict) -> tuple[list[str], str, list[str], set[str]]:
+def _staged_before(segs: list[Seg], seg: Seg, d: str, glob: list[str], top: str, root: Path, memo: dict, command: str) -> tuple[list[str], str, list[str], set[str]]:
     """(the files the `git add`s before the commit `seg` stage into its
     index, why the guard can't tell what another git command before it
     stages (else ""), the files the `git add`s after it would stage, which
@@ -8731,12 +8741,16 @@ def _staged_before(segs: list[Seg], seg: Seg, d: str, glob: list[str], top: str,
         if not args:
             continue
         if args[0] not in ("add", "stage"):
+            # After the commit, only where a later part may run first (`_may_reorder`).
+            if why or not (ahead or _reorders(memo, command)):
+                continue
             key = ("keeps", id(s), d, tuple(glob))
-            if ahead and not why and key not in memo:
+            if key not in memo:
                 memo[key] = _keeps_staged(args, s, lambda: _pushes_into(s, args, root, _git_common(d, glob)))
-            if ahead and not why and not memo[key]:
+            if not memo[key]:
                 label = "git " + " ".join(_brief(a) for a in args[:2])
-                why = f"an earlier part runs `{label}`, which may change what it commits: run that in a command of its own first"
+                where = "an earlier part" if ahead else "a later part, which may run first,"
+                why = f"{where} runs `{label}`, which may change what it commits: run that in a command of its own first"
             continue
         if id(s) not in memo:
             memo[id(s)] = _add_reading(s, root)
@@ -9625,11 +9639,12 @@ def _beside_ref_move(cant: str, moves: str, code: _Code, root: Path, made: bool)
     (#393: a code commit goes through unjudged there, which the refusal then
     says). Run apart, each is judged on its own, the push by what it sends
     (#338's answer 41)."""
-    proto = ", and on a `prototype/*` branch a planning session's code commits go through unjudged" if code.prototyping(root) else ""
+    unjudged = "on a `prototype/*` branch a planning session's code commits go through unjudged" if code.prototyping(root) else ""
+    proto = f", and {unjudged}" if unjudged else ""
     if made:
         plain = ": " not in cant and cant.startswith("the guard can't tell what")  # only that it can't read a push beside one
         also = "" if plain else f" (besides, {cant})"  # a push it can't read for another reason says that too
-        unjudged = " On a `prototype/*` branch a planning session's code commits go through unjudged." if proto else ""
+        unjudged = f" {unjudged[0].upper()}{unjudged[1:]}." if unjudged else ""
         return (
             f"a push to `{code.repo or 'the project'}` in the same command as `{moves}`, which may make or finish commits, is "
             f"refused wherever it sits and whatever it carries{also}: run the push in a command of its own, after it, where "

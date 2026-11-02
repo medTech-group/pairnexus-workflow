@@ -201,6 +201,12 @@ def test_a_git_add_on_a_prototype_branch_meets_the_prototype_exception_first(tmp
         "git fetch --update-head-ok origin main:feature && git commit -m x",
         "git push . main:feature && git commit -m x",
         "git ci && git commit -m x",
+        "git rm -q --cached '*.py' && git commit -m x",
+        "git rm -r -q --cached ':(top)src' && git commit -m x",
+        "git reset --soft HEAD~1 -q && git commit -m x",
+        "git reset main && git commit -m x",
+        "for b in 1 2; do git commit -m x; git checkout main -- src; done",
+        "git commit -m x & git stash pop",
     ],
 )
 def test_another_git_command_that_may_change_what_is_staged_before_a_commit(proj, monkeypatch, capsys, command):
@@ -228,6 +234,9 @@ def test_another_git_command_that_may_change_what_is_staged_before_a_commit(proj
         "git rm -q docs/old.md && git commit -m d",
         "git mv docs/guide.md docs/g.md && git commit -m d",
         "git restore docs/guide.md && git restore --staged docs/x.md && git commit -m d",
+        "git reset && git add docs/guide.md && git commit -m d",
+        "git reset -q HEAD -- docs && git add docs/guide.md && git commit -m d",
+        "git commit -m d && git stash pop",
     ],
 )
 def test_git_commands_that_leave_what_is_staged_before_a_commit_go_through(proj, monkeypatch, capsys, command):
@@ -467,6 +476,17 @@ def test_a_push_beside_what_makes_no_commit_is_asked_as_before(proj, monkeypatch
     ):
         d, why = hook(monkeypatch, capsys, proj, command)
         assert d == "ask" and "can't tell" in why and OWN not in why, (command, why)
+        d, why = hook(monkeypatch, capsys, proj, command, "conductor")
+        assert d == "deny" and "can't tell" in why and "may make or finish commits" not in why, (command, why)
+
+
+def test_ticket_sessions_decide_as_today(proj, monkeypatch, capsys):
+    """A ticket session writes code: none of this ticket's rules apply to it."""
+    _on(proj, "claude/build-1")
+    git(proj, "config", "branch.claude/build-1.remote", "origin")
+    _change(proj, CODE)
+    for command in ("git add -A && git commit -m x && git push origin claude/build-1", "git commit -am x; git push -u origin HEAD", "git reset --soft HEAD~1 && git commit -m x"):
+        assert hook(monkeypatch, capsys, proj, command, "ticket") == ("allow", ""), command
 
 
 def test_a_bare_push_beside_a_commit_after_a_branch_change(proj, tmp_path, monkeypatch, capsys):
@@ -522,7 +542,7 @@ def test_a_chained_push_on_a_prototype_branch_is_refused(tmp_path, monkeypatch, 
     _change(root, CODE)
     for command in ("git commit -am x && git push origin prototype/x", "git commit -am x && git push", "git add -A && git commit -m x; git push origin HEAD"):
         d, why = hook(monkeypatch, capsys, root, command)
-        assert d == "deny" and OWN in why and "unjudged" in why, (command, why)
+        assert d == "deny" and OWN in why and "unjudged" in why and "may make or finish commits" in why, (command, why)
     # Each on its own: the commit and the push to a prototype branch go through.
     assert hook(monkeypatch, capsys, root, "git commit -am x") == ("allow", "")
     git(root, "commit", "-qam", "x")
