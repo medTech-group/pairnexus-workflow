@@ -219,9 +219,10 @@ def _units(text):
 
 def _sized(total, filler="f" * 80, **hashes):
     """Findings whose record comes to exactly `total` UTF-16 units: parts
-    named `filler`, then parts of 80 `f` to come within 200 to 470 units of
-    it, then one part named with `a` (2 units each, its text and its line) and
-    `é` (7: one in its text, six encoded), which closes any such gap."""
+    named `filler`, then parts of 80 `f` (about 280 units each) to come within
+    7 units of it or more, then one part named with `a` (2 units each, its
+    text and its line) and `é` (7: one in its text, six encoded), which closes
+    any gap from 7 to about 550."""
     def text(found):
         return reviews.record(kind="round", round=1, commit=SHA, reviewers="correctness", clean=None, findings=found, **hashes)
 
@@ -230,7 +231,10 @@ def _sized(total, filler="f" * 80, **hashes):
         return findings_mod.checked([findings_mod.Finding(mark="note", mechanism=n) for n in names], (), False)
 
     def most(size, under):
+        """The most parts whose record stays within `under`: up by 25, then back."""
         n = 0
+        while size(n + 25) <= under:
+            n += 25
         while size(n + 1) <= under:
             n += 1
         return n
@@ -238,7 +242,7 @@ def _sized(total, filler="f" * 80, **hashes):
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(reviews, "RECORD_LIMIT", 10**9)  # measured with the limit lifted
         big = most(lambda n: _units(text(found(n, 0, 1, 0))), total - 3000)
-        small = most(lambda n: _units(text(found(big, n, 1, 0))), total - 200)
+        small = most(lambda n: _units(text(found(big, n, 1, 0))), total - 7)
         gap = total - _units(text(found(big, small, 1, 0)))
     e = next(e for e in range(80) if (gap - 7 * e) % 2 == 0 and 0 <= (gap - 7 * e) // 2 < 80 - e)
     return found(big, small, 1 + (gap - 7 * e) // 2, e), text
@@ -580,9 +584,17 @@ def test_old_records_beside_stray_finding_lines_read_as_before(capsys):
 
 
 def test_read_keeps_who_posted_a_rule_2_record(capsys, tmp_path):
-    text = written(capsys, tmp_path, [])
+    text = written(capsys, tmp_path, FULL)
     (r,) = reviews.read([{"id": 5, "user": {"login": "owner"}, "created_at": "t", "body": text.replace("\n", "\r\n")}])
-    assert (r.rule, r.author, r.comment_id) == (2, "owner", 5)
+    assert (r.rule, r.author, r.comment_id, len(r.findings), len(r.outcomes)) == (2, "owner", 5, 5, 4)
+
+
+@pytest.mark.parametrize("end", [" ", "\t", "  \t "])
+def test_spaces_or_tabs_after_a_records_lines_still_read(capsys, tmp_path, end):
+    text = written(capsys, tmp_path, FULL)
+    padded = "\n".join(l + end if l.startswith("<!-- workflow:") else l for l in text.splitlines())
+    (r,) = reviews.records_in(padded)
+    assert (r.rule, len(r.findings), len(r.outcomes)) == (2, 5, 4)
 
 
 def test_the_reader_never_raises_on_odd_lines():
