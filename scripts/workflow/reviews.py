@@ -371,16 +371,16 @@ def record(*, kind, round, commit=None, reviewers, clean, body=None, diff=None, 
     return text
 
 
-def _parse(fields: str, below=()) -> Record | None:
-    """A review line's record, or None. `below` is the lines under it, where a
-    `rule=2` record's finding and outcome lines are."""
+def _parse(fields: str, lines=(), start: int = 0) -> Record | None:
+    """A review line's record, or None. `lines[start:]` is the comment's lines
+    under it, where a `rule=2` record's finding and outcome lines are."""
     got = dict(p.partition("=")[::2] for p in fields.split(" "))
     found = None
     if "rule" in got:
         rule = {k: got.pop(k, None) for k in _RULE_FIELDS}
         if rule["rule"] != str(RULE) or None in rule.values():
             return None
-        found = findings_mod.read_lines(below, rule["findings"], rule["outcomes"], rule["split"])
+        found = findings_mod.read_lines(lines, start, rule["findings"], rule["outcomes"], rule["split"])
         if found is None:
             return None
     try:
@@ -419,22 +419,13 @@ def records_in(text) -> list[Record]:
         if any(f in line for f in _FENCE):
             break
         m = _LINE.fullmatch(line)
-        # A `rule=2` record's own lines below it, up to the next fence.
-        r = None if not m else _parse(m.group(1), _below(lines, i + 1) if " rule=" in m.group(1) else ())
+        # A `rule=2` record's own lines follow it.
+        r = _parse(m.group(1), lines, i + 1) if m else None
         if r is not None:
             out.append(r)
             own.update(range(i + 1, i + 1 + len(r.findings) + len(r.outcomes)))
     if any(_OWN_LINE.match(line) and i not in own for i, line in enumerate(lines)):
         out = [r for r in out if r.rule is None]
-    return out
-
-
-def _below(lines, start: int, most: int = 2 * findings_mod.MAX_ITEMS) -> list[str]:
-    out = []
-    for line in lines[start:start + most]:
-        if any(f in line for f in _FENCE):
-            break
-        out.append(line.rstrip(" \t"))
     return out
 
 

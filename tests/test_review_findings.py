@@ -218,26 +218,30 @@ def _units(text):
 
 
 def _sized(total, filler="f" * 80, **hashes):
-    """Findings whose record comes to exactly `total` UTF-16 units: fillers
-    named `filler`, then one part named with `a` (2 units each, its text and
-    its line) and `é` (7: one in its text, six encoded)."""
+    """Findings whose record comes to exactly `total` UTF-16 units: parts
+    named `filler`, then parts of 80 `f` to come within 200 to 470 units of
+    it, then one part named with `a` (2 units each, its text and its line) and
+    `é` (7: one in its text, six encoded), which closes any such gap."""
     def text(found):
         return reviews.record(kind="round", round=1, commit=SHA, reviewers="correctness", clean=None, findings=found, **hashes)
 
-    def found(fillers, a, e):
-        names = [filler] * fillers + ["a" * a + "é" * e]
+    def found(big, small, a, e):
+        names = [filler] * big + ["f" * 80] * small + ["a" * a + "é" * e]
         return findings_mod.checked([findings_mod.Finding(mark="note", mechanism=n) for n in names], (), False)
+
+    def most(size, under):
+        n = 0
+        while size(n + 1) <= under:
+            n += 1
+        return n
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(reviews, "RECORD_LIMIT", 10**9)  # measured with the limit lifted
-        fillers = 0
-        while _units(text(found(fillers + 1, 1, 0))) <= total - 200:
-            fillers += 25
-        while _units(text(found(fillers, 1, 0))) > total - 200:
-            fillers -= 1
-        gap = total - _units(text(found(fillers, 1, 0)))
+        big = most(lambda n: _units(text(found(n, 0, 1, 0))), total - 3000)
+        small = most(lambda n: _units(text(found(big, n, 1, 0))), total - 200)
+        gap = total - _units(text(found(big, small, 1, 0)))
     e = next(e for e in range(80) if (gap - 7 * e) % 2 == 0 and 0 <= (gap - 7 * e) // 2 < 80 - e)
-    return found(fillers, 1 + (gap - 7 * e) // 2, e), text
+    return found(big, small, 1 + (gap - 7 * e) // 2, e), text
 
 
 def test_the_room_for_the_hashes_is_what_they_add():
@@ -340,6 +344,7 @@ def test_a_missing_file_or_a_folder_is_refused(capsys, tmp_path):
         ({"outcomes": []}, "give `findings`"),
         ({"findings": {}}, "`findings` is a list"),
         ({"findings": [], "extra": 1}, "unknown key `\"extra\"`"),
+        ({"findings": [], "a`b": 1}, "unknown key `\"a\\`b\"`"),
         ({"findings": [], "outcomes": {}}, "`outcomes` is a list"),
         ({"findings": [], "split": "yes"}, "`split` is true or false"),
         ([1], "finding 1 is an object"),
@@ -553,6 +558,17 @@ def test_two_whole_records_in_one_comment_are_both_read(capsys, tmp_path):
     b = written(capsys, tmp_path, [{"mark": "note", "mechanism": "b"}], "--kind", "pass", "--round", "3", "--commit", SHA, "--reviewers", "correctness")
     got = reviews.records_in(a + "\n" + b)
     assert [(r.kind, r.rule, len(r.findings), len(r.outcomes)) for r in got] == [("round", 2, 5, 4), ("pass", 2, 1, 0)]
+
+
+def test_a_comment_of_review_like_lines_is_read_one_line_past_each(monkeypatch):
+    calls = []
+    real = findings_mod._parse_finding
+    monkeypatch.setattr(findings_mod, "_parse_finding", lambda line, n: calls.append(n) or real(line, n))
+    line = f"<!-- workflow:review kind=round round=1 commit={SHA} reviewers=spec rule=2 findings=999 outcomes=0 split=no result=clean -->"
+    assert reviews.records_in("\n".join([line] * 3000)) == []
+    # Each review line reads at most the one under it, and stops there (one
+    # with fewer than 999 lines under it reads none), never 999 for each.
+    assert len(calls) == 3000 - 999
 
 
 def test_old_records_beside_stray_finding_lines_read_as_before(capsys):

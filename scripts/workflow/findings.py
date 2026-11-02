@@ -556,22 +556,31 @@ def _parse_outcome(line: str, n: int) -> Outcome | None:
     return Outcome(kind=kind, mechanism=name, issue=issue) if issue else None
 
 
-def read_lines(lines, n_findings: str, n_outcomes: str, split: str) -> Findings | None:
-    """The findings and outcomes from the lines right under a `rule=2` review
-    line, given its counts and split flag as written, or None unless that many
-    are there, in order, keeping the rules. Never raises. (`reviews.records_in`
-    refuses the record when the comment holds any other finding or outcome
-    line.)"""
+def read_lines(lines, start: int, n_findings: str, n_outcomes: str, split: str) -> Findings | None:
+    """The findings and outcomes from `lines[start:]`, the lines right under a
+    `rule=2` review line, given its counts and split flag as written, or None
+    unless that many are there, in order, keeping the rules. Each line is read
+    only once the counts are valid, and reading stops at the first that isn't
+    one, so a comment of review-like lines costs little. Never raises.
+    (`reviews.records_in` refuses the record when the comment holds any other
+    finding or outcome line.)"""
     findings_count, outcomes_count = _count(n_findings), _count(n_outcomes)
-    if findings_count is None or outcomes_count is None or split not in ("yes", "no") or len(lines) < findings_count + outcomes_count:
+    if findings_count is None or outcomes_count is None or split not in ("yes", "no"):
         return None
-    found = [_parse_finding(lines[i], i + 1) for i in range(findings_count)]
-    outs = [_parse_outcome(lines[findings_count + i], i + 1) for i in range(outcomes_count)]
-    if None in found or None in outs:
+    total = findings_count + outcomes_count
+    if len(lines) - start < total:
         return None
+    found, outs, read = [], [], []
+    for i in range(total):
+        line = lines[start + i].rstrip(" \t")
+        item = _parse_finding(line, i + 1) if i < findings_count else _parse_outcome(line, i - findings_count + 1)
+        if item is None:
+            return None  # a code fence, a blank line or anything else ends it
+        (found if i < findings_count else outs).append(item)
+        read.append(line)
     try:
         got = checked(found, outs, split == "yes")
     except FindingsError:
         return None
-    # Only exactly what the writer writes.
-    return got if got.lines() == list(lines[: findings_count + outcomes_count]) else None
+    # Only exactly what the writer writes, which never holds a fence.
+    return got if got.lines() == read else None
