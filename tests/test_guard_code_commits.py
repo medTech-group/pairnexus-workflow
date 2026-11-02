@@ -758,8 +758,9 @@ def test_an_unreadable_commits_ask_never_hides_a_refusal(proj, monkeypatch, caps
     _unreadable(proj)
     d, why = hook(monkeypatch, capsys, proj, "git commit -m x; echo x > src/new.py")
     assert d == "deny" and "code path" in why, why
-    # Another ask in the command joins it.
-    d, why = hook(monkeypatch, capsys, proj, "git commit -m x; git push origin HEAD:main")
+    # Another ask in the command joins it (a push to another repository: one to `project.repo` beside a commit is
+    # refused, #394).
+    d, why = hook(monkeypatch, capsys, proj, "git commit -m x; git push https://github.com/acme/elsewhere.git HEAD:main")
     assert d == "ask" and "base branch" in why and "index file" in why, why
 
 
