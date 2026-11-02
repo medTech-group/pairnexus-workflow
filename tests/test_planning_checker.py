@@ -18,22 +18,38 @@ def _text() -> str:
     return AGENT.read_text(encoding="utf-8")
 
 
-def _frontmatter() -> dict:
+def _parts() -> tuple[str, str]:
+    """(the frontmatter, the body)."""
     text = _text()
     assert text.startswith("---\n"), "the agent opens with its frontmatter"
-    head = text.split("---\n", 2)[1]
-    return dict(line.split(": ", 1) for line in head.strip().splitlines())
+    _, head, body = text.split("---\n", 2)
+    return head, body
+
+
+def _frontmatter() -> dict:
+    return dict(line.split(": ", 1) for line in _parts()[0].strip().splitlines())
+
+
+def _flatten(text: str) -> str:
+    return " ".join(text.split())
 
 
 def _body() -> str:
-    return " ".join(_text().split("---\n", 2)[2].split())
+    return _flatten(_parts()[1])
 
 
 def _section(name: str) -> str:
     """One `## ` section of the body, flattened."""
-    text = _text().split("---\n", 2)[2]
-    assert f"\n## {name}\n" in text, f"the agent has a `## {name}` section"
-    return " ".join(text.split(f"\n## {name}\n", 1)[1].split("\n## ", 1)[0].split())
+    body = _parts()[1]
+    assert f"\n## {name}\n" in body, f"the agent has a `## {name}` section"
+    return _flatten(body.split(f"\n## {name}\n", 1)[1].split("\n## ", 1)[0])
+
+
+def _bullet(section: str, name: str) -> str:
+    """One `- **name**` bullet of a section, flattened."""
+    body = _parts()[1].split(f"\n## {section}\n", 1)[1].split("\n## ", 1)[0]
+    assert f"\n- **{name}" in body, f"`## {section}` has a bullet `{name}`"
+    return _flatten(body.split(f"\n- **{name}", 1)[1].split("\n- ", 1)[0])
 
 
 # --- who it is ----------------------------------------------------------------
@@ -56,14 +72,20 @@ def test_its_description_says_which_reads_use_it():
 
 
 def test_it_names_the_four_reads():
-    reads = _section("The reads")
-    for read in ("Before a round", "The end check", "A re-read", "The breakdown check"):
-        assert read in reads, read
+    bullets = re.findall(r"^- \*\*([^*]+)\*\*", _parts()[1].split("\n## The reads\n", 1)[1].split("\n## ", 1)[0], re.M)
+    assert bullets == ["Before a round:", "The end check:", "A re-read:", "The breakdown check:"]
+    # The scratch directory's `<read>` names the same four.
+    assert "(`round`, `end`, `reread` or `breakdown`)" in _section("Your inputs")
     # A re-read reads only what changed, against the rest, and doesn't report the rest again.
-    reread = reads.split("A re-read", 1)[1]
-    assert "only what" in reread and "changed" in reread
+    reread = _bullet("The reads", "A re-read")
+    assert "only what a round changed" in reread and "against all the rest" in reread
+    assert "Report only findings that involve what changed" in reread
+    # The breakdown check's round is re-read too (answer 24), with the breakdown's rules.
+    assert "the breakdown check's round" in reread
+    assert "A re-read of the breakdown check, or of a quick ticket, reads as that read does" in reread
     # A quick ticket's end check reads the draft against the item's issue (spec #436, "Quick tickets").
-    assert "quick ticket" in reads and "item's issue" in reads and "decided for" in reads.lower()
+    end = _bullet("The reads", "The end check")
+    assert "quick ticket" in end and "against the item's issue" in end and "Decided for you" in end
 
 
 # --- its inputs ---------------------------------------------------------------
@@ -93,7 +115,7 @@ def test_the_breakdown_check_also_reads_the_spec_tickets_owner_tasks_and_edits()
 
 def test_it_reports_four_kinds_of_finding():
     kinds = _section("What to look for")
-    assert "four kinds" in kinds
+    assert re.search(r"four kinds of finding, and only these", kinds, re.I), kinds
     for kind in ("Conflicts between answers", "Combinations that break", "Gaps", "Wrong facts"):
         assert kind in kinds, kind
     assert "build ticket would have to guess" in kinds
@@ -140,25 +162,38 @@ def test_a_finding_about_the_owners_own_words_is_always_ask():
 
 def test_in_the_breakdown_check_only_wording_is_a_fix():
     marks = _section("Ask or fix")
-    bd = marks.split("breakdown check", 1)[1]
-    assert "only wording" in bd
-    assert "`## Blocked by`" in bd and "**ask**" in bd
+    bd = marks.split("In the breakdown check", 1)[1]
+    assert re.match(r", and its re-read, only wording is a \*\*fix\*\*", bd), bd[:80]
+    assert "moves a criterion or a decision between tickets" in bd
+    assert "changes a `## Blocked by`, is an **ask**" in bd
+
+
+def test_an_ask_after_a_last_read_is_left_open_not_asked():
+    # Spec #436: "A last read's findings ... are never asked: ... its ask findings are what's left."
+    ask = _section("Ask or fix").split("**ask**", 1)[1].split("**fix**", 1)[0]
+    assert "a last re-read" in ask and "left open" in ask
 
 
 def test_it_says_how_to_report_and_when_it_found_nothing():
     report = _section("How to report")
-    for part in ("ask", "fix", "example", "kind"):
-        assert part in report.lower(), part
+    for part in ("**Kind:** one of the four", "**Mark:** ask or fix", "**About:**", "**Example:**"):
+        assert part in report, part
     assert "found nothing" in report
+
+
+def test_a_quick_tickets_decided_for_you_list_has_its_own_place_in_the_report():
+    report = _section("How to report")
+    assert "separate list" in report and '"Decided for you"' in report
+    assert "with its evidence" in report
+    assert "aren't findings" in report
 
 
 # --- sensitive data -------------------------------------------------------------
 
 
 def test_sensitive_data_is_left_out_of_its_inputs_and_its_findings():
-    body = _body()
-    assert "Sensitive data" in body and "`profile.md`" in body
-    assert "left out" in body and "marked as left out" in body
+    inputs = _section("Your inputs")
+    assert re.search(r"\*\*Sensitive data\*\* \(`profile\.md`[^)]*\) is left out of your inputs and marked as left out", inputs), inputs
     report = _section("How to report")
     # Its findings follow the same rule: never quoted, marked as left out.
     assert "sensitive" in report.lower() and "left out" in report
@@ -179,5 +214,4 @@ def test_vendoring_writes_the_planning_checker_into_a_project(tmp_path):
 
 def test_the_changelog_names_the_planning_checker():
     notes = since_0110()
-    unreleased = notes.split("\n## ", 2)[0] if notes.count("\n## ") else notes
-    assert "planning-checker" in unreleased and "#438" in unreleased
+    assert "`planning-checker`" in notes and "(#438, part of spec #436)" in notes
