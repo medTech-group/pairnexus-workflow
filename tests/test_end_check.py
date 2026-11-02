@@ -232,9 +232,9 @@ def test_a_session_that_carries_on_never_runs_the_end_check_again():
     assert "what's left" in s and "never" in s and "interview" in s
 
 
-def test_an_own_words_question_belongs_to_the_end_check_s_round():
+def test_an_own_words_question_is_posted_with_the_end_check_s_round():
     s = _sentence(_part("ask findings"), "own words")
-    assert "this round" in s and "all its questions are answered" in s
+    assert "post" in s and "round" in s and "answered" in s
 
 
 def test_carry_on_points_to_the_end_check_once_one_is_posted():
@@ -255,8 +255,8 @@ def test_a_map_decision_runs_the_end_check_before_its_adr_is_written():
     s = _sentence(m, "end check")
     assert "before" in s and "ADR" in s
     assert "Spec" in s  # run as the Spec path runs it
-    # A decision that changes no ADR runs it before it's recorded.
-    assert "recorded" in s
+    # Before the glossary too; a decision that changes neither runs it before it's recorded.
+    assert "glossary" in s and "recorded" in s
     assert "no rounds" in _sentence(m, "has none")
 
 
