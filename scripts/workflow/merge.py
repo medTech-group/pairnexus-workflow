@@ -1115,7 +1115,7 @@ def _panel(ctx: Context, add) -> None:
     counted = [r for r in records if _counted(r, perms, shas)]
     if len(records) > len(counted):
         left_out = _plural(len(records) - len(counted), "review record")
-        _note(ctx, "records_ignored", f"Left out {left_out}: posted by an account without write access, or naming a commit outside this pull request.")
+        _note(ctx, "records_ignored", f"Left out {left_out}: posted by an account without write access, or naming a commit not in this pull request's commit list.")
     rounds = [i for i, r in enumerate(counted) if r.kind == "round"]
     if not rounds:
         add("no_review")

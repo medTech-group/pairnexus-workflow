@@ -332,6 +332,13 @@ def test_an_untrusted_hand_off_is_left_out_with_a_note(project, capsys, bad):
     assert "naming a commit not in this pull request's commit list" in n["message"]
 
 
+def test_records_and_hand_offs_left_out_for_one_reason_are_worded_alike(project, capsys):
+    data = with_comments((rec(clean=False), "owner"), (rec(kind="pass", commit=OUTSIDE), "owner"), (hand_off_comment(head=OUTSIDE), "owner"))
+    got, _ = check(project, capsys, data)
+    why = {x["id"]: x["message"].split(": ", 1)[1] for x in got["notes"] if x["id"] in ("records_ignored", "hand_offs_ignored")}
+    assert why["records_ignored"] == why["hand_offs_ignored"]
+
+
 def test_an_untrusted_later_hand_off_leaves_the_trusted_one_reported(project, capsys):
     data = with_comments((rec(clean=False), "owner"), (hand_off_comment(rnd=1, passes=0), "owner"), (hand_off_comment(), "stranger"))
     got, _ = check(project, capsys, data)
