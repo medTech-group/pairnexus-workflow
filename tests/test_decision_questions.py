@@ -83,8 +83,10 @@ def test_decision_questions_are_the_ones_posted_as_the_owner_s_and_named():
 def test_the_skills_that_ask_them_follow_these_rules_and_matt_pocock_s_stay_unedited():
     s = _sentence(_intro(), "the skills that ask them")
     assert "follow these rules" in s
-    for skill in ("`start`", "`next`", "`review-panel` §8", "`conductor`"):
+    for skill in ("`start`", "`next`", "`review-panel` §8"):
         assert skill in s, skill
+    # `conductor` asks only the charter's questions, which get the evidence rule alone.
+    assert "`conductor`" not in s and "`conductor`" in _sentence(_intro(), "charter")
     # A map decision's rounds run through Matt Pocock's skills, which aren't edited.
     s = _sentence(_intro(), "`wayfinder`")
     assert "`grilling`" in s and "unedited" in s
@@ -205,7 +207,8 @@ def test_what_s_left_after_a_last_read_goes_into_further_notes_or_a_comment_on_t
     assert "last read" in r
     # A last read's ask findings are left, never asked; its fix findings are made.
     s = _sentence(r, "never asked")
-    assert "**ask** findings" in s and "**fix** findings are made" in s
+    assert "**ask** findings" in s
+    assert "last read's **fix** findings are made" in r
     assert "except the breakdown check's" in s
     # A quick ticket's leftovers go into its "Decided for you", marked open.
     s = _sentence(r, "quick ticket")
@@ -255,7 +258,7 @@ def test_the_checks_are_named_with_the_checker_that_runs_them():
     s = _sentence(r, "before the round is asked")
     # A check's own rounds (the end check's, the breakdown check's) aren't read first, and no round twice.
     assert "except a check's own rounds" in s and "end check" in s and "breakdown check" in s
-    assert "never checks a round twice" in s
+    assert "never repeats a round's own check" in s
     s = _sentence(r, "(the re-read)")
     assert "once" in s and "only what that round changed" in s and "stops" in s
     # Rounds after a draft exists get one re-read against all earlier answers.
@@ -276,6 +279,9 @@ def test_the_breakdown_check_reads_the_tickets_against_the_spec():
     r = _rule("The breakdown check")
     assert "**Agree these**" in r and "`planning-checker`" in r and "against the spec" in r
     assert "exactly one build ticket, owner task or edit" in r
+    # Answer 15: criteria every ticket carries, and decisions that build nothing, are left out.
+    s = _sentence(r, "exactly one build ticket")
+    assert "every ticket carries" in s and "build nothing" in s and "left out" in s
     assert "`## Blocked by`" in r and "`## Bar`" in r
     assert "Only wording is a **fix**" in r
     # Answer 24: here the re-read's ask findings are asked, as one more round, with no read after it.
