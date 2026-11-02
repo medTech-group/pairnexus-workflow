@@ -20,6 +20,8 @@ Every reason is in `REASONS`, worded for *new to building* and for *developer*;
 the decision never depends on the wording. It reuses the kit's readers rather
 than repeating them:
 - the review records: `reviews.read`;
+- the hand-off comment (#371): `handoff.read`, reported as `hand_off`, never
+  a reason;
 - the checks on the head commit: `protection.latest` (a name reported twice
   counts by its latest result, the try-it link's check marked);
 - the checks the rulesets require: `protection.check`;
@@ -44,7 +46,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import charter as charter_mod
-from . import own_changes, presets as presets_mod, protection, reviews, small, state
+from . import handoff, own_changes, presets as presets_mod, protection, reviews, small, state
 from .evidence import is_full, read_headline
 from .guard import matches
 from .posts import CommentsError, _login, _number, comments_from, decode_values
@@ -133,6 +135,7 @@ class Result:
     measured: dict | None = None  # the diff against it, where the small review's condition applies
     queue: bool = False  # a ruleset in force on the base requires a merge queue: "ready" means ready to queue (#245)
     head_hashes: own_changes.Hashes = own_changes.UNKNOWN_HASHES  # the head's own changes, hashed (#261)
+    hand_off: dict | None = None  # the latest trusted hand-off comment no counted record follows (#371)
 
     def as_dict(self) -> dict:
         return {
@@ -153,6 +156,7 @@ class Result:
             "small": self.measured,
             "queue": self.queue,
             "head_hashes": {"diff": self.head_hashes.diff, "lines": self.head_hashes.lines},
+            "hand_off": self.hand_off,
         }
 
 
@@ -895,6 +899,14 @@ def _may_review(login: str | None, perms: dict[str, str]) -> bool:
     return bool(login) and perms.get(login.casefold()) in WRITE
 
 
+def _counted(r: reviews.Record, perms: dict[str, str], shas: set[str]) -> bool:
+    """A round or pass record the review rules count: from an account with
+    write access, for a commit of the pull request (`shas`). A spec record
+    names no commit; `_hand_off` reads records straight from the comments,
+    where one can be."""
+    return r.kind != "spec" and _may_review(r.author, perms) and r.commit in shas
+
+
 def _note(ctx: Context, nid: str, message: str) -> None:
     ctx.notes.append({"id": nid, "message": message})
 
@@ -1076,7 +1088,8 @@ def _panel(ctx: Context, add) -> None:
     PR, each record counted) number `ctx.review_passes`, the pass cap (#256)
     gives `passes_used_up` instead: the owner decides. With the cap `until-clean`
     (#402) there is none: it never does. Records from accounts
-    without write access, or naming a commit outside the PR, are ignored.
+    without write access, or naming a commit not in the PR's commit list (the
+    head always counts), are ignored (`_counted`).
 
     The small review (#257): when no counted round ran `spec`, the diff must be
     within the small threshold (`ctx.size`). Past it, `past_small_threshold`
@@ -1100,10 +1113,10 @@ def _panel(ctx: Context, add) -> None:
     perms = ctx.permissions()
     shas = ctx.commits() | {head}
     records = ctx.records()
-    counted = [r for r in records if _may_review(r.author, perms) and r.commit in shas]
+    counted = [r for r in records if _counted(r, perms, shas)]
     if len(records) > len(counted):
         left_out = _plural(len(records) - len(counted), "review record")
-        _note(ctx, "records_ignored", f"Left out {left_out}: posted by an account without write access, or naming a commit outside this pull request.")
+        _note(ctx, "records_ignored", f"Left out {left_out}: posted by an account without write access, or naming a commit not in this pull request's commit list.")
     rounds = [i for i, r in enumerate(counted) if r.kind == "round"]
     if not rounds:
         add("no_review")
@@ -1180,6 +1193,58 @@ def _panel(ctx: Context, add) -> None:
         needs_pass("review_stale")
     if unread is not None:
         raise unread
+
+
+def _hand_off(ctx: Context) -> dict | None:
+    """The latest trusted hand-off comment (#371, spec #412), until a counted
+    review record of its head or a later commit follows it: one from an
+    account with write access whose head is a commit of the pull request, as
+    `_panel` counts a record. A review record posted after it, counted the
+    same way (a round's or a pass's, from such an account, for such a commit)
+    and not for a commit before its head by the pull request's history (a
+    record posted late for an older commit isn't a review since), means the
+    fresh session has reviewed, so there is none. It never decides anything:
+    a session or the conductor reads it to carry the review on. Unreadable
+    when the comments, the pull request, its commits or the permissions are.
+    What a person reads says "carry on in a fresh session" (#362, answer 32)."""
+    head = ctx.pr().head
+    perms = ctx.permissions()
+    shas = ctx.commits() | {head}
+    comments = ctx.comments()
+    offs = handoff.read(comments)
+    trusted = [h for h in offs if _may_review(h.author, perms) and h.head in shas]
+    if len(offs) > len(trusted):
+        n = len(offs) - len(trusted)
+        # What the check saw, which holds however long the pull request is: past the 250 commits GitHub
+        # lists, one of its commits can't be told from one outside it.
+        _note(ctx, "hand_offs_ignored", f"Left out {_plural(n, 'comment')} asking to carry on in a fresh session: "
+              "posted by an account without write access, or naming a commit not in this pull request's commit list.")
+    if not trusted:
+        return None
+    latest = trusted[-1]
+    history = {sha: n for n, sha in enumerate(ctx.parents())}
+
+    def order(sha: str) -> int:
+        # Its place among the PR's commits, oldest first. A counted commit the list leaves out is the
+        # PR's head (GitHub lists at most 250): the newest, so a hand-off of it is cleared only by a record of it.
+        return history.get(sha, len(history))
+
+    after = reviews.read(comments[latest.position + 1:])
+    if any(_counted(r, perms, shas) and order(r.commit) >= order(latest.head) for r in after):
+        return None
+    where = f" ({_clean(latest.url)})" if latest.url else ""
+    _note(ctx, "hand_off", f"Carry on in a fresh session: the comment on {_short(latest.head)}{where} hands the review on, "
+          "and a fresh session carries it on from there, reviewing any later commits too.")
+    return {
+        "head": latest.head,
+        "on_head": latest.head == head,
+        "round": latest.round,
+        "passes": latest.passes,
+        "comment_id": latest.comment_id,
+        "author": latest.author,
+        "created_at": latest.created_at,
+        "url": latest.url,
+    }
 
 
 def _hashed(h: str | None) -> bool:
@@ -1450,6 +1515,10 @@ def evaluate(
               "These rules are checked when it is queued: a request made after that (changes requested, a new review thread) doesn't stop the merge.")
     elif ctx.queue_unsure():
         _note(ctx, "queue_unsure", "A merge-queue rule in a ruleset this command can't judge isn't counted as a queue: " + "; ".join(ctx.queue_unsure()) + ".")
+    try:
+        hand_off = _hand_off(ctx)
+    except Unreadable:  # already a reason of its own, from the rules that read it
+        hand_off = None
     kit = ctx.kit
     if reasons:
         decision = "not_yet"
@@ -1460,7 +1529,7 @@ def evaluate(
     else:
         decision = "ready"
     return Result(decision, number, head, level, owner, reasons, ctx.notes, ctx.checks, kit, ctx.preview, ctx.review_rounds, ctx.review_passes,
-                  ctx.small_max_lines, ctx.small_max_files, ctx.measured.as_dict() if ctx.measured else None, queue, ctx.head_hashes())
+                  ctx.small_max_lines, ctx.small_max_files, ctx.measured.as_dict() if ctx.measured else None, queue, ctx.head_hashes(), hand_off)
 
 
 # ---------- text ----------
