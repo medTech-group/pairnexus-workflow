@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**The run charter's recommended answers carry their evidence** (#447, part of spec #436). The `conductor` skill's kick-off, and `docs/charter.md` where it describes asking, now follow the flow's evidence rule ("Decision questions") for the charter's questions, with no checks.
+
+- **Each recommended answer** says what it rests on (the profile setting, doctor line, kit default or last run's charter it comes from, or the pre-flight finding behind it), what it gives up and what would make it wrong. It covers every kick-off question that recommends an answer: step 1's findings, step 2's charter questions, and step 3's plan. **Same as last time?** rests on the last run's charter, named by its tracking issue, and is wrong where the project changed since (the diff, doctor's lines, the profile).
+- **No basis, no recommendation:** where the conductor can't name what a default rests on, it offers no recommended answer and lays the options out. The end time is always the owner's.
+- **Evidence only:** nothing checks it, and the defaults themselves don't change.
+- **For projects updating:** nothing to do; the vendored `conductor` skill changes with the update. Tests: `tests/test_charter_evidence.py`.
+
 **The flow's rules for decision questions** (#439, part of spec #436). A new section of `docs/flow.md`, "Decision questions", right after §2, holds the rules §1 and §2 follow. `start`, `next` and `review-panel` §8 follow them, and `conductor`'s charter questions get the evidence rule only; spec #436's other tickets wire them in (until #442, `review-panel` §8 still names the spec's first comment).
 
 - **Which questions:** those whose answer is posted as the owner's: a map decision's rounds, the spec interview, the seams, the questions the planning review's **Fixes** sends once a draft exists, and edits after publishing. A quick ticket gets the end check and the "Decided for you" list, without posted answers; the run charter's questions get the evidence rule only; routing choices get neither.
