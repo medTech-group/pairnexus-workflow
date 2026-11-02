@@ -715,7 +715,7 @@ How to report each:
 | `skills/check-setup` | "Check the set-up": `workflow doctor`'s report, with what only a session can see (the rulesets, the environments) handed to it, and each upgrade it names offered with "Not now"; changes nothing |
 | `skills/upgrade-setup` | The upgrades from solo mode: "Protect `main`", guided click by click, read back, then the pull request that leaves solo mode |
 | `skills/update-workflow` | Update a project's vendored copy |
-| `agents/` | The read-only Correctness reviewer, the UI explorer and the read-only planning checker |
+| `agents/` | The read-only Correctness reviewer and planning checker, and the UI explorer |
 | `scripts/workflow.py`, `scripts/workflow/` | The CLI the skills and hooks run (Python 3.11+, standard library only): `profile`, `status` (with doctor's local gaps, no network call), `doctor` (what's set up and what isn't, each line with its fix; changes nothing), `protection`, `version`, `adopt`, `ready`, `charter`, `state`, `render`, `comments`, `merge-check`, `preview` (whether a pull request's try-it link is ready for its head commit), `briefing`, `evidence`, `repair`, `vendor`, `hook`. `python3 -B scripts/workflow.py --help` lists every flag |
 | `hooks/hooks.json` | The plugin's hooks (a vendored project gets the same hooks in its `.claude/settings.json`): the guard (the never-list), the status gate, the flow context (`docs/profile.md`, "The flow context") and the guided start's first-message nudge, and at session start the environment repair, project setup and update notice |
 | `docs/` | `flow.md`, `charter.md`, `enforcement.md`, `install.md`, `profile.md`, `protection.md`, `spike.md` (what's verified), `proposal.md` (the original design, historical) |

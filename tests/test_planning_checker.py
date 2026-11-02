@@ -38,18 +38,23 @@ def _body() -> str:
     return _flatten(_parts()[1])
 
 
-def _section(name: str) -> str:
-    """One `## ` section of the body, flattened."""
+def _raw_section(name: str) -> str:
+    """One `## ` section of the body, as written."""
     body = _parts()[1]
     assert f"\n## {name}\n" in body, f"the agent has a `## {name}` section"
-    return _flatten(body.split(f"\n## {name}\n", 1)[1].split("\n## ", 1)[0])
+    return body.split(f"\n## {name}\n", 1)[1].split("\n## ", 1)[0]
+
+
+def _section(name: str) -> str:
+    """One `## ` section of the body, flattened."""
+    return _flatten(_raw_section(name))
 
 
 def _bullet(section: str, name: str) -> str:
     """One `- **name**` bullet of a section, flattened."""
-    body = _parts()[1].split(f"\n## {section}\n", 1)[1].split("\n## ", 1)[0]
-    assert f"\n- **{name}" in body, f"`## {section}` has a bullet `{name}`"
-    return _flatten(body.split(f"\n- **{name}", 1)[1].split("\n- ", 1)[0])
+    raw = _raw_section(section)
+    assert f"\n- **{name}" in raw, f"`## {section}` has a bullet `{name}`"
+    return _flatten(raw.split(f"\n- **{name}", 1)[1].split("\n- ", 1)[0])
 
 
 # --- who it is ----------------------------------------------------------------
@@ -72,13 +77,15 @@ def test_its_description_says_which_reads_use_it():
 
 
 def test_it_names_the_four_reads():
-    bullets = re.findall(r"^- \*\*([^*]+)\*\*", _parts()[1].split("\n## The reads\n", 1)[1].split("\n## ", 1)[0], re.M)
+    bullets = re.findall(r"^- \*\*([^*]+)\*\*", _raw_section("The reads"), re.M)
     assert bullets == ["Before a round:", "The end check:", "A re-read:", "The breakdown check:"]
     # The scratch directory's `<read>` names the same four.
-    assert "(`round`, `end`, `reread` or `breakdown`)" in _section("Your inputs")
+    assert "`round`, `end`, `reread` or `breakdown`" in _section("Your inputs")
     # A re-read reads only what changed, against the rest, and doesn't report the rest again.
     reread = _bullet("The reads", "A re-read")
-    assert "only what a round changed" in reread and "against all the rest" in reread
+    assert "only what changed since the read it follows, against all the rest" in reread
+    # What changed includes the fixes the session made after that read (answer 22's "Wrong if").
+    assert "the fixes the session made after that read" in reread
     assert "Report only findings that involve what changed" in reread
     # The breakdown check's round is re-read too (answer 24), with the breakdown's rules.
     assert "the breakdown check's round" in reread
@@ -94,6 +101,12 @@ def test_it_names_the_four_reads():
 def test_it_reads_the_scratch_directory_the_session_fills():
     inputs = _section("Your inputs")
     assert "/tmp/plan-check-<issue>-<read>-<n>/" in inputs
+    # `<issue>` is wherever the answers are posted (flow §1 and §2), the map for its Destination item.
+    issue = inputs.split("`<issue>`", 1)[1].split("`<read>`", 1)[0]
+    for where in ("the decision ticket", "the item's issue", "the spec's issue", "the map, for its Destination item"):
+        assert where in issue, where
+    # The fixes each post lists are read with the answers, so the checker knows what they settled.
+    assert "the fixes each post lists" in inputs
     assert "the session fills" in inputs or "the session filled" in inputs
     for given in ("as posted", "the ADRs", "the glossary", "the project's rules", "the profile"):
         assert given in inputs, given
@@ -134,6 +147,23 @@ def test_each_finding_needs_a_concrete_example_and_a_preference_isnt_one():
     assert "owner's own words included" in kinds
 
 
+def test_a_listed_fix_settles_like_a_confirmed_line():
+    # Spec #436, "Records": a fix listed in a post, with no objection, stands the same way.
+    kinds = _section("What to look for")
+    conflicts = kinds.split("**Conflicts between answers:**", 1)[1].split("2. ", 1)[0]
+    assert "confirmed replacement line settles it" in conflicts
+    assert "a fix a post lists that the owner didn't object to" in conflicts
+    facts = kinds.split("**Wrong facts:**", 1)[1]
+    assert "A fact a listed fix already corrected isn't one" in facts
+
+
+def test_the_breakdown_checks_findings_are_the_four_kinds():
+    bd = _bullet("The reads", "The breakdown check")
+    assert "lands in no ticket is a gap" in bd
+    assert "one that lands in two, or a `## Bar` that doesn't fit the spec's, is a conflict" in bd
+    assert "a `## Blocked by` that doesn't match what a ticket builds on is a combination that breaks" in bd
+
+
 def test_the_breakdown_check_reads_landing_blockers_and_bars():
     reads = _section("The reads")
     bd = reads.split("The breakdown check", 1)[1]
@@ -171,7 +201,10 @@ def test_in_the_breakdown_check_only_wording_is_a_fix():
 def test_an_ask_after_a_last_read_is_left_open_not_asked():
     # Spec #436: "A last read's findings ... are never asked: ... its ask findings are what's left."
     ask = _section("Ask or fix").split("**ask**", 1)[1].split("**fix**", 1)[0]
-    assert "a last re-read" in ask and "left open" in ask
+    assert re.search(r"nothing is asked after the read \(a last re-read\), keeps it as left open", ask), ask
+    # Answer 24: the breakdown check's re-read is the exception, its asks asked before publishing.
+    assert re.search(r"breakdown check's re-read is the exception: its \*\*ask\*\* findings are asked", ask), ask
+    assert "before the tickets are published" in ask
 
 
 def test_it_says_how_to_report_and_when_it_found_nothing():
