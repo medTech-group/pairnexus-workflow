@@ -961,10 +961,6 @@ def _strip_prefix(toks: list[str], wrappers: list[str] | None = None) -> tuple[l
                 wrappers.append(name)
             takes = _WRAPPERS[name]
             toks = toks[1:]
-            if name == "xargs":  # as GNU's getopt reads them, so its command starts where xargs's does (#394)
-                toks = _xargs_options(toks)[1]
-                changed = True
-                continue
             while toks and (toks[0].startswith("-") or re.match(r"^\d+(\.\d+)?[smhd]?$", toks[0]) or _ASSIGN.match(toks[0])):
                 t = toks[0]
                 toks = toks[1:]
@@ -1009,82 +1005,57 @@ _XARGS_LONG = {
 }  # fmt: skip
 
 
-def _xargs_options(toks: list[str]) -> tuple[bool, list[str]]:
-    """(whether every option was one it knows, the words after xargs's
-    options): `toks` are the words after `xargs`, read as GNU's getopt reads
-    them, up to the first that isn't an option (or after `--`)."""
-    known, i = True, 0
+def _xargs_options(toks: list[str]) -> tuple[bool, str | None]:
+    """(whether every option was one it knows, the word it replaces with its
+    input) for `toks`, the words after `xargs`, read as GNU's getopt reads
+    them up to its command: `-I %`, `-I%`, `-0I%`, `-i` or `-i<word>`,
+    `--replace` or `--replace=<word>` (by any unique prefix), the last one
+    given; a value missing at the end counts as an option it doesn't know."""
+    known, rep, i = True, None, 0
     while i < len(toks):
         w = toks[i]
-        if w == "--":
-            return known, toks[i + 1 :]
-        if not w.startswith("-") or len(w) < 2:
-            break
-        i += 1
-        if w.startswith("--"):
-            name, eq, _ = w[2:].partition("=")
-            cands = [o for o in _XARGS_LONG if o == name] or [o for o in _XARGS_LONG if o.startswith(name)] if name else []
-            if len(cands) != 1:
-                known = False
-            elif _XARGS_LONG[cands[0]] == "next" and not eq:
-                i += 1  # its value
-            continue
-        for k, ch in enumerate(w[1:], 2):
-            if ch in _XARGS_SHORT_FLAGS:
-                continue
-            if ch in _XARGS_SHORT_NEXT and not w[k:]:
-                i += 1  # its value, the next word
-            if ch not in _XARGS_SHORT_NEXT | _XARGS_SHORT_ATTACHED:
-                known = False
-            break
-    return known, toks[i:]
-
-
-def _xargs_replace(head: list[str]) -> str | None:
-    """The word xargs replaces with its input (`-I %`, `-I%`, `-0I%`, `-i`
-    or `-i<word>`, `--replace`, `--replace=<word>`, the last one given), read
-    from its own options up to its command; None when it replaces none; ""
-    when the guard can't read them with certainty (another `xargs` in the
-    chain, an option it doesn't know or that is ambiguous, a line `env -S`
-    splits), so any word may be replaced."""
-    starts = [k for k, w in enumerate(head) if posixpath.basename(w) == "xargs"]
-    if len(starts) != 1:
-        return "" if starts or any("xargs" in w for w in head) else None
-    rep, i = None, starts[0] + 1
-    while i < len(head):
-        w = head[i]
-        i += 1
         if w == "--" or not w.startswith("-") or len(w) < 2:
-            return rep  # its command starts: a wrapper's options after it aren't xargs's
+            break
+        i += 1
         if w.startswith("--"):
             name, eq, val = w[2:].partition("=")
             cands = [o for o in _XARGS_LONG if o == name] or [o for o in _XARGS_LONG if o.startswith(name)] if name else []
             if len(cands) != 1:
-                return ""
-            kind = _XARGS_LONG[cands[0]]
-            if cands[0] == "replace":
+                known = False
+            elif cands[0] == "replace":
                 rep = val if eq else "{}"
-            elif kind == "next" and not eq:
-                i += 1  # its value
+            elif _XARGS_LONG[cands[0]] == "next" and not eq:
+                known, i = known and i < len(toks), i + 1  # its value
             continue
         for k, ch in enumerate(w[1:], 2):
             if ch in _XARGS_SHORT_FLAGS:
                 continue
             if ch in _XARGS_SHORT_ATTACHED:
-                if ch == "i":
-                    rep = w[k:] or "{}"
-                break
-            if ch in _XARGS_SHORT_NEXT:
+                rep = (w[k:] or "{}") if ch == "i" else rep
+            elif ch in _XARGS_SHORT_NEXT:
                 val = w[k:]
                 if not val:
-                    if i >= len(head):
-                        return ""
-                    val, i = head[i], i + 1
-                if ch == "I":
-                    rep = val
-                break
-            return ""  # an option it doesn't know
-    return rep
+                    known = known and i < len(toks)
+                    val, i = (toks[i] if i < len(toks) else ""), i + 1
+                rep = val if ch == "I" else rep
+            else:
+                known = False  # one it doesn't know (BSD's `-J`, `-R`, `-S`)
+            break
+    return known, rep
+
+
+def _xargs_replace(words: list[str]) -> str | None:
+    """The word xargs replaces with its input, read from the part's words
+    (wrappers, `xargs` and its options, its command) as GNU's getopt reads
+    them, whatever the shell reader made of them; None when it replaces
+    none; "" when the guard can't read them with certainty (another `xargs`
+    in the chain, an option it doesn't know, a line `env -S` splits), so any
+    word may be replaced."""
+    starts = [k for k, w in enumerate(words) if posixpath.basename(w) == "xargs"]
+    if len(starts) != 1:
+        return "" if starts or any("xargs" in w for w in words) else None
+    known, rep = _xargs_options(words[starts[0] + 1 :])
+    return rep if known else ""
 
 
 def _shell_c(toks: list[str]) -> str | None:
@@ -1210,7 +1181,7 @@ def _segments_of(toks: list, root: Path, cwd: str | None, depth: int) -> list[Se
             seg.fed_file = bool(item.stdin or item.heredoc) or any(
                 w in ("-a", "--arg-file") or w.startswith("--arg-file=") or re.fullmatch(r"-a.+", w) is not None for w in head
             )
-            seg.fed_replace = _xargs_replace(head)
+            seg.fed_replace = _xargs_replace(words)
         segs.append(seg)
         prev = seg
         segs += _nested(seg, root, depth)

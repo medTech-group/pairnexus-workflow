@@ -277,14 +277,20 @@ def test_a_git_add_after_the_commit_that_may_run_first(proj, monkeypatch, capsys
 
 
 @pytest.mark.parametrize(
-    "xargs",
-    ["xargs -I{}", "xargs -0I {}", "xargs -rI {}", "xargs --replace", "xargs -0 -r -n 1 -P 2 --null --no-run-if-empty -d x", "xargs -i", "xargs"],
+    "xargs, tail",
+    [
+        ("xargs -I{}", " {}"),
+        ("xargs -0I {}", " {}"),
+        ("xargs -rI {}", " {}"),
+        ("xargs -0 -r -n 1 -P 2 --null --no-run-if-empty -d x", ""),
+        ("xargs -i", " {}"),
+        ("xargs", ""),
+    ],
 )
-def test_xargs_add_with_its_own_options_and_docs_only_goes_through(proj, monkeypatch, capsys, xargs):
+def test_xargs_add_with_its_own_options_and_docs_only_goes_through(proj, monkeypatch, capsys, xargs, tail):
     """xargs's options read as GNU's getopt reads them: its replace word stands in its paths, not its subcommand, and
     the rest are ordinary: no push, and docs only."""
     _change(proj, "docs/guide.md")
-    tail = " {}" if ("I" in xargs or "replace" in xargs or "-i" in xargs) else ""
     for role in (None, "conductor"):
         command = f"git diff --name-only docs | {xargs} git add{tail} && git commit -m d"
         assert hook(monkeypatch, capsys, proj, command, role) == ("allow", ""), (command, role)
@@ -292,6 +298,15 @@ def test_xargs_add_with_its_own_options_and_docs_only_goes_through(proj, monkeyp
     _change(proj, CODE)
     d, why = hook(monkeypatch, capsys, proj, f"git diff --name-only | {xargs} git add{tail} && git commit -m d")
     assert d == "deny" and "may carry the code path `src/app.py`" in why and OWN not in why, why
+
+
+def test_an_xargs_option_it_doesnt_know_makes_a_fed_git_one_it_cant_name(proj, monkeypatch, capsys):
+    """BSD's `-R 1` (which GNU refuses): the replace word can't be read, so any subcommand may be replaced."""
+    _change(proj, CODE)
+    d, why = hook(monkeypatch, capsys, proj, "git diff --name-only | xargs -R 1 -I % git add % && git commit -m x")
+    assert d != "allow", why
+    d, why = hook(monkeypatch, capsys, proj, "git commit -m d && echo push | xargs -R 1 -I log git log")
+    assert d == "deny" and OWN in why, why
 
 
 def test_a_reset_or_restore_before_finishing_a_merge(proj, monkeypatch, capsys):
