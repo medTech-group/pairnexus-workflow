@@ -185,8 +185,19 @@ def test_same_as_last_time_names_a_difference_from_the_defaults_without_asking_i
     s = _sentence(_reuse(), "earlier choice")
     assert "charter defaults" in s and "charter diff" in s
     assert "never" in s and "again" in s
-    assert "`github.approvals`" in s and "owner" in s
     assert "`auto-merge`" in s and "reused `session`" in s
+
+
+def test_same_as_last_time_asks_the_merge_mode_again_while_approvals_recommend_owner():
+    # Doctor's `github.approvals` makes **owner** the merge question's recommended
+    # answer (pre-flight's "Required approvals"); a reused mode that isn't `owner`
+    # is asked again, whatever today's defaults show, so the two never disagree.
+    s = _sentence(_reuse(), "`github.approvals`")
+    assert "asked again" in s and "**owner**" in s
+    assert "isn't `owner`" in s and "whatever the defaults show" in s
+    assert "Required approvals" in s
+    d = _sentence(_charter_reuse(), "requires approvals")
+    assert "asked again" in d and "`owner` recommended" in d
     # The merge mode the merge question no longer offers keeps its own handling, named
     # as the one exception, for each reason it isn't offered.
     ex = _sentence(_reuse(), "no longer offers")
