@@ -56,7 +56,9 @@ def _end_check() -> str:
 def _part(word: str) -> str:
     """The one bullet under the end check whose opening words name `word`, flattened."""
     bullets = _bullets()
-    first = [i for i, b in enumerate(bullets) if b.startswith("**The end check")][0]
+    starts = [i for i, b in enumerate(bullets) if b.startswith("**The end check")]
+    assert len(starts) == 1, "the Spec path's step 2 has one **The end check** bullet"
+    first = starts[0]
     found = []
     for b in bullets[first + 1:]:
         if not b.startswith("**"):
@@ -86,10 +88,12 @@ def test_the_end_check_runs_after_the_last_round_and_before_the_draft():
     # Before the draft is reviewed and published.
     assert end < step.index("Review the draft before publishing it")
     assert end < step.index("Publish the reviewed text as is")
+    # The draft's own planning review still comes before publishing.
+    assert step.index("Review the draft before publishing it") < step.index("Publish the reviewed text as is")
     first = re.split(r"(?<=[.;])\s+", _end_check())[0]
     # Before the draft is written, never after it.
     assert re.search(r"\bbefore (you write )?the (draft|spec is written)", first)
-    assert not re.search(r"\bafter\b[^.]*\bdraft", first)
+    assert not re.search(r"\bafter (you write |writing )?the draft\b", first)
 
 
 def test_the_end_check_reads_all_the_answers_together_with_the_checker():
@@ -186,7 +190,7 @@ def test_the_re_read_s_findings_are_never_asked():
 # --- what's left -----------------------------------------------------------------
 
 
-def test_what_s_left_goes_into_further_notes_or_a_comment_on_the_spec():
+def test_what_s_left_goes_into_further_notes_before_publishing():
     w = _part("What's left")
     for part in ("left open", "unanswered", "re-read"):
         assert part in w, part
@@ -228,6 +232,11 @@ def test_a_session_that_carries_on_never_runs_the_end_check_again():
     assert "what's left" in s and "never" in s and "interview" in s
 
 
+def test_an_own_words_question_belongs_to_the_end_check_s_round():
+    s = _sentence(_part("ask findings"), "own words")
+    assert "this round" in s and "all its questions are answered" in s
+
+
 def test_carry_on_points_to_the_end_check_once_one_is_posted():
     row = _flatten(_between(_start(), "| A planned item |", "\n"))
     s = _sentence(row, 'headed "End check"')
@@ -246,6 +255,9 @@ def test_a_map_decision_runs_the_end_check_before_its_adr_is_written():
     s = _sentence(m, "end check")
     assert "before" in s and "ADR" in s
     assert "Spec" in s  # run as the Spec path runs it
+    # A decision that changes no ADR runs it before it's recorded.
+    assert "recorded" in s
+    assert "no rounds" in _sentence(m, "has none")
 
 
 def test_a_map_decision_s_end_check_posts_on_its_decision_ticket_and_leaves_the_rest_in_its_resolution():
@@ -286,6 +298,10 @@ def test_next_runs_the_end_check_as_start_does():
     assert "end check" in r
     assert "ADR" in r and "spec" in r
     assert "`start`" in r and '"Spec"' in r and '"Map"' in r
+    # A session carrying on stops asking once the end check is posted.
+    before = _flatten(block.split("\n- **Before asking", 1)[1].split("\n- **", 1)[0])
+    s = _sentence(before, '"End check"')
+    assert "rounds are over" in s and "`start`" in s
     # A pointer, not a copy of `start`'s steps.
     assert "**Leave them open**" not in r
 
