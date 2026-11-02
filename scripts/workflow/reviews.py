@@ -86,6 +86,8 @@ _HASHED_FIELDS = ("kind", "round", "commit", "reviewers", "diff", "lines", "resu
 _SPEC_FIELDS = ("kind", "round", "body", "reviewers", "result")
 # A `rule=2` record's own fields, between its reviewers (or hashes) and its result.
 _RULE_FIELDS = ("rule", "findings", "outcomes", "split")
+# The rule a record written from a findings file names (#370, spec #412).
+RULE = 2
 # A record line is a line of its own, at the start of the line as the writer
 # writes it, before any code fence: one quoted in a sentence, in backticks, in
 # a list or quote, or in a code block isn't read as a record. When in doubt the
@@ -95,6 +97,9 @@ _RULE_FIELDS = ("rule", "findings", "outcomes", "split")
 # line counts; the writer's comment has none.
 _LINE = re.compile(r"<!-- workflow:review (\S[^\n]*?\S) -->[ \t]*")
 _FENCE = ("```", "~~~")
+# A finding or outcome line however spelt: a comment's other lines like it
+# leave its `rule=2` records unread.
+_OWN_LINE = re.compile(r"\s*<!--\s*workflow:(finding|outcome)\b", re.IGNORECASE)
 _LINE_END = re.compile(r"\r\n|\r|\n")
 _SHA = re.compile(r"[0-9a-f]{40}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -150,19 +155,25 @@ class Record:
                 f"reviewers={','.join(self.reviewers)} result={self.result} -->"
             )
         hashes = "" if self.diff is None else f"diff={self.diff} lines={self.lines} "
-        rule = "" if self.rule is None else self._found().fields() + " "
+        rule = "" if self.rule is None else self.found.fields() + " "
         return (
             f"<!-- workflow:review kind={self.kind} round={self.round} commit={self.commit} "
             f"reviewers={','.join(self.reviewers)} {hashes}{rule}result={self.result} -->"
         )
 
-    def _found(self) -> findings_mod.Findings:
+    @property
+    def found(self) -> findings_mod.Findings:
+        """A `rule=2` record's findings, outcomes and split flag together."""
         return findings_mod.Findings(self.findings, self.outcomes, self.from_split)
 
-    def lines_of(self) -> list[str]:
+    def with_found(self, found: findings_mod.Findings) -> "Record":
+        """This record as a `rule=2` one, carrying `found`."""
+        return replace(self, rule=RULE, findings=found.findings, outcomes=found.outcomes, from_split=found.from_split)
+
+    def machine_lines(self) -> list[str]:
         """The machine-readable lines: the review line, then a `rule=2`
         record's finding and outcome lines."""
-        return [self.line(), *(self._found().lines() if self.rule is not None else [])]
+        return [self.line(), *(self.found.lines() if self.rule is not None else [])]
 
 
 def _shown(value, n: int) -> str:
@@ -284,8 +295,14 @@ def _checked(kind, round, commit, reviewers, result, body=None, diff=None, lines
 
 FINDINGS_WITH_RESULT = "--findings works the result out from the findings' marks: leave out --clean and --not-clean"
 FINDINGS_WITH_SPEC = "--findings is for a build review's round or pass, not a spec's review: leave it out"
-# GitHub's limit on a comment's body, in characters.
+# GitHub's limit on a comment's body, in characters. A `rule=2` record keeps
+# within it once a cloud session's footer is added (`_CLOUD_FOOTER`), counted
+# in UTF-16 units, never fewer than its characters.
 COMMENT_LIMIT = 65_536
+RECORD_LIMIT = COMMENT_LIMIT - len(_CLOUD_FOOTER)
+# What the hashes of a round's own changes add to its line, when the size is
+# checked before they are computed.
+_HASHES_ROOM = len(" diff= lines=") + 2 * 64
 
 
 def record(*, kind, round, commit=None, reviewers, clean, body=None, diff=None, lines=None, findings=None) -> str:
@@ -330,7 +347,7 @@ def record(*, kind, round, commit=None, reviewers, clean, body=None, diff=None, 
             found = findings_mod.checked(findings.findings, findings.outcomes, findings.from_split)
         except findings_mod.FindingsError as e:
             raise RecordError(str(e)) from None
-        r = replace(r, rule=2, findings=found.findings, outcomes=found.outcomes, from_split=found.from_split)
+        r = r.with_found(found)
     names = ", ".join(n.capitalize() for n in r.reviewers)
     if r.kind == "spec":
         what, on = f"Spec review round {r.round}", f"body `{r.body[:7]}`"
@@ -341,12 +358,14 @@ def record(*, kind, round, commit=None, reviewers, clean, body=None, diff=None, 
     if r.rule is None:
         return f"{head}\n{r.line()}\n{AGENT_MARKER}\n"
     # Paragraphs apart, so Markdown never runs a list into the next line.
-    machine = "\n".join([*r.lines_of(), AGENT_MARKER])
-    text = "\n\n".join([head, *r._found().paragraphs(), machine]) + "\n"
-    if len(text) > COMMENT_LIMIT:
+    machine = "\n".join([*r.machine_lines(), AGENT_MARKER])
+    text = "\n\n".join([head, *r.found.paragraphs(), machine]) + "\n"
+    # Checked as if hashed already, so a record refused for its size is never hashed.
+    size = len(text.encode("utf-16-le")) // 2 + (_HASHES_ROOM if r.diff is None else 0)
+    if size > RECORD_LIMIT:
         raise RecordError(
-            f"the record would be {len(text)} characters, past GitHub's {COMMENT_LIMIT} for a comment: "
-            "file the lesser findings as one ticket and give its issue, or shorten the parts' names"
+            f"the record would be {size} characters, past the {RECORD_LIMIT} a comment holds with a cloud session's footer "
+            f"(GitHub takes {COMMENT_LIMIT}): file the lesser findings as one ticket and give its issue, or shorten the parts' names"
         )
     return text
 
@@ -358,7 +377,7 @@ def _parse(fields: str, below=()) -> Record | None:
     found = None
     if "rule" in got:
         rule = {k: got.pop(k, None) for k in _RULE_FIELDS}
-        if rule["rule"] != "2" or None in rule.values():
+        if rule["rule"] != str(RULE) or None in rule.values():
             return None
         found = findings_mod.read_lines(below, rule["findings"], rule["outcomes"], rule["split"])
         if found is None:
@@ -377,7 +396,7 @@ def _parse(fields: str, below=()) -> Record | None:
     if found is not None:
         if r.kind == "spec" or r.clean != found.clean:
             return None
-        r = replace(r, rule=2, findings=found.findings, outcomes=found.outcomes, from_split=found.from_split)
+        r = r.with_found(found)
     # Only exactly what the writer writes: the fields in order, single spaces,
     # lowercase, the panel's order, no repeats.
     return r if r.line() == f"<!-- workflow:review {fields} -->" else None
@@ -386,10 +405,13 @@ def _parse(fields: str, below=()) -> Record | None:
 def records_in(text) -> list[Record]:
     """Every well-formed record line in one comment's text, in order, up to its
     first code fence. A malformed one, or text that isn't a string, yields
-    nothing; never raises."""
+    nothing; never raises. A `rule=2` record counts only when every finding
+    or outcome line in the comment, anywhere and in any spelling, is one of
+    the lines its records were read from: so one can't be read beside lines
+    it doesn't account for."""
     if not isinstance(text, str):
         return []
-    out = []
+    out, own = [], set()
     lines = _LINE_END.split(text)
     for i, line in enumerate(lines):
         if any(f in line for f in _FENCE):
@@ -399,6 +421,9 @@ def records_in(text) -> list[Record]:
         r = _parse(m.group(1), _below(lines, i + 1)) if m else None
         if r is not None:
             out.append(r)
+            own.update(range(i + 1, i + 1 + len(r.findings) + len(r.outcomes)))
+    if any(_OWN_LINE.match(line) and i not in own for i, line in enumerate(lines)):
+        out = [r for r in out if r.rule is None]
     return out
 
 

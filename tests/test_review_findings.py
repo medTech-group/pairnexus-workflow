@@ -12,6 +12,7 @@ from workflow import cli, findings as findings_mod, reviews
 from changelog_notes import since_0110
 
 SHA = "3f2a9c0b7de14a2c9e8f5d6b1a0c3e2f4d5b6a7c"
+MARKER = "<!-- workflow:agent -->"
 ROUND = ["--kind", "round", "--round", "2", "--commit", SHA, "--reviewers", "standards,spec,correctness"]
 
 FULL = {
@@ -206,7 +207,70 @@ def test_the_other_flags_are_checked_before_the_file_is_read(capsys, tmp_path):
 def test_a_record_past_githubs_comment_limit_is_refused(capsys, tmp_path):
     many = [{"mark": "note", "mechanism": f"part {i} " + "é" * 60} for i in range(200)]
     err = refused(capsys, tmp_path, many)
-    assert "past GitHub's 65536 for a comment" in err
+    assert f"past the {reviews.RECORD_LIMIT} a comment holds with a cloud session's footer" in err
+
+
+def _units(text):
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _sized(total, **hashes):
+    """Findings whose record comes to exactly `total` UTF-16 units: fillers,
+    then one part named with `a` (2 units each, its text and its line) and `é`
+    (7: one in its text, six encoded)."""
+    def text(found):
+        return reviews.record(kind="round", round=1, commit=SHA, reviewers="correctness", clean=None, findings=found, **hashes)
+
+    def found(fillers, a, e):
+        names = ["f" * 80] * fillers + ["a" * a + "é" * e]
+        return findings_mod.checked([findings_mod.Finding(mark="note", mechanism=n) for n in names], (), False)
+
+    limit = reviews.RECORD_LIMIT
+    reviews.RECORD_LIMIT = 10**9  # measured with the limit lifted, put back below
+    try:
+        fillers = 0
+        while _units(text(found(fillers + 1, 1, 0))) <= total - 200:
+            fillers += 25
+        while _units(text(found(fillers, 1, 0))) > total - 200:
+            fillers -= 1
+        gap = total - _units(text(found(fillers, 1, 0)))
+    finally:
+        reviews.RECORD_LIMIT = limit
+    e = next(e for e in range(80) if (gap - 7 * e) % 2 == 0 and 0 <= (gap - 7 * e) // 2 < 80 - e)
+    return found(fillers, 1 + (gap - 7 * e) // 2, e), text
+
+
+@pytest.mark.parametrize("hashes", [{"diff": "a" * 64, "lines": "b" * 64}, {}])
+def test_the_size_limit_holds_on_both_sides_of_it_hashed_or_not(hashes):
+    room = 0 if hashes else len(" diff= lines=") + 128
+    f, text = _sized(reviews.RECORD_LIMIT - room, **hashes)
+    assert _units(text(f)) == reviews.RECORD_LIMIT - room
+    f, text = _sized(reviews.RECORD_LIMIT - room + 1, **hashes)
+    with pytest.raises(reviews.RecordError, match=f"would be {reviews.RECORD_LIMIT + 1} characters, past the {reviews.RECORD_LIMIT}"):
+        text(f)
+
+
+def test_a_record_with_room_for_its_hashes_is_read_back_whole_once_hashed():
+    f, text = _sized(reviews.RECORD_LIMIT - len(" diff= lines=") - 128)
+    hashed = reviews.record(kind="round", round=1, commit=SHA, reviewers="correctness", clean=None, findings=f, diff="a" * 64, lines="b" * 64)
+    assert _units(hashed) == reviews.RECORD_LIMIT
+    assert _units(hashed + reviews._CLOUD_FOOTER) == reviews.COMMENT_LIMIT
+    assert len(reviews.records_in(hashed + reviews._CLOUD_FOOTER)[0].findings) == len(f.findings)
+
+
+def test_a_refusal_shows_the_findings_path_plainly_and_a_long_ones_end(capsys, tmp_path):
+    code, out, err = run(capsys, *ROUND, "--findings", "/no/such/findings.json")
+    assert "--findings names no file: `/no/such/findings.json`" in err
+    long = str(tmp_path / ("d" * 90) / "findings.json")
+    code, out, err = run(capsys, *ROUND, "--findings", long)
+    assert err.rstrip().endswith("/findings.json`") and "…" in err
+
+
+def test_a_deeply_nested_value_is_refused_in_words(capsys, tmp_path):
+    import sys
+    depth = sys.getrecursionlimit() - 100
+    err = refused(capsys, tmp_path, '{"findings": [], "split": ' + "[" * depth + "]" * depth + "}")
+    assert "Traceback" not in err and ("not a list" in err or "isn't JSON" in err)
 
 
 def test_a_file_starting_with_a_byte_order_mark_is_read(capsys, tmp_path):
@@ -263,6 +327,10 @@ def test_a_missing_file_or_a_folder_is_refused(capsys, tmp_path):
         ({"findings": [], "outcomes": [{"outcome": "fail-closed", "mechanism": "~~~"}]}, "outcome 1: `mechanism` has `~~~`"),
         ({"findings": [], "split": "true"}, "`split` is true or false (in JSON, without quotes), not `\"true\"`"),
         ({"findings": [], "split": None}, "not `null`"),
+        ({"findings": [], "split": [[1]]}, "not a list"),
+        ({"findings": [], "outcomes": [{"outcome": "contested", "finding": {"a": 1}, "ruling": "kept"}]}, "not an object"),
+        ('{"findings": [], "split": NaN}', "`NaN` is no JSON value"),
+        ('[{"mark": "ticket", "mechanism": "a", "issue": Infinity}]', "`Infinity` is no JSON value"),
         ({"findings": [], "outcomes": [{"outcome": "contested", "finding": "2", "ruling": "kept"}]}, "from 1 to 999, not `\"2\"`"),
         ({"findings": [], "outcomes": [{"outcome": "split", "mechanism": "a", "issue": True}]}, "as 415 or \"#415\", not `true`"),
         ([{"mark": "note", "mechanism": "x" * 81}], "finding 1: `mechanism` is longer than 80 characters"),
@@ -293,7 +361,7 @@ def test_a_missing_file_or_a_folder_is_refused(capsys, tmp_path):
         ({"findings": [], "outcomes": [{"outcome": "fail-closed", "mechanism": "a", "issue": 3}]}, "outcome 1: unknown key `\"issue\"`"),
         ({"findings": [], "outcomes": [{"outcome": "split", "mechanism": "a"}]}, "outcome 1: give `issue`"),
         ({"findings": [], "outcomes": [{"outcome": "contested", "finding": 1, "ruling": "overturned"}] * 2}, "outcome 2: finding 1's contest is already ruled"),
-        ({"findings": [], "outcomes": [{"outcome": "split", "mechanism": "a", "issue": 4}, {"outcome": "split", "mechanism": "a", "issue": 5}]}, "outcome 2: the part `\"a\"` is already split"),
+        ({"findings": [], "outcomes": [{"outcome": "split", "mechanism": "a", "issue": 4}, {"outcome": "split", "mechanism": "a", "issue": 5}]}, "outcome 2: the part `a` is already split"),
         ({"findings": [], "outcomes": [{"outcome": "contested", "finding": 1, "ruling": "kept"}]}, "1 contest kept but 0 findings flagged contested"),
         ([{"mark": "blocks", "mechanism": "a", "reproducer": "x", "contested": True}], "0 contests kept but 1 finding flagged contested"),
     ],
@@ -421,11 +489,42 @@ def test_a_finding_or_outcome_line_alone_is_no_record(capsys, tmp_path):
     assert reviews.records_in("\n".join(lines[1:])) == []
 
 
-def test_a_whole_record_beside_a_broken_one_is_still_read(capsys, tmp_path):
+def test_a_whole_record_is_read_from_its_own_comment_beside_a_broken_one(capsys, tmp_path):
     good = written(capsys, tmp_path, FULL)
     broken = "\n".join(_machine(good)[:-3])
-    got = reviews.records_in(broken + "\n" + good)
-    assert len(got) == 1 and got[0].rule == 2 and len(got[0].findings) == 5
+    got = reviews.read([{"id": 1, "body": broken}, {"id": 2, "body": good}])
+    assert [(r.comment_id, r.rule, len(r.findings)) for r in got] == [(2, 2, 5)]
+    # In one comment, the broken record's lines are lines the good one doesn't
+    # account for: neither counts.
+    assert reviews.records_in(broken + "\n" + good) == []
+
+
+@pytest.mark.parametrize(
+    "where",
+    [
+        pytest.param(lambda t, x: t.replace(MARKER, MARKER + "\n" + x), id="after the marker"),
+        pytest.param(lambda t, x: t.replace("\n" + MARKER, "\n\n" + x + "\n" + MARKER), id="after a blank line"),
+        pytest.param(lambda t, x: t.replace(MARKER, " " + x + "\n" + MARKER), id="indented"),
+        pytest.param(lambda t, x: t.replace(MARKER, x.upper() + "\n" + MARKER), id="upper-cased"),
+        pytest.param(lambda t, x: t.replace(MARKER, x.replace("<!-- ", "<!--") + "\n" + MARKER), id="no space"),
+        pytest.param(lambda t, x: x + "\n" + t, id="above it"),
+        pytest.param(lambda t, x: t + "\n```\n" + x, id="after a fence"),
+        pytest.param(lambda t, x: t.replace(MARKER, x.replace("finding n=2 mark=blocks mechanism=x covered=no contested=no security=no issue=none", "outcome n=1 kind=fail-closed mechanism=x") + "\n" + MARKER), id="an outcome line"),
+    ],
+)
+def test_a_finding_or_outcome_line_anywhere_else_in_the_comment_leaves_the_record_unread(capsys, tmp_path, where):
+    text = written(capsys, tmp_path, [{"mark": "note", "mechanism": "a"}])
+    assert len(reviews.records_in(text)) == 1
+    extra = "<!-- workflow:finding n=2 mark=blocks mechanism=x covered=no contested=no security=no issue=none -->"
+    assert reviews.records_in(where(text, extra)) == []
+
+
+def test_old_records_beside_stray_finding_lines_read_as_before(capsys):
+    cli.main(["review-record", *ROUND, "--clean"])
+    out, _ = capsys.readouterr()
+    extra = "<!-- workflow:finding n=1 mark=blocks mechanism=x covered=no contested=no security=no issue=none -->"
+    (r,) = reviews.records_in(out + extra)
+    assert (r.rule, r.result) == (None, "clean")
 
 
 def test_read_keeps_who_posted_a_rule_2_record(capsys, tmp_path):
@@ -440,6 +539,10 @@ def test_the_reader_never_raises_on_odd_lines():
         f"<!-- workflow:review kind=round round=1 commit={SHA} reviewers=spec rule=2 findings=1 outcomes=0 split=no result=clean -->",
         "<!-- workflow:finding n=1 mark=note mechanism=%ZZ covered=no contested=no security=no issue=none -->",
         "<!-- workflow:outcome n=1 kind=split mechanism=a issue=99999999999999999999999 -->",
+        f"<!-- workflow:review kind=round round=1 commit={SHA} reviewers=spec rule=2 findings=1 outcomes=0 split=no result=clean -->\n"
+        "<!-- workflow:finding n=1 mark=note mechanism=\ud800 covered=no contested=no security=no issue=none -->",
+        f"<!-- workflow:review kind=round round=1 commit={SHA} reviewers=spec rule=2 findings=0 outcomes=1 split=no result=clean -->\n"
+        "<!-- workflow:outcome n=1 kind=fail-closed mechanism=\u00e9 -->",
     ]:
         assert reviews.records_in(text) == []
 

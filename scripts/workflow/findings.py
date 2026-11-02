@@ -86,6 +86,8 @@ MAX_ITEMS = 999
 # An issue's number, at most seven digits, as a record line writes it.
 _ISSUE_DIGITS = r"[1-9][0-9]{0,6}"
 _ISSUE = re.compile(rf"#?({_ISSUE_DIGITS})")
+# What `_encoded` writes: letters, digits, `%._-`.
+_ENCODED = re.compile(r"[A-Za-z0-9%._-]+")
 _COUNT = re.compile(r"0|[1-9][0-9]{0,2}")
 _FINDING_KEYS = ("mark", "mechanism", "reproducer", "covered", "contested", "security", "area", "issue")
 _OUTCOME_KEYS = {
@@ -99,8 +101,7 @@ _MARK_RULE = "`mark` is `blocks`, `ticket` (a ticket to fix it) or `note`"
 _SECURITY_RULE = "`security` is `change` (a security problem the change adds) or `main` (a security or safety problem in code on the base branch)"
 _OUTCOME_RULE = "`outcome` is `contested`, `fail-closed` or `split`"
 _RULING_RULE = "`ruling` is `kept` or `overturned`"
-# Lines a record's own finding and outcome lines start with.
-_OWN_LINES = ("<!-- workflow:finding ", "<!-- workflow:outcome ")
+
 _FINDING_LINE = re.compile(
     r"<!-- workflow:finding n=([0-9]+) mark=(\S+) mechanism=(\S+) covered=(yes|no) "
     r"contested=(yes|no) security=(\S+) issue=(\S+) -->[ \t]*"
@@ -215,16 +216,26 @@ def _encoded(name: str) -> str:
     return quote(name, safe="").replace("~", "%7E")
 
 
+def _plain(text: str, n: int) -> str:
+    """Text as a refusal shows it: cut to `n` characters, anything that isn't
+    printable escaped."""
+    cut = "".join(c if c.isprintable() else repr(c)[1:-1] for c in text[:n])
+    return cut + ("…" if len(text) > n else "")
+
+
 def _json(value, n: int = 30) -> str:
-    """A value as the person wrote it, in JSON, cut to `n` characters, in
-    backticks: for refusals of an outcome or the file's own keys, never of a
-    finding's."""
+    """A value as the person wrote it, in JSON, in backticks (a list or an
+    object only named): for refusals of an outcome or the file's own keys,
+    never of a finding's."""
+    if isinstance(value, list):
+        return "a list"
+    if isinstance(value, dict):
+        return "an object"
     try:
         text = json.dumps(value, ensure_ascii=False)
-    except ValueError:
+    except (ValueError, OverflowError):
         text = str(value)
-    cut = "".join("\\" + c if c in "`\\" else c if c.isprintable() else repr(c)[1:-1] for c in text[:n])
-    return "`" + cut + ("…" if len(text) > n else "") + "`"
+    return f"`{_plain(text, n)}`"
 
 
 def _plural(n: int, word: str) -> str:
@@ -253,16 +264,24 @@ def _name(value, where: str, key: str) -> str:
     return name
 
 
+_ISSUE_RULE = "`issue` is an issue's number, as 415 or \"#415\""
+
+
+def _issue_read(text: str) -> int | None:
+    """An issue's number as a record line writes it, or None."""
+    return int(text) if re.fullmatch(_ISSUE_DIGITS, text) else None
+
+
 def _issue_ok(value) -> bool:
-    return type(value) is int and re.fullmatch(_ISSUE_DIGITS, str(value)) is not None
+    return type(value) is int and _issue_read(str(value)) == value
 
 
 def _issue(value, where: str, quoted: bool) -> int:
-    """An issue's number: 415, or "#415"."""
+    """An issue's number from the file: 415, or "#415"."""
     text = value if isinstance(value, str) else str(value) if type(value) is int else ""
     m = _ISSUE.fullmatch(text.strip())
     if not m:
-        raise FindingsError(f"{where}: `issue` is an issue's number, as 415 or \"#415\"" + (f", not {_json(value)}" if quoted else ""))
+        raise FindingsError(f"{where}: {_ISSUE_RULE}" + (f", not {_json(value)}" if quoted else ""))
     return int(m.group(1))
 
 
@@ -297,7 +316,7 @@ def checked(findings, outcomes, from_split) -> Findings:
         if f.contested and f.mark != "blocks":
             raise FindingsError(f"{where} is contested (kept after a contest), so it is marked blocks: a kept finding is re-entered as blocking")
         if f.issue is not None and not _issue_ok(f.issue):
-            raise FindingsError(f"{where}: `issue` is an issue's number")
+            raise FindingsError(f"{where}: {_ISSUE_RULE}")
     ruled, acted = set(), set()
     for i, o in enumerate(outcomes, 1):
         where = f"outcome {i}"
@@ -320,10 +339,10 @@ def checked(findings, outcomes, from_split) -> Findings:
             if (o.kind == "split") != (o.issue is not None):
                 raise FindingsError(f"{where}: " + ("give `issue`: the ticket it was split out to" if o.kind == "split" else "only a split names an issue"))
             if o.issue is not None and not _issue_ok(o.issue):
-                raise FindingsError(f"{where}: `issue` is an issue's number")
+                raise FindingsError(f"{where}: {_ISSUE_RULE}")
             if (o.kind, o.mechanism) in acted:
                 verb = "split" if o.kind == "split" else "in its safe fallback"
-                raise FindingsError(f"{where}: the part {_json(o.mechanism, MAX_NAME)} is already {verb}")
+                raise FindingsError(f"{where}: the part `{o.mechanism}` is already {verb}")
             acted.add((o.kind, o.mechanism))
     kept = sum(1 for o in outcomes if o.ruling == "kept")
     flagged = sum(1 for f in findings if f.contested)
@@ -357,8 +376,9 @@ def _known(obj: dict, keys, where: str) -> None:
 
 def _finding(raw, i: int) -> Finding:
     """One finding from the file. What only the file has (its keys and their
-    JSON types, the reproducer, the area) is checked here; the rest by
-    `checked`."""
+    JSON types, the reproducer, the area) is checked here, and the mark and
+    names too, so refusals come in the file's order; `checked` then applies
+    the rules the reader shares."""
     where = f"finding {i}"
     if not isinstance(raw, dict):
         raise FindingsError(f"{where} is an object, as {{\"mark\": \"note\", \"mechanism\": \"…\"}}")
@@ -416,12 +436,16 @@ def _outcome(raw, i: int) -> Outcome:
     return Outcome(kind=kind, mechanism=mechanism, issue=issue)
 
 
+def _no_constant(name: str):
+    raise FindingsError(f"isn't JSON: `{name}` is no JSON value")
+
+
 def load(text: str) -> Findings:
     """A findings file's text, read and checked. Raises FindingsError."""
     if not text.strip():
         raise FindingsError("is empty: give `[]` for a review with no findings")
     try:
-        data = json.loads(text, object_pairs_hook=_no_repeats)
+        data = json.loads(text, object_pairs_hook=_no_repeats, parse_constant=_no_constant)
     except FindingsError:
         raise
     except (ValueError, RecursionError) as e:
@@ -451,7 +475,8 @@ def from_file(path) -> Findings:
     missing, can't be read, isn't UTF-8 text or is malformed."""
     if not path:
         raise FindingsError("give --findings a file: this review's findings, `[]` for none")
-    shown = _json(path, 80)[1:-1] if len(path) <= 80 else "…" + _json(path[-79:], 79)[1:-1]
+    # The end of a long path, where the file's name is.
+    shown = _plain(path, 80) if len(path) <= 80 else "…" + _plain(path[-79:], 79)
     p = Path(path)
     try:
         if not p.exists():
@@ -475,6 +500,8 @@ def from_file(path) -> Findings:
 def _decoded(text: str) -> str | None:
     """A mechanism as written, or None when it isn't exactly as the writer
     encodes it."""
+    if not _ENCODED.fullmatch(text):
+        return None
     try:
         name = unquote(text, errors="strict")
     except UnicodeDecodeError:
@@ -484,10 +511,6 @@ def _decoded(text: str) -> str | None:
 
 def _count(text: str) -> int | None:
     return int(text) if _COUNT.fullmatch(text) else None
-
-
-def _issue_read(text: str) -> int | None:
-    return int(text) if re.fullmatch(_ISSUE_DIGITS, text) else None
 
 
 def _parse_finding(line: str, n: int) -> Finding | None:
@@ -526,16 +549,15 @@ def _parse_outcome(line: str, n: int) -> Outcome | None:
 
 def read_lines(lines, n_findings: str, n_outcomes: str, split: str) -> Findings | None:
     """The findings and outcomes from the lines right under a `rule=2` review
-    line, given its counts and split flag as written, or None unless exactly
-    that many are there, in order, with no more of them after, keeping the
-    rules. Never raises."""
-    nf, no = _count(n_findings), _count(n_outcomes)
-    if nf is None or no is None or split not in ("yes", "no") or len(lines) < nf + no:
+    line, given its counts and split flag as written, or None unless that many
+    are there, in order, keeping the rules. Never raises. (`reviews.records_in`
+    refuses the record when the comment holds any other finding or outcome
+    line.)"""
+    many, more = _count(n_findings), _count(n_outcomes)
+    if many is None or more is None or split not in ("yes", "no") or len(lines) < many + more:
         return None
-    if len(lines) > nf + no and lines[nf + no].startswith(_OWN_LINES):
-        return None
-    found = [_parse_finding(lines[i], i + 1) for i in range(nf)]
-    outs = [_parse_outcome(lines[nf + i], i + 1) for i in range(no)]
+    found = [_parse_finding(lines[i], i + 1) for i in range(many)]
+    outs = [_parse_outcome(lines[many + i], i + 1) for i in range(more)]
     if None in found or None in outs:
         return None
     try:
@@ -543,4 +565,4 @@ def read_lines(lines, n_findings: str, n_outcomes: str, split: str) -> Findings 
     except FindingsError:
         return None
     # Only exactly what the writer writes.
-    return got if got.lines() == list(lines[: nf + no]) else None
+    return got if got.lines() == list(lines[: many + more]) else None
