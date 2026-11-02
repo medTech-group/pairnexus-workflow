@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**The end check: all the answers read together before the spec or ADR is written** (#441, part of spec #436). In `start`'s Spec step, once the seams' round is posted and before the draft, and in its Map step, before a decision's ADR, `planning-checker` reads every answer posted for the spec or decision together, once. `next` runs it as `start` does.
+
+- **Its ask findings** come back as one short round, under the flow's "Decision questions" (each with a recommendation and its evidence where there's a basis for one), with **Leave them open** among the options. This round gets no check of its own before it's asked. Its **fix** findings are made and listed in that round's post, or, with no round, in a comment straight after the read.
+- **Then one re-read** of only what changed (the round's answers and the fixes), against the rest, and stop. Its findings are never asked: its fixes are made, and its **ask** findings join what's left.
+- **What's left** (left open, unanswered, or a re-read's **ask** findings) goes into the spec's Further Notes as open questions (a comment on the spec's issue once it's published), or a map decision's resolution comment; never only in the session's closing choices. It isn't the planning review: no spec record, no rounds until clean.
+- **"That's enough, write it up"** still runs the end check, with **Leave them open** on each of its questions.
+- **For projects updating:** nothing to do; the vendored skills change with the update. Tests: `tests/test_end_check.py`.
+
 **The interview's recommendations carry their evidence, and each round is posted as it's answered** (#440, part of spec #436). `start` and `next` now ask their decision questions under the flow's "Decision questions": the interview's rounds, the seams, a map decision's rounds, the questions a planning review's fixes raise, and in `start` those of **Edit the spec first** and of **Add to an existing issue** on a spec. Routing choices keep their one line of why.
 
 - **Evidence:** each recommended option says what it rests on (the file, issue, ADR or earlier answer checked), what it gives up and what would make it wrong; with no basis to prefer one option, no "(Recommended)", and the options are laid out.
