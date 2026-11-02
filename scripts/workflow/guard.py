@@ -7726,7 +7726,7 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tupl
             continue
         # What runs before it in the command: a `git add` stages more, read here; another git command may stage
         # anything (#394).
-        staged, why_staged, later = _staged_before(segs, seg, d, glob, top, root, staging)
+        staged, why_staged, later, guessed = _staged_before(segs, seg, d, glob, top, root, staging)
         if why_staged:
             unsure = unsure or f"{cant}: {why_staged}"
         if staged and c.specs and not (c.include or c.all):
@@ -7741,10 +7741,12 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tupl
             reorders = _may_reorder(command)
         if hit and reorders:
             unsure = unsure or (
-                f"{cant}: a later part runs `git add`, which may run first (in a loop, a pipeline or the background) and "
-                f"would stage the code path {_shown(hit)} ({hit.pattern})"
+                f"{cant}: a later part runs `git add`, which would stage the code path {_shown(hit)} ({hit.pattern}), and may "
+                "run first, as the command holds a loop, a pipeline, the background, a function or a substitution: run the "
+                "commit in a command of its own"
             )
         seen = set(files)
+        carried = set(files)
         files += [f for f in staged if f not in seen and not seen.add(f)]
         # A commit finishing a revert (`git commit` while one is in progress, `git revert --continue`) is judged by the revert rule (#392).
         hits = [_Hit(f, m, wt) for f in files for m in [_listed_code(f, code)] if m] if args[0] in ("commit", "revert") and not heads and not unread else []
@@ -7766,6 +7768,12 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tupl
                 unsure = unsure or f"{cant}: it couldn't read {unread}, and the changes it could carry include the code path {_shown(hit)} ({hit.pattern})"
                 break
             what = finishing if heads or args[0] != "commit" else "this commit"
+            if f in guessed and f not in carried:  # only by a `git add` it can't read plainly (#394)
+                return (
+                    f"{what} may carry the code path {_shown(hit)} ({hit.pattern}): an earlier `git add` that the guard can't "
+                    "read plainly counts as adding every changed and untracked file. If it adds no code path, name what it adds "
+                    f"plainly (`git add <path>`), or run it in a command of its own first; {code.instead}"
+                ), None
             return f"{what} carries the code path {_shown(hit)} ({hit.pattern}); {code.instead}", None
         if own_err:  # it couldn't read the merge's own changes: asked when what is staged differs from a parent in code
             staged: list[str] | None = []
@@ -8702,14 +8710,17 @@ def _keeps_staged(args: list[str], s: Seg, into) -> bool:
     return sub in _KEEPS_STAGED
 
 
-def _staged_before(segs: list[Seg], seg: Seg, d: str, glob: list[str], top: str, root: Path, memo: dict) -> tuple[list[str], str, list[str]]:
+def _staged_before(segs: list[Seg], seg: Seg, d: str, glob: list[str], top: str, root: Path, memo: dict) -> tuple[list[str], str, list[str], set[str]]:
     """(the files the `git add`s before the commit `seg` stage into its
     index, why the guard can't tell what another git command before it
     stages (else ""), the files the `git add`s after it would stage, which
-    may run first). Each part, and each whole-tree read, is read once per
-    command (`memo`)."""
+    may run first, the files counted only because an add it can't read
+    plainly counts every change). Each part, and each whole-tree read, is
+    read once per command (`memo`)."""
     before: list[str] = []
     later: list[str] = []
+    guessed: set[str] = set()
+    plain: set[str] = set()  # what the adds it reads plainly stage
     why = ""
     ahead = True
     for s in segs:
@@ -8741,14 +8752,16 @@ def _staged_before(segs: list[Seg], seg: Seg, d: str, glob: list[str], top: str,
             if got is None:
                 why = why or f"it couldn't read what `git {args[0]}` stages: {err}"
             files = got or []
+            guessed.update(files)
         elif st.git_dir is not None:
             key = ("git-dir", d, tuple(glob))
             if key not in memo:
                 memo[key] = _git_dir_abs(d, glob)
             if memo[key] in (None, st.git_dir):  # the same index (one it can't read counts as may)
                 files = st.files
+                plain.update(files)
         (before if ahead else later).extend(files)
-    return before, why, later
+    return before, why, later, guessed - plain
 
 
 # While the push rule runs: its git reads by their arguments, so many pushes in one command read each thing once.
@@ -9512,7 +9525,8 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
             unsure = held(f"{cant}: {err}")
     for s in segs:  # a git command whose subcommand the shell spells, or `xargs git`, may itself be a push (#394)
         args = _part_git(s)
-        if args and (args[0] == "<stdin>" or _shell_spelled(args[0], globs=True) or "{}" in args[0]):
+        # (`xargs -I %` may stand any word for its input: a fed subcommand that isn't one of git's own counts.)
+        if args and (args[0] == "<stdin>" or _shell_spelled(args[0], globs=True) or "{}" in args[0] or (s.fed and args[0] not in _GIT_COMMANDS)):
             changers = changers or code.changers or _Changers(segs, root)
             made = changers.commits(s)
             if made:
@@ -9613,10 +9627,13 @@ def _beside_ref_move(cant: str, moves: str, code: _Code, root: Path, made: bool)
     (#338's answer 41)."""
     proto = ", and on a `prototype/*` branch a planning session's code commits go through unjudged" if code.prototyping(root) else ""
     if made:
+        plain = ": " not in cant and cant.startswith("the guard can't tell what")  # only that it can't read a push beside one
+        also = "" if plain else f" (besides, {cant})"  # a push it can't read for another reason says that too
+        unjudged = " On a `prototype/*` branch a planning session's code commits go through unjudged." if proto else ""
         return (
-            f"{cant}: another part of the command runs `{moves}`, which may make or finish commits{proto}, and a push to "
-            f"`{code.repo or 'the project'}` is refused in the same command as one, wherever it sits and whatever it carries: "
-            f"run the push in a command of its own, after it, where it is judged by what it sends ({code.writes_none})"
+            f"a push to `{code.repo or 'the project'}` in the same command as `{moves}`, which may make or finish commits, is "
+            f"refused wherever it sits and whatever it carries{also}: run the push in a command of its own, after it, where "
+            f"it is judged by what it sends ({code.writes_none}).{unjudged}"
         )
     return (
         f"{cant}: another part of the command runs `{moves}`, which can change what it sends{proto}, so a push is refused "

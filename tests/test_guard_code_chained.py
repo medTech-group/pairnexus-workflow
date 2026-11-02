@@ -150,7 +150,7 @@ def test_a_git_add_it_cant_read_plainly_counts_every_change(tmp_path, monkeypatc
     _change(root, CODE)
     for role in (None, "conductor"):
         d, why = hook(monkeypatch, capsys, root, command, role)
-        assert d == "deny" and "carries the code path `src/app.py` (src/**)" in why, (command, role, why)
+        assert d == "deny" and "may carry the code path `src/app.py` (src/**)" in why and "can't read plainly" in why, (command, role, why)
     _change(root, "src/new.py")
     git(root, "checkout", "-q", "--", CODE)
     d, why = hook(monkeypatch, capsys, root, command)
@@ -270,6 +270,17 @@ def test_a_git_add_in_a_substitution_runs_before_the_commit(proj, monkeypatch, c
     for role in (None, "conductor"):
         d, why = hook(monkeypatch, capsys, proj, 'git commit -m "' + DOLLAR + '(git add -A)"', role)
         assert d == "deny" and "`src/app.py`" in why, (role, why)
+
+
+def test_the_refusal_of_an_add_it_cant_read_says_so(proj, monkeypatch, capsys):
+    """Refused as carrying every change, it says why, and how to name what it adds."""
+    _change(proj, CODE)
+    _change(proj, "docs/guide.md")
+    d, why = hook(monkeypatch, capsys, proj, "git add -u docs && git commit -m d")
+    assert d == "deny" and "may carry the code path `src/app.py`" in why and "can't read plainly" in why and "`git add <path>`" in why, why
+    # A code path it reads plainly: as any refusal.
+    d, why = hook(monkeypatch, capsys, proj, "git add src && git add -u docs && git commit -m d")
+    assert d == "deny" and "this commit carries the code path `src/app.py`" in why, why
 
 
 def test_a_forced_add_the_guard_cant_read_counts_ignored_files(proj, monkeypatch, capsys):
@@ -419,6 +430,9 @@ def test_a_push_beside_xargs_git_is_refused(proj, monkeypatch, capsys):
         "git " + DOLLAR + "A && git " + DOLLAR + "B",
         "git commit -m d; echo push | xargs -I{} git {} origin HEAD:main",
         "git commit -m d && git {push,origin,HEAD:main}",
+        "git commit -m d && echo push | xargs -I % git %",
+        "git commit -m d && echo push | xargs -IX git X origin HEAD",
+        "git commit -m d && echo push | xargs --replace=X git X",
     ],
 )
 def test_a_git_command_that_may_itself_be_the_push_beside_a_commit_is_refused(proj, monkeypatch, capsys, command):
