@@ -311,7 +311,7 @@ def test_a_hand_off_of_a_commit_past_the_listed_250_that_is_no_longer_the_head_i
     got, _ = check(project, capsys, data)
     assert got["hand_off"] is None
     [n] = [x for x in got["notes"] if x["id"] == "hand_offs_ignored"]
-    assert "past the 250 GitHub lists" in n["message"]
+    assert "naming a commit not in this pull request's commit list" in n["message"]  # the same words, however long
 
 
 def test_a_record_before_it_doesnt_clear_it(project, capsys):
@@ -329,7 +329,7 @@ def test_an_untrusted_hand_off_is_left_out_with_a_note(project, capsys, bad):
     got, _ = check(project, capsys, data)
     assert got["hand_off"] is None and "hand_offs_ignored" in note_ids(got)
     [n] = [x for x in got["notes"] if x["id"] == "hand_offs_ignored"]
-    assert "outside this pull request" in n["message"] and "250" not in n["message"]  # a short PR: never past the list
+    assert "naming a commit not in this pull request's commit list" in n["message"]
 
 
 def test_an_untrusted_later_hand_off_leaves_the_trusted_one_reported(project, capsys):
