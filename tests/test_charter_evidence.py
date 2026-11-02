@@ -201,9 +201,10 @@ def test_same_as_last_time_asks_the_merge_mode_again_while_approvals_recommend_o
     # The reused `auto-merge` no longer offered isn't set to the default while approvals
     # recommend owner: it is asked again too, so the exception never overrides them.
     ex = _sentence(reuse, "no longer offers")
-    tail = ex.split("unless", 1)[1]
-    assert "`github.approvals`" in tail and "again" in tail
-    assert re.search(r"\bowner\b\W*\s+recommended", tail.split(":", 1)[1])
+    assert "`github.approvals`" in ex
+    after = ex.split("`github.approvals`", 1)[1]
+    assert "again" in after
+    assert re.search(r"\bowner\b\W*\s+recommended", after)
     d = [s for s in re.split(r"(?<=[.;])\s+", _charter_reuse()) if "approvals" in s]
     assert len(d) == 1, d
     assert "again" in d[0] and "owner" in d[0] and "auto-merge" in d[0]
