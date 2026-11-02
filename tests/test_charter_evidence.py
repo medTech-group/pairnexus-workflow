@@ -1,10 +1,10 @@
 """#447: the run charter's recommended answers carry their evidence (spec #436's
 "Which questions": the charter's questions get the evidence rule only, with no
-checks; answer 1 on #433, and the spec's story 19). Read as a text contract on the `conductor` skill's
-kick-off, and on `docs/charter.md` §2 where it describes asking, as
-`tests/test_decision_questions.py` reads the flow: each test reads one part of
-the text, and checks what it requires rather than its exact wording, so a later
-rewording that keeps the rule passes."""
+checks; answer 1 on #433, and the spec's story 19). Read as a text contract
+on the `conductor` skill's kick-off, and on `docs/charter.md` §2 where it
+describes asking, as `tests/test_decision_questions.py` reads the flow: each
+test reads one part of the text, and checks what it requires rather than its
+exact wording, so a later rewording that keeps the rule passes."""
 
 import re
 
@@ -57,19 +57,21 @@ def _reuse() -> str:
     return found[0]
 
 
-def _charter_asking() -> str:
-    """`docs/charter.md` §2's opening paragraph, where it describes asking, flattened."""
+def _charter_section() -> str:
+    """`docs/charter.md` §2, as written."""
     text = CHARTER.read_text(encoding="utf-8")
     assert "\n## 2. The questions\n" in text
-    section = text.split("\n## 2. The questions\n", 1)[1].split("\n## ", 1)[0]
-    return _flatten(section.strip().split("\n\n", 1)[0])
+    return text.split("\n## 2. The questions\n", 1)[1].split("\n## ", 1)[0]
+
+
+def _charter_asking() -> str:
+    """`docs/charter.md` §2's opening paragraph, where it describes asking, flattened."""
+    return _flatten(_charter_section().strip().split("\n\n", 1)[0])
 
 
 def _charter_reuse() -> str:
     """`docs/charter.md` §2's "Same as last time?" paragraph, flattened."""
-    text = CHARTER.read_text(encoding="utf-8")
-    section = text.split("\n## 2. The questions\n", 1)[1].split("\n## ", 1)[0]
-    found = [p for p in section.split("\n\n") if "Same as last time?" in p]
+    found = [p for p in _charter_section().split("\n\n") if "Same as last time?" in p]
     assert len(found) == 1, found
     return _flatten(found[0])
 
@@ -90,12 +92,14 @@ def test_the_kick_off_says_each_recommended_answer_carries_its_evidence():
         assert f"- **{part}" in rule, part
 
 
-def test_what_it_rests_on_names_the_four_sources():
+def test_what_it_rests_on_names_its_sources():
     rests = _item(_evidence(), "What it rests on")
     assert "profile setting" in rests
     assert "doctor line" in rests
     assert "default" in rests and "charter defaults" in rests
     assert "last run's charter" in rests
+    # And what the pre-flight found, which today's recommendations in steps 1 and 3 rest on.
+    assert "pre-flight finding" in rests
     # Named, not just pointed at: the setting by its key, the line by its id.
     assert re.search(r"\bkey\b", rests) and re.search(r"\bid\b", rests)
 
@@ -156,14 +160,18 @@ def test_same_as_last_time_carries_its_evidence():
     # diff, which shows only what reuse cleared or filled.
     wrong = _sentence(reuse, "make it wrong")
     assert "diff" in wrong and "reuse" in wrong
-    assert "`run.preset`" in wrong and "`github.approvals`" in wrong and "doctor's lines" in wrong
+    assert "charter defaults" in wrong and "`github.approvals`" in wrong
+    # Accepted gaps aren't compared: reuse clears them and step 1 asks them afresh.
+    assert "step 1" in _sentence(reuse, "Accepted gaps")
 
 
 def test_same_as_last_time_is_not_recommended_as_is_where_today_s_evidence_rules_an_answer_out():
-    s = _sentence(_reuse(), "rules an old answer out")
+    s = _sentence(_reuse(), "rules a reused answer out")
     # That answer is asked again with its own recommendation, not reused as is.
     assert "ask it again" in s and "own recommendation" in s
     assert "reused as is" in s
+    # The merge mode solo mode rules out keeps its own handling, named as the exception.
+    assert "exception" in _sentence(_reuse(), "no longer offers it")
 
 
 def test_recommended_answers_still_come_first_and_the_preset_is_still_recommended():
@@ -189,7 +197,7 @@ def test_the_charter_doc_says_each_recommended_answer_carries_its_evidence():
         assert source in p, source
     assert _points_to_the_flow(_sentence(p, "Decision questions"))
     # A question without a basis has no default to put first.
-    assert "first, where it has one" in p
+    assert "first" in _sentence(p, "Asked in rounds") and "where it has one" in _sentence(p, "Asked in rounds")
 
 
 def test_the_charter_doc_has_no_recommendation_without_a_basis_and_no_checks():
@@ -206,7 +214,8 @@ def test_the_charter_doc_s_same_as_last_time_carries_its_evidence():
     assert "rests on" in p and "last run's charter" in p
     assert "gives up" in p and "wrong" in p
     # The diff isn't the evidence of change: the old answers are set beside today's.
-    assert "rules an old answer out" in p and "on its own" in p
+    assert "rules a reused answer out" in p and "on its own" in p
+    assert "charter defaults" in p
 
 
 # --- the changelog ----------------------------------------------------------
