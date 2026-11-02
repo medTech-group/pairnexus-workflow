@@ -168,26 +168,29 @@ def test_same_as_last_time_carries_its_evidence():
 def test_same_as_last_time_is_not_recommended_as_is_where_today_s_evidence_rules_an_answer_out():
     reuse = _reuse()
     s = _sentence(reuse, "own recommendation")
-    # Such an answer is asked again on its own, with its own recommendation, and only then.
-    assert "again" in s and "on its own" in s and "only" in s
-    assert "rules it out" in s and "doctor line" in s
-    # The cases, each from evidence the conductor has today: what validate would refuse
-    # against today's profile and queue, `github.approvals` against the reused mode,
-    # and `auto-merge` picked today for a reused `session`, whether or not it was offered then.
-    assert "charter validate" in reuse and "merge queue is on" in reuse
-    assert "`github.approvals`" in _sentence(reuse, "`github.approvals`") and "isn't `owner`" in reuse
-    s = _sentence(reuse, "reused `session`")
-    assert "`auto-merge`" in s and "can't show" in s
+    # Such an answer has no basis to be reused as is: asked again on its own, with
+    # its own recommendation, and "Same as last time?" recommended for the rest.
+    assert "no basis" in s and "again" in s and "on its own" in s
+    assert "Same as last time?" in s
+    # What today's profile and queue rule out is compared by hand: `validate`
+    # checks against the profile only once the end time is set.
+    by_hand = _sentence(reuse, "by hand")
+    assert "charter validate" in by_hand and "end time" in by_hand
+    assert "merge queue is on" in by_hand and "`ui.explorer`" in by_hand
 
 
 def test_same_as_last_time_names_a_difference_from_the_defaults_without_asking_it_again():
     # A reused answer that only differs from today's defaults is the owner's earlier
-    # choice: named, never asked again for that alone.
+    # choice: named, with what today's doctor lines say of it, never asked again for that alone.
     s = _sentence(_reuse(), "earlier choice")
     assert "charter defaults" in s and "charter diff" in s
     assert "never" in s and "again" in s
-    # The merge mode solo mode rules out keeps its own handling, named as the exception.
-    assert "exception" in _sentence(_reuse(), "no longer offers it")
+    assert "`github.approvals`" in s and "owner" in s
+    assert "`auto-merge`" in s and "reused `session`" in s
+    # The merge mode the merge question no longer offers keeps its own handling, named
+    # as the one exception, for each reason it isn't offered.
+    ex = _sentence(_reuse(), "no longer offers")
+    assert "exception" in ex and "solo mode" in ex and "no CI" in ex and "no required checks" in ex
 
 
 def test_recommended_answers_still_come_first_and_the_preset_is_still_recommended():
@@ -234,8 +237,9 @@ def test_the_charter_doc_s_same_as_last_time_carries_its_evidence():
     # a reason to ask again; an answer today's evidence rules out is asked on its own.
     s = _sentence(p, "earlier choice")
     assert "charter defaults" in s and "never" in s
-    assert "rules a reused answer out" in p or "rules out" in p
-    assert "on its own" in p
+    assert "rules out" in p and "on its own" in p
+    # The reused `auto-merge` no longer offered is set to the new default, as the skill says.
+    assert "no longer offers" in p and "new default" in p
 
 
 # --- the changelog ----------------------------------------------------------
