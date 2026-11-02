@@ -199,9 +199,12 @@ def test_on_a_quick_ticket_the_persons_own_words_are_always_ask():
     quick = marks.split("On a quick ticket", 1)[1].split("In the breakdown check", 1)[0]
     for part in ("the item's issue", "own words", "is **ask**"):
         assert part in quick, part
-    # What they typed: a Change it, and a reply to an ask unless it accepted the recommendation.
-    assert re.search(r"\*\*Change it\*\*[^)]*\*\*ask\*\*[^)]*\b(?:isn't|not|never|unless|except)\b[^)]*accepted", quick), quick
-    assert not re.search(r"accepted or not|even an accepted", quick), quick
+    # What they typed: a Change it, and a reply to an ask, in either order, but never an
+    # accepted recommendation (answer 4: "an answer they typed, not one they accepted").
+    typed = [p for p in re.findall(r"\(([^)]*)\)", quick) if "**Change it**" in p and "**ask**" in p]
+    assert typed, quick
+    assert re.search(r"\b(?:isn't|not|never|unless|except|other than|rather than|no)\b[^,;]*\baccepted\b", typed[0]), typed[0]
+    assert not re.search(r"\b(?:or not|whether|including|even|regardless|also)\b", typed[0]), typed[0]
 
 
 def test_a_quick_tickets_reread_gets_the_persons_replies_word_for_word():
