@@ -286,7 +286,29 @@ def test_a_git_add_into_the_index_a_work_tree_commit_reads(proj, tmp_path, monke
     (tmp_path / "e").mkdir()
     _change(proj, CODE)
     d, why = hook(monkeypatch, capsys, proj, f"git add -A && git --work-tree={tmp_path / 'e'} commit -m x")
-    assert d != "allow" and ("`src/app.py`" in why or "can't tell" in why), why
+    assert d == "deny" and "carries the code path `src/app.py`" in why, why
+
+
+def test_a_git_add_into_another_work_tree_or_index_is_cant_tell(proj, tmp_path, monkeypatch, capsys):
+    (tmp_path / "e" / "src").mkdir(parents=True)
+    (tmp_path / "e" / "src" / "app.py").write_text("edited\n")
+    for command in (
+        f"git --work-tree={tmp_path / 'e'} add -A && git commit -m x",
+        f"GIT_WORK_TREE={tmp_path / 'e'} git add src/app.py && git commit -m x",
+        "GIT_INDEX_FILE=/tmp/i git add -A && git commit -m x",
+        f"git -c core.worktree={tmp_path / 'e'} add -A && git commit -m x",
+    ):
+        d, why = hook(monkeypatch, capsys, proj, command)
+        assert d == "ask" and "another work tree or into another index" in why, (command, why)
+        d, why = hook(monkeypatch, capsys, proj, command, "conductor")
+        assert d == "deny", (command, why)
+
+
+def test_a_function_defined_in_the_command_may_run_its_commit_after_the_add(proj, monkeypatch, capsys):
+    _change(proj, CODE)
+    for command in ("f() { git commit -m d; }; git add -A; f", "function f { git commit -m d; }; git add -A; f"):
+        d, why = hook(monkeypatch, capsys, proj, command)
+        assert d == "ask" and "a later part runs `git add`" in why, (command, why)
 
 
 def test_a_pathspec_commit_after_an_add_carries_only_what_it_names(proj, monkeypatch, capsys):
@@ -341,6 +363,10 @@ def _docs_ready(root):
         "git am x.patch && git push",
         "git rebase --continue && git push origin feature",
         "git cherry-pick --cont && git push",
+        "git commit --qu -m d && git push origin feature",
+        "git pull --qui && git push",
+        "git commit -m --abort && git push origin feature",
+        "git merge --abort origin/main && git push origin feature",
         "git am --resolved && git push",
         "git commit -m d && git push git@github.com:acme/demo.git HEAD:refs/heads/feature",
         "git commit -m d && git -C docs push origin feature",
@@ -385,7 +411,16 @@ def test_a_push_beside_xargs_git_is_refused(proj, monkeypatch, capsys):
         assert d == "deny" and OWN in why, (role, why)
 
 
-@pytest.mark.parametrize("command", ["git commit -m d && git " + DOLLAR + "P", "git commit -m d; echo push | xargs git", "git " + DOLLAR + "A && git " + DOLLAR + "B"])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git commit -m d && git " + DOLLAR + "P",
+        "git commit -m d; echo push | xargs git",
+        "git " + DOLLAR + "A && git " + DOLLAR + "B",
+        "git commit -m d; echo push | xargs -I{} git {} origin HEAD:main",
+        "git commit -m d && git {push,origin,HEAD:main}",
+    ],
+)
 def test_a_git_command_that_may_itself_be_the_push_beside_a_commit_is_refused(proj, monkeypatch, capsys, command):
     for role in (None, "conductor"):
         d, why = hook(monkeypatch, capsys, proj, command, role)

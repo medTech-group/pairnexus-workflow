@@ -8498,6 +8498,7 @@ class _Staging:
     git_dir: str | None = None
     whole: bool = False
     force: bool = False
+    elsewhere: str = ""  # what sends it to another work tree, git directory or index: what it stages there isn't read
 
 
 def _add_args(args: list[str]) -> _Add | None:
@@ -8554,13 +8555,16 @@ _REORDERS = {"&", "|", "|&"} | (_COMPOUND_WORDS - {"if", "case", "function"})
 
 def _may_reorder(command: str) -> bool:
     """Whether a later part of the command may run before an earlier one: it
-    holds `&`, `|`, a loop or a coprocess, or a substitution (`$(…)`, a
-    backtick, `<(…)`), which runs before the part it is in. A plain sequence
+    holds `&`, `|`, a loop, a coprocess or a function's definition, or a
+    substitution (`$(…)`, a backtick, `<(…)`), which runs before the part it
+    is in. A plain sequence
     (`;`, `&&`, `||`, newlines) runs in order."""
     if "`" in command or "$(" in command or "<(" in command or ">(" in command:
         return True
     try:
-        return any(isinstance(t, str) and t in _REORDERS for t in _tokens(command))
+        toks = [t for t in _tokens(command) if isinstance(t, str)]
+        # A function defined in it (`f() { … }`, `function f`) runs where it is called.
+        return any(t in _REORDERS or t == "function" for t in toks) or any(a == "(" and b == ")" for a, b in zip(toks, toks[1:]))
     except Exception:  # a command it can't split: may
         return True
 
@@ -8598,6 +8602,11 @@ def _add_reading(s: Seg, root: Path) -> _Staging:
     # A word the shell expands, or an option it can't read, may be `-f`.
     force = (a.force if a is not None else any(_FORCE_WORD.fullmatch(w) for w in args[1:])) or any(_EXPANDS.search(w) for w in args[1:])
     whole = _Staging(whole=True, force=force)
+    moved = [o for o in (g[0] if g else []) if o.partition("=")[0] in _GIT_REPO_GLOBALS]
+    moved += [g[0][i + 1] for i, o in enumerate((g[0] if g else [])[:-1]) if o == "-c" and g[0][i + 1].split("=", 1)[0].casefold() == "core.worktree"]
+    moved += sorted(set(_assigned(s)) & (_GIT_REPO_ENV | _GIT_INDEX_ENV))
+    if moved:
+        return replace(whole, elsewhere=f"`{_brief(moved[0])}`")
     plain = s.words[0] in ("git", "git-add", "git-stage") and not (g is not None and (g[0] or g[2]))
     # A global option (`-C`), a path to git, a wrapper, a variable set for it (`GIT_*`, `HOME`) or the names `xargs` gives it.
     if a is None or not plain or s.wrappers or s.assigns or s.fed:
@@ -8711,7 +8720,10 @@ def _staged_before(segs: list[Seg], seg: Seg, d: str, glob: list[str], top: str,
         if not args:
             continue
         if args[0] not in ("add", "stage"):
-            if ahead and not why and not _keeps_staged(args, s, lambda: _pushes_into(s, args, root, _git_common(d, glob))):
+            key = ("keeps", id(s), d, tuple(glob))
+            if ahead and not why and key not in memo:
+                memo[key] = _keeps_staged(args, s, lambda: _pushes_into(s, args, root, _git_common(d, glob)))
+            if ahead and not why and not memo[key]:
                 label = "git " + " ".join(_brief(a) for a in args[:2])
                 why = f"an earlier part runs `{label}`, which may change what it commits: run that in a command of its own first"
             continue
@@ -8719,6 +8731,8 @@ def _staged_before(segs: list[Seg], seg: Seg, d: str, glob: list[str], top: str,
             memo[id(s)] = _add_reading(s, root)
         st: _Staging = memo[id(s)]
         files: list[str] = []
+        if st.elsewhere and ahead:
+            why = why or f"an earlier `git {args[0]}` runs with {st.elsewhere}, which stages from another work tree or into another index: run it in a command of its own first"
         if st.whole:  # every changed and untracked file of the commit's checkout
             key = ("whole", top, tuple(glob), st.force)
             if key not in memo:
@@ -8898,10 +8912,11 @@ _MOVES_ONLY = {
 
 
 def _makes_none(args: list[str]) -> bool:
-    """A git command that makes no commit whatever its subcommand: one
-    stopping a merge, cherry-pick, revert, rebase or `am` in progress
-    (`--abort`, `--quit`, from `--abo` and `--qu` on), or a commit's dry run."""
-    if any(len(a) >= 4 and ("--abort".startswith(a) or "--quit".startswith(a)) for a in args[1:]):
+    """A git command that makes no commit: a merge, cherry-pick, revert,
+    rebase or `am` stopped (`--abort`, from `--abo` on, or `--quit`, spelled
+    out, as `--qu` may be `--quiet`), given as its only word, or a commit's
+    dry run."""
+    if args[0] in _CONTINUE_COMMITS and len(args) == 2 and (len(args[1]) >= 5 and "--abort".startswith(args[1]) or args[1] == "--quit"):
         return True
     return args[0] == "commit" and _commit_args(args[1:]).dry_run
 
@@ -9497,7 +9512,7 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
             unsure = held(f"{cant}: {err}")
     for s in segs:  # a git command whose subcommand the shell spells, or `xargs git`, may itself be a push (#394)
         args = _part_git(s)
-        if args and (args[0] == "<stdin>" or _EXPANDS.search(args[0])):
+        if args and (args[0] == "<stdin>" or _shell_spelled(args[0], globs=True) or "{}" in args[0]):
             changers = changers or code.changers or _Changers(segs, root)
             made = changers.commits(s)
             if made:
