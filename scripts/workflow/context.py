@@ -198,9 +198,9 @@ FLOW_HEAD = "This request is part of the project's workflow. Follow its flow ste
 # What the first flow context may take of Claude Code's limit (CONTEXT_LIMIT,
 # below): the rest is room for what goes in front of it, the glossary's rule
 # and path in an attended session or the conductor line in a conductor session
-# (about 650 characters with a usual path). 8,800 since #439, so the flow's
-# sections 1 and 2 still fit beside their pointers to "Decision questions".
-FLOW_BUDGET = 8_800
+# (about 650 characters with a usual path). It is set so that the kit's own
+# flow, from its start through §2, fits whole: a planning session needs both.
+FLOW_BUDGET = 8_900
 _READ = " Read it now, all of it, before acting: "
 _WHOLE = " All of it is below (from "
 _STOPS = " Only its start fits below. It stops before "

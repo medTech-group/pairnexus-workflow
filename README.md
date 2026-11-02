@@ -456,7 +456,7 @@ Claude interviews you in **rounds**:
   - Testing Decisions;
   - Out of Scope;
   - Further Notes.
-- **Under the kit's flow, before publishing:** Claude posts your answers, each question with your answer quoted word for word, on the item's issue (with none, as the spec's first comment once it is published). It has the spec's draft reviewed against them and against the code (the review panel's planning review), in rounds until one is clean. A fix that would change what you decided comes back to you as a question first.
+- **Under the kit's flow, before publishing:** Claude posts your answers, each question with your answer quoted word for word, on the item's issue as soon as each round is answered (with none, Claude files one first), each tagged as your own words or a recommendation you accepted. It has the spec's draft reviewed against them and against the code (the review panel's planning review), in rounds until one is clean. A fix that would change what you decided comes back to you as a question first.
 - **Then it publishes** the reviewed text as is, with its review records on the spec's issue. It labels the spec `ready-for-agent` and `spec`, so the readiness check never takes the spec itself for a build ticket, and it cites the decision behind each choice.
 
 **3. `/to-tickets`: the build tickets.** Type `/to-tickets`, or `/to-tickets #<spec number>` in a new session.

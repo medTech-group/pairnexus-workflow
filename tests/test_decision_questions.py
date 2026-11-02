@@ -70,23 +70,24 @@ def _checklist(n: int) -> str:
 
 
 def test_decision_questions_are_the_ones_posted_as_the_owner_s_and_named():
-    intro = _intro()
-    assert "posted as the owner's" in intro
+    s = _sentence(_intro(), "posted as the owner's")
     # The five kinds, each by where it's asked.
-    assert "map decision" in intro
-    assert "interview" in intro and "`start`" in intro and "`next`" in intro
-    assert "seams" in intro
-    assert "**Fixes**" in intro and "draft" in intro and "§8" in intro
-    assert "after publishing" in intro
-    assert "**Edit the spec first**" in intro and "**Add to an existing issue**" in intro
+    assert "map decision" in s
+    assert "interview" in s and "`start`'s Spec step" in s and "`next`" in s
+    assert "seams" in s
+    assert "**Fixes**" in s and "draft" in s and "§8" in s
+    assert "after publishing" in s
+    assert "**Edit the spec first**" in s and "**Add to an existing issue**" in s
 
 
 def test_the_skills_point_here_and_matt_pocock_s_stay_unedited():
-    intro = _intro()
+    s = _sentence(_intro(), "the skills that ask them")
+    assert "follow these rules" in s
     for skill in ("`start`", "`next`", "`review-panel` §8", "`conductor`"):
-        assert skill in intro, skill
+        assert skill in s, skill
     # A map decision's rounds run through Matt Pocock's skills, which aren't edited.
-    assert "`wayfinder`" in intro and "`grilling`" in intro
+    s = _sentence(_intro(), "`wayfinder`")
+    assert "`grilling`" in s and "unedited" in s
 
 
 def test_quick_tickets_get_the_end_check_and_the_decided_for_you_list_without_posted_answers():
@@ -113,13 +114,13 @@ def test_routing_choices_get_neither():
 
 
 def test_each_recommendation_carries_its_evidence():
-    r = _rule("Evidence")
-    assert "what it rests on" in r
-    assert "what it gives up" in r
-    assert "what would make it wrong" in r
+    s = _sentence(_rule("Evidence"), "rests on")
+    assert "what it rests on" in s
+    assert "what it gives up" in s
+    assert "what would make it wrong" in s
     # What it rests on is something checked.
     for kind in ("file", "issue", "ADR", "answer"):
-        assert kind in r, kind
+        assert kind in s, kind
 
 
 def test_no_recommended_without_a_basis():
@@ -181,6 +182,7 @@ def test_flow_1_asks_its_rounds_under_decision_questions():
     assert '"Decision questions"' in _step(2, "1")
     step3 = _step(3, "1")
     assert "**Post the owner's answers**" in step3
+    assert "each round as soon as it's answered" in step3
     # The existing rule stays: word for word, never a summary.
     assert "each question with the answer quoted word for word" in step3
 
@@ -201,6 +203,10 @@ def test_flow_2_files_an_item_s_issue_first_instead_of_the_spec_s_first_comment(
 def test_what_s_left_after_a_last_read_goes_into_further_notes_or_a_comment_on_the_spec():
     r = _rule("What's left")
     assert "last read" in r
+    # A last read's ask findings are left, never asked; its fix findings are made.
+    s = _sentence(r, "never asked")
+    assert "**ask** findings" in s and "**fix** findings are made" in s
+    assert "unanswered" in r and "left open" in r
     assert "Further Notes" in r and "before" in r and "published" in r
     assert "comment on the spec's issue" in r
     assert "never only" in r
@@ -222,18 +228,26 @@ def test_the_checks_are_named_and_are_not_the_planning_review():
     assert "`review-panel` §8's planning review" in r
     assert "reads once" in r and "re-reads once" in r
     assert "no spec record" in r
+    # A breakdown finding left open holds its tickets back, not the publish.
+    s = _sentence(r, "stops the publish")
+    assert "nothing it found" in s and "out of `ready-for-agent`" in s
 
 
 def test_the_checks_are_named_with_the_checker_that_runs_them():
     r = _rule("The checks")
     assert "`planning-checker`" in r and "read-only" in r
-    for check in ("before it's asked", "end check", "re-read"):
+    # Ask and fix, as the checker marks them.
+    s = _sentence(r, "marks each finding")
+    assert "what an answer means" in s and "the owner decides" in s
+    assert "**fix**" in s and "the session makes it" in s
+    for check in ("before the round is asked", "end check", "re-read"):
         assert check in r, check
     # The end check reads all the answers before the spec or the ADR is written.
     s = _sentence(r, "(the end check)")
     assert "all the answers" in s and "before the spec" in s and "ADR" in s
-    # Its round lets the owner leave a finding open; then one re-read, and it stops.
-    assert "**Leave them open**" in s
+    # Its round lets the owner leave a finding open, and isn't itself checked first.
+    assert "**Leave them open**" in _sentence(r, "short round")
+    assert "except the end check's own round" in _sentence(r, "before the round is asked")
     s = _sentence(r, "(the re-read)")
     assert "once" in s and "only what that round changed" in s and "stops" in s
     # Rounds after a draft exists get one re-read against all earlier answers.
@@ -256,6 +270,9 @@ def test_the_breakdown_check_reads_the_tickets_against_the_spec():
     assert "exactly one build ticket, owner task or edit" in r
     assert "`## Blocked by`" in r and "`## Bar`" in r
     assert "Only wording is a **fix**" in r
+    # Answer 24: here the re-read's ask findings are asked, as one more round, with no read after it.
+    s = _sentence(r, "re-read's")
+    assert "asked too" in s and "no read after it" in s
     assert "before the tickets are published" in r
     # A finding left open keeps its tickets from being built.
     s = _sentence(r, "left open")
@@ -290,7 +307,11 @@ def test_a_planning_session_is_sent_to_the_rules_by_the_hook_s_first_flow_contex
 
 
 def test_the_changelog_has_a_note_and_version_is_untouched():
-    notes = since_0110()
-    assert "(#439, part of spec #436)" in notes
-    unreleased = notes.split("## Unreleased", 1)[1].split("\n## ", 1)[0]
-    assert "#439" in unreleased
+    # Read as the other notes are, so a release that moves them under its heading still passes.
+    assert "(#439, part of spec #436)" in since_0110()
+    log = (KIT / "CHANGELOG.md").read_text(encoding="utf-8")
+    start = log.index("## Unreleased\n")
+    end = log.index("\n## ", start + 1)
+    # No version bump: VERSION is still the last release's.
+    released = log[end + 4:].split("\n", 1)[0].strip()
+    assert (KIT / "VERSION").read_text().strip() == released
