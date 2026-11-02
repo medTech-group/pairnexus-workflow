@@ -2,11 +2,12 @@
 
 ## Unreleased
 
-**The end check: all the answers read together before the spec or ADR is written** (#441, part of spec #436). In `start`'s Spec step, once the seams' round is posted and before the draft, and in its Map step, before a decision's ADR, `planning-checker` reads every answer posted for the spec or decision together, once. `next` runs it as `start` does.
+**The end check: all the answers read together before the spec or ADR is written** (#441, part of spec #436). In `start`'s Spec step, once the seams' round is posted and before the draft, and in its Map step, before a decision's ADR, `planning-checker` reads every answer posted for the spec or decision together, once. It is one of the flow's checks, not the planning review: one read, one re-read, and no spec record. `next` runs it as `start` says.
 
-- **Its ask findings** come back as one short round, under the flow's "Decision questions" (each with a recommendation and its evidence where there's a basis for one), with **Leave them open** among the options. This round gets no check of its own before it's asked. Its **fix** findings are made and listed in that round's post, or, with no round, in a comment straight after the read.
+- Its **ask** findings come back as one short round, under the flow's "Decision questions" (each with a recommendation and its evidence where there's a basis for one, a finding about the owner's own words on its own), with **Leave them open** among the options. This round gets no check of its own before it's asked. Its **fix** findings are made and listed in that round's post, or, with no round, in a comment straight after the read.
 - **Then one re-read** of only what changed (the round's answers and the fixes), against the rest, and stop. Its findings are never asked: its fixes are made, and its **ask** findings join what's left.
-- **What's left** (left open, unanswered, or a re-read's **ask** findings) goes into the spec's Further Notes as open questions (a comment on the spec's issue once it's published), or a map decision's resolution comment; never only in the session's closing choices. It isn't the planning review: no spec record, no rounds until clean.
+- **What's left** (left open, unanswered, or a re-read's **ask** findings) goes into the spec's Further Notes as open questions, or a map decision's resolution comment; never only in the session's closing choices.
+- **Its posts** go where the rounds are, headed "End check" or "Re-read", and "Carry on" never runs an end check again once one is posted.
 - **"That's enough, write it up"** still runs the end check, with **Leave them open** on each of its questions.
 - **For projects updating:** nothing to do; the vendored skills change with the update. Tests: `tests/test_end_check.py`.
 

@@ -41,30 +41,31 @@ def _spec_step(n: int) -> str:
     return spec.split(f"\n{n}. ", 1)[1].split(f"\n{n + 1}. ", 1)[0]
 
 
+def _bullets() -> list[str]:
+    """Step 2's bullets at any depth, each as written up to the next bullet."""
+    return re.split(r"\n\s*- ", "\n" + _spec_step(2))[1:]
+
+
 def _end_check() -> str:
-    """The Spec path's end-check bullet with its own bullets, flattened."""
-    step = _spec_step(2)
-    assert "\n   - **The end check" in step, "the Spec path's step 2 has a **The end check** bullet"
-    return _flatten(step.split("\n   - **The end check", 1)[1].split("\n   - ", 1)[0])
+    """The Spec path's end-check bullet (its opening, not its own bullets), flattened."""
+    found = [b for b in _bullets() if b.startswith("**The end check")]
+    assert len(found) == 1, "the Spec path's step 2 has one **The end check** bullet"
+    return _flatten(found[0])
 
 
-def _nested() -> str:
-    """The end-check bullet's own bullets, as written."""
-    step = _spec_step(2).split("\n   - **The end check", 1)[1]
-    lines = []
-    for line in step.split("\n")[1:]:
-        if line.startswith("     ") or not line.strip():
-            lines.append(line)
-            continue
-        break
-    return "\n".join(lines)
-
-
-def _part(name: str) -> str:
-    """One `- **name` bullet under the end check, flattened."""
-    nested = _nested()
-    assert f"\n     - **{name}" in "\n" + nested, f"the end check has a `- **{name}` bullet"
-    return _flatten(("\n" + nested).split(f"\n     - **{name}", 1)[1].split("\n     - **", 1)[0])
+def _part(word: str) -> str:
+    """The one bullet under the end check whose opening words name `word`, flattened."""
+    bullets = _bullets()
+    first = [i for i, b in enumerate(bullets) if b.startswith("**The end check")][0]
+    found = []
+    for b in bullets[first + 1:]:
+        if not b.startswith("**"):
+            break  # the end check's own bullets are bold-led; the step's next bullet isn't
+        opening = re.sub(r"\*", "", b).split(" (", 1)[0][:30].lower()
+        if word.lower() in opening:
+            found.append(b)
+    assert len(found) == 1, f"the end check has one bullet opening with {word!r}: {found}"
+    return _flatten(found[0])
 
 
 def _map_step(n: int) -> str:
@@ -106,15 +107,15 @@ def test_the_end_check_fills_the_checker_s_scratch_directory():
 
 def test_the_end_check_isn_t_the_planning_review():
     s = _sentence(_end_check(), "planning review")
-    assert "isn't" in s or "not" in s
-    assert "spec record" in s
+    assert re.search(r"\bnot the planning review\b|\bisn't the planning review\b", s)
+    assert "no spec record" in s and "one re-read" in s
 
 
 # --- its ask findings: one short round ----------------------------------------
 
 
 def test_ask_findings_come_back_as_one_short_round():
-    a = _part("Its **ask** findings")
+    a = _part("ask findings")
     assert "one short round" in a
     assert "Decision questions" in a
     # Each question with a recommendation and its evidence, under the rules.
@@ -123,14 +124,14 @@ def test_ask_findings_come_back_as_one_short_round():
 
 
 def test_the_end_check_round_isn_t_checked_again_before_it_s_asked():
-    s = _sentence(_part("Its **ask** findings"), "before it's asked")
+    s = _sentence(_part("ask findings"), "before it's asked")
     assert re.search(r"\bno\b|\bnever\b|\bisn't\b", s)
     # Its re-read reads what it changed instead.
     assert "re-read" in s
 
 
 def test_the_end_check_round_is_posted_as_each_round_is():
-    a = _part("Its **ask** findings")
+    a = _part("ask findings")
     assert "posted" in a or "Post it" in a
     assert "fixes" in a or "**fix**" in a
 
@@ -139,7 +140,7 @@ def test_the_end_check_round_is_posted_as_each_round_is():
 
 
 def test_fix_findings_are_made_and_listed_where_they_can_object():
-    f = _part("Its **fix** findings")
+    f = _part("fix findings")
     assert "make" in f
     # In the round's post.
     assert "round's post" in f
@@ -152,25 +153,30 @@ def test_fix_findings_are_made_and_listed_where_they_can_object():
 
 
 def test_then_one_re_read_of_only_what_changed_and_stop():
-    r = _part("Then one re-read")
+    r = _part("re-read")
     assert "only what" in r and "changed" in r
     assert "against the rest" in r
-    assert "stop" in r
-    s = _sentence(r, "again")
-    assert "nothing" in s.lower()
+    assert "stop" in _sentence(r, "against the rest")
+
+
+def test_the_re_read_gets_its_own_scratch_directory_and_is_told_what_changed():
+    s = _sentence(_part("re-read"), "/tmp/plan-check-")
+    assert "-reread-" in s
+    assert "read it follows" in s and "changed" in s and "fixes" in s
+    assert "Your inputs" in s
 
 
 def test_the_re_read_covers_the_fixes_too():
-    s = _sentence(_part("Then one re-read"), "only what")
+    s = _sentence(_part("re-read"), "only what")
     assert "fixes" in s
 
 
 def test_the_re_read_s_findings_are_never_asked():
-    r = _part("Then one re-read")
+    r = _part("re-read")
     s = _sentence(r, "never asked")
     assert "findings" in s
     # Its fix findings are made; its ask findings are what's left.
-    assert "**fix**" in r and "made" in r or "make" in r
+    assert "make its **fix** findings" in _sentence(r, "never asked")
     assert "what's left" in _sentence(r, "**ask** findings are")
 
 
@@ -183,8 +189,6 @@ def test_what_s_left_goes_into_further_notes_or_a_comment_on_the_spec():
         assert part in w, part
     s = _sentence(w, "open questions")
     assert "Further Notes" in s and "before" in s and "published" in s
-    s = _sentence(w, "spec's issue")
-    assert "comment" in s and "after" in s
     # Never kept only in the session's closing choices.
     assert "never only" in w
 
@@ -192,6 +196,29 @@ def test_what_s_left_goes_into_further_notes_or_a_comment_on_the_spec():
 def test_leave_them_open_sends_a_finding_to_further_notes():
     s = _sentence(_part("What's left"), "**Leave them open**")
     assert "Further Notes" in s or "what's left" in s.lower()
+
+
+def test_a_finding_about_their_own_words_is_asked_on_its_own():
+    s = _sentence(_part("ask findings"), "own words")
+    assert "on its own" in s and '"Yes to all"' in s
+
+
+def test_the_end_check_s_posts_are_headed_and_go_where_the_rounds_are():
+    s = _sentence(_end_check(), "where the rounds are")
+    assert '"End check"' in s and '"Re-read"' in s
+    # A map's Destination item: a comment on the map naming it, where later sessions look.
+    assert "comment on the map naming it" in s
+
+
+def test_carrying_on_never_runs_the_end_check_again():
+    row = _flatten(_between(_start(), "| A planned item |", "\n"))
+    s = _sentence(row, 'headed "End check"')
+    assert "never" in s and "again" in s
+    # Its re-read runs if it hasn't yet.
+    s = _sentence(row, 'no "Re-read" post')
+    assert "re-read" in s
+    s = _sentence(row, "they left open")
+    assert "Further Notes" in s and "never back into the interview" in s
 
 
 # --- the Map step -----------------------------------------------------------------
@@ -213,10 +240,11 @@ def test_a_map_decision_s_end_check_posts_on_its_decision_ticket_and_leaves_the_
     assert "left" in s
 
 
-def test_the_map_step_keeps_the_end_check_shape():
-    m = _map_step(4)
-    for part in ("**ask**", "**Leave them open**", "**fix**", "re-read", "stop"):
-        assert part in m, part
+def test_the_map_step_runs_the_spec_path_s_end_check_rather_than_a_copy():
+    s = _sentence(_map_step(4), "end check")
+    assert "Spec path's step 2" in s
+    # One description, in the Spec path: the Map step doesn't restate its shape.
+    assert "**Leave them open**" not in _map_step(4)
 
 
 # --- "That's enough, write it up" ----------------------------------------------------
@@ -229,6 +257,8 @@ def test_that_s_enough_still_runs_the_end_check():
     assert "**Leave them open**" in line and "Further Notes" in line
     # Before the spec is written.
     assert "before" in line
+    # A map decision has no spec: its resolution comment.
+    assert "resolution comment" in line
 
 
 # --- next ------------------------------------------------------------------------------
@@ -241,6 +271,8 @@ def test_next_runs_the_end_check_as_start_does():
     assert "end check" in r
     assert "ADR" in r and "spec" in r
     assert "`start`" in r and '"Spec"' in r and '"Map"' in r
+    # A pointer, not a copy of `start`'s steps.
+    assert "**Leave them open**" not in r and "re-read" not in r
 
 
 # --- changelog ---------------------------------------------------------------------------
