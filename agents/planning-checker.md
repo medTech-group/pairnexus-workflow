@@ -13,7 +13,7 @@ A scratch directory the session fills for this read, `/tmp/plan-check-<issue>-<r
 - `<read>` is which of the four reads this is: `round`, `end`, `reread` or `breakdown`;
 - `<n>` counts that read on that issue, from 1.
 
-The session tells you which read this is. For a re-read, it also tells you which read it follows, what that read's round changed, and the fixes the session made after that read.
+The session tells you which read this is. For a re-read, it also tells you which read it follows, what that read's round changed, and the fixes the session made after that read. A re-read after the draft follows the planning review's round or the edit after publishing that sent its questions, and its fixes are the ones listed in that round's post.
 
 The directory holds:
 - the questions or answers so far, as posted: each question with its recommendation and evidence, and the owner's reply quoted word for word, tagged **accepted recommendation** or **the owner's own words**, with any confirmed replacement line ("answer 34 replaces 7: confirmed") and the fixes each post lists, oldest first. Before a round, also the round's questions as they are about to be asked;
@@ -24,7 +24,7 @@ Read the repository files the evidence cites in place: a fact about the kit or t
 
 For the breakdown check, and its re-read, the directory also holds the spec, the drafted tickets with their full bodies (criteria, `## Blocked by`, `## Bar`), the owner tasks and the edits to existing issues, each edit as the edit itself. For a quick ticket's end check, and its re-read, it holds the drafted ticket and the item's issue.
 
-**Sensitive data** (`profile.md`'s list) is left out of your inputs and marked as left out. Something missing because it was left out is not a finding. If you meet sensitive data in an input all the same, never quote it: say which file holds it, so the session takes it out.
+**Sensitive data** (`profile.md`'s list) is left out of your inputs and marked as left out. Something missing because it was left out is not a finding. If you meet sensitive data all the same, never quote it. If it is in the scratch directory, name the file, so the session takes it out.
 
 ## The reads
 
@@ -49,7 +49,7 @@ Mark each finding:
 - **ask**: it changes what an answer means, so it is the owner's to decide. The session asks the owner, or, where nothing is asked after the read (a last re-read), keeps it as left open. The breakdown check's re-read is the exception: its **ask** findings are asked, in one more short round before the tickets are published.
 - **fix**: wording, a fact or an omission that changes no answer's meaning. The session makes it and lists it where the owner can object.
 
-A finding about an answer tagged as the owner's own words is always **ask**, whatever its kind: only the owner changes their words.
+A finding about an answer tagged as the owner's own words is always **ask**, whatever its kind: only the owner changes their words. On a quick ticket, which posts no answers, the item's issue counts as the person's own words: a finding that changes what it asks for is **ask**.
 
 In the breakdown check, and its re-read, only wording is a **fix**. Anything that moves a criterion or a decision between tickets, owner tasks and edits, or changes a `## Blocked by`, is an **ask**.
 
@@ -62,7 +62,7 @@ Number the findings. For each:
 - **Mark:** ask or fix;
 - **About:** the answer, question or ticket (its number), and its tag where it has one;
 - **Example:** the steps and where they go wrong, or the quoted line with its file or issue;
-- **For ask:** the question to put to the owner, with the options you see; **for fix:** the change, in one line.
+- **For ask:** the question to put to the owner, with the options you see (before a round: the recommendation it would change, and how); **for fix:** the change, in one line.
 
 On a quick ticket's end check, and its re-read, add a separate list after the findings, headed "Decided for you": each decision the drafted ticket makes for the person, with its evidence (what it rests on, what it gives up, what would make it wrong). These aren't findings, and carry no kind or mark.
 

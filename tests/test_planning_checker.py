@@ -50,11 +50,16 @@ def _section(name: str) -> str:
     return _flatten(_raw_section(name))
 
 
+def _mark(name: str) -> str:
+    """The `- **ask**` or `- **fix**` bullet of "Ask or fix", flattened."""
+    return _bullet("Ask or fix", f"{name}**")
+
+
 def _bullet(section: str, name: str) -> str:
     """One `- **name**` bullet of a section, flattened."""
     raw = _raw_section(section)
     assert f"\n- **{name}" in raw, f"`## {section}` has a bullet `{name}`"
-    return _flatten(raw.split(f"\n- **{name}", 1)[1].split("\n- ", 1)[0])
+    return _flatten(re.split(r"\n- |\n\n", raw.split(f"\n- **{name}", 1)[1], maxsplit=1)[0])
 
 
 # --- who it is ----------------------------------------------------------------
@@ -165,8 +170,7 @@ def test_the_breakdown_checks_findings_are_the_four_kinds():
 
 
 def test_the_breakdown_check_reads_landing_blockers_and_bars():
-    reads = _section("The reads")
-    bd = reads.split("The breakdown check", 1)[1]
+    bd = _bullet("The reads", "The breakdown check")
     assert "exactly one" in bd
     for where in ("build ticket", "owner task", "edit to an existing issue"):
         assert where in bd, where
@@ -176,11 +180,9 @@ def test_the_breakdown_check_reads_landing_blockers_and_bars():
 
 
 def test_each_finding_is_marked_ask_or_fix():
-    marks = _section("Ask or fix")
-    assert "**ask**" in marks and "**fix**" in marks
-    ask = marks.split("**ask**", 1)[1].split("**fix**", 1)[0]
+    ask = _mark("ask")
     assert "changes what an answer means" in ask
-    fix = marks.split("**fix**", 1)[1]
+    fix = _mark("fix")
     assert "wording" in fix and "fact" in fix and "omission" in fix
     assert "changes no answer's meaning" in fix or "doesn't change what any answer means" in fix
 
@@ -188,6 +190,18 @@ def test_each_finding_is_marked_ask_or_fix():
 def test_a_finding_about_the_owners_own_words_is_always_ask():
     marks = _section("Ask or fix")
     assert re.search(r"owner's own words[^.]*always \*\*ask\*\*", marks), marks
+
+
+def test_on_a_quick_ticket_the_items_issue_counts_as_the_persons_own_words():
+    # Answer 4, and spec #436's "Its ask findings are asked first" on a quick ticket.
+    marks = _section("Ask or fix")
+    assert re.search(r"On a quick ticket[^.]*the item's issue counts as the person's own words: a finding that changes what it asks for is \*\*ask\*\*", marks), marks
+
+
+def test_a_reread_after_the_draft_follows_the_round_that_sent_its_questions():
+    inputs = _section("Your inputs")
+    assert "A re-read after the draft follows the planning review's round or the edit after publishing" in inputs
+    assert "its fixes are the ones listed in that round's post" in inputs
 
 
 def test_in_the_breakdown_check_only_wording_is_a_fix():
@@ -200,7 +214,7 @@ def test_in_the_breakdown_check_only_wording_is_a_fix():
 
 def test_an_ask_after_a_last_read_is_left_open_not_asked():
     # Spec #436: "A last read's findings ... are never asked: ... its ask findings are what's left."
-    ask = _section("Ask or fix").split("**ask**", 1)[1].split("**fix**", 1)[0]
+    ask = _mark("ask")
     assert re.search(r"nothing is asked after the read \(a last re-read\), keeps it as left open", ask), ask
     # Answer 24: the breakdown check's re-read is the exception, its asks asked before publishing.
     assert re.search(r"breakdown check's re-read is the exception: its \*\*ask\*\* findings are asked", ask), ask
@@ -227,6 +241,8 @@ def test_a_quick_tickets_decided_for_you_list_has_its_own_place_in_the_report():
 def test_sensitive_data_is_left_out_of_its_inputs_and_its_findings():
     inputs = _section("Your inputs")
     assert re.search(r"\*\*Sensitive data\*\* \(`profile\.md`[^)]*\) is left out of your inputs and marked as left out", inputs), inputs
+    # Met all the same: never quoted; named only when it is in the scratch directory.
+    assert "never quote it. If it is in the scratch directory, name the file" in inputs
     report = _section("How to report")
     # Its findings follow the same rule: never quoted, marked as left out.
     assert "sensitive" in report.lower() and "left out" in report

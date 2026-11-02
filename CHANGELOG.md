@@ -2,12 +2,12 @@
 
 ## Unreleased
 
-**A new read-only agent, `planning-checker`, for the planning checks** (#438, part of spec #436). Nothing uses it yet: the planning checks that call it (before each round, the end check, a quick ticket's included, the re-reads and the breakdown check) come with spec #436's other tickets.
+**A new read-only agent, `planning-checker`, for the planning checks** (#438, part of spec #436). Nothing uses it yet: the planning checks that call it (before each round, the end check (a quick ticket's too), the re-reads and the breakdown check) come with spec #436's other tickets.
 
 - **What it reads:** a scratch directory the session fills for each read, `/tmp/plan-check-<issue>-<read>-<n>/`: the questions or answers as posted, with their tags and evidence; the issues the evidence cites, fetched as files; the ADRs, the glossary, the project's rules and the profile. It reads the repository files the evidence cites in place. For the breakdown check, also the spec, the drafted tickets, the owner tasks and the edits to existing issues. It has Read, Grep and Glob only: no edits, no GitHub.
-- **What it reports:** four kinds of finding (conflicts between answers; combinations that break; gaps a build ticket would have to guess at; wrong facts), each with a concrete example: the session's steps and where they go wrong, or a quoted line that contradicts it, with its file or issue. A finding without one, or a preference, isn't reported.
+- **What it reports:** four kinds of finding (conflicts between answers; combinations that break; gaps a build ticket would have to guess at; wrong facts), each with a concrete example: the session's steps and where they go wrong, or a quoted line that contradicts it, with its file or issue. A finding without one, or a preference, isn't reported. On a quick ticket, it also lists the decisions the drafted ticket makes for the person, each with its evidence, under "Decided for you".
 - **Ask or fix:** each finding is marked **ask** (it changes what an answer means: the owner decides) or **fix** (wording, a fact or an omission that changes no answer's meaning: the session makes it). A finding about an answer in the owner's own words is always **ask**; in the breakdown check, only wording is a **fix**.
-- **Sensitive data** (`profile.md`) is left out of its inputs and marked as left out, and its findings never quote it.
+- **Sensitive data** (`profile.md`'s list) is left out of its inputs and marked as left out, and its findings never quote it.
 - **For projects updating:** the update adds `.claude/agents/planning-checker.md`; nothing else to do. Tests: `tests/test_planning_checker.py`.
 
 **A review record can be written from a findings file, its result worked out from the findings' marks: `workflow review-record --findings F`** (#370, part of spec #412). Records written as before read exactly as before.
