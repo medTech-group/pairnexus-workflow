@@ -257,6 +257,14 @@ def test_a_git_add_after_the_commit_that_may_run_first(proj, monkeypatch, capsys
         assert d == "deny" and "`src/app.py`" in why, (command, why)
 
 
+def test_two_commits_after_an_add_each_read_on_their_own(proj, monkeypatch, capsys):
+    """The second commit's reading isn't left with the first's (no note naming a file list)."""
+    _change(proj, "docs/guide.md")
+    _change(proj, "docs/a.md")
+    for role in (None, "conductor"):
+        assert hook(monkeypatch, capsys, proj, "git add docs/a.md docs/guide.md; git commit -m x docs/a.md; git commit -m y", role) == ("allow", ""), role
+
+
 def test_a_git_add_in_a_substitution_runs_before_the_commit(proj, monkeypatch, capsys):
     _change(proj, CODE)
     for role in (None, "conductor"):

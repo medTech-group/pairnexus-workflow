@@ -7726,16 +7726,16 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tupl
             continue
         # What runs before it in the command: a `git add` stages more, read here; another git command may stage
         # anything (#394).
-        more, before, later = _staged_before(segs, seg, d, glob, top, root, staging)
-        if before:
-            unsure = unsure or f"{cant}: {before}"
-        if more and c.specs and not (c.include or c.all):
+        staged, why_staged, later = _staged_before(segs, seg, d, glob, top, root, staging)
+        if why_staged:
+            unsure = unsure or f"{cant}: {why_staged}"
+        if staged and c.specs and not (c.include or c.all):
             # A pathspec alone commits only what it names: of what is added, the files it names that are untracked now
             # (`_carried` reads the tracked ones).
-            named, _ = _git_read(d, glob, "ls-files", "-z", "--others", "--full-name", "--", *c.specs, env=pathspec_env)
-            if named is not None:
-                keep = set(named)
-                more = [f for f in more if f in keep]
+            untracked, _ = _git_read(d, glob, "ls-files", "-z", "--others", "--full-name", "--", *c.specs, env=pathspec_env)
+            if untracked is not None:
+                keep = set(untracked)
+                staged = [f for f in staged if f in keep]
         hit = next((_Hit(f, m, wt) for f in later for m in [_listed_code(f, code)] if m), None)
         if hit and reorders is None:
             reorders = _may_reorder(command)
@@ -7745,7 +7745,7 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tupl
                 f"would stage the code path {_shown(hit)} ({hit.pattern})"
             )
         seen = set(files)
-        files += [f for f in more if f not in seen and not seen.add(f)]
+        files += [f for f in staged if f not in seen and not seen.add(f)]
         # A commit finishing a revert (`git commit` while one is in progress, `git revert --continue`) is judged by the revert rule (#392).
         hits = [_Hit(f, m, wt) for f in files for m in [_listed_code(f, code)] if m] if args[0] in ("commit", "revert") and not heads and not unread else []
         reverting = _revert_head(d, glob) if hits else ""
@@ -7793,7 +7793,8 @@ def _commit_code(segs: list[Seg], code: _Code, root: Path, command: str) -> tupl
 # fills from a branch that isn't `prototype/*` (`_known_refs`).
 
 _PROTOTYPE = "refs/heads/prototype/"
-# git commands that never change which branch HEAD names, though they may move a branch's tip.
+# git commands that never change which branch HEAD names, though they may move a branch's tip. Kept in step with
+# `_KEEPS_REFS`, `_MOVES_ONLY` and `_KEEPS_STAGED` (#394).
 _KEEPS_HEAD = {"commit", "merge", "cherry-pick", "revert", "am", "reset", "tag", "notes", "fetch", "config", "remote", *_PUSH_CMDS}
 # What finishes a rebase, on the branch it started on (`--quit` leaves HEAD detached).
 _REBASE_ENDS = (["--continue"], ["--skip"], ["--abort"])
@@ -8270,6 +8271,7 @@ def _local_url(url: str) -> bool:
 
 
 # Git subcommands that change no ref, HEAD or config: another part of the command running one leaves a push's reading as it is.
+# `_KEEPS_STAGED` starts from it, less those that write the index (#394); kept in step with `_KEEPS_HEAD` and `_MOVES_ONLY`.
 _KEEPS_REFS = {
     "add", "annotate", "apply", "archive", "blame", "bundle", "cat-file", "check-attr", "check-ignore", "check-mailmap",
     "check-ref-format", "cherry", "clean", "count-objects", "describe", "diff", "diff-files", "diff-index", "diff-tree",
@@ -8547,7 +8549,7 @@ def _add_args(args: list[str]) -> _Add | None:
 
 
 # The shell's words that can run a later part first: a background job, a pipeline, a loop, a coprocess.
-_REORDERS = {"&", "|", "|&", "for", "while", "until", "select", "coproc"}
+_REORDERS = {"&", "|", "|&"} | (_COMPOUND_WORDS - {"if", "case", "function"})
 
 
 def _may_reorder(command: str) -> bool:
