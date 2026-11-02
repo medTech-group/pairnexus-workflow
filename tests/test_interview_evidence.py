@@ -232,6 +232,13 @@ def test_the_interview_asks_under_the_rules_and_posts_each_round():
     assert "each round" in s.lower() and "posted" in s and "tagged" in s
 
 
+def test_the_interview_posts_a_destination_item_s_rounds_on_the_map():
+    s = _sentence(_spec_step(1), "as soon as it's answered")
+    assert "item's issue" in s and "Destination item" in s and "map" in s
+    stop = _spec_step(1).split("**Stop here**", 1)[1]
+    assert "Destination item" in stop and "map" in stop
+
+
 def test_stopping_mid_interview_finds_the_rounds_already_posted():
     stop = _spec_step(1).split("**Stop here**", 1)[1]
     assert "already posted" in stop
@@ -345,6 +352,8 @@ def test_next_posts_each_round_where_the_flow_says():
         assert place in s, place
     s = _sentence(r, "fix raises")
     assert "current rounds" in s and "before the spec is published" in s
+    # Before publishing, with the interview's rounds: the item's issue or the map.
+    assert "item's issue" in s and "map" in s
     # After publishing (a later planning review, such as the ADR pull request's): the spec's issue.
     assert "spec's issue after" in s
     # A map decision's on its decision ticket, whatever the spec's state.

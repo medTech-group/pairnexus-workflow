@@ -251,12 +251,12 @@ For each item, read the flow's section for its path and follow it, skipping noth
    - your recommended answer as the first option, with its evidence, and real alternatives after it; with no basis to prefer one, no recommendation;
    - plain text only for a question with no sensible options.
 
-   Look facts up yourself, in the background; only decisions go to them. Each round is posted on the item's issue as soon as it's answered, tagged, before the next round is asked.
+   Look facts up yourself, in the background; only decisions go to them. Each round is posted as soon as it's answered, tagged, before the next round is asked: on the item's issue, or for a map's Destination item in a comment on the map naming it ("Decision questions", above).
 
    When nothing is left to ask, confirm your understanding in a few lines and ask:
    - **Write the spec (Recommended)**;
    - **There's more to discuss**;
-   - **Stop here**: post their answers so far on the item's issue, each question with the answer quoted word for word, tagged, in the same form as each round. Every answered round is already posted, so this posts only a round not yet there. The next session carries on from them.
+   - **Stop here**: post their answers so far on the item's issue, each question with the answer quoted word for word, tagged, in the same form as each round. Every answered round is already posted, so this posts only a round not yet there. For a map's Destination item, they go in a comment on the map naming it. The next session carries on from them.
 2. **The spec.** Read `to-spec`'s `SKILL.md` and follow it.
    - Ask the seams as a choice, with the seams listed above the question: **These seams (Recommended)**, with its evidence (what each seam rests on in the code, what it leaves untested, and what would make it wrong), **Fewer, higher seams** or **Change them**.
    - Post their answers, the seams among them, on the item's issue (or, for a map's Destination item, a comment on the map naming it). The interview's rounds are already there, so this is the seams' round. Post it as soon as it's answered, tagged, each question with the answer quoted word for word (flow §2).
