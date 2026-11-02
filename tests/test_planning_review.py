@@ -236,7 +236,7 @@ def test_the_planning_review_posts_both_record_kinds():
     assert "the edited body gets another planning round, its own spec record, before any tickets are written from it" in p
     # The edit's rounds are posted on the spec's issue, and are the Spec reviewer's input
     # (#442: in the tagged form, `tests/test_planning_after_draft.py`)...
-    assert "Post each of its rounds on the spec's issue as soon as it's answered" in p
+    assert "Post each of its question rounds on the spec's issue as soon as it's answered" in p
     # ...as well as, never instead of, the answers the spec was written from.
     assert "An edit after publishing takes all of these as well as the rounds of every edit so far, this one included" in p
     # One order for the whole file, so "later" means something.
