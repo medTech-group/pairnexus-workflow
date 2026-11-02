@@ -347,6 +347,8 @@ def test_next_posts_each_round_where_the_flow_says():
     assert "current rounds" in s and "before the spec is published" in s
     # After publishing (a later planning review, such as the ADR pull request's): the spec's issue.
     assert "spec's issue after" in s
+    # A map decision's on its decision ticket, whatever the spec's state.
+    assert "decision ticket" in s
 
 
 def test_next_reads_this_spec_s_or_decision_s_rounds_before_asking():
