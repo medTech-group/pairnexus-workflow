@@ -328,6 +328,8 @@ def test_an_untrusted_hand_off_is_left_out_with_a_note(project, capsys, bad):
     data = with_comments((rec(clean=False), "owner"), bad)
     got, _ = check(project, capsys, data)
     assert got["hand_off"] is None and "hand_offs_ignored" in note_ids(got)
+    [n] = [x for x in got["notes"] if x["id"] == "hand_offs_ignored"]
+    assert "outside this pull request" in n["message"] and "250" not in n["message"]  # a short PR: never past the list
 
 
 def test_an_untrusted_later_hand_off_leaves_the_trusted_one_reported(project, capsys):

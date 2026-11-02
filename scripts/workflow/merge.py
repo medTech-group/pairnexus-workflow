@@ -1214,9 +1214,11 @@ def _hand_off(ctx: Context) -> dict | None:
     trusted = [h for h in offs if _may_review(h.author, perms) and h.head in shas]
     if len(offs) > len(trusted):
         n = len(offs) - len(trusted)
+        # Past the commits GitHub lists, a commit of the pull request can't be told from one outside it.
+        past = (ctx.pr().counts.get("commits") or 0) > MAX_COMMITS
+        where = "not among this pull request's (outside it, or past the 250 GitHub lists)" if past else "outside this pull request"
         _note(ctx, "hand_offs_ignored", f"Left out {_plural(n, 'comment')} asking to carry on in a fresh session: "
-              "posted by an account without write access, or naming a commit not among this pull request's "
-              "(outside it, or past the 250 GitHub lists).")
+              f"posted by an account without write access, or naming a commit {where}.")
     if not trusted:
         return None
     latest = trusted[-1]
