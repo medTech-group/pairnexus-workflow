@@ -37,6 +37,25 @@ review makes the spec read as unreviewed again:
   its very end (`_CLOUD_FOOTER`), once or repeated, left out;
 - `reviewers`: `spec`, `correctness` or both.
 
+A build review written from a findings file (#370, spec #412 "Records and
+clean"; `findings`) carries `rule=2`: its result is worked out from the
+findings' marks (not clean when any is marked blocks), and the line names how
+many findings and outcomes follow, and whether the ticket was made by a split:
+
+    Review round 2 on `3f2a9c0`: not clean. Reviewers: Standards, Spec, Correctness.
+
+    Findings:
+    - Blocks: the part `the requeue order`.
+
+    <!-- workflow:review kind=round round=2 commit=<full sha> reviewers=standards,spec,correctness diff=<64 hex> lines=<64 hex> rule=2 findings=1 outcomes=0 split=no result=not-clean -->
+    <!-- workflow:finding n=1 mark=blocks mechanism=the%20requeue%20order covered=no contested=no security=no issue=none -->
+    <!-- workflow:agent -->
+
+Its finding and outcome lines follow the review line directly, in order; the
+reader takes such a record only whole, every line there and keeping the rules,
+and skips it otherwise. A record without `rule=2` reads exactly as before:
+`rule` None, no findings.
+
 `spec_reviewed` says whether a list of records holds a clean spec record for a
 body: the latest spec record for that body's hash is clean.
 
@@ -52,6 +71,7 @@ import hashlib
 import re
 from dataclasses import dataclass, replace
 
+from . import findings as findings_mod
 from .own_changes import UNKNOWN
 from .posts import AGENT_MARKER, _login, _number, comments_from
 
@@ -64,6 +84,8 @@ RESULTS = ("clean", "not-clean")
 _FIELDS = ("kind", "round", "commit", "reviewers", "result")
 _HASHED_FIELDS = ("kind", "round", "commit", "reviewers", "diff", "lines", "result")
 _SPEC_FIELDS = ("kind", "round", "body", "reviewers", "result")
+# A `rule=2` record's own fields, between its reviewers (or hashes) and its result.
+_RULE_FIELDS = ("rule", "findings", "outcomes", "split")
 # A record line is a line of its own, at the start of the line as the writer
 # writes it, before any code fence: one quoted in a sentence, in backticks, in
 # a list or quote, or in a code block isn't read as a record. When in doubt the
@@ -104,6 +126,13 @@ class Record:
     # None on a record without them (before #258) and on a spec record.
     diff: str | None = None
     lines: str | None = None
+    # A `rule=2` record's (#370): its findings and the last review's outcomes,
+    # and whether the ticket was made by a split; None, (), () and False on a
+    # record without it.
+    rule: int | None = None
+    findings: tuple[findings_mod.Finding, ...] = ()
+    outcomes: tuple[findings_mod.Outcome, ...] = ()
+    from_split: bool = False
     # Filled by `read` from the comment that carried the record.
     author: str | None = None
     comment_id: int | None = None
@@ -121,10 +150,19 @@ class Record:
                 f"reviewers={','.join(self.reviewers)} result={self.result} -->"
             )
         hashes = "" if self.diff is None else f"diff={self.diff} lines={self.lines} "
+        rule = "" if self.rule is None else self._found().fields() + " "
         return (
             f"<!-- workflow:review kind={self.kind} round={self.round} commit={self.commit} "
-            f"reviewers={','.join(self.reviewers)} {hashes}result={self.result} -->"
+            f"reviewers={','.join(self.reviewers)} {hashes}{rule}result={self.result} -->"
         )
+
+    def _found(self) -> findings_mod.Findings:
+        return findings_mod.Findings(self.findings, self.outcomes, self.from_split)
+
+    def lines_of(self) -> list[str]:
+        """The machine-readable lines: the review line, then a `rule=2`
+        record's finding and outcome lines."""
+        return [self.line(), *(self._found().lines() if self.rule is not None else [])]
 
 
 def _shown(value, n: int) -> str:
@@ -244,7 +282,11 @@ def _checked(kind, round, commit, reviewers, result, body=None, diff=None, lines
     return Record(kind=kind, round=int(rnd), commit=sha, reviewers=who, result=result, body=digest, diff=diff, lines=lines)
 
 
-def record(*, kind, round, commit=None, reviewers, clean, body=None, diff=None, lines=None) -> str:
+FINDINGS_WITH_RESULT = "--findings works the result out from the findings' marks: leave out --clean and --not-clean"
+FINDINGS_WITH_SPEC = "--findings is for a build review's round or pass, not a spec's review: give --clean or --not-clean"
+
+
+def record(*, kind, round, commit=None, reviewers, clean, body=None, diff=None, lines=None, findings=None) -> str:
     """The comment's body for one round or pass, or for a spec's review round,
     ending with a newline.
 
@@ -254,8 +296,18 @@ def record(*, kind, round, commit=None, reviewers, clean, body=None, diff=None, 
     is published, and the record names its `body_hash`. `diff` and `lines`
     are a round's or pass's hashes of its own changes (`own_changes`), which
     `workflow review-record` computes; without them the line is written as
-    before #258. Raises RecordError, saying which flag to fix, for a missing or
-    malformed field."""
+    before #258. `findings` (a `findings.Findings`, #370) writes a `rule=2`
+    record whose result is worked out from its marks, so `clean` is None with
+    it, and a spec's review takes none. Raises RecordError, saying which flag
+    to fix, for a missing or malformed field."""
+    if findings is not None:
+        if body is not None or _kind(kind) == "spec":
+            raise RecordError(FINDINGS_WITH_SPEC)
+        if clean is not None:
+            raise RecordError(FINDINGS_WITH_RESULT)
+        if not isinstance(findings, findings_mod.Findings):
+            raise RecordError("give the findings as read from a findings file")
+        clean = findings.clean
     if clean is True:
         result = "clean"
     elif clean is False:
@@ -271,17 +323,38 @@ def record(*, kind, round, commit=None, reviewers, clean, body=None, diff=None, 
             raise RecordError(f"the spec's body {EMPTY_BODY}")
         digest = body_hash(body)
     r = _checked(kind, round, commit, reviewers, result, digest, diff, lines)
+    if findings is not None:
+        try:
+            found = findings_mod.checked(findings.findings, findings.outcomes, findings.from_split)
+        except findings_mod.FindingsError as e:
+            raise RecordError(str(e)) from None
+        r = replace(r, rule=2, findings=found.findings, outcomes=found.outcomes, from_split=found.from_split)
     names = ", ".join(n.capitalize() for n in r.reviewers)
     if r.kind == "spec":
         what, on = f"Spec review round {r.round}", f"body `{r.body[:7]}`"
     else:
         what = f"Review round {r.round}" if r.kind == "round" else f"Correctness pass after round {r.round}"
         on = f"`{r.commit[:7]}`"
-    return f"{what} on {on}: {r.result.replace('-', ' ')}. Reviewers: {names}.\n{r.line()}\n{AGENT_MARKER}\n"
+    head = f"{what} on {on}: {r.result.replace('-', ' ')}. Reviewers: {names}."
+    if r.rule is None:
+        return f"{head}\n{r.line()}\n{AGENT_MARKER}\n"
+    # Paragraphs apart, so Markdown never runs a list into the next line.
+    machine = "\n".join([*r.lines_of(), AGENT_MARKER])
+    return "\n\n".join([head, *r._found().text(), machine]) + "\n"
 
 
-def _parse(fields: str) -> Record | None:
+def _parse(fields: str, below=()) -> Record | None:
+    """A review line's record, or None. `below` is the lines under it, where a
+    `rule=2` record's finding and outcome lines are."""
     got = dict(p.partition("=")[::2] for p in fields.split(" "))
+    found = None
+    if "rule" in got:
+        rule = {k: got.pop(k, None) for k in _RULE_FIELDS}
+        if rule["rule"] != "2" or None in rule.values():
+            return None
+        found = findings_mod.read_lines(below, rule["findings"], rule["outcomes"], rule["split"])
+        if found is None:
+            return None
     try:
         if set(got) == set(_FIELDS):
             r = _checked(*(got[k] for k in _FIELDS))
@@ -293,6 +366,10 @@ def _parse(fields: str) -> Record | None:
             return None
     except RecordError:
         return None
+    if found is not None:
+        if r.kind == "spec" or r.clean != found.clean:
+            return None
+        r = replace(r, rule=2, findings=found.findings, outcomes=found.outcomes, from_split=found.from_split)
     # Only exactly what the writer writes: the fields in order, single spaces,
     # lowercase, the panel's order, no repeats.
     return r if r.line() == f"<!-- workflow:review {fields} -->" else None
@@ -305,13 +382,24 @@ def records_in(text) -> list[Record]:
     if not isinstance(text, str):
         return []
     out = []
-    for line in _LINE_END.split(text):
+    lines = _LINE_END.split(text)
+    for i, line in enumerate(lines):
         if any(f in line for f in _FENCE):
             break
         m = _LINE.fullmatch(line)
-        r = _parse(m.group(1)) if m else None
+        # A `rule=2` record's own lines below it, up to the next fence.
+        r = _parse(m.group(1), _below(lines, i + 1)) if m else None
         if r is not None:
             out.append(r)
+    return out
+
+
+def _below(lines, start: int, most: int = 2 * findings_mod.MAX_ITEMS) -> list[str]:
+    out = []
+    for line in lines[start:start + most]:
+        if any(f in line for f in _FENCE):
+            break
+        out.append(line.rstrip(" \t"))
     return out
 
 
