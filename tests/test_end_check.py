@@ -61,6 +61,7 @@ def _part(word: str) -> str:
     for b in bullets[first + 1:]:
         if not b.startswith("**"):
             break  # the end check's own bullets are bold-led; the step's next bullet isn't
+        # Its opening words: the bold lead and a few after it, without the markup.
         opening = re.sub(r"\*", "", b).split(" (", 1)[0][:30].lower()
         if word.lower() in opening:
             found.append(b)
@@ -86,7 +87,9 @@ def test_the_end_check_runs_after_the_last_round_and_before_the_draft():
     assert end < step.index("Review the draft before publishing it")
     assert end < step.index("Publish the reviewed text as is")
     first = re.split(r"(?<=[.;])\s+", _end_check())[0]
-    assert "before" in first and ("draft" in first or "spec is written" in first)
+    # Before the draft is written, never after it.
+    assert re.search(r"\bbefore (you write )?the (draft|spec is written)", first)
+    assert not re.search(r"\bafter\b[^.]*\bdraft", first)
 
 
 def test_the_end_check_reads_all_the_answers_together_with_the_checker():
@@ -176,7 +179,7 @@ def test_the_re_read_s_findings_are_never_asked():
     s = _sentence(r, "never asked")
     assert "findings" in s
     # Its fix findings are made; its ask findings are what's left.
-    assert "make its **fix** findings" in _sentence(r, "never asked")
+    assert re.search(r"make its \*\*fix\*\* findings|\*\*fix\*\* findings are made", s)
     assert "what's left" in _sentence(r, "**ask** findings are")
 
 
@@ -210,15 +213,27 @@ def test_the_end_check_s_posts_are_headed_and_go_where_the_rounds_are():
     assert "comment on the map naming it" in s
 
 
-def test_carrying_on_never_runs_the_end_check_again():
+def test_each_read_leaves_a_headed_post_even_when_it_finds_nothing():
+    s = _sentence(_end_check(), "where the rounds are")
+    assert "each read" in s and "nothing found" in s
+
+
+def test_a_session_that_carries_on_never_runs_the_end_check_again():
+    # In the end check itself, so a session that comes through `next` finds it too.
+    e = _end_check()
+    s = _sentence(e, "carries on")
+    assert '"End check"' in s and "never" in s and "again" in s
+    assert '"Re-read"' in s and "only if" in s
+    s = _sentence(e, "left open there")
+    assert "what's left" in s and "never" in s and "interview" in s
+
+
+def test_carry_on_points_to_the_end_check_once_one_is_posted():
     row = _flatten(_between(_start(), "| A planned item |", "\n"))
     s = _sentence(row, 'headed "End check"')
-    assert "never" in s and "again" in s
-    # Its re-read runs if it hasn't yet.
-    s = _sentence(row, 'no "Re-read" post')
-    assert "re-read" in s
-    s = _sentence(row, "they left open")
-    assert "Further Notes" in s and "never back into the interview" in s
+    assert "interview is over" in s and "end check" in s and '"Spec"' in s
+    # The interview carries on only while something is left to ask.
+    assert "left open" not in _sentence(row, "carry on the interview")
 
 
 # --- the Map step -----------------------------------------------------------------
@@ -272,7 +287,7 @@ def test_next_runs_the_end_check_as_start_does():
     assert "ADR" in r and "spec" in r
     assert "`start`" in r and '"Spec"' in r and '"Map"' in r
     # A pointer, not a copy of `start`'s steps.
-    assert "**Leave them open**" not in r and "re-read" not in r
+    assert "**Leave them open**" not in r
 
 
 # --- changelog ---------------------------------------------------------------------------
