@@ -25,6 +25,7 @@
     workflow review-record --kind round|pass --round N --commit SHA --reviewers NAMES --findings F [--base BRANCH]      (a rule=2 record: its result worked out from the findings file's marks)
     workflow review-record [--kind spec] --round N --body F --reviewers spec,correctness --clean|--not-clean      (a spec's review, keyed to its body's SHA-256)
     workflow review-record --measure --commit SHA [--base BRANCH] [--small-max-lines N] [--small-max-files N]      (the diff against the small threshold; no record)
+    workflow hand-off --commit SHA --round N --passes N [--record F] [--tickets 415,416]      (the hand-off comment a session posts on its pull request for a fresh session)
     workflow pr-template [--existing FILE]      (prints the file to write; exits 3 for a folder of templates)
     workflow adopt --owner LOGIN --repo OWNER/NAME --name NAME [--project DIR]      (a copy of the starter made yours)
     workflow evidence [--suite NAME ... | --all] [--base-count N | --base-ref BRANCH] [--fresh] [--allow-dirty]
@@ -64,6 +65,7 @@ from . import findings as findings_mod
 from . import _old_python, fallback
 from . import gate as gate_mod
 from . import guard as guard_mod
+from . import handoff as handoff_mod
 from . import issues as issues_mod
 from . import merge as merge_mod
 from . import own_changes as own_changes_mod
@@ -1134,6 +1136,38 @@ def cmd_review_record(a) -> int:
     return 0
 
 
+def cmd_hand_off(a) -> int:
+    """`hand-off` (#371): the comment a session posts on its pull request when
+    a fresh session carries the review on."""
+    flags = ("commit", "round", "passes", "record", "tickets")
+    for flag in flags:
+        if len(getattr(a, flag) or []) > 1:
+            print(f"workflow hand-off: give --{flag} once", file=sys.stderr)
+            return 2
+    one = {flag: (getattr(a, flag) or [None])[0] for flag in flags}
+    try:
+        handoff_mod.checked(one["commit"], one["round"], one["passes"])  # the flags before the file
+        tickets = () if one["tickets"] is None else handoff_mod.tickets_from(one["tickets"])
+        record = None if one["record"] is None else handoff_mod.last_record(_hand_off_record(one["record"]))
+        text = handoff_mod.comment(head=one["commit"], round=one["round"], passes=one["passes"], record=record, tickets=tickets)
+    except handoff_mod.HandOffError as e:
+        print(f"workflow hand-off: {e}", file=sys.stderr)
+        return 2
+    sys.stdout.write(text)
+    return 0
+
+
+def _hand_off_record(path: str) -> str:
+    """`hand-off --record`'s text, refused in words when it can't be read."""
+    p = Path(path)
+    try:
+        return p.read_bytes().decode("utf-8")
+    except UnicodeDecodeError:
+        raise handoff_mod.HandOffError("--record isn't UTF-8 text: give the record as posted (its record.md)") from None
+    except OSError as e:
+        raise handoff_mod.HandOffError(f"--record can't be read: {e.strerror or e}") from None
+
+
 def _own_hashes(a, commit: str) -> own_changes_mod.Hashes:
     """A round's or pass's hashes of its own changes (#258): from the merge base
     of `origin/<base>`, fetched first, to `commit`, never the working head.
@@ -1805,6 +1839,14 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--small-max-lines", metavar="N", type=_small_max_lines, help="with --measure: the small threshold's changed lines, 1 to 1000 (default: the profile's run.small_max_lines)")
     s.add_argument("--small-max-files", metavar="N", type=_small_max_files, help="with --measure: the small threshold's changed files, 1 to 50 (default: the profile's run.small_max_files)")
     s.set_defaults(fn=cmd_review_record)
+
+    s = sub.add_parser("hand-off", allow_abbrev=False, help="the hand-off comment a session posts on its pull request, so a fresh session carries the review on")
+    s.add_argument("--commit", action="append", help="the full SHA of the head the hand-off covers (`git rev-parse HEAD`)")
+    s.add_argument("--round", action="append", help="the review rounds so far (0 for none)")
+    s.add_argument("--passes", action="append", help="the Correctness passes so far (0 for none)")
+    s.add_argument("--record", action="append", metavar="FILE", help="the last review's record as posted (its record.md, a rule=2 one), from the first round on: its findings marked blocks are the open ones, a security finding shown by its area only")
+    s.add_argument("--tickets", action="append", metavar="N,N", help="the tickets filed so far, comma-separated (the record's own are added)")
+    s.set_defaults(fn=cmd_hand_off)
 
     s = sub.add_parser("evidence")
     s.add_argument("--suite", action="append")

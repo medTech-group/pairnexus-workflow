@@ -82,6 +82,8 @@ SECURITY = ("change", "main")
 OUTCOMES = ("contested", "fail-closed", "split")
 RULINGS = ("kept", "overturned")
 MAX_NAME = 80
+# How a finding kept after a contest is said, wherever it is listed.
+KEPT_SAID = ", kept after a contest"
 # At most this many findings, or outcomes, in one record.
 MAX_ITEMS = 999
 
@@ -136,7 +138,13 @@ class Finding:
     def text(self) -> str:
         what = {"blocks": "Blocks", "ticket": "A ticket to fix it", "note": "Note"}[self.mark]
         if self.contested:
-            what += ", kept after a contest"
+            what += KEPT_SAID
+        return f"- {what}: {self.part()}."
+
+    def part(self) -> str:
+        """What the finding is about, as a person reads it: the part, or a
+        security finding's area only, with whether the safe fallback covers it
+        and its ticket."""
         if self.security == "change":
             part = f"a security problem the change adds, in `{self.mechanism}`"
         elif self.security == "main":
@@ -147,7 +155,7 @@ class Finding:
             part += ", which the safe fallback covers"
         if self.issue:
             part += f", #{self.issue}"
-        return f"- {what}: {part}."
+        return part
 
 
 @dataclass(frozen=True)
