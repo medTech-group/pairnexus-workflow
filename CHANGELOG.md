@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**A new read-only agent, `planning-checker`, for the planning checks** (#438, part of spec #436). Nothing uses it yet: the planning checks that call it (before each round, the end check, the re-reads and the breakdown check) come with spec #436's other tickets.
+
+- **What it reads:** a scratch directory the session fills for each read, `/tmp/plan-check-<issue>-<read>-<n>/`: the questions or answers as posted, with their tags and evidence; the issues the evidence cites, fetched as files; the ADRs, the glossary, the project's rules and the profile. It reads the repository files the evidence cites in place. For the breakdown check, also the spec, the drafted tickets, the owner tasks and the edits to existing issues. It has Read, Grep and Glob only: no edits, no GitHub.
+- **What it reports:** four kinds of finding (conflicts between answers; combinations that break; gaps a build ticket would have to guess at; wrong facts), each with a concrete example: the session's steps and where they go wrong, or a quoted line that contradicts it, with its file or issue. A finding without one, or a preference, isn't reported.
+- **Ask or fix:** each finding is marked **ask** (it changes what an answer means: the owner decides) or **fix** (wording, a fact or an omission: the session makes it). A finding about an answer in the owner's own words is always **ask**; in the breakdown check, only wording is a **fix**.
+- **Sensitive data** (`profile.md`) is left out of its inputs and marked as left out, and its findings never quote it.
+- **For projects updating:** the update adds `.claude/agents/planning-checker.md`; nothing else to do. Tests: `tests/test_planning_checker.py`.
+
 **A review record can be written from a findings file, its result worked out from the findings' marks: `workflow review-record --findings F`** (#370, part of spec #412). Records written as before read exactly as before.
 
 - **The findings file** is JSON: a list of findings (`[]` for none), or an object with `findings`, the last review's `outcomes` and `split`. Each finding has its mark (`blocks`, `ticket` for a ticket to fix it, or `note`), its mechanism (the reviewer's short name for the part it is about), a reproducer (needed for `blocks`), whether the bar's fail-closed form covers it (`covered`), whether it is a finding kept after a contest (`contested`), whether it is a security finding (`security`: `change` or `main`, with its `area`) and any `issue`. An outcome is a contest of the last review's finding N with this review's ruling (`kept` or `overturned`), a part that took the safe fallback (`fail-closed`), or a part split out to an issue (`split`). `split: true` says the ticket was itself made by a split.
