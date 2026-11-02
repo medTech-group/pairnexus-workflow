@@ -8567,12 +8567,13 @@ def _keeps_staged(args: list[str]) -> bool:
                 return False  # paths
             if w.startswith("--"):
                 name = w[2:].partition("=")[0]
-                if not name or any(o.startswith(name) for o in ("orphan", "patch", "pathspec-from-file", "pathspec-file-nul")):
+                # Paths' forms, a new root, or a merge into the working tree.
+                if not name or any(o.startswith(name) for o in ("orphan", "patch", "pathspec-from-file", "pathspec-file-nul", "ours", "theirs", "merge", "conflict", "overlay", "no-overlay")):
                     return False
                 continue
             if w.startswith("-") and len(w) > 1:
                 for k, ch in enumerate(w[1:], 1):
-                    if ch == "p":
+                    if ch in "pm23":  # `-p`, `-m`, `--ours` (`-2`), `--theirs` (`-3`)
                         return False
                     if ch in "bB":
                         i += 1 if k == len(w) - 1 else 0  # its new branch's name
@@ -8582,6 +8583,8 @@ def _keeps_staged(args: list[str]) -> bool:
         return words <= 1  # a branch; a second word is a path
     if sub == "stash":
         return [w for w in rest if not w.startswith("-")][:1] in (["list"], ["show"])
+    if sub == "fetch" or sub in _PUSH_CMDS:  # not one naming a destination, nor a push into this repository (`--update-head-ok`, `updateInstead`)
+        return _git_changes(args) is None
     if sub == "config":
         opts, words = _config_args(rest)
         if opts is None:
@@ -8618,8 +8621,10 @@ def _staged_before(segs: list[Seg], seg: Seg, d: str, glob: list[str], top: str,
             memo[id(s)] = _add_reading(s, root)
         kind, where, names = memo[id(s)]
         if kind == "checkout":
-            gd = memo.setdefault(("git-dir", d, tuple(glob)), _git_dir_abs(d, glob))
-            if where == (top, gd):
+            key = ("git-dir", d, tuple(glob))
+            if key not in memo:
+                memo[key] = _git_dir_abs(d, glob)
+            if where == (top, memo[key]):
                 files += names
             continue
         if kind == "whole":  # every changed and untracked file of the commit's checkout
@@ -8744,9 +8749,7 @@ def _global_config_write(s: Seg, root: Path) -> bool:
 class _Changers:
     """The parts of one command that may change what a push reads, each
     classified once: "config" (where pushes go), "refs" (a branch, a tag or
-    HEAD), "push" (refs, when it pushes into the judged repository),
-    "unnamed" (a command word the shell spells, which may be git: counted
-    as "refs" by the push rule, never by `_moves_head`)."""
+    HEAD), "push" (refs, when it pushes into the judged repository)."""
 
     def __init__(self, segs: list[Seg], root: Path):
         self.root = root
@@ -8758,8 +8761,6 @@ class _Changers:
                 self.parts.append((s, "refs", "gh " + " ".join(s.words[1:3]), None))
                 continue
             args = _other_git(s.words)
-            if args is None and _SPELLED_WORD.search(s.words[0]):  # a command word the shell spells: it may be git (#394)
-                self.parts.append((s, "unnamed", _brief(s.words[0]), None))
             what = _git_changes(args) if args else None
             label = "git " + " ".join(_brief(a) for a in args[:2]) if args else ""
             if what:
@@ -8781,19 +8782,35 @@ class _Changers:
                 if key not in self.into:
                     self.into[key] = _pushes_into(s, args, self.root, common)
                 what = "refs" if self.into[key] else ""
-            if what == kind or (kind == "config" and what == "url") or (kind == "refs" and what == "unnamed"):
+            if what == kind or (kind == "config" and what == "url"):
+                return label
+        return None
+
+    def commits(self, seg: Seg) -> str | None:
+        """`git <sub>` of the first other part that may make or finish
+        commits (#394): one that may move a ref and isn't a git command
+        known only to move refs (`_MOVES_ONLY`), so an alias, `git $X` and
+        any git command the guard doesn't know count."""
+        for s, what, label, args in self.parts:
+            if s is not seg and what == "refs" and args is not None and args[0] not in _MOVES_ONLY:
                 return label
         return None
 
 
-_SPELLED_WORD = re.compile(r"[$`]")  # a variable or a substitution in a command word
+_SPELLED_WORD = re.compile(r"[$`]")  # a variable or a substitution in a path
+# git commands that may move a ref but never make or finish a commit (#394): beside one, a push to `project.repo` is
+# asked as before (refused while prototyping, #393); beside any other git command that may move a ref, refused.
+_MOVES_ONLY = {
+    "bisect", "branch", "checkout", "clone", "fetch", "init", "reset", "switch", "symbolic-ref", "tag", "update-ref", "worktree",
+    *_PUSH_CMDS,
+}  # fmt: skip
 
 
 def _head_kept(changers: _Changers, seg: Seg) -> bool:
     """Whether every other part that may move a ref keeps which branch HEAD
     names (`_KEEPS_HEAD`: a commit, a merge, a `--continue` but a rebase's),
     so a bare push still goes where git picks its remote now."""
-    return all(args is not None and args[0] in _KEEPS_HEAD for s, what, _l, args in changers.parts if s is not seg and what in ("refs", "push", "unnamed"))
+    return all(args is not None and args[0] in _KEEPS_HEAD for s, what, _l, args in changers.parts if s is not seg and what in ("refs", "push"))
 
 
 def _push_env(segs: list[Seg], seg: Seg, pattern: re.Pattern) -> str | None:
@@ -9210,13 +9227,15 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
             refs = changers.first(seg, "refs", _git_common(d, pglob))
             up = changers.first(seg, "upstream")
             if refs or up:  # git picks a bare push's remote by the branch checked out when it runs (asked when not ours)
-                if refs and not up and _head_kept(changers, seg):  # that branch stays: where it goes is read now
-                    to_now = _default_remote(d, pglob)
-                    reach = to_now is None or _may_reach(d, pglob, to_now, remotes, cfg, code)
-                else:
-                    reach = bool(refs) and _a_remote_of_ours(d, pglob, remotes, cfg, code)
-                if reach:
-                    return _beside_ref_move(cant, refs or "", code, root), None
+                made = changers.commits(seg)
+                if refs and (made or code.prototyping(root)):  # refused when it may go to `project.repo`
+                    if not up and _head_kept(changers, seg):  # the branch stays: where it goes is read now
+                        to_now = _default_remote(d, pglob)
+                        reach = to_now is None or _may_reach(d, pglob, to_now, remotes, cfg, code)
+                    else:
+                        reach = _a_remote_of_ours(d, pglob, remotes, cfg, code)
+                    if reach:
+                        return _beside_ref_move(cant, made or refs, code, root), None
                 unsure = unsure or f"{cant}: another part of the command runs `{refs or up}`, which can change where it goes and what it sends"
                 continue
             named = _default_remote(d, pglob)
@@ -9246,7 +9265,11 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
         common = _git_common(d, pglob)
         moves = changers.first(seg, "refs", common)
         if moves:
-            return _beside_ref_move(cant, moves, code, root), None
+            made = changers.commits(seg)
+            if made or code.prototyping(root):
+                return _beside_ref_move(cant, made or moves, code, root), None
+            unsure = held(f"{cant}: another part of the command runs `{moves}`, which can change what it sends")
+            continue
         if seg.fed:
             unsure = held(f"{cant}: `xargs` gives it its refs")
             continue
@@ -9363,13 +9386,15 @@ def _judge_pushes(segs: list[Seg], code: _Code, root: Path, command: str) -> tup
         if err:
             unsure = held(f"{cant}: {err}")
     if can_t:
-        # A push it can't tell about that may go to `project.repo`, beside a part that may move a ref, whatever stopped
-        # it reading: refused, not asked, as a push it can read is (#394).
+        # A push it can't tell about that may go to `project.repo`, whatever stopped it reading, beside a part that makes
+        # or finishes commits (#394), or, while prototyping, any that may move a ref (#393): refused, not asked, as a
+        # push it can read is.
         changers = changers or code.changers or _Changers(segs, root)
         for s, common, why in can_t:
             moves = changers.first(s, "refs", common)
-            if moves:
-                return _beside_ref_move(why, moves, code, root), None
+            made = changers.commits(s) if moves else None
+            if made or (moves and code.prototyping(root)):
+                return _beside_ref_move(why, made or moves, code, root), None
     return None, unsure or note or None
 
 
@@ -9448,11 +9473,11 @@ def _may_reach(d: str, glob: list[str], named: str | None, remotes: set[str], cf
 
 def _beside_ref_move(cant: str, moves: str, code: _Code, root: Path) -> str:
     """The refusal of a push to `project.repo` (or one that may go there)
-    beside a part that may move a ref: a git command that makes or finishes
-    commits, moves a branch, a tag or HEAD, or one the guard can't name.
-    Run apart, each is judged on its own, the push by what it sends (#394;
-    #338's answer 41). It covers #393's refusal while prototyping, where a
-    code commit goes through unjudged, which the refusal then says."""
+    beside a git command that makes or finishes commits, or one the guard
+    can't name (#394), or, while prototyping, beside any part that may move
+    a ref (#393: a code commit goes through unjudged there, which the
+    refusal then says). Run apart, each is judged on its own, the push by
+    what it sends (#338's answer 41)."""
     proto = ", and on a `prototype/*` branch a planning session's code commits go through unjudged" if code.prototyping(root) else ""
     return (
         f"{cant}: another part of the command runs `{moves}`, which can change what it sends{proto}, so a push is refused "

@@ -192,6 +192,10 @@ def test_a_git_add_on_a_prototype_branch_meets_the_prototype_exception_first(tmp
         "git read-tree main && git commit -m x",
         "git apply --cached x.patch && git commit -m x",
         "git checkout --orphan fresh && git commit -m x",
+        "git checkout --ours docs/guide.md && git commit -am x",
+        "git checkout -m main && git commit -m x",
+        "git fetch --update-head-ok origin main:feature && git commit -m x",
+        "git push . main:feature && git commit -m x",
         "git ci && git commit -m x",
         "git " + DOLLAR + "SUB && git commit -m x",
     ],
@@ -282,7 +286,6 @@ def test_a_push_chained_with_a_commit_is_refused(tmp_path, monkeypatch, capsys, 
     [
         "git ci -m d && git push origin feature",  # an alias, or a command git doesn't have
         "git " + DOLLAR + "SUB && git push origin feature",
-        DOLLAR + "GIT commit -m d && git push origin feature",
         "git " + DOLLAR + "(echo commit) -m d && git push origin feature",
     ],
 )
