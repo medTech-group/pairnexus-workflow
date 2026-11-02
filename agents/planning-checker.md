@@ -49,7 +49,7 @@ Mark each finding:
 - **ask**: it changes what an answer means, so it is the owner's to decide. The session asks the owner, or, where nothing is asked after the read (a last re-read), keeps it as left open. The breakdown check's re-read is the exception: its **ask** findings are asked, in one more short round before the tickets are published.
 - **fix**: wording, a fact or an omission that changes no answer's meaning. The session makes it and lists it where the owner can object.
 
-A finding about an answer tagged as the owner's own words is always **ask**, whatever its kind: only the owner changes their words. On a quick ticket, which posts no answers, the item's issue counts as the person's own words: a finding that changes what it asks for is **ask**.
+A finding about an answer tagged as the owner's own words is always **ask**, whatever its kind: only the owner changes their words. On a quick ticket, which posts no answers, the item's issue and what the person typed (a **Change it**, a reply to an **ask**) count as the person's own words: a finding that changes what they ask for is **ask**.
 
 In the breakdown check, and its re-read, only wording is a **fix**. Anything that moves a criterion or a decision between tickets, owner tasks and edits, or changes a `## Blocked by`, is an **ask**.
 

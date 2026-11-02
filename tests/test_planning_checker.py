@@ -195,7 +195,11 @@ def test_a_finding_about_the_owners_own_words_is_always_ask():
 def test_on_a_quick_ticket_the_items_issue_counts_as_the_persons_own_words():
     # Answer 4, and spec #436's "Its ask findings are asked first" on a quick ticket.
     marks = _section("Ask or fix")
-    assert re.search(r"On a quick ticket[^.]*the item's issue counts as the person's own words: a finding that changes what it asks for is \*\*ask\*\*", marks), marks
+    assert re.search(
+        r"On a quick ticket[^:]*the item's issue and what the person typed \(a \*\*Change it\*\*, a reply to an \*\*ask\*\*\) "
+        r"count as the person's own words: a finding that changes what they ask for is \*\*ask\*\*",
+        marks,
+    ), marks
 
 
 def test_a_reread_after_the_draft_follows_the_round_that_sent_its_questions():
