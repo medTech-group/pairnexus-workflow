@@ -1114,16 +1114,14 @@ def cmd_review_record(a) -> int:
     reviewers = ",".join(a.reviewers) if a.reviewers else None
     found_path = (a.findings or [None])[0]
     try:
-        # --findings (#370): the flags first, then the file, before any git runs.
-        if found_path is not None:
-            if path is not None or reviews_mod._kind(one["kind"]) == "spec":
-                raise reviews_mod.RecordError(reviews_mod.FINDINGS_WITH_SPEC)
-            if a.clean is not None:
-                raise reviews_mod.RecordError(reviews_mod.FINDINGS_WITH_RESULT)
         if path is not None:
             reviews_mod.check_key(one["kind"], one["commit"], body_given=True)
+        found = None
+        if found_path is not None:
+            # --findings (#370): every other flag is checked before the file is read.
+            reviews_mod.record(**one, reviewers=reviewers, clean=a.clean, findings=findings_mod.Findings())
+            found = findings_mod.from_file(found_path)
         body = None if path is None else _spec_body(path)
-        found = None if found_path is None else findings_mod.from_file(found_path)
         # Checked before any git runs: a refused record is never hashed.
         text = reviews_mod.record(**one, reviewers=reviewers, clean=a.clean, body=body, findings=found)
         if reviews_mod._kind(one["kind"]) in ("round", "pass"):

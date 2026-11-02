@@ -283,7 +283,9 @@ def _checked(kind, round, commit, reviewers, result, body=None, diff=None, lines
 
 
 FINDINGS_WITH_RESULT = "--findings works the result out from the findings' marks: leave out --clean and --not-clean"
-FINDINGS_WITH_SPEC = "--findings is for a build review's round or pass, not a spec's review: give --clean or --not-clean"
+FINDINGS_WITH_SPEC = "--findings is for a build review's round or pass, not a spec's review: leave it out"
+# GitHub's limit on a comment's body, in characters.
+COMMENT_LIMIT = 65_536
 
 
 def record(*, kind, round, commit=None, reviewers, clean, body=None, diff=None, lines=None, findings=None) -> str:
@@ -340,7 +342,13 @@ def record(*, kind, round, commit=None, reviewers, clean, body=None, diff=None, 
         return f"{head}\n{r.line()}\n{AGENT_MARKER}\n"
     # Paragraphs apart, so Markdown never runs a list into the next line.
     machine = "\n".join([*r.lines_of(), AGENT_MARKER])
-    return "\n\n".join([head, *r._found().text(), machine]) + "\n"
+    text = "\n\n".join([head, *r._found().paragraphs(), machine]) + "\n"
+    if len(text) > COMMENT_LIMIT:
+        raise RecordError(
+            f"the record would be {len(text)} characters, past GitHub's {COMMENT_LIMIT} for a comment: "
+            "file the lesser findings as one ticket and give its issue, or shorten the parts' names"
+        )
+    return text
 
 
 def _parse(fields: str, below=()) -> Record | None:

@@ -27,7 +27,7 @@ A finding, one for each this review reported:
 - `mark`: `blocks`, `ticket` (a ticket to fix it) or `note`;
 - `mechanism`: the reviewer's short name for the part of the change it is
   about ("the part", in what a person reads), at most 80 characters, with no
-  backtick or control character;
+  backtick, `~~~` or control character;
 - `reproducer`: the concrete failing case; a finding marked `blocks` needs
   one. It stays in the file: the record never carries it;
 - `covered` (default false): the bar's fail-closed form covers it;
@@ -53,7 +53,8 @@ posted:
 its `<!-- workflow:fix-ticket … kind=split -->` line.
 
 An empty list is a clean review; the result is worked out: not clean when any
-finding is marked `blocks`.
+finding is marked `blocks`. A refusal names the finding or outcome and the key,
+and never quotes a finding's values, which may describe a security problem.
 
 In the record, under its `rule=2` review line and with nothing between, one
 line for each finding and then one for each outcome, in order:
@@ -61,8 +62,8 @@ line for each finding and then one for each outcome, in order:
     <!-- workflow:finding n=1 mark=blocks mechanism=the%20requeue%20order covered=yes contested=no security=no issue=none -->
     <!-- workflow:outcome n=1 kind=split mechanism=the%20preview%20reader issue=416 -->
 
-A mechanism is percent-encoded (every byte but letters, digits and `-._~`),
-so it is written exactly and never ends the comment. The writer and the
+A mechanism is percent-encoded (every byte but letters, digits and `-._`),
+so it is written exactly and never ends the comment or reads as a code fence. The writer and the
 reader share one set of rules (`checked`); the reader never raises.
 """
 
@@ -82,7 +83,9 @@ MAX_NAME = 80
 # At most this many findings, or outcomes, in one record.
 MAX_ITEMS = 999
 
-_ISSUE = re.compile(r"#?([1-9][0-9]{0,6})")
+# An issue's number, at most seven digits, as a record line writes it.
+_ISSUE_DIGITS = r"[1-9][0-9]{0,6}"
+_ISSUE = re.compile(rf"#?({_ISSUE_DIGITS})")
 _COUNT = re.compile(r"0|[1-9][0-9]{0,2}")
 _FINDING_KEYS = ("mark", "mechanism", "reproducer", "covered", "contested", "security", "area", "issue")
 _OUTCOME_KEYS = {
@@ -91,6 +94,13 @@ _OUTCOME_KEYS = {
     "split": ("outcome", "mechanism", "issue"),
 }
 _TOP_KEYS = ("findings", "outcomes", "split")
+# The rules' words, shared by the file's refusals and `checked`.
+_MARK_RULE = "`mark` is `blocks`, `ticket` (a ticket to fix it) or `note`"
+_SECURITY_RULE = "`security` is `change` (a security problem the change adds) or `main` (a security or safety problem in code on the base branch)"
+_OUTCOME_RULE = "`outcome` is `contested`, `fail-closed` or `split`"
+_RULING_RULE = "`ruling` is `kept` or `overturned`"
+# Lines a record's own finding and outcome lines start with.
+_OWN_LINES = ("<!-- workflow:finding ", "<!-- workflow:outcome ")
 _FINDING_LINE = re.compile(
     r"<!-- workflow:finding n=([0-9]+) mark=(\S+) mechanism=(\S+) covered=(yes|no) "
     r"contested=(yes|no) security=(\S+) issue=(\S+) -->[ \t]*"
@@ -114,7 +124,7 @@ class Finding:
 
     def line(self, n: int) -> str:
         return (
-            f"<!-- workflow:finding n={n} mark={self.mark} mechanism={_enc(self.mechanism)} "
+            f"<!-- workflow:finding n={n} mark={self.mark} mechanism={_encoded(self.mechanism)} "
             f"covered={_yn(self.covered)} contested={_yn(self.contested)} "
             f"security={self.security or 'no'} issue={self.issue or 'none'} -->"
         )
@@ -150,9 +160,9 @@ class Outcome:
         if self.kind == "contested":
             rest = f"finding={self.finding} ruling={self.ruling}"
         elif self.kind == "fail-closed":
-            rest = f"mechanism={_enc(self.mechanism)}"
+            rest = f"mechanism={_encoded(self.mechanism)}"
         else:
-            rest = f"mechanism={_enc(self.mechanism)} issue={self.issue}"
+            rest = f"mechanism={_encoded(self.mechanism)} issue={self.issue}"
         return f"<!-- workflow:outcome n={n} kind={self.kind} {rest} -->"
 
     def text(self) -> str:
@@ -183,7 +193,7 @@ class Findings:
         """The lines under the review line, in order."""
         return [f.line(i) for i, f in enumerate(self.findings, 1)] + [o.line(i) for i, o in enumerate(self.outcomes, 1)]
 
-    def text(self) -> list[str]:
+    def paragraphs(self) -> list[str]:
         """What a person reads, as paragraphs."""
         out = []
         if self.findings:
@@ -199,14 +209,22 @@ def _yn(v: bool) -> str:
     return "yes" if v else "no"
 
 
-def _enc(name: str) -> str:
-    return quote(name, safe="")
+def _encoded(name: str) -> str:
+    """Every byte but letters, digits and `-._` percent-encoded: `~` too, so a
+    name never holds `~~~`, which a reader takes for a code fence."""
+    return quote(name, safe="").replace("~", "%7E")
 
 
-def _shown(value, n: int = 30) -> str:
-    text = str(value)
+def _json(value, n: int = 30) -> str:
+    """A value as the person wrote it, in JSON, cut to `n` characters, in
+    backticks: for refusals of an outcome or the file's own keys, never of a
+    finding's."""
+    try:
+        text = json.dumps(value, ensure_ascii=False)
+    except ValueError:
+        text = str(value)
     cut = "".join("\\" + c if c in "`\\" else c if c.isprintable() else repr(c)[1:-1] for c in text[:n])
-    return cut + ("…" if len(text) > n else "")
+    return "`" + cut + ("…" if len(text) > n else "") + "`"
 
 
 def _plural(n: int, word: str) -> str:
@@ -218,7 +236,7 @@ def _plural(n: int, word: str) -> str:
 
 def _name(value, where: str, key: str) -> str:
     """A mechanism or an area: text, at most MAX_NAME characters once trimmed,
-    with no backtick or control character."""
+    with no backtick, `~~~` or control character. Never quotes it."""
     if not isinstance(value, str):
         raise FindingsError(f"{where}: `{key}` is text")
     name = value.strip()
@@ -228,59 +246,67 @@ def _name(value, where: str, key: str) -> str:
         raise FindingsError(f"{where}: `{key}` is longer than {MAX_NAME} characters: give a short name")
     if "`" in name:
         raise FindingsError(f"{where}: `{key}` has a backtick: leave it out")
+    if "~~~" in name:
+        raise FindingsError(f"{where}: `{key}` has `~~~`, which reads as a code fence: leave it out")
     if not all(c.isprintable() for c in name):
-        raise FindingsError(f"{where}: `{key}` has a control character (a line break, a tab): keep it to one line of plain text")
+        raise FindingsError(f"{where}: `{key}` has a control or invisible character (a line break, a tab): keep it to one line of plain text")
     return name
 
 
-def _issue(value, where: str, key: str = "issue") -> int:
+def _issue_ok(value) -> bool:
+    return type(value) is int and re.fullmatch(_ISSUE_DIGITS, str(value)) is not None
+
+
+def _issue(value, where: str, quoted: bool) -> int:
     """An issue's number: 415, or "#415"."""
     text = value if isinstance(value, str) else str(value) if type(value) is int else ""
     m = _ISSUE.fullmatch(text.strip())
     if not m:
-        raise FindingsError(f"{where}: `{key}` is an issue's number, as 415 or \"#415\", not `{_shown(value)}`")
+        raise FindingsError(f"{where}: `issue` is an issue's number, as 415 or \"#415\"" + (f", not {_json(value)}" if quoted else ""))
     return int(m.group(1))
 
 
 def _flag(value, where: str, key: str) -> bool:
+    """true or false; a finding's own flags, so the value isn't quoted."""
     if not isinstance(value, bool):
-        raise FindingsError(f"{where}: `{key}` is true or false, not `{_shown(value)}`")
+        raise FindingsError(f"{where}: `{key}` is true or false (in JSON, without quotes)")
     return value
 
 
-def _number(value, where: str, key: str) -> int:
+def _finding_number(value, where: str) -> int:
     if type(value) is not int or not 1 <= value <= MAX_ITEMS:
-        raise FindingsError(f"{where}: `{key}` is the number of the last review's finding, from 1 to {MAX_ITEMS}, not `{_shown(value)}`")
+        raise FindingsError(f"{where}: `finding` is the number of the last review's finding, from 1 to {MAX_ITEMS}, not {_json(value)}")
     return value
 
 
 def checked(findings, outcomes, from_split) -> Findings:
     """The rules a record's findings and outcomes keep, for the writer and the
-    reader alike: a Findings, or FindingsError naming what is wrong."""
+    reader alike: a Findings, or FindingsError naming what is wrong, never
+    quoting a finding's values."""
     findings, outcomes = tuple(findings), tuple(outcomes)
     if len(findings) > MAX_ITEMS or len(outcomes) > MAX_ITEMS:
         raise FindingsError(f"at most {MAX_ITEMS} findings and {MAX_ITEMS} outcomes in one review")
     for i, f in enumerate(findings, 1):
         where = f"finding {i}"
         if f.mark not in MARKS:
-            raise FindingsError(f"{where}: `mark` is `blocks`, `ticket` (a ticket to fix it) or `note`, not `{_shown(f.mark)}`")
+            raise FindingsError(f"{where}: {_MARK_RULE}")
+        if f.security is not None and f.security not in SECURITY:
+            raise FindingsError(f"{where}: {_SECURITY_RULE}")
         if _name(f.mechanism, where, "area" if f.security else "mechanism") != f.mechanism:
             raise FindingsError(f"{where}: `mechanism` has space at its ends")
-        if f.security is not None and f.security not in SECURITY:
-            raise FindingsError(f"{where}: `security` is `change` (a security problem the change adds) or `main` (a security or safety problem in code on the base branch), not `{_shown(f.security)}`")
         if f.contested and f.mark != "blocks":
             raise FindingsError(f"{where} is contested (kept after a contest), so it is marked blocks: a kept finding is re-entered as blocking")
-        if f.issue is not None and not (type(f.issue) is int and 1 <= f.issue <= 9_999_999):
+        if f.issue is not None and not _issue_ok(f.issue):
             raise FindingsError(f"{where}: `issue` is an issue's number")
     ruled, acted = set(), set()
     for i, o in enumerate(outcomes, 1):
         where = f"outcome {i}"
         if o.kind not in OUTCOMES:
-            raise FindingsError(f"{where}: `outcome` is `contested`, `fail-closed` or `split`, not `{_shown(o.kind)}`")
+            raise FindingsError(f"{where}: {_OUTCOME_RULE}")
         if o.kind == "contested":
-            _number(o.finding, where, "finding")
+            _finding_number(o.finding, where)
             if o.ruling not in RULINGS:
-                raise FindingsError(f"{where}: `ruling` is `kept` or `overturned`, not `{_shown(o.ruling)}`")
+                raise FindingsError(f"{where}: {_RULING_RULE}, not {_json(o.ruling)}")
             if o.mechanism is not None or o.issue is not None:
                 raise FindingsError(f"{where}: a contest names the finding and its ruling only")
             if o.finding in ruled:
@@ -293,11 +319,11 @@ def checked(findings, outcomes, from_split) -> Findings:
                 raise FindingsError(f"{where}: `mechanism` has space at its ends")
             if (o.kind == "split") != (o.issue is not None):
                 raise FindingsError(f"{where}: " + ("give `issue`: the ticket it was split out to" if o.kind == "split" else "only a split names an issue"))
-            if o.issue is not None and not (type(o.issue) is int and 1 <= o.issue <= 9_999_999):
+            if o.issue is not None and not _issue_ok(o.issue):
                 raise FindingsError(f"{where}: `issue` is an issue's number")
             if (o.kind, o.mechanism) in acted:
                 verb = "split" if o.kind == "split" else "in its safe fallback"
-                raise FindingsError(f"{where}: the part `{_shown(o.mechanism, MAX_NAME)}` is already {verb}")
+                raise FindingsError(f"{where}: the part {_json(o.mechanism, MAX_NAME)} is already {verb}")
             acted.add((o.kind, o.mechanism))
     kept = sum(1 for o in outcomes if o.ruling == "kept")
     flagged = sum(1 for f in findings if f.contested)
@@ -307,7 +333,7 @@ def checked(findings, outcomes, from_split) -> Findings:
             "re-enter each finding whose contest was kept, marked blocks, with `contested: true`"
         )
     if not isinstance(from_split, bool):
-        raise FindingsError(f"`split` is true or false, not `{_shown(from_split)}`")
+        raise FindingsError(f"`split` is true or false (in JSON, without quotes), not {_json(from_split)}")
     return Findings(findings, outcomes, from_split)
 
 
@@ -318,7 +344,7 @@ def _no_repeats(pairs):
     seen = {}
     for k, v in pairs:
         if k in seen:
-            raise FindingsError(f"the file gives `{_shown(k)}` twice in one object: give it once")
+            raise FindingsError(f"the file gives {_json(k)} twice in one object: give it once")
         seen[k] = v
     return seen
 
@@ -326,10 +352,13 @@ def _no_repeats(pairs):
 def _known(obj: dict, keys, where: str) -> None:
     for k in obj:
         if k not in keys:
-            raise FindingsError(f"{where}: unknown key `{_shown(k)}`: the keys are {', '.join(f'`{x}`' for x in keys)}")
+            raise FindingsError(f"{where}: unknown key {_json(k)}: the keys are {', '.join(f'`{x}`' for x in keys)}")
 
 
 def _finding(raw, i: int) -> Finding:
+    """One finding from the file. What only the file has (its keys and their
+    JSON types, the reproducer, the area) is checked here; the rest by
+    `checked`."""
     where = f"finding {i}"
     if not isinstance(raw, dict):
         raise FindingsError(f"{where} is an object, as {{\"mark\": \"note\", \"mechanism\": \"…\"}}")
@@ -337,31 +366,36 @@ def _finding(raw, i: int) -> Finding:
     for key in ("mark", "mechanism"):
         if key not in raw:
             raise FindingsError(f"{where}: give `{key}`")
-    mark = raw["mark"]
-    if mark not in MARKS:
-        raise FindingsError(f"{where}: `mark` is `blocks`, `ticket` (a ticket to fix it) or `note`, not `{_shown(mark)}`")
+    if raw["mark"] not in MARKS:
+        raise FindingsError(f"{where}: {_MARK_RULE}")
     mechanism = _name(raw["mechanism"], where, "mechanism")
     reproducer = raw.get("reproducer")
     if reproducer is not None and not isinstance(reproducer, str):
         raise FindingsError(f"{where}: `reproducer` is text")
-    if mark == "blocks" and not (reproducer or "").strip():
+    if raw["mark"] == "blocks" and not (reproducer or "").strip():
         raise FindingsError(f"{where} is marked blocks but has no `reproducer`: give the concrete failing case, or mark it `note`")
-    covered = _flag(raw.get("covered", False), where, "covered")
-    contested = _flag(raw.get("contested", False), where, "contested")
     security = raw.get("security")
     if security is not None and security not in SECURITY:
-        raise FindingsError(f"{where}: `security` is `change` (a security problem the change adds) or `main` (a security or safety problem in code on the base branch), not `{_shown(security)}`")
+        raise FindingsError(f"{where}: {_SECURITY_RULE}")
     if security is None and "area" in raw:
         raise FindingsError(f"{where}: `area` goes only with `security`")
     if security is not None:
         if "area" not in raw:
             raise FindingsError(f"{where} is a security finding: give its `area`, the only part of it the record shows")
         mechanism = _name(raw["area"], where, "area")
-    issue = None if raw.get("issue") is None else _issue(raw["issue"], where)
-    return Finding(mark=mark, mechanism=mechanism, covered=covered, contested=contested, security=security, issue=issue)
+    return Finding(
+        mark=raw["mark"],
+        mechanism=mechanism,
+        covered=_flag(raw.get("covered", False), where, "covered"),
+        contested=_flag(raw.get("contested", False), where, "contested"),
+        security=security,
+        issue=None if raw.get("issue") is None else _issue(raw["issue"], where, quoted=False),
+    )
 
 
 def _outcome(raw, i: int) -> Outcome:
+    """One outcome from the file: its keys and their JSON types here, the rest
+    by `checked`."""
     where = f"outcome {i}"
     if not isinstance(raw, dict):
         raise FindingsError(f"{where} is an object, as {{\"outcome\": \"split\", \"mechanism\": \"…\", \"issue\": 416}}")
@@ -369,19 +403,16 @@ def _outcome(raw, i: int) -> Outcome:
         raise FindingsError(f"{where}: give `outcome`: `contested`, `fail-closed` or `split`")
     kind = raw["outcome"]
     if kind not in OUTCOMES:
-        raise FindingsError(f"{where}: `outcome` is `contested`, `fail-closed` or `split`, not `{_shown(kind)}`")
+        raise FindingsError(f"{where}: {_OUTCOME_RULE}, not {_json(kind)}")
     keys = _OUTCOME_KEYS[kind]
     _known(raw, keys, where)
     for key in keys:
         if key not in raw:
-            raise FindingsError(f"{where}: give `{key}`")
+            raise FindingsError(f"{where}: give `{key}`" + (": the ticket it was split out to" if key == "issue" else ""))
     if kind == "contested":
-        finding = _number(raw["finding"], where, "finding")
-        if raw["ruling"] not in RULINGS:
-            raise FindingsError(f"{where}: `ruling` is `kept` or `overturned`, not `{_shown(raw['ruling'])}`")
-        return Outcome(kind=kind, finding=finding, ruling=raw["ruling"])
+        return Outcome(kind=kind, finding=_finding_number(raw["finding"], where), ruling=raw["ruling"])
     mechanism = _name(raw["mechanism"], where, "mechanism")
-    issue = _issue(raw["issue"], where) if kind == "split" else None
+    issue = _issue(raw["issue"], where, quoted=True) if kind == "split" else None
     return Outcome(kind=kind, mechanism=mechanism, issue=issue)
 
 
@@ -395,7 +426,7 @@ def load(text: str) -> Findings:
         raise
     except (ValueError, RecursionError) as e:
         where = f" (line {e.lineno}, column {e.colno})" if isinstance(e, json.JSONDecodeError) else ""
-        raise FindingsError(f"isn't JSON{where}: give a list of findings, or an object with `findings`") from None
+        raise FindingsError(f"isn't JSON this command reads{where}: give a list of findings, or an object with `findings`") from None
     if isinstance(data, list):
         data = {"findings": data}
     if not isinstance(data, dict):
@@ -408,13 +439,10 @@ def load(text: str) -> Findings:
     outcomes = data.get("outcomes", [])
     if not isinstance(outcomes, list):
         raise FindingsError("`outcomes` is a list")
-    split = data.get("split", False)
-    if not isinstance(split, bool):
-        raise FindingsError(f"`split` is true or false, not `{_shown(split)}`")
     return checked(
-        (_finding(raw, i) for i, raw in enumerate(data["findings"], 1)),
-        (_outcome(raw, i) for i, raw in enumerate(outcomes, 1)),
-        split,
+        [_finding(raw, i) for i, raw in enumerate(data["findings"], 1)],
+        [_outcome(raw, i) for i, raw in enumerate(outcomes, 1)],
+        data.get("split", False),
     )
 
 
@@ -423,7 +451,7 @@ def from_file(path) -> Findings:
     missing, can't be read, isn't UTF-8 text or is malformed."""
     if not path:
         raise FindingsError("give --findings a file: this review's findings, `[]` for none")
-    shown = _shown(path, 80) if len(path) <= 80 else "…" + _shown(path[-79:], 79)
+    shown = _json(path, 80)[1:-1] if len(path) <= 80 else "…" + _json(path[-79:], 79)[1:-1]
     p = Path(path)
     try:
         if not p.exists():
@@ -436,7 +464,7 @@ def from_file(path) -> Findings:
     except OSError as e:
         raise FindingsError(f"--findings `{shown}` can't be read: {e.strerror or e}") from None
     try:
-        return load(text.removeprefix("﻿"))
+        return load(text.removeprefix("\ufeff"))
     except FindingsError as e:
         raise FindingsError(f"--findings `{shown}` {e}" if str(e).startswith(("is ", "isn't ", "holds ")) else f"--findings `{shown}`: {e}") from None
 
@@ -444,68 +472,74 @@ def from_file(path) -> Findings:
 # The reader -------------------------------------------------------------------
 
 
-def _dec(text: str) -> str | None:
+def _decoded(text: str) -> str | None:
     """A mechanism as written, or None when it isn't exactly as the writer
     encodes it."""
     try:
         name = unquote(text, errors="strict")
     except UnicodeDecodeError:
         return None
-    return name if _enc(name) == text else None
+    return name if _encoded(name) == text else None
 
 
 def _count(text: str) -> int | None:
     return int(text) if _COUNT.fullmatch(text) else None
 
 
-def parse_finding(line: str, n: int) -> Finding | None:
+def _issue_read(text: str) -> int | None:
+    return int(text) if re.fullmatch(_ISSUE_DIGITS, text) else None
+
+
+def _parse_finding(line: str, n: int) -> Finding | None:
     m = _FINDING_LINE.fullmatch(line)
     if not m or m.group(1) != str(n):
         return None
     _, mark, mech, covered, contested, security, issue = m.groups()
-    name = _dec(mech)
-    if name is None or (issue != "none" and not re.fullmatch(r"[1-9][0-9]{0,6}", issue)) or security not in ("no", *SECURITY):
+    name = _decoded(mech)
+    number = None if issue == "none" else _issue_read(issue)
+    if name is None or (issue != "none" and number is None) or security not in ("no", *SECURITY):
         return None
     return Finding(
         mark=mark, mechanism=name, covered=covered == "yes", contested=contested == "yes",
-        security=None if security == "no" else security, issue=None if issue == "none" else int(issue),
+        security=None if security == "no" else security, issue=number,
     )
 
 
-def parse_outcome(line: str, n: int) -> Outcome | None:
+def _parse_outcome(line: str, n: int) -> Outcome | None:
     m = _OUTCOME_LINE.fullmatch(line)
     if not m or m.group(1) != str(n):
         return None
     kind, rest = m.group(2), dict(p.partition("=")[::2] for p in m.group(3).split(" "))
-    if kind == "contested" and list(rest) == ["finding", "ruling"]:
+    if kind not in _OUTCOME_KEYS or list(rest) != list(_OUTCOME_KEYS[kind][1:]):
+        return None
+    if kind == "contested":
         finding = _count(rest["finding"])
-        return None if not finding else Outcome(kind=kind, finding=finding, ruling=rest["ruling"])
-    if kind in ("fail-closed", "split") and list(rest) == list(_OUTCOME_KEYS[kind][1:]):
-        name = _dec(rest["mechanism"])
-        if name is None:
-            return None
-        if kind == "fail-closed":
-            return Outcome(kind=kind, mechanism=name)
-        if not re.fullmatch(r"[1-9][0-9]{0,6}", rest["issue"]):
-            return None
-        return Outcome(kind=kind, mechanism=name, issue=int(rest["issue"]))
-    return None
+        return Outcome(kind=kind, finding=finding, ruling=rest["ruling"]) if finding else None
+    name = _decoded(rest["mechanism"])
+    if name is None:
+        return None
+    if kind == "fail-closed":
+        return Outcome(kind=kind, mechanism=name)
+    issue = _issue_read(rest["issue"])
+    return Outcome(kind=kind, mechanism=name, issue=issue) if issue else None
 
 
-def read_lines(lines, findings: str, outcomes: str, split: str) -> Findings | None:
+def read_lines(lines, n_findings: str, n_outcomes: str, split: str) -> Findings | None:
     """The findings and outcomes from the lines right under a `rule=2` review
-    line (`lines` holds at least as many as its counts say, or fewer when the
-    comment ends first), or None unless they are all there, in order, and keep
-    the rules. Never raises."""
-    nf, no = _count(findings), _count(outcomes)
+    line, given its counts and split flag as written, or None unless exactly
+    that many are there, in order, with no more of them after, keeping the
+    rules. Never raises."""
+    nf, no = _count(n_findings), _count(n_outcomes)
     if nf is None or no is None or split not in ("yes", "no") or len(lines) < nf + no:
         return None
-    fs = [parse_finding(lines[i], i + 1) for i in range(nf)]
-    os_ = [parse_outcome(lines[nf + i], i + 1) for i in range(no)]
-    if any(x is None for x in fs) or any(x is None for x in os_):
+    if len(lines) > nf + no and lines[nf + no].startswith(_OWN_LINES):
+        return None
+    found = [_parse_finding(lines[i], i + 1) for i in range(nf)]
+    outs = [_parse_outcome(lines[nf + i], i + 1) for i in range(no)]
+    if None in found or None in outs:
         return None
     try:
-        got = checked(fs, os_, split == "yes")
+        got = checked(found, outs, split == "yes")
     except FindingsError:
         return None
     # Only exactly what the writer writes.
