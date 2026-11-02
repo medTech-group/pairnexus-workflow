@@ -22,6 +22,7 @@
     workflow preview --comments F --checks F --sha SHA [--json] | --fetch N [any of those] [--json]
     workflow briefing verify --file F
     workflow review-record --kind round|pass --round N --commit SHA --reviewers NAMES --clean|--not-clean [--base BRANCH]      (with the hashes of the PR's own changes at SHA)
+    workflow review-record --kind round|pass --round N --commit SHA --reviewers NAMES --findings F [--base BRANCH]      (a rule=2 record: its result worked out from the findings file's marks)
     workflow review-record [--kind spec] --round N --body F --reviewers spec,correctness --clean|--not-clean      (a spec's review, keyed to its body's SHA-256)
     workflow review-record --measure --commit SHA [--base BRANCH] [--small-max-lines N] [--small-max-files N]      (the diff against the small threshold; no record)
     workflow pr-template [--existing FILE]      (prints the file to write; exits 3 for a folder of templates)
@@ -59,6 +60,7 @@ from . import doctor as doctor_mod
 from . import estimate as estimate_mod
 from . import evidence as evidence_mod
 from . import fetch as fetch_mod
+from . import findings as findings_mod
 from . import _old_python, fallback
 from . import gate as gate_mod
 from . import guard as guard_mod
@@ -1096,7 +1098,7 @@ def cmd_review_record(a) -> int:
     a spec's review round (keyed to its body's SHA-256) posts."""
     # Each flag is a list (`append`), so a repeated one is refused rather than
     # the last silently winning; repeated --reviewers add up.
-    for flag in ("kind", "round", "commit", "body", "base"):
+    for flag in ("kind", "round", "commit", "body", "base", "findings"):
         if len(getattr(a, flag) or []) > 1:
             print(f"workflow review-record: give --{flag} once", file=sys.stderr)
             return 2
@@ -1110,16 +1112,22 @@ def cmd_review_record(a) -> int:
     if path is not None and not (one["kind"] or "").strip():
         one["kind"] = "spec"  # --body alone (or with an empty --kind) is a spec's review
     reviewers = ",".join(a.reviewers) if a.reviewers else None
+    found_path = (a.findings or [None])[0]
     try:
         if path is not None:
             reviews_mod.check_key(one["kind"], one["commit"], body_given=True)
+        found = None
+        if found_path is not None:
+            # --findings (#370): every other flag is checked before the file is read.
+            reviews_mod.record(**one, reviewers=reviewers, clean=a.clean, findings=findings_mod.Findings())
+            found = findings_mod.from_file(found_path)
         body = None if path is None else _spec_body(path)
         # Checked before any git runs: a refused record is never hashed.
-        text = reviews_mod.record(**one, reviewers=reviewers, clean=a.clean, body=body)
+        text = reviews_mod.record(**one, reviewers=reviewers, clean=a.clean, body=body, findings=found)
         if reviews_mod._kind(one["kind"]) in ("round", "pass"):
             hashes = _own_hashes(a, one["commit"].strip().lower())
-            text = reviews_mod.record(**one, reviewers=reviewers, clean=a.clean, diff=hashes.diff, lines=hashes.lines)
-    except reviews_mod.RecordError as e:
+            text = reviews_mod.record(**one, reviewers=reviewers, clean=a.clean, diff=hashes.diff, lines=hashes.lines, findings=found)
+    except (reviews_mod.RecordError, findings_mod.FindingsError) as e:
         print(f"workflow review-record: {e}", file=sys.stderr)
         return 2
     sys.stdout.write(text)
@@ -1168,7 +1176,7 @@ def _measure(a) -> int:
     against the merge base of `origin/<base>`, and whether they are within the
     small threshold, counted as `merge-check` counts them. Writes no record:
     standard output is only the measurement, every note goes to standard error."""
-    given = [f"--{f}" for f in ("kind", "round", "body", "reviewers") if getattr(a, f)] + (["--clean or --not-clean"] if a.clean is not None else [])
+    given = [f"--{f}" for f in ("kind", "round", "body", "reviewers", "findings") if getattr(a, f)] + (["--clean or --not-clean"] if a.clean is not None else [])
     if given:
         print(f"workflow review-record: --measure writes no record: leave out {', '.join(given)}", file=sys.stderr)
         return 2
@@ -1791,6 +1799,7 @@ def main(argv: list[str] | None = None) -> int:
     result = s.add_mutually_exclusive_group()
     result.add_argument("--clean", dest="clean", action="store_true", default=None, help="nothing left to fix")
     result.add_argument("--not-clean", dest="clean", action="store_false", help="the round found something to fix")
+    s.add_argument("--findings", action="append", metavar="FILE", help="a round's or pass's findings file (JSON: each finding's mark, mechanism, reproducer and flags, the last review's outcomes, the split flag; `[]` for none): writes a rule=2 record whose result is worked out from the marks, so no --clean or --not-clean")
     s.add_argument("--measure", action="store_true", help="write no record: print --commit's changed lines and files outside tests, against the merge base of origin/<base>, and whether they are within the small threshold, counted as merge-check counts them")
     s.add_argument("--base", action="append", metavar="BRANCH", help="the base branch, fetched as origin/<base> first (default: the profile's project.base_branch)")
     s.add_argument("--small-max-lines", metavar="N", type=_small_max_lines, help="with --measure: the small threshold's changed lines, 1 to 1000 (default: the profile's run.small_max_lines)")
