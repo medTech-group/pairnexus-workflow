@@ -977,6 +977,14 @@ def _set(path, value):
     return change
 
 
+def _blocks_part(commit):
+    """A `rule=2` round on `commit` with one blocking finding on the part `the requeue order` (#427)."""
+    from workflow import findings
+
+    found = findings.load(json.dumps({"findings": [{"mark": "blocks", "mechanism": "the requeue order", "reproducer": "a PR dropped twice is requeued once"}]}))
+    return reviews.record(kind="round", round=1, commit=commit, reviewers="standards,spec,correctness", clean=None, findings=found)
+
+
 SCENARIOS = {
     "checks_pending": (None, lambda d: d["checks"].update(check_runs=[run_("tests", status="queued")])),
     "checks_failed": (None, lambda d: d["checks"].update(check_runs=[run_("tests", "failure")])),
@@ -989,6 +997,8 @@ SCENARIOS = {
     "review_stale": (None, lambda d: d.update(comments=[comment(rec(commit=EARLIER))])),
     "pass_not_clean": (None, lambda d: d.update(comments=[comment(rec(), cid=1), comment(rec("pass", clean=False), cid=2)])),
     "passes_used_up": (None, lambda d: d.update(comments=[comment(rec(), cid=1), comment(rec("pass", clean=False), cid=2), comment(rec("pass", clean=False), cid=3)])),
+    # #427: the same part blocks in two `rule=2` records in a row, the latest on the head.
+    "mechanism_repeats": (None, lambda d: d.update(comments=[comment(_blocks_part(EARLIER), cid=1), comment(_blocks_part(HEAD), cid=2)])),
     "past_small_threshold": (None, lambda d: d.update(
         files=[{"filename": "src/app.py", "status": "modified", "additions": 61, "deletions": 0}],
         comments=[comment(rec(reviewers="correctness"))],
