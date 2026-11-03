@@ -462,6 +462,10 @@ _HTML_ENDS = (
 )
 _HTML_RAW = re.compile(r" {0,3}<(pre|script|style|textarea)(?=[ \t>]|$)", re.I)
 _HTML_TAG = re.compile(r" {0,3}</?[A-Za-z]")
+# In a stretch has_bar skips as HTML: something GitHub may read as opening
+# code or a comment there instead (the first line may be inline HTML, not a
+# block, or a list item's block may end early), so has_bar stops reading.
+_OPENS_MORE = re.compile(r"`{3,}|~{3,}|<!--|<\?|<!\[CDATA\[|<(?:pre|script|style|textarea)(?=[ \t>]|$)", re.I)
 _LINE_END = re.compile(r"\r\n|\r|\n")  # Markdown's line ends, not str.splitlines()'s
 
 
@@ -522,6 +526,10 @@ def has_bar(body: str | None) -> bool:
             continue
         if nxt is None:
             return False  # never closed: the rest is code or HTML
+        if not f and nxt > i + 1 and (line[:1] in " \t" or any(_OPENS_MORE.search(l) for l in lines[i + 1 : nxt])):
+            # Skipped as HTML, but GitHub may end it sooner (indented, it may be
+            # a list item's) or open code or a comment inside it.
+            return False
         i = nxt
     return False
 

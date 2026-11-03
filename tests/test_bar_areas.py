@@ -149,6 +149,8 @@ def test_profile_check_refuses_a_name_that_isnt_an_area(tmp_path, monkeypatch, c
         "- x\n  ## Bar\n",  # a heading in a list item
         "```\nx\n``` \t\n## Bar\n",  # a closer may have spaces and tabs after it
         "x\n \t\nBar\n---\n",
+        "<details>\n<summary>Notes</summary>\n</details>\n\n## Bar\n",  # an HTML block before it
+        "  <!-- one line -->\n## Bar\n",  # an indented comment on one line
     ],
 )
 def test_has_bar(body):
@@ -219,6 +221,12 @@ def test_has_bar(body):
         "x\n\u00a0\nBar\n---\n",
         "Bar\n---\u00a0\n",
         "x\n\u3000\nBar\n---\n",
+        # Inline HTML skipped as a block mustn't hide a fence or comment GitHub opens.
+        "<https://example.com/spec>\n```md\nExample:\n\n## Bar\n- x\n```\n",
+        "<b>Note</b>: draft below\n<!-- draft\n\n## Bar\n-->\n",
+        "Run it:\n<kbd>\n```\nmake\n\n## Bar\n```\n",
+        "- \n  <!--\n~~~\n[a]: /u\nx -->\n## Bar ##\n<div>",
+        "- \n  <!--\n<summary>s</summary>\n## Bar\nx -->\n## Bar\n",  # a list item's comment ends with the item
     ],
 )
 def test_has_no_bar(body):
