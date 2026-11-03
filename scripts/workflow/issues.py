@@ -431,43 +431,84 @@ def protected_named(body: str | None, patterns: Iterable[str] | None, repo: str 
 
 
 # The bar (#428, spec #412): a `## Bar` heading of the ticket's own, as GitHub
-# shows it. When in doubt it isn't one, so the ticket is noted (fail closed).
+# shows it. When in doubt it isn't one, so the ticket is noted (fail closed):
+# `has_bar` stops reading at anything whose rendering it can't be sure of.
+# Each pattern runs on a line with its trailing spaces taken off, and no two
+# of its space runs sit side by side, so a long line can't make it slow.
 _BAR_WORD = r"(?:bar:?|\*\*bar:?\*\*|__bar:?__|\*bar:?\*|_bar:?_)"  # bold or italic too
-_BAR_HEADING = re.compile(r"^ {0,3}#{1,6}[ \t]+" + _BAR_WORD + r"[ \t]*:?(?:[ \t]+#+)?[ \t]*$", re.I)
-_BAR_SETEXT = re.compile(r"^ {0,3}" + _BAR_WORD + r"[ \t]*:?[ \t]*$", re.I)  # "Bar" underlined
-_SETEXT_RULE = re.compile(r"^ {0,3}(?:=+|-+)[ \t]*$")
-# A fence at any indent, in a list item too (looser than GitHub: it hides more).
-_BAR_FENCE = re.compile(r"^[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)?(`{3,}|~{3,})(.*)$")
-_HTML_COMMENT = re.compile(r"<!--.*?(?:-->|\Z)", re.S)  # unclosed: hides the rest
-BAR_NOTE = (
-    "area {area} is in run.bar_areas, but the ticket has no ## Bar heading: add one saying what the change "
-    "must handle, what it does when it can't be sure (fail closed), and the limits it accepts"
+_BAR_HEADING = re.compile(r"^ {0,3}#{1,6}[ \t]+" + _BAR_WORD + r"(?:[ \t]*:)?(?:[ \t]+#+)?$", re.I)
+_BAR_SETEXT = re.compile(_BAR_WORD + r"(?:[ \t]*:)?$", re.I)  # "Bar" at column 0, underlined
+_SETEXT_RULE = re.compile(r"(?:=+|-+)$")  # at column 0: not a list item's
+_BAR_FENCE = re.compile(r"(`{3,}|~{3,})(.*)$")  # a fence at column 0: top level
+# A fence marker anywhere else: indented, quoted or in a list item, where
+# GitHub may pair the fences differently.
+_ODD_FENCE = re.compile(r"(?:[ \t>]|(?:[-*+]|\d{1,9}[.)])(?=[ \t]))+(?:`{3,}|~{3,})")
+# HTML blocks, as CommonMark starts and ends them: a comment, <?, <!X and
+# <![CDATA[ end at their terminator, raw-text tags at their closing tag, any
+# other tag at a blank line.
+_HTML_ENDS = (
+    (re.compile(r" {0,3}<!--"), "-->"),
+    (re.compile(r" {0,3}<\?"), "?>"),
+    (re.compile(r" {0,3}<!\[CDATA\["), "]]>"),
+    (re.compile(r" {0,3}<![A-Za-z]"), ">"),
 )
+_HTML_RAW = re.compile(r" {0,3}<(pre|script|style|textarea)(?=[ \t>]|$)", re.I)
+_HTML_TAG = re.compile(r" {0,3}</?[A-Za-z]")
+_LINE_END = re.compile(r"\r\n|\r|\n")  # Markdown's line ends, not str.splitlines()'s
 
 
 def has_bar(body: str | None) -> bool:
-    """The body has a `## Bar` heading of its own (any level, or "Bar"
-    underlined, bold or italic, a trailing colon allowed). One GitHub hides or
-    shows as code doesn't count: in an HTML comment, in fenced code (an
-    example, in a list item too; an unclosed fence hides the rest), indented as
-    code, or in a quote (from elsewhere)."""
-    fence: str | None = None
-    lines = _HTML_COMMENT.sub("", body or "").splitlines()
-    for i, line in enumerate(lines):
+    """The body has a `## Bar` heading of its own: at any level, or "Bar"
+    underlined at column 0 after a blank line, bold or italic, a trailing
+    colon allowed. One GitHub hides or shows as code or text doesn't count:
+    in fenced or indented code, an HTML block or comment, or a quote. Reading
+    stops (no bar from there on) at a fence that isn't at column 0 or a
+    construct left open, where GitHub could pair the rest differently."""
+    lines = _LINE_END.split(body or "")
+    i, n = 0, len(lines)
+    while i < n:
+        line = lines[i].rstrip()
         f = _BAR_FENCE.match(line)
-        if fence is not None:
-            if f and f.group(1)[0] == fence[0] and len(f.group(1)) >= len(fence) and not f.group(2).strip():
-                fence = None
-            continue
         if f and not (f.group(1)[0] == "`" and "`" in f.group(2)):
-            fence = f.group(1)
+            mark = f.group(1)
+            close = re.compile(r" {0,3}" + re.escape(mark[0]) + "{" + str(len(mark)) + ",}$")
+            i += 1
+            while i < n and not close.match(lines[i].rstrip()):
+                i += 1
+            if i >= n:
+                return False  # never closed: the rest is code
+            i += 1
+            continue
+        if _ODD_FENCE.match(line):
+            return False
+        end = next((e for start, e in _HTML_ENDS if start.match(line)), None)
+        raw = _HTML_RAW.match(line)
+        if raw:
+            end = f"</{raw.group(1).lower()}>"
+        if end is not None:
+            while i < n and end not in (lines[i].lower() if raw else lines[i]):
+                i += 1
+            if i >= n:
+                return False  # never closed: the rest is HTML
+            i += 1
+            continue
+        if _HTML_TAG.match(line):
+            while i < n and lines[i].strip():
+                i += 1
             continue
         if _BAR_HEADING.match(line):
             return True
         after_blank = i == 0 or not lines[i - 1].strip()
-        if after_blank and _BAR_SETEXT.match(line) and i + 1 < len(lines) and _SETEXT_RULE.match(lines[i + 1]):
+        if after_blank and _BAR_SETEXT.match(line) and i + 1 < n and _SETEXT_RULE.match(lines[i + 1].rstrip()):
             return True
+        i += 1
     return False
+
+
+BAR_NOTE = (
+    "area {area} is in run.bar_areas, but the ticket has no ## Bar heading: add one saying what the change "
+    "must handle, what it does when it can't be sure (fail closed), and the limits it accepts"
+)
 
 
 @dataclass

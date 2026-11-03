@@ -80,6 +80,15 @@ def test_refuses_any_name_when_there_are_no_areas():
     assert "run.bar_areas" in str(e.value) and "isn't one of the profile's areas (it has none)" in str(e.value)
 
 
+@pytest.mark.parametrize("name", ["web app", "ui/ux", "-lead", "trail.", "_drafts", "a+b"])
+def test_refuses_a_name_no_ticket_could_give(name):
+    data = tomllib.loads(_toml(f"bar_areas = [{json.dumps(name)}]"))
+    data["areas"][name] = ["x/**"]  # an area by that name exists
+    with pytest.raises(ProfileError) as e:
+        parse(data, Path("."))
+    assert "run.bar_areas" in str(e.value) and "can't be a ticket's area" in str(e.value)
+
+
 @pytest.mark.parametrize("run", ['bar_areas = "guard"', "bar_areas = [1]", "bar_areas = true"])
 def test_refuses_anything_but_a_list_of_names(run):
     with pytest.raises(ProfileError) as e:
@@ -127,6 +136,10 @@ def test_profile_check_refuses_a_name_that_isnt_an_area(tmp_path, monkeypatch, c
         "## Bar\r\n- y\r\n",
         "<!-- guidance -->\n## Bar\n- y\n",  # a comment before it, closed
         "```x`y\n## Bar\n",  # a backtick in a backtick fence's info string: not a fence
+        "<details>\n\n## Bar\n\n</details>\n",  # an HTML block ends at a blank line
+        "<!-- a\nb -->\n## Bar\n",  # a comment ends at its line with -->
+        "x\n\n```\na\n```\n\n## Bar\n",
+        "- x\n  ## Bar\n",  # a heading in a list item
     ],
 )
 def test_has_bar(body):
@@ -158,10 +171,46 @@ def test_has_bar(body):
         "x\nBar\n---\n",  # a paragraph's last line underlined: the heading is "x Bar"
         "Bar\n- y\n",
         "## Bar (must handle, fail closed, accepted limits)\n",
+        # Round 2: a `<!--` in code can't hide a fence's opener.
+        "The marker opens with `<!--`.\n\n```md\n<!-- workflow:agent -->\n## Bar\n- x\n```\n",
+        "<!-- workflow:agent -->## Bar\n",  # text after a comment, on its line, is HTML
+        "<!-- c --> ## Bar\n",
+        "<!-- a\nb\n--> ## Bar\n",
+        "<details>\n<summary>Bar</summary>\n## Bar\n</details>\n",  # an HTML block runs to a blank line
+        "<div>\n## Bar\n</div>\n",
+        "<pre>\n\n## Bar\n</pre>\n",  # and <pre> to its closing tag
+        "<!-- never closed\n\n## Bar\n",
+        # Fences GitHub may pair differently stop the reading.
+        "    ```\nx\n```\n## Bar\n",
+        "- ```\n  run x\n- next\n```\n## Bar\n```\n",
+        "1. ```\n   ## Bar\n   ```\n",
+        "   ```\n## Bar\n```\n",
+        "1. x\n\n   ```\n   a\n  ```\n## Bar\n```\n",
+        "> ```\n## Bar\n",
+        # Lines inside a fence that don't close it.
+        "```md\n- ```\n## Bar\n```\n",
+        "```\n    ```\n## Bar\n```\n",
+        "```\n\t```\n## Bar\n```\n",
+        # An underline at column 0 can't underline a list item's paragraph.
+        "- Must handle: x\n\n  Bar\n---\n",
+        "x\n\nBar",  # the last line: no underline, no error
+        # Only \n, \r and \r\n end a line in Markdown.
+        "x\x0b## Bar\n",
+        "x\u2028## Bar\n",
+        "x\x85## Bar\n",
     ],
 )
 def test_has_no_bar(body):
     assert not has_bar(body)
+
+
+@pytest.mark.parametrize("body", ["## Bar" + " " * 65000 + "x", "\n\nBar" + " \t" * 32000 + "x", "**Bar**" + " " * 65000])
+def test_a_long_line_is_quick(body):
+    import time
+
+    t = time.monotonic()
+    has_bar(body)
+    assert time.monotonic() - t < 1
 
 
 def test_a_heading_after_a_closed_fence_counts():
