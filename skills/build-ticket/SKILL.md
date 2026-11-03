@@ -68,6 +68,39 @@ Follow the `review-panel` skill on the diff against the base branch:
 - Within the threshold, follow `review-panel`'s small review (section 7): one round of Correctness, with the security review and the explorer where they apply, then Correctness passes under the pass cap, with no further rounds.
 - Past it, run the full panel (the light review in a 1-round run), and the PR body says the diff overruled the mark. So does a later commit that takes it past the threshold, which `WF merge-check` reports as `past_small_threshold`: then run the one full-panel round it asks for, with the next round number and allowed past the round limit, and if it isn't clean, a Correctness pass (`review-panel` §7).
 
+### Filing tickets to fix findings, and split tickets
+
+Under the rule (`review-panel` §10), you file three kinds of ticket, so nothing piles up as `needs-triage`:
+- **old:** a finding marked a ticket to fix it about code the change neither touches nor reaches, or a written rule broken outside the change's own lines;
+- **late:** a finding marked a ticket to fix it from the second review on, about lines already reviewed;
+- **split:** a part that `WF merge-check` says to split out (`mechanism_repeats` with `next: split`).
+
+**When.** An old or late one: after each review, once its findings file is written and before its record, so the record names it: put the issue's number in the finding's entry as `issue`. A finding you doubt is filed too, as the reviewer marked it: your doubt goes in the findings table, never in the ticket. A split one: as soon as `WF merge-check` says to split, before a fresh fixer takes the part out of the pull request, so a restart never loses the ticket; the next review's findings file gives it as a `split` outcome with its issue.
+
+**Look first** for an open issue for the same failure (the same defect in the same place, however it is worded): `gh api -X GET search/issues -f q='repo:<repo> is:issue is:open in:body "workflow:fix-ticket"'`, then a search by the file's or the function's name. When there is one, file nothing: its number is the finding's `issue`, and a comment on it names this ticket and the review that found it again. For a split, an open ticket whose machine line says `from=` this ticket and `kind=split` for the same part is that one.
+
+**The ticket.** A ready build ticket, labelled `ready-for-agent`, never `needs-triage`, with a title saying in plain words what is wrong ("The requeue drops a pull request queued twice"), and in its body:
+- `Area: <name>`: the profile's `[areas]` area whose paths hold the lines it is about; a split one keeps this ticket's area;
+- `## What to build`: the finding in plain words, or for a split the part and why it was split out, naming the review it came from ("found by round 2 of #<PR>");
+- `## Acceptance criteria`: from the finding: its reproducer's case as the test that should pass, and the fix's behaviour; a split one gets the criteria that need the part, moved from this ticket word for word, and the part working;
+- `## Bar`: this ticket's bar, copied, when it has one and the new ticket is in its area (a split one always copies it); otherwise none;
+- `## Blocked by`: this ticket (`#<n>`) when the new one is about this pull request's own lines, whose code isn't on the base branch yet: every split one, and a late one on the change's own lines. Otherwise "None": every old one, and a late one on lines the change only reaches.
+
+Its body ends with the machine line, then the agents' marker:
+
+```
+<!-- workflow:fix-ticket from=<n> kind=old|late|split -->
+<!-- workflow:agent -->
+```
+
+`from` is this ticket's number, not its pull request's, written as digits alone; `kind` is one of `old`, `late` or `split`. In a run, the line is how the ticket joins the run. When this ticket has such a line saying `kind=split`, each of its findings files sets `split: true` (`review-panel` §4).
+
+Two exceptions (ADR 0001):
+- **A protected path** (the profile's `guard.protected_paths`): filed as an owner task instead, labelled `owner-task` in place of `ready-for-agent`, with the same machine line, so a run lists it for the owner (flow §2).
+- **A security or safety problem in code on the base branch** (`security: main`), whatever its mark: every public word names only its area: the title ("A security problem in <area>"), the body, the comment on an open one, the findings table: no reproducer, no file or line, no way to exploit it. A ticket to fix it is filed `ready-for-human`, never `ready-for-agent`, so nothing builds it unattended. Its details (where, the reproducer, the fix) go to the owner privately, never on GitHub: in attended work, in the session's chat; in a run, in your own chat as soon as you have verified it, and again in your final message, which names the ticket and says its details are there. A blocking one is never split out or filed in place of its fix.
+
+In the findings table, such a finding's outcome is "Filed #<n>", or "Already filed as #<n>" when you found an open one.
+
 ## 4. Open the pull request
 
 To the base branch. Its body opens with **In plain words**, above everything else, so someone new to building can judge the change without reading code. Use exactly these headings, each on its own line with its text below it (the text here is only an example):
@@ -103,6 +136,7 @@ Below it, unchanged:
 - after a light review (asked for, or a briefing's review rounds at 1), the line "Light review: one round, no UI explorer", adding "plus N Correctness rounds for the fixes" when there were some, above the findings table (not on a ticket that got the small review);
 - after the small review, the line "Small review: one round, Correctness", adding ", security" and ", explorer" when they ran, above the findings table. On a ticket marked small whose diff was past the threshold, say instead that the diff overruled the mark ("Marked `Review: small`, but the diff overruled the mark: 85 lines in 3 files outside tests, so the full panel ran"). With none of these lines, the full panel ran;
 - the findings table: round, reviewer, finding, and what happened (fixed in which commit, or not a problem and why);
+- after a split, under **Split out**, each part split out, in plain words, with its ticket and the acceptance criteria moved to it, quoted;
 - the decisions taken, under "Decisions for the owner";
 - the by-hand checks added.
 
