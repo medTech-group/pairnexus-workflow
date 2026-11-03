@@ -1146,8 +1146,11 @@ def _panel(ctx: Context, add) -> None:
     rounds = [i for i, r in enumerate(counted) if r.kind == "round"]
     history = {sha: n for n, sha in enumerate(ctx.parents())}  # the PR's commits, oldest first
     if counted:
-        # A counted commit the list leaves out is the head (GitHub lists at most 250): the newest.
-        latest_by_history = max(enumerate(counted), key=lambda e: (history.get(e[1].commit, len(history)), e[0]))[1]
+        # The head is the newest commit, wherever GitHub's list (by date, at most 250) puts it, or leaves it out.
+        def place(sha):
+            return len(history) if sha == head else history.get(sha, len(history))
+
+        latest_by_history = max(enumerate(counted), key=lambda e: (place(e[1].commit), e[0]))[1]
         ctx.rule2 = latest_by_history.rule == reviews.RULE
     if not rounds:
         add("no_review")

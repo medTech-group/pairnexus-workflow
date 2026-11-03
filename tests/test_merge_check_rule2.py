@@ -278,6 +278,15 @@ def test_a_head_past_the_listed_commits_is_the_newest(project, capsys):
     assert review_ids(got) == [("passes_used_up", "owner")] and got["review_passes"] == 2
 
 
+@pytest.mark.parametrize("order", [(HEAD, EARLIER, MIDDLE), (EARLIER, HEAD, MIDDLE)], ids=["head-first", "head-second"])
+def test_a_head_listed_before_an_older_commit_is_still_the_newest(project, capsys, order):
+    # GitHub lists commits by date, so a head can come before an older commit: a late record for that one doesn't decide.
+    data = with_records(rec(rnd=3, commit=EARLIER, clean=False), new([BLOCKS], kind="pass", rnd=3), rec("pass", rnd=3, commit=MIDDLE, clean=False))
+    data["commits"] = [{"sha": s} for s in order]
+    got, _ = check(project, capsys, data, "--review-rounds", "3", "--review-passes", "1")
+    assert review_ids(got) == [("pass_not_clean", None)] and got["review_passes"] == "until-clean"
+
+
 def test_an_old_record_from_an_account_without_write_access_doesnt_decide(project, capsys):
     # Only counted records decide: a stranger's old-rule record posted last changes nothing.
     data = with_records(new([BLOCKS], rnd=3, commit=EARLIER), *[new([BLOCKS], kind="pass", rnd=3, commit=MIDDLE)] * 3)
@@ -313,7 +322,7 @@ def test_the_flags_help_says_rule_2_has_no_cap(capsys):
     with pytest.raises(SystemExit):
         cli.main(["merge-check", "--help"])
     help_text = " ".join(capsys.readouterr().out.split())
-    assert "None applies when the latest counted review record is a rule=2 one (#426)" in help_text
+    assert "no pass cap applies when the latest counted review record is a rule=2 one" in help_text
 
 
 def test_the_merge_rule_says_how_rule_2_is_judged():
