@@ -67,6 +67,10 @@ def _commit(root, change, msg="x"):
 def proj(tmp_path):
     """A clone on `feature`, from a base whose code file has ten lines."""
     root = _clone(tmp_path)
+    # No automatic maintenance: newer git (2.56 in CI) runs it detached after
+    # a commit, and its lock in .git/objects can come and go mid-test.
+    git(root, "config", "maintenance.auto", "false")
+    git(root, "config", "gc.auto", "0")
     _on_base(root, lambda r: _change(r, CODE, LINES))
     git(root, "checkout", "-q", "-B", "feature", "origin/main")
     return root

@@ -197,6 +197,9 @@ review_passes = 2                       # Correctness passes after the last roun
 # counts only while the diff is within both, counting files outside tests.
 small_max_lines = 60                    # changed lines, added plus removed (1-1000)
 small_max_files = 4                     # changed files, a rename as one (1-50)
+# The areas from [areas] whose tickets need a `## Bar` (must handle, fail
+# closed, accepted limits): `workflow ready` notes one without it. [] for none.
+bar_areas = []                          # e.g. ["notes"]
 # A run's size, the charter's recommended answer: light, normal (the numbers
 # above) or thorough (docs/charter.md). Attended builds never read it.
 preset = "normal"

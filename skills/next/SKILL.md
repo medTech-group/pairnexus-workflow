@@ -34,6 +34,7 @@ It leaves out specs (the `spec` label, a "Spec:" title, or an issue with sub-iss
 
 A READY ticket may carry notes, which never change whether it is ready:
 - "names protected path <path> (<pattern>): check it isn't an owner task";
+- "area <area> is in run.bar_areas, but the ticket has no ## Bar heading: …", when its area is one of the profile's `run.bar_areas` and its body has no `## Bar` (#428): check whether it needs one;
 - "spec #<n> has no clean review: check it before building", when its spec (its parent issue, labelled `spec`) has no clean review record for its current body from an account with write access. Specs created before the kit brought this in are never noted. When the spec's comments or their authors' permissions can't be read, the note says so: "spec #<n>: couldn't read its reviews (<why>)".
 
 Where `gh api` isn't available, give each spec's comments in its `comments` field in `issues.json`, as a list (`issue_read` with method `get_comments`, every page), and the permissions of those who posted them with `--permissions perms.json`, in any shape `merge-check --permissions` takes (`list_repository_collaborators`, every page, or each author's `collaborators/<login>/permission`). A spec whose comments aren't given as a list (a count of 0 is none) is read with `gh api`, and a spec without `created_at` counts as new.

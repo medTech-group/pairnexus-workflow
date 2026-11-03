@@ -1,0 +1,462 @@
+"""#428 (spec #412, "The bar"): `run.bar_areas` names the areas whose tickets
+need a `## Bar`; `profile check` refuses a name that isn't an area and shows
+the setting, and `workflow ready` notes a ready ticket in such an area whose
+body has no `## Bar` heading, leaving it ready."""
+
+import json
+import tomllib
+from pathlib import Path
+
+import pytest
+
+from workflow import cli
+from workflow.issues import BAR_NOTE, has_bar, readiness
+from workflow.profile import ProfileError, check, parse
+
+KIT = Path(__file__).resolve().parents[1]
+
+AREAS = '[areas]\nguard = ["scripts/workflow/guard.py"]\nconductor = ["skills/conductor/**"]\nprofile = ["scripts/workflow/profile.py"]\n'
+BAR = "## Bar\n\n- Must handle: x.\n- Fail closed: y.\n- Accepted limits: none.\n"
+
+
+def issue(n, body="", labels=("ready-for-agent",)):
+    return {"number": n, "state": "open", "labels": [{"name": l} for l in labels], "body": body, "title": f"t{n}"}
+
+
+def _toml(run=""):
+    return f'[project]\nname = "demo"\nrepo = "acme/demo"\n{AREAS}[run]\n{run}\n'
+
+
+def _write(root, run=""):
+    (root / ".claude/workflow").mkdir(parents=True, exist_ok=True)
+    (root / ".claude/workflow/profile.toml").write_text(_toml(run))
+
+
+def _parse(run=""):
+    return parse(tomllib.loads(_toml(run)), Path("."))
+
+
+# ---------- the profile ----------
+
+
+@pytest.mark.parametrize("run", ["", "bar_areas = []"])
+def test_absent_or_empty_means_none(run):
+    assert _parse(run).bar_areas == []
+
+
+def test_reads_the_listed_areas():
+    assert _parse('bar_areas = ["guard", "conductor"]').bar_areas == ["guard", "conductor"]
+
+
+def test_a_name_differing_only_in_case_is_the_area():
+    assert _parse('bar_areas = ["Guard"]').bar_areas == ["Guard"]
+
+
+@pytest.mark.parametrize(
+    "run, said",
+    [
+        ('bar_areas = ["guard", "gaurd"]', "gaurd"),
+        ('bar_areas = ["billing"]', "billing"),
+        ('bar_areas = [""]', "''"),
+    ],
+)
+def test_refuses_a_name_that_isnt_an_area(run, said):
+    with pytest.raises(ProfileError) as e:
+        _parse(run)
+    msg = str(e.value)
+    assert "run.bar_areas" in msg and said in msg and "isn't one of the profile's areas" in msg
+    assert "(conductor, guard, profile)" in msg  # names the areas there are
+
+
+def test_a_long_name_is_cut_short_in_the_message():
+    with pytest.raises(ProfileError) as e:
+        _parse(f'bar_areas = ["{"x" * 3000}"]')
+    assert len(str(e.value)) < 300
+
+
+def test_refuses_any_name_when_there_are_no_areas():
+    with pytest.raises(ProfileError) as e:
+        parse(tomllib.loads('[project]\nname = "d"\nrepo = "a/d"\n[run]\nbar_areas = ["guard"]\n'), Path("."))
+    assert "run.bar_areas" in str(e.value) and "isn't one of the profile's areas (it has none)" in str(e.value)
+
+
+@pytest.mark.parametrize("name", ["web app", "ui/ux", "-lead", "trail.", "_drafts", "a+b"])
+def test_warns_of_a_name_no_ticket_could_give(tmp_path, name):
+    data = tomllib.loads(_toml(f"bar_areas = [{json.dumps(name)}, \"guard\"]"))
+    data["areas"][name] = []  # an area by that name exists: the setting stands
+    prof = parse(data, tmp_path)
+    assert prof.bar_areas == [name, "guard"]
+    (w,) = [x for x in check(prof) if x.startswith("run.bar_areas")]
+    assert "no ticket's Area: line can give" in w and "never noted" in w
+
+
+def test_no_warning_for_names_a_ticket_can_give(tmp_path):
+    data = tomllib.loads(_toml('bar_areas = ["guard", "merge-check", "v2.0"]'))
+    data["areas"]["merge-check"] = data["areas"]["v2.0"] = []
+    assert not [x for x in check(parse(data, tmp_path)) if x.startswith("run.bar_areas")]
+
+
+@pytest.mark.parametrize("run", ['bar_areas = "guard"', "bar_areas = [1]", "bar_areas = true"])
+def test_refuses_anything_but_a_list_of_names(run):
+    with pytest.raises(ProfileError) as e:
+        _parse(run)
+    assert "run.bar_areas" in str(e.value) and "a list of area names" in str(e.value)
+
+
+def test_profile_check_shows_the_setting(tmp_path, monkeypatch, capsys):
+    _write(tmp_path, 'bar_areas = ["guard", "conductor"]')
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    assert cli.main(["profile", "check"]) == 0
+    assert json.loads(capsys.readouterr().out)["bar_areas"] == ["guard", "conductor"]
+
+
+def test_profile_check_shows_none_as_an_empty_list(tmp_path, monkeypatch, capsys):
+    _write(tmp_path)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    assert cli.main(["profile", "check"]) == 0
+    assert json.loads(capsys.readouterr().out)["bar_areas"] == []
+
+
+def test_profile_check_refuses_a_name_that_isnt_an_area(tmp_path, monkeypatch, capsys):
+    _write(tmp_path, 'bar_areas = ["gaurd"]')
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    assert cli.main(["profile", "check"]) == 1
+    assert "run.bar_areas" in capsys.readouterr().err
+
+
+# ---------- the heading ----------
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        BAR,
+        "## What to build\n\nx\n\n## Bar\n\n- y\n",
+        "### Bar\n- y\n",
+        "## bar:\n- y\n",
+        "  ## Bar  \n- y\n",
+        "## Bar ##\n- y\n",
+        "## **Bar**\n- y\n",
+        "## _Bar:_\n- y\n",
+        "Bar\n---\n- y\n",  # underlined, as GitHub shows a heading
+        "x\n\nBar\n===\n- y\n",
+        "## Bar\r\n- y\r\n",
+        "<!-- guidance -->\n## Bar\n- y\n",  # a comment before it, closed
+        "```x`y\n## Bar\n",  # a backtick in a backtick fence's info string: not a fence
+        "<details>\n\n## Bar\n\n</details>\n",  # an HTML block ends at a blank line
+        "<!-- a\nb -->\n## Bar\n",  # a comment ends at its line with -->
+        "x\n\n```\na\n```\n\n## Bar\n",
+        "- x\n  ## Bar\n",  # a heading in a list item
+        "```\nx\n``` \t\n## Bar\n",  # a closer may have spaces and tabs after it
+        "x\n \t\nBar\n---\n",
+        "<details>\n<summary>Notes</summary>\n</details>\n\n## Bar\n",  # an HTML block before it
+        "  <!-- one line -->\n## Bar\n",  # an indented comment on one line
+        "\ufeff## Bar\n",
+        "<!DOCTYPE html>\n## Bar\n",  # a declaration with a capital letter ends at its >
+        "<!X a'b>\n## Bar\n",  # it ends at the first >, whatever quotes come before
+        "<titles>x</titles>\n\n## Bar\n",  # not a filtered tag name
+        "<rt>x</rt>\n\n## Bar\n",  # rt is shown; only rp is in the list
+        "<!-- a -- b -->\n<p>x</p>\n\n## Bar\n",  # -- inside a comment ends nothing
+        '<div title="a > b">\n<span>x</span>\n</div>\n\n## Bar\n',  # tags closed, a > in a quoted value
+        '<div><!-- " -->\n\n## Bar\n',  # a quote in a comment opens nothing
+        "<p>a < b</p>\n\n## Bar\n",  # a literal <
+        '<img src=x alt="a\nb" />\n\n## Bar\n',
+    ],
+)
+def test_has_bar(body):
+    assert has_bar(body)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        None,
+        "",
+        "Area: guard\n\nNo bar here.\n",
+        "The bar is high.\n",
+        "## Barriers\n- y\n",
+        "## Bar codes\n- y\n",
+        "**Bar**\n- y\n",
+        "```markdown\n## Bar\n- y\n```\n",  # an example in fenced code isn't the ticket's bar
+        "~~~\n## Bar\n~~~\n",
+        "> ## Bar\n> - y\n",  # quoted from elsewhere: not the ticket's own
+        "    ## Bar\n",  # indented code
+        "#Bar\n",  # not a heading in GitHub's Markdown
+        "\t## Bar\n",  # tab-indented: code
+        "<!--\n## Bar\n- Must handle: TODO\n-->\n",  # hidden by GitHub
+        "<!-- a placeholder\n## Bar\n",  # an unclosed comment hides the rest
+        "- ```md\n  ## Bar\n  ```\n",  # fenced code in a list item
+        "```\n~~~\n## Bar\n```\n",  # a fence closes only with its own character
+        "````\n```\n## Bar\n````\n",  # and at least as long
+        "```\n```js\n## Bar\n```\n",  # and with nothing after it
+        "x\nBar\n---\n",  # a paragraph's last line underlined: the heading is "x Bar"
+        "Bar\n- y\n",
+        "## Bar (must handle, fail closed, accepted limits)\n",
+        # Round 2: a `<!--` in code can't hide a fence's opener.
+        "The marker opens with `<!--`.\n\n```md\n<!-- workflow:agent -->\n## Bar\n- x\n```\n",
+        "<!-- workflow:agent -->## Bar\n",  # text after a comment, on its line, is HTML
+        "<!-- c --> ## Bar\n",
+        "<!-- a\nb\n--> ## Bar\n",
+        "<details>\n<summary>Bar</summary>\n## Bar\n</details>\n",  # an HTML block runs to a blank line
+        "<div>\n## Bar\n</div>\n",
+        "<pre>\n\n## Bar\n</pre>\n",  # and <pre> to its closing tag
+        "<!-- never closed\n\n## Bar\n",
+        # Fences GitHub may pair differently stop the reading.
+        "    ```\nx\n```\n## Bar\n",
+        "- ```\n  run x\n- next\n```\n## Bar\n```\n",
+        "1. ```\n   ## Bar\n   ```\n",
+        "   ```\n## Bar\n```\n",
+        "1. x\n\n   ```\n   a\n  ```\n## Bar\n```\n",
+        "> ```\n## Bar\n",  # fail closed: GitHub shows it, but a quoted fence stops the reading
+        # Lines inside a fence that don't close it.
+        "```md\n- ```\n## Bar\n```\n",
+        "```\n    ```\n## Bar\n```\n",
+        "```\n\t```\n## Bar\n```\n",
+        # An underline at column 0 can't underline a list item's paragraph.
+        "- Must handle: x\n\n  Bar\n---\n",
+        "x\n\nBar",  # the last line: no underline, no error
+        # Only \n, \r and \r\n end a line in Markdown.
+        "x\x0b## Bar\n",
+        "x\u2028## Bar\n",
+        "x\x85## Bar\n",
+        # Round 3: HTML in a list item or a quote stops the reading.
+        "- <!--\n  ## Bar\n  -->\n",
+        "- <details><summary>Notes</summary>\n  ## Bar\n  </details>\n",
+        "* <pre>\n\n  ## Bar\n  </pre>\n",
+        "1) <!--\n   ## Bar\n   -->\n",
+        "> <div>\n## Bar\n",  # fail closed, as above
+        # Only spaces and tabs are blank or trailing in Markdown, not U+00A0.
+        "```\nx\n```\u00a0\n## Bar\n```\n",
+        "<div>\n\u00a0\n## Bar\n</div>\n",
+        "x\n\u00a0\nBar\n---\n",
+        "Bar\n---\u00a0\n",
+        "x\n\u3000\nBar\n---\n",
+        # Inline HTML skipped as a block mustn't hide a fence or comment GitHub opens.
+        "<https://example.com/spec>\n```md\nExample:\n\n## Bar\n- x\n```\n",
+        "<b>Note</b>: draft below\n<!-- draft\n\n## Bar\n-->\n",
+        "Run it:\n<kbd>\n```\nmake\n\n## Bar\n```\n",
+        "- \n  <!--\n~~~\n[a]: /u\nx -->\n## Bar ##\n<div>",
+        "- \n  <!--\n<summary>s</summary>\n## Bar\nx -->\n## Bar\n",  # a list item's comment ends with the item
+        # Pass 1: each opener GitHub may read past a blank line, after inline HTML.
+        "<b>Note</b>: x\n<!DOCTYPE\n\n## Bar\n>\n",
+        "<b>x</b> y\n<?php\n\n## Bar\n?>\n",
+        "<b>x</b> y\n<![CDATA[\n\n## Bar\n]]>\n",
+        "<b>x</b> y\n<pre>\n\n## Bar\n</pre>\n",
+        "<b>x</b> y\n~~~\n\n## Bar\n~~~\n",
+        # HTML in a list item's continuation, indented 4 columns or more, or with a tab.
+        "- x\n    <!--\n   ## Bar\n",
+        "- x\n\t<!--\n  ## Bar\n",
+        "1. x\n     <!--\n   ## Bar\n",
+        "-\n    <!--\n  ## Bar\n",
+        "- x\n\n    <pre>\n\n  ## Bar\n",
+        "- x\n    <div>\n  ## Bar\n",
+        # Pass 2: a raw block ends at any raw closing tag, so a tag after it opens another.
+        "<pre>\n</script>\n<div>\n</pre>\n## Bar\n",
+        "<textarea>\n\n## Bar\n</textarea>\n",
+        "<!x\n<div>\n## Bar\n>\n",  # <!x isn't a block: <div> after it is
+        "<\u017fcript>\n<div>\n</script>\n## Bar\n",  # tag names are ASCII
+        "\ufeff<!--\n## Bar\n-->\n",  # a leading BOM is skipped
+        "\ufeff```\n## Bar\n```\n",
+        "<pre\x0c\n\n## Bar\n</pre>\n",  # a form feed after the tag name
+        # Pass 3: each of pass 2's rules has a case that needs it.
+        "<script>\n</\u017fcript>\n## Bar\n",  # a closing tag's name is ASCII too
+        "<pre\x0b\n\n## Bar\n</pre>\n",  # a vertical tab after the tag name
+        "<b>x</b> y\n<pre\x0c\n\n## Bar\n</pre>\n",  # and in a stretch skipped as HTML
+        "<b>x</b> y\n<pre\x0b\n\n## Bar\n</pre>\n",
+        "<!x\n## Bar\n>\n",  # <!x: a declaration under newer CommonMark, so reading stops
+        # Pass 4: HTML left open mid-tag, mid-value or mid-comment swallows what follows.
+        "<!-- x --><div\n## Bar\n",
+        "<div\n\n## Bar\n",
+        "<details><!-- notes\n\n## Bar\n",
+        '<div>\n<span title="\n\n## Bar\n',
+        "<pre></pre><div\n## Bar\n",
+        "<?x?><div\n## Bar\n",
+        "<!X><div\n## Bar\n",
+        # Pass 5: what HTML5 reads differently from a naive scan counts as left open.
+        '<!--> <div x="-->\n## Bar\n',
+        '<!-- a --!> <div x="-->\n## Bar\n',
+        "<?x '?><div x='>\n## Bar\n",
+        "<!X '><div x='>\n## Bar\n",
+        "<div a'b> <span x='>\n\n## Bar\n",
+        "<div><svg><![CDATA[ >\n\n## Bar\n",
+        '<div>\n<span title=">\n\n## Bar\n',  # a double-quoted value left open
+        "<div>\n<span title='>\n\n## Bar\n",  # and a single-quoted one
+        "<div><!-- a > b\n\n## Bar\n",  # a comment left open
+        'x <!-- a --!> <b title="-->\n## Bar\n',  # --!> in a paragraph
+        # Pass 6: constructs read differently along the way stop the reading, inline too.
+        'x <?a > <i b=" ?>\n## Bar\n',
+        'x <![CDATA[ > <i b=" ]]>\n## Bar\n',
+        '<b>x</b> <?a > <i b=" ?> " c>\n\n## Bar\n',
+        'x <!--> <i b=" -->\n## Bar\n',
+        '<title a=" <i b=\' ">\n\n## Bar\n',  # the tag filter makes <title text
+        '<script a=" <i b=\' ">\n</script>\n## Bar\n',
+        '<b>x</b>\ny <title a=" <i b=\' ">\n\n## Bar\n',
+        'x <title a=" <i b=\' ">\n## Bar\n',
+        "<noscript>\n\n## Bar\n",  # content a browser may hide
+        "<select>\n\n## Bar\n",
+        '<!---> <div x="-->\n## Bar\n',
+        '<!-- a\n--!> <div x="\n-->\n## Bar\n',
+        # Fail closed: GitHub shows these, but has_bar stops at what it can't be sure of.
+        "<pre>\n</textarea>\n## Bar\n</pre>\n",
+        "<script>\n</style>\n## Bar\n",
+        "<?x?>\n## Bar\n",
+    ],
+)
+def test_has_no_bar(body):
+    assert not has_bar(body)
+
+
+_FILTERED = ("title", "textarea", "style", "xmp", "iframe", "noembed", "noframes", "script", "plaintext")
+
+
+@pytest.mark.parametrize("name", _FILTERED)
+@pytest.mark.parametrize("shape", ['x <{t} a=" <i b=\' ">\n## Bar\n', '<{t} a=" <i b=\' ">\n\n## Bar\n'])
+def test_a_tag_the_tag_filter_turns_into_text_stops_the_reading(name, shape):
+    # GitHub's tag filter escapes the tag, so the quote inside it opens a value that swallows the rest.
+    assert not has_bar(shape.format(t=name)) and not has_bar(shape.format(t=name.upper()))
+
+
+@pytest.mark.parametrize("name", ["template", "noscript", "select", "rp", "svg", "math"])
+def test_a_tag_whose_content_a_browser_hides_stops_the_reading(name):
+    # rp isn't displayed; GitHub's sanitizer may drop svg and math with what's in them.
+    assert not has_bar(f"<{name}>\n\n## Bar\n") and not has_bar(f"x <{name}> y\n## Bar\n")
+
+
+@pytest.mark.parametrize("body", ["x <i\va=' c=\"'>\n## Bar\n", "x <i a=b\vc=' d=\"'>\n## Bar\n"])
+def test_a_vertical_tab_stops_the_reading(body):
+    # cmark parts a tag's attributes at a vertical tab; HTML5 doesn't, so a quote opens a value.
+    assert not has_bar(body)
+
+
+@pytest.mark.parametrize("body", ["## Bar" + " " * 65000 + "x", "\n\nBar" + " \t" * 32000 + "x", "**Bar**" + " " * 65000])
+def test_a_long_line_is_quick(body):
+    import time
+
+    t = time.monotonic()
+    has_bar(body)
+    assert time.monotonic() - t < 1
+
+
+def test_a_heading_after_a_closed_fence_counts():
+    assert has_bar("```\nexample\n```\n\n## Bar\n- y\n")
+
+
+def test_an_unclosed_fence_hides_what_follows():
+    assert not has_bar("```\nexample\n\n## Bar\n- y\n")
+
+
+# ---------- workflow ready ----------
+
+
+def _notes(issues, bar_areas, areas=("guard", "conductor", "profile")):
+    return {v.number: v for v in readiness(issues, [], areas=list(areas), bar_areas=bar_areas)}
+
+
+def test_notes_a_ticket_in_a_bar_area_with_no_bar_and_leaves_it_ready():
+    v = _notes([issue(1, "Area: guard\n"), issue(2, "Area: guard\n\n" + BAR)], ["guard"])
+    assert v[1].ready and v[1].reasons == []
+    assert v[1].notes == [BAR_NOTE.format(area="guard")]
+    assert v[2].ready and v[2].notes == []
+
+
+def test_the_note_says_what_is_missing():
+    (note,) = _notes([issue(1, "Area: guard\n")], ["guard"])[1].notes
+    assert "## Bar" in note and "guard" in note and "run.bar_areas" in note
+    assert "(must handle" not in note  # nothing a writer might copy into the heading
+
+
+def test_only_the_listed_areas():
+    v = _notes([issue(1, "Area: profile\n"), issue(2, "Area: conductor\n"), issue(3)], ["guard", "conductor"])
+    assert v[1].notes == [] and v[3].notes == []
+    assert v[2].notes == [BAR_NOTE.format(area="conductor")]
+
+
+@pytest.mark.parametrize("bar_areas", [None, []])
+def test_no_bar_areas_no_note(bar_areas):
+    assert _notes([issue(1, "Area: guard\n")], bar_areas)[1].notes == []
+
+
+def test_areas_compare_without_case():
+    v = _notes([issue(1, "Area: Guard\n"), issue(2, "Area: guard\n")], ["GUARD"])
+    assert v[1].notes == [BAR_NOTE.format(area="guard")] and v[2].notes == [BAR_NOTE.format(area="guard")]
+
+
+def test_a_fenced_example_bar_is_still_noted():
+    v = _notes([issue(1, "Area: guard\n\n```\n## Bar\n```\n")], ["guard"])
+    assert v[1].notes == [BAR_NOTE.format(area="guard")]
+
+
+def test_a_ticket_not_ready_is_noted_too():
+    # As the protected-path note: the note is about the ticket, whatever else holds it.
+    v = _notes([issue(1, "Area: guard\n\n## Blocked by\n\n#9\n"), issue(9, labels=())], ["guard"])
+    assert not v[1].ready and v[1].notes == [BAR_NOTE.format(area="guard")]
+
+
+def test_beside_the_other_notes():
+    body = "Area: guard\n\nChange `.github/workflows/ci.yml` to add a job.\n"
+    v = {x.number: x for x in readiness([issue(1, body)], [], areas=["guard"], protected=[".github/workflows/**"], bar_areas=["guard"])}
+    assert v[1].ready
+    assert any(n.startswith("names protected path") for n in v[1].notes)
+    assert BAR_NOTE.format(area="guard") in v[1].notes
+
+
+# ---------- the CLI ----------
+
+
+@pytest.fixture
+def ready_files(tmp_path, monkeypatch):
+    _write(tmp_path, 'bar_areas = ["guard"]')
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    issues = [issue(1, "Area: guard\n"), issue(2, "Area: guard\n\n" + BAR), issue(3, "Area: profile\n")]
+    (tmp_path / "issues.json").write_text(json.dumps(issues))
+    (tmp_path / "prs.json").write_text("[]")
+    return ["ready", "--issues", str(tmp_path / "issues.json"), "--prs", str(tmp_path / "prs.json")]
+
+
+def test_ready_cli_json(ready_files, capsys):
+    assert cli.main([*ready_files, "--json", "--slots", "5"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    notes = {v["number"]: v["notes"] for v in out["ready"]}
+    assert notes == {1: [BAR_NOTE.format(area="guard")], 2: [], 3: []}
+    assert out["not_ready"] == []
+
+
+def test_ready_cli_text(ready_files, capsys):
+    assert cli.main([*ready_files, "--only", "1"]) == 0
+    out = capsys.readouterr().out
+    assert "READY #1 [guard]" in out and f"note: {BAR_NOTE.format(area='guard')}" in out
+
+
+# ---------- the template and the docs ----------
+
+
+def test_template_names_the_setting_and_still_parses():
+    text = (KIT / "templates/profile.toml").read_text(encoding="utf-8")
+    assert "bar_areas" in text
+    run = text[text.index("\n[run]") :]
+    assert "bar_areas" in run.split("\n[", 2)[1]  # under [run]
+    assert parse(tomllib.loads(text), Path(".")).bar_areas == []
+
+
+def test_template_example_is_one_of_its_areas():
+    text = (KIT / "templates/profile.toml").read_text(encoding="utf-8")
+    example = text.split("bar_areas = []", 1)[1].split("e.g. ", 1)[1].split("\n", 1)[0]
+    areas = text.split("\n[areas]", 1)[1].split("\n[", 1)[0]
+    for name in json.loads(example):
+        assert f"# {name} = [" in areas
+
+
+def test_docs_name_the_setting():
+    text = (KIT / "docs/profile.md").read_text(encoding="utf-8")
+    run = text[text.index("## `[run]`") :]
+    row = next(l for l in run.splitlines() if l.startswith("| `bar_areas`"))
+    assert "## Bar" in row and "workflow ready" in row and "[areas]" in row
+
+
+def test_next_lists_the_note():
+    text = (KIT / "skills/next/SKILL.md").read_text(encoding="utf-8")
+    notes = text.split("A READY ticket may carry notes", 1)[1].split("\n\n", 1)[0]
+    shown = BAR_NOTE.format(area="<area>").split(":", 1)[0]
+    assert f'"{shown}: …"' in notes and "run.bar_areas" in notes
+    line = next(l for l in notes.splitlines() if shown in l)
+    assert "before building" not in line  # a note never changes whether a ticket is ready
