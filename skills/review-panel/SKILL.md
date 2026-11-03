@@ -96,7 +96,7 @@ A record under the rule (section 10), written with `--findings` (section 4), com
 4. the fixer, when there is anything to fix, with `part.md` from that answer, a split's ticket filed first (`build-ticket`);
 5. step 5, on the head it pushed.
 
-A finding the fixer reports refused by the guard is the owner's, since only they can lift the guard's never-list: never work around it, and stop as `build-ticket` §5's "Still red after three fix attempts" says, the refusal as the reason, naming only a security finding's area. A refused finding never waits for a later review, which could pass over it.
+A finding the fixer reports refused by the guard stops the ticket, whatever the refusal: one of the never-list, or a hook that timed out again after its one split. Never work around it: stop as `build-ticket` §5's "Still red after three fix attempts" says, the refusal as the reason, naming only a security finding's area, with its details (the refusal's message included) given to the owner privately, as `build-ticket` §3 says for `security: main`. A refused finding never waits for a later review, which could pass over it.
 
 Give it the repository's path (the clean copy's, after a step 4 that made one), the branch's name, and a scratch directory of its own, `/tmp/fix-<ticket>-<review>/` (`<review>` being `r<n>` or `pass<k>`, as the review's own), holding only these, and nothing of this session's history (no `previous.md`, no summaries):
 - `ticket.md`, `bar.md` and `rules.md`, copied from the review's scratch directory;

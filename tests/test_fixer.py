@@ -382,7 +382,10 @@ def test_a_refusal_of_the_guard_is_an_outcome_the_session_acts_on():
     fixer = _the_fixer()
     # A refused finding is never left for a later review: §10's lines-already-reviewed rule would make it
     # a ticket, or no reviewer report it again, and the defect would merge (pass 1).
-    assert "A finding the fixer reports refused by the guard is the owner's" in fixer
+    # Whatever the refusal, a timed-out hook refused again among them: the fail-closed form (pass 2).
+    assert "A finding the fixer reports refused by the guard stops the ticket, whatever the refusal: one of the never-list, or a hook that timed out again after its one split" in fixer
     assert "stop as `build-ticket` §5's \"Still red after three fix attempts\" says, the refusal as the reason, naming only a security finding's area" in fixer
+    # The owner gets what they need to act, privately.
+    assert "with its details (the refusal's message included) given to the owner privately, as `build-ticket` §3 says for `security: main`" in fixer
     assert "A refused finding never waits for a later review" in fixer
     assert "head moved" not in fixer
