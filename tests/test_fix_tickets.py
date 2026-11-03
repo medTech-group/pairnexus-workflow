@@ -68,9 +68,10 @@ def test_review_panel_points_to_it():
     assert "the way `build-ticket` files tickets to fix findings" in s3
     # build-ticket's older line on findings sends a ticket mark here.
     review = _flat(_between(_read(BUILD), "## 3. Review it", HEADING))
+    name = HEADING.removeprefix("### ")  # built from the heading, so a rename can't leave this pointer dead
     assert (
         "(under the rule, a finding marked a ticket to fix it is filed instead, except a security problem the change adds: "
-        "\"Filing tickets to fix findings, and split tickets\", below)"
+        f"\"{name}\", below)"
     ) in review
     # review-panel §3 names the same exception, so the two never answer differently.
     assert (
