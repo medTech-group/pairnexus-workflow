@@ -1317,9 +1317,9 @@ def _repeats(counted: list[reviews.Record], by_history: list[int], head: str) ->
     again from the review that posts it.
 
     What comes next: `fail_closed` when the latest record marks the part as
-    one the bar's fail-closed form covers and no record says it took that
-    form; else `split` when no record says it was split out and the ticket
-    wasn't made by a split (any record's flag); else None."""
+    one the bar's fail-closed form covers and no review (as its latest copy)
+    says it took that form; else `split` when no review says it was split out
+    and the ticket wasn't made by a split (any review's flag); else None."""
     # A review posted more than once is one review: its first post's place, its latest copy's content.
     first: dict[int, int] = {}
     for i, r in enumerate(counted):
@@ -1338,7 +1338,7 @@ def _repeats(counted: list[reviews.Record], by_history: list[int], head: str) ->
     if not seq or content[seq[-1]].commit != head or content[seq[-1]].rule != reviews.RULE:
         return []
     latest = content[seq[-1]]
-    rule2 = [r for r in counted if r.rule == reviews.RULE]
+    rule2 = [r for r in content.values() if r.rule == reviews.RULE]  # each review once, as its latest copy
     acted = {(o.kind, o.mechanism) for r in rule2 for o in r.outcomes}
     from_split = any(r.from_split for r in rule2)
 

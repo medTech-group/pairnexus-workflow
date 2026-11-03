@@ -448,20 +448,49 @@ def test_posting_any_review_again_later_never_changes_the_breaker(project, capsy
 
     rng = random.Random(427)
     found = [[BLOCKS]] * 4 + [[COVERED], [BLOCKS, OTHER], [OTHER, BLOCKS], [NOTE | {"mechanism": PART}], [TICKET | {"mechanism": PART}], [], [BLOCKS, BLOCKS]]
-    outcomes = [[], [], [], OVERTURNED_1, FELL_BACK]
+    outcomes = [[], [], [], OVERTURNED_1, FELL_BACK, SPLIT_OUT]
+    kept = [([KEPT], KEPT_1), ([KEPT, BLOCKS], KEPT_1)]  # a kept contest re-entered, with its ruling
     fired = 0
-    for trial in range(60):
-        recs, rnd = [], 0
+    for trial in range(80):
+        recs, rnd, split = [], rng.randint(0, 2), rng.random() < 0.2
         for commit in sorted(rng.choices([EARLIER, MIDDLE, HEAD], k=rng.randint(2, 5)), key=[EARLIER, MIDDLE, HEAD].index):
             kind = "round" if not recs or rng.random() < 0.5 else "pass"
             rnd += kind == "round"
-            recs.append(new(rng.choice(found), kind=kind, rnd=rnd, commit=commit, outcomes=rng.choice(outcomes)))
+            what, ruled = rng.choice(kept) if recs and rng.random() < 0.2 else (rng.choice(found), rng.choice(outcomes))
+            recs.append(new(what, kind=kind, rnd=rnd, commit=commit, outcomes=ruled, split=split))
         if rng.random() < 0.3:  # sometimes a record posted late, for an older commit
             recs.insert(rng.randrange(len(recs)), recs.pop())
         at = rng.randrange(len(recs))
         later = rng.randint(at + 1, len(recs))
         twice = recs[:later] + [recs[at]] + recs[later:]
         once_got, twice_got = (run(project, capsys, *r) for r in (recs, twice))
-        assert nexts(twice_got) == nexts(once_got), (trial, at, later)
+        said = [[(r["mechanism"], r.get("next"), r["wording"]["developer"]["message"]) for r in repeats(got)] for got in (once_got, twice_got)]
+        assert said[1] == said[0], (trial, at, later)
         fired += bool(repeats(once_got))
     assert fired >= 10  # the histories reach the breaker
+
+
+# ---------- Correctness pass 1's findings ----------
+
+
+@pytest.mark.parametrize("between", [False, True])
+def test_a_corrected_copy_is_read_as_the_review(project, capsys, between):
+    # Round 2 on the head is posted again, corrected: only a note on the part. Its latest copy is the review, so the
+    # note breaks the run, whether the correction comes right after it or after a pass on the head.
+    first = [new([BLOCKS], rnd=1, commit=EARLIER), new([BLOCKS], rnd=2)]
+    middle = [new([OTHER], kind="pass", rnd=2)] if between else []
+    got = run(project, capsys, *first, *middle, new([NOTE | {"mechanism": PART}], rnd=2))
+    assert not repeats(got)
+    # And the other way: the correction adds the part.
+    got = run(project, capsys, new([BLOCKS], rnd=1, commit=EARLIER), new([OTHER], rnd=2), *middle, new([BLOCKS], rnd=2))
+    assert nexts(got) == ([] if between else [(PART, "split")])
+
+
+def test_a_corrected_copy_without_an_action_takes_it_back(project, capsys):
+    # Round 2 was posted with the safe fallback taken by mistake, then corrected without it: the part hasn't
+    # taken that form, so the count runs on and the safe fallback is next.
+    got = run(project, capsys, new([COVERED], rnd=1, commit=EARLIER), new([COVERED], rnd=2, commit=MIDDLE, outcomes=FELL_BACK),
+              new([COVERED], rnd=2, commit=MIDDLE), new([COVERED], rnd=3))
+    assert nexts(got) == [(PART, "fail_closed")]
+    [r] = repeats(got)
+    assert "3 reviews in a row" in r["wording"]["developer"]["message"]
