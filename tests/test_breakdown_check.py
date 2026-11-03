@@ -186,6 +186,9 @@ def test_its_posts_go_on_the_spec_s_issue_headed_one_for_each_read():
     assert "nothing found" in s
     # Which post: the round's that follows the read, or with no round the read's own comment.
     assert "round that follows" in s and re.search(r"[Ww]ith no round, the read's own comment", s), s
+    # Each carries the breakdown it read, so a session that carries on starts from it.
+    c = _sentence(o, "Each carries")
+    assert "breakdown that read checked" in c and "in full" in c
 
 
 # --- ask and fix ------------------------------------------------------------------
@@ -299,18 +302,28 @@ def test_a_check_with_nothing_to_ask_publishes_with_no_further_click():
     assert re.search(r"nothing (left )?to ask|nothing to ask", s), s
 
 
-def test_publishing_labels_build_tickets_owner_tasks_and_makes_the_edits():
-    s = _sentence(_part("publish"), "blockers first")
-    assert "each build ticket `ready-for-agent`" in s and "held back" in s
-    assert "owner task labelled `owner-task`" in s
-    assert "make the edits to existing issues" in s
-    # The edits, with any held ticket's section written in, before anything is published.
-    e = _sentence(_part("publish"), "make the edits")
-    assert "section into its edit" in e
-    assert e.index("make the edits") < e.index("publish in order")
-    # An edit to an issue claimed or built since is left unmade, and said.
-    s = _sentence(_part("publish"), "claimed or built since")
+def _publish_steps() -> list[str]:
+    """The numbered steps of **Then publish**, flattened, in order."""
+    steps = re.split(r"\s\d\. ", _part("publish"))[1:]
+    assert len(steps) == 4, steps
+    return steps
+
+
+def test_publishing_holds_first_then_tickets_then_edits_then_says_so():
+    hold, tickets, edits, done = _publish_steps()
+    # Holds first, section and label together, before anything new is ready.
+    assert "Hold back the existing tickets" in hold and "`needs-info`" in hold and "one edit" in hold
+    assert "adds a blocker" in hold
+    # New tickets, blockers first; owner tasks labelled.
+    assert "blockers first" in tickets and "`ready-for-agent`" in tickets and "held back" in tickets
+    assert "owner task labelled `owner-task`" in tickets
+    # Edits after, with the new tickets' numbers, keeping a held section.
+    assert "new tickets' numbers" in edits and "keeping a held ticket's section" in edits
+    assert "Give back" in edits and "unless the ticket is held back" in edits
+    s = _sentence(edits, "claimed or built since")
     assert "isn't made" in s and "spec's issue" in s
+    # The end of publishing is marked, so it's never resumed after it.
+    assert '"Breakdown published"' in done and "spec's issue" in done
 
 
 def test_the_final_breakdown_is_posted_before_publishing():
@@ -334,20 +347,25 @@ def test_a_session_that_carries_on_finishes_a_final_breakdown_with_no_read():
     p = _part("carries on")
     assert "spec's issue" in p
     s = _sentence(p, 'With a "Breakdown to publish" post')
+    assert 'no "Breakdown published" comment after it' in s
     assert "exactly as posted" in s and "no further read" in s
     # Done means any issue of that title, open or closed, so nothing is published twice.
     assert "open or closed" in s and "`## Parent`" in s
+    # A hold is done only with both its section and its label.
+    assert "section and `needs-info` are both there" in p
     assert "edit already in its issue's body" in p
     # "Carry on" finds such a spec, before the "no tickets" row would send it to `to-tickets`.
     rows = [l for l in _start().splitlines() if l.startswith("| An open spec")]
-    assert '"Breakdown to publish" post' in rows[0], rows
+    assert '"Breakdown to publish" post' in rows[0] and '"Breakdown published"' in rows[0], rows
 
 
 def test_without_a_final_breakdown_only_the_reads_with_no_post_run():
     p = _part("carries on")
     s = _sentence(p, "Without one")
+    # It starts from the breakdown the last read posted, not a fresh draft.
+    assert "the breakdown in the last read's post" in s
     assert "stand" in s and "**Agree these**" in s
-    s = _sentence(p, "Agreed as drafted")
+    s = _sentence(p, "Agreed as it stands")
     assert "only the reads that have no post yet" in s
     assert '"Breakdown re-read" post' in s
     s = _sentence(p, "Changed at **Agree these**")
@@ -364,9 +382,18 @@ def test_carry_on_points_to_settling_a_held_back_ticket():
     row = [l for l in _start().splitlines() if l.startswith("| A build ticket held back")]
     assert len(row) == 1, row
     first = row[0].split(" | ", 1)[0]
-    # Found by its section, whatever label it has now, so a stop part-way isn't stuck.
-    assert "`## Breakdown check`" in first and "not labelled `ready-for-agent`" in first
+    assert "`## Breakdown check`" in first
     assert "Settling a held-back ticket" in row[0]
+
+
+def test_what_held_back_means():
+    s = _sentence(_part("settling"), "is held back when")
+    assert '"Open:" line' in s
+    # Or a settle that stopped between its line and its label.
+    assert "`needs-info` or `needs-triage`" in s and 'no "Open:" line left' in s
+    # Never a ticket taken out of ready-for-agent on purpose.
+    s = _sentence(_part("settling"), "`needs-human`")
+    assert "no label" in s and "isn't" in s
 
 
 def test_settling_asks_every_open_finding_in_one_round_on_the_spec_s_issue():
@@ -393,12 +420,14 @@ def test_a_ticket_goes_back_to_ready_only_with_no_finding_left_open():
     p = _part("settling")
     s = _sentence(p, "swap")
     assert "`ready-for-agent`" in s and 'no "Open:" line left' in s
+    assert "`needs-info` or `needs-triage` for `ready-for-agent`" in s
     assert '"Settled: answer <n>"' in _sentence(p, "Settled:")
 
 
 def test_section_5_never_sorts_a_held_back_issue():
     five = _flatten(_between(_start(), "\n## 5. Sorting new issues", "\n## 6."))
-    s = _sentence(five, "`## Breakdown check` section isn't sorted")
+    s = _sentence(five, "isn't sorted here")
+    assert "held back by the breakdown check" in s and "Settling a held-back ticket" in s
     assert "Carry on" in s
     # The label triage swapped is put back, so status shows it waiting again.
     assert re.search(r"put back `needs-info` in place of `needs-triage`", s), s
