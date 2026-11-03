@@ -97,24 +97,19 @@ def test_every_reviews_fixes_round_1s_included_go_to_a_fresh_fixer():
     # The session builds and coordinates; it fixes nothing itself.
     assert "You build the change, start the reviewers and the fixers, file the tickets, post the records and keep short summaries" in fixer
     assert "you fix no finding yourself" in fixer
-    assert "A failure `review-panel` §3's step 5 finds after a fixer goes to the next review, never to you." in fixer
     # §3's step list says so too.
     assert "a fresh fixer makes every review's fixes and contests, never you: your doubt goes in the findings table" in _review()
 
 
-def test_a_red_required_check_is_section_5s_whoever_made_the_commit():
-    """A red required check is the session's (§5), whoever's commit it is, with no exception to leave it waiting on a review."""
+def test_red_checks_and_failures_after_a_fixer_stay_as_the_kit_already_routes_them():
+    """The bullet adds no rule of its own for a failure or a red check: review-panel §3's step 5 and build-ticket §5 keep them, unchanged."""
     fixer = _bullet(_rule(), "**A fresh fixer makes every review's fixes,**")
-    assert "A required check that goes red is §5's, whoever's commit it is;" in fixer
-    assert "unless" not in fixer.split("A required check that goes red", 1)[1]
-    # One owner when step 5 listed the same failure: the session's fix is its outcome, which the next review checks.
-    assert "when step 5 already listed its failure, your §5 fix is that row's outcome in the findings table and under \"Failures\", so the next review checks the fix rather than reporting it again" in fixer
+    assert fixer.rstrip().endswith("you fix no finding yourself.")
+    for words in ("required check", "Failures", "step 5"):
+        assert words not in fixer, words
     assert "**A required check is red:** find the cause" in _section(BUILD, "## 5. Get it green\n", "\n## 6. ")
-    # No Correctness pass is started for a red check: a clean pass on reviewed lines could never block it.
-    assert "run a Correctness pass on the head for it" not in fixer
-    # review-panel §1's "Failures" stays step 5's.
-    inputs = _panel("## 1. Gather the inputs", "\n## 2.")
-    assert "under \"Failures\", each failure step 5 of section 3 found after the last fixer, with the command that shows it and its output." in inputs
+    s3 = _panel("## 3. After each round\n", "\n## 4.")
+    assert "Under the rule, you fix nothing yourself: a failure goes in the findings table and under \"Failures\" in the next review's `previous.md`" in s3
 
 
 # --- the draft ----------------------------------------------------------------
