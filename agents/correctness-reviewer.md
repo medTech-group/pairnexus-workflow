@@ -15,7 +15,7 @@ You are given a scratch directory, which holds:
 - `previous.md`, from round 2: the earlier findings and what was done;
 - in a build review under the rule for build reviewers: `rule.md`, the rule itself; `bar.md`, the ticket's bar; and, from the second review, `since.patch`, the pull request's own changes since the last review.
 
-**When the scratch directory holds `rule.md`, follow it.** It says how to mark each finding, the reproducer a blocking one needs, how to name the part it is about, where the hunt stops (the bar, moved criteria, lines already reviewed), what to review from the second review, how to rule on a contest and how to report. Where it and this file differ, `rule.md` wins. Without it (a planning review, or a build review under today's rule), review and report as below.
+**When the scratch directory holds `rule.md`, follow it:** it is the rule for build reviewers. Where it and this file differ, `rule.md` wins. Without it (a planning review, or a build review under today's rule), review and report as below.
 
 You also get the list of changed files. Read each in full in the repo, not only its hunks, along with the code it calls and the tests that cover it.
 

@@ -24,11 +24,17 @@ Make a scratch directory outside the repo, for example `/tmp/review-<ticket>-r<r
 - `rule.md`: section 10, copied as it is, with:
 
   ```
-  sed -n '/^## 10\. The rule for build reviewers$/,$p' <this skill's directory>/SKILL.md > <scratch>/rule.md
+  sed -n '/^## 10\. The rule for build reviewers$/,$p' <this skill's directory>/SKILL.md > <scratch>/rule.md && test -s <scratch>/rule.md
   ```
+
+  If it fails, stop and find out why: never start the reviewers with an empty or missing `rule.md`.
 - `bar.md`: the ticket's `## Bar`, or the bar its spec gives for its tickets, as written; "None" when neither gives one.
-- `previous.md`, from the second review (round or pass), in place of the one above: each earlier review (its kind, number and commit) with its findings numbered as in its record, each with its mark, its part exactly as the reviewer wrote it, its severity and what was done (fixed in which commit with which test, a ticket to fix it filed as which issue, contested with the written reason, ruled kept or overturned); the last review's contested findings, under "Contests to rule on", each with its number and its reason; the parts that took the bar's fail-closed form or were split out; and, under "Moved criteria", each acceptance criterion moved by a split, quoted, with the ticket it moved to.
-- `since.patch`, from the second review: the pull request's own changes since the last review, round or pass, with the base branch's changes left out. With `<last>` the commit the last review covered (its `commit.txt`), after a `git fetch`:
+- `previous.md`, from the second review (round or pass), in place of the one above:
+  - each earlier review (its kind, number and commit) with its findings numbered as in its record, each with its mark, its part exactly as the reviewer wrote it, its severity and what was done: fixed in which commit with which test, a ticket to fix it filed as which issue, contested with the written reason, or ruled kept or overturned;
+  - under "Contests to rule on", the last review's contested findings, each with its number, its reason, and what it needs to be re-entered if kept: its reproducer, its part, and its `security` and area if it has them;
+  - the parts that took the bar's fail-closed form or were split out;
+  - under "Moved criteria", each acceptance criterion moved by a split, quoted, with the ticket it moved to.
+- `since.patch`, from the second review: the pull request's own changes since the last review, round or pass, with the base branch's changes left out. With `<last>` the commit the last review covered (its `commit.txt`, or the commit its posted record names), after a `git fetch`:
 
   ```
   old=$(git merge-base origin/<base> <last>)
@@ -36,7 +42,7 @@ Make a scratch directory outside the repo, for example `/tmp/review-<ticket>-r<r
   tree=$(git merge-tree --write-tree --merge-base="$old" "$new" <last>) && git diff "$tree" HEAD > <scratch>/since.patch
   ```
 
-  It replays the reviewed change onto the base the head is on, and compares that with the head. If it fails (the reviewed change conflicts with the base merged in since, or git is older than 2.40), write no `since.patch`: with none, the reviewers treat the whole change as new.
+  It replays the reviewed change onto the base the head is on, and compares that with the head. If it fails (the reviewed change conflicts with the base merged in since, the commit can't be found, or git is older than 2.40), write no `since.patch`: with none, the reviewers treat the whole change as new.
 
 The reviewers read these files. The Correctness reviewer can't run git or reach GitHub.
 
@@ -80,7 +86,7 @@ Follow the rule in <scratch>/rule.md: it says how to mark and report each findin
 5. Rerun the typecheck and the affected tests.
 6. Post the round's review record (section 4).
 
-A record under the rule (section 10), written with `--findings` (section 4), comes from the reviewers' reports: every finding a reviewer reported goes in the findings file as reported, even one you judge not a problem, which is answered with its reason in the findings table and left for the next review to rule on. One entry for each finding each reviewer reported. A mark is the reviewer's: copy it, its part, its reproducer and its flags as written, and never change one.
+A record under the rule (section 10), written with `--findings` (section 4), comes from the reviewers' reports: every finding a reviewer reported goes in the findings file as reported, even one you judge not a problem. Such a finding marked blocks is contested: its reason goes in the findings table and in the next review's `previous.md`, under "Contests to rule on", and the next review rules on it. One marked a ticket to fix it or a note is answered with its reason in the findings table, and never ruled on. One entry for each finding each reviewer reported. A mark is the reviewer's: copy it, its part, its reproducer and its flags as written, and never change one.
 
 ## 4. Post the review record
 
@@ -112,7 +118,11 @@ Post a record on the pull request after every round, whatever it found, and afte
       {"mark": "ticket", "mechanism": "label sync", "issue": 415},
       {"mark": "note", "mechanism": "wording"}
     ],
-    "outcomes": [{"outcome": "contested", "finding": 2, "ruling": "overturned"}],
+    "outcomes": [
+      {"outcome": "contested", "finding": 2, "ruling": "overturned"},
+      {"outcome": "fail-closed", "mechanism": "the merge gate"},
+      {"outcome": "split", "mechanism": "the preview reader", "issue": 416}
+    ],
     "split": false
   }
   ```
@@ -235,7 +245,7 @@ No Standards reviewer and no explorer: there is no code to hold to the standards
 | 1 | 1 | Correctness | A not-planned blocker reads as done | Fixed in abc1234, test `test_blockers_not_planned` |
 | 2 | 1 | Spec | No `Area:` on the new tickets | Not a problem: the spec makes areas optional for one-off tickets |
 
-Under the rule (section 10), the table gains the mark and the part after the reviewer, a security finding's part being its area only:
+Under the rule (section 10), the table gains the mark and the part after the reviewer. A security finding's row names only its area, in every column: its part, its finding and its outcome, the test's name included.
 
 | # | Round | Reviewer | Mark | Part | Finding | Outcome |
 |---|---|---|---|---|---|---|
@@ -256,7 +266,7 @@ This section is copied, as it is, into each build review's scratch directory as 
 **Marks.** Mark each finding:
 - **blocks:** it holds the merge until it is fixed. It needs a reproducer (below); without one, mark it a note.
 - **a ticket to fix it** (`ticket`): a real defect that goes to a ticket of its own, built next, not in this pull request: one in code the change neither touches nor reaches, a breach of a written rule outside the change's own lines, or, from the second review, a finding on lines already reviewed that isn't one of the kinds that still block (below).
-- **note:** a preference no written rule backs, a gap the bar accepts, a finding on a moved criterion, or any finding with no reproducer. Noted in the findings table; it neither blocks nor gets a ticket.
+- **note:** a preference no written rule backs, a gap the bar accepts, a finding on a moved criterion, or a finding that would block but has no reproducer. Noted in the findings table; it neither blocks nor gets a ticket.
 
 The mark isn't the severity. Severity: critical, important or minor. "Critical" is the top severity; it never means blocks. A minor finding can block, and a critical one with no reproducer is a note.
 
@@ -285,11 +295,11 @@ Where the hunt stops:
 - **Moved criteria:** a criterion `previous.md` lists as moved by a split isn't unmet here: a finding on it is a note.
 - **Lines already reviewed** (from the second review): a finding on lines unchanged since a review that covered them (in the change or in what it reached) is marked a ticket to fix it, unless it is a safety breach, a security problem the change adds, loses data, leaves an acceptance criterion unmet, leaves new behaviour untested, or is something the change breaks elsewhere: those still block, whichever review finds them.
 
-**From the second review,** a round or a pass, review `since.patch` and what it reaches: the code it calls and the code that calls it, read in full in the repo. Read `diff.patch`, the whole change, for context. Everything in `since.patch` follows the rule as in a first review, and so do the lines it reaches that no earlier review covered. Check each fix `previous.md` lists. With no `since.patch`, the whole change is new to this review.
+**From the second review,** a round or a pass, review `since.patch` and what it reaches: the code it calls and the code that calls it, read in full in the repo. Read `diff.patch`, the whole change, for context. Everything in `since.patch` follows the rule as in a first review, and so do the lines it reaches that no earlier review covered. Check each fix `previous.md` lists. With no `since.patch`, the whole change is new to this review. An empty one (a merge of the base that left the pull request's own changes as they were) still asks for a look: check the change's lines in `diff.patch` against the base merged in, for something it breaks.
 
 **Security.** A security problem the change adds: mark it as any other finding, with `security: change` and its area, a word or two such as "sign-in". A security or safety problem in code already on the base branch: `security: main`, with its area. Give its details (where, the reproducer) in your report, never in a part's name: the public records show only the area.
 
-**Contests.** `previous.md` lists, under "Contests to rule on", the last review's findings that were contested, each with its written reason. The Correctness reviewer rules on each: **kept** (the finding stands: re-enter it as a finding of this review, marked blocks, with its part as before, flagged kept) or **overturned** (it counts for nothing: leave it out). Other reviewers don't rule. A kept finding is fixed, never contested again. Never change a mark yourself to settle a contest: rule on it.
+**Contests.** `previous.md` lists, under "Contests to rule on", the last review's findings marked blocks that were contested, each with its written reason. Only a finding marked blocks is contested. The Correctness reviewer rules on each: **kept** (the finding stands: re-enter it as a finding of this review, marked blocks, flagged kept, with its reproducer, its part, and its `security` and area as before) or **overturned** (it counts for nothing: leave it out). Other reviewers don't rule. A kept finding is fixed, never contested again. Never change a mark yourself to settle a contest: rule on it.
 
 **How to report.** For each finding:
 - **Mark:** blocks, ticket or note;

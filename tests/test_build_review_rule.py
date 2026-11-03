@@ -101,9 +101,11 @@ def test_each_finding_carries_one_of_three_marks():
     for mark in ("**blocks:**", "**a ticket to fix it** (`ticket`):", "**note:**"):
         assert mark in rule, mark
     # A note: a preference, a gap the bar accepts, a moved criterion, no reproducer.
-    note = rule.split("**note:**", 1)[1].split("**", 1)[0]
-    for words in ("a preference no written rule backs", "a gap the bar accepts", "a finding on a moved criterion", "no reproducer"):
+    note = _section(PANEL, RULE_HEADING + "\n").split("- **note:**", 1)[1].split("\n", 1)[0]
+    for words in ("a preference no written rule backs", "a gap the bar accepts", "a finding on a moved criterion", "a finding that would block but has no reproducer"):
         assert words in note, words
+    # A ticket to fix it needs no reproducer: only a would-be blocking finding without one is a note.
+    assert "any finding with no reproducer" not in note
 
 
 def test_the_top_severity_is_critical_and_never_read_as_the_mark():
@@ -253,7 +255,7 @@ def test_section_3_writes_every_reported_finding_into_the_findings_file():
     assert "A mark is the reviewer's" in s3
 
 
-def test_section_4_writes_rule_2_records_with_findings():
+def test_section_4_writes_records_under_the_rule_with_findings():
     s4 = _flat(_section(PANEL, "## 4. Post the review record", "\n## 5."))
     assert "WF review-record --kind round --round <n> --commit <sha> --reviewers standards,spec,correctness --findings /tmp/review-<ticket>-r<n>/findings.json > /tmp/review-<ticket>-r<n>/record.md" in s4
     assert "WF review-record --kind pass --round <last round> --commit <sha> --reviewers correctness --findings /tmp/review-<ticket>-pass<k>/findings.json > /tmp/review-<ticket>-pass<k>/record.md" in s4
@@ -282,15 +284,18 @@ def test_the_findings_table_gains_the_mark_and_the_part():
 
 def test_correctness_reviewer_points_to_rule_md():
     agent = _flat(_read("agents/correctness-reviewer.md"))
-    assert "**When the scratch directory holds `rule.md`, follow it.**" in agent
+    assert "**When the scratch directory holds `rule.md`, follow it:**" in agent
     assert "Where it and this file differ, `rule.md` wins." in agent
     for name in ("`bar.md`", "`since.patch`"):
         assert name in agent, name
+    # It points to the rule rather than restating it.
+    assert "how to rule on a contest" not in agent
 
 
 def test_ui_explorer_points_to_rule_md():
     agent = _flat(_read("agents/ui-explorer.md"))
-    assert "**When you're given a `rule.md`, follow it.**" in agent
+    assert "**When the scratch directory you're given holds `rule.md`, follow it.**" in agent
+    assert "you are given the review's scratch directory too, with `rule.md`, `bar.md` and, from the second review, `since.patch`" in agent
     assert "your steps to reproduce, what you expected and what you saw are the reproducer" in agent
 
 
@@ -360,12 +365,19 @@ def test_since_patch_is_not_written_when_the_reviewed_change_conflicts_with_the_
     _move_base(root, "b\n", "B-base\n")
     merged = subprocess.run(["git", "merge", "-q", "--no-edit", "main"], cwd=root, capture_output=True, text=True)
     assert merged.returncode != 0
-    (root / "f.txt").write_text((root / "f.txt").read_text().split("<<<<<<<")[0] + "B-both\n" + (root / "f.txt").read_text().split(">>>>>>> main\n")[1])
+    conflicted = (root / "f.txt").read_text()
+    (root / "f.txt").write_text(conflicted.split("<<<<<<<")[0] + "B-both\n" + conflicted.split(">>>>>>> main\n")[1])
     git(root, "commit", "-qam", "merged")
     scratch = tmp_path / "scratch"
     scratch.mkdir()
-    done = subprocess.run(["bash", "-c", _since_command(scratch, last)], cwd=root, capture_output=True)
+    command = _since_command(scratch, last)
+    done = subprocess.run(["bash", "-c", command], cwd=root, capture_output=True)
     assert done.returncode != 0
+    # It is the replay's conflict that stops it (merge-tree exits 1), not some other failure.
+    replay = command.split("\n")[-1].split(" && ", 1)[0].replace("tree=$(", "", 1).rstrip(")")
+    setup = "\n".join(command.split("\n")[:-1])
+    conflict = subprocess.run(["bash", "-c", setup + "\n" + replay], cwd=root, capture_output=True)
+    assert conflict.returncode == 1
     assert not (scratch / "since.patch").exists()
     # The text says what that means: the whole change is new to the review.
     assert "write no `since.patch`" in _flat(_inputs())
@@ -380,3 +392,54 @@ def test_the_changelog_notes_it_under_unreleased():
     note = notes.split("#374", 1)[0].rsplit("\n\n**", 1)[1] + notes.split("#374", 1)[1].split("\n\n**", 1)[0]
     for words in ("`rule.md`", "reproducer", "critical", "`since.patch`", "`bar.md`", "`--findings`"):
         assert words in note, words
+
+
+# --- round 1's findings ------------------------------------------------------
+
+
+def test_only_a_blocking_finding_is_contested():
+    s3 = _flat(_section(PANEL, "## 3. After each round", "\n## 4."))
+    assert "Such a finding marked blocks is contested" in s3
+    assert "One marked a ticket to fix it or a note is answered with its reason in the findings table, and never ruled on" in s3
+    assert "Only a finding marked blocks is contested." in _rule()
+
+
+def test_a_kept_contest_is_re_entered_with_its_reproducer_and_security_flags():
+    inputs = _flat(_inputs())
+    assert "what it needs to be re-entered if kept: its reproducer, its part, and its `security` and area if it has them" in inputs
+    assert "marked blocks, flagged kept, with its reproducer, its part, and its `security` and area as before" in _rule()
+    # The re-entry the rule describes is one review-record accepts.
+    entry = findings.load(
+        '{"findings": [{"mark": "blocks", "mechanism": "x", "reproducer": "r", "contested": true, "security": "change", "area": "sign-in"}],'
+        ' "outcomes": [{"outcome": "contested", "finding": 1, "ruling": "kept"}]}'
+    )
+    assert entry.findings[0].contested and entry.findings[0].security == "change"
+
+
+def test_a_security_finding_names_only_its_area_in_every_column():
+    table = _flat(_section(PANEL, "## 9. The findings table"))
+    assert "A security finding's row names only its area, in every column: its part, its finding and its outcome, the test's name included." in table
+
+
+def test_section_4_shows_every_outcome_the_file_takes():
+    s4 = _section(PANEL, "## 4. Post the review record", "\n## 5.")
+    loaded = findings.load(_fence_after(s4, "For example:"))
+    assert {o.kind for o in loaded.outcomes} == set(findings.OUTCOMES)
+
+
+def test_an_empty_or_missing_rule_md_stops_the_review(tmp_path):
+    command = _fence_after(_inputs(), "`rule.md`")
+    assert command.endswith("&& test -s <scratch>/rule.md")
+    broken = command.replace("<this skill's directory>", str(tmp_path / "nowhere")).replace("<scratch>", str(tmp_path))
+    assert subprocess.run(["bash", "-c", broken], capture_output=True).returncode != 0
+    assert "never start the reviewers with an empty or missing `rule.md`" in _flat(_inputs())
+
+
+def test_last_comes_from_commit_txt_or_the_posted_record():
+    inputs = _flat(_inputs())
+    assert "its `commit.txt`, or the commit its posted record names" in inputs
+    assert "the commit can't be found" in inputs
+
+
+def test_an_empty_since_patch_after_a_base_merge_still_gets_a_look():
+    assert "An empty one (a merge of the base that left the pull request's own changes as they were) still asks for a look" in _rule()
