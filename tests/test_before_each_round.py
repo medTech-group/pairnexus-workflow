@@ -129,6 +129,10 @@ def test_its_inputs_carry_the_words_that_raised_the_round():
     # Only what they asked for is tagged as theirs: their words in the item's
     # issue, or the change asked for in an edit after publishing.
     assert "item's issue" in s and "edit after publishing" in s
+    # For a map's Destination item or a map decision, the map's own item's issue,
+    # never the Destination line the session wrote on the map.
+    assert "map's own item's issue" in s and "Destination item" in s and "map decision" in s
+    assert "line on the map" not in s
     # The rest (text the session wrote) goes in untagged, never as their words.
     rest = _sentence(r, "untagged")
     assert "decision ticket" in rest and "Destination item" in rest
@@ -145,7 +149,12 @@ def test_the_agent_knows_the_round_read_and_its_inputs():
     inputs = _flatten(_between(text, "## Your inputs", "\n## "))
     s = _sentence(inputs, "Before a round")
     assert "raised the round" in s and "own words" in s
-    assert "decision ticket" in _sentence(inputs, "untagged")
+    # The same inputs as start's rule, so the two never disagree.
+    tagged = _sentence(inputs, "That is their words")
+    assert "map's own item's issue" in tagged and "map decision" in tagged and "edit after publishing" in tagged
+    rest = _sentence(inputs, "untagged")
+    for part in ("decision ticket", "Destination item", "draft", "finding", "as published"):
+        assert part in rest, part
     reads = _flatten(_between(text, "## The reads", "\n## "))
     s = _sentence(reads, "**Before a round:**")
     assert "raised the round" in s and "options" in s
