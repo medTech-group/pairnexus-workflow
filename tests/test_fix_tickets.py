@@ -276,10 +276,15 @@ def test_a_blocking_security_problem_on_main_holds_a_run_for_the_owner():
         "takes #<n> out of this ticket's `## Blocked by`), then answers here\"."
     ) in text
     # No special step when it is picked up again: the queue or merge-check puts the base's fix under the change.
+    # Found again later, whatever its mark, it is the owner's: never refiled, never a second hold.
     assert (
-        "Nothing else is needed when it is picked up again: the merge queue, or `WF merge-check`'s \"behind the base\" "
-        "without one, puts the owner's fix under the change before it merges. A reviewer who finds it again on lines already "
-        "reviewed marks it a ticket to fix it, filed as above, never a second hold."
+        "When it is picked up again, the problem the hold names is the owner's, whatever a later review marks it: a finding on it "
+        "is \"Already filed as #<n>\", #<n> being the ticket the `needs-human` reason names, so nothing new is filed and it never "
+        "holds the ticket again. Marked blocks, it is answered with the owner's ruling on #<n> (fixed on the base branch, or not "
+        "a problem), which goes to the next review."
+    ) in text
+    assert (
+        "The merge queue, or `WF merge-check`'s \"behind the base\" without one, puts the owner's fix under the change before it merges."
     ) in text
     zero = _flat(_between(_read(BUILD), "## 0. Read first", "\n## 1."))
     assert "- **Its blockers.** If any isn't closed as completed, say so and stop: it isn't ready." in zero
