@@ -293,10 +293,21 @@ def test_start_s_breakdown_has_the_bar():
 # ---------- the changelog ----------
 
 
-def test_the_changelog_has_the_note():
-    notes = since_0110(_read("CHANGELOG.md"))
-    unreleased = notes[:notes.index("\n## 0.", 1)] if "\n## 0." in notes else notes
+def _assert_the_note(changelog):
+    # From "## Unreleased" down to 0.1.10, so a release that moves the note under its own
+    # heading still passes (pass 3); VERSION untouched is the release rules' own check.
+    unreleased = since_0110(changelog)
     assert "(#376" in unreleased
     assert "`workflow:carry-on`" in unreleased and "## Bar" in unreleased
     # Pass 1, correctness 3: it says what §2 says now.
     assert "a triaged ticket gets item 2's parts, the bar among them" in unreleased
+
+
+def test_the_changelog_has_the_note():
+    _assert_the_note(_read("CHANGELOG.md"))
+
+
+def test_the_note_is_still_found_once_a_release_moves_it():
+    # The next release puts its heading under "## Unreleased", above the notes it releases.
+    text = _read("CHANGELOG.md").replace("## Unreleased\n\n", "## Unreleased\n\n## 0.1.99\n\n", 1)
+    _assert_the_note(text)
