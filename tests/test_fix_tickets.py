@@ -272,16 +272,18 @@ def test_a_blocking_security_problem_on_main_holds_a_run_for_the_owner():
     ) in text
     assert (
         "stop as §5's \"Still red after three fix attempts\" says (`needs-human`), the reason naming only its area and saying "
-        "how it is released: \"the owner fixes it on the base branch, closes #<n>, then answers here\"."
+        "how it is released: \"the owner fixes it on the base branch and closes #<n> as completed (or, if it isn't a problem, "
+        "takes #<n> out of this ticket's `## Blocked by`), then answers here\"."
     ) in text
-    # The signal to merge the base in first sits where every session reads it: §0's blocker check.
-    zero = _flat(_between(_read(BUILD), "## 0. Read first", "\n## 1."))
+    # No special step when it is picked up again: the queue or merge-check puts the base's fix under the change.
     assert (
-        "When one is a ticket filed from this ticket for a security problem on the base branch (labelled `ready-for-human`, "
-        "its machine line saying `from=` this ticket), now closed as completed, merge the base branch in before anything else, "
-        "as §5's \"The base branch moved\" says, with the merge queue on too, so the reviewers read the owner's fix"
-    ) in zero
-    assert "§0 has the session that picks it up again merge the base branch in first, so its reviewers read the fix." in text
+        "Nothing else is needed when it is picked up again: the merge queue, or `WF merge-check`'s \"behind the base\" "
+        "without one, puts the owner's fix under the change before it merges. A reviewer who finds it again on lines already "
+        "reviewed marks it a ticket to fix it, filed as above, never a second hold."
+    ) in text
+    zero = _flat(_between(_read(BUILD), "## 0. Read first", "\n## 1."))
+    assert "- **Its blockers.** If any isn't closed as completed, say so and stop: it isn't ready." in zero
+    assert "merge the base branch in" not in zero
     assert "In attended work it is fixed here, its details shown to the person and given privately to whoever fixes it." in text
     assert "full review" not in text
     assert "**The base branch moved:**" in _read(BUILD)
@@ -338,6 +340,7 @@ def test_changelog_note():
     assert "is a new ticket unless this session already filed one for it" in note
     assert "never filed, even when marked a ticket to fix it" in note
     assert "its ticket to fix it is filed (`kind=old`) and named under the held ticket's `## Blocked by`, replacing a \"None\"" in note
+    assert "closed as completed, or taken out of `## Blocked by` if it isn't a problem" in note
     assert "(#373, part of spec #412)" in notes
     assert "`<!-- workflow:fix-ticket from=<n> kind=old|late|split -->`" in notes
     assert "Tests: `tests/test_fix_tickets.py`." in notes
