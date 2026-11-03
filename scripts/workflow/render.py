@@ -200,6 +200,33 @@ def _starts_from_words(ticket: dict, profile: Profile, branch: str) -> str:
     )
 
 
+# A hand-off comment on a pull request (#371): what a carried-on ticket's
+# session starts from (#380).
+_HAND_OFF = re.compile(r"https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/([1-9][0-9]{0,9})#issuecomment-([1-9][0-9]{0,19})")
+
+
+def _hand_off_words(url, profile: Profile, branch: str) -> str:
+    """The briefing's "Hand-off:" line, from the optional `hand_off` slot: the
+    URL of the hand-off comment an earlier run's end time left on the ticket's
+    pull request (#380), or none. Anything else stops the render."""
+    if url is None or (isinstance(url, str) and url.strip().lower() == "none"):
+        return "none: no earlier run handed this ticket on."
+    m = _HAND_OFF.fullmatch(url.strip()) if isinstance(url, str) else None
+    if not m or (profile.repo and m.group(1).lower() != profile.repo.lower()):
+        raise RenderError(
+            "the hand_off slot is the URL of the hand-off comment on this ticket's pull request "
+            f"(https://github.com/{profile.repo or '<repo>'}/pull/<n>#issuecomment-<id>), or \"none\""
+        )
+    return (
+        f"{m.group(0)}. An earlier run's end time came before this ticket's review was clean, so this run carries it on; "
+        f"it isn't a retry. Its pull request #{m.group(2)} and branch `{branch}` stay as they are: check out the branch "
+        "from GitHub, and read that hand-off comment before anything else. Go on from it: fix its open blocking findings "
+        "first, then run the next review, numbered after the rounds and passes it names (`merge-check` counts them from "
+        "the records). A security finding it names by its area only gets a full review of the change for that area "
+        "first, which finds its details again: none crossed sessions."
+    )
+
+
 def _code(cmd: str) -> str:
     return f"`{cmd}`" if cmd else "none"
 
@@ -271,6 +298,7 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
         "ticket.title": ticket.get("title") or "",
         "ticket.branch": branch,
         "ticket.starts_from": _starts_from_words(ticket, profile, branch),
+        "ticket.hand_off": _hand_off_words(slots.get("hand_off"), profile, branch),
         "project.name": profile.name,
         "project.repo": profile.repo,
         "project.base_branch": profile.base_branch,
