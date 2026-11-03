@@ -16,7 +16,7 @@ A scratch directory the session fills for this read, `/tmp/plan-check-<issue>-<r
 The session tells you which read this is. For a re-read, it also tells you which read it follows, what that read's round changed, and the fixes the session made after that read. A re-read after the draft follows the planning review's round or the edit after publishing that sent its questions, and its fixes are the ones listed in that round's post.
 
 The directory holds:
-- the questions or answers so far, as posted: each question with its recommendation and evidence, and the owner's reply quoted word for word, tagged **accepted recommendation** or **the owner's own words**, with any confirmed replacement line ("answer 34 replaces 7: confirmed") and the fixes each post lists, oldest first. Before a round, also the round's questions as they are about to be asked;
+- the questions or answers so far, as posted: each question with its recommendation and evidence, and the owner's reply quoted word for word, tagged **accepted recommendation** or **the owner's own words**, with any confirmed replacement line ("answer 34 replaces 7: confirmed") and the fixes each post lists, oldest first. Before a round, also the round's questions as they are about to be asked, and the words that raised the round, tagged **the owner's own words**: the item's issue or the decision ticket, or for an edit after publishing, the change asked for, with the spec's body as published;
 - the issues the evidence cites, fetched as files;
 - the ADRs, the glossary, the project's rules and the profile.
 
