@@ -80,13 +80,30 @@ Follow the rule in <scratch>/rule.md: it says how to mark and report each findin
 ## 3. After each round
 
 1. Check each finding against the code. A reviewer can be wrong.
-2. Fix every real one, with a test for each bug.
+2. Fix every real one, with a test for each bug. Under the rule (section 10), a fresh fixer makes them instead, for the findings marked blocks (**The fixer**, below), and a finding marked a ticket to fix it or a note isn't fixed here (the paragraph after these steps).
 3. Record each that isn't a problem, with the reason.
 4. Run `git status`: it must show nothing a reviewer made. Discard anything stray and say so. If the guard refuses the discard (a protected file), finish in a clean copy, and say so in the PR body: `git worktree add --detach <a directory outside the repo> HEAD`, commit there, and push with `git push origin HEAD:<branch>`. Do everything after it there: later fixes, the tests, `commit.txt`, the diff and the next rounds. Give the reviewers the clean copy's absolute path as the repo: the explorer runs the CLI from it, and checks both it and the session's checkout with `git status`.
 5. Rerun the typecheck and the affected tests.
 6. Post the round's review record (section 4).
 
 A record under the rule (section 10), written with `--findings` (section 4), comes from the reviewers' reports: every finding a reviewer reported goes in the findings file as reported, even one you judge not a problem. Such a finding marked blocks is contested: its reason goes in the findings table and in the next review's `previous.md`, under "Contests to rule on", and the next review rules on it. One marked a ticket to fix it is never dropped: it is filed as the reviewer marked it, the way `build-ticket` files tickets to fix findings, and your doubt goes in the findings table. The one exception is a security problem the change adds (`security: change`) marked a ticket to fix it: it is never filed, but fixed in the pull request, since it still blocks (section 10). A note is answered with its reason in the findings table. Neither is ruled on. A finding flagged kept after a contest is never contested again: it is fixed. One entry for each finding each reviewer reported. A mark is the reviewer's: copy it, its part, its reproducer and its flags as written, and never change one.
+
+**The fixer.** Under the rule (section 10), each review's fixes, round 1's included, go to a fresh `fixer` agent (`pairnexus-workflow:fixer` as a plugin), never one kept from an earlier review, and you make none yourself: you build the change, start the reviewers and the fixers, post the records and keep short summaries. Start it once the review's findings file is written and its tickets are filed, when it has a finding marked blocks (a security problem the change adds marked a ticket to fix it among them). A finding you doubt goes to the fixer all the same: it checks it. Give it the repository's path (the clean copy's, after step 4's), the branch's name, and a scratch directory of its own, `/tmp/fix-<ticket>-<review>/` (`<review>` being `r<n>` or `pass<k>`, as the review's own), holding only these, and nothing of this session's history:
+- `ticket.md`, `bar.md` and `rules.md`, copied from the review's scratch directory;
+- `findings.md`: the review's findings marked blocks, numbered as in its findings file, each with its part, where it is, its reproducer, the reviewer's one-line fix, its `security` and area, and, for one kept after a contest, the ruling and its reason (an overturned one isn't given to it: it counts for nothing);
+- `moved.md`: the criteria moved by a split, quoted, each with its ticket, or "None";
+- `head.txt`: `git rev-parse HEAD`, the head it starts from;
+- `part.md`, when `merge-check` says to give a part the safe fallback or split it out: the part's name exactly as the records give it, and which.
+
+If auto-merge is armed, disarm it first: the fixer pushes. Its report gives each finding's outcome: the commit and the test for each fixed one (they go in the findings table), the reason for each contested one, and why for each not fixed, which stays open for the next review. Then steps 4 to 6.
+
+**The fix rule.** The `fixer` agent follows it, and says the same. For each finding marked blocks:
+- Check it against the code first: a reviewer can be wrong.
+- A defect: its reproducer as a failing test first, then the fix that makes it pass. A missing test (an acceptance criterion unmet, or behaviour untested): the test is the fix.
+- Narrow first: prefer a fix that removes a case, refuses more or deletes text over one that adds. A fix that adds an exception, a state or a rule tests both sides of it in the same commit.
+- Then the typecheck and the affected tests, a commit, a push, and each finding's outcome reported.
+- "Not a problem": the finding is contested with a written reason, never fixed silently or dropped; its reason is the contest's, in the findings table and under "Contests to rule on". A finding kept after a contest is fixed, never contested again; one overturned counts for nothing. The fixer never changes a mark.
+- A security problem the change adds: its test's name, its row in the findings table and its commit message name only its area.
 
 ## 4. Post the review record
 
