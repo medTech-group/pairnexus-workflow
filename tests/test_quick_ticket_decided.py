@@ -99,8 +99,15 @@ def test_the_end_check_fills_its_scratch_directory():
 def test_the_quick_ticket_s_check_isn_t_the_planning_review_and_posts_no_answers():
     o = _check_opening()
     assert re.search(r"\bnot the planning review\b|\bisn't the planning review\b", o)
-    s = _sentence(o, "posted")
-    assert re.search(r"\bno\b|\bnever\b|\bnothing\b", s) and "answers" in s
+    s = _sentence(o, "as their answers")
+    assert "posted" in s and re.search(r"\bnone\b|\bno\b|\bnever\b|\bnothing\b|\bnot\b", s)
+
+
+def test_a_quick_ticket_with_no_item_s_issue_files_one_first():
+    s = _sentence(_check_opening(), "no item's issue")
+    assert "file one first" in s
+    # The two routes that reach a quick ticket without one.
+    assert "step 0" in s and "**Add to an existing issue**" in s
 
 
 # --- Decided for you ----------------------------------------------------------------------
@@ -114,8 +121,16 @@ def test_the_decisions_made_for_them_go_into_the_ticket_under_decided_for_you():
     for part in ("rests on", "gives up", "wrong"):
         assert part in d, part
     # Never tagged as their answers.
-    s = _sentence(d, "never")
-    assert "tagged" in s and ("answers" in s or "accepted recommendation" in s)
+    s = _sentence(d, "tagged")
+    assert re.search(r"\bnot\b|\bnever\b", s) and "their answers" in s
+    # Sensitive data stays out of a section that is posted in the ticket's body.
+    s = _sentence(d, "Sensitive data")
+    assert "`profile.md`" in s and "left out" in s
+
+
+def test_step_2_publishes_the_section_with_the_ticket():
+    s = _flatten(_quick_step(2))
+    assert "`## Decided for you`" in _sentence(s, "replace its body")
 
 
 def test_the_list_is_shown_above_publish_it_with_the_fixes():
@@ -139,6 +154,12 @@ def test_ask_findings_are_asked_first():
     assert "asked" in s and "**Publish it**" in s
     # As decision-question-shaped choices: a recommendation with its evidence where there's a basis.
     assert "recommendation" in a and "evidence" in a
+    assert "**Leave them open**" in a
+
+
+def test_an_ask_finding_left_open_goes_into_decided_for_you_marked_open():
+    s = _sentence(_part("ask findings"), "`## Decided for you`")
+    assert re.search(r"\b(leave|left)\b[^.]*\bopen\b", s) and "marked open" in s
 
 
 def test_a_finding_about_their_own_words_is_asked_on_its_own():
@@ -158,7 +179,7 @@ def test_fix_findings_are_made_and_shown_above_publish_it():
 
 
 def test_one_re_read_in_all_of_what_the_answers_and_change_it_changed():
-    r = _part("re-read")
+    r = _part("One re-read")
     assert "one re-read in all" in r.lower()
     s = _sentence(r, "since the end check")
     assert "**ask**" in s and "**Change it**" in s and "changed" in s and "fixes" in s
@@ -168,19 +189,39 @@ def test_one_re_read_in_all_of_what_the_answers_and_change_it_changed():
 
 
 def test_the_re_read_fills_its_own_scratch_directory():
-    s = _sentence(_part("re-read"), "/tmp/plan-check-")
+    s = _sentence(_part("One re-read"), "/tmp/plan-check-")
     assert "-reread-" in s and "Your inputs" in s
     # It gets their replies, as the agent's inputs say.
     assert "replies" in s
 
 
+def test_the_re_read_runs_once_on_a_draft_that_changed_beyond_its_section():
+    s = _sentence(_part("One re-read"), "**Publish it** on a draft")
+    # Once: the first such pick.
+    assert "first time" in s
+    # Writing the section isn't a change that calls for it.
+    assert "beyond" in s and "`## Decided for you`" in s
+
+
+def test_it_publishes_straight_away_only_when_nothing_new_is_left_to_show():
+    s = _sentence(_part("One re-read"), "straight away")
+    assert "only when" in s and "found nothing" in s
+    # Its own "Decided for you" list can add items: those are shown before publishing.
+    assert "section" in s and "as it was" in s
+
+
+def test_the_re_read_is_given_the_replies_tagged():
+    s = _sentence(_part("One re-read"), "/tmp/plan-check-")
+    assert "word for word" in s and "tagged" in s and "**ask**" in s
+
+
 def test_nothing_changed_means_no_re_read():
-    s = _sentence(_part("re-read"), "nothing changed")
+    s = _sentence(_part("One re-read"), "nothing changed")
     assert re.search(r"\bno re-read\b|\bnothing to re-read\b", s)
 
 
 def test_the_re_read_s_findings_are_never_asked_and_what_it_leaves_is_marked_open():
-    r = _part("re-read")
+    r = _part("One re-read")
     s = _sentence(r, "never asked")
     assert "**fix**" in s and "**ask**" in s
     s = _sentence(r, "marked open")
@@ -189,9 +230,12 @@ def test_the_re_read_s_findings_are_never_asked_and_what_it_leaves_is_marked_ope
     assert "above **Publish it**" in r
 
 
-def test_a_change_after_the_re_read_gets_no_second_read():
-    s = _sentence(_part("re-read"), "after the re-read")
-    assert "**Change it**" in s and re.search(r"\bno (further|second|other) read\b|\bwithout another read\b", s)
+def test_a_change_after_the_re_read_gets_no_second_read_and_is_marked_open():
+    a = _part("After the re-read")
+    s = _sentence(a, "**Change it**")
+    assert re.search(r"\bno (further|second|other) read\b|\bwithout another read\b", s)
+    # What it decides for them is never published as if a read had seen it.
+    assert "`## Decided for you`" in s and "marked open" in s
 
 
 # --- the same for File the fix as a ticket and Ready to build ------------------------------
@@ -210,23 +254,30 @@ def test_ready_to_build_drafts_the_ticket_and_runs_its_check_before_its_own_opti
     before = s[:options]
     assert "draft" in before and "end check" in before
     # The list is shown above the options.
-    assert "above" in _sentence(before, "**Decided for you**") or "above the options" in before
+    s1 = _sentence(before, "**Decided for you**")
+    assert "above the options" in s1 and "**ask**" in s1
     # The check it ran is the one Publish it shows: no second end check.
     ready = _flatten(_between(_sorting(), "**Ready to build**", "\n- **"))
     s2 = _sentence(ready, "**Publish it**")
     assert "check" in s2 and re.search(r"\bthe one\b|\bno second\b|\bnot again\b", s2)
+    # Its ask findings are asked once Ready to build is picked, never before the options.
+    assert "**ask**" in s2 and "now" in s2
+    assert "since the check" in s2
+
+
+def test_another_outcome_keeps_the_ask_findings_on_the_issue():
+    s = _sentence(_flatten(_sorting()), "isn't published")
+    assert "**Needs a spec**" in s and "**ask**" in s and "comment on the issue" in s
 
 
 def test_triage_run_on_its_own_isn_t_covered():
     s = _flatten(_sorting())
-    sent = _sentence(s, "on its own")
+    sent = _sentence(s, "`triage` run on its own")
     assert "`triage`" in sent and re.search(r"\bisn't\b|\bnot\b", sent)
 
 
-def test_triage_stays_unedited():
-    # Matt Pocock's skill: the vendored copy carries none of this spec's rules.
-    triage = (KIT / ".claude/skills/triage/SKILL.md").read_text(encoding="utf-8")
-    assert "Decided for you" not in triage and "planning-checker" not in triage
+# `triage` stays unedited: it is Matt Pocock's, with no source in this kit (only its vendored
+# copy), so no test here could see an edit to it. Not tested.
 
 
 # --- the flow agrees -------------------------------------------------------------------------
