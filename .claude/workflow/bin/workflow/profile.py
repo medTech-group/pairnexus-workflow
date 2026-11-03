@@ -71,6 +71,7 @@ ALLOWED: dict[str, set[str] | None] = {
         "review_passes",
         "small_max_lines",
         "small_max_files",
+        "bar_areas",
         "ticket_environment",
         "conductor_environment",
         "environment_setup",
@@ -221,6 +222,9 @@ class Profile:
     # counts only while the diff, outside tests, is within both.
     small_max_lines: int = 60
     small_max_files: int = 4
+    # The areas whose tickets need a `## Bar` (#428, spec #412): `workflow
+    # ready` notes a ticket in one with none. Empty: none do.
+    bar_areas: list[str] = field(default_factory=list)
     ticket_environment: str = ""
     conductor_environment: str = ""
     environment_setup: str = ""
@@ -267,6 +271,21 @@ def _review_passes(v) -> int | str:
         return _int(v, "run.review_passes", 2, 0, 10)
     except ProfileError:
         raise ProfileError(f'run.review_passes: expected a whole number from 0 to 10, or "{presets_mod.UNTIL_CLEAN}" (no cap)') from None
+
+
+def _bar_areas(v, areas: dict) -> list[str]:
+    """`run.bar_areas` (#428): names from `[areas]`, compared without case as
+    tickets' areas are; absent or empty, none."""
+    if v is None:
+        return []
+    if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
+        raise ProfileError(f"run.bar_areas: expected a list of area names from [areas], not {_shown(v)}")
+    known = {a.casefold() for a in areas}
+    for name in v:
+        if name.casefold() not in known:
+            there = f"({', '.join(sorted(areas, key=str.casefold))})" if areas else "(it has none)"
+            raise ProfileError(f"run.bar_areas: {_shown(name)} isn't one of the profile's areas {there}; name one from [areas], or leave it out")
+    return list(v)
 
 
 def _cwd(v, where: str) -> str:
@@ -510,6 +529,7 @@ def parse(data: dict, root: Path) -> Profile:
         review_passes=_review_passes(run.get("review_passes")),
         small_max_lines=_int(run.get("small_max_lines"), "run.small_max_lines", 60, 1, 1000),
         small_max_files=_int(run.get("small_max_files"), "run.small_max_files", 4, 1, 50),
+        bar_areas=_bar_areas(run.get("bar_areas"), areas),
         ticket_environment=str(run.get("ticket_environment") or ""),
         conductor_environment=str(run.get("conductor_environment") or ""),
         environment_setup=str(run.get("environment_setup") or ""),
@@ -867,6 +887,15 @@ def check(profile: Profile) -> list[str]:
             w.append(f"commands.package {pk.name}: cwd {pk.cwd} isn't a directory")
         if not matches(root, pk.path):
             w.append(f"commands.package {pk.name}: path {pk.path!r} matches no file (relative to the project root)")
+    from .issues import can_be_area
+
+    for name in profile.bar_areas:
+        if not can_be_area(name):
+            w.append(
+                f"run.bar_areas: no ticket's Area: line can give {_shown(name)} (an area is one word of letters, "
+                "digits, dots, hyphens and underscores, not starting or ending with one of the last three), "
+                "so its tickets are never noted; rename the area"
+            )
     for area, pats in profile.areas.items():
         for pat in pats:
             if not matches(root, pat):
@@ -908,6 +937,7 @@ def summary(profile: Profile) -> dict:
         "required_checks": profile.required_checks,
         "killed_markers": profile.killed_markers,
         "areas": profile.areas,
+        "bar_areas": profile.bar_areas,
         "deploy_commands": profile.deploy_commands,
         "protected_paths": profile.protected_paths,
         "code_writers": profile.code_writers,

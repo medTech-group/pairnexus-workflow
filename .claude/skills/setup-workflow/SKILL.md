@@ -117,7 +117,7 @@ Everything else takes the template's default, or what exploring found: the comma
 
 **9. Labels,** created through the API (`gh api repos/<repo>/labels -f name=… -f color=…`) unless they already exist:
 - `ready-for-agent`, `ready-for-human`, `needs-human`, `owner-task`, `needs-triage`, `needs-info`, `wontfix`, `spec`;
-- `workflow:in-progress`, `workflow:run`, `workflow:stop`, `workflow:infra`;
+- `workflow:in-progress`, `workflow:run`, `workflow:stop`, `workflow:infra`, `workflow:carry-on`;
 - `wayfinder:map`, `wayfinder:research`, `wayfinder:prototype`, `wayfinder:grilling`, `wayfinder:task`.
 
 `ready-for-human` and `owner-task` both mean "a person does this". Readiness treats both as human blockers.

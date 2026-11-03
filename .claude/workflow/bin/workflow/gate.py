@@ -2,19 +2,20 @@
 
 A ticket session ends each turn with a status line:
 
-    WORKFLOW-STATUS: done | waiting | needs-human | stopped
+    WORKFLOW-STATUS: done | waiting | needs-human | stopped | handed-off
 
 `done` also needs the flow's checklist (at least three `- [x]` / `- [ ]` lines),
 and every unchecked line must say why: `because`, `why`, ` — `, ` - `, `n/a`
 or `not ` ("not needed"). A bare link or a colon isn't a reason.
 Text inside ``` fences is ignored when looking for both, so a quoted status line
 or checklist doesn't count.
-`waiting` (CI running, a check-in scheduled), `needs-human` and `stopped` end
-the turn as they are. Without a valid status the gate asks the session to add
-one, once per turn: never while a stop hook is already making it continue
-(`stop_hook_active`), so it can't trap a session in a loop. A cap of
-`MAX_BLOCKS` a session a day (UTC) is a last safety net, so a long ticket
-session keeps the gate the next day.
+`waiting` (CI running, a check-in scheduled), `needs-human`, `stopped` and
+`handed-off` (#371: the session posted the hand-off comment, and a fresh
+session carries the review on) end the turn as they are. Without a valid
+status the gate asks the session to add one, once per turn: never while a stop
+hook is already making it continue (`stop_hook_active`), so it can't trap a
+session in a loop. A cap of `MAX_BLOCKS` a session a day (UTC) is a last
+safety net, so a long ticket session keeps the gate the next day.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-STATUS = re.compile(r"^\s*\**WORKFLOW-STATUS\**\s*:\s*\**\s*(done|waiting|needs-human|stopped)\b", re.I | re.M)
+STATUS = re.compile(r"^\s*\**WORKFLOW-STATUS\**\s*:\s*\**\s*(done|waiting|needs-human|stopped|handed-off)\b", re.I | re.M)
 CHECK_LINE = re.compile(r"^\s*[-*]\s*\[[ xX]\]\s+\S", re.M)
 UNCHECKED = re.compile(r"^\s*[-*]\s*\[ \]\s+(\S.*)$", re.M)
 # A reason, in words: "because …", "not needed", "n/a", "none", "skipped", "why: …", or after a spaced dash.
@@ -56,7 +57,7 @@ def verdict(message: str) -> str | None:
     m = STATUS.search(message)
     if not m:
         return (
-            "End the turn with a status line, `WORKFLOW-STATUS: done | waiting | needs-human | stopped`. "
+            "End the turn with a status line, `WORKFLOW-STATUS: done | waiting | needs-human | stopped | handed-off`. "
             "`done` also needs the flow's Building checklist, every line marked done or saying why not. "
             "Waiting on CI with a check-in scheduled is `waiting`."
         )

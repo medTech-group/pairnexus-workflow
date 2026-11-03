@@ -67,20 +67,31 @@ def assignees_of(issue: dict) -> list[str]:
     return [a["login"] if isinstance(a, dict) else str(a) for a in issue.get("assignees") or []]
 
 
-def parse_numbers(text: str | None) -> set[int]:
-    """Ticket numbers from "13, #143": commas between, `#` and spaces ignored.
+def parse_number_list(text: str | None) -> list[int]:
+    """Ticket numbers from "13, #143", in the order given, each once: commas
+    between, `#` and spaces ignored.
 
     Raises ValueError naming the first part that isn't a number.
     """
-    out: set[int] = set()
+    out: dict[int, None] = {}
     for part in (text or "").split(","):
         p = part.strip().lstrip("#").strip()
         if not p:
             continue
-        if not p.isdigit():
-            raise ValueError(f"not a ticket number: {part.strip()!r}")
-        out.add(int(p))
-    return out
+        digits = p.lstrip("0")
+        # "٣" or "²" is no ticket number, nor one past 18 digits (Python's own
+        # limit on int() is a setting, and counts leading zeros)
+        if not (p.isascii() and p.isdigit()) or len(digits) > 18:
+            shown = part.strip()
+            shown = shown[:20] + "\u2026" if len(shown) > 20 else shown
+            raise ValueError(f"not a ticket number: {shown!r}")
+        out.setdefault(int(digits or "0"))
+    return list(out)
+
+
+def parse_numbers(text: str | None) -> set[int]:
+    """`parse_number_list`, as a set."""
+    return set(parse_number_list(text))
 
 
 def _same_repo(ref_repo: str, repo: str | None) -> bool:
@@ -176,6 +187,11 @@ def blockers_of(body: str | None, repo: str | None = None) -> list[Blocker]:
 _AREA_LINE = re.compile(r"^\s*(?:[-*+]\s+)?\**area\**\s*:\s*(.*)$", re.I)
 _AREA_HEADING = re.compile(r"^\s*#{1,6}\s*area\s*(?::\s*(.*))?$", re.I)
 _AREA_WORD = re.compile(r"[\w.-]+")
+
+
+def can_be_area(name: str) -> bool:
+    """A ticket's `Area:` could give `name`: one word, as `read_area` reads it."""
+    return bool(_AREA_WORD.fullmatch(name)) and name.strip(".-_") == name
 
 
 def _slug(text: str) -> str:
@@ -419,6 +435,168 @@ def protected_named(body: str | None, patterns: Iterable[str] | None, repo: str 
     return list(out.items())
 
 
+# The bar (#428, spec #412): a `## Bar` heading of the ticket's own, as GitHub
+# shows it. When in doubt it isn't one, so the ticket is noted (fail closed):
+# `has_bar` stops reading at anything whose rendering it can't be sure of.
+# Each pattern runs on a line with its trailing spaces taken off, and no two
+# of its space runs sit side by side, so a long line can't make it slow.
+_BAR_WORD = r"(?:bar:?|\*\*bar:?\*\*|__bar:?__|\*bar:?\*|_bar:?_)"  # bold or italic too
+_BAR_HEADING = re.compile(r"^ {0,3}#{1,6}[ \t]+" + _BAR_WORD + r"(?:[ \t]*:)?(?:[ \t]+#+)?$", re.I)
+_BAR_SETEXT = re.compile(_BAR_WORD + r"(?:[ \t]*:)?$", re.I)  # "Bar" at column 0, underlined
+_SETEXT_RULE = re.compile(r"(?:=+|-+)$")  # at column 0: not a list item's
+_TOP_FENCE = re.compile(r"(`{3,}|~{3,})(.*)$")  # a fence at column 0: top level
+# What comes before a line's content: indentation, quote and list markers.
+# A fence after any of it, or HTML after a quote or list marker, is where
+# GitHub may pair or end things differently.
+_CONTAINER = re.compile(r"(?:[ \t>]|(?:[-*+]|\d{1,9}[.)])(?=[ \t]))*")
+_FENCE_MARK = re.compile(r"`{3,}|~{3,}")
+_HTML_MARK = re.compile(r"<[!?/A-Za-z]")
+# HTML blocks, as cmark-gfm starts and ends them: a comment, <?, <!X (a
+# capital letter) and <![CDATA[ end at their terminator, a raw-text tag at
+# the first line holding any raw-text closing tag, any other tag at a blank
+# line. Tag names are ASCII.
+_HTML_ENDS = (
+    (re.compile(r" {0,3}<!--"), "-->"),
+    (re.compile(r" {0,3}<\?"), "?>"),
+    (re.compile(r" {0,3}<!\[CDATA\["), "]]>"),
+    (re.compile(r" {0,3}<![A-Z]"), ">"),
+)
+_HTML_RAW = re.compile(r" {0,3}<(?:pre|script|style|textarea)(?=[ \t\v\f>]|$)", re.I | re.A)
+_RAW_END = re.compile(r"</(?:pre|script|style|textarea)>", re.I | re.A)
+# <!x: a paragraph under cmark-gfm's rule (a declaration needs a capital
+# letter), a declaration under newer CommonMark's: either may hide what follows.
+_LOWER_DECLARATION = re.compile(r" {0,3}<![a-z]")
+_HTML_TAG = re.compile(r" {0,3}</?[A-Za-z]")
+# In a stretch has_bar skips as HTML: something GitHub may read as opening
+# code or a comment there instead (the first line may be inline HTML, not a
+# block, or a list item's block may end early), so has_bar stops reading.
+_OPENS_MORE = re.compile(r"`{3,}|~{3,}|<!|<\?|<(?:pre|script|style|textarea)(?=[ \t\v\f>]|$)", re.I | re.A)
+_LINE_END = re.compile(r"\r\n|\r|\n")  # Markdown's line ends, not str.splitlines()'s
+
+
+def _past(lines: list[str], i: int, ends) -> int | None:
+    """The index after the first line from `i` on that `ends`, or None when
+    none does (the construct is never closed)."""
+    while i < len(lines):
+        if ends(lines[i]):
+            return i + 1
+        i += 1
+    return None
+
+
+# What `_html_closed` understands; anything else after a `<` is treated as
+# left open. Tags as CommonMark and HTML5 both read them: a quote opens a
+# value only after `=`.
+_SP = r"[ \t\n\r\f]"
+_TAG = re.compile(
+    rf"</?[A-Za-z][A-Za-z0-9-]*(?:{_SP}+[A-Za-z_:][-A-Za-z0-9_:.]*"
+    rf"(?:{_SP}*={_SP}*(?:\"[^\"]*\"|'[^']*'|[^ \t\n\r\f\"'=<>`]+))?)*{_SP}*/?>",
+    re.A,
+)
+_PLAIN_BOGUS = re.compile(r"<![A-Z][^>]*>")  # <!DOCTYPE …>: HTML5 ends it at the first >
+# Constructs whose reading differs between cmark-gfm, newer CommonMark,
+# GitHub's tag filter and HTML5, inline or in a block: has_bar stops reading
+# at any line (outside fenced code) that holds one. <? and <![ (a processing
+# instruction or CDATA cmark ends later than HTML5), comments HTML5 ends
+# early, a vertical tab, and tags the tag filter turns into text or whose
+# content a browser hides.
+_RISKY = re.compile(
+    r"<\?|<!\[|--!>|<!--->|<!-->|\v"  # \v: cmark parts a tag's attributes at it, HTML5 doesn't
+    r"|</?(?:title|textarea|style|xmp|iframe|noembed|noframes|script|plaintext|select|template|noscript|rp|svg|math)(?![A-Za-z0-9-])",
+    re.I | re.A,
+)
+
+
+def _html_closed(text: str) -> bool:
+    """`text`, passed through as raw HTML, is made only of plain text, closed
+    comments, well-formed tags and `<!X …>`, with nothing `_RISKY`, so it
+    ends outside any tag, value or comment and a browser shows what follows
+    it. Anything else counts as left open: has_bar stops reading."""
+    if _RISKY.search(text):
+        return False
+    i, n = 0, len(text)
+    while i < n:
+        i = text.find("<", i)
+        if i < 0:
+            return True
+        if text.startswith("<!--", i):
+            j = text.find("-->", i + 4)  # <!-->, <!---> and --!> are _RISKY
+            if j < 0:
+                return False
+            i = j + 3
+        elif m := (_TAG.match(text, i) or _PLAIN_BOGUS.match(text, i)):
+            i = m.end()
+        elif i + 1 < n and (text[i + 1] in "/!?" or text[i + 1].isascii() and text[i + 1].isalpha()):
+            return False  # a construct it doesn't understand
+        else:
+            i += 1  # a literal <
+    return True
+
+
+def _odd_container(line: str) -> bool:
+    """A fence indented, quoted or in a list item, or HTML in a quote, a list
+    item or indented 4 columns or more (code at the top level, but a list
+    item's continuation may hold it): where has_bar stops reading."""
+    p = _CONTAINER.match(line).end()
+    if not p:
+        return False
+    rest, before = line[p:], line[:p]
+    deep = before.strip(" \t") or "\t" in before or len(before) >= 4
+    return bool(_FENCE_MARK.match(rest) or (deep and _HTML_MARK.match(rest)))
+
+
+def has_bar(body: str | None) -> bool:
+    """The body has a `## Bar` heading of its own: at any level, or "Bar"
+    underlined at column 0 after a blank line, bold or italic, a trailing
+    colon allowed. One GitHub hides or shows as code or text doesn't count:
+    in fenced or indented code, an HTML block or comment, or a quote. Reading
+    stops (no bar from there on) at a fence that isn't at column 0 or a
+    construct never closed, where GitHub could read the rest differently."""
+    lines = _LINE_END.split((body or "").removeprefix("\ufeff"))  # GitHub skips a leading BOM
+    i, n = 0, len(lines)
+    while i < n:
+        line = lines[i].rstrip(" \t")
+        nxt: int | None = None
+        f = _TOP_FENCE.match(line)
+        if f and not (f.group(1)[0] == "`" and "`" in f.group(2)):
+            close = re.compile(r" {0,3}" + re.escape(f.group(1)[0]) + "{" + str(len(f.group(1))) + ",}$")
+            nxt = _past(lines, i + 1, lambda l: close.match(l.rstrip(" \t")))
+        elif _odd_container(line) or _LOWER_DECLARATION.match(line) or _RISKY.search(line):
+            return False
+        elif _HTML_RAW.match(line):
+            nxt = _past(lines, i, _RAW_END.search)
+        elif end := next((e for start, e in _HTML_ENDS if start.match(line)), None):
+            nxt = _past(lines, i, lambda l: end in l)
+        elif _HTML_TAG.match(line):
+            nxt = _past(lines, i, lambda l: not l.strip(" \t"))
+            if nxt is None:
+                return False  # to the end: the rest is HTML
+        elif _BAR_HEADING.match(line):
+            return True
+        else:
+            after_blank = i == 0 or not lines[i - 1].strip(" \t")
+            if after_blank and _BAR_SETEXT.match(line) and i + 1 < n and _SETEXT_RULE.match(lines[i + 1].rstrip(" \t")):
+                return True
+            i += 1
+            continue
+        if nxt is None:
+            return False  # never closed: the rest is code or HTML
+        if not f and nxt > i + 1 and (line[:1] in " \t" or any(_OPENS_MORE.search(l) for l in lines[i + 1 : nxt])):
+            # Skipped as HTML, but GitHub may end it sooner (indented, it may be
+            # a list item's) or open code or a comment inside it.
+            return False
+        if not f and not _html_closed("\n".join(lines[i:nxt])):
+            return False  # it leaves a tag, a quoted value or a comment open
+        i = nxt
+    return False
+
+
+BAR_NOTE = (
+    "area {area} is in run.bar_areas, but the ticket has no ## Bar heading: add one saying what the change "
+    "must handle, what it does when it can't be sure (fail closed), and the limits it accepts"
+)
+
+
 @dataclass
 class Verdict:
     number: int
@@ -439,6 +617,7 @@ def readiness(
     repo: str | None = None,
     areas: Iterable[str] | None = None,
     protected: Iterable[str] | None = None,
+    bar_areas: Iterable[str] | None = None,
 ) -> list[Verdict]:
     """Every open `ready-for-agent` build ticket with whether it is ready and why not.
 
@@ -455,8 +634,11 @@ def readiness(
     one (`protected_named`) gets a note, never a block, since a ticket session
     can't change one and the words alone can't tell a change from a mention;
     the conductor lists such tickets at kick-off for the owner to keep or exclude.
+    `bar_areas` are the profile's `run.bar_areas` (#428): a ticket in one
+    whose body has no `## Bar` (`has_bar`) gets a note, never a block.
     """
     protected = list(protected or [])
+    need_bar = {a.casefold() for a in bar_areas or [] if a}
     by_num = {i["number"]: i for i in issues if "pull_request" not in i}
     # Pull requests as the issues API lists them (`pull_request.merged_at`), for PR blockers.
     pr_items = {i["number"]: i for i in issues if "pull_request" in i}
@@ -514,6 +696,8 @@ def readiness(
                 v.reasons.append(f"blocker #{b} closed as {bi.get('state_reason')}, not completed")
         for path, pat in protected_named(issue.get("body"), protected, repo):
             v.notes.append(f"names protected path {path} ({pat}): check it isn't an owner task")
+        if area and area in need_bar and not has_bar(issue.get("body")):
+            v.notes.append(BAR_NOTE.format(area=area))
         v.ready = not v.reasons
         out.append(v)
     return out
@@ -524,18 +708,27 @@ def startable(
     running_areas: list[str | None],
     slots: int,
     overrides: set[int] | frozenset = frozenset(),
+    first: list[int] | tuple = (),
 ) -> list[Verdict]:
     """Ready tickets to start now, at most `slots`, one per area.
 
-    Tickets labelled workflow:infra come first, then lowest number first. A
+    Tickets labelled workflow:infra come first (lowest number first), then the
+    tickets in `first`, in the order given (`ready --first`, #372: a run's
+    tickets to fix old bugs or late findings, and split tickets), then the
+    rest, lowest number first. A ticket in `first` that isn't ready is left
+    out like any other; one that is infra stays among the infra tickets. A
     ticket with no area may run beside anything. `overrides` are tickets the
     run state allows to share an area. Areas are compared case-insensitively.
     """
     taken = {a.casefold() for a in running_areas if a}
-    order = sorted(
-        (v for v in verdicts if v.ready),
-        key=lambda v: (INFRA_LABEL not in {l.casefold() for l in v.labels}, v.number),
-    )
+    rank = {n: i for i, n in enumerate(dict.fromkeys(first))}  # a caller's list may repeat a number
+
+    def key(v: Verdict):
+        if INFRA_LABEL in {l.casefold() for l in v.labels}:
+            return (0, 0, v.number)  # infra: by number, whatever `first` says
+        return (1, rank.get(v.number, len(rank)), v.number)
+
+    order = sorted((v for v in verdicts if v.ready), key=key)
     out: list[Verdict] = []
     for v in order:
         if len(out) >= slots:
