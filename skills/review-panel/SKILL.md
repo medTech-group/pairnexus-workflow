@@ -33,7 +33,8 @@ Make a scratch directory outside the repo, for example `/tmp/review-<ticket>-r<r
   - each earlier review (its kind, number and commit) with its findings numbered as in its record, each with its mark, its part exactly as the reviewer wrote it, its severity and what was done: fixed in which commit with which test, a ticket to fix it filed as which issue, contested with the written reason, or ruled kept or overturned;
   - under "Contests to rule on", the last review's contested findings, each with its number, its reason, and what it needs to be re-entered if kept: its reproducer, its part, and its `security` and area if it has them;
   - the parts that took the bar's fail-closed form or were split out;
-  - under "Moved criteria", each acceptance criterion moved by a split, quoted, with the ticket it moved to.
+  - under "Moved criteria", each acceptance criterion moved by a split, quoted, with the ticket it moved to;
+  - under "Failures", each failure step 5 of section 3 found after the last fixer, with the command that shows it and its output.
 - `since.patch`, from the second review: the pull request's own changes since the last review, round or pass, with the base branch's changes left out. `<last>` is the commit the last review covered. Before the pull request opens, it is in that review's `commit.txt`. After, it is the `commit=` of the latest review record that `merge-check` counts: one posted from an account with write access. After a `git fetch`:
 
   ```
@@ -81,9 +82,9 @@ Follow the rule in <scratch>/rule.md: it says how to mark and report each findin
 
 1. Check each finding against the code. A reviewer can be wrong.
 2. Fix every real one, with a test for each bug. Under the rule (section 10), a fresh fixer makes them instead, in the order **The fixer** (below) gives, and a finding marked a ticket to fix it or a note isn't fixed here (the paragraph after these steps).
-3. Record each that isn't a problem, with the reason. Under the rule, that reason is the fixer's (**The fix rule**).
+3. Record each that isn't a problem, with the reason. Under the rule, a blocking finding's reason is the fixer's (**The fix rule**).
 4. Run `git status`: it must show nothing a reviewer made. Discard anything stray and say so. If the guard refuses the discard (a protected file), finish in a clean copy, and say so in the PR body: `git worktree add --detach <a directory outside the repo> HEAD`, commit there, and push with `git push origin HEAD:<branch>`. Do everything after it there: later fixes, the tests, `commit.txt`, the diff and the next rounds. Give the reviewers the clean copy's absolute path as the repo: the explorer runs the CLI from it, and checks both it and the session's checkout with `git status`.
-5. Rerun the typecheck and the affected tests. Under the rule, you fix nothing yourself: a failure goes in the findings table and the next review's `previous.md`, and that review's fixer gets it from its findings.
+5. Rerun the typecheck and the affected tests. Under the rule, you fix nothing yourself: a failure goes in the findings table and under "Failures" in the next review's `previous.md`, whose reviewers report it as a finding (section 10), so that review's fixer gets it.
 6. Post the round's review record (section 4).
 
 A record under the rule (section 10), written with `--findings` (section 4), comes from the reviewers' reports: every finding a reviewer reported goes in the findings file as reported, even one you judge not a problem. Such a finding marked blocks is contested only when the fixer contests it (**The fix rule**), never by you: its reason, the fixer's, goes in the findings table and in the next review's `previous.md`, under "Contests to rule on", and the next review rules on it. One marked a ticket to fix it is never dropped: it is filed as the reviewer marked it, the way `build-ticket` files tickets to fix findings, and your doubt goes in the findings table. The one exception is a security problem the change adds (`security: change`) marked a ticket to fix it: it is never filed, but fixed in the pull request, since it still blocks (section 10). A note is answered with its reason in the findings table. Neither is ruled on. A finding flagged kept after a contest is never contested again: it is fixed. One entry for each finding each reviewer reported. A mark is the reviewer's: copy it, its part, its reproducer and its flags as written, and never change one.
@@ -95,7 +96,7 @@ A record under the rule (section 10), written with `--findings` (section 4), com
 4. the fixer, when there is anything to fix, with `part.md` from that answer, a split's ticket filed first (`build-ticket`);
 5. step 5, on the head it pushed.
 
-When the fixer stops before giving every finding an outcome: if the head moved under it, start a fresh one on the current head with the findings it left; if the guard refused it something, the refusal is the answer: stop, as `build-ticket` §5's "Still red after three fix attempts" says, with the refusal as the reason.
+A finding the fixer reports refused by the guard: act on the refusal as on one of your own (`build-ticket` §2), never around it, its public words naming only a security finding's area.
 
 Give it the repository's path (the clean copy's, after a step 4 that made one), the branch's name, and a scratch directory of its own, `/tmp/fix-<ticket>-<review>/` (`<review>` being `r<n>` or `pass<k>`, as the review's own), holding only these, and nothing of this session's history (no `previous.md`, no summaries):
 - `ticket.md`, `bar.md` and `rules.md`, copied from the review's scratch directory;
@@ -104,7 +105,7 @@ Give it the repository's path (the clean copy's, after a step 4 that made one), 
 - `head.txt`: `git rev-parse HEAD`, the head it starts from;
 - `part.md`, when `merge-check` says to give a part the safe fallback or split it out: each such part's name exactly as the records give it, and which for each.
 
-If auto-merge is armed, disarm it first: the fixer pushes. Its report gives each finding's outcome: the commit and the test for each fixed one (they go in the findings table), the reason for each contested one, and the part for each taken with its part.
+If auto-merge is armed, disarm it first: the fixer pushes. Its report gives each finding's outcome: the commit and the test for each fixed one (they go in the findings table), the reason for each contested one, the part for each taken with its part, and the guard's refusal for each refused.
 
 **The fix rule.** The `fixer` agent follows it, and gives it in full. For each finding it is given:
 - Check it against the code first: a reviewer can be wrong.
@@ -112,7 +113,7 @@ If auto-merge is armed, disarm it first: the fixer pushes. Its report gives each
 - Narrow first: prefer a fix that removes a case, refuses more or deletes text over one that adds; a defect it can't fix in place, it fixes by refusing the case it fails on. A fix that adds an exception, a state or a rule tests both sides of it in the same commit.
 - Change nothing a finding doesn't need, never build a moved criterion, and never put back a part split out.
 - Then the typecheck and the affected tests, a commit for each finding, a push, and each finding's outcome reported.
-- "Not a problem": the finding is contested with a written reason, never fixed silently or dropped; its reason is the contest's, in the findings table and under "Contests to rule on". A finding kept after a contest is fixed, never contested again; one overturned counts for nothing. Every finding ends fixed, contested, or taken with its part (a part in `part.md`, replaced or taken out). A security finding is never taken with its part, and a security problem the change adds marked a ticket to fix it is fixed, never contested: it still blocks. The fixer never changes a mark.
+- "Not a problem": the finding is contested with a written reason, never fixed silently or dropped; its reason is the contest's, in the findings table and under "Contests to rule on". A finding kept after a contest is fixed, never contested again; one overturned counts for nothing. Every finding ends fixed, contested, taken with its part (a part in `part.md`, replaced or taken out) or refused by the guard. A security finding is never taken with its part, and a security problem the change adds marked a ticket to fix it is fixed, never contested: it still blocks (when its reproducer already gives the right result, the test is the fix). The fixer never changes a mark.
 - A security problem the change adds: its test's name, its row in the findings table and its commit message name only its area, and so does every other word the fixer writes in the repository.
 
 ## 4. Post the review record
@@ -322,7 +323,7 @@ Where the hunt stops:
 - **Moved criteria:** a criterion `previous.md` lists as moved by a split isn't unmet here: a finding on it is a note.
 - **Lines already reviewed** (from the second review): a finding that would otherwise block, on lines unchanged since a review that covered them (in the change or in what it reached), is marked a ticket to fix it, unless it is a safety breach, a security problem the change adds, loses data, leaves an acceptance criterion unmet, leaves new behaviour untested, or is something the change breaks elsewhere: those still block, whichever review finds them.
 
-**From the second review,** a round or a pass, review `since.patch` and what it reaches: the code it calls and the code that calls it, read in full in the repo. Read `diff.patch`, the whole change, for context. Everything in `since.patch` follows the rule as in a first review, and so do the lines it reaches that no earlier review covered. Check each fix `previous.md` lists. With no `since.patch`, the whole change is new to this review. An empty one still asks for a look: check the change's lines in `diff.patch` against the base, for something it breaks.
+**From the second review,** a round or a pass, review `since.patch` and what it reaches: the code it calls and the code that calls it, read in full in the repo. Read `diff.patch`, the whole change, for context. Everything in `since.patch` follows the rule as in a first review, and so do the lines it reaches that no earlier review covered. Check each fix `previous.md` lists, and report each failure it lists under "Failures" as a finding, marked as any other, the failing command and its output as the reproducer. With no `since.patch`, the whole change is new to this review. An empty one still asks for a look: check the change's lines in `diff.patch` against the base, for something it breaks.
 
 **Security.** A security problem the change adds: mark it as any other finding, with `security: change` and its area, a word or two such as "sign-in". A security or safety problem in code already on the base branch: `security: main`, with its area. Give its details (where, the reproducer) in your report, never in a part's name: the public records show only the area.
 

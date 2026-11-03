@@ -48,7 +48,7 @@ def _s3() -> str:
 
 
 def _paragraph(text: str, opening: str) -> str:
-    """From `opening` to the next bold-headed paragraph (`**…**` after a full stop), flattened."""
+    """From `opening` to the next bold-headed paragraph (`**…**` after a full stop or a colon), flattened."""
     assert opening in text, opening
     after = text.split(opening, 1)[1]
     return opening + re.split(r"(?<=[.:]) \*\*[A-Z]", after, maxsplit=1)[0]
@@ -91,8 +91,9 @@ def test_it_gets_only_what_the_spec_names_and_nothing_of_the_sessions_history():
     assert "Nothing of the session's history" in inputs
     assert "Read no other `/tmp/review-*` or `/tmp/fix-*` directory" in inputs
     assert "`previous.md`" not in inputs
-    # It checks it starts on the head it was given: anything else, it stops.
-    assert "If `git rev-parse HEAD` isn't `head.txt`, stop" in inputs
+    # The head is given; nothing stops it there (round 3: a stop with no outcome had no answer).
+    assert "`head.txt`: the branch's head the findings are about" in inputs
+    assert "If `git rev-parse HEAD` isn't `head.txt`" not in inputs
 
 
 def test_section_3_gives_it_the_same_inputs_in_a_directory_of_its_own():
@@ -228,8 +229,9 @@ def test_it_reports_each_findings_outcome_by_its_number():
     # No third way out: a finding left "not fixed" would turn into a ticket at the next review
     # (§10's lines already reviewed), and the defect would merge.
     assert "not fixed" not in report
-    assert "Every finding ends fixed, contested, or taken with its part" in _section("The fix rule")
-    assert "Every finding ends fixed, contested, or taken with its part (a part in `part.md`, replaced or taken out)" in _fix_rule()
+    assert "Every finding ends fixed, contested, taken with its part (below) or refused by the guard, nothing else" in _section("The fix rule")
+    assert "Every finding ends fixed, contested, taken with its part (a part in `part.md`, replaced or taken out) or refused by the guard" in _fix_rule()
+    assert "**refused:**" in report
     assert "fixes by refusing the case it fails on" in _fix_rule()
     assert "you fix by refusing the case it fails on" in _section("The fix rule")
     assert "its number in `findings.md`" in report
@@ -329,9 +331,20 @@ def test_a_failure_after_the_fixer_goes_to_the_next_review_never_to_the_session(
     s3 = _s3()
     # Not a second fixer in the same review: it would have no finding number, and a failure
     # the first fixer rightly left alone would start fixer after fixer.
-    assert "Under the rule, you fix nothing yourself: a failure goes in the findings table and the next review's `previous.md`, and that review's fixer gets it from its findings." in s3
+    assert "Under the rule, you fix nothing yourself: a failure goes in the findings table and under \"Failures\" in the next review's `previous.md`, whose reviewers report it as a finding (section 10), so that review's fixer gets it." in s3
     assert "a failure goes to a fresh fixer" not in s3
-    assert "Under the rule, that reason is the fixer's (**The fix rule**)." in s3
+    # It reaches that review: §1 lists it, and §10 (rule.md) has the reviewers report it, marked as any
+    # other, so a failure on the base branch becomes a ticket and one the change causes blocks.
+    text = (KIT / PANEL).read_text(encoding="utf-8")
+    inputs = _flat(text.split("## 1. Gather the inputs", 1)[1].split("\n## 2.", 1)[0])
+    assert "under \"Failures\", each failure step 5 of section 3 found after the last fixer, with the command that shows it and its output" in inputs
+    rule = _flat(text.split("## 10. The rule for build reviewers", 1)[1])
+    assert "report each failure it lists under \"Failures\" as a finding, marked as any other, the failing command and its output as the reproducer" in rule
+
+
+def test_the_older_steps_hand_the_fixes_and_reasons_to_the_fixer():
+    s3 = _s3()
+    assert "Under the rule, a blocking finding's reason is the fixer's (**The fix rule**)." in s3
     opening = (KIT / PANEL).read_text(encoding="utf-8").split("## 1.", 1)[0]
     assert "under the rule for build reviewers, a fresh fixer makes the fixes: section 3" in _flat(opening)
 
@@ -346,7 +359,7 @@ def test_a_splits_ticket_is_filed_before_the_fixer_takes_the_part_out():
 
 def test_a_security_finding_is_never_taken_with_its_part():
     part = _section("A part to replace or take out")
-    assert "A security finding never is: fix it or contest it as usual, and keep its test." in part
+    assert "A security finding never is: fix it or contest it as usual first; if its part is then taken out, its test goes with the part, and your report says so." in part
     assert "A security finding is never taken with its part" in _fix_rule()
 
 
@@ -354,10 +367,19 @@ def test_a_security_problem_the_change_adds_marked_a_ticket_is_never_contested()
     # review-panel §10 lets only a finding marked blocks be contested.
     for text in (_section("The fix rule"), _fix_rule()):
         assert "a security problem the change adds marked a ticket to fix it is fixed, never contested: it still blocks" in text.lower()
+        # One whose reproducer already passes isn't fixed silently: the test is the fix.
+        assert "already gives the right result, the test is the fix" in text
 
 
-def test_a_fixer_that_stops_early_is_answered():
+def test_a_refusal_of_the_guard_is_an_outcome_the_session_acts_on():
+    inputs = _section("Your inputs")
+    assert "the refusal is the answer, never a puzzle to get around" in inputs
+    # The project's rule for a hook that timed out: split or simplify it.
+    assert "a command whose hook timed out, split or simplify once" in inputs
+    assert "leave that finding **refused** (How to report) and go on to the next" in inputs
+    assert "commits already made are pushed all the same" in _section("The fix rule")
     fixer = _the_fixer()
-    assert "if the head moved under it, start a fresh one on the current head with the findings it left" in fixer
-    assert "if the guard refused it something, the refusal is the answer: stop" in fixer
-    assert "If the guard refuses you an edit or a command, the refusal is the answer: stop" in _section("Your inputs")
+    assert "act on the refusal as on one of your own (`build-ticket` §2), never around it, its public words naming only a security finding's area" in fixer
+    # No stop sends it to the owner by itself, and no restart loop.
+    assert "Still red after three fix attempts" not in fixer
+    assert "head moved" not in fixer
