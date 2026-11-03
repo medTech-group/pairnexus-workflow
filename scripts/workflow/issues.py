@@ -430,6 +430,31 @@ def protected_named(body: str | None, patterns: Iterable[str] | None, repo: str 
     return list(out.items())
 
 
+# The bar (#428, spec #412): a `## Bar` heading (any level, a trailing colon or
+# closing hashes allowed), outside fenced code and quotes.
+_BAR_HEADING = re.compile(r"^ {0,3}#{1,6}[ \t]+bar[ \t]*:?(?:[ \t]+#+)?[ \t]*$", re.I)
+_FENCE_LINE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+BAR_NOTE = "area {area} is in run.bar_areas, but the ticket has no ## Bar (must handle, fail closed, accepted limits)"
+
+
+def has_bar(body: str | None) -> bool:
+    """The body has a `## Bar` heading of its own: one in fenced code (an
+    example) or in a quote (from elsewhere) doesn't count, and an unclosed
+    fence hides the rest, as GitHub renders it."""
+    fence: str | None = None
+    for line in (body or "").splitlines():
+        f = _FENCE_LINE.match(line)
+        if fence is None:
+            if f and not (f.group(1)[0] == "`" and "`" in f.group(2)):
+                fence = f.group(1)
+                continue
+            if _BAR_HEADING.match(line):
+                return True
+        elif f and f.group(1)[0] == fence[0] and len(f.group(1)) >= len(fence) and not f.group(2).strip():
+            fence = None
+    return False
+
+
 @dataclass
 class Verdict:
     number: int
@@ -450,6 +475,7 @@ def readiness(
     repo: str | None = None,
     areas: Iterable[str] | None = None,
     protected: Iterable[str] | None = None,
+    bar_areas: Iterable[str] | None = None,
 ) -> list[Verdict]:
     """Every open `ready-for-agent` build ticket with whether it is ready and why not.
 
@@ -466,8 +492,11 @@ def readiness(
     one (`protected_named`) gets a note, never a block, since a ticket session
     can't change one and the words alone can't tell a change from a mention;
     the conductor lists such tickets at kick-off for the owner to keep or exclude.
+    `bar_areas` are the profile's `run.bar_areas` (#428): a ticket in one
+    whose body has no `## Bar` (`has_bar`) gets a note, never a block.
     """
     protected = list(protected or [])
+    bar = {a.casefold() for a in bar_areas or [] if a}
     by_num = {i["number"]: i for i in issues if "pull_request" not in i}
     # Pull requests as the issues API lists them (`pull_request.merged_at`), for PR blockers.
     pr_items = {i["number"]: i for i in issues if "pull_request" in i}
@@ -525,6 +554,8 @@ def readiness(
                 v.reasons.append(f"blocker #{b} closed as {bi.get('state_reason')}, not completed")
         for path, pat in protected_named(issue.get("body"), protected, repo):
             v.notes.append(f"names protected path {path} ({pat}): check it isn't an owner task")
+        if area and area.casefold() in bar and not has_bar(issue.get("body")):
+            v.notes.append(BAR_NOTE.format(area=area))
         v.ready = not v.reasons
         out.append(v)
     return out

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**`run.bar_areas`: the areas whose tickets need a bar** (#428, part of spec #412). A new profile setting lists the areas from `[areas]` whose build tickets need a `## Bar` (what the change must handle, what it does when it can't be sure, and the limits it accepts). `workflow ready` notes a ticket in one of them whose body has no `## Bar` heading ("area guard is in run.bar_areas, but the ticket has no ## Bar …"), leaving it ready, as it notes a ticket naming a protected path. A heading in fenced code or a quote doesn't count. Absent or empty, no area needs one. `profile check` refuses a name that isn't one of `[areas]` (compared without case, as tickets' areas are) and shows the list under `bar_areas`; the profile template and `docs/profile.md` name it.
+
+- **For projects updating:** nothing to do; add `bar_areas = ["<area>"]` under `[run]` to have tickets in those areas noted. This repository's own setting is an owner task (the profile is a protected path). Tests: `tests/test_bar_areas.py`.
+
 **Filing the three kinds of ticket: old bugs, late findings and split parts** (#373, part of spec #412). `build-ticket` §3 gains "Filing tickets to fix findings, and split tickets", the step `review-panel` §3 points to: under the rule for build reviewers, the session files a ready build ticket for each finding marked a ticket to fix it, after the review and before its record (the issue goes back into the findings file as `issue`), and for each part `merge-check` says to split out, before the part is taken out, so nothing piles up as `needs-triage`.
 
 - **The kinds:** `late` for a finding about the pull request's own lines or lines already reviewed, `old` for any other (code the change doesn't reach, or a written rule broken outside its lines), `split` for a part split out.
