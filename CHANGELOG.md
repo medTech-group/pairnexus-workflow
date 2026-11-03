@@ -4,7 +4,7 @@
 
 **Attended work builds and reviews under the new rule** (#375, part of spec #412). `build-ticket` §3 gains "The rule for build reviewers", which turns `review-panel` §10's rule on: in attended work always, and in a ticket session only when its briefing has a "Findings:" line (a run keeps the rule it started with).
 
-- **A fresh fixer** makes every review's fixes, round 1's included; the session builds the change, starts the reviewers and the fixers, files the tickets and posts the records, and fixes no finding itself (a failure after a fixer, local or a required check red on its commit, goes to the next review, with a Correctness pass for it when none is due).
+- **A fresh fixer** makes every review's fixes, round 1's included; the session builds the change, starts the reviewers and the fixers, files the tickets and posts the records, and fixes no finding itself (a failure the tests find after a fixer goes to the next review; a red required check is still the session's).
 - **The pull request opens as a draft after round 1,** with round 1's record, before its fixer, so `merge-check` reads every review; it is marked ready once `merge-check` gives no review reason (none whose `rule` is `review_panel`) and no `couldnt_read`.
 - **No pass cap** under the rule, in runs and attended work: Correctness passes until one is clean. `review-panel` §5, §6 and §7 say so, and the light and small reviews keep their shapes and carry on with passes, with no hand-off to the owner.
 - **`mechanism_repeats`** is acted on by its `next`: the safe fallback by a fresh fixer, or a split (the ticket filed first, then a fresh fixer takes the part out); the pull request body says which and why under **Parts that kept blocking**.

@@ -97,22 +97,21 @@ def test_every_reviews_fixes_round_1s_included_go_to_a_fresh_fixer():
     # The session builds and coordinates; it fixes nothing itself.
     assert "You build the change, start the reviewers and the fixers, file the tickets, post the records and keep short summaries" in fixer
     assert "you fix no finding yourself" in fixer
-    assert "A failure after a fixer, found by `review-panel` §3's step 5 or by a required check red on its commit, goes under \"Failures\" to the next review, never to you" in fixer
+    assert "A failure `review-panel` §3's step 5 finds after a fixer goes to the next review, never to you." in fixer
     # §3's step list says so too.
     assert "a fresh fixer makes every review's fixes and contests, never you: your doubt goes in the findings table" in _review()
 
 
-def test_a_red_check_on_a_fixers_commit_goes_to_the_next_review_and_any_other_is_section_5s():
-    """Both sides: red on a fixer's commit is the next review's; red on a head no fixer made is §5's."""
+def test_a_red_required_check_is_section_5s_unless_step_5_listed_its_failure():
+    """Both sides: a red required check is the session's (§5), whoever's commit it is; one whose failure step 5 already listed waits for that review."""
     fixer = _bullet(_rule(), "**A fresh fixer makes every review's fixes,**")
-    assert "or by a required check red on its commit, goes under \"Failures\" to the next review, never to you" in fixer
-    # No review due (the last was clean): a pass for it, so it never waits for a review nobody asks for.
-    assert "when no review is due (the last one was clean), run a Correctness pass on the head for it" in fixer
-    assert "§5's red check is for a head no fixer made, such as a merge of the base." in fixer
-    # review-panel §1's "Failures" takes it.
-    inputs = _panel("## 1. Gather the inputs", "\n## 2.")
-    assert "and each required check red on that fixer's commit, with its check run's failing output (`build-ticket`)" in inputs
+    assert "A required check that goes red is §5's, whoever's commit it is, unless its failure is one step 5 already listed for the next review." in fixer
     assert "**A required check is red:** find the cause" in _section(BUILD, "## 5. Get it green\n", "\n## 6. ")
+    # No Correctness pass is started for a red check: a clean pass on reviewed lines could never block it.
+    assert "run a Correctness pass on the head for it" not in fixer
+    # review-panel §1's "Failures" stays step 5's.
+    inputs = _panel("## 1. Gather the inputs", "\n## 2.")
+    assert "under \"Failures\", each failure step 5 of section 3 found after the last fixer, with the command that shows it and its output." in inputs
 
 
 # --- the draft ----------------------------------------------------------------
@@ -301,7 +300,9 @@ def test_a_carry_on_ticket_reaches_build_ticket_and_skips_the_build():
     assert "take `workflow:carry-on` off and put `ready-for-agent` back" in claim
     assert "go on from §3's \"Carrying on after a hand-off\" instead of §2" in claim
     # A ticket session gets there from its briefing's Hand-off line, not the label the conductor takes off.
-    assert "In a ticket session, a briefing with a \"Hand-off:\" line also goes on from §3's \"Carrying on after a hand-off\"." in claim
+    # Only a briefing whose Hand-off line links one: a fresh ticket's says "none".
+    assert "In a ticket session under the rule, a briefing whose \"Hand-off:\" line links a hand-off comment (not \"none\") also goes on from §3's \"Carrying on after a hand-off\"." in claim
+
 
 
 def test_carry_on_leaves_a_ticket_a_run_holds_to_the_run():
@@ -309,8 +310,11 @@ def test_carry_on_leaves_a_ticket_a_run_holds_to_the_run():
     claim = _section(BUILD, "## 1. Claim it\n", "\n## 2. ")
     assert "When it also has `workflow:in-progress`, a run holds it: say so and stop." in claim
     # Its branch alone never refuses it: a finished run's carried-on ticket is on a run's branch.
-    assert "run.ticket_branch" not in claim.split("**A ticket labelled `workflow:carry-on`**", 1)[1]
+    refusal = claim.split("When it also has `workflow:in-progress`", 1)[1].split("Otherwise", 1)[0]
+    assert "run.ticket_branch" not in refusal
     assert "Otherwise claim it as above" in claim
+    # On a run's branch it is still attended work for the rule, though the guard reads the branch as a ticket session's.
+    assert "It is attended work for §3's \"Which rule\", even on a branch named like `run.ticket_branch`." in claim
     assert claim.index("a run holds it: say so and stop") < claim.index("Otherwise claim it as above")
 
 
