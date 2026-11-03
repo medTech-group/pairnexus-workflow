@@ -272,13 +272,15 @@ def test_a_blocking_security_problem_on_main_holds_a_run_for_the_owner():
     ) in text
     assert (
         "stop as §5's \"Still red after three fix attempts\" says (`needs-human`), the reason naming only its area and saying "
-        "how it is released: \"the owner fixes it on the base branch and closes #<n> as completed (or, if it isn't a problem, "
-        "takes #<n> out of this ticket's `## Blocked by`), then answers here\"."
+        "how it is released: \"the owner fixes it on the base branch, merges the base into this ticket's pull request and "
+        "closes #<n> as completed (or, if it isn't a problem, takes #<n> out of this ticket's `## Blocked by`), then answers here\"."
     ) in text
     # After the hold, the fail-closed form: no release machinery, a re-found problem holds again.
+    # Keyed on the mark, which a new session can read, not on recognising "the problem" from an area-only record.
     assert (
-        "What comes after the hold is the owner's. A later session that meets the problem again, before the owner's fix is on "
-        "its branch, holds the ticket again the same way: that costs the owner a second look, never a merge with the problem in it."
+        "What comes after the hold is the owner's. A later review that marks a `security: main` finding blocks holds the ticket "
+        "again the same way, whatever it is: that costs the owner another look, never a merge with the problem in it. "
+        "Marked a ticket to fix it, it is filed as the security bullet says."
     ) in text
     assert "Already filed as #<n>\", #<n> being the ticket the `needs-human` reason names" not in text
     zero = _flat(_between(_read(BUILD), "## 0. Read first", "\n## 1."))
@@ -340,8 +342,9 @@ def test_changelog_note():
     assert "is a new ticket unless this session already filed one for it" in note
     assert "never filed, even when marked a ticket to fix it" in note
     assert "its ticket to fix it is filed (`kind=old`) and named under the held ticket's `## Blocked by`, replacing a \"None\"" in note
-    assert "closed as completed, or taken out of `## Blocked by` if it isn't a problem" in note
-    assert "a later session that meets the problem again holds the ticket again" in note
+    assert "closes it as completed, or takes it out of `## Blocked by` if it isn't a problem" in note
+    assert "a later review that marks one blocks holds the ticket again" in note
+    assert "merges the base into the held ticket's pull request" in note
     assert "(#373, part of spec #412)" in notes
     assert "`<!-- workflow:fix-ticket from=<n> kind=old|late|split -->`" in notes
     assert "Tests: `tests/test_fix_tickets.py`." in notes
