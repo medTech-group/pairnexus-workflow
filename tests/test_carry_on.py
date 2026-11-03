@@ -193,7 +193,12 @@ def test_a_rule_2_ticket_is_carried_on_not_set_aside():
     assert "If `WF hand-off` refuses, set the ticket aside" in carry and "the writer's message" in carry
     # One hand-off per head, every time, and a comment only with a new one.
     assert "2. Then, unless `WF merge-check`'s `hand_off.on_head` is already true, write the hand-off" in carry
-    assert "when it gives any \"couldn't read\" reason, `hand_off` tells nothing" in carry and "never writing one blind" in carry
+    # Only the inputs `hand_off` reads hold it, so an unreadable preview or profile never stalls the stop.
+    assert "whose `input` is `pr`, `commits`, `comments` or `permissions`" in carry and "never writing one blind" in carry
+    assert "any other input doesn't hold it" in carry
+    # A ticket held for a code fix keeps its fix: never carried on without it.
+    assert "A ticket held for a code fix (`requeued_head`) is never carried on" in carry
+    assert "loses `workflow:carry-on` if it still has it, so no later run adopts it without its fix" in carry
     assert "when step 2 posted a hand-off, comment on it" in carry
     # A carry-on ticket adopted but never started keeps its hand-off.
     # It gets every step (so `workflow:in-progress` comes off), with no second hand-off and no comment.
