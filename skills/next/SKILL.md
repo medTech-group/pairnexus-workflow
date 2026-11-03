@@ -61,7 +61,7 @@ Say which one you picked and why, in one line, with a build ticket's notes from 
 - **Before asking anything,** read the rounds already posted for this spec or decision (on a map, the comments naming its Destination item). Then carry on from them, and number on from the last answer posted for it. Once an "End check" post is there, its rounds are over (the interview's, the seams' or a map decision's), though a planning review's fix questions still come: go on as `start`'s end check says.
 - **After the last round,** before the spec, or a map decision's ADR or glossary, is written (or the decision recorded, when it changes neither), run the end check as `start`'s step 4 says ("Spec" and "Map").
 - **A spec's tickets** are agreed with **Agree these**, then read against the spec by the breakdown check before any is published, as `start`'s step 4 says ("Spec", step 3).
-- **Planning counts:** a spec once its tickets are published, a later edit to it and a map decision each end with a "Planning counts" comment, as `start`'s "Decision questions" says.
+- **Planning counts:** each piece of planning ends with a "Planning counts" comment, posted when and where `start`'s "Decision questions" says.
 
 **How to build it, in an attended session:** ask with the `AskUserQuestion` tool, or as a numbered list where it isn't available:
 - **Build it now (Recommended)**: the full review panel;
