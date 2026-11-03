@@ -25,6 +25,17 @@ Ask in plain text only when the answer can't be a choice ("Tell me what you have
   - **Each finding** either changes the recommendation (a **fix**, or an **ask** showing your own recommendation was wrong) or is shown beside its question as "Check: …", in plain words with its example. A finding about no question in the round (an earlier answer's evidence, say) has its fix made and listed in the round's post when it's a **fix**, and joins the round as a question of its own, with its "Check: …", when it's an **ask**. A change that leaves no basis to prefer an option drops its "(Recommended)", as **Evidence** says. A question with a "Check: …" about their own words is asked on its own, as "Yes to all" says: straight after the rest of the round, as part of it, and posted with it once all its questions are answered.
   - **Then ask the round,** as its check left it. Its check is never repeated: the one read covers what you changed from its findings and each question asked on its own after the round. If the read fails, try it once more, and if it fails again, ask the round and say in its post that it wasn't checked, and why.
 - **Each round** is posted as soon as it's answered, not only at **Stop here**, so a later session carries on from it. The interview's and the seams' rounds go on the item's issue (for a map's Destination item, a comment on the map naming it, and with neither, file an item's issue first). A map decision's rounds go on its decision ticket. An edit after publishing goes on the spec's issue, and so do the breakdown check's rounds. A question a planning review's fix raises goes with the current rounds: the item's issue (or the map) before the spec is published, the spec's issue after, and the decision ticket for a map decision. The post carries each question, your recommendation with its evidence, the checks' findings (when a check ran), and their reply quoted word for word. For the check before the round, the post lists each finding with whether it changed the recommendation, was shown as "Check: …" or was a fix made outside the round, or says "nothing found" (or "not checked", with why, when the read failed). Each reply is tagged **accepted recommendation** or **the owner's own words**. Their own words are any reply but a recommendation they accepted: an option picked over it or where none was recommended, or words they typed. It numbers the answers on from the last one posted for the same spec or decision, wherever that was (the item's issue, then the spec's issue), so a later line can name one. Earlier posts without numbers count in the order they were posted. A replacement or narrowing they confirmed is a plain line of its own ("answer 34 replaces 7: confirmed"), naming the issue of an answer posted elsewhere ("answer 3 on #301"). Sensitive data (`profile.md`) is left out of the post, and marked as left out.
+- **Planning counts.** Each piece of planning ends with one comment headed "Planning counts", so they can see whether the checks catch things early. A step that didn't run says so ("no breakdown check: a quick ticket has none"), so a 0 always means a read that found nothing. Count from the posts on GitHub where they say it: the round posts, the headed check posts and the confirmed lines. Count the rest as you ran it (a quick ticket's checks, which post nothing, and the planning rounds). A part an earlier session ran and didn't post reads "not known", with why, never a guess. It gives each of these as a number:
+  - **The before-round checks:** their findings, and how many changed a recommendation, counted from the round posts' "changed the recommendation" only, with any round "not checked" named.
+  - **The findings of each read,** **ask** and **fix** apart: the end check, each re-read (the end check's, and each one after the draft), and the breakdown check and its re-read, each read on its own line.
+  - **The answers replaced after the end check:** the confirmed replacement and narrowing lines posted after its "End check" post.
+  - **The questions sent after the draft:** those a planning review's **Fixes** sent, and an edit's own questions.
+  - **The findings of each planning round** (`review-panel` §8: the draft's, and a pull request's of the session's ADRs or glossary), by reviewer ("round 1: Spec 4, Correctness 2").
+- **Where the planning counts go:**
+  - **A spec:** on the spec's issue once its tickets are published (step 4, "Spec", step 3), counting the interview, the end check, the planning review, any edit made before its tickets, and the breakdown check. A session that stops after the spec is published and before its tickets posts what it counted so far there first, headed "Planning counts so far", and the session that publishes the tickets takes it from there.
+  - **A later edit** to a published spec, once its tickets are published: its own comment on the spec's issue, once the edit is saved and the tickets it touches are changed, counting that edit's rounds, re-reads, questions and planning rounds.
+  - **A quick ticket:** on the ticket once it is published (step 4, "Quick ticket", step 2), counting its end check and its one re-read, the routes through **File the fix as a ticket** and §5's **Ready to build** included.
+  - **A map decision:** on its decision ticket when it's recorded, before it's closed (step 4, "Map").
 
 ## Where things are
 
@@ -237,7 +248,7 @@ For each item, read the flow's section for its path and follow it, skipping noth
    - **After the re-read,** a **Change it** gets no further read: make it, add each decision it makes for them to `## Decided for you`, marked open (no read has seen it), and show the draft again.
 
    Show it, with the decisions made for them (each with its evidence, the open ones marked open) and the check's fixes above **Publish it (Recommended)**. Then ask **Publish it (Recommended)** or **Change it**.
-2. Publish by editing the item's issue into the ticket: replace its body (its `## Decided for you` included), drop the marker, and add `ready-for-agent`. The item's issue becomes the ticket.
+2. Publish by editing the item's issue into the ticket: replace its body (its `## Decided for you` included), drop the marker, and add `ready-for-agent`. The item's issue becomes the ticket. Then post its "Planning counts" on it ("Decision questions", above).
 3. Ask:
    - **Build it now (Recommended)**: load `build-ticket` with the Skill tool, on a fresh branch;
    - **Build it with a light review**: the same, asking `build-ticket` for a light review (`review-panel` §6, "The light review"): one review round, for a low-risk change;
@@ -285,7 +296,7 @@ For each item, read the flow's section for its path and follow it, skipping noth
    Ask:
    - **Split it into tickets (Recommended)**;
    - **Edit the spec first**: the edited body gets another planning round and its spec record (`review-panel` §8) before the tickets, and the questions the edit raises are decision questions ("Decision questions", above), each round checked before it's asked ("Before each round", above) and posted on the spec's issue as soon as it's answered, tagged;
-   - **Stop here**: `/start` offers the tickets next time, from the open spec.
+   - **Stop here**: `/start` offers the tickets next time, from the open spec. First post what you counted so far on the spec's issue, headed "Planning counts so far" ("Decision questions", above).
 3. **The tickets.** Read `to-tickets`' `SKILL.md` and follow it, with flow §2's additions. Show the breakdown with a link to the spec it's read against: each build ticket with its full body drafted (its criteria, `## Blocked by`, and `## Bar` where it has one), the owner tasks, and the edits to existing issues, each as the edit itself. An edit is only to an open issue that isn't claimed (`workflow:in-progress`) or built (closed, or with an open PR): a change to one that is becomes a new build ticket, as **Add to an existing issue** says. An edit to a spec gets its planning round and spec record, as **Add to an existing issue** says too. Then ask:
    - **Agree these (Recommended)**;
    - **Change the sizes**;
@@ -310,7 +321,7 @@ For each item, read the flow's section for its path and follow it, skipping noth
      1. Hold back the existing tickets: the section and `needs-info` in place of `ready-for-agent`, in one edit where you can.
      2. Publish the new build tickets, blockers first, as `to-tickets` does: each `ready-for-agent` but the ones held back. File each owner task labelled `owner-task`.
      3. Make the edits to existing issues, with the new tickets' numbers, keeping a held ticket's section. An edit whose issue was claimed or built since isn't made: list it in a comment on the spec's issue, as what's left.
-     4. Comment "Breakdown published" on the spec's issue.
+     4. Comment "Breakdown published" on the spec's issue, then post the spec's "Planning counts" there ("Decision questions", above).
 
      A check that leaves nothing to ask publishes with no further click.
    - **What's left** (a finding left open or unanswered), with each read's fixes, is listed in that read's post on the spec's issue (above). It names the tickets a finding holds back, and is never only in the session's closing choices.
@@ -329,13 +340,13 @@ For each item, read the flow's section for its path and follow it, skipping noth
 3. Ask:
    - **Stop here: the first decision in a fresh session (Recommended)**: there, the first message offers it, or `/next map`;
    - **Next item of the plan**: only when it is light.
-4. **Each decision,** in its own session (flow §1): its rounds asked as decision questions ("Decision questions", above), each recommendation with its evidence, each round checked before it's asked ("Before each round", above), and each round posted on its ticket as soon as it's answered, tagged, each question with the answer quoted word for word. After the last round, before the ADR or glossary is written (or the decision recorded, when it changes neither), the end check, run as the Spec path's step 2 runs it, with every post on the decision ticket. A decision with no rounds has none. What's left after it goes into the decision's resolution comment. Then the ADR and glossary written on a branch and given `review-panel`'s planning review (§8) until clean (a question a fix raises is a decision question too, checked before it's asked as "Before each round", above, says), before the ticket is closed and the pull request offered with its review records.
+4. **Each decision,** in its own session (flow §1): its rounds asked as decision questions ("Decision questions", above), each recommendation with its evidence, each round checked before it's asked ("Before each round", above), and each round posted on its ticket as soon as it's answered, tagged, each question with the answer quoted word for word. After the last round, before the ADR or glossary is written (or the decision recorded, when it changes neither), the end check, run as the Spec path's step 2 runs it, with every post on the decision ticket. A decision with no rounds has none. What's left after it goes into the decision's resolution comment. Then the ADR and glossary written on a branch and given `review-panel`'s planning review (§8) until clean (a question a fix raises is a decision question too, checked before it's asked as "Before each round", above, says), before the ticket is closed and the pull request offered with its review records. When it's recorded, before it's closed, post its "Planning counts" on the decision ticket ("Decision questions", above).
 5. **The gate** (flow §1). None of a map's build tickets is built until every item of its Destination has a spec and tickets. `next`, this skill and the conductor's kick-off keep to it; `workflow ready` doesn't know about maps. So while a map has unspecified Destination items, don't offer to build its tickets.
 
 **Add to an existing issue:**
 1. On a spec, ask the questions the change raises first: they are decision questions ("Decision questions", above), each round checked before it's asked ("Before each round", above) and posted on the spec's issue as soon as it's answered, tagged. Then show the change to that issue, and ask **Make this change (Recommended)** or **Change it**.
 2. Edit it on yes.
-3. If it's a spec, its edited body gets another planning round and its spec record (`review-panel` §8). If its tickets are published, find the tickets the change touches, and change them the same way.
+3. If it's a spec, its edited body gets another planning round and its spec record (`review-panel` §8). If its tickets are published, find the tickets the change touches, and change them the same way, then post the edit's own "Planning counts" on the spec's issue ("Decision questions", above).
 4. A ticket already built (closed, or with an open PR) isn't edited: the change becomes a new quick ticket.
 
 ## 5. Sorting new issues
@@ -378,7 +389,7 @@ They can change course at any point. Take it as said, and confirm in one line:
 - **"Skip that one" / "drop it":** close its issue as not planned.
 - **"Do that one first":** reorder, and change the blockers to match.
 - **A spec or ticket to change after it's published:**
-  - edit it on GitHub, or ask you to; a spec you edit gets another planning round and its spec record (`review-panel` §8), and the questions the edit raises are asked as "Decision questions" (above) say;
+  - edit it on GitHub, or ask you to; a spec you edit gets another planning round and its spec record (`review-panel` §8), and the questions the edit raises are asked as "Decision questions" (above) say, the edit ending with its own "Planning counts" once its tickets are changed;
   - removing `ready-for-agent` stops `/next` and runs picking it up;
   - closing it as not planned drops it.
 - **A decision to undo:** reopen it.
