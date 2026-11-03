@@ -278,3 +278,10 @@ def test_docs_name_the_setting():
     run = text[text.index("## `[run]`") :]
     row = next(l for l in run.splitlines() if l.startswith("| `bar_areas`"))
     assert "## Bar" in row and "workflow ready" in row and "[areas]" in row
+
+
+def test_next_lists_the_note():
+    text = (KIT / "skills/next/SKILL.md").read_text(encoding="utf-8")
+    notes = text.split("A READY ticket may carry notes", 1)[1].split("\n\n", 1)[0]
+    shown = BAR_NOTE.format(area="<area>").split(":", 1)[0]
+    assert f'"{shown}: …"' in notes and "run.bar_areas" in notes

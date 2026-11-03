@@ -511,7 +511,7 @@ def readiness(
     whose body has no `## Bar` (`has_bar`) gets a note, never a block.
     """
     protected = list(protected or [])
-    bar = {a.casefold() for a in bar_areas or [] if a}
+    need_bar = {a.casefold() for a in bar_areas or [] if a}
     by_num = {i["number"]: i for i in issues if "pull_request" not in i}
     # Pull requests as the issues API lists them (`pull_request.merged_at`), for PR blockers.
     pr_items = {i["number"]: i for i in issues if "pull_request" in i}
@@ -569,7 +569,7 @@ def readiness(
                 v.reasons.append(f"blocker #{b} closed as {bi.get('state_reason')}, not completed")
         for path, pat in protected_named(issue.get("body"), protected, repo):
             v.notes.append(f"names protected path {path} ({pat}): check it isn't an owner task")
-        if area and area in bar and not has_bar(issue.get("body")):
+        if area and area in need_bar and not has_bar(issue.get("body")):
             v.notes.append(BAR_NOTE.format(area=area))
         v.ready = not v.reasons
         out.append(v)
