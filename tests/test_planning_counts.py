@@ -198,11 +198,12 @@ def test_an_edit_before_the_specs_counts_counts_in_the_specs_comment():
 
 def test_when_a_spec_owes_its_counts():
     s = _sentence(_sub("a spec", _where_raw()), "owes its \"Planning counts\" until")
-    # Until the comment follows "Breakdown published": while any ticket is
-    # unpublished (a publish that stopped part-way included), and after.
-    # Its first: settling a held-back ticket can post another "Breakdown published".
+    # Until the comment follows the spec's first "Breakdown published" (settling a
+    # held-back ticket can post another): every period it names is tied to that
+    # first one, so a later publish never makes the spec owe them again.
     assert "headed exactly \"Planning counts\" follows its first \"Breakdown published\" comment" in s
-    assert "before that first \"Breakdown published\"" in s and "after it" in s
+    assert "before that first \"Breakdown published\", and after it until that comment" in s
+    assert "being published" not in s
     # A spec from before these counts owes none, so its edits post their own.
     s = _sentence(_sub("a spec", _where_raw()), "owes none")
     # Neither post: a spec whose publishing stopped part-way still owes.
