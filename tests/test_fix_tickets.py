@@ -118,8 +118,8 @@ def test_when_each_is_filed():
     assert (
         "The next review's findings file gives a `split` outcome for each of this ticket's own split tickets that no record "
         "names yet and whose part is out of the pull request, its `mechanism` copied from the ticket's `Part:` line; a part "
-        "still in it is taken out first by a fresh fixer, and the review after that gives its outcome. So a session restarted "
-        "after the split still gives it, takes the part out if it is still there, adds it to **Split out** if the body doesn't "
+        "still in it is taken out by a fresh fixer before the next review, which then gives its outcome. So a session "
+        "restarted after the split still gives it, takes the part out before that review if it is still there, adds it to **Split out** if the body doesn't "
         "name it yet, and lists its moved criteria in `previous.md`."
     ) in text
 
@@ -233,10 +233,9 @@ def test_the_machine_line_and_the_marker_close_the_body():
 def test_merge_check_points_to_the_filing():
     # A session with only `merge-check` loaded files the split ticket with its machine line and `Part:` line too.
     text = _flat(_read("skills/merge-check/SKILL.md"))
-    assert (
-        "with `split`, file a ready build ticket for the part first, as `build-ticket` §3's \"Filing tickets to fix findings, "
-        "and split tickets\" says,"
-    ) in text
+    # Built from the heading, so renaming the section fails here rather than leaving a dead pointer.
+    name = HEADING.removeprefix("### ")
+    assert f"with `split`, file a ready build ticket for the part first, as `build-ticket` §3's \"{name}\" says," in text
 
 
 def test_findings_py_names_the_same_line():
@@ -363,6 +362,8 @@ def test_changelog_note():
     assert "never filed, even when marked a ticket to fix it" in note
     assert "its ticket to fix it is filed (`kind=old`) and named under the held ticket's `## Blocked by`, replacing a \"None\"" in note
     assert "a split has its own row, \"Split out to #<n>\"" in note
+    assert "gives them as `split` outcomes once the part is out of the pull request" in note
+    assert "`merge-check`'s skill points its `split` to this step." in note
     assert "closes its ticket to fix it as completed, or takes that ticket out of `## Blocked by` if it isn't a problem" in note
     assert "a later review that marks one blocks holds the ticket again" in note
     # A hold can come before the pull request opens: the branch always exists.
