@@ -1,6 +1,8 @@
 """#427 (spec #412, "The circuit breaker"): when the same part (mechanism) has a
 blocking finding in two `rule=2` records in a row, `workflow merge-check` says
-`mechanism_repeats`, naming it, with what comes next:
+`mechanism_repeats`, naming it, in place of the review reason, with what comes
+next, and with the review after it in `then` (`round` or `pass`, as the round
+limit chooses it):
 
 - `next: fail_closed` when the reviewer marked the part as one the bar's
   fail-closed form covers and it hasn't taken that form;
@@ -10,12 +12,14 @@ blocking finding in two `rule=2` records in a row, `workflow merge-check` says
 
 Names are compared exactly; security findings never count; a contested finding
 the next reviewer kept counts once, with the review that first reported it, and
-a review whose only finding on the part is the kept contest neither counts nor
-breaks the run; an overturned finding counts for nothing. The count starts again
-after an action (the safe fallback taken, a split), and `mechanism_repeats` is
-given only while the head is the latest record's commit. "In a row" is by the
-pull request's history, as the rule choice ranks records (#426): the head
-newest, then by posting.
+a review whose only findings on the part are kept re-entries neither counts nor
+breaks the run; an overturned finding counts for nothing. A ruling is about the
+review posted before the record that gives it (not a copy of that record, nor a
+later commit's review). A review posted twice counts once. The count starts
+again after an action (the safe fallback taken, a split), and
+`mechanism_repeats` is given only while the head is the latest record's commit.
+"In a row" is by the pull request's history, as the rule choice ranks records
+(#426): the head newest, then by posting.
 """
 
 import pytest
@@ -23,11 +27,10 @@ import pytest
 from changelog_notes import since_0110
 from test_merge_check import EARLIER, HEAD, check, comment, project, rec  # noqa: F401 (project is a fixture)
 from test_merge_check_passes import KIT, MIDDLE, review_reasons
-from test_merge_check_rule2 import BLOCKS, KEPT, NOTE, TICKET, new, with_records
+from test_merge_check_rule2 import BLOCKS, ELSEWHERE as OTHER, KEPT, NOTE, TICKET, new, with_records
 
 PART = BLOCKS["mechanism"]
 COVERED = {**BLOCKS, "covered": True}
-OTHER = {**BLOCKS, "mechanism": "the label sync"}
 KEPT_1 = [{"outcome": "contested", "finding": 1, "ruling": "kept"}]
 OVERTURNED_1 = [{"outcome": "contested", "finding": 1, "ruling": "overturned"}]
 FELL_BACK = [{"outcome": "fail-closed", "mechanism": PART}]
@@ -306,9 +309,10 @@ def test_a_kept_contest_beside_a_note_on_the_part_breaks_the_run(project, capsys
     assert not repeats(got)
 
 
-def test_a_merge_of_the_base_the_review_carries_over_keeps_the_breaker(project, capsys):
+def test_a_merge_of_the_base_waits_for_the_next_review(project, capsys):
     # The head merges the base into MIDDLE and leaves the pull request's own changes as they were: MIDDLE's
-    # review covers it (`review_carried`), and a merge of the base isn't an action on the part.
+    # review covers it (`review_carried`), but the head isn't the latest record's commit, so no breaker: the
+    # usual reason asks for the next review, which reports the part again if it still blocks.
     from test_merge_check_carry_over import MIDDLE as MERGED_INTO, REVIEWED, hashes_of, merged_in
     from test_merge_check_passes import records
 
@@ -317,7 +321,7 @@ def test_a_merge_of_the_base_the_review_carries_over_keeps_the_breaker(project, 
     data["comments"] = records(new([BLOCKS], rnd=1, commit=EARLIER, hashes=reviewed), new([BLOCKS], rnd=2, commit=MERGED_INTO, hashes=reviewed))
     got, _ = check(project, capsys, data, "--review-rounds", "3")
     assert "review_carried" in [n["id"] for n in got["notes"]], got
-    assert nexts(got) == [(PART, "split")]
+    assert not repeats(got) and [(r["id"], r.get("next")) for r in review_reasons(got)] == [("review_not_clean", "round")]
 
 
 def test_the_words_name_the_other_findings_and_the_limits(project, capsys):
@@ -326,3 +330,64 @@ def test_the_words_name_the_other_findings_and_the_limits(project, capsys):
     assert "other" in r["wording"]["new"]["fix"] and "other blocking findings" in r["wording"]["developer"]["fix"]
     [r] = repeats(run(project, capsys, new([BLOCKS], rnd=1, commit=EARLIER, split=True), new([BLOCKS], rnd=2, split=True)))
     assert "10 reviews" in r["wording"]["developer"]["fix"] and "end time" in r["wording"]["developer"]["fix"]
+
+
+# ---------- round 2's findings ----------
+
+
+def test_a_ruling_posted_twice_overturns_once(project, capsys):
+    # Round 2 overturns round 1's finding 1 (the other part), and is posted again: the copy's ruling is about round 1 too.
+    for rnd, rounds, kind in ((2, "3", "round"), (3, "3", "pass")):
+        first = new([OTHER, BLOCKS], rnd=1 if kind == "round" else 3, commit=EARLIER)
+        ruling = new([BLOCKS], kind=kind, rnd=rnd, outcomes=OVERTURNED_1)
+        assert nexts(run(project, capsys, first, ruling, rounds=rounds)) == [(PART, "split")]
+        assert nexts(run(project, capsys, first, ruling, ruling, rounds=rounds)) == [(PART, "split")], kind
+
+
+def test_a_late_copy_before_a_ruling_doesnt_take_it(project, capsys):
+    # Round 3 overturns round 2's finding on the part; round 1 was posted again, late, just before it.
+    got = run(project, capsys, new([OTHER], rnd=1, commit=EARLIER), new([BLOCKS], rnd=2, commit=MIDDLE),
+              new([OTHER], rnd=1, commit=EARLIER), new([BLOCKS], rnd=3, outcomes=OVERTURNED_1))
+    assert not repeats(got) and [r["id"] for r in review_reasons(got)] == ["review_not_clean"]
+
+
+def test_a_late_copy_of_a_ruling_doesnt_rule_on_a_later_review(project, capsys):
+    # Round 2 overturns round 1's finding 1; a copy of round 2 is posted after round 3, on the head.
+    got = run(project, capsys, new([OTHER, BLOCKS], rnd=1, commit=EARLIER), new([BLOCKS], rnd=2, commit=MIDDLE, outcomes=OVERTURNED_1),
+              new([BLOCKS], rnd=3), new([BLOCKS], rnd=2, commit=MIDDLE, outcomes=OVERTURNED_1))
+    assert nexts(got) == [(PART, "split")]
+    # A late re-post of a review that ruled on the one before it never rules on a later commit's review.
+    got = run(project, capsys, new([OTHER], rnd=1, commit=EARLIER, outcomes=[]), new([BLOCKS], rnd=2, commit=MIDDLE),
+              new([BLOCKS], rnd=3), new([OTHER], rnd=1, commit=EARLIER))
+    assert nexts(got) == [(PART, "split")]
+
+
+def test_an_old_rule_record_posted_late_between_doesnt_take_a_ruling(project, capsys):
+    # Round 1 on MIDDLE; an old-rule record for EARLIER posted late; round 2 on the head overturns round 1's finding
+    # on the part, so round 1 counts for nothing.
+    got = run(project, capsys, new([BLOCKS], rnd=1, commit=MIDDLE), rec(rnd=1, commit=EARLIER, clean=False),
+              new([BLOCKS], rnd=2, outcomes=OVERTURNED_1))
+    assert not repeats(got) and [r["id"] for r in review_reasons(got)] == ["review_not_clean"]
+
+
+@pytest.mark.parametrize("rounds, then", [("3", "round"), ("2", "pass")])
+def test_the_text_names_the_review_that_follows(project, capsys, monkeypatch, rounds, then):
+    data = with_records(new([BLOCKS], rnd=1, commit=EARLIER), new([BLOCKS], rnd=2))
+    said = {"round": ("run another round", "ask for another review"),
+            "pass": ("run a Correctness pass on the head", "ask for a short check of the latest changes")}[then]
+    for level, words in zip(("developer", "new"), said):
+        monkeypatch.setenv("WORKFLOW_EXPERIENCE", level)
+        out, _ = check(project, capsys, data, "--review-rounds", rounds, as_json=False)
+        assert words in out, (level, out)
+
+
+def test_the_new_words_read_as_a_sentence(project, capsys):
+    [r] = repeats(run(project, capsys, new([BLOCKS], rnd=1, commit=EARLIER), new([BLOCKS], rnd=2)))
+    assert r["wording"]["new"]["message"].startswith(f"Not yet: the part `{PART}` blocked 2 reviews in a row,")
+
+
+def test_two_parts_at_once_dont_ask_to_fix_each_other(project, capsys):
+    got = run(project, capsys, new([BLOCKS, OTHER], rnd=1, commit=EARLIER), new([BLOCKS, OTHER], rnd=2))
+    for r in repeats(got):
+        assert "other than the parts this answer names" in r["wording"]["developer"]["fix"]
+        assert "other than the parts this answer names" in r["wording"]["new"]["fix"]
