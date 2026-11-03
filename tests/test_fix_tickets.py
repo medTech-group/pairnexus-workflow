@@ -15,6 +15,7 @@ import pytest
 
 from changelog_notes import since_0110
 from conftest import KIT, git
+from workflow import issues
 from workflow.guard import decide
 from workflow.profile import load
 
@@ -259,21 +260,46 @@ def test_a_blocking_security_problem_on_main_holds_a_run_for_the_owner():
     assert "A blocking `security: main` finding is never split out." in text
     # ADR 0001: in a run it stops its ticket at needs-human; never fixed unattended in public.
     assert "In a run it holds this ticket for the owner, until the owner has fixed it on the base branch:" in text
-    assert "file its ticket to fix it as above (`ready-for-human`, only its area named, its details given privately);" in text
+    assert (
+        "file its ticket to fix it as above (`ready-for-human`, only its area named, its details given privately), "
+        "with `kind=old` and `## Blocked by` \"None\";"
+    ) in text
     # The hold is released by the fix on the base branch, not by a later session finding it again.
     assert (
-        "add that ticket under this ticket's `## Blocked by`, keeping the rest of its body, "
-        "so `workflow ready` holds this ticket until the owner closes that one;"
+        "add that ticket under this ticket's `## Blocked by`, replacing a \"None\" there and adding the section if there is none, "
+        "keeping the rest of its body, so §0's blocker check (and `workflow ready`, once it is labelled ready again) "
+        "stops any start before the owner closes that one;"
     ) in text
-    assert "stop as §5's \"Still red after three fix attempts\" says (`needs-human`), the reason naming only its area." in text
     assert (
-        "The session that picks this ticket up again merges the base branch in first, as §5's \"The base branch moved\" says, "
-        "with the merge queue on too, so its reviewers read the fix."
+        "stop as §5's \"Still red after three fix attempts\" says (`needs-human`), the reason naming only its area and saying "
+        "how it is released: \"the owner fixes it on the base branch, closes #<n>, then answers here\"."
     ) in text
+    # The signal to merge the base in first sits where every session reads it: §0's blocker check.
+    zero = _flat(_between(_read(BUILD), "## 0. Read first", "\n## 1."))
+    assert (
+        "When one is a ticket filed from this ticket for a security problem on the base branch (labelled `ready-for-human`, "
+        "its machine line saying `from=` this ticket), now closed as completed, merge the base branch in before anything else, "
+        "as §5's \"The base branch moved\" says, with the merge queue on too, so the reviewers read the owner's fix"
+    ) in zero
+    assert "§0 has the session that picks it up again merge the base branch in first, so its reviewers read the fix." in text
     assert "In attended work it is fixed here, its details shown to the person and given privately to whoever fixes it." in text
     assert "full review" not in text
     assert "**The base branch moved:**" in _read(BUILD)
     assert "**Still red after three fix attempts:**" in _read(BUILD)
+
+
+@pytest.mark.parametrize(
+    "section, held",
+    [
+        ("## Blocked by\n\nNone\n", []),  # why the step replaces a "None": a section opening with it reads as no blockers
+        ("## Blocked by\n\nNone\n- #500\n", []),
+        ("## Blocked by\n\n- #500\n", [500]),
+        ("## Blocked by\n\n- #372\n- #500\n", [372, 500]),
+    ],
+)
+def test_the_hold_reads_as_a_blocker_only_with_none_replaced(section, held):
+    body = f"Area: build\n\n## What to build\n\nx\n\n{section}\n<!-- workflow:agent -->\n"
+    assert [b for b in issues.blockers_of(body)] == held
 
 
 def test_a_security_problem_the_change_adds_is_never_filed():
@@ -311,7 +337,7 @@ def test_changelog_note():
     assert "those filed under the account it posts as" in note
     assert "is a new ticket unless this session already filed one for it" in note
     assert "never filed, even when marked a ticket to fix it" in note
-    assert "its ticket to fix it is filed and named under the held ticket's `## Blocked by`" in note
+    assert "its ticket to fix it is filed (`kind=old`) and named under the held ticket's `## Blocked by`, replacing a \"None\"" in note
     assert "(#373, part of spec #412)" in notes
     assert "`<!-- workflow:fix-ticket from=<n> kind=old|late|split -->`" in notes
     assert "Tests: `tests/test_fix_tickets.py`." in notes

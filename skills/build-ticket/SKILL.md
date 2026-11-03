@@ -32,7 +32,7 @@ In a ticket session the guard refuses a post without it. Labels, assignees, stat
   **Your first write** is a comment on the ticket saying you've started, quoting that output line exactly ("Started. Briefing 3f2a9c01b7de intact"), so the conductor sees whether the briefing arrived intact. Carry on either way: if it didn't, the conductor stops this session and starts another.
 - **The ticket,** its spec (the issue under "Parent") and every issue they link. Use `gh api` or the GitHub MCP tools.
 - **The profile** (`.claude/workflow/profile.toml`, `profile.md`) and the rules it points to.
-- **Its blockers.** If any isn't closed as completed, say so and stop: it isn't ready.
+- **Its blockers.** If any isn't closed as completed, say so and stop: it isn't ready. When one is a ticket filed from this ticket for a security problem on the base branch (labelled `ready-for-human`, its machine line saying `from=` this ticket), now closed as completed, merge the base branch in before anything else, as §5's "The base branch moved" says, with the merge queue on too, so the reviewers read the owner's fix (§3, "Filing tickets to fix findings, and split tickets").
 
 **Never in a conductor session.** With `WORKFLOW_ROLE=conductor`, stop here, before the claim or any other write: the conductor never builds a ticket. Follow the `conductor` skill's "A ticket named in chat" with it instead.
 
@@ -110,11 +110,11 @@ Two exceptions (ADR 0001), and a finding that is both takes both:
   - it is a new ticket each time, unless you filed one for it yourself in this session, its details in your chat: then it is "Already filed as #<n>". Any other open one names only its area, so it can't be matched: tell the owner privately of any it may repeat.
 
 A blocking `security: main` finding is never split out. In a run it holds this ticket for the owner, until the owner has fixed it on the base branch:
-- file its ticket to fix it as above (`ready-for-human`, only its area named, its details given privately);
-- add that ticket under this ticket's `## Blocked by`, keeping the rest of its body, so `workflow ready` holds this ticket until the owner closes that one;
-- stop as §5's "Still red after three fix attempts" says (`needs-human`), the reason naming only its area.
+- file its ticket to fix it as above (`ready-for-human`, only its area named, its details given privately), with `kind=old` and `## Blocked by` "None";
+- add that ticket under this ticket's `## Blocked by`, replacing a "None" there and adding the section if there is none, keeping the rest of its body, so §0's blocker check (and `workflow ready`, once it is labelled ready again) stops any start before the owner closes that one;
+- stop as §5's "Still red after three fix attempts" says (`needs-human`), the reason naming only its area and saying how it is released: "the owner fixes it on the base branch, closes #<n>, then answers here".
 
-The session that picks this ticket up again merges the base branch in first, as §5's "The base branch moved" says, with the merge queue on too, so its reviewers read the fix. In attended work it is fixed here, its details shown to the person and given privately to whoever fixes it.
+§0 has the session that picks it up again merge the base branch in first, so its reviewers read the fix. In attended work it is fixed here, its details shown to the person and given privately to whoever fixes it.
 
 A security problem the change adds (`security: change`) is the one finding never filed as marked: even when marked a ticket to fix it, it is fixed in this pull request, since it still blocks (`review-panel` §10), only its area named in public, and the findings table gives its mark. Marked blocks or note, it follows the usual rule.
 
