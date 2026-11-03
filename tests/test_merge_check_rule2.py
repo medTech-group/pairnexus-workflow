@@ -30,11 +30,11 @@ NOTE = {"mark": "note", "mechanism": "wording"}
 SECURITY_NOTE = {"mark": "note", "mechanism": "token scope", "security": "change", "area": "sign-in"}
 
 
-def new(found=(), kind="round", rnd=1, commit=HEAD, outcomes=(), split=False, reviewers=None):
+def new(found=(), kind="round", rnd=1, commit=HEAD, outcomes=(), split=False, reviewers=None, hashes=(None, None)):
     """A `rule=2` record, as `workflow review-record --findings` writes it."""
     f = findings.load(json.dumps({"findings": list(found), "outcomes": list(outcomes), "split": split}))
     who = reviewers or ("correctness" if kind == "pass" else "standards,spec,correctness")
-    return reviews.record(kind=kind, round=rnd, commit=commit, reviewers=who, clean=None, findings=f)
+    return reviews.record(kind=kind, round=rnd, commit=commit, reviewers=who, clean=None, findings=f, diff=hashes[0], lines=hashes[1])
 
 
 def with_records(*recs, data=None):
@@ -159,10 +159,40 @@ def test_a_clean_pass_on_the_head_after_many_is_ready(project, capsys):
     assert got["decision"] == "ready", got["reasons"]
 
 
+def _free_pass(project, capsys, rule2):
+    """A clean round, then a pass on a merge of the base that left the changed
+    lines as they were (it doesn't count toward a cap), and the head after it."""
+    from test_merge_check_carry_over import BASE_TIP, CONTEXT, FORK_POINT, MIDDLE as MERGE, RESOLVED, REVIEWED, hashed, hashes_of, pr
+
+    reviewed, context = hashes_of(project, capsys, REVIEWED), hashes_of(project, capsys, CONTEXT)
+    data = pr(RESOLVED, (EARLIER, [FORK_POINT]), (MERGE, [EARLIER, BASE_TIP]), (HEAD, [MERGE]))
+    if rule2:
+        data["comments"] = records(new([], rnd=1, commit=EARLIER, hashes=reviewed), new([NOTE], kind="pass", rnd=1, commit=MERGE, hashes=context))
+    else:
+        data["comments"] = records(hashed(rnd=1, commit=EARLIER, hashes=reviewed), hashed("pass", rnd=1, commit=MERGE, hashes=context))
+    return check(project, capsys, data, "--review-passes", "1")[0]
+
+
 def test_no_free_passes_note_without_a_cap(project, capsys):
     # The note about passes that didn't count toward the cap means nothing without one.
-    got, _ = check(project, capsys, with_records(new([BLOCKS], rnd=3, commit=EARLIER), new([NOTE], kind="pass", rnd=3)), "--review-rounds", "3")
-    assert "free_passes" not in note_ids(got)
+    old = _free_pass(project, capsys, rule2=False)
+    assert "free_passes" in note_ids(old) and old["review_passes"] == 1
+    got = _free_pass(project, capsys, rule2=True)
+    assert review_ids(got) == [("review_stale", None)]
+    assert "free_passes" not in note_ids(got) and got["review_passes"] == "until-clean"
+
+
+def test_a_rule_2_review_carries_over_a_merge_of_the_base(project, capsys):
+    # A merge of the base that left the pull request's own changes as they were: the review covers the head.
+    from test_merge_check_carry_over import REVIEWED, hashes_of, merged_in
+
+    reviewed = hashes_of(project, capsys, REVIEWED)
+    for found, want in (([NOTE], "ready"), ([BLOCKS], "not_yet")):
+        data = merged_in(REVIEWED)
+        data["comments"] = records(new(found, rnd=1, commit=EARLIER, hashes=reviewed))
+        got, _ = check(project, capsys, data)
+        assert got["decision"] == want and "review_carried" in note_ids(got), got
+    assert review_ids(got) == [("review_not_clean", "round")]
 
 
 # ---------- both rules on one pull request: the latest counted record decides ----------
@@ -195,6 +225,34 @@ def test_new_records_then_an_old_one_the_cap_again(project, capsys):
     assert got["review_passes"] == 2
 
 
+def test_a_late_old_record_for_an_older_commit_doesnt_decide(project, capsys):
+    # Posted last, but for MIDDLE, before the head's own pass: the new rule still decides.
+    data = with_records(
+        new([BLOCKS], rnd=3, commit=EARLIER), *[new([BLOCKS], kind="pass", rnd=3, commit=MIDDLE)] * 2, new([BLOCKS], kind="pass", rnd=3),
+        rec("pass", rnd=3, commit=MIDDLE, clean=False),
+    )
+    got, _ = check(project, capsys, data, "--review-rounds", "3", "--review-passes", "2")
+    assert review_ids(got) == [("pass_not_clean", None)]
+    assert got["review_passes"] == "until-clean"
+
+
+def test_a_late_new_record_for_an_older_commit_doesnt_decide(project, capsys):
+    data = with_records(
+        rec(rnd=3, commit=EARLIER, clean=False), rec("pass", rnd=3, commit=MIDDLE, clean=False), rec("pass", rnd=3, commit=HEAD, clean=False),
+        new([BLOCKS], kind="pass", rnd=3, commit=MIDDLE),
+    )
+    got, _ = check(project, capsys, data, "--review-rounds", "3", "--review-passes", "2")
+    assert review_ids(got) == [("passes_used_up", "owner")]
+    assert got["review_passes"] == 2
+
+
+def test_on_one_commit_the_last_posted_decides(project, capsys):
+    old_last = with_records(new([BLOCKS], rnd=3, commit=EARLIER), *[new([BLOCKS], kind="pass", rnd=3)] * 2, rec("pass", rnd=3, commit=HEAD, clean=False))
+    assert review_ids(check(project, capsys, old_last, "--review-rounds", "3", "--review-passes", "2")[0]) == [("passes_used_up", "owner")]
+    new_last = with_records(new([BLOCKS], rnd=3, commit=EARLIER), *[rec("pass", rnd=3, commit=HEAD, clean=False)] * 2, new([BLOCKS], kind="pass", rnd=3))
+    assert review_ids(check(project, capsys, new_last, "--review-rounds", "3", "--review-passes", "2")[0]) == [("pass_not_clean", None)]
+
+
 def test_an_old_record_from_an_account_without_write_access_doesnt_decide(project, capsys):
     # Only counted records decide: a stranger's old-rule record posted last changes nothing.
     data = with_records(new([BLOCKS], rnd=3, commit=EARLIER), *[new([BLOCKS], kind="pass", rnd=3, commit=MIDDLE)] * 3)
@@ -204,7 +262,7 @@ def test_an_old_record_from_an_account_without_write_access_doesnt_decide(projec
     assert got["review_passes"] == "until-clean"
 
 
-def test_a_new_round_after_old_passes_judges_by_its_marks(project, capsys):
+def test_a_new_round_after_an_old_round_judges_by_its_marks(project, capsys):
     data = with_records(rec(rnd=1, commit=EARLIER, clean=False), new([NOTE], rnd=2))
     assert check(project, capsys, data, "--review-rounds", "3")[0]["decision"] == "ready"
 
@@ -220,6 +278,17 @@ def test_the_changelog_notes_it():
 def test_the_merge_check_skill_says_rule_2_has_no_cap():
     text = (KIT / "skills/merge-check/SKILL.md").read_text(encoding="utf-8")
     assert "rule=2" in text and "never says `passes_used_up`" in text
+    [field] = [line for line in text.splitlines() if line.startswith("- `review_passes`:")]
+    assert "`rule=2`" in field and "#426" in field
+
+
+def test_the_flags_help_says_rule_2_has_no_cap(capsys):
+    from workflow import cli
+
+    with pytest.raises(SystemExit):
+        cli.main(["merge-check", "--help"])
+    help_text = " ".join(capsys.readouterr().out.split())
+    assert "None applies when the latest counted review record is a rule=2 one (#426)" in help_text
 
 
 def test_the_merge_rule_says_how_rule_2_is_judged():

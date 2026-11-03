@@ -543,13 +543,19 @@ class Context:
         self.small_max_lines = small_max_lines or (profile.small_max_lines if profile else small.DEFAULT_MAX_LINES)
         self.small_max_files = small_max_files or (profile.small_max_files if profile else small.DEFAULT_MAX_FILES)
         self.measured: small.Measure | None = None  # the diff against it, once measured
-        self.rule2 = False  # the latest counted review record is a `rule=2` one: no pass cap (#426)
+        self.rule2 = False  # the latest counted review record is a `rule=2` one: no pass cap (#426); `_panel` sets it
         self.waived: list[str] = []  # the waivers used
         self.notes: list[dict] = []
         self.checks: list[dict] = []
         self.preview: dict | None = None
         self.kit: list[str] = []
         self._cache: dict = {}
+
+    @property
+    def pass_cap(self) -> int | str:
+        """The pass cap the review rule uses: `review_passes`, or none
+        (`until-clean`) when the latest counted record is a `rule=2` one (#426)."""
+        return presets_mod.UNTIL_CLEAN if self.rule2 else self.review_passes
 
     def raw(self, name: str):
         """The input's JSON as given."""
@@ -913,7 +919,9 @@ def _clean_review(r: reviews.Record) -> bool:
     from its findings' marks (spec #412, "Records and clean"): clean only with
     no finding marked blocks, a finding kept after a contest among them; a note
     or a ticket to fix it never makes it unclean. Any other record's is its own
-    result, as today."""
+    result, as today. The reader (`reviews.read`) already skips a `rule=2`
+    record whose `result` disagrees with its marks; this says the rule here
+    too, and the reader's check stays."""
     return r.found.clean if r.rule == reviews.RULE else r.clean
 
 
@@ -1123,7 +1131,10 @@ def _panel(ctx: Context, add) -> None:
     The new rule (#426, spec #412 "Records and clean"): a `rule=2` record is
     clean by its findings' marks (`_clean_review`), and when the latest counted
     record is one, there is no pass cap, whatever `ctx.review_passes` says: the
-    latest counted record's rule decides. The round limit stays as above."""
+    latest counted record's rule decides, latest by the PR's history and then
+    by posting, so a record posted late for an older commit doesn't decide it.
+    When the old rule decides, every counted pass after the last round counts
+    toward its cap, as it always has. The round limit stays as above."""
     head = ctx.pr().head
     perms = ctx.permissions()
     shas = ctx.commits() | {head}
@@ -1133,7 +1144,11 @@ def _panel(ctx: Context, add) -> None:
         left_out = _plural(len(records) - len(counted), "review record")
         _note(ctx, "records_ignored", f"Left out {left_out}: posted by an account without write access, or naming a commit not in this pull request's commit list.")
     rounds = [i for i, r in enumerate(counted) if r.kind == "round"]
-    ctx.rule2 = bool(counted) and counted[-1].rule == reviews.RULE
+    history = {sha: n for n, sha in enumerate(ctx.parents())}  # the PR's commits, oldest first
+    if counted:
+        # A counted commit the list leaves out is the head (GitHub lists at most 250): the newest.
+        latest_by_history = max(enumerate(counted), key=lambda e: (history.get(e[1].commit, len(history)), e[0]))[1]
+        ctx.rule2 = latest_by_history.rule == reviews.RULE
     if not rounds:
         add("no_review")
         return
@@ -1166,8 +1181,6 @@ def _panel(ctx: Context, add) -> None:
     def on_head(r: reviews.Record) -> bool:
         return r.commit == head or (carried and r is latest)
 
-    history = {sha: n for n, sha in enumerate(ctx.parents())}  # the PR's commits, oldest first
-
     def free(i: int, commit: str | None, lines: str | None) -> bool:
         """A pass on `commit` after the counted records up to `i` doesn't count
         toward the cap (answer 23). The review before it is the latest since
@@ -1182,7 +1195,7 @@ def _panel(ctx: Context, add) -> None:
 
     after = [(i - 1, r) for i, r in enumerate(counted) if i > rounds[-1] and r.kind == "pass"]
     used = [r for i, r in after if not free(i, r.commit, r.lines)]
-    cap = presets_mod.UNTIL_CLEAN if ctx.rule2 else ctx.review_passes
+    cap = ctx.pass_cap
     if len(after) > len(used) and cap != presets_mod.UNTIL_CLEAN:
         _note(ctx, "free_passes", f"{_plural(len(after) - len(used), 'Correctness pass', 'Correctness passes')} after a merge of the base that left the pull request's changed lines as they were didn't count toward the pass cap.")
     passes = [r for _, r in after if on_head(r)]
@@ -1544,9 +1557,7 @@ def evaluate(
         decision = "owner_review"
     else:
         decision = "ready"
-    # The pass cap the review rule used: none under the new rule (#426).
-    passes_cap = presets_mod.UNTIL_CLEAN if ctx.rule2 else ctx.review_passes
-    return Result(decision, number, head, level, owner, reasons, ctx.notes, ctx.checks, kit, ctx.preview, ctx.review_rounds, passes_cap,
+    return Result(decision, number, head, level, owner, reasons, ctx.notes, ctx.checks, kit, ctx.preview, ctx.review_rounds, ctx.pass_cap,
                   ctx.small_max_lines, ctx.small_max_files, ctx.measured.as_dict() if ctx.measured else None, queue, ctx.head_hashes(), hand_off)
 
 
