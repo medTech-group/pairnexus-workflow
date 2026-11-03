@@ -478,12 +478,12 @@ def test_a_corrected_copy_is_read_as_the_review(project, capsys, between):
     # Round 2 on the head is posted again, corrected: only a note on the part. Its latest copy is the review, so the
     # note breaks the run, whether the correction comes right after it or after a pass on the head.
     first = [new([BLOCKS], rnd=1, commit=EARLIER), new([BLOCKS], rnd=2)]
-    middle = [new([OTHER], kind="pass", rnd=2)] if between else []
+    middle = [new([BLOCKS], kind="pass", rnd=2)] if between else []
     got = run(project, capsys, *first, *middle, new([NOTE | {"mechanism": PART}], rnd=2))
     assert not repeats(got)
     # And the other way: the correction adds the part.
     got = run(project, capsys, new([BLOCKS], rnd=1, commit=EARLIER), new([OTHER], rnd=2), *middle, new([BLOCKS], rnd=2))
-    assert nexts(got) == ([] if between else [(PART, "split")])
+    assert nexts(got) == [(PART, "split")]
 
 
 def test_a_corrected_copy_without_an_action_takes_it_back(project, capsys):
@@ -494,3 +494,10 @@ def test_a_corrected_copy_without_an_action_takes_it_back(project, capsys):
     assert nexts(got) == [(PART, "fail_closed")]
     [r] = repeats(got)
     assert "3 reviews in a row" in r["wording"]["developer"]["message"]
+
+
+def test_a_corrected_copy_without_the_split_flag_takes_it_back(project, capsys):
+    # Round 2 was posted saying the ticket was made by a split, then corrected: the ticket wasn't, so split.
+    got = run(project, capsys, new([BLOCKS], rnd=1, commit=EARLIER), new([BLOCKS], rnd=2, commit=MIDDLE, split=True),
+              new([BLOCKS], rnd=2, commit=MIDDLE), new([BLOCKS], rnd=3))
+    assert nexts(got) == [(PART, "split")]
