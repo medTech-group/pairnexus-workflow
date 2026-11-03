@@ -211,7 +211,13 @@ def _flow_bar():
 
 def test_flow_s_ticket_list_has_the_bar():
     bullet = next(ln for ln in _flow_tickets().splitlines() if ln.strip().startswith("- `## Bar`"))
-    assert "may" in bullet and "`run.bar_areas`" in bullet and "must" in bullet and "(\"The bar\")" in bullet
+    assert bullet.strip() == "- `## Bar`, required in a `run.bar_areas` area (\"The bar\")."
+    # A triaged ticket gets the same parts, the bar among them (round 3, correctness 3).
+    assert "it gets item 2's parts before it gets the label" in _read("docs/flow.md")
+
+
+def test_flow_s_bar_section_says_a_ticket_may_carry_one():
+    assert "A ticket may carry one, and one whose area is in the profile's `run.bar_areas` must" in _flow_bar()
 
 
 def test_flow_says_what_a_bar_is():
@@ -225,6 +231,22 @@ def test_the_hook_s_first_flow_context_still_carries_section_2(tmp_path):
     # Round 2, correctness B2: §2's bar bullet stays short enough for the first flow context.
     from workflow import context
     assert "\n## 2. A spec and its build tickets" in context.first_flow([KIT / "docs/flow.md"])
+
+
+def test_section_2_fits_for_a_project_with_an_addendum_at_an_ordinary_path(tmp_path):
+    # Round 3, explorer 1: the hook names each flow file by its absolute path, inside the budget, so
+    # §2 must still fit for a vendored project with a flow addendum at an ordinary path (main: up to 94).
+    from workflow import context
+    root = tmp_path / ("p" * max(1, 90 - len(str(tmp_path)) - 1))
+    assert len(str(root)) >= 80
+    (root / ".claude/workflow").mkdir(parents=True)
+    flow = root / ".claude/workflow/flow.md"
+    flow.write_text(_read("docs/flow.md"), encoding="utf-8")
+    addendum = root / "docs/agents/flow-addendum.md"
+    addendum.parent.mkdir(parents=True)
+    addendum.write_text("# Addendum\n\nOne.\nTwo.\nThree.\n", encoding="utf-8")
+    out = context.first_flow([flow, addendum])
+    assert "\n## 2. A spec and its build tickets" in out and "- `## Bar`" in out
 
 
 def _example_bar():
