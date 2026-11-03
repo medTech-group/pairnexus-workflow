@@ -106,7 +106,9 @@ def test_when_each_is_filed():
     # A split: before the fixer takes the part out, so a restart never loses it.
     assert (
         "A split one: as soon as `WF merge-check` says to split, before a fresh fixer takes the part out of the pull request, "
-        "so a restart never loses the ticket; then add it to the pull request body's **Split out** (§4) at once."
+        "so a restart never loses the ticket; then add it to the pull request body's **Split out** (§4) at once, and give that "
+        "part's blocking findings in the findings table the outcome \"Split out to #<n>\", so a hand-off written before the "
+        "next review names it."
     ) in text
     # A session restarted after the split still gives the outcome, with the part's exact name, and the body's entry.
     assert (
