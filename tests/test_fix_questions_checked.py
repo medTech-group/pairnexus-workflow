@@ -56,8 +56,21 @@ def _points_to_the_check(text: str) -> bool:
     isn't enough)."""
     t = _flatten(text)
     found = [m.start() for m in re.finditer(r"checked before it's asked|waits? for its check", t)]
-    negation = r"\b(isn't|not|never|no|doesn't|don't|without|skips?)\b"
-    return bool(found) and not any(re.search(negation, t[:i], re.I) for i in found)
+    return bool(found) and not any(_negated(t, i) for i in found)
+
+
+NEGATION = r"\b(isn't|not|never|no|nor|doesn't|don't|without|skips?)\b"
+
+
+def _negated(sentence: str, at: int) -> bool:
+    """Something earlier in the sentence negates what stands at `at`."""
+    return bool(re.search(NEGATION, sentence[:at], re.I))
+
+
+def _says(sentence: str, pattern: str) -> bool:
+    """The sentence states `pattern`, and nothing earlier in it negates it."""
+    m = re.search(pattern, sentence)
+    return bool(m) and not _negated(sentence, m.start())
 
 
 # --- the check: one read, before the question round ------------------------------
@@ -104,6 +117,23 @@ def test_points_to_the_check_catches_a_reversed_rule():
     assert not _points_to_the_check("A question round doesn't wait for its check (**Before each question round** applies only to `start`).")
     assert not _points_to_the_check("No question round waits for its check before it's asked (**Before each question round**).")
     assert not _points_to_the_check("See **Before each question round**, below.")
+
+
+def test_says_catches_a_reversed_rule():
+    assert _says("if it fails again, ask the question round all the same", r"ask the question round")
+    assert not _says("if it fails again, don't ask the question round", r"ask the question round")
+    assert not _says("Each finding never changes the recommendation", r"changes? the recommendation")
+
+
+def test_a_check_s_own_rounds_are_left_out_as_start_and_the_flow_leave_them():
+    s = _sentence(_check(), "`start`'s \"Before each round\"")
+    assert re.search(r"but a check's own|except a check's own", s), s
+
+
+def test_its_inputs_take_every_question_round_posted_so_far():
+    # A question round posted after this planning round's answers.md was built is read too.
+    s = _sentence(_check(), "as you're about to ask them")
+    assert "posted so far" in s and "since this planning round's `answers.md` was built" in s
 
 
 def test_it_covers_the_rounds_fixes_sends():
@@ -167,7 +197,7 @@ def test_it_reads_against_the_code_the_adrs_earlier_answers_and_the_rules():
 
 def test_each_finding_changes_the_recommendation_or_is_shown_as_check():
     s = _sentence(_check(), "Each finding")
-    assert re.search(r"changes? the recommendation", s)
+    assert _says(s, r"changes? the recommendation"), s
     assert '"Check: …"' in s
     assert "**fix**" in s and "**ask**" in s and "wrong" in s
 
@@ -193,7 +223,7 @@ def test_a_check_that_fails_leaves_the_round_marked_not_checked():
     s = _sentence(_check(), "fails")
     assert "once more" in s
     # The round is still asked: a failed read never holds planning up.
-    assert "ask the question round" in s
+    assert _says(s.split("fails again", 1)[1], r"ask the question round"), s
     assert re.search(r"wasn't checked|not checked", s) and "why" in s
 
 
