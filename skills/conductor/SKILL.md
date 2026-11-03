@@ -401,7 +401,7 @@ The owner's "also #<n>" for a ticket whose open pull request needs a code fix (t
 - disarm auto-merge if it is armed (`disable_pr_auto_merge`, or `gh pr merge <n> --disable-auto`);
 - if it is in the merge queue, take it out (GitHub's **Remove from queue**), or, where that can't be done here, say so on the tracking issue. Leaving the queue, by your hand or GitHub's, is never a drop: a held pull request is never queued, so nothing goes to `WF state drop` for it;
 - then record the pull request's head (`pull/<PR>/head`), its full SHA, as the ticket's `requeued_head`, with no `base_merged`, `queue_heads`, `queue_failed` or `queue_result`, so the merge queue's drop rule starts afresh, and write the state. Nothing an archived session pushed counts as the fix.
-- Then take `workflow:carry-on` off the ticket if it has it (#380): the fix asked for lives only in this run's state, so no later run may adopt the ticket without it.
+- Then take `workflow:carry-on` off the ticket if it has it (#380): the fix asked for lives only in this run's state, so no later run may adopt the ticket without it. A ticket the state holds as `carry-on` (carried on at the end time) becomes `in-review`, so neither the report nor a resumed stop treats it as carried on; the row then marks it as it says.
 
 While `requeued_head` is set the pull request is held: check-in step 4's held row.
 
@@ -457,7 +457,7 @@ WF render --template TEMPLATES/ticket-session-prompt.md --ticket ticket.json --c
 | `owner_decisions` | The owner's amendments since the run began that touch this ticket |
 | `briefing` | Anything specific: known pitfalls, environment quirks from `profile.md`, what a previous attempt left (branch, PR, head SHA), and a held pull request's fix ("A pull request that needs a code fix") |
 | `wake_trigger` | The state's `wake_trigger`: the id of the routine the session fires when its ticket ends; `none` when it is `null` |
-| `hand_off` | Optional, for a carry-on ticket ("The work", in the pre-flight): `WF merge-check --fetch <its PR> --json`'s `hand_off.url`, the hand-off comment its session starts from, on the briefing's "Hand-off:" line. Leave it out, or `none`, for any other ticket. Anything but the URL of a comment on a pull request of this repository stops the render: handle it as a "Starts from:" line that stops the render (above), with the render's message |
+| `hand_off` | Optional: `WF merge-check --fetch <its PR> --json`'s `hand_off.url` whenever the ticket has an open pull request whose `hand_off` isn't null, a carry-on ticket's ("The work", in the pre-flight) above all, held or not: the hand-off comment its session starts from, on the briefing's "Hand-off:" line. Leave it out, or `none`, for any other ticket. Anything but the URL of a comment on a pull request of this repository stops the render: handle it as a "Starts from:" line that stops the render (above), with the render's message |
 
 **The session checks its copy.** Its first step writes the briefing it received to `.workflow/briefing.md` and runs `WF briefing verify --file .workflow/briefing.md`, which prints `Briefing <hash> intact`, `Briefing changed: expected <a>, got <b>` or `no Briefing line`; its first comment on the ticket quotes that line. Anything but `intact` with the state's hash: stop that session and retry (check-in step 4).
 

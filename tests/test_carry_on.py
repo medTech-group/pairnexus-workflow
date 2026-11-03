@@ -203,6 +203,8 @@ def test_a_rule_2_ticket_is_carried_on_not_set_aside():
     hold = _skill().split("**The hold,**", 1)[1].split("\n\n", 1)[0]
     assert "- Then take `workflow:carry-on` off the ticket if it has it (#380)" in hold
     assert "so no later run may adopt the ticket without it" in hold
+    # A ticket already carried on at the end time stops being one, so no resume labels it again.
+    assert "A ticket the state holds as `carry-on` (carried on at the end time) becomes `in-review`" in hold
     assert "when step 2 posted a hand-off, comment on it" in carry
     # A carry-on ticket adopted but never started keeps its hand-off.
     # It gets every step (so `workflow:in-progress` comes off), with no second hand-off and no comment.
@@ -282,7 +284,9 @@ def test_the_kick_off_adopts_every_carry_on_ticket_first_without_asking():
 def test_the_briefing_section_names_the_hand_off_slot():
     brief = _skill().split("## A ticket session's briefing", 1)[1].split("\n## ", 1)[0]
     row = next(ln for ln in brief.splitlines() if ln.startswith("| `hand_off` |"))
-    assert "Optional, for a carry-on ticket" in row and "`hand_off.url`" in row
+    # Given whenever the pull request has a hand-off, so a held or resumed carry-on ticket never loses it.
+    assert "Optional: `WF merge-check --fetch <its PR> --json`'s `hand_off.url` whenever the ticket has an open pull request whose `hand_off` isn't null" in row
+    assert "held or not" in row
     assert "handle it as a \"Starts from:\" line that stops the render" in row
 
 
