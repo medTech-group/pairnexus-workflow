@@ -207,7 +207,7 @@ def _starts_from_words(ticket: dict, profile: Profile, branch: str) -> str:
 _HAND_OFF_URL = re.compile(r"https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/([1-9][0-9]{0,9})#issuecomment-([1-9][0-9]{0,19})")
 
 
-def _is_none(value) -> bool:
+def _says_none(value) -> bool:
     return value is None or (isinstance(value, str) and value.strip().lower() == "none")
 
 
@@ -215,7 +215,7 @@ def _hand_off_words(url: object, profile: Profile, branch: str) -> str:
     """The briefing's "Hand-off:" line, from the optional `hand_off` slot: the
     URL of the hand-off comment an earlier run's end time left on the ticket's
     pull request (#380), or none. Anything else stops the render."""
-    if _is_none(url):
+    if _says_none(url):
         return "none: start from the ticket and what **Specific to this ticket** says."
     m = _HAND_OFF_URL.fullmatch(url.strip()) if isinstance(url, str) else None
     if not m or m.group(1).lower() != profile.repo.lower():
@@ -224,8 +224,8 @@ def _hand_off_words(url: object, profile: Profile, branch: str) -> str:
             f"(https://github.com/{profile.repo}/pull/<n>#issuecomment-<id>), or \"none\""
         )
     return (
-        f"{m.group(0)}. An earlier run's end time came before this ticket's review was clean, so this run carries it on; "
-        f"it isn't a retry. Its pull request #{m.group(2)} and branch `{branch}` stay as they are: check out the branch "
+        f"{m.group(0)}. An earlier session handed this ticket on before its review was clean, so this session carries it "
+        f"on. Its pull request #{m.group(2)} and branch `{branch}` stay as they are: check out the branch "
         "from GitHub, and read that hand-off comment before anything else. Go on from it: fix its open blocking findings "
         "first, then run the next review, numbered after the rounds and passes it names (`merge-check` counts them from "
         "the records). For a security finding it names by its area only, first review the whole change for that area: "
@@ -335,6 +335,8 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
     }
     for k in REQUIRED_SLOTS:
         v[k] = slots.get(k, "")
+    for k in OPTIONAL_SLOTS:
+        v[k] = "none" if _says_none(slots.get(k)) else slots[k]
     for k, val in slots.items():
         v.setdefault(k, val)
     return v
@@ -355,9 +357,9 @@ def _pass_cap(review: dict) -> str:
 
 def render(template: str, vals: dict) -> str:
     used = [m.group(1) for m in PLACEHOLDER.finditer(template)]
-    if not _is_none(vals.get("hand_off")) and "ticket.hand_off" not in used:
+    if not _says_none(vals.get("hand_off")) and "ticket.hand_off" not in used:
         raise RenderError(
-            "the template has no {{ticket.hand_off}} line, so the session would never see its hand_off: "
+            "the template has no {{ticket.hand_off}} line, which tells the session to start from its hand_off: "
             "render it with the kit's current ticket-session-prompt.md"
         )
     missing_slots = [k for k in REQUIRED_SLOTS if k in used and not str(vals.get(k, "")).strip()]
