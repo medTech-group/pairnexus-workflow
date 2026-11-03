@@ -1301,12 +1301,14 @@ def _repeats(counted: list[reviews.Record], by_history: list[int], head: str) ->
     commit: once an action is pushed, a review comes first.
 
     `by_history` is `counted`'s places, oldest first by the PR's history, then
-    by posting (as the rule choice ranks records); a review posted twice
-    (`_same_review`) counts once, as its later copy. Names compare exactly;
+    by posting (as the rule choice ranks records). A review posted more than
+    once (`_same_review`) is one review, wherever its copies were posted: at
+    its first post's place, with its latest copy's findings and outcomes; a
+    copy never rules or counts on its own. Names compare exactly;
     security findings never count; a record without `rule=2` breaks every run.
-    A contest's ruling is about the last review before the record that gives
-    it: the latest by history among the records posted before it, no later in
-    history than it and not a copy of it. A finding it overturned counts for
+    A contest's ruling is about the last review before the review that gives
+    it: the latest by history among the reviews first posted before it and no
+    later in history than it. A finding it overturned counts for
     nothing; one it kept counts with the review that first reported it, and a
     review whose only findings on the part are kept re-entries neither counts
     nor breaks the run. A note or a ticket to fix it on the part, with no new
@@ -1318,25 +1320,24 @@ def _repeats(counted: list[reviews.Record], by_history: list[int], head: str) ->
     one the bar's fail-closed form covers and no record says it took that
     form; else `split` when no record says it was split out and the ticket
     wasn't made by a split (any record's flag); else None."""
-    rank = {i: n for n, i in enumerate(by_history)}
-    overturned: dict[int, set[int]] = {}  # a place in `counted` -> its findings' numbers overturned
+    # A review posted more than once is one review: its first post's place, its latest copy's content.
+    first: dict[int, int] = {}
     for i, r in enumerate(counted):
-        ruled = {o.finding for o in r.outcomes if o.kind == "contested" and o.ruling == "overturned"}
-        before = [j for j in range(i) if rank[j] < rank[i] and not _same_review(counted[j], r)]
+        first[i] = next((j for j in range(i) if first[j] == j and _same_review(counted[j], r)), i)
+    content = {first[i]: counted[i] for i in range(len(counted))}  # the latest copy wins
+    rank = {i: n for n, i in enumerate(by_history)}
+    seq = [i for i in by_history if first[i] == i]
+    overturned: dict[int, set[int]] = {}  # a review's first place -> its findings' numbers overturned
+    for i in seq:
+        ruled = {o.finding for o in content[i].outcomes if o.kind == "contested" and o.ruling == "overturned"}
+        before = [j for j in seq if j < i and rank[j] < rank[i]]
         if ruled and before:
             about = max(before, key=rank.__getitem__)
-            if counted[about].rule == reviews.RULE:
+            if content[about].rule == reviews.RULE:
                 overturned.setdefault(about, set()).update(ruled)
-    seq: list[int] = []
-    for i in by_history:
-        if seq and _same_review(counted[seq[-1]], counted[i]):
-            overturned.setdefault(i, set()).update(overturned.get(seq[-1], ()))
-            seq[-1] = i
-        else:
-            seq.append(i)
-    if not seq or counted[seq[-1]].commit != head or counted[seq[-1]].rule != reviews.RULE:
+    if not seq or content[seq[-1]].commit != head or content[seq[-1]].rule != reviews.RULE:
         return []
-    latest = counted[seq[-1]]
+    latest = content[seq[-1]]
     rule2 = [r for r in counted if r.rule == reviews.RULE]
     acted = {(o.kind, o.mechanism) for r in rule2 for o in r.outcomes}
     from_split = any(r.from_split for r in rule2)
@@ -1344,7 +1345,7 @@ def _repeats(counted: list[reviews.Record], by_history: list[int], head: str) ->
     def in_a_row(part: str) -> int:
         n = 0
         for i in reversed(seq):
-            r = counted[i]
+            r = content[i]
             if r.rule != reviews.RULE:
                 break
             gone = overturned.get(i, set())

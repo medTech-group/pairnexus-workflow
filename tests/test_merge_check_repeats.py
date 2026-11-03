@@ -14,8 +14,9 @@ Names are compared exactly; security findings never count; a contested finding
 the next reviewer kept counts once, with the review that first reported it, and
 a review whose only findings on the part are kept re-entries neither counts nor
 breaks the run; an overturned finding counts for nothing. A ruling is about the
-review posted before the record that gives it (not a copy of that record, nor a
-later commit's review). A review posted twice counts once. The count starts
+last review before the review that gives it (first posted before it and no
+later in history). A review posted more than once is one review, wherever its
+copies were posted. The count starts
 again after an action (the safe fallback taken, a split), and
 `mechanism_repeats` is given only while the head is the latest record's commit.
 "In a row" is by the pull request's history, as the rule choice ranks records
@@ -356,9 +357,10 @@ def test_a_late_copy_of_a_ruling_doesnt_rule_on_a_later_review(project, capsys):
     got = run(project, capsys, new([OTHER, BLOCKS], rnd=1, commit=EARLIER), new([BLOCKS], rnd=2, commit=MIDDLE, outcomes=OVERTURNED_1),
               new([BLOCKS], rnd=3), new([BLOCKS], rnd=2, commit=MIDDLE, outcomes=OVERTURNED_1))
     assert nexts(got) == [(PART, "split")]
-    # A late re-post of a review that ruled on the one before it never rules on a later commit's review.
-    got = run(project, capsys, new([OTHER], rnd=1, commit=EARLIER, outcomes=[]), new([BLOCKS], rnd=2, commit=MIDDLE),
-              new([BLOCKS], rnd=3), new([OTHER], rnd=1, commit=EARLIER))
+    # A late re-post of a review that ruled on the one before it never rules on a later commit's review: round 2
+    # (overturning round 1's other part) is posted again after round 3, whose finding 1 is the part.
+    got = run(project, capsys, new([OTHER, BLOCKS], rnd=1, commit=EARLIER), new([BLOCKS], rnd=2, commit=MIDDLE, outcomes=OVERTURNED_1),
+              new([BLOCKS, OTHER], rnd=3), new([BLOCKS], rnd=2, commit=MIDDLE, outcomes=OVERTURNED_1))
     assert nexts(got) == [(PART, "split")]
 
 
@@ -391,3 +393,75 @@ def test_two_parts_at_once_dont_ask_to_fix_each_other(project, capsys):
     for r in repeats(got):
         assert "other than the parts this answer names" in r["wording"]["developer"]["fix"]
         assert "other than the parts this answer names" in r["wording"]["new"]["fix"]
+
+
+# ---------- round 3's findings ----------
+
+
+def test_a_ruling_survives_its_target_posted_again_after_it(project, capsys):
+    # Round 2 overturns round 1's finding on the part; round 1 is then posted again (a missed record re-posted).
+    got = run(project, capsys, new([BLOCKS], rnd=1, commit=EARLIER), new([BLOCKS], rnd=2, outcomes=OVERTURNED_1),
+              new([BLOCKS], rnd=1, commit=EARLIER))
+    assert not repeats(got) and [r["id"] for r in review_reasons(got)] == ["review_not_clean"]
+
+
+def test_a_copy_of_a_ruling_posted_after_another_review_on_its_commit_rules_as_its_original(project, capsys):
+    # Round 2 on the head overturns round 1's finding; a pass on the head; then round 2 posted again. The copy's
+    # ruling is round 2's, about round 1, never about the pass.
+    first = [new([OTHER, BLOCKS], rnd=1, commit=EARLIER), new([BLOCKS], rnd=2, outcomes=OVERTURNED_1), new([BLOCKS], kind="pass", rnd=2)]
+    want = nexts(run(project, capsys, *first, rounds="2"))
+    assert want == [(PART, "split")]
+    assert nexts(run(project, capsys, *first, new([BLOCKS], rnd=2, outcomes=OVERTURNED_1), rounds="2")) == want
+
+
+@pytest.mark.parametrize("case", ["revives", "between", "count"])
+def test_a_copy_posted_anywhere_later_counts_once(project, capsys, case):
+    if case == "revives":
+        # A note on the part between a review and its late copy still breaks the run.
+        recs = [new([OTHER], rnd=1, commit=EARLIER), new([BLOCKS], kind="pass", rnd=1, commit=MIDDLE), new([NOTE | {"mechanism": PART}], kind="pass", rnd=1, commit=MIDDLE),
+                new([BLOCKS], rnd=2)]
+        copy, at = new([BLOCKS], kind="pass", rnd=1, commit=MIDDLE), 3
+    elif case == "between":
+        recs = [new([OTHER], rnd=1, commit=EARLIER), new([TICKET | {"mechanism": PART}], rnd=2), new([BLOCKS], kind="pass", rnd=2), new([BLOCKS], rnd=3)]
+        copy, at = new([TICKET | {"mechanism": PART}], rnd=2), 3
+    else:
+        recs = [new([BLOCKS], rnd=1, commit=EARLIER), new([BLOCKS], rnd=2), new([BLOCKS], kind="pass", rnd=2)]
+        copy, at = new([BLOCKS], rnd=2), 3
+    once = run(project, capsys, *recs)
+    twice = run(project, capsys, *recs[:at], copy, *recs[at:])
+    assert [(r["id"], r.get("next"), r.get("mechanism")) for r in review_reasons(twice)] == [(r["id"], r.get("next"), r.get("mechanism")) for r in review_reasons(once)]
+    if case == "count":
+        [r] = repeats(twice)
+        assert "3 reviews in a row" in r["wording"]["developer"]["message"]
+
+
+def test_the_skill_says_to_act_on_the_breaker_before_updating_the_branch():
+    text = (KIT / "skills/merge-check/SKILL.md").read_text(encoding="utf-8")
+    assert "act on it before bringing the branch up to date" in text
+
+
+def test_posting_any_review_again_later_never_changes_the_breaker(project, capsys):
+    # A fixed set of made-up histories (seeded, so it never fails by chance): a copy of any record, posted at any
+    # later place, leaves the breaker's answer as it was. Each round has its own number, so a copy is never a
+    # correction.
+    import random
+
+    rng = random.Random(427)
+    found = [[BLOCKS]] * 4 + [[COVERED], [BLOCKS, OTHER], [OTHER, BLOCKS], [NOTE | {"mechanism": PART}], [TICKET | {"mechanism": PART}], [], [BLOCKS, BLOCKS]]
+    outcomes = [[], [], [], OVERTURNED_1, FELL_BACK]
+    fired = 0
+    for trial in range(60):
+        recs, rnd = [], 0
+        for commit in sorted(rng.choices([EARLIER, MIDDLE, HEAD], k=rng.randint(2, 5)), key=[EARLIER, MIDDLE, HEAD].index):
+            kind = "round" if not recs or rng.random() < 0.5 else "pass"
+            rnd += kind == "round"
+            recs.append(new(rng.choice(found), kind=kind, rnd=rnd, commit=commit, outcomes=rng.choice(outcomes)))
+        if rng.random() < 0.3:  # sometimes a record posted late, for an older commit
+            recs.insert(rng.randrange(len(recs)), recs.pop())
+        at = rng.randrange(len(recs))
+        later = rng.randint(at + 1, len(recs))
+        twice = recs[:later] + [recs[at]] + recs[later:]
+        once_got, twice_got = (run(project, capsys, *r) for r in (recs, twice))
+        assert nexts(twice_got) == nexts(once_got), (trial, at, later)
+        fired += bool(repeats(once_got))
+    assert fired >= 10  # the histories reach the breaker
