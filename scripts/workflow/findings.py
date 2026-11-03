@@ -460,7 +460,7 @@ def _finite(text: str) -> float:
 def load(text: str) -> Findings:
     """A findings file's text, read and checked. Raises FindingsError."""
     if not text.strip():
-        raise FindingsError("is empty: give `[]` for a review with no findings")
+        raise FindingsError("is empty: give `{\"findings\": []}` for a review with no findings")
     try:
         data = json.loads(text, object_pairs_hook=_no_repeats, parse_constant=_no_constant, parse_float=_finite)
     except FindingsError:
@@ -474,7 +474,7 @@ def load(text: str) -> Findings:
         raise FindingsError("holds a list of findings, or an object with `findings`, `outcomes` and `split`")
     _known(data, _TOP_KEYS, "the file")
     if "findings" not in data:
-        raise FindingsError("give `findings`: the list of this review's findings (`[]` for none)")
+        raise FindingsError("give `findings`: the list of this review's findings (empty for none)")
     if not isinstance(data["findings"], list):
         raise FindingsError("`findings` is a list")
     outcomes = data.get("outcomes", [])
@@ -491,7 +491,7 @@ def from_file(path) -> Findings:
     """A findings file read from disk, refused in words for a file that is
     missing, can't be read, isn't UTF-8 text or is malformed."""
     if not path:
-        raise FindingsError("give --findings a file: this review's findings, `[]` for none")
+        raise FindingsError("give --findings a file: this review's findings, `{\"findings\": []}` for none")
     # The end of a long path, where the file's name is.
     shown = _plain(path, 80) if len(path) <= 80 else "…" + _plain(path[-79:], 79)
     p = Path(path)
