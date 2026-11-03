@@ -139,14 +139,10 @@ def test_the_section_never_reads_as_a_blocker():
     # A real dependency goes where readiness reads it, as an issue number.
     s = _sentence(d, "goes in `## Blocked by`")
     assert "`#n`" in s and not re.search(r"\b(never|not)\b[^.]*goes in", s)
-    # An open question about one holds the ticket back, since prose in `## Blocked by` blocks nothing.
+    # An open question about one is published marked open: only a breakdown finding left open
+    # holds tickets back (flow, "Decision questions", **Not the planning review**).
     s = _sentence(d, "open question")
-    assert "marked open" in s and re.search(r"\bkeeps the ticket out of `ready-for-agent`", s)
-
-
-def test_step_2_leaves_out_ready_for_agent_while_a_dependency_is_open():
-    s = _sentence(_flatten(_quick_step(2)), "replace its body")
-    assert re.search(r"\bunless\b[^.]*open question[^.]*keeps it out", s)
+    assert "marked open" in s and re.search(r"\b(doesn't|does not|never)\b[^.:]*\bhold", s)
 
 
 def test_see_isn_t_read_as_a_blocker_but_blocked_by_is():
