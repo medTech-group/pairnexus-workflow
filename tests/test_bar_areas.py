@@ -155,6 +155,7 @@ def test_profile_check_refuses_a_name_that_isnt_an_area(tmp_path, monkeypatch, c
         "<!DOCTYPE html>\n## Bar\n",  # a declaration with a capital letter ends at its >
         "<!X a'b>\n## Bar\n",  # it ends at the first >, whatever quotes come before
         "<titles>x</titles>\n\n## Bar\n",  # not a filtered tag name
+        "<rt>x</rt>\n\n## Bar\n",  # rt is shown; only rp is in the list
         "<!-- a -- b -->\n<p>x</p>\n\n## Bar\n",  # -- inside a comment ends nothing
         '<div title="a > b">\n<span>x</span>\n</div>\n\n## Bar\n',  # tags closed, a > in a quoted value
         '<div><!-- " -->\n\n## Bar\n',  # a quote in a comment opens nothing
@@ -315,8 +316,9 @@ def test_a_tag_the_tag_filter_turns_into_text_stops_the_reading(name, shape):
     assert not has_bar(shape.format(t=name)) and not has_bar(shape.format(t=name.upper()))
 
 
-@pytest.mark.parametrize("name", ["template", "noscript", "select"])
+@pytest.mark.parametrize("name", ["template", "noscript", "select", "rp", "svg", "math"])
 def test_a_tag_whose_content_a_browser_hides_stops_the_reading(name):
+    # rp isn't displayed; GitHub's sanitizer may drop svg and math with what's in them.
     assert not has_bar(f"<{name}>\n\n## Bar\n") and not has_bar(f"x <{name}> y\n## Bar\n")
 
 

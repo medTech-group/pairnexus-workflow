@@ -502,7 +502,7 @@ _PLAIN_BOGUS = re.compile(r"<![A-Z][^>]*>")  # <!DOCTYPE …>: HTML5 ends it at 
 # content a browser hides.
 _RISKY = re.compile(
     r"<\?|<!\[|--!>|<!--->|<!-->|\v"  # \v: cmark parts a tag's attributes at it, HTML5 doesn't
-    r"|</?(?:title|textarea|style|xmp|iframe|noembed|noframes|script|plaintext|select|template|noscript)(?![A-Za-z0-9-])",
+    r"|</?(?:title|textarea|style|xmp|iframe|noembed|noframes|script|plaintext|select|template|noscript|rp|svg|math)(?![A-Za-z0-9-])",
     re.I | re.A,
 )
 
