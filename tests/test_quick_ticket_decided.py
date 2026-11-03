@@ -125,10 +125,30 @@ def test_the_decisions_made_for_them_go_into_the_ticket_under_decided_for_you():
         assert part in d, part
     # Never tagged as their answers.
     s = _sentence(d, "tagged")
-    assert re.search(r"\bnot\b|\bnever\b", s) and "their answers" in s
+    # The negation belongs to "tagged as their answers".
+    assert re.search(r"\b(not|never)\b[^,;.]*\btagged\b[^,;.]*\btheir answers\b", s)
     # Sensitive data stays out of a section that is posted in the ticket's body.
     s = _sentence(d, "Sensitive data")
     assert "`profile.md`" in s and "left out" in s
+
+
+def test_the_section_never_reads_as_a_blocker():
+    s = _sentence(_part("Decided for you"), "waits on #n")
+    assert "never" in s and '"blocked by #n"' in s
+
+
+def test_waits_on_isn_t_read_as_a_blocker_but_blocked_by_is():
+    # Why the rule above: the readiness reader takes "blocked by #n" anywhere in a body.
+    from workflow.issues import blockers_of
+
+    ticket = "## Blocked by\n\nNone\n\n## Decided for you\n\n- Wrong if it {} #302.\n"
+    assert blockers_of(ticket.format("waits on")) == []
+    assert blockers_of(ticket.format("is blocked by")) == [302]
+
+
+def test_an_answer_takes_the_decision_it_settles_out_of_the_section():
+    s = _sentence(_part("ask findings"), "settles")
+    assert "`## Decided for you`" in s and "out" in s
 
 
 def test_step_2_publishes_the_section_with_the_ticket():
@@ -161,8 +181,8 @@ def test_ask_findings_are_asked_first():
 
 
 def test_an_ask_finding_left_open_goes_into_decided_for_you_marked_open():
-    s = _sentence(_part("ask findings"), "`## Decided for you`")
-    assert re.search(r"\b(leave|left)\b[^.]*\bopen\b", s) and "marked open" in s
+    s = _sentence(_part("ask findings"), "marked open")
+    assert "`## Decided for you`" in s and re.search(r"\b(leave|left)\b[^.]*\bopen\b", s) and "marked open" in s
 
 
 def test_yes_to_all_answers_only_the_questions_with_a_recommendation():
@@ -284,10 +304,15 @@ def test_needs_more_information_asks_for_what_the_check_found():
     assert "`profile.md`" in s and "left out" in s
 
 
+def test_sorting_skips_the_draft_when_a_build_ticket_is_ruled_out():
+    s = _sentence(_flatten(_sorting()), "rules out")
+    assert "draft" in s and "leave that option out" in s
+
+
 def test_triage_run_on_its_own_isn_t_covered():
     s = _flatten(_sorting())
     sent = _sentence(s, "`triage` run on its own")
-    assert "`triage`" in sent and re.search(r"\bisn't\b|\bnot\b", sent)
+    assert re.search(r"\b(isn't|not)\s+covered\b", sent)
 
 
 # `triage` stays unedited: it is Matt Pocock's, with no source in this kit (only its vendored
