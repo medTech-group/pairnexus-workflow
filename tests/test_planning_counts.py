@@ -197,10 +197,11 @@ def test_an_edit_before_the_specs_counts_counts_in_the_specs_comment():
 
 
 def test_when_a_spec_owes_its_counts():
-    s = _sentence(_sub("a spec", _where_raw()), "owes its \"Planning counts\" while")
-    # Until its tickets are published, and after, until the comment is there.
-    assert "tickets aren't published" in s
-    assert "\"Breakdown published\" comment has no comment headed exactly \"Planning counts\"" in s
+    s = _sentence(_sub("a spec", _where_raw()), "owes its \"Planning counts\" until")
+    # Until the comment follows "Breakdown published": while any ticket is
+    # unpublished (a publish that stopped part-way included), and after.
+    assert "headed exactly \"Planning counts\" follows its \"Breakdown published\" comment" in s
+    assert "tickets aren't all published" in s
     # A spec from before these counts owes none, so its edits post their own.
     s = _sentence(_sub("a spec", _where_raw()), "owes none")
     # Neither post: a spec whose publishing stopped part-way still owes.
@@ -222,7 +223,7 @@ def test_a_spec_session_that_stops_before_its_tickets_posts_what_it_counted():
     assert "adds up every such comment" in where
     # A spec whose tickets are out with no counts is found by "Carrying on",
     # and a "so far" comment never passes for the counts.
-    s = _sentence(where, "owes its \"Planning counts\" while")
+    s = _sentence(where, "owes its \"Planning counts\" until")
     assert "headed exactly" in s and "\"Planning counts so far\" isn't one" in s and "Carrying on" in s
 
 
