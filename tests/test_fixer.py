@@ -104,7 +104,7 @@ def test_section_3_gives_it_the_same_inputs_in_a_directory_of_its_own():
     listed = fixer.split("holding only these", 1)[1]
     assert "- `previous.md`" not in listed and "- `diff.patch`" not in listed
     # An overturned finding counts for nothing: it isn't given to the fixer.
-    assert "an overturned one isn't given to it" in fixer
+    assert "An overturned one isn't given to it: it counts for nothing" in fixer
 
 
 # --- the fix rule, in both places --------------------------------------------
@@ -228,8 +228,8 @@ def test_it_reports_each_findings_outcome_by_its_number():
     # No third way out: a finding left "not fixed" would turn into a ticket at the next review
     # (§10's lines already reviewed), and the defect would merge.
     assert "not fixed" not in report
-    assert "Every finding ends fixed or contested" in _section("The fix rule")
-    assert "Every finding ends fixed or contested" in _fix_rule()
+    assert "Every finding ends fixed, contested, or taken with its part" in _section("The fix rule")
+    assert "Every finding ends fixed, contested, or taken with its part (a part in `part.md`, replaced or taken out)" in _fix_rule()
     assert "fixes by refusing the case it fails on" in _fix_rule()
     assert "you fix by refusing the case it fails on" in _section("The fix rule")
     assert "its number in `findings.md`" in report
@@ -291,7 +291,7 @@ def test_a_security_problem_the_change_adds_marked_a_ticket_reaches_the_fixer():
 
 def test_a_security_problem_on_main_never_reaches_a_runs_fixer():
     s3 = _the_fixer()
-    assert "(`security: main`) goes in only in attended work: in a run it holds the ticket for the owner (`build-ticket`), and the fixer never sees it" in s3
+    assert "A blocking security or safety problem in code on the base branch (`security: main`) goes in only in attended work: in a run it holds the ticket for the owner (`build-ticket`), and the fixer never sees it" in s3
     assert "which it does only in attended work" in _section("The fix rule")
 
 
@@ -311,6 +311,7 @@ def test_it_fixes_only_what_its_fixes_broke_and_reports_the_rest():
     rule = _section("The fix rule")
     assert "Fix what your fixes broke; report any other failure, changing nothing for it" in rule
     assert "skip it when the profile has none" in rule
+    assert "the typecheck and the affected tests" in _fix_rule()
 
 
 def test_the_session_contests_nothing_itself():
@@ -324,8 +325,39 @@ def test_part_md_can_name_several_parts():
     assert "for each such part, its name" in _section("A part to replace or take out")
 
 
-def test_a_failure_after_the_fixer_goes_to_a_fresh_fixer():
+def test_a_failure_after_the_fixer_goes_to_the_next_review_never_to_the_session():
     s3 = _s3()
-    assert "Under the rule, a failure goes to a fresh fixer, as a finding with the failing test as its reproducer." in s3
+    # Not a second fixer in the same review: it would have no finding number, and a failure
+    # the first fixer rightly left alone would start fixer after fixer.
+    assert "Under the rule, you fix nothing yourself: a failure goes in the findings table and the next review's `previous.md`, and that review's fixer gets it from its findings." in s3
+    assert "a failure goes to a fresh fixer" not in s3
+    assert "Under the rule, that reason is the fixer's (**The fix rule**)." in s3
     opening = (KIT / PANEL).read_text(encoding="utf-8").split("## 1.", 1)[0]
     assert "under the rule for build reviewers, a fresh fixer makes the fixes: section 3" in _flat(opening)
+
+
+# --- round 2's findings ------------------------------------------------------
+
+
+def test_a_splits_ticket_is_filed_before_the_fixer_takes_the_part_out():
+    order = _the_fixer().split("The order, after each review:", 1)[1]
+    assert "with `part.md` from that answer, a split's ticket filed first (`build-ticket`)" in order
+
+
+def test_a_security_finding_is_never_taken_with_its_part():
+    part = _section("A part to replace or take out")
+    assert "A security finding never is: fix it or contest it as usual, and keep its test." in part
+    assert "A security finding is never taken with its part" in _fix_rule()
+
+
+def test_a_security_problem_the_change_adds_marked_a_ticket_is_never_contested():
+    # review-panel §10 lets only a finding marked blocks be contested.
+    for text in (_section("The fix rule"), _fix_rule()):
+        assert "a security problem the change adds marked a ticket to fix it is fixed, never contested: it still blocks" in text.lower()
+
+
+def test_a_fixer_that_stops_early_is_answered():
+    fixer = _the_fixer()
+    assert "if the head moved under it, start a fresh one on the current head with the findings it left" in fixer
+    assert "if the guard refused it something, the refusal is the answer: stop" in fixer
+    assert "If the guard refuses you an edit or a command, the refusal is the answer: stop" in _section("Your inputs")
