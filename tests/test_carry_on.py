@@ -285,7 +285,9 @@ def test_the_briefing_section_names_the_hand_off_slot():
     brief = _skill().split("## A ticket session's briefing", 1)[1].split("\n## ", 1)[0]
     row = next(ln for ln in brief.splitlines() if ln.startswith("| `hand_off` |"))
     # Given whenever the pull request has a hand-off, so a held or resumed carry-on ticket never loses it.
-    assert "Optional: `WF merge-check --fetch <its PR> --json`'s `hand_off.url` whenever the ticket has an open pull request whose `hand_off` isn't null" in row
+    # Only a pull request on its ticket branch: the Hand-off line tells the session to check that branch out.
+    assert "Optional: `WF merge-check --fetch <its PR> --json`'s `hand_off.url` whenever the ticket has an open pull request on its ticket branch (found by head branch" in row
+    assert "whose `hand_off` isn't null" in row
     assert "held or not" in row
     assert "handle it as a \"Starts from:\" line that stops the render" in row
 
