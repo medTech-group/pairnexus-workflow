@@ -429,7 +429,10 @@ def test_only_a_blocking_finding_is_contested():
     s3 = _s3()
     assert "Such a finding marked blocks is contested" in s3
     # A ticket the session doubts is still filed, never dropped: the builder never judges its own work.
-    assert "One marked a ticket to fix it is filed as marked, its ticket saying why you doubt it; a note is answered with its reason in the findings table. Neither is ruled on." in s3
+    # How it is filed (its `## Blocked by`, a security finding's area-only ticket) is build-ticket's;
+    # the doubt goes in the table, which §9 already limits for a security finding.
+    assert "One marked a ticket to fix it is never dropped: it is filed as the reviewer marked it, the way `build-ticket` files tickets to fix findings, and your doubt goes in the findings table." in s3
+    assert "why you doubt it" not in s3
     assert "Only a finding marked blocks is contested." in _rule()
     # A ruling stands: a kept finding isn't sent back for another ruling.
     assert "A finding flagged kept after a contest is never contested again: it is fixed." in s3
@@ -491,7 +494,10 @@ def test_review_record_refusals_name_the_object_form():
     for text in ("", "{}"):
         with pytest.raises(findings.FindingsError) as e:
             findings.load(text)
-        assert "`[]`" not in str(e.value)
+        assert "`[]`" not in str(e.value), text
+    with pytest.raises(findings.FindingsError) as e:
+        findings.load("")
+    assert '`{"findings": []}`' in str(e.value)
     with pytest.raises(findings.FindingsError) as e:
         findings.from_file("")
     assert '`{"findings": []}`' in str(e.value)
