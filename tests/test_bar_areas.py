@@ -156,7 +156,10 @@ def test_profile_check_refuses_a_name_that_isnt_an_area(tmp_path, monkeypatch, c
         "\ufeff## Bar\n",
         "<!DOCTYPE html>\n## Bar\n",  # a declaration with a capital letter ends at its >
         '<div title="a > b">\n<span>x</span>\n</div>\n\n## Bar\n',  # tags closed, a > in a quoted value
-        "<!-- a -- b -->\n<p>x</p>\n\n## Bar\n",
+        '<div><!-- " -->\n\n## Bar\n',  # a quote in a comment opens nothing
+        "<p>a < b</p>\n\n## Bar\n",  # a literal <
+        "<?x?>\n## Bar\n",
+        '<img src=x alt="a\nb" />\n\n## Bar\n',
     ],
 )
 def test_has_bar(body):
@@ -268,6 +271,17 @@ def test_has_bar(body):
         "<pre></pre><div\n## Bar\n",
         "<?x?><div\n## Bar\n",
         "<!X><div\n## Bar\n",
+        # Pass 5: what HTML5 reads differently from a naive scan counts as left open.
+        '<!--> <div x="-->\n## Bar\n',
+        '<!-- a --!> <div x="-->\n## Bar\n',
+        "<?x '?><div x='>\n## Bar\n",
+        "<!X '><div x='>\n## Bar\n",
+        "<div a'b> <span x='>\n\n## Bar\n",
+        "<div><svg><![CDATA[ >\n\n## Bar\n",
+        '<div>\n<span title=">\n\n## Bar\n',  # a double-quoted value left open
+        "<div>\n<span title='>\n\n## Bar\n",  # and a single-quoted one
+        "<div><!-- a > b\n\n## Bar\n",  # a comment left open
+        'x <!-- a --!> <b title="-->\n## Bar\n',  # --!> in a paragraph
     ],
 )
 def test_has_no_bar(body):

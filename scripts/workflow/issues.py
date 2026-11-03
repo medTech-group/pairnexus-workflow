@@ -484,35 +484,41 @@ def _past(lines: list[str], i: int, ends) -> int | None:
     return None
 
 
-_TAG_START = re.compile(r"<[A-Za-z/!?]")
+# What `_html_closed` understands; anything else after a `<` is treated as
+# left open. Tags as CommonMark and HTML5 both read them: a quote opens a
+# value only after `=`.
+_SP = r"[ \t\n\r\f]"
+_TAG = re.compile(
+    rf"</?[A-Za-z][A-Za-z0-9-]*(?:{_SP}+[A-Za-z_:][-A-Za-z0-9_:.]*"
+    rf"(?:{_SP}*={_SP}*(?:\"[^\"]*\"|'[^']*'|[^ \t\n\r\f\"'=<>`]+))?)*{_SP}*/?>",
+    re.A,
+)
+_PLAIN_BOGUS = re.compile(r"<(?:![A-Z]|\?)[^>\"']*>")  # <!DOCTYPE …>, <?…?>: end at the first >, no quotes
 
 
 def _html_closed(text: str) -> bool:
-    """`text`, passed through as raw HTML, ends outside any tag, quoted
-    attribute value or comment, so a browser shows what follows it: else a
-    heading after it may land inside the tag or the comment."""
+    """`text`, passed through as raw HTML, is made only of plain text, simple
+    comments, well-formed tags and quote-free `<!X …>` or `<?…>`, so it ends
+    outside any tag, value or comment and a browser shows what follows it.
+    Anything else (a comment HTML5 ends early, CDATA, a bogus comment with
+    quotes, a malformed tag) counts as left open: has_bar stops reading."""
     i, n = 0, len(text)
     while i < n:
+        i = text.find("<", i)
+        if i < 0:
+            return True
         if text.startswith("<!--", i):
             j = text.find("-->", i + 4)
-            if j < 0:
-                return False
+            body = text[i + 4 : j] if j >= 0 else ""
+            if j < 0 or body.startswith((">", "->")) or "--" in body:
+                return False  # unclosed, or one HTML5 may end sooner (<!-->, --!>)
             i = j + 3
-            continue
-        if not _TAG_START.match(text, i):
-            i += 1
-            continue
-        i += 1
-        quote = ""
-        while i < n and (quote or text[i] != ">"):
-            if quote:
-                quote = "" if text[i] == quote else quote
-            elif text[i] in "\"'":
-                quote = text[i]
-            i += 1
-        if i >= n:
-            return False
-        i += 1
+        elif m := (_TAG.match(text, i) or _PLAIN_BOGUS.match(text, i)):
+            i = m.end()
+        elif i + 1 < n and (text[i + 1] in "/!?" or text[i + 1].isascii() and text[i + 1].isalpha()):
+            return False  # a construct it doesn't understand
+        else:
+            i += 1  # a literal <
     return True
 
 
@@ -544,8 +550,8 @@ def has_bar(body: str | None) -> bool:
         if f and not (f.group(1)[0] == "`" and "`" in f.group(2)):
             close = re.compile(r" {0,3}" + re.escape(f.group(1)[0]) + "{" + str(len(f.group(1))) + ",}$")
             nxt = _past(lines, i + 1, lambda l: close.match(l.rstrip(" \t")))
-        elif _odd_container(line) or _LOWER_DECLARATION.match(line):
-            return False
+        elif _odd_container(line) or _LOWER_DECLARATION.match(line) or "--!>" in line:
+            return False  # --!>: HTML5 ends a comment there, which CommonMark may not
         elif _HTML_RAW.match(line):
             nxt = _past(lines, i, _RAW_END.search)
         elif end := next((e for start, e in _HTML_ENDS if start.match(line)), None):
