@@ -11,6 +11,13 @@ A ticket's "Starts from:" line (a quick ticket for another pull request's fix,
 #348) names the branch its session starts from, in place of the base branch;
 the briefing's "Starts from:" line gives it, or the base branch without one.
 
+The briefing's `{{review.limit}}` line (#382) is the run's limit on a ticket's
+reviews: under the rule for build reviewers (the charter's `rule: 2`) its
+"Findings:" line, which turns the rule on for the session (`build-ticket` §3)
+and has no pass cap; for a charter without `rule`, today's "Pass cap:" line.
+A run under the rule is refused a template without that line, whose session
+would review under today's rule.
+
 `seal` ends a rendered briefing with `Briefing <hash>`, the first 12 hex
 characters of the SHA-256 of the text above it. The session echoes that line in
 its first comment, so the conductor sees the briefing arrived intact.
@@ -297,6 +304,7 @@ def _small(review: dict, profile: Profile) -> str:
 def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking: int, by_hand: int | None) -> dict:
     merge = charter.get("merge") or {}
     review = presets_mod.review_of(charter, profile)
+    ruled = presets_mod.rule_of(charter) == presets_mod.RULE  # its pass cap is then until-clean (`review_of`)
     waived = merge.get("waived_checks") or []
     branch = profile.ticket_branch.replace("*", str(ticket["number"]))
     v = {
@@ -320,6 +328,9 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
         # Kept for a template written before #402, which says "{{review.passes_words}} after the last review round".
         "review.passes_words": presets_mod.passes_words(review),
         "review.pass_cap": _pass_cap(review),
+        # The line after "Small review": the "Findings:" line under the rule (#382), else the "Pass cap:" line.
+        "review.limit": FINDINGS_LINE if ruled else f"- **Pass cap:** {_pass_cap(review)}",
+        "review.stopping": _stopping(ruled),
         # The bare numbers, for merge-check's --review-passes, --small-max-lines and --small-max-files.
         "review.passes": str(review["passes"]),
         "review.small_max_lines": str(review["small_max_lines"]),
@@ -342,6 +353,31 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
     return v
 
 
+# A ticket session's "Findings:" line (#382): it turns the rule for build reviewers on
+# (`build-ticket` §3, "Which rule"). It names no ticket: it reaches projects that have none.
+FINDINGS_LINE = (
+    "- **Findings:** rule 2, the rule for build reviewers (`build-ticket` §3, \"The rule for build reviewers\", and "
+    "`review-panel` §10): every review of this ticket follows it. There is no pass cap: after the last review round, "
+    "Correctness passes until one is clean, and the run's end time is the only limit on this ticket's reviews; "
+    "`merge-check` never says `passes_used_up`. Keep the PR body's findings table current after each review, so the "
+    "open findings are there if the end time comes first: the conductor then carries the ticket on to the next run."
+)
+
+
+def _stopping(ruled: bool) -> str:
+    """When the session stops, after "**Stopping:**": under the rule, never
+    because a review isn't clean (#382); else at the pass cap too."""
+    if ruled:
+        return (
+            "if CI is still red after three fix attempts, or the ticket can't be built as written "
+            "(never because a review isn't clean: there is no pass cap):"
+        )
+    return (
+        "if CI is still red after three fix attempts, the review reached its pass cap (`merge-check` says "
+        "`passes_used_up`: put the open findings in the PR body), or the ticket can't be built as written:"
+    )
+
+
 def _pass_cap(review: dict) -> str:
     """The briefing's pass cap line after "**Pass cap:**": a number's, or
     `until-clean`'s (#402), which never stops at `passes_used_up`."""
@@ -357,6 +393,11 @@ def _pass_cap(review: dict) -> str:
 
 def render(template: str, vals: dict) -> str:
     used = [m.group(1) for m in PLACEHOLDER.finditer(template)]
+    if str(vals.get("review.limit", "")).startswith("- **Findings:**") and "review.limit" not in used:
+        raise RenderError(
+            "the run reviews under the rule for build reviewers, and the template has no {{review.limit}} line, which "
+            "tells the session so: render it with the kit's current ticket-session-prompt.md"
+        )
     if not _says_none(vals.get("hand_off")) and "ticket.hand_off" not in used:
         raise RenderError(
             "the template has no {{ticket.hand_off}} line, which tells the session to start from its hand_off: "
