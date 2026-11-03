@@ -213,8 +213,8 @@ def _says_none(value) -> bool:
 
 def _hand_off_words(url: object, profile: Profile, branch: str) -> str:
     """The briefing's "Hand-off:" line, from the optional `hand_off` slot: the
-    URL of the hand-off comment an earlier run's end time left on the ticket's
-    pull request (#380), or none. Anything else stops the render."""
+    URL of the hand-off comment an earlier session left on the ticket's pull
+    request (#380), or none. Anything else stops the render."""
     if _says_none(url):
         return "none: start from the ticket and what **Specific to this ticket** says."
     m = _HAND_OFF_URL.fullmatch(url.strip()) if isinstance(url, str) else None

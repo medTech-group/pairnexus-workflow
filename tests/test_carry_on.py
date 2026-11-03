@@ -195,7 +195,8 @@ def test_a_rule_2_ticket_is_carried_on_not_set_aside():
     assert "2. Then, unless `WF merge-check`'s `hand_off.on_head` is already true, write the hand-off" in carry
     assert "when step 2 posted a hand-off, comment on it" in carry
     # A carry-on ticket adopted but never started keeps its hand-off.
-    assert "A carry-on ticket this run adopted and never started (`queued`, still labelled `workflow:carry-on`) is taken too: it gets step 1 only" in carry
+    # It gets every step (so `workflow:in-progress` comes off), with no second hand-off and no comment.
+    assert "A carry-on ticket this run adopted and never started (`queued`, still labelled `workflow:carry-on`) is taken too: step 2 finds its hand-off on its head, so it gets no second one and no comment" in carry
     # The record that decides is the one merge-check ranks latest.
     assert "ranked as `WF merge-check` ranks it" in carry
     assert "`hand_off.on_head`" in carry
@@ -229,12 +230,14 @@ def test_the_kick_off_adopts_every_carry_on_ticket_first_without_asking():
     assert "it keeps `workflow:carry-on` until its session is created (check-in step 5)" in line
     # The estimate and the one page count it.
     assert "give it first in the `--tickets` of `WF charter estimate` and `WF charter splice`" in line
-    # A failed read is tried again, a bounded number of times.
-    assert "at most 3 times" in line
+    # No readable hand-off: the session reads the pull request's own, with no retry to count.
+    assert "With `hand_off` null (a counted review followed the hand-off, or the comments couldn't be read), give `none`" in line
+    assert "read the latest hand-off comment and the review records on its pull request first" in line
+    # One also labelled `needs-human` waits on the owner, never adopted without asking.
+    assert "open tickets labelled `workflow:carry-on` and not `needs-human`" in line
     # `start` leaves a ticket its run adopted.
     assert "`start`'s \"Carry on\" leaves a ticket that also has `workflow:in-progress` to its run" in line
     # A failed read never gives `none`; a closed pull request makes it a ready ticket again.
-    assert "On a \"couldn't read\" reason, run it again at the next check-in rather than start the session" in line
     assert "remove `workflow:carry-on` and add `ready-for-agent` back" in line
     plan = skill.split("3. **The plan.**", 1)[1].split("\n", 1)[0]
     assert "after the carry-on tickets first" in plan
@@ -249,6 +252,10 @@ def test_the_kick_off_adopts_every_carry_on_ticket_first_without_asking():
     chat = skill.split("## A ticket named in chat", 1)[1].split("\n## ", 1)[0]
     named_carry = next(p for p in chat.split("\n\n") if p.startswith("**A carry-on ticket named**"))
     assert "`WF ready` never lists it" in named_carry and "add it to the state as `queued`" in named_carry
+    # A run for it alone has a plan and scope of that ticket, never empty; an "also" queues it the same way.
+    assert "its plan and `scope.tickets` are `[<n>]`, since neither may be empty" in named_carry
+    assert "or in an \"also #<n>\" (check-in step 3)" in named_carry
+    assert "(a carry-on ticket is queued instead: \"A carry-on ticket named\")" in skill
     assert "set aside, carried on." in skill
     queued = skill.split("1. **Queued tickets** in the state:", 1)[1].split("\n", 1)[0]
     assert queued.lstrip().startswith("carry-on tickets adopted at kick-off first")
