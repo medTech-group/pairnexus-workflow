@@ -50,6 +50,24 @@ def test_an_infra_ticket_given_too_stays_among_the_infra_tickets():
     assert [v.number for v in startable(vs, [], 5, first=[13, 12])] == [11, 12, 13, 10]
 
 
+def test_a_long_part_is_refused_by_the_kit_not_by_python():
+    import sys
+
+    if hasattr(sys, "set_int_max_str_digits"):
+        old = sys.get_int_max_str_digits()
+        sys.set_int_max_str_digits(0)  # no limit: the refusal must not rest on Python's
+        try:
+            with pytest.raises(ValueError, match="not a ticket number: '1{20}…'"):
+                parse_number_list("5, " + "1" * 5000)
+        finally:
+            sys.set_int_max_str_digits(old)
+    assert parse_number_list("0" * 4300 + "7") == [7]  # leading zeros don't count
+    with pytest.raises(ValueError, match="not a ticket number: 'x{20}…'"):
+        parse_number_list("x" * 100)
+    with pytest.raises(ValueError, match="not a ticket number: '12x'$"):
+        parse_number_list("12x")
+
+
 def test_parse_number_list_keeps_the_order_given():
     assert parse_number_list("14, #11,14 ,, 3") == [14, 11, 3]
     assert parse_number_list(None) == []

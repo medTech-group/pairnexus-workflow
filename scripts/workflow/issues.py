@@ -78,12 +78,14 @@ def parse_number_list(text: str | None) -> list[int]:
         p = part.strip().lstrip("#").strip()
         if not p:
             continue
-        try:
-            if not (p.isascii() and p.isdigit()):  # "٣" or "²" is no ticket number
-                raise ValueError
-            out.setdefault(int(p))  # past Python's 4,300 digits, int() refuses too
-        except ValueError:
-            raise ValueError(f"not a ticket number: {part.strip()[:20]!r}") from None
+        digits = p.lstrip("0")
+        # "٣" or "²" is no ticket number, nor one past 18 digits (Python's own
+        # limit on int() is a setting, and counts leading zeros)
+        if not (p.isascii() and p.isdigit()) or len(digits) > 18:
+            shown = part.strip()
+            shown = shown[:20] + "\u2026" if len(shown) > 20 else shown
+            raise ValueError(f"not a ticket number: {shown!r}")
+        out.setdefault(int(digits or "0"))
     return list(out)
 
 
