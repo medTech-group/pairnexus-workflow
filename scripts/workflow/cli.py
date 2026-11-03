@@ -731,6 +731,10 @@ def cmd_state(a) -> int:
         return 0
     if a.action in ("drop", "queue"):
         return _state_record(a, body)
+    if a.action == "join":
+        return _state_join(a, body)
+    if a.action == "joined":
+        return _state_joined(a, body)
     if a.action == "put":
         try:
             cur = state_mod.get(body)
@@ -775,6 +779,73 @@ def _state_record(a, body: str) -> int:
     new = state_mod.put(body, s)
     Path(a.out).write_text(new, encoding="utf-8")
     print(said)
+    return 0
+
+
+def _pages(v) -> list:
+    """Issues as one list: GitHub's list, or `--paginate --slurp`'s list of pages."""
+    if isinstance(v, list) and v and all(isinstance(x, list) for x in v):
+        return [i for page in v for i in page]
+    if not isinstance(v, list):
+        raise state_mod.StateError("--issues must be the open issues as the GitHub API lists them (a JSON list, or a list of its pages)")
+    return v
+
+
+def _state_join(a, body: str) -> int:
+    """`state join` (#378): record the tickets filed during the run that join it,
+    print who joined, who didn't and why, and the `--first` list for `workflow
+    ready`, and write the body with the state to --out."""
+    s = state_mod.get(body)
+    if s is None:
+        raise state_mod.StateError("no state block in this body; use `state put` first")
+    if a.fetch:
+        prof = load()
+        if not prof.repo:
+            raise SystemExit("--fetch needs the profile's project.repo")
+        issues = [i for i in _fetch(prof.repo, "issues") if (i.get("state") or "").lower() == "open"]
+        logins = sorted({(i.get("user") or {}).get("login") for i in issues if state_mod.fix_line(i.get("body"))} - {None, ""})
+        try:
+            perms_raw = fetch_mod.permissions_of(prof.repo, logins)
+        except fetch_mod.GhError as e:
+            raise SystemExit(f"workflow state join: the authors' permissions couldn't be read ({e}); give --issues F and --permissions F")
+    else:
+        inputs = _json_inputs(a, ["issues", "permissions"])
+        for name in ("issues", "permissions"):
+            if inputs[name][0] is None:
+                raise state_mod.StateError(f"--{name}: {inputs[name][1]}")
+        issues, perms_raw = _pages(inputs["issues"][0]), inputs["permissions"][0]
+    try:
+        perms = merge_mod._permissions(perms_raw)
+    except merge_mod.Unreadable as e:
+        raise state_mod.StateError(f"--permissions can't be read: {e}") from None
+    said = state_mod.join(s, issues, perms)
+    new = state_mod.put(body, s)
+    Path(a.out).write_text(new, encoding="utf-8")
+    if a.json:
+        _out(said)
+        return 0
+    for j in said["joined"]:
+        print(f"joined #{j['number']} ({j['kind']}, from #{j['from']})")
+    for j in said["not_joined"]:
+        print(f"not joined #{j['number']} ({j['kind']}, from #{j['from']}): {j['why']}")
+    print("first:" + (" " + ",".join(str(n) for n in said["first"]) if said["first"] else ""))
+    return 0
+
+
+def _state_joined(a, body: str) -> int:
+    """`state joined` (#378): each joined ticket's fate, for the run report."""
+    s = state_mod.get(body)
+    if s is None:
+        raise state_mod.StateError("no state block in this body")
+    out = state_mod.joined(s)
+    if a.json:
+        _out(out)
+        return 0
+    for j in out:
+        what = j["status"] or "not started"
+        if j["waits_on_source"]:
+            what += f"; its source #{j['from']} didn't merge in this run"
+        print(f"#{j['number']} ({j['kind']}, from #{j['from']}): {what}")
     return 0
 
 
@@ -1737,7 +1808,7 @@ def main(argv: list[str] | None = None) -> int:
     s.set_defaults(fn=cmd_charter)
 
     s = sub.add_parser("state")
-    s.add_argument("action", choices=["init", "get", "put", "patch", "drop", "queue"])
+    s.add_argument("action", choices=["init", "get", "put", "patch", "drop", "queue", "join", "joined"])
     s.add_argument("--body")
     s.add_argument("--charter")
     s.add_argument("--run-id")
@@ -1756,6 +1827,10 @@ def main(argv: list[str] | None = None) -> int:
         choices=state_mod.DROP_ANSWERS,
         help="drop: GitHub's answer to queueing it; prints in_queue, waiting, merged, retry, requeued, merge_base or needs_human",
     )
+    s.add_argument("--issues", metavar="F", help="join: the open issues as the GitHub API lists them (a list, or `--paginate --slurp`'s pages)")
+    s.add_argument("--permissions", metavar="F", help="join: the authors' permissions, in any shape merge-check's --permissions takes")
+    s.add_argument("--fetch", action="store_true", help="join: read the open issues and their authors' permissions with `gh api`")
+    s.add_argument("--json", action="store_true", help="join, joined: print JSON")
     s.add_argument("--state")
     s.add_argument("--patch")
     s.add_argument("--out")
@@ -1907,6 +1982,8 @@ def main(argv: list[str] | None = None) -> int:
         p.error("state drop needs --ticket, --head, --answer and --out")
     if a.cmd == "state" and a.action == "queue" and not (a.queue and a.out):
         p.error("state queue needs --queue and --out")
+    if a.cmd == "state" and a.action == "join" and not (a.out and (a.fetch or (a.issues and a.permissions))):
+        p.error("state join needs --out, and --issues and --permissions (or --fetch)")
     try:
         return a.fn(a)
     except (ProfileError, state_mod.StateError, render_mod.RenderError, evidence_mod.EvidenceError, vendor_mod.VendorError) as e:
