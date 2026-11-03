@@ -664,7 +664,7 @@ def test_the_conductor_starts_them_through_ready_first():
 
 def test_the_conductor_joins_once_more_before_the_report():
     report = _flat(_read("skills/conductor/SKILL.md").split("4. **The report.**", 1)[1].split("5. **Wind up.**", 1)[0])
-    assert report.index("Then run `WF state join`") < report.index("WF state joined")
+    assert report.index("Then run `WF state join`") < report.index("and write the state to the issue") < report.index("WF state joined")
 
 
 def test_the_conductor_names_them_at_the_go_and_in_the_report():
