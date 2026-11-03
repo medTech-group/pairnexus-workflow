@@ -272,7 +272,7 @@ def test_a_blocking_security_problem_on_main_holds_a_run_for_the_owner():
     ) in text
     assert (
         "stop as §5's \"Still red after three fix attempts\" says (`needs-human`), the reason naming only its area and saying "
-        "how it is released: \"the owner fixes it on the base branch, merges the base into this ticket's pull request and "
+        "how it is released: \"the owner fixes it on the base branch, merges the base into this ticket's branch and "
         "closes #<n> as completed (or, if it isn't a problem, takes #<n> out of this ticket's `## Blocked by`), then answers here\"."
     ) in text
     # After the hold, the fail-closed form: no release machinery, a re-found problem holds again.
@@ -342,9 +342,10 @@ def test_changelog_note():
     assert "is a new ticket unless this session already filed one for it" in note
     assert "never filed, even when marked a ticket to fix it" in note
     assert "its ticket to fix it is filed (`kind=old`) and named under the held ticket's `## Blocked by`, replacing a \"None\"" in note
-    assert "closes it as completed, or takes it out of `## Blocked by` if it isn't a problem" in note
+    assert "closes its ticket to fix it as completed, or takes that ticket out of `## Blocked by` if it isn't a problem" in note
     assert "a later review that marks one blocks holds the ticket again" in note
-    assert "merges the base into the held ticket's pull request" in note
+    # A hold can come before the pull request opens: the branch always exists.
+    assert "merges the base into the held ticket's branch" in note
     assert "(#373, part of spec #412)" in notes
     assert "`<!-- workflow:fix-ticket from=<n> kind=old|late|split -->`" in notes
     assert "Tests: `tests/test_fix_tickets.py`." in notes

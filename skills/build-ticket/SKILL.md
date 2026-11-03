@@ -112,7 +112,7 @@ Two exceptions (ADR 0001), and a finding that is both takes both:
 A blocking `security: main` finding is never split out. In a run it holds this ticket for the owner:
 - file its ticket to fix it as above (`ready-for-human`, only its area named, its details given privately), with `kind=old` and `## Blocked by` "None";
 - add that ticket under this ticket's `## Blocked by`, replacing a "None" there and adding the section if there is none, keeping the rest of its body, so §0's blocker check (and `workflow ready`, once it is labelled ready again) stops any start before the owner closes that one;
-- stop as §5's "Still red after three fix attempts" says (`needs-human`), the reason naming only its area and saying how it is released: "the owner fixes it on the base branch, merges the base into this ticket's pull request and closes #<n> as completed (or, if it isn't a problem, takes #<n> out of this ticket's `## Blocked by`), then answers here".
+- stop as §5's "Still red after three fix attempts" says (`needs-human`), the reason naming only its area and saying how it is released: "the owner fixes it on the base branch, merges the base into this ticket's branch and closes #<n> as completed (or, if it isn't a problem, takes #<n> out of this ticket's `## Blocked by`), then answers here".
 
 What comes after the hold is the owner's. A later review that marks a `security: main` finding blocks holds the ticket again the same way, whatever it is: that costs the owner another look, never a merge with the problem in it. Marked a ticket to fix it, it is filed as the security bullet says. In attended work, a blocking one is fixed here instead, its details shown to the person and given privately to whoever fixes it.
 
