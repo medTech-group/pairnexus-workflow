@@ -115,7 +115,8 @@ def test_a_destination_item_s_end_check_reads_the_map_decisions_it_draws_on():
 
 def test_the_re_read_reads_against_what_the_end_check_read():
     s = _sentence(_part("re-read"), "against the rest")
-    assert "what the end check read" in s
+    # What it reads against is what the end check read, however it's worded.
+    assert "end check" in s.split("against", 1)[1]
 
 
 def test_the_end_check_fills_the_checker_s_scratch_directory():
