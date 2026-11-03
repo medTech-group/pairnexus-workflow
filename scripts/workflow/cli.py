@@ -1833,7 +1833,7 @@ def main(argv: list[str] | None = None) -> int:
     result = s.add_mutually_exclusive_group()
     result.add_argument("--clean", dest="clean", action="store_true", default=None, help="nothing left to fix")
     result.add_argument("--not-clean", dest="clean", action="store_false", help="the round found something to fix")
-    s.add_argument("--findings", action="append", metavar="FILE", help="a round's or pass's findings file (JSON: each finding's mark, mechanism, reproducer and flags, the last review's outcomes, the split flag; `[]` for none): writes a rule=2 record whose result is worked out from the marks, so no --clean or --not-clean")
+    s.add_argument("--findings", action="append", metavar="FILE", help="a round's or pass's findings file (JSON: each finding's mark, mechanism, reproducer and flags, the last review's outcomes, the split flag; `{\"findings\": []}` for none): writes a rule=2 record whose result is worked out from the marks, so no --clean or --not-clean")
     s.add_argument("--measure", action="store_true", help="write no record: print --commit's changed lines and files outside tests, against the merge base of origin/<base>, and whether they are within the small threshold, counted as merge-check counts them")
     s.add_argument("--base", action="append", metavar="BRANCH", help="the base branch, fetched as origin/<base> first (default: the profile's project.base_branch)")
     s.add_argument("--small-max-lines", metavar="N", type=_small_max_lines, help="with --measure: the small threshold's changed lines, 1 to 1000 (default: the profile's run.small_max_lines)")

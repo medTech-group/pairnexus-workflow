@@ -161,7 +161,7 @@ def test_each_finding_names_its_part_reusing_earlier_names_exactly():
 # --- what blocks, and where the hunt stops ----------------------------------
 
 
-def test_what_blocks_is_adr_0001_as_adr_0002_changes_it():
+def test_what_blocks_lists_its_kinds_and_names_no_adr():
     rule = _rule()
     assert "**What blocks.** A finding with a reproducer blocks when it is:" in rule
     # rule.md reaches projects, which have no copy of the kit's ADRs.
@@ -223,6 +223,9 @@ def test_a_finding_on_lines_already_reviewed_is_a_ticket_unless_it_is_one_of_six
     ):
         assert words in lines, words
     assert "those still block, whichever review finds them" in lines
+    # The ticket mark says the same: only a would-be blocking finding becomes a ticket.
+    ticket = _section(PANEL, RULE_HEADING + "\n").split("- **a ticket to fix it**", 1)[1].split("\n", 1)[0]
+    assert "from the second review, a finding that would otherwise block, on lines already reviewed, that isn't one of the kinds that still block" in ticket
 
 
 def test_previous_md_carries_the_parts_the_contests_and_what_was_done():
@@ -252,7 +255,7 @@ def test_a_security_problem_shows_only_its_area():
 
 def test_the_report_lists_what_the_findings_file_needs():
     report = _rule().split("**How to report.**", 1)[1]
-    for field in ("**Mark:**", "**Severity:**", "**Part:**", "**Where:**", "**Reproducer:**", "**Covered:**", "**Security:**", "**The fix:**"):
+    for field in ("**Mark:**", "**Severity:**", "**Part:**", "**Where:**", "**Reproducer:**", "**Covered:**", "**Security:**", "**Kept:**", "**The fix:**"):
         assert field in report, field
 
 
@@ -415,6 +418,8 @@ def test_the_changelog_notes_it_under_unreleased():
     note = notes.split("#374", 1)[0].rsplit("\n\n**", 1)[1] + notes.split("#374", 1)[1].split("\n\n**", 1)[0]
     for words in ("`rule.md`", "reproducer", "critical", "`since.patch`", "`bar.md`", "`--findings`"):
         assert words in note, words
+    # The changelog says what §10 says of lines already reviewed.
+    assert "a finding on them that would otherwise block is a ticket to fix it" in note
 
 
 # --- contests, outcomes, and when the commands fail ------------------------
@@ -423,7 +428,8 @@ def test_the_changelog_notes_it_under_unreleased():
 def test_only_a_blocking_finding_is_contested():
     s3 = _s3()
     assert "Such a finding marked blocks is contested" in s3
-    assert "One marked a ticket to fix it or a note is answered with its reason in the findings table, and never ruled on" in s3
+    # A ticket the session doubts is still filed, never dropped: the builder never judges its own work.
+    assert "One marked a ticket to fix it is filed as marked, its ticket saying why you doubt it; a note is answered with its reason in the findings table. Neither is ruled on." in s3
     assert "Only a finding marked blocks is contested." in _rule()
     # A ruling stands: a kept finding isn't sent back for another ruling.
     assert "A finding flagged kept after a contest is never contested again: it is fixed." in s3
@@ -432,7 +438,7 @@ def test_only_a_blocking_finding_is_contested():
 def test_a_kept_contest_is_re_entered_with_its_reproducer_and_security_flags():
     inputs = _flat(_inputs())
     assert "what it needs to be re-entered if kept: its reproducer, its part, and its `security` and area if it has them" in inputs
-    assert "marked blocks, flagged kept, with its reproducer, its part, and its `security` and area as before" in _rule()
+    assert "marked blocks even on lines already reviewed, flagged kept (`contested` in the findings file), with its reproducer, its part, and its `security` and area as before" in _rule()
     # The re-entry the rule describes is one review-record accepts.
     entry = findings.load(
         '{"findings": [{"mark": "blocks", "mechanism": "x", "reproducer": "r", "contested": true, "security": "change", "area": "sign-in"}],'
@@ -462,15 +468,30 @@ def test_an_empty_or_missing_rule_md_stops_the_review(tmp_path):
     broken = command.replace("<this skill's directory>", str(skill)).replace("<scratch>", str(tmp_path))
     assert subprocess.run(["bash", "-c", broken], capture_output=True).returncode != 0
     assert (tmp_path / "rule.md").read_text() == ""
+    # A skill directory that isn't there fails too.
+    missing = command.replace("<this skill's directory>", str(tmp_path / "nowhere")).replace("<scratch>", str(tmp_path))
+    assert subprocess.run(["bash", "-c", missing], capture_output=True).returncode != 0
     assert "never start the reviewers with an empty or missing `rule.md`" in _flat(_inputs())
 
 
 def test_last_comes_from_commit_txt_or_the_posted_record():
     inputs = _flat(_inputs())
     # Never a comment just anyone could post: only a record merge-check counts.
-    assert "the commit named (`commit=`) by the latest record `merge-check` counts, one from an account with write access, never any other comment, or, before the pull request opens, its `commit.txt`" in inputs
+    assert "Before the pull request opens, it is in that review's `commit.txt`. After, it is the `commit=` of the latest review record that `merge-check` counts: one posted from an account with write access." in inputs
     assert "the commit can't be found" in inputs
 
 
 def test_an_empty_since_patch_after_a_base_merge_still_gets_a_look():
-    assert "An empty one still asks for a look: if the base was merged in since the last review, check the change's lines in `diff.patch` against it" in _rule()
+    # The reviewer can't run git, so the look doesn't depend on knowing whether the base was merged in.
+    assert "An empty one still asks for a look: check the change's lines in `diff.patch` against the base, for something it breaks." in _rule()
+
+
+def test_review_record_refusals_name_the_object_form():
+    """§4 always writes the object form; the refusals say so, never a bare `[]`."""
+    for text in ("", "{}"):
+        with pytest.raises(findings.FindingsError) as e:
+            findings.load(text)
+        assert "`[]`" not in str(e.value)
+    with pytest.raises(findings.FindingsError) as e:
+        findings.from_file("")
+    assert '`{"findings": []}`' in str(e.value)
