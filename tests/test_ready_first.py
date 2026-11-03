@@ -6,7 +6,7 @@ import json
 import pytest
 
 from workflow import cli
-from workflow.issues import parse_number_list, readiness, startable
+from workflow.issues import parse_number_list, parse_numbers, readiness, startable
 
 INFRA = ("ready-for-agent", "workflow:infra")
 
@@ -57,10 +57,11 @@ def test_parse_number_list_keeps_the_order_given():
         parse_number_list("12, x1")
 
 
-@pytest.mark.parametrize("odd", ["\uff17", "\u0663", "\u00b2"])
+@pytest.mark.parametrize("odd", ["\uff17", "\u0663", "\u00b2", "1" * 5000])
 def test_only_plain_digits_are_ticket_numbers(odd):
-    with pytest.raises(ValueError, match="not a ticket number"):
-        parse_number_list(f"5, {odd}")
+    for parse in (parse_number_list, parse_numbers):
+        with pytest.raises(ValueError, match="not a ticket number"):
+            parse(f"5, {odd}")
 
 
 # ---------- the `ready` command ----------
@@ -126,6 +127,8 @@ def test_ready_cli_first_bad_number_is_a_clean_error(ready_files, capsys):
     assert cli.main([*ready_files, "--first", "4, abc"]) == 2
     err = capsys.readouterr().err
     assert "abc" in err and "Traceback" not in err
-    assert cli.main([*ready_files, "--first", "4, \u00b2"]) == 2
-    err = capsys.readouterr().err
-    assert "not a ticket number" in err and "invalid literal" not in err
+    for flag in ("--first", "--exclude", "--only", "--override"):
+        for odd in ("\u00b2", "\u0663", "1" * 5000):
+            assert cli.main([*ready_files, flag, f"4, {odd}"]) == 2
+            err = capsys.readouterr().err
+            assert "not a ticket number" in err and "invalid literal" not in err and "Exceeds" not in err
