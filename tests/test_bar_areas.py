@@ -227,6 +227,19 @@ def test_has_bar(body):
         "Run it:\n<kbd>\n```\nmake\n\n## Bar\n```\n",
         "- \n  <!--\n~~~\n[a]: /u\nx -->\n## Bar ##\n<div>",
         "- \n  <!--\n<summary>s</summary>\n## Bar\nx -->\n## Bar\n",  # a list item's comment ends with the item
+        # Pass 1: each opener GitHub may read past a blank line, after inline HTML.
+        "<b>Note</b>: x\n<!DOCTYPE\n\n## Bar\n>\n",
+        "<b>x</b> y\n<?php\n\n## Bar\n?>\n",
+        "<b>x</b> y\n<![CDATA[\n\n## Bar\n]]>\n",
+        "<b>x</b> y\n<pre>\n\n## Bar\n</pre>\n",
+        "<b>x</b> y\n~~~\n\n## Bar\n~~~\n",
+        # HTML in a list item's continuation, indented 4 columns or more, or with a tab.
+        "- x\n    <!--\n   ## Bar\n",
+        "- x\n\t<!--\n  ## Bar\n",
+        "1. x\n     <!--\n   ## Bar\n",
+        "-\n    <!--\n  ## Bar\n",
+        "- x\n\n    <pre>\n\n  ## Bar\n",
+        "- x\n    <div>\n  ## Bar\n",
     ],
 )
 def test_has_no_bar(body):

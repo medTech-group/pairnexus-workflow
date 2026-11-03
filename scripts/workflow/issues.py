@@ -465,7 +465,7 @@ _HTML_TAG = re.compile(r" {0,3}</?[A-Za-z]")
 # In a stretch has_bar skips as HTML: something GitHub may read as opening
 # code or a comment there instead (the first line may be inline HTML, not a
 # block, or a list item's block may end early), so has_bar stops reading.
-_OPENS_MORE = re.compile(r"`{3,}|~{3,}|<!--|<\?|<!\[CDATA\[|<(?:pre|script|style|textarea)(?=[ \t>]|$)", re.I)
+_OPENS_MORE = re.compile(r"`{3,}|~{3,}|<!|<\?|<(?:pre|script|style|textarea)(?=[ \t>]|$)", re.I)
 _LINE_END = re.compile(r"\r\n|\r|\n")  # Markdown's line ends, not str.splitlines()'s
 
 
@@ -480,13 +480,15 @@ def _past(lines: list[str], i: int, ends) -> int | None:
 
 
 def _odd_container(line: str) -> bool:
-    """A fence indented, quoted or in a list item, or HTML in a quote or a
-    list item: where has_bar stops reading."""
+    """A fence indented, quoted or in a list item, or HTML in a quote, a list
+    item or indented 4 columns or more (code at the top level, but a list
+    item's continuation may hold it): where has_bar stops reading."""
     p = _CONTAINER.match(line).end()
     if not p:
         return False
-    rest = line[p:]
-    return bool(_FENCE_MARK.match(rest) or (line[:p].strip(" \t") and _HTML_MARK.match(rest)))
+    rest, before = line[p:], line[:p]
+    deep = before.strip(" \t") or "\t" in before or len(before) >= 4
+    return bool(_FENCE_MARK.match(rest) or (deep and _HTML_MARK.match(rest)))
 
 
 def has_bar(body: str | None) -> bool:
