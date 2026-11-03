@@ -86,10 +86,15 @@ def test_every_build_reviewer_follows_it_and_planning_reviews_dont_get_it():
 
 def test_it_applies_to_records_written_with_findings_and_a_run_keeps_its_rule():
     rule = _rule()
-    assert "**When it applies:** a build review whose record is written with `--findings` (section 4)" in rule
+    assert "**When it applies:** once `build-ticket` says build reviews follow it; in a run, only when the briefing has a \"Findings:\" line, since a run keeps the rule it started with" in rule
     # Until the switch, today's rule: no rule.md, and records with --clean or --not-clean.
     assert "build reviews keep today's rule: no `rule.md`, and records with `--clean` or `--not-clean`" in rule
-    assert "A run keeps the rule it started with" in rule
+    assert "Under the rule, every build review's record is written with `--findings` (section 4)" in rule
+    # The kit's own ticket numbers stay out of rule.md, which reviewers read.
+    assert not re.search(r"#\d", rule)
+    # The light and small reviews' records too.
+    for start in (". The light review\n", ". The small review\n"):
+        assert "under the rule, `--findings`" in _flat(_section(PANEL, start)), start
 
 
 # --- marks, severity, reproducers, the part ----------------------------------
@@ -437,7 +442,7 @@ def test_an_empty_or_missing_rule_md_stops_the_review(tmp_path):
 
 def test_last_comes_from_commit_txt_or_the_posted_record():
     inputs = _flat(_inputs())
-    assert "its `commit.txt`, or the commit its posted record names" in inputs
+    assert "the commit its record on the pull request names (`commit=`), or, before the pull request opens, its `commit.txt`" in inputs
     assert "the commit can't be found" in inputs
 
 

@@ -34,7 +34,7 @@ Make a scratch directory outside the repo, for example `/tmp/review-<ticket>-r<r
   - under "Contests to rule on", the last review's contested findings, each with its number, its reason, and what it needs to be re-entered if kept: its reproducer, its part, and its `security` and area if it has them;
   - the parts that took the bar's fail-closed form or were split out;
   - under "Moved criteria", each acceptance criterion moved by a split, quoted, with the ticket it moved to.
-- `since.patch`, from the second review: the pull request's own changes since the last review, round or pass, with the base branch's changes left out. With `<last>` the commit the last review covered (its `commit.txt`, or the commit its posted record names), after a `git fetch`:
+- `since.patch`, from the second review: the pull request's own changes since the last review, round or pass, with the base branch's changes left out. With `<last>` the commit the last review covered: the commit its record on the pull request names (`commit=`), or, before the pull request opens, its `commit.txt`; after a `git fetch`:
 
   ```
   old=$(git merge-base origin/<base> <last>)
@@ -154,14 +154,14 @@ A shorter review for a low-risk change, asked for as "build #12 with a light rev
   WF review-record --kind round --round 1 --commit <sha> --reviewers standards,spec,correctness --clean > /tmp/review-<ticket>-r1/record.md
   ```
 
-  (`standards,spec,correctness,security` when the security review ran; `--not-clean` when it found something to fix.)
+  (`standards,spec,correctness,security` when the security review ran; `--not-clean` when it found something to fix; under the rule, `--findings` in place of `--clean` or `--not-clean`, as section 4 says.)
 - **If round 1 isn't clean,** fix its findings as in section 3, then run Correctness-only rounds until one is clean, at most 2 more. Each is a round of its own, with its own scratch directory, `commit.txt` and `previous.md`, and posts its record as a round, never as a pass:
 
   ```
   WF review-record --kind round --round <n> --commit <sha> --reviewers correctness --clean > /tmp/review-<ticket>-r<n>/record.md
   ```
 
-  (`--not-clean` when it found something to fix.) The 2 is fixed, whatever `run.review_rounds` says: with the briefing's review rounds at 1, these rounds come on top of its "at most 1".
+  (`--not-clean` when it found something to fix; under the rule, `--findings`, as section 4 says.) The 2 is fixed, whatever `run.review_rounds` says: with the briefing's review rounds at 1, these rounds come on top of its "at most 1".
 - **Post each record** as section 4 says. A later commit after the last round still gets its Correctness pass (section 5).
 - **Anything still open** after them goes to the owner in the PR body, never silently.
 
@@ -183,7 +183,7 @@ The review of a ticket marked `Review: small` while its diff stays within the sm
   WF review-record --kind round --round 1 --commit <sha> --reviewers correctness --clean > /tmp/review-<ticket>-r1/record.md
   ```
 
-  (`correctness,security`, `correctness,explorer` or `correctness,security,explorer` when those ran; `--not-clean` when it found something to fix.)
+  (`correctness,security`, `correctness,explorer` or `correctness,security,explorer` when those ran; `--not-clean` when it found something to fix; under the rule, `--findings` in place of `--clean` or `--not-clean`, as section 4 says.)
 - **Fixes after it** are covered by Correctness passes (section 5), under the pass cap. There are no further rounds: when the round isn't clean, fix its findings as in section 3, and a clean pass on the head lifts them.
 - **Past the small threshold,** measured before reviewing or as `merge-check`'s `past_small_threshold`, the ticket doesn't get the small review: run the full panel (section 5), or the light review (section 6) in a 1-round run. The pull request's body says the diff overruled the mark. After a small round already ran, that is one full-panel round (the light review's round 1 in a 1-round run, without the explorer) with the next round number, allowed past the round limit; if it isn't clean, fix its findings and run a Correctness pass, with no further round.
 - **Anything still open** after the pass cap (or, with `until-clean`, at the run's end time) goes to the owner in the PR body, never silently.
@@ -256,7 +256,7 @@ Under the rule (section 10), the table gains the mark and the part after the rev
 
 This section is copied, as it is, into each build review's scratch directory as `rule.md` (section 1), so keep it the last section. Every build reviewer follows it: Standards, Spec, Correctness, the security review and the explorer, in rounds and passes, the light and small reviews included. Planning reviews (section 8) don't get it.
 
-**When it applies:** a build review whose record is written with `--findings` (section 4). Until `build-ticket` switches to it (#375 for attended work; for a run, its briefing's "Findings:" line, #382), build reviews keep today's rule: no `rule.md`, and records with `--clean` or `--not-clean`. A run keeps the rule it started with.
+**When it applies:** once `build-ticket` says build reviews follow it; in a run, only when the briefing has a "Findings:" line, since a run keeps the rule it started with. Until then, build reviews keep today's rule: no `rule.md`, and records with `--clean` or `--not-clean`. Under the rule, every build review's record is written with `--findings` (section 4).
 
 **Your inputs,** in the scratch directory beside `diff.patch`, `ticket.md` and `rules.md`:
 - `bar.md`: the ticket's bar: what it must handle, what it does when it can't be sure (its fail-closed form), and the limits it accepts; "None" when it has none.
