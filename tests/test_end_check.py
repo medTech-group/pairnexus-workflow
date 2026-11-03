@@ -106,6 +106,13 @@ def test_the_end_check_reads_all_the_answers_together_with_the_checker():
     assert 'flow, "Decision questions"' in e
 
 
+def test_a_destination_item_s_end_check_reads_the_map_decisions_it_draws_on():
+    s = _sentence(_end_check(), "all the answers")
+    assert "Destination item" in s and "map decisions" in s
+    # The same answers the planning review reads after the draft.
+    assert "`answers.md`" in s
+
+
 def test_the_end_check_fills_the_checker_s_scratch_directory():
     s = _sentence(_end_check(), "/tmp/plan-check-")
     assert "-end-" in s
