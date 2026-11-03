@@ -193,7 +193,7 @@ def test_a_rule_2_ticket_is_carried_on_not_set_aside():
     assert "If `WF hand-off` refuses, set the ticket aside" in carry and "the writer's message" in carry
     # One hand-off per head, every time, and a comment only with a new one.
     assert "2. Then, unless `WF merge-check`'s `hand_off.on_head` is already true, write the hand-off" in carry
-    assert "never writing one blind" in carry
+    assert "when it gives any \"couldn't read\" reason, `hand_off` tells nothing" in carry and "never writing one blind" in carry
     assert "when step 2 posted a hand-off, comment on it" in carry
     # A carry-on ticket adopted but never started keeps its hand-off.
     # It gets every step (so `workflow:in-progress` comes off), with no second hand-off and no comment.
@@ -244,7 +244,6 @@ def test_the_kick_off_adopts_every_carry_on_ticket_first_without_asking():
     assert "open tickets labelled `workflow:carry-on` and not `needs-human`" in line
     # `start` leaves a ticket its run adopted.
     assert "`start`'s \"Carry on\" leaves a ticket that also has `workflow:in-progress` to its run" in line
-    # A failed read never gives `none`; a closed pull request makes it a ready ticket again.
     plan = skill.split("3. **The plan.**", 1)[1].split("\n", 1)[0]
     assert "after the carry-on tickets first" in plan
     named = next(ln for ln in skill.splitlines() if ln.startswith("- **No run in progress**"))
@@ -262,7 +261,9 @@ def test_the_kick_off_adopts_every_carry_on_ticket_first_without_asking():
     assert "its plan and `scope.tickets` are `[<n>]`, since neither may be empty" in named_carry
     assert "or in an \"also #<n>\" (check-in step 3)" in named_carry
     assert "if \"The work\" wouldn't adopt it (no open pull request on its ticket branch), say why and start nothing" in named_carry
-    assert "when the run is stopping or winding down, say it won't start in this run and queue nothing" in named_carry
+    assert "when the run is stopping or winding down (judged once the other changes in the owner's words read with it are applied), say it won't start in this run and queue nothing" in named_carry
+    # An "also" asking for a code fix goes to that section, which holds the pull request.
+    assert "An \"also\" that asks for a code fix on its pull request is \"A pull request that needs a code fix\"'s instead" in named_carry
     assert "(a carry-on ticket is queued instead: \"A carry-on ticket named\")" in skill
     assert "set aside, carried on." in skill
     queued = skill.split("1. **Queued tickets** in the state:", 1)[1].split("\n", 1)[0]
