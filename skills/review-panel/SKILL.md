@@ -34,7 +34,7 @@ Make a scratch directory outside the repo, for example `/tmp/review-<ticket>-r<r
   - under "Contests to rule on", the last review's contested findings, each with its number, its reason, and what it needs to be re-entered if kept: its reproducer, its part, and its `security` and area if it has them;
   - the parts that took the bar's fail-closed form or were split out;
   - under "Moved criteria", each acceptance criterion moved by a split, quoted, with the ticket it moved to.
-- `since.patch`, from the second review: the pull request's own changes since the last review, round or pass, with the base branch's changes left out. With `<last>` the commit the last review covered: the commit its record on the pull request names (`commit=`), or, before the pull request opens, its `commit.txt`; after a `git fetch`:
+- `since.patch`, from the second review: the pull request's own changes since the last review, round or pass, with the base branch's changes left out. With `<last>` the commit the last review covered: the commit named (`commit=`) by the latest record `merge-check` counts, one from an account with write access, never any other comment, or, before the pull request opens, its `commit.txt`; after a `git fetch`:
 
   ```
   old=$(git merge-base origin/<base> <last>)
@@ -86,7 +86,7 @@ Follow the rule in <scratch>/rule.md: it says how to mark and report each findin
 5. Rerun the typecheck and the affected tests.
 6. Post the round's review record (section 4).
 
-A record under the rule (section 10), written with `--findings` (section 4), comes from the reviewers' reports: every finding a reviewer reported goes in the findings file as reported, even one you judge not a problem. Such a finding marked blocks is contested: its reason goes in the findings table and in the next review's `previous.md`, under "Contests to rule on", and the next review rules on it. One marked a ticket to fix it or a note is answered with its reason in the findings table, and never ruled on. One entry for each finding each reviewer reported. A mark is the reviewer's: copy it, its part, its reproducer and its flags as written, and never change one.
+A record under the rule (section 10), written with `--findings` (section 4), comes from the reviewers' reports: every finding a reviewer reported goes in the findings file as reported, even one you judge not a problem. Such a finding marked blocks is contested: its reason goes in the findings table and in the next review's `previous.md`, under "Contests to rule on", and the next review rules on it. One marked a ticket to fix it or a note is answered with its reason in the findings table, and never ruled on. A finding flagged kept after a contest is never contested again: it is fixed. One entry for each finding each reviewer reported. A mark is the reviewer's: copy it, its part, its reproducer and its flags as written, and never change one.
 
 ## 4. Post the review record
 
@@ -109,7 +109,7 @@ Post a record on the pull request after every round, whatever it found, and afte
   WF review-record --kind pass --round <last round> --commit <sha> --reviewers correctness --findings /tmp/review-<ticket>-pass<k>/findings.json > /tmp/review-<ticket>-pass<k>/record.md
   ```
 
-  The file is JSON, `[]` when no reviewer reported anything. Each finding (section 3) gives its `mark` (`blocks`, `ticket` or `note`), its part as `mechanism`, its `reproducer` (needed for `blocks`, and never shown in the record), `covered` (the bar's fail-closed form covers it), `contested` (a finding of the last review kept after a contest, re-entered here), `security` (`change` or `main`) with its `area`, and `issue` once its ticket is filed. Beside the list, `outcomes` gives what became of the last review's findings after its record was posted (each contest's ruling, a part that took the bar's fail-closed form, a part split out to a ticket), and `split` is true when the ticket was itself made by a split. For example:
+  The file is a JSON object, always, so no outcome or split flag is ever lost: `findings`, the list, empty when no reviewer reported anything; `outcomes`; and `split`. Each finding (section 3) gives its `mark` (`blocks`, `ticket` or `note`), its part as `mechanism`, its `reproducer` (needed for `blocks`, and never shown in the record), `covered` (the bar's fail-closed form covers it), `contested` (a finding of the last review kept after a contest, re-entered here), `security` (`change` or `main`) with its `area`, and `issue` once its ticket is filed. `outcomes` gives what became of the last review's findings after its record was posted (each contest's ruling, a part that took the bar's fail-closed form, a part split out to a ticket), and `split` is true when the ticket was itself made by a split. For example:
 
   ```
   {
@@ -280,7 +280,7 @@ No reproducer: the finding is a note, whatever its severity.
 
 **The part.** Name the part of the change each finding is about: a short name, at most 80 characters, one line, no backtick or `~~~`, such as "the requeue order". When `previous.md` names the same part, reuse its name exactly, character for character; give a new name only to a part no earlier review named. Say, too, whether the bar's fail-closed form covers the part: the part could do what `bar.md` says the change does when it can't be sure.
 
-**What blocks:** ADR 0001's rule, as ADR 0002 changes it. A finding with a reproducer blocks when it is:
+**What blocks.** A finding with a reproducer blocks when it is:
 - a defect in the change's own lines;
 - something the change breaks elsewhere (a regression in code it reaches);
 - something the change makes reachable;
@@ -293,9 +293,9 @@ No reproducer: the finding is a note, whatever its severity.
 Where the hunt stops:
 - **The bar:** a gap `bar.md` accepts as a limit is a note.
 - **Moved criteria:** a criterion `previous.md` lists as moved by a split isn't unmet here: a finding on it is a note.
-- **Lines already reviewed** (from the second review): a finding on lines unchanged since a review that covered them (in the change or in what it reached) is marked a ticket to fix it, unless it is a safety breach, a security problem the change adds, loses data, leaves an acceptance criterion unmet, leaves new behaviour untested, or is something the change breaks elsewhere: those still block, whichever review finds them.
+- **Lines already reviewed** (from the second review): a finding that would otherwise block, on lines unchanged since a review that covered them (in the change or in what it reached), is marked a ticket to fix it, unless it is a safety breach, a security problem the change adds, loses data, leaves an acceptance criterion unmet, leaves new behaviour untested, or is something the change breaks elsewhere: those still block, whichever review finds them.
 
-**From the second review,** a round or a pass, review `since.patch` and what it reaches: the code it calls and the code that calls it, read in full in the repo. Read `diff.patch`, the whole change, for context. Everything in `since.patch` follows the rule as in a first review, and so do the lines it reaches that no earlier review covered. Check each fix `previous.md` lists. With no `since.patch`, the whole change is new to this review. An empty one (a merge of the base that left the pull request's own changes as they were) still asks for a look: check the change's lines in `diff.patch` against the base merged in, for something it breaks.
+**From the second review,** a round or a pass, review `since.patch` and what it reaches: the code it calls and the code that calls it, read in full in the repo. Read `diff.patch`, the whole change, for context. Everything in `since.patch` follows the rule as in a first review, and so do the lines it reaches that no earlier review covered. Check each fix `previous.md` lists. With no `since.patch`, the whole change is new to this review. An empty one still asks for a look: if the base was merged in since the last review, check the change's lines in `diff.patch` against it, for something it breaks.
 
 **Security.** A security problem the change adds: mark it as any other finding, with `security: change` and its area, a word or two such as "sign-in". A security or safety problem in code already on the base branch: `security: main`, with its area. Give its details (where, the reproducer) in your report, never in a part's name: the public records show only the area.
 

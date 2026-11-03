@@ -35,7 +35,7 @@ You also get the list of changed files. Read each in full in the repo, not only 
 ## How to report
 
 Report each finding with:
-- **Severity:** critical, important or minor ("critical" is the top severity, never a mark);
+- **Severity:** critical, important or minor;
 - **Where:** file and line;
 - **The failure:** concrete inputs or state, and what goes wrong;
 - **The fix:** one line.

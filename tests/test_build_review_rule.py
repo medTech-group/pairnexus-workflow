@@ -41,6 +41,18 @@ def _inputs() -> str:
     return _section(PANEL, "## 1. Gather the inputs", "\n## 2.")
 
 
+def _s3() -> str:
+    return _flat(_section(PANEL, "## 3. After each round", "\n## 4."))
+
+
+def _s4() -> str:
+    return _section(PANEL, "## 4. Post the review record", "\n## 5.")
+
+
+def _table() -> str:
+    return _flat(_section(PANEL, "## 9. The findings table"))
+
+
 def _fence_after(text: str, words: str) -> str:
     """The first fenced block after `words` in `text`, its lines unindented."""
     after = text.split(words, 1)[1]
@@ -151,7 +163,9 @@ def test_each_finding_names_its_part_reusing_earlier_names_exactly():
 
 def test_what_blocks_is_adr_0001_as_adr_0002_changes_it():
     rule = _rule()
-    assert "ADR 0001's rule, as ADR 0002 changes it" in rule
+    assert "**What blocks.** A finding with a reproducer blocks when it is:" in rule
+    # rule.md reaches projects, which have no copy of the kit's ADRs.
+    assert "ADR" not in rule
     for words in (
         "a defect in the change's own lines;",
         "something the change breaks elsewhere",
@@ -197,7 +211,8 @@ def test_from_the_second_review_reviewers_get_the_changes_since_the_last_review_
 def test_a_finding_on_lines_already_reviewed_is_a_ticket_unless_it_is_one_of_six_kinds():
     rule = _rule()
     lines = rule.split("**Lines already reviewed**", 1)[1].split("**", 1)[0]
-    assert "a finding on lines unchanged since a review that covered them (in the change or in what it reached) is marked a ticket to fix it" in lines
+    # Only a finding that would otherwise block becomes a ticket: a note stays a note.
+    assert "a finding that would otherwise block, on lines unchanged since a review that covered them (in the change or in what it reached), is marked a ticket to fix it" in lines
     for words in (
         "a safety breach",
         "a security problem the change adds",
@@ -254,24 +269,27 @@ def test_section_2_points_every_prompt_it_gives_to_rule_md():
 
 
 def test_section_3_writes_every_reported_finding_into_the_findings_file():
-    s3 = _flat(_section(PANEL, "## 3. After each round", "\n## 4."))
+    s3 = _s3()
     assert "under the rule (section 10), written with `--findings` (section 4)" in s3
     assert "every finding a reviewer reported goes in the findings file as reported, even one you judge not a problem" in s3
     assert "A mark is the reviewer's" in s3
 
 
 def test_section_4_writes_records_under_the_rule_with_findings():
-    s4 = _flat(_section(PANEL, "## 4. Post the review record", "\n## 5."))
+    s4 = _flat(_s4())
     assert "WF review-record --kind round --round <n> --commit <sha> --reviewers standards,spec,correctness --findings /tmp/review-<ticket>-r<n>/findings.json > /tmp/review-<ticket>-r<n>/record.md" in s4
     assert "WF review-record --kind pass --round <last round> --commit <sha> --reviewers correctness --findings /tmp/review-<ticket>-pass<k>/findings.json > /tmp/review-<ticket>-pass<k>/record.md" in s4
-    assert "`[]` when no reviewer reported anything" in s4
+    # One form, so an outcome or the split flag is never dropped with an empty list.
+    assert "The file is a JSON object, always, so no outcome or split flag is ever lost: `findings`, the list, empty when no reviewer reported anything; `outcomes`; and `split`" in s4
+    assert "`[]`" not in s4
+    assert findings.load('{"findings": [], "outcomes": [{"outcome": "fail-closed", "mechanism": "the merge gate"}], "split": true}').clean
     # Every key the findings file takes is named, so the session can write it.
     for key in ("mark", "mechanism", "reproducer", "covered", "contested", "security", "area", "issue", "outcomes", "split"):
         assert f"`{key}`" in s4, key
 
 
 def test_section_4s_example_findings_file_is_one_review_record_accepts():
-    s4 = _section(PANEL, "## 4. Post the review record", "\n## 5.")
+    s4 = _s4()
     example = _fence_after(s4, "For example:")
     loaded = findings.load(example)
     marks = [f.mark for f in loaded.findings]
@@ -280,7 +298,7 @@ def test_section_4s_example_findings_file_is_one_review_record_accepts():
 
 
 def test_the_findings_table_gains_the_mark_and_the_part():
-    table = _flat(_section(PANEL, "## 9. The findings table"))
+    table = _table()
     assert "| # | Round | Reviewer | Mark | Part | Finding | Outcome |" in table
 
 
@@ -399,14 +417,16 @@ def test_the_changelog_notes_it_under_unreleased():
         assert words in note, words
 
 
-# --- round 1's findings ------------------------------------------------------
+# --- contests, outcomes, and when the commands fail ------------------------
 
 
 def test_only_a_blocking_finding_is_contested():
-    s3 = _flat(_section(PANEL, "## 3. After each round", "\n## 4."))
+    s3 = _s3()
     assert "Such a finding marked blocks is contested" in s3
     assert "One marked a ticket to fix it or a note is answered with its reason in the findings table, and never ruled on" in s3
     assert "Only a finding marked blocks is contested." in _rule()
+    # A ruling stands: a kept finding isn't sent back for another ruling.
+    assert "A finding flagged kept after a contest is never contested again: it is fixed." in s3
 
 
 def test_a_kept_contest_is_re_entered_with_its_reproducer_and_security_flags():
@@ -422,12 +442,12 @@ def test_a_kept_contest_is_re_entered_with_its_reproducer_and_security_flags():
 
 
 def test_a_security_finding_names_only_its_area_in_every_column():
-    table = _flat(_section(PANEL, "## 9. The findings table"))
+    table = _table()
     assert "A security finding's row names only its area, in every column: its part, its finding and its outcome, the test's name included." in table
 
 
 def test_section_4_shows_every_outcome_the_file_takes():
-    s4 = _section(PANEL, "## 4. Post the review record", "\n## 5.")
+    s4 = _s4()
     loaded = findings.load(_fence_after(s4, "For example:"))
     assert {o.kind for o in loaded.outcomes} == set(findings.OUTCOMES)
 
@@ -435,16 +455,22 @@ def test_section_4_shows_every_outcome_the_file_takes():
 def test_an_empty_or_missing_rule_md_stops_the_review(tmp_path):
     command = _fence_after(_inputs(), "`rule.md`")
     assert command.endswith("&& test -s <scratch>/rule.md")
-    broken = command.replace("<this skill's directory>", str(tmp_path / "nowhere")).replace("<scratch>", str(tmp_path))
+    # A skill whose heading doesn't match: sed itself succeeds and writes nothing.
+    skill = tmp_path / "skill"
+    skill.mkdir()
+    (skill / "SKILL.md").write_text("## 10. Another heading\nwords\n", encoding="utf-8")
+    broken = command.replace("<this skill's directory>", str(skill)).replace("<scratch>", str(tmp_path))
     assert subprocess.run(["bash", "-c", broken], capture_output=True).returncode != 0
+    assert (tmp_path / "rule.md").read_text() == ""
     assert "never start the reviewers with an empty or missing `rule.md`" in _flat(_inputs())
 
 
 def test_last_comes_from_commit_txt_or_the_posted_record():
     inputs = _flat(_inputs())
-    assert "the commit its record on the pull request names (`commit=`), or, before the pull request opens, its `commit.txt`" in inputs
+    # Never a comment just anyone could post: only a record merge-check counts.
+    assert "the commit named (`commit=`) by the latest record `merge-check` counts, one from an account with write access, never any other comment, or, before the pull request opens, its `commit.txt`" in inputs
     assert "the commit can't be found" in inputs
 
 
 def test_an_empty_since_patch_after_a_base_merge_still_gets_a_look():
-    assert "An empty one (a merge of the base that left the pull request's own changes as they were) still asks for a look" in _rule()
+    assert "An empty one still asks for a look: if the base was merged in since the last review, check the change's lines in `diff.patch` against it" in _rule()
