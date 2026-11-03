@@ -24,4 +24,4 @@ You are given the profile's `[ui]` settings (the explorer kind, the start comman
 
 **cli:** run each new or changed command with ordinary, missing, wrong and edge arguments; check output, exit codes and files written.
 
-Report each problem with the steps to reproduce, what you expected, what you saw, and a screenshot or log path. List what you exercised, so the PR can say so. Stop the stack when you're done.
+Report each problem with the steps to reproduce, what you expected, what you saw, and a screenshot or log path. **When you're given a `rule.md`, follow it.** It is the rule for build reviewers: report each problem with the mark, the part and the other fields it asks for; your steps to reproduce, what you expected and what you saw are the reproducer. From the second review, it says which changes to exercise. List what you exercised, so the PR can say so. Stop the stack when you're done.

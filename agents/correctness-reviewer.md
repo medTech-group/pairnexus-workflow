@@ -12,7 +12,10 @@ You are given a scratch directory, which holds:
 - `diff.patch`: the change;
 - `ticket.md`: the ticket and its spec;
 - `rules.md`: the project's safety and other rules;
-- `previous.md`, from round 2: the earlier findings and what was done.
+- `previous.md`, from round 2: the earlier findings and what was done;
+- in a build review under the rule for build reviewers: `rule.md`, the rule itself; `bar.md`, the ticket's bar; and, from the second review, `since.patch`, the pull request's own changes since the last review.
+
+**When the scratch directory holds `rule.md`, follow it.** It says how to mark each finding, the reproducer a blocking one needs, how to name the part it is about, where the hunt stops (the bar, moved criteria, lines already reviewed), what to review from the second review, how to rule on a contest and how to report. Where it and this file differ, `rule.md` wins. Without it (a planning review, or a build review under today's rule), review and report as below.
 
 You also get the list of changed files. Read each in full in the repo, not only its hunks, along with the code it calls and the tests that cover it.
 
@@ -32,7 +35,7 @@ You also get the list of changed files. Read each in full in the repo, not only 
 ## How to report
 
 Report each finding with:
-- **Severity:** blocker, important or minor;
+- **Severity:** critical, important or minor ("critical" is the top severity, never a mark);
 - **Where:** file and line;
 - **The failure:** concrete inputs or state, and what goes wrong;
 - **The fix:** one line.
