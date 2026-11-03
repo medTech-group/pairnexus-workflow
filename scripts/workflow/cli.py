@@ -180,6 +180,7 @@ def cmd_ready(a) -> int:
         repo=prof.repo if prof else None,
         areas=list(prof.areas) if prof else None,
         protected=list(prof.protected_paths) if prof else None,
+        bar_areas=list(prof.bar_areas) if prof else None,
     )
     if only is not None:
         missing = sorted(only - {v.number for v in verdicts})
