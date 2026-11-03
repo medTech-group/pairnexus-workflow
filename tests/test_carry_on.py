@@ -102,6 +102,7 @@ def test_a_hand_off_slot_that_isnt_a_comment_on_this_repos_pull_request_stops_th
 
 
 def _render_with(tmp_path, template_text, slots):
+    tmp_path.mkdir()
     _project(tmp_path, slots)
     (tmp_path / "old-template.md").write_text(template_text)
     env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)}
@@ -114,10 +115,10 @@ def test_a_template_without_the_line_never_drops_a_hand_off(tmp_path):
     # An older (vendored) template has no Hand-off line: a hand-off given to it stops the render.
     old = TEMPLATE.read_text().replace("**Hand-off:** {{ticket.hand_off}}\n", "")
     assert "ticket.hand_off" not in old
-    p = _render_with(tmp_path, old, {**SLOTS, "hand_off": HAND_OFF})
+    p = _render_with(tmp_path / "given", old, {**SLOTS, "hand_off": HAND_OFF})
     assert p.returncode != 0 and "{{ticket.hand_off}}" in p.stderr and p.stdout == ""
     # Without one, it renders as before.
-    p = _render_with(tmp_path, old, {**SLOTS, "hand_off": "none"})
+    p = _render_with(tmp_path / "none", old, {**SLOTS, "hand_off": "none"})
     assert p.returncode == 0, p.stderr
     assert "**Hand-off:**" not in p.stdout
 
@@ -154,7 +155,9 @@ def _stop():
 
 
 def _carry():
-    return next(p for p in _stop().split("\n\n") if "**Carried on at the end time**" in p)
+    """The carried-on paragraph, its steps and the paragraph after them, up to step 3 of "Stop the run"."""
+    stop = _stop()
+    return stop[stop.index("**Carried on at the end time**"):stop.index("3. **Release,**")]
 
 
 def test_the_end_time_step_reads_each_tickets_pass_cap_from_merge_check():
