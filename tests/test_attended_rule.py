@@ -105,8 +105,10 @@ def test_every_reviews_fixes_round_1s_included_go_to_a_fresh_fixer():
 def test_a_red_required_check_is_section_5s_whoever_made_the_commit():
     """A red required check is the session's (§5), whoever's commit it is, with no exception to leave it waiting on a review."""
     fixer = _bullet(_rule(), "**A fresh fixer makes every review's fixes,**")
-    assert "A required check that goes red is §5's, whoever's commit it is." in fixer
+    assert "A required check that goes red is §5's, whoever's commit it is;" in fixer
     assert "unless" not in fixer.split("A required check that goes red", 1)[1]
+    # One owner when step 5 listed the same failure: the session's fix is its outcome, which the next review checks.
+    assert "when step 5 already listed its failure, your §5 fix is that row's outcome in the findings table and under \"Failures\", so the next review checks the fix rather than reporting it again" in fixer
     assert "**A required check is red:** find the cause" in _section(BUILD, "## 5. Get it green\n", "\n## 6. ")
     # No Correctness pass is started for a red check: a clean pass on reviewed lines could never block it.
     assert "run a Correctness pass on the head for it" not in fixer
@@ -272,8 +274,10 @@ def test_nothing_waits_and_carry_on_starts_a_fresh_session_with_a_fresh_10():
     # The claim is §1's alone.
     assert "Claimed as §1 says, the fresh session: 1. works on the pull request's branch" in carry
     assert "takes `workflow:carry-on` off" not in carry
-    assert "reads the hand-off (`WF merge-check --fetch <PR> --json`'s `hand_off`; in a run, with step 6.3's flags)" in carry
-    assert "runs the review `WF merge-check` asks for (in a run, with step 6.3's flags), with `previous.md` from the findings table and the records; its count starts at that hand-off" in carry
+    assert "reads the hand-off (`WF merge-check --fetch <PR> --json`'s `hand_off`) and the PR body's findings table" in carry
+    assert "runs the review `WF merge-check` asks for, with `previous.md` from the findings table and the records; its count starts at that hand-off" in carry
+    # Attended work's steps only: a ticket session carries on by its briefing's Hand-off line.
+    assert "in a run" not in carry
 
 
 def test_findings_handed_on_before_their_fixer_go_to_a_fixer_before_the_review():
@@ -300,7 +304,6 @@ def test_a_carry_on_ticket_reaches_build_ticket_and_skips_the_build():
     assert "**A ticket labelled `workflow:carry-on`** with an open pull request" in claim
     assert "take `workflow:carry-on` off and put `ready-for-agent` back" in claim
     assert "go on from §3's \"Carrying on after a hand-off\" instead of §2" in claim
-    # A ticket session gets there from its briefing's Hand-off line, not the label the conductor takes off.
     # A ticket session follows its briefing's own Hand-off line (the conductor's), never this route.
     assert "Hand-off:" not in claim
 
