@@ -253,6 +253,31 @@ def test_on_one_commit_the_last_posted_decides(project, capsys):
     assert review_ids(check(project, capsys, new_last, "--review-rounds", "3", "--review-passes", "2")[0]) == [("pass_not_clean", None)]
 
 
+def _past_250(*recs):
+    """A pull request of 251 commits: GitHub lists the 250 oldest, so its head isn't listed."""
+    data = inputs()
+    shas = [f"{n:040x}" for n in range(1, 251)]
+    data["pr"]["commits"] = 251
+    data["commits"] = [{"sha": s} for s in shas]
+    data["compare"]["commits"] = [{"sha": s} for s in shas] + [{"sha": HEAD}]
+    data["compare"]["ahead_by"] = 251
+    last = shas[-1]
+    data["comments"] = records(*(r(last) for r in recs))
+    return data
+
+
+def test_a_head_past_the_listed_commits_is_the_newest(project, capsys):
+    # The head isn't in GitHub's list: its record is still the latest, by the PR's history.
+    new_last = _past_250(lambda last: rec(rnd=3, commit=last, clean=False), *[lambda last: rec("pass", rnd=3, commit=last, clean=False)] * 2,
+                         lambda last: new([BLOCKS], kind="pass", rnd=3))
+    got, _ = check(project, capsys, new_last, "--review-rounds", "3", "--review-passes", "2")
+    assert review_ids(got) == [("pass_not_clean", None)] and got["review_passes"] == "until-clean"
+    old_last = _past_250(lambda last: new([BLOCKS], rnd=3, commit=last), *[lambda last: new([BLOCKS], kind="pass", rnd=3, commit=last)] * 2,
+                         lambda last: rec("pass", rnd=3, commit=HEAD, clean=False))
+    got, _ = check(project, capsys, old_last, "--review-rounds", "3", "--review-passes", "2")
+    assert review_ids(got) == [("passes_used_up", "owner")] and got["review_passes"] == 2
+
+
 def test_an_old_record_from_an_account_without_write_access_doesnt_decide(project, capsys):
     # Only counted records decide: a stranger's old-rule record posted last changes nothing.
     data = with_records(new([BLOCKS], rnd=3, commit=EARLIER), *[new([BLOCKS], kind="pass", rnd=3, commit=MIDDLE)] * 3)
