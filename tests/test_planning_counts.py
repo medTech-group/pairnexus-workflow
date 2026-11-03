@@ -187,13 +187,23 @@ def test_a_spec_posts_it_on_its_issue_once_its_tickets_are_published():
     counts = _sentence(s, "It counts the interview")
     for part in ("interview", "end check", "breakdown check", "pull request's rounds"):
         assert part in counts, part
-    # An edit counts here until the spec's own comment is posted.
-    assert "edit made before it is posted" in counts
+    # An edit counts here while the spec owes its own comment.
+    assert "edit made while the spec owes it" in counts
 
 
 def test_an_edit_before_the_specs_counts_counts_in_the_specs_comment():
     s = _sub("a spec", _where_raw())
-    assert "edit made before it is posted" in s
+    assert "edit made while the spec owes it" in s
+
+
+def test_when_a_spec_owes_its_counts():
+    s = _sentence(_sub("a spec", _where_raw()), "owes its \"Planning counts\" while")
+    # Until its tickets are published, and after, until the comment is there.
+    assert "tickets aren't published" in s
+    assert "\"Breakdown published\" comment has no comment headed exactly \"Planning counts\"" in s
+    # A spec from before these counts owes none, so its edits post their own.
+    s = _sentence(_sub("a spec", _where_raw()), "owes none")
+    assert "no \"Breakdown published\" comment" in s
 
 
 def test_a_spec_session_that_stops_before_its_tickets_posts_what_it_counted():
@@ -208,7 +218,7 @@ def test_a_spec_session_that_stops_before_its_tickets_posts_what_it_counted():
     assert "adds up every such comment" in where
     # A spec whose tickets are out with no counts is found by "Carrying on",
     # and a "so far" comment never passes for the counts.
-    s = _sentence(where, '"Breakdown published"')
+    s = _sentence(where, "owes its \"Planning counts\" while")
     assert "headed exactly" in s and "\"Planning counts so far\" isn't one" in s and "Carrying on" in s
 
 
@@ -233,9 +243,9 @@ def test_carrying_on_finds_a_spec_whose_counts_were_never_posted():
 def test_a_later_edit_to_a_published_spec_adds_its_own():
     s = _sub("a later edit", _where_raw())
     assert "its own" in s and "spec's issue" in s
-    # Only once the spec's own comment is there, so an edit's comment never
-    # stands in for it (the carry-on row looks for a "Planning counts" comment).
-    assert "made once the spec's own \"Planning counts\" is posted" in s
+    # Only when the spec owes none, so an edit's comment never stands in for
+    # the spec's own (the carry-on row looks for a "Planning counts" comment).
+    assert "made when the spec owes no \"Planning counts\" of its own" in s
 
 
 def test_a_quick_ticket_posts_it_on_the_ticket():
@@ -298,14 +308,14 @@ def test_the_map_decision_posts_it_before_its_ticket_is_closed():
 
 def test_an_edit_after_publishing_posts_its_own():
     add = _flatten(_path("\n**Add to an existing issue:**", "\n## 5."))
-    s = _sentence(add, NAME)
-    assert re.search(r"\bown\b", s) and "spec's issue" in s and _points_to_the_counts(s)
-    # Before its tickets are published, an edit counts in the spec's own comment,
-    # and a session that ends there posts what it counted.
-    s = _sentence(add, "Before then")
-    assert "spec's own" in s
-    assert "Once the spec's own \"Planning counts\" is posted" in add
-    assert "\"Planning counts so far\"" in _sentences(add, "ends here")[0]
+    # Its own comment, whenever the spec owes none: the action, not only a mention.
+    s = _sentence(add, "Otherwise")
+    assert re.search(r"Otherwise, post the edit's own \"Planning counts\" on the spec's issue", s), s
+    # While the spec owes its own, the edit counts there, and a session that
+    # ends there posts what it counted.
+    s = _sentence(add, "While the spec owes")
+    assert "the edit counts in that comment" in s
+    assert "\"Planning counts so far\"" in s and "ends here" in s
     # §7 points to the rule rather than restating its condition.
     later = _flatten(_path("**A spec or ticket to change after it's published:**", "\n- **A decision to undo"))
     assert _points_to_the_counts(later) and "\"Where the planning counts go\"" in later
