@@ -193,6 +193,7 @@ def test_a_rule_2_ticket_is_carried_on_not_set_aside():
     assert "If `WF hand-off` refuses, set the ticket aside" in carry and "the writer's message" in carry
     # One hand-off per head, every time, and a comment only with a new one.
     assert "2. Then, unless `WF merge-check`'s `hand_off.on_head` is already true, write the hand-off" in carry
+    assert "never writing one blind" in carry
     assert "when step 2 posted a hand-off, comment on it" in carry
     # A carry-on ticket adopted but never started keeps its hand-off.
     # It gets every step (so `workflow:in-progress` comes off), with no second hand-off and no comment.
@@ -229,10 +230,13 @@ def test_the_kick_off_adopts_every_carry_on_ticket_first_without_asking():
     assert "outside `charter.plan` and `scope.tickets`" in line
     assert "it keeps `workflow:carry-on` until its session is created (check-in step 5)" in line
     # The estimate and the one page count it.
-    assert "give it first in the `--tickets` of `WF charter estimate`, so the estimate counts its sessions; the one page's plan stays the plan" in line
+    assert "give it first in the `--tickets` of `WF charter estimate`, once" in line and "the one page's plan stays the plan" in line
     assert "and in the tracking issue's first comment" in line
-    # A ticket session can push only to its ticket branch: a pull request elsewhere stays for attended work.
-    assert "One whose pull request isn't on its ticket branch" in line and "it keeps `workflow:carry-on` for attended work" in line
+    # One rule: an open pull request on its ticket branch, found by head branch; any other keeps its label.
+    assert "Adopt one only when it has an open pull request on its ticket branch" in line
+    assert "found by head branch as leftovers are" in line
+    assert "it keeps `workflow:carry-on` for attended work or the owner; say why at the go" in line
+    assert "once (in a run for it alone it is the plan already)" in line
     # No readable hand-off: the session reads the pull request's own, with no retry to count.
     assert "With `hand_off` null (a counted review followed the hand-off, or the comments couldn't be read), give `none`" in line
     assert "read the latest hand-off comment and the review records on its pull request first" in line
@@ -241,7 +245,6 @@ def test_the_kick_off_adopts_every_carry_on_ticket_first_without_asking():
     # `start` leaves a ticket its run adopted.
     assert "`start`'s \"Carry on\" leaves a ticket that also has `workflow:in-progress` to its run" in line
     # A failed read never gives `none`; a closed pull request makes it a ready ticket again.
-    assert "remove `workflow:carry-on` and add `ready-for-agent` back" in line
     plan = skill.split("3. **The plan.**", 1)[1].split("\n", 1)[0]
     assert "after the carry-on tickets first" in plan
     named = next(ln for ln in skill.splitlines() if ln.startswith("- **No run in progress**"))
@@ -258,6 +261,8 @@ def test_the_kick_off_adopts_every_carry_on_ticket_first_without_asking():
     # A run for it alone has a plan and scope of that ticket, never empty; an "also" queues it the same way.
     assert "its plan and `scope.tickets` are `[<n>]`, since neither may be empty" in named_carry
     assert "or in an \"also #<n>\" (check-in step 3)" in named_carry
+    assert "if \"The work\" wouldn't adopt it (no open pull request on its ticket branch), say why and start nothing" in named_carry
+    assert "when the run is stopping or winding down, say it won't start in this run and queue nothing" in named_carry
     assert "(a carry-on ticket is queued instead: \"A carry-on ticket named\")" in skill
     assert "set aside, carried on." in skill
     queued = skill.split("1. **Queued tickets** in the state:", 1)[1].split("\n", 1)[0]
