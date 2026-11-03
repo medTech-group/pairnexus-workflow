@@ -73,23 +73,19 @@ def parse_number_list(text: str | None) -> list[int]:
 
     Raises ValueError naming the first part that isn't a number.
     """
-    out: list[int] = []
+    out: dict[int, None] = {}
     for part in (text or "").split(","):
         p = part.strip().lstrip("#").strip()
         if not p:
             continue
-        if not p.isdigit():
+        if not (p.isascii() and p.isdigit()):  # "٣" or "²" is no ticket number
             raise ValueError(f"not a ticket number: {part.strip()!r}")
-        if int(p) not in out:
-            out.append(int(p))
-    return out
+        out.setdefault(int(p))
+    return list(out)
 
 
 def parse_numbers(text: str | None) -> set[int]:
-    """Ticket numbers from "13, #143": commas between, `#` and spaces ignored.
-
-    Raises ValueError naming the first part that isn't a number.
-    """
+    """`parse_number_list`, as a set."""
     return set(parse_number_list(text))
 
 
@@ -547,11 +543,12 @@ def startable(
     run state allows to share an area. Areas are compared case-insensitively.
     """
     taken = {a.casefold() for a in running_areas if a}
-    rank = {n: i for i, n in enumerate(dict.fromkeys(first))}
+    rank = {n: i for i, n in enumerate(dict.fromkeys(first))}  # a caller's list may repeat a number
 
     def key(v: Verdict):
-        infra = INFRA_LABEL in {l.casefold() for l in v.labels}
-        return (not infra, len(rank) if infra else rank.get(v.number, len(rank)), v.number)
+        if INFRA_LABEL in {l.casefold() for l in v.labels}:
+            return (0, 0, v.number)  # infra: by number, whatever `first` says
+        return (1, rank.get(v.number, len(rank)), v.number)
 
     order = sorted((v for v in verdicts if v.ready), key=key)
     out: list[Verdict] = []

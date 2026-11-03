@@ -57,6 +57,12 @@ def test_parse_number_list_keeps_the_order_given():
         parse_number_list("12, x1")
 
 
+@pytest.mark.parametrize("odd", ["\uff17", "\u0663", "\u00b2"])
+def test_only_plain_digits_are_ticket_numbers(odd):
+    with pytest.raises(ValueError, match="not a ticket number"):
+        parse_number_list(f"5, {odd}")
+
+
 # ---------- the `ready` command ----------
 
 
@@ -102,8 +108,8 @@ def test_ready_cli_first_leaves_out_a_ticket_that_isnt_ready(ready_files, capsys
 
 
 def test_ready_cli_first_with_only_and_running_area(ready_files, capsys):
-    assert cli.main([*ready_files, "--json", "--slots", "6", "--only", "1,2,4", "--first", "2,6", "--running-area", "messages"]) == 0
-    assert _start_now(capsys) == [2, 4]
+    assert cli.main([*ready_files, "--json", "--slots", "6", "--only", "1,2,4", "--first", "4,2,6", "--running-area", "messages"]) == 0
+    assert _start_now(capsys) == [4, 2]
 
 
 def test_ready_cli_first_in_text(ready_files, capsys):
@@ -120,3 +126,6 @@ def test_ready_cli_first_bad_number_is_a_clean_error(ready_files, capsys):
     assert cli.main([*ready_files, "--first", "4, abc"]) == 2
     err = capsys.readouterr().err
     assert "abc" in err and "Traceback" not in err
+    assert cli.main([*ready_files, "--first", "4, \u00b2"]) == 2
+    err = capsys.readouterr().err
+    assert "not a ticket number" in err and "invalid literal" not in err
