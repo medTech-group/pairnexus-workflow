@@ -57,7 +57,7 @@ Skip this if the briefing says the conductor has claimed it. Otherwise, before a
 
 Follow the `review-panel` skill on the diff against the base branch:
 - rounds until one comes back clean, at most the briefing's review rounds in a ticket session, else the profile's `run.review_rounds`;
-- verify each finding, then fix it with a test or answer it with a reason;
+- verify each finding, then fix it with a test or answer it with a reason (under the rule, a finding marked a ticket to fix it is filed instead: "Filing tickets to fix findings, and split tickets", below);
 - rerun the typecheck and the affected tests after each round;
 - after the last round, any further commit gets a short Correctness pass, at most the briefing's pass cap, else the profile's `run.review_passes` (`review-panel` §5); past it, the owner decides (`passes_used_up`: in a run, `needs-human`, step 6.3). A pass cap of `until-clean` (#402) is none: fix each pass's findings and run another until one is clean, keeping the PR body's findings table current, since the run's end time can come first; `merge-check` never says `passes_used_up`, and the flag is `--review-passes until-clean`. The exception is a merge of the base that leaves the pull request's own changes identical, which needs CI only: after pushing a merge of the base, run step 6.3's `WF merge-check` (with `--fetch <PR>` and the briefing's flags) and run a pass only when it asks for one. In attended work, where the merge is the owner's, run `WF merge-check --fetch <PR> --json` after pushing a merge of the base, for its review reasons only.
 
@@ -71,19 +71,25 @@ Follow the `review-panel` skill on the diff against the base branch:
 ### Filing tickets to fix findings, and split tickets
 
 Under the rule (`review-panel` §10), you file three kinds of ticket, so nothing piles up as `needs-triage`:
-- **old:** a finding marked a ticket to fix it about code the change neither touches nor reaches, or a written rule broken outside the change's own lines;
-- **late:** a finding marked a ticket to fix it from the second review on, about lines already reviewed;
+- **late:** a finding marked a ticket to fix it about this pull request's own lines, or about lines already reviewed (§10's "Lines already reviewed");
+- **old:** any other finding marked a ticket to fix it: code the change neither touches nor reaches, or a written rule broken outside the change's own lines;
 - **split:** a part that `WF merge-check` says to split out (`mechanism_repeats` with `next: split`).
 
-**When.** An old or late one: after each review, once its findings file is written and before its record, so the record names it: put the issue's number in the finding's entry as `issue`. A finding you doubt is filed too, as the reviewer marked it: your doubt goes in the findings table, never in the ticket. A split one: as soon as `WF merge-check` says to split, before a fresh fixer takes the part out of the pull request, so a restart never loses the ticket; the next review's findings file gives it as a `split` outcome with its issue.
+**When.** An old or late one: after each review, once its findings file is written and before its record, so the record names it: put the issue's number in the finding's entry as `issue`. A finding you doubt is filed too, as the reviewer marked it: your doubt goes in the findings table, never in the ticket. A split one: as soon as `WF merge-check` says to split, before a fresh fixer takes the part out of the pull request, so a restart never loses the ticket. Then add it to the pull request body's **Split out** (§4) at once. The next review's findings file gives it as a `split` outcome with its issue: every open ticket whose machine line says `from=` this ticket and `kind=split` that no record names yet, so a session restarted after the split still gives it, and `previous.md` lists its moved criteria.
 
-**Look first** for an open issue for the same failure (the same defect in the same place, however it is worded): `gh api -X GET search/issues -f q='repo:<repo> is:issue is:open in:body "workflow:fix-ticket"'`, then a search by the file's or the function's name. When there is one, file nothing: its number is the finding's `issue`, and a comment on it names this ticket and the review that found it again. For a split, an open ticket whose machine line says `from=` this ticket and `kind=split` for the same part is that one.
+**Look first** for an open fix ticket for the same failure (the same defect in the same place, however it is worded): first among the tickets this session has filed (its findings files' `issue`), then among the open issues carrying a machine line, listed rather than searched, since GitHub's search can miss an issue filed a minute ago:
 
-**The ticket.** A ready build ticket, labelled `ready-for-agent`, never `needs-triage`, with a title saying in plain words what is wrong ("The requeue drops a pull request queued twice"), and in its body:
-- `Area: <name>`: the profile's `[areas]` area whose paths hold the lines it is about; a split one keeps this ticket's area;
-- `## What to build`: the finding in plain words, or for a split the part and why it was split out, naming the review it came from ("found by round 2 of #<PR>");
+```
+gh api 'repos/<repo>/issues?state=open&per_page=100' --paginate --jq '.[] | select(.pull_request == null) | select((.body // "") | contains("<!-- workflow:fix-ticket ")) | "#\(.number) \(.title)"'
+```
+
+When one is that failure, file nothing: its number is the finding's `issue`, and a comment on it names this ticket and the review that found it again. For a split, an open ticket whose machine line says `from=` this ticket and `kind=split` for the same part is that one. An open issue for the same failure without a machine line (one a person wrote, say) is never reused, since no run builds it: file the ticket, and name that issue in its `## What to build`.
+
+**The ticket.** A ready build ticket, labelled `ready-for-agent`, with a title saying in plain words what is wrong ("The requeue drops a pull request queued twice"), and in its body:
+- `Area: <name>`: the profile's `[areas]` area whose paths hold the lines it is about; when no area's paths hold them, or more than one does, and for every split one, this ticket's area;
+- `## What to build`: the finding in plain words, or for a split the part and why it was split out, naming this ticket and the review it came from ("found by round 2 of #<PR>, for #<n>");
 - `## Acceptance criteria`: from the finding: its reproducer's case as the test that should pass, and the fix's behaviour; a split one gets the criteria that need the part, moved from this ticket word for word, and the part working;
-- `## Bar`: this ticket's bar, copied, when it has one and the new ticket is in its area (a split one always copies it); otherwise none;
+- `## Bar`: the bar this review's `bar.md` gives (this ticket's, or its spec's), copied, when the new ticket is in this ticket's area (a split one always copies it); else, when the profile's `run.bar_areas` names the new ticket's area, the bar that area's tickets copy from `profile.md`; otherwise none;
 - `## Blocked by`: this ticket (`#<n>`) when the new one is about this pull request's own lines, whose code isn't on the base branch yet: every split one, and a late one on the change's own lines. Otherwise "None": every old one, and a late one on lines the change only reaches.
 
 Its body ends with the machine line, then the agents' marker:
@@ -95,11 +101,17 @@ Its body ends with the machine line, then the agents' marker:
 
 `from` is this ticket's number, not its pull request's, written as digits alone; `kind` is one of `old`, `late` or `split`. In a run, the line is how the ticket joins the run. When this ticket has such a line saying `kind=split`, each of its findings files sets `split: true` (`review-panel` §4).
 
-Two exceptions (ADR 0001):
-- **A protected path** (the profile's `guard.protected_paths`): filed as an owner task instead, labelled `owner-task` in place of `ready-for-agent`, with the same machine line, so a run lists it for the owner (flow §2).
-- **A security or safety problem in code on the base branch** (`security: main`), whatever its mark: every public word names only its area: the title ("A security problem in <area>"), the body, the comment on an open one, the findings table: no reproducer, no file or line, no way to exploit it. A ticket to fix it is filed `ready-for-human`, never `ready-for-agent`, so nothing builds it unattended. Its details (where, the reproducer, the fix) go to the owner privately, never on GitHub: in attended work, in the session's chat; in a run, in your own chat as soon as you have verified it, and again in your final message, which names the ticket and says its details are there. A blocking one is never split out or filed in place of its fix.
+Two exceptions (ADR 0001), and a finding that is both takes both:
+- **A protected path** (the profile's `guard.protected_paths`): filed as an owner task instead, labelled `owner-task` in place of `ready-for-agent`, with the same machine line.
+- **A security finding** (`security: change` or `main`) marked a ticket to fix it:
+  - every public word names only the finding's area: the title ("A security problem in <the finding's area>"), the body, the findings table: no reproducer, no file or line, no way to exploit it;
+  - it is labelled `ready-for-human`, never `ready-for-agent`, so nothing builds it unattended, and its body says where the details are: "Details: given to the owner by the ticket session for #<n>";
+  - its details (where, the reproducer, the fix) go to the owner privately, never on GitHub: in attended work, in the session's chat; in a run, in your own chat as soon as you have verified it, and again in your final message, which names the ticket;
+  - it is always a new ticket: an open one names only its area, so it can't be matched. Tell the owner privately of any open one it may repeat.
 
-In the findings table, such a finding's outcome is "Filed #<n>", or "Already filed as #<n>" when you found an open one.
+  A blocking security finding is fixed in this pull request: never split out, and never filed in place of its fix.
+
+In the findings table, a finding filed or found as above has the outcome "Filed #<n>", or "Already filed as #<n>".
 
 ## 4. Open the pull request
 

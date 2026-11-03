@@ -2,7 +2,7 @@
 second", "The circuit breaker", "Runs"; ADR 0001's exceptions): tickets to fix
 old bugs, tickets to fix late findings and split tickets, filed by the ticket
 session as `build-ticket` says, each with an `Area:` line, acceptance criteria
-from the finding, the bar where it has one, the agent marker and the machine
+from the finding, the bar where it has one, the agents' marker and the machine
 line `<!-- workflow:fix-ticket from=<n> kind=old|late|split -->`. Read as the
 kit's other text contracts are (prior art: tests/test_build_review_rule.py)."""
 
@@ -54,7 +54,9 @@ def test_the_filing_is_a_part_of_build_tickets_review_step():
 def test_review_panel_points_to_it():
     s3 = _flat(_between(_read(PANEL), "## 3. After each round", "\n## 4."))
     assert "the way `build-ticket` files tickets to fix findings" in s3
-    assert "tickets to fix findings" in HEADING
+    # build-ticket's older line on findings sends a ticket mark here.
+    review = _flat(_between(_read(BUILD), "## 3. Review it", HEADING))
+    assert "(under the rule, a finding marked a ticket to fix it is filed instead: \"Filing tickets to fix findings, and split tickets\", below)" in review
 
 
 def test_the_three_kinds():
@@ -62,10 +64,14 @@ def test_the_three_kinds():
     assert "Under the rule (`review-panel` §10)" in text
     assert "nothing piles up as `needs-triage`" in text
     assert (
-        "**old:** a finding marked a ticket to fix it about code the change neither touches nor reaches, "
+        "**late:** a finding marked a ticket to fix it about this pull request's own lines, "
+        "or about lines already reviewed (§10's \"Lines already reviewed\");"
+    ) in text
+    # Every other ticket mark is old, so each has a kind.
+    assert (
+        "**old:** any other finding marked a ticket to fix it: code the change neither touches nor reaches, "
         "or a written rule broken outside the change's own lines;"
     ) in text
-    assert "**late:** a finding marked a ticket to fix it from the second review on, about lines already reviewed;" in text
     assert "**split:** a part that `WF merge-check` says to split out (`mechanism_repeats` with `next: split`)." in text
 
 
@@ -80,26 +86,47 @@ def test_when_each_is_filed():
     # A split: before the fixer takes the part out, so a restart never loses it.
     assert (
         "A split one: as soon as `WF merge-check` says to split, before a fresh fixer takes the part out of the pull request, "
-        "so a restart never loses the ticket; the next review's findings file gives it as a `split` outcome with its issue."
+        "so a restart never loses the ticket. Then add it to the pull request body's **Split out** (§4) at once."
+    ) in text
+    # A session restarted after the split still gives the outcome, from the open split tickets.
+    assert (
+        "The next review's findings file gives it as a `split` outcome with its issue: every open ticket whose machine line "
+        "says `from=` this ticket and `kind=split` that no record names yet, so a session restarted after the split still "
+        "gives it, and `previous.md` lists its moved criteria."
     ) in text
 
 
 def test_it_looks_for_an_open_one_first():
     text = _filing()
-    assert "**Look first** for an open issue for the same failure (the same defect in the same place, however it is worded)" in text
-    assert "`gh api -X GET search/issues -f q='repo:<repo> is:issue is:open in:body \"workflow:fix-ticket\"'`" in text
-    assert "When there is one, file nothing: its number is the finding's `issue`" in text
+    assert "**Look first** for an open fix ticket for the same failure (the same defect in the same place, however it is worded)" in text
+    # Listed, not searched: the search index lags behind an issue just filed.
+    assert "first among the tickets this session has filed (its findings files' `issue`), then among the open issues carrying a machine line, listed rather than searched" in text
+    assert "search/issues" not in text
+    listing = _filing_raw().split("listed rather than searched", 1)[1].split("```\n", 2)[1].strip()
+    assert listing.startswith("gh api 'repos/<repo>/issues?state=open&per_page=100' --paginate ")
+    assert 'contains("<!-- workflow:fix-ticket ")' in listing
+    assert "When one is that failure, file nothing: its number is the finding's `issue`" in text
+    # An issue no run would build is never reused.
+    assert "An open issue for the same failure without a machine line (one a person wrote, say) is never reused, since no run builds it: file the ticket, and name that issue in its `## What to build`." in text
     # A split looks for its own earlier filing, so a restarted session never files it twice.
     assert "For a split, an open ticket whose machine line says `from=` this ticket and `kind=split` for the same part is that one." in text
 
 
 def test_the_tickets_parts():
     text = _filing()
-    assert "A ready build ticket, labelled `ready-for-agent`, never `needs-triage`" in text
-    assert "`Area: <name>`: the profile's `[areas]` area whose paths hold the lines it is about; a split one keeps this ticket's area;" in text
+    assert "A ready build ticket, labelled `ready-for-agent`, with a title" in text
+    assert (
+        "`Area: <name>`: the profile's `[areas]` area whose paths hold the lines it is about; when no area's paths hold them, "
+        "or more than one does, and for every split one, this ticket's area;"
+    ) in text
+    assert "naming this ticket and the review it came from (\"found by round 2 of #<PR>, for #<n>\")" in text
     assert "`## Acceptance criteria`: from the finding" in text
     assert "a split one gets the criteria that need the part, moved from this ticket word for word" in text
-    assert "`## Bar`: this ticket's bar, copied, when it has one and the new ticket is in its area (a split one always copies it); otherwise none;" in text
+    assert (
+        "`## Bar`: the bar this review's `bar.md` gives (this ticket's, or its spec's), copied, when the new ticket is in this "
+        "ticket's area (a split one always copies it); else, when the profile's `run.bar_areas` names the new ticket's area, "
+        "the bar that area's tickets copy from `profile.md`; otherwise none;"
+    ) in text
 
 
 def test_blocked_by_names_this_ticket_only_for_its_own_lines():
@@ -113,8 +140,8 @@ def test_blocked_by_names_this_ticket_only_for_its_own_lines():
 
 def test_the_machine_line_and_the_marker_close_the_body():
     raw = _filing_raw()
-    fence = raw.split("```\n", 2)[1]
-    lines = [l.strip() for l in fence.strip().splitlines()]
+    fence = raw.split("Its body ends with the machine line", 1)[1].split("```\n", 2)[1]
+    lines = [line.strip() for line in fence.strip().splitlines()]
     assert lines == ["<!-- workflow:fix-ticket from=<n> kind=old|late|split -->", "<!-- workflow:agent -->"]
     assert MACHINE.match(lines[0])
     text = _filing()
@@ -123,35 +150,36 @@ def test_the_machine_line_and_the_marker_close_the_body():
     assert "When this ticket has such a line saying `kind=split`, each of its findings files sets `split: true` (`review-panel` §4)." in text
 
 
-def test_the_machine_line_matches_what_findings_py_reads():
-    # findings.py's docstring names the line the split flag is copied from.
-    doc = _read("scripts/workflow/findings.py")
+def test_findings_py_names_the_same_line():
+    # findings.py's docstring names the line the split flag is copied from, in the same form.
+    doc = _flat(_read("scripts/workflow/findings.py"))
     assert "`<!-- workflow:fix-ticket … kind=split -->`" in doc
-    # A filled-in line from the template, as a session writes it.
-    assert MACHINE.match("<!-- workflow:fix-ticket from=373 kind=late -->")
-    assert not MACHINE.match("<!-- workflow:fix-ticket from=#373 kind=late -->")
 
 
 def test_a_protected_path_is_an_owner_task():
     text = _filing()
     assert (
         "**A protected path** (the profile's `guard.protected_paths`): filed as an owner task instead, labelled `owner-task` "
-        "in place of `ready-for-agent`, with the same machine line, so a run lists it for the owner (flow §2)."
+        "in place of `ready-for-agent`, with the same machine line."
     ) in text
+    # A security finding on a protected path follows both bullets.
+    assert "Two exceptions (ADR 0001), and a finding that is both takes both:" in text
 
 
 def test_a_security_problem_on_main_names_only_its_area():
     text = _filing()
-    assert "**A security or safety problem in code on the base branch** (`security: main`), whatever its mark:" in text
-    assert "every public word names only its area" in text
-    assert "the title (\"A security problem in <area>\")" in text
+    # Any security finding, the change's or the base branch's, so a mistaken ticket mark leaks nothing.
+    assert "**A security finding** (`security: change` or `main`) marked a ticket to fix it:" in text
+    assert "every public word names only the finding's area: the title (\"A security problem in <the finding's area>\"), the body, the findings table" in text
     assert "no reproducer, no file or line, no way to exploit it" in text
-    assert "filed `ready-for-human`, never `ready-for-agent`, so nothing builds it unattended" in text
-    assert "Its details (where, the reproducer, the fix) go to the owner privately, never on GitHub" in text
+    assert "it is labelled `ready-for-human`, never `ready-for-agent`, so nothing builds it unattended" in text
+    assert "its body says where the details are: \"Details: given to the owner by the ticket session for #<n>\"" in text
+    assert "its details (where, the reproducer, the fix) go to the owner privately, never on GitHub" in text
     assert "in attended work, in the session's chat" in text
-    assert "in a run, in your own chat as soon as you have verified it, and again in your final message" in text
-    # Only a ticket marked one is filed; a blocking one stays with its ticket.
-    assert "A blocking one is never split out or filed in place of its fix." in text
+    assert "in a run, in your own chat as soon as you have verified it, and again in your final message, which names the ticket" in text
+    assert "it is always a new ticket: an open one names only its area, so it can't be matched. Tell the owner privately of any open one it may repeat." in text
+    # Only a ticket marked one is filed; a blocking one is fixed in the pull request.
+    assert "A blocking security finding is fixed in this pull request: never split out, and never filed in place of its fix." in text
 
 
 def test_the_pull_request_body_names_moved_criteria_and_the_split_ticket():
@@ -161,7 +189,7 @@ def test_the_pull_request_body_names_moved_criteria_and_the_split_ticket():
         "criteria moved to it, quoted;"
     ) in body
     text = _filing()
-    assert "In the findings table, such a finding's outcome is \"Filed #<n>\", or \"Already filed as #<n>\"" in text
+    assert "In the findings table, a finding filed or found as above has the outcome \"Filed #<n>\", or \"Already filed as #<n>\"." in text
 
 
 def test_plain_words_in_what_a_person_reads():
