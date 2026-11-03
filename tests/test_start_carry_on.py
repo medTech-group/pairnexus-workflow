@@ -153,23 +153,24 @@ def test_start_carries_on_from_the_hand_off():
     row = _carry_on_row()
     assert "`workflow:carry-on`" in row
     assert "**Carry on (Recommended)**" in row
-    # Choosing it takes the label off first, so no run adopts it as well, and claims it in the
-    # same write, so a stop before `build-ticket` never leaves it unlabelled (round 1, correctness 3).
-    # It also gives `ready-for-agent` back and assigns it, as `build-ticket`'s claim and the conductor do (round 2).
-    assert ("in one write, before any other write: remove `workflow:carry-on`, add `workflow:in-progress` and "
-            "`ready-for-agent`, and assign it to yourself") in row
-    # It starts from the hand-off: merge-check's hand_off, then build-ticket on its pull request's branch.
+    # It hands the ticket to build-ticket's carry-on path (#375), whose claim takes the label off
+    # before any other write, so no run adopts it as well. start doesn't make the write itself,
+    # or build-ticket would no longer see the label (the merge of #375).
+    assert "load `build-ticket` for it (\"carry on #<n>\")" in row
+    assert "takes `workflow:carry-on` off before any other write" in row
+    assert "§3's \"Carrying on after a hand-off\"" in row
+    assert "remove `workflow:carry-on`, add" not in row
     assert "`WF merge-check --fetch <PR> --json`" in row and "`hand_off.url`" in row
-    assert "`build-ticket`" in row and "its pull request's branch" in row
     assert "not a retry" in row
+    bt = _read("skills/build-ticket/SKILL.md")
+    assert "**A ticket labelled `workflow:carry-on`**" in bt and "Carrying on after a hand-off" in bt
 
 
 def test_start_leaves_a_run_s_carry_on_ticket_to_its_run():
     row = _carry_on_row()
-    assert "With a run in progress, the run adopted it: leave it to its run." in row
-    # With none, it is claimed work, whose "Carry on from there" takes the label off first (round 1, correctness 4).
+    assert "A ticket also labelled `workflow:in-progress` is listed as claimed: a run holds it (`build-ticket` §1): leave it to its run." in row
     claimed = next(ln for ln in _carrying_on().splitlines() if ln.startswith("| Work claimed (`workflow:in-progress`)"))
-    assert "take `workflow:carry-on` off first" in claimed
+    assert "workflow:carry-on" not in claimed
 
 
 def test_one_rule_gives_the_one_recommendation():
