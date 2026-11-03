@@ -151,6 +151,9 @@ def test_profile_check_refuses_a_name_that_isnt_an_area(tmp_path, monkeypatch, c
         "x\n \t\nBar\n---\n",
         "<details>\n<summary>Notes</summary>\n</details>\n\n## Bar\n",  # an HTML block before it
         "  <!-- one line -->\n## Bar\n",  # an indented comment on one line
+        "<pre>\n</textarea>\n## Bar\n</pre>\n",  # any raw closing tag ends a raw block
+        "<script>\n</style>\n## Bar\n",
+        "\ufeff## Bar\n",
     ],
 )
 def test_has_bar(body):
@@ -169,7 +172,7 @@ def test_has_bar(body):
         "**Bar**\n- y\n",
         "```markdown\n## Bar\n- y\n```\n",  # an example in fenced code isn't the ticket's bar
         "~~~\n## Bar\n~~~\n",
-        "> ## Bar\n> - y\n",  # quoted from elsewhere
+        "> ## Bar\n> - y\n",  # quoted from elsewhere: not the ticket's own
         "    ## Bar\n",  # indented code
         "#Bar\n",  # not a heading in GitHub's Markdown
         "\t## Bar\n",  # tab-indented: code
@@ -197,7 +200,7 @@ def test_has_bar(body):
         "1. ```\n   ## Bar\n   ```\n",
         "   ```\n## Bar\n```\n",
         "1. x\n\n   ```\n   a\n  ```\n## Bar\n```\n",
-        "> ```\n## Bar\n",
+        "> ```\n## Bar\n",  # fail closed: GitHub shows it, but a quoted fence stops the reading
         # Lines inside a fence that don't close it.
         "```md\n- ```\n## Bar\n```\n",
         "```\n    ```\n## Bar\n```\n",
@@ -214,7 +217,7 @@ def test_has_bar(body):
         "- <details><summary>Notes</summary>\n  ## Bar\n  </details>\n",
         "* <pre>\n\n  ## Bar\n  </pre>\n",
         "1) <!--\n   ## Bar\n   -->\n",
-        "> <div>\n## Bar\n",
+        "> <div>\n## Bar\n",  # fail closed, as above
         # Only spaces and tabs are blank or trailing in Markdown, not U+00A0.
         "```\nx\n```\u00a0\n## Bar\n```\n",
         "<div>\n\u00a0\n## Bar\n</div>\n",
@@ -240,6 +243,14 @@ def test_has_bar(body):
         "-\n    <!--\n  ## Bar\n",
         "- x\n\n    <pre>\n\n  ## Bar\n",
         "- x\n    <div>\n  ## Bar\n",
+        # Pass 2: a raw block ends at any raw closing tag, so a tag after it opens another.
+        "<pre>\n</script>\n<div>\n</pre>\n## Bar\n",
+        "<textarea>\n\n## Bar\n</textarea>\n",
+        "<!x\n<div>\n## Bar\n>\n",  # <!x isn't a block: <div> after it is
+        "<\u017fcript>\n<div>\n</script>\n## Bar\n",  # tag names are ASCII
+        "\ufeff<!--\n## Bar\n-->\n",  # a leading BOM is skipped
+        "\ufeff```\n## Bar\n```\n",
+        "<pre\x0c\n\n## Bar\n</pre>\n",  # a form feed after the tag name
     ],
 )
 def test_has_no_bar(body):

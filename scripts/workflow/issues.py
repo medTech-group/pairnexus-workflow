@@ -451,21 +451,23 @@ _TOP_FENCE = re.compile(r"(`{3,}|~{3,})(.*)$")  # a fence at column 0: top level
 _CONTAINER = re.compile(r"(?:[ \t>]|(?:[-*+]|\d{1,9}[.)])(?=[ \t]))*")
 _FENCE_MARK = re.compile(r"`{3,}|~{3,}")
 _HTML_MARK = re.compile(r"<[!?/A-Za-z]")
-# HTML blocks, as CommonMark starts and ends them: a comment, <?, <!X and
-# <![CDATA[ end at their terminator, raw-text tags at their closing tag, any
-# other tag at a blank line.
+# HTML blocks, as cmark-gfm starts and ends them: a comment, <?, <!X (a
+# capital letter) and <![CDATA[ end at their terminator, a raw-text tag at
+# the first line holding any raw-text closing tag, any other tag at a blank
+# line. Tag names are ASCII.
 _HTML_ENDS = (
     (re.compile(r" {0,3}<!--"), "-->"),
     (re.compile(r" {0,3}<\?"), "?>"),
     (re.compile(r" {0,3}<!\[CDATA\["), "]]>"),
-    (re.compile(r" {0,3}<![A-Za-z]"), ">"),
+    (re.compile(r" {0,3}<![A-Z]"), ">"),
 )
-_HTML_RAW = re.compile(r" {0,3}<(pre|script|style|textarea)(?=[ \t>]|$)", re.I)
+_HTML_RAW = re.compile(r" {0,3}<(?:pre|script|style|textarea)(?=[ \t\v\f>]|$)", re.I | re.A)
+_RAW_END = re.compile(r"</(?:pre|script|style|textarea)>", re.I | re.A)
 _HTML_TAG = re.compile(r" {0,3}</?[A-Za-z]")
 # In a stretch has_bar skips as HTML: something GitHub may read as opening
 # code or a comment there instead (the first line may be inline HTML, not a
 # block, or a list item's block may end early), so has_bar stops reading.
-_OPENS_MORE = re.compile(r"`{3,}|~{3,}|<!|<\?|<(?:pre|script|style|textarea)(?=[ \t>]|$)", re.I)
+_OPENS_MORE = re.compile(r"`{3,}|~{3,}|<!|<\?|<(?:pre|script|style|textarea)(?=[ \t\v\f>]|$)", re.I | re.A)
 _LINE_END = re.compile(r"\r\n|\r|\n")  # Markdown's line ends, not str.splitlines()'s
 
 
@@ -498,7 +500,7 @@ def has_bar(body: str | None) -> bool:
     in fenced or indented code, an HTML block or comment, or a quote. Reading
     stops (no bar from there on) at a fence that isn't at column 0 or a
     construct never closed, where GitHub could read the rest differently."""
-    lines = _LINE_END.split(body or "")
+    lines = _LINE_END.split((body or "").removeprefix("\ufeff"))  # GitHub skips a leading BOM
     i, n = 0, len(lines)
     while i < n:
         line = lines[i].rstrip(" \t")
@@ -509,9 +511,8 @@ def has_bar(body: str | None) -> bool:
             nxt = _past(lines, i + 1, lambda l: close.match(l.rstrip(" \t")))
         elif _odd_container(line):
             return False
-        elif raw := _HTML_RAW.match(line):
-            end = f"</{raw.group(1).lower()}>"
-            nxt = _past(lines, i, lambda l: end in l.lower())
+        elif _HTML_RAW.match(line):
+            nxt = _past(lines, i, _RAW_END.search)
         elif end := next((e for start, e in _HTML_ENDS if start.match(line)), None):
             nxt = _past(lines, i, lambda l: end in l)
         elif _HTML_TAG.match(line):
