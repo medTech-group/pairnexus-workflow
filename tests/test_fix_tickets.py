@@ -108,8 +108,10 @@ def test_when_each_is_filed():
         "A split one: as soon as `WF merge-check` says to split, before a fresh fixer takes the part out of the pull request, "
         "so a restart never loses the ticket; then add it to the pull request body's **Split out** (§4) at once, and add a row of "
         "its own to the findings table, naming the part with the outcome \"Split out to #<n>\", so a hand-off written before the "
-        "next review names it. Earlier rows keep their outcomes."
+        "next review names it. The part's rows still open get the same outcome; rows already answered keep theirs."
     ) in text
+    # Pass 12's form, which rewrote every row of the part, is gone.
+    assert "give that part's blocking findings in the findings table" not in text
     # A session restarted after the split still gives the outcome, with the part's exact name, and the body's entry.
     assert (
         "The next review's findings file gives a `split` outcome for each of this ticket's own split tickets that no record "
