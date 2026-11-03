@@ -159,7 +159,13 @@ def test_start_carries_on_from_the_hand_off():
     assert "load `build-ticket` for it (\"carry on #<n>\")" in row
     assert "takes `workflow:carry-on` off before any other write" in row
     assert "§3's \"Carrying on after a hand-off\"" in row
-    assert "remove `workflow:carry-on`, add" not in row
+    # With an open pull request, the only removal the row names is build-ticket's (pass 6, 3).
+    with_pr = row[:row.index("With no open pull request")]
+    assert with_pr.count("`workflow:carry-on` off") == 1
+    # Without one, build-ticket's carry-on path doesn't apply, so start takes the label off with the
+    # claim, or nothing would (pass 6, 1).
+    assert ("With no open pull request, `build-ticket`'s carry-on path doesn't apply: say so, take "
+            "`workflow:carry-on` off in the claim's write, and carry on as for claimed work.") in row
     assert "`WF merge-check --fetch <PR> --json`" in row and "`hand_off.url`" in row
     assert "not a retry" in row
     bt = _read("skills/build-ticket/SKILL.md")
@@ -168,9 +174,10 @@ def test_start_carries_on_from_the_hand_off():
 
 def test_start_leaves_a_run_s_carry_on_ticket_to_its_run():
     row = _carry_on_row()
-    assert "A ticket also labelled `workflow:in-progress` is listed as claimed: a run holds it (`build-ticket` §1): leave it to its run." in row
-    claimed = next(ln for ln in _carrying_on().splitlines() if ln.startswith("| Work claimed (`workflow:in-progress`)"))
-    assert "workflow:carry-on" not in claimed
+    assert "A ticket also labelled `workflow:in-progress` is listed as claimed, and `build-ticket` §1 stops on it." in row
+    assert "With a run in progress, it is the run's: leave it to its run." in row
+    # With none (an abandoned run), **Release it** makes it a carry-on ticket again (pass 6, 2).
+    assert "With none, offer **Release it** (the row below): it is then a carry-on ticket again." in row
 
 
 def test_one_rule_gives_the_one_recommendation():
