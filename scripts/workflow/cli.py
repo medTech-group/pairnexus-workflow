@@ -9,7 +9,7 @@
     workflow protection --merge-queue F --doctor F [--timeout MINUTES] [--json]
     workflow protection --checks-ran F [--statuses F] --rulesets F --repo F [--base BRANCH] [--json]
     workflow version [--fresh] [--json] | --repo | --starter
-    workflow ready [--issues F --prs F | --fetch] [--permissions F] [--exclude 1,2] [--only 1,2] [--override 3] [--running-area A ...] [--slots N] [--json]
+    workflow ready [--issues F --prs F | --fetch] [--permissions F] [--exclude 1,2] [--only 1,2] [--override 3] [--first 7,5] [--running-area A ...] [--slots N] [--json]
     workflow charter defaults [--unprotected] | validate F [--approved] [--unprotected] [--queue on|off] | markdown F [--tickets 13:area,143:-] [--estimate F] | diff OLD NEW | reuse OLD | pin-plan F | questions [--unprotected] [--queue on|off]
     workflow charter estimate F [--tickets N | 13:area,143:-] [--runs F] [--security 13,143] [--now ISO] [--json]
     workflow charter splice --body F --charter F [--out F] [--tickets 13:area,143:-] [--estimate F]
@@ -159,6 +159,7 @@ def cmd_ready(a) -> int:
         exclude = issues_mod.parse_numbers(a.exclude)
         only = issues_mod.parse_numbers(a.only) if a.only is not None else None
         overrides = issues_mod.parse_numbers(a.override)
+        first = issues_mod.parse_number_list(a.first)
         if only is not None and not only:
             raise ValueError("--only was given no ticket numbers")
     except ValueError as e:
@@ -189,7 +190,7 @@ def cmd_ready(a) -> int:
     _note_unreviewed_specs(verdicts, issues, prs, prof.repo if prof else None, a.permissions, stdin_for)
     slots = a.slots if a.slots is not None else (prof.max_parallel if prof else 2)
     running = [r.strip().casefold() for r in a.running_area or [] if r and r.strip()]
-    start = issues_mod.startable(verdicts, running, max(0, slots), overrides=overrides)
+    start = issues_mod.startable(verdicts, running, max(0, slots), overrides=overrides, first=first)
     if a.json:
         _out(
             {
@@ -1650,6 +1651,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--exclude", help="tickets to leave out, e.g. 13,#143")
     s.add_argument("--only", help="consider only these tickets, e.g. 1,2,3")
     s.add_argument("--override", help="tickets that may share an area with a running one, e.g. 5,6")
+    s.add_argument("--first", help="tickets to start right after workflow:infra tickets, in this order, e.g. 7,#5")
     s.add_argument("--running-area", action="append")
     s.add_argument("--slots", type=int)
     s.add_argument("--permissions", metavar="F", help="the permissions of those who posted a spec's review records, in any shape merge-check's --permissions takes; else read with `gh api`")

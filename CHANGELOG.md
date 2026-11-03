@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**`workflow ready --first`: given tickets start right after infra tickets** (#372, part of spec #412). `workflow ready --first <n>,<n>` puts the given tickets in its start order (`start_now`, and "start now:" in its text) right after the `workflow:infra` tickets, in the order given, ahead of the rest, so a run can start its tickets to fix old bugs, its tickets to fix late findings and its split tickets next. A given ticket that isn't ready is left out as before, one that is infra stays among the infra tickets, and an empty `--first` changes nothing. Without `--first`, the order is as before: infra tickets, then the rest, lowest number first. The conductor's use of it comes with its own ticket (#378).
+
+- **For projects updating:** nothing to do. Tests: `tests/test_ready_first.py`.
+
 **Planning counts: whether the checks catch things early** (#448, part of spec #436). In `start`, each piece of planning now ends with one comment headed "Planning counts": the checks before each round: their findings and how many changed a recommendation (counted from the round posts' "changed the recommendation" only), the **ask** and **fix** findings of each read (the end check, each re-read, the breakdown check and its re-read), the answers replaced after the end check (its confirmed lines), the questions sent after the draft, and each planning round's findings by reviewer.
 
 - **Where:** on the spec's issue, once its tickets are published and the session's ADR or glossary pull request, if any, has had its planning review. An edit made while the spec owes its counts counts there; any other edit adds its own, so a spec published before these counts still gets one for each edit. A session that ends after the spec is published and while the spec owes its counts leaves what no post says in a "Planning counts so far" comment on the spec's issue, and the counts add those up. "Carrying on" finishes a spec whose tickets are out with no counts. A quick ticket posts it on the ticket, from all three of `start`'s routes, and a map decision on its decision ticket before it's closed. `next` points to the rule.
