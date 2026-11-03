@@ -97,15 +97,16 @@ def test_every_reviews_fixes_round_1s_included_go_to_a_fresh_fixer():
     # The session builds and coordinates; it fixes nothing itself.
     assert "You build the change, start the reviewers and the fixers, file the tickets, post the records and keep short summaries" in fixer
     assert "you fix no finding yourself" in fixer
-    assert "A failure `review-panel` §3's step 5 finds after a fixer goes to the next review, never to you" in fixer
+    assert "A failure after a fixer, found by `review-panel` §3's step 5 or by a required check on its commit, goes to the next review, never to you" in fixer
     # §3's step list says so too.
-    assert "a fresh fixer makes every review's fixes and you make none" in _review()
+    assert "a fresh fixer makes every review's fixes and contests, never you: your doubt goes in the findings table" in _review()
 
 
-def test_a_red_required_check_is_still_section_5s():
-    """Round 1, Correctness: "fix nothing yourself" and §5's red check answered a red check differently."""
+def test_a_red_check_on_a_fixers_commit_goes_to_the_next_review_and_any_other_is_section_5s():
+    """Both sides: red on a fixer's commit is the next review's; red on a head no fixer made is §5's."""
     fixer = _bullet(_rule(), "**A fresh fixer makes every review's fixes,**")
-    assert "A required check that goes red is still §5's." in fixer
+    assert "or by a required check on its commit, goes to the next review" in fixer
+    assert "§5's red check is for a head no fixer made, such as a merge of the base." in fixer
     assert "**A required check is red:** find the cause" in _section(BUILD, "## 5. Get it green\n", "\n## 6. ")
 
 
@@ -136,7 +137,7 @@ def test_section_4_opens_it_as_a_draft_under_the_rule_and_carries_on_with_the_re
 
 
 def test_couldnt_read_is_no_review_reason_so_the_draft_names_it():
-    """Round 1, Correctness: an input merge-check couldn't read gives `couldnt_read` with no rule."""
+    """An input merge-check couldn't read gives `couldnt_read`, with no rule: the draft's condition names it."""
     assert merge.REASONS["couldnt_read"].rule != "review_panel"
 
 
@@ -226,11 +227,12 @@ def test_the_findings_table_gains_the_mark_and_the_part_under_the_rule():
 # --- attended work: the status line and the stop ------------------------------
 
 
-def test_attended_work_prints_one_status_line_at_each_review_that_isnt_clean():
-    status = _bullet(_rule(), "**In attended work, one status line at each review that isn't clean,**")
+def test_attended_work_prints_one_progress_line_at_each_review_that_isnt_clean():
+    status = _bullet(_rule(), "**In attended work, one progress line at each review that isn't clean,**")
     assert "once its record is posted and `WF merge-check` has answered" in status
     assert "(\"#12: pass 3 not clean; the requeue part split out to #415\")" in status
-    assert "It asks nothing: the loop goes on." in status
+    # Not the turn's status line, which would end the turn.
+    assert "It is a line to the person, not a `WORKFLOW-STATUS` line, and it asks nothing: the loop goes on." in status
 
 
 def test_attended_work_stops_after_10_reviews_that_werent_clean_in_one_session():
@@ -244,13 +246,13 @@ def test_attended_work_stops_after_10_reviews_that_werent_clean_in_one_session()
     assert "Once the 10th such review's fixer has reported, and pushed what it committed, and its tests have run (`review-panel` §3, step 5), stop before the next review" in stop
     # The hand-off (#371), posted as it is.
     assert "`WF hand-off --commit <head> --round <N> --passes <P> --record <F> [--tickets <n,n>]`" in stop
-    assert "`<N>` the last round's number, `<P>` the passes since it" in stop
+    assert "`<N>` the last round's number, `<P>` the Correctness passes so far (as `workflow hand-off` takes them)" in stop
     assert "post its output on the pull request as it is" in stop
     assert "If it refuses, fix what it names and run it again: never write one by hand" in stop
     # Labelled carry-on; neither claimed nor ready, so nothing builds it again from the start.
     assert "label the ticket `workflow:carry-on`, keeping its other labels, and remove `workflow:in-progress` and `ready-for-agent`" in stop
     # A status line, and the handed-off status.
-    assert "say one status line" in stop
+    assert "say one progress line" in stop
     assert "`WORKFLOW-STATUS: handed-off`" in stop
     assert stop.index("WF hand-off") < stop.index("workflow:carry-on") < stop.index("handed-off")
 
@@ -259,34 +261,54 @@ def test_nothing_waits_and_carry_on_starts_a_fresh_session_with_a_fresh_10():
     stop = _bullet(_rule(), "**The attended stop, after 10 reviews that weren't clean in one session.**")
     assert "Nothing waits for an answer." in stop
     assert "\"Carry on\" from the person, at any time, goes on in a fresh session, with a fresh 10" in stop
-    assert "say 'carry on'" in stop  # no quotes nested in the example's own
+    assert "say 'carry on #12' in a fresh session" in stop  # the trigger itself, with no quotes nested in the example's own
     carry = _bullet(_rule(), "**Carrying on after a hand-off.**")
-    assert "The fresh session takes `workflow:carry-on` off and claims the ticket (§1)" in carry
+    # The claim is §1's alone.
+    assert "Claimed as §1 says, the fresh session works on the pull request's branch" in carry
+    assert "takes `workflow:carry-on` off" not in carry
     assert "reads the hand-off (`WF merge-check --fetch <PR> --json`'s `hand_off`)" in carry
-    assert "its count starts at that hand-off" in carry
+    assert "with `previous.md` from the findings table and the records; its count starts at that hand-off" in carry
+
+
+def test_findings_handed_on_before_their_fixer_go_to_a_fixer_before_the_review():
+    """A hand-off posted before a review's fixer (a run's end time): the fixer first, as the briefing's Hand-off line says."""
+    carry = _bullet(_rule(), "**Carrying on after a hand-off.**")
+    assert "When the last record's blocking findings have no outcome in the findings table yet (the hand-off came before their fixer), it first gives them to a fresh fixer" in carry
+    assert "from `review-panel` §3's order at its step 3 (`WF merge-check`, then the fixer)" in carry
+    assert carry.index("it first gives them to a fresh fixer") < carry.index("Then it runs the review")
 
 
 def test_a_carry_on_ticket_reaches_build_ticket_and_skips_the_build():
-    """Round 1, Correctness: "carry on #N" wasn't a trigger, and §2 came before the carry-on steps."""
+    """"carry on #N" is a trigger, and a carry-on ticket goes to §3's carrying-on steps, not §2."""
     description = _read(BUILD).split("\n---", 1)[0]
     assert '"carry on #N"' in description
     claim = _section(BUILD, "## 1. Claim it\n", "\n## 2. ")
     assert "**A ticket labelled `workflow:carry-on`** with an open pull request" in claim
     assert "take `workflow:carry-on` off and put `ready-for-agent` back" in claim
     assert "go on from §3's \"Carrying on after a hand-off\" instead of §2" in claim
+    # A ticket session gets there from its briefing's Hand-off line, not the label the conductor takes off.
+    assert "A ticket session whose briefing has a \"Hand-off:\" line goes on from there too." in claim
+
+
+def test_carry_on_leaves_a_ticket_a_run_holds_to_the_run():
+    """Both sides: a run's ticket (claimed, or on a run's branch) is refused; any other carry-on ticket is claimed."""
+    claim = _section(BUILD, "## 1. Claim it\n", "\n## 2. ")
+    assert "When it also has `workflow:in-progress`, or its pull request's branch is named like `run.ticket_branch`, a run holds it: say so and stop." in claim
+    assert "Otherwise claim it as above" in claim
+    assert claim.index("a run holds it: say so and stop") < claim.index("Otherwise claim it as above")
 
 
 def test_a_contest_open_at_the_hand_off_is_ruled_on_by_the_fresh_session():
     carry = _bullet(_rule(), "**Carrying on after a hand-off.**")
-    assert "A contest still open at the hand-off goes under \"Contests to rule on\"" in carry
+    assert "A contest still open at the hand-off goes under \"Contests to rule on\" with its reason, its finding as the findings table gives it, and its part and flags from the record." in carry
 
 
 def test_no_security_detail_crosses_sessions_at_the_attended_stop():
     carry = _bullet(_rule(), "**Carrying on after a hand-off.**")
-    assert "its first review gets no `since.patch`, so its reviewers treat the whole change as new (`review-panel` §1)" in carry
+    # The whole change for that area only: since.patch stays, so other areas keep the lines-already-reviewed rule.
+    assert "that review's `previous.md` also says to review the whole change (`diff.patch`) for that area, `since.patch` staying as usual" in carry
+    assert "no `since.patch`" not in carry
     assert "none cross sessions" in carry
-    # And review-panel §1 says what no since.patch means.
-    assert "with none, the reviewers treat the whole change as new" in _panel("## 1. Gather the inputs", "\n## 2.")
 
 
 def test_a_run_has_no_such_stop():
