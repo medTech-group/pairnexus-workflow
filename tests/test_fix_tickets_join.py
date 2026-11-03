@@ -664,7 +664,12 @@ def test_the_conductor_starts_them_through_ready_first():
 
 def test_the_conductor_joins_once_more_before_the_report():
     report = _flat(_read("skills/conductor/SKILL.md").split("4. **The report.**", 1)[1].split("5. **Wind up.**", 1)[0])
-    assert report.index("Then run `WF state join`") < report.index("and write the state to the issue") < report.index("WF state joined")
+    # First, with nothing else pending, its body written to the issue and the state read back, so the step's
+    # later edits and its one state write keep `joined` (and the join never drops them).
+    assert report.startswith("First, so a ticket filed since the last check-in joins too, run `WF state join` as check-in step 1 does: "
+                             "write its body to the issue and read the state back from it")
+    assert report.count("WF state join ") + report.count("WF state join`") == 1
+    assert report.index("WF state join`") < report.index("look again at each revert still `opened`") < report.index("WF state joined")
 
 
 def test_the_conductor_names_them_at_the_go_and_in_the_report():
