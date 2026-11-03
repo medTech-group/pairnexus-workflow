@@ -51,10 +51,13 @@ def _sentence(text: str, word: str) -> str:
 
 
 def _points_to_the_check(text: str) -> bool:
-    """The text says its question rounds are checked before they're asked, and doesn't say they aren't."""
+    """The sentence says its question rounds are checked before they're asked, and
+    nothing earlier in it negates that (a bare mention of the paragraph's name
+    isn't enough)."""
     t = _flatten(text)
-    found = [m.start() for m in re.finditer(r"checked before it's asked|waits for its check|\*\*Before each question round\*\*", t)]
-    return bool(found) and not any(re.search(r"\b(isn't|not|never|no)\s+$", t[max(0, i - 12):i]) for i in found)
+    found = [m.start() for m in re.finditer(r"checked before it's asked|waits? for its check", t)]
+    negation = r"\b(isn't|not|never|no|doesn't|don't|without|skips?)\b"
+    return bool(found) and not any(re.search(negation, t[:i], re.I) for i in found)
 
 
 # --- the check: one read, before the question round ------------------------------
@@ -98,6 +101,17 @@ def test_one_check_per_round_whether_start_or_this_section_asks_it():
 def test_points_to_the_check_catches_a_reversed_rule():
     assert _points_to_the_check("Each question round waits for its check before it's asked.")
     assert not _points_to_the_check("A question round isn't checked before it's asked.")
+    assert not _points_to_the_check("A question round doesn't wait for its check (**Before each question round** applies only to `start`).")
+    assert not _points_to_the_check("No question round waits for its check before it's asked (**Before each question round**).")
+    assert not _points_to_the_check("See **Before each question round**, below.")
+
+
+def test_it_covers_the_rounds_fixes_sends():
+    # Scoped to Fixes' questions: §8 also names the breakdown check's rounds as
+    # question rounds, and those are a check's own rounds, with no check before them.
+    s = _sentence(_check(), "`planning-checker`")
+    assert "**Fixes** sends" in s
+    assert "breakdown" not in _check()
 
 
 # --- its inputs ------------------------------------------------------------------
@@ -122,14 +136,24 @@ def test_its_inputs_are_the_question_round_and_every_post_so_far():
 def test_its_inputs_carry_the_owner_s_words_tagged_and_the_rest_untagged():
     c = _check()
     s = _sentence(c, "word for word")
+    # Named as start's rule and the agent name it, so the two never read as different inputs.
+    assert "raised the round" in s
     assert "**the owner's own words**" in s
     assert "item's issue" in s and "edit after publishing" in s
-    assert "map's own item's issue" in s
+    assert "map's own item's issue" in s and "map decision" in s
+    # Only what the owner asked for is tagged as theirs, never text the session wrote.
+    assert "decision ticket" not in s and "line on the map" not in s
     rest = _sentence(c, "untagged")
-    # A fix question's own inputs: what the planning round reviewed and the finding behind it.
-    assert re.search(r"draft or diff", rest) and "finding behind" in rest
     assert "decision ticket" in rest and "Destination item" in rest
     assert "as published" in rest
+
+
+def test_a_fix_question_also_gets_the_draft_and_its_finding():
+    # Only a fix question: an edit's own questions come before any planning round.
+    s = _sentence(_check(), "draft or diff")
+    assert re.search(r"\bFor a question a planning (?:round|review)'s fix raises\b", s), s
+    assert "finding behind" in s
+    assert "raised the work" not in _check()
 
 
 def test_it_reads_against_the_code_the_adrs_earlier_answers_and_the_rules():
@@ -168,6 +192,8 @@ def test_then_the_round_is_asked_and_its_check_never_repeated():
 def test_a_check_that_fails_leaves_the_round_marked_not_checked():
     s = _sentence(_check(), "fails")
     assert "once more" in s
+    # The round is still asked: a failed read never holds planning up.
+    assert "ask the question round" in s
     assert re.search(r"wasn't checked|not checked", s) and "why" in s
 
 
@@ -181,9 +207,14 @@ def test_the_question_round_s_post_lists_the_check_s_findings():
 # --- an edit after publishing ------------------------------------------------------
 
 
-def test_an_edit_s_question_rounds_are_checked_before_they_re_asked():
+def test_an_edit_s_question_rounds_are_checked_by_start_s_rule():
+    # An edit's own questions come before its planning round, with no draft or
+    # finding behind them, so they take start's rule, not this paragraph's inputs.
     edit = _para("An edit after publishing")
-    assert _points_to_the_check(_sentence(edit, "**Before each question round**"))
+    s = _sentence(edit, "waits for its check")
+    assert _points_to_the_check(s)
+    assert "`start`'s \"Before each round\"" in s
+    assert "**Before each question round**" not in edit
 
 
 # --- the changelog ---------------------------------------------------------------
