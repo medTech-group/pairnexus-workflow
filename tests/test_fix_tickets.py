@@ -265,9 +265,12 @@ def test_a_blocking_security_problem_on_main_holds_a_run_for_the_owner():
     assert "In attended work it is fixed here, its details shown to the person and given privately to whoever fixes it." in text
     # The details stayed in the stopped session's chat: the next session finds the problem again itself.
     assert (
-        "A session started on the ticket after the hold first runs a full review of the change for that area, "
-        "so it finds the problem again, or finds it fixed on the base branch."
+        "A session started on the ticket after the hold first runs a full review of the change: a review with no `since.patch`, "
+        "so the whole change is new to it (`review-panel` §10), and every reviewer's prompt names the area the hold names "
+        "as the place to look. It finds the problem again, or finds it fixed on the base branch."
     ) in text
+    # review-panel §10 gives "no since.patch" that meaning, so lines already reviewed don't turn it into a ticket.
+    assert "With no `since.patch`, the whole change is new to this review." in _read(PANEL)
     assert "**Still red after three fix attempts:**" in _read(BUILD)
 
 
