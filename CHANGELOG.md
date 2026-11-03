@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**Quick tickets list what was decided for the person** (#443, part of spec #436). In `start`, a quick ticket now gets the end check before **Publish it**: `planning-checker` reads the drafted ticket against the item's issue, once, for the decisions the session made for the person.
+
+- **Decided for you:** each decision it lists goes into the ticket's body under `## Decided for you`, with its evidence (what it rests on, what it gives up, what would make it wrong), and is shown above **Publish it (Recommended)** with the check's fixes. They are never tagged as the person's answers, and a quick ticket posts no answers.
+- **Its ask findings** are asked first, as one short round with **Leave them open** among the options; a finding about the person's own words (the item's issue, or what they typed) is asked on its own. Its **fix** findings are made and listed above **Publish it**.
+- **One re-read in all,** of what the answers and any **Change it** changed, on the draft as it stands when **Publish it** is last shown. Its findings are never asked: its fixes are made, and what it leaves goes into `## Decided for you`, marked open.
+- **The same list** comes with **File the fix as a ticket** (after finding a bug's cause) and §5's **Ready to build**, which drafts the ticket and runs its check before its own options; that check is the one **Publish it** shows. `triage` run on its own isn't covered, and stays unedited.
+- **For projects updating:** nothing to do; the vendored `start` changes with the update. Tests: `tests/test_quick_ticket_decided.py`.
+
 **The end check: all the answers read together before the spec or ADR is written** (#441, part of spec #436). In `start`'s Spec step, once the seams' round is posted and before the draft, and in its Map step, before a decision's ADR or glossary is written (or the decision recorded, when it changes neither), `planning-checker` reads every answer posted for the spec or decision together, once. It is one of the flow's checks, not the planning review: one read, one re-read, and no spec record. `next` runs it as `start` says.
 
 - Its **ask** findings come back as one short round, under the flow's "Decision questions" (each with a recommendation and its evidence where there's a basis for one, a finding about the owner's own words on its own), with **Leave them open** among the options. This round gets no check of its own before it's asked. Its **fix** findings are made and listed in that round's post, or, with no round, in a comment straight after the read.

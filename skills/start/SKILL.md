@@ -223,8 +223,14 @@ For each item, read the flow's section for its path and follow it, skipping noth
    - an `Area:` line;
    - a `Review: small` line, only when you expect the change to stay within the small threshold (the profile's `run.small_max_lines` changed lines in `run.small_max_files` files, outside tests) and to add no endpoint, table, screen or setting (flow §2). Removing the line opts the ticket out.
 
-   Show it, and ask **Publish it (Recommended)** or **Change it**.
-2. Publish by editing the item's issue into the ticket: replace its body, drop the marker, and add `ready-for-agent`. The item's issue becomes the ticket.
+   **The end check,** before **Publish it** (flow, "Decision questions", **The checks**). Give `planning-checker` the drafted ticket and the item's issue, for one read of the decisions you made for them that the item's issue doesn't make. Fill its scratch directory, `/tmp/plan-check-<issue>-end-<n>/` with `<issue>` the item's issue, as the agent's "Your inputs" says. It is one of the flow's checks, not the planning review: one read and one re-read in all, and nothing posted as their answers, since a quick ticket posts none.
+   - **Its ask findings** are asked first, before **Publish it** is shown: one short round of choices, each with your recommendation and its evidence where there's a basis for one, and **Leave them open** among its options. A finding about their own words (the item's issue, or what they typed in a reply) is asked on its own, never in a round they could answer with "yes to all". Change the draft to their answers. A finding left open goes into `## Decided for you`, marked open.
+   - **Its fix findings** you make in the draft yourself, and list them above **Publish it**, where they can object.
+   - **Decided for you:** each decision the check lists under "Decided for you" goes into the ticket's body under `## Decided for you`, in plain words, with its evidence: what it rests on, what it gives up and what would make it wrong. These are decisions you made for them, never tagged as their answers or as an accepted recommendation. With none, the heading says "None".
+   - **One re-read in all,** of only what changed since the end check (what their answers to its **ask** findings and any **Change it** changed, and the fixes), against the rest of what it read. It runs on the draft as it stands when **Publish it** is last shown: once they pick **Publish it** on a draft that changed since the check, run it before publishing. Fill `/tmp/plan-check-<issue>-reread-<n>/` as "Your inputs" says, with their replies word for word. Its findings are never asked: make its **fix** findings, and its **ask** findings go into `## Decided for you`, marked open, with its own "Decided for you" list updating the section for what changed. Then show the draft once more, its fixes and what it left above **Publish it**, or publish straight away when it found nothing. With nothing changed, there's no re-read. A **Change it** after the re-read is made as they say, with no further read: the one re-read has run.
+
+   Show it, with the decisions made for them (each with its evidence, the open ones marked open) and the check's fixes above **Publish it (Recommended)**. Then ask **Publish it (Recommended)** or **Change it**.
+2. Publish by editing the item's issue into the ticket: replace its body (its `## Decided for you` included), drop the marker, and add `ready-for-agent`. The item's issue becomes the ticket.
 3. Ask:
    - **Build it now (Recommended)**: load `build-ticket` with the Skill tool, on a fresh branch;
    - **Build it with a light review**: the same, asking `build-ticket` for a light review (`review-panel` §6, "The light review"): one review round, for a low-risk change;
@@ -241,7 +247,7 @@ For each item, read the flow's section for its path and follow it, skipping noth
 **Find the cause first:**
 1. Follow `diagnosing-bugs` until a command fails on the bug and you know why.
 2. Say what you found in two lines, and ask:
-   - **File the fix as a ticket and build it (Recommended)**: then "Quick ticket" above, on the same issue, with the failing command in its acceptance criteria;
+   - **File the fix as a ticket and build it (Recommended)**: then "Quick ticket" above, on the same issue, with the failing command in its acceptance criteria, and its end check and `## Decided for you` as there;
    - **It needs decisions: make it a spec**: then "Spec" below;
    - **Stop here**: comment on the item's issue with what you found.
 
@@ -309,13 +315,13 @@ Take them one at a time, oldest first, following `triage`'s steps for each. Read
 - the check whether it is already built, or ruled out before (`.out-of-scope/`);
 - reproducing a bug before anything else.
 
-Say in two lines what it asks and what you found, then ask, your recommendation first:
-- **Ready to build**: it becomes a build ticket as in "Quick ticket" above, with the same template and its `Review: small` line only where the quick ticket says (flow §2 says a triaged ticket gets `Area:`, `## Blocked by` and acceptance criteria);
+Say in two lines what it asks and what you found. Before its options, draft the build ticket it would become, as "Quick ticket" step 1 writes it, and run that step's end check, its **ask** findings asked first. Show the decisions it lists (**Decided for you**, each with its evidence) and its fixes above the options. Then ask, your recommendation first:
+- **Ready to build**: it becomes that build ticket as in "Quick ticket" above, with the same template and its `Review: small` line only where the quick ticket says (flow §2 says a triaged ticket gets `Area:`, `## Blocked by` and acceptance criteria). The check you ran is the one **Publish it** shows, so it isn't run again: go on from showing the draft, with its one re-read if the draft changes;
 - **Needs a spec**: it joins the plan: append the item marker with `path=spec`;
 - **Needs more information**: comment asking for it, label `needs-info`;
 - **Won't do**: comment why, label `wontfix`, close as not planned.
 
-Each outcome removes `needs-triage`.
+Each outcome removes `needs-triage`. `triage` run on its own, which applies `ready-for-agent` when the maintainer says so, isn't covered: only this step drafts and checks the ticket.
 
 ## 6. Between items, and when the session gets long
 
