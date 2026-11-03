@@ -135,7 +135,8 @@ Only the local look counts here: `status` makes no network call for it, and the 
 | A PR waiting for them | Give its link, what it does and its checks. Ask **Check whether it's ready to merge (Recommended)**, which loads `merge-check` for it, **Review it with me**, **I'll merge it myself** or **Later**. |
 | Work claimed (`workflow:in-progress`), no run in progress | An earlier session stopped part-way. Read the issue's comments and look for its branch (an open PR that closes it, or a branch naming its number). Ask **Carry on from there (Recommended)**, then follow `build-ticket` on that branch, or **Release it**, which removes the label so `/next` can take it. |
 | A planned item | Read its body and comments. A `path=spec` item may have an interview's rounds posted in its comments ("Decision questions", above): read every one, with its tags, its evidence, the checks' findings and any confirmed replacement line, which says which answer stands. Then carry on the interview from them, numbering on from the last answer posted, or go to the spec if nothing is left to ask. Once a post headed "End check" is there, the interview is over: carry on from it as the end check says (step 4, "Spec"). Then step 4 for its path. |
-| An open spec with no tickets | Read the rounds posted on the spec's issue first (an edit after publishing posts there), then `to-tickets` for it (step 4, "Spec", step 3) |
+| An open spec with no tickets | Read the rounds posted on the spec's issue first (an edit after publishing, and the breakdown check, post there), then `to-tickets` for it (step 4, "Spec", step 3) |
+| A build ticket held back by the breakdown check (`needs-info`, with a `## Breakdown check` section marked open) | Read the rounds on its spec's issue, then ask the open finding again, as a decision question ("Decision questions", above), posted on the spec's issue as soon as it's answered, tagged. With an answer, edit the tickets it affects as it says (their criteria and `## Blocked by`), replace the open finding with the answer's number, and swap `needs-info` for `ready-for-agent`. A ticket already built (closed, or with an open PR) isn't edited: that part becomes a new quick ticket. With **Leave them open** again, nothing changes. |
 | A map decision, a clear map's next spec, or a ready ticket | Load `next` with the Skill tool, with that issue |
 
 **What the other options lead to:**
@@ -280,13 +281,29 @@ For each item, read the flow's section for its path and follow it, skipping noth
    - **Split it into tickets (Recommended)**;
    - **Edit the spec first**: the edited body gets another planning round and its spec record (`review-panel` §8) before the tickets, and the questions the edit raises are decision questions ("Decision questions", above), each round posted on the spec's issue as soon as it's answered, tagged;
    - **Stop here**: `/start` offers the tickets next time, from the open spec.
-3. **The tickets.** Read `to-tickets`' `SKILL.md` and follow it, with flow §2's additions. Show the breakdown and ask:
-   - **Publish these (Recommended)**;
+3. **The tickets.** Read `to-tickets`' `SKILL.md` and follow it, with flow §2's additions. Show the breakdown with a link to the spec it's read against: each build ticket with its full body drafted (its criteria, `## Blocked by` and `## Bar`), the owner tasks, and the edits to existing issues, each as the edit itself. Then ask:
+   - **Agree these (Recommended)**;
    - **Change the sizes**;
    - **Change what blocks what**;
    - **Merge or split some**.
 
-   Repeat until they publish.
+   Repeat until they agree.
+
+   **The breakdown check,** after **Agree these** and before anything is published (flow, "Decision questions", **The breakdown check**). Give `planning-checker` the breakdown as agreed, for one read against the spec. Fill its scratch directory, `/tmp/plan-check-<spec>-breakdown-<n>/` (`<spec>` being the spec's issue), as the agent's "Your inputs" says: the spec, the drafted tickets in full, the owner tasks and the edits to existing issues, with every round posted for the spec (for a map's Destination item, the answers on the map decisions it draws on too). It reads:
+   - every decision and acceptance criterion of the spec in exactly one build ticket, owner task or edit to an existing issue;
+   - criteria every ticket carries (the changelog note, the full suite) and decisions that build nothing (out of scope, or something left unchanged) are left out;
+   - each ticket's `## Blocked by` against what it builds on;
+   - each ticket's `## Bar` against the spec's, where the spec gives one.
+
+   It is one of the flow's checks, not the planning review: one read, one re-read, and no spec record. Every post it leads to goes on the spec's issue, headed "Breakdown check" or "Breakdown re-read", one for each read, even one that found nothing ("nothing found").
+   - **Ask or fix:** here only wording is a **fix**. Anything that moves a criterion or a decision between tickets, owner tasks and edits, or changes a `## Blocked by`, is an **ask**, whatever the checker marked it.
+   - **Its ask findings** come back to them as one short round before anything is published, asked as decision questions ("Decision questions", above), each with **Leave them open** among its options. This round gets no check of its own before it's asked. Post it on the spec's issue as each round is, with the fixes listed in it. Then redraft the breakdown as the answers say.
+   - **Its fix findings** you make yourself, and list them in that round's post. With no round, list them in the "Breakdown check" post.
+   - **Then one re-read** of only what changed (that round's answers, the redraft and the fixes), against the rest of the breakdown and the spec. Fill `/tmp/plan-check-<spec>-reread-<n>/` and tell it it follows the breakdown check, with what that round changed and the fixes. With nothing changed, there's nothing to re-read. Its **fix** findings are made. Unlike the end check's re-read, its **ask** findings are asked, as one more short round before anything is published, with no read after it. Each of its questions shows, for each option, the `## Blocked by` each ticket it affects would end up with. Post it on the spec's issue, then show the breakdown as redrafted once more before you publish it.
+   - **A finding left open** keeps the tickets it affects out of `ready-for-agent`: publish them without it, labelled `needs-info`, so status lists them as waiting on a person rather than as new issues to sort. Write the finding into their bodies under `## Breakdown check`, marked open: the question, and what each answer would change. In that section, name another issue as "see #n", never "blocked by #n": `workflow ready` reads "blocked by" with an issue anywhere in the body as a blocker. An issue a ticket waits for goes in its `## Blocked by` as `#n`. "Carry on" (§1) settles them later.
+   - **Then publish** in order, blockers first, as `to-tickets` does, each `ready-for-agent` but the ones held back. A check that leaves nothing to ask publishes with no further click. Its wording fixes, with what's left, are listed on the spec's issue, in the "Breakdown check" post or the last round's.
+   - **What's left** (a finding left open or unanswered) goes in a comment on the spec's issue listing it, naming the tickets it holds back, never only in the session's closing choices.
+   - **If the session stops before publishing,** the next one reads the rounds on the spec's issue first: the answers posted there stand. It drafts the breakdown again to match them, asks **Agree these**, and runs the breakdown check on that draft.
 4. **Commit what the session wrote,** as flow §2 says.
 5. **Build in a fresh session.** A spec's interview and tickets fill most of a session, and the flow builds one ticket per session. Ask:
    - **Build them in a fresh session (Recommended)**: there, the first message (or `/next build`) takes the first ticket;
