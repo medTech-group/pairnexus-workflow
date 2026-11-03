@@ -34,7 +34,7 @@ Make a scratch directory outside the repo, for example `/tmp/review-<ticket>-r<r
   - under "Contests to rule on", the last review's contested findings, each with its number, its reason, and what it needs to be re-entered if kept: its reproducer, its part, and its `security` and area if it has them;
   - the parts that took the bar's fail-closed form or were split out;
   - under "Moved criteria", each acceptance criterion moved by a split, quoted, with the ticket it moved to;
-  - under "Failures", each failure step 5 of section 3 found after the last fixer, with the command that shows it and its output.
+  - under "Failures", each failure step 5 of section 3 found after the last fixer, with the command that shows it and its output, and each required check red on that fixer's commit, with its check run's failing output (`build-ticket`).
 - `since.patch`, from the second review: the pull request's own changes since the last review, round or pass, with the base branch's changes left out. `<last>` is the commit the last review covered. Before the pull request opens, it is in that review's `commit.txt`. After, it is the `commit=` of the latest review record that `merge-check` counts: one posted from an account with write access. After a `git fetch`:
 
   ```
