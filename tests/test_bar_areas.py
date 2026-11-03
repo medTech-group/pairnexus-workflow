@@ -251,6 +251,12 @@ def test_has_bar(body):
         "\ufeff<!--\n## Bar\n-->\n",  # a leading BOM is skipped
         "\ufeff```\n## Bar\n```\n",
         "<pre\x0c\n\n## Bar\n</pre>\n",  # a form feed after the tag name
+        # Pass 3: each of pass 2's rules has a case that needs it.
+        "<script>\n</\u017fcript>\n## Bar\n",  # a closing tag's name is ASCII too
+        "<pre\x0b\n\n## Bar\n</pre>\n",  # a vertical tab after the tag name
+        "<b>x</b> y\n<pre\x0c\n\n## Bar\n</pre>\n",  # and in a stretch skipped as HTML
+        "<b>x</b> y\n<pre\x0b\n\n## Bar\n</pre>\n",
+        "<!x\n## Bar\n>\n",  # <!x: a declaration under newer CommonMark, so reading stops
     ],
 )
 def test_has_no_bar(body):

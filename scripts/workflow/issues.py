@@ -463,6 +463,9 @@ _HTML_ENDS = (
 )
 _HTML_RAW = re.compile(r" {0,3}<(?:pre|script|style|textarea)(?=[ \t\v\f>]|$)", re.I | re.A)
 _RAW_END = re.compile(r"</(?:pre|script|style|textarea)>", re.I | re.A)
+# <!x: a paragraph under cmark-gfm's rule (a declaration needs a capital
+# letter), a declaration under newer CommonMark's: either may hide what follows.
+_LOWER_DECLARATION = re.compile(r" {0,3}<![a-z]")
 _HTML_TAG = re.compile(r" {0,3}</?[A-Za-z]")
 # In a stretch has_bar skips as HTML: something GitHub may read as opening
 # code or a comment there instead (the first line may be inline HTML, not a
@@ -509,7 +512,7 @@ def has_bar(body: str | None) -> bool:
         if f and not (f.group(1)[0] == "`" and "`" in f.group(2)):
             close = re.compile(r" {0,3}" + re.escape(f.group(1)[0]) + "{" + str(len(f.group(1))) + ",}$")
             nxt = _past(lines, i + 1, lambda l: close.match(l.rstrip(" \t")))
-        elif _odd_container(line):
+        elif _odd_container(line) or _LOWER_DECLARATION.match(line):
             return False
         elif _HTML_RAW.match(line):
             nxt = _past(lines, i, _RAW_END.search)
