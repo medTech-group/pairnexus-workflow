@@ -202,7 +202,7 @@ def test_when_a_spec_owes_its_counts():
     # unpublished (a publish that stopped part-way included), and after.
     # Its first: settling a held-back ticket can post another "Breakdown published".
     assert "headed exactly \"Planning counts\" follows its first \"Breakdown published\" comment" in s
-    assert "tickets aren't all published" in s
+    assert "before that first \"Breakdown published\"" in s and "after it" in s
     # A spec from before these counts owes none, so its edits post their own.
     s = _sentence(_sub("a spec", _where_raw()), "owes none")
     # Neither post: a spec whose publishing stopped part-way still owes.
@@ -324,6 +324,8 @@ def test_an_edit_after_publishing_posts_its_own():
     s = _sentence(add, "While the spec owes")
     assert "the edit counts in that comment" in s
     assert "\"Planning counts so far\"" in s and "last step" in s and "later items" in s
+    # Only if the spec still owes them when the session ends.
+    assert "still owes them when it ends" in s
     # §7 points to the rule rather than restating its condition.
     later = _flatten(_path("**A spec or ticket to change after it's published:**", "\n- **A decision to undo"))
     assert _points_to_the_counts(later) and "\"Where the planning counts go\"" in later
