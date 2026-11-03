@@ -109,12 +109,12 @@ Two exceptions (ADR 0001), and a finding that is both takes both:
   - its details (where, the reproducer, the fix) go to the owner privately, never on GitHub: in attended work, in the session's chat; in a run, in your own chat as soon as you have verified it, and again in your final message, which names the ticket;
   - it is a new ticket each time, unless you filed one for it yourself in this session, its details in your chat: then it is "Already filed as #<n>". Any other open one names only its area, so it can't be matched: tell the owner privately of any it may repeat.
 
-A blocking `security: main` finding is never split out. In a run it holds this ticket for the owner, until the owner has fixed it on the base branch:
+A blocking `security: main` finding is never split out. In a run it holds this ticket for the owner:
 - file its ticket to fix it as above (`ready-for-human`, only its area named, its details given privately), with `kind=old` and `## Blocked by` "None";
 - add that ticket under this ticket's `## Blocked by`, replacing a "None" there and adding the section if there is none, keeping the rest of its body, so §0's blocker check (and `workflow ready`, once it is labelled ready again) stops any start before the owner closes that one;
 - stop as §5's "Still red after three fix attempts" says (`needs-human`), the reason naming only its area and saying how it is released: "the owner fixes it on the base branch and closes #<n> as completed (or, if it isn't a problem, takes #<n> out of this ticket's `## Blocked by`), then answers here".
 
-When it is picked up again, the problem the hold names is the owner's, whatever a later review marks it: a finding on it is "Already filed as #<n>", #<n> being the ticket the `needs-human` reason names, so nothing new is filed and it never holds the ticket again. Marked blocks, it is answered with the owner's ruling on #<n> (fixed on the base branch, or not a problem), which goes to the next review. The merge queue, or `WF merge-check`'s "behind the base" without one, puts the owner's fix under the change before it merges. In attended work it is fixed here, its details shown to the person and given privately to whoever fixes it.
+What comes after the hold is the owner's. A later session that meets the problem again, before the owner's fix is on its branch, holds the ticket again the same way: that costs the owner a second look, never a merge with the problem in it. In attended work, a blocking one is fixed here instead, its details shown to the person and given privately to whoever fixes it.
 
 A security problem the change adds (`security: change`) is the one finding never filed as marked: even when marked a ticket to fix it, it is fixed in this pull request, since it still blocks (`review-panel` §10), only its area named in public, and the findings table gives its mark. Marked blocks or note, it follows the usual rule.
 

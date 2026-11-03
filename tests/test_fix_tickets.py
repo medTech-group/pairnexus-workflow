@@ -259,7 +259,7 @@ def test_a_blocking_security_problem_on_main_holds_a_run_for_the_owner():
     text = _filing()
     assert "A blocking `security: main` finding is never split out." in text
     # ADR 0001: in a run it stops its ticket at needs-human; never fixed unattended in public.
-    assert "In a run it holds this ticket for the owner, until the owner has fixed it on the base branch:" in text
+    assert "In a run it holds this ticket for the owner:" in text
     assert (
         "file its ticket to fix it as above (`ready-for-human`, only its area named, its details given privately), "
         "with `kind=old` and `## Blocked by` \"None\";"
@@ -275,21 +275,16 @@ def test_a_blocking_security_problem_on_main_holds_a_run_for_the_owner():
         "how it is released: \"the owner fixes it on the base branch and closes #<n> as completed (or, if it isn't a problem, "
         "takes #<n> out of this ticket's `## Blocked by`), then answers here\"."
     ) in text
-    # No special step when it is picked up again: the queue or merge-check puts the base's fix under the change.
-    # Found again later, whatever its mark, it is the owner's: never refiled, never a second hold.
+    # After the hold, the fail-closed form: no release machinery, a re-found problem holds again.
     assert (
-        "When it is picked up again, the problem the hold names is the owner's, whatever a later review marks it: a finding on it "
-        "is \"Already filed as #<n>\", #<n> being the ticket the `needs-human` reason names, so nothing new is filed and it never "
-        "holds the ticket again. Marked blocks, it is answered with the owner's ruling on #<n> (fixed on the base branch, or not "
-        "a problem), which goes to the next review."
+        "What comes after the hold is the owner's. A later session that meets the problem again, before the owner's fix is on "
+        "its branch, holds the ticket again the same way: that costs the owner a second look, never a merge with the problem in it."
     ) in text
-    assert (
-        "The merge queue, or `WF merge-check`'s \"behind the base\" without one, puts the owner's fix under the change before it merges."
-    ) in text
+    assert "Already filed as #<n>\", #<n> being the ticket the `needs-human` reason names" not in text
     zero = _flat(_between(_read(BUILD), "## 0. Read first", "\n## 1."))
     assert "- **Its blockers.** If any isn't closed as completed, say so and stop: it isn't ready." in zero
     assert "merge the base branch in" not in zero
-    assert "In attended work it is fixed here, its details shown to the person and given privately to whoever fixes it." in text
+    assert "In attended work, a blocking one is fixed here instead, its details shown to the person and given privately to whoever fixes it." in text
     assert "full review" not in text
     assert "**The base branch moved:**" in _read(BUILD)
     assert "**Still red after three fix attempts:**" in _read(BUILD)
@@ -346,6 +341,7 @@ def test_changelog_note():
     assert "never filed, even when marked a ticket to fix it" in note
     assert "its ticket to fix it is filed (`kind=old`) and named under the held ticket's `## Blocked by`, replacing a \"None\"" in note
     assert "closed as completed, or taken out of `## Blocked by` if it isn't a problem" in note
+    assert "a later session that meets the problem again holds the ticket again" in note
     assert "(#373, part of spec #412)" in notes
     assert "`<!-- workflow:fix-ticket from=<n> kind=old|late|split -->`" in notes
     assert "Tests: `tests/test_fix_tickets.py`." in notes
