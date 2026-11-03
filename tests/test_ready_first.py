@@ -62,6 +62,9 @@ def test_a_long_part_is_refused_by_the_kit_not_by_python():
         finally:
             sys.set_int_max_str_digits(old)
     assert parse_number_list("0" * 4300 + "7") == [7]  # leading zeros don't count
+    assert parse_number_list("9" * 18 + ", 000" + "8" * 18) == [int("9" * 18), int("8" * 18)]
+    with pytest.raises(ValueError, match="not a ticket number: '1" + "0" * 18 + "'$"):
+        parse_number_list("1" + "0" * 18)  # 19 digits
     with pytest.raises(ValueError, match="not a ticket number: 'x{20}…'"):
         parse_number_list("x" * 100)
     with pytest.raises(ValueError, match="not a ticket number: '12x'$"):
