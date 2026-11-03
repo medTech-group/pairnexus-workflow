@@ -37,6 +37,15 @@ A large effort can start as a **map**: an issue labelled `wayfinder:map` whose c
    - acceptance criteria naming their seams;
    - the by-hand checks it will need (a real device, account or service), if any;
    - `Review: small` if the change should stay within the small threshold and add no endpoint, table, screen or setting (§3).
+   - `## Bar`: what the change must handle, what it does when it can't be sure (fail closed), and the limits it accepts, each with its backstop if any, so reviewers know where their hunt stops. A ticket may carry one (a spec may give one for its tickets), and one whose area is in the profile's `run.bar_areas` must: `workflow ready` notes such a ticket with no `## Bar`, leaving it ready, as it notes a protected path. For example:
+
+     ```markdown
+     ## Bar
+
+     - Must handle: a note saved with an empty title, and two saves of one note at once.
+     - Fail closed: when it can't tell which save is newer, it keeps both and says so.
+     - Accepted limits: notes over 1 MB aren't checked (backstop: the server refuses them).
+     ```
 3. Anything only the owner can do (create an account, a key, a domain) is its own issue labelled `owner-task` (or `ready-for-human`), and blocks what needs it.
 4. **A change to a protected path** (the profile's `guard.protected_paths`: the kit, CI config, CODEOWNERS, secrets files) is an owner task too, labelled `owner-task`, never a build ticket: a ticket session can't change those paths. `workflow ready` notes a ticket whose body names one ("names protected path … : check it isn't an owner task"), leaving it ready; the conductor lists such tickets at kick-off for the owner to keep or exclude. Paths in fenced code (unless the prose before it asks for a change "to" or "in" it), or after "don't", "do not" or "never" in their clause, aren't noted; when in doubt, a path is noted.
 5. **A ticket that fixes a failing or flaky required check** is infra: label it `workflow:infra` as well, so it starts before other tickets. (If its fix is to CI config itself, it is an owner task, as above.)

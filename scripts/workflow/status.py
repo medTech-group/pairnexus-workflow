@@ -51,6 +51,8 @@ class Status:
     experience: Experience = field(default_factory=lambda: Experience(None, "unknown"))
     run: list[Item] = field(default_factory=list)
     in_progress: list[Item] = field(default_factory=list)
+    # `workflow:carry-on` tickets no run has adopted and no person is asked about (#376).
+    carry_on: list[Item] = field(default_factory=list)
     prs: list[Item] = field(default_factory=list)
     planned: list[Item] = field(default_factory=list)
     maps: list[Item] = field(default_factory=list)
@@ -145,7 +147,12 @@ def snapshot(
             st.run.append(Item(n, title))
             continue
         if issues_mod.CLAIM_LABEL in labels:
-            st.in_progress.append(Item(n, title, ", ".join(sorted(labels & {"spec", "wayfinder:map", "ready-for-agent"}))))
+            st.in_progress.append(Item(n, title, ", ".join(sorted(labels & {"spec", "wayfinder:map", "ready-for-agent", issues_mod.CARRY_ON_LABEL}))))
+        elif issues_mod.CARRY_ON_LABEL in labels and not labels & _WAITING:
+            # Handed on, review not yet clean: `start` offers "Carry on". One a run adopted has
+            # `workflow:in-progress` (its run's), and one waiting on a person waits (#376).
+            st.carry_on.append(Item(n, title))
+            continue
         if "wayfinder:map" in labels:
             detail = "open decisions unknown (no sub_issues_summary)" if kids is None else f"{kids[1]} open decisions"
             st.maps.append(Item(n, title, detail))
@@ -185,6 +192,7 @@ def snapshot(
 _SECTIONS = [
     ("run", "Unattended run in progress"),
     ("in_progress", "Claimed (being worked on)"),
+    ("carry_on", "Carried on (handed on by an earlier session, review not yet clean)"),
     ("prs", "Open pull requests"),
     ("planned", "Planned at an earlier start, not yet begun"),
     ("maps", "Maps"),
