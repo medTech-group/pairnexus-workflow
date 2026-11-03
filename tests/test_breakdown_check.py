@@ -100,12 +100,19 @@ def test_the_tickets_step_asks_agree_these_first_and_repeats_until_they_agree():
 
 
 def test_the_breakdown_shown_has_full_bodies_owner_tasks_edits_and_the_spec_s_link():
-    a = _flatten(_agreeing())
-    shown = a.split("\n   - **", 1)[0]  # what's shown, before the question's options
+    shown = _flatten(_agreeing().split("\n   - **", 1)[0])  # what's shown, before the question's options
+    assert "Agree these" not in shown
     assert "full bod" in shown  # "their full bodies" / "its full body"
-    for part in ("criteria", "`## Blocked by`", "`## Bar`", "owner task", "edits to existing issues"):
+    for part in ("criteria", "`## Blocked by`", "owner task", "edits to existing issues"):
         assert part in shown, part
+    # A bar only where the ticket has one (ADR 0002: a ticket may carry one).
+    assert "`## Bar` where it has one" in shown
     assert re.search(r"\blink to the spec\b", shown), shown
+
+
+def test_an_edit_is_only_to_an_issue_not_claimed_or_built():
+    s = _sentence(_flatten(_agreeing()), "An edit is only")
+    assert "claimed" in s and "built" in s and "new build ticket" in s
 
 
 # --- the check: when it runs, what it reads -------------------------------------
@@ -173,11 +180,8 @@ def test_its_posts_go_on_the_spec_s_issue_headed_one_for_each_read():
     assert '"Breakdown check"' in s and '"Breakdown re-read"' in s
     assert "one for each read" in s
     assert "nothing found" in s
-    # Which post: the round's that follows the read, or with no round a comment after it.
-    assert "round that follows" in s and re.search(r"[Ww]ith no round", s), s
-    # The check's post names what it read, so a session that carries on can finish publishing.
-    n = _sentence(o, "names the tickets")
-    assert '"Breakdown check" post' in n
+    # Which post: the round's that follows the read, or with no round the read's own comment.
+    assert "round that follows" in s and re.search(r"[Ww]ith no round, the read's own comment", s), s
 
 
 # --- ask and fix ------------------------------------------------------------------
@@ -210,11 +214,9 @@ def test_its_fix_findings_are_made_and_listed_where_they_can_object():
     s = _sentence(_part("ask or fix"), "**fix** findings")
     assert re.search(r"\bmake\b|\bmade\b", s), s
     assert "What's left" in s  # listed where "What's left" says, one place for both
+    # One place for both: that read's post, whose placement the posts' sentence gives.
     w = _sentence(_part("what's left"), "with each read's fixes")
-    assert "spec's issue" in w
-    assert "round that follows the read" in w
-    # With no round, in that read's own post: the re-read's as well as the check's.
-    assert re.search(r"[Ww]ith no round, in that read's own post", w), w
+    assert "spec's issue" in w and "that read's post" in w
 
 
 def test_one_re_read_whose_ask_findings_are_one_more_round_with_no_read_after_it():
@@ -268,11 +270,15 @@ def test_a_finding_left_open_keeps_its_tickets_out_of_ready_for_agent():
     assert "`## Breakdown check`" in p
     # A label that puts them with what waits on a person, not with new issues to sort.
     assert "`needs-info`" in p
-    # An existing issue the finding affects is taken out of ready-for-agent too.
-    s = _sentence(p, "existing issue's")
-    assert re.search(r"swap an existing issue's `ready-for-agent` for `needs-info`", s), s
-    # The section says who settles it, so triage doesn't.
+    # Existing build tickets it affects are held back too, but only ready, unclaimed, unbuilt ones.
+    s = _sentence(p, "the existing ones")
+    assert "`ready-for-agent`" in s and "claimed" in s and "built" in s
+    # A finding about an edit to anything else holds back the tickets that edit affects.
+    s = _sentence(p, "anything else")
+    assert "spec" in s and "build tickets that edit affects" in s
+    # The section says who settles it, so triage doesn't, and marks each open finding.
     assert "settled through `/start`, not by triage" in p
+    assert '"Open:"' in _sentence(p, "a line for each open finding")
 
 
 def test_a_finding_written_into_a_body_never_reads_as_a_blocker():
@@ -294,6 +300,18 @@ def test_publishing_labels_build_tickets_owner_tasks_and_makes_the_edits():
     assert "each build ticket `ready-for-agent`" in s and "held back" in s
     assert "owner task labelled `owner-task`" in s
     assert "edit to an existing issue made" in s
+    # The existing tickets are held back before anything is published.
+    assert s.index("hold back the existing tickets") < s.index("publish in order")
+    # An edit to an issue claimed or built since is left unmade, and said.
+    s = _sentence(_part("publish"), "claimed or built since")
+    assert "isn't made" in s and "spec's issue" in s
+
+
+def test_the_final_breakdown_is_posted_before_publishing():
+    s = _sentence(_part("publish"), '"Breakdown to publish"')
+    assert "First post" in s and "spec's issue" in s
+    for listed in ("build ticket's title", "held back", "owner task", "edit"):
+        assert listed in s, listed
 
 
 def test_what_s_left_goes_on_the_spec_s_issue():
@@ -304,59 +322,71 @@ def test_what_s_left_goes_on_the_spec_s_issue():
     assert re.search(r"\bnever only in the session's closing choices\b", p), p
 
 
-def test_a_session_that_carries_on_never_runs_a_read_again():
+def test_a_session_that_carries_on_finishes_a_final_breakdown_with_no_read():
     p = _part("carries on")
     assert "spec's issue" in p
-    assert re.search(r"\bnever runs a read again once its post is there\b", p), p
-    # The answers already posted stand, and the redraft is shown.
-    s = _sentence(p, "stand")
-    assert "draft the breakdown again" in s and "show" in s
-    # Only what hasn't run: the re-read if none is posted; after one, no further read.
-    r = _sentence(p, '"Breakdown re-read" post')
-    assert "the re-read" in r and "if no" in r
-    assert "no further read" in _sentence(p, "with one there")
-    # A publish that stopped part-way publishes only what's missing.
-    m = _sentence(p, "part-way")
-    assert '"Breakdown check" post' in m and "sub-issues" in m
+    s = _sentence(p, 'With a "Breakdown to publish" post')
+    assert "finish" in s and "no further read" in s
+    for left in ("open issue of that title under the spec", "owner task not filed", "edit not made", "not held back"):
+        assert left in s, left
     # "Carry on" finds such a spec.
     row = [l for l in _start().splitlines() if l.startswith("|") and "publishing stopped part-way" in l]
-    assert len(row) == 1 and '"Breakdown check" post' in row[0], row
+    assert len(row) == 1 and '"Breakdown to publish" post' in row[0], row
+
+
+def test_without_a_final_breakdown_the_reads_don_t_carry_over():
+    s = _sentence(_part("carries on"), "don't carry over")
+    # The answers posted stand; the redraft is agreed and checked afresh.
+    assert "stand" in s and "**Agree these**" in s
+    assert re.search(r"\brun the breakdown check on that draft\b", s), s
 
 
 def _settle_row() -> str:
-    row = [l for l in _start().splitlines() if l.startswith("|") and "`needs-info`" in l and "`## Breakdown check`" in l]
+    row = [l for l in _start().splitlines() if l.startswith("|") and "`## Breakdown check`" in l and "Open:" in l]
     assert len(row) == 1, row
     return _flatten(row[0])
 
 
 def test_carry_on_settles_a_ticket_a_breakdown_finding_held_back():
     r = _settle_row()
-    # Status shows it as waiting: the session reads those bodies to find it.
-    assert "read the bodies of the `needs-info` issues" in r
-    # Every finding left open, as one round of decision questions, posted on the spec's issue.
-    assert "every finding left open" in r
-    assert '"Decision questions", above' in r and "spec's issue" in r
-    # A ticket already built isn't edited.
-    assert "quick ticket" in r
+    first = r.split(" | ", 1)[0]
+    # Found by its section, whichever of the two labels it has now (triage swaps one for the other).
+    assert "`needs-info`" in first and "`needs-triage`" in first
+    # Every one, not only the first eight the text lists.
+    assert "`WF status --json`" in r and "bodies" in r
+    # Every finding still open, as one round, posted on the spec's issue.
+    assert "every finding still open" in r and "one round" in r
+    assert "spec's issue" in r
+    # A ticket claimed or built since isn't edited.
+    s = _sentence(r, "isn't edited")
+    assert "`workflow:in-progress`" in s and "open PR" in s and "quick ticket" in s
 
 
-def test_settling_shows_the_resulting_blockers_and_runs_no_read():
-    r = _settle_row()
-    s = _sentence(r, "would end up with")
-    assert "`## Blocked by`" in s and "each option" in s
-    s = _sentence(r, "last round")
+def test_settling_is_the_last_round_carried_on_with_no_read():
+    s = _sentence(_settle_row(), "carried on")
+    assert "last round" in s and "step 3" in s  # shaped as step 3's last round: the resulting blockers
     assert "no check before it" in s and "no read after it" in s
 
 
+def test_a_new_ticket_an_answer_makes_is_published_before_it_is_named():
+    s = _sentence(_settle_row(), "an answer makes")
+    assert "published" in s and "before the blockers that name it" in s
+
+
 def test_a_ticket_goes_back_to_ready_only_with_no_finding_left_open():
-    s = _sentence(_settle_row(), "swap")
-    assert re.search(r"swap `needs-info` for `ready-for-agent` only on a ticket with no finding left open", s), s
+    r = _settle_row()
+    s = _sentence(r, "swap")
+    assert "`ready-for-agent`" in s
+    assert re.search(r"\bonly\b[^.]*\bno \"Open:\" line left\b", s), s
+    assert '"Settled: answer <n>"' in _sentence(r, "Settled:")
 
 
 def test_section_5_never_sorts_a_held_back_issue():
     five = _flatten(_between(_start(), "\n## 5. Sorting new issues", "\n## 6."))
     s = _sentence(five, "`## Breakdown check`")
     assert "isn't sorted" in s and "Carry on" in s
+    # The label triage swapped is put back, so status shows it waiting again.
+    assert re.search(r"put back `needs-info` in place of `needs-triage`", s), s
 
 
 # --- what the held-back label and section do in the code ------------------------------
@@ -366,17 +396,20 @@ def _issue(n, title, labels=(), body=""):
     return {"number": n, "title": title, "labels": [{"name": x} for x in labels], "body": body, "state": "open"}
 
 
-HELD = (
-    "Area: start\n\n## Blocked by\n\n- #4\n\n## Breakdown check\n\n"
-    "Held back by spec #3's breakdown check: settled through `/start`, not by triage.\n\n"
-    "- Which ticket takes criterion C? If this one, it also builds on see #5.\n"
-)
+def _held() -> str:
+    """A held-back ticket's body, its section opening as `start` writes it."""
+    opening = re.search(r'opening with "([^"]+)"', _part("left open")).group(1)
+    return (
+        "Area: start\n\n## Blocked by\n\n- #4\n\n## Breakdown check\n\n"
+        + opening.replace("<spec>", "3")
+        + ".\n\n- Open: which ticket takes criterion C? If this one, it also builds on see #5.\n"
+    )
 
 
 def test_a_held_back_ticket_is_waiting_on_a_person_not_ready_or_to_sort(repo):
     from workflow import status
 
-    issues = [_issue(6, "Ticket six", ["needs-info"], HELD), _issue(4, "Ticket four", ["ready-for-agent"], "Area: docs\n\n## Blocked by\n\nNone")]
+    issues = [_issue(6, "Ticket six", ["needs-info"], _held()), _issue(4, "Ticket four", ["ready-for-agent"], "Area: docs\n\n## Blocked by\n\nNone")]
     st = status.snapshot(repo, True, issues, [], repo="acme/demo", areas=["start", "docs"])
     assert [i.number for i in st.waiting] == [6]
     assert all(i.number != 6 for i in st.to_triage + st.ready)
@@ -385,8 +418,8 @@ def test_a_held_back_ticket_is_waiting_on_a_person_not_ready_or_to_sort(repo):
 def test_the_section_s_issues_are_never_read_as_blockers():
     from workflow.issues import blockers_of
 
-    assert blockers_of(HELD) == [4]
-    assert blockers_of(HELD.replace("see #5", "blocked by #5")) == [4, 5]
+    assert blockers_of(_held()) == [4]
+    assert blockers_of(_held().replace("see #5", "blocked by #5")) == [4, 5]
 
 
 def test_next_runs_the_breakdown_check_as_start_says():
