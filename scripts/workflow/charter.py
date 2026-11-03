@@ -651,10 +651,10 @@ def _pass_cap(rv: dict) -> str:
 
 # The one page's line on the tickets that join a run as they are filed (#378, spec #412 "Runs"),
 # so the owner approves it at the go: `workflow state join` decides who joins.
-JOINING = (
+FILED_DURING_RUN = (
     "- **Tickets filed during the run:** tickets to fix old bugs, tickets to fix late findings and split tickets "
-    "join the run, whatever its scope: each labelled `ready-for-agent`, ending with "
-    "`<!-- workflow:fix-ticket from=<n> kind=old|late|split -->` from an account with write access, naming a ticket of the run. "
+    "join the run, whatever its scope: each labelled `ready-for-agent`, posted by an account with write access and naming "
+    "a ticket of the run in its last `<!-- workflow:fix-ticket from=<n> kind=old|late|split -->` line. "
     "They start once unblocked, after infra tickets and ahead of the run's other tickets not yet started; "
     "owner tasks and excluded tickets never join, and one whose source can't merge in this run is listed in the run report."
 )
@@ -671,7 +671,7 @@ def to_markdown(c: dict, plan: list[tuple[int, str | None]] | None = None, profi
         "## Run charter",
         "",
         f"- **Scope:** {tickets}; excluded: {excl}; tickets unblocked during the run: {_yn(s['follow_unblocked'])}.",
-        JOINING,
+        FILED_DURING_RUN,
         f"- **Limits:** ends {lim['ends_at']}; {presets_mod.plural(lim['max_parallel'], 'session', 'sessions')} at once, {lim['max_sessions']} in all; "
         f"{presets_mod.plural(lim['max_retries'], 'retry', 'retries')} per ticket, then `needs-human`; check-ins every {lim['check_in_minutes']} minutes.",
         *_size_lines(c, profile, estimate),

@@ -115,12 +115,66 @@ def test_a_ticket_not_labelled_ready_never_joins():
     assert [x["number"] for x in out["not_joined"]] == [501] and "ready-for-agent" in out["not_joined"][0]["why"]
 
 
-@pytest.mark.parametrize("login", ["reader", "triager", "outsider", "stranger"])
+@pytest.mark.parametrize("login", ["reader", "triager", "outsider"])
 def test_a_ticket_from_an_account_without_write_access_never_joins(login):
     s = _state()
     out = _join(s, [_fix(501, login=login)])
     assert not s.get("joined") and out["first"] == []
-    assert out["not_joined"] == [{"number": 501, "from": 378, "kind": "split", "why": f"@{login} has no write access"}]
+    # The login in backticks, never an @-mention that would notify the account when the reason is posted.
+    assert out["not_joined"] == [{"number": 501, "from": 378, "kind": "split", "why": f"`{login}` has no write access"}]
+
+
+def test_a_ticket_whose_authors_permission_wasnt_given_never_joins():
+    s = _state()
+    out = _join(s, [_fix(501, login="stranger")])
+    assert not s.get("joined") and out["not_joined"][0]["why"] == "`stranger`'s permission wasn't given"
+
+
+def test_labels_are_read_without_case_as_workflow_ready_reads_them():
+    s = _state()
+    out = _join(s, [
+        _fix(501, labels=("Ready-For-Agent",)),
+        _fix(502, labels=("ready-for-agent", "Owner-Task")),
+        _fix(503, labels=("READY-FOR-HUMAN", "ready-for-agent")),
+    ])
+    assert s["joined"] == {"501": {"from": 378, "kind": "split"}}
+    assert [x["number"] for x in out["not_joined"]] == [502, 503]
+
+
+@pytest.mark.parametrize("number", [0, -5, True, "501"])
+def test_an_issue_without_a_real_number_is_left_alone(number):
+    s = _state()
+    t = _fix(501)
+    t["number"] = number
+    out = _join(s, [t, _fix(502)])
+    assert s["joined"] == {"502": {"from": 378, "kind": "split"}} and out["not_joined"] == []
+
+
+@pytest.mark.parametrize("st", [None, "", "OPEN "])
+def test_an_issue_whose_state_isnt_open_is_left_alone(st):
+    s = _state()
+    t = _fix(501)
+    if st is None:
+        del t["state"]
+    else:
+        t["state"] = st
+    assert _join(s, [t])["first"] == [] and not s.get("joined")
+
+
+def test_a_ticket_blocked_by_its_source_is_recorded_as_waiting_on_it():
+    s = _state({"378": {"status": "running"}, "377": {"status": "merged"}})
+    _join(s, [
+        _fix(501, blocked="- #378"),
+        _fix(502, kind="late", blocked="#377, #400"),
+        _fix(503, kind="late", blocked="- #400"),  # blocked, but not by its source
+        _fix(504, kind="old"),
+    ])
+    assert s["joined"] == {
+        "501": {"from": 378, "kind": "split", "waits": True},
+        "502": {"from": 378, "kind": "late"},
+        "503": {"from": 378, "kind": "late"},
+        "504": {"from": 378, "kind": "old"},
+    }
 
 
 @pytest.mark.parametrize("login", ["writer", "keeper", "OWNER-LOGIN"])
@@ -154,8 +208,8 @@ def test_any_ticket_of_the_run_counts_as_a_source_whatever_its_status():
 def test_a_fix_ticket_of_a_joined_ticket_joins_too_in_any_order():
     s = _state()
     # #502 comes first in the list but names #501, which joins only from #378.
-    _join(s, [_fix(502, src=501, kind="late"), _fix(501)])
-    assert s["joined"] == {"501": {"from": 378, "kind": "split"}, "502": {"from": 501, "kind": "late"}}
+    _join(s, [_fix(502, src=501, kind="late", blocked="- #501"), _fix(501)])
+    assert s["joined"] == {"501": {"from": 378, "kind": "split"}, "502": {"from": 501, "kind": "late", "waits": True}}
 
 
 def test_an_excluded_ticket_never_joins():
@@ -210,6 +264,13 @@ def test_first_is_in_number_order():
         {"501": {"from": 378, "kind": "other"}},
         {"501": {"from": 378}},
         {"501": "split"},
+        {"501": {"from": 378, "kind": "split", "waits": "yes"}},
+        {"501": {"from": 378, "kind": "split", "extra": 1}},
+        # Keys written one way only, so a ticket can never be recorded twice.
+        {"²": {"from": 378, "kind": "old"}},
+        {"0501": {"from": 378, "kind": "old"}},
+        {"٥٠١": {"from": 378, "kind": "old"}},
+        {"0": {"from": 378, "kind": "old"}},
     ],
 )
 def test_the_state_refuses_a_malformed_joined_record(joined):
@@ -218,11 +279,14 @@ def test_the_state_refuses_a_malformed_joined_record(joined):
     assert any(p.startswith("joined") for p in state.validate(s))
 
 
-def test_join_refuses_a_state_that_isnt_valid():
+@pytest.mark.parametrize("bad", [{"501": "split"}, {"²": {"from": 378, "kind": "old"}}])
+def test_join_and_joined_refuse_a_state_that_isnt_valid(bad):
     s = _state()
-    s["joined"] = {"501": "split"}
+    s["joined"] = bad
     with pytest.raises(state.StateError):
         _join(s, [_fix(502)])
+    with pytest.raises(state.StateError):
+        state.joined(s)
 
 
 # ---------- the report: who didn't start ----------
@@ -231,10 +295,11 @@ def test_join_refuses_a_state_that_isnt_valid():
 def test_joined_tells_each_joined_tickets_fate_for_the_report():
     s = _state({"378": {"status": "needs-human"}, "380": {"status": "merged"}, "504": {"status": "merged", "pr": 9}})
     s["joined"] = {
-        "501": {"from": 378, "kind": "split"},  # its source can't merge: listed
-        "502": {"from": 380, "kind": "late"},  # its source merged, not started
-        "503": {"from": 501, "kind": "late"},  # its source is a joined ticket that never started
+        "501": {"from": 378, "kind": "split", "waits": True},  # its source can't merge: listed
+        "502": {"from": 380, "kind": "late", "waits": True},  # its source merged, not started
+        "503": {"from": 501, "kind": "late", "waits": True},  # its source is a joined ticket that never started
         "504": {"from": 380, "kind": "old"},  # started and merged
+        "505": {"from": 378, "kind": "old"},  # never waits on its source, which didn't merge
     }
     out = {j["number"]: j for j in state.joined(s)}
     assert out[501] == {"number": 501, "from": 378, "kind": "split", "status": None, "source_status": "needs-human",
@@ -242,7 +307,8 @@ def test_joined_tells_each_joined_tickets_fate_for_the_report():
     assert out[502]["status"] is None and out[502]["waits_on_source"] is False
     assert out[503]["source_status"] is None and out[503]["waits_on_source"] is True
     assert out[504]["status"] == "merged" and out[504]["waits_on_source"] is False
-    assert [j["number"] for j in state.joined(s)] == [501, 502, 503, 504]
+    assert out[505]["status"] is None and out[505]["waits_on_source"] is False
+    assert [j["number"] for j in state.joined(s)] == [501, 502, 503, 504, 505]
 
 
 # ---------- the CLI ----------
@@ -273,7 +339,7 @@ def test_state_join_records_the_joined_tickets_in_the_body(tmp_path):
     assert p.returncode == 0, p.stderr
     assert p.stdout.splitlines() == [
         "joined #501 (split, from #378)",
-        "not joined #502 (old, from #378): @reader has no write access",
+        "not joined #502 (old, from #378): `reader` has no write access",
         "first: 501",
     ]
     s = state.get((tmp_path / "new.md").read_text())
@@ -315,6 +381,19 @@ def test_state_join_refuses_permissions_it_cant_read(tmp_path):
     assert p.returncode != 0 and "permissions" in p.stderr and not (tmp_path / "new.md").exists()
 
 
+def test_state_join_reads_mixed_pages_and_wrapped_lists(tmp_path):
+    _files(tmp_path, _state(), {"issues": [[_fix(501)], _fix(502, kind="old")]})
+    p = _cli(tmp_path, "state", "join", "--body", "body.md", "--issues", "issues.json", "--permissions", "perms.json", "--out", "new.md")
+    assert p.returncode == 0, p.stderr
+    assert p.stdout.splitlines()[-1] == "first: 501,502"
+
+
+def test_state_join_refuses_fetch_with_files(tmp_path):
+    _files(tmp_path, _state(), [_fix(501)])
+    p = _cli(tmp_path, "state", "join", "--body", "body.md", "--fetch", "--issues", "issues.json", "--out", "new.md")
+    assert p.returncode != 0 and "not both" in p.stderr and not (tmp_path / "new.md").exists()
+
+
 def test_state_join_reads_the_permissions_as_github_gives_them(tmp_path):
     perms = [{"permission": "admin", "user": {"login": OWNER}}, {"permission": "read", "user": {"login": "reader"}}]
     _files(tmp_path, _state(), [_fix(501), _fix(502, login="reader")], perms=perms)
@@ -326,7 +405,8 @@ def test_state_join_reads_the_permissions_as_github_gives_them(tmp_path):
 def test_state_join_fetch_reads_the_open_issues_and_their_authors_permissions(tmp_path, monkeypatch):
     import fake_gh
 
-    issues = [_fix(501), _fix(502, login="reader", kind="old"), _fix(503, st="closed"), _issue(400, "no line", login="someone")]
+    issues = [_fix(501), _fix(502, login="reader", kind="old"), _fix(503, st="closed", login="closer"),
+              _issue(400, "no line", login="someone"), _fix(504, src=999, login="elsewhere")]
     gh = fake_gh.install(tmp_path, monkeypatch, {
         "repos/acme/demo/issues": fake_gh.pages(issues[:2], issues[2:]),
         f"repos/acme/demo/collaborators/{OWNER}/permission": {"permission": "admin", "user": {"login": OWNER}},
@@ -337,22 +417,50 @@ def test_state_join_fetch_reads_the_open_issues_and_their_authors_permissions(tm
     assert p.returncode == 0, p.stderr
     assert p.stdout.splitlines()[-1] == "first: 501"
     assert state.get((tmp_path / "new.md").read_text())["joined"] == {"501": {"from": 378, "kind": "split"}}
-    # Only the authors of open tickets with a machine line are asked about.
+    # Only the authors of open tickets whose machine line names a ticket of the run are asked about.
     assert sorted(x for x in gh.paths() if "collaborators" in x) == [
         f"repos/acme/demo/collaborators/{OWNER}/permission", "repos/acme/demo/collaborators/reader/permission"]
 
 
+def test_state_join_fetch_says_which_flags_to_give_when_the_issues_cant_be_read(tmp_path, monkeypatch):
+    import fake_gh
+
+    fake_gh.install(tmp_path, monkeypatch, {"repos/acme/demo/issues": fake_gh.reply(exit=1, stderr="gh: Server Error (HTTP 500)")})
+    _files(tmp_path, _state(), [])
+    p = _cli(tmp_path, "state", "join", "--body", "body.md", "--fetch", "--out", "new.md")
+    assert p.returncode != 0 and "--issues F and --permissions F" in p.stderr and "--prs" not in p.stderr
+    assert not (tmp_path / "new.md").exists()
+
+
 def test_state_joined_prints_the_report_lines(tmp_path):
     s = _state({"378": {"status": "needs-human"}, "380": {"status": "merged"}, "504": {"status": "running"}})
-    s["joined"] = {"501": {"from": 378, "kind": "split"}, "502": {"from": 380, "kind": "late"}, "504": {"from": 380, "kind": "old"}}
+    s["joined"] = {"501": {"from": 378, "kind": "split", "waits": True}, "502": {"from": 380, "kind": "late", "waits": True},
+                   "503": {"from": 378, "kind": "old"}, "504": {"from": 380, "kind": "old"}}
     _files(tmp_path, s, [])
     p = _cli(tmp_path, "state", "joined", "--body", "body.md")
     assert p.returncode == 0, p.stderr
     assert p.stdout.splitlines() == [
         "#501 (split, from #378): not started; its source #378 didn't merge in this run",
         "#502 (late, from #380): not started",
+        "#503 (old, from #378): not started",
         "#504 (old, from #380): running",
     ]
+
+
+def test_state_joined_with_nothing_joined_says_so(tmp_path):
+    _files(tmp_path, _state(), [])
+    p = _cli(tmp_path, "state", "joined", "--body", "body.md")
+    assert p.returncode == 0 and p.stdout == "nothing joined\n"
+
+
+def test_state_joined_refuses_a_bad_state_without_a_traceback(tmp_path):
+    _project(tmp_path)
+    s = _state()
+    s["joined"] = {"²": {"from": 378, "kind": "old"}}
+    block = state.put("x", _state()).replace(state._dump(_state()), state._dump(s))
+    (tmp_path / "body.md").write_text(block)
+    p = _cli(tmp_path, "state", "joined", "--body", "body.md")
+    assert p.returncode == 1 and "Traceback" not in p.stderr and "joined key" in p.stderr
 
 
 def test_a_joined_ticket_starts_once_unblocked_after_infra_through_ready_first(tmp_path):
@@ -404,8 +512,8 @@ def test_the_one_page_says_fix_and_split_tickets_join(scope):
         "tickets to fix old bugs, tickets to fix late findings and split tickets",
         "join the run, whatever its scope",
         "`<!-- workflow:fix-ticket from=<n> kind=old|late|split -->`",
-        "from an account with write access",
-        "naming a ticket of the run",
+        "posted by an account with write access",
+        "naming a ticket of the run in its last",
         "labelled `ready-for-agent`",
         "start once unblocked, after infra tickets and ahead of the run's other tickets not yet started",
         "owner tasks and excluded tickets never join",
@@ -440,13 +548,29 @@ def _conductor():
     return _flat(_read("skills/conductor/SKILL.md"))
 
 
-def test_the_conductor_joins_them_before_starting_new_tickets():
-    step = _flat(_read("skills/conductor/SKILL.md").split("**5. Start sessions,**", 1)[1].split("**6. Release**", 1)[0])
-    assert "WF state join" in step
-    assert "--first <its `first`>" in step
+def _checkin():
+    return _read("skills/conductor/SKILL.md").split("## Each check-in", 1)[1].split("## A pull request that needs a code fix", 1)[0]
+
+
+def test_the_conductor_joins_them_at_every_check_in_before_judging_done():
+    # Before step 2 judges "Done" (and winding down too), so a ticket filed in a source's last review isn't missed.
+    before = _flat(_checkin().split("**1. Read the state.**", 1)[1].split("**2. Stop or wind down?**", 1)[0])
+    assert "WF state join --body .workflow/run/body.md --fetch --out .workflow/run/body.md --json" in before
+    assert "At every check-in, winding down too, record who joined before judging step 2" in before
+    assert "for step 2 and \"Done\" too" in before
+
+
+def test_the_conductor_starts_them_through_ready_first():
+    step = _flat(_checkin().split("**5. Start sessions,**", 1)[1].split("**6. Release**", 1)[0])
+    assert "--first <join's first>" in step and "`--first` takes step 1's `first`" in step
     # Added to `--only` too, as the infra tickets are, so a pinned scope still starts them.
     assert "plus every open workflow:infra ticket and every ticket in the state's `joined`" in step
-    assert step.index("WF state join") < step.index("WF ready --fetch")
+    assert "`" not in step.split("--first <", 1)[1].split(">", 1)[0]  # no code span nested in the command
+
+
+def test_the_conductor_joins_once_more_before_the_report():
+    report = _flat(_read("skills/conductor/SKILL.md").split("4. **The report.**", 1)[1].split("5. **Wind up.**", 1)[0])
+    assert report.index("Then run `WF state join`") < report.index("WF state joined")
 
 
 def test_the_conductor_names_them_at_the_go_and_in_the_report():

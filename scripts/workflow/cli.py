@@ -782,15 +782,6 @@ def _state_record(a, body: str) -> int:
     return 0
 
 
-def _pages(v) -> list:
-    """Issues as one list: GitHub's list, or `--paginate --slurp`'s list of pages."""
-    if isinstance(v, list) and v and all(isinstance(x, list) for x in v):
-        return [i for page in v for i in page]
-    if not isinstance(v, list):
-        raise state_mod.StateError("--issues must be the open issues as the GitHub API lists them (a JSON list, or a list of its pages)")
-    return v
-
-
 def _state_join(a, body: str) -> int:
     """`state join` (#378): record the tickets filed during the run that join it,
     print who joined, who didn't and why, and the `--first` list for `workflow
@@ -798,22 +789,25 @@ def _state_join(a, body: str) -> int:
     s = state_mod.get(body)
     if s is None:
         raise state_mod.StateError("no state block in this body; use `state put` first")
+    instead = "give --issues F and --permissions F in place of --fetch"
     if a.fetch:
         prof = load()
         if not prof.repo:
-            raise SystemExit("--fetch needs the profile's project.repo")
-        issues = [i for i in _fetch(prof.repo, "issues") if (i.get("state") or "").lower() == "open"]
-        logins = sorted({(i.get("user") or {}).get("login") for i in issues if state_mod.fix_line(i.get("body"))} - {None, ""})
+            raise SystemExit(f"workflow state join: --fetch needs the profile's project.repo; {instead}")
         try:
-            perms_raw = fetch_mod.permissions_of(prof.repo, logins)
+            issues = _fetch(prof.repo, "issues")
+        except SystemExit as e:
+            raise SystemExit(f"workflow state join: the open issues couldn't be read ({str(e.code).splitlines()[0]}); {instead}") from None
+        try:
+            perms_raw = fetch_mod.permissions_of(prof.repo, state_mod.authors(s, issues))
         except fetch_mod.GhError as e:
-            raise SystemExit(f"workflow state join: the authors' permissions couldn't be read ({e}); give --issues F and --permissions F")
+            raise SystemExit(f"workflow state join: the authors' permissions couldn't be read ({e}); {instead}") from None
     else:
         inputs = _json_inputs(a, ["issues", "permissions"])
         for name in ("issues", "permissions"):
             if inputs[name][0] is None:
                 raise state_mod.StateError(f"--{name}: {inputs[name][1]}")
-        issues, perms_raw = _pages(inputs["issues"][0]), inputs["permissions"][0]
+        issues, perms_raw = estimate_mod._flatten(inputs["issues"][0]), inputs["permissions"][0]
     try:
         perms = merge_mod._permissions(perms_raw)
     except merge_mod.Unreadable as e:
@@ -841,6 +835,8 @@ def _state_joined(a, body: str) -> int:
     if a.json:
         _out(out)
         return 0
+    if not out:
+        print("nothing joined")
     for j in out:
         what = j["status"] or "not started"
         if j["waits_on_source"]:
@@ -1984,6 +1980,8 @@ def main(argv: list[str] | None = None) -> int:
         p.error("state queue needs --queue and --out")
     if a.cmd == "state" and a.action == "join" and not (a.out and (a.fetch or (a.issues and a.permissions))):
         p.error("state join needs --out, and --issues and --permissions (or --fetch)")
+    if a.cmd == "state" and a.action == "join" and a.fetch and (a.issues or a.permissions):
+        p.error("state join: give --fetch or --issues and --permissions, not both")
     try:
         return a.fn(a)
     except (ProfileError, state_mod.StateError, render_mod.RenderError, evidence_mod.EvidenceError, vendor_mod.VendorError) as e:
