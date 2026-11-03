@@ -322,7 +322,7 @@ def test_the_flags_help_says_rule_2_has_no_cap(capsys):
     with pytest.raises(SystemExit):
         cli.main(["merge-check", "--help"])
     help_text = " ".join(capsys.readouterr().out.split())
-    assert "no pass cap applies when the latest counted review record is a rule=2 one" in help_text
+    assert "a run passes the briefing's; no pass cap applies when the latest counted review record is a rule=2 one" in help_text
 
 
 def test_the_merge_rule_says_how_rule_2_is_judged():
