@@ -164,8 +164,10 @@ def test_start_carries_on_from_the_hand_off():
     assert with_pr.count("`workflow:carry-on` off") == 1
     # Without one, build-ticket's carry-on path doesn't apply, so start takes the label off with the
     # claim, or nothing would (pass 6, 1).
-    assert ("With no open pull request, `build-ticket`'s carry-on path doesn't apply: say so, take "
-            "`workflow:carry-on` off in the claim's write, and carry on as for claimed work.") in row
+    # It makes the same write build-ticket's carry-on claim makes, `ready-for-agent` back included (pass 7, 1).
+    assert ("With no open pull request, `build-ticket`'s carry-on path doesn't apply: say so, make that claim "
+            "yourself (`workflow:in-progress` on, `workflow:carry-on` off and `ready-for-agent` back, in one write), "
+            "and carry on as for claimed work.") in row
     assert "`WF merge-check --fetch <PR> --json`" in row and "`hand_off.url`" in row
     assert "not a retry" in row
     bt = _read("skills/build-ticket/SKILL.md")
@@ -177,7 +179,12 @@ def test_start_leaves_a_run_s_carry_on_ticket_to_its_run():
     assert "A ticket also labelled `workflow:in-progress` is listed as claimed, and `build-ticket` §1 stops on it." in row
     assert "With a run in progress, it is the run's: leave it to its run." in row
     # With none (an abandoned run), **Release it** makes it a carry-on ticket again (pass 6, 2).
-    assert "With none, offer **Release it** (the row below): it is then a carry-on ticket again." in row
+    assert "With none, offer only **Release it** (the row below): it is then a carry-on ticket again." in row
+    # The carry-on row is the one for any carry-on ticket, claimed or not; the claimed-work row defers to
+    # it, so it never recommends a path build-ticket stops on (pass 7, 2).
+    assert row.startswith("| A carry-on ticket (`workflow:carry-on`: under status's `carry_on`, or claimed with it) |")
+    claimed = next(ln for ln in _carrying_on().splitlines() if ln.startswith("| Work claimed (`workflow:in-progress`)"))
+    assert "One also labelled `workflow:carry-on` is the carry-on row's (above), not this row's." in claimed
 
 
 def test_one_rule_gives_the_one_recommendation():
