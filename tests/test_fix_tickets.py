@@ -108,8 +108,8 @@ def test_when_each_is_filed():
         "A split one: as soon as `WF merge-check` says to split, before a fresh fixer takes the part out of the pull request, "
         "so a restart never loses the ticket; then add it to the pull request body's **Split out** (§4) at once, and add a row of "
         "its own to the findings table, naming the part with the outcome \"Split out to #<n>\", so a hand-off written before the "
-        "next review names it. A security row on the part, contested or not, is never split out: it stays as it is, a contest among "
-        "them staying under \"Contests to rule on\". The part's other rows still open get the same outcome, a contest not yet "
+        "next review names it. A security row on the part, contested or not, is never split out: it stays as it is, its contest, "
+        "if it has one, staying under \"Contests to rule on\". The part's other rows still open get the same outcome, a contest not yet "
         "ruled on included (it leaves \"Contests to rule on\"); rows already answered keep theirs."
     ) in text
     # Pass 12's form, which rewrote every row of the part, is gone.
