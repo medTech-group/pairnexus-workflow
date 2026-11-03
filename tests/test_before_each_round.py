@@ -151,7 +151,9 @@ def test_the_agent_knows_the_round_read_and_its_inputs():
     assert "raised the round" in s and "own words" in s
     # The same inputs as start's rule, so the two never disagree.
     tagged = _sentence(inputs, "That is their words")
-    assert "map's own item's issue" in tagged and "map decision" in tagged and "edit after publishing" in tagged
+    for part in ("map's own item's issue", "Destination item", "map decision", "edit after publishing"):
+        assert part in tagged, part
+    assert "line on the map" not in tagged
     rest = _sentence(inputs, "untagged")
     for part in ("decision ticket", "Destination item", "draft", "finding", "as published"):
         assert part in rest, part
