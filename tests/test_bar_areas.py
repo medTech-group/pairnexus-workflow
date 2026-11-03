@@ -305,6 +305,27 @@ def test_has_no_bar(body):
     assert not has_bar(body)
 
 
+_FILTERED = ("title", "textarea", "style", "xmp", "iframe", "noembed", "noframes", "script", "plaintext")
+
+
+@pytest.mark.parametrize("name", _FILTERED)
+@pytest.mark.parametrize("shape", ['x <{t} a=" <i b=\' ">\n## Bar\n', '<{t} a=" <i b=\' ">\n\n## Bar\n'])
+def test_a_tag_the_tag_filter_turns_into_text_stops_the_reading(name, shape):
+    # GitHub's tag filter escapes the tag, so the quote inside it opens a value that swallows the rest.
+    assert not has_bar(shape.format(t=name)) and not has_bar(shape.format(t=name.upper()))
+
+
+@pytest.mark.parametrize("name", ["template", "noscript", "select"])
+def test_a_tag_whose_content_a_browser_hides_stops_the_reading(name):
+    assert not has_bar(f"<{name}>\n\n## Bar\n") and not has_bar(f"x <{name}> y\n## Bar\n")
+
+
+@pytest.mark.parametrize("body", ["x <i\va=' c=\"'>\n## Bar\n", "x <i a=b\vc=' d=\"'>\n## Bar\n"])
+def test_a_vertical_tab_stops_the_reading(body):
+    # cmark parts a tag's attributes at a vertical tab; HTML5 doesn't, so a quote opens a value.
+    assert not has_bar(body)
+
+
 @pytest.mark.parametrize("body", ["## Bar" + " " * 65000 + "x", "\n\nBar" + " \t" * 32000 + "x", "**Bar**" + " " * 65000])
 def test_a_long_line_is_quick(body):
     import time

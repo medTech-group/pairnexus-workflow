@@ -498,10 +498,10 @@ _PLAIN_BOGUS = re.compile(r"<![A-Z][^>]*>")  # <!DOCTYPE …>: HTML5 ends it at 
 # GitHub's tag filter and HTML5, inline or in a block: has_bar stops reading
 # at any line (outside fenced code) that holds one. <? and <![ (a processing
 # instruction or CDATA cmark ends later than HTML5), comments HTML5 ends
-# early, and tags the tag filter turns into text or whose content a browser
-# hides.
+# early, a vertical tab, and tags the tag filter turns into text or whose
+# content a browser hides.
 _RISKY = re.compile(
-    r"<\?|<!\[|--!>|<!--->|<!-->"
+    r"<\?|<!\[|--!>|<!--->|<!-->|\v"  # \v: cmark parts a tag's attributes at it, HTML5 doesn't
     r"|</?(?:title|textarea|style|xmp|iframe|noembed|noframes|script|plaintext|select|template|noscript)(?![A-Za-z0-9-])",
     re.I | re.A,
 )
