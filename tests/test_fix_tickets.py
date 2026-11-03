@@ -73,8 +73,8 @@ def test_review_panel_points_to_it():
     ) in review
     # review-panel §3 names the same exception, so the two never answer differently.
     assert (
-        "The one exception is a security problem the change adds (`security: change`): whatever its mark, "
-        "it is fixed in the pull request, since it still blocks (section 10)."
+        "The one exception is a security problem the change adds (`security: change`) marked a ticket to fix it: "
+        "it is never filed, but fixed in the pull request, since it still blocks (section 10)."
     ) in s3
 
 
@@ -263,6 +263,11 @@ def test_a_blocking_security_problem_on_main_holds_a_run_for_the_owner():
         "the reason naming only its area, its details given privately as above."
     ) in text
     assert "In attended work it is fixed here, its details shown to the person and given privately to whoever fixes it." in text
+    # The details stayed in the stopped session's chat: the next session finds the problem again itself.
+    assert (
+        "A session started on the ticket after the hold first runs a full review of the change for that area, "
+        "so it finds the problem again, or finds it fixed on the base branch."
+    ) in text
     assert "**Still red after three fix attempts:**" in _read(BUILD)
 
 
@@ -270,10 +275,12 @@ def test_a_security_problem_the_change_adds_is_never_filed():
     text = _filing()
     # It blocks whichever review finds it (review-panel §10), so a mistaken ticket mark never lets it merge.
     assert (
-        "A security problem the change adds (`security: change`) is the one finding never filed as marked: whatever its mark, "
-        "it is fixed in this pull request, since it still blocks (`review-panel` §10), only its area named in public, "
-        "and the findings table gives its mark."
+        "A security problem the change adds (`security: change`) is the one finding never filed as marked: even when marked "
+        "a ticket to fix it, it is fixed in this pull request, since it still blocks (`review-panel` §10), only its area "
+        "named in public, and the findings table gives its mark. Marked blocks or note, it follows the usual rule."
     ) in text
+    # Only the ticket mark is overridden: a note (a gap the bar accepts) or a contest keeps its usual rule.
+    assert "whatever its mark" not in _flat(_between(_read(PANEL), "## 3. After each round", "\n## 4."))
 
 
 def test_the_pull_request_body_names_moved_criteria_and_the_split_ticket():
@@ -294,6 +301,11 @@ def test_plain_words_in_what_a_person_reads():
 
 def test_changelog_note():
     notes = since_0110()
+    note = _flat(notes.split("**Filing the three kinds of ticket", 1)[1].split("\n**", 1)[0])
+    # The note says what the skill says on the points a reader acts on.
+    assert "those filed under the account it posts as" in note
+    assert "is a new ticket unless this session already filed one for it" in note
+    assert "never filed, even when marked a ticket to fix it" in note
     assert "(#373, part of spec #412)" in notes
     assert "`<!-- workflow:fix-ticket from=<n> kind=old|late|split -->`" in notes
     assert "Tests: `tests/test_fix_tickets.py`." in notes
