@@ -318,6 +318,7 @@ def test_first_is_in_number_order():
         {"0501": {"from": 378, "kind": "old"}},
         {"٥٠١": {"from": 378, "kind": "old"}},
         {"0": {"from": 378, "kind": "old"}},
+        {"1" * 19: {"from": 378, "kind": "old"}},  # past 18 digits: the refusing side of the limit
     ],
 )
 def test_the_state_refuses_a_malformed_joined_record(joined):
