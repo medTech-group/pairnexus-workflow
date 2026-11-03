@@ -60,7 +60,7 @@ def test_a_closed_one_is_not_listed(tmp_path):
     assert st.carry_on == []
 
 
-@pytest.mark.parametrize("label", ["needs-human", "owner-task", "ready-for-human"])
+@pytest.mark.parametrize("label", ["needs-human", "owner-task", "ready-for-human", "needs-info"])
 def test_one_waiting_on_a_person_waits_and_is_not_offered(tmp_path, label):
     st = status.snapshot(tmp_path, True, [_issue(41, ["workflow:carry-on", label])], [])
     assert st.carry_on == [] and _nums(st.waiting) == [41]
@@ -81,6 +81,23 @@ def test_several_are_listed_in_number_order(tmp_path):
 def test_a_carry_on_ticket_never_reads_as_one_to_sort(tmp_path):
     st = status.snapshot(tmp_path, True, [_issue(41, ["workflow:carry-on", "needs-triage"])], [])
     assert _nums(st.carry_on) == [41] and st.to_triage == []
+
+
+def test_one_still_labelled_ready_is_carried_on_not_ready(tmp_path):
+    # A stray `ready-for-agent` never offers it as a fresh build that skips the hand-off (round 1, explorer 1).
+    st = status.snapshot(tmp_path, True, [_issue(41, ["workflow:carry-on", "ready-for-agent"], body="Area: start\n\n## Blocked by\n\nNone")], [])
+    assert _nums(st.carry_on) == [41] and st.ready == []
+
+
+@pytest.mark.parametrize("labels, body, section", [
+    (["spec"], "", "specs"),
+    (["wayfinder:map"], "", "maps"),
+    ([], "<!-- workflow:item path=ticket -->", "planned"),
+])
+def test_only_a_ticket_is_carried_on(tmp_path, labels, body, section):
+    # A spec, a map or a planned item keeps its own section (round 1, explorer 2).
+    st = status.snapshot(tmp_path, True, [_issue(41, ["workflow:carry-on", *labels], body=body)], [])
+    assert st.carry_on == [] and _nums(getattr(st, section)) == [41]
 
 
 def test_the_text_and_the_json_list_them(tmp_path):
@@ -118,13 +135,17 @@ def test_start_offers_carry_on_first_and_recommended():
     assert "a kit update or **Check the set-up** comes after it, without \"(Recommended)\"" in row
 
 
+def _carry_on_row():
+    return next(ln for ln in _carrying_on().splitlines() if ln.startswith("| A carry-on ticket"))
+
+
 def test_start_carries_on_from_the_hand_off():
-    row = next(ln for ln in _carrying_on().splitlines() if ln.startswith("| A carry-on ticket"))
+    row = _carry_on_row()
     assert "`workflow:carry-on`" in row
     assert "**Carry on (Recommended)**" in row
-    # Choosing it takes the label off first, so no run adopts it as well.
-    assert "remove `workflow:carry-on`" in row
-    assert re.search(r"remove `workflow:carry-on`.*before any other write", row)
+    # Choosing it takes the label off first, so no run adopts it as well, and claims it in the
+    # same write, so a stop before `build-ticket` never leaves it unlabelled (round 1, correctness 3).
+    assert re.search(r"in one label write, before any other write: remove `workflow:carry-on` and add `workflow:in-progress`", row)
     # It starts from the hand-off: merge-check's hand_off, then build-ticket on its pull request's branch.
     assert "`WF merge-check --fetch <PR> --json`" in row and "`hand_off.url`" in row
     assert "`build-ticket`" in row and "its pull request's branch" in row
@@ -132,8 +153,24 @@ def test_start_carries_on_from_the_hand_off():
 
 
 def test_start_leaves_a_run_s_carry_on_ticket_to_its_run():
-    row = next(ln for ln in _carrying_on().splitlines() if ln.startswith("| A carry-on ticket"))
-    assert "`workflow:in-progress`" in row and "leave it to its run" in row
+    row = _carry_on_row()
+    assert "with a run in progress, the run adopted it: leave it to its run" in row
+    # With none, it is claimed work, whose "Carry on from there" takes the label off first (round 1, correctness 4).
+    claimed = next(ln for ln in _carrying_on().splitlines() if ln.startswith("| Work claimed (`workflow:in-progress`)"))
+    assert "take `workflow:carry-on` off first" in claimed
+
+
+def test_each_other_first_option_gives_way_to_carry_on():
+    # One "(Recommended)" first option, whatever else is offered (round 1, spec 1, correctness 2).
+    rows = [ln for ln in _read(START).splitlines() if ln.startswith(("| **Update the workflow kit", "| **Check the set-up**", "| **A brand-new project"))]
+    assert len(rows) == 3
+    for row in rows:
+        assert "unless a carry-on ticket is offered (above)" in row, row[:40]
+
+
+def test_a_carry_on_ticket_is_offered_once():
+    row = next(ln for ln in _read(START).splitlines() if ln.startswith("| **Carry on: <the thing>**"))
+    assert "a carry-on ticket has its own option (above)" in row
 
 
 def test_start_reads_carry_on_tickets_in_the_look_around():
@@ -171,6 +208,11 @@ def test_flow_gives_a_plain_example_bar():
 
 def test_the_example_bar_counts_as_a_bar():
     assert issues.has_bar(_example_bar())
+
+
+def test_the_bullet_before_the_bar_still_reads_as_a_list_item():
+    line = next(ln for ln in _flow_tickets().splitlines() if ln.strip().startswith("- `Review: small`"))
+    assert line.endswith(";")
 
 
 def test_start_s_quick_ticket_has_the_bar():

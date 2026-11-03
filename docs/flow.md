@@ -36,7 +36,7 @@ A large effort can start as a **map**: an issue labelled `wayfinder:map` whose c
    - an `Area: <name>` line from the profile's `[areas]`, so the conductor never runs two sessions on one area;
    - acceptance criteria naming their seams;
    - the by-hand checks it will need (a real device, account or service), if any;
-   - `Review: small` if the change should stay within the small threshold and add no endpoint, table, screen or setting (§3).
+   - `Review: small` if the change should stay within the small threshold and add no endpoint, table, screen or setting (§3);
    - `## Bar`: what the change must handle, what it does when it can't be sure (fail closed), and the limits it accepts, each with its backstop if any, so reviewers know where their hunt stops. A ticket may carry one (a spec may give one for its tickets), and one whose area is in the profile's `run.bar_areas` must: `workflow ready` notes such a ticket with no `## Bar`, leaving it ready, as it notes a protected path. For example:
 
      ```markdown
