@@ -264,9 +264,12 @@ def put(body: str, state: dict) -> str:
 FIX_KINDS = ("old", "late", "split")
 # The machine line a ticket session ends a filed ticket with (`build-ticket` §3), in exactly the form its
 # listing scans for; the last one in a body is the ticket's own, since a body may quote another's above it.
-FIX_LINE = re.compile(r"<!-- workflow:fix-ticket from=([0-9]+) kind=(" + "|".join(FIX_KINDS) + r") -->")
+# `from` has at most 18 digits, as `issues.parse_number_list` reads a ticket number, so no body can make
+# `int()` refuse it (Python 3.11 refuses past 4,300 digits) and stop every ticket joining.
+FIX_LINE = re.compile(r"<!-- workflow:fix-ticket from=([0-9]{1,18}) kind=(" + "|".join(FIX_KINDS) + r") -->")
+_MAX_NUMBER = 10**18
 _OWNER_LABELS = ("owner-task", "ready-for-human")
-_NUMBER = re.compile(r"[1-9][0-9]*")  # an issue number as a key, written one way only
+_NUMBER = re.compile(r"[1-9][0-9]{0,17}")  # an issue number as a key, written one way only
 
 
 def fix_line(body: Any) -> tuple[int, str] | None:
@@ -279,7 +282,7 @@ def _candidates(issues: Any) -> list[tuple[dict, int, str]]:
     """(issue, from, kind) for each open issue, not a pull request, with a machine line."""
     out = []
     for i in issues if isinstance(issues, list) else []:
-        if not (isinstance(i, dict) and _int(i.get("number")) and i["number"] > 0) or "pull_request" in i:
+        if not (isinstance(i, dict) and _int(i.get("number")) and 0 < i["number"] < _MAX_NUMBER) or "pull_request" in i:
             continue
         if not isinstance(i.get("state"), str) or i["state"].lower() != "open":
             continue
@@ -297,7 +300,11 @@ def _author(issue: dict) -> str:
 
 def authors(s: dict, issues: Any) -> list[str]:
     """The authors whose permission `join` needs: those of the open tickets
-    whose machine line names a ticket of the run or another such ticket."""
+    whose machine line names a ticket of the run or another such ticket.
+    Raises StateError for a state with problems."""
+    problems = validate(s)
+    if problems:
+        raise StateError("the state has problems, so nobody joined:\n- " + "\n- ".join(problems))
     cands = _candidates(issues)
     known = {k for k in (s.get("tickets") or {})} | {k for k in (s.get("joined") or {})} | {str(i["number"]) for i, _, _ in cands}
     seen: dict[str, str] = {}
@@ -308,7 +315,7 @@ def authors(s: dict, issues: Any) -> list[str]:
     return sorted(seen.values(), key=str.casefold)
 
 
-def join(s: dict, issues: Any, perms: dict[str, str]) -> dict:
+def join(s: dict, issues: Any, perms: dict[str, str], repo: str | None = None) -> dict:
     """Record on `s` (changed in place) the open tickets that join the run:
     labelled `ready-for-agent`, not an owner task (`owner-task`,
     `ready-for-human`), not excluded by the charter's scope, by an author with
@@ -318,7 +325,9 @@ def join(s: dict, issues: Any, perms: dict[str, str]) -> dict:
     too). Labels are read without case, as `workflow ready` reads them. A
     ticket already in `tickets` is of the run already. Whether it is ready to
     start is `workflow ready`'s, so a ticket that joined stays joined. Each
-    record keeps `waits` when the ticket's `## Blocked by` names its source.
+    record keeps `waits` when the ticket's blockers name its source, read as
+    `workflow ready` reads them (`repo`, the profile's owner/repo, makes
+    `owner/repo#n` and issue URLs this repository's).
 
     Returns `joined` (those that joined now), `not_joined` (those naming a
     ticket of the run that didn't join, with why) and `first`: every joined
@@ -359,7 +368,7 @@ def join(s: dict, issues: Any, perms: dict[str, str]) -> dict:
                 why = f"`{login}` has no write access"
             else:
                 entry = {"from": src, "kind": kind}
-                if src in issues_mod.blockers_of(i.get("body")):
+                if src in issues_mod.blockers_of(i.get("body"), repo):
                     entry["waits"] = True
                 record[str(n)] = entry
                 new.append({"number": n, **entry})

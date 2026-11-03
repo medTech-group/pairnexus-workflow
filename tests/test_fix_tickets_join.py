@@ -99,6 +99,22 @@ def test_a_line_not_in_the_exact_form_never_joins(line):
     assert not s.get("joined") and out["first"] == [] and out["not_joined"] == []
 
 
+def test_a_line_naming_a_number_past_18_digits_is_no_machine_line_and_stops_nothing():
+    # Anyone can open an issue: a `from=` too long for `int()` must never stop the others joining.
+    s = _state()
+    out = _join(s, [_issue(500, f"x\n<!-- workflow:fix-ticket from={'3' * 5000} kind=old -->\n", login="outsider"),
+                    _issue(499, "x\n<!-- workflow:fix-ticket from=1234567890123456789 kind=old -->\n"), _fix(501)])
+    assert s["joined"] == {"501": {"from": 378, "kind": "split"}} and out["not_joined"] == []
+    assert state.authors(s, [_issue(500, f"<!-- workflow:fix-ticket from={'3' * 5000} kind=old -->")]) == []
+
+
+def test_an_issue_numbered_past_18_digits_is_left_alone():
+    s = _state()
+    t = _fix(501)
+    t["number"] = 10**20
+    assert _join(s, [t])["first"] == [] and not s.get("joined")
+
+
 @pytest.mark.parametrize("label", ["owner-task", "ready-for-human"])
 def test_owner_tasks_carry_the_line_but_never_join(label):
     s = _state()
@@ -175,6 +191,15 @@ def test_a_ticket_blocked_by_its_source_is_recorded_as_waiting_on_it():
         "503": {"from": 378, "kind": "late"},
         "504": {"from": 378, "kind": "old"},
     }
+
+
+@pytest.mark.parametrize("ref", ["acme/demo#378", "ACME/Demo#378", "https://github.com/acme/demo/issues/378"])
+def test_waits_reads_the_blockers_as_workflow_ready_does(ref):
+    # This repository's own refs, written in full, name the source too; another repository's don't.
+    s = _state()
+    state.join(s, [_fix(501, kind="late", blocked=f"- {ref}"), _fix(502, kind="late", blocked="- other/demo#378")], WRITE, "acme/demo")
+    assert s["joined"]["501"] == {"from": 378, "kind": "late", "waits": True}
+    assert s["joined"]["502"] == {"from": 378, "kind": "late"}
 
 
 @pytest.mark.parametrize("login", ["writer", "keeper", "OWNER-LOGIN"])
@@ -388,6 +413,48 @@ def test_state_join_reads_mixed_pages_and_wrapped_lists(tmp_path):
     assert p.stdout.splitlines()[-1] == "first: 501,502"
 
 
+@pytest.mark.parametrize(
+    "issues",
+    [{"message": "Bad credentials", "documentation_url": "https://docs.github.com/rest"}, [[_fix(501)], {"message": "Not Found"}], 5, "hello", {}],
+)
+def test_state_join_refuses_issues_that_arent_issues(tmp_path, issues):
+    # A saved GitHub error is never read as "nobody filed anything".
+    _files(tmp_path, _state(), issues)
+    p = _cli(tmp_path, "state", "join", "--body", "body.md", "--issues", "issues.json", "--permissions", "perms.json", "--out", "new.md")
+    assert p.returncode == 1 and "isn't an issue" in p.stderr and "Traceback" not in p.stderr
+    assert not (tmp_path / "new.md").exists()
+    if isinstance(issues, dict) and "message" in issues:
+        assert "Bad credentials" in p.stderr
+
+
+@pytest.mark.parametrize("name", ["issues", "permissions"])
+def test_state_join_says_a_null_file_holds_null(tmp_path, name):
+    _files(tmp_path, _state(), [_fix(501)])
+    (tmp_path / f"{'perms' if name == 'permissions' else 'issues'}.json").write_text("null")
+    p = _cli(tmp_path, "state", "join", "--body", "body.md", "--issues", "issues.json", "--permissions", "perms.json", "--out", "new.md")
+    assert p.returncode == 1 and f"--{name}: the file holds null" in p.stderr
+
+
+def test_state_join_fetch_refuses_a_bad_state_before_fetching(tmp_path, monkeypatch):
+    import fake_gh
+
+    gh = fake_gh.install(tmp_path, monkeypatch, {"repos/acme/demo/issues": fake_gh.pages([_fix(501)])})
+    _project(tmp_path)
+    s = _state()
+    s["joined"] = [{"from": 378, "kind": "old"}]
+    (tmp_path / "body.md").write_text(state.put("x", _state()).replace(state._dump(_state()), state._dump(s)))
+    p = _cli(tmp_path, "state", "join", "--body", "body.md", "--fetch", "--out", "new.md")
+    assert p.returncode == 1 and "the state has problems" in p.stderr and "Traceback" not in p.stderr
+    assert gh.paths() == [] and not (tmp_path / "new.md").exists()
+
+
+def test_state_join_reads_blockers_with_the_profiles_repo(tmp_path):
+    _files(tmp_path, _state(), [_fix(501, kind="late", blocked="- https://github.com/acme/demo/issues/378")])
+    p = _cli(tmp_path, "state", "join", "--body", "body.md", "--issues", "issues.json", "--permissions", "perms.json", "--out", "new.md")
+    assert p.returncode == 0, p.stderr
+    assert state.get((tmp_path / "new.md").read_text())["joined"]["501"] == {"from": 378, "kind": "late", "waits": True}
+
+
 def test_state_join_refuses_fetch_with_files(tmp_path):
     _files(tmp_path, _state(), [_fix(501)])
     p = _cli(tmp_path, "state", "join", "--body", "body.md", "--fetch", "--issues", "issues.json", "--out", "new.md")
@@ -406,20 +473,24 @@ def test_state_join_fetch_reads_the_open_issues_and_their_authors_permissions(tm
     import fake_gh
 
     issues = [_fix(501), _fix(502, login="reader", kind="old"), _fix(503, st="closed", login="closer"),
-              _issue(400, "no line", login="someone"), _fix(504, src=999, login="elsewhere")]
+              _issue(400, "no line", login="someone"), _fix(504, src=999, login="elsewhere"),
+              _fix(505, src=501, kind="late", login="chained")]  # names #501, which joins in the same check-in
     gh = fake_gh.install(tmp_path, monkeypatch, {
         "repos/acme/demo/issues": fake_gh.pages(issues[:2], issues[2:]),
         f"repos/acme/demo/collaborators/{OWNER}/permission": {"permission": "admin", "user": {"login": OWNER}},
         "repos/acme/demo/collaborators/reader/permission": {"permission": "read", "user": {"login": "reader"}},
+        "repos/acme/demo/collaborators/chained/permission": {"permission": "write", "user": {"login": "chained"}},
     })
     _files(tmp_path, _state(), [])
     p = _cli(tmp_path, "state", "join", "--body", "body.md", "--fetch", "--out", "new.md")
     assert p.returncode == 0, p.stderr
-    assert p.stdout.splitlines()[-1] == "first: 501"
-    assert state.get((tmp_path / "new.md").read_text())["joined"] == {"501": {"from": 378, "kind": "split"}}
-    # Only the authors of open tickets whose machine line names a ticket of the run are asked about.
-    assert sorted(x for x in gh.paths() if "collaborators" in x) == [
-        f"repos/acme/demo/collaborators/{OWNER}/permission", "repos/acme/demo/collaborators/reader/permission"]
+    assert p.stdout.splitlines()[-1] == "first: 501,505"
+    assert state.get((tmp_path / "new.md").read_text())["joined"] == {
+        "501": {"from": 378, "kind": "split"}, "505": {"from": 501, "kind": "late"}}
+    # Only the authors of open tickets whose machine line names a ticket of the run, or another such ticket, are asked about.
+    assert sorted(x for x in gh.paths() if "collaborators" in x) == sorted([
+        "repos/acme/demo/collaborators/chained/permission", f"repos/acme/demo/collaborators/{OWNER}/permission",
+        "repos/acme/demo/collaborators/reader/permission"])
 
 
 def test_state_join_fetch_says_which_flags_to_give_when_the_issues_cant_be_read(tmp_path, monkeypatch):

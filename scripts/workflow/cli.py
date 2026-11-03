@@ -789,7 +789,11 @@ def _state_join(a, body: str) -> int:
     s = state_mod.get(body)
     if s is None:
         raise state_mod.StateError("no state block in this body; use `state put` first")
+    problems = state_mod.validate(s)
+    if problems:  # before any fetch
+        raise state_mod.StateError("the state has problems, so nobody joined:\n- " + "\n- ".join(problems))
     instead = "give --issues F and --permissions F in place of --fetch"
+    prof = load(required=False) if not a.fetch else None
     if a.fetch:
         prof = load()
         if not prof.repo:
@@ -806,13 +810,18 @@ def _state_join(a, body: str) -> int:
         inputs = _json_inputs(a, ["issues", "permissions"])
         for name in ("issues", "permissions"):
             if inputs[name][0] is None:
-                raise state_mod.StateError(f"--{name}: {inputs[name][1]}")
+                raise state_mod.StateError(f"--{name}: {inputs[name][1] or 'the file holds null'}")
         issues, perms_raw = estimate_mod._flatten(inputs["issues"][0]), inputs["permissions"][0]
+        # A saved error (`{"message": …}`) or anything else that isn't an issue is never read as "no issues".
+        for i in issues:
+            if not (isinstance(i, dict) and isinstance(i.get("number"), int) and not isinstance(i["number"], bool)):
+                said = f": {str(i['message'])[:200]}" if isinstance(i, dict) and "message" in i else ""
+                raise state_mod.StateError(f"--issues holds something that isn't an issue{said}; fetch the open issues again")
     try:
         perms = merge_mod._permissions(perms_raw)
     except merge_mod.Unreadable as e:
         raise state_mod.StateError(f"--permissions can't be read: {e}") from None
-    said = state_mod.join(s, issues, perms)
+    said = state_mod.join(s, issues, perms, prof.repo if prof else None)
     new = state_mod.put(body, s)
     Path(a.out).write_text(new, encoding="utf-8")
     if a.json:
