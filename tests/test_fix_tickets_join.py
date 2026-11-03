@@ -662,14 +662,14 @@ def test_the_conductor_starts_them_through_ready_first():
     assert "`" not in step.split("--first <", 1)[1].split(">", 1)[0]  # no code span nested in the command
 
 
-def test_the_conductor_joins_once_more_before_the_report():
+def test_the_conductor_joins_once_more_for_the_report_on_a_copy():
+    # After the step's one state write, on a copy never written to the issue: nothing pending can be lost,
+    # and a ticket filed since the last check-in still reaches the report.
     report = _flat(_read("skills/conductor/SKILL.md").split("4. **The report.**", 1)[1].split("5. **Wind up.**", 1)[0])
-    # First, with nothing else pending, its body written to the issue and the state read back, so the step's
-    # later edits and its one state write keep `joined` (and the join never drops them).
-    assert report.startswith("First, so a ticket filed since the last check-in joins too, run `WF state join` as check-in step 1 does: "
-                             "write its body to the issue and read the state back from it")
     assert report.count("WF state join ") + report.count("WF state join`") == 1
-    assert report.index("WF state join`") < report.index("look again at each revert still `opened`") < report.index("WF state joined")
+    write = report.index("as check-in step 2 begins, and write the state to the issue. Then write the final report")
+    join = report.index("run `WF state join` as check-in step 1 does but with `--out .workflow/run/report-body.md`, a copy never written to the issue")
+    assert write < join < report.index("`WF state joined --body .workflow/run/report-body.md`")
 
 
 def test_the_conductor_names_them_at_the_go_and_in_the_report():
