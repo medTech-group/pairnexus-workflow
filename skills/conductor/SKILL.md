@@ -208,7 +208,7 @@ Then:
 5. Choose the run id (`yyyy-mm-dd-word`).
 6. Create the **by-hand issue** from `TEMPLATES/by-hand-issue.md`, filling in `RUN_ID`. Both templates already end with the marker.
 7. Create the **tracking issue** from `TEMPLATES/tracking-issue.md`, label `workflow:run`, filling in `RUN_ID` and `BY_HAND_ISSUE`, and its charter section with `WF charter splice --body body.md --charter charter.json --tickets "<n>:<area>,…" --estimate estimate.json --out body.md`, so the one page carries the estimate. Then link it from the by-hand issue.
-8. Show the owner the rendered charter and ask "Go / Change something".
+8. Show the owner the rendered charter and ask "Go / Change something". Its "Tickets filed during the run" line says that tickets to fix old bugs, tickets to fix late findings and split tickets filed by this run's sessions join it (check-in step 5), so the go approves that too; an owner who doesn't want one built names it in `scope.exclude`.
    - **If the kick-off is abandoned** (the owner says stop, or never answers before this session ends), close the tracking and by-hand issues as not planned, with a comment saying the run never started. An open `workflow:run` issue counts as a run in progress for `workflow status` and the guided start.
 9. Record the go:
    - set `approved` to `{by: <profile project.owner>, at: <now, UTC>, source: "chat <time>: <the owner's words>"}`;
@@ -334,14 +334,21 @@ Then act on what you find:
 
 **5. Start sessions,** unless winding down. Fill the free slots (`limits.max_parallel` minus running), in this order:
 1. **Queued tickets** in the state: carry-on tickets adopted at kick-off first, then retries, tickets the owner answered, and leftovers adopted at kick-off. They're claimed already; check `workflow:in-progress` is still on (add it back if a session took it off when it stopped), then start them.
-2. **New ready tickets:**
+2. **Tickets filed during the run join it** (#378, spec #412 "Runs"; the one page's "Tickets filed during the run" line, approved at the go): tickets to fix old bugs, tickets to fix late findings and split tickets that a ticket session files (`build-ticket` §3). First record who joined:
 
    ```bash
-   WF ready --fetch --exclude <scope.exclude> --only <scope.tickets when it's a list, plus every open workflow:infra ticket> \
-     --running-area <each running ticket's area> --override <state.overrides> --slots <free>
+   WF state join --body .workflow/run/body.md --fetch --out .workflow/run/body.md --json
    ```
 
-   `--only` always includes every open `workflow:infra` ticket, whoever filed it (you, a session, or the owner), so a fix for a failing check goes first. With `follow_unblocked` true and `scope.tickets` "all-ready", leave out `--only`.
+   Where `gh` can't read them, give the open issues as `--issues F` (as the GitHub API lists them, every page) and their authors' permissions as `--permissions F` (`collaborators/<login>/permission` for each author, in any shape `merge-check`'s `--permissions` takes) in place of `--fetch`. It joins each open ticket labelled `ready-for-agent` whose last `<!-- workflow:fix-ticket from=<n> kind=old|late|split -->` line names a ticket of the run (one in the state's `tickets`, or one that joined), posted by an account with write access; never an owner task (`owner-task`, `ready-for-human`), which carries the line too, or a ticket in `scope.exclude`. It records them in the state's `joined`, whatever the scope, and prints `joined`, `not_joined` (each with why) and `first`, the joined tickets not started yet. Write the body to the issue and read the state back from it (`WF state get --body .workflow/run/body.md`), so step 8's write keeps it, and name in this check-in's comment who joined and, once, who didn't and why. A joined ticket is in scope as any other, for "Done" too; it starts once unblocked (a split ticket, and a late one on its source's own lines, wait on their source's merge).
+3. **New ready tickets:**
+
+   ```bash
+   WF ready --fetch --exclude <scope.exclude> --only <scope.tickets when it's a list, plus every open workflow:infra ticket and every ticket in the state's `joined`> \
+     --first <its `first`> --running-area <each running ticket's area> --override <state.overrides> --slots <free>
+   ```
+
+   `--only` always includes every open `workflow:infra` ticket, whoever filed it (you, a session, or the owner), so a fix for a failing check goes first, and every joined ticket, so a pinned scope still starts them. `--first <its `first`>` (the `first` of `WF state join`, comma-separated; empty changes nothing) starts them right after the infra tickets, ahead of the run's other tickets not yet started. With `follow_unblocked` true and `scope.tickets` "all-ready", leave out `--only`.
 
 For each ticket to start:
 1. Claim it: add the `workflow:in-progress` label to its current labels, and assign `project.owner`.
@@ -479,7 +486,7 @@ Do these in order, across as many check-ins as it takes. The state's `status: "s
 
    On a resume, a ticket marked `carry-on` gets whichever of these steps it still lacks. The hand-off names a security finding by its area only, and so do you: a security problem's details you learn (from the session's summary or its pull request) go to the owner only in this chat, never in the hand-off, the ticket, the pull request or the tracking issue; the next session's first review finds them again. The report lists each carried-on ticket with its hand-off (`WF merge-check`'s `hand_off.url`).
 3. **Release,** once every session is archived, if the charter says `release.when: end`, **unless the reason is `owner`**. A stop means something may be wrong: skip the release, log "release skipped: stopped by the owner" in the ledger, and say in the report that the owner can release by hand. The end time, a wind-down and a finished run release as the charter says.
-4. **The report.** Before the rest of this step, look again at each revert still `opened` ("Reverting a merged change", step 3), so the state it writes carries their results. Read too the owner's comments not read yet (check-in step 3's *Comments*, setting `comments_read_through`), applying none: an "also #<n>" for a pull request needing a code fix takes the first of rows 2 to 4 of "A pull request that needs a code fix" that fits, row 3 adding no label, and any other change, a `needs-human` ticket's answer among them, gets the reply that the run has stopped, requeuing nothing. Then look again at each ticket with `requeued_head`, as that section's row 9 says. Then look again at each ticket still marked `cap_unknown_at`, as check-in step 2 begins, and write the state to the issue. Then write the final report with the `run-report` skill, and notify the owner as the charter says.
+4. **The report.** Before the rest of this step, look again at each revert still `opened` ("Reverting a merged change", step 3), so the state it writes carries their results. Read too the owner's comments not read yet (check-in step 3's *Comments*, setting `comments_read_through`), applying none: an "also #<n>" for a pull request needing a code fix takes the first of rows 2 to 4 of "A pull request that needs a code fix" that fits, row 3 adding no label, and any other change, a `needs-human` ticket's answer among them, gets the reply that the run has stopped, requeuing nothing. Then look again at each ticket with `requeued_head`, as that section's row 9 says. Then look again at each ticket still marked `cap_unknown_at`, as check-in step 2 begins, and write the state to the issue. Then write the final report with the `run-report` skill, and notify the owner as the charter says; it lists each joined ticket that didn't start, from `WF state joined --body .workflow/run/body.md`, naming those whose source didn't merge in this run.
 5. **Wind up.**
    - Set `stopped` (when and why) and `status: "stopped"`.
    - The sessions' PR subscriptions end with their archive; the conductor subscribes to nothing itself.

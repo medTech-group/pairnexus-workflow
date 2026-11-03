@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**Tickets to fix findings, and split tickets, join a run** (#378, part of spec #412). Tickets to fix old bugs, tickets to fix late findings and split tickets that a run's ticket session files (#373) now join the run's scope automatically, whatever the charter's scope says.
+
+- **Who joins:** an open ticket labelled `ready-for-agent` whose last `<!-- workflow:fix-ticket from=<n> kind=old|late|split -->` line names a ticket of the run, posted by an account with write access. Owner tasks (`owner-task`, `ready-for-human`) carry the line too and never join, nor does a ticket in the charter's `scope.exclude`.
+- **`workflow state join`** (new) decides it at each check-in, from the open issues and their authors' permissions (`--fetch`, or `--issues F --permissions F`). It records the joined tickets in the run state's new `joined` and prints `first`, which the conductor gives to `workflow ready --first` (#372) and adds to `--only`: they start once unblocked, after infra tickets and ahead of the run's other tickets not yet started.
+- **The one page** gains a "Tickets filed during the run" line saying they join, so the owner approves it at the go.
+- **The run report:** `workflow state joined` (new) gives each joined ticket's fate; the report lists one that never started, and whether its source didn't merge in this run.
+- **For projects updating:** nothing to do; the vendored conductor changes with the update. Tests: `tests/test_fix_tickets_join.py`.
+
 **Filing the three kinds of ticket: old bugs, late findings and split parts** (#373, part of spec #412). `build-ticket` §3 gains "Filing tickets to fix findings, and split tickets", the step `review-panel` §3 points to: under the rule for build reviewers, the session files a ready build ticket for each finding marked a ticket to fix it, after the review and before its record (the issue goes back into the findings file as `issue`), and for each part `merge-check` says to split out, before the part is taken out, so nothing piles up as `needs-triage`.
 
 - **The kinds:** `late` for a finding about the pull request's own lines or lines already reviewed, `old` for any other (code the change doesn't reach, or a written rule broken outside its lines), `split` for a part split out.

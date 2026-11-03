@@ -323,6 +323,25 @@ def test_state_join_reads_the_permissions_as_github_gives_them(tmp_path):
     assert state.get((tmp_path / "new.md").read_text())["joined"] == {"501": {"from": 378, "kind": "split"}}
 
 
+def test_state_join_fetch_reads_the_open_issues_and_their_authors_permissions(tmp_path, monkeypatch):
+    import fake_gh
+
+    issues = [_fix(501), _fix(502, login="reader", kind="old"), _fix(503, st="closed"), _issue(400, "no line", login="someone")]
+    gh = fake_gh.install(tmp_path, monkeypatch, {
+        "repos/acme/demo/issues": fake_gh.pages(issues[:2], issues[2:]),
+        f"repos/acme/demo/collaborators/{OWNER}/permission": {"permission": "admin", "user": {"login": OWNER}},
+        "repos/acme/demo/collaborators/reader/permission": {"permission": "read", "user": {"login": "reader"}},
+    })
+    _files(tmp_path, _state(), [])
+    p = _cli(tmp_path, "state", "join", "--body", "body.md", "--fetch", "--out", "new.md")
+    assert p.returncode == 0, p.stderr
+    assert p.stdout.splitlines()[-1] == "first: 501"
+    assert state.get((tmp_path / "new.md").read_text())["joined"] == {"501": {"from": 378, "kind": "split"}}
+    # Only the authors of open tickets with a machine line are asked about.
+    assert sorted(x for x in gh.paths() if "collaborators" in x) == [
+        f"repos/acme/demo/collaborators/{OWNER}/permission", "repos/acme/demo/collaborators/reader/permission"]
+
+
 def test_state_joined_prints_the_report_lines(tmp_path):
     s = _state({"378": {"status": "needs-human"}, "380": {"status": "merged"}, "504": {"status": "running"}})
     s["joined"] = {"501": {"from": 378, "kind": "split"}, "502": {"from": 380, "kind": "late"}, "504": {"from": 380, "kind": "old"}}
