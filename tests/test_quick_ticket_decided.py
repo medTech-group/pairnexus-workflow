@@ -63,6 +63,8 @@ def _part(word: str) -> str:
     for b in bullets:
         if not b.startswith("**"):
             break
+        # Its opening words: the bold lead and a few after it, without the markup
+        # (30 characters, as `tests/test_end_check.py` reads the Spec path's bullets).
         opening = re.sub(r"\*", "", b).split(" (", 1)[0][:30].lower()
         if word.lower() in opening:
             found.append(b.split("\n\n", 1)[0])
@@ -100,7 +102,8 @@ def test_the_quick_ticket_s_check_isn_t_the_planning_review_and_posts_no_answers
     o = _check_opening()
     assert re.search(r"\bnot the planning review\b|\bisn't the planning review\b", o)
     s = _sentence(o, "as their answers")
-    assert "posted" in s and re.search(r"\bnone\b|\bno\b|\bnever\b|\bnothing\b|\bnot\b", s)
+    # The negation belongs to "posted", not to "not the planning review" in the same sentence.
+    assert re.search(r"\b(none|nothing|never|not|no)\b[^,:;]*\bposted\b", s)
 
 
 def test_a_quick_ticket_with_no_item_s_issue_files_one_first():
@@ -160,6 +163,11 @@ def test_ask_findings_are_asked_first():
 def test_an_ask_finding_left_open_goes_into_decided_for_you_marked_open():
     s = _sentence(_part("ask findings"), "`## Decided for you`")
     assert re.search(r"\b(leave|left)\b[^.]*\bopen\b", s) and "marked open" in s
+
+
+def test_yes_to_all_answers_only_the_questions_with_a_recommendation():
+    s = _sentence(_part("ask findings"), "Yes to all\" answers")
+    assert "only" in s and "recommendation" in s and "again" in s and "on its own" in s
 
 
 def test_a_finding_about_their_own_words_is_asked_on_its_own():
@@ -256,18 +264,24 @@ def test_ready_to_build_drafts_the_ticket_and_runs_its_check_before_its_own_opti
     # The list is shown above the options.
     s1 = _sentence(before, "**Decided for you**")
     assert "above the options" in s1 and "**ask**" in s1
+    # Shown there, not asked: they are asked once Ready to build is picked.
+    assert "Show" in s1 and not re.search(r"\bask (its|the|them)\b", s1)
+    # The issue being sorted is the item's issue, so no second issue is filed.
+    assert "item's issue" in _sentence(before, "issue you're sorting")
     # The check it ran is the one Publish it shows: no second end check.
     ready = _flatten(_between(_sorting(), "**Ready to build**", "\n- **"))
     s2 = _sentence(ready, "**Publish it**")
     assert "check" in s2 and re.search(r"\bthe one\b|\bno second\b|\bnot again\b", s2)
     # Its ask findings are asked once Ready to build is picked, never before the options.
-    assert "**ask**" in s2 and "now" in s2
-    assert "since the check" in s2
+    assert "**ask**" in s2 and re.search(r"\bnow\b", s2)
+    # Its one re-read runs as the Quick ticket's step 1 says, never before the draft is shown.
+    assert "re-read" in s2 and "step 1" in s2
 
 
-def test_another_outcome_keeps_the_ask_findings_on_the_issue():
-    s = _sentence(_flatten(_sorting()), "isn't published")
-    assert "**Needs a spec**" in s and "**ask**" in s and "comment on the issue" in s
+def test_needs_more_information_asks_for_what_the_check_found():
+    s = _sentence(_flatten(_sorting()), "among what the comment asks")
+    assert "**Needs more information**" in s and "**ask**" in s
+    assert "`profile.md`" in s and "left out" in s
 
 
 def test_triage_run_on_its_own_isn_t_covered():
