@@ -69,7 +69,7 @@ Then Claude:
 - **creates the workflow's labels** on the repository straight away (`ready-for-agent`, `workflow:run`, `workflow:stop` and others);
 - **opens one pull request** containing:
   - the repository's settings: `.claude/workflow/profile.toml` and `profile.md`, with `ruleset = false` (solo mode), or `ruleset = true` when it read back a ruleset that already protects the base branch;
-  - the kit's copy: its skills and Matt Pocock's in `.claude/skills/`, the read-only agents and the UI explorer in `.claude/agents/`, the CLI, docs and templates in `.claude/workflow/`, its hooks merged into `.claude/settings.json`, and `.claude/workflow/lock.json` recording the version and every file;
+  - the kit's copy: its skills and Matt Pocock's in `.claude/skills/`, the read-only agents, the UI explorer and the fixer in `.claude/agents/`, the CLI, docs and templates in `.claude/workflow/`, its hooks merged into `.claude/settings.json`, and `.claude/workflow/lock.json` recording the version and every file;
   - a `workflow kit` CI check (`.github/workflows/workflow-kit.yml`) and the weekly update check (`.github/workflows/workflow-kit-update.yml`);
   - CODEOWNERS, issue templates, the pull request template ("In plain words" at the top), `docs/agents/` (how agents use the issue tracker and labels), `.gitignore` entries, and a short section in `CLAUDE.md`.
 
@@ -716,7 +716,7 @@ How to report each:
 | `skills/check-setup` | "Check the set-up": `workflow doctor`'s report, with what only a session can see (the rulesets, the environments) handed to it, and each upgrade it names offered with "Not now"; changes nothing |
 | `skills/upgrade-setup` | The upgrades from solo mode: "Protect `main`", guided click by click, read back, then the pull request that leaves solo mode |
 | `skills/update-workflow` | Update a project's vendored copy |
-| `agents/` | The read-only Correctness reviewer and planning checker, and the UI explorer |
+| `agents/` | The read-only Correctness reviewer and planning checker, the UI explorer, and the fixer that makes each review's fixes |
 | `scripts/workflow.py`, `scripts/workflow/` | The CLI the skills and hooks run (Python 3.11+, standard library only): `profile`, `status` (with doctor's local gaps, no network call), `doctor` (what's set up and what isn't, each line with its fix; changes nothing), `protection`, `version`, `adopt`, `ready`, `charter`, `state`, `render`, `comments`, `merge-check`, `preview` (whether a pull request's try-it link is ready for its head commit), `briefing`, `evidence`, `repair`, `vendor`, `hook`. `python3 -B scripts/workflow.py --help` lists every flag |
 | `hooks/hooks.json` | The plugin's hooks (a vendored project gets the same hooks in its `.claude/settings.json`): the guard (the never-list), the status gate, the flow context (`docs/profile.md`, "The flow context") and the guided start's first-message nudge, and at session start the environment repair, project setup and update notice |
 | `docs/` | `flow.md`, `charter.md`, `enforcement.md`, `install.md`, `profile.md`, `protection.md`, `spike.md` (what's verified), `proposal.md` (the original design, historical) |
