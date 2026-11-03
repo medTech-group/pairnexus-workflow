@@ -106,9 +106,9 @@ def test_when_each_is_filed():
     # A split: before the fixer takes the part out, so a restart never loses it.
     assert (
         "A split one: as soon as `WF merge-check` says to split, before a fresh fixer takes the part out of the pull request, "
-        "so a restart never loses the ticket; then add it to the pull request body's **Split out** (§4) at once, and give that "
-        "part's blocking findings in the findings table the outcome \"Split out to #<n>\", so a hand-off written before the "
-        "next review names it."
+        "so a restart never loses the ticket; then add it to the pull request body's **Split out** (§4) at once, and add a row of "
+        "its own to the findings table, naming the part with the outcome \"Split out to #<n>\", so a hand-off written before the "
+        "next review names it. Earlier rows keep their outcomes."
     ) in text
     # A session restarted after the split still gives the outcome, with the part's exact name, and the body's entry.
     assert (
@@ -327,7 +327,10 @@ def test_the_pull_request_body_names_moved_criteria_and_the_split_ticket():
         "criteria moved to it, quoted;"
     ) in body
     text = _filing()
-    assert "In the findings table, a finding filed or found as above has the outcome \"Filed #<n>\", or \"Already filed as #<n>\"." in text
+    assert (
+        "In the findings table, a finding filed or found as above has the outcome \"Filed #<n>\", or \"Already filed as #<n>\"; "
+        "a split has its own row, \"Split out to #<n>\"."
+    ) in text
 
 
 def test_plain_words_in_what_a_person_reads():
@@ -344,6 +347,7 @@ def test_changelog_note():
     assert "is a new ticket unless this session already filed one for it" in note
     assert "never filed, even when marked a ticket to fix it" in note
     assert "its ticket to fix it is filed (`kind=old`) and named under the held ticket's `## Blocked by`, replacing a \"None\"" in note
+    assert "a split has its own row, \"Split out to #<n>\"" in note
     assert "closes its ticket to fix it as completed, or takes that ticket out of `## Blocked by` if it isn't a problem" in note
     assert "a later review that marks one blocks holds the ticket again" in note
     # A hold can come before the pull request opens: the branch always exists.
