@@ -203,11 +203,15 @@ def test_when_a_spec_owes_its_counts():
     assert "\"Breakdown published\" comment has no comment headed exactly \"Planning counts\"" in s
     # A spec from before these counts owes none, so its edits post their own.
     s = _sentence(_sub("a spec", _where_raw()), "owes none")
-    assert "no \"Breakdown published\" comment" in s
+    # Neither post: a spec whose publishing stopped part-way still owes.
+    assert "neither a \"Breakdown to publish\" post nor a \"Breakdown published\" comment" in s
 
 
 def test_a_spec_session_that_stops_before_its_tickets_posts_what_it_counted():
     where = _sub("a spec", _where_raw())
+    # Only while the spec owes its counts: an edit to a spec that owes none
+    # posts its own comment instead (Add to an existing issue, step 3).
+    assert "while the spec owes its \"Planning counts\"" in where.split("however it ends", 1)[0].rsplit(". ", 1)[-1]
     ends = where.split("however it ends", 1)[1].split(". ", 1)[0]
     assert "**Stop here**" in ends and "fresh session" in ends and "edit" in ends
     s = _sentence(where, "last step")
