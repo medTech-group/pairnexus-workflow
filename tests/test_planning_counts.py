@@ -31,6 +31,9 @@ def _start() -> str:
 
 
 def _sentences(text: str, word: str) -> list[str]:
+    # Unlike tests/test_before_each_round.py's, this also splits at a ":" that
+    # starts a new sentence (before a capital, a bold name, a quote, a backtick
+    # or a bracket), since the counts' rules list their parts after colons.
     return [s for s in re.split(r"(?<=[.;:])\s+(?=[A-Z*\"`(])", text) if word in s]
 
 
@@ -70,7 +73,9 @@ def _rule() -> str:
 
 
 def _sub(word: str, raw: str | None = None) -> str:
-    """The one sub-bullet of the rule (or of `raw`) whose opening names `word`, flattened."""
+    """The one sub-bullet of the rule (or of `raw`) whose opening names `word`, flattened.
+    Its opening is its bold lead and the words just after it: the first 40
+    characters, without the markup."""
     subs = re.split(r"\n\s+- ", _rule_raw() if raw is None else raw)[1:]
     found = [s for s in subs if word.lower() in re.sub(r"\*", "", s)[:40].lower()]
     assert len(found) == 1, f"the rule has one sub-bullet opening with {word!r}: {found}"
@@ -88,7 +93,8 @@ def _spec_step(n: int) -> str:
 
 
 def _points_to_the_counts(text: str) -> bool:
-    """The text names the counts' comment, and doesn't say it isn't posted."""
+    """The text names the counts' comment, and doesn't say it isn't posted: no
+    negation in the 24 characters (up to three words) before the name."""
     t = _flatten(text)
     found = [m.start() for m in re.finditer(r"\"Planning counts", t)]
     return bool(found) and not any(re.search(r"\b(isn't|not|never|no)\s+(\w+\s+){0,2}$", t[max(0, i - 24):i], re.I) for i in found)
@@ -178,22 +184,26 @@ def test_a_spec_posts_it_on_its_issue_once_its_tickets_are_published():
     assert "pull request" in first and "planning review" in first
     # A session with no such pull request still has its moment.
     assert "if it has one" in first
+    counts = _sentence(s, "It counts the interview")
     for part in ("interview", "end check", "breakdown check", "pull request's rounds"):
-        assert part in first, part
+        assert part in counts, part
+    # An edit counts here until the spec's own comment is posted.
+    assert "edit made before it is posted" in counts
 
 
-def test_an_edit_before_the_tickets_counts_in_the_specs_comment():
+def test_an_edit_before_the_specs_counts_counts_in_the_specs_comment():
     s = _sub("a spec", _where_raw())
-    assert re.search(r"edit made before (its|the) tickets", s), s
+    assert "edit made before it is posted" in s
 
 
 def test_a_spec_session_that_stops_before_its_tickets_posts_what_it_counted():
     where = _sub("a spec", _where_raw())
-    s = _sentence(where, "however it ends")
+    ends = where.split("however it ends", 1)[1].split(". ", 1)[0]
+    assert "**Stop here**" in ends and "fresh session" in ends and "edit" in ends
+    s = _sentence(where, "last step")
     assert "\"Planning counts so far\"" in s and "no post says" in s
-    # Last, so the session's own pull request's rounds are in it.
-    assert "last step" in s and s.index("last step") < s.index("Commit what the session wrote")
-    assert "edit made before them" in s
+    # Last, after the commit and its review, so that pull request's rounds are in it.
+    assert "after \"Commit what the session wrote\" and that pull request's planning review" in s
     # The session that posts the counts adds every such comment up.
     assert "adds up every such comment" in where
     # A spec whose tickets are out with no counts is found by "Carrying on",
@@ -210,8 +220,12 @@ def test_carrying_on_finds_a_spec_whose_counts_were_never_posted():
     found = [r for r in rows if "\"Breakdown published\" comment has no comment headed exactly" in r]
     assert len(found) == 1, rows
     assert "\"Planning counts so far\" isn't one" in found[0]
-    what = found[0].split(" | ", 1)[1]
-    assert "step 4" in what and "adding up every" in what and _points_to_the_counts(what)
+    what = _flatten(found[0].split(" | ", 1)[1])
+    assert "step 4" in what and "adding up every" in what
+    # The row's own instruction posts them, not only the "so far" mention.
+    assert re.search(r"then post them as \"Decision questions\" says", what), what
+    # "Carrying on" says how many rows need more than status's lines.
+    assert "Three rows need more" in reads
     # The publish-in-progress row still comes first (tests/test_breakdown_check.py).
     assert '"Breakdown to publish" post' in rows[0]
 
@@ -219,7 +233,9 @@ def test_carrying_on_finds_a_spec_whose_counts_were_never_posted():
 def test_a_later_edit_to_a_published_spec_adds_its_own():
     s = _sub("a later edit", _where_raw())
     assert "its own" in s and "spec's issue" in s
-    assert "once its tickets are published" in s
+    # Only once the spec's own comment is there, so an edit's comment never
+    # stands in for it (the carry-on row looks for a "Planning counts" comment).
+    assert "made once the spec's own \"Planning counts\" is posted" in s
 
 
 def test_a_quick_ticket_posts_it_on_the_ticket():
@@ -227,7 +243,7 @@ def test_a_quick_ticket_posts_it_on_the_ticket():
     assert "on the ticket" in s and "published" in s
     assert "end check" in s and "re-read" in s
     # Each of the guided start's routes to a quick ticket ends there.
-    assert "**File the fix as a ticket**" in s and "**Ready to build**" in s
+    assert "**File the fix as a ticket and build it**" in s and "**Ready to build**" in s
 
 
 def test_a_map_decision_posts_it_on_its_decision_ticket():
@@ -256,6 +272,9 @@ def test_the_spec_paths_stop_after_publishing_posts_what_it_counted_so_far():
     step = _flatten(_spec_step(2))
     stop = step.split("**Stop here**", 1)[1].split(" - **", 1)[0]
     assert "\"Planning counts so far\"" in stop
+    # Last, after the commit and its pull request's review.
+    assert "after \"Commit what the session wrote\"" in stop and "planning review" in stop
+    assert stop.index("Commit what the session wrote") < stop.index("Planning counts so far")
 
 
 def test_the_quick_ticket_posts_it_once_published():
@@ -283,17 +302,19 @@ def test_an_edit_after_publishing_posts_its_own():
     assert re.search(r"\bown\b", s) and "spec's issue" in s and _points_to_the_counts(s)
     # Before its tickets are published, an edit counts in the spec's own comment,
     # and a session that ends there posts what it counted.
-    s = _sentence(add, "not yet published")
+    s = _sentence(add, "Before then")
     assert "spec's own" in s
+    assert "Once the spec's own \"Planning counts\" is posted" in add
     assert "\"Planning counts so far\"" in _sentences(add, "ends here")[0]
     # §7 points to the rule rather than restating its condition.
     later = _flatten(_path("**A spec or ticket to change after it's published:**", "\n- **A decision to undo"))
     assert _points_to_the_counts(later) and "\"Where the planning counts go\"" in later
 
 
-def test_a_fresh_session_for_the_tickets_posts_what_it_counted_first():
+def test_a_fresh_session_for_the_tickets_posts_what_it_counted_as_its_last_step():
     long = _flatten(_path("**When the session gets long in the middle of an item:**", "\n## 7."))
-    assert "\"Planning counts so far\"" in _sentence(long, "to-tickets")
+    s = _sentence(long, "to-tickets")
+    assert "\"Planning counts so far\"" in s and "last step" in s
 
 
 def test_points_to_the_counts_catches_a_reversed_rule():
