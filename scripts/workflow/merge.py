@@ -1131,8 +1131,11 @@ def _panel(ctx: Context, add) -> None:
     The new rule (#426, spec #412 "Records and clean"): a `rule=2` record is
     clean by its findings' marks (`_clean_review`), and when the latest counted
     record is one, there is no pass cap, whatever `ctx.review_passes` says: the
-    latest counted record's rule decides, latest by the PR's history and then
-    by posting, so a record posted late for an older commit doesn't decide it.
+    latest counted record's rule decides: latest by the PR's commit list
+    (GitHub's order, by date), with the head always the newest, and then by
+    posting, so a record posted late for an older commit doesn't decide it.
+    Like `free` and `_hand_off`, it takes the list's order for the PR's
+    history; it doesn't read the commits' parents.
     When the old rule decides, every counted pass after the last round counts
     toward its cap, as it always has. The round limit stays as above."""
     head = ctx.pr().head
