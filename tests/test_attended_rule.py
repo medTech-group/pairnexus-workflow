@@ -102,10 +102,11 @@ def test_every_reviews_fixes_round_1s_included_go_to_a_fresh_fixer():
     assert "a fresh fixer makes every review's fixes and contests, never you: your doubt goes in the findings table" in _review()
 
 
-def test_a_red_required_check_is_section_5s_unless_step_5_listed_its_failure():
-    """Both sides: a red required check is the session's (§5), whoever's commit it is; one whose failure step 5 already listed waits for that review."""
+def test_a_red_required_check_is_section_5s_whoever_made_the_commit():
+    """A red required check is the session's (§5), whoever's commit it is, with no exception to leave it waiting on a review."""
     fixer = _bullet(_rule(), "**A fresh fixer makes every review's fixes,**")
-    assert "A required check that goes red is §5's, whoever's commit it is, unless its failure is one step 5 already listed for the next review." in fixer
+    assert "A required check that goes red is §5's, whoever's commit it is." in fixer
+    assert "unless" not in fixer.split("A required check that goes red", 1)[1]
     assert "**A required check is red:** find the cause" in _section(BUILD, "## 5. Get it green\n", "\n## 6. ")
     # No Correctness pass is started for a red check: a clean pass on reviewed lines could never block it.
     assert "run a Correctness pass on the head for it" not in fixer
@@ -300,9 +301,8 @@ def test_a_carry_on_ticket_reaches_build_ticket_and_skips_the_build():
     assert "take `workflow:carry-on` off and put `ready-for-agent` back" in claim
     assert "go on from §3's \"Carrying on after a hand-off\" instead of §2" in claim
     # A ticket session gets there from its briefing's Hand-off line, not the label the conductor takes off.
-    # Only a briefing whose Hand-off line links one: a fresh ticket's says "none".
-    assert "In a ticket session under the rule, a briefing whose \"Hand-off:\" line links a hand-off comment (not \"none\") also goes on from §3's \"Carrying on after a hand-off\"." in claim
-
+    # A ticket session follows its briefing's own Hand-off line (the conductor's), never this route.
+    assert "Hand-off:" not in claim
 
 
 def test_carry_on_leaves_a_ticket_a_run_holds_to_the_run():

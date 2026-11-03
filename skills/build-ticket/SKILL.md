@@ -44,8 +44,6 @@ Skip this if the briefing says the conductor has claimed it. Otherwise, before a
 
 **A ticket labelled `workflow:carry-on`** with an open pull request ("carry on #12"), in attended work: an earlier session handed it on. When it also has `workflow:in-progress`, a run holds it: say so and stop. Otherwise claim it as above, take `workflow:carry-on` off and put `ready-for-agent` back, then go on from §3's "Carrying on after a hand-off" instead of §2. It is attended work for §3's "Which rule", even on a branch named like `run.ticket_branch`.
 
-In a ticket session under the rule, a briefing whose "Hand-off:" line links a hand-off comment (not "none") also goes on from §3's "Carrying on after a hand-off".
-
 ## 2. Build it
 
 - **Branch:** work on the session's branch. A ticket session's is the profile's `run.ticket_branch` with the ticket's number. In an attended session that builds more than one thing, each ticket gets its own branch, fresh from `origin/<base>` and not named like `run.ticket_branch` (that would make it a ticket session), so no pull request carries another's work.
@@ -77,7 +75,7 @@ Follow the `review-panel` skill on the diff against the base branch:
 - **Which rule.** In attended work, build reviews always follow the rule for build reviewers (`review-panel` §10). In a ticket session, only when its briefing has a "Findings:" line: a run keeps the rule it started with, so a briefing without one means today's rule throughout, and this section doesn't apply.
 
 Under the rule:
-- **A fresh fixer makes every review's fixes,** round 1's included (`review-panel` §3, **The fixer**), in the order it gives. You build the change, start the reviewers and the fixers, file the tickets, post the records and keep short summaries; you fix no finding yourself. A failure `review-panel` §3's step 5 finds after a fixer goes to the next review, never to you. A required check that goes red is §5's, whoever's commit it is, unless its failure is one step 5 already listed for the next review.
+- **A fresh fixer makes every review's fixes,** round 1's included (`review-panel` §3, **The fixer**), in the order it gives. You build the change, start the reviewers and the fixers, file the tickets, post the records and keep short summaries; you fix no finding yourself. A failure `review-panel` §3's step 5 finds after a fixer goes to the next review, never to you. A required check that goes red is §5's, whoever's commit it is.
 - **The pull request opens as a draft after round 1:** once round 1's findings file is written and its tickets filed, open it (§4) with `draft: true` and post round 1's record on it, before its fixer, so `WF merge-check` reads every review from the start. Mark it ready for review (`update_pull_request` with `draft: false`) once `WF merge-check --fetch <PR> --json` (in a run, with step 6.3's flags) gives no review reason: none whose `rule` is `review_panel`, and no `couldnt_read` (with an input it couldn't read, it can't tell). Its `draft` reason never holds a review.
 - **No pass cap** (`review-panel` §5): after the last round, Correctness passes until one is clean, keeping the PR body's findings table current.
 - **When the same part keeps blocking** (`mechanism_repeats`), do what its `next` says, not what you judge, fixing the review's other blocking findings in the same fixer:
