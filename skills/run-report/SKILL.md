@@ -20,7 +20,7 @@ One comment on the tracking issue, written for the owner to act on. Build it onl
 ## Its sections
 
 1. **Summary.** One line:
-   - how many tickets merged, how many were set aside, how many weren't started;
+   - how many tickets merged, how many were set aside, how many were carried on, how many weren't started;
    - why the run ended: done, the end time, a limit, or the stop label.
 
    **A solo-mode run** repeats its gap right under the summary. It is one whose charter's `accepted_gaps` has a line starting `solo mode:` or `removed protection:`, whatever its case or spacing (the charter's own check reads `removed protection:` the same way). Use these words, with the base branch's name in place of `main` where it isn't `main`:
@@ -32,7 +32,7 @@ One comment on the tracking issue, written for the owner to act on. Build it onl
    - `removed protection:`: first say the profile says `main` is protected but the conductor's read-back didn't find it protected (the protection was removed, or couldn't be confirmed without admin access), then "Restore protection".
 2. **Merged.** A table of ticket, title, PR, review rounds, wall time (from `started_at` to `merged_at`) and attempts.
 3. **Set aside.** Each `needs-human` or set-aside ticket, with exactly what it needs and from whom. A run wound down because a session wasn't a ticket session (the state's `wind_down`) says so first, with the environment's fix: `WORKFLOW_ROLE=ticket` in the ticket environment's variables (`docs/enforcement.md` §2), before the next run.
-   Then each ticket carried on at the end time (the state's `carry-on`, labelled `workflow:carry-on`, #380), with its pull request and a link to its hand-off: it needs nothing from the owner, since the next run adopts it first and its session starts from that hand-off.
+   Then each ticket carried on at the end time (the state's `carry-on`, labelled `workflow:carry-on`, #380), with its pull request and a link to its hand-off (`workflow merge-check --fetch <PR> --json`'s `hand_off.url`): it needs nothing from the owner, since the next run adopts it first and its session starts from that hand-off.
 4. **What's live.** Each release step in the ledger: what ran, from which commit, and the smoke test's result. A release skipped because the owner stopped the run says so, and that the owner can release by hand.
 5. **Changes outside the repo.** The ledger, as a list for the owner to **confirm or undo**. Each line gives the change, when it happened, and the charter line or owner comment that allowed it. A revert entry gives its `result`: only one whose `result` starts with "made" is a change to confirm or undo; any other ("opened", "not made") is listed as not made, with its pull request or why.
 6. **For you:**
