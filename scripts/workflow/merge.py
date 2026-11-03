@@ -543,12 +543,19 @@ class Context:
         self.small_max_lines = small_max_lines or (profile.small_max_lines if profile else small.DEFAULT_MAX_LINES)
         self.small_max_files = small_max_files or (profile.small_max_files if profile else small.DEFAULT_MAX_FILES)
         self.measured: small.Measure | None = None  # the diff against it, once measured
+        self.rule2 = False  # the latest counted review record is a `rule=2` one: no pass cap (#426); `_panel` sets it
         self.waived: list[str] = []  # the waivers used
         self.notes: list[dict] = []
         self.checks: list[dict] = []
         self.preview: dict | None = None
         self.kit: list[str] = []
         self._cache: dict = {}
+
+    @property
+    def pass_cap(self) -> int | str:
+        """The pass cap the review rule uses: `review_passes`, or none
+        (`until-clean`) when the latest counted record is a `rule=2` one (#426)."""
+        return presets_mod.UNTIL_CLEAN if self.rule2 else self.review_passes
 
     def raw(self, name: str):
         """The input's JSON as given."""
@@ -907,6 +914,17 @@ def _counted(r: reviews.Record, perms: dict[str, str], shas: set[str]) -> bool:
     return r.kind != "spec" and _may_review(r.author, perms) and r.commit in shas
 
 
+def _clean_review(r: reviews.Record) -> bool:
+    """Whether a review left nothing to fix. A `rule=2` record's is worked out
+    from its findings' marks (spec #412, "Records and clean"): clean only with
+    no finding marked blocks, a finding kept after a contest among them; a note
+    or a ticket to fix it never makes it unclean. Any other record's is its own
+    result, as today. The reader (`reviews.read`) already skips a `rule=2`
+    record whose `result` disagrees with its marks; this says the rule here
+    too, and the reader's check stays."""
+    return r.found.clean if r.rule == reviews.RULE else r.clean
+
+
 def _note(ctx: Context, nid: str, message: str) -> None:
     ctx.notes.append({"id": nid, "message": message})
 
@@ -1108,7 +1126,18 @@ def _panel(ctx: Context, add) -> None:
     that review's (`lines`), and no record on its commit since the last round
     wasn't clean; nor is the cap reached by a pass on the head that wouldn't
     count. A record without the hashes, or with `unknown`, covers only its own
-    commit."""
+    commit.
+
+    The new rule (#426, spec #412 "Records and clean"): a `rule=2` record is
+    clean by its findings' marks (`_clean_review`), and when the latest counted
+    record is one, there is no pass cap, whatever `ctx.review_passes` says: the
+    latest counted record's rule decides: latest by the PR's commit list
+    (GitHub's order, by date), with the head always the newest, and then by
+    posting, so a record posted late for an older commit doesn't decide it.
+    Like `free` and `_hand_off`, it takes the list's order for the PR's
+    history; it doesn't read the commits' parents.
+    When the old rule decides, every counted pass after the last round counts
+    toward its cap, as it always has. The round limit stays as above."""
     head = ctx.pr().head
     perms = ctx.permissions()
     shas = ctx.commits() | {head}
@@ -1118,6 +1147,14 @@ def _panel(ctx: Context, add) -> None:
         left_out = _plural(len(records) - len(counted), "review record")
         _note(ctx, "records_ignored", f"Left out {left_out}: posted by an account without write access, or naming a commit not in this pull request's commit list.")
     rounds = [i for i, r in enumerate(counted) if r.kind == "round"]
+    history = {sha: n for n, sha in enumerate(ctx.parents())}  # the PR's commits, oldest first
+    if counted:
+        # The head is the newest commit, wherever GitHub's list (by date, at most 250) puts it, or leaves it out.
+        def place(sha):
+            return len(history) if sha == head else history.get(sha, len(history))
+
+        latest_by_history = max(enumerate(counted), key=lambda e: (place(e[1].commit), e[0]))[1]
+        ctx.rule2 = latest_by_history.rule == reviews.RULE
     if not rounds:
         add("no_review")
         return
@@ -1150,8 +1187,6 @@ def _panel(ctx: Context, add) -> None:
     def on_head(r: reviews.Record) -> bool:
         return r.commit == head or (carried and r is latest)
 
-    history = {sha: n for n, sha in enumerate(ctx.parents())}  # the PR's commits, oldest first
-
     def free(i: int, commit: str | None, lines: str | None) -> bool:
         """A pass on `commit` after the counted records up to `i` doesn't count
         toward the cap (answer 23). The review before it is the latest since
@@ -1161,15 +1196,15 @@ def _panel(ctx: Context, add) -> None:
         wasn't clean."""
         since = counted[rounds[-1]:i + 1]
         prev = max(enumerate(since), key=lambda e: (history.get(e[1].commit, -1), e[0]))[1]
-        return (ctx.base_merge(commit) and prev.clean and _hashed(lines) and lines == prev.lines
-                and all(r.clean for r in since if r.commit == commit))
+        return (ctx.base_merge(commit) and _clean_review(prev) and _hashed(lines) and lines == prev.lines
+                and all(_clean_review(r) for r in since if r.commit == commit))
 
     after = [(i - 1, r) for i, r in enumerate(counted) if i > rounds[-1] and r.kind == "pass"]
     used = [r for i, r in after if not free(i, r.commit, r.lines)]
-    if len(after) > len(used) and ctx.review_passes != presets_mod.UNTIL_CLEAN:
+    cap = ctx.pass_cap
+    if len(after) > len(used) and cap != presets_mod.UNTIL_CLEAN:
         _note(ctx, "free_passes", f"{_plural(len(after) - len(used), 'Correctness pass', 'Correctness passes')} after a merge of the base that left the pull request's changed lines as they were didn't count toward the pass cap.")
     passes = [r for _, r in after if on_head(r)]
-    cap = ctx.review_passes
 
     def needs_pass(rid, **more):
         # A pass the head needs that wouldn't count doesn't meet the cap (answer 23: no false needs-human). It is
@@ -1180,14 +1215,14 @@ def _panel(ctx: Context, add) -> None:
         else:
             add(rid, **more, **details)
 
-    if not last.clean:
+    if not _clean_review(last):
         if not last_allowed:
             add("review_not_clean", next="round", **details)
         elif not passes:
             needs_pass("review_not_clean", next="pass", case="last_round" if last.round >= allowed else "small" if not any(ran_spec) else "after_small")
-        elif not passes[-1].clean:
+        elif not _clean_review(passes[-1]):
             needs_pass("pass_not_clean")
-    elif passes and not passes[-1].clean:
+    elif passes and not _clean_review(passes[-1]):
         needs_pass("pass_not_clean")
     elif not on_head(last) and not passes:
         needs_pass("review_stale")
@@ -1528,7 +1563,7 @@ def evaluate(
         decision = "owner_review"
     else:
         decision = "ready"
-    return Result(decision, number, head, level, owner, reasons, ctx.notes, ctx.checks, kit, ctx.preview, ctx.review_rounds, ctx.review_passes,
+    return Result(decision, number, head, level, owner, reasons, ctx.notes, ctx.checks, kit, ctx.preview, ctx.review_rounds, ctx.pass_cap,
                   ctx.small_max_lines, ctx.small_max_files, ctx.measured.as_dict() if ctx.measured else None, queue, ctx.head_hashes(), hand_off)
 
 
