@@ -110,21 +110,28 @@ def test_its_inputs_are_the_round_and_every_round_posted_so_far():
     r = _rule()
     assert "/tmp/plan-check-<issue>-round-<n>/" in _sentence(r, "/tmp/plan-check-")
     assert '"Your inputs"' in _sentence(r, "/tmp/plan-check-")
-    s = _sentence(r, "every round posted")
+    s = _sentence(r, "every post so far")
     # The round as it's about to be asked, with its recommendations and evidence.
     assert re.search(r"about to (?:ask|be asked)", s) and "evidence" in s
-    # The answers so far, and for a map's Destination item the map decisions it
-    # draws on, as the end check takes them.
+    # The answers so far with the checks' own posts (their fixes), as §8's
+    # answers.md takes them, and for a map's Destination item the map decisions
+    # it draws on, as the end check takes them.
+    assert "checks' own posts" in s and "`answers.md`" in s
     assert "Destination item" in s and "map decisions" in s
 
 
 def test_its_inputs_carry_the_words_that_raised_the_round():
     # A recommendation that contradicts the item's issue or the edit asked for is
     # caught before the round, not left open by a last read.
-    s = _sentence(_rule(), "raised the round")
+    r = _rule()
+    s = _sentence(r, "raised the round")
     assert "word for word" in s and "**the owner's own words**" in s
-    assert "item's issue" in s and "decision ticket" in s
-    assert "edit after publishing" in s and "spec's body as published" in s
+    # Only what they asked for is tagged as theirs: their words in the item's
+    # issue, or the change asked for in an edit after publishing.
+    assert "item's issue" in s and "edit after publishing" in s
+    # The rest (text the session wrote) goes in untagged, never as their words.
+    rest = _sentence(r, "untagged")
+    assert "decision ticket" in rest and "spec's body as published" in rest
 
 
 def test_the_agent_knows_the_round_read_and_its_inputs():
@@ -134,7 +141,10 @@ def test_the_agent_knows_the_round_read_and_its_inputs():
     assert re.search(r"`<read>` is .*`round`", text)
     inputs = _flatten(_between(text, "## Your inputs", "\n## "))
     s = _sentence(inputs, "Before a round")
-    assert "raised the round" in s and "own words" in s
+    assert "raised the round" in s and "own words" in s and "untagged" in s
+    reads = _flatten(_between(text, "## The reads", "\n## "))
+    s = _sentence(reads, "**Before a round:**")
+    assert "raised the round" in s and "options" in s
 
 
 # --- each finding: changes the recommendation, or "Check: …" -----------------------
@@ -146,6 +156,12 @@ def test_each_finding_changes_the_recommendation_or_is_shown_as_check():
     assert '"Check: …"' in s
     # Which change it: a fix, or an ask that your own recommendation was wrong.
     assert "**fix**" in s and "**ask**" in s and "wrong" in s
+
+
+def test_a_finding_about_no_question_in_the_round_has_a_place():
+    s = _sentence(_rule(), "no question in the round")
+    assert "**fix**" in s and "round's post" in s
+    assert "**ask**" in s and "question of its own" in s
 
 
 def test_a_finding_that_leaves_no_basis_drops_the_recommendation():
@@ -166,11 +182,17 @@ def test_a_check_about_their_own_words_is_asked_on_its_own_as_part_of_the_round(
 def test_then_the_round_is_asked_and_its_check_never_repeated():
     r = _rule()
     assert re.search(r"\bThen ask the round\b|\bthe round is then asked\b", r, re.I)
-    assert _sentences(r, "never repeated")
-    # What the check changed, and a question asked on its own after it, aren't read again.
-    s = _sentence(r, "read again")
+    # One read covers what the check changed and each question asked on its own after it.
+    s = _sentence(r, "never repeated")
     assert "findings" in s and "on its own" in s
-    assert re.search(r"\b(nothing|nor|not|never)\b", s)
+
+
+def test_a_check_that_fails_leaves_the_round_marked_not_checked():
+    s = _sentence(_rule(), "fails")
+    assert "once more" in s and "ask the round" in s
+    assert re.search(r"wasn't checked|not checked", s) and "why" in s
+    post = _sentence(_each_round(), "check before the round")
+    assert '"not checked"' in post
 
 
 def test_the_round_post_lists_the_check_s_findings():
@@ -187,6 +209,9 @@ def test_a_check_s_own_rounds_get_none():
     assert re.search(r"\bnone\b|\bno check\b", s)
     for own in ("end check", "breakdown check", "held-back ticket", "quick ticket"):
         assert own in s, own
+    # Only those: none of the rounds the check covers is listed with them.
+    for checked in ("interview", "seams", "map decision", "**Edit the spec first**", "**Fixes**", "existing issue"):
+        assert checked not in s, checked
 
 
 def test_points_to_the_check_catches_a_reversed_rule():
@@ -227,13 +252,10 @@ def test_a_planning_review_s_fix_questions_are_checked_before_they_re_asked():
     assert _points_to_the_check(review[0])
 
 
-def test_the_check_s_own_rounds_keep_no_check_of_their_own():
-    # The end check's and the breakdown check's rounds still say they get none.
-    step2 = _flatten(_spec_step(2))
-    assert "no check of its own before it's asked" in step2
-    step3 = _flatten(_spec_step(3))
-    assert "no check of its own before it's asked" in step3
-    assert "no check before it" in step3
+def test_a_map_decision_s_fix_questions_are_checked_before_they_re_asked():
+    m = _flatten(_path("\n**Map** (flow §1)", "\n**Add to an existing issue:**"))
+    s = _sentence(m, "a fix raises")
+    assert _points_to_the_check(s)
 
 
 # --- next ----------------------------------------------------------------------
