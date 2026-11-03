@@ -331,7 +331,7 @@ def test_a_failure_after_the_fixer_goes_to_the_next_review_never_to_the_session(
     s3 = _s3()
     # Not a second fixer in the same review: it would have no finding number, and a failure
     # the first fixer rightly left alone would start fixer after fixer.
-    assert "Under the rule, you fix nothing yourself: a failure goes in the findings table and under \"Failures\" in the next review's `previous.md`, whose reviewers report it as a finding (section 10), so that review's fixer gets it." in s3
+    assert "Under the rule, you fix nothing yourself: a failure goes in the findings table and under \"Failures\" in the next review's `previous.md`, whose Correctness reviewer reports it as a finding (section 10), so that review's fixer gets it." in s3
     assert "a failure goes to a fresh fixer" not in s3
     # It reaches that review: §1 lists it, and §10 (rule.md) has the reviewers report it, marked as any
     # other, so a failure on the base branch becomes a ticket and one the change causes blocks.
@@ -339,7 +339,8 @@ def test_a_failure_after_the_fixer_goes_to_the_next_review_never_to_the_session(
     inputs = _flat(text.split("## 1. Gather the inputs", 1)[1].split("\n## 2.", 1)[0])
     assert "under \"Failures\", each failure step 5 of section 3 found after the last fixer, with the command that shows it and its output" in inputs
     rule = _flat(text.split("## 10. The rule for build reviewers", 1)[1])
-    assert "report each failure it lists under \"Failures\" as a finding, marked as any other, the failing command and its output as the reproducer" in rule
+    # One reviewer reports it, so it is never three entries with different marks.
+    assert "as the Correctness reviewer, report each failure it lists under \"Failures\" as a finding, marked as any other, the failing command and its output as the reproducer" in rule
 
 
 def test_the_older_steps_hand_the_fixes_and_reasons_to_the_fixer():
@@ -376,10 +377,12 @@ def test_a_refusal_of_the_guard_is_an_outcome_the_session_acts_on():
     assert "the refusal is the answer, never a puzzle to get around" in inputs
     # The project's rule for a hook that timed out: split or simplify it.
     assert "a command whose hook timed out, split or simplify once" in inputs
-    assert "leave that finding **refused** (How to report) and go on to the next" in inputs
+    assert "refused again, or anything else it refuses, leave that finding **refused** (How to report) and go on to the next" in inputs
     assert "commits already made are pushed all the same" in _section("The fix rule")
     fixer = _the_fixer()
-    assert "act on the refusal as on one of your own (`build-ticket` §2), never around it, its public words naming only a security finding's area" in fixer
-    # No stop sends it to the owner by itself, and no restart loop.
-    assert "Still red after three fix attempts" not in fixer
+    # A refused finding is never left for a later review: §10's lines-already-reviewed rule would make it
+    # a ticket, or no reviewer report it again, and the defect would merge (pass 1).
+    assert "A finding the fixer reports refused by the guard is the owner's" in fixer
+    assert "stop as `build-ticket` §5's \"Still red after three fix attempts\" says, the refusal as the reason, naming only a security finding's area" in fixer
+    assert "A refused finding never waits for a later review" in fixer
     assert "head moved" not in fixer

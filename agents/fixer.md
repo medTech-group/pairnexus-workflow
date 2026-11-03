@@ -19,7 +19,7 @@ The session gives you the repository's path, the branch's name, and a scratch di
 
 Nothing of the session's history: no earlier review's discussion, no earlier fixer's reasoning. Read no other `/tmp/review-*` or `/tmp/fix-*` directory. What you need is in these files and in the repository. Read the code each finding names in full, with the code it calls, the code that calls it and the tests that cover it. The project's commands (its typecheck and how to run one test file) are in its profile, `.claude/workflow/profile.toml`, under `[commands]`.
 
-If the guard refuses you an edit or a command, the refusal is the answer, never a puzzle to get around: a command whose hook timed out, split or simplify once, as the project's rules say; anything else it refuses, leave that finding **refused** (How to report) and go on to the next.
+If the guard refuses you an edit or a command, the refusal is the answer, never a puzzle to get around: a command whose hook timed out, split or simplify once, as the project's rules say; refused again, or anything else it refuses, leave that finding **refused** (How to report) and go on to the next.
 
 ## The fix rule
 
