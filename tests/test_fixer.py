@@ -89,6 +89,8 @@ def test_it_gets_only_what_the_spec_names_and_nothing_of_the_sessions_history():
     for words in ("marked blocks", "reproducer", "kept after a contest"):
         assert words in findings, words
     assert "Nothing of the session's history" in inputs
+    assert "Read no other `/tmp/review-*` or `/tmp/fix-*` directory" in inputs
+    assert "`previous.md`" not in inputs
     # It checks it starts on the head it was given: anything else, it stops.
     assert "If `git rev-parse HEAD` isn't `head.txt`, stop" in inputs
 
@@ -98,7 +100,9 @@ def test_section_3_gives_it_the_same_inputs_in_a_directory_of_its_own():
     assert "`/tmp/fix-<ticket>-<review>/`" in fixer
     for name in ("`ticket.md`", "`bar.md`", "`rules.md`", "`findings.md`", "`moved.md`", "`head.txt`"):
         assert name in fixer, name
-    assert "nothing of this session's history" in fixer
+    assert "nothing of this session's history (no `previous.md`, no summaries)" in fixer
+    listed = fixer.split("holding only these", 1)[1]
+    assert "- `previous.md`" not in listed and "- `diff.patch`" not in listed
     # An overturned finding counts for nothing: it isn't given to the fixer.
     assert "an overturned one isn't given to it" in fixer
 
@@ -116,7 +120,7 @@ RULE_WORDS = (
     # an added exception, state or rule: both sides, one commit
     "adds an exception, a state or a rule tests both sides of it in the same commit",
     # then the checks, the commit, the push and the report
-    "the typecheck and the affected tests",
+    "the affected tests",
 )
 
 
@@ -126,19 +130,20 @@ def test_the_agent_states_the_fix_rule():
         assert words in rule, words
     assert rule.index("failing test first") < rule.index("prefer a fix that removes a case")
     for step in ("commit", "push", "report"):
-        assert step in rule.split("the typecheck and the affected tests", 1)[1], step
+        assert step in rule.split("the affected tests", 1)[1], step
 
 
 def test_section_3_states_the_same_fix_rule():
     rule = _fix_rule()
     for words in RULE_WORDS:
         assert words in rule, words
-    assert "`fixer` agent follows it" in rule
+    assert "`fixer` agent follows it, and gives it in full" in rule
+    assert "It is `review-panel` §3's fix rule, given here in full" in _section("The fix rule")
 
 
 def test_the_agent_and_section_3_order_the_checks_before_the_commit():
     for rule in (_section("The fix rule"), _fix_rule()):
-        tests = rule.index("the typecheck and the affected tests")
+        tests = rule.index("the affected tests")
         assert tests < rule.index("commit", tests) < rule.index("push", tests)
 
 
@@ -209,7 +214,7 @@ def test_section_3_sends_each_reviews_fixes_to_a_fresh_fixer():
     assert "a fresh fixer makes them instead" in steps
 
 
-def test_it_never_posts_merges_or_starts_a_review():
+def test_it_never_posts_merges_or_edits_the_records():
     body = _body()
     assert "never post on GitHub" in body
     assert "never merge" in body
@@ -218,8 +223,15 @@ def test_it_never_posts_merges_or_starts_a_review():
 
 def test_it_reports_each_findings_outcome_by_its_number():
     report = _section("How to report")
-    for outcome in ("**fixed:**", "**contested:**", "**not fixed:**"):
+    for outcome in ("**fixed:**", "**contested:**", "**taken with its part:**"):
         assert outcome in report, outcome
+    # No third way out: a finding left "not fixed" would turn into a ticket at the next review
+    # (§10's lines already reviewed), and the defect would merge.
+    assert "not fixed" not in report
+    assert "Every finding ends fixed or contested" in _section("The fix rule")
+    assert "Every finding ends fixed or contested" in _fix_rule()
+    assert "fixes by refusing the case it fails on" in _fix_rule()
+    assert "you fix by refusing the case it fails on" in _section("The fix rule")
     assert "its number in `findings.md`" in report
     assert "the head you pushed" in report
 
@@ -247,3 +259,73 @@ def test_the_changelog_notes_it_under_unreleased():
     note = notes.split("#429", 1)[0].rsplit("\n\n**", 1)[1] + notes.split("#429", 1)[1].split("\n\n**", 1)[0]
     for words in ("`fixer`", "`agents/fixer.md`", "§3", "failing test", "fresh"):
         assert words in note, words
+
+
+# --- round 1's findings ------------------------------------------------------
+
+
+def test_the_record_and_merge_check_come_before_the_fixer():
+    # merge-check says `mechanism_repeats` only while the head is the latest record's commit:
+    # a fixer that pushed first would leave it never firing, and `part.md` never given.
+    fixer = _the_fixer()
+    order = fixer.split("The order, after each review:", 1)[1]
+    findings_file, step4, record, merge_check, the_fixer, step5 = (
+        order.index("the findings file written"),
+        order.index("step 4;"),
+        order.index("the record posted (step 6)"),
+        order.index("`WF merge-check` run on the head"),
+        order.index("the fixer, when there is anything to fix, with `part.md` from that answer"),
+        order.index("step 5, on the head it pushed"),
+    )
+    assert findings_file < step4 < record < merge_check < the_fixer < step5
+    assert "only while the head is the latest record's commit" in order
+
+
+def test_a_security_problem_the_change_adds_marked_a_ticket_reaches_the_fixer():
+    s3 = _the_fixer()
+    findings = s3.split("`findings.md`:", 1)[1]
+    assert "any security problem the change adds (`security: change`) marked a ticket to fix it" in findings
+    inputs = _section("Your inputs").split("`findings.md`", 1)[1]
+    assert "any security problem the change adds (`security: change`) marked a ticket to fix it, which you fix as if marked blocks" in inputs
+
+
+def test_a_security_problem_on_main_never_reaches_a_runs_fixer():
+    s3 = _the_fixer()
+    assert "(`security: main`) goes in only in attended work: in a run it holds the ticket for the owner (`build-ticket`), and the fixer never sees it" in s3
+    assert "which it does only in attended work" in _section("The fix rule")
+
+
+def test_a_security_problems_area_is_all_any_word_in_the_repository_names():
+    rule = _section("The fix rule")
+    assert "the test's docstring and comments, code comments" in rule
+    assert "so does every other word the fixer writes in the repository" in _fix_rule()
+
+
+def test_it_pushes_head_to_the_branch_so_a_clean_copy_pushes_too():
+    rule = _section("The fix rule")
+    assert "always as `git push origin HEAD:<branch>`" in rule
+    assert "Commit only the files you changed" in rule
+
+
+def test_it_fixes_only_what_its_fixes_broke_and_reports_the_rest():
+    rule = _section("The fix rule")
+    assert "Fix what your fixes broke; report any other failure, changing nothing for it" in rule
+    assert "skip it when the profile has none" in rule
+
+
+def test_the_session_contests_nothing_itself():
+    s3 = _s3()
+    assert "contested only when the fixer contests it (**The fix rule**), never by you" in s3
+    assert "your doubt goes only in the findings table" in _the_fixer()
+
+
+def test_part_md_can_name_several_parts():
+    assert "each such part's name exactly as the records give it, and which for each" in _the_fixer()
+    assert "for each such part, its name" in _section("A part to replace or take out")
+
+
+def test_a_failure_after_the_fixer_goes_to_a_fresh_fixer():
+    s3 = _s3()
+    assert "Under the rule, a failure goes to a fresh fixer, as a finding with the failing test as its reproducer." in s3
+    opening = (KIT / PANEL).read_text(encoding="utf-8").split("## 1.", 1)[0]
+    assert "under the rule for build reviewers, a fresh fixer makes the fixes: section 3" in _flat(opening)
