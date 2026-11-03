@@ -272,7 +272,7 @@ def test_a_blocking_security_problem_on_main_holds_a_run_for_the_owner():
     ) in text
     assert (
         "stop as §5's \"Still red after three fix attempts\" says (`needs-human`), the reason naming only its area and saying "
-        "how it is released: \"the owner fixes it on the base branch, merges the base into this ticket's branch and "
+        "how it is released: \"the owner fixes it on the base branch, merges the base into `<branch>` (this ticket's branch, named in full) and "
         "closes #<n> as completed (or, if it isn't a problem, takes #<n> out of this ticket's `## Blocked by`), then answers here\"."
     ) in text
     # After the hold, the fail-closed form: no release machinery, a re-found problem holds again.
