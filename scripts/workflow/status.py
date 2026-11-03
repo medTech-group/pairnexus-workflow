@@ -173,7 +173,7 @@ def snapshot(
             continue
         if issues_mod.CARRY_ON_LABEL in labels:
             # Handed on, review not yet clean: `start` offers "Carry on" (#376). One claimed is listed
-            # as claimed only (a run adopted it, #380), and it is never also ready.
+            # as claimed only (a run adopted it, #380).
             if issues_mod.CLAIM_LABEL not in labels:
                 st.carry_on.append(Item(n, title))
             continue
@@ -186,7 +186,8 @@ def snapshot(
         st.prs.append(Item(pr["number"], pr.get("title") or "", ((pr.get("head") or {}).get("ref") or "") + draft))
         if (pr.get("title") or "").casefold().startswith(KIT_UPDATE_TITLE.casefold()) and st.kit_update_pr is None:
             st.kit_update_pr = pr["number"]
-    carried = {i.number for i in st.carry_on}
+    # A ticket handed on is never ready, whichever section lists it: carrying it on isn't a fresh build.
+    carried = {i["number"] for i in issues if "pull_request" not in i and issues_mod.CARRY_ON_LABEL in lab(i)}
     for v in issues_mod.readiness(issues, prs, repo=repo, areas=areas, protected=protected):
         if v.ready and v.number not in carried:
             st.ready.append(Item(v.number, v.title, v.area or ""))

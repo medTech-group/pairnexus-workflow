@@ -37,15 +37,7 @@ A large effort can start as a **map**: an issue labelled `wayfinder:map` whose c
    - acceptance criteria naming their seams;
    - the by-hand checks it will need (a real device, account or service), if any;
    - `Review: small` if the change should stay within the small threshold and add no endpoint, table, screen or setting (§3);
-   - `## Bar`: what the change must handle, what it does when it can't be sure (fail closed), and the limits it accepts, each with its backstop if any, so reviewers know where their hunt stops. A ticket may carry one (a spec may give one for its tickets), and one whose area is in the profile's `run.bar_areas` must: `workflow ready` notes such a ticket with no `## Bar`, leaving it ready, as it notes a protected path. For example:
-
-     ```markdown
-     ## Bar
-
-     - Must handle: a note saved with an empty title, and two saves of one note at once.
-     - Fail closed: when it can't tell which save is newer, it keeps both and says so.
-     - Accepted limits: notes over 1 MB aren't checked (backstop: the server refuses them).
-     ```
+   - `## Bar` ("The bar"): a ticket may carry one, and one whose area is in the profile's `run.bar_areas` must.
 3. Anything only the owner can do (create an account, a key, a domain) is its own issue labelled `owner-task` (or `ready-for-human`), and blocks what needs it.
 4. **A change to a protected path** (the profile's `guard.protected_paths`: the kit, CI config, CODEOWNERS, secrets files) is an owner task too, labelled `owner-task`, never a build ticket: a ticket session can't change those paths. `workflow ready` notes a ticket whose body names one ("names protected path … : check it isn't an owner task"), leaving it ready; the conductor lists such tickets at kick-off for the owner to keep or exclude. Paths in fenced code (unless the prose before it asks for a change "to" or "in" it), or after "don't", "do not" or "never" in their clause, aren't noted; when in doubt, a path is noted.
 5. **A ticket that fixes a failing or flaky required check** is infra: label it `workflow:infra` as well, so it starts before other tickets. (If its fix is to CI config itself, it is an owner task, as above.)
@@ -66,6 +58,18 @@ The questions whose answer is posted as the owner's: a map decision's rounds (§
 - **Each read's fixes** are listed where the owner can object: in the post of the round that follows the read; with no round after it, in a comment on the same issue straight after the read, with what it leaves; on a quick ticket, above **Publish it**.
 - **What's left** after a last read goes into the spec's Further Notes as open questions before it's published, or a comment on the spec's issue listing them after; for a map decision, its resolution comment; on a quick ticket, its `## Decided for you`, marked open. It is never only in the session's closing choices. What's left is what was unanswered or left open, and a last read's **ask** findings: a re-read's **ask** findings are never asked, except the breakdown check's. A last read's **fix** findings are made.
 - **Not the planning review.** These checks (before each round, the end check, the re-reads and the breakdown check) aren't `review-panel` §8's planning review: each reads once and re-reads once, never in rounds until clean, and posts no spec record. Once a check's **ask** round is answered or left open, nothing it found stops the publish (a breakdown finding left open keeps its tickets out of `ready-for-agent`), unless #363's spec changes what blocks these checks.
+
+## The bar
+
+A build ticket's `## Bar` says where the reviewers' hunt stops: what the change must handle, what it does when it can't be sure (fail closed), and the limits it accepts, each with its backstop if any. A spec may give one for its tickets. A ticket may carry one, and one whose area is in the profile's `run.bar_areas` must: `workflow ready` notes such a ticket with no `## Bar`, leaving it ready, as it notes a protected path. For example:
+
+```markdown
+## Bar
+
+- Must handle: a note saved with an empty title, and two saves of one note at once.
+- Fail closed: when it can't tell which save is newer, it keeps both and says so.
+- Accepted limits: notes over 1 MB aren't checked (backstop: the server refuses them).
+```
 
 ## 3. Building: one ticket per session
 

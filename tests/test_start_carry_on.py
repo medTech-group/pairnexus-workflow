@@ -66,6 +66,18 @@ def test_one_waiting_on_a_person_waits_and_is_not_offered(tmp_path, label):
     assert st.carry_on == [] and _nums(st.waiting) == [41]
 
 
+@pytest.mark.parametrize("labels, body", [
+    (["needs-info"], ""),
+    ([], "<!-- workflow:item path=ticket -->"),
+    (["workflow:run"], ""),
+])
+def test_a_carry_on_ticket_in_another_section_is_never_ready(tmp_path, labels, body):
+    # Round 2, explorer 1 and correctness M1: never ready, whichever section lists it.
+    b = f"Area: start\n\n## Blocked by\n\nNone\n\n{body}"
+    st = status.snapshot(tmp_path, True, [_issue(41, ["workflow:carry-on", "ready-for-agent", *labels], body=b)], [])
+    assert st.ready == []
+
+
 def test_one_a_run_adopted_is_left_to_the_run(tmp_path):
     # The conductor adds workflow:in-progress when it adopts a carry-on ticket (#380).
     st = status.snapshot(tmp_path, True, [_issue(41, ["workflow:carry-on", "workflow:in-progress"])], [])
@@ -130,9 +142,7 @@ def _carrying_on():
 def test_start_offers_carry_on_first_and_recommended():
     text = _read(START)
     row = next(ln for ln in text.splitlines() if ln.startswith("| **Carry on: #<n>, handed on (Recommended)**"))
-    assert "`carry_on`" in row and "first" in row
-    # The kit update and the set-up check give way to it, without "(Recommended)".
-    assert "a kit update or **Check the set-up** comes after it, without \"(Recommended)\"" in row
+    assert "`carry_on`" in row and "comes first (\"One recommendation\", below)" in row
 
 
 def _carry_on_row():
@@ -145,7 +155,9 @@ def test_start_carries_on_from_the_hand_off():
     assert "**Carry on (Recommended)**" in row
     # Choosing it takes the label off first, so no run adopts it as well, and claims it in the
     # same write, so a stop before `build-ticket` never leaves it unlabelled (round 1, correctness 3).
-    assert re.search(r"in one label write, before any other write: remove `workflow:carry-on` and add `workflow:in-progress`", row)
+    # It also gives `ready-for-agent` back and assigns it, as `build-ticket`'s claim and the conductor do (round 2).
+    assert ("in one write, before any other write: remove `workflow:carry-on`, add `workflow:in-progress` and "
+            "`ready-for-agent`, and assign it to yourself") in row
     # It starts from the hand-off: merge-check's hand_off, then build-ticket on its pull request's branch.
     assert "`WF merge-check --fetch <PR> --json`" in row and "`hand_off.url`" in row
     assert "`build-ticket`" in row and "its pull request's branch" in row
@@ -154,23 +166,31 @@ def test_start_carries_on_from_the_hand_off():
 
 def test_start_leaves_a_run_s_carry_on_ticket_to_its_run():
     row = _carry_on_row()
-    assert "with a run in progress, the run adopted it: leave it to its run" in row
+    assert "With a run in progress, the run adopted it: leave it to its run." in row
     # With none, it is claimed work, whose "Carry on from there" takes the label off first (round 1, correctness 4).
     claimed = next(ln for ln in _carrying_on().splitlines() if ln.startswith("| Work claimed (`workflow:in-progress`)"))
     assert "take `workflow:carry-on` off first" in claimed
 
 
-def test_each_other_first_option_gives_way_to_carry_on():
-    # One "(Recommended)" first option, whatever else is offered (round 1, spec 1, correctness 2).
-    rows = [ln for ln in _read(START).splitlines() if ln.startswith(("| **Update the workflow kit", "| **Check the set-up**", "| **A brand-new project"))]
-    assert len(rows) == 3
-    for row in rows:
-        assert "unless a carry-on ticket is offered (above)" in row, row[:40]
+def test_one_rule_gives_the_one_recommendation():
+    # One "(Recommended)" first option, whatever else is offered (rounds 1 and 2): one rule under the
+    # table, over every row, rather than a clause in each.
+    text = _read(START)
+    table = _section(text, "**Then ask: \"What are we working on?\"**", "**Carrying on.**")
+    rule = next(ln for ln in table.splitlines() if ln.startswith("**One recommendation.**"))
+    assert "a ticket under `carry_on`" in rule and "comes first and is the only \"(Recommended)\" option" in rule
+    assert "whatever the rows above say" in rule
+    assert "the rest keep their order after it, without \"(Recommended)\"" in rule
+    assert table.count("carry-on ticket is offered") == 0
 
 
 def test_a_carry_on_ticket_is_offered_once():
-    row = next(ln for ln in _read(START).splitlines() if ln.startswith("| **Carry on: <the thing>**"))
-    assert "a carry-on ticket has its own option (above)" in row
+    lines = _read(START).splitlines()
+    row = next(ln for ln in lines if ln.startswith("| **Carry on: <the thing>**"))
+    assert "a ticket under status's `carry_on` has its own option (above)" in row
+    # Nor is its pull request offered again (round 2, correctness M4).
+    pr = next(ln for ln in lines if ln.startswith("| **Check whether #N is ready to merge**"))
+    assert "or the pull request of a ticket offered under `carry_on`" in pr
 
 
 def test_start_reads_carry_on_tickets_in_the_look_around():
@@ -185,17 +205,30 @@ def _flow_tickets():
     return _section(_read("docs/flow.md"), "2. Follow `to-tickets`", "3. Anything only the owner can do")
 
 
+def _flow_bar():
+    return _section(_read("docs/flow.md"), "\n## The bar\n", "\n## 3. Building")
+
+
 def test_flow_s_ticket_list_has_the_bar():
-    text = _flow_tickets()
-    bullet = next(ln for ln in text.splitlines() if ln.strip().startswith("- `## Bar`"))
-    assert "may" in bullet and "`run.bar_areas`" in bullet and "must" in bullet
+    bullet = next(ln for ln in _flow_tickets().splitlines() if ln.strip().startswith("- `## Bar`"))
+    assert "may" in bullet and "`run.bar_areas`" in bullet and "must" in bullet and "(\"The bar\")" in bullet
+
+
+def test_flow_says_what_a_bar_is():
+    text = _flow_bar()
     for part in ("must handle", "fail closed", "the limits it accepts", "backstop"):
-        assert part in bullet.casefold()
-    assert "`workflow ready` notes" in bullet
+        assert part in text.casefold()
+    assert "`run.bar_areas`" in text and "`workflow ready` notes" in text
+
+
+def test_the_hook_s_first_flow_context_still_carries_section_2(tmp_path):
+    # Round 2, correctness B2: §2's bar bullet stays short enough for the first flow context.
+    from workflow import context
+    assert "\n## 2. A spec and its build tickets" in context.first_flow([KIT / "docs/flow.md"])
 
 
 def _example_bar():
-    m = re.search(r"\n( *)```markdown\n(.*?)\n\1```\n", _flow_tickets(), re.S)
+    m = re.search(r"\n( *)```markdown\n(.*?)\n\1```\n", _flow_bar(), re.S)
     assert m, "an example bar in a fenced block"
     return textwrap.dedent(m.group(2)) + "\n"
 
