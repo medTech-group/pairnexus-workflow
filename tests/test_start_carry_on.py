@@ -233,12 +233,14 @@ def test_the_hook_s_first_flow_context_still_carries_section_2(tmp_path):
     assert "\n## 2. A spec and its build tickets" in context.first_flow([KIT / "docs/flow.md"])
 
 
-def test_section_2_fits_for_a_project_with_an_addendum_at_an_ordinary_path(tmp_path):
+def test_section_2_fits_for_a_project_with_an_addendum_at_an_ordinary_path(tmp_path, monkeypatch):
     # Round 3, explorer 1: the hook names each flow file by its absolute path, inside the budget, so
     # §2 must still fit for a vendored project with a flow addendum at an ordinary path (main: up to 94).
+    # The paths are relative, from tmp_path, so the project's path is exactly 90 characters wherever
+    # pytest's temporary directory is.
     from workflow import context
-    root = tmp_path / ("p" * max(1, 90 - len(str(tmp_path)) - 1))
-    assert len(str(root)) >= 80
+    monkeypatch.chdir(tmp_path)
+    root = Path("p" * 90)
     (root / ".claude/workflow").mkdir(parents=True)
     flow = root / ".claude/workflow/flow.md"
     flow.write_text(_read("docs/flow.md"), encoding="utf-8")
