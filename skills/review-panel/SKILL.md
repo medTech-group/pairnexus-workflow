@@ -19,6 +19,31 @@ Make a scratch directory outside the repo, for example `/tmp/review-<ticket>-r<r
 - `rules.md`: the project's rules, copied from each document in the profile's `project.rules` (safety rules, wording), plus `profile.md`'s sensitive-data and secrets sections.
 - `previous.md`, from round 2: the earlier findings and what was done about each.
 
+**Under the rule for build reviewers** (section 10), add these, `<scratch>` being this review's scratch directory:
+
+- `rule.md`: section 10, copied as it is, with:
+
+  ```
+  sed -n '/^## 10\. The rule for build reviewers$/,$p' <this skill's directory>/SKILL.md > <scratch>/rule.md && test -s <scratch>/rule.md
+  ```
+
+  If it fails, stop and find out why: never start the reviewers with an empty or missing `rule.md`.
+- `bar.md`: the ticket's `## Bar`, or the bar its spec gives for its tickets, as written; "None" when neither gives one.
+- `previous.md`, from the second review (round or pass), in place of the one above:
+  - each earlier review (its kind, number and commit) with its findings numbered as in its record, each with its mark, its part exactly as the reviewer wrote it, its severity and what was done: fixed in which commit with which test, a ticket to fix it filed as which issue, contested with the written reason, or ruled kept or overturned;
+  - under "Contests to rule on", the last review's contested findings, each with its number, its reason, and what it needs to be re-entered if kept: its reproducer, its part, and its `security` and area if it has them;
+  - the parts that took the bar's fail-closed form or were split out;
+  - under "Moved criteria", each acceptance criterion moved by a split, quoted, with the ticket it moved to.
+- `since.patch`, from the second review: the pull request's own changes since the last review, round or pass, with the base branch's changes left out. `<last>` is the commit the last review covered. Before the pull request opens, it is in that review's `commit.txt`. After, it is the `commit=` of the latest review record that `merge-check` counts: one posted from an account with write access. After a `git fetch`:
+
+  ```
+  old=$(git merge-base origin/<base> <last>)
+  new=$(git merge-base origin/<base> HEAD)
+  tree=$(git merge-tree --write-tree --merge-base="$old" "$new" <last>) && git diff "$tree" HEAD > <scratch>/since.patch
+  ```
+
+  It replays the reviewed change onto the base the head is on, and compares that with the head. If it fails (the reviewed change conflicts with the base merged in since, the commit can't be found, or git is older than 2.40), write no `since.patch`: with none, the reviewers treat the whole change as new.
+
 The reviewers read these files. The Correctness reviewer can't run git or reach GitHub.
 
 ## 2. Start the reviewers (one message, all at once)
@@ -44,6 +69,14 @@ Tell the explorer, too, that a command under review that writes files (`workflow
 
 Give each reviewer the round number. From round 2, give each `previous.md`, so it checks the fixes and doesn't repeat itself.
 
+**Under the rule** (section 10), every reviewer follows `rule.md`. Open each prompt you write with this line, `<scratch>` filled in: the two prompts for `code-review`'s Standards and Spec reviewers, and the security review's (run it in an agent of its own, told to use the `security-review` skill on the branch):
+
+```
+Follow the rule in <scratch>/rule.md: it says how to mark and report each finding.
+```
+
+`correctness-reviewer` and `ui-explorer` read it themselves: give each the scratch directory (the explorer as well as its own files' directory), and they follow its `rule.md`.
+
 ## 3. After each round
 
 1. Check each finding against the code. A reviewer can be wrong.
@@ -52,6 +85,8 @@ Give each reviewer the round number. From round 2, give each `previous.md`, so i
 4. Run `git status`: it must show nothing a reviewer made. Discard anything stray and say so. If the guard refuses the discard (a protected file), finish in a clean copy, and say so in the PR body: `git worktree add --detach <a directory outside the repo> HEAD`, commit there, and push with `git push origin HEAD:<branch>`. Do everything after it there: later fixes, the tests, `commit.txt`, the diff and the next rounds. Give the reviewers the clean copy's absolute path as the repo: the explorer runs the CLI from it, and checks both it and the session's checkout with `git status`.
 5. Rerun the typecheck and the affected tests.
 6. Post the round's review record (section 4).
+
+A record under the rule (section 10), written with `--findings` (section 4), comes from the reviewers' reports: every finding a reviewer reported goes in the findings file as reported, even one you judge not a problem. Such a finding marked blocks is contested: its reason goes in the findings table and in the next review's `previous.md`, under "Contests to rule on", and the next review rules on it. One marked a ticket to fix it is never dropped: it is filed as the reviewer marked it, the way `build-ticket` files tickets to fix findings, and your doubt goes in the findings table. A note is answered with its reason in the findings table. Neither is ruled on. A finding flagged kept after a contest is never contested again: it is fixed. One entry for each finding each reviewer reported. A mark is the reviewer's: copy it, its part, its reproducer and its flags as written, and never change one.
 
 ## 4. Post the review record
 
@@ -67,6 +102,30 @@ Post a record on the pull request after every round, whatever it found, and afte
   ```
   WF review-record --kind pass --round <last round> --commit <sha> --reviewers correctness --clean > /tmp/review-<ticket>-pass<k>/record.md
   ```
+- **Under the rule** (section 10), a round's or a pass's record is written from its findings file, `findings.json` in its scratch directory, with `--findings` in place of `--clean` or `--not-clean`: its result is worked out from the marks, not clean when any finding is marked `blocks`.
+
+  ```
+  WF review-record --kind round --round <n> --commit <sha> --reviewers standards,spec,correctness --findings /tmp/review-<ticket>-r<n>/findings.json > /tmp/review-<ticket>-r<n>/record.md
+  WF review-record --kind pass --round <last round> --commit <sha> --reviewers correctness --findings /tmp/review-<ticket>-pass<k>/findings.json > /tmp/review-<ticket>-pass<k>/record.md
+  ```
+
+  The file is a JSON object, always, so no outcome or split flag is ever lost: `findings`, the list, empty when no reviewer reported anything; `outcomes`; and `split`. Each finding (section 3) gives its `mark` (`blocks`, `ticket` or `note`), its part as `mechanism`, its `reproducer` (needed for `blocks`, and never shown in the record), `covered` (the bar's fail-closed form covers it), `contested` (a finding of the last review kept after a contest, re-entered here), `security` (`change` or `main`) with its `area`, and `issue` once its ticket is filed. `outcomes` gives what became of the last review's findings after its record was posted (each contest's ruling, a part that took the bar's fail-closed form, a part split out to a ticket), and `split` is true when the ticket was itself made by a split. For example:
+
+  ```
+  {
+    "findings": [
+      {"mark": "blocks", "mechanism": "the requeue order", "reproducer": "a dropped PR requeued twice: queued once", "covered": true},
+      {"mark": "ticket", "mechanism": "label sync", "issue": 415},
+      {"mark": "note", "mechanism": "wording"}
+    ],
+    "outcomes": [
+      {"outcome": "contested", "finding": 2, "ruling": "overturned"},
+      {"outcome": "fail-closed", "mechanism": "the merge gate"},
+      {"outcome": "split", "mechanism": "the preview reader", "issue": 416}
+    ],
+    "split": false
+  }
+  ```
 
 A round's or a pass's record also names two hashes of the pull request's own changes at that commit, `diff=` (with their context lines) and `lines=` (the changed lines alone), which the command computes from the diff against the merge base of `origin/<base>`, fetched first. When the pull request's base branch isn't the profile's `project.base_branch`, add `--base <branch>` to the command. A hash it can't compute reads `unknown`, and it says why on standard error: the record still counts, and `record.md` holds only the record.
 
@@ -81,7 +140,7 @@ No pull request yet (the first rounds of `build-ticket` run before it opens)? Ke
 Repeat on the new diff until a round finds nothing to fix, at most the briefing's review rounds in a ticket session, else the profile's `run.review_rounds` (a ticket that gets the small review has its one round: section 7). For a light review, or when the briefing's review rounds are 1, follow the light review (section 6) instead, unless the ticket gets the small review (section 7).
 
 - Anything still open after the last round goes to the owner in the PR body, never silently.
-- Any commit after the last round gets a Correctness pass on just those commits before merging, except a merge of the base that leaves the pull request's own changes identical, which needs CI only: after pushing a merge of the base, run `workflow merge-check` (`--fetch <PR> --json`, in a ticket session with the briefing's flags) and run a pass only when it asks for one. Before a pass starts, `mkdir -p /tmp/review-<ticket>-pass<k>` (its scratch directory, `k` counting the passes from 1) and write `git rev-parse HEAD` to `commit.txt` there: the commit it covers, never one made after. Then post its record (section 4).
+- Any commit after the last round gets a Correctness pass on just those commits before merging, except a merge of the base that leaves the pull request's own changes identical, which needs CI only: after pushing a merge of the base, run `workflow merge-check` (`--fetch <PR> --json`, in a ticket session with the briefing's flags) and run a pass only when it asks for one. Before a pass starts, `mkdir -p /tmp/review-<ticket>-pass<k>` (its scratch directory, `k` counting the passes from 1) and write `git rev-parse HEAD` to `commit.txt` there: the commit it covers, never one made after. Then post its record (section 4). Under the rule (section 10), a pass reviews the changes since the last review, round or pass (`since.patch`, section 1), not since the last round.
 - **Passes stop at the pass cap:** at most the briefing's pass cap in a ticket session, else the profile's `run.review_passes`, counting every pass after the last round, each record once, on any commit, except a pass on a merge of the base after a clean review that left the pull request's changed lines as they were, which `merge-check` asks for even at the cap (a pass that rechecks open findings always counts). When one more pass would be needed past it, `workflow merge-check` says `passes_used_up`: run no further pass. What's still open goes to the owner in the PR body, and the owner decides (in attended work they can choose "One more pass").
 - **The pass cap `until-clean`** (a briefing's or the profile's, #402) is no cap: after the last round, fix each pass's findings and run another, until one is clean. `merge-check` never says `passes_used_up`. Keep the PR body's findings table current after each pass: in a run, the end time can come first, and the conductor then sets the ticket aside with its open findings there.
 
@@ -95,14 +154,14 @@ A shorter review for a low-risk change, asked for as "build #12 with a light rev
   WF review-record --kind round --round 1 --commit <sha> --reviewers standards,spec,correctness --clean > /tmp/review-<ticket>-r1/record.md
   ```
 
-  (`standards,spec,correctness,security` when the security review ran; `--not-clean` when it found something to fix.)
+  (`standards,spec,correctness,security` when the security review ran; `--not-clean` when it found something to fix; under the rule, `--findings` in place of `--clean` or `--not-clean`, as section 4 says.)
 - **If round 1 isn't clean,** fix its findings as in section 3, then run Correctness-only rounds until one is clean, at most 2 more. Each is a round of its own, with its own scratch directory, `commit.txt` and `previous.md`, and posts its record as a round, never as a pass:
 
   ```
   WF review-record --kind round --round <n> --commit <sha> --reviewers correctness --clean > /tmp/review-<ticket>-r<n>/record.md
   ```
 
-  (`--not-clean` when it found something to fix.) The 2 is fixed, whatever `run.review_rounds` says: with the briefing's review rounds at 1, these rounds come on top of its "at most 1".
+  (`--not-clean` when it found something to fix; under the rule, `--findings`, as section 4 says.) The 2 is fixed, whatever `run.review_rounds` says: with the briefing's review rounds at 1, these rounds come on top of its "at most 1".
 - **Post each record** as section 4 says. A later commit after the last round still gets its Correctness pass (section 5).
 - **Anything still open** after them goes to the owner in the PR body, never silently.
 
@@ -124,14 +183,14 @@ The review of a ticket marked `Review: small` while its diff stays within the sm
   WF review-record --kind round --round 1 --commit <sha> --reviewers correctness --clean > /tmp/review-<ticket>-r1/record.md
   ```
 
-  (`correctness,security`, `correctness,explorer` or `correctness,security,explorer` when those ran; `--not-clean` when it found something to fix.)
+  (`correctness,security`, `correctness,explorer` or `correctness,security,explorer` when those ran; `--not-clean` when it found something to fix; under the rule, `--findings` in place of `--clean` or `--not-clean`, as section 4 says.)
 - **Fixes after it** are covered by Correctness passes (section 5), under the pass cap. There are no further rounds: when the round isn't clean, fix its findings as in section 3, and a clean pass on the head lifts them.
 - **Past the small threshold,** measured before reviewing or as `merge-check`'s `past_small_threshold`, the ticket doesn't get the small review: run the full panel (section 5), or the light review (section 6) in a 1-round run. The pull request's body says the diff overruled the mark. After a small round already ran, that is one full-panel round (the light review's round 1 in a 1-round run, without the explorer) with the next round number, allowed past the round limit; if it isn't clean, fix its findings and run a Correctness pass, with no further round.
 - **Anything still open** after the pass cap (or, with `until-clean`, at the run's end time) goes to the owner in the PR body, never silently.
 
 ## 8. The planning review
 
-Planning is reviewed before it's offered or published (flow §1 and §2): a map decision's pull request (its ADRs and glossary), a spec's draft, and a spec session's ADR or glossary pull request. Build tickets aren't. Sections 1 to 5 hold, with these differences.
+Planning is reviewed before it's offered or published (flow §1 and §2): a map decision's pull request (its ADRs and glossary), a spec's draft, and a spec session's ADR or glossary pull request. Build tickets aren't. Sections 1 to 5 hold, with these differences. Planning reviews don't get section 10, the rule for build reviewers: no `rule.md`, `bar.md` or `since.patch`, and their records keep `--clean` or `--not-clean`.
 
 **The inputs,** in a fresh scratch directory for each kind of review, so a spec's review and the same session's pull request never share one: `/tmp/review-<issue>-spec-r<n>/` for a spec's draft, `/tmp/review-<issue>-pr-r<n>/` for a pull request. `<issue>` is the decision ticket, the item's issue, or the map's number for its Destination item (a spec has no number of its own until it's published), else a short name for the work:
 - the diff as `diff.patch`, or the spec's draft as `spec.md`: the whole body exactly as it will be published, any footer or marker included (a Claude Code cloud session's own footer needn't be: the hash leaves it out, **Records**);
@@ -185,3 +244,72 @@ No Standards reviewer and no explorer: there is no code to hold to the standards
 |---|---|---|---|---|
 | 1 | 1 | Correctness | A not-planned blocker reads as done | Fixed in abc1234, test `test_blockers_not_planned` |
 | 2 | 1 | Spec | No `Area:` on the new tickets | Not a problem: the spec makes areas optional for one-off tickets |
+
+Under the rule (section 10), the table gains the mark and the part after the reviewer. A security finding's row names only its area, in every column: its part, its finding and its outcome, the test's name included.
+
+| # | Round | Reviewer | Mark | Part | Finding | Outcome |
+|---|---|---|---|---|---|---|
+| 1 | 1 | Correctness | blocks | the blocker check | A not-planned blocker reads as done | Fixed in abc1234, test `test_blockers_not_planned` |
+| 2 | 1 | Standards | note | wording | "Sync" where the glossary says "update" | Noted |
+
+## 10. The rule for build reviewers
+
+This section is copied, as it is, into each build review's scratch directory as `rule.md` (section 1), so keep it the last section. Every build reviewer follows it: Standards, Spec, Correctness, the security review and the explorer, in rounds and passes, the light and small reviews included. Planning reviews (section 8) don't get it.
+
+**When it applies:** once `build-ticket` says build reviews follow it; in a run, only when the briefing has a "Findings:" line, since a run keeps the rule it started with. Until then, build reviews keep today's rule: no `rule.md`, and records with `--clean` or `--not-clean`. Under the rule, every build review's record is written with `--findings` (section 4).
+
+**Your inputs,** in the scratch directory beside `diff.patch`, `ticket.md` and `rules.md`:
+- `bar.md`: the ticket's bar: what it must handle, what it does when it can't be sure (its fail-closed form), and the limits it accepts; "None" when it has none.
+- `previous.md`, from the second review: the earlier reviews' findings, each with its number in its review's record, its mark, its part and what was done; the contests for you to rule on; the parts that took the fail-closed form or were split out; and the criteria moved by a split.
+- `since.patch`, from the second review: the pull request's own changes since the last review, with the base branch's changes left out.
+
+**Marks.** Mark each finding:
+- **blocks:** it holds the merge until it is fixed. It needs a reproducer (below); without one, mark it a note.
+- **a ticket to fix it** (`ticket`): a real defect that goes to a ticket of its own, built next, not in this pull request: one in code the change neither touches nor reaches, a breach of a written rule outside the change's own lines, or, from the second review, a finding that would otherwise block, on lines already reviewed, that isn't one of the kinds that still block (below).
+- **note:** a preference no written rule backs, a gap the bar accepts, a finding on a moved criterion, or a finding that would block but has no reproducer. Noted in the findings table; it neither blocks nor gets a ticket.
+
+The mark isn't the severity. Severity: critical, important or minor. "Critical" is the top severity; it never means blocks. A minor finding can block, and a critical one with no reproducer is a note.
+
+**Reproducers.** A finding marked blocks gives one, by what it is about:
+- code: an input, and the result it should give;
+- skill or doc text: a concrete scenario, and the two lines that answer it differently;
+- an unmet acceptance criterion or untested behaviour: the criterion or behaviour quoted, and the test that should exist;
+- a breach of a written rule: the rule quoted, and the line that breaks it.
+
+No reproducer: the finding is a note, whatever its severity.
+
+**The part.** Name the part of the change each finding is about: a short name, at most 80 characters, one line, no backtick or `~~~`, such as "the requeue order". When `previous.md` names the same part, reuse its name exactly, character for character; give a new name only to a part no earlier review named. Say, too, whether the bar's fail-closed form covers the part: the part could do what `bar.md` says the change does when it can't be sure.
+
+**What blocks.** A finding with a reproducer blocks when it is:
+- a defect in the change's own lines;
+- something the change breaks elsewhere (a regression in code it reaches);
+- something the change makes reachable;
+- an acceptance criterion not met;
+- new behaviour without a test;
+- a safety breach the change adds;
+- a security problem the change adds;
+- a breach of a written rule (`rules.md`) in the change's own lines.
+
+Where the hunt stops:
+- **The bar:** a gap `bar.md` accepts as a limit is a note.
+- **Moved criteria:** a criterion `previous.md` lists as moved by a split isn't unmet here: a finding on it is a note.
+- **Lines already reviewed** (from the second review): a finding that would otherwise block, on lines unchanged since a review that covered them (in the change or in what it reached), is marked a ticket to fix it, unless it is a safety breach, a security problem the change adds, loses data, leaves an acceptance criterion unmet, leaves new behaviour untested, or is something the change breaks elsewhere: those still block, whichever review finds them.
+
+**From the second review,** a round or a pass, review `since.patch` and what it reaches: the code it calls and the code that calls it, read in full in the repo. Read `diff.patch`, the whole change, for context. Everything in `since.patch` follows the rule as in a first review, and so do the lines it reaches that no earlier review covered. Check each fix `previous.md` lists. With no `since.patch`, the whole change is new to this review. An empty one still asks for a look: check the change's lines in `diff.patch` against the base, for something it breaks.
+
+**Security.** A security problem the change adds: mark it as any other finding, with `security: change` and its area, a word or two such as "sign-in". A security or safety problem in code already on the base branch: `security: main`, with its area. Give its details (where, the reproducer) in your report, never in a part's name: the public records show only the area.
+
+**Contests.** `previous.md` lists, under "Contests to rule on", the last review's findings marked blocks that were contested, each with its written reason. Only a finding marked blocks is contested. The Correctness reviewer rules on each: **kept** (the finding stands: re-enter it as a finding of this review, marked blocks even on lines already reviewed, flagged kept (`contested` in the findings file), with its reproducer, its part, and its `security` and area as before) or **overturned** (it counts for nothing: leave it out). Other reviewers don't rule. A kept finding is fixed, never contested again. Never change a mark yourself to settle a contest: rule on it.
+
+**How to report.** For each finding:
+- **Mark:** blocks, ticket or note;
+- **Severity:** critical, important or minor;
+- **Part:** its name;
+- **Where:** file and line, or the criterion or rule;
+- **Reproducer:** for a finding marked blocks (above);
+- **Covered:** yes when the bar's fail-closed form covers the part, else no;
+- **Security:** none, change or main, with its area;
+- **Kept:** yes for a finding re-entered after its contest was kept, else no;
+- **The fix:** one line.
+
+Then, from the Correctness reviewer, each contest's ruling: its number in `previous.md`, kept or overturned, and why. Say plainly when you found nothing.
