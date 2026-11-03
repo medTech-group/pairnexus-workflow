@@ -256,21 +256,23 @@ def test_a_security_problem_on_main_names_only_its_area():
 
 def test_a_blocking_security_problem_on_main_holds_a_run_for_the_owner():
     text = _filing()
-    assert "A blocking `security: main` finding is never split out, and never filed in place of its fix." in text
+    assert "A blocking `security: main` finding is never split out." in text
     # ADR 0001: in a run it stops its ticket at needs-human; never fixed unattended in public.
+    assert "In a run it holds this ticket for the owner, until the owner has fixed it on the base branch:" in text
+    assert "file its ticket to fix it as above (`ready-for-human`, only its area named, its details given privately);" in text
+    # The hold is released by the fix on the base branch, not by a later session finding it again.
     assert (
-        "In a run it holds this ticket for the owner: stop as §5's \"Still red after three fix attempts\" says (`needs-human`), "
-        "the reason naming only its area, its details given privately as above."
+        "add that ticket under this ticket's `## Blocked by`, keeping the rest of its body, "
+        "so `workflow ready` holds this ticket until the owner closes that one;"
+    ) in text
+    assert "stop as §5's \"Still red after three fix attempts\" says (`needs-human`), the reason naming only its area." in text
+    assert (
+        "The session that picks this ticket up again merges the base branch in first, as §5's \"The base branch moved\" says, "
+        "with the merge queue on too, so its reviewers read the fix."
     ) in text
     assert "In attended work it is fixed here, its details shown to the person and given privately to whoever fixes it." in text
-    # The details stayed in the stopped session's chat: the next session finds the problem again itself.
-    assert (
-        "A session started on the ticket after the hold first runs a full review of the change: a review with no `since.patch`, "
-        "so the whole change is new to it (`review-panel` §10), and every reviewer's prompt names the area the hold names "
-        "as the place to look. It finds the problem again, or finds it fixed on the base branch."
-    ) in text
-    # review-panel §10 gives "no since.patch" that meaning, so lines already reviewed don't turn it into a ticket.
-    assert "With no `since.patch`, the whole change is new to this review." in _read(PANEL)
+    assert "full review" not in text
+    assert "**The base branch moved:**" in _read(BUILD)
     assert "**Still red after three fix attempts:**" in _read(BUILD)
 
 
@@ -309,6 +311,7 @@ def test_changelog_note():
     assert "those filed under the account it posts as" in note
     assert "is a new ticket unless this session already filed one for it" in note
     assert "never filed, even when marked a ticket to fix it" in note
+    assert "its ticket to fix it is filed and named under the held ticket's `## Blocked by`" in note
     assert "(#373, part of spec #412)" in notes
     assert "`<!-- workflow:fix-ticket from=<n> kind=old|late|split -->`" in notes
     assert "Tests: `tests/test_fix_tickets.py`." in notes

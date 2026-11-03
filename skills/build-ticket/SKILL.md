@@ -109,7 +109,12 @@ Two exceptions (ADR 0001), and a finding that is both takes both:
   - its details (where, the reproducer, the fix) go to the owner privately, never on GitHub: in attended work, in the session's chat; in a run, in your own chat as soon as you have verified it, and again in your final message, which names the ticket;
   - it is a new ticket each time, unless you filed one for it yourself in this session, its details in your chat: then it is "Already filed as #<n>". Any other open one names only its area, so it can't be matched: tell the owner privately of any it may repeat.
 
-A blocking `security: main` finding is never split out, and never filed in place of its fix. In a run it holds this ticket for the owner: stop as §5's "Still red after three fix attempts" says (`needs-human`), the reason naming only its area, its details given privately as above. A session started on the ticket after the hold first runs a full review of the change: a review with no `since.patch`, so the whole change is new to it (`review-panel` §10), and every reviewer's prompt names the area the hold names as the place to look. It finds the problem again, or finds it fixed on the base branch. In attended work it is fixed here, its details shown to the person and given privately to whoever fixes it.
+A blocking `security: main` finding is never split out. In a run it holds this ticket for the owner, until the owner has fixed it on the base branch:
+- file its ticket to fix it as above (`ready-for-human`, only its area named, its details given privately);
+- add that ticket under this ticket's `## Blocked by`, keeping the rest of its body, so `workflow ready` holds this ticket until the owner closes that one;
+- stop as §5's "Still red after three fix attempts" says (`needs-human`), the reason naming only its area.
+
+The session that picks this ticket up again merges the base branch in first, as §5's "The base branch moved" says, with the merge queue on too, so its reviewers read the fix. In attended work it is fixed here, its details shown to the person and given privately to whoever fixes it.
 
 A security problem the change adds (`security: change`) is the one finding never filed as marked: even when marked a ticket to fix it, it is fixed in this pull request, since it still blocks (`review-panel` §10), only its area named in public, and the findings table gives its mark. Marked blocks or note, it follows the usual rule.
 
