@@ -282,12 +282,6 @@ def _bar_areas(v, areas: dict) -> list[str]:
         raise ProfileError(f"run.bar_areas: expected a list of area names from [areas], not {_shown(v)}")
     known = {a.casefold() for a in areas}
     for name in v:
-        # One word as `issues.read_area` reads a ticket's `Area:`, or no ticket could name it.
-        if name and not (re.fullmatch(r"[\w.-]+", name) and name.strip(".-_") == name):
-            raise ProfileError(
-                f"run.bar_areas: {_shown(name)} can't be a ticket's area, which is one word of letters, digits, "
-                "dots, hyphens and underscores, not starting or ending with one of the last three; rename the area"
-            )
         if name.casefold() not in known:
             there = f"({', '.join(sorted(areas, key=str.casefold))})" if areas else "(it has none)"
             raise ProfileError(f"run.bar_areas: {_shown(name)} isn't one of the profile's areas {there}; name one from [areas], or leave it out")
@@ -893,6 +887,15 @@ def check(profile: Profile) -> list[str]:
             w.append(f"commands.package {pk.name}: cwd {pk.cwd} isn't a directory")
         if not matches(root, pk.path):
             w.append(f"commands.package {pk.name}: path {pk.path!r} matches no file (relative to the project root)")
+    from .issues import can_be_area
+
+    for name in profile.bar_areas:
+        if not can_be_area(name):
+            w.append(
+                f"run.bar_areas: no ticket's Area: line can give {_shown(name)} (an area is one word of letters, "
+                "digits, dots, hyphens and underscores, not starting or ending with one of the last three), "
+                "so its tickets are never noted; rename the area"
+            )
     for area, pats in profile.areas.items():
         for pat in pats:
             if not matches(root, pat):

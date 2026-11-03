@@ -11,7 +11,7 @@ import pytest
 
 from workflow import cli
 from workflow.issues import BAR_NOTE, has_bar, readiness
-from workflow.profile import ProfileError, parse
+from workflow.profile import ProfileError, check, parse
 
 KIT = Path(__file__).resolve().parents[1]
 
@@ -81,12 +81,19 @@ def test_refuses_any_name_when_there_are_no_areas():
 
 
 @pytest.mark.parametrize("name", ["web app", "ui/ux", "-lead", "trail.", "_drafts", "a+b"])
-def test_refuses_a_name_no_ticket_could_give(name):
-    data = tomllib.loads(_toml(f"bar_areas = [{json.dumps(name)}]"))
-    data["areas"][name] = ["x/**"]  # an area by that name exists
-    with pytest.raises(ProfileError) as e:
-        parse(data, Path("."))
-    assert "run.bar_areas" in str(e.value) and "can't be a ticket's area" in str(e.value)
+def test_warns_of_a_name_no_ticket_could_give(tmp_path, name):
+    data = tomllib.loads(_toml(f"bar_areas = [{json.dumps(name)}, \"guard\"]"))
+    data["areas"][name] = []  # an area by that name exists: the setting stands
+    prof = parse(data, tmp_path)
+    assert prof.bar_areas == [name, "guard"]
+    (w,) = [x for x in check(prof) if x.startswith("run.bar_areas")]
+    assert "no ticket's Area: line can give" in w and "never noted" in w
+
+
+def test_no_warning_for_names_a_ticket_can_give(tmp_path):
+    data = tomllib.loads(_toml('bar_areas = ["guard", "merge-check", "v2.0"]'))
+    data["areas"]["merge-check"] = data["areas"]["v2.0"] = []
+    assert not [x for x in check(parse(data, tmp_path)) if x.startswith("run.bar_areas")]
 
 
 @pytest.mark.parametrize("run", ['bar_areas = "guard"', "bar_areas = [1]", "bar_areas = true"])
@@ -334,3 +341,5 @@ def test_next_lists_the_note():
     notes = text.split("A READY ticket may carry notes", 1)[1].split("\n\n", 1)[0]
     shown = BAR_NOTE.format(area="<area>").split(":", 1)[0]
     assert f'"{shown}: …"' in notes and "run.bar_areas" in notes
+    line = next(l for l in notes.splitlines() if shown in l)
+    assert "before building" not in line  # a note never changes whether a ticket is ready

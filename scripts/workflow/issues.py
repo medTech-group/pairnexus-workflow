@@ -189,6 +189,11 @@ _AREA_HEADING = re.compile(r"^\s*#{1,6}\s*area\s*(?::\s*(.*))?$", re.I)
 _AREA_WORD = re.compile(r"[\w.-]+")
 
 
+def can_be_area(name: str) -> bool:
+    """A ticket's `Area:` could give `name`: one word, as `read_area` reads it."""
+    return bool(_AREA_WORD.fullmatch(name)) and name.strip(".-_") == name
+
+
 def _slug(text: str) -> str:
     return re.sub(r"[^\w]+", "-", text.casefold()).strip("-_")
 
@@ -439,7 +444,7 @@ _BAR_WORD = r"(?:bar:?|\*\*bar:?\*\*|__bar:?__|\*bar:?\*|_bar:?_)"  # bold or it
 _BAR_HEADING = re.compile(r"^ {0,3}#{1,6}[ \t]+" + _BAR_WORD + r"(?:[ \t]*:)?(?:[ \t]+#+)?$", re.I)
 _BAR_SETEXT = re.compile(_BAR_WORD + r"(?:[ \t]*:)?$", re.I)  # "Bar" at column 0, underlined
 _SETEXT_RULE = re.compile(r"(?:=+|-+)$")  # at column 0: not a list item's
-_BAR_FENCE = re.compile(r"(`{3,}|~{3,})(.*)$")  # a fence at column 0: top level
+_TOP_FENCE = re.compile(r"(`{3,}|~{3,})(.*)$")  # a fence at column 0: top level
 # A fence marker anywhere else: indented, quoted or in a list item, where
 # GitHub may pair the fences differently.
 _ODD_FENCE = re.compile(r"(?:[ \t>]|(?:[-*+]|\d{1,9}[.)])(?=[ \t]))+(?:`{3,}|~{3,})")
@@ -457,51 +462,54 @@ _HTML_TAG = re.compile(r" {0,3}</?[A-Za-z]")
 _LINE_END = re.compile(r"\r\n|\r|\n")  # Markdown's line ends, not str.splitlines()'s
 
 
+def _past(lines: list[str], i: int, ends) -> int | None:
+    """The index after the first line from `i` on that `ends`, or None when
+    none does (the construct is never closed)."""
+    while i < len(lines):
+        if ends(lines[i]):
+            return i + 1
+        i += 1
+    return None
+
+
 def has_bar(body: str | None) -> bool:
     """The body has a `## Bar` heading of its own: at any level, or "Bar"
     underlined at column 0 after a blank line, bold or italic, a trailing
     colon allowed. One GitHub hides or shows as code or text doesn't count:
     in fenced or indented code, an HTML block or comment, or a quote. Reading
     stops (no bar from there on) at a fence that isn't at column 0 or a
-    construct left open, where GitHub could pair the rest differently."""
+    construct never closed, where GitHub could read the rest differently."""
     lines = _LINE_END.split(body or "")
     i, n = 0, len(lines)
     while i < n:
         line = lines[i].rstrip()
-        f = _BAR_FENCE.match(line)
+        nxt: int | None = None
+        f = _TOP_FENCE.match(line)
         if f and not (f.group(1)[0] == "`" and "`" in f.group(2)):
-            mark = f.group(1)
-            close = re.compile(r" {0,3}" + re.escape(mark[0]) + "{" + str(len(mark)) + ",}$")
-            i += 1
-            while i < n and not close.match(lines[i].rstrip()):
-                i += 1
-            if i >= n:
-                return False  # never closed: the rest is code
-            i += 1
-            continue
-        if _ODD_FENCE.match(line):
+            close = re.compile(r" {0,3}" + re.escape(f.group(1)[0]) + "{" + str(len(f.group(1))) + ",}$")
+            nxt = _past(lines, i + 1, lambda l: close.match(l.rstrip()))
+        elif _ODD_FENCE.match(line):
             return False
-        end = next((e for start, e in _HTML_ENDS if start.match(line)), None)
-        raw = _HTML_RAW.match(line)
-        if raw:
+        elif raw := _HTML_RAW.match(line):
             end = f"</{raw.group(1).lower()}>"
-        if end is not None:
-            while i < n and end not in (lines[i].lower() if raw else lines[i]):
-                i += 1
-            if i >= n:
-                return False  # never closed: the rest is HTML
+            nxt = _past(lines, i, lambda l: end in l.lower())
+        elif end := next((e for start, e in _HTML_ENDS if start.match(line)), None):
+            nxt = _past(lines, i, lambda l: end in l)
+        elif _HTML_TAG.match(line):
+            nxt = _past(lines, i, lambda l: not l.strip())
+            if nxt is None:
+                return False  # to the end: the rest is HTML
+        elif _BAR_HEADING.match(line):
+            return True
+        else:
+            after_blank = i == 0 or not lines[i - 1].strip()
+            if after_blank and _BAR_SETEXT.match(line) and i + 1 < n and _SETEXT_RULE.match(lines[i + 1].rstrip()):
+                return True
             i += 1
             continue
-        if _HTML_TAG.match(line):
-            while i < n and lines[i].strip():
-                i += 1
-            continue
-        if _BAR_HEADING.match(line):
-            return True
-        after_blank = i == 0 or not lines[i - 1].strip()
-        if after_blank and _BAR_SETEXT.match(line) and i + 1 < n and _SETEXT_RULE.match(lines[i + 1].rstrip()):
-            return True
-        i += 1
+        if nxt is None:
+            return False  # never closed: the rest is code or HTML
+        i = nxt
     return False
 
 
