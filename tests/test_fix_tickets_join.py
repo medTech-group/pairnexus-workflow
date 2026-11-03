@@ -108,10 +108,32 @@ def test_a_line_naming_a_number_past_18_digits_is_no_machine_line_and_stops_noth
     assert state.authors(s, [_issue(500, f"<!-- workflow:fix-ticket from={'3' * 5000} kind=old -->")]) == []
 
 
+def test_a_last_line_past_18_digits_never_lets_a_quoted_line_above_it_count():
+    # The last line is the ticket's own: one too long is no machine line, and the quoted one above it never counts.
+    body = f"Quoting:\n> {_line(378)}\n\n## Blocked by\n\nNone\n\n<!-- workflow:fix-ticket from=1234567890123456789 kind=old -->\n"
+    s = _state()
+    out = _join(s, [_issue(501, body)])
+    assert not s.get("joined") and out == {"joined": [], "not_joined": [], "first": []}
+    assert state.fix_line(body) is None
+
+
+def test_eighteen_digits_still_count_as_a_ticket_number():
+    # The accepting side of the limit: an 18-digit source (leading zeros aside) and an 18-digit issue number.
+    big = 10**18 - 1
+    s = _state({str(big): {"status": "running"}})
+    t = _fix(big - 1, src=big)
+    out = _join(s, [t, _issue(501, f"x\n<!-- workflow:fix-ticket from=000378 kind=old -->\n")])
+    assert s["joined"] == {str(big - 1): {"from": big, "kind": "split"}} and out["first"] == [big - 1]
+    s = _state()
+    t = _fix(big)
+    assert _join(s, [t, _issue(501, "x\n<!-- workflow:fix-ticket from=000378 kind=old -->\n")])["first"] == [501, big]
+    assert state.validate(s) == []
+
+
 def test_an_issue_numbered_past_18_digits_is_left_alone():
     s = _state()
     t = _fix(501)
-    t["number"] = 10**20
+    t["number"] = 10**18
     assert _join(s, [t])["first"] == [] and not s.get("joined")
 
 

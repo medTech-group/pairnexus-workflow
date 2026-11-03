@@ -26,8 +26,8 @@ records the owner allowing (#338, answer 40).
 Optional: `joined`, the tickets that joined the run as they were filed (#378,
 spec #412 "Runs"): tickets to fix old bugs, tickets to fix late findings and
 split tickets, keyed by issue number, each `{"from": <the ticket it was filed
-from>, "kind": "old"|"late"|"split"}`, with `"waits": true` when its `## Blocked
-by` names that ticket. `join` decides who joins; `joined` tells
+from>, "kind": "old"|"late"|"split"}`, with `"waits": true` when its blockers
+(as `workflow ready` reads them) name that ticket. `join` decides who joins; `joined` tells
 each one's fate for the run report.
 
 With the queue on, `drop` decides each answer GitHub gives to queueing a
@@ -264,18 +264,25 @@ def put(body: str, state: dict) -> str:
 FIX_KINDS = ("old", "late", "split")
 # The machine line a ticket session ends a filed ticket with (`build-ticket` §3), in exactly the form its
 # listing scans for; the last one in a body is the ticket's own, since a body may quote another's above it.
-# `from` has at most 18 digits, as `issues.parse_number_list` reads a ticket number, so no body can make
-# `int()` refuse it (Python 3.11 refuses past 4,300 digits) and stop every ticket joining.
-FIX_LINE = re.compile(r"<!-- workflow:fix-ticket from=([0-9]{1,18}) kind=(" + "|".join(FIX_KINDS) + r") -->")
-_MAX_NUMBER = 10**18
+FIX_LINE = re.compile(r"<!-- workflow:fix-ticket from=([0-9]+) kind=(" + "|".join(FIX_KINDS) + r") -->")
+# A ticket number has at most 18 digits, as `issues.parse_number_list` reads one: a last line whose `from`
+# is longer is no machine line (never a quoted one above it), and never reaches `int()`, which refuses
+# past 4,300 digits (Python 3.11) and would stop every ticket joining.
+_MAX_DIGITS = 18
+_MAX_NUMBER = 10**_MAX_DIGITS
 _OWNER_LABELS = ("owner-task", "ready-for-human")
-_NUMBER = re.compile(r"[1-9][0-9]{0,17}")  # an issue number as a key, written one way only
+_NUMBER = re.compile(r"[1-9][0-9]{0,%d}" % (_MAX_DIGITS - 1))  # an issue number as a key, written one way only
 
 
 def fix_line(body: Any) -> tuple[int, str] | None:
-    """(from, kind) from the body's last machine line, or None without one."""
+    """(from, kind) from the body's last machine line, or None without one
+    (or when its `from` is past 18 digits, leading zeros aside)."""
     found = FIX_LINE.findall(body) if isinstance(body, str) else []
-    return (int(found[-1][0]), found[-1][1]) if found else None
+    if not found:
+        return None
+    digits, kind = found[-1]
+    digits = digits.lstrip("0") or "0"
+    return (int(digits), kind) if len(digits) <= _MAX_DIGITS else None
 
 
 def _candidates(issues: Any) -> list[tuple[dict, int, str]]:
