@@ -151,14 +151,14 @@ def test_profile_check_refuses_a_name_that_isnt_an_area(tmp_path, monkeypatch, c
         "x\n \t\nBar\n---\n",
         "<details>\n<summary>Notes</summary>\n</details>\n\n## Bar\n",  # an HTML block before it
         "  <!-- one line -->\n## Bar\n",  # an indented comment on one line
-        "<pre>\n</textarea>\n## Bar\n</pre>\n",  # any raw closing tag ends a raw block
-        "<script>\n</style>\n## Bar\n",
         "\ufeff## Bar\n",
         "<!DOCTYPE html>\n## Bar\n",  # a declaration with a capital letter ends at its >
+        "<!X a'b>\n## Bar\n",  # it ends at the first >, whatever quotes come before
+        "<titles>x</titles>\n\n## Bar\n",  # not a filtered tag name
+        "<!-- a -- b -->\n<p>x</p>\n\n## Bar\n",  # -- inside a comment ends nothing
         '<div title="a > b">\n<span>x</span>\n</div>\n\n## Bar\n',  # tags closed, a > in a quoted value
         '<div><!-- " -->\n\n## Bar\n',  # a quote in a comment opens nothing
         "<p>a < b</p>\n\n## Bar\n",  # a literal <
-        "<?x?>\n## Bar\n",
         '<img src=x alt="a\nb" />\n\n## Bar\n',
     ],
 )
@@ -282,6 +282,23 @@ def test_has_bar(body):
         "<div>\n<span title='>\n\n## Bar\n",  # and a single-quoted one
         "<div><!-- a > b\n\n## Bar\n",  # a comment left open
         'x <!-- a --!> <b title="-->\n## Bar\n',  # --!> in a paragraph
+        # Pass 6: constructs read differently along the way stop the reading, inline too.
+        'x <?a > <i b=" ?>\n## Bar\n',
+        'x <![CDATA[ > <i b=" ]]>\n## Bar\n',
+        '<b>x</b> <?a > <i b=" ?> " c>\n\n## Bar\n',
+        'x <!--> <i b=" -->\n## Bar\n',
+        '<title a=" <i b=\' ">\n\n## Bar\n',  # the tag filter makes <title text
+        '<script a=" <i b=\' ">\n</script>\n## Bar\n',
+        '<b>x</b>\ny <title a=" <i b=\' ">\n\n## Bar\n',
+        'x <title a=" <i b=\' ">\n## Bar\n',
+        "<noscript>\n\n## Bar\n",  # content a browser may hide
+        "<select>\n\n## Bar\n",
+        '<!---> <div x="-->\n## Bar\n',
+        '<!-- a\n--!> <div x="\n-->\n## Bar\n',
+        # Fail closed: GitHub shows these, but has_bar stops at what it can't be sure of.
+        "<pre>\n</textarea>\n## Bar\n</pre>\n",
+        "<script>\n</style>\n## Bar\n",
+        "<?x?>\n## Bar\n",
     ],
 )
 def test_has_no_bar(body):

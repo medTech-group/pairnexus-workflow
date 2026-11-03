@@ -493,25 +493,36 @@ _TAG = re.compile(
     rf"(?:{_SP}*={_SP}*(?:\"[^\"]*\"|'[^']*'|[^ \t\n\r\f\"'=<>`]+))?)*{_SP}*/?>",
     re.A,
 )
-_PLAIN_BOGUS = re.compile(r"<(?:![A-Z]|\?)[^>\"']*>")  # <!DOCTYPE …>, <?…?>: end at the first >, no quotes
+_PLAIN_BOGUS = re.compile(r"<![A-Z][^>]*>")  # <!DOCTYPE …>: HTML5 ends it at the first >
+# Constructs whose reading differs between cmark-gfm, newer CommonMark,
+# GitHub's tag filter and HTML5, inline or in a block: has_bar stops reading
+# at any line (outside fenced code) that holds one. <? and <![ (a processing
+# instruction or CDATA cmark ends later than HTML5), comments HTML5 ends
+# early, and tags the tag filter turns into text or whose content a browser
+# hides.
+_RISKY = re.compile(
+    r"<\?|<!\[|--!>|<!--->|<!-->"
+    r"|</?(?:title|textarea|style|xmp|iframe|noembed|noframes|script|plaintext|select|template|noscript)(?![A-Za-z0-9-])",
+    re.I | re.A,
+)
 
 
 def _html_closed(text: str) -> bool:
-    """`text`, passed through as raw HTML, is made only of plain text, simple
-    comments, well-formed tags and quote-free `<!X …>` or `<?…>`, so it ends
-    outside any tag, value or comment and a browser shows what follows it.
-    Anything else (a comment HTML5 ends early, CDATA, a bogus comment with
-    quotes, a malformed tag) counts as left open: has_bar stops reading."""
+    """`text`, passed through as raw HTML, is made only of plain text, closed
+    comments, well-formed tags and `<!X …>`, with nothing `_RISKY`, so it
+    ends outside any tag, value or comment and a browser shows what follows
+    it. Anything else counts as left open: has_bar stops reading."""
+    if _RISKY.search(text):
+        return False
     i, n = 0, len(text)
     while i < n:
         i = text.find("<", i)
         if i < 0:
             return True
         if text.startswith("<!--", i):
-            j = text.find("-->", i + 4)
-            body = text[i + 4 : j] if j >= 0 else ""
-            if j < 0 or body.startswith((">", "->")) or "--" in body:
-                return False  # unclosed, or one HTML5 may end sooner (<!-->, --!>)
+            j = text.find("-->", i + 4)  # <!-->, <!---> and --!> are _RISKY
+            if j < 0:
+                return False
             i = j + 3
         elif m := (_TAG.match(text, i) or _PLAIN_BOGUS.match(text, i)):
             i = m.end()
@@ -550,8 +561,8 @@ def has_bar(body: str | None) -> bool:
         if f and not (f.group(1)[0] == "`" and "`" in f.group(2)):
             close = re.compile(r" {0,3}" + re.escape(f.group(1)[0]) + "{" + str(len(f.group(1))) + ",}$")
             nxt = _past(lines, i + 1, lambda l: close.match(l.rstrip(" \t")))
-        elif _odd_container(line) or _LOWER_DECLARATION.match(line) or "--!>" in line:
-            return False  # --!>: HTML5 ends a comment there, which CommonMark may not
+        elif _odd_container(line) or _LOWER_DECLARATION.match(line) or _RISKY.search(line):
+            return False
         elif _HTML_RAW.match(line):
             nxt = _past(lines, i, _RAW_END.search)
         elif end := next((e for start, e in _HTML_ENDS if start.match(line)), None):
