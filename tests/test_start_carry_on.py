@@ -294,13 +294,14 @@ def test_start_s_breakdown_has_the_bar():
 
 
 def _assert_the_note(changelog):
-    # From "## Unreleased" down to 0.1.10, so a release that moves the note under its own
-    # heading still passes (pass 3); VERSION untouched is the release rules' own check.
-    unreleased = since_0110(changelog)
-    assert "(#376" in unreleased
-    assert "`workflow:carry-on`" in unreleased and "## Bar" in unreleased
+    # Found from "## Unreleased" down to 0.1.10, so a release that moves the note under its own
+    # heading still passes (pass 3); its content is checked in the note's own text (pass 4).
+    notes = since_0110(changelog)
+    start = notes.index("(#376")
+    note = notes[start:notes.index("Tests: `tests/test_start_carry_on.py`.", start)]
+    assert "`workflow:carry-on`" in note and "## Bar" in note
     # Pass 1, correctness 3: it says what §2 says now.
-    assert "a triaged ticket gets item 2's parts, the bar among them" in unreleased
+    assert "a triaged ticket gets item 2's parts, the bar among them" in note
 
 
 def test_the_changelog_has_the_note():
@@ -309,5 +310,8 @@ def test_the_changelog_has_the_note():
 
 def test_the_note_is_still_found_once_a_release_moves_it():
     # The next release puts its heading under "## Unreleased", above the notes it releases.
-    text = _read("CHANGELOG.md").replace("## Unreleased\n\n", "## Unreleased\n\n## 0.1.99\n\n", 1)
-    _assert_the_note(text)
+    text = _read("CHANGELOG.md")
+    head = text.index("## Unreleased\n") + len("## Unreleased\n")
+    moved = text[:head] + "\n## 0.1.99\n" + text[head:]
+    assert since_0110(moved).index("## 0.1.99") < since_0110(moved).index("(#376")
+    _assert_the_note(moved)
