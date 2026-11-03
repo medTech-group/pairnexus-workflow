@@ -272,6 +272,13 @@ def test_the_bullet_before_the_bar_still_reads_as_a_list_item():
     assert line.endswith(";")
 
 
+def test_start_s_sorting_names_item_2_s_parts_as_flow_s_item_6_does():
+    # Pass 1, correctness 2: start's sorting step says what a triaged ticket gets as flow §2 item 6 does.
+    sorting = _section(_read(START), "## 5. Sorting new issues", "## 6.")
+    assert "flow §2 item 6: a triaged ticket gets item 2's parts, the bar among them" in sorting
+    assert "gets `Area:`, `## Blocked by` and acceptance criteria" not in sorting
+
+
 def test_start_s_quick_ticket_has_the_bar():
     step = _section(_read(START), "**Quick ticket** (flow §2", "**The end check,**")
     bullet = next(ln for ln in step.splitlines() if ln.strip().startswith("- `## Bar`"))
@@ -291,3 +298,5 @@ def test_the_changelog_has_the_note():
     unreleased = notes[:notes.index("\n## 0.", 1)] if "\n## 0." in notes else notes
     assert "(#376" in unreleased
     assert "`workflow:carry-on`" in unreleased and "## Bar" in unreleased
+    # Pass 1, correctness 3: it says what §2 says now.
+    assert "a triaged ticket gets item 2's parts, the bar among them" in unreleased
