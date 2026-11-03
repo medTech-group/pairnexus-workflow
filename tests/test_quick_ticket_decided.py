@@ -133,22 +133,29 @@ def test_the_decisions_made_for_them_go_into_the_ticket_under_decided_for_you():
 
 
 def test_the_section_never_reads_as_a_blocker():
-    s = _sentence(_part("Decided for you"), "waits on #n")
-    assert "never" in s and '"blocked by #n"' in s
+    d = _part("Decided for you")
+    s = _sentence(d, '"see #n"')
+    assert re.search(r'"see #n",?\s*never\s+"blocked by #n"', s)
+    # A real dependency, or an open question about one, goes where readiness reads it.
+    s = _sentence(d, "waits for")
+    assert "`## Blocked by`" in s and "open question" in s
 
 
-def test_waits_on_isn_t_read_as_a_blocker_but_blocked_by_is():
+def test_see_isn_t_read_as_a_blocker_but_blocked_by_is():
     # Why the rule above: the readiness reader takes "blocked by #n" anywhere in a body.
     from workflow.issues import blockers_of
 
     ticket = "## Blocked by\n\nNone\n\n## Decided for you\n\n- Wrong if it {} #302.\n"
-    assert blockers_of(ticket.format("waits on")) == []
+    assert blockers_of(ticket.format("needs, see")) == []
     assert blockers_of(ticket.format("is blocked by")) == [302]
 
 
 def test_an_answer_takes_the_decision_it_settles_out_of_the_section():
     s = _sentence(_part("ask findings"), "settles")
     assert "`## Decided for you`" in s and "out" in s
+    # The re-read doesn't put it back.
+    s = _sentence(_part("One re-read"), "settle")
+    assert "except" in s and "stays out" in s
 
 
 def test_step_2_publishes_the_section_with_the_ticket():
@@ -306,7 +313,7 @@ def test_needs_more_information_asks_for_what_the_check_found():
 
 def test_sorting_skips_the_draft_when_a_build_ticket_is_ruled_out():
     s = _sentence(_flatten(_sorting()), "rules out")
-    assert "draft" in s and "leave that option out" in s
+    assert re.search(r"\b(Unless|unless|Except|except)\b[^.]*rules out", s) and "leave that option out" in s
 
 
 def test_triage_run_on_its_own_isn_t_covered():
