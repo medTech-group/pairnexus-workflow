@@ -27,6 +27,8 @@ BLOCKS = {"mark": "blocks", "mechanism": "the requeue order", "reproducer": "a P
 KEPT = {**BLOCKS, "contested": True}
 TICKET = {"mark": "ticket", "mechanism": "label sync", "issue": 415}
 NOTE = {"mark": "note", "mechanism": "wording"}
+# Another part than BLOCKS's, so two reviews in a row don't repeat a part (#427's circuit breaker).
+ELSEWHERE = {**BLOCKS, "mechanism": "the label sync"}
 SECURITY_NOTE = {"mark": "note", "mechanism": "token scope", "security": "change", "area": "sign-in"}
 
 
@@ -86,7 +88,7 @@ def test_a_blocking_finding_fixed_in_the_same_review_still_makes_it_not_clean(pr
 
 
 def test_a_pass_with_a_blocking_finding_isnt_clean_and_one_with_notes_is(project, capsys):
-    blocked = with_records(new([BLOCKS], rnd=3, commit=EARLIER), new([BLOCKS], kind="pass", rnd=3))
+    blocked = with_records(new([BLOCKS], rnd=3, commit=EARLIER), new([ELSEWHERE], kind="pass", rnd=3))
     assert review_ids(check(project, capsys, blocked, "--review-rounds", "3")[0]) == [("pass_not_clean", None)]
     noted = with_records(new([BLOCKS], rnd=3, commit=EARLIER), new([NOTE, TICKET], kind="pass", rnd=3))
     assert check(project, capsys, noted, "--review-rounds", "3")[0]["decision"] == "ready"
@@ -124,7 +126,7 @@ def test_the_round_limit_still_chooses_a_round_or_a_pass(project, capsys):
 
 @pytest.mark.parametrize("cap", ["0", "1", "2", "10"])
 def test_no_passes_used_up_whatever_the_flag_says(project, capsys, cap):
-    many = [new([BLOCKS], kind="pass", rnd=3, commit=MIDDLE)] * 11 + [new([BLOCKS], kind="pass", rnd=3)]
+    many = [new([BLOCKS], kind="pass", rnd=3, commit=MIDDLE)] * 11 + [new([ELSEWHERE], kind="pass", rnd=3)]
     data = with_records(new([BLOCKS], rnd=3, commit=EARLIER), *many)
     got, _ = check(project, capsys, data, "--review-rounds", "3", "--review-passes", cap)
     assert review_ids(got) == [("pass_not_clean", None)]

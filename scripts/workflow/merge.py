@@ -240,6 +240,21 @@ REASONS = {
         "new": ("Not yet: the short checks of the latest changes have reached their limit, so the owner decides what happens next.", "The owner can ask Claude for one more check; until then, this change stays unmerged."),
         "developer": ("Not yet: the pass cap is reached ({cap} allowed after round {round}, {passes}), and the head {short} still needs one: this pull request waits on the owner.", "The owner decides: \"One more pass\" (merge-check skill) runs one past the cap; in a run the ticket stops at needs-human with the open findings in the PR body."),
     }),
+    # The circuit breaker (#427, spec #412): in place of the review reasons above, while the head is the latest
+    # record's commit. Its `next` (the case) is `fail_closed` or `split`; with neither left, no `next`.
+    "mechanism_repeats": Reason("review_panel", "review", {
+        "new": ("Not yet: the part `{mechanism}` was found to block in {reviews} in a row, and neither the safe fallback nor a split is left for it.", "Fix the findings and review again, as usual: the review carries on until one is clean."),
+        "developer": ("Not yet: the part `{mechanism}` has a blocking finding in {reviews} in a row, the latest on the head {short}; the safe fallback was taken already or the ticket's bar doesn't cover it, and it can't be split (split already, or the ticket was made by a split).", "Fix the findings and run the next review, as for a review that wasn't clean: it carries on until clean, within a run's end time."),
+    }, cases={
+        "fail_closed": {
+            "new": ("Not yet: the part `{mechanism}` was found to block in {reviews} in a row, and the ticket's bar has a safe fallback for it.", "Replace the part with the safe fallback, then review again."),
+            "developer": ("Not yet: the part `{mechanism}` has a blocking finding in {reviews} in a row, the latest on the head {short}, and the reviewer marked it as one the bar's fail-closed form (the safe fallback) covers.", "A fresh fixer replaces the part with the bar's fail-closed behaviour, the safe fallback; the next review checks it and records the outcome `fail-closed`. Say so in the PR body."),
+        },
+        "split": {
+            "new": ("Not yet: the part `{mechanism}` was found to block in {reviews} in a row, and the safe fallback in the ticket's bar doesn't cover it, or was tried already.", "Split the part out: file a ticket for it, take it out of this change, then review again."),
+            "developer": ("Not yet: the part `{mechanism}` has a blocking finding in {reviews} in a row, the latest on the head {short}; the bar's fail-closed form (the safe fallback) doesn't cover it or was taken already.", "Split it out: file a ready build ticket for the part first, then a fresh fixer takes it out of this pull request; the next review checks it and records the outcome `split`. The PR body names the moved criteria and the new ticket."),
+        },
+    }),
     # The small review's condition (#257): in place of every other review reason.
     "past_small_threshold": Reason("review_panel", "review", {
         "new": ("Not yet: this change has grown past what a short review covers ({size}, where a short review covers at most {most}).", "Review it now: Claude runs the full review panel."),
@@ -1137,7 +1152,12 @@ def _panel(ctx: Context, add) -> None:
     Like `free` and `_hand_off`, it takes the list's order for the PR's
     history; it doesn't read the commits' parents.
     When the old rule decides, every counted pass after the last round counts
-    toward its cap, as it always has. The round limit stays as above."""
+    toward its cap, as it always has. The round limit stays as above.
+
+    The circuit breaker (#427, spec #412): while the head is the latest
+    counted record's commit (in that same order), a part with a blocking
+    finding in two `rule=2` records in a row gives `mechanism_repeats`, one
+    for each such part, in place of the review reasons below (`_repeats`)."""
     head = ctx.pr().head
     perms = ctx.permissions()
     shas = ctx.commits() | {head}
@@ -1148,13 +1168,15 @@ def _panel(ctx: Context, add) -> None:
         _note(ctx, "records_ignored", f"Left out {left_out}: posted by an account without write access, or naming a commit not in this pull request's commit list.")
     rounds = [i for i, r in enumerate(counted) if r.kind == "round"]
     history = {sha: n for n, sha in enumerate(ctx.parents())}  # the PR's commits, oldest first
-    if counted:
-        # The head is the newest commit, wherever GitHub's list (by date, at most 250) puts it, or leaves it out.
-        def place(sha):
-            return len(history) if sha == head else history.get(sha, len(history))
 
-        latest_by_history = max(enumerate(counted), key=lambda e: (place(e[1].commit), e[0]))[1]
-        ctx.rule2 = latest_by_history.rule == reviews.RULE
+    # The head is the newest commit, wherever GitHub's list (by date, at most 250) puts it, or leaves it out.
+    def place(sha):
+        return len(history) if sha == head else history.get(sha, len(history))
+
+    # The counted records by the PR's history, then by posting: the rule choice's order, and the breaker's.
+    by_history = [r for _, r in sorted(enumerate(counted), key=lambda e: (place(e[1].commit), e[0]))]
+    if counted:
+        ctx.rule2 = by_history[-1].rule == reviews.RULE
     if not rounds:
         add("no_review")
         return
@@ -1215,6 +1237,15 @@ def _panel(ctx: Context, add) -> None:
         else:
             add(rid, **more, **details)
 
+    # The circuit breaker (#427): in place of the reasons below, while the head is the latest record's commit.
+    repeats = _repeats(by_history, head)
+    for part, after_it, n in repeats:
+        more = {"next": after_it, "case": after_it} if after_it else {}
+        add("mechanism_repeats", mechanism=part, reviews=_plural(n, "review"), **more, **details)
+    if repeats:
+        if unread is not None:
+            raise unread
+        return
     if not _clean_review(last):
         if not last_allowed:
             add("review_not_clean", next="round", **details)
@@ -1228,6 +1259,77 @@ def _panel(ctx: Context, add) -> None:
         needs_pass("review_stale")
     if unread is not None:
         raise unread
+
+
+def _blocking(f) -> bool:
+    """A finding the breaker can count: marked blocks, and not a security one (answer 40)."""
+    return f.mark == "blocks" and f.security is None
+
+
+def _repeats(by_history: list[reviews.Record], head: str) -> list[tuple[str, str | None, int]]:
+    """The circuit breaker (#427, spec #412): each part (mechanism) with a
+    blocking finding in two `rule=2` records in a row, or more, as (its name,
+    what comes next or None, how many in a row), in the order the latest record
+    names them. Only while the head is the latest record's commit: once an
+    action is pushed, a review comes first.
+
+    `by_history` is the counted records, oldest first by the PR's history, then
+    by posting (as the rule choice ranks them). Names compare exactly; security
+    findings never count; a record without `rule=2` breaks every run. A
+    finding the next record overturned counts for nothing; one it kept counts
+    with the record that first reported it, and a record whose only finding on
+    the part is that kept re-entry neither counts nor breaks the run. An
+    action on the part (an outcome `fail-closed` or `split`, posted by the
+    review after it) starts the count again from the record that posts it.
+
+    What comes next: `fail_closed` when the latest record marks the part as
+    one the bar's fail-closed form covers and no record says it took that
+    form; else `split` when no record says it was split out and the ticket
+    wasn't made by a split; else None."""
+    if not by_history or by_history[-1].commit != head or by_history[-1].rule != reviews.RULE:
+        return []
+    latest = by_history[-1]
+    new = [r for r in by_history if r.rule == reviews.RULE]
+    acted = {(o.kind, o.mechanism) for r in new for o in r.outcomes}
+    from_split = any(r.from_split for r in new)
+
+    def overturned(k: int) -> set[int]:
+        """The numbers of record k's findings the record after it overturned."""
+        if k + 1 >= len(by_history) or by_history[k + 1].rule != reviews.RULE:
+            return set()
+        return {o.finding for o in by_history[k + 1].outcomes if o.kind == "contested" and o.ruling == "overturned"}
+
+    def in_a_row(part: str) -> int:
+        n = 0
+        for k in range(len(by_history) - 1, -1, -1):
+            r = by_history[k]
+            if r.rule != reviews.RULE:
+                break
+            gone = overturned(k)
+            on_part = [(i, f) for i, f in enumerate(r.findings, 1) if _blocking(f) and f.mechanism == part and i not in gone]
+            if any(not f.contested for _, f in on_part):
+                n += 1
+            elif not on_part:
+                break
+            # else: only the kept re-entry, which counted with the record before: neither counts nor breaks.
+            if any(o.kind in ("fail-closed", "split") and o.mechanism == part for o in r.outcomes):
+                break  # the action came after the record before this one: the count starts here
+        return n
+
+    out = []
+    for part in dict.fromkeys(f.mechanism for f in latest.findings if _blocking(f)):
+        n = in_a_row(part)
+        if n < 2:
+            continue
+        covered = any(f.covered for f in latest.findings if _blocking(f) and f.mechanism == part)
+        if covered and ("fail-closed", part) not in acted:
+            after_it = "fail_closed"
+        elif ("split", part) not in acted and not from_split:
+            after_it = "split"
+        else:
+            after_it = None
+        out.append((part, after_it, n))
+    return out
 
 
 def _hand_off(ctx: Context) -> dict | None:
@@ -1475,6 +1577,8 @@ def _reason(rid: str, rule: Rule | None, level: str, details: dict, wording_id: 
         out["round"], out["reviewers"] = details["round"], details["reviewers"]
         if "next" in details:
             out["next"] = details["next"]
+        if "mechanism" in details:  # mechanism_repeats: the part, exactly as the records name it
+            out["mechanism"] = details["mechanism"]
     return out
 
 
