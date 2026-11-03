@@ -67,20 +67,31 @@ def assignees_of(issue: dict) -> list[str]:
     return [a["login"] if isinstance(a, dict) else str(a) for a in issue.get("assignees") or []]
 
 
-def parse_numbers(text: str | None) -> set[int]:
-    """Ticket numbers from "13, #143": commas between, `#` and spaces ignored.
+def parse_number_list(text: str | None) -> list[int]:
+    """Ticket numbers from "13, #143", in the order given, each once: commas
+    between, `#` and spaces ignored.
 
     Raises ValueError naming the first part that isn't a number.
     """
-    out: set[int] = set()
+    out: dict[int, None] = {}
     for part in (text or "").split(","):
         p = part.strip().lstrip("#").strip()
         if not p:
             continue
-        if not p.isdigit():
-            raise ValueError(f"not a ticket number: {part.strip()!r}")
-        out.add(int(p))
-    return out
+        digits = p.lstrip("0")
+        # "٣" or "²" is no ticket number, nor one past 18 digits (Python's own
+        # limit on int() is a setting, and counts leading zeros)
+        if not (p.isascii() and p.isdigit()) or len(digits) > 18:
+            shown = part.strip()
+            shown = shown[:20] + "\u2026" if len(shown) > 20 else shown
+            raise ValueError(f"not a ticket number: {shown!r}")
+        out.setdefault(int(digits or "0"))
+    return list(out)
+
+
+def parse_numbers(text: str | None) -> set[int]:
+    """`parse_number_list`, as a set."""
+    return set(parse_number_list(text))
 
 
 def _same_repo(ref_repo: str, repo: str | None) -> bool:
@@ -524,18 +535,27 @@ def startable(
     running_areas: list[str | None],
     slots: int,
     overrides: set[int] | frozenset = frozenset(),
+    first: list[int] | tuple = (),
 ) -> list[Verdict]:
     """Ready tickets to start now, at most `slots`, one per area.
 
-    Tickets labelled workflow:infra come first, then lowest number first. A
+    Tickets labelled workflow:infra come first (lowest number first), then the
+    tickets in `first`, in the order given (`ready --first`, #372: a run's
+    tickets to fix old bugs or late findings, and split tickets), then the
+    rest, lowest number first. A ticket in `first` that isn't ready is left
+    out like any other; one that is infra stays among the infra tickets. A
     ticket with no area may run beside anything. `overrides` are tickets the
     run state allows to share an area. Areas are compared case-insensitively.
     """
     taken = {a.casefold() for a in running_areas if a}
-    order = sorted(
-        (v for v in verdicts if v.ready),
-        key=lambda v: (INFRA_LABEL not in {l.casefold() for l in v.labels}, v.number),
-    )
+    rank = {n: i for i, n in enumerate(dict.fromkeys(first))}  # a caller's list may repeat a number
+
+    def key(v: Verdict):
+        if INFRA_LABEL in {l.casefold() for l in v.labels}:
+            return (0, 0, v.number)  # infra: by number, whatever `first` says
+        return (1, rank.get(v.number, len(rank)), v.number)
+
+    order = sorted((v for v in verdicts if v.ready), key=key)
     out: list[Verdict] = []
     for v in order:
         if len(out) >= slots:

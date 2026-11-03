@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+**`workflow ready --first`: given tickets start right after infra tickets** (#372, part of spec #412). `workflow ready --first <n>,<n>` puts the given tickets in its start order (`start_now`, and "start now:" in its text) right after the `workflow:infra` tickets, in the order given, ahead of the rest, so a run can start its tickets to fix old bugs, its tickets to fix late findings and its split tickets next. A given ticket that isn't ready is left out as before, one that is infra stays among the infra tickets, and an empty `--first` changes nothing. Without `--first`, the order is as before: infra tickets, then the rest, lowest number first. The conductor's use of it comes with its own ticket (#378).
+
+- **Ticket numbers are plain digits:** `ready`'s `--first`, `--exclude`, `--only` and `--override`, and `charter estimate --security`, now refuse a number written in other digits ("٣", "７", "²") or longer than 18 digits (leading zeros aside), saying "not a ticket number" (a long part cut to 20 characters and "…"), where before some were read as numbers and others stopped with Python's own message.
+- **For projects updating:** nothing to do. Tests: `tests/test_ready_first.py`.
+
 **The rule for build reviewers: marks, reproducers, part names, and what later reviews look at** (#374, part of spec #412). `review-panel` gains a last section, §10, which each build review copies into its scratch directory as `rule.md` (§1 gives the `sed` command), and which every build reviewer follows: Standards, Spec, Correctness, the security review and the explorer. Planning reviews (§8) don't get it.
 
 - **Each finding** is marked **blocks**, **a ticket to fix it** or **note**, with a severity of critical, important or minor ("critical" replaces "blocker" in `correctness-reviewer`, so a severity is never read as the mark), and a part name, reused exactly from `previous.md` when it is the same part. A blocking finding needs a reproducer (code: an input and the result it should give; text: a scenario and the two lines; a criterion or behaviour: quoted, with the missing test; a written rule: the rule and the line), else it is a note. The Correctness reviewer rules on the last review's contests, kept or overturned.
