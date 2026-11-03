@@ -43,7 +43,8 @@ END = "<!-- workflow-state:end -->"
 _BLOCK = re.compile(r"<!-- workflow-state:begin[^>]*-->\s*```json\s*(.*?)\s*```\s*<!-- workflow-state:end -->", re.S)
 
 BODY_LIMIT = 65_536
-TICKET_STATUSES = {"queued", "running", "in-review", "merged", "needs-human", "set-aside", "skipped"}
+# `carry-on`: not clean at the run's end time, handed on to the next run (#380).
+TICKET_STATUSES = {"queued", "running", "in-review", "merged", "needs-human", "set-aside", "skipped", "carry-on"}
 RUN_STATUSES = {"running", "stopping", "stopped"}
 
 

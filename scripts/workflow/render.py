@@ -28,6 +28,8 @@ PLACEHOLDER = re.compile(r"\{\{\s*([A-Za-z0-9_.]+)\s*\}\}")
 # Filled by the conductor for each ticket. "none" is a valid answer; empty isn't.
 # `wake_trigger` is the id of the routine that wakes the conductor when a ticket ends.
 REQUIRED_SLOTS = ("alongside", "read_first", "owner_decisions", "briefing", "wake_trigger")
+# Optional: `hand_off`, a carried-on ticket's hand-off comment (#380), on the "Hand-off:" line.
+OPTIONAL_SLOTS = ("hand_off",)
 _SEAL = re.compile(r"[ \t]*Briefing ([0-9a-f]{12})")
 
 
@@ -200,6 +202,37 @@ def _starts_from_words(ticket: dict, profile: Profile, branch: str) -> str:
     )
 
 
+# A hand-off comment on a pull request (#371): what a carried-on ticket's
+# session starts from (#380).
+_HAND_OFF_URL = re.compile(r"https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/([1-9][0-9]{0,9})#issuecomment-([1-9][0-9]{0,19})")
+
+
+def _says_none(value) -> bool:
+    return value is None or (isinstance(value, str) and value.strip().lower() == "none")
+
+
+def _hand_off_words(url: object, profile: Profile, branch: str) -> str:
+    """The briefing's "Hand-off:" line, from the optional `hand_off` slot: the
+    URL of the hand-off comment an earlier session left on the ticket's pull
+    request (#380), or none. Anything else stops the render."""
+    if _says_none(url):
+        return "none: start from the ticket and what **Specific to this ticket** says."
+    m = _HAND_OFF_URL.fullmatch(url.strip()) if isinstance(url, str) else None
+    if not m or m.group(1).lower() != profile.repo.lower():
+        raise RenderError(
+            "the hand_off slot is the URL of the hand-off comment on this ticket's pull request "
+            f"(https://github.com/{profile.repo}/pull/<n>#issuecomment-<id>), or \"none\""
+        )
+    return (
+        f"{m.group(0)}. An earlier session handed this ticket on before its review was clean, so this session carries it "
+        f"on. Its pull request #{m.group(2)} and branch `{branch}` stay as they are: check out the branch "
+        "from GitHub, and read that hand-off comment before anything else. Go on from it: fix its open blocking findings "
+        "first, then run the next review, numbered after the rounds and passes it names (`merge-check` counts them from "
+        "the records). For a security finding it names by its area only, first review the whole change for that area: "
+        "that review finds its details again, since none crossed sessions."
+    )
+
+
 def _code(cmd: str) -> str:
     return f"`{cmd}`" if cmd else "none"
 
@@ -271,6 +304,7 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
         "ticket.title": ticket.get("title") or "",
         "ticket.branch": branch,
         "ticket.starts_from": _starts_from_words(ticket, profile, branch),
+        "ticket.hand_off": _hand_off_words(slots.get("hand_off"), profile, branch),
         "project.name": profile.name,
         "project.repo": profile.repo,
         "project.base_branch": profile.base_branch,
@@ -301,6 +335,8 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
     }
     for k in REQUIRED_SLOTS:
         v[k] = slots.get(k, "")
+    for k in OPTIONAL_SLOTS:
+        v[k] = "none" if _says_none(slots.get(k)) else slots[k]
     for k, val in slots.items():
         v.setdefault(k, val)
     return v
@@ -313,13 +349,19 @@ def _pass_cap(review: dict) -> str:
         return (
             f"{presets_mod.pass_cap_words(review)}. Fix each pass's findings and run another; `merge-check` never "
             "says `passes_used_up`. Keep the PR body's findings table current after each pass, so the open findings "
-            "are there if the run's end time comes first (the conductor then sets the ticket aside)."
+            "are there if the run's end time comes first (the conductor then sets the ticket aside, or under spec #412's "
+            "rule carries it on to the next run)."
         )
     return f"{presets_mod.pass_cap_words(review)}. When `merge-check` says `passes_used_up`, the cap is reached: stop (below)."
 
 
 def render(template: str, vals: dict) -> str:
     used = [m.group(1) for m in PLACEHOLDER.finditer(template)]
+    if not _says_none(vals.get("hand_off")) and "ticket.hand_off" not in used:
+        raise RenderError(
+            "the template has no {{ticket.hand_off}} line, which tells the session to start from its hand_off: "
+            "render it with the kit's current ticket-session-prompt.md"
+        )
     missing_slots = [k for k in REQUIRED_SLOTS if k in used and not str(vals.get(k, "")).strip()]
     if missing_slots:
         raise RenderError(
