@@ -147,6 +147,8 @@ def test_profile_check_refuses_a_name_that_isnt_an_area(tmp_path, monkeypatch, c
         "<!-- a\nb -->\n## Bar\n",  # a comment ends at its line with -->
         "x\n\n```\na\n```\n\n## Bar\n",
         "- x\n  ## Bar\n",  # a heading in a list item
+        "```\nx\n``` \t\n## Bar\n",  # a closer may have spaces and tabs after it
+        "x\n \t\nBar\n---\n",
     ],
 )
 def test_has_bar(body):
@@ -205,6 +207,18 @@ def test_has_bar(body):
         "x\x0b## Bar\n",
         "x\u2028## Bar\n",
         "x\x85## Bar\n",
+        # Round 3: HTML in a list item or a quote stops the reading.
+        "- <!--\n  ## Bar\n  -->\n",
+        "- <details><summary>Notes</summary>\n  ## Bar\n  </details>\n",
+        "* <pre>\n\n  ## Bar\n  </pre>\n",
+        "1) <!--\n   ## Bar\n   -->\n",
+        "> <div>\n## Bar\n",
+        # Only spaces and tabs are blank or trailing in Markdown, not U+00A0.
+        "```\nx\n```\u00a0\n## Bar\n```\n",
+        "<div>\n\u00a0\n## Bar\n</div>\n",
+        "x\n\u00a0\nBar\n---\n",
+        "Bar\n---\u00a0\n",
+        "x\n\u3000\nBar\n---\n",
     ],
 )
 def test_has_no_bar(body):

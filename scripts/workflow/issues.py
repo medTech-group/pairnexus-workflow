@@ -445,9 +445,12 @@ _BAR_HEADING = re.compile(r"^ {0,3}#{1,6}[ \t]+" + _BAR_WORD + r"(?:[ \t]*:)?(?:
 _BAR_SETEXT = re.compile(_BAR_WORD + r"(?:[ \t]*:)?$", re.I)  # "Bar" at column 0, underlined
 _SETEXT_RULE = re.compile(r"(?:=+|-+)$")  # at column 0: not a list item's
 _TOP_FENCE = re.compile(r"(`{3,}|~{3,})(.*)$")  # a fence at column 0: top level
-# A fence marker anywhere else: indented, quoted or in a list item, where
-# GitHub may pair the fences differently.
-_ODD_FENCE = re.compile(r"(?:[ \t>]|(?:[-*+]|\d{1,9}[.)])(?=[ \t]))+(?:`{3,}|~{3,})")
+# What comes before a line's content: indentation, quote and list markers.
+# A fence after any of it, or HTML after a quote or list marker, is where
+# GitHub may pair or end things differently.
+_CONTAINER = re.compile(r"(?:[ \t>]|(?:[-*+]|\d{1,9}[.)])(?=[ \t]))*")
+_FENCE_MARK = re.compile(r"`{3,}|~{3,}")
+_HTML_MARK = re.compile(r"<[!?/A-Za-z]")
 # HTML blocks, as CommonMark starts and ends them: a comment, <?, <!X and
 # <![CDATA[ end at their terminator, raw-text tags at their closing tag, any
 # other tag at a blank line.
@@ -472,6 +475,16 @@ def _past(lines: list[str], i: int, ends) -> int | None:
     return None
 
 
+def _odd_container(line: str) -> bool:
+    """A fence indented, quoted or in a list item, or HTML in a quote or a
+    list item: where has_bar stops reading."""
+    p = _CONTAINER.match(line).end()
+    if not p:
+        return False
+    rest = line[p:]
+    return bool(_FENCE_MARK.match(rest) or (line[:p].strip(" \t") and _HTML_MARK.match(rest)))
+
+
 def has_bar(body: str | None) -> bool:
     """The body has a `## Bar` heading of its own: at any level, or "Bar"
     underlined at column 0 after a blank line, bold or italic, a trailing
@@ -482,13 +495,13 @@ def has_bar(body: str | None) -> bool:
     lines = _LINE_END.split(body or "")
     i, n = 0, len(lines)
     while i < n:
-        line = lines[i].rstrip()
+        line = lines[i].rstrip(" \t")
         nxt: int | None = None
         f = _TOP_FENCE.match(line)
         if f and not (f.group(1)[0] == "`" and "`" in f.group(2)):
             close = re.compile(r" {0,3}" + re.escape(f.group(1)[0]) + "{" + str(len(f.group(1))) + ",}$")
-            nxt = _past(lines, i + 1, lambda l: close.match(l.rstrip()))
-        elif _ODD_FENCE.match(line):
+            nxt = _past(lines, i + 1, lambda l: close.match(l.rstrip(" \t")))
+        elif _odd_container(line):
             return False
         elif raw := _HTML_RAW.match(line):
             end = f"</{raw.group(1).lower()}>"
@@ -496,14 +509,14 @@ def has_bar(body: str | None) -> bool:
         elif end := next((e for start, e in _HTML_ENDS if start.match(line)), None):
             nxt = _past(lines, i, lambda l: end in l)
         elif _HTML_TAG.match(line):
-            nxt = _past(lines, i, lambda l: not l.strip())
+            nxt = _past(lines, i, lambda l: not l.strip(" \t"))
             if nxt is None:
                 return False  # to the end: the rest is HTML
         elif _BAR_HEADING.match(line):
             return True
         else:
-            after_blank = i == 0 or not lines[i - 1].strip()
-            if after_blank and _BAR_SETEXT.match(line) and i + 1 < n and _SETEXT_RULE.match(lines[i + 1].rstrip()):
+            after_blank = i == 0 or not lines[i - 1].strip(" \t")
+            if after_blank and _BAR_SETEXT.match(line) and i + 1 < n and _SETEXT_RULE.match(lines[i + 1].rstrip(" \t")):
                 return True
             i += 1
             continue
