@@ -4,6 +4,7 @@ the setting, and `workflow ready` notes a ready ticket in such an area whose
 body has no `## Bar` heading, leaving it ready."""
 
 import json
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -32,8 +33,6 @@ def _write(root, run=""):
 
 
 def _parse(run=""):
-    import tomllib
-
     return parse(tomllib.loads(_toml(run)), Path("."))
 
 
@@ -65,16 +64,20 @@ def test_refuses_a_name_that_isnt_an_area(run, said):
     with pytest.raises(ProfileError) as e:
         _parse(run)
     msg = str(e.value)
-    assert "run.bar_areas" in msg and said in msg and "isn't one of [areas]" in msg
-    assert "conductor, guard, profile" in msg  # names the areas there are
+    assert "run.bar_areas" in msg and said in msg and "isn't one of the profile's areas" in msg
+    assert "(conductor, guard, profile)" in msg  # names the areas there are
+
+
+def test_a_long_name_is_cut_short_in_the_message():
+    with pytest.raises(ProfileError) as e:
+        _parse(f'bar_areas = ["{"x" * 3000}"]')
+    assert len(str(e.value)) < 300
 
 
 def test_refuses_any_name_when_there_are_no_areas():
-    import tomllib
-
     with pytest.raises(ProfileError) as e:
         parse(tomllib.loads('[project]\nname = "d"\nrepo = "a/d"\n[run]\nbar_areas = ["guard"]\n'), Path("."))
-    assert "run.bar_areas" in str(e.value) and "the profile has no [areas]" in str(e.value)
+    assert "run.bar_areas" in str(e.value) and "isn't one of the profile's areas (it has none)" in str(e.value)
 
 
 @pytest.mark.parametrize("run", ['bar_areas = "guard"', "bar_areas = [1]", "bar_areas = true"])
@@ -117,6 +120,13 @@ def test_profile_check_refuses_a_name_that_isnt_an_area(tmp_path, monkeypatch, c
         "## bar:\n- y\n",
         "  ## Bar  \n- y\n",
         "## Bar ##\n- y\n",
+        "## **Bar**\n- y\n",
+        "## _Bar:_\n- y\n",
+        "Bar\n---\n- y\n",  # underlined, as GitHub shows a heading
+        "x\n\nBar\n===\n- y\n",
+        "## Bar\r\n- y\r\n",
+        "<!-- guidance -->\n## Bar\n- y\n",  # a comment before it, closed
+        "```x`y\n## Bar\n",  # a backtick in a backtick fence's info string: not a fence
     ],
 )
 def test_has_bar(body):
@@ -138,6 +148,16 @@ def test_has_bar(body):
         "> ## Bar\n> - y\n",  # quoted from elsewhere
         "    ## Bar\n",  # indented code
         "#Bar\n",  # not a heading in GitHub's Markdown
+        "\t## Bar\n",  # tab-indented: code
+        "<!--\n## Bar\n- Must handle: TODO\n-->\n",  # hidden by GitHub
+        "<!-- a placeholder\n## Bar\n",  # an unclosed comment hides the rest
+        "- ```md\n  ## Bar\n  ```\n",  # fenced code in a list item
+        "```\n~~~\n## Bar\n```\n",  # a fence closes only with its own character
+        "````\n```\n## Bar\n````\n",  # and at least as long
+        "```\n```js\n## Bar\n```\n",  # and with nothing after it
+        "x\nBar\n---\n",  # a paragraph's last line underlined: the heading is "x Bar"
+        "Bar\n- y\n",
+        "## Bar (must handle, fail closed, accepted limits)\n",
     ],
 )
 def test_has_no_bar(body):
@@ -169,6 +189,7 @@ def test_notes_a_ticket_in_a_bar_area_with_no_bar_and_leaves_it_ready():
 def test_the_note_says_what_is_missing():
     (note,) = _notes([issue(1, "Area: guard\n")], ["guard"])[1].notes
     assert "## Bar" in note and "guard" in note and "run.bar_areas" in note
+    assert "(must handle" not in note  # nothing a writer might copy into the heading
 
 
 def test_only_the_listed_areas():
@@ -200,7 +221,7 @@ def test_a_ticket_not_ready_is_noted_too():
 
 def test_beside_the_other_notes():
     body = "Area: guard\n\nChange `.github/workflows/ci.yml` to add a job.\n"
-    v ={x.number: x for x in readiness([issue(1, body)], [], areas=["guard"], protected=[".github/workflows/**"], bar_areas=["guard"])}
+    v = {x.number: x for x in readiness([issue(1, body)], [], areas=["guard"], protected=[".github/workflows/**"], bar_areas=["guard"])}
     assert v[1].ready
     assert any(n.startswith("names protected path") for n in v[1].notes)
     assert BAR_NOTE.format(area="guard") in v[1].notes
@@ -237,13 +258,19 @@ def test_ready_cli_text(ready_files, capsys):
 
 
 def test_template_names_the_setting_and_still_parses():
-    import tomllib
-
     text = (KIT / "templates/profile.toml").read_text(encoding="utf-8")
     assert "bar_areas" in text
     run = text[text.index("\n[run]") :]
     assert "bar_areas" in run.split("\n[", 2)[1]  # under [run]
     assert parse(tomllib.loads(text), Path(".")).bar_areas == []
+
+
+def test_template_example_is_one_of_its_areas():
+    text = (KIT / "templates/profile.toml").read_text(encoding="utf-8")
+    example = text.split("bar_areas = []", 1)[1].split("e.g. ", 1)[1].split("\n", 1)[0]
+    areas = text.split("\n[areas]", 1)[1].split("\n[", 1)[0]
+    for name in json.loads(example):
+        assert f"# {name} = [" in areas
 
 
 def test_docs_name_the_setting():

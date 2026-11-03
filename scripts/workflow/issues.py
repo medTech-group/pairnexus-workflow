@@ -430,28 +430,43 @@ def protected_named(body: str | None, patterns: Iterable[str] | None, repo: str 
     return list(out.items())
 
 
-# The bar (#428, spec #412): a `## Bar` heading (any level, a trailing colon or
-# closing hashes allowed), outside fenced code and quotes.
-_BAR_HEADING = re.compile(r"^ {0,3}#{1,6}[ \t]+bar[ \t]*:?(?:[ \t]+#+)?[ \t]*$", re.I)
-_FENCE_LINE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
-BAR_NOTE = "area {area} is in run.bar_areas, but the ticket has no ## Bar (must handle, fail closed, accepted limits)"
+# The bar (#428, spec #412): a `## Bar` heading of the ticket's own, as GitHub
+# shows it. When in doubt it isn't one, so the ticket is noted (fail closed).
+_BAR_WORD = r"(?:bar:?|\*\*bar:?\*\*|__bar:?__|\*bar:?\*|_bar:?_)"  # bold or italic too
+_BAR_HEADING = re.compile(r"^ {0,3}#{1,6}[ \t]+" + _BAR_WORD + r"[ \t]*:?(?:[ \t]+#+)?[ \t]*$", re.I)
+_BAR_SETEXT = re.compile(r"^ {0,3}" + _BAR_WORD + r"[ \t]*:?[ \t]*$", re.I)  # "Bar" underlined
+_SETEXT_RULE = re.compile(r"^ {0,3}(?:=+|-+)[ \t]*$")
+# A fence at any indent, in a list item too (looser than GitHub: it hides more).
+_BAR_FENCE = re.compile(r"^[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)?(`{3,}|~{3,})(.*)$")
+_HTML_COMMENT = re.compile(r"<!--.*?(?:-->|\Z)", re.S)  # unclosed: hides the rest
+BAR_NOTE = (
+    "area {area} is in run.bar_areas, but the ticket has no ## Bar heading: add one saying what the change "
+    "must handle, what it does when it can't be sure (fail closed), and the limits it accepts"
+)
 
 
 def has_bar(body: str | None) -> bool:
-    """The body has a `## Bar` heading of its own: one in fenced code (an
-    example) or in a quote (from elsewhere) doesn't count, and an unclosed
-    fence hides the rest, as GitHub renders it."""
+    """The body has a `## Bar` heading of its own (any level, or "Bar"
+    underlined, bold or italic, a trailing colon allowed). One GitHub hides or
+    shows as code doesn't count: in an HTML comment, in fenced code (an
+    example, in a list item too; an unclosed fence hides the rest), indented as
+    code, or in a quote (from elsewhere)."""
     fence: str | None = None
-    for line in (body or "").splitlines():
-        f = _FENCE_LINE.match(line)
-        if fence is None:
-            if f and not (f.group(1)[0] == "`" and "`" in f.group(2)):
-                fence = f.group(1)
-                continue
-            if _BAR_HEADING.match(line):
-                return True
-        elif f and f.group(1)[0] == fence[0] and len(f.group(1)) >= len(fence) and not f.group(2).strip():
-            fence = None
+    lines = _HTML_COMMENT.sub("", body or "").splitlines()
+    for i, line in enumerate(lines):
+        f = _BAR_FENCE.match(line)
+        if fence is not None:
+            if f and f.group(1)[0] == fence[0] and len(f.group(1)) >= len(fence) and not f.group(2).strip():
+                fence = None
+            continue
+        if f and not (f.group(1)[0] == "`" and "`" in f.group(2)):
+            fence = f.group(1)
+            continue
+        if _BAR_HEADING.match(line):
+            return True
+        after_blank = i == 0 or not lines[i - 1].strip()
+        if after_blank and _BAR_SETEXT.match(line) and i + 1 < len(lines) and _SETEXT_RULE.match(lines[i + 1]):
+            return True
     return False
 
 
@@ -554,7 +569,7 @@ def readiness(
                 v.reasons.append(f"blocker #{b} closed as {bi.get('state_reason')}, not completed")
         for path, pat in protected_named(issue.get("body"), protected, repo):
             v.notes.append(f"names protected path {path} ({pat}): check it isn't an owner task")
-        if area and area.casefold() in bar and not has_bar(issue.get("body")):
+        if area and area in bar and not has_bar(issue.get("body")):
             v.notes.append(BAR_NOTE.format(area=area))
         v.ready = not v.reasons
         out.append(v)

@@ -283,8 +283,8 @@ def _bar_areas(v, areas: dict) -> list[str]:
     known = {a.casefold() for a in areas}
     for name in v:
         if name.casefold() not in known:
-            there = f"[areas] has {', '.join(sorted(areas, key=str.casefold))}" if areas else "the profile has no [areas]"
-            raise ProfileError(f"run.bar_areas: {name!r} isn't one of [areas] ({there}); name an area there, or leave it out")
+            there = f"({', '.join(sorted(areas, key=str.casefold))})" if areas else "(it has none)"
+            raise ProfileError(f"run.bar_areas: {_shown(name)} isn't one of the profile's areas {there}; name one from [areas], or leave it out")
     return list(v)
 
 
