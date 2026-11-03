@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 0.1.19
+
+**Only ticket sessions write code, now for commits and pushes too.** #389 to #394 (part of #338): under `code_writers = "ticket"`, the guard refuses a commit or a push that carries code outside ticket sessions, judges a merge by its own changes, lets through a revert that exactly undoes a commit on the base (the conductor's needs the owner's yes), lets a planning session try an idea in code on a `prototype/*` branch that can't reach another branch unjudged, and refuses a commit and a push chained in one command. Under `"any"`, or with `code_writers` absent, nothing changes.
+
+**Recommendations that hold up.** Spec #436 (#438 to #448): the flow gains "Decision questions", and `start`, `next`, `review-panel` §8 and the conductor's kick-off follow it: each recommendation carries its evidence, a read-only `planning-checker` agent checks each round of questions before the person sees it, all the answers are read together before a spec or ADR is written, a spec's tickets are read against the spec before they're published, a quick ticket lists what was decided for the person, and each piece of planning ends with its "Planning counts". ADR 0001 says so too (#437).
+
+**Groundwork for spec #412's rule for build reviewers, not switched on yet.** Eleven of its tickets, each with its note below: review records written from a findings file with marks, the review hand-off, `merge-check`'s judging of those records and its circuit breaker, `workflow ready --first`, filing tickets to fix findings and split ones (and their joining a run), the `fixer` agent, carrying on a ticket at a run's end, and `run.bar_areas`. Build reviews keep today's rule until the spec's last tickets switch it on.
+
+- **For projects updating to 0.1.19:**
+  - The update adds `.claude/agents/planning-checker.md` and `.claude/agents/fixer.md`; the fixer starts only once build reviews follow spec #412's rule.
+  - Optional: `bar_areas = ["<area>"]` under `[run]` has `workflow ready` note a ticket in those areas without a `## Bar` (#428).
+  - Under `code_writers = "ticket"`: commit, then push in a command of its own, as the skills already say; refs fetched from anything but a branch (a pull request's) no longer count as on the remote.
+- **Known limits:** the guard's shell reader can still hide a later command in some shell forms (#422), and a prototype's code can still reach another branch through GitHub's own ref writes (#423).
+
 **`run.bar_areas`: the areas whose tickets need a bar** (#428, part of spec #412). A new profile setting lists the areas from `[areas]` whose build tickets need a `## Bar` (what the change must handle, what it does when it can't be sure, and the limits it accepts). `workflow ready` notes a ticket in one of them whose body has no `## Bar` heading ("area guard is in run.bar_areas, but the ticket has no ## Bar …"), leaving it ready, as it notes a ticket naming a protected path. A heading GitHub hides or shows as code or text (in an HTML comment or block, fenced or indented code, or a quote) doesn't count, and where it can't be sure how GitHub reads the rest it reads no further, so the ticket is noted. Absent or empty, no area needs one. `profile check` refuses a name that isn't one of `[areas]`, compared without case as tickets' areas are, and warns of one no ticket's `Area:` could give and shows the list under `bar_areas`; the profile template and `docs/profile.md` name it.
 
 - **For projects updating:** nothing to do; add `bar_areas = ["<area>"]` under `[run]` to have tickets in those areas noted. This repository's own setting is an owner task (the profile is a protected path), and waits for the kit's update pull request that vendors this release: until then the vendored kit refuses the key as unknown, and every command stops reading the profile. Tests: `tests/test_bar_areas.py`.
