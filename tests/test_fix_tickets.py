@@ -45,6 +45,11 @@ def _filing() -> str:
     return _flat(_filing_raw())
 
 
+def _listing() -> str:
+    """The command that lists the open issues, from the filing subsection."""
+    return _filing_raw().split("rather than searching", 1)[1].split("```\n", 2)[1].strip()
+
+
 def _body_list() -> str:
     return _flat(_between(_read(BUILD), "## 4. Open the pull request", "\n## 5."))
 
@@ -62,7 +67,15 @@ def test_review_panel_points_to_it():
     assert "the way `build-ticket` files tickets to fix findings" in s3
     # build-ticket's older line on findings sends a ticket mark here.
     review = _flat(_between(_read(BUILD), "## 3. Review it", HEADING))
-    assert "(under the rule, a finding marked a ticket to fix it is filed instead: \"Filing tickets to fix findings, and split tickets\", below)" in review
+    assert (
+        "(under the rule, a finding marked a ticket to fix it is filed instead, except a security problem the change adds: "
+        "\"Filing tickets to fix findings, and split tickets\", below)"
+    ) in review
+    # review-panel §3 names the same exception, so the two never answer differently.
+    assert (
+        "The one exception is a security problem the change adds (`security: change`): whatever its mark, "
+        "it is fixed in the pull request, since it still blocks (section 10)."
+    ) in s3
 
 
 def test_the_three_kinds():
@@ -102,27 +115,29 @@ def test_when_each_is_filed():
     ) in text
 
 
-def _listing() -> str:
-    return _filing_raw().split("rather than searching", 1)[1].split("```\n", 2)[1].strip()
-
-
 def test_it_looks_for_an_open_one_first():
     text = _filing()
     # Only this ticket's own fix tickets are reused: one from another ticket, or a person's issue, may never be built.
+    # Only the session's own filing counts: `author_association` doesn't show write access.
     assert (
         "**This ticket's own fix tickets** are the open issues whose machine line (below) says `from=` this ticket, "
-        "posted by an account with write access (`OWNER`, `MEMBER` or `COLLABORATOR` in the listing)."
+        "posted by the account you post as (`gh api user --jq .login`), since only your own filing counts; "
+        "those saying `kind=split` are its own split tickets."
     ) in text
+    assert "author_association" not in text
     assert (
         "**Look first.** When one of this ticket's own fix tickets is for the same failure (the same defect in the same place, "
-        "however it is worded), or for a split the same part, file nothing: its number is the finding's `issue`."
+        "however it is worded), or for a split the same part, file nothing: its number is the finding's `issue` (a security one: below)."
     ) in text
     assert (
         "Any other open issue for the same failure is never reused, since a run may never build it: file the ticket, "
         "and name that issue in its `## What to build` (\"may repeat #<n>\")."
     ) in text
     # Listed, not searched: the search index lags behind an issue just filed.
-    assert "List every open issue with its machine line, if it has one, rather than searching, since GitHub's search can miss an issue filed a minute ago:" in text
+    assert (
+        "List every open issue with its author and its machine line, if it has one (the last, since a body may quote another "
+        "above its own), rather than searching, since GitHub's search can miss an issue filed a minute ago:"
+    ) in text
     assert "search/issues" not in text
     assert _listing().startswith("gh api 'repos/<repo>/issues?state=open&per_page=100' --paginate --jq '")
 
@@ -131,21 +146,27 @@ def test_it_looks_for_an_open_one_first():
 def test_the_listing_prints_each_issues_machine_line(tmp_path):
     jq = _listing().split("--jq '", 1)[1].rsplit("'", 1)[0]
     issues = [
-        {"number": 5, "title": "A bug a person wrote", "author_association": "NONE", "body": "labels broken"},
-        {"number": 6, "title": "The preview reader", "author_association": "OWNER",
+        {"number": 5, "title": "A bug a person wrote", "user": {"login": "someone"}, "body": "labels broken"},
+        {"number": 6, "title": "The preview reader", "user": {"login": "owner"},
          "body": "x\n<!-- workflow:fix-ticket from=373 kind=split -->\n<!-- workflow:agent -->"},
-        {"number": 7, "title": "a pull request", "pull_request": {}, "body": "<!-- workflow:fix-ticket from=1 kind=old -->"},
-        {"number": 8, "title": "No body", "author_association": "MEMBER", "body": None},
-        {"number": 9, "title": "Quotes the form", "author_association": "OWNER",
+        {"number": 7, "title": "a pull request", "pull_request": {}, "user": {"login": "owner"},
+         "body": "<!-- workflow:fix-ticket from=1 kind=old -->"},
+        {"number": 8, "title": "No body", "user": {"login": "owner"}, "body": None},
+        {"number": 9, "title": "Quotes the form", "user": {"login": "owner"},
          "body": "`<!-- workflow:fix-ticket from=<n> kind=old|late|split -->`"},
+        # A finding quoting another ticket's line above its own: its own, the last, is the one listed.
+        {"number": 10, "title": "Quotes a real line", "user": {"login": "owner"},
+         "body": "#380's `<!-- workflow:fix-ticket from=12 kind=old -->` names its PR\n"
+                 "<!-- workflow:fix-ticket from=373 kind=late -->\n<!-- workflow:agent -->"},
     ]
     (tmp_path / "page.json").write_text(json.dumps(issues))
     out = subprocess.run(["jq", "-r", jq, str(tmp_path / "page.json")], capture_output=True, text=True, check=True).stdout
     assert out.splitlines() == [
-        "#5 NONE - A bug a person wrote",
-        "#6 OWNER <!-- workflow:fix-ticket from=373 kind=split --> The preview reader",
-        "#8 MEMBER - No body",
-        "#9 OWNER - Quotes the form",
+        "#5 someone - A bug a person wrote",
+        "#6 owner <!-- workflow:fix-ticket from=373 kind=split --> The preview reader",
+        "#8 owner - No body",
+        "#9 owner - Quotes the form",
+        "#10 owner <!-- workflow:fix-ticket from=373 kind=late --> Quotes a real line",
     ]
 
 
@@ -174,7 +195,10 @@ def test_the_tickets_parts():
         "new ticket's area, the bar that area's tickets copy from `profile.md`; otherwise none;"
     ) in text
     # `workflow ready` reads "blocked by #8" anywhere in a body as a blocker.
-    assert "Outside `## Blocked by`, never write \"blocked by\" before an issue number, even in a copied finding: `workflow ready` would read it as a blocker." in text
+    assert (
+        "Write \"blocked by\" only in `## Blocked by`: `workflow ready` reads it anywhere else on a line with an issue number "
+        "as a blocker. In a copied finding or a moved criterion, write \"waits on\" instead, and say so in the pull request body."
+    ) in text
 
 
 def test_blocked_by_names_this_ticket_only_for_its_own_lines():
@@ -223,17 +247,33 @@ def test_a_security_problem_on_main_names_only_its_area():
     assert "its details (where, the reproducer, the fix) go to the owner privately, never on GitHub" in text
     assert "in attended work, in the session's chat" in text
     assert "in a run, in your own chat as soon as you have verified it, and again in your final message, which names the ticket" in text
-    assert "it is always a new ticket: an open one names only its area, so it can't be matched. Tell the owner privately of any open one it may repeat." in text
+    assert (
+        "it is a new ticket each time, unless you filed one for it yourself in this session, its details in your chat: "
+        "then it is \"Already filed as #<n>\". Any other open one names only its area, so it can't be matched: "
+        "tell the owner privately of any it may repeat."
+    ) in text
+
+
+def test_a_blocking_security_problem_on_main_holds_a_run_for_the_owner():
+    text = _filing()
+    assert "A blocking `security: main` finding is never split out, and never filed in place of its fix." in text
+    # ADR 0001: in a run it stops its ticket at needs-human; never fixed unattended in public.
+    assert (
+        "In a run it holds this ticket for the owner: stop as §5's \"Still red after three fix attempts\" says (`needs-human`), "
+        "the reason naming only its area, its details given privately as above."
+    ) in text
+    assert "In attended work it is fixed here, its details shown to the person and given privately to whoever fixes it." in text
+    assert "**Still red after three fix attempts:**" in _read(BUILD)
 
 
 def test_a_security_problem_the_change_adds_is_never_filed():
     text = _filing()
     # It blocks whichever review finds it (review-panel §10), so a mistaken ticket mark never lets it merge.
     assert (
-        "A security problem the change adds (`security: change`) is never filed, whatever its mark: it is fixed in this "
-        "pull request, only its area named in public, and the findings table says it was marked a ticket."
+        "A security problem the change adds (`security: change`) is the one finding never filed as marked: whatever its mark, "
+        "it is fixed in this pull request, since it still blocks (`review-panel` §10), only its area named in public, "
+        "and the findings table gives its mark."
     ) in text
-    assert "A blocking `security: main` finding is fixed here too: never split out, and never filed in place of its fix." in text
 
 
 def test_the_pull_request_body_names_moved_criteria_and_the_split_ticket():
