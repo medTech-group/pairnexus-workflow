@@ -43,7 +43,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Callable, NamedTuple
 
 from . import charter as charter_mod
 from . import handoff, own_changes, presets as presets_mod, protection, reviews, small, state
@@ -243,16 +243,16 @@ REASONS = {
     # The circuit breaker (#427, spec #412): in place of the review reasons above, while the head is the latest
     # record's commit. Its `next` (the case) is `fail_closed` or `split`; with neither left, no `next`.
     "mechanism_repeats": Reason("review_panel", "review", {
-        "new": ("Not yet: the part `{mechanism}` was found to block in {reviews} in a row, and neither the safe fallback nor a split is left for it.", "Fix the findings and review again, as usual: the review carries on until one is clean."),
-        "developer": ("Not yet: the part `{mechanism}` has a blocking finding in {reviews} in a row, the latest on the head {short}; the safe fallback was taken already or the ticket's bar doesn't cover it, and it can't be split (split already, or the ticket was made by a split).", "Fix the findings and run the next review, as for a review that wasn't clean: it carries on until clean, within a run's end time."),
+        "new": ("Not yet: the part `{mechanism}` blocked the review {reviews} in a row, and neither the safe fallback nor a split is left for it.", "Fix what the review found, as usual, then review again: it carries on until a review finds nothing to fix."),
+        "developer": ("Not yet: the part `{mechanism}` has a blocking finding in {reviews} in a row, the latest on {short}; the safe fallback was taken already or the ticket's bar doesn't cover it, and it can't be split (split already, or the ticket was made by a split).", "Fix the findings as for a review that wasn't clean, then run the next review (`then`: a round or a Correctness pass). It carries on until clean: in a run, within its end time; in attended work, up to 10 reviews that weren't clean in one session."),
     }, cases={
         "fail_closed": {
-            "new": ("Not yet: the part `{mechanism}` was found to block in {reviews} in a row, and the ticket's bar has a safe fallback for it.", "Replace the part with the safe fallback, then review again."),
-            "developer": ("Not yet: the part `{mechanism}` has a blocking finding in {reviews} in a row, the latest on the head {short}, and the reviewer marked it as one the bar's fail-closed form (the safe fallback) covers.", "A fresh fixer replaces the part with the bar's fail-closed behaviour, the safe fallback; the next review checks it and records the outcome `fail-closed`. Say so in the PR body."),
+            "new": ("Not yet: the part `{mechanism}` blocked the review {reviews} in a row, and the ticket's bar has a safe fallback for it.", "Replace the part with the safe fallback, fix the other things the review found, then review again."),
+            "developer": ("Not yet: the part `{mechanism}` has a blocking finding in {reviews} in a row, the latest on {short}, and the reviewer marked it as one the bar's fail-closed form (the safe fallback) covers.", "A fresh fixer replaces the part with the bar's fail-closed behaviour, the safe fallback, and fixes the review's other blocking findings; then the next review (`then`: a round or a Correctness pass) checks it and records the outcome `fail-closed`, and the count starts again. Say so in the PR body."),
         },
         "split": {
-            "new": ("Not yet: the part `{mechanism}` was found to block in {reviews} in a row, and the safe fallback in the ticket's bar doesn't cover it, or was tried already.", "Split the part out: file a ticket for it, take it out of this change, then review again."),
-            "developer": ("Not yet: the part `{mechanism}` has a blocking finding in {reviews} in a row, the latest on the head {short}; the bar's fail-closed form (the safe fallback) doesn't cover it or was taken already.", "Split it out: file a ready build ticket for the part first, then a fresh fixer takes it out of this pull request; the next review checks it and records the outcome `split`. The PR body names the moved criteria and the new ticket."),
+            "new": ("Not yet: the part `{mechanism}` blocked the review {reviews} in a row, and the safe fallback in the ticket's bar doesn't cover it, or was tried already.", "Split the part out: file a ticket for it, take it out of this change, fix the other things the review found, then review again."),
+            "developer": ("Not yet: the part `{mechanism}` has a blocking finding in {reviews} in a row, the latest on {short}; the bar's fail-closed form (the safe fallback) doesn't cover it or was taken already.", "Split it out: file a ready build ticket for the part first, then a fresh fixer takes it out of this pull request and fixes the review's other blocking findings; the next review (`then`: a round or a Correctness pass) checks it and records the outcome `split`, and the count starts again. The PR body names the moved criteria and the new ticket."),
         },
     }),
     # The small review's condition (#257): in place of every other review reason.
@@ -1173,10 +1173,11 @@ def _panel(ctx: Context, add) -> None:
     def place(sha):
         return len(history) if sha == head else history.get(sha, len(history))
 
-    # The counted records by the PR's history, then by posting: the rule choice's order, and the breaker's.
-    by_history = [r for _, r in sorted(enumerate(counted), key=lambda e: (place(e[1].commit), e[0]))]
+    # The counted records by the PR's history, then by posting (their places in `counted`): the rule choice's
+    # order, and the breaker's.
+    by_history = sorted(range(len(counted)), key=lambda i: (place(counted[i].commit), i))
     if counted:
-        ctx.rule2 = by_history[-1].rule == reviews.RULE
+        ctx.rule2 = counted[by_history[-1]].rule == reviews.RULE
     if not rounds:
         add("no_review")
         return
@@ -1228,27 +1229,23 @@ def _panel(ctx: Context, add) -> None:
         _note(ctx, "free_passes", f"{_plural(len(after) - len(used), 'Correctness pass', 'Correctness passes')} after a merge of the base that left the pull request's changed lines as they were didn't count toward the pass cap.")
     passes = [r for _, r in after if on_head(r)]
 
+    usual: list[tuple[str, dict]] = []  # the review reason, unless the circuit breaker gives its own
+
+    def give(rid, **more):
+        usual.append((rid, more))
+
     def needs_pass(rid, **more):
         # A pass the head needs that wouldn't count doesn't meet the cap (answer 23: no false needs-human). It is
         # judged on GitHub's `lines` hash; the pass's record names git's, so where they differ, that pass counts.
         if cap != presets_mod.UNTIL_CLEAN and len(used) >= cap and not free(len(counted) - 1, head, hashes.lines):
             posted = " posted" if len(used) == len(after) else f" counted of {len(after)} posted"
-            add("passes_used_up", next="owner", passes=_plural(len(used), "Correctness pass", "Correctness passes") + posted, cap=cap, **details)
+            give("passes_used_up", next="owner", passes=_plural(len(used), "Correctness pass", "Correctness passes") + posted, cap=cap, **details)
         else:
-            add(rid, **more, **details)
+            give(rid, **more, **details)
 
-    # The circuit breaker (#427): in place of the reasons below, while the head is the latest record's commit.
-    repeats = _repeats(by_history, head)
-    for part, after_it, n in repeats:
-        more = {"next": after_it, "case": after_it} if after_it else {}
-        add("mechanism_repeats", mechanism=part, reviews=_plural(n, "review"), **more, **details)
-    if repeats:
-        if unread is not None:
-            raise unread
-        return
     if not _clean_review(last):
         if not last_allowed:
-            add("review_not_clean", next="round", **details)
+            give("review_not_clean", next="round", **details)
         elif not passes:
             needs_pass("review_not_clean", next="pass", case="last_round" if last.round >= allowed else "small" if not any(ran_spec) else "after_small")
         elif not _clean_review(passes[-1]):
@@ -1257,78 +1254,109 @@ def _panel(ctx: Context, add) -> None:
         needs_pass("pass_not_clean")
     elif not on_head(last) and not passes:
         needs_pass("review_stale")
+    # The circuit breaker (#427): in place of the review reason, while the head is the latest record's commit,
+    # or a merge of the base that record's review carries over to.
+    repeats = _repeats(counted, by_history, latest.commit if carried else head)
+    # The review that follows its action, as the round limit chooses it: what `review_not_clean` would have said
+    # (another round, or a pass after the last allowed one), else a pass.
+    then = (usual[0][1]["next"] if usual[0][0] == "review_not_clean" else "pass") if usual else None
+    for r in repeats:
+        more = {"next": r.next, "case": r.next} if r.next else {}
+        add("mechanism_repeats", mechanism=r.part, reviews=_plural(r.count, "review"), then=then, **more, **details)
+    if not repeats:
+        for rid, more in usual:
+            add(rid, **more)
     if unread is not None:
         raise unread
 
 
-def _blocking(f) -> bool:
-    """A finding the breaker can count: marked blocks, and not a security one (answer 40)."""
-    return f.mark == "blocks" and f.security is None
+class _Repeat(NamedTuple):
+    part: str  # the mechanism, as the records name it
+    next: str | None  # fail_closed, split, or None
+    count: int  # the reviews in a row
 
 
-def _repeats(by_history: list[reviews.Record], head: str) -> list[tuple[str, str | None, int]]:
+def _same_review(a: reviews.Record, b: reviews.Record) -> bool:
+    """`b` is `a` posted again (a record missed is posted again, and a post that
+    timed out may have gone through): a round with the same number on the same
+    commit, or a pass on the same commit after the same round with the same
+    findings and outcomes. Two passes on one commit that found different
+    things are two reviews (a fixer that contested everything pushes nothing)."""
+    return (a.kind == b.kind and a.round == b.round and a.commit == b.commit
+            and (a.kind == "round" or a.found == b.found))
+
+
+def _repeats(counted: list[reviews.Record], by_history: list[int], head: str) -> list[_Repeat]:
     """The circuit breaker (#427, spec #412): each part (mechanism) with a
-    blocking finding in two `rule=2` records in a row, or more, as (its name,
-    what comes next or None, how many in a row), in the order the latest record
-    names them. Only while the head is the latest record's commit: once an
-    action is pushed, a review comes first.
+    blocking finding in two `rule=2` reviews in a row, or more, in the order
+    the latest record names them. Only while `head` (the pull request's head,
+    or the commit whose review a merge of the base carries over to) is the
+    latest record's commit: once an action is pushed, a review comes first.
 
-    `by_history` is the counted records, oldest first by the PR's history, then
-    by posting (as the rule choice ranks them). Names compare exactly; security
-    findings never count; a record without `rule=2` breaks every run. A
-    finding the next record overturned counts for nothing; one it kept counts
-    with the record that first reported it, and a record whose only finding on
-    the part is that kept re-entry neither counts nor breaks the run. An
-    action on the part (an outcome `fail-closed` or `split`, posted by the
-    review after it) starts the count again from the record that posts it.
+    `by_history` is `counted`'s places, oldest first by the PR's history, then
+    by posting (as the rule choice ranks records); a review posted twice
+    (`_same_review`) counts once, as its later copy. Names compare exactly;
+    security findings never count; a record without `rule=2` breaks every run.
+    A contest's ruling is about the review posted just before the record that
+    gives it: a finding it overturned counts for nothing; one it kept counts
+    with the review that first reported it, and a review whose only findings on
+    the part are kept re-entries neither counts nor breaks the run. A note or a
+    ticket to fix it on the part, with no new blocking finding on it, breaks
+    it. An action on the part (an outcome `fail-closed` or `split`, posted by
+    the review after it) starts the count again from the review that posts it.
 
     What comes next: `fail_closed` when the latest record marks the part as
     one the bar's fail-closed form covers and no record says it took that
     form; else `split` when no record says it was split out and the ticket
-    wasn't made by a split; else None."""
-    if not by_history or by_history[-1].commit != head or by_history[-1].rule != reviews.RULE:
+    wasn't made by a split (any record's flag); else None."""
+    overturned: dict[int, set[int]] = {}  # a place in `counted` -> its findings' numbers overturned
+    for i in range(1, len(counted)):
+        if counted[i].rule == reviews.RULE and counted[i - 1].rule == reviews.RULE:
+            overturned.setdefault(i - 1, set()).update(
+                o.finding for o in counted[i].outcomes if o.kind == "contested" and o.ruling == "overturned")
+    seq: list[int] = []
+    for i in by_history:
+        if seq and _same_review(counted[seq[-1]], counted[i]):
+            overturned.setdefault(i, set()).update(overturned.get(seq[-1], ()))
+            seq[-1] = i
+        else:
+            seq.append(i)
+    if not seq or counted[seq[-1]].commit != head or counted[seq[-1]].rule != reviews.RULE:
         return []
-    latest = by_history[-1]
-    new = [r for r in by_history if r.rule == reviews.RULE]
+    latest = counted[seq[-1]]
+    new = [r for r in counted if r.rule == reviews.RULE]
     acted = {(o.kind, o.mechanism) for r in new for o in r.outcomes}
     from_split = any(r.from_split for r in new)
 
-    def overturned(k: int) -> set[int]:
-        """The numbers of record k's findings the record after it overturned."""
-        if k + 1 >= len(by_history) or by_history[k + 1].rule != reviews.RULE:
-            return set()
-        return {o.finding for o in by_history[k + 1].outcomes if o.kind == "contested" and o.ruling == "overturned"}
-
     def in_a_row(part: str) -> int:
         n = 0
-        for k in range(len(by_history) - 1, -1, -1):
-            r = by_history[k]
+        for i in reversed(seq):
+            r = counted[i]
             if r.rule != reviews.RULE:
                 break
-            gone = overturned(k)
-            on_part = [(i, f) for i, f in enumerate(r.findings, 1) if _blocking(f) and f.mechanism == part and i not in gone]
-            if any(not f.contested for _, f in on_part):
+            gone = overturned.get(i, set())
+            on_part = [f for k, f in enumerate(r.findings, 1) if f.security is None and f.mechanism == part and k not in gone]
+            if any(f.mark == "blocks" and not f.contested for f in on_part):
                 n += 1
-            elif not on_part:
+            elif not on_part or not all(f.contested for f in on_part):
                 break
-            # else: only the kept re-entry, which counted with the record before: neither counts nor breaks.
+            # else only kept re-entries, which counted with the review before: neither counts nor breaks.
             if any(o.kind in ("fail-closed", "split") and o.mechanism == part for o in r.outcomes):
-                break  # the action came after the record before this one: the count starts here
+                break  # the action came after the review before this one: the count starts here
         return n
 
     out = []
-    for part in dict.fromkeys(f.mechanism for f in latest.findings if _blocking(f)):
+    blocking = [f for f in latest.findings if f.mark == "blocks" and f.security is None]
+    for part in dict.fromkeys(f.mechanism for f in blocking):
         n = in_a_row(part)
         if n < 2:
             continue
-        covered = any(f.covered for f in latest.findings if _blocking(f) and f.mechanism == part)
-        if covered and ("fail-closed", part) not in acted:
-            after_it = "fail_closed"
+        if any(f.covered for f in blocking if f.mechanism == part) and ("fail-closed", part) not in acted:
+            out.append(_Repeat(part, "fail_closed", n))
         elif ("split", part) not in acted and not from_split:
-            after_it = "split"
+            out.append(_Repeat(part, "split", n))
         else:
-            after_it = None
-        out.append((part, after_it, n))
+            out.append(_Repeat(part, None, n))
     return out
 
 
@@ -1577,8 +1605,10 @@ def _reason(rid: str, rule: Rule | None, level: str, details: dict, wording_id: 
         out["round"], out["reviewers"] = details["round"], details["reviewers"]
         if "next" in details:
             out["next"] = details["next"]
-        if "mechanism" in details:  # mechanism_repeats: the part, exactly as the records name it
+        if "mechanism" in details:  # mechanism_repeats: the part, exactly as the records name it, and the review after it
             out["mechanism"] = details["mechanism"]
+            if details.get("then"):
+                out["then"] = details["then"]
     return out
 
 

@@ -254,5 +254,75 @@ def test_the_changelog_notes_it():
 def test_the_merge_check_skill_names_the_reason_and_its_next():
     text = (KIT / "skills/merge-check/SKILL.md").read_text(encoding="utf-8")
     assert "`mechanism_repeats`" in text
-    for word in ("`fail_closed`", "`split`", "the safe fallback"):
+    for word in ("`fail_closed`", "`split`", "the safe fallback", "its `then`: `round` or `pass`", "fixing the review's other blocking findings as well"):
         assert word in text, word
+
+
+# ---------- round 1's findings ----------
+
+
+@pytest.mark.parametrize("rounds, then", [("3", "round"), ("2", "pass")])
+def test_then_says_which_review_follows(project, capsys, rounds, then):
+    # The round limit still chooses the review's shape: round 2 of 3 is followed by a round; of 2, by a pass.
+    for split in (False, True):
+        got = run(project, capsys, new([BLOCKS], rnd=1, commit=EARLIER, split=split), new([BLOCKS], rnd=2, split=split), rounds=rounds)
+        [r] = repeats(got)
+        assert r["then"] == then, (split, r)
+
+
+def test_then_after_a_pass_is_a_pass(project, capsys):
+    got = run(project, capsys, new([BLOCKS], rnd=3, commit=EARLIER), new([BLOCKS], kind="pass", rnd=3))
+    [r] = repeats(got)
+    assert r["then"] == "pass"
+
+
+@pytest.mark.parametrize("copy", ["same", "corrected"])
+def test_a_review_posted_twice_counts_once(project, capsys, copy):
+    second = new([BLOCKS], rnd=1) if copy == "same" else new([BLOCKS, NOTE], rnd=1)
+    got = run(project, capsys, new([OTHER], rnd=1, commit=EARLIER), new([BLOCKS], rnd=1), second, rounds="1")
+    assert not repeats(got) and [r["id"] for r in review_reasons(got)] == ["review_not_clean"]
+    assert not repeats(run(project, capsys, new([BLOCKS], rnd=1), new([BLOCKS], rnd=1)))
+
+
+def test_two_passes_on_one_commit_with_other_findings_are_two_reviews(project, capsys):
+    # A fixer may contest everything and push nothing: the next pass is on the same commit, and is a review of its own.
+    got = run(project, capsys, new([BLOCKS], rnd=3, commit=EARLIER), new([BLOCKS, OTHER], kind="pass", rnd=3),
+              new([BLOCKS], kind="pass", rnd=3, outcomes=[{"outcome": "contested", "finding": 2, "ruling": "overturned"}]))
+    assert nexts(got) == [(PART, "split")]
+
+
+def test_a_ruling_is_read_against_the_review_posted_before_it(project, capsys):
+    # Round 2 on the head overturns round 1's finding; a pass for MIDDLE is posted late, after it. By history the
+    # pass comes between them, but the ruling is about round 1, the review posted before it.
+    got = run(project, capsys, new([BLOCKS], rnd=1, commit=EARLIER), new([BLOCKS], rnd=2, outcomes=OVERTURNED_1),
+              new([BLOCKS], kind="pass", rnd=1, commit=MIDDLE))
+    assert nexts(got) == [(PART, "split")]
+
+
+def test_a_kept_contest_beside_a_note_on_the_part_breaks_the_run(project, capsys):
+    # The review's only finding on the part isn't the kept contest: the note is one too.
+    got = run(project, capsys, new([BLOCKS], rnd=1, commit=EARLIER), new([KEPT, {**NOTE, "mechanism": PART}], rnd=2, commit=MIDDLE, outcomes=KEPT_1),
+              new([BLOCKS], rnd=3))
+    assert not repeats(got)
+
+
+def test_a_merge_of_the_base_the_review_carries_over_keeps_the_breaker(project, capsys):
+    # The head merges the base into MIDDLE and leaves the pull request's own changes as they were: MIDDLE's
+    # review covers it (`review_carried`), and a merge of the base isn't an action on the part.
+    from test_merge_check_carry_over import MIDDLE as MERGED_INTO, REVIEWED, hashes_of, merged_in
+    from test_merge_check_passes import records
+
+    reviewed = hashes_of(project, capsys, REVIEWED)
+    data = merged_in(REVIEWED)
+    data["comments"] = records(new([BLOCKS], rnd=1, commit=EARLIER, hashes=reviewed), new([BLOCKS], rnd=2, commit=MERGED_INTO, hashes=reviewed))
+    got, _ = check(project, capsys, data, "--review-rounds", "3")
+    assert "review_carried" in [n["id"] for n in got["notes"]], got
+    assert nexts(got) == [(PART, "split")]
+
+
+def test_the_words_name_the_other_findings_and_the_limits(project, capsys):
+    got = run(project, capsys, new([BLOCKS], rnd=1, commit=EARLIER), new([BLOCKS, OTHER], rnd=2))
+    [r] = repeats(got)
+    assert "other" in r["wording"]["new"]["fix"] and "other blocking findings" in r["wording"]["developer"]["fix"]
+    [r] = repeats(run(project, capsys, new([BLOCKS], rnd=1, commit=EARLIER, split=True), new([BLOCKS], rnd=2, split=True)))
+    assert "10 reviews" in r["wording"]["developer"]["fix"] and "end time" in r["wording"]["developer"]["fix"]
