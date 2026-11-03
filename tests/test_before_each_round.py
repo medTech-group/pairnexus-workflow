@@ -131,7 +131,10 @@ def test_its_inputs_carry_the_words_that_raised_the_round():
     assert "item's issue" in s and "edit after publishing" in s
     # The rest (text the session wrote) goes in untagged, never as their words.
     rest = _sentence(r, "untagged")
-    assert "decision ticket" in rest and "spec's body as published" in rest
+    assert "decision ticket" in rest and "Destination item" in rest
+    # A fix question's draft and finding, and the published spec, for any round after publishing.
+    assert "draft" in _sentence(r, "fix raises") and "finding" in _sentence(r, "fix raises")
+    assert "as published" in _sentence(r, "Once the spec is published")
 
 
 def test_the_agent_knows_the_round_read_and_its_inputs():
@@ -141,7 +144,8 @@ def test_the_agent_knows_the_round_read_and_its_inputs():
     assert re.search(r"`<read>` is .*`round`", text)
     inputs = _flatten(_between(text, "## Your inputs", "\n## "))
     s = _sentence(inputs, "Before a round")
-    assert "raised the round" in s and "own words" in s and "untagged" in s
+    assert "raised the round" in s and "own words" in s
+    assert "decision ticket" in _sentence(inputs, "untagged")
     reads = _flatten(_between(text, "## The reads", "\n## "))
     s = _sentence(reads, "**Before a round:**")
     assert "raised the round" in s and "options" in s
@@ -201,12 +205,14 @@ def test_the_round_post_lists_the_check_s_findings():
     assert "finding" in s
     # Each with what became of it, so the counts can tell how many changed a recommendation.
     assert "changed the recommendation" in s and '"Check: …"' in s
+    # A fix outside the round is its own outcome, never counted as a changed recommendation.
+    assert "outside the round" in s
     assert '"nothing found"' in s
 
 
 def test_a_check_s_own_rounds_get_none():
     s = _sentence(_rule(), "own rounds")
-    assert re.search(r"\bnone\b|\bno check\b", s)
+    assert re.search(r"\bno check\b|\bnone\b", s)
     for own in ("end check", "breakdown check", "held-back ticket", "quick ticket"):
         assert own in s, own
     # Only those: none of the rounds the check covers is listed with them.
@@ -234,8 +240,9 @@ def test_the_seams_round_is_checked_before_it_s_asked():
 
 def test_a_map_decision_s_rounds_are_checked_before_they_re_asked():
     m = _path("\n**Map** (flow §1)", "\n**Add to an existing issue:**")
-    step = m.split("\n4. ", 1)[1].split("\n5. ", 1)[0]
-    assert _points_to_the_check(step)
+    step = _flatten(m.split("\n4. ", 1)[1].split("\n5. ", 1)[0])
+    # The decision's own rounds, not the fix questions' pointer later in the step.
+    assert _points_to_the_check(_sentence(step, "**Each decision,**"))
 
 
 def test_edits_after_publishing_are_checked_before_they_re_asked():
