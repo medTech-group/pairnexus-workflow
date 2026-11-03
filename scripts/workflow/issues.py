@@ -484,6 +484,38 @@ def _past(lines: list[str], i: int, ends) -> int | None:
     return None
 
 
+_TAG_START = re.compile(r"<[A-Za-z/!?]")
+
+
+def _html_closed(text: str) -> bool:
+    """`text`, passed through as raw HTML, ends outside any tag, quoted
+    attribute value or comment, so a browser shows what follows it: else a
+    heading after it may land inside the tag or the comment."""
+    i, n = 0, len(text)
+    while i < n:
+        if text.startswith("<!--", i):
+            j = text.find("-->", i + 4)
+            if j < 0:
+                return False
+            i = j + 3
+            continue
+        if not _TAG_START.match(text, i):
+            i += 1
+            continue
+        i += 1
+        quote = ""
+        while i < n and (quote or text[i] != ">"):
+            if quote:
+                quote = "" if text[i] == quote else quote
+            elif text[i] in "\"'":
+                quote = text[i]
+            i += 1
+        if i >= n:
+            return False
+        i += 1
+    return True
+
+
 def _odd_container(line: str) -> bool:
     """A fence indented, quoted or in a list item, or HTML in a quote, a list
     item or indented 4 columns or more (code at the top level, but a list
@@ -536,6 +568,8 @@ def has_bar(body: str | None) -> bool:
             # Skipped as HTML, but GitHub may end it sooner (indented, it may be
             # a list item's) or open code or a comment inside it.
             return False
+        if not f and not _html_closed("\n".join(lines[i:nxt])):
+            return False  # it leaves a tag, a quoted value or a comment open
         i = nxt
     return False
 
