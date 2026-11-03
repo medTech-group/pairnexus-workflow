@@ -198,7 +198,11 @@ def test_a_rule_2_ticket_is_carried_on_not_set_aside():
     assert "any other input doesn't hold it" in carry
     # A ticket held for a code fix keeps its fix: never carried on without it.
     assert "A ticket held for a code fix (`requeued_head`) is never carried on" in carry
-    assert "loses `workflow:carry-on` if it still has it, so no later run adopts it without its fix" in carry
+    assert "the hold has taken `workflow:carry-on` off it" in carry
+    # The hold itself takes the label off, whatever the stop's reason or when the "also" came.
+    hold = _skill().split("**The hold,**", 1)[1].split("\n\n", 1)[0]
+    assert "- Then take `workflow:carry-on` off the ticket if it has it (#380)" in hold
+    assert "so no later run may adopt the ticket without it" in hold
     assert "when step 2 posted a hand-off, comment on it" in carry
     # A carry-on ticket adopted but never started keeps its hand-off.
     # It gets every step (so `workflow:in-progress` comes off), with no second hand-off and no comment.
@@ -222,7 +226,7 @@ def test_tickets_held_for_the_owner_go_to_the_owner_as_today():
     assert "touches a protected path (`WF merge-check`'s `kit_files` note: the JSON's `files` isn't empty" in carry
     assert "go to the owner as today" in carry and "never carried on" in carry
     # Files it couldn't read can't rule a protected path out.
-    assert "or whose files it couldn't read" in carry
+    assert "or whose files or profile it couldn't read (a \"couldn't read\" reason whose `input` is `files` or `profile`)" in carry
 
 
 def test_the_kick_off_adopts_every_carry_on_ticket_first_without_asking():
