@@ -229,7 +229,10 @@ def test_the_kick_off_adopts_every_carry_on_ticket_first_without_asking():
     assert "outside `charter.plan` and `scope.tickets`" in line
     assert "it keeps `workflow:carry-on` until its session is created (check-in step 5)" in line
     # The estimate and the one page count it.
-    assert "give it first in the `--tickets` of `WF charter estimate` and `WF charter splice`" in line
+    assert "give it first in the `--tickets` of `WF charter estimate`, so the estimate counts its sessions; the one page's plan stays the plan" in line
+    assert "and in the tracking issue's first comment" in line
+    # A ticket session can push only to its ticket branch: a pull request elsewhere stays for attended work.
+    assert "One whose pull request isn't on its ticket branch" in line and "it keeps `workflow:carry-on` for attended work" in line
     # No readable hand-off: the session reads the pull request's own, with no retry to count.
     assert "With `hand_off` null (a counted review followed the hand-off, or the comments couldn't be read), give `none`" in line
     assert "read the latest hand-off comment and the review records on its pull request first" in line
