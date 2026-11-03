@@ -117,8 +117,10 @@ def test_when_each_is_filed():
     # A session restarted after the split still gives the outcome, with the part's exact name, and the body's entry.
     assert (
         "The next review's findings file gives a `split` outcome for each of this ticket's own split tickets that no record "
-        "names yet, its `mechanism` copied from the ticket's `Part:` line, so a session restarted after the split still gives "
-        "it, adds it to **Split out** if the body doesn't name it yet, and lists its moved criteria in `previous.md`."
+        "names yet and whose part is out of the pull request, its `mechanism` copied from the ticket's `Part:` line; a part "
+        "still in it is taken out first by a fresh fixer, and the review after that gives its outcome. So a session restarted "
+        "after the split still gives it, takes the part out if it is still there, adds it to **Split out** if the body doesn't "
+        "name it yet, and lists its moved criteria in `previous.md`."
     ) in text
 
 
@@ -226,6 +228,15 @@ def test_the_machine_line_and_the_marker_close_the_body():
     assert "`from` is this ticket's number, not its pull request's, written as digits alone; `kind` is one of `old`, `late` or `split`." in text
     # The findings file's split flag comes from the same line, read on the ticket being built.
     assert "When this ticket was itself filed as a split ticket (its own machine line says `kind=split`), each of its findings files sets `split: true` (`review-panel` §4)." in text
+
+
+def test_merge_check_points_to_the_filing():
+    # A session with only `merge-check` loaded files the split ticket with its machine line and `Part:` line too.
+    text = _flat(_read("skills/merge-check/SKILL.md"))
+    assert (
+        "with `split`, file a ready build ticket for the part first, as `build-ticket` §3's \"Filing tickets to fix findings, "
+        "and split tickets\" says,"
+    ) in text
 
 
 def test_findings_py_names_the_same_line():
