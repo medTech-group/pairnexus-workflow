@@ -313,13 +313,13 @@ def test_publishing_holds_first_then_tickets_then_edits_then_says_so():
     hold, tickets, edits, done = _publish_steps()
     # Holds first, section and label together, before anything new is ready.
     assert "Hold back the existing tickets" in hold and "`needs-info`" in hold and "one edit" in hold
-    assert "adds a blocker" in hold
+    # Nothing else loses its label while publishing, so no ticket is left unlabelled by a stop.
+    assert "Take `ready-for-agent` off" not in _part("publish")
     # New tickets, blockers first; owner tasks labelled.
     assert "blockers first" in tickets and "`ready-for-agent`" in tickets and "held back" in tickets
     assert "owner task labelled `owner-task`" in tickets
     # Edits after, with the new tickets' numbers, keeping a held section.
     assert "new tickets' numbers" in edits and "keeping a held ticket's section" in edits
-    assert "Give back" in edits and "unless the ticket is held back" in edits
     s = _sentence(edits, "claimed or built since")
     assert "isn't made" in s and "spec's issue" in s
     # The end of publishing is marked, so it's never resumed after it.
@@ -364,6 +364,8 @@ def test_without_a_final_breakdown_only_the_reads_with_no_post_run():
     s = _sentence(p, "Without one")
     # It starts from the breakdown the last read posted, not a fresh draft.
     assert "the breakdown in the last read's post" in s
+    # With its fixes, which the post lists beside the breakdown it read.
+    assert "its listed fixes" in s
     assert "stand" in s and "**Agree these**" in s
     s = _sentence(p, "Agreed as it stands")
     assert "only the reads that have no post yet" in s
