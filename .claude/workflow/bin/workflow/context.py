@@ -197,8 +197,10 @@ def flow_files(project: Path, kit_root: Path, addendum: str = "") -> list[Path]:
 FLOW_HEAD = "This request is part of the project's workflow. Follow its flow step by step: skip nothing, and end with its checklist."
 # What the first flow context may take of Claude Code's limit (CONTEXT_LIMIT,
 # below): the rest is room for what goes in front of it, the glossary's rule
-# and path in an attended session or the conductor line in a conductor session.
-FLOW_BUDGET = 8_500
+# and path in an attended session or the conductor line in a conductor session
+# (about 650 characters with a usual path). It is set so that the kit's own
+# flow, from its start through §2, fits whole: a planning session needs both.
+FLOW_BUDGET = 8_900
 _READ = " Read it now, all of it, before acting: "
 _WHOLE = " All of it is below (from "
 _STOPS = " Only its start fits below. It stops before "
