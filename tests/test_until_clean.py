@@ -14,27 +14,13 @@ import re
 import pytest
 
 from changelog_notes import since_0110
-from test_charter_small_review import _brief, _limits_q, _line, _merge_check, _page, _project, _validate
-from test_charter_small_review import _defaults as _new_defaults, _preset as _new_preset
+# Their `_defaults` and `_preset` give a charter without `rule` (#382): the pass cap is today's rule's.
+from test_charter_small_review import _brief, _defaults, _limits_q, _line, _merge_check, _page, _preset, _project, _validate
 from test_merge_check import EARLIER, HEAD, check, ids, inputs, project, rec  # noqa: F401 (project is a fixture)
 from test_merge_check_passes import KIT, _at_the_cap, _load, passes_in_profile, records, three_commits
 from workflow import profile as profile_mod
 
 WORDS = "Correctness passes until one is clean, within the run's end time"
-
-
-def _defaults(tmp_path):
-    """A charter of a run started before the rule for build reviewers (#382), which has no pass cap:
-    `charter defaults` writes `rule: 2` now, and the pass cap is today's rule's."""
-    c = _new_defaults(tmp_path)
-    del c["rule"]
-    return c
-
-
-def _preset(tmp_path, name):
-    c = _new_preset(tmp_path, name)
-    del c["rule"]
-    return c
 
 
 def _read(rel):

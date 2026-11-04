@@ -63,7 +63,7 @@ def _lines(text, start):
 
 def test_a_new_charter_is_under_the_rule(tmp_path):
     _project(tmp_path)
-    assert _defaults(tmp_path)["rule"] == 2
+    assert _defaults(tmp_path, rule=True)["rule"] == 2
     assert charter_mod.defaults()["rule"] == 2
 
 
@@ -71,14 +71,14 @@ def test_a_charter_from_a_preset_keeps_the_rule(tmp_path):
     # Choosing a preset sets `preset`, `limits` and `review`: the rule is outside them.
     _project(tmp_path)
     for name in ("light", "normal", "thorough"):
-        assert _preset(tmp_path, name)["rule"] == 2
+        assert _preset(tmp_path, name, rule=True)["rule"] == 2
 
 
 def test_the_next_run_uses_the_rule(tmp_path):
     # A run started before the rule, reused for the next run: the next run uses the new one,
     # and the old pass cap goes, since there is none under the rule.
     _project(tmp_path)
-    old = _old(_defaults(tmp_path))
+    old = _old(_defaults(tmp_path, rule=True))
     old["review"]["passes"] = 3
     new = charter_mod.reuse(old)
     assert new["rule"] == 2 and "passes" not in new["review"]
@@ -94,14 +94,14 @@ def test_reuse_keeps_a_until_clean_charter_valid(tmp_path):
 
 def test_validate_accepts_the_rule_and_its_absence(tmp_path):
     _project(tmp_path)
-    assert _validate(tmp_path, _defaults(tmp_path)).returncode == 0
-    assert _validate(tmp_path, _old(_defaults(tmp_path))).returncode == 0
+    assert _validate(tmp_path, _defaults(tmp_path, rule=True)).returncode == 0
+    assert _validate(tmp_path, _old(_defaults(tmp_path, rule=True))).returncode == 0
 
 
 @pytest.mark.parametrize("value", [1, 3, "2", True, None, 2.0])
 def test_validate_refuses_any_other_rule(tmp_path, value):
     _project(tmp_path)
-    c = _defaults(tmp_path)
+    c = _defaults(tmp_path, rule=True)
     c["rule"] = value
     p = _validate(tmp_path, c)
     assert p.returncode == 1 and "rule must be 2" in p.stderr
@@ -111,7 +111,7 @@ def test_validate_refuses_any_other_rule(tmp_path, value):
 def test_validate_refuses_a_pass_cap_under_the_rule(tmp_path, passes):
     # There is none to give: a pass cap the run would never apply is refused, not ignored.
     _project(tmp_path)
-    c = _defaults(tmp_path)
+    c = _defaults(tmp_path, rule=True)
     c["review"]["passes"] = passes
     p = _validate(tmp_path, c)
     assert p.returncode == 1 and "review.passes" in p.stderr and "no pass cap" in p.stderr
@@ -124,8 +124,8 @@ def test_the_review_under_the_rule_has_no_pass_cap(tmp_path):
     from workflow.profile import load
 
     prof = load(tmp_path)
-    assert presets_mod.review_of(_defaults(tmp_path), prof)["passes"] == presets_mod.UNTIL_CLEAN
-    assert presets_mod.review_of(_old(_defaults(tmp_path)), prof)["passes"] == 3
+    assert presets_mod.review_of(_defaults(tmp_path, rule=True), prof)["passes"] == presets_mod.UNTIL_CLEAN
+    assert presets_mod.review_of(_old(_defaults(tmp_path, rule=True)), prof)["passes"] == 3
 
 
 def test_the_limits_question_offers_no_pass_cap_under_the_rule(tmp_path):
@@ -161,7 +161,7 @@ def test_a_state_write_that_changes_the_rule_is_refused(tmp_path, started):
     from workflow import state as state_mod
 
     _project(tmp_path)
-    c = _defaults(tmp_path)
+    c = _defaults(tmp_path, rule=True)
     if started == "old":
         _old(c)
     _state(tmp_path, c)
@@ -194,7 +194,7 @@ def test_a_state_write_that_changes_the_rule_is_refused(tmp_path, started):
 
 def test_the_briefing_names_the_rule_in_a_findings_line(tmp_path):
     _project(tmp_path, "review_passes = 3\n")
-    brief = _brief(tmp_path, _defaults(tmp_path))
+    brief = _brief(tmp_path, _defaults(tmp_path, rule=True))
     [line] = _lines(brief, FINDINGS)
     assert line.startswith("- **Findings:** rule 2, the rule for build reviewers")
     assert "`review-panel` §10" in line and "`build-ticket` §3" in line
@@ -204,7 +204,7 @@ def test_the_briefing_names_the_rule_in_a_findings_line(tmp_path):
 
 def test_under_the_rule_the_briefing_drops_the_pass_cap(tmp_path):
     _project(tmp_path, "review_passes = 3\n")
-    brief = _brief(tmp_path, _defaults(tmp_path))
+    brief = _brief(tmp_path, _defaults(tmp_path, rule=True))
     assert not _lines(brief, PASS_CAP)
     line = _line(brief, FINDINGS)
     assert "no pass cap" in line and "the run's end time is the only limit on this ticket's reviews" in line
@@ -221,7 +221,7 @@ def test_under_the_rule_the_briefing_drops_the_pass_cap(tmp_path):
 def test_a_briefing_without_the_rule_reads_as_before(tmp_path):
     # A run started before the rule keeps today's rule throughout: no "Findings:" line, its pass cap and its stop.
     _project(tmp_path, "review_passes = 3\n")
-    brief = _brief(tmp_path, _old(_defaults(tmp_path)))
+    brief = _brief(tmp_path, _old(_defaults(tmp_path, rule=True)))
     assert not _lines(brief, FINDINGS) and "Findings:" not in brief
     assert _line(brief, PASS_CAP) == (
         "- **Pass cap:** at most 3 Correctness passes after the last review round. "
@@ -239,11 +239,25 @@ def test_a_template_without_the_line_is_refused_under_the_rule(tmp_path):
     _project(tmp_path)
     old = tmp_path / "old-template.md"
     old.write_text(TEMPLATE.read_text().replace("{{review.limit}}", "- **Pass cap:** {{review.pass_cap}}"))
-    p = _render(tmp_path, _defaults(tmp_path), old)
+    p = _render(tmp_path, _defaults(tmp_path, rule=True), old)
     assert p.returncode != 0 and "{{review.limit}}" in p.stderr
-    p = _render(tmp_path, _old(_defaults(tmp_path)), old)
+    p = _render(tmp_path, _old(_defaults(tmp_path, rule=True)), old)
     assert p.returncode == 0, p.stderr
     assert "Findings:" not in (tmp_path / "briefing.md").read_text()
+    # Before #402 the line was "{{review.passes_words}} after the last review round": refused too.
+    old.write_text(TEMPLATE.read_text().replace("{{review.limit}}", "- {{review.passes_words}} after the last review round."))
+    p = _render(tmp_path, _defaults(tmp_path, rule=True), old)
+    assert p.returncode != 0 and "{{review.limit}}" in p.stderr
+
+
+def test_a_template_with_no_pass_cap_at_all_renders_under_the_rule(profile):
+    # The renderer's own templates (one placeholder) give no pass cap to mislead a session with.
+    from workflow import render
+
+    c = charter_mod.defaults()
+    c["limits"]["ends_at"] = "2099-10-13T03:30:00Z"
+    slots = {"alongside": "none", "read_first": "none", "owner_decisions": "none", "briefing": "Build it.", "wake_trigger": "t"}
+    assert render.render("{{briefing}}", render.values(profile, {"number": 1}, c, slots, 1, None)) == "Build it."
 
 
 def test_the_template_has_the_line_once():
@@ -256,7 +270,7 @@ def test_the_template_has_the_line_once():
 
 def test_under_the_rule_the_one_page_names_it_and_drops_the_pass_cap(tmp_path):
     _project(tmp_path, "review_passes = 3\n")
-    page = _page(tmp_path, _defaults(tmp_path))
+    page = _page(tmp_path, _defaults(tmp_path, rule=True))
     assert not _lines(page, PASS_CAP)
     [line] = _lines(page, FINDINGS)
     assert line.startswith("- **Findings:** the rule for build reviewers")
@@ -268,7 +282,7 @@ def test_under_the_rule_the_one_page_names_it_and_drops_the_pass_cap(tmp_path):
 
 def test_a_one_page_without_the_rule_reads_as_before(tmp_path):
     _project(tmp_path, "review_passes = 3\n")
-    page = _page(tmp_path, _old(_defaults(tmp_path)))
+    page = _page(tmp_path, _old(_defaults(tmp_path, rule=True)))
     assert not _lines(page, FINDINGS)
     assert _line(page, PASS_CAP) == "- **Pass cap:** at most 3 Correctness passes after the last review round, then `needs-human`."
 

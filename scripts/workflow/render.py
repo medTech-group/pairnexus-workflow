@@ -15,8 +15,8 @@ The briefing's `{{review.limit}}` line (#382) is the run's limit on a ticket's
 reviews: under the rule for build reviewers (the charter's `rule: 2`) its
 "Findings:" line, which turns the rule on for the session (`build-ticket` §3)
 and has no pass cap; for a charter without `rule`, today's "Pass cap:" line.
-A run under the rule is refused a template without that line, whose session
-would review under today's rule.
+A run under the rule is refused an older ticket-session template, one giving
+today's pass cap with no such line, whose session would review under today's rule.
 
 `seal` ends a rendered briefing with `Briefing <hash>`, the first 12 hex
 characters of the SHA-256 of the text above it. The session echoes that line in
@@ -393,10 +393,12 @@ def _pass_cap(review: dict) -> str:
 
 def render(template: str, vals: dict) -> str:
     used = [m.group(1) for m in PLACEHOLDER.finditer(template)]
-    if str(vals.get("review.limit", "")).startswith("- **Findings:**") and "review.limit" not in used:
+    # An older ticket-session template: it gives today's pass cap and no "Findings:" line (#382).
+    older = {"review.pass_cap", "review.passes_words"} & set(used) and "review.limit" not in used
+    if older and str(vals.get("review.limit", "")).startswith("- **Findings:**"):
         raise RenderError(
-            "the run reviews under the rule for build reviewers, and the template has no {{review.limit}} line, which "
-            "tells the session so: render it with the kit's current ticket-session-prompt.md"
+            "the run reviews under the rule for build reviewers, and the template gives a pass cap with no "
+            "{{review.limit}} line, which tells the session the rule: render it with the kit's current ticket-session-prompt.md"
         )
     if not _says_none(vals.get("hand_off")) and "ticket.hand_off" not in used:
         raise RenderError(
