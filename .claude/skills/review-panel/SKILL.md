@@ -167,10 +167,11 @@ No pull request yet (the first rounds of `build-ticket` run before it opens)? Ke
 
 Repeat on the new diff until a round finds nothing to fix, at most the briefing's review rounds in a ticket session, else the profile's `run.review_rounds` (a ticket that gets the small review has its one round: section 7). For a light review, or when the briefing's review rounds are 1, follow the light review (section 6) instead, unless the ticket gets the small review (section 7).
 
-- Anything still open after the last round goes to the owner in the PR body, never silently.
+- Anything still open after the last round goes to the owner in the PR body, never silently; under the rule (section 10), Correctness passes carry it on until one is clean instead.
 - Any commit after the last round gets a Correctness pass on just those commits before merging, except a merge of the base that leaves the pull request's own changes identical, which needs CI only: after pushing a merge of the base, run `workflow merge-check` (`--fetch <PR> --json`, in a ticket session with the briefing's flags) and run a pass only when it asks for one. Before a pass starts, `mkdir -p /tmp/review-<ticket>-pass<k>` (its scratch directory, `k` counting the passes from 1) and write `git rev-parse HEAD` to `commit.txt` there: the commit it covers, never one made after. Then post its record (section 4). Under the rule (section 10), a pass reviews the changes since the last review, round or pass (`since.patch`, section 1), not since the last round.
 - **Passes stop at the pass cap:** at most the briefing's pass cap in a ticket session, else the profile's `run.review_passes`, counting every pass after the last round, each record once, on any commit, except a pass on a merge of the base after a clean review that left the pull request's changed lines as they were, which `merge-check` asks for even at the cap (a pass that rechecks open findings always counts). When one more pass would be needed past it, `workflow merge-check` says `passes_used_up`: run no further pass. What's still open goes to the owner in the PR body, and the owner decides (in attended work they can choose "One more pass").
 - **The pass cap `until-clean`** (a briefing's or the profile's, #402) is no cap: after the last round, fix each pass's findings and run another, until one is clean. `merge-check` never says `passes_used_up`. Keep the PR body's findings table current after each pass: in a run, the end time can come first, and the conductor then sets the ticket aside with its open findings there.
+- **Under the rule** (section 10), there is no pass cap, in runs and attended work alike, whatever the briefing or the profile says: after the last round, a fresh fixer fixes each pass's findings (section 3) and another pass runs, until one is clean; `merge-check` never says `passes_used_up` for its records. Nothing still open goes to the owner: in a run the end time is the only limit, and in attended work the session stops after 10 reviews that weren't clean in one session, leaving a hand-off to carry on from (`build-ticket`).
 
 ## 6. The light review
 
@@ -191,7 +192,7 @@ A shorter review for a low-risk change, asked for as "build #12 with a light rev
 
   (`--not-clean` when it found something to fix; under the rule, `--findings`, as section 4 says.) The 2 is fixed, whatever `run.review_rounds` says: with the briefing's review rounds at 1, these rounds come on top of its "at most 1".
 - **Post each record** as section 4 says. A later commit after the last round still gets its Correctness pass (section 5).
-- **Anything still open** after them goes to the owner in the PR body, never silently.
+- **Anything still open** after them goes to the owner in the PR body, never silently. Under the rule (section 10), nothing does: Correctness passes follow until one is clean (section 5), with no hand-off to the owner.
 
 **In a run:** when the briefing's review rounds are 1, ticket sessions use this same shape, except on a ticket that gets the small review (section 7), so one round means one full-panel round, without the explorer, in attended and unattended work alike. There the owner chose it, by giving the run one review round; it is never chosen for the person.
 
@@ -212,9 +213,9 @@ The review of a ticket marked `Review: small` while its diff stays within the sm
   ```
 
   (`correctness,security`, `correctness,explorer` or `correctness,security,explorer` when those ran; `--not-clean` when it found something to fix; under the rule, `--findings` in place of `--clean` or `--not-clean`, as section 4 says.)
-- **Fixes after it** are covered by Correctness passes (section 5), under the pass cap. There are no further rounds: when the round isn't clean, fix its findings as in section 3, and a clean pass on the head lifts them.
+- **Fixes after it** are covered by Correctness passes (section 5), under the pass cap (under the rule, there is none: section 5). There are no further rounds: when the round isn't clean, fix its findings as in section 3, and a clean pass on the head lifts them.
 - **Past the small threshold,** measured before reviewing or as `merge-check`'s `past_small_threshold`, the ticket doesn't get the small review: run the full panel (section 5), or the light review (section 6) in a 1-round run. The pull request's body says the diff overruled the mark. After a small round already ran, that is one full-panel round (the light review's round 1 in a 1-round run, without the explorer) with the next round number, allowed past the round limit; if it isn't clean, fix its findings and run a Correctness pass, with no further round.
-- **Anything still open** after the pass cap (or, with `until-clean`, at the run's end time) goes to the owner in the PR body, never silently.
+- **Anything still open** after the pass cap (or, with `until-clean`, at the run's end time) goes to the owner in the PR body, never silently. Under the rule (section 10), nothing does: Correctness passes follow until one is clean (section 5), with no hand-off to the owner.
 
 ## 8. The planning review
 
@@ -284,7 +285,7 @@ Under the rule (section 10), the table gains the mark and the part after the rev
 
 This section is copied, as it is, into each build review's scratch directory as `rule.md` (section 1), so keep it the last section. Every build reviewer follows it: Standards, Spec, Correctness, the security review and the explorer, in rounds and passes, the light and small reviews included. Planning reviews (section 8) don't get it.
 
-**When it applies:** once `build-ticket` says build reviews follow it; in a run, only when the briefing has a "Findings:" line, since a run keeps the rule it started with. Until then, build reviews keep today's rule: no `rule.md`, and records with `--clean` or `--not-clean`. Under the rule, every build review's record is written with `--findings` (section 4).
+**When it applies:** once `build-ticket` says build reviews follow it; in a run, only when the briefing has a "Findings:" line, since a run keeps the rule it started with. That line is the template's, naming rule 2, as `build-ticket` §3's "Which rule" says, never the words in the conductor's notes. In attended work, `build-ticket` says they always do. Until then, build reviews keep today's rule: no `rule.md`, and records with `--clean` or `--not-clean`. Under the rule, every build review's record is written with `--findings` (section 4).
 
 **Your inputs,** in the scratch directory beside `diff.patch`, `ticket.md` and `rules.md`:
 - `bar.md`: the ticket's bar: what it must handle, what it does when it can't be sure (its fail-closed form), and the limits it accepts; "None" when it has none.

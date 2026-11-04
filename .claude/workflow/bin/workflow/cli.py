@@ -676,7 +676,8 @@ def _charter_change_problems(old, new) -> list[str]:
     """A put or patch that changes the charter: the checks `charter validate
     --approved` runs against the profile on disk. Removed protection the old
     charter recorded can't be dropped, not even by clearing the charter
-    (`charter.dropped_removed_protection`). A state whose charter is unchanged
+    (`charter.dropped_removed_protection`), nor can the rule for build reviewers
+    change (`charter.changed_rule`). A state whose charter is unchanged
     isn't checked; a charter that is otherwise unsound is left to `state.put`."""
     c = new.get("charter") if isinstance(new, dict) else None
     was = old.get("charter") if isinstance(old, dict) else None
@@ -686,6 +687,9 @@ def _charter_change_problems(old, new) -> list[str]:
     dropped = charter_mod.dropped_removed_protection(was, c)
     if dropped:
         return [dropped]
+    rule_change = charter_mod.changed_rule(was, c)  # a run keeps the rule it started with (#382)
+    if rule_change:
+        return [rule_change]
     if not isinstance(c, dict) or charter_mod.validate(c):
         return []
     try:
@@ -702,6 +706,10 @@ def cmd_state(a) -> int:
     if a.action == "init":
         c = _json(a.charter)
         problems = charter_mod.validate(c, require_approval=True, queue=_queue(a))
+        if isinstance(c, dict) and not presets_mod.under_rule(c):
+            # A run started on this kit reviews under the rule throughout (#382): one answer, as `rule` may
+            # be absent only for a run started before it, never at its start.
+            problems = [p for p in problems if p != charter_mod.RULE_MUST_BE] + [charter_mod.NO_RULE_AT_INIT]
         if not problems:
             prof = load(required=False)
             if prof is not None:
