@@ -22,6 +22,8 @@ from typing import Callable, Iterable, Union
 
 READY_LABEL = "ready-for-agent"
 CLAIM_LABEL = "workflow:in-progress"
+# Handed on by an earlier session with its review not yet clean (#380, #376).
+CARRY_ON_LABEL = "workflow:carry-on"
 INFRA_LABEL = "workflow:infra"
 HUMAN_LABELS = {"needs-human", "owner-task", "ready-for-human"}
 SPEC_LABEL = "spec"

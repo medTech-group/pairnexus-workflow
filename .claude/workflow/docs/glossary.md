@@ -36,7 +36,7 @@ A request to bring a [branch](#branch)'s changes into [`main`](#main). Each one 
 
 ### Checks (CI)
 
-Tests that run by themselves on each [pull request](#pull-request-pr): green when they pass, red when they fail. CI (continuous integration) runs them.
+Tests that run by themselves (CI, continuous integration) on each [pull request](#pull-request-pr): green when they pass, red when they fail.
 
 **Why it matters to you:** red means something is broken, so never [merge](#merge) until they are green.
 
@@ -66,7 +66,7 @@ A link on a [pull request](#pull-request-pr) that opens a working copy of the ch
 
 ### Cloud session
 
-Claude Code on Anthropic's computers, from the Claude app or claude.ai/code. Its environment sets what it reaches: the [repository](#repository), websites, secrets.
+Claude Code on Anthropic's computers, from the Claude app or claude.ai/code.
 
 **Why it matters to you:** nothing to install on your computer.
 
@@ -104,19 +104,25 @@ A plan for work too big or unclear for one [spec](#spec), decided one question a
 
 ### Review panel
 
-Claude reviewers who each read a change, a [spec](#spec) or a [map](#map) decision from one side, each round leaving its record. The small review is one round of Correctness for a [ticket](#ticket) marked small; the light review, asked for, is one round with no walk-through of the screens, never chosen for you.
+Claude reviewers who each read a change, a [spec](#spec) or a [map](#map) decision from one side, round after round. The small review is one round of Correctness for a [ticket](#ticket) marked small; the light review, asked for, is one round with no walk-through of the screens, never chosen for you.
 
 **Why it matters to you:** mistakes are caught before you see the change.
 
+### Bar
+
+Where a [ticket](#ticket)'s review stops: what it must handle, its safe fallback when unsure, and the limits it accepts.
+
+**Why it matters to you:** reviews end at what you asked for.
+
 ### Solo mode
 
-How a project starts while GitHub doesn't protect [`main`](#main) yet (`ruleset = false` in the [profile](#profile)): the kit refuses Claude's changes straight to `main`.
+How a project starts while GitHub doesn't protect [`main`](#main) yet: the kit refuses Claude's changes straight to `main`.
 
 **Why it matters to you:** you can start on GitHub's free plan, and Claude's changes reach `main` only when you [merge](#merge).
 
 ### Protect `main`
 
-GitHub's own protection, ending [solo mode](#solo-mode): a ruleset (GitHub's [branch](#branch) rules) sends every change to [`main`](#main) through a [pull request](#pull-request-pr), and "Require these checks" stops a [merge](#merge) while [checks](#checks-ci) fail. Claude sets it up, or guides your clicks.
+GitHub's own protection, ending [solo mode](#solo-mode): a ruleset (GitHub's [branch](#branch) rules) sends every change to [`main`](#main) through a [pull request](#pull-request-pr), and "Require these checks" stops a [merge](#merge) while [checks](#checks-ci) fail.
 
 **Why it matters to you:** GitHub itself then stops a mistake reaching `main`.
 
