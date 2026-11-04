@@ -97,14 +97,22 @@ def dropped_removed_protection(old: Any, new: Any) -> str | None:
 
 def changed_rule(old: Any, new: Any) -> str | None:
     """The problem when a change moves a run's charter to another rule for
-    build reviewers (`new` cleared counts), else None. A run keeps the rule it
-    started with; a first charter (`old` not a charter) starts it."""
-    if not isinstance(old, dict) or presets_mod.under_rule(old) == presets_mod.under_rule(new):
+    build reviewers, or clears it (whatever its rule, so a later charter can't
+    bring another), else None. A run keeps the rule it started with; a first
+    charter (`old` not a charter) starts it."""
+    if not isinstance(old, dict) or (isinstance(new, dict) and presets_mod.under_rule(old) == presets_mod.under_rule(new)):
         return None
     return (
         "rule: a run keeps the rule it started with, so its charter's `rule` can't change (nor the charter be cleared) during the run "
         "(the next run's charter takes the new rule)"
     )
+
+
+# `state init` starts a run on this kit, which reviews under the rule throughout (#382).
+NO_RULE_AT_INIT = (
+    "rule: a run started on this kit reviews under the rule for build reviewers, so its charter needs `rule: 2` "
+    "(`charter defaults` and `charter reuse` write it)"
+)
 
 
 def _auto_merge_risk(why: str, solo: bool) -> str:
@@ -259,7 +267,7 @@ def questions(
             rec = d["preset"]
             q["options"] = [rec] + [o for o in q["options"] if o != rec]
             q["recommended"] = rec
-            q["presets"] = presets_mod.table(profile, presets_mod.under_rule(d))
+            q["presets"] = presets_mod.table(profile)
         if q["key"] == "merge" and why:
             q["options"] = [o for o in q["options"] if o != "auto-merge"]
             q["note"] = (
@@ -485,7 +493,7 @@ def validate(c: Any, require_approval: bool = False, now: datetime | None = None
     elif require_approval:
         p.append("the charter has not been approved: the owner's go is needed, with its source")
     if "rule" in c and not presets_mod.under_rule(c):
-        p.append(f"rule must be {presets_mod.RULE} (the rule for build reviewers), or absent (today's rule, for a run started before it)")
+        p.append(f"rule must be {presets_mod.RULE} (the rule for build reviewers), or absent (the earlier rule, for a run started before it)")
     if "preset" in c and not _one_of(c["preset"], set(presets_mod.PRESETS)):
         p.append(f"preset must be one of {', '.join(presets_mod.PRESETS)}, or absent (read as normal)")
     if "review" in c:
@@ -499,15 +507,13 @@ def validate(c: Any, require_approval: bool = False, now: datetime | None = None
                 p.append("review.explorer must be true or false")
             if "small" in rv and not isinstance(rv["small"], bool):
                 p.append("review.small must be true or false, or absent (off)")
-            if "passes" in rv and presets_mod.under_rule(c):
-                p.append(
-                    "review.passes with rule 2: the rule for build reviewers has no pass cap (a ticket's reviews go on "
-                    "until one is clean, within the run's end time); remove it"
-                )
             for k, _, lo, hi in presets_mod.PROFILE_REVIEW:
-                if k == "passes" and presets_mod.under_rule(c):
-                    continue  # refused whatever it says, above
-                if k in rv and not presets_mod.valid_review(k, rv[k], lo, hi):
+                if k == "passes" and k in rv and presets_mod.under_rule(c):
+                    p.append(
+                        "review.passes with rule 2: the rule for build reviewers has no pass cap (a ticket's reviews go "
+                        "on until one is clean, within the run's end time); remove it"
+                    )
+                elif k in rv and not presets_mod.valid_review(k, rv[k], lo, hi):
                     also = f', or "{presets_mod.UNTIL_CLEAN}" (no cap)' if k == "passes" else ""
                     p.append(f"review.{k} must be a whole number from {lo} to {hi}{also}, or absent (the profile's)")
     p += validate_amendments(c.get("amendments", []))

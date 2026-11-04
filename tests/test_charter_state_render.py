@@ -150,6 +150,7 @@ def test_state_init_cli(tmp_path):
     # An empty project, so no profile is read (this repository has its own).
     run = {"capture_output": True, "text": True, "cwd": tmp_path, "env": {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)}}
     c = good_charter()
+    c["rule"] = 2  # a run started on this kit is under the rule for build reviewers (#382)
     f = tmp_path / "c.json"
     f.write_text(json.dumps(c))
     p = subprocess.run([sys.executable, str(cli), "state", "init", "--charter", str(f), "--run-id", "r1"], **run)

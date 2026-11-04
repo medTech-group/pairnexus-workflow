@@ -218,12 +218,10 @@ def _says_none(value) -> bool:
     return value is None or (isinstance(value, str) and value.strip().lower() == "none")
 
 
-def _hand_off_words(url: object, profile: Profile, branch: str, under_rule: bool = False) -> str:
+def _hand_off_words(url: object, profile: Profile, branch: str) -> str:
     """The briefing's "Hand-off:" line, from the optional `hand_off` slot: the
     URL of the hand-off comment an earlier session left on the ticket's pull
-    request (#380), or none. Anything else stops the render. `under_rule`: the
-    run reviews under the rule for build reviewers, whose fixes a fresh fixer
-    makes, after `merge-check` has had its say on a part that keeps blocking (#382)."""
+    request (#380), or none. Anything else stops the render."""
     if _says_none(url):
         return "none: start from the ticket and what **Specific to this ticket** says."
     m = _HAND_OFF_URL.fullmatch(url.strip()) if isinstance(url, str) else None
@@ -235,15 +233,8 @@ def _hand_off_words(url: object, profile: Profile, branch: str, under_rule: bool
     return (
         f"{m.group(0)}. An earlier session handed this ticket on before its review was clean, so this session carries it "
         f"on. Its pull request #{m.group(2)} and branch `{branch}` stay as they are: check out the branch "
-        "from GitHub, and read that hand-off comment before anything else. Go on from it: "
-        + (
-            "run `merge-check` on the head and act on any `mechanism_repeats` it gives; then have a fresh fixer "
-            "(`review-panel` §3) fix its open blocking findings first, each finding's words in the hand-off and the PR "
-            "body's findings table standing as its reproducer; "
-            if under_rule
-            else "fix its open blocking findings first, "
-        )
-        + "then run the next review, numbered after the rounds and passes it names (`merge-check` counts them from "
+        "from GitHub, and read that hand-off comment before anything else. Go on from it: fix its open blocking findings "
+        "first, then run the next review, numbered after the rounds and passes it names (`merge-check` counts them from "
         "the records). For a security finding it names by its area only, first review the whole change for that area: "
         "that review finds its details again, since none crossed sessions."
     )
@@ -321,7 +312,7 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
         "ticket.title": ticket.get("title") or "",
         "ticket.branch": branch,
         "ticket.starts_from": _starts_from_words(ticket, profile, branch),
-        "ticket.hand_off": _hand_off_words(slots.get("hand_off"), profile, branch, under_rule),
+        "ticket.hand_off": _hand_off_words(slots.get("hand_off"), profile, branch),
         "project.name": profile.name,
         "project.repo": profile.repo,
         "project.base_branch": profile.base_branch,
@@ -378,13 +369,10 @@ BRIEFING_FINDINGS = (
 
 
 def _stopping(under_rule: bool) -> str:
-    """When the session stops, after "**Stopping:**": under the rule, never
-    because a review isn't clean (#382); else at the pass cap too."""
+    """When the session stops, after "**Stopping:**": under the rule, with no
+    pass cap to stop at (#382); else at the pass cap too."""
     if under_rule:
-        return (
-            "if CI is still red after three fix attempts, or the ticket can't be built as written "
-            "(never because a review isn't clean: there is no pass cap):"
-        )
+        return "if CI is still red after three fix attempts, or the ticket can't be built as written:"
     return (
         "if CI is still red after three fix attempts, the review reached its pass cap (`merge-check` says "
         "`passes_used_up`: put the open findings in the PR body), or the ticket can't be built as written:"
@@ -398,8 +386,8 @@ def _pass_cap(review: dict) -> str:
         return (
             f"{presets_mod.pass_cap_words(review)}. Fix each pass's findings and run another; `merge-check` never "
             "says `passes_used_up`. Keep the PR body's findings table current after each pass, so the open findings "
-            "are there if the run's end time comes first (the conductor then sets the ticket aside, or under spec #412's "
-            "rule carries it on to the next run)."
+            "are there if the run's end time comes first (the conductor then sets the ticket aside, or carries it on to the "
+            "next run when its latest review followed the rule for build reviewers)."
         )
     return f"{presets_mod.pass_cap_words(review)}. When `merge-check` says `passes_used_up`, the cap is reached: stop (below)."
 

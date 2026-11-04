@@ -148,17 +148,35 @@ def test_a_run_keeps_the_rule_it_started_with(tmp_path):
     assert charter_mod.changed_rule(old, new) and charter_mod.changed_rule(new, old)
     assert charter_mod.changed_rule(old, old) is None and charter_mod.changed_rule(new, new) is None
     assert charter_mod.changed_rule(None, new) is None  # a run's first charter starts it
-    assert charter_mod.changed_rule(new, None)  # clearing a charter under the rule drops it too
+    # Clearing a run's charter is refused under either rule, so a later charter can't bring the other one.
+    assert charter_mod.changed_rule(new, None) and charter_mod.changed_rule(old, None)
 
 
 def _state(tmp_path, c):
+    """A running run's tracking issue body. One started before the rule was written by an earlier
+    kit's `state init`, which this kit's refuses (below), so it is built directly."""
     from workflow import state as state_mod
 
     c["approved"] = {"by": "o", "at": "2026-10-12T11:55:00Z", "source": "chat"}
+    s = state_mod.empty(c)
+    s["run_id"], s["comments_read_through"] = "r1", 0
+    (tmp_path / "body.md").write_text(state_mod.put("The run.", s))
+
+
+@pytest.mark.parametrize("rule", [True, False])
+def test_a_run_started_on_this_kit_is_under_the_rule(tmp_path, rule):
+    _project(tmp_path)
+    c = _defaults(tmp_path, rule=True)
+    if not rule:
+        _old(c)
+    c["approved"] = {"by": "o", "at": "2026-10-12T11:55:00Z", "source": "chat"}
     _file(tmp_path, c, "charter.json")
     p = _cli(tmp_path, "state", "init", "--charter", "charter.json", "--run-id", "r1", "--read-through", "0")
-    assert p.returncode == 0, p.stderr
-    (tmp_path / "body.md").write_text(state_mod.put("The run.", json.loads(p.stdout)))
+    if rule:
+        assert p.returncode == 0, p.stderr
+        assert json.loads(p.stdout)["charter"]["rule"] == 2
+    else:
+        assert p.returncode == 1 and "needs `rule: 2`" in p.stderr, p.stderr
 
 
 @pytest.mark.parametrize("started", ["old", "new"])
@@ -190,6 +208,10 @@ def test_a_state_write_that_changes_the_rule_is_refused(tmp_path, started):
     (tmp_path / "patch.json").write_text(json.dumps({"charter": {"rule": 2} if started == "old" else {"rule": None}}))
     p = _cli(tmp_path, "state", "patch", "--body", "body.md", "--patch", "patch.json", "--out", "body.md")
     assert p.returncode != 0 and "keeps the rule it started with" in p.stderr, p.stderr + p.stdout
+    assert (tmp_path / "body.md").read_text() == before
+    # Nor can the charter be cleared, so that a later `put` could bring the other rule.
+    p = put(None)
+    assert p.returncode != 0 and "nor the charter be cleared" in p.stderr, p.stderr + p.stdout
     assert (tmp_path / "body.md").read_text() == before
     # Any other charter change still goes through.
     same = json.loads(json.dumps(c))
@@ -228,7 +250,8 @@ def test_under_the_rule_the_briefing_drops_the_pass_cap(tmp_path):
         "`merge-check` never says `passes_used_up`", ""
     )
     stopping = _line(brief, "- **Stopping:**")
-    assert "pass cap" not in stopping.split("never because", 1)[0] and "never because a review isn't clean" in stopping
+    # No pass cap to stop at; a stop `build-ticket` names (a security problem in code on the base branch) still applies.
+    assert stopping == "- **Stopping:** if CI is still red after three fix attempts, or the ticket can't be built as written:"
 
 
 def test_a_briefing_without_the_rule_reads_as_before(tmp_path):
@@ -288,18 +311,13 @@ def test_the_template_has_the_line_once():
 HAND_OFF = "https://github.com/acme/demo/pull/41#issuecomment-6600212381"
 
 
-def test_under_the_rule_the_hand_off_line_gives_the_findings_to_a_fresh_fixer(tmp_path):
-    # A carried-on ticket: `merge-check` first, for a part that keeps blocking, then a fresh fixer.
+def test_the_hand_off_line_reads_the_same_under_either_rule(tmp_path):
+    # Under the rule, `build-ticket` §3 says how its findings are fixed; the line names no second way.
     _project(tmp_path)
     (tmp_path / "slots.json").write_text(json.dumps({**json.loads((tmp_path / "slots.json").read_text()), "hand_off": HAND_OFF}))
-    line = _line(_brief(tmp_path, _defaults(tmp_path, rule=True)), "**Hand-off:**")
-    assert "run `merge-check` on the head and act on any `mechanism_repeats` it gives" in line
-    assert "then have a fresh fixer (`review-panel` §3) fix its open blocking findings first" in line
-    assert line.index("`mechanism_repeats`") < line.index("fresh fixer") < line.index("then run the next review")
-    # Without the rule, as before.
-    line = _line(_brief(tmp_path, _old(_defaults(tmp_path, rule=True))), "**Hand-off:**")
-    assert "fix its open blocking findings first, then run the next review" in line
-    assert "fresh fixer" not in line and "mechanism_repeats" not in line
+    ruled = _line(_brief(tmp_path, _defaults(tmp_path, rule=True)), "**Hand-off:**")
+    assert ruled == _line(_brief(tmp_path, _old(_defaults(tmp_path, rule=True))), "**Hand-off:**")
+    assert "fix its open blocking findings first, then run the next review" in ruled
 
 
 # ---------- the one page ----------

@@ -706,6 +706,9 @@ def cmd_state(a) -> int:
     if a.action == "init":
         c = _json(a.charter)
         problems = charter_mod.validate(c, require_approval=True, queue=_queue(a))
+        if isinstance(c, dict) and not presets_mod.under_rule(c):
+            # A run started on this kit reviews under the rule throughout (#382).
+            problems.append(charter_mod.NO_RULE_AT_INIT)
         if not problems:
             prof = load(required=False)
             if prof is not None:

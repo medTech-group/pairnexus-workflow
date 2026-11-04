@@ -201,13 +201,13 @@ def test_the_limits_question_offers_no_pass_cap_now(tmp_path):
         assert f"; {WORDS};" in q["presets"][name]["words"]
 
 
-def test_the_presets_words_for_a_charter_without_the_rule_give_the_profiles_cap(tmp_path):
+def test_the_presets_words_are_a_new_charters(tmp_path):
+    # They are offered at a kick-off, whose charter is under the rule (#382): the profile's cap doesn't apply.
     _project(tmp_path, "review_passes = 3\n")
     prof = profile_mod.load(tmp_path)
     from workflow import presets
 
-    assert "at most 3 Correctness passes" in presets.table(prof)["normal"]["words"]
-    assert f"; {WORDS};" in presets.table(prof, presets.RULE)["normal"]["words"]
+    assert f"; {WORDS};" in presets.table(prof)["normal"]["words"] and "at most 3" not in presets.words("normal", prof)
 
 
 def test_the_briefing_words_until_clean(tmp_path):

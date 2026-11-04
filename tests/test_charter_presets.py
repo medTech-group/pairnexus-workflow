@@ -281,6 +281,7 @@ def test_a_charter_without_preset_or_review_stays_valid(tmp_path):
     c = _older(env)
     assert _validate(tmp_path, env, c).returncode == 0
     c["approved"] = {"by": "o", "at": "2026-10-11T10:00:00Z", "source": "go"}
+    c["rule"] = 2  # a run started on this kit is under the rule for build reviewers (#382)
     p = _cli("state", "init", "--charter", _file(tmp_path, c), "--run-id", "r1", env=env)
     assert p.returncode == 0, p.stderr
     body = tmp_path / "b.md"
