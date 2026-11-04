@@ -12,6 +12,8 @@ Through `workflow hook guard`, run as Claude Code runs it, in temporary git
 repositories cloned from a bare remote (`…/acme/demo.git`). The commands are
 data given to the hook; only the set-up runs."""
 
+import sys
+
 import pytest
 
 from changelog_notes import since_0110
@@ -871,11 +873,34 @@ def test_replacement_objects_dont_hide_what_is_sent(proj, monkeypatch, capsys):
     assert d == "deny" and "src/app.py" in why, why
 
 
+# Run as the guard's `git` (#481), given the length of the guard's own git
+# command and then the command: a `git log` never answers, so its reader's
+# queue stays empty however fast the machine is; any other read runs git
+# itself. Options before the subcommand are skipped (`-c` and `-C` with their
+# values).
+_LOG_NEVER_ANSWERS = """
+import os, sys, time
+n, argv = int(sys.argv[1]), sys.argv[2:]
+words, i = argv[n:], 0
+while i < len(words) and words[i].startswith("-"):
+    i += 2 if words[i] in ("-c", "-C") else 1
+if words[i : i + 1] == ["log"]:
+    time.sleep(60)  # the guard kills it once its time is up
+    sys.exit(1)
+os.execvp(argv[0], argv)
+"""
+
+
 def test_a_read_that_takes_too_long_is_asked(proj, monkeypatch, capsys):
+    """The push's `git log` read never answers, and has no time at all: it is
+    asked about every time (#481). A limit of 0 alone isn't enough, since an
+    answer git has already queued is still used."""
     _code_commit(proj)
+    real = guard_mod._GIT_READ
+    monkeypatch.setattr(guard_mod, "_GIT_READ", [sys.executable, "-I", "-c", _LOG_NEVER_ANSWERS, str(len(real)), *real])
     monkeypatch.setattr(guard_mod, "_GIT_READ_SECONDS", 0)
     d, why = hook(monkeypatch, capsys, proj, "git push origin feature")
-    assert d == "ask" and "took too long" in why, why
+    assert d == "ask" and "`git log` took too long" in why, why
 
 
 def test_many_pushes_in_one_command_stay_within_time(proj, monkeypatch, capsys):
