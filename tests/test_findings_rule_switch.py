@@ -179,6 +179,18 @@ def test_a_run_started_on_this_kit_is_under_the_rule(tmp_path, rule):
         assert p.returncode == 1 and "needs `rule: 2`" in p.stderr, p.stderr
 
 
+@pytest.mark.parametrize("value", ["2", 2.0, None, 3, True])
+def test_state_init_gives_one_answer_for_a_rule_that_isnt_2(tmp_path, value):
+    # Never "or absent", which `state init` refuses too.
+    _project(tmp_path)
+    c = _defaults(tmp_path, rule=True)
+    c["rule"] = value
+    c["approved"] = {"by": "o", "at": "2026-10-12T11:55:00Z", "source": "chat"}
+    _file(tmp_path, c, "charter.json")
+    p = _cli(tmp_path, "state", "init", "--charter", "charter.json", "--run-id", "r1", "--read-through", "0")
+    assert p.returncode == 1 and "needs `rule: 2`" in p.stderr and "rule must be" not in p.stderr, p.stderr
+
+
 @pytest.mark.parametrize("started", ["old", "new"])
 def test_a_state_write_that_changes_the_rule_is_refused(tmp_path, started):
     from workflow import state as state_mod
@@ -375,6 +387,25 @@ def test_every_merge_check_a_run_runs_has_no_pass_cap_under_the_rule():
     assert "recommend `until-clean`" not in cap and "never finds it there" in cap
     step = next(ln for ln in _read("skills/build-ticket/SKILL.md").splitlines() if ln.startswith("3. **Run `WF merge-check`.**"))
     assert "`<P>` the briefing's pass cap (`until-clean` with its \"Findings:\" line" in step
+
+
+def test_an_amendment_never_changes_the_rule():
+    # The owner may ask mid-run; the conductor says no before the page is spliced, not at the state write.
+    conductor = _read("skills/conductor/SKILL.md")
+    step = next(ln for ln in conductor.splitlines() if ln.startswith("3. Run `WF charter validate --approved --queue <on|off>`"))
+    assert "Never change the charter's `rule`, even when the owner asks for the other review rule" in step
+    assert step.index("Never change the charter's `rule`") < step.index("`WF state patch` and `WF state put` also refuse")
+    assert "or that changes `rule` or clears the charter" in step
+
+
+def test_reuse_says_it_adds_the_rule():
+    assert "adds `rule: 2` and drops any `review.passes`" in _read("docs/charter.md")
+    assert "`rule: 2` added and any `review.passes` dropped" in _read("skills/conductor/SKILL.md")
+
+
+def test_the_review_panel_names_the_templates_line():
+    applies = next(ln for ln in _read("skills/review-panel/SKILL.md").splitlines() if ln.startswith("**When it applies:**"))
+    assert "the template's line naming rule 2, as `build-ticket` §3's \"Which rule\" says" in applies
 
 
 def test_the_end_time_step_reads_the_rule_from_the_charter():

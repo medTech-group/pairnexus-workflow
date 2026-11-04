@@ -178,11 +178,10 @@ def test_the_one_page_with_a_number_reads_as_before(tmp_path):
     )
 
 
-def test_until_clean_in_the_profile_reads_into_the_presets_and_the_page(tmp_path):
+def test_until_clean_in_the_profile_reads_into_the_page(tmp_path):
     _project(tmp_path, 'review_passes = "until-clean"\n')
-    q = _limits_q(tmp_path)
-    for name in ("light", "normal", "thorough"):
-        assert f"; {WORDS};" in q["presets"][name]["words"]
+    # The presets' words describe a new charter, under the rule (#382), whatever the profile:
+    # `test_the_presets_words_are_a_new_charters`. The one page of a charter without `rule` reads the profile.
     c = _preset(tmp_path, "normal")
     page = _page(tmp_path, c)
     assert "**Size:** **Normal**." in page
