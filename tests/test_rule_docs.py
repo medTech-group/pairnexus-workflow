@@ -52,9 +52,10 @@ def _outside_code(text):
 
 def test_flow_3_says_when_the_rule_applies_and_that_it_never_asks_the_owner():
     rule = _flat(_rule_part(_step_3()))
-    # The holds for the owner are the skills' (a security problem on the base branch, a fix the guard
-    # refuses): pointed to, never listed as if complete.
-    assert "(`review-panel` §10), a review never stops to ask the owner, except where `build-ticket` §3 or `review-panel` §3 hold the ticket for them, such as for a security or safety problem in code already on the base branch." in rule
+    # The holds for the owner are the skills' (in a run, a security problem on the base branch; a fix the
+    # guard refuses): pointed to, never listed, since which apply differs between runs and attended work.
+    assert "(`review-panel` §10), a review never stops to ask the owner, except where `build-ticket` §3 or `review-panel` §3 hold the ticket for them." in rule
+    assert "such as" not in rule.split("Build reviews follow it", 1)[0]
     assert 'Build reviews follow it in attended work always, and in a ticket session when its briefing has a "Findings:" line.' in rule
     assert "Where the rule differs from the above, it wins:" in rule
 
