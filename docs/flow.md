@@ -30,17 +30,18 @@ A large effort can start as a **map**: an issue labelled `wayfinder:map` whose c
 
 1. Settle the idea with the owner first, in the same session: `grill-with-docs` (or a map's decisions). Then follow `to-spec`: agree the test seams with the owner and write the spec's draft, citing the decision behind each choice.
    **Post the owner's answers** ("Decision questions"), each round as soon as it's answered: each question with the answer quoted word for word, the seams among them. They go on the item's issue or the map's Destination item (a comment on the map naming it), when there is one. A spec with neither files an item's issue first, so its rounds are posted before the spec is published. Then review the spec's draft with the planning review (`review-panel` §8) until a round is clean, fixing as §1 does, and publish the reviewed text as is (`ready-for-agent`). Each round's spec record goes on the spec's issue (`workflow review-record --kind spec --body`): it names the hash of the spec's body, so an edit after the review makes the spec read as unreviewed again.
-   Label the spec `spec` as well, so readiness never mistakes it for a build ticket. A spec for a map's Destination item is linked from that item in the map's body (and its tickets are the spec's sub-issues), so `next` and the conductor can tell which Destination items are specified.
+   Label the spec `spec` as well, so readiness never mistakes it for a build ticket. A spec for a map's Destination item is linked from that item in the map's body (and its tickets are the spec's sub-issues), so `next` and the conductor can tell which items are specified.
 2. Follow `to-tickets`: agree the breakdown (**Agree these**), run the breakdown check ("Decision questions"), then publish build tickets (`ready-for-agent`). Each build ticket has:
-   - `## Blocked by` (issue refs, or "None"), written out even when the tickets are also linked with GitHub's own dependencies, so a blocker closed as not planned is seen;
+   - `## Blocked by` (issue refs, or "None"), written out even when also linked with GitHub's own dependencies, so a blocker closed as not planned is seen;
    - an `Area: <name>` line from the profile's `[areas]`, so the conductor never runs two sessions on one area;
    - acceptance criteria naming their seams;
    - the by-hand checks it will need (a real device, account or service), if any;
-   - `Review: small` if the change should stay within the small threshold and add no endpoint, table, screen or setting (§3).
+   - `Review: small` if the change should stay within the small threshold and add no endpoint, table, screen or setting (§3);
+   - `## Bar`, required in a `run.bar_areas` area ("The bar").
 3. Anything only the owner can do (create an account, a key, a domain) is its own issue labelled `owner-task` (or `ready-for-human`), and blocks what needs it.
 4. **A change to a protected path** (the profile's `guard.protected_paths`: the kit, CI config, CODEOWNERS, secrets files) is an owner task too, labelled `owner-task`, never a build ticket: a ticket session can't change those paths. `workflow ready` notes a ticket whose body names one ("names protected path … : check it isn't an owner task"), leaving it ready; the conductor lists such tickets at kick-off for the owner to keep or exclude. Paths in fenced code (unless the prose before it asks for a change "to" or "in" it), or after "don't", "do not" or "never" in their clause, aren't noted; when in doubt, a path is noted.
 5. **A ticket that fixes a failing or flaky required check** is infra: label it `workflow:infra` as well, so it starts before other tickets. (If its fix is to CI config itself, it is an owner task, as above.)
-6. **An issue triaged to `ready-for-agent`** (by `triage`, or the `start` skill's sorting) is a build ticket too: it gets the same `## Blocked by`, `Area:` and acceptance criteria before it gets the label.
+6. **An issue triaged to `ready-for-agent`** (by `triage` or `start`'s sorting) is a build ticket too: it gets item 2's parts before it gets the label.
 7. **Commit what the session wrote:** the domain glossary and ADRs, on their own branch, with a pull request for the owner to merge. They get the planning review as §1 does before the pull request is offered, with its review records on its commit. Research notes go on a `research/<name>` branch, linked from the spec, never merged. They are files in the working tree, and a cloud session's are gone when it ends.
 
 **Checklist:** every input decision used or ruled out with a reason; seams agreed; each round checked, posted as answered and tagged; answers posted verbatim; reviewed until clean, records posted; spec published; tickets agreed, checked, published, wired, each with an area; owner tasks filed (protected-path changes among them); check fixes labelled `workflow:infra`; glossary and ADRs committed with a PR offered, research on its branch.
@@ -57,6 +58,18 @@ The questions whose answer is posted as the owner's: a map decision's rounds (§
 - **Each read's fixes** are listed where the owner can object: in the post of the round that follows the read; with no round after it, in a comment on the same issue straight after the read, with what it leaves; on a quick ticket, above **Publish it**.
 - **What's left** after a last read goes into the spec's Further Notes as open questions before it's published, or a comment on the spec's issue listing them after; for a map decision, its resolution comment; on a quick ticket, its `## Decided for you`, marked open. It is never only in the session's closing choices. What's left is what was unanswered or left open, and a last read's **ask** findings: a re-read's **ask** findings are never asked, except the breakdown check's. A last read's **fix** findings are made.
 - **Not the planning review.** These checks (before each round, the end check, the re-reads and the breakdown check) aren't `review-panel` §8's planning review: each reads once and re-reads once, never in rounds until clean, and posts no spec record. Once a check's **ask** round is answered or left open, nothing it found stops the publish (a breakdown finding left open keeps its tickets out of `ready-for-agent`), unless #363's spec changes what blocks these checks.
+
+## The bar
+
+A build ticket's `## Bar` says where the reviewers' hunt stops: what the change must handle, what it does when it can't be sure (fail closed), and the limits it accepts, each with its backstop if any. A spec may give one for its tickets. A ticket may carry one, and one whose area is in the profile's `run.bar_areas` must: `workflow ready` notes such a ticket with no `## Bar`, leaving it ready, as it notes a protected path. For example:
+
+```markdown
+## Bar
+
+- Must handle: a note saved with an empty title, and two saves of one note at once.
+- Fail closed: when it can't tell which save is newer, it keeps both and says so.
+- Accepted limits: notes over 1 MB aren't checked (backstop: the server refuses them).
+```
 
 ## 3. Building: one ticket per session
 
