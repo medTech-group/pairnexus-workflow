@@ -63,8 +63,9 @@ def test_flow_3_says_when_the_rule_applies_and_that_it_never_asks_the_owner():
 def test_flow_3_describes_what_blocks_the_fixer_and_the_bar():
     rule = _flat(_rule_part(_step_3()))
     assert "A finding blocks only with a reproducer, a concrete case that fails; without one it is a note." in rule
-    # Filed ready; when it is built (a run, or an offer after the merge) is build-ticket's.
-    assert "becomes a ticket to fix it, filed ready (`build-ticket` §3)." in rule
+    # How it is filed (ready, an owner task, `ready-for-human`) and when it is built are build-ticket's.
+    assert "becomes a ticket to fix it, filed as `build-ticket` §3 says." in rule
+    assert "filed ready" not in rule
     assert "built next" not in rule
     assert "A review is clean when no finding blocks." in rule
     assert "A fresh `fixer` agent makes each review's fixes, round 1's included" in rule
