@@ -133,7 +133,7 @@ The run's limits and review default from here, through `preset`; each run's char
 
 **Build reviews under the rule for build reviewers** (spec #412, flow §3 step 3), which attended work always follows, and a run whose charter has `rule: 2`:
 - `review_rounds` still sets a review's rounds; `review_passes` doesn't apply, since there is no pass cap: Correctness passes follow the last round until one is clean.
-- A fresh fixer agent makes each review's fixes, and a part that keeps blocking may take the safe fallback its ticket's bar describes or be split out to a ticket of its own. `bar_areas` names the areas whose tickets must give that bar.
+- A fresh `fixer` agent makes each review's fixes. A part that keeps blocking takes the safe fallback its ticket's bar describes, is split out to a ticket of its own, or, with neither left, is fixed as usual. `bar_areas` names the areas whose tickets must give that bar.
 - Attended work stops after 10 reviews that weren't clean in one session, leaving a hand-off and the label `workflow:carry-on`; a run carries such a ticket on at its end time (`charter.md`, "The end time"). The 10 is fixed: no profile key changes it.
 
 ## Environment variables
