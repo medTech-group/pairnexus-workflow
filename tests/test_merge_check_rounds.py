@@ -305,4 +305,4 @@ def test_the_rendered_briefings_merge_check_names_the_rounds(tmp_path):
 
     merging = _render(tmp_path, "auto-merge", [])
     # The pass cap and the small threshold follow the rounds (#259).
-    assert re.search(r"merge-check --fetch <PR> --json --charter \.workflow/tracking\.md --review-rounds \d+ --review-passes \d+ --small-max-lines \d+ --small-max-files \d+`", merging), merging
+    assert re.search(r"merge-check --fetch <PR> --json --charter \.workflow/tracking\.md --review-rounds \d+ --review-passes (\d+|until-clean) --small-max-lines \d+ --small-max-files \d+`", merging), merging

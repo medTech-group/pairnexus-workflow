@@ -12,6 +12,12 @@ validation and one page read them.
 The pass cap is a whole number from 0 to 10, or `UNTIL_CLEAN` (#402): no cap,
 Correctness passes until one is clean, bounded only by the run's end time.
 
+A charter's `rule` (#382) is the rule for build reviewers its run reviews
+under: `RULE` (2, `review-panel` §10's) in every charter the kit writes now,
+or absent for today's rule, in a run started before it. Under `RULE` there is
+no pass cap: `review_of` gives `UNTIL_CLEAN` whatever the charter or the
+profile says, so the run's end time is its only limit on a ticket's reviews.
+
 `profile` is a loaded profile (`profile.load`), or None for the profile's
 defaults. Normal is the profile's own numbers; "has an explorer" means the
 profile's `ui.explorer` isn't `none`, and with none, `review.explorer` is
@@ -33,6 +39,15 @@ UNTIL_CLEAN = "until-clean"
 UNTIL_CLEAN_SHORT = "Correctness passes until one is clean"
 UNTIL_CLEAN_WORDS = f"{UNTIL_CLEAN_SHORT}, within the run's end time"
 LIGHT_NO_EXPLORER = "no UI explorer (one round is the light review)"
+# The rule for build reviewers (`review-panel` §10) as a charter names it (#382).
+RULE = 2
+
+
+def under_rule(c: Any) -> bool:
+    """A charter's run reviews under the rule for build reviewers: its `rule`
+    is `RULE`. Without one, today's rule (anything else in it `charter
+    validate` refuses)."""
+    return isinstance(c, dict) and type(c.get("rule")) is int and c["rule"] == RULE
 
 
 def _run(profile: Any, key: str) -> int | str:
@@ -136,9 +151,10 @@ def small_reviewers(review: dict, profile: Any = None) -> str:
 
 
 def words(name: str, profile: Any = None) -> str:
-    """A preset's numbers in words, for the question's choices."""
+    """A preset's numbers in words, for the question's choices: for a new
+    charter, so under the rule for build reviewers (no pass cap)."""
     p = numbers(name, profile)
-    lim, rev = p["limits"], review_of({"preset": name, "review": p["review"]}, profile)
+    lim, rev = p["limits"], review_of({"preset": name, "review": p["review"], "rule": RULE}, profile)
     small = f"small review on (at most {threshold_words(rev)} outside tests)" if rev["small"] else "small review off"
     return (
         f"{plural(lim['max_parallel'], 'session', 'sessions')} at once, {lim['max_sessions']} in all, "
@@ -176,15 +192,6 @@ def valid_review(key: str, v: Any, lo: int, hi: int) -> bool:
     return _whole(v, lo, hi) or (key == "passes" and v == UNTIL_CLEAN)
 
 
-def pass_cap_choices(profile: Any = None) -> list[dict]:
-    """The pass caps the limits question offers beside the presets, each
-    `{value, words}`: the profile's first, then `until-clean`, or, when the
-    profile's is `until-clean`, the profile's default number."""
-    own = _run(profile, "review_passes")
-    other = _run(None, "review_passes") if own == UNTIL_CLEAN else UNTIL_CLEAN
-    return [{"value": v, "words": passes_words({"passes": v})} for v in (own, other)]
-
-
 def review_of(c: dict, profile: Any = None) -> dict:
     """The review a run takes from its charter, `{rounds, explorer, small,
     passes, small_max_lines, small_max_files}`. Rounds and explorer: the
@@ -192,7 +199,8 @@ def review_of(c: dict, profile: Any = None) -> dict:
     before presets, the profile's, as before. `small`: the charter's, and off
     when it has none, so a charter approved before the small review behaves as
     approved. The pass cap and the small threshold: the charter's, else the
-    profile's `run.review_passes`, `run.small_max_lines` and `run.small_max_files`."""
+    profile's `run.review_passes`, `run.small_max_lines` and `run.small_max_files`.
+    Under the rule (`under_rule`), no pass cap: `UNTIL_CLEAN`, whatever either says."""
     r = c.get("review") if isinstance(c, dict) else None
     r = r if isinstance(r, dict) else {}
     if "rounds" in r and "explorer" in r:
@@ -205,6 +213,8 @@ def review_of(c: dict, profile: Any = None) -> dict:
     out["small"] = r.get("small") is True
     for key, run_key, lo, hi in PROFILE_REVIEW:
         out[key] = r[key] if valid_review(key, r.get(key), lo, hi) else _run(profile, run_key)
+    if under_rule(c):
+        out["passes"] = UNTIL_CLEAN
     return out
 
 
@@ -242,7 +252,7 @@ def changes(c: dict, profile: Any = None) -> list[str]:
     out += small_change
     # The pass cap and the threshold are the profile's in every preset: a change only against a profile.
     if isinstance(rev, dict) and profile is not None:
-        got, usual = review_of(c, profile), review_of({"preset": c["preset"]}, profile)
+        got, usual = review_of(c, profile), review_of({"preset": c["preset"], "rule": c.get("rule")}, profile)
         if got["passes"] != usual["passes"]:
             out.append(UNTIL_CLEAN_SHORT if got["passes"] == UNTIL_CLEAN else plural(got["passes"], "pass", "passes"))
         if (got["small_max_lines"], got["small_max_files"]) != (usual["small_max_lines"], usual["small_max_files"]):

@@ -7,8 +7,11 @@ from workflow.render import RenderError, render, values
 
 
 def good_charter():
+    """A charter for the renderer's own templates, which have no "Findings:" line: without `rule`
+    (#382), since a charter under it is refused a template without that line."""
     c = charter.defaults(["deploy staging"])
     c["limits"]["ends_at"] = "2099-10-13T03:30:00Z"
+    del c["rule"]
     return c
 
 
@@ -147,6 +150,7 @@ def test_state_init_cli(tmp_path):
     # An empty project, so no profile is read (this repository has its own).
     run = {"capture_output": True, "text": True, "cwd": tmp_path, "env": {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)}}
     c = good_charter()
+    c["rule"] = 2  # a run started on this kit is under the rule for build reviewers (#382)
     f = tmp_path / "c.json"
     f.write_text(json.dumps(c))
     p = subprocess.run([sys.executable, str(cli), "state", "init", "--charter", str(f), "--run-id", "r1"], **run)

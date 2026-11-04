@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**Runs review under the rule for build reviewers** (#382, part of spec #412). A run started on this kit uses the rule throughout, and a run keeps the rule it started with, with no question asked.
+
+- **The charter's `rule: 2`,** written by `workflow charter defaults` and `charter reuse` (so the next run takes it), outside the presets. A charter without it, from a run started on an earlier kit, keeps today's rule to its end. `charter validate` refuses any other value, and `review.passes` beside it; `state init` refuses a charter without it, and `state put` and `state patch` refuse a charter that changes `rule` mid-run, or clears a run's charter.
+- **The briefing's "Findings:" line** (`{{review.limit}}` in `templates/ticket-session-prompt.md`) names the rule and turns it on for the session (`build-ticket` §3), in place of its "Pass cap:" line: no pass cap, the run's end time the only limit on a ticket's reviews, `merge-check --review-passes until-clean`, and no stop at a pass cap (`{{review.stopping}}`). A briefing without it means today's rule, as before. `workflow render` refuses, for a charter under the rule, a template without the line (an older kit's, or a project's own).
+- **The one page** shows a "**Findings:**" line in place of its "**Pass cap:**" line, and the limits question offers no pass cap (no `pass_cap`); each preset's `words` says "Correctness passes until one is clean, within the run's end time". `presets.review_of` gives `until-clean` under the rule, whatever the profile's `run.review_passes`.
+
 **`start` offers carry-on tickets, and the flow says when a ticket needs a bar** (#376, part of spec #412). In attended work, the guided start lists the tickets an earlier session handed on with their review not yet clean (`workflow:carry-on`), with **Carry on (Recommended)** first.
 
 - **`workflow status`** lists them under a new `carry_on` ("Carried on (handed on by an earlier session, review not yet clean)"): open tickets labelled `workflow:carry-on`, leaving out one a run adopted (it has `workflow:in-progress`, and is listed as claimed, naming the label) and one waiting on a person (`needs-human`, `owner-task`, `ready-for-human` or `needs-info`), which is listed as waiting. Only a ticket is carried on: a spec, a map or a planned item keeps its own section. A ticket labelled `workflow:carry-on` is never listed as ready, whichever section lists it.

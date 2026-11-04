@@ -270,8 +270,9 @@ def test_state_init_refuses_the_explorer_without_one(tmp_path):
 
 
 def _older(env):
+    """A charter written before presets, so before the rule for build reviewers (#382) too."""
     c = _defaults(env)
-    del c["preset"], c["review"]
+    del c["preset"], c["review"], c["rule"]
     return c
 
 
@@ -280,6 +281,7 @@ def test_a_charter_without_preset_or_review_stays_valid(tmp_path):
     c = _older(env)
     assert _validate(tmp_path, env, c).returncode == 0
     c["approved"] = {"by": "o", "at": "2026-10-11T10:00:00Z", "source": "go"}
+    c["rule"] = 2  # a run started on this kit is under the rule for build reviewers (#382)
     p = _cli("state", "init", "--charter", _file(tmp_path, c), "--run-id", "r1", env=env)
     assert p.returncode == 0, p.stderr
     body = tmp_path / "b.md"
@@ -312,6 +314,9 @@ def test_review_of_takes_the_charters_review(tmp_path):
     prof = profile_mod.load(tmp_path)
     c = _defaults(env)
     c["review"] = {"rounds": 1, "explorer": False}
+    # A new charter is under the rule for build reviewers (#382): no pass cap.
+    assert presets.review_of(c, prof) == {"rounds": 1, "explorer": False, **OFF, "passes": presets.UNTIL_CLEAN}
+    del c["rule"]
     assert presets.review_of(c, prof) == {"rounds": 1, "explorer": False, **OFF}
 
 
@@ -384,7 +389,7 @@ def test_a_preset_without_review_reviews_as_its_preset(tmp_path):
     md = _cli("charter", "markdown", _file(tmp_path, c), env=env).stdout
     # Without a review, the small review reads as off (#259): a change from Light's.
     assert "**Size:** **Light**, changed: the small review off." in md and "up to 1 round per ticket; UI explorer off." in md
-    assert presets.review_of(c, profile_mod.load(tmp_path)) == {"rounds": 1, "explorer": False, **OFF}
+    assert presets.review_of(c, profile_mod.load(tmp_path)) == {"rounds": 1, "explorer": False, **OFF, "passes": presets.UNTIL_CLEAN}
 
 
 def test_a_review_without_a_preset_shows_the_charters_review(tmp_path):

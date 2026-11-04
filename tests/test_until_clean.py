@@ -14,6 +14,7 @@ import re
 import pytest
 
 from changelog_notes import since_0110
+# Their `_defaults` and `_preset` give a charter without `rule` (#382): the pass cap is today's rule's.
 from test_charter_small_review import _brief, _defaults, _limits_q, _line, _merge_check, _page, _preset, _project, _validate
 from test_merge_check import EARLIER, HEAD, check, ids, inputs, project, rec  # noqa: F401 (project is a fixture)
 from test_merge_check_passes import KIT, _at_the_cap, _load, passes_in_profile, records, three_commits
@@ -177,37 +178,35 @@ def test_the_one_page_with_a_number_reads_as_before(tmp_path):
     )
 
 
-def test_until_clean_in_the_profile_reads_into_the_presets_and_the_page(tmp_path):
+def test_until_clean_in_the_profile_reads_into_the_page(tmp_path):
     _project(tmp_path, 'review_passes = "until-clean"\n')
-    q = _limits_q(tmp_path)
-    for name in ("light", "normal", "thorough"):
-        assert f"; {WORDS};" in q["presets"][name]["words"]
+    # The presets' words describe a new charter, under the rule (#382), whatever the profile:
+    # `test_the_presets_words_are_a_new_charters`. The one page of a charter without `rule` reads the profile.
     c = _preset(tmp_path, "normal")
     page = _page(tmp_path, c)
     assert "**Size:** **Normal**." in page
     assert _line(page, "- **Pass cap:**").startswith(f"- **Pass cap:** none: after the last review round, {WORDS}")
 
 
-def test_the_limits_question_offers_until_clean_beside_the_presets(tmp_path):
+def test_the_limits_question_offers_no_pass_cap_now(tmp_path):
+    # It offered the profile's cap and until-clean beside the presets; a run under the rule for
+    # build reviewers (#382), which every new charter is, has no pass cap, so it offers none.
     _project(tmp_path, "review_passes = 3\n")
     q = _limits_q(tmp_path)
-    assert q["pass_cap"] == [
-        {"value": 3, "words": "at most 3 Correctness passes"},
-        {"value": "until-clean", "words": WORDS},
-    ]
-    assert '"until-clean"' in q["note"]
-    # The presets' numbers stay as they are.
+    assert "pass_cap" not in q and '"until-clean"' not in q["note"]
+    # The presets' numbers stay as they are; their words give the rule's passes.
     for name in ("light", "normal", "thorough"):
         assert "passes" not in q["presets"][name]["review"]
-        assert "at most 3 Correctness passes" in q["presets"][name]["words"]
+        assert f"; {WORDS};" in q["presets"][name]["words"]
 
 
-def test_the_limits_question_with_until_clean_in_the_profile_offers_a_number_too(tmp_path):
-    _project(tmp_path, 'review_passes = "until-clean"\n')
-    assert _limits_q(tmp_path)["pass_cap"] == [
-        {"value": "until-clean", "words": WORDS},
-        {"value": 2, "words": "at most 2 Correctness passes"},
-    ]
+def test_the_presets_words_are_a_new_charters(tmp_path):
+    # They are offered at a kick-off, whose charter is under the rule (#382): the profile's cap doesn't apply.
+    _project(tmp_path, "review_passes = 3\n")
+    prof = profile_mod.load(tmp_path)
+    from workflow import presets
+
+    assert f"; {WORDS};" in presets.table(prof)["normal"]["words"] and "at most 3" not in presets.words("normal", prof)
 
 
 def test_the_briefing_words_until_clean(tmp_path):
@@ -280,10 +279,9 @@ def test_the_conductor_skill_says_what_until_clean_does():
     # Only the tickets this stop leaves behind, never one set aside or asked about before: a resume takes none twice.
     assert "the state still holds `running` (its session archived by this step) or `queued` (not yet started: a retry, an answered ticket or an adopted leftover), not labelled `needs-human`" in aside
     assert "an open pull request on its ticket branch" in aside
-    # The kick-off recommends until-clean for a ticket set aside at an earlier run's end time.
+    # The kick-off offers no pass cap: every new charter is under the rule for build reviewers (#382).
     size = skill.split("**The size, presets first.**", 1)[1].split("\n", 1)[0]
-    assert "When a leftover adopted in step 1 is a ticket set aside at an earlier run's end time" in size and "recommend `until-clean`" in size
-    assert "`pass_cap`" in skill.split("**The size, presets first.**", 1)[1].split("\n", 1)[0]
+    assert "no `pass_cap`" in size and "`review.passes` stays out of the charter" in size
 
 
 @pytest.mark.parametrize("rel", ["docs/flow.md", "skills/build-ticket/SKILL.md", "skills/review-panel/SKILL.md", "docs/charter.md", "docs/profile.md"])
