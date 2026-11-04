@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.21
+
+**Decision questions asked in a message are easier to read.** A recommendation now has its own labelled part, "➡️ Recommended:", with its evidence, and the alternatives have theirs, so a recommendation can't be mistaken for a decision already made. Questions asked as clickable choices are unchanged.
+
+- **For projects updating to 0.1.21:** nothing to do. Sessions follow the new layout once the update merges.
+
 - **Decision questions asked in a message show a labelled Recommended part and the alternatives (#486).** A round asked in a message, as `grilling` lays one out, now gives each question its own parts: the question, "➡️ **Recommended:**" with what it rests on, what it gives up and what would make it wrong (or "Recommended: none" and why), and "**Alternatives:**", one line each, never the recommendation as the question's first sentence or a bold paragraph. A round posted on GitHub keeps the same parts, as columns or labels. `grilling` is unedited, and questions asked as choices, the run charter's among them, are unchanged. The rule is in the flow's "Decision questions", and the guided start's interview points to it.
 
 ## 0.1.20
