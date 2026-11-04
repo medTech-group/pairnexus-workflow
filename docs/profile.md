@@ -131,6 +131,12 @@ An unknown key is an error, so a typo can't quietly turn previews off. In a prof
 
 The run's limits and review default from here, through `preset`; each run's charter can change them (`charter.md`).
 
+**Build reviews under the rule for build reviewers** (spec #412, `review-panel` §10), which attended work always follows, and a run whose charter has `rule: 2`:
+- `review_rounds` still sets a review's rounds; `review_passes` doesn't apply, since there is no pass cap: Correctness passes follow the last round until one is clean.
+- A finding blocks only with a reproducer, a concrete case that fails, and a fresh fixer agent makes each review's fixes, a failing test first.
+- When the same part of the change blocks in two reviews in a row, it takes the safe fallback its ticket's bar describes, or it is split out to a ticket of its own and the pull request merges without it. `bar_areas` names the areas whose tickets must give that bar.
+- In a run, the end time is the only limit: a ticket not clean then is labelled `workflow:carry-on`, and the next run carries it on. In attended work, the session stops after 10 reviews that weren't clean in one session, leaving a hand-off and the same label, and "carry on #<n>" goes on in a fresh session. The 10 is fixed: no profile key changes it.
+
 ## Environment variables
 
 | Variable | Read by | What it does |
