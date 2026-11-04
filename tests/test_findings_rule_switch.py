@@ -109,7 +109,7 @@ def test_validate_refuses_any_other_rule(tmp_path, value):
     assert p.returncode == 1 and "rule must be 2" in p.stderr
 
 
-@pytest.mark.parametrize("passes", [0, 2, "until-clean"])
+@pytest.mark.parametrize("passes", [0, 2, "until-clean", 99, None])
 def test_validate_refuses_a_pass_cap_under_the_rule(tmp_path, passes):
     # There is none to give: a pass cap the run would never apply is refused, not ignored.
     _project(tmp_path)
@@ -117,7 +117,9 @@ def test_validate_refuses_a_pass_cap_under_the_rule(tmp_path, passes):
     c["review"]["passes"] = passes
     p = _validate(tmp_path, c)
     assert p.returncode == 1 and "review.passes" in p.stderr and "no pass cap" in p.stderr
-    assert _validate(tmp_path, _old(c)).returncode == 0  # today's rule keeps its pass cap
+    assert "must be a whole number" not in p.stderr  # one answer: no value is right
+    if passes not in (99, None):
+        assert _validate(tmp_path, _old(c)).returncode == 0  # today's rule keeps its pass cap
 
 
 def test_the_review_under_the_rule_has_no_pass_cap(tmp_path):
@@ -261,14 +263,21 @@ def test_a_template_without_the_line_is_refused_under_the_rule(tmp_path):
     assert p.returncode != 0 and "{{review.limit}}" in p.stderr
 
 
-def test_a_template_with_no_pass_cap_at_all_renders_under_the_rule(profile):
-    # The renderer's own templates (one placeholder) give no pass cap to mislead a session with.
+def test_any_template_without_the_line_is_refused_under_the_rule(profile):
+    # A project's own template, or an older kit's with no pass cap line at all: its session would
+    # review under today's rule. Its other holes are named first.
     from workflow import render
 
     c = charter_mod.defaults()
     c["limits"]["ends_at"] = "2099-10-13T03:30:00Z"
     slots = {"alongside": "none", "read_first": "none", "owner_decisions": "none", "briefing": "Build it.", "wake_trigger": "t"}
-    assert render.render("{{briefing}}", render.values(profile, {"number": 1}, c, slots, 1, None)) == "Build it."
+    vals = render.values(profile, {"number": 1}, c, slots, 1, None)
+    with pytest.raises(render.RenderError, match=r"no \{\{review\.limit\}\} line"):
+        render.render("{{briefing}}", vals)
+    with pytest.raises(render.RenderError, match="no value for: nope"):
+        render.render("{{briefing}} {{nope}}", vals)
+    assert render.render("{{review.limit}}", vals).startswith("- **Findings:** rule 2")
+    assert render.render("{{briefing}}", render.values(profile, {"number": 1}, _old(c), slots, 1, None)) == "Build it."
 
 
 def test_the_template_has_the_line_once():
@@ -284,8 +293,8 @@ def test_under_the_rule_the_hand_off_line_gives_the_findings_to_a_fresh_fixer(tm
     _project(tmp_path)
     (tmp_path / "slots.json").write_text(json.dumps({**json.loads((tmp_path / "slots.json").read_text()), "hand_off": HAND_OFF}))
     line = _line(_brief(tmp_path, _defaults(tmp_path, rule=True)), "**Hand-off:**")
-    assert "run `merge-check` on the head first and act on any `mechanism_repeats` it gives" in line
-    assert "fix its open blocking findings first, through a fresh fixer (`review-panel` §3)" in line
+    assert "run `merge-check` on the head and act on any `mechanism_repeats` it gives" in line
+    assert "then have a fresh fixer (`review-panel` §3) fix its open blocking findings first" in line
     assert line.index("`mechanism_repeats`") < line.index("fresh fixer") < line.index("then run the next review")
     # Without the rule, as before.
     line = _line(_brief(tmp_path, _old(_defaults(tmp_path, rule=True))), "**Hand-off:**")

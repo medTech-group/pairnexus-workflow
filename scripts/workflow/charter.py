@@ -102,7 +102,7 @@ def changed_rule(old: Any, new: Any) -> str | None:
     if not isinstance(old, dict) or presets_mod.under_rule(old) == presets_mod.under_rule(new):
         return None
     return (
-        "rule: a run keeps the rule it started with, so its charter's `rule` can't change during the run "
+        "rule: a run keeps the rule it started with, so its charter's `rule` can't change (nor the charter be cleared) during the run "
         "(the next run's charter takes the new rule)"
     )
 
@@ -505,6 +505,8 @@ def validate(c: Any, require_approval: bool = False, now: datetime | None = None
                     "until one is clean, within the run's end time); remove it"
                 )
             for k, _, lo, hi in presets_mod.PROFILE_REVIEW:
+                if k == "passes" and presets_mod.under_rule(c):
+                    continue  # refused whatever it says, above
                 if k in rv and not presets_mod.valid_review(k, rv[k], lo, hi):
                     also = f', or "{presets_mod.UNTIL_CLEAN}" (no cap)' if k == "passes" else ""
                     p.append(f"review.{k} must be a whole number from {lo} to {hi}{also}, or absent (the profile's)")

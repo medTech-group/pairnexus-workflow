@@ -15,8 +15,8 @@ The briefing's `{{review.limit}}` line (#382) is the run's limit on a ticket's
 reviews: under the rule for build reviewers (the charter's `rule: 2`) its
 "Findings:" line, which turns the rule on for the session (`build-ticket` §3)
 and has no pass cap; for a charter without `rule`, today's "Pass cap:" line.
-A run under the rule is refused an older ticket-session template, one giving
-today's pass cap with no such line, whose session would review under today's rule.
+A run under the rule is refused a template without that line (an older kit's,
+or a project's own), whose session would review under today's rule.
 
 `seal` ends a rendered briefing with `Briefing <hash>`, the first 12 hex
 characters of the SHA-256 of the text above it. The session echoes that line in
@@ -237,8 +237,8 @@ def _hand_off_words(url: object, profile: Profile, branch: str, under_rule: bool
         f"on. Its pull request #{m.group(2)} and branch `{branch}` stay as they are: check out the branch "
         "from GitHub, and read that hand-off comment before anything else. Go on from it: "
         + (
-            "run `merge-check` on the head first and act on any `mechanism_repeats` it gives; then fix its open blocking "
-            "findings first, through a fresh fixer (`review-panel` §3), each finding's words in the hand-off and the PR "
+            "run `merge-check` on the head and act on any `mechanism_repeats` it gives; then have a fresh fixer "
+            "(`review-panel` §3) fix its open blocking findings first, each finding's words in the hand-off and the PR "
             "body's findings table standing as its reproducer; "
             if under_rule
             else "fix its open blocking findings first, "
@@ -406,13 +406,6 @@ def _pass_cap(review: dict) -> str:
 
 def render(template: str, vals: dict) -> str:
     used = [m.group(1) for m in PLACEHOLDER.finditer(template)]
-    # An older ticket-session template: it gives today's pass cap and no "Findings:" line (#382).
-    older = {"review.pass_cap", "review.passes_words"} & set(used) and "review.limit" not in used
-    if older and vals.get("review.rule") == str(presets_mod.RULE):
-        raise RenderError(
-            "the run reviews under the rule for build reviewers, and the template gives a pass cap with no "
-            "{{review.limit}} line, which tells the session the rule: render it with the kit's current ticket-session-prompt.md"
-        )
     if not _says_none(vals.get("hand_off")) and "ticket.hand_off" not in used:
         raise RenderError(
             "the template has no {{ticket.hand_off}} line, which tells the session to start from its hand_off: "
@@ -437,5 +430,11 @@ def render(template: str, vals: dict) -> str:
     if holes:
         raise RenderError(
             "these still say SEE_BELOW/TODO_FILL/<fill …>: " + ", ".join(holes) + "; write what the session needs, or \"none\""
+        )
+    # Without the line, the session would review under today's rule (#382): an older template, or one of the project's own.
+    if vals.get("review.rule") == str(presets_mod.RULE) and "review.limit" not in used:
+        raise RenderError(
+            "the run reviews under the rule for build reviewers, and the template has no {{review.limit}} line, which "
+            "tells the session the rule: render it with the kit's current ticket-session-prompt.md"
         )
     return PLACEHOLDER.sub(lambda m: str(vals[m.group(1)]), template)
