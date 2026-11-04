@@ -89,7 +89,9 @@ def test_the_next_run_uses_the_rule(tmp_path):
 def test_reuse_keeps_a_until_clean_charter_valid(tmp_path):
     old = _old(charter_mod.defaults())
     old["review"]["passes"] = "until-clean"
-    assert "passes" not in charter_mod.reuse(old)["review"]
+    new = charter_mod.reuse(old)
+    assert "passes" not in new["review"]
+    assert not charter_mod.validate({**new, "limits": {**new["limits"], "ends_at": "2099-10-13T03:30:00Z"}})
 
 
 def test_validate_accepts_the_rule_and_its_absence(tmp_path):
@@ -144,6 +146,7 @@ def test_a_run_keeps_the_rule_it_started_with(tmp_path):
     assert charter_mod.changed_rule(old, new) and charter_mod.changed_rule(new, old)
     assert charter_mod.changed_rule(old, old) is None and charter_mod.changed_rule(new, new) is None
     assert charter_mod.changed_rule(None, new) is None  # a run's first charter starts it
+    assert charter_mod.changed_rule(new, None)  # clearing a charter under the rule drops it too
 
 
 def _state(tmp_path, c):
@@ -181,6 +184,11 @@ def test_a_state_write_that_changes_the_rule_is_refused(tmp_path, started):
     p = put(other)
     assert p.returncode != 0 and "keeps the rule it started with" in p.stderr, p.stderr + p.stdout
     assert (tmp_path / "body.md").read_text() == before
+    # `state patch` refuses it too: a charter patch that sets the other rule, or takes it out.
+    (tmp_path / "patch.json").write_text(json.dumps({"charter": {"rule": 2} if started == "old" else {"rule": None}}))
+    p = _cli(tmp_path, "state", "patch", "--body", "body.md", "--patch", "patch.json", "--out", "body.md")
+    assert p.returncode != 0 and "keeps the rule it started with" in p.stderr, p.stderr + p.stdout
+    assert (tmp_path / "body.md").read_text() == before
     # Any other charter change still goes through.
     same = json.loads(json.dumps(c))
     same["limits"]["check_in_minutes"] = 30
@@ -209,6 +217,9 @@ def test_under_the_rule_the_briefing_drops_the_pass_cap(tmp_path):
     line = _line(brief, FINDINGS)
     assert "no pass cap" in line and "the run's end time is the only limit on this ticket's reviews" in line
     assert "carries the ticket on to the next run" in line and "set aside" not in line
+    # The bar goes to every reviewer; a ticket held for the owner isn't carried on.
+    assert "each reviewer gets the ticket's `## Bar`, when it has one, as the line their hunt stops at" in line
+    assert "unless it is held for the owner (a security or safety problem in code already on the base branch, or a protected path)" in line
     assert "--review-passes until-clean " in _merge_check(brief)
     # No owner stop for a review that isn't clean: `passes_used_up` never comes, so nothing waits on it.
     assert "Correctness passes after" not in brief and "passes_used_up" not in brief.replace(
@@ -265,6 +276,23 @@ def test_the_template_has_the_line_once():
     assert "{{review.pass_cap}}" not in TEMPLATE.read_text()
 
 
+HAND_OFF = "https://github.com/acme/demo/pull/41#issuecomment-6600212381"
+
+
+def test_under_the_rule_the_hand_off_line_gives_the_findings_to_a_fresh_fixer(tmp_path):
+    # A carried-on ticket: `merge-check` first, for a part that keeps blocking, then a fresh fixer.
+    _project(tmp_path)
+    (tmp_path / "slots.json").write_text(json.dumps({**json.loads((tmp_path / "slots.json").read_text()), "hand_off": HAND_OFF}))
+    line = _line(_brief(tmp_path, _defaults(tmp_path, rule=True)), "**Hand-off:**")
+    assert "run `merge-check` on the head first and act on any `mechanism_repeats` it gives" in line
+    assert "fix its open blocking findings first, through a fresh fixer (`review-panel` §3)" in line
+    assert line.index("`mechanism_repeats`") < line.index("fresh fixer") < line.index("then run the next review")
+    # Without the rule, as before.
+    line = _line(_brief(tmp_path, _old(_defaults(tmp_path, rule=True))), "**Hand-off:**")
+    assert "fix its open blocking findings first, then run the next review" in line
+    assert "fresh fixer" not in line and "mechanism_repeats" not in line
+
+
 # ---------- the one page ----------
 
 
@@ -297,7 +325,29 @@ def test_the_conductor_keeps_a_runs_rule_with_no_question():
     assert "never" in para and "mid-run" in para
     # The size question offers no pass cap under the rule.
     size = skill.split("**The size, presets first.**", 1)[1].split("\n", 1)[0]
-    assert "no `pass_cap`" in size
+    assert "no `pass_cap`" in size and "the rule for build reviewers (above)" in size
+
+
+def test_the_limits_question_names_no_ticket():
+    # Its words reach other projects' conductors, which have no such ticket.
+    q = next(q for q in charter_mod.questions() if q["key"] == "limits")
+    assert "#" not in q["ask"] + q["note"]
+
+
+def test_the_rule_is_switched_on_by_the_templates_line_only():
+    which = next(ln for ln in _read("skills/build-ticket/SKILL.md").splitlines() if ln.startswith("- **Which rule.**"))
+    assert 'only when its briefing has a "Findings:" line naming rule 2' in which and "`- **Findings:** rule 2, …`" in which
+    assert "the notes the conductor writes for the ticket don't count" in which
+
+
+def test_every_merge_check_a_run_runs_has_no_pass_cap_under_the_rule():
+    conductor = _read("skills/conductor/SKILL.md")
+    row = next(ln for ln in conductor.splitlines() if ln.startswith("| **PR open, not merged** (any mode) |"))
+    assert "`--review-passes until-clean` under the charter's `rule: 2`" in row
+    cap = next(p for p in conductor.split("\n\n") if p.startswith("**A ticket at the cap.**"))
+    assert "recommend `until-clean`" not in cap and "never finds it there" in cap
+    step = next(ln for ln in _read("skills/build-ticket/SKILL.md").splitlines() if ln.startswith("3. **Run `WF merge-check`.**"))
+    assert "`<P>` the briefing's pass cap (`until-clean` with its \"Findings:\" line" in step
 
 
 def test_the_end_time_step_reads_the_rule_from_the_charter():
@@ -313,8 +363,8 @@ def test_the_charter_doc_names_the_rule():
 
 
 def test_the_changelog_has_the_note():
-    unreleased = since_0110(_read("CHANGELOG.md")).split("\n## ", 1)[0]
-    note = unreleased.split("**Runs review under the rule for build reviewers** (#382", 1)[1].split("\n\n**", 1)[0]
+    # Read from "## Unreleased" down, so a release that moves the note under its version keeps it found.
+    note = since_0110(_read("CHANGELOG.md")).split("**Runs review under the rule for build reviewers** (#382", 1)[1].split("\n\n**", 1)[0]
     assert "`rule: 2`" in note and '"Findings:" line' in note
     released = _read("CHANGELOG.md").split("\n## ")[2].split()[0].lstrip("v")
     assert (KIT / "VERSION").read_text().strip() == released  # untouched: a release bumps it

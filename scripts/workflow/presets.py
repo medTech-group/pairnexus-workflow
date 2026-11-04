@@ -43,10 +43,11 @@ LIGHT_NO_EXPLORER = "no UI explorer (one round is the light review)"
 RULE = 2
 
 
-def rule_of(c: Any) -> int | None:
-    """The rule a charter's run reviews under: `RULE`, or None for today's rule
-    (a charter without `rule`, or anything else in it, which `charter validate` refuses)."""
-    return RULE if isinstance(c, dict) and c.get("rule") == RULE and type(c.get("rule")) is int else None
+def under_rule(c: Any) -> bool:
+    """A charter's run reviews under the rule for build reviewers: its `rule`
+    is `RULE`. Without one, today's rule (anything else in it `charter
+    validate` refuses)."""
+    return isinstance(c, dict) and type(c.get("rule")) is int and c["rule"] == RULE
 
 
 def _run(profile: Any, key: str) -> int | str:
@@ -149,11 +150,12 @@ def small_reviewers(review: dict, profile: Any = None) -> str:
     return "with the security review where it applies"
 
 
-def words(name: str, profile: Any = None, rule: int | None = None) -> str:
-    """A preset's numbers in words, for the question's choices; with `rule`,
-    for a charter under it (no pass cap)."""
+def words(name: str, profile: Any = None, ruled: bool = False) -> str:
+    """A preset's numbers in words, for the question's choices; `ruled`, for
+    a charter under the rule for build reviewers (no pass cap)."""
     p = numbers(name, profile)
-    lim, rev = p["limits"], review_of({"preset": name, "review": p["review"], "rule": rule}, profile)
+    rev = review_of({"preset": name, "review": p["review"], **({"rule": RULE} if ruled else {})}, profile)
+    lim = p["limits"]
     small = f"small review on (at most {threshold_words(rev)} outside tests)" if rev["small"] else "small review off"
     return (
         f"{plural(lim['max_parallel'], 'session', 'sessions')} at once, {lim['max_sessions']} in all, "
@@ -162,9 +164,9 @@ def words(name: str, profile: Any = None, rule: int | None = None) -> str:
     )
 
 
-def table(profile: Any = None, rule: int | None = None) -> dict:
-    """Every preset, as the limits question offers them (with `rule`, for a charter under it)."""
-    return {name: {"label": LABELS[name], **numbers(name, profile), "words": words(name, profile, rule)} for name in PRESETS}
+def table(profile: Any = None, ruled: bool = False) -> dict:
+    """Every preset, as the limits question offers them (`ruled`, for a charter under the rule)."""
+    return {name: {"label": LABELS[name], **numbers(name, profile), "words": words(name, profile, ruled)} for name in PRESETS}
 
 
 def recommended(profile: Any = None) -> str:
@@ -199,7 +201,7 @@ def review_of(c: dict, profile: Any = None) -> dict:
     when it has none, so a charter approved before the small review behaves as
     approved. The pass cap and the small threshold: the charter's, else the
     profile's `run.review_passes`, `run.small_max_lines` and `run.small_max_files`.
-    Under `RULE` (`rule_of`), no pass cap: `UNTIL_CLEAN`, whatever either says."""
+    Under the rule (`under_rule`), no pass cap: `UNTIL_CLEAN`, whatever either says."""
     r = c.get("review") if isinstance(c, dict) else None
     r = r if isinstance(r, dict) else {}
     if "rounds" in r and "explorer" in r:
@@ -212,7 +214,7 @@ def review_of(c: dict, profile: Any = None) -> dict:
     out["small"] = r.get("small") is True
     for key, run_key, lo, hi in PROFILE_REVIEW:
         out[key] = r[key] if valid_review(key, r.get(key), lo, hi) else _run(profile, run_key)
-    if rule_of(c) == RULE:
+    if under_rule(c):
         out["passes"] = UNTIL_CLEAN
     return out
 
@@ -251,7 +253,7 @@ def changes(c: dict, profile: Any = None) -> list[str]:
     out += small_change
     # The pass cap and the threshold are the profile's in every preset: a change only against a profile.
     if isinstance(rev, dict) and profile is not None:
-        got, usual = review_of(c, profile), review_of({"preset": c["preset"], "rule": rule_of(c)}, profile)
+        got, usual = review_of(c, profile), review_of({"preset": c["preset"], **({"rule": RULE} if under_rule(c) else {})}, profile)
         if got["passes"] != usual["passes"]:
             out.append(UNTIL_CLEAN_SHORT if got["passes"] == UNTIL_CLEAN else plural(got["passes"], "pass", "passes"))
         if (got["small_max_lines"], got["small_max_files"]) != (usual["small_max_lines"], usual["small_max_files"]):

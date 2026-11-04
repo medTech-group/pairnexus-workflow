@@ -218,10 +218,12 @@ def _says_none(value) -> bool:
     return value is None or (isinstance(value, str) and value.strip().lower() == "none")
 
 
-def _hand_off_words(url: object, profile: Profile, branch: str) -> str:
+def _hand_off_words(url: object, profile: Profile, branch: str, under_rule: bool = False) -> str:
     """The briefing's "Hand-off:" line, from the optional `hand_off` slot: the
     URL of the hand-off comment an earlier session left on the ticket's pull
-    request (#380), or none. Anything else stops the render."""
+    request (#380), or none. Anything else stops the render. `under_rule`: the
+    run reviews under the rule for build reviewers, whose fixes a fresh fixer
+    makes, after `merge-check` has had its say on a part that keeps blocking (#382)."""
     if _says_none(url):
         return "none: start from the ticket and what **Specific to this ticket** says."
     m = _HAND_OFF_URL.fullmatch(url.strip()) if isinstance(url, str) else None
@@ -233,8 +235,15 @@ def _hand_off_words(url: object, profile: Profile, branch: str) -> str:
     return (
         f"{m.group(0)}. An earlier session handed this ticket on before its review was clean, so this session carries it "
         f"on. Its pull request #{m.group(2)} and branch `{branch}` stay as they are: check out the branch "
-        "from GitHub, and read that hand-off comment before anything else. Go on from it: fix its open blocking findings "
-        "first, then run the next review, numbered after the rounds and passes it names (`merge-check` counts them from "
+        "from GitHub, and read that hand-off comment before anything else. Go on from it: "
+        + (
+            "run `merge-check` on the head first and act on any `mechanism_repeats` it gives; then fix its open blocking "
+            "findings first, through a fresh fixer (`review-panel` §3), each finding's words in the hand-off and the PR "
+            "body's findings table standing as its reproducer; "
+            if under_rule
+            else "fix its open blocking findings first, "
+        )
+        + "then run the next review, numbered after the rounds and passes it names (`merge-check` counts them from "
         "the records). For a security finding it names by its area only, first review the whole change for that area: "
         "that review finds its details again, since none crossed sessions."
     )
@@ -304,7 +313,7 @@ def _small(review: dict, profile: Profile) -> str:
 def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking: int, by_hand: int | None) -> dict:
     merge = charter.get("merge") or {}
     review = presets_mod.review_of(charter, profile)
-    ruled = presets_mod.rule_of(charter) == presets_mod.RULE  # its pass cap is then until-clean (`review_of`)
+    under_rule = presets_mod.under_rule(charter)  # its pass cap is then until-clean (`review_of`)
     waived = merge.get("waived_checks") or []
     branch = profile.ticket_branch.replace("*", str(ticket["number"]))
     v = {
@@ -312,7 +321,7 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
         "ticket.title": ticket.get("title") or "",
         "ticket.branch": branch,
         "ticket.starts_from": _starts_from_words(ticket, profile, branch),
-        "ticket.hand_off": _hand_off_words(slots.get("hand_off"), profile, branch),
+        "ticket.hand_off": _hand_off_words(slots.get("hand_off"), profile, branch, under_rule),
         "project.name": profile.name,
         "project.repo": profile.repo,
         "project.base_branch": profile.base_branch,
@@ -329,8 +338,10 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
         "review.passes_words": presets_mod.passes_words(review),
         "review.pass_cap": _pass_cap(review),
         # The line after "Small review": the "Findings:" line under the rule (#382), else the "Pass cap:" line.
-        "review.limit": FINDINGS_LINE if ruled else f"- **Pass cap:** {_pass_cap(review)}",
-        "review.stopping": _stopping(ruled),
+        "review.limit": BRIEFING_FINDINGS if under_rule else f"- **Pass cap:** {_pass_cap(review)}",
+        "review.stopping": _stopping(under_rule),
+        # The rule the run reviews under: "2", or "none" for today's rule.
+        "review.rule": str(presets_mod.RULE) if under_rule else "none",
         # The bare numbers, for merge-check's --review-passes, --small-max-lines and --small-max-files.
         "review.passes": str(review["passes"]),
         "review.small_max_lines": str(review["small_max_lines"]),
@@ -355,19 +366,21 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
 
 # A ticket session's "Findings:" line (#382): it turns the rule for build reviewers on
 # (`build-ticket` §3, "Which rule"). It names no ticket: it reaches projects that have none.
-FINDINGS_LINE = (
+BRIEFING_FINDINGS = (
     "- **Findings:** rule 2, the rule for build reviewers (`build-ticket` §3, \"The rule for build reviewers\", and "
-    "`review-panel` §10): every review of this ticket follows it. There is no pass cap: after the last review round, "
-    "Correctness passes until one is clean, and the run's end time is the only limit on this ticket's reviews; "
-    "`merge-check` never says `passes_used_up`. Keep the PR body's findings table current after each review, so the "
-    "open findings are there if the end time comes first: the conductor then carries the ticket on to the next run."
+    "`review-panel` §10): every review of this ticket follows it, and each reviewer gets the ticket's `## Bar`, when it "
+    "has one, as the line their hunt stops at. There is no pass cap: after the last review round, Correctness passes "
+    "until one is clean, and the run's end time is the only limit on this ticket's reviews; `merge-check` never says "
+    "`passes_used_up`. Keep the PR body's findings table current after each review, so the open findings are there if "
+    "the end time comes first: the conductor then carries the ticket on to the next run, unless it is held for the "
+    "owner (a security or safety problem in code already on the base branch, or a protected path)."
 )
 
 
-def _stopping(ruled: bool) -> str:
+def _stopping(under_rule: bool) -> str:
     """When the session stops, after "**Stopping:**": under the rule, never
     because a review isn't clean (#382); else at the pass cap too."""
-    if ruled:
+    if under_rule:
         return (
             "if CI is still red after three fix attempts, or the ticket can't be built as written "
             "(never because a review isn't clean: there is no pass cap):"
@@ -395,7 +408,7 @@ def render(template: str, vals: dict) -> str:
     used = [m.group(1) for m in PLACEHOLDER.finditer(template)]
     # An older ticket-session template: it gives today's pass cap and no "Findings:" line (#382).
     older = {"review.pass_cap", "review.passes_words"} & set(used) and "review.limit" not in used
-    if older and str(vals.get("review.limit", "")).startswith("- **Findings:**"):
+    if older and vals.get("review.rule") == str(presets_mod.RULE):
         raise RenderError(
             "the run reviews under the rule for build reviewers, and the template gives a pass cap with no "
             "{{review.limit}} line, which tells the session the rule: render it with the kit's current ticket-session-prompt.md"

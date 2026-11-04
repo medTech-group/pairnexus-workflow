@@ -99,7 +99,7 @@ def changed_rule(old: Any, new: Any) -> str | None:
     """The problem when a change moves a run's charter to another rule for
     build reviewers (`new` cleared counts), else None. A run keeps the rule it
     started with; a first charter (`old` not a charter) starts it."""
-    if not isinstance(old, dict) or presets_mod.rule_of(old) == presets_mod.rule_of(new if isinstance(new, dict) else {}):
+    if not isinstance(old, dict) or presets_mod.under_rule(old) == presets_mod.under_rule(new):
         return None
     return (
         "rule: a run keeps the rule it started with, so its charter's `rule` can't change during the run "
@@ -153,7 +153,7 @@ QUESTIONS: list[dict[str, Any]] = [
         "note": "limits.ends_at must be given by the owner: an ISO time with its zone, e.g. 2026-10-13T03:30:00Z. "
         "Choosing a preset sets preset, limits (but ends_at and check_in_minutes) and review from presets[name]. "
         "The small threshold (review.small_max_lines, review.small_max_files) is the profile's in every preset: add "
-        "one to review only when the owner changes it. The run reviews under the rule for build reviewers (rule 2, #382): "
+        "one to review only when the owner changes it. The run reviews under the rule for build reviewers (rule 2): "
         "there is no pass cap to ask about, since a ticket's reviews go on until one is clean, within the run's end time.",
         "options": list(presets_mod.PRESETS),
         "default": {"ends_at": None, **presets_mod.numbers(presets_mod.DEFAULT)["limits"], "check_in_minutes": 20},
@@ -259,7 +259,7 @@ def questions(
             rec = d["preset"]
             q["options"] = [rec] + [o for o in q["options"] if o != rec]
             q["recommended"] = rec
-            q["presets"] = presets_mod.table(profile, presets_mod.rule_of(d))
+            q["presets"] = presets_mod.table(profile, presets_mod.under_rule(d))
         if q["key"] == "merge" and why:
             q["options"] = [o for o in q["options"] if o != "auto-merge"]
             q["note"] = (
@@ -484,7 +484,7 @@ def validate(c: Any, require_approval: bool = False, now: datetime | None = None
                 p.append(f"limits.ends_at ({lim['ends_at']}) must be after approved.at ({a['at']})")
     elif require_approval:
         p.append("the charter has not been approved: the owner's go is needed, with its source")
-    if "rule" in c and presets_mod.rule_of(c) is None:
+    if "rule" in c and not presets_mod.under_rule(c):
         p.append(f"rule must be {presets_mod.RULE} (the rule for build reviewers), or absent (today's rule, for a run started before it)")
     if "preset" in c and not _one_of(c["preset"], set(presets_mod.PRESETS)):
         p.append(f"preset must be one of {', '.join(presets_mod.PRESETS)}, or absent (read as normal)")
@@ -499,7 +499,7 @@ def validate(c: Any, require_approval: bool = False, now: datetime | None = None
                 p.append("review.explorer must be true or false")
             if "small" in rv and not isinstance(rv["small"], bool):
                 p.append("review.small must be true or false, or absent (off)")
-            if "passes" in rv and presets_mod.rule_of(c) == presets_mod.RULE:
+            if "passes" in rv and presets_mod.under_rule(c):
                 p.append(
                     "review.passes with rule 2: the rule for build reviewers has no pass cap (a ticket's reviews go on "
                     "until one is clean, within the run's end time); remove it"
@@ -668,12 +668,12 @@ def _size_lines(c: dict, profile: Any, estimate: Any = None) -> list[str]:
         f"- **Review:** up to {rounds} per ticket; {presets_mod.explorer_words(c, profile)}.",
         *(_estimate_lines(estimate) if estimate is not None else []),
         f"- **Small review:** {small}.",
-        FINDINGS_LINE if presets_mod.rule_of(c) == presets_mod.RULE else f"- **Pass cap:** {_pass_cap(rv)}.",
+        ONE_PAGE_FINDINGS if presets_mod.under_rule(c) else f"- **Pass cap:** {_pass_cap(rv)}.",
     ]
 
 
 # The one page's line under the rule for build reviewers (#382), in place of the pass cap.
-FINDINGS_LINE = (
+ONE_PAGE_FINDINGS = (
     "- **Findings:** the rule for build reviewers: a finding blocks only with a concrete failing case, a fresh fixer "
     "makes each review's fixes, and there is no pass cap: a ticket's reviews go on until one is clean, and the run's "
     "end time is the only limit on a ticket's reviews. A ticket still not clean then is carried on to the next run "

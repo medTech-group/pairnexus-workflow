@@ -687,9 +687,9 @@ def _charter_change_problems(old, new) -> list[str]:
     dropped = charter_mod.dropped_removed_protection(was, c)
     if dropped:
         return [dropped]
-    moved = charter_mod.changed_rule(was, c)  # a run keeps the rule it started with (#382)
-    if moved:
-        return [moved]
+    rule_change = charter_mod.changed_rule(was, c)  # a run keeps the rule it started with (#382)
+    if rule_change:
+        return [rule_change]
     if not isinstance(c, dict) or charter_mod.validate(c):
         return []
     try:
