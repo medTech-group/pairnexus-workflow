@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.1.20
+
+**Reviews that converge without the owner: switched on.** Spec #412's rule for build reviewers, whose groundwork 0.1.19 shipped switched off, now governs build reviews: a blocking finding needs a concrete reproducer, a fresh fixer makes each review's fixes and prefers the narrower one, reviews after the first look at what changed since the last, a part that keeps blocking takes its ticket's safe fallback or is split into a ticket of its own, and there is no pass cap. In attended work a session stops after 10 reviews that weren't clean and hands the ticket on (`workflow:carry-on`); in a run, the run's end time is the only limit, and a ticket not clean by then is carried on by the next run. The docs and the glossary say how, in plain words.
+
+- **For projects updating to 0.1.20:**
+  - Attended build reviews follow the rule as soon as the update merges.
+  - A run follows it only when it starts on this kit: a run already in progress keeps the rule it started with, to its end, with no question asked. The next run's charter carries `rule: 2` (written by `workflow charter defaults` and `charter reuse`).
+  - A project with its own ticket-session template (`templates/ticket-session-prompt.md` changed by the project): add the "Findings:" line the kit's template now has; `workflow render` refuses a template without it for a run under the rule.
+  - Optional: `bar_areas = ["<area>"]` under `[run]` for the areas whose tickets should name a safe fallback.
+- **Known limits:** the guard's shell reader can still hide a later command in some shell forms (#422), and a prototype's code can still reach another branch through GitHub's own ref writes (#423). Whether the rule makes reviews converge is what the first run under it shows.
+
 **The docs and the glossary describe the rule for build reviewers** (#383, part of spec #412). How reviews settle without the owner, in plain words ("the part", "the safe fallback").
 
 - **`docs/flow.md` §3 to §5:** §3 step 3 says when the rule applies and what it changes. A finding blocks only with a reproducer, a fresh fixer makes each review's fixes, and the bar says where the hunt stops. A part that blocks in two reviews in a row takes the safe fallback, is split out, or, with neither left, is fixed as usual. There is no pass cap, and attended work stops after 10 reviews that weren't clean, labelling the ticket `workflow:carry-on`.
