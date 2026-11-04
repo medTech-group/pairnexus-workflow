@@ -36,7 +36,7 @@ A request to bring a [branch](#branch)'s changes into [`main`](#main). Each one 
 
 ### Checks (CI)
 
-Tests that run by themselves on each [pull request](#pull-request-pr) (CI, continuous integration): green when they pass, red when they fail.
+Tests that run by themselves (CI, continuous integration) on each [pull request](#pull-request-pr): green when they pass, red when they fail.
 
 **Why it matters to you:** red means something is broken, so never [merge](#merge) until they are green.
 
