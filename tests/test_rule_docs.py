@@ -75,8 +75,10 @@ def test_flow_3_describes_what_blocks_the_fixer_and_the_bar():
 def test_flow_3_describes_the_safe_fallback_and_the_split_in_plain_words():
     rule = _flat(_rule_part(_step_3()))
     assert "When the same part of the change blocks in two reviews in a row, `workflow merge-check` says what comes next (`mechanism_repeats`), and the session does it" in rule
-    assert "the part takes the safe fallback the bar describes" in rule
-    assert "or it is split out to a ticket of its own (filed first, with the acceptance criteria that need it) and the pull request merges without it" in rule
+    assert "and the session does it. The part takes the safe fallback the bar describes;" in rule
+    assert "or it is split out to a ticket of its own, filed first with the acceptance criteria that need it, and the pull request merges without it;" in rule
+    # merge-check's third answer, no `next`: neither is left.
+    assert "or, when neither is left, its findings are fixed as usual and the review goes on." in rule
     assert "A part is split only once" in rule
     assert "a security problem the change adds is fixed, never split out" in rule
     # Plain words: "the part", never the records' "mechanism" outside code.
@@ -115,15 +117,19 @@ def test_flow_3_small_and_light_reviews_carry_on_until_clean_under_the_rule():
 def test_flow_4_keeps_the_pass_cap_to_todays_rule_and_never_waits_on_the_owner_for_a_part():
     item = _flat(_flow(4).split("\n4. **The reviews are clean**", 1)[1].split("\n\n", 1)[0])
     assert "Under today's rule, passes stop at the pass cap (§3 step 3): where one more would be needed past it, the pull request waits on the owner" in item
-    assert "When the same part has a blocking finding in two such records in a row, the next review waits for the safe fallback or the split `workflow merge-check` names (`mechanism_repeats`, §3 step 3), never for the owner." in item
+    assert "A review recorded under the rule for build reviewers (a `rule=2` record" in item
+    assert "spec #412's rule" not in item
+    assert "When the same part has a blocking finding in two such records in a row, `workflow merge-check` names what the session does before the next review (`mechanism_repeats`, §3 step 3), never the owner." in item
 
 
 def test_flow_5_carries_on_at_the_end_time_and_joins_the_filed_tickets():
     s5 = _flat(_flow(5))
     assert "the review reached its pass cap (with the open findings in the PR body; only under today's rule)" in s5
     bullet = s5.split("**under the rule for build reviewers**", 1)[1].split(" - ", 1)[0]
-    assert "its review never waits on the owner: a ticket whose review isn't clean at the run's end time is carried on, not set aside" in bullet
-    assert "The conductor posts the hand-off on its pull request and labels it `workflow:carry-on`, and the next run adopts it first, without asking." in bullet
+    assert "there is no pass cap. At the run's end time, a ticket whose review isn't clean is carried on as `charter.md`'s \"The end time\" says:" in bullet
+    # The end time's exceptions are the charter's: never restated as an absolute here.
+    assert "never waits on the owner" not in bullet and "not set aside" not in bullet
+    assert "the conductor posts the hand-off on its pull request and labels it `workflow:carry-on`, and the next run adopts it first, without asking." in bullet
     assert "(tickets to fix old bugs or late findings, and split tickets) join the run by themselves" in bullet
     assert "A run keeps the rule it started with: one whose charter has `rule: 2` reviews under it, and one started on an older kit keeps today's rule to its end" in bullet
 
@@ -137,14 +143,14 @@ def _charter_rule():
 
 def test_charter_describes_the_rule_the_fixer_the_safe_fallback_and_the_split():
     text = _charter_rule()
-    assert "(the charter's `rule: 2`, `review-panel` §10)" in text
-    assert "Nothing about a ticket's review is asked of the owner during the run, except a security or safety problem in code already on the base branch, or a protected path" in text
-    assert "a finding blocks only with a reproducer, a concrete case that fails" in text
+    assert "(the charter's `rule: 2`; flow §3 step 3 has the whole rule)" in text
+    assert "No question about a ticket's review is asked mid-run" in text
+    assert "a finding blocks only with a reproducer" in text
     assert "a fresh `fixer` agent makes each review's fixes, a failing test first" in text
-    assert "the part takes the safe fallback the ticket's bar describes (its `## Bar`), or is split out to a ticket of its own" in text
-    assert "while the pull request merges without the part. A part is split only once" in text
-    assert "there is no pass cap: Correctness passes follow the last round until one is clean, and the end time is the only limit" in text
-    assert 'A ticket not clean then is carried on ("The end time", below), never set aside for its review.' in text
+    assert "`workflow merge-check` says what the session does: give it the safe fallback the ticket's bar describes, split it out to a ticket of its own (which joins the run, while the pull request merges without the part), or, when neither is left, fix it as usual" in text
+    assert 'there is no pass cap: the end time is the only limit on a ticket\'s reviews ("The end time", below).' in text
+    assert "A security or safety problem in code already on the base branch, or a protected path, still goes to the owner." in text
+    assert "never set aside" not in text
     assert "the report lists them (`run-report`)" in text
     assert "mechanism" not in _outside_code(text)
 
@@ -153,7 +159,10 @@ def test_charter_is_in_section_4_and_its_end_time_names_the_rule_in_plain_words(
     during = _section("docs/charter.md", "\n## 4. During the run\n", "\n## 5.")
     assert "- **How a ticket's review settles under the rule for build reviewers**" in during
     end = _flat(during.split("- **The end time**", 1)[1])
-    assert "A ticket whose review isn't clean then, under the rule for build reviewers (the charter's `rule: 2`), is carried on (#380)" in end
+    # As the conductor decides it: by the latest counted record's rule.
+    assert "A ticket whose review isn't clean then, under the rule for build reviewers (its latest counted review record is a `rule=2` one, or it has none yet in a run whose charter has `rule: 2`), is carried on (#380)" in end
+    first = _flat(during.split("- **The ticket sessions' review comes from the charter.**", 1)[1].split("\n- ", 1)[0])
+    assert 'and the pass cap (under `rule: 2`, the "Findings:" line in its place)' in first
     assert "under spec #412's rule" not in end
 
 
@@ -162,13 +171,12 @@ def test_charter_is_in_section_4_and_its_end_time_names_the_rule_in_plain_words(
 
 def test_profile_says_which_run_keys_apply_under_the_rule():
     text = _flat(_section("docs/profile.md", "**Build reviews under the rule for build reviewers**", "\n## "))
-    assert "which attended work always follows, and a run whose charter has `rule: 2`" in text
+    assert "(spec #412, flow §3 step 3), which attended work always follows, and a run whose charter has `rule: 2`" in text
     assert "`review_rounds` still sets a review's rounds; `review_passes` doesn't apply, since there is no pass cap" in text
-    assert "a fresh fixer agent makes each review's fixes, a failing test first" in text
-    assert "it takes the safe fallback its ticket's bar describes, or it is split out to a ticket of its own and the pull request merges without it" in text
+    assert "A fresh fixer agent makes each review's fixes, and a part that keeps blocking may take the safe fallback its ticket's bar describes or be split out to a ticket of its own." in text
     assert "`bar_areas` names the areas whose tickets must give that bar" in text
-    assert "a ticket not clean then is labelled `workflow:carry-on`, and the next run carries it on" in text
-    assert "the session stops after 10 reviews that weren't clean in one session, leaving a hand-off and the same label" in text
+    assert "Attended work stops after 10 reviews that weren't clean in one session, leaving a hand-off and the label `workflow:carry-on`" in text
+    assert 'a run carries such a ticket on at its end time (`charter.md`, "The end time")' in text
     assert "The 10 is fixed: no profile key changes it." in text
     # It sits under `[run]`, after its table.
     run = _section("docs/profile.md", "\n## `[run]`\n", "\n## ")
@@ -181,11 +189,10 @@ def test_profile_says_which_run_keys_apply_under_the_rule():
 def test_run_report_lists_the_parts_that_took_the_safe_fallback_or_were_split_out():
     text = _read("skills/run-report/SKILL.md")
     gather = _flat(text.split("- **Each merged PR's body:**", 1)[1].split("\n- ", 1)[0])
-    assert "the number of review rounds and Correctness passes" in gather
     assert "also its **Parts that kept blocking** and **Split out**" in gather
-    assert "whether it took the safe fallback its ticket's bar describes or was split out to a ticket of its own" in gather
+    assert "and what was done: the safe fallback its ticket's bar describes, a split to a ticket of its own, or neither left." in gather
     merged = _flat(text.split("2. **Merged.**", 1)[1].split("\n3. ", 1)[0])
-    assert "A table of ticket, title, PR, review rounds, Correctness passes, wall time" in merged
+    assert "A table of ticket, title, PR, review rounds, wall time" in merged
     assert "a part that kept blocking was settled without the owner, so the report is where they hear of it" in merged
     assert "one plain line for each part that took the safe fallback or was split out, with why" in merged
     assert "mechanism" not in _outside_code(gather + merged)
@@ -215,7 +222,9 @@ def test_the_glossary_has_bar_after_review_panel_in_plain_words():
 
 def test_the_glossarys_review_panel_is_reworded_for_the_rule():
     entry = _flat(_entry("Review panel"))
-    assert "decision from one side, until nothing blocks." in entry
+    # True of planning reviews and of today's rule too, which can end unclean.
+    assert "decision from one side, round after round." in entry
+    assert "blocks" not in entry
     assert "each round leaving its record" not in entry
 
 
