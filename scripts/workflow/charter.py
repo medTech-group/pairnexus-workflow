@@ -103,8 +103,7 @@ def changed_rule(old: Any, new: Any) -> str | None:
     if not isinstance(old, dict) or (isinstance(new, dict) and presets_mod.under_rule(old) == presets_mod.under_rule(new)):
         return None
     return (
-        "rule: a run keeps the rule it started with, so its charter's `rule` can't change (nor the charter be cleared) during the run "
-        "(the next run's charter takes the new rule)"
+        "rule: a run keeps the rule it started with, so its charter's `rule` can't change (nor the charter be cleared) during the run"
     )
 
 

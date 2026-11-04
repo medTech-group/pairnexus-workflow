@@ -215,6 +215,7 @@ def test_a_state_write_that_changes_the_rule_is_refused(tmp_path, started):
         _old(other)
     p = put(other)
     assert p.returncode != 0 and "keeps the rule it started with" in p.stderr, p.stderr + p.stdout
+    assert "next run" not in p.stderr  # no run on this kit takes the earlier rule, so nothing to promise
     assert (tmp_path / "body.md").read_text() == before
     # `state patch` refuses it too: a charter patch that sets the other rule, or takes it out.
     (tmp_path / "patch.json").write_text(json.dumps({"charter": {"rule": 2} if started == "old" else {"rule": None}}))
@@ -395,7 +396,8 @@ def test_an_amendment_never_changes_the_rule():
     step = next(ln for ln in conductor.splitlines() if ln.startswith("3. Run `WF charter validate --approved --queue <on|off>`"))
     assert "Never change the charter's `rule`, even when the owner asks for the other review rule" in step
     # True either way: the next run is under rule 2 whichever rule the owner asked for.
-    assert "every run started on this kit reviews under rule 2 (`charter reuse` writes it)" in step and "the next run takes the new one" not in step
+    assert "every run started on this kit reviews under the rule for build reviewers (`charter defaults` and `charter reuse` write `rule: 2`)" in step
+    assert "the next run takes the new one" not in step
     assert step.index("Never change the charter's `rule`") < step.index("`WF state patch` and `WF state put` also refuse")
     assert "or that changes `rule` or clears the charter" in step
 
