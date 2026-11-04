@@ -33,6 +33,7 @@ PARTS = {
         "Spec": "spec",
         "Map": "map",
         "Review panel": "review-panel",
+        "Bar": "bar",
         "Solo mode": "solo-mode",
         "Protect `main`": "protect-main",
         "Unattended run": "unattended-run",
@@ -62,6 +63,7 @@ MENTIONS = {
     "spec": r"\bspecs?\b",
     "map": r"\bmaps?\b",
     "review-panel": r"\breview panels?\b",
+    "bar": r"\bbars?\b",
     "solo-mode": r"\bsolo mode\b",
     "protect-main": r"Protect `main`",
     "unattended-run": r"\bunattended runs?\b",
@@ -113,7 +115,7 @@ def test_the_glossary_has_the_two_parts_with_each_word_under_its_part():
     assert list(parts) == list(PARTS)
     for part, words in PARTS.items():
         assert list(parts[part]) == list(words), part
-    assert sum(len(w) for w in PARTS.values()) == 23
+    assert sum(len(w) for w in PARTS.values()) == 24
 
 
 def test_each_heading_has_its_stable_anchor():

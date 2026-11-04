@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**The docs and the glossary describe the rule for build reviewers** (#383, part of spec #412). How reviews settle without the owner, in plain words ("the part", "the safe fallback").
+
+- **`docs/flow.md` §3 to §5:** §3 step 3 says when the rule applies and what it changes. A finding blocks only with a reproducer, a fresh fixer makes each review's fixes, and the bar says where the hunt stops. A part that blocks in two reviews in a row takes the safe fallback, is split out, or, with neither left, is fixed as usual. There is no pass cap, and attended work stops after 10 reviews that weren't clean, labelling the ticket `workflow:carry-on`.
+- **`docs/flow.md`, continued:** under the rule, the small and light reviews carry on until clean; §4 item 4 keeps the pass cap to today's rule; §5 points to the charter for the end time and the tickets that join the run.
+- **`docs/charter.md`** §4 says how a ticket's review settles under `rule: 2`, and its end time names the rule instead of the spec's number; **`docs/profile.md`** says which `[run]` keys apply under the rule; **`run-report`** lists each part that kept blocking and what was done.
+- **The glossary** gains "Bar", and "Review panel" is reworded ("round after round"). To stay within 6,000 characters, three clauses were cut: Cloud session's environment, Solo mode's `ruleset = false` and Protect `main`'s "Claude sets it up, or guides your clicks"; Checks (CI) folds its CI sentence into the first.
+- **For projects updating:** nothing to do. Tests: `tests/test_rule_docs.py` and `tests/test_glossary.py`.
+
 **Runs review under the rule for build reviewers** (#382, part of spec #412). A run started on this kit uses the rule throughout, and a run keeps the rule it started with, with no question asked.
 
 - **The charter's `rule: 2`,** written by `workflow charter defaults` and `charter reuse` (so the next run takes it), outside the presets. A charter without it, from a run started on an earlier kit, keeps today's rule to its end. `charter validate` refuses any other value, and `review.passes` beside it; `state init` refuses a charter without it, and `state put` and `state patch` refuse a charter that changes `rule` mid-run, or clears a run's charter.
