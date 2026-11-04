@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Decision questions asked in a message show a labelled Recommended part and the alternatives (#486).** A round asked in a message, as `grilling` lays one out, now gives each question its own parts: the question, "➡️ **Recommended:**" with what it rests on, what it gives up and what would make it wrong (or "Recommended: none" and why), and "**Alternatives:**", one line each, never the recommendation as the question's first sentence or a bold paragraph. A round posted on GitHub keeps the same parts, as columns or labels. `grilling` is unedited, and questions asked as choices, the run charter's among them, are unchanged. The rule is in the flow's "Decision questions", and the guided start's interview points to it.
+
 ## 0.1.20
 
 **Reviews that converge without the owner: switched on.** Spec #412's rule for build reviewers, whose groundwork 0.1.19 shipped switched off, now governs build reviews: a blocking finding needs a concrete reproducer, a fresh fixer makes each review's fixes and prefers the narrower one, reviews after the first look at what changed since the last, a part that keeps blocking takes its ticket's safe fallback or is split into a ticket of its own, and there is no pass cap. In attended work a session stops after 10 reviews that weren't clean and hands the ticket on (`workflow:carry-on`); in a run, the run's end time is the only limit, and a ticket not clean by then is carried on by the next run. The docs and the glossary say how, in plain words.
