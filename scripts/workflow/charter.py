@@ -108,6 +108,8 @@ def changed_rule(old: Any, new: Any) -> str | None:
     )
 
 
+# `validate`'s problem with a `rule` that isn't 2 (#382).
+RULE_MUST_BE = f"rule must be {presets_mod.RULE} (the rule for build reviewers), or absent (today's rule, for a run started before it)"
 # `state init` starts a run on this kit, which reviews under the rule throughout (#382).
 NO_RULE_AT_INIT = (
     "rule: a run started on this kit reviews under the rule for build reviewers, so its charter needs `rule: 2` "
@@ -493,7 +495,7 @@ def validate(c: Any, require_approval: bool = False, now: datetime | None = None
     elif require_approval:
         p.append("the charter has not been approved: the owner's go is needed, with its source")
     if "rule" in c and not presets_mod.under_rule(c):
-        p.append(f"rule must be {presets_mod.RULE} (the rule for build reviewers), or absent (today's rule, for a run started before it)")
+        p.append(RULE_MUST_BE)
     if "preset" in c and not _one_of(c["preset"], set(presets_mod.PRESETS)):
         p.append(f"preset must be one of {', '.join(presets_mod.PRESETS)}, or absent (read as normal)")
     if "review" in c:

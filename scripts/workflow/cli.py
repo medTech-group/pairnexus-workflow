@@ -709,7 +709,7 @@ def cmd_state(a) -> int:
         if isinstance(c, dict) and not presets_mod.under_rule(c):
             # A run started on this kit reviews under the rule throughout (#382): one answer, as `rule` may
             # be absent only for a run started before it, never at its start.
-            problems = [p for p in problems if not p.startswith("rule must be")] + [charter_mod.NO_RULE_AT_INIT]
+            problems = [p for p in problems if p != charter_mod.RULE_MUST_BE] + [charter_mod.NO_RULE_AT_INIT]
         if not problems:
             prof = load(required=False)
             if prof is not None:

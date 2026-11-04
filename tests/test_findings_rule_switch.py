@@ -394,6 +394,8 @@ def test_an_amendment_never_changes_the_rule():
     conductor = _read("skills/conductor/SKILL.md")
     step = next(ln for ln in conductor.splitlines() if ln.startswith("3. Run `WF charter validate --approved --queue <on|off>`"))
     assert "Never change the charter's `rule`, even when the owner asks for the other review rule" in step
+    # True either way: the next run is under rule 2 whichever rule the owner asked for.
+    assert "every run started on this kit reviews under rule 2 (`charter reuse` writes it)" in step and "the next run takes the new one" not in step
     assert step.index("Never change the charter's `rule`") < step.index("`WF state patch` and `WF state put` also refuse")
     assert "or that changes `rule` or clears the charter" in step
 
@@ -405,7 +407,7 @@ def test_reuse_says_it_adds_the_rule():
 
 def test_the_review_panel_names_the_templates_line():
     applies = next(ln for ln in _read("skills/review-panel/SKILL.md").splitlines() if ln.startswith("**When it applies:**"))
-    assert "the template's line naming rule 2, as `build-ticket` §3's \"Which rule\" says" in applies
+    assert "That line is the template's, naming rule 2, as `build-ticket` §3's \"Which rule\" says" in applies
 
 
 def test_the_end_time_step_reads_the_rule_from_the_charter():

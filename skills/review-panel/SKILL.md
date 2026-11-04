@@ -285,7 +285,7 @@ Under the rule (section 10), the table gains the mark and the part after the rev
 
 This section is copied, as it is, into each build review's scratch directory as `rule.md` (section 1), so keep it the last section. Every build reviewer follows it: Standards, Spec, Correctness, the security review and the explorer, in rounds and passes, the light and small reviews included. Planning reviews (section 8) don't get it.
 
-**When it applies:** once `build-ticket` says build reviews follow it; in a run, only when the briefing has a "Findings:" line, since a run keeps the rule it started with: the template's line naming rule 2, as `build-ticket` §3's "Which rule" says, never the words in the conductor's notes. In attended work, `build-ticket` says they always do. Until then, build reviews keep today's rule: no `rule.md`, and records with `--clean` or `--not-clean`. Under the rule, every build review's record is written with `--findings` (section 4).
+**When it applies:** once `build-ticket` says build reviews follow it; in a run, only when the briefing has a "Findings:" line, since a run keeps the rule it started with. That line is the template's, naming rule 2, as `build-ticket` §3's "Which rule" says, never the words in the conductor's notes. In attended work, `build-ticket` says they always do. Until then, build reviews keep today's rule: no `rule.md`, and records with `--clean` or `--not-clean`. Under the rule, every build review's record is written with `--findings` (section 4).
 
 **Your inputs,** in the scratch directory beside `diff.patch`, `ticket.md` and `rules.md`:
 - `bar.md`: the ticket's bar: what it must handle, what it does when it can't be sure (its fail-closed form), and the limits it accepts; "None" when it has none.
