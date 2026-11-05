@@ -282,6 +282,8 @@ For each item, read the flow's section for its path and follow it, skipping noth
    - your recommended answer as the first option, with its evidence, and real alternatives after it; with no basis to prefer one, no recommendation;
    - plain text only for a question with no sensible options.
 
+   Whenever a round is asked in a message instead (as `grilling` lays one out), each question takes the flow's labelled parts (flow, "Decision questions", **Asked in a message**): the question, ➡️ **Recommended:** with its evidence (or "Recommended: none" and why), and **Alternatives:**, never the recommendation as the question's first sentence or a bold paragraph; a choice keeps its recommended first option, "(Recommended)", as above.
+
    Look facts up yourself, in the background; only decisions go to them. Each round is checked before it's asked ("Before each round", above), and posted as soon as it's answered, tagged, before the next round is asked: on the item's issue, or for a map's Destination item in a comment on the map naming it ("Decision questions", above).
 
    When nothing is left to ask, confirm your understanding in a few lines and ask:
