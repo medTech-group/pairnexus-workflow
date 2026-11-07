@@ -255,7 +255,7 @@ def test_the_glossarys_review_panel_names_both_reviews():
 
 def _kit_words(root: str, kit: Path = KIT):
     """The kit's own Markdown under `root`. `docs/research/` is left out: its
-    saved sources are other people's words (spec #505)."""
+    saved copies are other people's words (spec #505)."""
     for path in (kit / root).rglob("*.md"):
         if not path.relative_to(kit).as_posix().startswith("docs/research/"):
             yield path

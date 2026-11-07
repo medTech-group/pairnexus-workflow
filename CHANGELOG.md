@@ -9,7 +9,7 @@
   - `check --note F [--page <link> F ...] [--fetch]` compares a note's key sources with their fingerprints, as a set. For each source it says unchanged; changed, with each new paragraph's live text, position and hash, and each paragraph gone, by its position in the saved copy, with the saved copy's text and its hash; or can't fetch, and why. It refuses a note that breaks the layout, naming what to fix.
   - `notes [--dir DIR]` lists the notes marked `Status: current`, and names on standard error any `note.md` whose header it can't read.
 - **The `study` skill** starts with one section, the folder's one fixed layout in `docs/research/<topic>/`: `note.md` and its `Status:`, `Last checked:` and `Issue:` header, the `## Key sources` lines, the fingerprint file, a saved copy's `Source:`, `Accessed:` and `Third-party text:` lines, "[left out]" lines that keep each paragraph in its place, and the mark ` **(unconfirmed)**`. The tests' fixtures are copied from its examples, and a test ties them.
-- **`tests/test_small_review_build.py`'s** wording scan leaves `docs/research/` out, since saved sources are other people's words.
+- **`tests/test_small_review_build.py`'s** wording scan leaves `docs/research/` out, since saved copies are other people's words.
 - **For projects updating:** nothing to do.
 
 ## 0.1.21

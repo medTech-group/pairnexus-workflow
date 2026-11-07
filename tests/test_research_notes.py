@@ -477,6 +477,18 @@ def test_the_study_skill_writes_down_the_header_the_mark_and_left_out_lines():
     assert "WF research notes" in text and "WF research check" in text and "WF research fingerprint" in text
 
 
+def test_the_saved_copy_has_one_name():
+    """CONTRIBUTING.md's "the same name for the same thing everywhere": the
+    skill, the README's row and the changelog's note all say "saved copy"."""
+    readme = next(l for l in (KIT / "README.md").read_text(encoding="utf-8").splitlines() if l.startswith("| `skills/study`"))
+    log = (KIT / "CHANGELOG.md").read_text(encoding="utf-8")
+    entry = log[log.index("**Research notes in the repository") :]
+    entry = entry[: min(i for i in (entry.find("\n\n**", 1), entry.find("\n## ")) if i > 0)]
+    for where, text in (("README.md", readme), ("CHANGELOG.md", entry), ("the study skill", SKILL.read_text(encoding="utf-8"))):
+        assert "saved source" not in text.lower(), where
+        assert "saved cop" in text, where
+
+
 def test_the_shown_fingerprints_are_the_hashes_of_the_shown_page():
     shown = _shown("docs/research/booking-ahead/sources/booking-help.fingerprints").splitlines()
     assert shown[0] == f"url: {URL}"
