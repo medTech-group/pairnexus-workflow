@@ -16,6 +16,10 @@
 
 - **For projects updating:** nothing to do.
 
+**`workflow research` reads a fetched page that names no content type when its bytes are clearly text** (#527, part of spec #505). Such a page was refused. It is now read as HTML when it starts as an HTML page (`<!doctype html>` or `<html>`, after any XML declaration and comments), and as plain text when it is plain text. It stays refused, `fingerprint` exiting 1 and `check` saying can't fetch, when its bytes start like a PDF or an image (or hold `%PDF-` in their first 1024 bytes), hold a control character (a NUL among them), aren't valid UTF-8, or start with markup that isn't HTML (an SVG, say) or with a character that isn't shown, or shows as blank (a zero width space, a combining mark, a Hangul filler or a private-use character, say). A page that names its content type reads as before.
+
+- **For projects updating:** nothing to do.
+
 **Set-up creates the `research` label** (#507, part of spec #505). `setup-workflow`'s labels step creates `research` with the others: it marks the issues that track research notes (a study's, a fact note's, and one a session files about a note), and isn't `wayfinder:research`.
 
 - **For projects updating:** create the `research` label on the repository (`gh api repos/<repo>/labels -f name=research`), or leave it: a session that files a `research` issue creates it when it's missing (from the `study` skill, #512, and the spec's other research tickets). If the repository already has a `research` label for something else, rename that one first, since the kit reads every issue carrying it as research. Tests: `tests/test_research_label_setup.py`.
@@ -33,6 +37,10 @@
 - **"Decision questions"** gains a study's intake and verdict, posted on its research issue. Of the checks, they get only the one before each round, with no end check or re-read until the spec's open question on it is settled. Routing choices still get neither the evidence rule nor the checks. Recording research's routing choices is left to #544.
 - **The README** says the same: a study before the interview and, for a new project, before charting; research notes in `docs/research/<topic>/` in its map-decision step 4 and its `/research` line; a study's questionnaire in its topic's folder.
 - **For projects updating:** nothing to do. New research notes go in `docs/research/<topic>/`; old ones on `research/*` branches stay where they are until a session relies on one and offers to bring it in. Tests: `tests/test_research_flow.py`, `tests/test_decision_questions.py` and `tests/test_planning_review.py`.
+
+**`merge-check`: the note that research records were left out, and files it can't read** (#538, split out of #509, part of spec #505). On a pull request whose files it read and that changes a file outside `docs/research/`, a `research_records_ignored` note says its research records were left out and why. When it can't read the pull request's list of files (a page left out, no list at all), it still judges the review panel's records beside the "couldn't read" reason, as before, so `passes_used_up` and `review_passes` (`"until-clean"` under a `rule=2` record) show as they did, and it is never `ready`; but when no file it could read is outside `docs/research/`, which rule applies can't be told, so it no longer advises a review (`no_review`), and no note claims files outside that folder.
+
+- **For projects updating:** nothing to do. Tests: `tests/test_research_merge_check_unread.py`.
 
 ## 0.1.21
 
