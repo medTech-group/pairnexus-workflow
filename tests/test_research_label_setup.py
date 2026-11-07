@@ -34,29 +34,30 @@ def test_setup_creates_the_research_label_with_the_others():
 
 
 def test_setup_says_what_the_research_label_is_for():
-    step = _labels_step()
-    # A reader can tell it from `wayfinder:research`, a map's research decision.
-    assert "`research` marks a study's issue" in step
-    assert "`wayfinder:research`" in step
+    # The step's own sentence on it, outside the bullet list: what it marks,
+    # and that it isn't `wayfinder:research`, a map's research decision.
+    (line,) = [l for l in _labels_step().splitlines()
+               if l.startswith("`research`") and not l.startswith("- ")]
+    assert "study" in line
+    assert "`wayfinder:research`" in line
 
 
 def _note():
-    """The ticket's changelog note: its paragraph and list, read from
-    "## Unreleased" down, so it still counts once a release moves it."""
+    """The ticket's changelog note, from its lead to the next note or heading,
+    read from "## Unreleased" down so it still counts once a release moves it."""
     notes = since_0110()
-    start = notes.index("(#507")
-    start = notes.rindex("\n\n", 0, start)
-    end = notes.find("\n\n**", start + 2)
-    return notes[start:end if end != -1 else len(notes)]
+    start = notes.index("**Set-up creates the `research` label** (#507")
+    ends = [i for i in (notes.find("\n\n**", start + 2), notes.find("\n## ", start)) if i != -1]
+    return notes[start:min(ends, default=len(notes))]
 
 
 def test_the_changelog_notes_it_with_what_projects_updating_do():
     note = _note()
-    assert "`research` label" in note
-    updating = next(l for l in note.splitlines() if "**For projects updating" in l)
+    updating = [l for l in note.splitlines() if l.startswith("- **For projects updating")]
+    assert len(updating) == 1
     # Create it, or leave it to a session, which creates it when it's missing.
-    assert "create the `research` label" in updating
-    assert "creates it when it's missing" in updating
+    assert "`research` label" in updating[0]
+    assert "create" in updating[0] and "missing" in updating[0]
 
 
 def test_version_is_not_bumped():

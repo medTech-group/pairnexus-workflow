@@ -4,7 +4,7 @@
 
 **Set-up creates the `research` label** (#507, part of spec #505). `setup-workflow`'s labels step creates `research` with the others: it marks a study's issue, and the issue a session files when it finds a research note's claim wrong, and isn't `wayfinder:research`.
 
-- **For projects updating:** create the `research` label on the repository (`gh api repos/<repo>/labels -f name=research`), or leave it: a session that needs it creates it when it's missing. Tests: `tests/test_research_label_setup.py`.
+- **For projects updating:** create the `research` label on the repository (`gh api repos/<repo>/labels -f name=research`), or leave it: the session running a study (the `study` skill, #512) creates it when it's missing. If the repository already has a `research` label for something else, rename that one first, since the kit reads every issue carrying it as research. Tests: `tests/test_research_label_setup.py`.
 
 ## 0.1.18
 
