@@ -212,32 +212,12 @@ def read_page(path: Path) -> tuple[bytes, str]:
     return Path(path).read_bytes(), ctype
 
 
-_ASCII = "".join(map(chr, range(128)))
-
-
-def _ascii_link(url: str) -> str:
-    """The link as the request sends it: letters outside ASCII in its path,
-    query and fragment percent-encoded as UTF-8, its host IDNA-encoded. An
-    ASCII link, existing escapes included, is sent as written."""
-    if url.isascii():
-        return url
-    parts = urllib.parse.urlsplit(url)
-    netloc = parts.netloc
-    if not netloc.isascii():
-        user, at, hostport = netloc.rpartition("@")
-        host, colon, port = hostport.partition(":")
-        try:
-            host = host.encode("idna").decode("ascii")
-        except UnicodeError:
-            raise PageError("its host name can't be written in ASCII (IDNA)") from None
-        netloc = urllib.parse.quote(user, safe=_ASCII) + at + host + colon + port
-    path, query, fragment = (urllib.parse.quote(x, safe=_ASCII) for x in (parts.path, parts.query, parts.fragment))
-    return urllib.parse.urlunsplit((parts.scheme, netloc, path, query, fragment))
-
-
 def fetch(url: str, timeout: float = FETCH_TIMEOUT, limit: int = FETCH_LIMIT) -> tuple[bytes, str]:
     """The page at a web link: its bytes and content type. Only http and https,
-    redirects included; raises PageError with the reason it can't."""
+    redirects included, and only a link written in ASCII; raises PageError
+    with the reason it can't."""
+    if not url.isascii():
+        raise PageError("it holds characters outside ASCII; cite the link percent-encoded")
     parts = urllib.parse.urlsplit(url)
     if parts.scheme not in ("http", "https") or not parts.netloc:
         raise PageError("it isn't an http or https link")
@@ -251,7 +231,7 @@ def fetch(url: str, timeout: float = FETCH_TIMEOUT, limit: int = FETCH_LIMIT) ->
         urllib.request.HTTPErrorProcessor(),
     ):
         opener.add_handler(h)
-    req = urllib.request.Request(_ascii_link(url), headers={"User-Agent": USER_AGENT, "Accept": "text/html, text/plain;q=0.9, */*;q=0.1"})
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "text/html, text/plain;q=0.9, */*;q=0.1"})
     try:
         with opener.open(req, timeout=timeout) as r:
             raw = r.read(limit + 1)

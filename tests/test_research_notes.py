@@ -211,20 +211,54 @@ def test_fingerprint_fetches_the_page(project, server):
     assert [x["hash"] for x in json.loads(p.stdout)["paragraphs"]] == [_h(t) for t in PARAS]
 
 
-def test_fingerprint_fetches_a_link_with_letters_outside_ascii(project, server):
-    base, routes = server
-    routes["/caf%C3%A9?q=cr%C3%A8me"] = (200, "text/html", b"<p>A</p>")
-    p = _cli("fingerprint", f"{base}/café?q=crème", "--fetch", "--json", env=_env(project))
-    assert p.returncode == 0, p.stderr
-    got = json.loads(p.stdout)
-    assert got["url"] == f"{base}/café?q=crème"  # the link as written
-    assert [x["text"] for x in got["paragraphs"]] == ["A"]
+class _Seen(http.server.BaseHTTPRequestHandler):
+    """Records every request it gets, of any method, and answers 404."""
+
+    seen: list = []
+
+    def parse_request(self):
+        ok = super().parse_request()
+        self.seen.append(self.requestline)
+        return ok
+
+    def do_GET(self):  # noqa: N802
+        self.send_error(404)
+
+    do_CONNECT = do_GET  # noqa: N815
+
+    def log_message(self, *a):
+        pass
 
 
-def test_a_host_outside_ascii_is_sent_idna_encoded():
-    assert research._ascii_link("https://bücher.example:8080/café") == "https://xn--bcher-kva.example:8080/caf%C3%A9"
-    with pytest.raises(research.PageError, match="host name"):
-        research.fetch("https://bücher..example/")
+@pytest.fixture
+def seen():
+    """A local server that records every request, the proxy for every link."""
+    requests: list = []
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), type("S", (_Seen,), {"seen": requests}))
+    t = threading.Thread(target=httpd.serve_forever, daemon=True)
+    t.start()
+    yield f"http://127.0.0.1:{httpd.server_address[1]}", requests
+    httpd.shutdown()
+    httpd.server_close()
+
+
+@pytest.mark.parametrize("link", ["{base}/caf\u00e9", "https://fa\u00df.de/", "{base}/caf\udce9"], ids=["path", "host", "lone-surrogate"])
+def test_page_fetching_refuses_a_link_outside_ascii_before_any_request(project, seen, monkeypatch, link):
+    base, requests = seen
+    link = link.format(base=base)
+
+    def opened(self, *a, **k):
+        raise AssertionError(f"a request was made for {link!r}")
+
+    monkeypatch.setattr(research.urllib.request.OpenerDirector, "open", opened)
+    with pytest.raises(research.PageError, match="outside ASCII"):
+        research.fetch(link)
+    proxy = {k: base for k in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY")}
+    p = _cli("fingerprint", link, "--fetch", env={**_env(project), **proxy, "no_proxy": "", "NO_PROXY": ""})
+    assert p.returncode == 1 and p.stdout == ""
+    assert "can't fetch" in p.stderr and "outside ASCII" in p.stderr
+    assert "Traceback" not in p.stderr
+    assert requests == []
 
 
 def test_fingerprint_fetches_a_link_with_its_escapes_left_alone(project, server):
