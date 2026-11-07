@@ -609,10 +609,17 @@ def _break(project, path, old, new):
         ("note.md", "- <https", "1. <https", "key-source line"),
         ("note.md", "## Key sources\n\n", "## Key sources\n\n### Laws\n\n", "last section"),
         ("note.md", "- <https://example.com/help/booking>, saved as `sources/booking-help.md`, fingerprints in `sources/booking-help.fingerprints`\n", "", "- None"),
+        ("sources/booking-help.md", "up to 30 days", "up to 90 days", "paragraph 2 doesn't match its fingerprint"),
+        (
+            "sources/booking-help.md",
+            "\n\n".join([PARAS[0], PARAS[1], "[left out]", PARAS[3]]),
+            "\n\n".join([PARAS[3], PARAS[1], "[left out]", PARAS[0]]),
+            "paragraph 1 doesn't match its fingerprint",
+        ),
     ],
     ids=[
         "paragraph-deleted", "hash-missing", "path-escapes", "path-absolute", "bad-line", "no-section", "fp-link", "saved-link", "no-third-party-line", "bad-hash",
-        "star-bullet", "indented", "numbered", "subheading", "empty-section",
+        "star-bullet", "indented", "numbered", "subheading", "empty-section", "one-word-changed", "paragraphs-swapped",
     ],
 )
 def test_check_refuses_a_note_that_breaks_the_layout(project, path, old, new, said):
@@ -621,6 +628,13 @@ def test_check_refuses_a_note_that_breaks_the_layout(project, path, old, new, sa
     assert p.returncode == 1, p.stdout
     assert said in p.stderr
     assert p.stdout == ""
+
+
+def test_check_accepts_a_saved_paragraph_with_words_left_out(project):
+    _break(project, "sources/booking-help.md", "at 9:00 each", "at [left out] each")
+    p = _check(project, (URL, PAGE))
+    assert p.returncode == 0, p.stderr
+    assert json.loads(p.stdout)["sources"][0]["result"] == "unchanged"
 
 
 def test_check_a_note_with_no_key_sources(project):

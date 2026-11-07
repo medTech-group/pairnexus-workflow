@@ -360,7 +360,8 @@ def _inside(folder: Path, rel: str, what: str, url: str) -> Path:
 
 def read_note(path: Path) -> tuple[Header, list[KeySource]]:
     """The note's header and its key sources, each with its fingerprints and
-    saved copy read and checked against the layout. Raises LayoutError."""
+    saved copy read and checked against the layout: each saved paragraph
+    with nothing left out has its fingerprint's hash. Raises LayoutError."""
     path = Path(path)
     try:
         text = path.read_text(encoding="utf-8")
@@ -411,6 +412,12 @@ def read_note(path: Path) -> tuple[Header, list[KeySource]]:
                 f"{s.url}: the saved copy has {len(s.saved_paragraphs)} paragraphs and its fingerprints {len(s.hashes)}, so positions don't match "
                 f"(a paragraph left out whole stays as one `{LEFT_OUT}` line)"
             )
+        for i, (text, h) in enumerate(zip(s.saved_paragraphs, s.hashes), 1):
+            if LEFT_OUT not in text and digest(text) != h:
+                raise LayoutError(
+                    f"{s.url}: the saved copy's paragraph {i} doesn't match its fingerprint, so it isn't the text the hash comes from "
+                    f"(write both files from one `workflow research fingerprint` output; only `{LEFT_OUT}` may change a paragraph)"
+                )
     return header, sources
 
 
