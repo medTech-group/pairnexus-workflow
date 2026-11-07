@@ -12,6 +12,10 @@
 - **`tests/test_small_review_build.py`'s** wording scan leaves `docs/research/` out, since saved copies are other people's words.
 - **For projects updating:** nothing to do.
 
+**Set-up creates the `research` label** (#507, part of spec #505). `setup-workflow`'s labels step creates `research` with the others: it marks the issues that track research notes (a study's, a fact note's, and one a session files about a note), and isn't `wayfinder:research`.
+
+- **For projects updating:** create the `research` label on the repository (`gh api repos/<repo>/labels -f name=research`), or leave it: a session that files a `research` issue creates it when it's missing (from the `study` skill, #512, and the spec's other research tickets). If the repository already has a `research` label for something else, rename that one first, since the kit reads every issue carrying it as research. Tests: `tests/test_research_label_setup.py`.
+
 ## 0.1.21
 
 **Decision questions asked in a message are easier to read.** A recommendation now has its own labelled part, "➡️ Recommended:", with its evidence, and the alternatives have theirs, so a recommendation can't be mistaken for a decision already made. Questions asked as clickable choices are unchanged.
