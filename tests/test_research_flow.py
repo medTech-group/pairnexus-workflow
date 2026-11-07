@@ -256,6 +256,14 @@ def test_the_readme_s_research_line_puts_notes_in_docs_research():
         assert part in line, part
 
 
+def test_the_readme_s_research_line_says_a_claim_found_wrong_needs_the_look():
+    # #511 round 1: the note doesn't merge after the research check alone when it finds a claim wrong
+    # or the note changes after it (flow §4 item 4).
+    s = _sentence(_readme_line("- **`/research <question>`**"), "merges")
+    assert "research check" in s and "look" in s
+    assert "wrong" in s and "changes" in s
+
+
 def test_the_readme_has_no_research_branch_left():
     text = _flatten(_readme())
     assert "`research/…` branch" not in text
