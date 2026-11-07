@@ -5,8 +5,10 @@ fixtures are copied from:
 
 - `note.md`, the note: three header lines (`Status:`, `Last checked:`,
   `Issue:`), then a blank line; its key sources one line each under
-  `## Key sources`, its last section, once: `- <link>, saved as `path`,
-  fingerprints in `path``;
+  `## Key sources`, once, outside any code fence: `- <link>, saved as `path`,
+  fingerprints in `path``. The section runs to the next `# ` or `## `
+  heading, or the note's end; a line shaped like a key-source line anywhere
+  else in the note is refused, so no key source goes unread;
 - a saved copy: `Source:`, `Accessed:` and `Third-party text:` lines, a blank
   line, then the page's paragraphs, one per position, separated by blank lines
   (a paragraph left out whole is one `[left out]` line in its place);
@@ -454,6 +456,82 @@ def _inside(folder: Path, rel: str, what: str, url: str) -> Path:
     return target
 
 
+def _heading_level(line: str) -> int:
+    """1 to 6 for an ATX heading written at the line's start (`## Notes`), else 0."""
+    level = len(line) - len(line.lstrip("#"))
+    return level if 1 <= level <= 6 and (len(line) == level or line[level] in " \t") else 0
+
+
+def _names_key_sources(line: str) -> bool:
+    """Whether the line is a heading named "Key sources" in any form a reader
+    could take for one: at any level, in any case, indented, in a quote."""
+    s = line.strip()
+    while s.startswith(">"):
+        s = s[1:].strip()
+    level = len(s) - len(s.lstrip("#"))
+    if not level or (len(s) > level and s[level] not in " \t"):
+        return False
+    return " ".join(s[level:].strip().rstrip("#").split()).casefold() == "key sources"
+
+
+def _fence(line: str) -> tuple[str, int, str] | None:
+    """(its character, its length, what follows) for a code fence's line
+    (three or more backticks or tildes, indented at most 3 spaces), else None."""
+    s = line.lstrip(" ")
+    if len(line) - len(s) > 3 or s[:1] not in ("`", "~"):
+        return None
+    length = len(s) - len(s.lstrip(s[0]))
+    rest = s[length:]
+    if length < 3 or (s[0] == "`" and "`" in rest):
+        return None
+    return s[0], length, rest.strip()
+
+
+def _looks_like_key_source(line: str) -> bool:
+    low = line.casefold()
+    return "saved as" in low and "fingerprint" in low
+
+
+def _key_sources_section(lines: list[str], path: Path) -> tuple[int, int]:
+    """(the `## Key sources` heading's index, the index where its section
+    ends: the next `# ` or `## ` heading, or the note's end). Fails closed:
+    a note whose key sources can't all be read is refused, naming the line,
+    rather than read in part."""
+    heads: list[tuple[int, int | None]] = []  # (index, the opening fence's index when inside one)
+    fence: tuple[str, int, int] | None = None
+    for i, line in enumerate(lines):
+        if _names_key_sources(line):
+            heads.append((i, fence[2] if fence else None))
+        f = _fence(line)
+        if fence is None:
+            if f:
+                fence = (f[0], f[1], i)
+        elif f and f[0] == fence[0] and f[1] >= fence[1] and not f[2]:
+            fence = None
+    if not heads:
+        raise LayoutError(f"{path}: it has no `## Key sources` section (write `- None` under it when there are none)")
+    for i, opened in heads:
+        if opened is not None:
+            raise LayoutError(
+                f"{path}: line {i + 1} names `## Key sources` inside a code fence (opened on line {opened + 1}): the section must be outside any fence, once: {lines[i][:200]}"
+            )
+    if len(heads) > 1:
+        raise LayoutError(
+            f"{path}: the note has `## Key sources` more than once (lines {', '.join(str(i + 1) for i, _ in heads)}), so line {heads[1][0] + 1} would go unread: "
+            f"list every key source under one heading: {lines[heads[1][0]][:200]}"
+        )
+    start = heads[0][0]
+    if lines[start] != "## Key sources":
+        raise LayoutError(f"{path}: line {start + 1} names the key sources but isn't the heading `## Key sources`, written at the line's start: {lines[start][:200]}")
+    end = next((j for j in range(start + 1, len(lines)) if 1 <= _heading_level(lines[j]) <= 2), len(lines))
+    for j, line in enumerate(lines):
+        if not start <= j < end and _looks_like_key_source(line):
+            raise LayoutError(
+                f"{path}: line {j + 1} looks like a key-source line but is outside `## Key sources` (its heading to the next `# ` or `## ` heading), so it wouldn't be read: {line[:200]}"
+            )
+    return start, end
+
+
 def read_note(path: Path) -> tuple[Header, list[KeySource]]:
     """The note's header and its key sources, each with its fingerprints and
     saved copy read and checked against the layout: each saved paragraph
@@ -468,24 +546,21 @@ def read_note(path: Path) -> tuple[Header, list[KeySource]]:
     except LayoutError as e:
         raise LayoutError(f"{path}: {e}") from None
     lines = [l.rstrip() for l in _lines(text)]
-    try:
-        start = lines.index("## Key sources")
-    except ValueError:
-        raise LayoutError(f"{path}: it has no `## Key sources` section (write `- None` under it when there are none)") from None
+    start, end = _key_sources_section(lines, path)
     sources: list[KeySource] = []
     none = False
-    for n, line in enumerate(lines[start + 1:], start + 2):
-        if line.startswith("#"):
-            raise LayoutError(f"{path}: `## Key sources` must be the note's last section, once, but line {n} is a heading after it: {line[:200]}")
+    for n, line in enumerate(lines[start + 1 : end], start + 2):
         if not line.strip():
             continue
         if line == "- None":
             none = True
             continue
+        if _heading_level(line):
+            raise LayoutError(f"{path}: `## Key sources` holds key-source lines only, but line {n} is a heading inside it: {line[:200]}")
         m = _KEY_SOURCE.fullmatch(line)
         if not m:
             raise LayoutError(
-                f"{path}: a line under `## Key sources` is neither a key-source line, `- <link>, saved as `<path>`, fingerprints in `<path>``, nor `- None`: {line[:200]}"
+                f"{path}: line {n}, under `## Key sources`, is neither a key-source line, `- <link>, saved as `<path>`, fingerprints in `<path>``, nor `- None`: {line[:200]}"
             )
         sources.append(KeySource(m["url"], _inside(path.parent, m["saved"], "saved copy", m["url"]), _inside(path.parent, m["fps"], "fingerprints", m["url"])))
     if none and sources:

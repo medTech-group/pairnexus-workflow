@@ -35,6 +35,10 @@
 
 - **For projects updating:** nothing to do. Tests: `tests/test_research_merge_check_unread.py`.
 
+**A research note's `## Key sources` section can be followed by other sections** (#528, split out of #506, part of spec #505). The section no longer has to be the note's last: `workflow research check` reads its key sources up to the next `# ` or `## ` heading. It fails closed, refusing the note and naming the line rather than reading it in part or saying "unchanged" without reading every key source: `## Key sources` more than once (in any case, at any level, or in a quote), one inside a code fence, a heading inside the section, or a line shaped like a key-source line outside it. The `study` skill's layout says where the section may sit.
+
+- **For projects updating:** nothing to do. Tests: `tests/test_research_notes.py`.
+
 ## 0.1.21
 
 **Decision questions asked in a message are easier to read.** A recommendation now has its own labelled part, "➡️ Recommended:", with its evidence, and the alternatives have theirs, so a recommendation can't be mistaken for a decision already made. Questions asked as clickable choices are unchanged.

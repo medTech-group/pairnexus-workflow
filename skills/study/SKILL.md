@@ -25,7 +25,7 @@ docs/research/<topic>/
 - `Last checked:` is the date its claims were last read against their sources, as `YYYY-MM-DD`. It is for information only: nothing decides by it.
 - `Issue:` is `#<n>`, the `research` issue that tracks it.
 
-**The key sources** are the sources its findings rest on. They alone get fingerprints. The note lists them under a `## Key sources` heading, one line each: the link in angle brackets, then its saved copy and its fingerprints, as paths inside the topic's folder. That section is the note's last, and the note has it once. A note with no key sources says so with one line, `- None`.
+**The key sources** are the sources its findings rest on. They alone get fingerprints. The note lists them under a `## Key sources` heading, one line each: the link in angle brackets, then its saved copy and its fingerprints, as paths inside the topic's folder. The note has that section once, outside any code fence. It runs to the next `# ` or `## ` heading, or to the note's end, so other sections may follow it. It holds only those lines, with blank lines between them if you like, and a line shaped like a key-source line anywhere else in the note is refused, since it wouldn't be read. A note with no key sources says so with one line, `- None`.
 
 An example note, `docs/research/booking-ahead/note.md`:
 
@@ -89,7 +89,7 @@ Cancel up to 2 hours before your booking for a full refund.
 - **changed:** each new paragraph's live text, its position on the live page and its hash, and each paragraph gone, by its position in the saved copy, with the saved copy's text there and its hash. Read only those;
 - **can't fetch,** and why.
 
-It refuses a note whose layout breaks the rules above (a key-source line it can't read, a path outside the topic's folder, links that don't agree, or a saved copy whose paragraphs don't match its fingerprints), naming what to fix. It spends no model tokens, and writes nothing.
+It refuses a note whose layout breaks the rules above (a key-source line it can't read or that sits outside the section, `## Key sources` twice or inside a code fence, a path outside the topic's folder, links that don't agree, or a saved copy whose paragraphs don't match its fingerprints), naming what to fix. It spends no model tokens, and writes nothing.
 
 **The mark.** A claim still wrong after the look at a fix gets the mark ` **(unconfirmed)**`, exactly that text, with its leading space, added at the end of the line that holds the claim. For example:
 

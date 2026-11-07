@@ -912,7 +912,7 @@ def _break(project, path, old, new):
         ("note.md", "- <https", "* <https", "key-source line"),
         ("note.md", "- <https", "  - <https", "key-source line"),
         ("note.md", "- <https", "1. <https", "key-source line"),
-        ("note.md", "## Key sources\n\n", "## Key sources\n\n### Laws\n\n", "last section"),
+        ("note.md", "## Key sources\n\n", "## Key sources\n\n### Laws\n\n", "line 13 is a heading inside it"),
         ("note.md", "- <https://example.com/help/booking>, saved as `sources/booking-help.md`, fingerprints in `sources/booking-help.fingerprints`\n", "", "- None"),
         ("sources/booking-help.md", "up to 30 days", "up to 90 days", "paragraph 2 doesn't match its fingerprint"),
         (
@@ -949,23 +949,82 @@ def test_check_a_note_with_no_key_sources(project):
     assert json.loads(p.stdout)["sources"] == []
 
 
+_KEY_LINE = "- <https://example.com/help/booking>, saved as `sources/booking-help.md`, fingerprints in `sources/booking-help.fingerprints`"
+_GROUPS = "- <https://example.com/help/groups>, saved as `sources/groups.md`, fingerprints in `sources/groups.fingerprints`"
+
+
+def _reshape(project, before="", after=""):
+    """The fixture note with `before` put in front of its `## Key sources`
+    heading (line 11) and `after` added at its end, after a blank line."""
+    note = _note(project)
+    text = note.read_text(encoding="utf-8")
+    i = text.index("## Key sources\n")
+    note.write_text(text[:i] + before + text[i:] + ("\n" + after if after else ""), encoding="utf-8")
+
+
 @pytest.mark.parametrize(
     "after",
     [
-        "## Key sources\n\n- <https://example.com/help/groups>, saved as `sources/groups.md`, fingerprints in `sources/groups.fingerprints`\n",
         "## Notes\n\nGroups of 8 or more call ahead.\n",
+        "# Appendix\n\nGroups of 8 or more call ahead.\n",
+        "## Notes\n\n### Groups\n\nGroups of 8 or more call ahead.\n\n## More\n\nWords.\n",
+        "##\tNotes\n\nWords.\n",
     ],
-    ids=["second-key-sources", "a-section-after"],
+    ids=["a-section-after", "a-top-heading-after", "sections-and-subheadings-after", "tab-after-the-hashes"],
 )
-def test_check_refuses_a_note_whose_key_sources_arent_its_last_section_once(project, after):
-    note = _note(project)
-    n = len(note.read_text(encoding="utf-8").splitlines()) + 2
-    with open(note, "a", encoding="utf-8") as fh:
-        fh.write("\n" + after)
+def test_check_reads_the_key_sources_up_to_the_next_section(project, tmp_path, after):
+    other = _two_sources(project)
+    _reshape(project, after=after)
+    page = _page(tmp_path, PARAS[:3])  # paragraph 4 gone
+    p = _check(project, (URL, PAGE), (other, page))
+    assert p.returncode == 0, p.stderr
+    a, b = json.loads(p.stdout)["sources"]
+    assert a["url"] == URL and a["result"] == "unchanged"
+    assert b["url"] == other and b["result"] == "changed"  # the second line, last before the next section, was read
+    assert [g["position"] for g in b["gone"]] == [4]
+
+
+def test_check_reads_a_note_with_no_key_sources_and_a_section_after(project):
+    _break(project, "note.md", _KEY_LINE, "- None")
+    _reshape(project, after="## Notes\n\nWords.\n")
+    p = _check(project)
+    assert p.returncode == 0, p.stderr
+    assert json.loads(p.stdout)["sources"] == []
+
+
+@pytest.mark.parametrize(
+    "before,after,n,said",
+    [
+        ("", f"## Key sources\n\n{_GROUPS}\n", 15, "`## Key sources` more than once"),
+        ("", f"## Notes\n\nWords.\n\n## Key sources\n\n{_GROUPS}\n", 19, "`## Key sources` more than once"),
+        ("", f"## Key Sources\n\n{_GROUPS}\n", 15, "`## Key sources` more than once"),
+        ("", f"### Key sources\n\n{_GROUPS}\n", 15, "`## Key sources` more than once"),
+        ("", f"> ## Key sources\n>\n> {_GROUPS}\n", 15, "`## Key sources` more than once"),
+        (f"```markdown\n## Key sources\n\n{_GROUPS}\n```\n\n", "", 12, "inside a code fence"),
+        ("~~~\n\n", "", 13, "inside a code fence"),
+        ("", f"## Notes\n\n{_GROUPS}\n", 17, "outside `## Key sources`"),
+        ("", f"## Notes\n\n{_GROUPS.replace('- <', '* <')}\n", 17, "outside `## Key sources`"),
+        ("", f"## Notes\n\n```\n{_GROUPS}\n```\n", 18, "outside `## Key sources`"),
+        (f"{_GROUPS}\n\n", "", 11, "outside `## Key sources`"),
+    ],
+    ids=[
+        "second-key-sources", "second-after-a-section", "second-in-another-case", "second-at-another-level", "second-in-a-quote",
+        "one-in-a-fence-before", "fence-never-closed", "source-line-in-a-later-section", "star-bullet-in-a-later-section",
+        "source-line-in-a-fence-after", "source-line-before-the-section",
+    ],
+)
+def test_check_refuses_a_note_whose_key_sources_it_cant_all_read(project, before, after, n, said):
+    _reshape(project, before=before, after=after)
+    p = _check(project, (URL, PAGE), ("https://example.com/help/groups", PAGE))
+    assert p.returncode == 1 and p.stdout == "", p.stdout  # never read in part
+    assert f"line {n}" in p.stderr and said in p.stderr, p.stderr
+
+
+def test_check_refuses_a_key_sources_heading_that_isnt_at_the_lines_start(project):
+    _break(project, "note.md", "\n## Key sources", "\n   ## Key sources")
     p = _check(project, (URL, PAGE))
     assert p.returncode == 1 and p.stdout == ""
-    assert f"line {n}" in p.stderr and after.splitlines()[0] in p.stderr
-    assert "`## Key sources` must be the note's last section, once" in p.stderr
+    assert "line 11" in p.stderr and "`## Key sources`" in p.stderr
 
 
 def test_check_says_when_the_note_is_superseded(project):
@@ -1072,6 +1131,14 @@ def test_the_study_skill_writes_down_the_header_the_mark_and_left_out_lines():
     assert "`Third-party text:`" in text and "not covered by the repository's licence" in text
     assert "`docs/research/<topic>/`" in text and "is always `note.md`" in text
     assert "WF research notes" in text and "WF research check" in text and "WF research fingerprint" in text
+
+
+def test_the_study_skill_says_where_the_key_sources_section_may_sit():
+    text = re.sub(r"\s+", " ", SKILL.read_text(encoding="utf-8"))
+    assert "The note has that section once, outside any code fence" in text
+    assert "It runs to the next `# ` or `## ` heading, or to the note's end, so other sections may follow it" in text
+    assert "a line shaped like a key-source line anywhere else in the note is refused" in text
+    assert "the note's last" not in text
 
 
 def test_the_saved_copy_has_one_name():
