@@ -226,6 +226,20 @@ def test_fingerprint_refuses_a_page_it_cant_read_and_writes_nothing(project, ser
 
 
 @pytest.mark.parametrize(
+    "html,want",
+    [
+        (b"<html><head><title>T</title><body><p>A</p>", ["A"]),  # `</head>` left out
+        (b"<nav><nav>x</nav>y</nav><p>B</p>", ["B"]),  # a skipped element inside one of its kind
+        (b"<p>a<br>b</p><table><tr><td>c</td><td>d</td></tr></table>", ["a b", "c d"]),
+        (b"<nav/><p>C</p><div/>D", ["C", "D"]),  # `<x/>` opens nothing
+    ],
+    ids=["head-not-closed", "nested-skip", "spaces", "self-closing"],
+)
+def test_the_html_reader(html, want):
+    assert research.paragraphs(html, "text/html") == want
+
+
+@pytest.mark.parametrize(
     "ctype,raw",
     [
         ("text/html; charset=undefined", b"<p>Caf\xc3\xa9</p>"),
