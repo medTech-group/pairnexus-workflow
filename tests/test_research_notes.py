@@ -251,20 +251,25 @@ def test_the_html_reader(html, want):
 
 
 @pytest.mark.parametrize(
-    "html,want",
+    "html",
     [
-        (b"<!doctype html><html><head><title>T</title><p>First para.<p>Second para.</html>", ["First para.", "Second para."]),
-        (b"<head><title>T</title><div>A</div>", ["A"]),
-        (
-            b"<head><title>T</title><base href=/><meta charset=utf-8><link rel=icon><style>s</style><script>j</script>"
-            b"<noscript>n</noscript><template>t</template><p>A",
-            ["A"],
-        ),
+        b"<head><noscript><img src=x></noscript><title>T</title></head><p>A</p>",
+        b"<head><template><div>t</div></template><title>T</title></head><p>A</p>",
     ],
-    ids=["html5-no-body", "div", "head-content-skipped"],
+    ids=["noscript", "template"],
 )
-def test_the_head_ends_at_the_first_tag_that_isnt_head_content(html, want):
-    assert research.paragraphs(html, "text/html") == want
+def test_the_head_is_skipped_until_its_end_or_the_body(html):
+    assert research.paragraphs(html, "text/html") == ["A"]
+
+
+def test_a_page_that_leaves_out_both_the_heads_end_and_the_body_is_refused(project):
+    page = project / "html5.html"
+    page.write_bytes(b"<!doctype html><html><head><title>T</title><p>First para.<p>Second para.</html>")
+    before = _snapshot(project)
+    p = _cli("fingerprint", URL, "--page", page, env=_env(project))
+    assert p.returncode == 1 and p.stdout == ""
+    assert "no text" in p.stderr
+    assert _snapshot(project) == before
 
 
 @pytest.mark.parametrize(

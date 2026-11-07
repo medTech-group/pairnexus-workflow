@@ -82,8 +82,6 @@ _BLOCK = {
 }
 _SPACE = {"br", "td", "th", "img", "input", "wbr"}
 _VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
-# What a head holds: any other start tag ends it, as `<body>` does.
-_HEAD = {"head", "title", "base", "meta", "link", "style", "script", "noscript", "template"}
 
 
 class _Text(HTMLParser):
@@ -100,8 +98,8 @@ class _Text(HTMLParser):
         self._now = []
 
     def handle_starttag(self, tag, attrs):
-        if tag not in _HEAD and self._skip[:1] == ["head"]:
-            self._skip = []  # `</head>` and `<body>` may be left out
+        if tag == "body" and self._skip[:1] == ["head"]:
+            self._skip = []  # `</head>` may be left out: the head ends at `<body>`. With neither, there is no text
         if self._skip:
             if tag == self._skip[-1] and tag not in _VOID:
                 self._skip.append(tag)
