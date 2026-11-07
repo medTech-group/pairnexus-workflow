@@ -211,6 +211,30 @@ def test_fingerprint_fetches_the_page(project, server):
     assert [x["hash"] for x in json.loads(p.stdout)["paragraphs"]] == [_h(t) for t in PARAS]
 
 
+def test_fingerprint_fetches_a_link_with_letters_outside_ascii(project, server):
+    base, routes = server
+    routes["/caf%C3%A9?q=cr%C3%A8me"] = (200, "text/html", b"<p>A</p>")
+    p = _cli("fingerprint", f"{base}/café?q=crème", "--fetch", "--json", env=_env(project))
+    assert p.returncode == 0, p.stderr
+    got = json.loads(p.stdout)
+    assert got["url"] == f"{base}/café?q=crème"  # the link as written
+    assert [x["text"] for x in got["paragraphs"]] == ["A"]
+
+
+def test_a_host_outside_ascii_is_sent_idna_encoded():
+    assert research._ascii_link("https://bücher.example:8080/café") == "https://xn--bcher-kva.example:8080/caf%C3%A9"
+    with pytest.raises(research.PageError, match="host name"):
+        research.fetch("https://bücher..example/")
+
+
+def test_fingerprint_fetches_a_link_with_its_escapes_left_alone(project, server):
+    base, routes = server
+    routes["/caf%C3%A9%20menu"] = (200, "text/html", b"<p>B</p>")
+    p = _cli("fingerprint", f"{base}/caf%C3%A9%20menu", "--fetch", "--json", env=_env(project))
+    assert p.returncode == 0, p.stderr
+    assert [x["text"] for x in json.loads(p.stdout)["paragraphs"]] == ["B"]
+
+
 def test_fingerprint_reads_a_plain_text_page_by_its_blank_lines(project, server):
     base, routes = server
     routes["/a.txt"] = (200, "text/plain", b"First  line\nstill first.\n\n\nSecond.\n")
