@@ -229,7 +229,7 @@ _BY_SPEC = "a spec's review is by " + " and ".join(SPEC_REVIEWERS)
 
 
 def _kind_refused(given) -> RecordError:
-    return RecordError(f"--kind is `round` or `pass` (or `spec` for a spec's review, `research` for a research check or the look at a fix), not `{_shown(given, 20)}`")
+    return RecordError(f"--kind is `round` or `pass` (or `spec` for a spec's review), not `{_shown(given, 20)}`; `research` is for a research check or the look at a fix")
 
 
 def check_key(kind, commit, body_given: bool) -> None:

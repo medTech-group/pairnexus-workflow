@@ -184,6 +184,13 @@ def test_research_is_no_reviewer_of_a_round_or_pass_and_takes_no_findings_or_bod
     assert code == 2 and "a research record names a commit" in err
 
 
+@pytest.mark.parametrize("kind", ["reserch", "light"])
+def test_a_mistyped_kind_is_refused_naming_research_too(no_project, capsys, kind):
+    code, out, err = recorded_cli(capsys, "--kind", kind, "--round", "1", "--commit", "a" * 40, "--reviewers", "research", "--clean")
+    assert code == 2 and out == ""
+    assert f"--kind is `round` or `pass` (or `spec` for a spec's review), not `{kind}`; `research` is for a research check or the look at a fix" in err, err
+
+
 def test_the_reader_reads_no_research_record_with_rule_2_fields():
     line = f"<!-- workflow:review kind=research round=1 commit={'a' * 40} reviewers=research rule=2 findings=0 outcomes=0 split=no result=clean -->"
     assert reviews.records_in(line + "\n<!-- workflow:agent -->\n") == []
