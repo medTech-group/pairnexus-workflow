@@ -144,11 +144,13 @@ class _Text(HTMLParser):
             self._end_head()  # `</head>` may be left out: the head ends at `<body>`
         if tag == "head" and not self._skip and not self._head:
             self._head = "open"
+        if self._open_head and self._skip[:1] in (["title"], ["noframes"]):
+            return  # raw text: nothing in it is a tag
         if self._skip:
             if tag == self._skip[-1] and tag not in _VOID:
                 self._skip.append(tag)
             return
-        if tag in _SKIP:
+        if tag in _SKIP or (self._open_head and tag in ("title", "noframes")):  # head content wherever it is, as HTML5 says
             if tag not in _VOID:
                 self._skip.append(tag)
             return

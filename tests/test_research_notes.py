@@ -372,6 +372,26 @@ def test_a_head_that_isnt_closed_ends_at_the_first_tag_that_isnt_head_content(ht
 @pytest.mark.parametrize(
     "html,want",
     [
+        (b'<!doctype html><html><head><meta charset="utf-8"><img src="pixel.gif" alt="">'
+         b"<title>Booking help</title><p>Book 30 days ahead.", ["Book 30 days ahead."]),
+        (b"<head><meta charset=utf-8>Hello<title>Page title</title><p>A", ["Hello", "A"]),
+        (b"<head><custom-el></custom-el><title>T</title><p>A", ["A"]),
+        (b"<head><div></div><noframes>NF</noframes><p>A", ["A"]),
+        # their content is text: a tag in it opens nothing
+        (b"<head><div></div><title>T<p>x</title><p>A", ["A"]),
+        (b"<head><div></div><title>T<title>x</title><p>A", ["A"]),
+        (b"<head><div></div><noframes>T<noframes>x</noframes><p>A", ["A"]),
+    ],
+    ids=["img", "text", "custom", "noframes", "title-tag", "title-title", "noframes-noframes"],
+)
+def test_after_a_head_that_isnt_closed_a_title_or_noframes_is_never_read(html, want):
+    # As HTML5 says, a title or noframes after the head is still head content.
+    assert research.paragraphs(html, "text/html") == want
+
+
+@pytest.mark.parametrize(
+    "html,want",
+    [
         # what HTML5 would read as text, a closed head still leaves out (#526: unchanged)
         (b"<head><title>T</title><div>x</div></head><body><p>A</p>", ["A"]),
         (b"<head><title>T</title>Hello</head><p>A</p>", ["A"]),
@@ -380,8 +400,9 @@ def test_a_head_that_isnt_closed_ends_at_the_first_tag_that_isnt_head_content(ht
         # a later head left open after the first one closed: as before
         (b"<head></head><p>A</p><head><p>B", ["A"]),
         (b"<p>A</p><head></head><p>B</p>", ["A", "B"]),
+        (b"<head></head><title>T</title><p>A</p>", ["T", "A"]),  # a title after a closed head
     ],
-    ids=["div", "text", "body", "noscript-open", "later-head-open", "text-before"],
+    ids=["div", "text", "body", "noscript-open", "later-head-open", "text-before", "title-after"],
 )
 def test_a_closed_head_reads_as_before(html, want):
     assert research.paragraphs(html, "text/html") == want
