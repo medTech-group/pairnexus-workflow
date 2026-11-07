@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import time
+import tracemalloc
 from datetime import date
 from pathlib import Path
 
@@ -628,6 +629,30 @@ def test_many_comments_before_markup_that_isnt_html_are_refused_at_once():
     with pytest.raises(research.PageError, match="no content type"):
         research.paragraphs(b"<!---->" * 2000 + b"<p>A</p>", "")
     assert time.monotonic() - t < 2
+
+
+_TEN_MB = 10 * 1024 * 1024
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"<!--" + b"x" * (_TEN_MB - 4),
+        b"<!--" + b"x" * (_TEN_MB - 12) + b"--><p>A</p>",
+        b"<!---->" * (_TEN_MB // 7) + b"<p>A</p>",
+        b"<!--" + b"--><!--" * (_TEN_MB // 7) + b"<p>A</p>",
+    ],
+    ids=["one", "one-closed", "many", "many-joined"],
+)
+def test_fetched_pages(raw):
+    tracemalloc.start()
+    try:
+        with pytest.raises(research.PageError, match="markup that isn't HTML"):
+            research.paragraphs(raw, "")
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert peak < 4 * len(raw)
 
 
 @pytest.mark.parametrize("ctype", ["application/pdf", "image/png", "application/octet-stream"])

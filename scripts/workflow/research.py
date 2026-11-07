@@ -208,11 +208,24 @@ def _kind(content_type: str, raw: bytes) -> str:
 _NOT_TEXT_STARTS = (b"%PDF-", b"%!PS", b"GIF87a", b"GIF89a", b"RIFF", b"\x89PNG", b"\xff\xd8\xff")
 # C0 and C1 control characters, but for tab, line feed, form feed and carriage return.
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0e-\x1f\x7f-\x9f]")
-# What may come before an HTML page's `<!doctype html>` or `<html>`: an XML
-# declaration (XHTML), comments and whitespace.
-_HTML_START = re.compile(
-    r"\s*(?:<\?xml\b[^>]*\?>\s*)?(?:<!--(?:(?!-->).)*-->\s*)*<(?:!doctype\s+html|html)[\s>]", re.I | re.S
-)  # a comment never runs past its first `-->`, so a failed match never backtracks across comments
+_SPACES = re.compile(r"\s*")
+_XML_DECLARATION = re.compile(r"<\?xml\b[^>]*\?>", re.I)
+_HTML_TAG = re.compile(r"<(?:!doctype\s+html|html)[\s>]", re.I)
+
+
+def _starts_as_html(text: str) -> bool:
+    """Whether the text starts with `<!doctype html>` or `<html>`, after an
+    XML declaration (XHTML), comments and whitespace."""
+    i = _SPACES.match(text).end()
+    m = _XML_DECLARATION.match(text, i)
+    if m:
+        i = _SPACES.match(text, m.end()).end()
+    while text.startswith("<!--", i):
+        end = text.find("-->", i + 4)
+        if end < 0:
+            return False
+        i = _SPACES.match(text, end + 3).end()
+    return _HTML_TAG.match(text, i) is not None
 
 
 def _untyped_kind(raw: bytes) -> str:
@@ -232,7 +245,7 @@ def _untyped_kind(raw: bytes) -> str:
         raise PageError(f"{why}: they aren't valid UTF-8") from None
     if _CONTROL.search(text):
         raise PageError(f"{why}: they hold a control character")
-    if _HTML_START.match(text):
+    if _starts_as_html(text):
         return "html"
     if text.lstrip().startswith("<"):
         raise PageError(f"{why}: they start with markup that isn't HTML")
