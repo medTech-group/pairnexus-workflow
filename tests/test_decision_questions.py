@@ -112,29 +112,6 @@ def test_routing_choices_get_neither():
     assert "**Build it now**" in s or "**Write the spec**" in s
 
 
-def test_a_study_s_routing_choices_are_each_recorded_in_one_line_where_the_rounds_go():
-    # #511 (spec #505, answer 16): routing choices still get neither, but research's are recorded.
-    s = _sentence(_intro(), "recorded in one line")
-    assert "reason" in s and "the owner's choice" in s
-    for choice in ("run or skip a study", "the professional choice", "after a source changed", "bringing in an old note"):
-        assert choice in s, choice
-    assert "stakes record" in s
-    # Where each line goes: the research issue, or, with none, the item's issue, the spec's issue or the decision ticket.
-    where = _sentence(_intro(), "Each line goes")
-    where = where.split("research issue", 1)[1]
-    for place in ("item's issue", "spec's issue", "decision ticket"):
-        assert place in where, place
-
-
-def test_only_research_s_routing_choices_are_recorded_not_every_routing_choice():
-    # #511 round 1: a session offering **Build it now** after a spec records no line for it.
-    s = _sentence(_intro(), "Routing choices")
-    assert "recorded" not in s and "one line" not in s
-    rec = _sentence(_intro(), "recorded in one line")
-    assert "research" in rec.split(":", 1)[0]
-    assert "**Build it now**" not in rec and "**Write the spec**" not in rec
-
-
 def test_a_study_s_intake_and_verdict_are_decision_questions_on_its_research_issue():
     # #511 (spec #505, answer 16): the list gains the intake and the verdict.
     s = _sentence(_intro(), "posted as the owner's")

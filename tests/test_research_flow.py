@@ -1,7 +1,7 @@
 """#511: the flow and the README on research (spec #505): the order, research
 notes in the repository, the overrides, fact notes, old notes, the note's
-header and the research check rule (the decision questions and routing
-choices a study adds are in `tests/test_decision_questions.py`). Read as text contracts on `docs/flow.md` and the README,
+header and the research check rule (the decision questions a study adds
+are in `tests/test_decision_questions.py`). Read as text contracts on `docs/flow.md` and the README,
 as `tests/test_decision_questions.py` reads the flow: each test reads one part
 of the text and checks what it requires rather than its exact wording."""
 
