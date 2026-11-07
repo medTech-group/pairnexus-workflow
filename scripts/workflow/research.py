@@ -27,6 +27,7 @@ import hashlib
 import http.client
 import re
 import ssl
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -234,7 +235,7 @@ def _untyped_kind(raw: bytes) -> str:
     start like a PDF or an image (or hold `%PDF-` in their first 1024 bytes,
     where PDF readers look for it), hold a control character (a NUL among
     them), aren't valid UTF-8, or start with markup that isn't HTML (an SVG,
-    say) raise PageError."""
+    say) or a character that isn't shown raise PageError."""
     why = "it names no content type, and its bytes aren't clearly a text page"
     i = 0
     while raw.startswith(b"\xef\xbb\xbf", i):  # every leading BOM, as `paragraphs` strips them
@@ -250,8 +251,12 @@ def _untyped_kind(raw: bytes) -> str:
         raise PageError(f"{why}: they hold a control character")
     if _starts_as_html(text):
         return "html"
-    if text.lstrip().startswith("<"):
+    j = _SPACES.match(text).end()
+    first = text[j : j + 1]
+    if first == "<":
         raise PageError(f"{why}: they start with markup that isn't HTML")
+    if first and unicodedata.category(first) == "Cf":  # a zero width space or a word joiner, say: it hides what follows
+        raise PageError(f"{why}: they start with a character that isn't shown")
     return "text"
 
 

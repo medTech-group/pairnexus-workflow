@@ -547,9 +547,11 @@ _UNTYPED_READ = [
     (b"First.\n\nCaf\xc3\xa9 second.\tTabbed.\f\n", ["First.", "Café second. Tabbed."]),
     (b"\xef\xbb\xbfFirst.\r\n\r\nSecond.\r\n", ["First.", "Second."]),
     (b"\xef\xbb\xbf\xef\xbb\xbf<!doctype html><html><head><title>t</title><script>var k=1;</script></head><body><p>First.</p></body></html>", ["First."]),
+    ("First.\u200b\n\nSecond.\n".encode(), ["First.\u200b", "Second."]),  # a format character past the first
 ]
 _UNTYPED_READ_IDS = [
     "html", "doctype-after-bom", "html-tag", "comment-first", "xhtml", "plain-text", "plain-text-bom-crlf", "doctype-after-two-boms",
+    "format-character-inside",
 ]
 
 
@@ -596,11 +598,14 @@ _UNTYPED_REFUSED = [
     b"<!-- never closed <html><p>A</p>",  # a comment that never ends
     b"<!doctype htmlx><p>A</p>",  # not the HTML doctype
     b"\xef\xbb\xbf\xef\xbb\xbf<svg xmlns='http://www.w3.org/2000/svg'><text>Hi</text></svg>",  # an SVG image after two BOMs
+    "\u2060<svg><text>Hi</text></svg>".encode(),  # an SVG image after a word joiner
+    "\u200b<svg><text>Hi</text></svg>".encode(),  # an SVG image after a zero width space
+    " \ufeff<svg><text>Hi</text></svg>".encode(),  # an SVG image after a space and a BOM
 ]
 _UNTYPED_REFUSED_IDS = [
     "pdf", "pdf-ascii", "pdf-after-blank", "pdf-late-header", "postscript", "png", "jpeg", "gif-printable", "webp-printable",
     "nul", "control", "c1-control", "not-utf8", "utf16", "svg-xml", "svg", "markup", "open-comment", "not-html-doctype",
-    "svg-after-two-boms",
+    "svg-after-two-boms", "svg-after-word-joiner", "svg-after-zero-width-space", "svg-after-space-and-bom",
 ]
 
 
