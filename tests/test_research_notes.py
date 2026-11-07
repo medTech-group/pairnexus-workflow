@@ -298,40 +298,54 @@ _CAFE = b"<p>Caf\xc3\xa9</p>"
 
 
 @pytest.mark.parametrize(
-    "ctype,raw,want",
+    "ctype,raw",
     [
-        ("text/html; charset=undefined", _CAFE, "Caf\u00e9"),
-        ("text/html; charset=idna", _CAFE, "Caf\u00e9"),
-        ("text/html", b'<meta charset="undefined">' + _CAFE, "Caf\u00e9"),
-        ("text/html", b'<meta charset="idna">' + _CAFE, "Caf\u00e9"),
-        # decodes, but isn't a web page's text encoding
-        ("text/html", b'<meta charset="punycode"><p>Book up to 30 days ahead - call first.</p>', "Book up to 30 days ahead - call first."),
-        ("text/html; charset=unicode_escape", b"<p>C:\\new</p>", "C:\\new"),
-        ("text/html; charset=raw_unicode_escape", _CAFE, "Caf\u00e9"),
-        ("text/html; charset=utf-7", _CAFE, "Caf\u00e9"),
-        ("text/html; charset=base64", _CAFE, "Caf\u00e9"),
-        ("text/html; charset=punycode", b"<p>a-" + b"A" * 2_000_000 + b"</p>", "a-" + "A" * 2_000_000),  # never slow
+        ("text/html", _CAFE),
+        ("text/html; charset=utf-8", _CAFE),
+        ("text/html; charset=UTF8", _CAFE),
+        ("text/html; charset=us-ascii", _CAFE),
+        ("text/html", b'<meta charset="utf-8">' + _CAFE),
+        ("text/html", b'<meta charset="ascii">' + _CAFE),
+        ("text/html", b"\xef\xbb\xbf" + _CAFE),
+        ("text/plain; charset=utf-8", b"Caf\xc3\xa9"),
     ],
-    ids=[
-        "header-undefined", "header-idna", "meta-undefined", "meta-idna",
-        "meta-punycode", "unicode-escape", "raw-unicode-escape", "utf-7", "base64", "punycode-long",
-    ],
+    ids=["no-charset", "header-utf-8", "header-utf8", "header-ascii", "meta-utf-8", "meta-ascii", "bom", "plain-text"],
 )
-def test_a_charset_it_cant_decode_with_is_read_as_utf8(ctype, raw, want):
-    assert research.paragraphs(raw, ctype) == [want]
+def test_a_utf8_page_is_read(ctype, raw):
+    assert research.paragraphs(raw, ctype) == ["Caf\u00e9"]
 
 
 @pytest.mark.parametrize(
-    "ctype,raw,want",
+    "ctype,raw,charset",
     [
-        ("text/html; charset=latin-1", b"<p>Caf\xe9</p>", "Caf\u00e9"),
-        ("text/html", b'<meta charset="windows-1252"><p>Caf\xe9</p>', "Caf\u00e9"),
-        ("text/html; charset=Shift_JIS", "<p>\u4e88\u7d04</p>".encode("shift_jis"), "\u4e88\u7d04"),
+        ("text/html; charset=windows-1252", b"<p>Caf\xe9</p>", "windows-1252"),
+        ("text/html", b'<meta charset="windows-1252"><p>Caf\xe9</p>', "windows-1252"),
+        ("text/html; charset=latin-1", b"<p>Caf\xe9</p>", "latin-1"),
+        ("text/html; charset=Shift_JIS", "<p>\u4e88\u7d04</p>".encode("shift_jis"), "Shift_JIS"),
+        ("text/html; charset=TIS-620", "<p>\u0e01\u0e14</p>".encode("tis-620"), "TIS-620"),
+        ("text/html", b'<meta charset="punycode"><p>Book up to 30 days ahead - call first.</p>', "punycode"),
+        ("text/html; charset=punycode", b"<p>a-" + b"A" * 2_000_000 + b"</p>", "punycode"),  # refused before any decoding: never slow
+        ("text/html; charset=unicode_escape", b"<p>C:\\new</p>", "unicode_escape"),
+        ("text/html; charset=undefined", _CAFE, "undefined"),
+        ("text/html", b'<meta charset="undefined">' + _CAFE, "undefined"),
+        ("text/html; charset=idna", _CAFE, "idna"),
+        ("text/html", b'<meta charset="idna">' + _CAFE, "idna"),
+        ("text/plain; charset=windows-1252", b"Caf\xe9", "windows-1252"),
     ],
-    ids=["latin-1", "windows-1252", "shift-jis"],
+    ids=[
+        "header-windows-1252", "meta-windows-1252", "latin-1", "shift-jis", "tis-620", "meta-punycode", "punycode-long",
+        "unicode-escape", "header-undefined", "meta-undefined", "header-idna", "meta-idna", "plain-text",
+    ],
 )
-def test_a_charset_it_can_decode_with_is_used(ctype, raw, want):
-    assert research.paragraphs(raw, ctype) == [want]
+def test_a_page_not_in_utf8_is_refused(ctype, raw, charset):
+    with pytest.raises(research.PageError, match=f"it is in {re.escape(charset)}; only UTF-8 pages are read"):
+        research.paragraphs(raw, ctype)
+
+
+@pytest.mark.parametrize("ctype,raw", [("text/html", b"<p>Caf\xe9</p>"), ("text/plain", b"Caf\xe9")], ids=["html", "plain-text"])
+def test_bytes_that_arent_valid_utf8_are_refused(ctype, raw):
+    with pytest.raises(research.PageError, match="its bytes aren't valid UTF-8"):
+        research.paragraphs(raw, ctype)
 
 
 def test_html_it_cant_parse_is_a_page_it_cant_read(monkeypatch):
@@ -343,15 +357,18 @@ def test_html_it_cant_parse_is_a_page_it_cant_read(monkeypatch):
         research.page_paragraphs(b"<p>A</p>", "text/html")
 
 
-def test_fingerprint_reads_a_page_whose_charset_it_cant_decode_with(project, tmp_path):
-    page = tmp_path / "undefined.html"
-    page.write_bytes(b'<meta charset="undefined"><p>Hi</p>')
-    p = _cli("fingerprint", URL, "--page", page, "--json", env=_env(project))
-    assert p.returncode == 0, p.stderr
-    assert [x["text"] for x in json.loads(p.stdout)["paragraphs"]] == ["Hi"]
+def test_fingerprint_refuses_a_page_not_in_utf8_and_writes_nothing(project, tmp_path):
+    page = tmp_path / "menu.html"
+    page.write_bytes(b'<meta charset="windows-1252"><p>Caf\xe9</p>')
+    before = _snapshot(project)
+    p = _cli("fingerprint", URL, "--page", page, env=_env(project))
+    assert p.returncode == 1 and p.stdout == ""
+    assert "can't read" in p.stderr and "it is in windows-1252; only UTF-8 pages are read" in p.stderr
+    assert "Traceback" not in p.stderr
+    assert _snapshot(project) == before
 
 
-def test_check_reads_every_source_when_one_names_a_charset_it_cant_decode_with(project, server):
+def test_check_cant_fetch_a_source_not_in_utf8_and_reads_the_others(project, server):
     base, routes = server
     other = _two_sources(project)
     folder = _note(project).parent
@@ -360,7 +377,9 @@ def test_check_reads_every_source_when_one_names_a_charset_it_cant_decode_with(p
     routes["/groups"] = (200, "text/html; charset=idna", PAGE.read_bytes())
     p = _check(project, (URL, PAGE), extra=["--fetch"])
     assert p.returncode == 0, p.stderr
-    assert [(s["url"], s["result"]) for s in json.loads(p.stdout)["sources"]] == [(URL, "unchanged"), (f"{base}/groups", "unchanged")]
+    got = json.loads(p.stdout)["sources"]
+    assert [(s["url"], s["result"]) for s in got] == [(URL, "unchanged"), (f"{base}/groups", "cant_fetch")]
+    assert "only UTF-8 pages are read" in got[1]["why"]
 
 
 @pytest.mark.parametrize(

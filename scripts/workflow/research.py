@@ -155,44 +155,41 @@ def _kind(content_type: str) -> str:
     raise PageError(f"it isn't a text page ({ctype})")
 
 
-# The text encodings a web page can use (the WHATWG Encoding Standard's, and
-# latin-1, ascii and utf-16 as pages name them), by Python's codec names.
-# Anything else, a codec such as punycode or unicode_escape among them, is read as UTF-8.
-_WEB_CHARSETS = {
-    "utf-8", "utf-16", "utf-16-be", "utf-16-le", "ascii", "cp866", "koi8-r", "koi8-u", "mac-roman", "mac-cyrillic",
-    "cp874", "cp1250", "cp1251", "cp1252", "cp1253", "cp1254", "cp1255", "cp1256", "cp1257", "cp1258",
-    "gbk", "gb2312", "gb18030", "big5", "euc_jp", "iso2022_jp", "shift_jis", "euc_kr",
-    *(f"iso8859-{n}" for n in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16)),
-}
-
-
-def _charset(content_type: str, raw: bytes, kind: str) -> str:
+def _charset(content_type: str, raw: bytes, kind: str) -> str | None:
+    """The charset the page names: the header's, else an HTML page's `<meta>`, else none."""
     m = re.search(r"charset=[\"']?([A-Za-z0-9_.:-]+)", content_type, re.I)
-    if not m and kind == "html":
+    if m:
+        return m.group(1)
+    if kind == "html":
         m = re.search(rb"<meta[^>]+charset=[\"']?([A-Za-z0-9_.:-]+)", raw[:4096], re.I)
-        name = m.group(1).decode("ascii") if m else "utf-8"
-    else:
-        name = m.group(1) if m else "utf-8"
+        if m:
+            return m.group(1).decode("ascii")
+    return None
+
+
+def _is_utf8(name: str) -> bool:
     try:
-        codec = codecs.lookup(name).name
+        return codecs.lookup(name).name in ("utf-8", "ascii")
     except (LookupError, UnicodeError, ValueError):
-        return "utf-8"
-    return codec if codec in _WEB_CHARSETS else "utf-8"
+        return False
 
 
 def paragraphs(raw: bytes, content_type: str) -> list[str]:
     """The page's text, as paragraphs: HTML by its block elements (scripts,
     styles, the head and navigation left out), plain text by its blank lines.
     Whitespace inside a paragraph is one space; empty paragraphs are dropped.
-    A charset it can't decode with, or one that isn't a web page's text
-    encoding, is read as UTF-8; HTML it can't parse, or
-    a page with no content type, raises PageError."""
+    Only UTF-8 pages are read: a page naming another charset, bytes that
+    aren't valid UTF-8, HTML it can't parse, or a page with no content type
+    raises PageError."""
     kind = _kind(content_type)
+    name = _charset(content_type, raw, kind)
+    if name is not None and not _is_utf8(name):
+        raise PageError(f"it is in {name}; only UTF-8 pages are read")
     try:
-        text = raw.decode(_charset(content_type, raw, kind), errors="replace")
-    except (LookupError, UnicodeError, ValueError):
-        text = raw.decode("utf-8", errors="replace")
-    text = text.lstrip("﻿")
+        text = raw.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        raise PageError("its bytes aren't valid UTF-8") from None
+    text = text.lstrip("\ufeff")
     if kind == "html":
         p = _Text()
         try:
