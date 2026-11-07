@@ -251,6 +251,23 @@ def test_the_html_reader(html, want):
 
 
 @pytest.mark.parametrize(
+    "html,want",
+    [
+        (b"<!doctype html><html><head><title>T</title><p>First para.<p>Second para.</html>", ["First para.", "Second para."]),
+        (b"<head><title>T</title><div>A</div>", ["A"]),
+        (
+            b"<head><title>T</title><base href=/><meta charset=utf-8><link rel=icon><style>s</style><script>j</script>"
+            b"<noscript>n</noscript><template>t</template><p>A",
+            ["A"],
+        ),
+    ],
+    ids=["html5-no-body", "div", "head-content-skipped"],
+)
+def test_the_head_ends_at_the_first_tag_that_isnt_head_content(html, want):
+    assert research.paragraphs(html, "text/html") == want
+
+
+@pytest.mark.parametrize(
     "ctype,raw",
     [
         ("text/html; charset=undefined", b"<p>Caf\xc3\xa9</p>"),
