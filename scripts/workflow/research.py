@@ -236,7 +236,10 @@ def _untyped_kind(raw: bytes) -> str:
     them), aren't valid UTF-8, or start with markup that isn't HTML (an SVG,
     say) raise PageError."""
     why = "it names no content type, and its bytes aren't clearly a text page"
-    body = raw[3:] if raw.startswith(b"\xef\xbb\xbf") else raw
+    i = 0
+    while raw.startswith(b"\xef\xbb\xbf", i):  # every leading BOM, as `paragraphs` strips them
+        i += 3
+    body = raw[i:]
     if any(body.lstrip().startswith(sig) for sig in _NOT_TEXT_STARTS) or b"%PDF-" in body[:1024]:
         raise PageError(f"{why}: they start like a PDF or an image")
     try:
