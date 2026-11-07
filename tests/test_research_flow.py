@@ -281,8 +281,10 @@ def test_the_readme_gives_the_order():
     for part in ("build it", "prototype first", "stop", "interview", "uncapped"):
         assert part in after, part
     chart = text.split("**Chart the map**", 1)[1].split("**Work through it**", 1)[0]
-    assert "new project" in chart and "intake" in chart and "panel" in chart and "before" in chart
-    assert "Notes" in chart and "research issue" in chart
+    # The one sentence on a study: not words anywhere in the charting steps.
+    s = _sentence(chart, "research issue")
+    for part in ("new project", "intake", "panel", "before", "Notes"):
+        assert part in s, part
 
 
 def test_the_readme_s_to_questionnaire_line_says_where_a_study_s_questionnaire_goes():
