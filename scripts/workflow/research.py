@@ -163,7 +163,7 @@ def _charset(content_type: str, raw: bytes, kind: str) -> str:
         name = m.group(1) if m else "utf-8"
     try:
         "".encode(name)
-    except LookupError:
+    except (LookupError, UnicodeError, ValueError):
         return "utf-8"
     return name
 
@@ -171,13 +171,22 @@ def _charset(content_type: str, raw: bytes, kind: str) -> str:
 def paragraphs(raw: bytes, content_type: str = "") -> list[str]:
     """The page's text, as paragraphs: HTML by its block elements (scripts,
     styles, the head and navigation left out), plain text by its blank lines.
-    Whitespace inside a paragraph is one space; empty paragraphs are dropped."""
+    Whitespace inside a paragraph is one space; empty paragraphs are dropped.
+    A charset it can't decode with is read as UTF-8; HTML it can't parse
+    raises PageError."""
     kind = _kind(content_type, raw)
-    text = raw.decode(_charset(content_type, raw, kind), errors="replace").lstrip("﻿")
+    try:
+        text = raw.decode(_charset(content_type, raw, kind), errors="replace")
+    except (LookupError, UnicodeError, ValueError):
+        text = raw.decode("utf-8", errors="replace")
+    text = text.lstrip("﻿")
     if kind == "html":
         p = _Text()
-        p.feed(text)
-        p.close()
+        try:
+            p.feed(text)
+            p.close()
+        except Exception as e:  # html.parser's own errors on odd markup
+            raise PageError(f"its HTML can't be read ({type(e).__name__})") from None
         return p.paragraphs
     return [t for t in (_flat(c) for c in re.split(r"\n[ \t\r\f\v]*\n", text.replace("\r\n", "\n").replace("\r", "\n"))) if t]
 

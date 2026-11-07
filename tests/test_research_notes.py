@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from conftest import KIT
+from workflow import research
 
 CLI = KIT / "scripts/workflow.py"
 FIX = KIT / "tests/fixtures/research"
@@ -194,6 +195,53 @@ def test_fingerprint_refuses_a_page_it_cant_read_and_writes_nothing(project, ser
     assert p.returncode == 1
     assert "can't" in p.stderr
     assert not saved.exists() and not fps.exists()
+
+
+@pytest.mark.parametrize(
+    "ctype,raw",
+    [
+        ("text/html; charset=undefined", b"<p>Caf\xc3\xa9</p>"),
+        ("text/html; charset=idna", b"<p>Caf\xc3\xa9</p>"),
+        ("text/html", b'<meta charset="undefined"><p>Caf\xc3\xa9</p>'),
+        ("text/html", b'<meta charset="idna"><p>Caf\xc3\xa9</p>'),
+    ],
+    ids=["header-undefined", "header-idna", "meta-undefined", "meta-idna"],
+)
+def test_a_charset_it_cant_decode_with_is_read_as_utf8(ctype, raw):
+    assert research.paragraphs(raw, ctype) == ["Caf\u00e9"]
+
+
+def test_a_charset_it_can_decode_with_is_used():
+    assert research.paragraphs(b"<p>Caf\xe9</p>", "text/html; charset=latin-1") == ["Caf\u00e9"]
+
+
+def test_html_it_cant_parse_is_a_page_it_cant_read(monkeypatch):
+    def broken(self, data):
+        raise AssertionError("unknown status keyword")
+
+    monkeypatch.setattr(research._Text, "feed", broken)
+    with pytest.raises(research.PageError):
+        research.page_paragraphs(b"<p>A</p>", "text/html")
+
+
+def test_fingerprint_reads_a_page_whose_charset_it_cant_decode_with(project, tmp_path):
+    page = tmp_path / "undefined.html"
+    page.write_bytes(b'<meta charset="undefined"><p>Hi</p>')
+    p = _cli("fingerprint", URL, "--page", page, "--json", env=_env(project))
+    assert p.returncode == 0, p.stderr
+    assert [x["text"] for x in json.loads(p.stdout)["paragraphs"]] == ["Hi"]
+
+
+def test_check_reads_every_source_when_one_names_a_charset_it_cant_decode_with(project, server):
+    base, routes = server
+    other = _two_sources(project)
+    folder = _note(project).parent
+    for f in ("note.md", "sources/groups.md", "sources/groups.fingerprints"):
+        (folder / f).write_text((folder / f).read_text().replace(other, f"{base}/groups"))
+    routes["/groups"] = (200, "text/html; charset=idna", PAGE.read_bytes())
+    p = _check(project, (URL, PAGE), extra=["--fetch"])
+    assert p.returncode == 0, p.stderr
+    assert [(s["url"], s["result"]) for s in json.loads(p.stdout)["sources"]] == [(URL, "unchanged"), (f"{base}/groups", "unchanged")]
 
 
 def test_fingerprint_cant_fetch_an_unreachable_page(project):
