@@ -495,27 +495,23 @@ def test_the_evidence_is_still_required_where_the_profile_says(project, capsys):
 def test_a_pull_request_with_any_other_file_gets_the_normal_rule_and_its_research_records_dont_count(project, capsys, other):
     files = note() + [other]
     got = judged(project, capsys, pr(files, record(1, files)))
-    assert ids(got) == ["no_review"] and "research_records_ignored" in note_ids(got)
+    assert ids(got) == ["no_review"]
     rnd = reviews.record(kind="round", round=1, commit=HEAD, reviewers="standards,spec,correctness", clean=True)
     got = judged(project, capsys, pr(files, record(1, files, clean=False), rnd))
     assert got["decision"] == "ready", got["reasons"]
 
 
-def test_files_it_cant_read_give_only_their_own_reason(project, capsys):
-    """Whether the pull request is one of research notes can't be told, so
-    neither rule's advice is given, and nothing is said about where its files are."""
-    data = pr(note(), record(1, note()))
+def test_files_it_cant_read_are_judged_by_the_review_panels_rule(project, capsys):
+    """As before #509: a pull request whose list of files can't be read is
+    judged as one that isn't research notes, so its review reasons show beside
+    the couldn't-read reason, and it isn't ready."""
+    rnd = reviews.record(kind="round", round=1, commit=HEAD, reviewers="standards,spec,correctness", clean=True)
+    one_pass = reviews.record(kind="pass", round=1, commit=HEAD, reviewers="correctness", clean=False)
+    data = pr(note(), rnd, one_pass, one_pass)
     data["pr"]["changed_files"] = 5  # GitHub's list left 3 out
     got = judged(project, capsys, data)
-    assert ids(got) == ["couldnt_read"]
+    assert ids(got) == ["couldnt_read", "passes_used_up"], got["reasons"]
     assert got["reasons"][0]["input"] == "files"
-    assert "research_records_ignored" not in note_ids(got)
-    assert got["decision"] == "not_yet"
-
-
-def test_a_pull_request_with_no_files_says_nothing_of_files_outside_the_research_folder(project, capsys):
-    got = judged(project, capsys, pr([], record(1, note())))
-    assert "research_records_ignored" not in note_ids(got)
     assert got["decision"] == "not_yet"
 
 
