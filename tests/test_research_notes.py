@@ -349,6 +349,9 @@ def test_a_page_that_leaves_out_both_the_heads_end_and_the_body_gives_its_paragr
         # head content, whitespace and comments keep it open
         (b"<html><head>\n <meta charset=utf-8><link rel=icon href=x><base href=/><style>p{}</style>"
          b"<script>a = '<p>no</p>'</script><noframes><p>no</p></noframes><!-- c --><meta/><head><html><p>A", ["A"]),
+        # these two are head content with no end tag: what follows them is read
+        (b"<head><title>T</title><basefont size=3><p>A", ["A"]),
+        (b"<head><title>T</title><bgsound src=x><p>A", ["A"]),
         # anything else ends it, and is read
         (b"<head><title>T</title>Hello<p>A", ["Hello", "A"]),  # text
         (b"<head><title>T</title><h1>H</h1><p>A", ["H", "A"]),
@@ -359,7 +362,7 @@ def test_a_page_that_leaves_out_both_the_heads_end_and_the_body_gives_its_paragr
     ],
     ids=[
         "noscript-tag", "noscript-text", "template", "nested-template", "title", "noscript-noscript",
-        "head-content", "text", "block", "self-closed", "skipped-element", "end-body", "end-other",
+        "head-content", "basefont", "bgsound", "text", "block", "self-closed", "skipped-element", "end-body", "end-other",
     ],
 )
 def test_a_head_that_isnt_closed_ends_at_the_first_tag_that_isnt_head_content(html, want):

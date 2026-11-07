@@ -136,7 +136,7 @@ class _Text(HTMLParser):
                 if tag in ("head", "html"):
                     return
                 if tag in _HEAD_CONTENT:
-                    if tag not in _VOID:
+                    if tag in _HEAD_RAW or tag == "template":  # the others have no end tag
                         self._skip.append(tag)
                     return
                 self._end_head()  # anything else ends the head, and is read
