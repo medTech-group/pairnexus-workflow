@@ -116,11 +116,13 @@ Everything else takes the template's default, or what exploring found: the comma
 **8. A "Workflow" section in `CLAUDE.md`.** It points at `.claude/workflow/flow.md` and the profile, says a session starts with the guided start (the `start` skill: "What are we working on?", or `/start`), says in a line that when the guard's hook times out and blocks a command, Claude says so and offers to split or simplify it, and replaces any older flow description. The project's own rules stay where they are.
 
 **9. Labels,** created through the API (`gh api repos/<repo>/labels -f name=… -f color=…`) unless they already exist:
-- `ready-for-agent`, `ready-for-human`, `needs-human`, `owner-task`, `needs-triage`, `needs-info`, `wontfix`, `spec`;
+- `ready-for-agent`, `ready-for-human`, `needs-human`, `owner-task`, `needs-triage`, `needs-info`, `wontfix`, `spec`, `research`;
 - `workflow:in-progress`, `workflow:run`, `workflow:stop`, `workflow:infra`;
 - `wayfinder:map`, `wayfinder:research`, `wayfinder:prototype`, `wayfinder:grilling`, `wayfinder:task`.
 
 `ready-for-human` and `owner-task` both mean "a person does this". Readiness treats both as human blockers.
+
+`research` marks a study's issue, and the issue a session files when it finds a research note's claim wrong. It isn't `wayfinder:research`, a map's research decision.
 
 **10. Issue templates:** copy `$KIT/templates/github/ISSUE_TEMPLATE/build-ticket.md` and `owner-task.md` to `.github/ISSUE_TEMPLATE/`, keeping any the project has.
 

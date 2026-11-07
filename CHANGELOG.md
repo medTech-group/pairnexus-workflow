@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**Set-up creates the `research` label** (#507, part of spec #505). `setup-workflow`'s labels step creates `research` with the others: it marks a study's issue, and the issue a session files when it finds a research note's claim wrong, and isn't `wayfinder:research`.
+
+- **For projects updating:** create the `research` label on the repository (`gh api repos/<repo>/labels -f name=research`), or leave it: a session that needs it creates it when it's missing. Tests: `tests/test_research_label_setup.py`.
+
 ## 0.1.18
 
 **A run can keep reviewing a ticket until it is clean.** #402: the pass cap takes `until-clean`, so after the last review round a run fixes and reviews again until a Correctness pass is clean, within its end time, instead of stopping the ticket at a number. Numbers 0 to 10 behave as before.
