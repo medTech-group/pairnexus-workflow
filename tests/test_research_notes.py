@@ -608,6 +608,30 @@ _UNTYPED_REFUSED_IDS = [
     "svg-after-two-boms", "svg-after-word-joiner", "svg-after-zero-width-space", "svg-after-space-and-bom",
 ]
 
+# First characters that aren't shown, or show as blank, and aren't format
+# characters: a page that starts with one is refused too (round 2).
+_NOT_SHOWN = {
+    "hangul-filler": "\u3164",
+    "choseong-filler": "\u115f",
+    "jungseong-filler": "\u1160",
+    "halfwidth-hangul-filler": "\uffa0",
+    "braille-blank": "\u2800",
+    "null-notehead": "\U0001d159",
+    "combining-grapheme-joiner": "\u034f",
+    "variation-selector": "\ufe0f",
+    "variation-selector-supplement": "\U000e0100",
+    "khmer-inherent-vowel": "\u17b4",
+    "combining-acute": "\u0301",
+    "private-use": "\ue000",
+    "noncharacter": "\ufffe",
+    "unassigned": "\u0378",
+}
+for _id, _c in _NOT_SHOWN.items():
+    _UNTYPED_REFUSED.append(f'{_c}<svg xmlns="http://www.w3.org/2000/svg"><text>Hi</text></svg>'.encode())
+    _UNTYPED_REFUSED_IDS.append(f"svg-after-{_id}")
+_UNTYPED_REFUSED.append("\u3164<!doctype html><html><head><title>t</title></head><body><p>First.</p></body></html>".encode())
+_UNTYPED_REFUSED_IDS.append("html-after-hangul-filler")
+
 
 @pytest.mark.parametrize("ctype", _NO_TYPE, ids=["no-header", "empty-header", "charset-only"])
 @pytest.mark.parametrize("raw", _UNTYPED_REFUSED, ids=_UNTYPED_REFUSED_IDS)
@@ -632,6 +656,34 @@ def test_check_cant_fetch_a_page_that_names_no_content_type_unless_its_bytes_are
     assert p.returncode == 0, p.stderr
     (src,) = json.loads(p.stdout)["sources"]
     assert src["result"] == "cant_fetch" and "no content type" in src["why"]
+
+
+@pytest.mark.parametrize("first", list(_NOT_SHOWN.values()) + ["​"], ids=list(_NOT_SHOWN) + ["zero-width-space"])
+def test_a_page_that_names_no_content_type_and_starts_with_a_character_that_isnt_shown_is_refused(first):
+    for rest in ("<svg><text>Hi</text></svg>", "<!doctype html><p>First.</p>", "First.\n\nSecond.\n"):
+        with pytest.raises(research.PageError, match="no content type.*isn't shown"):
+            research.paragraphs(f" \n{first}{rest}".encode(), "")
+
+
+def test_a_ten_mb_page_of_fillers_before_an_svg_is_refused():
+    raw = "ㅤ".encode() * (_TEN_MB // 3) + b"<svg><text>Hi</text></svg>"
+    with pytest.raises(research.PageError, match="isn't shown"):
+        research.paragraphs(raw, "")
+
+
+@pytest.mark.parametrize(
+    "first",
+    ["#", "{", '"', "“", "1", "É", "日", "\U0001f600", "م"],
+    ids=["hash", "brace", "quote", "curly-quote", "digit", "accented", "cjk", "emoji", "arabic"],
+)
+def test_a_page_that_names_no_content_type_and_starts_with_ordinary_text_reads(first):
+    raw = f"{first} First.\n\nSecond, with a fillerㅤ and a mark é inside.\n".encode()
+    assert research.paragraphs(raw, "") == [f"{first} First.", "Second, with a fillerㅤ and a mark é inside."]
+
+
+@pytest.mark.parametrize("first", list(_NOT_SHOWN.values()), ids=list(_NOT_SHOWN))
+def test_a_page_that_names_its_content_type_reads_whatever_its_first_character(first):
+    assert research.paragraphs(f"{first}First.\n".encode(), "text/plain") == [f"{first}First."]
 
 
 def test_many_comments_before_markup_that_isnt_html_are_refused_at_once():

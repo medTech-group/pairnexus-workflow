@@ -235,7 +235,7 @@ def _untyped_kind(raw: bytes) -> str:
     start like a PDF or an image (or hold `%PDF-` in their first 1024 bytes,
     where PDF readers look for it), hold a control character (a NUL among
     them), aren't valid UTF-8, or start with markup that isn't HTML (an SVG,
-    say) or a character that isn't shown raise PageError."""
+    say) or a character that isn't shown (`_shown`) raise PageError."""
     why = "it names no content type, and its bytes aren't clearly a text page"
     i = 0
     while raw.startswith(b"\xef\xbb\xbf", i):  # every leading BOM, as `paragraphs` strips them
@@ -255,9 +255,19 @@ def _untyped_kind(raw: bytes) -> str:
     first = text[j : j + 1]
     if first == "<":
         raise PageError(f"{why}: they start with markup that isn't HTML")
-    if first and unicodedata.category(first) == "Cf":  # a zero width space or a word joiner, say: it hides what follows
+    if first and not _shown(first):  # it hides what follows
         raise PageError(f"{why}: they start with a character that isn't shown")
     return "text"
+
+
+# Letters and symbols that show as blank, though printable.
+_BLANK = frozenset("ᅟᅠㅤﾠ⠀\U0001d159")
+
+
+def _shown(c: str) -> bool:
+    """Whether a page's first character is shown on its own: printable (so not a
+    format, private-use or unassigned character), not a mark, and not blank."""
+    return c.isprintable() and not unicodedata.category(c).startswith("M") and c not in _BLANK
 
 
 def _charset(content_type: str, raw: bytes, kind: str) -> str | None:

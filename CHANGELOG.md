@@ -16,7 +16,7 @@
 
 - **For projects updating:** nothing to do.
 
-**`workflow research` reads a fetched page that names no content type when its bytes are clearly text** (#527, part of spec #505). Such a page was refused. It is now read as HTML when it starts as an HTML page (`<!doctype html>` or `<html>`, after any XML declaration and comments), and as plain text when it is plain text. It stays refused, `fingerprint` exiting 1 and `check` saying can't fetch, when its bytes start like a PDF or an image (or hold `%PDF-` in their first 1024 bytes), hold a control character (a NUL among them), aren't valid UTF-8, or start with markup that isn't HTML (an SVG, say) or with a character that isn't shown (a zero width space, say). A page that names its content type reads as before.
+**`workflow research` reads a fetched page that names no content type when its bytes are clearly text** (#527, part of spec #505). Such a page was refused. It is now read as HTML when it starts as an HTML page (`<!doctype html>` or `<html>`, after any XML declaration and comments), and as plain text when it is plain text. It stays refused, `fingerprint` exiting 1 and `check` saying can't fetch, when its bytes start like a PDF or an image (or hold `%PDF-` in their first 1024 bytes), hold a control character (a NUL among them), aren't valid UTF-8, or start with markup that isn't HTML (an SVG, say) or with a character that isn't shown, or shows as blank (a zero width space, a combining mark, a Hangul filler or a private-use character, say). A page that names its content type reads as before.
 
 - **For projects updating:** nothing to do.
 
