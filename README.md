@@ -429,6 +429,8 @@ Planning uses [Matt Pocock's skills](https://github.com/mattpocock/skills). In v
 
 Keep steps 1 to 3 in **one session** where you can, so the spec and the tickets are written from everything said in the interview (see "Long sessions" above for when it gets long).
 
+**A study, when one runs, comes first.** The intake frames it (who it's for, what problem, what success looks like, any hard limits), with no question cap. Then a panel of fresh agents does the research. Then the interview below, still uncapped, starts from the study's findings and the questions it ranked. A study ends with a verdict: build it, prototype first, or stop (the kit's flow, "Research").
+
 **1. `/grill-with-docs`: the interview.** Type the command and the idea in a sentence or two:
 
 > /grill-with-docs In our notes app, people should get a reminder for a note they've given a date.
@@ -494,6 +496,8 @@ When the work is too big for one session, or too unclear to spec yet, chart it f
 
 > /wayfinder A small shop online: customers order from their phone, staff pack and post the orders.
 
+For a new project, a study comes first: its intake and its panel run before charting starts, and its research issue is linked from the map's Notes, never made one of the map's decisions (the kit's flow, "Research").
+
 1. Claude interviews you about the **destination**: what reaching the end looks like. It can be several items, each needing its own spec (for example "customers order from their phone" and "staff pack the orders").
 2. A second, wider round finds the open questions across the whole effort and the first steps that can be taken now. If it finds nothing unclear, no map is needed: it stops and asks how you want to go on (usually straight to a spec).
 3. It creates the map issue with these sections:
@@ -507,13 +511,13 @@ When the work is too big for one session, or too unclear to spec yet, chart it f
    - `wayfinder:research`: reading documentation or an API, done by Claude alone;
    - `wayfinder:prototype`: a rough, throwaway thing to react to;
    - `wayfinder:task`: something that has to be done before a decision can be made, like signing up for a service to try its API.
-5. It starts the research questions straight away in the background, and stops: charting resolves nothing itself.
+5. It starts the research questions straight away in the background, and stops: charting resolves nothing itself. Each background agent writes its note in its own worktree, and the session that started them opens each note's research pull request.
 
 **Work through it**, **one decision per session** (research questions excepted). Use `/next map`, or `/wayfinder <map link>`, or the guided start's "Carry on". Claude:
 1. takes the first decision whose blockers are settled, and claims it (the `workflow:in-progress` label, and assigned to you), so no other session takes it;
 2. settles it as its kind says: an interview with you, a prototype you react to, research, or a task;
 3. posts your answers on the decision's issue, each question with your answer quoted word for word, each round as soon as you answer it, tagged as your own words or a recommendation you accepted;
-4. commits any glossary or ADR change to a branch and has it reviewed against your answers and the code (the review panel's planning review), in rounds until one is clean; research notes stay on their own `research/…` branch, linked from the decision, never merged;
+4. commits any glossary or ADR change to a branch and has it reviewed against your answers and the code (the review panel's planning review), in rounds until one is clean; research notes go in `docs/research/<topic>/` through a research pull request of their own, linked from the decision;
 5. only then writes the resolution as a comment, closes the issue, and adds one line to the map's "Decisions so far";
 6. opens new decision issues as answers make them clear, moving each from "Not yet specified" as it does;
 7. offers you the pull request, with its review records on it.
@@ -555,8 +559,8 @@ Several decisions that don't block each other can be worked in parallel sessions
   - A **UI** prototype: several very different versions of one screen, switchable in the browser.
 
   When it has answered the question, the answer goes into the decisions, and the prototype is kept on a branch for reference.
-- **`/research <question>`**: a background agent reads the primary sources (official docs, source code, specs) and leaves a Markdown file in the repository, citing each claim. You keep talking meanwhile; its findings feed the interview. It is kept on a `research/…` branch, linked from the issue it answers, and never merged.
-- **`/to-questionnaire`**: when someone else holds the answer (an accountant, a supplier, legal). It asks you only who it's for and what you need back, then writes them a questionnaire to fill in, most important question first. It writes `to-questionnaire-<slug>.md` in the repository's root; you send it yourself. In a cloud session, ask Claude to print it before the session ends: the file is gone with the machine.
+- **`/research <question>`**: a background agent reads the primary sources (official docs, source code, specs) and leaves a Markdown file in the repository, citing each claim. You keep talking meanwhile; its findings feed the interview. The note goes in `docs/research/<topic>/`, starting with its header (`Status:`, `Last checked:` and `Issue:`), through a research pull request of its own, which merges after one research check of its claims against their saved sources. A note with no issue to name gets a `research` issue. Sessions read only notes marked `current`.
+- **`/to-questionnaire`**: when someone else holds the answer (an accountant, a supplier, legal). It asks you only who it's for and what you need back, then writes them a questionnaire to fill in, most important question first. It writes `to-questionnaire-<slug>.md` in the repository's root; you send it yourself. A questionnaire for a study's finding goes in that study's `docs/research/<topic>/` instead. In a cloud session, ask Claude to print it before the session ends: the file is gone with the machine.
 - **`/wait-what`**: Claude's last message didn't make sense. It says it again, plainly, with the context you were missing.
 - **`/handoff`**: writes the conversation so far to a file another session can pick up.
   - It saves to the machine's temporary directory, not the repository.
@@ -580,7 +584,7 @@ Several decisions that don't block each other can be worked in parallel sessions
 | `/wayfinder` | You type | A map of decisions for a large or foggy effort | `/next map` and `/next spec` work it |
 | `/to-questionnaire` | You type | Questions for someone else to answer, as a file in the repository's root | |
 | `/prototype` | Claude, when needed | Throwaway code that answers a design question | |
-| `/research` | Claude, when needed | A background agent reads primary sources, writes a cited note | |
+| `/research` | Claude, when needed | A background agent reads primary sources, writes a cited note | In `docs/research/<topic>/`, through a research pull request |
 | `/triage` | You type | Sorts raw bug reports and requests into `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human` or `wontfix`, with a brief for the agent | A ticket it readies gets `Area:` and `## Blocked by` first |
 | `/diagnosing-bugs` | Claude, when needed | Hard bugs: gets a command that fails on this bug before theorising, then fixes it with a test | The guided start's "Find the cause first" |
 | `/tdd` | Claude, when needed | Builds test-first, one red-to-green step at a time | Every ticket session uses it |
