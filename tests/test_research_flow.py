@@ -184,8 +184,10 @@ def test_old_notes_stay_until_used_and_are_then_brought_in():
     assert "`research/*`" in r and "stay where they are" in r
     s = _sentence(r, "relies on")
     assert "offers to bring it in" in s
-    for part in ("header", "saved sources", "fingerprints", "research check"):
+    for part in ("header", "saved copies", "fingerprints", "research check"):
         assert part in s, part
+    # One name for one thing: the `study` skill calls these files saved copies.
+    assert "saved source" not in s
 
 
 def test_the_kits_own_notes_go_in_docs_research_too():
