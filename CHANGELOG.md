@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+**Research notes in the repository: the folder's layout, fingerprints, the source check and current notes** (#506, part of spec #505).
+
+- **`workflow research`,** a new command whose inputs are files, with `--fetch` for pages. It calls no model and writes nothing:
+  - `fingerprint <link> --page F | --fetch [--json]` reads a page (HTML or plain text) and prints its paragraphs, each with the SHA-256 of its text as fetched. The session writes the saved copy and the fingerprint file from that one output. It leaves out whatever matches the profile's `[sensitive].patterns` from the text it prints, never from the hashes, and refuses a page it can't read as text, one not in UTF-8 (another charset, or bytes that aren't valid UTF-8), one whose server names no content type, or one with no text. With `--fetch` it refuses a link holding characters outside ASCII: cite it percent-encoded.
+  - `check --note F [--page <link> F ...] [--fetch]` compares a note's key sources with their fingerprints, as a set. For each source it says unchanged; changed, with each new paragraph's live text, position and hash, and each paragraph gone, by its position in the saved copy, with the saved copy's text and its hash; or can't fetch, and why. It refuses a note that breaks the layout, naming what to fix.
+  - `notes [--dir DIR]` lists the notes marked `Status: current`, and names on standard error any `note.md` whose header it can't read.
+- **The `study` skill** starts with one section, the folder's one fixed layout in `docs/research/<topic>/`: `note.md` and its `Status:`, `Last checked:` and `Issue:` header, the `## Key sources` lines, the fingerprint file, a saved copy's `Source:`, `Accessed:` and `Third-party text:` lines, "[left out]" lines that keep each paragraph in its place, and the mark ` **(unconfirmed)**`. The tests' fixtures are copied from its examples, and a test ties them.
+- **`tests/test_small_review_build.py`'s** wording scan leaves `docs/research/` out, since saved copies are other people's words.
+- **For projects updating:** nothing to do.
+
 **Set-up creates the `research` label** (#507, part of spec #505). `setup-workflow`'s labels step creates `research` with the others: it marks the issues that track research notes (a study's, a fact note's, and one a session files about a note), and isn't `wayfinder:research`.
 
 - **For projects updating:** create the `research` label on the repository (`gh api repos/<repo>/labels -f name=research`), or leave it: a session that files a `research` issue creates it when it's missing (from the `study` skill, #512, and the spec's other research tickets). If the repository already has a `research` label for something else, rename that one first, since the kit reads every issue carrying it as research. Tests: `tests/test_research_label_setup.py`.

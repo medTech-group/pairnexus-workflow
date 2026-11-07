@@ -4,6 +4,7 @@ review, `build-ticket`'s mark, measuring, fallback and PR line, the three build
 choices in `start` and `next`, planning writing the mark, and the glossary."""
 
 import re
+from pathlib import Path
 
 from conftest import KIT
 from changelog_notes import since_0110
@@ -252,9 +253,24 @@ def test_the_glossarys_review_panel_names_both_reviews():
     assert len(text) < 6000
 
 
+def _kit_words(root: str, kit: Path = KIT):
+    """The kit's own Markdown under `root`. `docs/research/` is left out: its
+    saved copies are other people's words (spec #505)."""
+    for path in (kit / root).rglob("*.md"):
+        if not path.relative_to(kit).as_posix().startswith("docs/research/"):
+            yield path
+
+
+def test_the_wording_scan_leaves_research_notes_out(tmp_path):
+    for f in ("docs/flow.md", "docs/research/a-topic/note.md", "docs/research/a-topic/sources/a-page.md", "docs/researchers.md"):
+        (tmp_path / f).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / f).write_text("for small changes")
+    assert sorted(p.relative_to(tmp_path).as_posix() for p in _kit_words("docs", tmp_path)) == ["docs/flow.md", "docs/researchers.md"]
+
+
 def test_no_text_calls_the_light_review_for_small_changes():
     for root in ("skills", "docs", "templates", "agents"):
-        for path in (KIT / root).rglob("*.md"):
+        for path in _kit_words(root):
             text = _flat(path.read_text(encoding="utf-8"))
             for phrase in ("for small changes", "for a small change", "for a small, low-risk", "files a small ticket"):
                 assert phrase not in text, f"{path.relative_to(KIT)} says {phrase!r}"
