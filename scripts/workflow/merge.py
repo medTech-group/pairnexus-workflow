@@ -1239,17 +1239,15 @@ def _panel(ctx: Context, add) -> None:
     for each such part, in place of the review reasons below (`_repeats`).
 
     A pull request of research notes (#509) is judged by `_research` instead.
-    On any other, research records don't count, and a note says so."""
-    try:
-        research = research_pr.is_research(ctx.files())
-    except Unreadable:  # its own reason: judged by the panel's records, which never makes it ready
-        research = False
-    if research:
+    On any other, research records don't count, and a note says so where it
+    has files. When its files can't be read, neither is judged."""
+    files = ctx.files()  # unreadable, its own reason: which rule applies can't be told, so neither gives advice
+    if research_pr.is_research(files):
         _research(ctx, add)
         return
     head = ctx.pr().head
     left = ctx.research_records()
-    if left:
+    if left and files:
         _note(ctx, "research_records_ignored", f"Left out {_plural(len(left), 'research record')}: this pull request changes files outside `docs/research/`, so the review panel's records decide.")
     perms = ctx.permissions()
     shas = ctx.commits() | {head}

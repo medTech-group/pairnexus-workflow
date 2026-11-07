@@ -501,6 +501,24 @@ def test_a_pull_request_with_any_other_file_gets_the_normal_rule_and_its_researc
     assert got["decision"] == "ready", got["reasons"]
 
 
+def test_files_it_cant_read_give_only_their_own_reason(project, capsys):
+    """Whether the pull request is one of research notes can't be told, so
+    neither rule's advice is given, and nothing is said about where its files are."""
+    data = pr(note(), record(1, note()))
+    data["pr"]["changed_files"] = 5  # GitHub's list left 3 out
+    got = judged(project, capsys, data)
+    assert ids(got) == ["couldnt_read"]
+    assert got["reasons"][0]["input"] == "files"
+    assert "research_records_ignored" not in note_ids(got)
+    assert got["decision"] == "not_yet"
+
+
+def test_a_pull_request_with_no_files_says_nothing_of_files_outside_the_research_folder(project, capsys):
+    got = judged(project, capsys, pr([], record(1, note())))
+    assert "research_records_ignored" not in note_ids(got)
+    assert got["decision"] == "not_yet"
+
+
 @pytest.mark.parametrize("path, research", [
     ("docs/research/booking-ahead/note.md", True),
     ("docs/research/x", True),
