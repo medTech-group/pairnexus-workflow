@@ -270,22 +270,44 @@ def test_a_page_that_leaves_out_both_the_heads_end_and_the_body_is_refused(proje
     assert _snapshot(project) == before
 
 
+_CAFE = b"<p>Caf\xc3\xa9</p>"
+
+
 @pytest.mark.parametrize(
-    "ctype,raw",
+    "ctype,raw,want",
     [
-        ("text/html; charset=undefined", b"<p>Caf\xc3\xa9</p>"),
-        ("text/html; charset=idna", b"<p>Caf\xc3\xa9</p>"),
-        ("text/html", b'<meta charset="undefined"><p>Caf\xc3\xa9</p>'),
-        ("text/html", b'<meta charset="idna"><p>Caf\xc3\xa9</p>'),
+        ("text/html; charset=undefined", _CAFE, "Caf\u00e9"),
+        ("text/html; charset=idna", _CAFE, "Caf\u00e9"),
+        ("text/html", b'<meta charset="undefined">' + _CAFE, "Caf\u00e9"),
+        ("text/html", b'<meta charset="idna">' + _CAFE, "Caf\u00e9"),
+        # decodes, but isn't a web page's text encoding
+        ("text/html", b'<meta charset="punycode"><p>Book up to 30 days ahead - call first.</p>', "Book up to 30 days ahead - call first."),
+        ("text/html; charset=unicode_escape", b"<p>C:\\new</p>", "C:\\new"),
+        ("text/html; charset=raw_unicode_escape", _CAFE, "Caf\u00e9"),
+        ("text/html; charset=utf-7", _CAFE, "Caf\u00e9"),
+        ("text/html; charset=base64", _CAFE, "Caf\u00e9"),
+        ("text/html; charset=punycode", b"<p>a-" + b"A" * 2_000_000 + b"</p>", "a-" + "A" * 2_000_000),  # never slow
     ],
-    ids=["header-undefined", "header-idna", "meta-undefined", "meta-idna"],
+    ids=[
+        "header-undefined", "header-idna", "meta-undefined", "meta-idna",
+        "meta-punycode", "unicode-escape", "raw-unicode-escape", "utf-7", "base64", "punycode-long",
+    ],
 )
-def test_a_charset_it_cant_decode_with_is_read_as_utf8(ctype, raw):
-    assert research.paragraphs(raw, ctype) == ["Caf\u00e9"]
+def test_a_charset_it_cant_decode_with_is_read_as_utf8(ctype, raw, want):
+    assert research.paragraphs(raw, ctype) == [want]
 
 
-def test_a_charset_it_can_decode_with_is_used():
-    assert research.paragraphs(b"<p>Caf\xe9</p>", "text/html; charset=latin-1") == ["Caf\u00e9"]
+@pytest.mark.parametrize(
+    "ctype,raw,want",
+    [
+        ("text/html; charset=latin-1", b"<p>Caf\xe9</p>", "Caf\u00e9"),
+        ("text/html", b'<meta charset="windows-1252"><p>Caf\xe9</p>', "Caf\u00e9"),
+        ("text/html; charset=Shift_JIS", "<p>\u4e88\u7d04</p>".encode("shift_jis"), "\u4e88\u7d04"),
+    ],
+    ids=["latin-1", "windows-1252", "shift-jis"],
+)
+def test_a_charset_it_can_decode_with_is_used(ctype, raw, want):
+    assert research.paragraphs(raw, ctype) == [want]
 
 
 def test_html_it_cant_parse_is_a_page_it_cant_read(monkeypatch):
