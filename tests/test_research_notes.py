@@ -244,6 +244,43 @@ def test_check_reads_every_source_when_one_names_a_charset_it_cant_decode_with(p
     assert [(s["url"], s["result"]) for s in json.loads(p.stdout)["sources"]] == [(URL, "unchanged"), (f"{base}/groups", "unchanged")]
 
 
+@pytest.mark.parametrize(
+    "name,raw",
+    [
+        ("law.pdf", b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n1 0 obj\n<<>>\nendobj\n"),
+        ("logo.png", b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"),
+        ("page", b"<p>A page saved with no suffix.</p>"),
+    ],
+    ids=["pdf", "png", "no-suffix"],
+)
+def test_fingerprint_refuses_a_file_that_isnt_a_text_page_and_writes_nothing(project, tmp_path, name, raw):
+    page = tmp_path / name
+    page.write_bytes(raw)
+    saved, fps = project / "s.md", project / "s.fingerprints"
+    p = _cli("fingerprint", URL, "--page", page, "--saved", saved, "--fingerprints", fps, env=_env(project))
+    assert p.returncode == 1, p.stdout
+    assert "isn't a text page" in p.stderr and p.stdout == ""
+    assert not saved.exists() and not fps.exists()
+
+
+@pytest.mark.parametrize("name", ["help.txt", "help.md", "help.htm", "help.xhtml"])
+def test_fingerprint_reads_a_file_named_as_a_text_page(project, tmp_path, name):
+    page = tmp_path / name
+    page.write_text("<p>First.</p>\n\n<p>Second.</p>\n" if "htm" in name else "First.\n\nSecond.\n", encoding="utf-8")
+    p = _cli("fingerprint", URL, "--page", page, "--json", env=_env(project))
+    assert p.returncode == 0, p.stderr
+    assert [x["text"] for x in json.loads(p.stdout)["paragraphs"]] == ["First.", "Second."]
+
+
+def test_check_cant_read_a_file_that_isnt_a_text_page(project, tmp_path):
+    page = tmp_path / "help.pdf"
+    page.write_bytes(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    p = _check(project, (URL, page))
+    assert p.returncode == 0, p.stderr
+    (src,) = json.loads(p.stdout)["sources"]
+    assert src["result"] == "cant_fetch" and "isn't a text page" in src["why"]
+
+
 def test_fingerprint_cant_fetch_an_unreachable_page(project):
     p = _cli("fingerprint", f"http://127.0.0.1:{_closed_port()}/x", "--fetch", env=_env(project))
     assert p.returncode == 1 and "can't fetch" in p.stderr

@@ -192,11 +192,14 @@ def paragraphs(raw: bytes, content_type: str = "") -> list[str]:
 
 
 def read_page(path: Path) -> tuple[bytes, str]:
-    """A page saved as a file: its bytes, and a content type by its name."""
-    raw = Path(path).read_bytes()
+    """A page saved as a file: its bytes, and a content type by its name.
+    Raises PageError for a name that isn't an HTML or plain-text page's."""
     suffix = Path(path).suffix.lower()
     ctype = "text/html" if suffix in (".html", ".htm", ".xhtml") else "text/plain" if suffix in (".txt", ".md") else ""
-    return raw, ctype
+    if not ctype:
+        what = f"a `{suffix}` file" if suffix else "a file with no suffix"
+        raise PageError(f"it isn't a text page ({what}): give the page as .html, .htm, .xhtml, .txt or .md")
+    return Path(path).read_bytes(), ctype
 
 
 def fetch(url: str, timeout: float = FETCH_TIMEOUT, limit: int = FETCH_LIMIT) -> tuple[bytes, str]:
