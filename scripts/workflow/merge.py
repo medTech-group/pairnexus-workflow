@@ -722,7 +722,7 @@ class Context:
         and patch where given (#261), which `head_hashes` reads."""
 
         def read():
-            items = _walk(self.raw("files"), "files", lambda d: "filename" in d or "path" in d, GRAPHQL + ("files", "nodes"))
+            items = self._file_items()
             out = _changes_of(items, "files")
             try:
                 want = self.pr().counts["files"]
@@ -735,14 +735,25 @@ class Context:
 
         return self.once("files", read)
 
+    def _file_items(self) -> list[dict]:
+        return _walk(self.raw("files"), "files", lambda d: "filename" in d or "path" in d, GRAPHQL + ("files", "nodes"))
+
     def files(self) -> list[str]:
         """Every path the PR changes, a rename's old path too."""
-        out: list[str] = []
-        for c in self.changes():
-            for p in (c.path, c.previous):
-                if p and p not in out:
-                    out.append(p)
-        return out
+        return _paths(self.changes())
+
+    def files_listed(self) -> list[str]:
+        """The paths the list of files gives, a rename's old path too, even
+        when it leaves some out (#538): `files` without its check that none is
+        left out. Empty when no list can be read at all."""
+        try:
+            return self.files()
+        except Unreadable:
+            pass
+        try:
+            return _paths(_changes_of(self._file_items(), "files"))
+        except (Unreadable, TypeError, ValueError, AttributeError, KeyError, IndexError, RecursionError):
+            return []
 
     def head_hashes(self) -> own_changes.Hashes:
         """The hashes of the PR's own changes at its head, from GitHub's
@@ -973,6 +984,16 @@ class Context:
             return v["state"], url, commit
 
         return self.once("preview", read)
+
+
+def _paths(changes: list[small.Change]) -> list[str]:
+    """Each path the changes name, a rename's old path too, once."""
+    out: list[str] = []
+    for c in changes:
+        for p in (c.path, c.previous):
+            if p and p not in out:
+                out.append(p)
+    return out
 
 
 def _changes_of(items: list[dict], name: str) -> list[small.Change]:
@@ -1239,12 +1260,17 @@ def _panel(ctx: Context, add) -> None:
     for each such part, in place of the review reasons below (`_repeats`).
 
     A pull request of research notes (#509) is judged by `_research` instead.
-    On any other, research records don't count."""
+    On any other, research records don't count, and a note says so where
+    every file was read and one is outside `docs/research/` (#538). When the
+    files can't be read, the panel's records judge it, which never makes it
+    ready beside the couldn't-read reason; but with no file it could read
+    outside `docs/research/`, which rule applies can't be told, so `no_review`,
+    the panel's advice for a pull request it hasn't reviewed, isn't given."""
     try:
-        research = research_pr.is_research(ctx.files())
-    except Unreadable:  # its own reason: judged by the panel's records, which never makes it ready
-        research = False
-    if research:
+        files = ctx.files()
+    except Unreadable:  # its own reason
+        files = None
+    if files is not None and research_pr.is_research(files):
         _research(ctx, add)
         return
     head = ctx.pr().head
@@ -1255,6 +1281,9 @@ def _panel(ctx: Context, add) -> None:
     if len(records) > len(counted):
         left_out = _plural(len(records) - len(counted), "review record")
         _note(ctx, "records_ignored", f"Left out {left_out}: posted by an account without write access, or naming a commit not in this pull request's commit list.")
+    research = ctx.research_records()
+    if research and files:  # every file read, and not all research notes: one is outside the folder
+        _note(ctx, "research_records_ignored", f"Left out {_plural(len(research), 'research record')}: this pull request changes files outside `docs/research/`, so the review panel's records decide.")
     rounds = [i for i, r in enumerate(counted) if r.kind == "round"]
     history = {sha: n for n, sha in enumerate(ctx.parents())}  # the PR's commits, oldest first
 
@@ -1268,7 +1297,9 @@ def _panel(ctx: Context, add) -> None:
     if counted:
         ctx.rule2 = counted[by_history[-1]].rule == reviews.RULE
     if not rounds:
-        add("no_review")
+        # Files it can't read, none of those it could outside the research folder: which rule applies can't be told.
+        if files is not None or any(not research_pr.is_research([p]) for p in ctx.files_listed()):
+            add("no_review")
         return
     last = counted[rounds[-1]]
     allowed = ctx.review_rounds
