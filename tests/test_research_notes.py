@@ -321,6 +321,25 @@ def test_fingerprint_fetches_only_web_links(project, link):
     assert "root:" not in p.stdout
 
 
+def test_fingerprint_follows_a_redirect(project, server):
+    base, routes = server
+    routes["/old"] = (302, "", b"/help")
+    routes["/help"] = (200, "text/html", PAGE.read_bytes())
+    p = _cli("fingerprint", f"{base}/old", "--fetch", "--json", env=_env(project))
+    assert p.returncode == 0, p.stderr
+    assert [x["hash"] for x in json.loads(p.stdout)["paragraphs"]] == [_h(t) for t in PARAS]
+
+
+@pytest.mark.parametrize("target", [b"file:///etc/passwd", b"ftp://example.com/a"], ids=["file", "ftp"])
+def test_fingerprint_follows_redirects_only_to_web_links(project, server, target):
+    base, routes = server
+    routes["/evil"] = (302, "", target)
+    saved = project / "s.md"
+    p = _cli("fingerprint", f"{base}/evil", "--fetch", "--saved", saved, env=_env(project))
+    assert p.returncode == 1 and "can't fetch" in p.stderr
+    assert "root:" not in p.stdout + p.stderr and not saved.exists()
+
+
 def test_fingerprint_needs_a_page_or_fetch(project):
     p = _cli("fingerprint", URL, env=_env(project))
     assert p.returncode == 2 and "--page" in p.stderr and "--fetch" in p.stderr
