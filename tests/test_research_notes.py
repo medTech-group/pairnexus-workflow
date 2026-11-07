@@ -951,6 +951,11 @@ def test_check_a_note_with_no_key_sources(project):
 
 _KEY_LINE = "- <https://example.com/help/booking>, saved as `sources/booking-help.md`, fingerprints in `sources/booking-help.fingerprints`"
 _GROUPS = "- <https://example.com/help/groups>, saved as `sources/groups.md`, fingerprints in `sources/groups.fingerprints`"
+_GROUPS_WRAPPED = _GROUPS.replace(", fingerprints in", ",\n  fingerprints in")  # as an 80-column editor wraps it
+_GROUPS_SPLIT = _GROUPS.replace("saved as", "saved\n  as")
+_GROUPS_TWO_SPACES = _GROUPS.replace("saved as", "saved  as")
+_GROUPS_NBSP = _GROUPS.replace("saved as", "saved as")
+_GROUPS_NOT_SAVED = "- <https://example.com/help/groups>, fingerprints in `sources/groups.fingerprints`"
 
 
 def _reshape(project, before="", after=""):
@@ -1006,11 +1011,20 @@ def test_check_reads_a_note_with_no_key_sources_and_a_section_after(project):
         ("", f"## Notes\n\n{_GROUPS.replace('- <', '* <')}\n", 17, "outside `## Key sources`"),
         ("", f"## Notes\n\n```\n{_GROUPS}\n```\n", 18, "outside `## Key sources`"),
         (f"{_GROUPS}\n\n", "", 11, "outside `## Key sources`"),
+        ("", f"## Notes\n\n{_GROUPS_WRAPPED}\n", 17, "outside `## Key sources`"),
+        ("", f"## Notes\n\nGroups of 8 or more call ahead.\n\nKey sources\n-----------\n\n{_GROUPS_WRAPPED}\n", 22, "outside `## Key sources`"),
+        ("", f"## Notes\n\n{_GROUPS_SPLIT}\n", 17, "outside `## Key sources`"),
+        ("", f"## Notes\n\n{_GROUPS_TWO_SPACES}\n", 17, "outside `## Key sources`"),
+        ("", f"## Notes\n\n{_GROUPS_NBSP}\n", 17, "outside `## Key sources`"),
+        ("", f"## Notes\n\n{_GROUPS_NOT_SAVED}\n", 17, "outside `## Key sources`"),
+        ("", f"## Notes\n\nGroups of 8 or more call ahead.\n{_GROUPS_WRAPPED}\n", 18, "outside `## Key sources`"),
     ],
     ids=[
         "second-key-sources", "second-after-a-section", "second-in-another-case", "second-at-another-level", "second-in-a-quote",
         "one-in-a-fence-before", "fence-never-closed", "source-line-in-a-later-section", "star-bullet-in-a-later-section",
-        "source-line-in-a-fence-after", "source-line-before-the-section",
+        "source-line-in-a-fence-after", "source-line-before-the-section", "wrapped-source-line-in-a-later-section",
+        "wrapped-source-line-under-an-underlined-heading", "saved-and-as-on-two-lines", "two-spaces-in-saved-as",
+        "no-break-space-in-saved-as", "source-line-with-no-saved-as", "wrapped-source-line-right-after-prose",
     ],
 )
 def test_check_refuses_a_note_whose_key_sources_it_cant_all_read(project, before, after, n, said):
@@ -1018,6 +1032,25 @@ def test_check_refuses_a_note_whose_key_sources_it_cant_all_read(project, before
     p = _check(project, (URL, PAGE), ("https://example.com/help/groups", PAGE))
     assert p.returncode == 1 and p.stdout == "", p.stdout  # never read in part
     assert f"line {n}" in p.stderr and said in p.stderr, p.stderr
+
+
+@pytest.mark.parametrize(
+    "before,after",
+    [
+        ("", "## Notes\n\nThe help page was saved as a copy, with its fingerprints beside it.\n"),
+        ("Each source was saved as text, with its fingerprints.\n\n", ""),
+        ("", "## Method\n\nEach page was saved as a copy and fingerprinted.\n"),
+    ],
+    ids=["prose-after-the-section", "prose-before-the-section", "prose-in-a-method-section"],
+)
+def test_check_reads_a_note_whose_prose_names_saved_copies_and_fingerprints(project, before, after):
+    """Prose with "saved as" and "fingerprint" but no link and no backtick
+    isn't shaped like a key-source line, so the note is read."""
+    _reshape(project, before=before, after=after)
+    p = _check(project, (URL, PAGE))
+    assert p.returncode == 0, p.stderr
+    (src,) = json.loads(p.stdout)["sources"]
+    assert src["url"] == URL and src["result"] == "unchanged"
 
 
 def test_check_refuses_a_key_sources_heading_that_isnt_at_the_lines_start(project):
@@ -1137,7 +1170,12 @@ def test_the_study_skill_says_where_the_key_sources_section_may_sit():
     text = re.sub(r"\s+", " ", SKILL.read_text(encoding="utf-8"))
     assert "The note has that section once, outside any code fence" in text
     assert "It runs to the next `# ` or `## ` heading, or to the note's end, so other sections may follow it" in text
-    assert "a line shaped like a key-source line anywhere else in the note is refused" in text
+    assert (
+        'Anywhere else in the note, a paragraph or list item with "saved as" or "fingerprint" in it (in any case, however it wraps) '
+        "and also a link (`<` or `://`) or a backtick is refused, since a key source there wouldn't be read" in text
+    )
+    assert 'Prose without a link or a backtick, such as "each page was saved as a copy, with its fingerprints", is fine' in text
+    assert "shaped like a key-source line" not in text
     assert "the note's last" not in text
 
 

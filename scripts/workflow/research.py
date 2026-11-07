@@ -7,8 +7,9 @@ fixtures are copied from:
   `Issue:`), then a blank line; its key sources one line each under
   `## Key sources`, once, outside any code fence: `- <link>, saved as `path`,
   fingerprints in `path``. The section runs to the next `# ` or `## `
-  heading, or the note's end; a line shaped like a key-source line anywhere
-  else in the note is refused, so no key source goes unread;
+  heading, or the note's end. Anywhere else in the note, a paragraph or list
+  item with "saved as" or "fingerprint" and also a link (`<` or `://`) or a
+  backtick is refused, so no key source goes unread;
 - a saved copy: `Source:`, `Accessed:` and `Third-party text:` lines, a blank
   line, then the page's paragraphs, one per position, separated by blank lines
   (a paragraph left out whole is one `[left out]` line in its place);
@@ -487,9 +488,43 @@ def _fence(line: str) -> tuple[str, int, str] | None:
     return s[0], length, rest.strip()
 
 
-def _looks_like_key_source(line: str) -> bool:
-    low = line.casefold()
-    return "saved as" in low and "fingerprint" in low
+def _starts_list_item(s: str) -> bool:
+    """Whether the stripped line starts a list item: `- `, `* `, `+ `, `1. ` or `1) `."""
+    if s[:1] in ("-", "*", "+"):
+        return s[1:2] in (" ", "\t")
+    digits = len(s) - len(s.lstrip("0123456789"))
+    return 0 < digits <= 9 and s[digits : digits + 1] in (".", ")") and s[digits + 1 : digits + 2] in (" ", "\t")
+
+
+def _blocks(lines: list[str], lo: int, hi: int):
+    """(its first line's index, its words joined by single spaces) for each
+    paragraph or list item in `lines[lo:hi]`: a run of lines that aren't
+    blank, ended by a blank line, a heading, a code fence's line or the next
+    list item. A heading or a fence's line is a block of its own."""
+    first, words = lo, []
+    for i in range(lo, hi):
+        s = lines[i].strip()
+        alone = bool(s) and bool(_heading_level(s) or _fence(lines[i]))
+        if words and (not s or alone or _starts_list_item(s)):
+            yield first, " ".join(words)
+            words = []
+        if s:
+            if not words:
+                first = i
+            words += s.split()  # any whitespace, a no-break space too, as one space
+            if alone:
+                yield first, " ".join(words)
+                words = []
+    if words:
+        yield first, " ".join(words)
+
+
+def _looks_like_key_source(text: str) -> bool:
+    """Whether a paragraph or list item could be a key-source line: "saved
+    as" or "fingerprint" in it, in any case, and also a link (`<` or `://`)
+    or a backtick."""
+    low = text.casefold()
+    return ("saved as" in low or "fingerprint" in low) and ("<" in low or "://" in low or "`" in low)
 
 
 def _key_sources_section(lines: list[str], path: Path) -> tuple[int, int]:
@@ -524,11 +559,12 @@ def _key_sources_section(lines: list[str], path: Path) -> tuple[int, int]:
     if lines[start] != "## Key sources":
         raise LayoutError(f"{path}: line {start + 1} names the key sources but isn't the heading `## Key sources`, written at the line's start: {lines[start][:200]}")
     end = next((j for j in range(start + 1, len(lines)) if 1 <= _heading_level(lines[j]) <= 2), len(lines))
-    for j, line in enumerate(lines):
-        if not start <= j < end and _looks_like_key_source(line):
-            raise LayoutError(
-                f"{path}: line {j + 1} looks like a key-source line but is outside `## Key sources` (its heading to the next `# ` or `## ` heading), so it wouldn't be read: {line[:200]}"
-            )
+    for lo, hi in ((0, start), (end, len(lines))):
+        for j, text in _blocks(lines, lo, hi):
+            if _looks_like_key_source(text):
+                raise LayoutError(
+                    f"{path}: line {j + 1} looks like a key-source line but is outside `## Key sources` (its heading to the next `# ` or `## ` heading), so it wouldn't be read: {lines[j][:200]}"
+                )
     return start, end
 
 
