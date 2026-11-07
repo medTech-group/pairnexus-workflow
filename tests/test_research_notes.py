@@ -347,6 +347,33 @@ def test_fingerprint_reads_a_file_named_as_a_text_page(project, tmp_path, name):
     assert [x["text"] for x in json.loads(p.stdout)["paragraphs"]] == ["First.", "Second."]
 
 
+_UNTYPED = [b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n1 0 obj\n<<>>\nendobj\n", b"<html><p>A</p></html>"]
+
+
+@pytest.mark.parametrize("raw", _UNTYPED, ids=["pdf", "html"])
+def test_fingerprint_refuses_a_page_that_names_no_content_type(project, server, raw):
+    base, routes = server
+    routes["/x"] = (200, "", raw)
+    before = _snapshot(project)
+    p = _cli("fingerprint", f"{base}/x", "--fetch", env=_env(project))
+    assert p.returncode == 1 and p.stdout == ""
+    assert "can't fetch" in p.stderr and "no content type" in p.stderr
+    assert _snapshot(project) == before
+
+
+@pytest.mark.parametrize("raw", _UNTYPED, ids=["pdf", "html"])
+def test_check_cant_fetch_a_page_that_names_no_content_type(project, server, raw):
+    base, routes = server
+    routes["/help/booking"] = (200, "", raw)
+    folder = _note(project).parent
+    for f in ("note.md", "sources/booking-help.md", "sources/booking-help.fingerprints"):
+        (folder / f).write_text((folder / f).read_text().replace(URL, f"{base}/help/booking"))
+    p = _check(project, extra=["--fetch"])
+    assert p.returncode == 0, p.stderr
+    (src,) = json.loads(p.stdout)["sources"]
+    assert src["result"] == "cant_fetch" and "no content type" in src["why"]
+
+
 def test_check_cant_read_a_file_that_isnt_a_text_page(project, tmp_path):
     page = tmp_path / "help.pdf"
     page.write_bytes(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")

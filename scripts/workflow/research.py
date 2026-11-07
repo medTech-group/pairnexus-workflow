@@ -140,18 +140,17 @@ class _Text(HTMLParser):
         self._end_paragraph()
 
 
-def _kind(content_type: str, raw: bytes) -> str:
-    """"html" or "text" by the content type; with none, by the bytes. Raises
-    PageError for anything else (a PDF, an image)."""
+def _kind(content_type: str) -> str:
+    """"html" or "text" by the content type. Raises PageError for anything
+    else (a PDF, an image), and for no content type at all."""
     ctype = content_type.split(";", 1)[0].strip().lower()
     if ctype in ("text/html", "application/xhtml+xml"):
         return "html"
     if ctype.startswith("text/"):
         return "text"
-    if ctype:
-        raise PageError(f"it isn't a text page ({ctype})")
-    head = raw[:1024].lstrip(b"\xef\xbb\xbf \t\r\n").lower()
-    return "html" if head.startswith((b"<!doctype html", b"<html")) else "text"
+    if not ctype:
+        raise PageError("it names no content type, so it can't be told from a PDF or an image")
+    raise PageError(f"it isn't a text page ({ctype})")
 
 
 def _charset(content_type: str, raw: bytes, kind: str) -> str:
@@ -168,13 +167,13 @@ def _charset(content_type: str, raw: bytes, kind: str) -> str:
     return name
 
 
-def paragraphs(raw: bytes, content_type: str = "") -> list[str]:
+def paragraphs(raw: bytes, content_type: str) -> list[str]:
     """The page's text, as paragraphs: HTML by its block elements (scripts,
     styles, the head and navigation left out), plain text by its blank lines.
     Whitespace inside a paragraph is one space; empty paragraphs are dropped.
-    A charset it can't decode with is read as UTF-8; HTML it can't parse
-    raises PageError."""
-    kind = _kind(content_type, raw)
+    A charset it can't decode with is read as UTF-8; HTML it can't parse, or
+    a page with no content type, raises PageError."""
+    kind = _kind(content_type)
     try:
         text = raw.decode(_charset(content_type, raw, kind), errors="replace")
     except (LookupError, UnicodeError, ValueError):

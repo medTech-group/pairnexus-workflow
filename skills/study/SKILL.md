@@ -51,7 +51,7 @@ Cancelling at least 2 hours before a booking gives a full refund (paragraph 4).
 WF research fingerprint <link> --fetch --saved docs/research/<topic>/sources/<name>.md --fingerprints docs/research/<topic>/sources/<name>.fingerprints
 ```
 
-It writes only those two files, making their folders when missing. It reads HTML and plain-text pages; a page it can't read as text, or one with no text in it (built by JavaScript), it refuses, and nothing is written.
+It writes only those two files, making their folders when missing. It reads HTML and plain-text pages; a page it can't read as text, one whose server names no content type, or one with no text in it (built by JavaScript), it refuses, and nothing is written.
 
 **The fingerprint file** holds no text: its first line is `url: <link>`, then one line per paragraph of the page as fetched, its position and the SHA-256 of its text, before anything is left out. `WF research fingerprint` writes it; never edit it by hand. An example, `docs/research/booking-ahead/sources/booking-help.fingerprints`:
 
