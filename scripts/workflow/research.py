@@ -84,14 +84,34 @@ _BLOCK = {
 }
 _SPACE = {"br", "td", "th", "img", "input", "wbr"}
 _VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
+# A head that `</head>` or `<body>` never ends ends, as HTML5 says, at the
+# first tag or text that isn't head content (#526). Inside these, nothing ends
+# it: a template's content, and the raw text of the others (a title's tags,
+# and a noscript's, as a browser running scripts reads them).
+_HEAD_CONTENT = {"base", "basefont", "bgsound", "link", "meta", "noframes", "noscript", "script", "style", "template", "title"}
+_HEAD_RAW = {"noframes", "noscript", "script", "style", "title"}
+_HTML_SPACE = " \t\n\f\r"
 
 
 class _Text(HTMLParser):
-    def __init__(self):
+    """The page's paragraphs. A head ends at `</head>` or `<body>`; with
+    `open_head`, one that neither ends also ends at the first tag or text that
+    isn't head content. `head_left_open` says the page's first head never
+    ended."""
+
+    def __init__(self, open_head: bool = False):
         super().__init__(convert_charrefs=True)
         self.paragraphs: list[str] = []
         self._now: list[str] = []
         self._skip: list[str] = []
+        self._open_head = open_head
+        self._head = ""  # "open" once the first head starts, "ended" once it ends
+        self.head_left_open = False
+
+    def close(self):
+        super().close()
+        self._end_paragraph()
+        self.head_left_open = self._head == "open"
 
     def _end_paragraph(self):
         text = _flat("".join(self._now))
@@ -99,14 +119,38 @@ class _Text(HTMLParser):
             self.paragraphs.append(text)
         self._now = []
 
+    def _end_head(self):
+        self._skip = []
+        if self._head == "open":
+            self._head = "ended"
+
+    def _in_head(self) -> bool:
+        """Directly in a head no `</head>` or `<body>` has ended yet, with `open_head`."""
+        return self._open_head and self._skip == ["head"]
+
     def handle_starttag(self, tag, attrs):
+        if self._open_head and self._skip[:1] == ["head"]:
+            if len(self._skip) > 1 and self._skip[1] in _HEAD_RAW:
+                return  # raw text: nothing in it is a tag
+            if self._in_head():
+                if tag in ("head", "html"):
+                    return
+                if tag in _HEAD_CONTENT:
+                    if tag in _HEAD_RAW or tag == "template":  # the others have no end tag
+                        self._skip.append(tag)
+                    return
+                self._end_head()  # anything else ends the head, and is read
         if tag == "body" and self._skip[:1] == ["head"]:
-            self._skip = []  # `</head>` may be left out: the head ends at `<body>`. With neither, there is no text
+            self._end_head()  # `</head>` may be left out: the head ends at `<body>`
+        if tag == "head" and not self._skip and not self._head:
+            self._head = "open"
+        if self._open_head and self._skip[:1] in (["title"], ["noframes"]):
+            return  # raw text: nothing in it is a tag
         if self._skip:
             if tag == self._skip[-1] and tag not in _VOID:
                 self._skip.append(tag)
             return
-        if tag in _SKIP:
+        if tag in _SKIP or (self._open_head and tag in ("title", "noframes")):  # head content wherever it is, as HTML5 says
             if tag not in _VOID:
                 self._skip.append(tag)
             return
@@ -116,6 +160,8 @@ class _Text(HTMLParser):
             self._now.append(" ")
 
     def handle_startendtag(self, tag, attrs):  # <x/>: opens nothing
+        if self._in_head() and tag not in _HEAD_CONTENT and tag not in ("head", "html"):
+            self._end_head()
         if self._skip or tag in _SKIP:
             return
         if tag in _BLOCK:
@@ -124,9 +170,13 @@ class _Text(HTMLParser):
             self._now.append(" ")
 
     def handle_endtag(self, tag):
+        if self._in_head() and tag in ("body", "html", "br"):
+            self._end_head()  # these end the head, and are read; any other end tag in it is ignored
         if self._skip:
             if tag == self._skip[-1]:
                 self._skip.pop()
+                if not self._skip and tag == "head":
+                    self._end_head()
             return
         if tag in _BLOCK:
             self._end_paragraph()
@@ -134,12 +184,10 @@ class _Text(HTMLParser):
             self._now.append(" ")
 
     def handle_data(self, data):
+        if self._in_head() and data.strip(_HTML_SPACE):
+            self._end_head()  # text that isn't white space ends the head, and is read
         if not self._skip:
             self._now.append(data)
-
-    def close(self):
-        super().close()
-        self._end_paragraph()
 
 
 def _kind(content_type: str) -> str:
@@ -191,10 +239,14 @@ def paragraphs(raw: bytes, content_type: str) -> list[str]:
         raise PageError("its bytes aren't valid UTF-8") from None
     text = text.lstrip("\ufeff")
     if kind == "html":
-        p = _Text()
         try:
+            p = _Text()
             p.feed(text)
             p.close()
+            if p.head_left_open:  # read again, ending the head as HTML5 does; a closed head reads as before
+                p = _Text(open_head=True)
+                p.feed(text)
+                p.close()
         except Exception as e:  # html.parser's own errors on odd markup
             raise PageError(f"its HTML can't be read ({type(e).__name__})") from None
         return p.paragraphs
