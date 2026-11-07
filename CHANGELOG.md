@@ -27,6 +27,10 @@
 - **Flow §4 item 4** carries the rule: a pull request whose files are all research notes counts its research check record as its clean review, the look, the mark, and only marks after the look. The `merge-check` skill lists `--recorded` and the four reasons.
 - **For projects updating:** nothing to do. Tests: `tests/test_research_merge_check.py`, with the mark's fixture (`tests/fixtures/research/marked-line.md`) copied from the `study` skill's text and tied to it.
 
+**`merge-check`: the note that research records were left out, and files it can't read** (#538, split out of #509, part of spec #505). On a pull request whose files it read and that changes a file outside `docs/research/`, a `research_records_ignored` note says its research records were left out and why. When it can't read the pull request's list of files (a page left out, no list at all), it still judges the review panel's records beside the "couldn't read" reason, as before, so `passes_used_up` and `review_passes` (`"until-clean"` under a `rule=2` record) show as they did, and it is never `ready`; but when no file it could read is outside `docs/research/`, which rule applies can't be told, so it no longer advises a review (`no_review`), and no note claims files outside that folder.
+
+- **For projects updating:** nothing to do. Tests: `tests/test_research_merge_check_unread.py`.
+
 ## 0.1.21
 
 **Decision questions asked in a message are easier to read.** A recommendation now has its own labelled part, "➡️ Recommended:", with its evidence, and the alternatives have theirs, so a recommendation can't be mistaken for a decision already made. Questions asked as clickable choices are unchanged.
