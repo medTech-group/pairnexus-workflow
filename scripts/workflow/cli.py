@@ -21,6 +21,9 @@
     workflow merge-check --fetch N [any of the files above] [--charter F --check-logs DIR] [--asker LOGIN] [--review-rounds N] [--review-passes N|until-clean] [--small-max-lines N] [--small-max-files N] [--json]
     workflow preview --comments F --checks F --sha SHA [--json] | --fetch N [any of those] [--json]
     workflow briefing verify --file F
+    workflow research fingerprint URL --page F | --fetch [--saved F] [--fingerprints F] [--json]      (a page's paragraphs and their SHA-256; writes only the files given)
+    workflow research check --note F [--page URL F ...] [--fetch] [--json]      (a note's key sources against their fingerprints; writes nothing)
+    workflow research notes [--dir DIR] [--json]      (the research notes marked current)
     workflow review-record --kind round|pass --round N --commit SHA --reviewers NAMES --clean|--not-clean [--base BRANCH]      (with the hashes of the PR's own changes at SHA)
     workflow review-record --kind round|pass --round N --commit SHA --reviewers NAMES --findings F [--base BRANCH]      (a rule=2 record: its result worked out from the findings file's marks)
     workflow review-record [--kind spec] --round N --body F --reviewers spec,correctness --clean|--not-clean      (a spec's review, keyed to its body's SHA-256)
@@ -50,6 +53,7 @@ import time
 import subprocess
 import sys
 import threading
+from datetime import date
 from pathlib import Path
 
 _STARTED = time.monotonic()  # the guard's time budget counts from here, before the kit's modules load
@@ -76,6 +80,7 @@ from . import pr_template as pr_template_mod
 from . import protection as protection_mod
 from . import render as render_mod
 from . import repair as repair_mod
+from . import research as research_mod
 from . import reviews as reviews_mod
 from . import small as small_mod
 from . import roles
@@ -1116,6 +1121,146 @@ def cmd_briefing(a) -> int:
     return 0
 
 
+def _research_patterns() -> list[str]:
+    """The profile's `[sensitive].patterns`, left out of any page text the
+    command prints or writes. No profile: none. A profile that can't be read
+    stops the command (exit 1), rather than print text unchecked."""
+    try:
+        prof = load(required=False)
+    except (OSError, UnicodeDecodeError) as e:
+        raise ProfileError(f"{PROFILE_PATH} can't be read ({getattr(e, 'strerror', None) or e}), so [sensitive].patterns can't be left out") from None
+    return list(prof.sensitive_patterns) if prof else []
+
+
+def _shown(path: Path) -> str:
+    """A path as the person gave it, relative to here when it's below here."""
+    try:
+        return path.resolve().relative_to(Path.cwd().resolve()).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def cmd_research(a) -> int:
+    """`research`: research notes in docs/research/<topic>/ (spec #505). Its
+    inputs are files, with --fetch for pages. It calls no model and writes only
+    the files `fingerprint` is given. Exits 0 with an answer (a source that
+    can't be fetched is an answer for `check`), 1 when a page or the note's
+    layout can't be read, 2 when an input is missing."""
+    patterns = _research_patterns()
+    if a.action == "fingerprint":
+        if bool(a.page) == bool(a.fetch):
+            print("workflow research fingerprint: give --page F (the page, saved as a file) or --fetch (fetch the link), one of them", file=sys.stderr)
+            return 2
+        try:
+            raw, ctype = research_mod.read_page(Path(a.page)) if a.page else research_mod.fetch(a.url)
+            paras = research_mod.page_paragraphs(raw, ctype)
+        except OSError as e:
+            print(f"workflow research fingerprint: can't read {a.page} ({e.strerror or e})", file=sys.stderr)
+            return 1
+        except research_mod.PageError as e:
+            how = "fetch" if a.fetch else "read"
+            print(f"workflow research fingerprint: can't {how} {a.url}: {e}; nothing was written", file=sys.stderr)
+            return 1
+        shown, n = [], 0
+        for t in paras:
+            t, k = research_mod.leave_out(t, patterns)
+            shown.append(t)
+            n += k
+        hashes = [research_mod.digest(t) for t in paras]  # the page as fetched, before anything is left out
+        if a.fingerprints:
+            Path(a.fingerprints).write_text(research_mod.fingerprints_text(a.url, paras), encoding="utf-8")
+        if a.saved:
+            Path(a.saved).write_text(research_mod.saved_copy_text(a.url, date.today().isoformat(), shown), encoding="utf-8")
+        if n:
+            print(f"workflow research fingerprint: left out {n} match(es) of the profile's [sensitive].patterns; leave out personal details by hand", file=sys.stderr)
+        if a.json:
+            _out({"url": a.url, "paragraphs": [{"position": i, "hash": h, "text": t} for i, (h, t) in enumerate(zip(hashes, shown), 1)]})
+        else:
+            print(f"{a.url}: {len(paras)} paragraph(s), each with its position and the SHA-256 of its text as fetched")
+            for i, (h, t) in enumerate(zip(hashes, shown), 1):
+                print(f"\n{i} {h}\n{t}")
+        return 0
+
+    if a.action == "check":
+        try:
+            header, sources = research_mod.read_note(Path(a.note))
+        except research_mod.LayoutError as e:
+            print(f"workflow research check: the note breaks the layout (the `study` skill's \"The folder's layout\"): {e}", file=sys.stderr)
+            return 1
+        given: dict[str, str] = {}
+        for url, f in a.page or []:
+            given[url] = f
+        missing = [s.url for s in sources if s.url not in given and not a.fetch]
+        if missing:
+            print(f"workflow research check: missing --page for {', '.join(missing)}: give --page <link> F for each, or --fetch to fetch them", file=sys.stderr)
+            return 2
+        results = []
+        for s in sources:
+            row = {"url": s.url, "saved": _shown(s.saved), "fingerprints": _shown(s.fingerprints)}
+            try:
+                if s.url in given:
+                    raw, ctype = research_mod.read_page(Path(given[s.url]))
+                else:
+                    raw, ctype = research_mod.fetch(s.url)
+                live = research_mod.page_paragraphs(raw, ctype)
+            except OSError as e:
+                print(f"workflow research check: can't read {given[s.url]} ({e.strerror or e})", file=sys.stderr)
+                return 1
+            except research_mod.PageError as e:
+                row.update(result="cant_fetch", why=str(e), new=[], gone=[])
+            else:
+                row.update(research_mod.compare(s, live, patterns))
+            results.append(row)
+        if a.json:
+            _out({"note": _shown(Path(a.note)), "status": header.status, "sources": results})
+            return 0
+        lines = [f"{_shown(Path(a.note))}: {len(results)} key source(s)"]
+        if header.status != "current":
+            lines.append(f"Note: this note isn't current (Status: {header.status}).")
+        if not results:
+            lines.append("It lists no key sources: nothing to check.")
+        elif all(r["result"] == "unchanged" for r in results):
+            lines.append("Every key source is unchanged: nothing to read.")
+        for r in results:
+            if r["result"] == "unchanged":
+                lines.append(f"- {r['url']}: unchanged")
+            elif r["result"] == "cant_fetch":
+                lines.append(f"- {r['url']}: can't fetch ({r['why']})")
+            else:
+                lines.append(f"- {r['url']}: changed, {len(r['new'])} new paragraph(s) and {len(r['gone'])} gone")
+                for p in r["new"]:
+                    lines.append(f"  new, paragraph {p['position']} of the live page, sha256 {p['hash']}:\n    {p['text']}")
+                for p in r["gone"]:
+                    lines.append(f"  gone, paragraph {p['position']} of the saved copy ({r['saved']}), sha256 {p['hash']}:\n    {p['saved_text']}")
+        print("\n".join(lines))
+        return 0
+
+    base = None if a.dir else project_root()
+    root = Path(a.dir) if a.dir else base / "docs/research"
+
+    def where(path: Path) -> str:  # relative to the project's root, as the notes link each other
+        if base is not None:
+            with contextlib.suppress(ValueError):
+                return path.resolve().relative_to(base.resolve()).as_posix()
+        return _shown(path)
+
+    current, not_listed = research_mod.notes(root)
+    if a.json:
+        _out({
+            "current": [{**n, "path": where(n["path"])} for n in current],
+            "not_listed": [{"path": where(n["path"]), "why": n["why"]} for n in not_listed],
+        })
+        return 0
+    for n in not_listed:
+        if n["broken"]:
+            print(f"workflow research notes: not listed, its header can't be read: {where(n['path'])}: {n['why']}", file=sys.stderr)
+    if not current:
+        print(f"No research notes marked current in {where(root)}.")
+    for n in current:
+        print(f"{where(n['path'])}  (last checked {n['last_checked']}, #{n['issue']}){': ' + n['title'] if n['title'] else ''}")
+    return 0
+
+
 def cmd_pr_template(a) -> int:
     """`pr-template`: the pull request template to write, on stdout, and a note on
     stderr. Changes nothing. Exits 3 for a folder of templates (nothing to write)."""
@@ -1901,6 +2046,27 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("action", choices=["verify"])
     s.add_argument("--file", required=True, help="the briefing as the session received it (or -)")
     s.set_defaults(fn=cmd_briefing)
+
+    s = sub.add_parser("research", help="research notes in docs/research/<topic>/: a page's fingerprints, a note's key sources checked against theirs, the notes marked current; calls no model, writes only the files given")
+    rsub = s.add_subparsers(dest="action", required=True)
+    r = rsub.add_parser("fingerprint", help="a page's text, paragraph by paragraph, each with the SHA-256 of its text as fetched")
+    r.add_argument("url", help="the page's link, as the note cites it")
+    r.add_argument("--page", metavar="F", help="the page, saved as a file (HTML, or plain text)")
+    r.add_argument("--fetch", action="store_true", help="fetch the link (http or https only)")
+    r.add_argument("--saved", metavar="F", help="write the saved copy here: its Source, Accessed and Third-party text lines, then the paragraphs, the profile's [sensitive].patterns left out")
+    r.add_argument("--fingerprints", metavar="F", help="write the fingerprint file here: `url: <link>`, then one `<position> <sha256>` line per paragraph")
+    r.add_argument("--json", action="store_true")
+    r.set_defaults(fn=cmd_research)
+    r = rsub.add_parser("check", help="a note's key sources against their fingerprints, as a set: unchanged, the new paragraphs and the paragraphs gone (each with its hash), or can't fetch")
+    r.add_argument("--note", metavar="F", required=True, help="the note, docs/research/<topic>/note.md")
+    r.add_argument("--page", metavar=("URL", "F"), nargs=2, action="append", help="a key source's page, saved as a file (repeat for each)")
+    r.add_argument("--fetch", action="store_true", help="fetch every key source not given with --page")
+    r.add_argument("--json", action="store_true")
+    r.set_defaults(fn=cmd_research)
+    r = rsub.add_parser("notes", help="the research notes marked `Status: current`")
+    r.add_argument("--dir", metavar="DIR", help="the research folder (default: the project's docs/research)")
+    r.add_argument("--json", action="store_true")
+    r.set_defaults(fn=cmd_research)
 
     s = sub.add_parser("pr-template", help="print the pull request template to write, with \"In plain words\" at the top; changes nothing")
     s.add_argument("--existing", metavar="FILE", help="the project's template: the headings go above its content (or its .github/PULL_REQUEST_TEMPLATE/ folder)")

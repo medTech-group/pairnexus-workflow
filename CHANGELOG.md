@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+**Research notes in the repository: the folder's layout, fingerprints, the source check and current notes** (#506, part of spec #505).
+
+- **`workflow research`,** a new command whose inputs are files, with `--fetch` for pages. It calls no model and writes nothing but the files it's given:
+  - `fingerprint <link> --page F | --fetch [--saved F] [--fingerprints F]` reads a page (HTML or plain text), prints its paragraphs, each with the SHA-256 of its text as fetched, and writes the saved copy and the fingerprint file when given them. It leaves out whatever matches the profile's `[sensitive].patterns` from the text it prints or writes, never from the hashes, and refuses a page it can't read as text or one with no text, writing nothing.
+  - `check --note F [--page <link> F ...] [--fetch]` compares a note's key sources with their fingerprints, as a set. For each source it says unchanged; changed, with each new paragraph's live text, position and hash, and each paragraph gone, by its position in the saved copy, with the saved copy's text and its hash; or can't fetch, and why. It refuses a note that breaks the layout, naming what to fix.
+  - `notes [--dir DIR]` lists the notes marked `Status: current`, and names on standard error any `note.md` whose header it can't read.
+- **The `study` skill** starts with one section, the folder's one fixed layout in `docs/research/<topic>/`: `note.md` and its `Status:`, `Last checked:` and `Issue:` header, the `## Key sources` lines, the fingerprint file, a saved copy's `Source:`, `Accessed:` and `Third-party text:` lines, "[left out]" lines that keep each paragraph in its place, and the mark ` **(unconfirmed)**`. The tests' fixtures are copied from its examples, and a test ties them.
+- **`tests/test_small_review_build.py`'s** wording scan leaves `docs/research/` out, since saved sources are other people's words.
+- **For projects updating:** nothing to do.
+
 ## 0.1.21
 
 **Decision questions asked in a message are easier to read.** A recommendation now has its own labelled part, "➡️ Recommended:", with its evidence, and the alternatives have theirs, so a recommendation can't be mistaken for a decision already made. Questions asked as clickable choices are unchanged.
