@@ -56,6 +56,17 @@ reader takes such a record only whole, every line there and keeping the rules,
 and skips it otherwise. A record without `rule=2` reads exactly as before:
 `rule` None, no findings.
 
+A research record (#509, spec #505) is what a pull request of research notes
+posts: its research check (round 1), or the look at a fix (round 2), by the
+one reviewer `research`, with the hashes of its own changes as a round's:
+
+    Research check on `3f2a9c0`: not clean. Reviewer: Research.
+    <!-- workflow:review kind=research round=1 commit=<full sha> reviewers=research diff=<64 hex> lines=<64 hex> result=not-clean -->
+    <!-- workflow:agent -->
+
+The claims it found wrong follow the record in the same comment, never before
+it: they may quote a code fence, and the reader stops at the first one.
+
 `spec_reviewed` says whether a list of records holds a clean spec record for a
 body: the latest spec record for that body's hash is clean.
 
@@ -75,10 +86,13 @@ from . import findings as findings_mod
 from .own_changes import UNKNOWN
 from .posts import AGENT_MARKER, _login, _number, comments_from
 
-KINDS = ("round", "pass", "spec")
+KINDS = ("round", "pass", "spec", "research")
 REVIEWERS = ("standards", "spec", "correctness", "security", "explorer")
 # Those a spec's review allows, in the panel's order.
 SPEC_REVIEWERS = ("spec", "correctness")
+# A research record's one reviewer, and its rounds: the research check, then the look at a fix (#509).
+RESEARCH_REVIEWER = "research"
+RESEARCH_ROUNDS = {1: "Research check", 2: "The look at a fix"}
 RESULTS = ("clean", "not-clean")
 
 _FIELDS = ("kind", "round", "commit", "reviewers", "result")
@@ -215,7 +229,7 @@ _BY_SPEC = "a spec's review is by " + " and ".join(SPEC_REVIEWERS)
 
 
 def _kind_refused(given) -> RecordError:
-    return RecordError(f"--kind is `round` or `pass` (or `spec` for a spec's review), not `{_shown(given, 20)}`")
+    return RecordError(f"--kind is `round` or `pass` (or `spec` for a spec's review, `research` for a research check or the look at a fix), not `{_shown(given, 20)}`")
 
 
 def check_key(kind, commit, body_given: bool) -> None:
@@ -226,7 +240,7 @@ def check_key(kind, commit, body_given: bool) -> None:
     k = _kind(kind)
     if body_given and k not in ("", "spec"):
         if k in KINDS:
-            raise RecordError("a round or a pass names a commit: give --commit; --body is for a spec record (--kind spec)")
+            raise RecordError(f"a {'research record' if k == 'research' else 'round or a pass'} names a commit: give --commit; --body is for a spec record (--kind spec)")
         raise _kind_refused(kind)
 
 
@@ -239,7 +253,7 @@ def _checked(kind, round, commit, reviewers, result, body=None, diff=None, lines
     check_key(kind, commit, body is not None)
     given, kind = kind, _kind(kind)
     if not kind:
-        raise RecordError("give --kind: `round` for a review round, `pass` for a later Correctness pass, `spec` for a spec's review")
+        raise RecordError("give --kind: `round` for a review round, `pass` for a later Correctness pass, `spec` for a spec's review, `research` for a research check or the look at a fix")
     if kind not in KINDS:
         raise _kind_refused(given)
     rnd = "" if round is None else str(round).strip()
@@ -247,6 +261,8 @@ def _checked(kind, round, commit, reviewers, result, body=None, diff=None, lines
         raise RecordError("give --round: the round's number (for a pass, the round it follows)")
     if not _ROUND.fullmatch(rnd):
         raise RecordError(f"--round is a whole number from 1 to 999999, not `{_shown(rnd, 20)}`")
+    if kind == "research" and int(rnd) not in RESEARCH_ROUNDS:
+        raise RecordError(f"a research record's round is 1 (the research check) or 2 (the look at a fix), not `{_shown(rnd, 20)}`")
     sha = digest = None
     if kind == "spec":
         if body is None:
@@ -266,16 +282,22 @@ def _checked(kind, round, commit, reviewers, result, body=None, diff=None, lines
     parts = [reviewers] if isinstance(reviewers, str) else list(reviewers or [])
     typed = [n.strip() for part in parts for n in str(part).split(",")]
     names = [n.lower() for n in typed]
-    allowed = SPEC_REVIEWERS if kind == "spec" else REVIEWERS
+    allowed = SPEC_REVIEWERS if kind == "spec" else (RESEARCH_REVIEWER,) if kind == "research" else REVIEWERS
     if not any(names):
         raise RecordError("give --reviewers: those that ran, from " + ", ".join(allowed))
     if "" in names:
         raise RecordError("--reviewers has an empty name: give them comma-separated, with nothing between two commas")
+    if kind == "research":
+        if set(names) != {RESEARCH_REVIEWER}:
+            other = next(t for n, t in zip(names, typed) if n != RESEARCH_REVIEWER)
+            raise RecordError(f"a research record's one reviewer is `research`, not `{_shown(other, 30)}`: give --reviewers research")
     for n, t in zip(names, typed):
-        if n not in REVIEWERS:
+        if n == RESEARCH_REVIEWER and kind != "research":
+            raise RecordError("`research` reviews only research notes: give --kind research for a research check or the look at a fix")
+        if n not in REVIEWERS and n != RESEARCH_REVIEWER:
             known = _BY_SPEC if kind == "spec" else "the reviewers are " + ", ".join(REVIEWERS)
             raise RecordError(f"unknown reviewer `{_shown(t, 30)}`: {known}")
-    who = tuple(r for r in REVIEWERS if r in names)
+    who = (RESEARCH_REVIEWER,) if kind == "research" else tuple(r for r in REVIEWERS if r in names)
     if kind == "pass" and who != ("correctness",):
         raise RecordError("a pass is reviewed by correctness alone: give --reviewers correctness")
     if kind == "spec" and not set(who) <= set(SPEC_REVIEWERS):
@@ -295,6 +317,7 @@ def _checked(kind, round, commit, reviewers, result, body=None, diff=None, lines
 
 FINDINGS_WITH_RESULT = "--findings works the result out from the findings' marks: leave out --clean and --not-clean"
 FINDINGS_WITH_SPEC = "--findings is for a build review's round or pass, not a spec's review: leave it out"
+FINDINGS_WITH_RESEARCH = "--findings is for a build review's round or pass, not a research record: give --clean or --not-clean, and list the claims it found wrong after the record"
 # GitHub's limit on a comment's body, in characters. A `rule=2` record keeps
 # within it once a cloud session's footer is added (`_CLOUD_FOOTER`), counted
 # in UTF-16 units, never fewer than its characters.
@@ -306,8 +329,9 @@ _HASHES_ROOM = len(" diff= lines=") + 2 * 64
 
 
 def record(*, kind, round, commit=None, reviewers, clean, body=None, diff=None, lines=None, findings=None) -> str:
-    """The comment's body for one round or pass, or for a spec's review round,
-    ending with a newline.
+    """The comment's body for one round or pass, for a spec's review round, or
+    for a research check or the look at a fix (`research`, rounds 1 and 2,
+    reviewed by `research` alone), ending with a newline.
 
     `round` is a number (or its digits), `reviewers` a list of names or one
     comma-separated string, `clean` True or False (None: not given). A round or
@@ -322,6 +346,8 @@ def record(*, kind, round, commit=None, reviewers, clean, body=None, diff=None, 
     if findings is not None:
         if body is not None or _kind(kind) == "spec":
             raise RecordError(FINDINGS_WITH_SPEC)
+        if _kind(kind) == "research":
+            raise RecordError(FINDINGS_WITH_RESEARCH)
         if clean is not None:
             raise RecordError(FINDINGS_WITH_RESULT)
         if not isinstance(findings, findings_mod.Findings):
@@ -349,6 +375,8 @@ def record(*, kind, round, commit=None, reviewers, clean, body=None, diff=None, 
             raise RecordError(str(e)) from None
         r = r.with_found(found)
     names = ", ".join(n.capitalize() for n in r.reviewers)
+    if r.kind == "research":
+        return f"{RESEARCH_ROUNDS[r.round]} on `{r.commit[:7]}`: {r.result.replace('-', ' ')}. Reviewer: Research.\n{r.line()}\n{AGENT_MARKER}\n"
     if r.kind == "spec":
         what, on = f"Spec review round {r.round}", f"body `{r.body[:7]}`"
     else:
@@ -395,7 +423,7 @@ def _parse(fields: str, lines=(), start: int = 0) -> Record | None:
     except RecordError:
         return None
     if found is not None:
-        if r.kind == "spec" or r.clean != found.clean:
+        if r.kind in ("spec", "research") or r.clean != found.clean:
             return None
         r = r.with_found(found)
     # Only exactly what the writer writes: the fields in order, single spaces,

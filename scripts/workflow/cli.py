@@ -18,6 +18,7 @@
     workflow render --template F --ticket F --charter F --slots F --tracking N [--by-hand N] [--out F] [--print]
     workflow comments --file F [--owner LOGIN] [--since-id N]
     workflow merge-check --pr F --files F --commits F --checks F --rulesets F --threads F --reviews F --comments F --permissions F --compare F [--preview F] [--asker LOGIN] [--review-rounds N] [--review-passes N|until-clean] [--small-max-lines N] [--small-max-files N] [--json]
+    workflow merge-check ... [--recorded F]      (a pull request of research notes, after the look at a fix: its own changes at that record's commit)
     workflow merge-check --fetch N [any of the files above] [--charter F --check-logs DIR] [--asker LOGIN] [--review-rounds N] [--review-passes N|until-clean] [--small-max-lines N] [--small-max-files N] [--json]
     workflow preview --comments F --checks F --sha SHA [--json] | --fetch N [any of those] [--json]
     workflow briefing verify --file F
@@ -27,6 +28,7 @@
     workflow review-record --kind round|pass --round N --commit SHA --reviewers NAMES --clean|--not-clean [--base BRANCH]      (with the hashes of the PR's own changes at SHA)
     workflow review-record --kind round|pass --round N --commit SHA --reviewers NAMES --findings F [--base BRANCH]      (a rule=2 record: its result worked out from the findings file's marks)
     workflow review-record [--kind spec] --round N --body F --reviewers spec,correctness --clean|--not-clean      (a spec's review, keyed to its body's SHA-256)
+    workflow review-record --kind research --round 1|2 --commit SHA --reviewers research --clean|--not-clean [--base BRANCH]      (a research check, round 1, or the look at a fix, round 2, on a pull request of research notes; with the hashes)
     workflow review-record --measure --commit SHA [--base BRANCH] [--small-max-lines N] [--small-max-files N]      (the diff against the small threshold; no record)
     workflow hand-off --commit SHA --round N --passes N [--record F] [--tickets 415,416]      (the hand-off comment a session posts on its pull request for a fresh session)
     workflow pr-template [--existing FILE]      (prints the file to write; exits 3 for a folder of templates)
@@ -970,7 +972,7 @@ def cmd_merge_check(a) -> int:
     with --fetch the rest through `gh api`. Changes nothing, posts nothing, and
     exits 0 whatever it finds: anything it can't read is a reason of its own,
     never "ready"."""
-    inputs = _json_inputs(a, [*merge_mod.INPUTS, "charter"], raw=("charter",))  # the charter: JSON, or the tracking issue's body, as merge.charter_from reads it
+    inputs = _json_inputs(a, [*merge_mod.INPUTS, *merge_mod.WHEN_NEEDED, "charter"], raw=("charter",))  # the charter: JSON, or the tracking issue's body, as merge.charter_from reads it
     prof, profile_error = None, None
     try:
         prof = load()  # its protected paths and required checks are rules: none found is a reason
@@ -996,6 +998,9 @@ def cmd_merge_check(a) -> int:
         if prof is not None and prof.previews.on and "preview" not in inputs:
             # After the --pr check, so the preview reads the inputs merge-check will.
             inputs["preview"] = _fetched_preview(prof.repo, a.fetch, inputs)
+        needed = merge_mod.recorded_commit(inputs, prof) if prof is not None and merge_mod.RECORDED not in inputs else None
+        if needed is not None:  # #509: only after the look at a fix on a pull request of research notes
+            inputs[merge_mod.RECORDED] = fetch_mod.recorded(prof.repo, *needed)
     logs: dict = {}
     if a.check_logs:
         try:
@@ -1355,7 +1360,7 @@ def cmd_review_record(a) -> int:
         body = None if path is None else _spec_body(path)
         # Checked before any git runs: a refused record is never hashed.
         text = reviews_mod.record(**one, reviewers=reviewers, clean=a.clean, body=body, findings=found)
-        if reviews_mod._kind(one["kind"]) in ("round", "pass"):
+        if reviews_mod._kind(one["kind"]) in ("round", "pass", "research"):
             hashes = _own_hashes(a, one["commit"].strip().lower())
             text = reviews_mod.record(**one, reviewers=reviewers, clean=a.clean, diff=hashes.diff, lines=hashes.lines, findings=found)
     except (reviews_mod.RecordError, findings_mod.FindingsError) as e:
@@ -2019,6 +2024,7 @@ def main(argv: list[str] | None = None) -> int:
             "threads": "GraphQL's reviewThreads, with totalCount and pageInfo, every page",
         }.get(name, "as JSON from the GitHub API, every page")
         s.add_argument(f"--{name}", metavar="F", help=f"{what} ({source}); a file, or - for standard input")
+    s.add_argument(f"--{merge_mod.RECORDED}", metavar="F", help="a pull request of research notes, after the look at a fix: its own changes at that research record's commit (GET repos/<repo>/compare/<base>...<commit>, as JSON from the GitHub API, or its files); read only then; a file, or -")
     s.add_argument("--fetch", metavar="N", type=_pr_number, help="fetch every input not given as a file for pull request N, through `gh api` (the profile's project.repo), and with [previews] on = true read its try-it link (`workflow preview`); a file given wins")
     s.add_argument("--charter", metavar="F", help="the run's approved charter, as JSON, or the tracking issue's body (its run state holds it): the checks it waives (flow §4.1); ignored in an attended session")
     s.add_argument("--check-logs", metavar="DIR", help="a waived check's log, one file per check, named by its check run's id on the head (<id>, <id>.log or <id>.txt; the id is its job's), as `gh run view --log-failed --job <id>` gives its tail")
@@ -2078,11 +2084,11 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser(
         "review-record", allow_abbrev=False, help="the record a review round or a later Correctness pass posts on the pull request, or a spec's review on the spec"
     )
-    s.add_argument("--kind", action="append", help="`round`, `pass` for a Correctness pass after the last round, or `spec` for a spec's review (the default with --body)")
+    s.add_argument("--kind", action="append", help="`round`, `pass` for a Correctness pass after the last round, `spec` for a spec's review (the default with --body), or `research` for a research check (round 1) or the look at a fix (round 2) on a pull request of research notes")
     s.add_argument("--round", action="append", help="the round's number; for a pass, the round it follows")
     s.add_argument("--commit", action="append", help="the full SHA the round covered (`git rev-parse HEAD`)")
     s.add_argument("--body", action="append", metavar="FILE", help="a spec's review: the file holding the spec's body as you publish it, in place of --commit; the record names its SHA-256")
-    s.add_argument("--reviewers", action="append", help="those that ran, comma-separated: " + ",".join(reviews_mod.REVIEWERS) + "; a spec's review takes " + ",".join(reviews_mod.SPEC_REVIEWERS))
+    s.add_argument("--reviewers", action="append", help="those that ran, comma-separated: " + ",".join(reviews_mod.REVIEWERS) + "; a spec's review takes " + ",".join(reviews_mod.SPEC_REVIEWERS) + "; a research record takes " + reviews_mod.RESEARCH_REVIEWER + " alone")
     result = s.add_mutually_exclusive_group()
     result.add_argument("--clean", dest="clean", action="store_true", default=None, help="nothing left to fix")
     result.add_argument("--not-clean", dest="clean", action="store_false", help="the round found something to fix")

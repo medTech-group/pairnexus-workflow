@@ -985,6 +985,18 @@ def _blocks_part(commit):
     return reviews.record(kind="round", round=1, commit=commit, reviewers="standards,spec,correctness", clean=None, findings=found)
 
 
+def _research(*records):
+    """A pull request of research notes (#509): one note added, with these comments."""
+    def change(data):
+        data["files"] = [{"filename": "docs/research/booking-ahead/note.md", "status": "added", "additions": 1, "deletions": 0, "sha": "1" * 40, "patch": "@@ -0,0 +1 @@\n+Status: current"}]
+        data["comments"] = [comment(r, cid=i + 1) for i, r in enumerate(records)]
+    return change
+
+
+def _research_rec(rnd, commit=HEAD, clean=True):
+    return reviews.record(kind="research", round=rnd, commit=commit, reviewers="research", clean=clean)
+
+
 SCENARIOS = {
     "checks_pending": (None, lambda d: d["checks"].update(check_runs=[run_("tests", status="queued")])),
     "checks_failed": (None, lambda d: d["checks"].update(check_runs=[run_("tests", "failure")])),
@@ -1003,6 +1015,12 @@ SCENARIOS = {
         files=[{"filename": "src/app.py", "status": "modified", "additions": 61, "deletions": 0}],
         comments=[comment(rec(reviewers="correctness"))],
     )),
+    # #509: a pull request of research notes.
+    "research_none": (None, _research()),
+    "research_needs_look": (None, _research(_research_rec(1, clean=False))),
+    "research_needs_marks": (None, _research(_research_rec(2, clean=False))),
+    # The look's record on another commit, with no hashes: what changed since can't be told.
+    "research_more_than_marks": (None, _research(_research_rec(2, commit=EARLIER))),
     "conflict": (None, _set(("pr", "mergeable"), False)),
     "mergeable_unknown": (None, _set(("pr", "mergeable"), None)),
     "draft": (None, _set(("pr", "draft"), True)),
