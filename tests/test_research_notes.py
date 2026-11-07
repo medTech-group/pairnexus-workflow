@@ -348,8 +348,16 @@ def _break(project, path, old, new):
         ("sources/booking-help.md", "Source: https://example.com/help/booking", "Source: https://example.com/other", "link"),
         ("sources/booking-help.md", "Third-party text:", "Third party:", "Third-party text"),
         ("sources/booking-help.fingerprints", "2 d8aa", "2 zz", "fingerprint"),
+        ("note.md", "- <https", "* <https", "key-source line"),
+        ("note.md", "- <https", "  - <https", "key-source line"),
+        ("note.md", "- <https", "1. <https", "key-source line"),
+        ("note.md", "## Key sources\n\n", "## Key sources\n\n### Laws\n\n", "key-source line"),
+        ("note.md", "- <https://example.com/help/booking>, saved as `sources/booking-help.md`, fingerprints in `sources/booking-help.fingerprints`\n", "", "- None"),
     ],
-    ids=["paragraph-deleted", "hash-missing", "path-escapes", "path-absolute", "bad-line", "no-section", "fp-link", "saved-link", "no-third-party-line", "bad-hash"],
+    ids=[
+        "paragraph-deleted", "hash-missing", "path-escapes", "path-absolute", "bad-line", "no-section", "fp-link", "saved-link", "no-third-party-line", "bad-hash",
+        "star-bullet", "indented", "numbered", "subheading", "empty-section",
+    ],
 )
 def test_check_refuses_a_note_that_breaks_the_layout(project, path, old, new, said):
     _break(project, path, old, new)
@@ -364,6 +372,14 @@ def test_check_a_note_with_no_key_sources(project):
     p = _check(project)
     assert p.returncode == 0, p.stderr
     assert json.loads(p.stdout)["sources"] == []
+
+
+def test_check_reads_the_key_sources_up_to_the_next_section(project):
+    with open(_note(project), "a", encoding="utf-8") as fh:
+        fh.write("\n## Open questions\n\n* Do groups book further ahead?\n")
+    p = _check(project, (URL, PAGE))
+    assert p.returncode == 0, p.stderr
+    assert [s["result"] for s in json.loads(p.stdout)["sources"]] == ["unchanged"]
 
 
 def test_check_says_when_the_note_is_superseded(project):

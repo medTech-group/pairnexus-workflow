@@ -341,19 +341,23 @@ def read_note(path: Path) -> tuple[Header, list[KeySource]]:
     sources: list[KeySource] = []
     none = False
     for line in lines[start + 1:]:
-        if line.startswith("#"):
+        if line.startswith(("# ", "## ")):
             break
-        if not line.startswith("- "):
+        if not line.strip():
             continue
         if line == "- None":
             none = True
             continue
         m = _KEY_SOURCE.fullmatch(line)
         if not m:
-            raise LayoutError(f"{path}: a key-source line isn't `- <link>, saved as `<path>`, fingerprints in `<path>``: {line[:200]}")
+            raise LayoutError(
+                f"{path}: a line under `## Key sources` is neither a key-source line, `- <link>, saved as `<path>`, fingerprints in `<path>``, nor `- None`: {line[:200]}"
+            )
         sources.append(KeySource(m["url"], _inside(path.parent, m["saved"], "saved copy", m["url"]), _inside(path.parent, m["fps"], "fingerprints", m["url"])))
     if none and sources:
         raise LayoutError(f"{path}: `## Key sources` says `- None` and lists sources")
+    if not none and not sources:
+        raise LayoutError(f"{path}: `## Key sources` lists nothing (write `- None` under it when there are none)")
     for s in sources:
         for f in (s.saved, s.fingerprints):
             if not f.is_file():
