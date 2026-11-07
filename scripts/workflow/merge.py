@@ -408,7 +408,7 @@ def _who(logins) -> str:
     return ", ".join(f"@{_clean(w)}" if w else "someone" for w in logins) or "someone"
 
 
-def _walk(value, name: str, is_item: Callable[[dict], bool], keys: tuple[str, ...] = (), counted: bool = False) -> list[dict]:
+def _walk(value, name: str, is_item: Callable[[dict], bool], keys: tuple[str, ...] = (), counted: bool = False, whole: bool = True) -> list[dict]:
     """The items in `value`: a list of them, pages of them, or an object
     holding them under one of `keys` (nested, as GraphQL nests them).
 
@@ -416,7 +416,8 @@ def _walk(value, name: str, is_item: Callable[[dict], bool], keys: tuple[str, ..
     part: its pages (`gh api graphql --paginate --slurp`) taken together hold
     fewer nodes than `totalCount`, or the last says `pageInfo.hasNextPage`, or
     the first `hasPreviousPage`. With `counted`, a list that doesn't say how
-    long it is (no `totalCount` or `pageInfo`) can't be read either."""
+    long it is (no `totalCount` or `pageInfo`) can't be read either. Without
+    `whole`, a list fetched only in part gives the items it holds."""
     out: list[dict] = []
     pages: list[tuple[bool, bool, int | None, int]] = []  # (has previous, has next, total, nodes)
 
@@ -451,7 +452,7 @@ def _walk(value, name: str, is_item: Callable[[dict], bool], keys: tuple[str, ..
     go(value, 0)
     if counted and not pages:
         raise Unreadable(name, "it doesn't say how many there are, so a page left out can't be told: give GraphQL's connection with totalCount and pageInfo")
-    if pages:
+    if pages and whole:
         total = max((t for *_, t, _ in pages if t is not None), default=None)
         if pages[0][0] or pages[-1][1] or (total is not None and sum(n for *_, n in pages) < total):
             raise Unreadable(name, PARTIAL)
@@ -735,8 +736,8 @@ class Context:
 
         return self.once("files", read)
 
-    def _file_items(self) -> list[dict]:
-        return _walk(self.raw("files"), "files", lambda d: "filename" in d or "path" in d, GRAPHQL + ("files", "nodes"))
+    def _file_items(self, whole: bool = True) -> list[dict]:
+        return _walk(self.raw("files"), "files", lambda d: "filename" in d or "path" in d, GRAPHQL + ("files", "nodes"), whole=whole)
 
     def files(self) -> list[str]:
         """Every path the PR changes, a rename's old path too."""
@@ -751,7 +752,7 @@ class Context:
         except Unreadable:
             pass
         try:
-            return _paths(_changes_of(self._file_items(), "files"))
+            return _paths(_changes_of(self._file_items(whole=False), "files"))
         except (Unreadable, TypeError, ValueError, AttributeError, KeyError, IndexError, RecursionError):
             return []
 

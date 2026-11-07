@@ -115,6 +115,32 @@ def test_a_file_it_could_read_outside_the_research_folder_still_gets_the_panels_
     assert NOTE_LEFT_OUT not in note_ids(got)
 
 
+def graphql_files(nodes, total, shape):
+    """GraphQL's list of files with a page left out (`hasNextPage`): bare,
+    under `data`, or as `gh api graphql --paginate --slurp` wraps its pages."""
+    files = {"files": {"totalCount": total, "pageInfo": {"hasNextPage": True, "hasPreviousPage": False}, "nodes": nodes}}
+    wrapped = {"data": {"repository": {"pullRequest": files}}}
+    return {"bare": files, "data": wrapped, "slurp": [wrapped]}[shape]
+
+
+@pytest.mark.parametrize("shape", ["bare", "data", "slurp"])
+@pytest.mark.parametrize(
+    "path, want",
+    [("src/app.py", ["couldnt_read", "no_review"]), ("docs/research/notes.md", ["couldnt_read"])],
+    ids=["code", "a-note"],
+)
+def test_a_graphql_list_with_a_page_left_out_still_gives_the_panels_advice_on_a_file_outside_the_research_folder(project, capsys, shape, path, want):
+    """GraphQL's partial list gives the nodes it holds, as REST's does: a
+    code file among them gets `no_review`; a research note alone doesn't."""
+    data = partial(pr([APP]))
+    data["files"] = graphql_files([{"path": path, "additions": 1, "deletions": 1}], 3, shape)
+    got = judged(project, capsys, data)
+    assert ids(got) == want, got["reasons"]
+    files_reason(got)
+    assert NOTE_LEFT_OUT not in note_ids(got)
+    assert got["decision"] == "not_yet"
+
+
 @pytest.mark.parametrize("files", [[APP], note()[:1]], ids=["code", "a-note"])
 def test_files_it_cant_read_still_show_the_pass_cap(project, capsys, files):
     """One round at --review-rounds 1, two passes that weren't clean at
