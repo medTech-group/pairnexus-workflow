@@ -87,14 +87,25 @@ def test_research_comes_after_decision_questions_so_the_hook_still_carries_1_and
 # --- the order ----------------------------------------------------------------
 
 
-def test_the_order_is_the_intake_then_the_panel_then_grilling_uncapped():
+def test_the_order_is_the_intake_then_the_panel_then_the_verdict():
+    s = _sentence(_rule("The order"), "runs from the intake")
+    assert s.index("intake") < s.index("panel") < s.rindex("verdict")
+    for verdict in ("build it", "prototype first", "stop"):
+        assert verdict in s, verdict
+    # The study ends at its verdict: grilling isn't part of it, and doesn't always follow.
+    assert "grilling" not in s.casefold()
+
+
+def test_grilling_follows_build_it_or_the_prototype_uncapped_and_stop_ends_the_work():
+    # #511 round 1: a study whose verdict is stop goes on to no grilling.
     r = _rule("The order")
-    assert r.index("intake") < r.index("panel") < r.index("grilling")
-    assert "uncapped" in r
+    s = _sentence(r, "Grilling")
+    assert "build it" in s and "`prototype`" in s and "prototype first" in s
+    assert "uncapped" in s
     # Grilling starts from what the study found.
-    assert "findings" in r and "ranked questions" in r
-    # A study runs from the intake to the verdict.
-    assert "verdict" in r
+    assert "findings" in s and "ranked questions" in s
+    s = _sentence(r, "Stop")
+    assert "no grilling" in s
 
 
 def test_a_new_project_on_a_map_runs_the_intake_and_the_panel_before_charting():
@@ -263,8 +274,12 @@ def test_the_readme_gives_the_order():
     text = _flatten(_readme())
     main = text.split("#### The main path, step by step", 1)[1].split("**1. `/grill-with-docs`", 1)[0]
     intake = main.index("intake")
-    assert main.index("interview", main.index("panel", intake)) > intake
-    assert "uncapped" in main and "verdict" in main
+    verdict = main.index("verdict", main.index("panel", intake))
+    # The interview comes after the verdict, never between the panel and it.
+    assert "interview" not in main[intake:verdict]
+    after = main[verdict:]
+    for part in ("build it", "prototype first", "stop", "interview", "uncapped"):
+        assert part in after, part
     chart = text.split("**Chart the map**", 1)[1].split("**Work through it**", 1)[0]
     assert "new project" in chart and "intake" in chart and "panel" in chart and "before" in chart
     assert "Notes" in chart and "research issue" in chart

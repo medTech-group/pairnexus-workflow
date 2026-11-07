@@ -429,7 +429,7 @@ Planning uses [Matt Pocock's skills](https://github.com/mattpocock/skills). In v
 
 Keep steps 1 to 3 in **one session** where you can, so the spec and the tickets are written from everything said in the interview (see "Long sessions" above for when it gets long).
 
-**A study, when one runs, comes first.** The intake frames it (who it's for, what problem, what success looks like, any hard limits), with no question cap. Then a panel of fresh agents does the research. Then the interview below, still uncapped, starts from the study's findings and the questions it ranked. A study ends with a verdict: build it, prototype first, or stop (the kit's flow, "Research").
+**A study, when one runs, comes first.** The intake frames it (who it's for, what problem, what success looks like, any hard limits), with no question cap. Then a panel of fresh agents does the research. A study ends with a verdict: build it, prototype first, or stop. On build it, the interview below follows, still uncapped, starting from the study's findings and the questions it ranked. Prototype first puts a prototype before the interview, and stop ends the work there (the kit's flow, "Research").
 
 **1. `/grill-with-docs`: the interview.** Type the command and the idea in a sentence or two:
 
