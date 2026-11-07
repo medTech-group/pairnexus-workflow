@@ -143,6 +143,15 @@ def test_a_study_s_intake_and_verdict_are_decision_questions_on_its_research_iss
     assert "intake" in s and "verdict" in s
 
 
+def test_a_study_s_intake_and_verdict_lose_only_checks_not_the_other_rules():
+    # #511 round 1: only the end check and the re-read are left out; the evidence rule, the layout
+    # and posting word for word still apply, so "only" is limited to the checks.
+    s = _sentence(_intro(), "before each round")
+    assert "intake" in s and "verdict" in s
+    assert "of the checks" in s.casefold()
+    assert "end check" in s and "re-read" in s
+
+
 # --- what a recommendation carries ------------------------------------------
 
 
