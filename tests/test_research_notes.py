@@ -318,14 +318,76 @@ def test_the_head_is_skipped_until_its_end_or_the_body(html):
     assert research.paragraphs(html, "text/html") == ["A"]
 
 
-def test_a_page_that_leaves_out_both_the_heads_end_and_the_body_is_refused(project):
+_HTML5 = b"<!doctype html><html><head><title>T</title><p>First para.<p>Second para.</html>"
+
+
+def test_a_page_that_leaves_out_both_the_heads_end_and_the_body_gives_its_paragraphs(project):
+    # #526: the head that never ends at `</head>` or `<body>` ends at the first
+    # tag (or text) that isn't head content, as HTML5 says.
+    assert research.paragraphs(_HTML5, "text/html") == ["First para.", "Second para."]
     page = project / "html5.html"
-    page.write_bytes(b"<!doctype html><html><head><title>T</title><p>First para.<p>Second para.</html>")
+    page.write_bytes(_HTML5)
     before = _snapshot(project)
-    p = _cli("fingerprint", URL, "--page", page, env=_env(project))
-    assert p.returncode == 1 and p.stdout == ""
-    assert "no text" in p.stderr
-    assert _snapshot(project) == before
+    p = _cli("fingerprint", URL, "--page", page, "--json", env=_env(project))
+    assert p.returncode == 0, p.stderr
+    got = json.loads(p.stdout)["paragraphs"]
+    assert [x["text"] for x in got] == ["First para.", "Second para."]
+    assert [x["hash"] for x in got] == [_h("First para."), _h("Second para.")]
+    assert _snapshot(project) == before  # it writes nothing
+
+
+@pytest.mark.parametrize(
+    "html,want",
+    [
+        # tags inside a head's <noscript> or <template> never end it
+        (b"<head><noscript><img src=x></noscript><title>T</title><p>A</p>", ["A"]),
+        (b"<head><noscript>&lt;img src=x&gt;</noscript><title>T</title><p>A</p>", ["A"]),
+        (b"<head><template><p>Hidden</p></template><title>T</title><p>A</p>", ["A"]),
+        (b"<head><template><template><p>x</p></template><p>y</p></template><title>T</title><p>A</p>", ["A"]),
+        (b"<head><title>T<p>x</p></title><p>A</p>", ["A"]),  # a title's tags are its text
+        (b"<head><noscript><noscript></noscript><title>T</title><p>A</p>", ["A"]),  # a noscript holds no noscript
+        # head content, whitespace and comments keep it open
+        (b"<html><head>\n <meta charset=utf-8><link rel=icon href=x><base href=/><style>p{}</style>"
+         b"<script>a = '<p>no</p>'</script><noframes><p>no</p></noframes><!-- c --><meta/><head><html><p>A", ["A"]),
+        # anything else ends it, and is read
+        (b"<head><title>T</title>Hello<p>A", ["Hello", "A"]),  # text
+        (b"<head><title>T</title><h1>H</h1><p>A", ["H", "A"]),
+        (b"<head><title>T</title><br/>Hello", ["Hello"]),  # a self-closed tag
+        (b"<head><title>T</title><nav>N</nav><p>A", ["A"]),  # an element whose content is never text
+        (b"<head><title>T</title></body><p>A", ["A"]),
+        (b"<head><title>T</title></div><p>A", ["A"]),  # another end tag is ignored
+    ],
+    ids=[
+        "noscript-tag", "noscript-text", "template", "nested-template", "title", "noscript-noscript",
+        "head-content", "text", "block", "self-closed", "skipped-element", "end-body", "end-other",
+    ],
+)
+def test_a_head_that_isnt_closed_ends_at_the_first_tag_that_isnt_head_content(html, want):
+    assert research.paragraphs(html, "text/html") == want
+
+
+@pytest.mark.parametrize(
+    "html,want",
+    [
+        # what HTML5 would read as text, a closed head still leaves out (#526: unchanged)
+        (b"<head><title>T</title><div>x</div></head><body><p>A</p>", ["A"]),
+        (b"<head><title>T</title>Hello</head><p>A</p>", ["A"]),
+        (b"<head><p>x</p><body><p>A</p>", ["A"]),
+        (b"<head><noscript></head><body><p>A</p>", ["A"]),
+        # a later head left open after the first one closed: as before
+        (b"<head></head><p>A</p><head><p>B", ["A"]),
+        (b"<p>A</p><head></head><p>B</p>", ["A", "B"]),
+    ],
+    ids=["div", "text", "body", "noscript-open", "later-head-open", "text-before"],
+)
+def test_a_closed_head_reads_as_before(html, want):
+    assert research.paragraphs(html, "text/html") == want
+
+
+def test_the_fixture_pages_fingerprints_are_unchanged():
+    got = research.paragraphs(PAGE.read_bytes(), "text/html; charset=utf-8")
+    fps = (NOTE / "sources/booking-help.fingerprints").read_text(encoding="utf-8").splitlines()[1:]
+    assert [f"{i} {_h(t)}" for i, t in enumerate(got, 1)] == fps
 
 
 _CAFE = b"<p>Caf\xc3\xa9</p>"
