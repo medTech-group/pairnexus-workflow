@@ -354,6 +354,13 @@ def test_fingerprint_follows_redirects_only_to_web_links(project, server, target
     assert "root:" not in p.stdout + p.stderr and not saved.exists()
 
 
+def test_a_profile_it_cant_read_stops_the_command(project):
+    (project / ".claude/workflow/profile.toml").write_text('[project]\nname="d"\nrepo="a/d"\n[sensitive]\npatterns=[\'(\']\n', encoding="utf-8")
+    p = _cli("fingerprint", URL, "--page", PAGE, env=_env(project))
+    assert p.returncode == 1 and p.stdout == ""
+    assert "sensitive.patterns" in p.stderr
+
+
 def test_fingerprint_needs_a_page_or_fetch(project):
     p = _cli("fingerprint", URL, env=_env(project))
     assert p.returncode == 2 and "--page" in p.stderr and "--fetch" in p.stderr
