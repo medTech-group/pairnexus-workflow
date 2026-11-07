@@ -9,7 +9,7 @@
     workflow protection --merge-queue F --doctor F [--timeout MINUTES] [--json]
     workflow protection --checks-ran F [--statuses F] --rulesets F --repo F [--base BRANCH] [--json]
     workflow version [--fresh] [--json] | --repo | --starter
-    workflow ready [--issues F --prs F | --fetch] [--permissions F] [--exclude 1,2] [--only 1,2] [--override 3] [--running-area A ...] [--slots N] [--json]
+    workflow ready [--issues F --prs F | --fetch] [--permissions F] [--exclude 1,2] [--only 1,2] [--override 3] [--first 7,5] [--running-area A ...] [--slots N] [--json]
     workflow charter defaults [--unprotected] | validate F [--approved] [--unprotected] [--queue on|off] | markdown F [--tickets 13:area,143:-] [--estimate F] | diff OLD NEW | reuse OLD | pin-plan F | questions [--unprotected] [--queue on|off]
     workflow charter estimate F [--tickets N | 13:area,143:-] [--runs F] [--security 13,143] [--now ISO] [--json]
     workflow charter splice --body F --charter F [--out F] [--tickets 13:area,143:-] [--estimate F]
@@ -22,8 +22,10 @@
     workflow preview --comments F --checks F --sha SHA [--json] | --fetch N [any of those] [--json]
     workflow briefing verify --file F
     workflow review-record --kind round|pass --round N --commit SHA --reviewers NAMES --clean|--not-clean [--base BRANCH]      (with the hashes of the PR's own changes at SHA)
+    workflow review-record --kind round|pass --round N --commit SHA --reviewers NAMES --findings F [--base BRANCH]      (a rule=2 record: its result worked out from the findings file's marks)
     workflow review-record [--kind spec] --round N --body F --reviewers spec,correctness --clean|--not-clean      (a spec's review, keyed to its body's SHA-256)
     workflow review-record --measure --commit SHA [--base BRANCH] [--small-max-lines N] [--small-max-files N]      (the diff against the small threshold; no record)
+    workflow hand-off --commit SHA --round N --passes N [--record F] [--tickets 415,416]      (the hand-off comment a session posts on its pull request for a fresh session)
     workflow pr-template [--existing FILE]      (prints the file to write; exits 3 for a folder of templates)
     workflow adopt --owner LOGIN --repo OWNER/NAME --name NAME [--project DIR]      (a copy of the starter made yours)
     workflow evidence [--suite NAME ... | --all] [--base-count N | --base-ref BRANCH] [--fresh] [--allow-dirty]
@@ -59,9 +61,11 @@ from . import doctor as doctor_mod
 from . import estimate as estimate_mod
 from . import evidence as evidence_mod
 from . import fetch as fetch_mod
+from . import findings as findings_mod
 from . import _old_python, fallback
 from . import gate as gate_mod
 from . import guard as guard_mod
+from . import handoff as handoff_mod
 from . import issues as issues_mod
 from . import merge as merge_mod
 from . import own_changes as own_changes_mod
@@ -155,6 +159,7 @@ def cmd_ready(a) -> int:
         exclude = issues_mod.parse_numbers(a.exclude)
         only = issues_mod.parse_numbers(a.only) if a.only is not None else None
         overrides = issues_mod.parse_numbers(a.override)
+        first = issues_mod.parse_number_list(a.first)
         if only is not None and not only:
             raise ValueError("--only was given no ticket numbers")
     except ValueError as e:
@@ -175,6 +180,7 @@ def cmd_ready(a) -> int:
         repo=prof.repo if prof else None,
         areas=list(prof.areas) if prof else None,
         protected=list(prof.protected_paths) if prof else None,
+        bar_areas=list(prof.bar_areas) if prof else None,
     )
     if only is not None:
         missing = sorted(only - {v.number for v in verdicts})
@@ -185,7 +191,7 @@ def cmd_ready(a) -> int:
     _note_unreviewed_specs(verdicts, issues, prs, prof.repo if prof else None, a.permissions, stdin_for)
     slots = a.slots if a.slots is not None else (prof.max_parallel if prof else 2)
     running = [r.strip().casefold() for r in a.running_area or [] if r and r.strip()]
-    start = issues_mod.startable(verdicts, running, max(0, slots), overrides=overrides)
+    start = issues_mod.startable(verdicts, running, max(0, slots), overrides=overrides, first=first)
     if a.json:
         _out(
             {
@@ -670,7 +676,8 @@ def _charter_change_problems(old, new) -> list[str]:
     """A put or patch that changes the charter: the checks `charter validate
     --approved` runs against the profile on disk. Removed protection the old
     charter recorded can't be dropped, not even by clearing the charter
-    (`charter.dropped_removed_protection`). A state whose charter is unchanged
+    (`charter.dropped_removed_protection`), nor can the rule for build reviewers
+    change (`charter.changed_rule`). A state whose charter is unchanged
     isn't checked; a charter that is otherwise unsound is left to `state.put`."""
     c = new.get("charter") if isinstance(new, dict) else None
     was = old.get("charter") if isinstance(old, dict) else None
@@ -680,6 +687,9 @@ def _charter_change_problems(old, new) -> list[str]:
     dropped = charter_mod.dropped_removed_protection(was, c)
     if dropped:
         return [dropped]
+    rule_change = charter_mod.changed_rule(was, c)  # a run keeps the rule it started with (#382)
+    if rule_change:
+        return [rule_change]
     if not isinstance(c, dict) or charter_mod.validate(c):
         return []
     try:
@@ -696,6 +706,10 @@ def cmd_state(a) -> int:
     if a.action == "init":
         c = _json(a.charter)
         problems = charter_mod.validate(c, require_approval=True, queue=_queue(a))
+        if isinstance(c, dict) and not presets_mod.under_rule(c):
+            # A run started on this kit reviews under the rule throughout (#382): one answer, as `rule` may
+            # be absent only for a run started before it, never at its start.
+            problems = [p for p in problems if p != charter_mod.RULE_MUST_BE] + [charter_mod.NO_RULE_AT_INIT]
         if not problems:
             prof = load(required=False)
             if prof is not None:
@@ -726,6 +740,10 @@ def cmd_state(a) -> int:
         return 0
     if a.action in ("drop", "queue"):
         return _state_record(a, body)
+    if a.action == "join":
+        return _state_join(a, body)
+    if a.action == "joined":
+        return _state_joined(a, body)
     if a.action == "put":
         try:
             cur = state_mod.get(body)
@@ -770,6 +788,78 @@ def _state_record(a, body: str) -> int:
     new = state_mod.put(body, s)
     Path(a.out).write_text(new, encoding="utf-8")
     print(said)
+    return 0
+
+
+def _state_join(a, body: str) -> int:
+    """`state join` (#378): record the tickets filed during the run that join it,
+    print who joined, who didn't and why, and the `--first` list for `workflow
+    ready`, and write the body with the state to --out."""
+    s = state_mod.get(body)
+    if s is None:
+        raise state_mod.StateError("no state block in this body; use `state put` first")
+    problems = state_mod.validate(s)
+    if problems:  # before any fetch
+        raise state_mod.StateError("the state has problems, so nobody joined:\n- " + "\n- ".join(problems))
+    instead = "give --issues F and --permissions F in place of --fetch"
+    prof = load(required=False) if not a.fetch else None
+    if a.fetch:
+        prof = load()
+        if not prof.repo:
+            raise SystemExit(f"workflow state join: --fetch needs the profile's project.repo; {instead}")
+        try:
+            issues = _fetch(prof.repo, "issues")
+        except SystemExit as e:
+            raise SystemExit(f"workflow state join: the open issues couldn't be read ({str(e.code).splitlines()[0]}); {instead}") from None
+        try:
+            perms_raw = fetch_mod.permissions_of(prof.repo, state_mod.authors(s, issues))
+        except fetch_mod.GhError as e:
+            raise SystemExit(f"workflow state join: the authors' permissions couldn't be read ({e}); {instead}") from None
+    else:
+        inputs = _json_inputs(a, ["issues", "permissions"])
+        for name in ("issues", "permissions"):
+            if inputs[name][0] is None:
+                raise state_mod.StateError(f"--{name}: {inputs[name][1] or 'the file holds null'}")
+        issues, perms_raw = estimate_mod._flatten(inputs["issues"][0]), inputs["permissions"][0]
+        # A saved error (`{"message": …}`) or anything else that isn't an issue is never read as "no issues".
+        for i in issues:
+            if not (isinstance(i, dict) and isinstance(i.get("number"), int) and not isinstance(i["number"], bool)):
+                said = f": {str(i['message'])[:200]}" if isinstance(i, dict) and "message" in i else ""
+                raise state_mod.StateError(f"--issues holds something that isn't an issue{said}; fetch the open issues again")
+    try:
+        perms = merge_mod._permissions(perms_raw)
+    except merge_mod.Unreadable as e:
+        raise state_mod.StateError(f"--permissions can't be read: {e}") from None
+    said = state_mod.join(s, issues, perms, prof.repo if prof else None)
+    new = state_mod.put(body, s)
+    Path(a.out).write_text(new, encoding="utf-8")
+    if a.json:
+        _out(said)
+        return 0
+    for j in said["joined"]:
+        print(f"joined #{j['number']} ({j['kind']}, from #{j['from']})")
+    for j in said["not_joined"]:
+        print(f"not joined #{j['number']} ({j['kind']}, from #{j['from']}): {j['why']}")
+    print("first:" + (" " + ",".join(str(n) for n in said["first"]) if said["first"] else ""))
+    return 0
+
+
+def _state_joined(a, body: str) -> int:
+    """`state joined` (#378): each joined ticket's fate, for the run report."""
+    s = state_mod.get(body)
+    if s is None:
+        raise state_mod.StateError("no state block in this body")
+    out = state_mod.joined(s)
+    if a.json:
+        _out(out)
+        return 0
+    if not out:
+        print("nothing joined")
+    for j in out:
+        what = j["status"] or "not started"
+        if j["waits_on_source"]:
+            what += f"; its source #{j['from']} didn't merge in this run"
+        print(f"#{j['number']} ({j['kind']}, from #{j['from']}): {what}")
     return 0
 
 
@@ -1096,7 +1186,7 @@ def cmd_review_record(a) -> int:
     a spec's review round (keyed to its body's SHA-256) posts."""
     # Each flag is a list (`append`), so a repeated one is refused rather than
     # the last silently winning; repeated --reviewers add up.
-    for flag in ("kind", "round", "commit", "body", "base"):
+    for flag in ("kind", "round", "commit", "body", "base", "findings"):
         if len(getattr(a, flag) or []) > 1:
             print(f"workflow review-record: give --{flag} once", file=sys.stderr)
             return 2
@@ -1110,20 +1200,58 @@ def cmd_review_record(a) -> int:
     if path is not None and not (one["kind"] or "").strip():
         one["kind"] = "spec"  # --body alone (or with an empty --kind) is a spec's review
     reviewers = ",".join(a.reviewers) if a.reviewers else None
+    found_path = (a.findings or [None])[0]
     try:
         if path is not None:
             reviews_mod.check_key(one["kind"], one["commit"], body_given=True)
+        found = None
+        if found_path is not None:
+            # --findings (#370): every other flag is checked before the file is read.
+            reviews_mod.record(**one, reviewers=reviewers, clean=a.clean, findings=findings_mod.Findings())
+            found = findings_mod.from_file(found_path)
         body = None if path is None else _spec_body(path)
         # Checked before any git runs: a refused record is never hashed.
-        text = reviews_mod.record(**one, reviewers=reviewers, clean=a.clean, body=body)
+        text = reviews_mod.record(**one, reviewers=reviewers, clean=a.clean, body=body, findings=found)
         if reviews_mod._kind(one["kind"]) in ("round", "pass"):
             hashes = _own_hashes(a, one["commit"].strip().lower())
-            text = reviews_mod.record(**one, reviewers=reviewers, clean=a.clean, diff=hashes.diff, lines=hashes.lines)
-    except reviews_mod.RecordError as e:
+            text = reviews_mod.record(**one, reviewers=reviewers, clean=a.clean, diff=hashes.diff, lines=hashes.lines, findings=found)
+    except (reviews_mod.RecordError, findings_mod.FindingsError) as e:
         print(f"workflow review-record: {e}", file=sys.stderr)
         return 2
     sys.stdout.write(text)
     return 0
+
+
+def cmd_hand_off(a) -> int:
+    """`hand-off` (#371): the comment a session posts on its pull request when
+    a fresh session carries the review on."""
+    flags = ("commit", "round", "passes", "record", "tickets")
+    for flag in flags:
+        if len(getattr(a, flag) or []) > 1:
+            print(f"workflow hand-off: give --{flag} once", file=sys.stderr)
+            return 2
+    one = {flag: (getattr(a, flag) or [None])[0] for flag in flags}
+    try:
+        handoff_mod.checked(one["commit"], one["round"], one["passes"])  # the flags before the file
+        tickets = () if one["tickets"] is None else handoff_mod.tickets_from(one["tickets"])
+        record = None if one["record"] is None else handoff_mod.last_record(_hand_off_record(one["record"]))
+        text = handoff_mod.comment(head=one["commit"], round=one["round"], passes=one["passes"], record=record, tickets=tickets)
+    except handoff_mod.HandOffError as e:
+        print(f"workflow hand-off: {e}", file=sys.stderr)
+        return 2
+    sys.stdout.write(text)
+    return 0
+
+
+def _hand_off_record(path: str) -> str:
+    """`hand-off --record`'s text, refused in words when it can't be read."""
+    p = Path(path)
+    try:
+        return p.read_bytes().decode("utf-8")
+    except UnicodeDecodeError:
+        raise handoff_mod.HandOffError("--record isn't UTF-8 text: give the record as posted (its record.md)") from None
+    except OSError as e:
+        raise handoff_mod.HandOffError(f"--record can't be read: {e.strerror or e}") from None
 
 
 def _own_hashes(a, commit: str) -> own_changes_mod.Hashes:
@@ -1168,7 +1296,7 @@ def _measure(a) -> int:
     against the merge base of `origin/<base>`, and whether they are within the
     small threshold, counted as `merge-check` counts them. Writes no record:
     standard output is only the measurement, every note goes to standard error."""
-    given = [f"--{f}" for f in ("kind", "round", "body", "reviewers") if getattr(a, f)] + (["--clean or --not-clean"] if a.clean is not None else [])
+    given = [f"--{f}" for f in ("kind", "round", "body", "reviewers", "findings") if getattr(a, f)] + (["--clean or --not-clean"] if a.clean is not None else [])
     if given:
         print(f"workflow review-record: --measure writes no record: leave out {', '.join(given)}", file=sys.stderr)
         return 2
@@ -1608,6 +1736,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--exclude", help="tickets to leave out, e.g. 13,#143")
     s.add_argument("--only", help="consider only these tickets, e.g. 1,2,3")
     s.add_argument("--override", help="tickets that may share an area with a running one, e.g. 5,6")
+    s.add_argument("--first", help="tickets to start right after workflow:infra tickets, in this order, e.g. 7,#5")
     s.add_argument("--running-area", action="append")
     s.add_argument("--slots", type=int)
     s.add_argument("--permissions", metavar="F", help="the permissions of those who posted a spec's review records, in any shape merge-check's --permissions takes; else read with `gh api`")
@@ -1693,7 +1822,7 @@ def main(argv: list[str] | None = None) -> int:
     s.set_defaults(fn=cmd_charter)
 
     s = sub.add_parser("state")
-    s.add_argument("action", choices=["init", "get", "put", "patch", "drop", "queue"])
+    s.add_argument("action", choices=["init", "get", "put", "patch", "drop", "queue", "join", "joined"])
     s.add_argument("--body")
     s.add_argument("--charter")
     s.add_argument("--run-id")
@@ -1712,6 +1841,10 @@ def main(argv: list[str] | None = None) -> int:
         choices=state_mod.DROP_ANSWERS,
         help="drop: GitHub's answer to queueing it; prints in_queue, waiting, merged, retry, requeued, merge_base or needs_human",
     )
+    s.add_argument("--issues", metavar="F", help="join: the open issues as the GitHub API lists them (a list, or `--paginate --slurp`'s pages)")
+    s.add_argument("--permissions", metavar="F", help="join: the authors' permissions, in any shape merge-check's --permissions takes")
+    s.add_argument("--fetch", action="store_true", help="join: read the open issues and their authors' permissions with `gh api`")
+    s.add_argument("--json", action="store_true", help="join, joined: print JSON")
     s.add_argument("--state")
     s.add_argument("--patch")
     s.add_argument("--out")
@@ -1748,7 +1881,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--check-logs", metavar="DIR", help="a waived check's log, one file per check, named by its check run's id on the head (<id>, <id>.log or <id>.txt; the id is its job's), as `gh run view --log-failed --job <id>` gives its tail")
     s.add_argument("--asker", metavar="LOGIN", help="the GitHub login of whoever asks (the owner gets \"Ready once you've read\" for kit and CI files)")
     s.add_argument("--review-rounds", metavar="N", type=_review_rounds, help="the review rounds allowed, 1 to 10 (default: the profile's run.review_rounds): after the last one, a clean Correctness pass on the head lifts its findings; a run passes the briefing's")
-    s.add_argument("--review-passes", metavar="N|until-clean", type=_review_passes, help="the Correctness passes allowed after the last round, 0 to 10, or until-clean for no cap (default: the profile's run.review_passes): with a number, where one more would be needed, the answer is passes_used_up and the owner decides; a run passes the briefing's")
+    s.add_argument("--review-passes", metavar="N|until-clean", type=_review_passes, help="the Correctness passes allowed after the last round, 0 to 10, or until-clean for no cap (default: the profile's run.review_passes): with a number, where one more would be needed, the answer is passes_used_up and the owner decides; a run passes the briefing's; no pass cap applies when the latest counted review record is a rule=2 one")
     s.add_argument("--small-max-lines", metavar="N", type=_small_max_lines, help="the small threshold's changed lines outside tests, 1 to 1000 (default: the profile's run.small_max_lines): a review in which no counted round ran Spec counts only within it; a run passes the briefing's")
     s.add_argument("--small-max-files", metavar="N", type=_small_max_files, help="the small threshold's changed files outside tests, 1 to 50 (default: the profile's run.small_max_files)")
     s.add_argument("--json", action="store_true", help="the decision, its reasons and notes, and each check's name and state, as JSON")
@@ -1791,11 +1924,20 @@ def main(argv: list[str] | None = None) -> int:
     result = s.add_mutually_exclusive_group()
     result.add_argument("--clean", dest="clean", action="store_true", default=None, help="nothing left to fix")
     result.add_argument("--not-clean", dest="clean", action="store_false", help="the round found something to fix")
+    s.add_argument("--findings", action="append", metavar="FILE", help="a round's or pass's findings file (JSON: each finding's mark, mechanism, reproducer and flags, the last review's outcomes, the split flag; `{\"findings\": []}` for none): writes a rule=2 record whose result is worked out from the marks, so no --clean or --not-clean")
     s.add_argument("--measure", action="store_true", help="write no record: print --commit's changed lines and files outside tests, against the merge base of origin/<base>, and whether they are within the small threshold, counted as merge-check counts them")
     s.add_argument("--base", action="append", metavar="BRANCH", help="the base branch, fetched as origin/<base> first (default: the profile's project.base_branch)")
     s.add_argument("--small-max-lines", metavar="N", type=_small_max_lines, help="with --measure: the small threshold's changed lines, 1 to 1000 (default: the profile's run.small_max_lines)")
     s.add_argument("--small-max-files", metavar="N", type=_small_max_files, help="with --measure: the small threshold's changed files, 1 to 50 (default: the profile's run.small_max_files)")
     s.set_defaults(fn=cmd_review_record)
+
+    s = sub.add_parser("hand-off", allow_abbrev=False, help="the hand-off comment a session posts on its pull request, so a fresh session carries the review on")
+    s.add_argument("--commit", action="append", help="the full SHA of the head the hand-off covers (`git rev-parse HEAD`)")
+    s.add_argument("--round", action="append", help="the review rounds so far (0 for none)")
+    s.add_argument("--passes", action="append", help="the Correctness passes so far (0 for none)")
+    s.add_argument("--record", action="append", metavar="FILE", help="the last review's record as posted (its record.md, a rule=2 one), from the first round on: its findings marked blocks are the open ones, a security finding shown by its area only")
+    s.add_argument("--tickets", action="append", metavar="N,N", help="the tickets filed so far, comma-separated (the record's own are added)")
+    s.set_defaults(fn=cmd_hand_off)
 
     s = sub.add_parser("evidence")
     s.add_argument("--suite", action="append")
@@ -1854,6 +1996,10 @@ def main(argv: list[str] | None = None) -> int:
         p.error("state drop needs --ticket, --head, --answer and --out")
     if a.cmd == "state" and a.action == "queue" and not (a.queue and a.out):
         p.error("state queue needs --queue and --out")
+    if a.cmd == "state" and a.action == "join" and not (a.out and (a.fetch or (a.issues and a.permissions))):
+        p.error("state join needs --out, and --issues and --permissions (or --fetch)")
+    if a.cmd == "state" and a.action == "join" and a.fetch and (a.issues or a.permissions):
+        p.error("state join: give --fetch or --issues and --permissions, not both")
     try:
         return a.fn(a)
     except (ProfileError, state_mod.StateError, render_mod.RenderError, evidence_mod.EvidenceError, vendor_mod.VendorError) as e:

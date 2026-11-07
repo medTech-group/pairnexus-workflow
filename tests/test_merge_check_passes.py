@@ -461,7 +461,12 @@ def test_the_stuck_clause_is_only_for_a_ticket_at_the_cap():
 def test_the_ticket_session_prompts_stopping_list_names_the_cap():
     template = _read("templates/ticket-session-prompt.md")
     stopping = template.split("**Stopping:**", 1)[1].split("\n- **", 1)[0]
-    assert "pass cap" in stopping and "`passes_used_up`" in stopping
+    # The line is `{{review.stopping}}` (#382): it names the cap for a charter without the rule, which has one.
+    from workflow import render
+
+    assert stopping.startswith(" {{review.stopping}}\n")
+    assert "pass cap" in render._stopping(False) and "`passes_used_up`" in render._stopping(False)
+    assert "`passes_used_up`" not in render._stopping(True)
 
 
 def test_review_panel_5_stops_passes_at_the_cap():

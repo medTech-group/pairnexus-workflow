@@ -41,17 +41,22 @@ def _file(tmp_path, c, name="c.json"):
     return name
 
 
-def _defaults(tmp_path):
+def _defaults(tmp_path, rule=False):
+    """`charter defaults`, with an end time. It writes `rule: 2` (#382), which has no pass cap; these
+    tests are about today's rule's pass cap, so without `rule=True` the charter is one of a run
+    started before it, without `rule`."""
     p = _cli(tmp_path, "charter", "defaults")
     assert p.returncode == 0, p.stderr
     c = json.loads(p.stdout)
     c["limits"]["ends_at"] = "2099-10-13T03:30:00Z"
+    if not rule:
+        del c["rule"]
     return c
 
 
-def _preset(tmp_path, name):
-    """A charter written from preset `name`, as the conductor writes one."""
-    c = _defaults(tmp_path)
+def _preset(tmp_path, name, rule=False):
+    """A charter written from preset `name`, as the conductor writes one (`rule` as `_defaults`)."""
+    c = _defaults(tmp_path, rule)
     ps = _limits_q(tmp_path)["presets"][name]
     c["preset"] = name
     c["limits"].update(ps["limits"])
@@ -119,7 +124,8 @@ def test_passes_and_the_threshold_are_the_profiles_in_every_preset(tmp_path, nam
     p = _limits_q(tmp_path)["presets"][name]
     # The charter carries none of them: a run reads the profile's.
     assert not {"passes", "small_max_lines", "small_max_files"} & set(p["review"])
-    assert "at most 3 Correctness passes" in p["words"]
+    # The question is for a run under the rule (#382): its words give no pass cap.
+    assert "at most 3 Correctness passes" not in p["words"] and "Correctness passes until one is clean" in p["words"]
     brief = _brief(tmp_path, _preset(tmp_path, name))
     assert "--review-passes 3 --small-max-lines 80 --small-max-files 5`" in _merge_check(brief)
 
@@ -237,7 +243,7 @@ def test_without_a_profile_the_defaults_are_the_profiles_defaults(tmp_path):
     c = json.loads(_cli(tmp_path, "charter", "defaults").stdout)
     assert c["review"]["small"] is True and "passes" not in c["review"]
     q = next(q for q in json.loads(_cli(tmp_path, "charter", "questions").stdout) if q["key"] == "limits")
-    assert "at most 2 Correctness passes" in q["presets"]["normal"]["words"]
+    assert "Correctness passes until one is clean" in q["presets"]["normal"]["words"]  # no pass cap under the rule (#382)
     assert "60 lines in 4 files" in q["presets"]["normal"]["words"]
 
 
@@ -277,13 +283,15 @@ def test_values_at_the_bounds_are_accepted(tmp_path, key, value):
 def test_the_limits_question_asks_the_small_review_and_the_pass_cap(tmp_path):
     _project(tmp_path)
     q = _limits_q(tmp_path)
-    assert "the small review" in q["ask"] and "pass cap" in q["ask"]
-    for key in ("review.passes", "review.small_max_lines", "review.small_max_files"):
+    # Under the rule (#382), which every new charter has, there is no pass cap to ask about.
+    assert "the small review" in q["ask"] and "no pass cap" in q["note"]
+    for key in ("review.small_max_lines", "review.small_max_files"):
         assert key in q["note"]
     ps = q["presets"]
-    assert "small review on (at most 60 lines in 4 files outside tests); at most 2 Correctness passes;" in ps["light"]["words"]
-    assert "small review on (at most 60 lines in 4 files outside tests); at most 2 Correctness passes;" in ps["normal"]["words"]
-    assert "small review off; at most 2 Correctness passes;" in ps["thorough"]["words"]
+    rule = "Correctness passes until one is clean, within the run's end time;"
+    assert f"small review on (at most 60 lines in 4 files outside tests); {rule}" in ps["light"]["words"]
+    assert f"small review on (at most 60 lines in 4 files outside tests); {rule}" in ps["normal"]["words"]
+    assert f"small review off; {rule}" in ps["thorough"]["words"]
 
 
 def test_the_one_page_lists_the_small_review_and_the_pass_cap(tmp_path):

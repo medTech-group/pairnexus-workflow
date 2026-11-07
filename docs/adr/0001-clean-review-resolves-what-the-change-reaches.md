@@ -1,5 +1,7 @@
 # A clean review resolves everything the change touches or reaches; old bugs outside it get a ticket to fix them
 
+ADR 0002 changes this in four places: a blocking finding needs a reproducer; from the second review, a finding on lines unchanged since a review that covered them gets a ticket to fix it unless it is a safety breach, a security problem the change adds, loses data, leaves a criterion unmet, leaves new behaviour untested or is something the change breaks elsewhere; a criterion moved to a split-off ticket isn't unmet; and a run keeps the rule it started with, with no question asked when the kit is updated mid-run (this replaces the last bullet's question to the owner). The rule arrives with the tickets of spec #410's breakdown, where #362's phase-1 tickets are re-scoped.
+
 A build review round or pass is clean when it leaves no blocking finding open, not when it finds nothing. A round or pass that reports a blocking finding is not clean, even once the finding is fixed: the next round or pass checks the fix.
 
 A finding blocks, whatever its severity, when it is:
@@ -28,5 +30,5 @@ We decided this because reviews weren't converging. Of about 264 review rounds o
 ## Consequences
 
 - Reviewers review the change and what it reaches, not unrelated code.
-- The rule applies to build reviews only. Planning reviews (a spec's draft, a map decision's or a spec session's ADRs and glossary, and, in phase 2, a breakdown's review) still count every finding. A blocking rule of their own for planning reviews is out of scope here; it is filed as #363 (answer 36).
+- The rule applies to build reviews only. Planning reviews (a spec's draft, a map decision's or a spec session's ADRs and glossary) still count every finding. A spec's breakdown isn't one of them: spec #436's breakdown check reads it, like that spec's other planning checks, once with one re-read and no spec record, and #388's size and bundling check joins it (#433, answer 13). Its ask findings are put to the owner before the tickets are published (#433, answers 23 and 24); once they are answered or left open, nothing it found stops the publish, unless #363's spec changes what blocks these checks. A blocking rule of their own for planning reviews is out of scope here; it is filed as #363 (answer 36).
 - It arrives with a project's kit update, with no setting. Until spec #362's phase-1 tickets reach a project in its kit update (this repository included), every finding still blocks. A run in progress keeps the rule it started with; if the kit is updated mid-run, the conductor asks the owner to finish the run on the new rule or to stop starting new tickets (answer 35; vendored installs only, for kit updates after the one that brings this rule). An attended pull request open across the update follows the new rule from its next round or pass.

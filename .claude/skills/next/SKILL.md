@@ -34,6 +34,7 @@ It leaves out specs (the `spec` label, a "Spec:" title, or an issue with sub-iss
 
 A READY ticket may carry notes, which never change whether it is ready:
 - "names protected path <path> (<pattern>): check it isn't an owner task";
+- "area <area> is in run.bar_areas, but the ticket has no ## Bar heading: …", when its area is one of the profile's `run.bar_areas` and its body has no `## Bar` (#428): check whether it needs one;
 - "spec #<n> has no clean review: check it before building", when its spec (its parent issue, labelled `spec`) has no clean review record for its current body from an account with write access. Specs created before the kit brought this in are never noted. When the spec's comments or their authors' permissions can't be read, the note says so: "spec #<n>: couldn't read its reviews (<why>)".
 
 Where `gh api` isn't available, give each spec's comments in its `comments` field in `issues.json`, as a list (`issue_read` with method `get_comments`, every page), and the permissions of those who posted them with `--permissions perms.json`, in any shape `merge-check --permissions` takes (`list_repository_collaborators`, every page, or each author's `collaborators/<login>/permission`). A spec whose comments aren't given as a list (a count of 0 is none) is read with `gh api`, and a spec without `created_at` counts as new.
@@ -55,6 +56,13 @@ Where `gh api` isn't available, give each spec's comments in its `comments` fiel
 Ready research tickets start at once in background subagents (the `research` skill), alongside whatever you pick.
 
 Say which one you picked and why, in one line, with a build ticket's notes from `WF ready` beside it. "Spec #<n> has no clean review" is a warning, never a block: say so plainly ("its spec wasn't reviewed since it last changed: check it before building"), and the person decides whether to build it; in a ticket session, the briefing already did. For a build ticket, ask how first (below). Then claim it and follow the matching section of the flow. At the end, name what comes next.
+
+**Decision questions** are the ones whose answer is posted as the owner's. They follow the flow's rules (flow, "Decision questions"). Here they are a map decision's rounds, a spec's interview and its seams, and the questions a planning review's **Fixes** sends once a draft exists. Ask them as `start` does: read its `SKILL.md` (`.claude/skills/start/SKILL.md` vendored, or `../start/SKILL.md` from this skill's directory as a plugin), its "Choices" with their "Decision questions", for the evidence each recommendation carries, "yes to all", the check before each round, and what each round's post carries and leaves out, with its tags and confirmed replacement lines. Routing choices, such as "How to build it" below, keep their one line of why.
+- **Each round** is posted as soon as it's answered, where the flow posts the owner's answers: the decision ticket, the item's issue, or a comment on the map naming its Destination item. A question a planning review's fix raises goes with the current rounds: the decision ticket for a map decision, and for a spec the item's issue or the map before the spec is published, and the spec's issue after.
+- **Before asking anything,** read the rounds already posted for this spec or decision (on a map, the comments naming its Destination item). Then carry on from them, and number on from the last answer posted for it. Once an "End check" post is there, its rounds are over (the interview's, the seams' or a map decision's), though a planning review's fix questions still come: go on as `start`'s end check says.
+- **After the last round,** before the spec, or a map decision's ADR or glossary, is written (or the decision recorded, when it changes neither), run the end check as `start`'s step 4 says ("Spec" and "Map").
+- **A spec's tickets** are agreed with **Agree these**, then read against the spec by the breakdown check before any is published, as `start`'s step 4 says ("Spec", step 3).
+- **Planning counts:** each piece of planning ends with a "Planning counts" comment, posted when and where `start`'s "Decision questions" says.
 
 **How to build it, in an attended session:** ask with the `AskUserQuestion` tool, or as a numbered list where it isn't available:
 - **Build it now (Recommended)**: the full review panel;

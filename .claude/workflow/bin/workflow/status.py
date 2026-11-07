@@ -21,6 +21,8 @@ PATHS = ("ticket", "diagnose", "spec", "map")
 # The title update-workflow gives its pull request.
 KIT_UPDATE_TITLE = "Update the workflow kit"
 _WAITING = issues_mod.HUMAN_LABELS | {"needs-info"}
+# The labels a claimed issue's line names.
+_CLAIM_DETAIL = {"spec", "wayfinder:map", issues_mod.READY_LABEL, issues_mod.CARRY_ON_LABEL}
 
 # Files a repository has before any of its own code: what set-up writes, and
 # the usual first commit. A checkout with nothing else is brand new.
@@ -51,6 +53,8 @@ class Status:
     experience: Experience = field(default_factory=lambda: Experience(None, "unknown"))
     run: list[Item] = field(default_factory=list)
     in_progress: list[Item] = field(default_factory=list)
+    # `workflow:carry-on` tickets no run has adopted and no person is asked about (#376).
+    carry_on: list[Item] = field(default_factory=list)
     prs: list[Item] = field(default_factory=list)
     planned: list[Item] = field(default_factory=list)
     maps: list[Item] = field(default_factory=list)
@@ -145,7 +149,7 @@ def snapshot(
             st.run.append(Item(n, title))
             continue
         if issues_mod.CLAIM_LABEL in labels:
-            st.in_progress.append(Item(n, title, ", ".join(sorted(labels & {"spec", "wayfinder:map", "ready-for-agent"}))))
+            st.in_progress.append(Item(n, title, ", ".join(sorted(labels & _CLAIM_DETAIL))))
         if "wayfinder:map" in labels:
             detail = "open decisions unknown (no sub_issues_summary)" if kids is None else f"{kids[1]} open decisions"
             st.maps.append(Item(n, title, detail))
@@ -167,6 +171,12 @@ def snapshot(
         if labels & _WAITING:
             st.waiting.append(Item(n, title, ", ".join(sorted(labels & _WAITING))))
             continue
+        if issues_mod.CARRY_ON_LABEL in labels:
+            # Handed on, review not yet clean: `start` offers "Carry on" (#376). One claimed is listed
+            # as claimed only (a run adopted it, #380).
+            if issues_mod.CLAIM_LABEL not in labels:
+                st.carry_on.append(Item(n, title))
+            continue
         if issues_mod.READY_LABEL in labels:
             continue  # a build ticket: readiness below
         if "needs-triage" in labels or not labels:
@@ -176,8 +186,10 @@ def snapshot(
         st.prs.append(Item(pr["number"], pr.get("title") or "", ((pr.get("head") or {}).get("ref") or "") + draft))
         if (pr.get("title") or "").casefold().startswith(KIT_UPDATE_TITLE.casefold()) and st.kit_update_pr is None:
             st.kit_update_pr = pr["number"]
+    # A ticket handed on is never ready, whichever section lists it: carrying it on isn't a fresh build.
+    carried = {i["number"] for i in issues if "pull_request" not in i and issues_mod.CARRY_ON_LABEL in lab(i)}
     for v in issues_mod.readiness(issues, prs, repo=repo, areas=areas, protected=protected):
-        if v.ready:
+        if v.ready and v.number not in carried:
             st.ready.append(Item(v.number, v.title, v.area or ""))
     return st
 
@@ -185,6 +197,7 @@ def snapshot(
 _SECTIONS = [
     ("run", "Unattended run in progress"),
     ("in_progress", "Claimed (being worked on)"),
+    ("carry_on", "Carried on (handed on by an earlier session, review not yet clean)"),
     ("prs", "Open pull requests"),
     ("planned", "Planned at an earlier start, not yet begun"),
     ("maps", "Maps"),

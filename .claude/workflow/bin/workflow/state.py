@@ -23,6 +23,13 @@ A ledger entry naming a revert (`"what": "revert"`, or any entry with a
 commit and push rule (#341) lets the conductor revert only a commit the ledger
 records the owner allowing (#338, answer 40).
 
+Optional: `joined`, the tickets that joined the run as they were filed (#378,
+spec #412 "Runs"): tickets to fix old bugs, tickets to fix late findings and
+split tickets, keyed by issue number, each `{"from": <the ticket it was filed
+from>, "kind": "old"|"late"|"split"}`, with `"waits": true` when its blockers
+(as `workflow ready` reads them) name that ticket. `join` decides who joins; `joined` tells
+each one's fate for the run report.
+
 With the queue on, `drop` decides each answer GitHub gives to queueing a
 ticket's pull request (#243), and keeps on the ticket what it needs: the heads
 seen in the queue with their drops (`queue_heads`), the `failed` answers per
@@ -37,13 +44,15 @@ import re
 from typing import Any
 
 from . import charter as charter_mod
+from . import issues as issues_mod
 
 BEGIN = "<!-- workflow-state:begin (written by the conductor; edit only through `workflow state`) -->"
 END = "<!-- workflow-state:end -->"
 _BLOCK = re.compile(r"<!-- workflow-state:begin[^>]*-->\s*```json\s*(.*?)\s*```\s*<!-- workflow-state:end -->", re.S)
 
 BODY_LIMIT = 65_536
-TICKET_STATUSES = {"queued", "running", "in-review", "merged", "needs-human", "set-aside", "skipped"}
+# `carry-on`: not clean at the run's end time, handed on to the next run (#380).
+TICKET_STATUSES = {"queued", "running", "in-review", "merged", "needs-human", "set-aside", "skipped", "carry-on"}
 RUN_STATUSES = {"running", "stopping", "stopped"}
 
 
@@ -166,6 +175,19 @@ def validate(s: Any) -> list[str]:
         p.append("estimate must be `workflow charter estimate --json`'s output or null")
     if s.get("merge_queue") is not None and not isinstance(s["merge_queue"], bool):
         p.append("merge_queue must be true, false or null")
+    jn = s.get("joined")
+    if jn is not None:
+        if not isinstance(jn, dict):
+            p.append("joined must be an object keyed by issue number")
+        else:
+            for k, v in jn.items():
+                if not _NUMBER.fullmatch(k):
+                    p.append(f"joined key {k!r} must be an issue number, in ASCII digits with no leading zero")
+                if not (
+                    isinstance(v, dict) and _int(v.get("from")) and v["from"] > 0 and v.get("kind") in FIX_KINDS
+                    and set(v) <= {"from", "kind", "waits"} and isinstance(v.get("waits", False), bool)
+                ):
+                    p.append(f"joined[{k}] must be {{\"from\": <an issue number>, \"kind\": one of {', '.join(FIX_KINDS)}, \"waits\": true or false, optional}}")
     wd = s.get("wind_down")
     if wd is not None and not (isinstance(wd, str) and wd.strip()):
         p.append("wind_down must be why the run winds down (words) or null")
@@ -237,6 +259,159 @@ def put(body: str, state: dict) -> str:
             "move narrative to comments and finished tickets to the run report"
         )
     return new
+
+
+FIX_KINDS = ("old", "late", "split")
+# The machine line a ticket session ends a filed ticket with (`build-ticket` §3), in exactly the form its
+# listing scans for; the last one in a body is the ticket's own, since a body may quote another's above it.
+FIX_LINE = re.compile(r"<!-- workflow:fix-ticket from=([0-9]+) kind=(" + "|".join(FIX_KINDS) + r") -->")
+# A ticket number has at most 18 digits, as `issues.parse_number_list` reads one: a last line whose `from`
+# is longer is no machine line (never a quoted one above it), and never reaches `int()`, which refuses
+# past 4,300 digits (Python 3.11) and would stop every ticket joining.
+_MAX_DIGITS = 18
+_MAX_NUMBER = 10**_MAX_DIGITS
+_OWNER_LABELS = ("owner-task", "ready-for-human")
+_NUMBER = re.compile(r"[1-9][0-9]{0,%d}" % (_MAX_DIGITS - 1))  # an issue number as a key, written one way only
+
+
+def fix_line(body: Any) -> tuple[int, str] | None:
+    """(from, kind) from the body's last machine line, or None without one
+    (or when its `from` is past 18 digits, leading zeros aside)."""
+    found = FIX_LINE.findall(body) if isinstance(body, str) else []
+    if not found:
+        return None
+    digits, kind = found[-1]
+    digits = digits.lstrip("0") or "0"
+    return (int(digits), kind) if len(digits) <= _MAX_DIGITS else None
+
+
+def _candidates(issues: Any) -> list[tuple[dict, int, str]]:
+    """(issue, from, kind) for each open issue, not a pull request, with a machine line."""
+    out = []
+    for i in issues if isinstance(issues, list) else []:
+        if not (isinstance(i, dict) and _int(i.get("number")) and 0 < i["number"] < _MAX_NUMBER) or "pull_request" in i:
+            continue
+        if not isinstance(i.get("state"), str) or i["state"].lower() != "open":
+            continue
+        line = fix_line(i.get("body"))
+        if line:
+            out.append((i, *line))
+    return sorted(out, key=lambda x: x[0]["number"])
+
+
+def _author(issue: dict) -> str:
+    user = issue.get("user")
+    login = user.get("login") if isinstance(user, dict) else None
+    return login if isinstance(login, str) else ""
+
+
+def authors(s: dict, issues: Any) -> list[str]:
+    """The authors whose permission `join` needs: those of the open tickets
+    whose machine line names a ticket of the run or another such ticket.
+    Raises StateError for a state with problems."""
+    problems = validate(s)
+    if problems:
+        raise StateError("the state has problems, so nobody joined:\n- " + "\n- ".join(problems))
+    cands = _candidates(issues)
+    known = {k for k in (s.get("tickets") or {})} | {k for k in (s.get("joined") or {})} | {str(i["number"]) for i, _, _ in cands}
+    seen: dict[str, str] = {}
+    for i, src, _ in cands:
+        login = _author(i)
+        if login and str(src) in known:
+            seen.setdefault(login.casefold(), login)
+    return sorted(seen.values(), key=str.casefold)
+
+
+def join(s: dict, issues: Any, perms: dict[str, str], repo: str | None = None) -> dict:
+    """Record on `s` (changed in place) the open tickets that join the run:
+    labelled `ready-for-agent`, not an owner task (`owner-task`,
+    `ready-for-human`), not excluded by the charter's scope, by an author with
+    write, maintain or admin permission in `perms` (login, casefolded, to
+    permission), whose last machine line names a ticket of the run: one in its
+    `tickets`, or one that joined (so a joined ticket's own fix tickets join
+    too). Labels are read without case, as `workflow ready` reads them. A
+    ticket already in `tickets` is of the run already. Whether it is ready to
+    start is `workflow ready`'s, so a ticket that joined stays joined. Each
+    record keeps `waits` when the ticket's blockers name its source, read as
+    `workflow ready` reads them (`repo`, the profile's owner/repo, makes
+    `owner/repo#n` and issue URLs this repository's).
+
+    Returns `joined` (those that joined now), `not_joined` (those naming a
+    ticket of the run that didn't join, with why) and `first`: every joined
+    ticket not yet in `tickets`, in number order, for `workflow ready --first`."""
+    problems = validate(s)
+    if problems:
+        raise StateError("the state has problems, so nobody joined:\n- " + "\n- ".join(problems))
+    tickets = s.get("tickets") or {}
+    record = dict(s.get("joined") or {})
+    c = s.get("charter") if isinstance(s.get("charter"), dict) else {}
+    excluded = set((c.get("scope") or {}).get("exclude") or [])
+    cands = _candidates(issues)
+    new, refused, decided = [], {}, set()
+    grew = True
+    while grew:  # a source may itself join further down the list
+        grew = False
+        for i, src, kind in cands:
+            n = i["number"]
+            if n in decided or str(n) in tickets or str(n) in record:
+                continue
+            if str(src) not in tickets and str(src) not in record:
+                continue
+            decided.add(n)
+            labels = issues_mod.labels_of(i)
+            login = _author(i)
+            owner = [x for x in _OWNER_LABELS if x in labels]
+            if owner:
+                why = f"labelled {owner[0]}: an owner task never joins"
+            elif issues_mod.READY_LABEL not in labels:
+                why = f"not labelled {issues_mod.READY_LABEL}"
+            elif n in excluded:
+                why = "excluded by the charter's scope"
+            elif not login:
+                why = "its author can't be read"
+            elif login.casefold() not in perms:
+                why = f"`{login}`'s permission wasn't given"
+            elif perms[login.casefold()] not in ("admin", "maintain", "write"):
+                why = f"`{login}` has no write access"
+            else:
+                entry = {"from": src, "kind": kind}
+                if src in issues_mod.blockers_of(i.get("body"), repo):
+                    entry["waits"] = True
+                record[str(n)] = entry
+                new.append({"number": n, **entry})
+                grew = True
+                continue
+            refused[n] = {"number": n, "from": src, "kind": kind, "why": why}
+    if record:
+        s["joined"] = record
+    return {
+        "joined": new,
+        "not_joined": [refused[n] for n in sorted(refused)],
+        "first": sorted(int(k) for k in record if k not in tickets),
+    }
+
+
+def joined(s: dict) -> list[dict]:
+    """Each joined ticket's fate, in number order, for the run report: its
+    `status` in the run's tickets (None when it never started), its source's
+    (None when the source isn't among them), and `waits_on_source`: it never
+    started, it waits on its source (`waits`) and its source didn't merge in
+    the run. Raises StateError for a state with problems."""
+    problems = validate(s)
+    if problems:
+        raise StateError("the state has problems:\n- " + "\n- ".join(problems))
+    tickets = s.get("tickets") or {}
+
+    def status(n) -> str | None:
+        t = tickets.get(str(n))
+        return t.get("status") if isinstance(t, dict) else None
+
+    out = []
+    for k, v in sorted((s.get("joined") or {}).items(), key=lambda kv: int(kv[0])):
+        mine, theirs = status(k), status(v["from"])
+        out.append({"number": int(k), "from": v["from"], "kind": v["kind"], "status": mine, "source_status": theirs,
+                    "waits_on_source": mine is None and bool(v.get("waits")) and theirs != "merged"})
+    return out
 
 
 def drop(ticket: dict, head: str, answer: str) -> str:

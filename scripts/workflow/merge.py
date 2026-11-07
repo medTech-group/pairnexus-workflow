@@ -20,6 +20,8 @@ Every reason is in `REASONS`, worded for *new to building* and for *developer*;
 the decision never depends on the wording. It reuses the kit's readers rather
 than repeating them:
 - the review records: `reviews.read`;
+- the hand-off comment (#371): `handoff.read`, reported as `hand_off`, never
+  a reason;
 - the checks on the head commit: `protection.latest` (a name reported twice
   counts by its latest result, the try-it link's check marked);
 - the checks the rulesets require: `protection.check`;
@@ -41,10 +43,10 @@ import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Callable, NamedTuple
 
 from . import charter as charter_mod
-from . import own_changes, presets as presets_mod, protection, reviews, small, state
+from . import handoff, own_changes, presets as presets_mod, protection, reviews, small, state
 from .evidence import is_full, read_headline
 from .guard import matches
 from .posts import CommentsError, _login, _number, comments_from, decode_values
@@ -133,6 +135,7 @@ class Result:
     measured: dict | None = None  # the diff against it, where the small review's condition applies
     queue: bool = False  # a ruleset in force on the base requires a merge queue: "ready" means ready to queue (#245)
     head_hashes: own_changes.Hashes = own_changes.UNKNOWN_HASHES  # the head's own changes, hashed (#261)
+    hand_off: dict | None = None  # the latest trusted hand-off comment no counted record follows (#371)
 
     def as_dict(self) -> dict:
         return {
@@ -153,6 +156,7 @@ class Result:
             "small": self.measured,
             "queue": self.queue,
             "head_hashes": {"diff": self.head_hashes.diff, "lines": self.head_hashes.lines},
+            "hand_off": self.hand_off,
         }
 
 
@@ -235,6 +239,21 @@ REASONS = {
     "passes_used_up": Reason("review_panel", "review", {
         "new": ("Not yet: the short checks of the latest changes have reached their limit, so the owner decides what happens next.", "The owner can ask Claude for one more check; until then, this change stays unmerged."),
         "developer": ("Not yet: the pass cap is reached ({cap} allowed after round {round}, {passes}), and the head {short} still needs one: this pull request waits on the owner.", "The owner decides: \"One more pass\" (merge-check skill) runs one past the cap; in a run the ticket stops at needs-human with the open findings in the PR body."),
+    }),
+    # The circuit breaker (#427, spec #412): in place of the review reasons above, while the head is the latest
+    # record's commit. Its `next` (the case) is `fail_closed` or `split`; with neither left, no `next`.
+    "mechanism_repeats": Reason("review_panel", "review", {
+        "new": ("Not yet: the part `{mechanism}` blocked {reviews} in a row, and neither the safe fallback nor a split is left for it.", "Fix what the review found, as usual, then {then_new}: it carries on until a review finds nothing to fix."),
+        "developer": ("Not yet: the part `{mechanism}` has a blocking finding in {reviews} in a row, the latest on {short}; the safe fallback was taken already or the ticket's bar doesn't cover it, and it can't be split (split already, or the ticket was made by a split).", "Fix the findings as for a review that wasn't clean, then {then_developer} (`then`: {then}). It carries on until clean: in a run, within its end time; in attended work, up to 10 reviews that weren't clean in one session."),
+    }, cases={
+        "fail_closed": {
+            "new": ("Not yet: the part `{mechanism}` blocked {reviews} in a row, and the ticket's bar has a safe fallback for it.", "Replace the part with the safe fallback, fix the other things the review found (other than the parts this answer names), then {then_new}."),
+            "developer": ("Not yet: the part `{mechanism}` has a blocking finding in {reviews} in a row, the latest on {short}, and the reviewer marked it as one the bar's fail-closed form (the safe fallback) covers.", "A fresh fixer replaces the part with the bar's fail-closed behaviour, the safe fallback, and fixes the review's other blocking findings (other than the parts this answer names); then {then_developer} (`then`: {then}), which checks it and records the outcome `fail-closed`, and the count starts again. Say so in the PR body."),
+        },
+        "split": {
+            "new": ("Not yet: the part `{mechanism}` blocked {reviews} in a row, and the safe fallback in the ticket's bar doesn't cover it, or was tried already.", "Split the part out: file a ticket for it, take it out of this change, fix the other things the review found (other than the parts this answer names), then {then_new}."),
+            "developer": ("Not yet: the part `{mechanism}` has a blocking finding in {reviews} in a row, the latest on {short}; the bar's fail-closed form (the safe fallback) doesn't cover it or was taken already.", "Split it out: file a ready build ticket for the part first, then a fresh fixer takes it out of this pull request and fixes the review's other blocking findings (other than the parts this answer names); then {then_developer} (`then`: {then}), which checks it and records the outcome `split`, and the count starts again. The PR body names the moved criteria and the new ticket."),
+        },
     }),
     # The small review's condition (#257): in place of every other review reason.
     "past_small_threshold": Reason("review_panel", "review", {
@@ -539,12 +558,19 @@ class Context:
         self.small_max_lines = small_max_lines or (profile.small_max_lines if profile else small.DEFAULT_MAX_LINES)
         self.small_max_files = small_max_files or (profile.small_max_files if profile else small.DEFAULT_MAX_FILES)
         self.measured: small.Measure | None = None  # the diff against it, once measured
+        self.rule2 = False  # the latest counted review record is a `rule=2` one: no pass cap (#426); `_panel` sets it
         self.waived: list[str] = []  # the waivers used
         self.notes: list[dict] = []
         self.checks: list[dict] = []
         self.preview: dict | None = None
         self.kit: list[str] = []
         self._cache: dict = {}
+
+    @property
+    def pass_cap(self) -> int | str:
+        """The pass cap the review rule uses: `review_passes`, or none
+        (`until-clean`) when the latest counted record is a `rule=2` one (#426)."""
+        return presets_mod.UNTIL_CLEAN if self.rule2 else self.review_passes
 
     def raw(self, name: str):
         """The input's JSON as given."""
@@ -895,6 +921,25 @@ def _may_review(login: str | None, perms: dict[str, str]) -> bool:
     return bool(login) and perms.get(login.casefold()) in WRITE
 
 
+def _counted(r: reviews.Record, perms: dict[str, str], shas: set[str]) -> bool:
+    """A round or pass record the review rules count: from an account with
+    write access, for a commit of the pull request (`shas`). A spec record
+    names no commit; `_hand_off` reads records straight from the comments,
+    where one can be."""
+    return r.kind != "spec" and _may_review(r.author, perms) and r.commit in shas
+
+
+def _clean_review(r: reviews.Record) -> bool:
+    """Whether a review left nothing to fix. A `rule=2` record's is worked out
+    from its findings' marks (spec #412, "Records and clean"): clean only with
+    no finding marked blocks, a finding kept after a contest among them; a note
+    or a ticket to fix it never makes it unclean. Any other record's is its own
+    result, as today. The reader (`reviews.read`) already skips a `rule=2`
+    record whose `result` disagrees with its marks; this says the rule here
+    too, and the reader's check stays."""
+    return r.found.clean if r.rule == reviews.RULE else r.clean
+
+
 def _note(ctx: Context, nid: str, message: str) -> None:
     ctx.notes.append({"id": nid, "message": message})
 
@@ -1076,7 +1121,8 @@ def _panel(ctx: Context, add) -> None:
     PR, each record counted) number `ctx.review_passes`, the pass cap (#256)
     gives `passes_used_up` instead: the owner decides. With the cap `until-clean`
     (#402) there is none: it never does. Records from accounts
-    without write access, or naming a commit outside the PR, are ignored.
+    without write access, or naming a commit not in the PR's commit list (the
+    head always counts), are ignored (`_counted`).
 
     The small review (#257): when no counted round ran `spec`, the diff must be
     within the small threshold (`ctx.size`). Past it, `past_small_threshold`
@@ -1095,16 +1141,43 @@ def _panel(ctx: Context, add) -> None:
     that review's (`lines`), and no record on its commit since the last round
     wasn't clean; nor is the cap reached by a pass on the head that wouldn't
     count. A record without the hashes, or with `unknown`, covers only its own
-    commit."""
+    commit.
+
+    The new rule (#426, spec #412 "Records and clean"): a `rule=2` record is
+    clean by its findings' marks (`_clean_review`), and when the latest counted
+    record is one, there is no pass cap, whatever `ctx.review_passes` says: the
+    latest counted record's rule decides: latest by the PR's commit list
+    (GitHub's order, by date), with the head always the newest, and then by
+    posting, so a record posted late for an older commit doesn't decide it.
+    Like `free` and `_hand_off`, it takes the list's order for the PR's
+    history; it doesn't read the commits' parents.
+    When the old rule decides, every counted pass after the last round counts
+    toward its cap, as it always has. The round limit stays as above.
+
+    The circuit breaker (#427, spec #412): while the head is the latest
+    counted record's commit (in that same order), a part with a blocking
+    finding in two `rule=2` records in a row gives `mechanism_repeats`, one
+    for each such part, in place of the review reasons below (`_repeats`)."""
     head = ctx.pr().head
     perms = ctx.permissions()
     shas = ctx.commits() | {head}
     records = ctx.records()
-    counted = [r for r in records if _may_review(r.author, perms) and r.commit in shas]
+    counted = [r for r in records if _counted(r, perms, shas)]
     if len(records) > len(counted):
         left_out = _plural(len(records) - len(counted), "review record")
-        _note(ctx, "records_ignored", f"Left out {left_out}: posted by an account without write access, or naming a commit outside this pull request.")
+        _note(ctx, "records_ignored", f"Left out {left_out}: posted by an account without write access, or naming a commit not in this pull request's commit list.")
     rounds = [i for i, r in enumerate(counted) if r.kind == "round"]
+    history = {sha: n for n, sha in enumerate(ctx.parents())}  # the PR's commits, oldest first
+
+    # The head is the newest commit, wherever GitHub's list (by date, at most 250) puts it, or leaves it out.
+    def place(sha):
+        return len(history) if sha == head else history.get(sha, len(history))
+
+    # The counted records by the PR's history, then by posting (their places in `counted`): the rule choice's
+    # order, and the breaker's.
+    by_history = sorted(range(len(counted)), key=lambda i: (place(counted[i].commit), i))
+    if counted:
+        ctx.rule2 = counted[by_history[-1]].rule == reviews.RULE
     if not rounds:
         add("no_review")
         return
@@ -1137,8 +1210,6 @@ def _panel(ctx: Context, add) -> None:
     def on_head(r: reviews.Record) -> bool:
         return r.commit == head or (carried and r is latest)
 
-    history = {sha: n for n, sha in enumerate(ctx.parents())}  # the PR's commits, oldest first
-
     def free(i: int, commit: str | None, lines: str | None) -> bool:
         """A pass on `commit` after the counted records up to `i` doesn't count
         toward the cap (answer 23). The review before it is the latest since
@@ -1148,38 +1219,211 @@ def _panel(ctx: Context, add) -> None:
         wasn't clean."""
         since = counted[rounds[-1]:i + 1]
         prev = max(enumerate(since), key=lambda e: (history.get(e[1].commit, -1), e[0]))[1]
-        return (ctx.base_merge(commit) and prev.clean and _hashed(lines) and lines == prev.lines
-                and all(r.clean for r in since if r.commit == commit))
+        return (ctx.base_merge(commit) and _clean_review(prev) and _hashed(lines) and lines == prev.lines
+                and all(_clean_review(r) for r in since if r.commit == commit))
 
     after = [(i - 1, r) for i, r in enumerate(counted) if i > rounds[-1] and r.kind == "pass"]
     used = [r for i, r in after if not free(i, r.commit, r.lines)]
-    if len(after) > len(used) and ctx.review_passes != presets_mod.UNTIL_CLEAN:
+    cap = ctx.pass_cap
+    if len(after) > len(used) and cap != presets_mod.UNTIL_CLEAN:
         _note(ctx, "free_passes", f"{_plural(len(after) - len(used), 'Correctness pass', 'Correctness passes')} after a merge of the base that left the pull request's changed lines as they were didn't count toward the pass cap.")
     passes = [r for _, r in after if on_head(r)]
-    cap = ctx.review_passes
+
+    usual: list[tuple[str, dict]] = []  # the review reason, unless the circuit breaker gives its own
+
+    def give(rid, **more):
+        usual.append((rid, more))
 
     def needs_pass(rid, **more):
         # A pass the head needs that wouldn't count doesn't meet the cap (answer 23: no false needs-human). It is
         # judged on GitHub's `lines` hash; the pass's record names git's, so where they differ, that pass counts.
         if cap != presets_mod.UNTIL_CLEAN and len(used) >= cap and not free(len(counted) - 1, head, hashes.lines):
             posted = " posted" if len(used) == len(after) else f" counted of {len(after)} posted"
-            add("passes_used_up", next="owner", passes=_plural(len(used), "Correctness pass", "Correctness passes") + posted, cap=cap, **details)
+            give("passes_used_up", next="owner", passes=_plural(len(used), "Correctness pass", "Correctness passes") + posted, cap=cap, **details)
         else:
-            add(rid, **more, **details)
+            give(rid, **more, **details)
 
-    if not last.clean:
+    if not _clean_review(last):
         if not last_allowed:
-            add("review_not_clean", next="round", **details)
+            give("review_not_clean", next="round", **details)
         elif not passes:
             needs_pass("review_not_clean", next="pass", case="last_round" if last.round >= allowed else "small" if not any(ran_spec) else "after_small")
-        elif not passes[-1].clean:
+        elif not _clean_review(passes[-1]):
             needs_pass("pass_not_clean")
-    elif passes and not passes[-1].clean:
+    elif passes and not _clean_review(passes[-1]):
         needs_pass("pass_not_clean")
     elif not on_head(last) and not passes:
         needs_pass("review_stale")
+    # The circuit breaker (#427): in place of the review reason, while the head is the latest record's commit.
+    repeats = _repeats(counted, by_history, head)
+    # The review that follows its action, as the round limit chooses it: what `review_not_clean` would have said
+    # (another round, or a pass after the last allowed one), else a pass.
+    then = (usual[0][1]["next"] if usual[0][0] == "review_not_clean" else "pass") if usual else "pass"
+    said = _THEN_SAID[then]
+    for r in repeats:
+        more = {"next": r.next, "case": r.next} if r.next else {}
+        add("mechanism_repeats", mechanism=r.part, reviews=_plural(r.count, "review"), then=then,
+            then_developer=said["developer"], then_new=said["new"], **more, **details)
+    if not repeats:
+        for rid, more in usual:
+            add(rid, **more)
     if unread is not None:
         raise unread
+
+
+# The review after the circuit breaker's action (`then`), as each level says it.
+_THEN_SAID = {
+    "round": {"developer": "run another round", "new": "ask for another review"},
+    "pass": {"developer": "run a Correctness pass on the head", "new": "ask for a short check of the latest changes"},
+}
+
+
+class _Repeat(NamedTuple):
+    part: str  # the mechanism, as the records name it
+    next: str | None  # fail_closed, split, or None
+    count: int  # the reviews in a row
+
+
+def _same_review(a: reviews.Record, b: reviews.Record) -> bool:
+    """`b` is `a` posted again (a record missed is posted again, and a post that
+    timed out may have gone through): a round with the same number on the same
+    commit, or a pass on the same commit after the same round with the same
+    findings and outcomes. Two passes on one commit that found different
+    things are two reviews (a fixer that contested everything pushes nothing)."""
+    return (a.kind == b.kind and a.round == b.round and a.commit == b.commit
+            and (a.kind == "round" or a.found == b.found))
+
+
+def _repeats(counted: list[reviews.Record], by_history: list[int], head: str) -> list[_Repeat]:
+    """The circuit breaker (#427, spec #412): each part (mechanism) with a
+    blocking finding in two `rule=2` reviews in a row, or more, in the order
+    the latest record names them. Only while the head is the latest record's
+    commit: once an action is pushed, a review comes first.
+
+    `by_history` is `counted`'s places, oldest first by the PR's history, then
+    by posting (as the rule choice ranks records). A review posted more than
+    once (`_same_review`) is one review, wherever its copies were posted: at
+    its first post's place, with its latest copy's findings and outcomes; a
+    copy never rules or counts on its own. Names compare exactly;
+    security findings never count; a record without `rule=2` breaks every run.
+    A contest's ruling is about the last review before the review that gives
+    it: the latest by history among the reviews first posted before it and no
+    later in history than it. A finding it overturned counts for
+    nothing; one it kept counts with the review that first reported it, and a
+    review whose only findings on the part are kept re-entries neither counts
+    nor breaks the run. A note or a ticket to fix it on the part, with no new
+    blocking finding on it, breaks it. An action on the part (an outcome
+    `fail-closed` or `split`, posted by the review after it) starts the count
+    again from the review that posts it.
+
+    What comes next: `fail_closed` when the latest record marks the part as
+    one the bar's fail-closed form covers and no review (as its latest copy)
+    says it took that form; else `split` when no review says it was split out
+    and the ticket wasn't made by a split (any review's flag); else None."""
+    # A review posted more than once is one review: its first post's place, its latest copy's content.
+    first: dict[int, int] = {}
+    for i, r in enumerate(counted):
+        first[i] = next((j for j in range(i) if first[j] == j and _same_review(counted[j], r)), i)
+    content = {first[i]: counted[i] for i in range(len(counted))}  # the latest copy wins
+    rank = {i: n for n, i in enumerate(by_history)}
+    seq = [i for i in by_history if first[i] == i]
+    overturned: dict[int, set[int]] = {}  # a review's first place -> its findings' numbers overturned
+    for i in seq:
+        ruled = {o.finding for o in content[i].outcomes if o.kind == "contested" and o.ruling == "overturned"}
+        before = [j for j in seq if j < i and rank[j] < rank[i]]
+        if ruled and before:
+            about = max(before, key=rank.__getitem__)
+            if content[about].rule == reviews.RULE:
+                overturned.setdefault(about, set()).update(ruled)
+    if not seq or content[seq[-1]].commit != head or content[seq[-1]].rule != reviews.RULE:
+        return []
+    latest = content[seq[-1]]
+    rule2 = [r for r in content.values() if r.rule == reviews.RULE]  # each review once, as its latest copy
+    acted = {(o.kind, o.mechanism) for r in rule2 for o in r.outcomes}
+    from_split = any(r.from_split for r in rule2)
+
+    def in_a_row(part: str) -> int:
+        n = 0
+        for i in reversed(seq):
+            r = content[i]
+            if r.rule != reviews.RULE:
+                break
+            gone = overturned.get(i, set())
+            on_part = [f for k, f in enumerate(r.findings, 1) if f.security is None and f.mechanism == part and k not in gone]
+            if any(f.mark == "blocks" and not f.contested for f in on_part):
+                n += 1
+            elif not on_part or not all(f.contested for f in on_part):
+                break
+            # else only kept re-entries, which counted with the review before: neither counts nor breaks.
+            if any(o.kind in ("fail-closed", "split") and o.mechanism == part for o in r.outcomes):
+                break  # the action came after the review before this one: the count starts here
+        return n
+
+    out = []
+    blocking = [f for f in latest.findings if f.mark == "blocks" and f.security is None]
+    for part in dict.fromkeys(f.mechanism for f in blocking):
+        n = in_a_row(part)
+        if n < 2:
+            continue
+        if any(f.covered for f in blocking if f.mechanism == part) and ("fail-closed", part) not in acted:
+            out.append(_Repeat(part, "fail_closed", n))
+        elif ("split", part) not in acted and not from_split:
+            out.append(_Repeat(part, "split", n))
+        else:
+            out.append(_Repeat(part, None, n))
+    return out
+
+
+def _hand_off(ctx: Context) -> dict | None:
+    """The latest trusted hand-off comment (#371, spec #412), until a counted
+    review record of its head or a later commit follows it: one from an
+    account with write access whose head is a commit of the pull request, as
+    `_panel` counts a record. A review record posted after it, counted the
+    same way (a round's or a pass's, from such an account, for such a commit)
+    and not for a commit before its head by the pull request's history (a
+    record posted late for an older commit isn't a review since), means the
+    fresh session has reviewed, so there is none. It never decides anything:
+    a session or the conductor reads it to carry the review on. Unreadable
+    when the comments, the pull request, its commits or the permissions are.
+    What a person reads says "carry on in a fresh session" (#362, answer 32)."""
+    head = ctx.pr().head
+    perms = ctx.permissions()
+    shas = ctx.commits() | {head}
+    comments = ctx.comments()
+    offs = handoff.read(comments)
+    trusted = [h for h in offs if _may_review(h.author, perms) and h.head in shas]
+    if len(offs) > len(trusted):
+        n = len(offs) - len(trusted)
+        # What the check saw, which holds however long the pull request is: past the 250 commits GitHub
+        # lists, one of its commits can't be told from one outside it.
+        _note(ctx, "hand_offs_ignored", f"Left out {_plural(n, 'comment')} asking to carry on in a fresh session: "
+              "posted by an account without write access, or naming a commit not in this pull request's commit list.")
+    if not trusted:
+        return None
+    latest = trusted[-1]
+    history = {sha: n for n, sha in enumerate(ctx.parents())}
+
+    def order(sha: str) -> int:
+        # Its place among the PR's commits, oldest first. A counted commit the list leaves out is the
+        # PR's head (GitHub lists at most 250): the newest, so a hand-off of it is cleared only by a record of it.
+        return history.get(sha, len(history))
+
+    after = reviews.read(comments[latest.position + 1:])
+    if any(_counted(r, perms, shas) and order(r.commit) >= order(latest.head) for r in after):
+        return None
+    where = f" ({_clean(latest.url)})" if latest.url else ""
+    _note(ctx, "hand_off", f"Carry on in a fresh session: the comment on {_short(latest.head)}{where} hands the review on, "
+          "and a fresh session carries it on from there, reviewing any later commits too.")
+    return {
+        "head": latest.head,
+        "on_head": latest.head == head,
+        "round": latest.round,
+        "passes": latest.passes,
+        "comment_id": latest.comment_id,
+        "author": latest.author,
+        "created_at": latest.created_at,
+        "url": latest.url,
+    }
 
 
 def _hashed(h: str | None) -> bool:
@@ -1375,6 +1619,10 @@ def _reason(rid: str, rule: Rule | None, level: str, details: dict, wording_id: 
         out["round"], out["reviewers"] = details["round"], details["reviewers"]
         if "next" in details:
             out["next"] = details["next"]
+        if "mechanism" in details:  # mechanism_repeats: the part, exactly as the records name it, and the review after it
+            out["mechanism"] = details["mechanism"]
+            if details.get("then"):
+                out["then"] = details["then"]
     return out
 
 
@@ -1450,6 +1698,10 @@ def evaluate(
               "These rules are checked when it is queued: a request made after that (changes requested, a new review thread) doesn't stop the merge.")
     elif ctx.queue_unsure():
         _note(ctx, "queue_unsure", "A merge-queue rule in a ruleset this command can't judge isn't counted as a queue: " + "; ".join(ctx.queue_unsure()) + ".")
+    try:
+        hand_off = _hand_off(ctx)
+    except Unreadable:  # already a reason of its own, from the rules that read it
+        hand_off = None
     kit = ctx.kit
     if reasons:
         decision = "not_yet"
@@ -1459,8 +1711,8 @@ def evaluate(
         decision = "owner_review"
     else:
         decision = "ready"
-    return Result(decision, number, head, level, owner, reasons, ctx.notes, ctx.checks, kit, ctx.preview, ctx.review_rounds, ctx.review_passes,
-                  ctx.small_max_lines, ctx.small_max_files, ctx.measured.as_dict() if ctx.measured else None, queue, ctx.head_hashes())
+    return Result(decision, number, head, level, owner, reasons, ctx.notes, ctx.checks, kit, ctx.preview, ctx.review_rounds, ctx.pass_cap,
+                  ctx.small_max_lines, ctx.small_max_files, ctx.measured.as_dict() if ctx.measured else None, queue, ctx.head_hashes(), hand_off)
 
 
 # ---------- text ----------

@@ -10,7 +10,9 @@ jobs:
   tests:
     # Pinned: setup-python's Python 3.9 (past its end of life) may not be built for newer images.
     runs-on: ubuntu-24.04
-    # The suite takes about 9 to 10 minutes; room to grow, still a stop for a hung job.
+    # The suite runs its files in parallel (pytest-xdist, one worker per CPU: 4 on GitHub's
+    # runners for a public repository), about 5 minutes against about 17 in one process (#335).
+    # Room to grow, still a stop for a hung job.
     timeout-minutes: 20
     strategy:
       matrix:
@@ -25,9 +27,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - run: pip install pytest
+      - run: pip install pytest pytest-xdist
       - run: git config --global user.email ci@example.com && git config --global user.name ci
-      - run: python -m pytest tests -q
+      - run: python -m pytest tests -q -n auto
         env:
           OLD_PYTHON: ${{ steps.old.outputs.python-path }}
       - name: Versions agree

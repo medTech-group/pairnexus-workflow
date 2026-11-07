@@ -12,7 +12,7 @@ One comment on the tracking issue, written for the owner to act on. Build it onl
 ## Gather the record
 
 - **The state:** save the tracking issue's body to `body.md`, then run `WF state get --body body.md`. Each ticket has its status, attempts, `started_at`, `merged_at` and PR. The state also holds the ledger and `for_owner`.
-- **Each merged PR's body:** its "Decisions for the owner", any findings left open, and the number of review rounds.
+- **Each merged PR's body:** its "Decisions for the owner", any findings left open, and the number of review rounds. Under the rule for build reviewers (`review-panel` §10, the charter's `rule: 2`), also its **Parts that kept blocking** and **Split out**: each part of the change that blocked in two reviews in a row, and what was done.
 - **Each merged PR's timeline**, every page (`gh api --paginate --slurp 'repos/<repo>/issues/<PR>/timeline?per_page=100'`, or one `?page=N` at a time where `--paginate` is refused): one with an `added_to_merge_queue` event went through the merge queue, whoever queued it. For those, when it was last added to the queue, and its reviews and review threads.
 - **The by-hand issue:** its open checkboxes.
 - **The tracking issue's comments:** each ticket session's notes and failures.
@@ -20,7 +20,7 @@ One comment on the tracking issue, written for the owner to act on. Build it onl
 ## Its sections
 
 1. **Summary.** One line:
-   - how many tickets merged, how many were set aside, how many weren't started;
+   - how many tickets merged, how many were set aside, how many were carried on, how many weren't started;
    - why the run ended: done, the end time, a limit, or the stop label.
 
    **A solo-mode run** repeats its gap right under the summary. It is one whose charter's `accepted_gaps` has a line starting `solo mode:` or `removed protection:`, whatever its case or spacing (the charter's own check reads `removed protection:` the same way). Use these words, with the base branch's name in place of `main` where it isn't `main`:
@@ -31,7 +31,10 @@ One comment on the tracking issue, written for the owner to act on. Build it onl
    - `solo mode:`: "Protect `main`";
    - `removed protection:`: first say the profile says `main` is protected but the conductor's read-back didn't find it protected (the protection was removed, or couldn't be confirmed without admin access), then "Restore protection".
 2. **Merged.** A table of ticket, title, PR, review rounds, wall time (from `started_at` to `merged_at`) and attempts.
+   Under the rule for build reviewers, a part that kept blocking was settled without the owner, so the report is where they hear of it: below the table, one plain line for each part named under **Parts that kept blocking**, with what was done and why ("#12: the requeue part blocked in two reviews in a row, so it was split out to #415, with its criterion").
 3. **Set aside.** Each `needs-human` or set-aside ticket, with exactly what it needs and from whom. A run wound down because a session wasn't a ticket session (the state's `wind_down`) says so first, with the environment's fix: `WORKFLOW_ROLE=ticket` in the ticket environment's variables (`docs/enforcement.md` §2), before the next run.
+   Then each ticket that joined the run as it was filed (a ticket to fix an old bug, a ticket to fix a late finding or a split ticket, the state's `joined`, #378) and never started: `WF state joined --body body.md` gives each one's fate (in a run's final report, on the copy the conductor's "Stop the run" step 4 joined, so the tickets filed since its last check-in are there too). Some wait on their source: their blockers named it when they joined, as `workflow ready` reads them (every split ticket's do, and a late one's on its source's own lines). One of those whose source didn't merge in this run says so ("its source #<n> didn't merge in this run"). It can start only once that source merges, in a later run or by hand. The others say only that they didn't start in this run.
+   Then each ticket carried on at the end time (the state's `carry-on`, labelled `workflow:carry-on`, #380), with its pull request and a link to its hand-off (`workflow merge-check --fetch <PR> --json`'s `hand_off.url`): it needs nothing from the owner, since the next run adopts it first and its session starts from that hand-off.
 4. **What's live.** Each release step in the ledger: what ran, from which commit, and the smoke test's result. A release skipped because the owner stopped the run says so, and that the owner can release by hand.
 5. **Changes outside the repo.** The ledger, as a list for the owner to **confirm or undo**. Each line gives the change, when it happened, and the charter line or owner comment that allowed it. A revert entry gives its `result`: only one whose `result` starts with "made" is a change to confirm or undo; any other ("opened", "not made") is listed as not made, with its pull request or why.
 6. **For you:**

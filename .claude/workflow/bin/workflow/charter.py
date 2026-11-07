@@ -24,6 +24,14 @@ presets.py. A charter written before presets has neither, and reads as Normal:
 the profile's review rounds and UI explorer. A missing `small` reads as off, and
 a missing pass cap or threshold value as the profile's (`presets.review_of`).
 
+`rule` (#382, spec #412 "Runs") is the rule for build reviewers the run
+reviews under: 2 (`review-panel` §10's), which `defaults` and `reuse` write, so
+a run started on this kit uses it throughout and the next run takes it with no
+question asked. A charter without it, from a run started before it, keeps
+today's rule to its end; a run's charter can't change it (`changed_rule`).
+Under it there is no pass cap: `review.passes` is refused, and the one page
+and the briefings name the rule in a "Findings:" line in place of the pass cap.
+
 Every amendment is `{at, by, change, source}`: when, who (the owner's login),
 what changed, and the comment URL or quoted words it came from.
 """
@@ -87,6 +95,27 @@ def dropped_removed_protection(old: Any, new: Any) -> str | None:
     return None
 
 
+def changed_rule(old: Any, new: Any) -> str | None:
+    """The problem when a change moves a run's charter to another rule for
+    build reviewers, or clears it (whatever its rule, so a later charter can't
+    bring another), else None. A run keeps the rule it started with; a first
+    charter (`old` not a charter) starts it."""
+    if not isinstance(old, dict) or (isinstance(new, dict) and presets_mod.under_rule(old) == presets_mod.under_rule(new)):
+        return None
+    return (
+        "rule: a run keeps the rule it started with, so its charter's `rule` can't change (nor the charter be cleared) during the run"
+    )
+
+
+# `validate`'s problem with a `rule` that isn't 2 (#382).
+RULE_MUST_BE = f"rule must be {presets_mod.RULE} (the rule for build reviewers), or absent (today's rule, for a run started before it)"
+# `state init` starts a run on this kit, which reviews under the rule throughout (#382).
+NO_RULE_AT_INIT = (
+    "rule: a run started on this kit reviews under the rule for build reviewers, so its charter needs `rule: 2` "
+    "(`charter defaults` and `charter reuse` write it)"
+)
+
+
 def _auto_merge_risk(why: str, solo: bool) -> str:
     """What auto-merge would do, for `why` (a solo_reason when `solo`)."""
     if solo:
@@ -127,15 +156,14 @@ QUESTIONS: list[dict[str, Any]] = [
         "key": "limits",
         "ask": "How big a run: Light, Normal or Thorough (each sets sessions at once (max_parallel), in all "
         "(max_sessions), retries per ticket (max_retries), review rounds, the small review for tickets marked `Review: small` "
-        "and the UI explorer, beside the profile's pass cap and small threshold; any one number can then be changed)? "
+        "and the UI explorer, beside the profile's small threshold; any one number can then be changed)? "
         "When does the run end (ends_at; required: there is no default end time)? How often to check in "
         "(check_in_minutes)?",
         "note": "limits.ends_at must be given by the owner: an ISO time with its zone, e.g. 2026-10-13T03:30:00Z. "
         "Choosing a preset sets preset, limits (but ends_at and check_in_minutes) and review from presets[name]. "
-        "review.passes (the pass cap) and the small threshold (review.small_max_lines, review.small_max_files) are "
-        "the profile's in every preset: add one to review only when the owner changes it. The pass cap is offered "
-        "beside the presets (pass_cap): the profile's first, then review.passes \"until-clean\" (Correctness passes "
-        "until one is clean, within the run's end time), or 2, run.review_passes's default, when the profile's is \"until-clean\".",
+        "The small threshold (review.small_max_lines, review.small_max_files) is the profile's in every preset: add "
+        "one to review only when the owner changes it. The run reviews under the rule for build reviewers (rule 2): "
+        "there is no pass cap to ask about, since a ticket's reviews go on until one is clean, within the run's end time.",
         "options": list(presets_mod.PRESETS),
         "default": {"ends_at": None, **presets_mod.numbers(presets_mod.DEFAULT)["limits"], "check_in_minutes": 20},
     },
@@ -192,7 +220,7 @@ def defaults(release_steps: list[str] | None = None, profile: Any = None, protec
     checked. limits.ends_at stays null: the owner gives it."""
     if release_steps is None and profile is not None:
         release_steps = [st["name"] for st in getattr(profile, "release_steps", []) or []]
-    out: dict[str, Any] = {"version": 1}
+    out: dict[str, Any] = {"version": 1, "rule": presets_mod.RULE}
     for q in QUESTIONS:
         out[q["key"]] = json.loads(json.dumps(q["default"]))
     if release_steps:
@@ -229,7 +257,8 @@ def questions(
     run.preset first and `recommended`, with each one's numbers in `presets`.
     Where auto-merge would merge with nothing checked (solo mode, no CI, no
     required checks), the merge question doesn't offer it, and its note says
-    why. With `queue` true, its note says no check can be waived."""
+    why. With `queue` true, its note says no check can be waived. No pass cap
+    is offered: the run reviews under the rule for build reviewers (#382)."""
     d = defaults(release_steps, profile, protected)
     out = json.loads(json.dumps(QUESTIONS))
     why = _no_auto_merge_reason(profile, protected)
@@ -240,7 +269,6 @@ def questions(
             q["options"] = [rec] + [o for o in q["options"] if o != rec]
             q["recommended"] = rec
             q["presets"] = presets_mod.table(profile)
-            q["pass_cap"] = presets_mod.pass_cap_choices(profile)
         if q["key"] == "merge" and why:
             q["options"] = [o for o in q["options"] if o != "auto-merge"]
             q["note"] = (
@@ -272,6 +300,9 @@ def reuse(old: dict, profile: Any = None) -> dict:
         c["review"] = {"rounds": was["rounds"], "explorer": was["explorer"], "small": small}
     elif "small" not in rv:
         rv["small"] = small
+    # The next run takes the rule (#382), which has no pass cap.
+    c["rule"] = presets_mod.RULE
+    c["review"].pop("passes", None)
     c["approved"] = None
     c["amendments"] = []
     c["accepted_gaps"] = []
@@ -336,7 +367,7 @@ APPROVAL_SKEW = timedelta(minutes=10)
 # Every key a charter may hold, so a typo ("max_paralel") is refused rather than ignored.
 KEYS = {
     "version", "scope", "limits", "merge", "release", "outward", "conductor_fixes", "open_decisions",
-    "stop_run_on", "notify", "accepted_gaps", "approved", "amendments", "plan", "preset", "review",
+    "stop_run_on", "notify", "accepted_gaps", "approved", "amendments", "plan", "preset", "review", "rule",
 }
 SUBKEYS = {
     "scope": {"tickets", "exclude", "follow_unblocked"},
@@ -462,6 +493,8 @@ def validate(c: Any, require_approval: bool = False, now: datetime | None = None
                 p.append(f"limits.ends_at ({lim['ends_at']}) must be after approved.at ({a['at']})")
     elif require_approval:
         p.append("the charter has not been approved: the owner's go is needed, with its source")
+    if "rule" in c and not presets_mod.under_rule(c):
+        p.append(RULE_MUST_BE)
     if "preset" in c and not _one_of(c["preset"], set(presets_mod.PRESETS)):
         p.append(f"preset must be one of {', '.join(presets_mod.PRESETS)}, or absent (read as normal)")
     if "review" in c:
@@ -476,7 +509,12 @@ def validate(c: Any, require_approval: bool = False, now: datetime | None = None
             if "small" in rv and not isinstance(rv["small"], bool):
                 p.append("review.small must be true or false, or absent (off)")
             for k, _, lo, hi in presets_mod.PROFILE_REVIEW:
-                if k in rv and not presets_mod.valid_review(k, rv[k], lo, hi):
+                if k == "passes" and k in rv and presets_mod.under_rule(c):
+                    p.append(
+                        "review.passes with rule 2: the rule for build reviewers has no pass cap (a ticket's reviews go "
+                        "on until one is clean, within the run's end time); remove it"
+                    )
+                elif k in rv and not presets_mod.valid_review(k, rv[k], lo, hi):
                     also = f', or "{presets_mod.UNTIL_CLEAN}" (no cap)' if k == "passes" else ""
                     p.append(f"review.{k} must be a whole number from {lo} to {hi}{also}, or absent (the profile's)")
     p += validate_amendments(c.get("amendments", []))
@@ -617,7 +655,8 @@ def _estimate_lines(est: Any) -> list[str]:
 def _size_lines(c: dict, profile: Any, estimate: Any = None) -> list[str]:
     """The one page's size and review: the preset and what changed from it
     ("**Normal**, changed: 3 sessions at once"), and the review it gives; when
-    given, the estimate the owner saw; then the small review and the pass cap."""
+    given, the estimate the owner saw; then the small review, and the pass cap,
+    or under the rule for build reviewers its "Findings:" line (#382)."""
     if c.get("preset") in presets_mod.PRESETS:
         changed = presets_mod.changes(c, profile)
         size = f"**{presets_mod.LABELS[c['preset']]}**" + (f", changed: {', '.join(changed)}" if changed else "")
@@ -638,8 +677,18 @@ def _size_lines(c: dict, profile: Any, estimate: Any = None) -> list[str]:
         f"- **Review:** up to {rounds} per ticket; {presets_mod.explorer_words(c, profile)}.",
         *(_estimate_lines(estimate) if estimate is not None else []),
         f"- **Small review:** {small}.",
-        f"- **Pass cap:** {_pass_cap(rv)}.",
+        ONE_PAGE_FINDINGS if presets_mod.under_rule(c) else f"- **Pass cap:** {_pass_cap(rv)}.",
     ]
+
+
+# The one page's line under the rule for build reviewers (#382), in place of the pass cap.
+ONE_PAGE_FINDINGS = (
+    "- **Findings:** the rule for build reviewers: a finding blocks only with a concrete failing case, a fresh fixer "
+    "makes each review's fixes, and there is no pass cap: a ticket's reviews go on until one is clean, and the run's "
+    "end time is the only limit on a ticket's reviews. A ticket still not clean then is carried on to the next run "
+    "(`workflow:carry-on`), not set aside; one held for a security or safety problem in code already on the base "
+    "branch, or for a protected path, still comes to you."
+)
 
 
 def _pass_cap(rv: dict) -> str:
@@ -647,6 +696,17 @@ def _pass_cap(rv: dict) -> str:
     if rv["passes"] == presets_mod.UNTIL_CLEAN:
         return f"{presets_mod.pass_cap_words(rv)}; a ticket still not clean at the end time is set aside (`needs-human`)"
     return f"{presets_mod.pass_cap_words(rv)}, then `needs-human`"
+
+
+# The one page's line on the tickets that join a run as they are filed (#378, spec #412 "Runs"),
+# so the owner approves it at the go: `workflow state join` decides who joins.
+FILED_DURING_RUN = (
+    "- **Tickets filed during the run:** tickets to fix old bugs, tickets to fix late findings and split tickets "
+    "join the run, whatever its scope: each labelled `ready-for-agent`, posted by an account with write access and naming "
+    "a ticket of the run in its last `<!-- workflow:fix-ticket from=<n> kind=old|late|split -->` line. "
+    "They start once unblocked, after infra tickets and ahead of the run's other tickets not yet started; "
+    "owner tasks and excluded tickets never join, and one whose source can't merge in this run is listed in the run report."
+)
 
 
 def to_markdown(c: dict, plan: list[tuple[int, str | None]] | None = None, profile: Any = None, estimate: Any = None) -> str:
@@ -660,6 +720,7 @@ def to_markdown(c: dict, plan: list[tuple[int, str | None]] | None = None, profi
         "## Run charter",
         "",
         f"- **Scope:** {tickets}; excluded: {excl}; tickets unblocked during the run: {_yn(s['follow_unblocked'])}.",
+        FILED_DURING_RUN,
         f"- **Limits:** ends {lim['ends_at']}; {presets_mod.plural(lim['max_parallel'], 'session', 'sessions')} at once, {lim['max_sessions']} in all; "
         f"{presets_mod.plural(lim['max_retries'], 'retry', 'retries')} per ticket, then `needs-human`; check-ins every {lim['check_in_minutes']} minutes.",
         *_size_lines(c, profile, estimate),
@@ -729,7 +790,7 @@ def diff(old: dict, new: dict) -> list[str]:
     old = old if isinstance(old, dict) else {}
     new = new if isinstance(new, dict) else {}
     out = []
-    for k in [q["key"] for q in QUESTIONS] + ["preset", "review", "plan", "accepted_gaps", "amendments", "approved"]:
+    for k in [q["key"] for q in QUESTIONS] + ["preset", "review", "rule", "plan", "accepted_gaps", "amendments", "approved"]:
         empty = [] if k in ("accepted_gaps", "amendments") else None
         if old.get(k, empty) != new.get(k, empty):
             out.append(f"{k}: {json.dumps(old.get(k))} -> {json.dumps(new.get(k))}")

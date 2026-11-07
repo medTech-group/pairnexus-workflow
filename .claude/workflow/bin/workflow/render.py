@@ -11,6 +11,13 @@ A ticket's "Starts from:" line (a quick ticket for another pull request's fix,
 #348) names the branch its session starts from, in place of the base branch;
 the briefing's "Starts from:" line gives it, or the base branch without one.
 
+The briefing's `{{review.limit}}` line (#382) is the run's limit on a ticket's
+reviews: under the rule for build reviewers (the charter's `rule: 2`) its
+"Findings:" line, which turns the rule on for the session (`build-ticket` §3)
+and has no pass cap; for a charter without `rule`, today's "Pass cap:" line.
+A run under the rule is refused a template without that line (an older kit's,
+or a project's own), whose session would review under today's rule.
+
 `seal` ends a rendered briefing with `Briefing <hash>`, the first 12 hex
 characters of the SHA-256 of the text above it. The session echoes that line in
 its first comment, so the conductor sees the briefing arrived intact.
@@ -28,6 +35,8 @@ PLACEHOLDER = re.compile(r"\{\{\s*([A-Za-z0-9_.]+)\s*\}\}")
 # Filled by the conductor for each ticket. "none" is a valid answer; empty isn't.
 # `wake_trigger` is the id of the routine that wakes the conductor when a ticket ends.
 REQUIRED_SLOTS = ("alongside", "read_first", "owner_decisions", "briefing", "wake_trigger")
+# Optional: `hand_off`, a carried-on ticket's hand-off comment (#380), on the "Hand-off:" line.
+OPTIONAL_SLOTS = ("hand_off",)
 _SEAL = re.compile(r"[ \t]*Briefing ([0-9a-f]{12})")
 
 
@@ -200,6 +209,37 @@ def _starts_from_words(ticket: dict, profile: Profile, branch: str) -> str:
     )
 
 
+# A hand-off comment on a pull request (#371): what a carried-on ticket's
+# session starts from (#380).
+_HAND_OFF_URL = re.compile(r"https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/([1-9][0-9]{0,9})#issuecomment-([1-9][0-9]{0,19})")
+
+
+def _says_none(value) -> bool:
+    return value is None or (isinstance(value, str) and value.strip().lower() == "none")
+
+
+def _hand_off_words(url: object, profile: Profile, branch: str) -> str:
+    """The briefing's "Hand-off:" line, from the optional `hand_off` slot: the
+    URL of the hand-off comment an earlier session left on the ticket's pull
+    request (#380), or none. Anything else stops the render."""
+    if _says_none(url):
+        return "none: start from the ticket and what **Specific to this ticket** says."
+    m = _HAND_OFF_URL.fullmatch(url.strip()) if isinstance(url, str) else None
+    if not m or m.group(1).lower() != profile.repo.lower():
+        raise RenderError(
+            "the hand_off slot is the URL of the hand-off comment on this ticket's pull request "
+            f"(https://github.com/{profile.repo}/pull/<n>#issuecomment-<id>), or \"none\""
+        )
+    return (
+        f"{m.group(0)}. An earlier session handed this ticket on before its review was clean, so this session carries it "
+        f"on. Its pull request #{m.group(2)} and branch `{branch}` stay as they are: check out the branch "
+        "from GitHub, and read that hand-off comment before anything else. Go on from it: fix its open blocking findings "
+        "first, then run the next review, numbered after the rounds and passes it names (`merge-check` counts them from "
+        "the records). For a security finding it names by its area only, first review the whole change for that area: "
+        "that review finds its details again, since none crossed sessions."
+    )
+
+
 def _code(cmd: str) -> str:
     return f"`{cmd}`" if cmd else "none"
 
@@ -264,6 +304,7 @@ def _small(review: dict, profile: Profile) -> str:
 def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking: int, by_hand: int | None) -> dict:
     merge = charter.get("merge") or {}
     review = presets_mod.review_of(charter, profile)
+    under_rule = presets_mod.under_rule(charter)  # its pass cap is then until-clean (`review_of`)
     waived = merge.get("waived_checks") or []
     branch = profile.ticket_branch.replace("*", str(ticket["number"]))
     v = {
@@ -271,6 +312,7 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
         "ticket.title": ticket.get("title") or "",
         "ticket.branch": branch,
         "ticket.starts_from": _starts_from_words(ticket, profile, branch),
+        "ticket.hand_off": _hand_off_words(slots.get("hand_off"), profile, branch),
         "project.name": profile.name,
         "project.repo": profile.repo,
         "project.base_branch": profile.base_branch,
@@ -286,6 +328,11 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
         # Kept for a template written before #402, which says "{{review.passes_words}} after the last review round".
         "review.passes_words": presets_mod.passes_words(review),
         "review.pass_cap": _pass_cap(review),
+        # The line after "Small review": the "Findings:" line under the rule (#382), else the "Pass cap:" line.
+        "review.limit": BRIEFING_FINDINGS if under_rule else f"- **Pass cap:** {_pass_cap(review)}",
+        "review.stopping": _stopping(under_rule),
+        # The rule the run reviews under: "2", or "none" for today's rule.
+        "review.rule": str(presets_mod.RULE) if under_rule else "none",
         # The bare numbers, for merge-check's --review-passes, --small-max-lines and --small-max-files.
         "review.passes": str(review["passes"]),
         "review.small_max_lines": str(review["small_max_lines"]),
@@ -301,9 +348,35 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
     }
     for k in REQUIRED_SLOTS:
         v[k] = slots.get(k, "")
+    for k in OPTIONAL_SLOTS:
+        v[k] = "none" if _says_none(slots.get(k)) else slots[k]
     for k, val in slots.items():
         v.setdefault(k, val)
     return v
+
+
+# A ticket session's "Findings:" line (#382): it turns the rule for build reviewers on
+# (`build-ticket` §3, "Which rule"). It names no ticket: it reaches projects that have none.
+BRIEFING_FINDINGS = (
+    "- **Findings:** rule 2, the rule for build reviewers (`build-ticket` §3, \"The rule for build reviewers\", and "
+    "`review-panel` §10): every review of this ticket follows it, and each reviewer gets the ticket's `## Bar`, when it "
+    "has one, as the line their hunt stops at. There is no pass cap: after the last review round, Correctness passes "
+    "until one is clean, and the run's end time is the only limit on this ticket's reviews; `merge-check` never says "
+    "`passes_used_up`. Keep the PR body's findings table current after each review, so the open findings are there if "
+    "the end time comes first: the conductor then carries the ticket on to the next run, unless it is held for the "
+    "owner (a security or safety problem in code already on the base branch, or a protected path)."
+)
+
+
+def _stopping(under_rule: bool) -> str:
+    """When the session stops, after "**Stopping:**": under the rule, with no
+    pass cap to stop at (#382); else at the pass cap too."""
+    if under_rule:
+        return "if CI is still red after three fix attempts, or the ticket can't be built as written:"
+    return (
+        "if CI is still red after three fix attempts, the review reached its pass cap (`merge-check` says "
+        "`passes_used_up`: put the open findings in the PR body), or the ticket can't be built as written:"
+    )
 
 
 def _pass_cap(review: dict) -> str:
@@ -313,13 +386,19 @@ def _pass_cap(review: dict) -> str:
         return (
             f"{presets_mod.pass_cap_words(review)}. Fix each pass's findings and run another; `merge-check` never "
             "says `passes_used_up`. Keep the PR body's findings table current after each pass, so the open findings "
-            "are there if the run's end time comes first (the conductor then sets the ticket aside)."
+            "are there if the run's end time comes first (the conductor then sets the ticket aside, or carries it on to the "
+            "next run when its latest review followed the rule for build reviewers)."
         )
     return f"{presets_mod.pass_cap_words(review)}. When `merge-check` says `passes_used_up`, the cap is reached: stop (below)."
 
 
 def render(template: str, vals: dict) -> str:
     used = [m.group(1) for m in PLACEHOLDER.finditer(template)]
+    if not _says_none(vals.get("hand_off")) and "ticket.hand_off" not in used:
+        raise RenderError(
+            "the template has no {{ticket.hand_off}} line, which tells the session to start from its hand_off: "
+            "render it with the kit's current ticket-session-prompt.md"
+        )
     missing_slots = [k for k in REQUIRED_SLOTS if k in used and not str(vals.get(k, "")).strip()]
     if missing_slots:
         raise RenderError(
@@ -339,5 +418,11 @@ def render(template: str, vals: dict) -> str:
     if holes:
         raise RenderError(
             "these still say SEE_BELOW/TODO_FILL/<fill …>: " + ", ".join(holes) + "; write what the session needs, or \"none\""
+        )
+    # Without the line, the session would review under today's rule (#382): an older template, or one of the project's own.
+    if vals.get("review.rule") == str(presets_mod.RULE) and "review.limit" not in used:
+        raise RenderError(
+            "the run reviews under the rule for build reviewers, and the template has no {{review.limit}} line, which "
+            "tells the session the rule: render it with the kit's current ticket-session-prompt.md"
         )
     return PLACEHOLDER.sub(lambda m: str(vals[m.group(1)]), template)
