@@ -139,70 +139,68 @@ def test_fingerprint_prints_each_paragraphs_text_and_hash(project):
         assert t in p.stdout
 
 
-def test_fingerprint_writes_the_saved_copy_and_fingerprints_in_the_layout(project, tmp_path):
-    saved, fps = project / "out/booking-help.md", project / "out/booking-help.fingerprints"
-    saved.parent.mkdir()
-    p = _cli("fingerprint", URL, "--page", PAGE, "--saved", saved, "--fingerprints", fps, env=_env(project))
+def _files_from(out: dict, accessed: str) -> tuple[str, str]:
+    """The fingerprint file and the saved copy, written from one
+    `fingerprint --json` output as the study skill says: the header lines are
+    the skill's example's, the `Accessed:` date today's."""
+    head = _shown("docs/research/booking-ahead/sources/booking-help.md").splitlines()[:3]
+    head = [l.replace("https://example.com/help/booking", out["url"]) for l in head]
+    head[1] = f"Accessed: {accessed}"
+    paras = out["paragraphs"]
+    fps = f"url: {out['url']}\n" + "".join(f"{x['position']} {x['hash']}\n" for x in paras)
+    saved = "\n".join(head) + "\n\n" + "\n\n".join(x["text"] for x in paras) + "\n"
+    return fps, saved
+
+
+def test_the_files_written_from_one_fingerprint_output_pass_the_check(project, server):
+    text = SKILL.read_text(encoding="utf-8")
+    assert "WF research fingerprint <link> --fetch --json" in text and "--saved" not in text
+    base, routes = server
+    link = f"{base}/help/booking"
+    routes["/help/booking"] = (200, "text/html", PAGE.read_bytes())
+    p = _cli("fingerprint", link, "--fetch", "--json", env=_env(project))
     assert p.returncode == 0, p.stderr
-    # the fingerprints are exactly the fixture's, which the skill shows
-    assert fps.read_text(encoding="utf-8") == (NOTE / "sources/booking-help.fingerprints").read_text(encoding="utf-8")
-    want = (NOTE / "sources/booking-help.md").read_text(encoding="utf-8").splitlines()
-    got = saved.read_text(encoding="utf-8").splitlines()
-    want[1] = f"Accessed: {date.today().isoformat()}"  # computed at the point of use
-    want[8] = PARAS[2]  # the fixture's session left paragraph 3 out by hand
-    assert got == want
-
-
-@pytest.mark.parametrize("fps_folder", ["new/sources", "."], ids=["both-missing", "saved-missing"])
-def test_fingerprint_makes_the_folders_it_writes_in(project, tmp_path, fps_folder):
-    saved, fps = tmp_path / "new/sources/a.md", tmp_path / fps_folder / "a.fingerprints"
-    p = _cli("fingerprint", URL, "--page", PAGE, "--saved", saved, "--fingerprints", fps, env=_env(project))
+    fps, saved = _files_from(json.loads(p.stdout), date.today().isoformat())
+    # the fingerprints are the fixture's, which the skill shows
+    assert fps == (NOTE / "sources/booking-help.fingerprints").read_text(encoding="utf-8").replace(URL, link)
+    folder = _note(project).parent
+    (folder / "sources/booking-help.fingerprints").write_text(fps, encoding="utf-8")
+    (folder / "sources/booking-help.md").write_text(saved, encoding="utf-8")
+    _break(project, "note.md", URL, link)
+    p = _check(project, extra=["--fetch"])
     assert p.returncode == 0, p.stderr
-    assert fps.read_text(encoding="utf-8") == (NOTE / "sources/booking-help.fingerprints").read_text(encoding="utf-8")
-    assert saved.read_text(encoding="utf-8").startswith(f"Source: {URL}\n")
-    assert "making their folders when missing" in SKILL.read_text(encoding="utf-8")
+    assert json.loads(p.stdout)["sources"][0]["result"] == "unchanged"
 
 
-@pytest.mark.parametrize("which", ["saved", "fingerprints"])
-def test_fingerprint_cant_write_and_writes_neither_file(project, tmp_path, which):
-    out = tmp_path / "out"
-    (out / "a-folder").mkdir(parents=True)
-    (out / "a-file").write_text("x")
-    saved, fps = out / "a.md", out / "a.fingerprints"
-    if which == "saved":
-        saved = out / "a-folder"  # a folder, not a file
-    else:
-        fps = out / "a-file/a.fingerprints"  # inside a file
-    p = _cli("fingerprint", URL, "--page", PAGE, "--saved", saved, "--fingerprints", fps, env=_env(project))
-    assert p.returncode == 1, p.stdout
-    assert "can't write" in p.stderr and "Traceback" not in p.stderr
-    assert len(p.stderr.strip().splitlines()) == 1
-    assert sorted(f.name for f in out.iterdir()) == ["a-file", "a-folder"]
-    assert list((out / "a-folder").iterdir()) == []
+@pytest.mark.parametrize("option", ["--saved", "--fingerprints"])
+def test_fingerprint_writes_nothing_and_takes_no_file_to_write(project, option):
+    before = _snapshot(project)
+    p = _cli("fingerprint", URL, "--page", PAGE, option, project / "out", env=_env(project))
+    assert p.returncode == 2 and p.stdout == ""
+    assert _snapshot(project) == before
 
 
 def test_fingerprint_leaves_out_sensitive_patterns_but_hashes_the_page_as_fetched(project, tmp_path):
     paras = ["Your code is BOOKCODE-123456, keep it.", "Plain words."]
     page = _page(tmp_path, paras)
-    saved = project / "saved.md"
-    p = _cli("fingerprint", URL, "--page", page, "--saved", saved, "--json", env=_env(project))
+    p = _cli("fingerprint", URL, "--page", page, "--json", env=_env(project))
     assert p.returncode == 0, p.stderr
     got = json.loads(p.stdout)["paragraphs"]
     assert got[0]["hash"] == _h(paras[0])
-    assert "BOOKCODE-123456" not in p.stdout and "BOOKCODE-123456" not in saved.read_text()
+    assert "BOOKCODE-123456" not in p.stdout
     assert got[0]["text"] == "Your code is [left out], keep it."
-    assert "[left out], keep it." in saved.read_text()
 
 
 @pytest.mark.parametrize("how", ["page", "fetch"])
 def test_fingerprint_sensitive_data(project, how):
     link = f"http://127.0.0.1:{_closed_port()}/help?code=BOOKCODE-123456"
-    saved, fps = project / "s.md", project / "s.fingerprints"
-    given = ["--page", PAGE] if how == "page" else ["--fetch"]
-    p = _cli("fingerprint", link, *given, "--saved", saved, "--fingerprints", fps, env=_env(project))
-    assert p.returncode == 1
-    assert "BOOKCODE-123456" not in p.stdout + p.stderr
-    assert not saved.exists() and not fps.exists()
+    given = ["--page", project / "missing.html"] if how == "page" else ["--fetch"]  # refused before it reads or fetches
+    before = _snapshot(project)
+    p = _cli("fingerprint", link, *given, env=_env(project))
+    assert p.returncode == 1 and p.stdout == ""
+    assert "sensitive data" in p.stderr and "can't" not in p.stderr
+    assert "BOOKCODE-123456" not in p.stdout + p.stderr and "127.0.0.1" not in p.stderr
+    assert _snapshot(project) == before
 
 
 def test_fingerprint_fetches_the_page(project, server):
@@ -229,11 +227,11 @@ def test_fingerprint_reads_a_plain_text_page_by_its_blank_lines(project, server)
 def test_fingerprint_refuses_a_page_it_cant_read_and_writes_nothing(project, server, route):
     base, routes = server
     routes["/x"] = route
-    saved, fps = project / "s.md", project / "s.fingerprints"
-    p = _cli("fingerprint", f"{base}/x", "--fetch", "--saved", saved, "--fingerprints", fps, env=_env(project))
-    assert p.returncode == 1
+    before = _snapshot(project)
+    p = _cli("fingerprint", f"{base}/x", "--fetch", env=_env(project))
+    assert p.returncode == 1 and p.stdout == ""
     assert "can't" in p.stderr
-    assert not saved.exists() and not fps.exists()
+    assert _snapshot(project) == before
 
 
 @pytest.mark.parametrize(
@@ -331,11 +329,11 @@ def test_check_reads_every_source_when_one_names_a_charset_it_cant_decode_with(p
 def test_fingerprint_refuses_a_file_that_isnt_a_text_page_and_writes_nothing(project, tmp_path, name, raw):
     page = tmp_path / name
     page.write_bytes(raw)
-    saved, fps = project / "s.md", project / "s.fingerprints"
-    p = _cli("fingerprint", URL, "--page", page, "--saved", saved, "--fingerprints", fps, env=_env(project))
+    before = _snapshot(project)
+    p = _cli("fingerprint", URL, "--page", page, env=_env(project))
     assert p.returncode == 1, p.stdout
     assert "isn't a text page" in p.stderr and p.stdout == ""
-    assert not saved.exists() and not fps.exists()
+    assert _snapshot(project) == before
 
 
 @pytest.mark.parametrize("name", ["help.txt", "help.md", "help.htm", "help.xhtml"])
@@ -408,10 +406,9 @@ def test_fingerprint_follows_a_redirect(project, server):
 def test_fingerprint_follows_redirects_only_to_web_links(project, server, target):
     base, routes = server
     routes["/evil"] = (302, "", target)
-    saved = project / "s.md"
-    p = _cli("fingerprint", f"{base}/evil", "--fetch", "--saved", saved, env=_env(project))
+    p = _cli("fingerprint", f"{base}/evil", "--fetch", env=_env(project))
     assert p.returncode == 1 and "can't fetch" in p.stderr
-    assert "root:" not in p.stdout + p.stderr and not saved.exists()
+    assert "root:" not in p.stdout + p.stderr
 
 
 def test_a_profile_it_cant_read_stops_the_command(project):
@@ -658,7 +655,7 @@ def _snapshot(root: Path):
     return sorted((p.relative_to(root).as_posix(), p.stat().st_mtime_ns, p.read_bytes() if p.is_file() else b"") for p in root.rglob("*"))
 
 
-def test_the_command_spends_no_tokens_and_writes_nothing_outside_the_files_given(project, tmp_path, server):
+def test_the_command_spends_no_tokens_and_writes_nothing(project, tmp_path, server):
     base, routes = server
     routes["/help"] = (200, "text/html", PAGE.read_bytes())
     tools = tmp_path / "tools"
@@ -682,11 +679,6 @@ def test_the_command_spends_no_tokens_and_writes_nothing_outside_the_files_given
         p = _cli(*args, cwd=project, env=env)
         assert p.returncode == 0, (args, p.stderr)
     assert _snapshot(project) == before
-    saved, fps = project / "out.md", project / "out.fingerprints"
-    p = _cli("fingerprint", URL, "--page", PAGE, "--saved", saved, "--fingerprints", fps, cwd=project, env=env)
-    assert p.returncode == 0, p.stderr
-    after = {x[0] for x in _snapshot(project)} - {x[0] for x in before}
-    assert after == {"out.md", "out.fingerprints"}
     assert not called.exists()
 
 

@@ -45,15 +45,15 @@ Cancelling at least 2 hours before a booking gives a full refund (paragraph 4).
 - <https://example.com/help/booking>, saved as `sources/booking-help.md`, fingerprints in `sources/booking-help.fingerprints`
 ```
 
-**Saving a key source.** Make both files from one fetch, so the saved copy is the same text the hashes come from:
+**Saving a key source.** Fetch the page once:
 
 ```
-WF research fingerprint <link> --fetch --saved docs/research/<topic>/sources/<name>.md --fingerprints docs/research/<topic>/sources/<name>.fingerprints
+WF research fingerprint <link> --fetch --json
 ```
 
-It writes only those two files, making their folders when missing. It reads HTML and plain-text pages; a page it can't read as text, one whose server names no content type, or one with no text in it (built by JavaScript), it refuses, and nothing is written.
+It prints the page's paragraphs, each with its position, the SHA-256 of its text as fetched, and its text. It writes nothing. Write both files from that one output, in the layout shown below, so the saved copy is the same text the hashes come from: the fingerprint file from each paragraph's position and hash, and the saved copy from each paragraph's text, under its three header lines. `WF research check` refuses a saved copy and fingerprint file that don't match. It reads HTML and plain-text pages; a page it can't read as text, one whose server names no content type, or one with no text in it (built by JavaScript), it refuses.
 
-**The fingerprint file** holds no text: its first line is `url: <link>`, then one line per paragraph of the page as fetched, its position and the SHA-256 of its text, before anything is left out. `WF research fingerprint` writes it; never edit it by hand. An example, `docs/research/booking-ahead/sources/booking-help.fingerprints`:
+**The fingerprint file** holds no text: its first line is `url: <link>`, then one line per paragraph of the page as fetched, its position and the SHA-256 of its text, before anything is left out. Write it from `WF research fingerprint`'s output only; never change a hash by hand. An example, `docs/research/booking-ahead/sources/booking-help.fingerprints`:
 
 ```text
 url: https://example.com/help/booking

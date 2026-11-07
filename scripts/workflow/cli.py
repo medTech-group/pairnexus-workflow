@@ -21,7 +21,7 @@
     workflow merge-check --fetch N [any of the files above] [--charter F --check-logs DIR] [--asker LOGIN] [--review-rounds N] [--review-passes N|until-clean] [--small-max-lines N] [--small-max-files N] [--json]
     workflow preview --comments F --checks F --sha SHA [--json] | --fetch N [any of those] [--json]
     workflow briefing verify --file F
-    workflow research fingerprint URL --page F | --fetch [--saved F] [--fingerprints F] [--json]      (a page's paragraphs and their SHA-256; writes only the files given)
+    workflow research fingerprint URL --page F | --fetch [--json]      (a page's paragraphs and their SHA-256; writes nothing)
     workflow research check --note F [--page URL F ...] [--fetch] [--json]      (a note's key sources against their fingerprints; writes nothing)
     workflow research notes [--dir DIR] [--json]      (the research notes marked current)
     workflow review-record --kind round|pass --round N --commit SHA --reviewers NAMES --clean|--not-clean [--base BRANCH]      (with the hashes of the PR's own changes at SHA)
@@ -45,7 +45,6 @@ from __future__ import annotations
 import argparse
 import json
 import contextlib
-import errno
 import os
 import re
 import shutil
@@ -54,7 +53,6 @@ import time
 import subprocess
 import sys
 import threading
-from datetime import date
 from pathlib import Path
 
 _STARTED = time.monotonic()  # the guard's time budget counts from here, before the kit's modules load
@@ -1143,17 +1141,17 @@ def _shown(path: Path) -> str:
 
 def cmd_research(a) -> int:
     """`research`: research notes in docs/research/<topic>/ (spec #505). Its
-    inputs are files, with --fetch for pages. It calls no model and writes only
-    the files `fingerprint` is given. Exits 0 with an answer (a source that
-    can't be fetched is an answer for `check`), 1 when a page or the note's
-    layout can't be read, 2 when an input is missing."""
+    inputs are files, with --fetch for pages. It calls no model and writes
+    nothing. Exits 0 with an answer (a source that can't be fetched is an
+    answer for `check`), 1 when a page or the note's layout can't be read, 2
+    when an input is missing."""
     patterns = _research_patterns()
     if a.action == "fingerprint":
         if bool(a.page) == bool(a.fetch):
             print("workflow research fingerprint: give --page F (the page, saved as a file) or --fetch (fetch the link), one of them", file=sys.stderr)
             return 2
         if research_mod.leave_out(a.url, patterns)[1]:
-            print("workflow research fingerprint: the link holds sensitive data; cite the page by a link without it. Nothing was written.", file=sys.stderr)
+            print("workflow research fingerprint: the link holds sensitive data; cite the page by a link without it", file=sys.stderr)
             return 1
         try:
             raw, ctype = research_mod.read_page(Path(a.page)) if a.page else research_mod.fetch(a.url)
@@ -1163,7 +1161,7 @@ def cmd_research(a) -> int:
             return 1
         except research_mod.PageError as e:
             how = "fetch" if a.fetch else "read"
-            print(f"workflow research fingerprint: can't {how} {a.url}: {e}; nothing was written", file=sys.stderr)
+            print(f"workflow research fingerprint: can't {how} {a.url}: {e}", file=sys.stderr)
             return 1
         shown, n = [], 0
         for t in paras:
@@ -1171,25 +1169,6 @@ def cmd_research(a) -> int:
             shown.append(t)
             n += k
         hashes = [research_mod.digest(t) for t in paras]  # the page as fetched, before anything is left out
-        files = [
-            (Path(f), text)
-            for f, text in (
-                (a.fingerprints, research_mod.fingerprints_text(a.url, paras) if a.fingerprints else ""),
-                (a.saved, research_mod.saved_copy_text(a.url, date.today().isoformat(), shown) if a.saved else ""),
-            )
-            if f
-        ]
-        try:  # both targets checked, and their folders made, before either file is written
-            for f, _ in files:
-                if f.is_dir():
-                    raise IsADirectoryError(errno.EISDIR, "it is a folder", str(f))
-            for f, _ in files:
-                f.parent.mkdir(parents=True, exist_ok=True)
-            for f, text in files:
-                f.write_text(text, encoding="utf-8")
-        except OSError as e:
-            print(f"workflow research fingerprint: can't write {e.filename} ({e.strerror or e})", file=sys.stderr)
-            return 1
         if n:
             print(f"workflow research fingerprint: left out {n} match(es) of the profile's [sensitive].patterns; leave out personal details by hand", file=sys.stderr)
         if a.json:
@@ -2066,14 +2045,12 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--file", required=True, help="the briefing as the session received it (or -)")
     s.set_defaults(fn=cmd_briefing)
 
-    s = sub.add_parser("research", help="research notes in docs/research/<topic>/: a page's fingerprints, a note's key sources checked against theirs, the notes marked current; calls no model, writes only the files given")
+    s = sub.add_parser("research", help="research notes in docs/research/<topic>/: a page's fingerprints, a note's key sources checked against theirs, the notes marked current; calls no model, writes nothing")
     rsub = s.add_subparsers(dest="action", required=True)
     r = rsub.add_parser("fingerprint", help="a page's text, paragraph by paragraph, each with the SHA-256 of its text as fetched")
     r.add_argument("url", help="the page's link, as the note cites it")
     r.add_argument("--page", metavar="F", help="the page, saved as a file (HTML, or plain text)")
     r.add_argument("--fetch", action="store_true", help="fetch the link (http or https only)")
-    r.add_argument("--saved", metavar="F", help="write the saved copy here: its Source, Accessed and Third-party text lines, then the paragraphs, the profile's [sensitive].patterns left out")
-    r.add_argument("--fingerprints", metavar="F", help="write the fingerprint file here: `url: <link>`, then one `<position> <sha256>` line per paragraph")
     r.add_argument("--json", action="store_true")
     r.set_defaults(fn=cmd_research)
     r = rsub.add_parser("check", help="a note's key sources against their fingerprints, as a set: unchanged, the new paragraphs and the paragraphs gone (each with its hash), or can't fetch")

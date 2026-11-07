@@ -16,7 +16,8 @@ fixtures are copied from:
 `fingerprint` reads a page (a file, or with `--fetch` the web), splits its text
 into paragraphs and hashes each; `check` compares a note's key sources against
 their fingerprints as a set; `notes` lists the notes marked `current`. None of
-it calls a model, and nothing is written but the files `fingerprint` is given.
+it calls a model, and none of it writes anything: the session writes the saved
+copy and the fingerprint file from `fingerprint`'s output.
 """
 
 from __future__ import annotations
@@ -33,7 +34,6 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 LEFT_OUT = "[left out]"
-THIRD_PARTY = "Third-party text: someone else's words, quoted to check this note's claims. Not covered by this repository's licence."
 NOTE_FILE = "note.md"
 FETCH_LIMIT = 10 * 1024 * 1024  # bytes
 FETCH_TIMEOUT = 30  # seconds
@@ -241,17 +241,6 @@ def page_paragraphs(raw: bytes, ctype: str) -> list[str]:
     if not paras:
         raise PageError("there is no text on it (a page built by JavaScript?)")
     return paras
-
-
-# ---------- the files written ----------
-
-
-def fingerprints_text(url: str, paras: list[str]) -> str:
-    return "".join([f"url: {url}\n"] + [f"{i} {digest(t)}\n" for i, t in enumerate(paras, 1)])
-
-
-def saved_copy_text(url: str, accessed: str, paras: list[str]) -> str:
-    return f"Source: {url}\nAccessed: {accessed}\n{THIRD_PARTY}\n\n" + "\n\n".join(paras) + "\n"
 
 
 # ---------- reading the layout ----------
