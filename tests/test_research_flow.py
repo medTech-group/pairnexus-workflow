@@ -118,15 +118,6 @@ def test_a_new_project_on_a_map_runs_the_intake_and_the_panel_before_charting():
     assert "`wayfinder:`" in _rule("The order")
 
 
-def test_flow_1_and_2_point_to_the_order():
-    s1 = _flatten(_flow(1).split("\n1. ", 1)[0])
-    assert "before charting" in s1 and '"Research"' in s1
-    step1 = _step(1, 2)
-    study = step1.index("study")
-    assert study < step1.index("`grill-with-docs`")
-    assert '"Research"' in step1
-
-
 # --- where research lives -----------------------------------------------------
 
 
@@ -138,11 +129,12 @@ def test_no_research_branch_is_left_in_flow_1_and_2():
         assert "on its branch" not in s and "on their branch" not in s, n
 
 
-def test_flow_1_and_2_put_research_notes_in_docs_research_through_a_research_pull_request():
+def test_flow_1_and_2_put_research_notes_in_a_research_pull_request_pointing_to_research():
+    # §1 and §2 point to "Research", which says where notes go, so the hook's first flow context
+    # still carries both whole (`tests/test_start_carry_on.py`).
     for step, section in ((4, 1), (7, 2)):
         s = _step(step, section)
-        assert "`docs/research/<topic>/`" in s, (step, section)
-        assert "research pull request" in s, (step, section)
+        assert "research pull request" in s and '"Research"' in s, (step, section)
     assert "research notes still go in their research pull request" in _step(5, 1)
     for n in (1, 2):
         assert "research in its research pull request" in _checklist(n), n
