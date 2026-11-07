@@ -45,6 +45,7 @@ from __future__ import annotations
 import argparse
 import json
 import contextlib
+import errno
 import os
 import re
 import shutil
@@ -1167,10 +1168,25 @@ def cmd_research(a) -> int:
             shown.append(t)
             n += k
         hashes = [research_mod.digest(t) for t in paras]  # the page as fetched, before anything is left out
-        if a.fingerprints:
-            Path(a.fingerprints).write_text(research_mod.fingerprints_text(a.url, paras), encoding="utf-8")
-        if a.saved:
-            Path(a.saved).write_text(research_mod.saved_copy_text(a.url, date.today().isoformat(), shown), encoding="utf-8")
+        files = [
+            (Path(f), text)
+            for f, text in (
+                (a.fingerprints, research_mod.fingerprints_text(a.url, paras) if a.fingerprints else ""),
+                (a.saved, research_mod.saved_copy_text(a.url, date.today().isoformat(), shown) if a.saved else ""),
+            )
+            if f
+        ]
+        try:  # both targets checked, and their folders made, before either file is written
+            for f, _ in files:
+                if f.is_dir():
+                    raise IsADirectoryError(errno.EISDIR, "it is a folder", str(f))
+            for f, _ in files:
+                f.parent.mkdir(parents=True, exist_ok=True)
+            for f, text in files:
+                f.write_text(text, encoding="utf-8")
+        except OSError as e:
+            print(f"workflow research fingerprint: can't write {e.filename} ({e.strerror or e})", file=sys.stderr)
+            return 1
         if n:
             print(f"workflow research fingerprint: left out {n} match(es) of the profile's [sensitive].patterns; leave out personal details by hand", file=sys.stderr)
         if a.json:

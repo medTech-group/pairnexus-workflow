@@ -153,6 +153,34 @@ def test_fingerprint_writes_the_saved_copy_and_fingerprints_in_the_layout(projec
     assert got == want
 
 
+@pytest.mark.parametrize("fps_folder", ["new/sources", "."], ids=["both-missing", "saved-missing"])
+def test_fingerprint_makes_the_folders_it_writes_in(project, tmp_path, fps_folder):
+    saved, fps = tmp_path / "new/sources/a.md", tmp_path / fps_folder / "a.fingerprints"
+    p = _cli("fingerprint", URL, "--page", PAGE, "--saved", saved, "--fingerprints", fps, env=_env(project))
+    assert p.returncode == 0, p.stderr
+    assert fps.read_text(encoding="utf-8") == (NOTE / "sources/booking-help.fingerprints").read_text(encoding="utf-8")
+    assert saved.read_text(encoding="utf-8").startswith(f"Source: {URL}\n")
+    assert "making their folders when missing" in SKILL.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("which", ["saved", "fingerprints"])
+def test_fingerprint_cant_write_and_writes_neither_file(project, tmp_path, which):
+    out = tmp_path / "out"
+    (out / "a-folder").mkdir(parents=True)
+    (out / "a-file").write_text("x")
+    saved, fps = out / "a.md", out / "a.fingerprints"
+    if which == "saved":
+        saved = out / "a-folder"  # a folder, not a file
+    else:
+        fps = out / "a-file/a.fingerprints"  # inside a file
+    p = _cli("fingerprint", URL, "--page", PAGE, "--saved", saved, "--fingerprints", fps, env=_env(project))
+    assert p.returncode == 1, p.stdout
+    assert "can't write" in p.stderr and "Traceback" not in p.stderr
+    assert len(p.stderr.strip().splitlines()) == 1
+    assert sorted(f.name for f in out.iterdir()) == ["a-file", "a-folder"]
+    assert list((out / "a-folder").iterdir()) == []
+
+
 def test_fingerprint_leaves_out_sensitive_patterns_but_hashes_the_page_as_fetched(project, tmp_path):
     paras = ["Your code is BOOKCODE-123456, keep it.", "Plain words."]
     page = _page(tmp_path, paras)
