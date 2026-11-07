@@ -27,7 +27,16 @@ than repeating them:
 - the checks the rulesets require: `protection.check`;
 - kit and CI files: the guard's own matcher, `guard.matches`;
 - the hashes of the pull request's own changes at its head: `own_changes.of_files`,
-  on GitHub's per-file data, as `workflow review-record` hashes them from git.
+  on GitHub's per-file data, as `workflow review-record` hashes them from git;
+- a pull request of research notes, the mark, and what changed since a
+  research record (#509): `research_pr`.
+
+A pull request whose files are all research notes (under `docs/research/`) is
+judged on its latest counted research record instead of the review panel's
+rounds (`_research`, under flow §4.4). After the look at a fix, telling marks
+from other changes needs one more input, `recorded`: the pull request's own
+changes at that record's commit (GitHub's comparison of the base with it),
+which `--fetch` fetches only when it is needed (`recorded_commit`).
 
 Every input is read before any rule runs (`Context.read_all`), so each one it
 can't read is a reason of its own ("couldn't read …"), never `ready`. A list
@@ -46,7 +55,7 @@ from pathlib import Path
 from typing import Callable, NamedTuple
 
 from . import charter as charter_mod
-from . import handoff, own_changes, presets as presets_mod, protection, reviews, small, state
+from . import handoff, own_changes, presets as presets_mod, protection, research_pr, reviews, small, state
 from .evidence import is_full, read_headline
 from .guard import matches
 from .posts import CommentsError, _login, _number, comments_from, decode_values
@@ -66,7 +75,12 @@ INPUTS = {
     "compare": "the base comparison",
     "preview": "the preview's status",
 }
+# An input read only where a rule needs it (#509): never "couldn't read" otherwise.
+RECORDED = "recorded"
+WHEN_NEEDED = {RECORDED: "its own changes at the research record's commit"}
 PROFILE = "profile"  # read from the project, not given by a flag
+# GitHub's comparison of two commits lists at most this many files.
+MAX_COMPARED_FILES = 300
 # How GraphQL nests a pull request's lists.
 GRAPHQL = ("data", "repository", "pullRequest")
 # Where the pull request says how long each list is (REST, then gh's --json).
@@ -259,6 +273,33 @@ REASONS = {
     "past_small_threshold": Reason("review_panel", "review", {
         "new": ("Not yet: this change has grown past what a short review covers ({size}, where a short review covers at most {most}).", "Review it now: Claude runs the full review panel."),
         "developer": ("Not yet: no counted round ran Spec, and the diff is past the small threshold: {size} outside tests, where the threshold is at most {most}.", "Run the full panel (the light review's shape for a 1-round run's pull request), allowed past the round limit; never a Correctness-only round."),
+    }),
+    # A pull request of research notes (#509, spec #505): in place of every review reason above.
+    "research_none": Reason("review_panel", "review", {
+        "new": ("Not yet: these research notes haven't had their research check.", "Check them now: one checker reads each claim against its saved source, once."),
+        "developer": ("Not yet: no research record from an account with write access on this pull request of research notes (every file under `docs/research/`).", "Run the research check (one `research-checker` reads each claim against its saved source, one pass), and post its record first in the comment (`workflow review-record --kind research --round 1 --reviewers research`), then the claims it found wrong."),
+    }),
+    "research_needs_look": Reason("review_panel", "review", {
+        "new": ("Not yet: the research check found claims to fix.", "Fix them, then ask for the look at the fix: a fresh checker reads only what changed and the claims it listed."),
+        "developer": ("Not yet: the research check on {round_short} wasn't clean.", "Fix the claims it listed, then the look at a fix: a fresh `research-checker` reads the lines changed since and the listed claims; post its record first (`workflow review-record --kind research --round 2 --reviewers research`), then any claim still wrong."),
+    }, cases={
+        "changed": {
+            "new": ("Not yet: the notes changed after their research check.", "Ask for the look at the change: a fresh checker reads only what changed."),
+            "developer": ("Not yet: the research check on {round_short} was clean, but the pull request's own changes at the head {short} aren't the ones it read (its `diff` hash).", "Run the look at a fix on the head: a fresh `research-checker` reads the lines changed since {round_short}; post its record first (`workflow review-record --kind research --round 2 --reviewers research`)."),
+        },
+    }),
+    "research_needs_marks": Reason("review_panel", None, {
+        "new": ("Not yet: the look at the fix found a claim still wrong, and it isn't marked yet.", "Add the mark ` **(unconfirmed)**` at the end of each line holding a claim it listed, and push. Nothing more is checked."),
+        "developer": ("Not yet: the look on {round_short} wasn't clean, and no mark ` **(unconfirmed)**` has been added since.", "Add the mark at the end of each line holding a claim the look listed, and push: only marks may follow the look, and no further look runs."),
+    }),
+    "research_more_than_marks": Reason("review_panel", None, {
+        "new": ("Not yet: the notes changed after the look at the fix by more than the unconfirmed mark.", "Only marks may follow that look: take the other change out again, or put it in a new research pull request."),
+        "developer": ("Not yet: after the look on {round_short}, the pull request's own changes at the head {short} differ by more than marks: {files}.", "Only marks (` **(unconfirmed)**` at the end of a claim's line) may follow the look: take the change out (judged on the pull request's own changes, so taking it out works), or move it to a new research pull request."),
+    }, cases={
+        "cant_tell": {
+            "new": ("Not yet: the notes changed after the look at the fix, and what changed can't be told.", "Ask Claude to post the look's record again, with the hashes of the change, then ask again."),
+            "developer": ("Not yet: the look's record on {round_short} names no hashes of the pull request's own changes (`unknown`, or none), so what changed since can't be told.", "Post the look's record for {round_short} again where `workflow review-record` can reach origin/{base}, so it carries its hashes; then run merge-check again."),
+        },
     }),
     "conflict": Reason("mergeable", "resolve_conflict", {
         "new": ("Not yet: this change clashes with something already in {base}.", "Ask Claude to resolve the conflict."),
@@ -682,19 +723,7 @@ class Context:
 
         def read():
             items = _walk(self.raw("files"), "files", lambda d: "filename" in d or "path" in d, GRAPHQL + ("files", "nodes"))
-            out: list[small.Change] = []
-            for f in items:
-                for k in ("filename", "path", "previous_filename"):
-                    if k in f and (not isinstance(f[k], str) or not f[k]):
-                        raise Unreadable("files", f"a file's {k} isn't a path")
-                if f.get("patch") is not None and not isinstance(f["patch"], str):
-                    raise Unreadable("files", "a file's patch isn't text")
-                status, sha = f.get("status", f.get("changeType")), f.get("sha")
-                out.append(small.Change(
-                    f.get("filename") or f["path"], f.get("previous_filename"),
-                    status.lower() if isinstance(status, str) else None, f.get("additions"), f.get("deletions"),
-                    sha if isinstance(sha, str) else None, f.get("patch"),
-                ))
+            out = _changes_of(items, "files")
             try:
                 want = self.pr().counts["files"]
             except Unreadable:
@@ -859,8 +888,38 @@ class Context:
     def records(self) -> list[reviews.Record]:
         """The round and pass records in the comments (`reviews.read`), oldest
         first. A spec record (#233) names a spec's body, not a commit, so it is
-        no review of the pull request's code."""
-        return [r for r in reviews.read(self.comments()) if r.kind != "spec"]
+        no review of the pull request's code; a research record (#509) counts
+        only on a pull request of research notes (`research_records`)."""
+        return [r for r in reviews.read(self.comments()) if r.kind in ("round", "pass")]
+
+    def research_records(self) -> list[reviews.Record]:
+        """The research records in the comments, oldest first (#509)."""
+        return [r for r in reviews.read(self.comments()) if r.kind == "research"]
+
+    def recorded(self, r: reviews.Record) -> list[small.Change]:
+        """The pull request's own changes at research record `r`'s commit
+        (#509): GitHub's comparison of the base with it (`files`), or its list
+        of files alone. They must hash as the record says (its `diff`), so a
+        comparison of another commit is never read as the record's."""
+
+        def read():
+            where = f"GET repos/<repo>/compare/{self.pr().base}...{r.commit}"
+            if self.inputs.get(RECORDED) is None:
+                raise Unreadable(RECORDED, f"it wasn't given: give the pull request's own changes at the research record's commit {r.commit} ({where}), or use --fetch")
+            v = _one(self.raw(RECORDED))
+            items = v.get("files") if isinstance(v, dict) and "files" in v else v
+            if isinstance(items, list) and len(items) >= MAX_COMPARED_FILES:
+                raise Unreadable(RECORDED, f"GitHub's comparison lists at most {MAX_COMPARED_FILES} files, so a list of {len(items)} may leave some out")
+            changes = _changes_of(_walk(items, RECORDED, lambda d: "filename" in d or "path" in d), RECORDED)
+            try:
+                got = own_changes.of_files(changes).diff
+            except (own_changes.CantHash, ValueError):
+                got = None
+            if got != r.diff:
+                raise Unreadable(RECORDED, f"its changes don't hash as the research record of {r.commit[:7]} says (its `diff`), so they aren't its commit's: give {where}")
+            return changes
+
+        return self.once(RECORDED, read)
 
     def compare(self) -> int:
         """How many commits the head is behind the base."""
@@ -916,6 +975,25 @@ class Context:
         return self.once("preview", read)
 
 
+def _changes_of(items: list[dict], name: str) -> list[small.Change]:
+    """Each file of a list as GitHub gives it: its path, a rename's old path,
+    its status, additions and deletions, blob SHA and patch, where given."""
+    out: list[small.Change] = []
+    for f in items:
+        for k in ("filename", "path", "previous_filename"):
+            if k in f and (not isinstance(f[k], str) or not f[k]):
+                raise Unreadable(name, f"a file's {k} isn't a path")
+        if f.get("patch") is not None and not isinstance(f["patch"], str):
+            raise Unreadable(name, "a file's patch isn't text")
+        status, sha = f.get("status", f.get("changeType")), f.get("sha")
+        out.append(small.Change(
+            f.get("filename") or f["path"], f.get("previous_filename"),
+            status.lower() if isinstance(status, str) else None, f.get("additions"), f.get("deletions"),
+            sha if isinstance(sha, str) else None, f.get("patch"),
+        ))
+    return out
+
+
 def _may_review(login: str | None, perms: dict[str, str]) -> bool:
     """The account has write, maintain or admin permission."""
     return bool(login) and perms.get(login.casefold()) in WRITE
@@ -924,9 +1002,10 @@ def _may_review(login: str | None, perms: dict[str, str]) -> bool:
 def _counted(r: reviews.Record, perms: dict[str, str], shas: set[str]) -> bool:
     """A round or pass record the review rules count: from an account with
     write access, for a commit of the pull request (`shas`). A spec record
-    names no commit; `_hand_off` reads records straight from the comments,
-    where one can be."""
-    return r.kind != "spec" and _may_review(r.author, perms) and r.commit in shas
+    names no commit, and a research record (#509) counts only on a pull
+    request of research notes (`_research`); `_hand_off` reads records straight
+    from the comments, where either can be."""
+    return r.kind in ("round", "pass") and _may_review(r.author, perms) and r.commit in shas
 
 
 def _clean_review(r: reviews.Record) -> bool:
@@ -1157,7 +1236,17 @@ def _panel(ctx: Context, add) -> None:
     The circuit breaker (#427, spec #412): while the head is the latest
     counted record's commit (in that same order), a part with a blocking
     finding in two `rule=2` records in a row gives `mechanism_repeats`, one
-    for each such part, in place of the review reasons below (`_repeats`)."""
+    for each such part, in place of the review reasons below (`_repeats`).
+
+    A pull request of research notes (#509) is judged by `_research` instead.
+    On any other, research records don't count."""
+    try:
+        research = research_pr.is_research(ctx.files())
+    except Unreadable:  # its own reason: judged by the panel's records, which never makes it ready
+        research = False
+    if research:
+        _research(ctx, add)
+        return
     head = ctx.pr().head
     perms = ctx.permissions()
     shas = ctx.commits() | {head}
@@ -1269,6 +1358,103 @@ def _panel(ctx: Context, add) -> None:
             add(rid, **more)
     if unread is not None:
         raise unread
+
+
+def _latest_research(ctx: Context) -> tuple[reviews.Record | None, int]:
+    """The latest counted research record (#509), and how many were left out:
+    from an account with write access, for a commit of the pull request (the
+    head always counts), latest by the pull request's commit list (the head
+    the newest), then by posting, so a record posted late for an older commit
+    isn't the latest."""
+    head = ctx.pr().head
+    perms = ctx.permissions()
+    shas = ctx.commits() | {head}
+    every = ctx.research_records()
+    counted = [r for r in every if _may_review(r.author, perms) and r.commit in shas]
+    if not counted:
+        return None, len(every)
+    history = {sha: n for n, sha in enumerate(ctx.parents())}
+
+    def place(sha):
+        return len(history) if sha == head else history.get(sha, len(history))
+
+    latest = max(enumerate(counted), key=lambda e: (place(e[1].commit), e[0]))[1]
+    return latest, len(every) - len(counted)
+
+
+def _research(ctx: Context, add) -> None:
+    """flow §4.4, for a pull request whose files are all research notes
+    (#509, spec #505): its latest counted research record (`_latest_research`)
+    is its review, and the review panel's records don't count. What changed
+    since is judged on the pull request's own changes: when they hash the same
+    as the record's (`diff`), at its own commit or after a merge of the base
+    or a change taken out again, nothing did.
+    - No record: `research_none`.
+    - The research check (round 1), not clean, or any change since:
+      `research_needs_look`. Clean with no change: it holds.
+    - The look at a fix (round 2): what changed since, by `research_pr.since`
+      on its commit's own changes (`ctx.recorded`) and the head's. More than
+      marks: `research_more_than_marks` (with a record whose hashes are
+      `unknown` or missing, its `cant_tell` case). Not clean with no mark
+      added: `research_needs_marks`. Otherwise it holds: a clean look with
+      no change or marks only, or a look that wasn't clean with marks.
+    Items 1 to 3 and #30's conditions are their own rules, as for any pull
+    request."""
+    head = ctx.pr().head
+    panel = ctx.records()
+    if panel:
+        _note(ctx, "panel_records_ignored", f"Left out {_plural(len(panel), 'review record')}: a pull request of research notes (every file under `docs/research/`) is judged on its research records.")
+    latest, left_out = _latest_research(ctx)
+    if left_out:
+        _note(ctx, "records_ignored", f"Left out {_plural(left_out, 'research record')}: posted by an account without write access, or naming a commit not in this pull request's commit list.")
+    if latest is None:
+        add("research_none", next="research_check")
+        return
+    details = {"round": latest.round, "round_short": _short(latest.commit), "reviewers": list(latest.reviewers)}
+    what = f"{reviews.RESEARCH_ROUNDS[latest.round].lower().replace('the look at a fix', 'look at a fix')} on {_short(latest.commit)}"
+    same = latest.commit == head or (_hashed(latest.diff) and latest.diff == ctx.head_hashes().diff)
+    if latest.round == 1:
+        if not latest.clean:
+            add("research_needs_look", next="look", **details)
+        elif not same:
+            add("research_needs_look", next="look", case="changed", **details)
+        else:
+            _note(ctx, "research_judged", f"Judged as a pull request of research notes, on its clean {what}" + ("" if latest.commit == head else ", whose changes the head's are") + ".")
+        return
+    if same:
+        since = research_pr.Since("none")
+    elif not _hashed(latest.diff):
+        add("research_more_than_marks", next="take_out", case="cant_tell", **details)
+        return
+    else:
+        since = research_pr.since(ctx.recorded(latest), ctx.changes())
+    if since.kind == "more":
+        add("research_more_than_marks", next="take_out", files=_names(since.files), **details)
+    elif not latest.clean and not since.marks:
+        add("research_needs_marks", next="mark", **details)
+    else:
+        result = "clean" if latest.clean else "not clean"
+        marks = f", with {_plural(since.marks, 'mark')} added since" if since.marks else ""
+        _note(ctx, "research_judged", f"Judged as a pull request of research notes, on its {what} ({result}){marks}.")
+
+
+def recorded_commit(inputs: dict, profile=None) -> tuple[str, str] | None:
+    """(the base branch, the commit) whose own changes `--fetch` fetches as
+    `recorded` (#509): the latest counted research record's, when the pull
+    request's files are all research notes, that record is the look at a fix,
+    and the head is another commit. None when none is needed, or the inputs
+    it needs can't be read (each its own reason)."""
+    ctx = Context(inputs, profile, None)
+    try:
+        if not research_pr.is_research(ctx.files()):
+            return None
+        latest, _ = _latest_research(ctx)
+        pr = ctx.pr()
+    except Unreadable:
+        return None
+    if latest is None or latest.round != 2 or latest.commit == pr.head or not _hashed(latest.diff):
+        return None
+    return pr.base, latest.commit
 
 
 # The review after the circuit breaker's action (`then`), as each level says it.
@@ -1613,12 +1799,12 @@ def _reason(rid: str, rule: Rule | None, level: str, details: dict, wording_id: 
     }
     if rid == "couldnt_read":
         out["input"] = details["input"]
+    if rule is not None and rule.id == "review_panel" and "next" in details:
+        # What lifts it: for review_not_clean another round, or a pass; for research_none (#509), the research check.
+        out["next"] = details["next"]
     if rule is not None and rule.id == "review_panel" and "round" in details:
-        # The counted round, so a caller needn't parse the wording (#122's notes);
-        # for review_not_clean, `next` says what lifts it: another round, or a pass.
+        # The counted round, so a caller needn't parse the wording (#122's notes).
         out["round"], out["reviewers"] = details["round"], details["reviewers"]
-        if "next" in details:
-            out["next"] = details["next"]
         if "mechanism" in details:  # mechanism_repeats: the part, exactly as the records name it, and the review after it
             out["mechanism"] = details["mechanism"]
             if details.get("then"):
@@ -1666,7 +1852,7 @@ def evaluate(
     common = {"short": _short(head), "base": base, "number": number if number is not None else "<n>"}
 
     def unreadable(e: Unreadable) -> dict:
-        what = "the profile" if e.name == PROFILE else INPUTS[e.name]
+        what = "the profile" if e.name == PROFILE else {**INPUTS, **WHEN_NEEDED}[e.name]
         details = {**common, "input": e.name, "what": what, "why": e.why.rstrip("."), **({"case": "preview"} if e.name == "preview" else {})}
         return _reason("couldnt_read", None, level, details, "couldnt_read_profile" if e.name == PROFILE else None)
 

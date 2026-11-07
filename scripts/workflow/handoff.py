@@ -132,7 +132,7 @@ def last_record(text) -> reviews_mod.Record:
     the comment's body): the last record in it, which must be a `rule=2` one.
     Raises HandOffError."""
     found = reviews_mod.records_in(text) if isinstance(text, str) else []
-    found = [r for r in found if r.kind != "spec"]
+    found = [r for r in found if r.kind in ("round", "pass")]
     if not found:
         raise HandOffError("--record holds no review record: give the last round's or pass's record as posted (its record.md)")
     r = found[-1]
