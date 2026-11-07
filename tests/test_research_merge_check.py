@@ -522,6 +522,18 @@ def test_flow_4_item_4_carries_the_research_rule():
     assert "research records count nowhere else" in item
 
 
+def test_the_merge_check_skill_says_research_none_carries_only_its_next(project, capsys):
+    """The skill's "Read the answer" says which research reasons carry a
+    round: all but `research_none`, which has no record to count."""
+    text = re.sub(r"\s+", " ", (KIT / "skills/merge-check/SKILL.md").read_text(encoding="utf-8"))
+    assert "each with its `next`, and all but `research_none` (no research record yet) with its `round`" in text
+    assert "the research ones, each with its `round`" not in text
+    [r] = judged(project, capsys, pr(note()))["reasons"]
+    assert r["id"] == "research_none" and "round" not in r and "reviewers" not in r
+    [r] = judged(project, capsys, pr(note(), record(1, note(), clean=False)))["reasons"]
+    assert (r["round"], r["reviewers"]) == (1, ["research"])
+
+
 def test_merge_checks_research_rule_names_that_item():
     [rule] = [r for r in merge.RULES if r.judge is merge._panel]
     assert rule.implements == "flow §4.4"
