@@ -564,7 +564,7 @@ def _break(project, path, old, new):
         ("note.md", "- <https", "* <https", "key-source line"),
         ("note.md", "- <https", "  - <https", "key-source line"),
         ("note.md", "- <https", "1. <https", "key-source line"),
-        ("note.md", "## Key sources\n\n", "## Key sources\n\n### Laws\n\n", "key-source line"),
+        ("note.md", "## Key sources\n\n", "## Key sources\n\n### Laws\n\n", "last section"),
         ("note.md", "- <https://example.com/help/booking>, saved as `sources/booking-help.md`, fingerprints in `sources/booking-help.fingerprints`\n", "", "- None"),
     ],
     ids=[
@@ -587,12 +587,23 @@ def test_check_a_note_with_no_key_sources(project):
     assert json.loads(p.stdout)["sources"] == []
 
 
-def test_check_reads_the_key_sources_up_to_the_next_section(project):
-    with open(_note(project), "a", encoding="utf-8") as fh:
-        fh.write("\n## Open questions\n\n* Do groups book further ahead?\n")
+@pytest.mark.parametrize(
+    "after",
+    [
+        "## Key sources\n\n- <https://example.com/help/groups>, saved as `sources/groups.md`, fingerprints in `sources/groups.fingerprints`\n",
+        "## Notes\n\nGroups of 8 or more call ahead.\n",
+    ],
+    ids=["second-key-sources", "a-section-after"],
+)
+def test_check_refuses_a_note_whose_key_sources_arent_its_last_section_once(project, after):
+    note = _note(project)
+    n = len(note.read_text(encoding="utf-8").splitlines()) + 2
+    with open(note, "a", encoding="utf-8") as fh:
+        fh.write("\n" + after)
     p = _check(project, (URL, PAGE))
-    assert p.returncode == 0, p.stderr
-    assert [s["result"] for s in json.loads(p.stdout)["sources"]] == ["unchanged"]
+    assert p.returncode == 1 and p.stdout == ""
+    assert f"line {n}" in p.stderr and after.splitlines()[0] in p.stderr
+    assert "`## Key sources` must be the note's last section, once" in p.stderr
 
 
 def test_check_says_when_the_note_is_superseded(project):

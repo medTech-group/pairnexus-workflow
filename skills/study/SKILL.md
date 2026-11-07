@@ -25,7 +25,7 @@ docs/research/<topic>/
 - `Last checked:` is the date its claims were last read against their sources, as `YYYY-MM-DD`. It is for information only: nothing decides by it.
 - `Issue:` is `#<n>`, the `research` issue that tracks it.
 
-**The key sources** are the sources its findings rest on. They alone get fingerprints. The note lists them under a `## Key sources` heading, one line each: the link in angle brackets, then its saved copy and its fingerprints, as paths inside the topic's folder. A note with no key sources says so with one line, `- None`.
+**The key sources** are the sources its findings rest on. They alone get fingerprints. The note lists them under a `## Key sources` heading, one line each: the link in angle brackets, then its saved copy and its fingerprints, as paths inside the topic's folder. That section is the note's last, and the note has it once. A note with no key sources says so with one line, `- None`.
 
 An example note, `docs/research/booking-ahead/note.md`:
 

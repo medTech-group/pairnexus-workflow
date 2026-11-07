@@ -5,7 +5,8 @@ fixtures are copied from:
 
 - `note.md`, the note: three header lines (`Status:`, `Last checked:`,
   `Issue:`), then a blank line; its key sources one line each under
-  `## Key sources`: `- <link>, saved as `path`, fingerprints in `path``;
+  `## Key sources`, its last section, once: `- <link>, saved as `path`,
+  fingerprints in `path``;
 - a saved copy: `Source:`, `Accessed:` and `Third-party text:` lines, a blank
   line, then the page's paragraphs, one per position, separated by blank lines
   (a paragraph left out whole is one `[left out]` line in its place);
@@ -351,9 +352,9 @@ def read_note(path: Path) -> tuple[Header, list[KeySource]]:
         raise LayoutError(f"{path}: it has no `## Key sources` section (write `- None` under it when there are none)") from None
     sources: list[KeySource] = []
     none = False
-    for line in lines[start + 1:]:
-        if line.startswith(("# ", "## ")):
-            break
+    for n, line in enumerate(lines[start + 1:], start + 2):
+        if line.startswith("#"):
+            raise LayoutError(f"{path}: `## Key sources` must be the note's last section, once, but line {n} is a heading after it: {line[:200]}")
         if not line.strip():
             continue
         if line == "- None":
