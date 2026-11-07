@@ -325,6 +325,56 @@ def test_a_mark_on_a_line_the_pull_request_otherwise_leaves_alone_counts():
     assert research_pr.since([was], [moved]).kind == "more"
 
 
+def _c(status, patch=None, sha="1" * 40, path=NOTE_PATH, previous=None):
+    from workflow.small import Change
+
+    return Change(path, previous, status, 0, 0, sha, patch)
+
+
+def test_a_file_with_no_patch_is_the_same_only_by_its_blob_or_removed():
+    since = research_pr.since
+    assert since([_c("added", sha="a" * 40)], [_c("added", sha="b" * 40)]).kind == "more"
+    assert since([_c("added", sha="a" * 40)], [_c("added", sha="a" * 40)]) == research_pr.Since("none")
+    assert since([_c("removed", sha=None)], [_c("removed", sha=None)]) == research_pr.Since("none")
+
+
+def test_a_status_that_differs_is_more_than_marks():
+    patch = "@@ -1 +1 @@\n-a\n+b"
+    got = research_pr.since([_c("modified", patch)], [_c("renamed", patch, previous="docs/research/old.md")])
+    assert got.kind == "more" and got.files == (NOTE_PATH,)
+    assert research_pr.since([_c("modified", patch)], [_c("renamed", patch)]).kind == "more"
+
+
+@pytest.mark.parametrize("bad", [
+    "@@ -1,3 +1,2 @@\n a\n-b\n+c",  # the header's counts and its lines don't agree
+    "@@ -1 +1 @@\n-a\n+b\n*c",  # a line starting with another character
+    "@@ -1 +1 @@\n-a\n+b\n@@ nothing @@",  # a header it can't read
+    "-a\n+b",  # no hunk first
+])
+def test_a_patch_it_cant_read_is_more_than_marks(bad):
+    good = "@@ -1 +1 @@\n-a\n+b"
+    assert research_pr.since([_c("modified", good)], [_c("modified", good)]) == research_pr.Since("none")
+    assert research_pr.since([_c("modified", good)], [_c("modified", bad)]).kind == "more"
+    assert research_pr.since([_c("modified", bad)], [_c("modified", good)]).kind == "more"
+
+
+def test_a_mark_on_a_last_line_with_no_newline_counts():
+    end = "\n\\ No newline at end of file"
+    was = _c("modified", "@@ -1,2 +1,2 @@\n a\n-b" + end + f"\n+{CLAIM}" + end)
+    now = _c("modified", "@@ -1,2 +1,2 @@\n a\n-b" + end + f"\n+{MARKED}" + end)
+    assert research_pr.since([was], [now]) == research_pr.Since("marks", 1)
+    # The newline added with the mark: more than marks.
+    now = _c("modified", "@@ -1,2 +1,2 @@\n a\n-b" + end + f"\n+{MARKED}")
+    assert research_pr.since([was], [now]).kind == "more"
+
+
+def test_a_pure_deletion_the_same_on_both_sides_is_no_change():
+    gone = _c("modified", "@@ -3,2 +2,0 @@\n-x\n-y")
+    assert research_pr.since([gone], [gone]) == research_pr.Since("none")
+    # One line more deleted at the head: more than marks.
+    assert research_pr.since([gone], [_c("modified", "@@ -3,3 +2,0 @@\n-x\n-y\n-z")]).kind == "more"
+
+
 def test_the_look_without_its_commits_changes_cant_be_judged(project, capsys):
     at_look = note()
     data = pr(note(marked()), record(2, at_look, commit=EARLIER, clean=False))
