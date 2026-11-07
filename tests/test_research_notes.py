@@ -13,6 +13,7 @@ import stat
 import subprocess
 import sys
 import threading
+import time
 from datetime import date
 from pathlib import Path
 
@@ -89,7 +90,8 @@ class _Pages(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             return
         self.send_response(status)
-        self.send_header("Content-Type", ctype)
+        if ctype is not None:  # None: no Content-Type header at all
+            self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -530,13 +532,77 @@ def test_fingerprint_reads_a_file_named_as_a_text_page(project, tmp_path, name):
     assert [x["text"] for x in json.loads(p.stdout)["paragraphs"]] == ["First.", "Second."]
 
 
-_UNTYPED = [b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n1 0 obj\n<<>>\nendobj\n", b"<html><p>A</p></html>"]
+# #527: a page that names no content type is read only when its bytes are
+# clearly HTML or plain text; anything else stays refused. "" is an empty
+# Content-Type header, None no header at all.
+_NO_TYPE = [None, "", "; charset=utf-8"]
+
+_UNTYPED_READ = [
+    (_html(PARAS).encode(), PARAS),  # the title is left out: read as HTML, not text
+    (b"\xef\xbb\xbf  \n<!DOCTYPE HTML>\n<head><title>t</title></head><p>First.</p><p>Second.</p>", ["First.", "Second."]),
+    (b"<html lang=en><head><title>t</title></head><body><p>First.</p></body></html>", ["First."]),
+    (b"<!-- a comment --><!doctype html><head><title>t</title></head><p>First.</p>", ["First."]),
+    (b'<?xml version="1.0" encoding="utf-8"?>\n<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "x">\n<html><head><title>t</title></head><body><p>First.</p></body></html>', ["First."]),
+    (b"First.\n\nCaf\xc3\xa9 second.\tTabbed.\f\n", ["First.", "Café second. Tabbed."]),
+    (b"\xef\xbb\xbfFirst.\r\n\r\nSecond.\r\n", ["First.", "Second."]),
+]
+_UNTYPED_READ_IDS = ["html", "doctype-after-bom", "html-tag", "comment-first", "xhtml", "plain-text", "plain-text-bom-crlf"]
 
 
-@pytest.mark.parametrize("raw", _UNTYPED, ids=["pdf", "html"])
-def test_fingerprint_refuses_a_page_that_names_no_content_type(project, server, raw):
+@pytest.mark.parametrize("ctype", _NO_TYPE, ids=["no-header", "empty-header", "charset-only"])
+@pytest.mark.parametrize("raw,want", _UNTYPED_READ, ids=_UNTYPED_READ_IDS)
+def test_fingerprint_reads_a_page_that_names_no_content_type_when_its_bytes_are_text(project, server, ctype, raw, want):
     base, routes = server
-    routes["/x"] = (200, "", raw)
+    routes["/x"] = (200, ctype, raw)
+    p = _cli("fingerprint", f"{base}/x", "--fetch", "--json", env=_env(project))
+    assert p.returncode == 0, p.stderr
+    assert [x["text"] for x in json.loads(p.stdout)["paragraphs"]] == want
+
+
+def test_check_reads_a_page_that_names_no_content_type_when_its_bytes_are_html(project, server):
+    base, routes = server
+    routes["/help/booking"] = (200, None, PAGE.read_bytes())
+    folder = _note(project).parent
+    for f in ("note.md", "sources/booking-help.md", "sources/booking-help.fingerprints"):
+        (folder / f).write_text((folder / f).read_text().replace(URL, f"{base}/help/booking"))
+    p = _check(project, extra=["--fetch"])
+    assert p.returncode == 0, p.stderr
+    (src,) = json.loads(p.stdout)["sources"]
+    assert src["result"] == "unchanged", src
+
+
+_UNTYPED_REFUSED = [
+    b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n1 0 obj\n<<>>\nendobj\n",  # a PDF with its binary comment
+    b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n",  # a PDF in ASCII only
+    b"\n%PDF-1.7\n1 0 obj\n<<>>\nendobj\n",  # a PDF after a blank line
+    b"Junk before the header.\n%PDF-1.4\n1 0 obj\n<<>>\nendobj\n",  # a PDF whose header is late, as PDF readers allow
+    b"%!PS-Adobe-3.0\n%%Title: a page\nshowpage\n",  # PostScript
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00",  # PNG
+    b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01",  # JPEG
+    b"GIF89a  ~~~~ ;",  # a GIF whose header bytes are all printable
+    b"RIFF~~~~WEBPVP8 ",  # WebP, printable header bytes
+    b"First.\n\nSecond \x00 with a NUL.\n",  # a NUL byte
+    b"First.\x1b[0m\n",  # a control character
+    b"First \xc2\x85 next.\n",  # a C1 control character, valid UTF-8
+    b"Caf\xe9\n",  # bytes that aren't valid UTF-8, with no charset named
+    b"\xff\xfeF\x00i\x00r\x00s\x00t\x00",  # UTF-16
+    b'<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"><text>Hi</text></svg>',  # an SVG image
+    b"<svg><text>Hi</text></svg>",  # an SVG image, no declaration
+    b"<p>Markup that doesn't say it's HTML.</p>",  # markup it can't tell from XML
+    b"<!-- never closed <html><p>A</p>",  # a comment that never ends
+    b"<!doctype htmlx><p>A</p>",  # not the HTML doctype
+]
+_UNTYPED_REFUSED_IDS = [
+    "pdf", "pdf-ascii", "pdf-after-blank", "pdf-late-header", "postscript", "png", "jpeg", "gif-printable", "webp-printable",
+    "nul", "control", "c1-control", "not-utf8", "utf16", "svg-xml", "svg", "markup", "open-comment", "not-html-doctype",
+]
+
+
+@pytest.mark.parametrize("ctype", _NO_TYPE, ids=["no-header", "empty-header", "charset-only"])
+@pytest.mark.parametrize("raw", _UNTYPED_REFUSED, ids=_UNTYPED_REFUSED_IDS)
+def test_fingerprint_refuses_a_page_that_names_no_content_type_unless_its_bytes_are_text(project, server, ctype, raw):
+    base, routes = server
+    routes["/x"] = (200, ctype, raw)
     before = _snapshot(project)
     p = _cli("fingerprint", f"{base}/x", "--fetch", env=_env(project))
     assert p.returncode == 1 and p.stdout == ""
@@ -544,10 +610,10 @@ def test_fingerprint_refuses_a_page_that_names_no_content_type(project, server, 
     assert _snapshot(project) == before
 
 
-@pytest.mark.parametrize("raw", _UNTYPED, ids=["pdf", "html"])
-def test_check_cant_fetch_a_page_that_names_no_content_type(project, server, raw):
+@pytest.mark.parametrize("raw", _UNTYPED_REFUSED, ids=_UNTYPED_REFUSED_IDS)
+def test_check_cant_fetch_a_page_that_names_no_content_type_unless_its_bytes_are_text(project, server, raw):
     base, routes = server
-    routes["/help/booking"] = (200, "", raw)
+    routes["/help/booking"] = (200, None, raw)
     folder = _note(project).parent
     for f in ("note.md", "sources/booking-help.md", "sources/booking-help.fingerprints"):
         (folder / f).write_text((folder / f).read_text().replace(URL, f"{base}/help/booking"))
@@ -555,6 +621,19 @@ def test_check_cant_fetch_a_page_that_names_no_content_type(project, server, raw
     assert p.returncode == 0, p.stderr
     (src,) = json.loads(p.stdout)["sources"]
     assert src["result"] == "cant_fetch" and "no content type" in src["why"]
+
+
+def test_many_comments_before_markup_that_isnt_html_are_refused_at_once():
+    t = time.monotonic()
+    with pytest.raises(research.PageError, match="no content type"):
+        research.paragraphs(b"<!---->" * 2000 + b"<p>A</p>", "")
+    assert time.monotonic() - t < 2
+
+
+@pytest.mark.parametrize("ctype", ["application/pdf", "image/png", "application/octet-stream"])
+def test_a_page_that_names_a_content_type_that_isnt_text_is_refused_whatever_its_bytes(ctype):
+    with pytest.raises(research.PageError, match="isn't a text page"):
+        research.paragraphs(b"<!doctype html><p>A</p>", ctype)
 
 
 def test_check_cant_read_a_file_that_isnt_a_text_page(project, tmp_path):

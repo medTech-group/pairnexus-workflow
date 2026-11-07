@@ -190,17 +190,53 @@ class _Text(HTMLParser):
             self._now.append(data)
 
 
-def _kind(content_type: str) -> str:
-    """"html" or "text" by the content type. Raises PageError for anything
-    else (a PDF, an image), and for no content type at all."""
+def _kind(content_type: str, raw: bytes) -> str:
+    """"html" or "text" by the content type; with none named, by the bytes,
+    only where they are clearly an HTML or plain-text page (`_untyped_kind`).
+    Raises PageError for anything else (a PDF, an image)."""
     ctype = content_type.split(";", 1)[0].strip().lower()
     if ctype in ("text/html", "application/xhtml+xml"):
         return "html"
     if ctype.startswith("text/"):
         return "text"
     if not ctype:
-        raise PageError("it names no content type, so it can't be told from a PDF or an image")
+        return _untyped_kind(raw)
     raise PageError(f"it isn't a text page ({ctype})")
+
+
+# Formats whose first bytes can be printable ASCII: refused even then.
+_NOT_TEXT_STARTS = (b"%PDF-", b"%!PS", b"GIF87a", b"GIF89a", b"RIFF", b"\x89PNG", b"\xff\xd8\xff")
+# C0 and C1 control characters, but for tab, line feed, form feed and carriage return.
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0e-\x1f\x7f-\x9f]")
+# What may come before an HTML page's `<!doctype html>` or `<html>`: an XML
+# declaration (XHTML), comments and whitespace.
+_HTML_START = re.compile(
+    r"\s*(?:<\?xml\b[^>]*\?>\s*)?(?:<!--(?:(?!-->).)*-->\s*)*<(?:!doctype\s+html|html)[\s>]", re.I | re.S
+)  # a comment never runs past its first `-->`, so a failed match never backtracks across comments
+
+
+def _untyped_kind(raw: bytes) -> str:
+    """A page that names no content type: "html" when its bytes start as an
+    HTML page, "text" when they are plain text. Fails closed: bytes that
+    start like a PDF or an image (or hold `%PDF-` in their first 1024 bytes,
+    where PDF readers look for it), hold a control character (a NUL among
+    them), aren't valid UTF-8, or start with markup that isn't HTML (an SVG,
+    say) raise PageError."""
+    why = "it names no content type, and its bytes aren't clearly a text page"
+    body = raw[3:] if raw.startswith(b"\xef\xbb\xbf") else raw
+    if any(body.lstrip().startswith(sig) for sig in _NOT_TEXT_STARTS) or b"%PDF-" in body[:1024]:
+        raise PageError(f"{why}: they start like a PDF or an image")
+    try:
+        text = body.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        raise PageError(f"{why}: they aren't valid UTF-8") from None
+    if _CONTROL.search(text):
+        raise PageError(f"{why}: they hold a control character")
+    if _HTML_START.match(text):
+        return "html"
+    if text.lstrip().startswith("<"):
+        raise PageError(f"{why}: they start with markup that isn't HTML")
+    return "text"
 
 
 def _charset(content_type: str, raw: bytes, kind: str) -> str | None:
@@ -228,8 +264,8 @@ def paragraphs(raw: bytes, content_type: str) -> list[str]:
     Whitespace inside a paragraph is one space; empty paragraphs are dropped.
     Only UTF-8 pages are read: a page naming another charset, bytes that
     aren't valid UTF-8, HTML it can't parse, or a page with no content type
-    raises PageError."""
-    kind = _kind(content_type)
+    whose bytes aren't clearly HTML or plain text raises PageError."""
+    kind = _kind(content_type, raw)
     name = _charset(content_type, raw, kind)
     if name is not None and not _is_utf8(name):
         raise PageError(f"it is in {name}; only UTF-8 pages are read")

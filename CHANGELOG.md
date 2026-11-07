@@ -16,6 +16,10 @@
 
 - **For projects updating:** nothing to do.
 
+**`workflow research` reads a fetched page that names no content type when its bytes are clearly text** (#527, part of spec #505). Such a page was refused. It is now read as HTML when it starts as an HTML page (`<!doctype html>` or `<html>`, after any XML declaration and comments), and as plain text when it is plain text. It stays refused, `fingerprint` exiting 1 and `check` saying can't fetch, when its bytes start like a PDF or an image (or hold `%PDF-` in their first 1024 bytes), hold a control character (a NUL among them), aren't valid UTF-8, or start with markup that isn't HTML (an SVG, say). A page that names its content type reads as before.
+
+- **For projects updating:** nothing to do.
+
 **Set-up creates the `research` label** (#507, part of spec #505). `setup-workflow`'s labels step creates `research` with the others: it marks the issues that track research notes (a study's, a fact note's, and one a session files about a note), and isn't `wayfinder:research`.
 
 - **For projects updating:** create the `research` label on the repository (`gh api repos/<repo>/labels -f name=research`), or leave it: a session that files a `research` issue creates it when it's missing (from the `study` skill, #512, and the spec's other research tickets). If the repository already has a `research` label for something else, rename that one first, since the kit reads every issue carrying it as research. Tests: `tests/test_research_label_setup.py`.
