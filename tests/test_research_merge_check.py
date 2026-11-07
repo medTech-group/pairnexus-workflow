@@ -390,6 +390,20 @@ def test_the_look_without_its_commits_changes_cant_be_judged(project, capsys):
     assert judged(project, capsys, data, at_look)["decision"] == "ready"
 
 
+def test_a_comparison_of_300_files_may_leave_some_out_so_it_isnt_read(project, capsys):
+    data = pr(note(marked()), record(2, note(), commit=EARLIER, clean=False))
+    many = note() + [added(f"docs/research/more/{i}.md", f"Line {i}.\n") for i in range(merge.MAX_COMPARED_FILES - 2)]
+    assert len(many) == 300
+    got = judged(project, capsys, data, compared(many, EARLIER))
+    [r] = [r for r in got["reasons"] if r["id"] == "couldnt_read"]
+    assert r["input"] == "recorded" and "at most 300 files" in r["wording"]["developer"]["message"]
+    assert got["decision"] == "not_yet"
+    # One fewer is read, and judged by its hashes.
+    got = judged(project, capsys, data, compared(many[:-1], EARLIER))
+    [r] = [r for r in got["reasons"] if r["id"] == "couldnt_read"]
+    assert "don't hash as the research record" in r["wording"]["developer"]["message"]
+
+
 def test_the_look_with_no_hashes_on_another_commit_cant_tell_what_changed(project, capsys):
     got = judged(project, capsys, pr(note(marked()), record(2, note(), commit=EARLIER, clean=False, hashed=False)))
     [r] = got["reasons"]
