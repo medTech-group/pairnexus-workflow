@@ -1152,6 +1152,9 @@ def cmd_research(a) -> int:
         if bool(a.page) == bool(a.fetch):
             print("workflow research fingerprint: give --page F (the page, saved as a file) or --fetch (fetch the link), one of them", file=sys.stderr)
             return 2
+        if research_mod.leave_out(a.url, patterns)[1]:
+            print("workflow research fingerprint: the link holds sensitive data; cite the page by a link without it. Nothing was written.", file=sys.stderr)
+            return 1
         try:
             raw, ctype = research_mod.read_page(Path(a.page)) if a.page else research_mod.fetch(a.url)
             paras = research_mod.page_paragraphs(raw, ctype)

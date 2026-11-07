@@ -194,6 +194,17 @@ def test_fingerprint_leaves_out_sensitive_patterns_but_hashes_the_page_as_fetche
     assert "[left out], keep it." in saved.read_text()
 
 
+@pytest.mark.parametrize("how", ["page", "fetch"])
+def test_fingerprint_sensitive_data(project, how):
+    link = f"http://127.0.0.1:{_closed_port()}/help?code=BOOKCODE-123456"
+    saved, fps = project / "s.md", project / "s.fingerprints"
+    given = ["--page", PAGE] if how == "page" else ["--fetch"]
+    p = _cli("fingerprint", link, *given, "--saved", saved, "--fingerprints", fps, env=_env(project))
+    assert p.returncode == 1
+    assert "BOOKCODE-123456" not in p.stdout + p.stderr
+    assert not saved.exists() and not fps.exists()
+
+
 def test_fingerprint_fetches_the_page(project, server):
     base, routes = server
     routes["/help"] = (200, "text/html; charset=utf-8", PAGE.read_bytes())
