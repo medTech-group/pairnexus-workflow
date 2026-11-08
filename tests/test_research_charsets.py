@@ -420,3 +420,36 @@ def test_check_reads_a_source_served_in_windows_1252(project, server):
     assert p.returncode == 0, p.stderr
     (src,) = json.loads(p.stdout)["sources"]
     assert src["result"] == "unchanged", src
+
+
+# ---------- the changelog ----------
+
+
+def _note_531() -> tuple[str, str]:
+    """The #531 note's body and its "For projects updating" line, each on one line."""
+    from changelog_notes import since_0110
+
+    log = since_0110()
+    start = log.rfind("\n\n", 0, log.index("(#531,")) + 2
+    body, rest = log[start:].split("\n\n", 1)
+    updating = rest.split("\n\n", 1)[0]
+    assert updating.startswith("- **For projects updating:**")
+    return " ".join(body.split()), " ".join(updating.split())
+
+
+def test_the_changelog_says_which_sources_fingerprinted_before_now_cant_be_fetched():
+    # a page served with no content type naming `us-ascii`, whose bytes are UTF-8, and a label in Python's
+    # own spelling, were read as UTF-8 before; now `check` says can't fetch
+    for ctype in ("; charset=us-ascii", "text/html; charset=utf_8", "text/html; charset=cp65001"):
+        with pytest.raises(research.PageError):
+            research.paragraphs("<!doctype html><p>Café</p>".encode(), ctype)
+    _, updating = _note_531()
+    assert "can't fetch" in updating
+    assert "no content type" in updating
+    assert "`utf_8`" in updating and "`cp65001`" in updating
+
+
+def test_the_changelog_says_a_utf8_page_reads_as_before_only_by_a_label_the_standard_lists():
+    body, _ = _note_531()
+    (sentence,) = [s for s in body.split(". ") if "exactly as before" in s]
+    assert "the standard lists" in sentence
