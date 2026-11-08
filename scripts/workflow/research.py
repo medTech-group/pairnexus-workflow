@@ -71,7 +71,8 @@ class LayoutError(Exception):
 class WriteError(Exception):
     """A file `write_files` can't write: `path` as given, and why. `kept`
     lists each (path, its old file) that couldn't be put back: the old file
-    is kept aside under that name, never removed."""
+    is kept aside under that name, never removed; its old file is None for a
+    new file that couldn't be removed, which is left written."""
 
     def __init__(self, path, why: str, kept: list | None = None):
         super().__init__(f"{path} ({why})")
@@ -466,7 +467,8 @@ def write_files(files: list[tuple[Path, str]]) -> None:
     each file put back as it was (the same file, renamed back), each new file
     and temporary file removed, and each folder made removed. An old file
     that can't be put back is kept aside, never removed, and named in the
-    error's `kept`. Raises WriteError naming the path that failed."""
+    error's `kept`, as is a new file that can't be removed. Raises WriteError
+    naming the path that failed."""
     made: list[Path] = []  # folders made, in order
     temps: list[Path] = []  # new files beside each path, not yet in place
     placed: list[tuple[Path, Path | None]] = []  # (path, the old file moved aside, or None)
@@ -511,7 +513,7 @@ def write_files(files: list[tuple[Path, str]]) -> None:
             os.replace(tmp, now)
             temps.remove(tmp)
     except BaseException as e:  # anything, an interrupt too: undone, then raised again
-        kept: list[tuple[Path, Path]] = []  # (path, its old file) not put back: the only copy, kept
+        kept: list[tuple[Path, Path | None]] = []  # (path, its old file, the only copy, kept; or None: a new file not removed)
         for path, old in reversed(placed):  # each put back as it was
             try:
                 if old is None:
@@ -523,7 +525,7 @@ def write_files(files: list[tuple[Path, str]]) -> None:
             except OSError:
                 if old is not None:
                     olds.remove(old)
-                    kept.append((path, old))
+                kept.append((path, old))
         for f in temps + olds:
             try:
                 os.unlink(f)

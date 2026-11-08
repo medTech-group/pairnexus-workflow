@@ -328,6 +328,40 @@ def test_the_line_for_an_old_file_kept_names_it(project, monkeypatch, capsys):
     assert "neither file was written" not in line
 
 
+def test_the_line_for_a_new_file_that_cant_be_removed_names_it(project, monkeypatch, capsys):
+    """Neither file was there: the saved copy is in place when placing the
+    fingerprints fails, and removing it fails too. It is written, so the line
+    says so, never "neither file was written"."""
+    from workflow import cli
+
+    saved, fps = project / "n1/a.md", project / "n2/a.fingerprints"
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(project))
+    monkeypatch.chdir(project)
+    real_replace, real_unlink = os.replace, os.unlink
+
+    def fake_replace(src, dst):
+        if Path(dst) == Path("n2/a.fingerprints"):
+            raise OSError(5, "Input/output error", str(dst))
+        return real_replace(src, dst)
+
+    def fake_unlink(p, *a, **k):
+        if Path(p) == Path("n1/a.md"):
+            raise OSError(13, "Permission denied", str(p))
+        return real_unlink(p, *a, **k)
+
+    monkeypatch.setattr(research.os, "replace", fake_replace)
+    monkeypatch.setattr(research.os, "unlink", fake_unlink)
+    code = cli.main(["research", "fingerprint", URL, "--page", str(PAGE), "--saved", "n1/a.md", "--fingerprints", "n2/a.fingerprints"])
+    monkeypatch.undo()
+    out, err = capsys.readouterr()
+    assert code == 1 and out == ""
+    [line] = err.strip().splitlines()
+    assert saved.read_text(encoding="utf-8").startswith(f"Source: {URL}\n")  # the new saved copy, left
+    assert not fps.parent.exists()
+    assert "n1/a.md" in line and "written" in line and "couldn't be removed" in line
+    assert "neither file was written" not in line
+
+
 @pytest.mark.parametrize("when", ["writing", "placing"])
 def test_any_other_exception_undoes_everything_and_is_raised_again(project, monkeypatch, when):
     """Not only an OSError: a text that can't be written in UTF-8, or an
