@@ -276,6 +276,25 @@ def test_the_round_2_case_is_read_and_called_wrong():
     assert "docs/research/booking-ahead/sources/booking-help.md" in SKILL.read_text(encoding="utf-8")
 
 
+# #571 round 2, finding 13: a claim linking the page itself, by the address a
+# saved copy's `Source:` line names, cites that saved copy and is read against it.
+BY_ADDRESS = "Bookings open at 8:00 each morning ([the booking help page](https://example.com/help/booking), paragraph 2)."
+
+
+def test_a_claim_linking_a_saved_copy_s_address_is_read_against_that_copy():
+    address = SAVED.read_text(encoding="utf-8").splitlines()[0].removeprefix("Source: ")
+    assert f"]({address})" in BY_ADDRESS and "sources/" not in BY_ADDRESS
+    rc = _job("The research check")
+    assert "or links a page by the address a saved copy's `Source:` line names (it then cites that saved copy)" in rc
+    case = _example(BY_ADDRESS)
+    assert "**Wrong**" in case and "`Source:` line names that address" in case
+    assert "paragraph 2 says bookings open at 9:00" in case
+    s = _study_10()
+    assert "whatever its label (it cites one by its path, or by the address its `Source:` line names)" in s
+    r = _flow_rule()
+    assert "facts only (a claim cites a saved copy by its path, or by the address its `Source:` line names)" in r
+
+
 def test_the_round_1_case_is_not_called_wrong_for_having_no_saved_copy():
     assert "sources/" not in ROUND_1  # it cites a transcript, never a saved copy
     case = _example(ROUND_1)
