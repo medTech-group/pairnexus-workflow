@@ -82,6 +82,12 @@
 - **The glossary** gains "Study". To stay under 6,000 characters, other entries are shortened without changing their meaning.
 - **For projects updating:** the update brings the two agents and the skill's new sections. A project set up before #507 has no `research` label: the session creates it before filing its first research issue, or create it yourself (`gh api repos/<repo>/labels -f name=research`). Tests: `tests/test_study_skill.py`, `tests/test_glossary.py` and `tests/test_research_records.py`.
 
+**The research check and the look in `review-panel`** (#513, part of spec #505).
+
+- **`review-panel` gains a section, "The research check and the look",** before the rule for build reviewers, which stays last. It is how to run them on a research pull request (every file under `docs/research/`), which gets neither the build panel nor the rule for build reviewers: one `research-checker`, one pass each, reading the topic's saved copies, never rounds until clean. The session posts each as one comment, the research record first (`--round 1` for the check, `--round 2` for the look), then the claims it found wrong. The look reads the lines changed since the check (the pull request's own changes, written as section 1's `since.patch`) and the claims the check listed; a listed claim whose line didn't change counts as still wrong. The mark goes on after the look, never before, and only marks follow it.
+- **It points rather than restates:** what each pass reads is the flow's "Research" rule, how the records count at merge is flow §4 item 4's, and how the checker reads a note's claims is the `research-checker` agent's own file (#571). The skill's description names the research check, so it loads for one.
+- **For projects updating:** nothing to do. Tests: `tests/test_review_panel_research.py`.
+
 **Research under way, held items and "Carry on"** (#514, part of spec #505).
 
 - **`workflow status`** lists open issues labelled `research` under a new heading, "Research under way" (`--json`'s `research`), never under "New issues to sort", whatever their other labels, and never as ready build tickets.
