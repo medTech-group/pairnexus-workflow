@@ -172,6 +172,18 @@ def test_the_look_s_comment_lists_every_claim_still_wrong_not_only_the_checker_s
     assert "the checker reported" in after and "didn't change" in after
 
 
+def test_no_changed_patch_means_no_look_and_no_look_record():
+    # Section 1's fallback (no `since.patch`: the whole change is new) has no
+    # meaning for the look's checker, which gets no `diff.patch`: with no
+    # `changed.patch`, a look would read nothing and come out clean.
+    part = _part("The look")
+    s = _sentence(part, "run no look")
+    assert "changed.patch" in s and "no look record" in s
+    assert "whole change as new" not in part
+    # With one written, the look runs as before.
+    assert "give a fresh `research-checker`" in part and "`changed.patch`: the lines changed" in part
+
+
 def test_the_mark_goes_on_after_the_look_and_never_before():
     part = _part("The mark")
     assert "after the look" in part
