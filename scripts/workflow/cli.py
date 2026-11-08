@@ -25,6 +25,8 @@
     workflow research fingerprint URL --page F | --fetch [--saved F --fingerprints F] [--json]      (a page's paragraphs and their SHA-256; writes only the two files given, both or neither)
     workflow research check --note F [--page URL F ...] [--fetch] [--json]      (a note's key sources against their fingerprints; writes nothing)
     workflow research notes [--dir DIR] [--json]      (the research notes marked current)
+    workflow research stakes --comments F --permissions F [--issues F] | --fetch [--json]      (every past stakes judgement, one per line)
+    workflow research estimate --comments F --permissions F [--issues F] | --fetch [--agents N] [--json]      (a study's agents and rough token count, from past full studies)
     workflow review-record --kind round|pass --round N --commit SHA --reviewers NAMES --clean|--not-clean [--base BRANCH]      (with the hashes of the PR's own changes at SHA)
     workflow review-record --kind round|pass --round N --commit SHA --reviewers NAMES --findings F [--base BRANCH]      (a rule=2 record: its result worked out from the findings file's marks)
     workflow review-record [--kind spec] --round N --body F --reviewers spec,correctness --clean|--not-clean      (a spec's review, keyed to its body's SHA-256)
@@ -83,6 +85,7 @@ from . import protection as protection_mod
 from . import render as render_mod
 from . import repair as repair_mod
 from . import research as research_mod
+from . import research_records as research_records_mod
 from . import reviews as reviews_mod
 from . import small as small_mod
 from . import roles
@@ -1146,9 +1149,11 @@ def _shown(path: Path) -> str:
 
 
 def cmd_research(a) -> int:
-    """`research`: research notes in docs/research/<topic>/ (spec #505). Its
-    inputs are files, with --fetch for pages. It calls no model and writes
-    nothing but the saved copy and fingerprint file `fingerprint` is given.
+    """`research`: research notes in docs/research/<topic>/ (spec #505), and
+    the stakes and token records in issue comments (`stakes`, `estimate`:
+    `_research_records`). Its inputs are files, with --fetch for pages or the
+    issues. It calls no model and writes nothing but the saved copy and
+    fingerprint file `fingerprint` is given.
     Exits 0 with an answer (a source that can't be fetched is an answer for
     `check`), 1 when a page or the note's layout can't be read or a file can't
     be written, 2 when an input is missing."""
@@ -1277,6 +1282,9 @@ def cmd_research(a) -> int:
         print("\n".join(lines))
         return 0
 
+    if a.action in ("stakes", "estimate"):
+        return _research_records(a, patterns)
+
     base = None if a.dir else project_root()
     root = Path(a.dir) if a.dir else base / "docs/research"
 
@@ -1300,6 +1308,91 @@ def cmd_research(a) -> int:
         print(f"No research notes marked current in {where(root)}.")
     for n in current:
         print(f"{where(n['path'])}  (last checked {n['last_checked']}, #{n['issue']}){': ' + n['title'] if n['title'] else ''}")
+    return 0
+
+
+def _research_records(a, patterns: list[str]) -> int:
+    """`research stakes` and `research estimate` (#510): the stakes and token
+    records in issue comments, from files or with `--fetch`. Writes nothing."""
+    name = f"workflow research {a.action}"
+    files = [f for f in ("comments", "permissions", "issues") if getattr(a, f) is not None]
+    if a.fetch and files:
+        print(f"{name}: give --fetch or the files (--comments F --permissions F, and --issues F for the titles), not both", file=sys.stderr)
+        return 2
+    instead = "give --comments F --permissions F (and --issues F for the titles) in place of --fetch"
+    if a.action == "estimate" and a.agents is not None and not re.fullmatch(r"[1-9][0-9]{0,2}", a.agents.strip()):
+        print(f"{name}: --agents is how many agents the study will run, a whole number from 1 to {research_records_mod.MAX_AGENTS}", file=sys.stderr)
+        return 2
+    if a.fetch:
+        try:
+            prof = load(required=False)
+        except ProfileError as e:
+            print(f"{name}: {e}", file=sys.stderr)
+            return 1
+        repo = prof.repo if prof else None
+        if not repo:
+            print(f"{name}: --fetch needs the profile's project.repo; {instead}", file=sys.stderr)
+            return 2
+        try:
+            issues = fetch_mod._items(fetch_mod.api(f"repos/{repo}/issues?state=all&per_page=100", paginate=True))
+            comments = fetch_mod._items(fetch_mod.api(f"repos/{repo}/issues/comments?per_page=100", paginate=True))
+            titles = research_records_mod.titles(issues)
+            logins: list[str] = []
+            for c in research_records_mod.candidates(comments):
+                who = posts_mod._login(c)
+                if who and who.casefold() not in {x.casefold() for x in logins}:
+                    logins.append(who)
+            perms = merge_mod._permissions(fetch_mod.permissions_of(repo, logins))
+        except (fetch_mod.GhError, research_records_mod.RecordsError, posts_mod.CommentsError, merge_mod.Unreadable) as e:
+            print(f"{name}: couldn't read GitHub ({e}); {instead}", file=sys.stderr)
+            return 1
+    else:
+        missing = [f"--{f}" for f in ("comments", "permissions") if getattr(a, f) is None]
+        if missing:
+            print(f"{name}: missing {' and '.join(missing)}: give --comments F (the issues' comments) and --permissions F "
+                  "(their authors' permissions), and --issues F for the titles, or --fetch to read them with gh", file=sys.stderr)
+            return 2
+        inputs = _json_inputs(a, ["comments", "permissions", "issues"], raw=("comments",))
+        for f in files:
+            if inputs[f][0] is None:
+                print(f"{name}: --{f}: {inputs[f][1] or 'the file holds null'}", file=sys.stderr)
+                return 1
+        try:
+            comments = posts_mod.load_comments(inputs["comments"][0])
+        except posts_mod.CommentsError as e:
+            print(f"{name}: --comments can't be read: {e}", file=sys.stderr)
+            return 1
+        try:
+            perms = merge_mod._permissions(inputs["permissions"][0])
+        except merge_mod.Unreadable as e:
+            print(f"{name}: --permissions can't be read: {e.why}", file=sys.stderr)
+            return 1
+        try:
+            titles = research_records_mod.titles(inputs["issues"][0]) if "issues" in inputs else {}
+        except research_records_mod.RecordsError as e:
+            print(f"{name}: --issues can't be read: {e}", file=sys.stderr)
+            return 1
+    try:
+        got = research_records_mod.read(comments, perms, titles, patterns)
+    except (research_records_mod.RecordsError, posts_mod.CommentsError) as e:
+        print(f"{name}: {e}", file=sys.stderr)
+        return 1
+    left_out = got.left_out_stakes if a.action == "stakes" else got.left_out_tokens
+    if left_out:
+        kind = "a stakes" if a.action == "stakes" else "a token"
+        print(f"{name}: left out {left_out} comment{'s' if left_out != 1 else ''} with {kind} record: without the agents' marker, "
+              "or posted by an account without write access", file=sys.stderr)
+    if a.action == "stakes":
+        if a.json:
+            _out({"stakes": got.stakes, "left_out": left_out})
+        else:
+            print("\n".join(research_records_mod.stakes_lines(got.stakes)) if got.stakes else "No stakes records yet.")
+        return 0
+    e = research_records_mod.estimate(got.tokens, int(a.agents) if a.agents is not None else None)
+    if a.json:
+        _out({**e, "left_out": left_out})
+    else:
+        print(research_records_mod.estimate_line(e))
     return 0
 
 
@@ -2090,7 +2183,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--file", required=True, help="the briefing as the session received it (or -)")
     s.set_defaults(fn=cmd_briefing)
 
-    s = sub.add_parser("research", help="research notes in docs/research/<topic>/: a page's fingerprints, a note's key sources checked against theirs, the notes marked current; calls no model, writes only the two files fingerprint is given")
+    s = sub.add_parser("research", help="research notes in docs/research/<topic>/: a page's fingerprints, a note's key sources checked against theirs, the notes marked current; past stakes judgements and a study's estimated size; calls no model, writes only the two files fingerprint is given")
     rsub = s.add_subparsers(dest="action", required=True)
     r = rsub.add_parser("fingerprint", help="a page's text, paragraph by paragraph, each with the SHA-256 of its text as fetched")
     r.add_argument("url", help="the page's link, as the note cites it")
@@ -2106,6 +2199,17 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--fetch", action="store_true", help="fetch every key source not given with --page")
     r.add_argument("--json", action="store_true")
     r.set_defaults(fn=cmd_research)
+    for action, what in (("stakes", "every past stakes judgement, one per line, in the order given (as GitHub gives them, oldest first)"),
+                         ("estimate", "how many agents a study will run and a rough token count, averaged from past full studies' token records, else from the per-agent figure")):
+        r = rsub.add_parser(action, help=f"{what}; only agents' comments from accounts with write access count")
+        r.add_argument("--comments", metavar="F", help="the issues' comments, as GitHub gives them (GET repos/<repo>/issues/comments, every page)")
+        r.add_argument("--permissions", metavar="F", help="their authors' permissions, in any shape merge-check's --permissions takes")
+        r.add_argument("--issues", metavar="F", help="the issues, for their titles (GET repos/<repo>/issues?state=all, every page)")
+        r.add_argument("--fetch", action="store_true", help="read the issues, their comments and the permissions with gh")
+        if action == "estimate":
+            r.add_argument("--agents", metavar="N", help="how many agents this study will run, when known (1 to 999)")
+        r.add_argument("--json", action="store_true")
+        r.set_defaults(fn=cmd_research)
     r = rsub.add_parser("notes", help="the research notes marked `Status: current`")
     r.add_argument("--dir", metavar="DIR", help="the research folder (default: the project's docs/research)")
     r.add_argument("--json", action="store_true")

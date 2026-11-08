@@ -66,6 +66,14 @@
 
 - **For projects updating:** a key source fingerprinted before can read differently at its next check. One labelled as ASCII (`ascii`, `us-ascii`, `ANSI_X3.4-1968`) whose bytes aren't all ASCII shows as changed, since it now reads as windows-1252. One whose header names a label in Python's own spelling (`utf_8`, `cp65001`, `us_ascii`, `646`), or served with no content type, labelled as ASCII and holding bytes outside ASCII, shows as can't fetch: fingerprint it again once the server's label is fixed.
 
+**Stakes and token records: `workflow research stakes` and `workflow research estimate`** (#510, part of spec #505).
+
+- **`workflow research stakes`** lists every past stakes judgement, one per line, in the order given (as GitHub gives them, oldest first): the issue's number, the comment's date, the issue's title and the stakes line (`--json` for JSON). A session reads them before judging a feature's stakes, for similar work.
+- **`workflow research estimate`** gives how many agents a study will run and a rough token count ("About 11 agents, roughly 1.2M tokens"), averaged from the past full studies' token records, one per research issue (the last one given), never a second study's; `--agents N` scales the learned per-agent figure to a study whose size is known. Before there are any, it counts the panel at its largest, 12 agents, at the per-agent figure, 100,000 tokens per agent, and says it isn't learned yet. That figure is a placeholder until the ticket that builds the study sets it from a trial run.
+- **Their inputs** are the issues' comments and their authors' permissions as files (`--comments F --permissions F`, and `--issues F` for the titles), or `--fetch` to read them with `gh`. Only comments carrying the agents' marker, posted by an account with write access, count, as hand-off comments do; the others are left out, and standard error says how many. They call no model and write nothing.
+- **The `study` skill** gains two sections, "The stakes record" and "The token record": each record's one fixed shape (a readable line, then its marker, `<!-- workflow:stakes -->` or `<!-- workflow:tokens study=full|second agents=N total=N -->`, then the agents' marker), and the per-agent figure, quoted from the constant.
+- **For projects updating:** nothing to do. Tests: `tests/test_research_records.py`, with the records' fixtures (`tests/fixtures/research/records/`) copied from the `study` skill's text and tied to it, and the skill's per-agent figure tied to the constant.
+
 ## 0.1.21
 
 **Decision questions asked in a message are easier to read.** A recommendation now has its own labelled part, "➡️ Recommended:", with its evidence, and the alternatives have theirs, so a recommendation can't be mistaken for a decision already made. Questions asked as clickable choices are unchanged.
