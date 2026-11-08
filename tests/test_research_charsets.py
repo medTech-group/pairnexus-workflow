@@ -80,10 +80,9 @@ def test_x_user_defined_decodes_as_the_standard_says():
 
 
 def test_only_the_standards_multi_byte_encodings_use_a_python_codec_and_only_these():
-    # Big5's covers HKSCS; Shift_JIS is Windows' (cp932); EUC-KR is Windows' (cp949)
+    # Shift_JIS is Windows' (cp932); EUC-KR is Windows' (cp949)
     assert research.MULTI_BYTE_CODECS == {
         "UTF-8": "utf-8",
-        "Big5": "big5hkscs",
         "EUC-JP": "euc_jp",
         "ISO-2022-JP": "iso2022_jp",
         "Shift_JIS": "cp932",
@@ -91,9 +90,9 @@ def test_only_the_standards_multi_byte_encodings_use_a_python_codec_and_only_the
         "UTF-16BE": "utf-16-be",
         "UTF-16LE": "utf-16-le",
     }
-    # the standard's own decoders, GBK's being gb18030's, with indexes built from these codecs
-    assert set(research.MULTI_BYTE_DECODERS) == {"GBK", "gb18030"}
-    assert research.INDEX_CODECS == {"gb18030": "gb18030"}
+    # the standard's own decoders, GBK's being gb18030's and Big5's covering HKSCS, with indexes built from these codecs
+    assert set(research.MULTI_BYTE_DECODERS) == {"GBK", "gb18030", "Big5"}
+    assert research.INDEX_CODECS == {"gb18030": "gb18030", "big5": "big5hkscs"}
     single = set(INDEXES) | {"ISO-8859-8-I", "x-user-defined"}
     decoders = set(research.MULTI_BYTE_DECODERS)
     assert set(research.MULTI_BYTE_CODECS) | decoders | single | {"replacement"} == set(NAMES)
@@ -164,6 +163,34 @@ def test_gbk_reads_two_bytes_as_the_standards_index(raw, want):
 def test_gbk_refuses_bytes_the_standard_doesnt_define(raw):
     with pytest.raises(research.PageError, match="its bytes aren't valid GBK"):
         research.decode(b"A" + raw, "GBK")
+
+
+
+@pytest.mark.parametrize("label", ["Big5-HKSCS", "big5"])
+def test_big5_reads_an_hkscs_character_with_leading_byte_0x87(label):
+    assert research.paragraphs(b"<p>HKSCS \x87\x7a</p>", f"text/html; charset={label}") == ["HKSCS \u3875"]
+
+
+def test_big5_never_reads_two_different_codes_as_one_character():
+    # 0xA1 0xFE is U+FF0F and 0xA2 0x41 is U+2215 in the standard's index
+    one, two = research.decode(b"\xa1\xfe", "Big5"), research.decode(b"\xa2\x41", "Big5")
+    assert (one, two) == ("\uff0f", "\u2215")
+    assert _h(one) != _h(two)
+
+
+@pytest.mark.parametrize(
+    "raw,want",
+    [(b"\xa1\x45", "\u2027"), (b"\xa1\xc2", "\u00af"), (b"\xa3\xe1", "\u20ac"), (b"\x88\x62", "\u00ca\u0304"), (b"\x88\xa5", "\u00ea\u030c")],
+    ids=["a145", "a1c2", "a3e1", "8862-two-code-points", "88a5-two-code-points"],
+)
+def test_big5_reads_two_bytes_as_the_standard_says(raw, want):
+    assert research.decode(raw, "Big5") == want
+
+
+@pytest.mark.parametrize("raw", [b"\x80", b"\xff", b"\x81", b"\x81\x40", b"\xa4\x7f", b"\xa4\xa0", b"\xa4\xff"])
+def test_big5_refuses_bytes_the_standard_doesnt_define(raw):
+    with pytest.raises(research.PageError, match="its bytes aren't valid Big5"):
+        research.decode(b"A" + raw, "Big5")
 
 
 # ---------- reading a page in its charset (seam 1) ----------

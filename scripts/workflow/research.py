@@ -358,12 +358,11 @@ _STANDARD = {
 ENCODING_LABELS = {label: name for name, labels in _STANDARD.items() for label in labels.split()}
 
 # The standard's multi-byte encodings a Python codec decodes as the standard does,
-# each with that codec: Big5's covers HKSCS, Shift_JIS is Windows' (cp932) and EUC-KR
-# is Windows' (cp949), as the standard's indexes are. The others are decoded by the
-# standard's own decoders (`MULTI_BYTE_DECODERS`). No other codec decodes a page.
+# each with that codec: Shift_JIS is Windows' (cp932) and EUC-KR is Windows' (cp949),
+# as the standard's indexes are. The others are decoded by the standard's own
+# decoders (`MULTI_BYTE_DECODERS`). No other codec decodes a page.
 MULTI_BYTE_CODECS = {
     "UTF-8": "utf-8",
-    "Big5": "big5hkscs",
     "EUC-JP": "euc_jp",
     "ISO-2022-JP": "iso2022_jp",
     "Shift_JIS": "cp932",
@@ -449,12 +448,45 @@ def decode(raw: bytes, name: str) -> str:
 # codec (`INDEX_CODECS`): each pointer's bytes as that codec reads them, then the
 # fixes where it and the standard's index differ. tests/test_research_charsets.py
 # ties each built index to the standard's own file.
-INDEX_CODECS = {"gb18030": "gb18030"}
+INDEX_CODECS = {"gb18030": "gb18030", "big5": "big5hkscs"}
 _GB18030_FIXES = {  # GB18030-2022's changes, and 0xA3 0xA0 as U+3000, as the standard's index has them
     6555: 0x3000, 7182: 0xFE10, 7183: 0xFE12, 7184: 0xFE11, 7185: 0xFE13, 7186: 0xFE14, 7187: 0xFE15,
     7188: 0xFE16, 7201: 0xFE17, 7202: 0xFE18, 7208: 0xFE19, 7533: 0x1E3F, 23775: 0x9FB4, 23783: 0x9FB5,
     23788: 0x9FB6, 23789: 0x9FB7, 23795: 0x9FB8, 23812: 0x9FB9, 23829: 0x9FBA, 23845: 0x9FBB,
 }
+_BIG5_FIXES = {  # HKSCS-2008's characters, and the codes the standard's index maps differently
+    1000: 0x3875, 1001: 0x21D53, 1002: 0x2369E, 1003: 0x26021, 1004: 0x3EEC, 1005: 0x258DE, 1006: 0x3AF5,
+    1007: 0x7AFC, 1008: 0x9F97, 1009: 0x24161, 1010: 0x2890D, 1011: 0x231EA, 1012: 0x20A8A, 1013: 0x2325E,
+    1014: 0x430A, 1015: 0x8484, 1016: 0x9F96, 1017: 0x942F, 1018: 0x4930, 1019: 0x8613, 1020: 0x5896,
+    1021: 0x974A, 1022: 0x9218, 1023: 0x79D0, 1024: 0x7A32, 1025: 0x6660, 1026: 0x6A29, 1027: 0x889D,
+    1028: 0x744C, 1029: 0x7BC5, 1030: 0x6782, 1031: 0x7A2C, 1032: 0x524F, 1033: 0x9046, 1034: 0x34E6,
+    1035: 0x73C4, 1036: 0x25DB9, 1037: 0x74C6, 1038: 0x9FC7, 1039: 0x57B3, 1040: 0x492F, 1041: 0x544C,
+    1042: 0x4131, 1043: 0x2368E, 1044: 0x5818, 1045: 0x7A72, 1046: 0x27B65, 1047: 0x8B8F, 1048: 0x46AE,
+    1049: 0x26E88, 1050: 0x4181, 1051: 0x25D99, 1052: 0x7BAE, 1053: 0x224BC, 1054: 0x9FC8, 1055: 0x224C1,
+    1056: 0x224C9, 1057: 0x224CC, 1058: 0x9FC9, 1059: 0x8504, 1060: 0x235BB, 1061: 0x40B4, 1062: 0x9FCA,
+    1063: 0x44E1, 1064: 0x2ADFF, 1065: 0x62C1, 1066: 0x706E, 1067: 0x9FCB, 2082: 0x7BB8, 2088: 0x7C06,
+    2103: 0x7CCE, 2114: 0x7DD2, 2123: 0x7E1D, 2148: 0x8005, 2151: 0x8028, 2221: 0x83C1, 2239: 0x84A8,
+    2244: 0x840F, 2303: 0x89A6, 2304: 0x89A9, 2354: 0x8D77, 2400: 0x90FD, 2413: 0x92B9, 2477: 0x975C,
+    2498: 0x97FF, 2605: 0x9F16, 2673: 0x8503, 2746: 0x5159, 2747: 0x515B, 2748: 0x515D, 2749: 0x515E,
+    2771: 0x936E, 2780: 0x7479, 2990: 0x6D67, 3087: 0x799B, 3259: 0x9097, 3301: 0x975D, 3436: 0x701E,
+    3451: 0x5B28, 4136: 0x7201, 4138: 0x77D7, 4141: 0x7E87, 4182: 0x99D6, 4206: 0x91D4, 4220: 0x60DE,
+    4230: 0x6FB6, 4241: 0x8F36, 4258: 0x4FBB, 4273: 0x71DF, 4279: 0x9104, 4282: 0x9DF0, 4294: 0x83CF,
+    4329: 0x5C10, 4330: 0x79E3, 4349: 0x5A67, 4419: 0x8F0B, 4422: 0x7B51, 4494: 0x62D0, 4624: 0x6062,
+    4694: 0x75F9, 4708: 0x6C4A, 4742: 0x9B2E, 4748: 0x9F17, 4815: 0x50ED, 4828: 0x5F0C, 4902: 0x880F,
+    4922: 0x62CE, 4982: 0x7468, 4992: 0x7162, 4997: 0x7250, 5029: 0x2027, 5038: 0xFE51, 5120: 0x00AF,
+    5153: 0xFF5E, 5168: 0x2295, 5169: 0x2299, 5182: 0x2215, 5183: 0xFE68, 5185: 0xFFE5, 5187: 0xFFE0,
+    5188: 0xFFE1, 5432: 0x2400, 5433: 0x2401, 5434: 0x2402, 5435: 0x2403, 5436: 0x2404, 5437: 0x2405,
+    5438: 0x2406, 5439: 0x2407, 5440: 0x2408, 5441: 0x2409, 5442: 0x240A, 5443: 0x240B, 5444: 0x240C,
+    5445: 0x240D, 5446: 0x240E, 5447: 0x240F, 5448: 0x2410, 5449: 0x2411, 5450: 0x2412, 5451: 0x2413,
+    5452: 0x2414, 5453: 0x2415, 5454: 0x2416, 5455: 0x2417, 5456: 0x2418, 5457: 0x2419, 5458: 0x241A,
+    5459: 0x241B, 5460: 0x241C, 5461: 0x241D, 5462: 0x241E, 5463: 0x241F, 5464: 0x2421, 5465: 0x20AC,
+    10942: 0x5EF4, 10946: 0x65E0, 10948: 0x7676, 10950: 0x96B6, 10957: 0x3003, 10958: 0x4EDD, 19028: 0x5029,
+    19035: 0x507D, 19088: 0x5305, 19096: 0x5344, 19112: 0x537F, 19162: 0x5605, 19240: 0x5A77, 19299: 0x5E75,
+    19305: 0x5ED0, 19326: 0x5F58, 19355: 0x60A4, 19398: 0x6490, 19439: 0x6674, 19454: 0x675E, 19553: 0x6C9C,
+    19554: 0x6E1D, 19557: 0x6E2F, 19611: 0x716E, 19643: 0x732A, 19672: 0x745C, 19697: 0x74E9, 19748: 0x7809,
+}
+# Big5's pointers whose character is two code points, as the standard's decoder gives them
+_BIG5_TWO = {1133: "\u00ca\u0304", 1135: "\u00ca\u030c", 1164: "\u00ea\u0304", 1166: "\u00ea\u030c"}
 _NOT_ASCII = re.compile(rb"[\x80-\xff]")
 
 
@@ -464,7 +496,13 @@ def _gb18030_pointers():
             yield (lead - 0x81) * 190 + byte - (0x40 if byte < 0x7F else 0x41), bytes((lead, byte))
 
 
-_INDEXES = {"gb18030": (_gb18030_pointers, _GB18030_FIXES)}
+def _big5_pointers():
+    for lead in range(0x81, 0xFF):
+        for byte in (*range(0x40, 0x7F), *range(0xA1, 0xFF)):
+            yield (lead - 0x81) * 157 + byte - (0x40 if byte < 0x7F else 0x62), bytes((lead, byte))
+
+
+_INDEXES = {"gb18030": (_gb18030_pointers, _GB18030_FIXES), "big5": (_big5_pointers, _BIG5_FIXES)}
 
 
 @functools.lru_cache(maxsize=None)
@@ -534,8 +572,26 @@ def _gb18030(raw: bytes) -> str | None:
     return _stateless(raw, _gb18030_char)
 
 
-# The standard's multi-byte encodings decoded by its own decoders: GBK's decoder is gb18030's.
-MULTI_BYTE_DECODERS = {"GBK": _gb18030, "gb18030": _gb18030}
+def _big5_char(raw: bytes, i: int) -> tuple[str, int] | None:
+    """The standard's Big5 decoder, at a byte that isn't ASCII."""
+    b = raw[i]
+    if not 0x81 <= b <= 0xFE or i + 1 >= len(raw):
+        return None
+    byte = raw[i + 1]
+    if not (0x40 <= byte <= 0x7E or 0xA1 <= byte <= 0xFE):
+        return None
+    pointer = (b - 0x81) * 157 + byte - (0x40 if byte < 0x7F else 0x62)
+    c = _BIG5_TWO.get(pointer) or multi_byte_index("big5").get(pointer)
+    return None if c is None else (c, i + 2)
+
+
+def _big5(raw: bytes) -> str | None:
+    return _stateless(raw, _big5_char)
+
+
+# The standard's multi-byte encodings decoded by its own decoders: GBK's decoder is
+# gb18030's, and Big5's index covers HKSCS.
+MULTI_BYTE_DECODERS = {"GBK": _gb18030, "gb18030": _gb18030, "Big5": _big5}
 
 
 def _cut(label: str) -> str:
