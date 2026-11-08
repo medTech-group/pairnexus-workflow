@@ -338,6 +338,46 @@ def test_merge_check_s_words_for_the_research_check_name_the_same_reading():
     assert "reads each claim against its source's saved copy" not in text
 
 
+# #571 round 3, findings 2, 3 and 12: a research check whose only result is one
+# fault ("no source", or "a source not saved"), with no claim wrong. The words
+# `merge-check` gives name the faults beside the claims, as the flow does, so a
+# session following them posts, fixes, looks at and marks the fault too.
+
+
+def _words(rid: str, case: str | None = None) -> str:
+    reason = merge.REASONS[rid]
+    words = reason.cases[case] if case else reason.wording
+    return " ".join(message + " " + fix for message, fix in words.values())
+
+
+def test_merge_check_s_research_words_name_the_faults_beside_the_claims():
+    none = merge.REASONS["research_none"].wording["developer"][1]
+    assert none.endswith("then the claims it found wrong and the faults.")
+    look = _words("research_needs_look")
+    assert "the research check found claims or faults to fix" in look
+    assert "the claims and faults it listed" in look
+    assert "Fix the claims and faults it listed" in look
+    assert "the listed claims and faults" in look
+    assert "then any claim still wrong and any fault still there" in look
+    marks = _words("research_needs_marks")
+    assert "found a claim still wrong or a fault still there" in marks
+    assert "each line holding a claim or fault it listed" in marks
+    assert "each line holding a claim or fault the look listed" in marks
+    for rid in ("research_none", "research_needs_look", "research_needs_marks"):
+        text = _words(rid)
+        for words in ("found claims to fix", "Fix the claims it listed", "the claims it listed",
+                      "the listed claims;", "holding a claim it listed", "holding a claim the look listed"):
+            assert words not in text, (rid, words)
+    row = _flat(MERGE_CHECK.read_text(encoding="utf-8"))
+    assert "the claims it found wrong and the faults after it" in row
+    assert "fix the claims and faults it listed" in row
+    assert "reads the lines changed since and the listed claims and faults" in row
+    assert "holding a claim or fault the look listed" in row
+    for words in ("the claims it found wrong after it", "fix the claims it listed",
+                  "and the listed claims,", "holding a claim the look listed"):
+        assert words not in row, words
+
+
 # ---------- the changelog ----------
 
 
