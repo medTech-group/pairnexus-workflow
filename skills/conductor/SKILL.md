@@ -284,6 +284,16 @@ Where `gh` can't read them, give the open issues as `--issues F` (as the GitHub 
 
 **When the owner answers** a `needs-human` ticket (in your chat, or in a comment without the marker, on the ticket or the tracking issue):
 1. Record the answer on the ticket: a comment quoting it, with its `source` (the comment's URL, or `chat <UTC time>`). If it changes what the ticket asks for, rewrite the ticket's acceptance criteria in its body to match, and say so in that comment.
+   **A ticket stopped on a research source** (the flow's "Research", **The source check**): when its session's `needs-human` line names a note, a source's link and the changed paragraphs' hashes, and the answer is a choice among go on, fix the note and re-run the study, also post it as an "Owner chose" line, one comment on the build ticket and one on the open research issue for that note and source, in this one fixed shape (the choice, the note, the source's link, and the hashes new and gone as that line gives them, `none` where there are none), with its marker, which nothing else carries:
+
+   ```markdown
+   Owner chose: fix the note. Note: `docs/research/booking-ahead/note.md`. Source: <https://example.com/help/booking>. New: ece1eadaed507719006ab2e8a550d9988c171b7d9f16a36c3d2825323dac7d55. Gone: 4301a2050cf762c2ae5567611ac08bb487eaba2d7190b6eba3712bfe6cdb6ed0.
+
+   <!-- workflow:owner-chose -->
+   <!-- workflow:agent -->
+   ```
+
+   A source that can't be fetched has no hashes: post no "Owner chose" line for it, since the answer doesn't count for a later session (the flow's **Choosing once**); step 1's comment still records it.
 2. Remove `needs-human`, add `ready-for-agent` and `workflow:in-progress` back, and mark the ticket `queued` with `attempts: 0` and no `asked_at`, `base_merged`, `queue_heads`, `queue_failed` or `queue_result`, so the merge queue's drop rule starts afresh. It starts again at step 5 like any queued ticket. Except for a ticket at the cap (above): a new session would only stop at the pass cap again, so don't requeue it, and take the steps for a ticket at the cap instead.
 3. **How attempts count:** `attempts` is the number of sessions started for the ticket since it was last queued fresh, at kick-off or after an owner's answer. The session started after an answer is a first try again, so the ticket gets one try plus `limits.max_retries` retries, as at the start; the earlier attempts stay in the tracking issue's comments, not in the count.
 

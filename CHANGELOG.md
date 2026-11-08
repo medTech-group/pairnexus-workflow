@@ -116,6 +116,14 @@
 - **The `study` skill** says how to run each option (section 9), and that a second study's issue closes when the main note's mark is updated (section 12).
 - **For projects updating:** nothing to do. Tests: `tests/test_professional_finding.py`.
 
+**The source check when a decision relies on a note** (#517, part of spec #505).
+
+- **The flow's "Research"** has the source check: whenever a recommendation's evidence cites a note, or a build follows one, the session runs `workflow research check` first. Unchanged spends nothing; changed has the model read only the changed paragraphs and recommend go on, fix the note or re-run the study, a recorded routing line; can't fetch is one line for a small decision and a question to the owner for a high-stakes one. A session building a ticket goes on with the current note after "fix" or "re-run" (attended); unattended, it notes a small decision and follows the charter's `open_decisions` for a high-stakes one, building under decide-and-record on the safer of the note and the live text. Its lines go in its pull request and on the build ticket, quoted sources leave personal details and the profile's sensitive patterns out, and it files or comments on a `research` issue only when a note needs work or no owner was there to choose. "Fixing a wrong note" says how a wrong claim is fixed.
+- **Choosing once.** When the owner answers a ticket stopped on a changed source, the conductor posts an "Owner chose" line, in one fixed shape with its own marker (`<!-- workflow:owner-chose -->`), on the build ticket and the open research issue; a later session follows it only when the check reports the same paragraphs, by their hashes. An answer about a source that can't be fetched doesn't carry over.
+- **The briefing** gains a line for a decision resting on a research note: under decide-and-record, the safest choice; under set aside, `needs-human` with the note, the link and the hashes.
+- **`start`'s "Carry on" row** for a research issue runs the source check and the owner's choice, unless a matching "Owner chose" line already chose, and closes the issue through the fixing research pull request or with the routing line. `build-ticket` points to the rule.
+- **For projects updating:** nothing to do. Tests: `tests/test_source_check.py`.
+
 ## 0.1.21
 
 **Decision questions asked in a message are easier to read.** A recommendation now has its own labelled part, "➡️ Recommended:", with its evidence, and the alternatives have theirs, so a recommendation can't be mistaken for a decision already made. Questions asked as clickable choices are unchanged.

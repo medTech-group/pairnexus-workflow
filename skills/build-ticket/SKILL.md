@@ -54,6 +54,7 @@ Skip this if the briefing says the conductor has claimed it. Otherwise, before a
 - **Stay within the flow's never-list** (§5). The guard hook stops most breaches: if it refuses something, the refusal is the answer, not a puzzle to get around.
 - **Checks you can't run here:** for a check that needs a real device, account or service, build against the spec's fakes. Add its by-hand step as a checkbox under this ticket on the run's by-hand issue, or on the ticket in attended work. Never mark it done.
 - **Decisions the ticket leaves open:** follow the briefing. By default, take the choice most consistent with the spec, ADRs and the project's rules, and record it for the PR body.
+- **A build that follows a research note** (a current note in `docs/research/`): run the source check on it first, and act on what it says as the flow's "Research", **The source check**, says for a session building a ticket, attended or unattended (in a ticket session, the briefing's line for a decision resting on a research note). Its can't-fetch line and its routing line go in the pull request and on the build ticket, with any changed paragraphs quoted as it says. Follow an "Owner chose" line on the ticket only when it matches, as **Choosing once** says. A claim you find wrong in a note is the flow's **Fixing a wrong note**: a `research` issue, mentioned in your pull request, never a second pull request.
 
 ## 3. Review it
 
