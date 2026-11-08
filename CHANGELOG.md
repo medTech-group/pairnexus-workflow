@@ -88,6 +88,12 @@
 - **It points rather than restates:** what each pass reads is the flow's "Research" rule, how the records count at merge is flow §4 item 4's, and how the checker reads a note's claims is the `research-checker` agent's own file (#571). The skill's description names the research check, so it loads for one.
 - **For projects updating:** nothing to do. Tests: `tests/test_review_panel_research.py`.
 
+**`start` and `next` offer a study** (#515, part of spec #505).
+
+- **`start`'s step 4 gains "Offering a study",** before a Spec item's interview and a Map item's charting. A new project is always recommended a study. Fixes, wording and internal changes are skipped with nothing asked or posted; work a current note covers (`workflow research notes`) is skipped with no question but one stakes line naming the note. Any other feature has its stakes judged, with the why said: new people or a new need, high stakes (safety, money, privacy and the law considered, not a list that decides), hard to undo, or a bet. Before judging, the session reads earlier judgements with `workflow research stakes`, and the offer shows the study's size from `workflow research estimate`, never as money, with nothing capping it. The owner chooses **Run a study** or **Skip it**, with their reason, recorded as the stakes record (the `study` skill's section 2) on the item's issue or the research issue; a map's Destination item follows the `study` skill's section 5. **Run a study** loads `study`. An item already linking a study gets no second offer.
+- **`next`** offers it the same way before a clear map's next spec, pointing to `start` for how the choice is asked.
+- **For projects updating:** nothing to do. Tests: `tests/test_study_offer.py`.
+
 ## 0.1.21
 
 **Decision questions asked in a message are easier to read.** A recommendation now has its own labelled part, "➡️ Recommended:", with its evidence, and the alternatives have theirs, so a recommendation can't be mistaken for a decision already made. Questions asked as clickable choices are unchanged.
