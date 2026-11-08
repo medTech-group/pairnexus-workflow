@@ -101,7 +101,7 @@ Cancelling at least 2 hours before a booking gives a full refund (paragraph 4). 
 
 ## 2. The stakes record
 
-When a feature's stakes are judged, the judgement is recorded in one comment: one readable line starting `Stakes: `, a blank line, then the stakes marker and the agents' marker, each on a line of its own. It goes on the item's issue when the study is skipped, and on the research issue when it runs. Before judging, read the earlier judgements, for similar work: `WF research stakes --fetch` lists every stakes record, one per line, oldest first, each with its issue's number, the comment's date and the issue's title.
+When a feature's stakes are judged, the judgement is recorded in one comment: one readable line starting `Stakes: `, a blank line, then the stakes marker and the agents' marker, each on a line of its own. It goes on the item's issue when the study is skipped, and on the research issue when it runs. Before judging, read the earlier judgements, for similar work: `WF research stakes --fetch` lists every stakes record, one per line, in the order given (as GitHub gives them, oldest first), each with its issue's number, the comment's date and the issue's title.
 
 An example, a comment on issue #42:
 
@@ -136,6 +136,6 @@ Tokens: 240,000 across 4 agents, each sub-agent's reported total added up. The m
 <!-- workflow:agent -->
 ```
 
-**The size shown.** When a study is offered, show its size from `WF research estimate --fetch`: how many agents it will run and a rough token count ("about 11 agents, roughly 1.2M tokens"). It averages the past full studies' token records, one per research issue (its latest), never a second study's; give `--agents N` when you know how many agents this one will run. Before there are any, it counts the panel at its largest, 12 agents, at the per-agent figure, 100,000 tokens per agent, and says it isn't learned yet. That figure is a placeholder until a trial run of the panel's agents sets it. Nothing caps a study, and its size is never shown as money.
+**The size shown.** When a study is offered, show its size from `WF research estimate --fetch`: how many agents it will run and a rough token count ("about 11 agents, roughly 1.2M tokens"). It averages the past full studies' token records, one per research issue (the last one given), never a second study's; give `--agents N` when you know how many agents this one will run. Before there are any, it counts the panel at its largest, 12 agents, at the per-agent figure, 100,000 tokens per agent, and says it isn't learned yet. That figure is a placeholder until a trial run of the panel's agents sets it. Nothing caps a study, and its size is never shown as money.
 
 **Which comments count.** For both records, only comments carrying the agents' marker, posted by an account with write access, count, as hand-off comments do. Others with a stakes or token marker are left out, and standard error says how many. `--fetch` reads the issues, their comments and those accounts' permissions with `gh`; without it, give them as files: `--comments F --permissions F` (any shape `WF merge-check` takes them in), and `--issues F` for the titles. Both commands spend no model tokens, and write nothing.

@@ -19,10 +19,11 @@ line of its kind (and none of the other kind), on a line of its own, no code
 fence before it, and for a stakes record exactly one line starting `Stakes: `
 with something after it. Only comments carrying the agents' marker, posted by
 an account with write access, count, as hand-off comments do (`read`); the
-others are left out and counted, so the command can say how many.
+others are left out and counted, so the command can say how many. The
+records are read in the order given (as GitHub gives them, oldest first).
 
-`estimate` averages the past full studies' token records, one per issue (its
-latest), never a second study's. Before there are any, it counts the panel at
+`estimate` averages the past full studies' token records, one per issue (the
+last one given), never a second study's. Before there are any, it counts the panel at
 its largest at the per-agent figure, `PER_AGENT_TOKENS`, which the skill's
 text quotes (a test ties the two). Nothing here calls a model or writes a file.
 """
@@ -34,8 +35,8 @@ import unicodedata
 from dataclasses import dataclass
 from fractions import Fraction
 
-from .merge import WRITE, _in_time_order, _time
-from .posts import AGENT_MARKER, _login, _number, comments_from
+from .merge import WRITE
+from .posts import AGENT_MARKER, _login, comments_from
 
 # The per-agent figure: a placeholder until the `study` skill's ticket sets it
 # from a trial run of the panel's agents (spec #505; answer 35), then the
@@ -177,19 +178,15 @@ def titles(issues) -> dict[int, str]:
 
 def candidates(comments) -> list[dict]:
     """The comments that hold a stakes or token record, agents' marker or not,
-    oldest first. `comments` is any shape `posts.comments_from` reads."""
-    return [c for c in _ordered(comments_from(comments)) if stakes_line(c.get("body"), False) or token_record(c.get("body"), False)]
-
-
-def _ordered(comments: list[dict]) -> list[dict]:
-    """Oldest first by time, as merge-check orders comments; as given when one has none."""
-    return _in_time_order(comments, lambda c: _time(c.get("created_at") or c.get("createdAt")), _number)
+    in the order given (as GitHub gives them, oldest first). `comments` is any
+    shape `posts.comments_from` reads."""
+    return [c for c in comments_from(comments) if stakes_line(c.get("body"), False) or token_record(c.get("body"), False)]
 
 
 @dataclass
 class Read:
-    stakes: list[dict]  # {issue, title, date, line, url}, oldest first
-    tokens: dict[int, tuple[Tokens, str]]  # issue -> its latest token record and the comment's link
+    stakes: list[dict]  # {issue, title, date, line, url}, in the order given
+    tokens: dict[int, tuple[Tokens, str]]  # issue -> the last token record given and the comment's link
     left_out_stakes: int = 0
     left_out_tokens: int = 0
 
@@ -225,7 +222,7 @@ def read(comments, perms: dict[str, str], issue_titles: dict[int, str], patterns
                 "url": url,
             })
         else:
-            got.tokens[issue] = (tokens, url)  # the latest, as they come oldest first
+            got.tokens[issue] = (tokens, url)  # the last one given
     return got
 
 

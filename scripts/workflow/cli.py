@@ -2199,7 +2199,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--fetch", action="store_true", help="fetch every key source not given with --page")
     r.add_argument("--json", action="store_true")
     r.set_defaults(fn=cmd_research)
-    for action, what in (("stakes", "every past stakes judgement, one per line, oldest first"),
+    for action, what in (("stakes", "every past stakes judgement, one per line, in the order given (as GitHub gives them, oldest first)"),
                          ("estimate", "how many agents a study will run and a rough token count, averaged from past full studies' token records, else from the per-agent figure")):
         r = rsub.add_parser(action, help=f"{what}; only agents' comments from accounts with write access count")
         r.add_argument("--comments", metavar="F", help="the issues' comments, as GitHub gives them (GET repos/<repo>/issues/comments, every page)")
