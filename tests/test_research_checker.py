@@ -188,6 +188,34 @@ def test_the_examples_give_an_unsaved_source_as_a_fault_never_as_wrong():
     assert "what the owner brought in included" in _example(OWNERS_LINK)
 
 
+# #571 Correctness pass 1, finding 1: the look counts a listed fault whose line
+# didn't change as still there. A source not saved fixed only by adding its
+# saved copy, `Bookings open at 9:00 ([help](https://example.com/help)).` left
+# as it was, would end with the unconfirmed mark on a line now cited and right.
+# So every fix the agent offers for a fault changes its line, and saving the
+# page alone is never one.
+
+
+def test_a_source_not_saved_is_fixed_only_by_changing_its_line():
+    rc = _job("The research check")
+    fault = rc[rc.index("Each cited source's text is saved"):]
+    fix = fault[fault.index("the session fixes it"):]
+    assert ("the session fixes it as it fixes one, by changing its line: it saves the page and links "
+            "its saved copy (`sources/<name>.md`), cites a saved copy that says it, or takes the link out") in fix
+    assert ("A saved copy added with its line left as it was doesn't fix it: "
+            "the look counts a fault whose line didn't change as still there") in fix
+    # Saving the source, its line unchanged, is no longer offered as a fix.
+    assert "it saves the source," not in fix
+    public = _example(PUBLIC_UNSAVED)
+    assert "the session saves the page and links its saved copy in place of the address, or cites the saved copy that says it" in public
+    owners = _example(OWNERS_LINK)
+    assert "the session saves the page and links its saved copy in place of the address, or takes the link out" in owners
+    for case in (public, owners):
+        assert "the session saves the page," not in case and "the session saves the page or" not in case
+    # The look still counts it as the three skills' texts say: line unchanged, still there.
+    assert "A listed claim or fault whose line didn't change is still wrong" in _job("The look")
+
+
 def test_an_observed_real_person_finding_is_read_against_what_the_owner_brought_in():
     # #569 round 2's note: such a finding the owner never brought in went unchecked.
     rc = _job("The research check")
