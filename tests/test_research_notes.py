@@ -256,7 +256,9 @@ def _proxied(project, base):
 # ASCII, a host holding a character UTS 46 maps or disallows, or starting with
 # a combining mark, a right-to-left host (the Bidi rule isn't checked), a port
 # or bracketed host outside ASCII, a label in Punycode beside one outside ASCII,
-# a host holding a `%` escape (urllib would decode it, and encode it otherwise).
+# a host holding a `%` escape (urllib would decode it, and encode it otherwise),
+# a character UTS 46 maps that NFC changes (the Kelvin sign, the Greek question
+# mark, a CJK compatibility ideograph): checked as written, never after NFC.
 _UNENCODABLE = [
     "{base}/caf\udce9",
     "{base}/caf\u00e9\u00a0menu",
@@ -269,10 +271,20 @@ _UNENCODABLE = [
     "http://\u2620.example/",
     "https://\u00fc.fa%C3%9F.de/",
     "https://fa%C3%9F.de/\u00fc",
+    "http://\u212aelvin.example/",
+    "http://a\u212ab.de/",
+    "http://a\u037eb.de/",
+    "http://a\u1fefb.de/",
+    "http://\U0002f868.de/",
+    "http://\U0002f874.de/",
+    "http://\U0002f91f.de/",
+    "http://\U0002f95f.de/",
+    "http://\U0002f9bf.de/",
 ]
 
 
-@pytest.mark.parametrize("link", _UNENCODABLE, ids=["lone-surrogate", "nbsp", "ligature-host", "mark-first", "right-to-left", "port", "punycode-beside", "xn-prefix", "symbol", "host-percent", "ascii-host-percent"])
+@pytest.mark.parametrize("link", _UNENCODABLE, ids=["lone-surrogate", "nbsp", "ligature-host", "mark-first", "right-to-left", "port", "punycode-beside", "xn-prefix", "symbol", "host-percent", "ascii-host-percent",
+     "kelvin", "kelvin-inside", "greek-question-mark", "varia", "cjk-2f868", "cjk-2f874", "cjk-2f91f", "cjk-2f95f", "cjk-2f9bf"])
 def test_page_fetching_refuses_a_link_it_cant_encode_before_any_request(project, seen, monkeypatch, link):
     base, requests = seen
     link = link.format(base=base)
