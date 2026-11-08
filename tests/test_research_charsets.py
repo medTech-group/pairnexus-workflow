@@ -523,8 +523,26 @@ def test_a_label_the_standard_reads_as_one_replacement_character_is_refused(labe
         ("text/html; charset=windows-1252", b"\xfe\xff" + "<p>Café</p>".encode("utf-16-be")),
         ("text/html; charset=utf-16be", b"\xff\xfe" + "<p>Café</p>".encode("utf-16-le")),
         ("text/plain", b"\xff\xfe" + "Café".encode("utf-16-le")),
+        # a label the standard doesn't list, or reads as one replacement character, is refused only without a byte order mark
+        ("text/html; charset=punycode", b"\xef\xbb\xbf<p>Caf\xc3\xa9</p>"),
+        ("text/html; charset=utf_8", b"\xef\xbb\xbf<p>Caf\xc3\xa9</p>"),
+        ("text/html; charset=iso-2022-kr", b"\xef\xbb\xbf<p>Caf\xc3\xa9</p>"),
+        ('text/html; charset="utf_8"', b"\xff\xfe" + "<p>Café</p>".encode("utf-16-le")),
+        ("text/html", b'\xef\xbb\xbf<meta charset="iso-2022-kr"><p>Caf\xc3\xa9</p>'),
     ],
-    ids=["utf8-bom-over-header", "utf8-bom-over-shift-jis", "utf16le-bom", "utf16be-bom-over-header", "utf16le-bom-over-utf16be", "plain-text-utf16le-bom"],
+    ids=[
+        "utf8-bom-over-header",
+        "utf8-bom-over-shift-jis",
+        "utf16le-bom",
+        "utf16be-bom-over-header",
+        "utf16le-bom-over-utf16be",
+        "plain-text-utf16le-bom",
+        "utf8-bom-over-punycode",
+        "utf8-bom-over-utf_8",
+        "utf8-bom-over-iso-2022-kr",
+        "utf16le-bom-over-quoted-utf_8",
+        "utf8-bom-over-meta-iso-2022-kr",
+    ],
 )
 def test_a_byte_order_mark_wins_over_the_label(ctype, raw):
     assert research.paragraphs(raw, ctype) == ["Café"]
@@ -690,12 +708,48 @@ def test_the_study_skill_refuses_only_a_headers_label_the_standard_doesnt_list_a
     routes["/menu"] = (200, f"text/html; charset={label}", page)
     p = _cli("fingerprint", f"{base}/menu", "--fetch", env=_env(project))
     assert p.returncode == 1 and "doesn't list" in p.stderr
+    # the same label in the header, on a page starting with a byte order mark: read in the mark's UTF-8, both files written
+    routes["/menu"] = (200, f"text/html; charset={label}", b"\xef\xbb\xbf<p>Caf\xc3\xa9</p>")
+    p = _cli("fingerprint", f"{base}/menu", "--fetch", "--saved", "t/bom.md", "--fingerprints", "t/bom.fingerprints", cwd=project, env=_env(project))
+    assert p.returncode == 0, p.stderr
+    assert (project / "t/bom.fingerprints").read_text(encoding="utf-8") == f"url: {base}/menu\n1 {_h('Café')}\n"
+    # the header's label: its first `charset=` that starts, after any opening quote, with an ASCII letter, a digit or one
+    # of `_.:-`, up to the first character that isn't one; a header with none names no charset, and the <meta> is read
+    with pytest.raises(research.PageError, match=f"doesn't list \\({label}\\)"):
+        research.paragraphs(page, f'text/html; charset="{label}"')
+    with pytest.raises(research.PageError, match=f"doesn't list \\({label}\\)"):
+        research.paragraphs(page, f"text/html; charset={label}é")
+    with pytest.raises(research.PageError, match=f"doesn't list \\({label}\\)"):
+        research.paragraphs(page, f"text/html; charset={{{{x}}}}; charset={label}")
+    for ctype in ("text/html; charset={{charset}}", 'text/html; charset=" utf-8"', "text/html; charset="):
+        assert research.paragraphs(b'<meta charset="windows-1252"><p>Caf\xe9</p>', ctype) == ["Café"]
+    # a label the standard reads as one replacement character is refused from a <meta> too
+    with pytest.raises(research.PageError, match="one replacement character"):
+        research.paragraphs(b'<meta charset="iso-2022-kr"><p>A</p>', "text/html")
     text = SKILL.read_text(encoding="utf-8")
     section = " ".join(text[text.index("**Saving a key source.**") : text.index("**The fingerprint file**")].split())
-    (sentence,) = [s for s in section.split(". ") if "WHATWG Encoding Standard" in s]
+    (sentence,) = [s for s in section.split(". ") if "it refuses, and writes nothing" in s]
     assert "one naming a charset the standard doesn't list" not in sentence
-    assert "one whose header names a charset the standard doesn't list" in sentence
-    assert "a `<meta>` naming one is passed over" in section
+    assert (
+        "one with no byte order mark whose header names a charset the standard doesn't list, or whose header or `<meta>` "
+        "names a label the standard reads as one replacement character (`iso-2022-kr`)" in sentence
+    )
+    assert "read differently in the charset they name than in UTF-8" in sentence
+    assert "A page starting with a byte order mark it reads in the mark's UTF-8 or UTF-16, whatever its header or `<meta>` names" in section
+    assert (
+        "The header's label is its first `charset=` that starts, after any opening quote, with an ASCII letter, a digit or one of `_.:-`, "
+        "up to the first character that isn't one; a header with none names no charset" in section
+    )
+    assert "a `<meta>` naming a label the standard doesn't list is passed over" in section
+    assert "one naming UTF-16 is read as UTF-8, and x-user-defined as windows-1252, as HTML says" in section
+    # the changelog's #531 note says the same
+    body, _ = _note_531()
+    assert "A byte order mark wins over any label, as the standard says" in body
+    assert (
+        "The header's label is its first `charset=` that starts, after any opening quote, with an ASCII letter, a digit or one of `_.:-`, "
+        "up to the first character that isn't one; a header with none names no charset, and an HTML page is then read by its `<meta>`" in body
+    )
+    assert "a `<meta>` naming UTF-16 is read as UTF-8, and one naming x-user-defined as windows-1252, as HTML says" in body
 
 
 # ---------- research output ----------
