@@ -104,15 +104,26 @@ def test_a_destination_item_s_records_go_in_a_comment_on_the_map_and_stop_moves_
         assert other in para, other
 
 
-def test_the_label_is_created_when_it_is_missing_and_left_alone_when_it_is_there():
-    # A text contract only: a ticket session can't create a repository label.
+def test_the_label_is_created_when_it_is_missing_and_renamed_first_when_it_is_used_for_something_else():
+    # A text contract only: a ticket session can't create or rename a repository label.
     s = _titled("The research issue")
     para = s[s.index("**The label.**"):s.index("**A map's Destination item**")]
     assert "`gh api repos/<repo>/labels/research`" in para  # looked for first
     assert "When it's missing" in para and "create it first" in para
     assert re.search(r"`gh api repos/<repo>/labels -f name=research[^`]*`", para)
     assert para.index("create it first") < para.index("then file the issue")
-    assert "When it's there, leave it as it is" in para
+    # When it's there, it is used as it is only when it is the kit's, judged by the issues carrying it.
+    assert "leave it as it is" not in para
+    there = para[para.index("When it's there"):]
+    assert "the issues carrying it" in there and "it is the kit's when" in there and "tracks a research note" in there
+    # Used for something else: set-up's rule, renamed first with the owner's agreement, else no study.
+    other = there[there.index("used for something else"):]
+    assert "say so" in other and "with the owner's agreement, rename that one" in other
+    assert other.index("rename that one") < other.index("before creating the kit's")
+    assert "the kit reads every issue carrying it as research" in other
+    assert "Without that agreement, file no research issue" in other
+    setup = (KIT / "skills/setup-workflow/SKILL.md").read_text(encoding="utf-8")
+    assert "used for something else, say so and, with the owner's agreement, rename that one before creating the kit's" in setup
 
 
 # ---------- the intake ----------
