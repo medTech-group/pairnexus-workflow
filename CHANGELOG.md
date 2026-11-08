@@ -82,6 +82,13 @@
 - **The glossary** gains "Study". To stay under 6,000 characters, other entries are shortened without changing their meaning.
 - **For projects updating:** the update brings the two agents and the skill's new sections. A project set up before #507 has no `research` label: the session creates it before filing its first research issue, or create it yourself (`gh api repos/<repo>/labels -f name=research`). Tests: `tests/test_study_skill.py`, `tests/test_glossary.py` and `tests/test_research_records.py`.
 
+**Research under way, held items and "Carry on"** (#514, part of spec #505).
+
+- **`workflow status`** lists open issues labelled `research` under a new heading, "Research under way" (`--json`'s `research`), never under "New issues to sort", whatever their other labels, and never as ready build tickets.
+- **Held items.** An item whose issue's `## Blocked by` names an open owner task (`owner-task` or `ready-for-human`) is listed under "Held by an open owner task" (`--json`'s `held`), naming the task, in place of its own section (a planned item, a spec, a build ticket or an issue to sort). One already waiting on a person stays under waiting, and a map or a research issue keeps its own section. Once the task closes, the item is back in its own section.
+- **`start`** reads both, gets a "Carry on" row for a research issue (it continues the study, or fixes the note the issue names, pointing to the `study` skill's section 5), offers an item linking an open research issue ("Study under way: #<n>") as that study's "Carry on", never a second study, and never offers a held item. **`next`** skips held items too.
+- **For projects updating:** nothing to do. Tests: `tests/test_research_under_way.py`.
+
 ## 0.1.21
 
 **Decision questions asked in a message are easier to read.** A recommendation now has its own labelled part, "➡️ Recommended:", with its evidence, and the alternatives have theirs, so a recommendation can't be mistaken for a decision already made. Questions asked as clickable choices are unchanged.

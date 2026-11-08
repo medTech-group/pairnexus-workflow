@@ -55,6 +55,12 @@ class Status:
     in_progress: list[Item] = field(default_factory=list)
     # `workflow:carry-on` tickets no run has adopted and no person is asked about (#376).
     carry_on: list[Item] = field(default_factory=list)
+    # Open issues labelled `research` (#514): a study under way, or a note to fix
+    # (the `study` skill's section 5). Never to sort.
+    research: list[Item] = field(default_factory=list)
+    # Items whose `## Blocked by` names an open owner task (#514): skipped by
+    # `next` and `start` while it's open. A map keeps its own section.
+    held: list[Item] = field(default_factory=list)
     prs: list[Item] = field(default_factory=list)
     planned: list[Item] = field(default_factory=list)
     maps: list[Item] = field(default_factory=list)
@@ -120,6 +126,18 @@ def _children(i: dict) -> tuple[int, int] | None:
     return total, max(0, total - (subs.get("completed") or 0))
 
 
+def owner_tasks_holding(issue: dict, by_num: dict[int, dict], repo: str | None = None) -> list[int]:
+    """The open owner tasks among the issue's blockers, in the order its
+    `## Blocked by` names them. A blocker missing from `by_num`, closed, in
+    another repository or not an owner task holds nothing here."""
+    out = []
+    for b in issues_mod.blockers_of(issue.get("body"), repo):
+        bi = by_num.get(b) if isinstance(b, int) else None
+        if bi is not None and _open(bi) and issues_mod.labels_of(bi) & issues_mod.OWNER_TASK_LABELS:
+            out.append(b)
+    return out
+
+
 def snapshot(
     root: Path,
     set_up: bool,
@@ -142,6 +160,7 @@ def snapshot(
         return st
     st.issues_read = True
     lab = issues_mod.labels_of
+    by_num = {i["number"]: i for i in issues if "pull_request" not in i}
     for i in sorted((i for i in issues if "pull_request" not in i and _open(i)), key=lambda i: i["number"]):
         n, title, labels, body = i["number"], i.get("title") or "", lab(i), i.get("body") or ""
         kids = _children(i)
@@ -150,9 +169,19 @@ def snapshot(
             continue
         if issues_mod.CLAIM_LABEL in labels:
             st.in_progress.append(Item(n, title, ", ".join(sorted(labels & _CLAIM_DETAIL))))
+        if issues_mod.RESEARCH_LABEL in labels:
+            # The kit reads every issue carrying the label as research (`study` §5): under way, never to sort.
+            st.research.append(Item(n, title))
+            continue
         if "wayfinder:map" in labels:
             detail = "open decisions unknown (no sub_issues_summary)" if kids is None else f"{kids[1]} open decisions"
             st.maps.append(Item(n, title, detail))
+            continue
+        tasks = [] if labels & _WAITING else owner_tasks_holding(i, by_num, repo)
+        if tasks:
+            # Held until the owner task closes (#514); one waiting on a person already waits.
+            word = "owner task" if len(tasks) == 1 else "owner tasks"
+            st.held.append(Item(n, title, f"{word} " + ", ".join(f"#{t}" for t in tasks)))
             continue
         if "spec" in labels or title.strip().casefold().startswith("spec:") or (kids and kids[0]):
             kind = "" if "spec" in labels or title.strip().casefold().startswith("spec:") else "parent issue, "
@@ -187,9 +216,10 @@ def snapshot(
         if (pr.get("title") or "").casefold().startswith(KIT_UPDATE_TITLE.casefold()) and st.kit_update_pr is None:
             st.kit_update_pr = pr["number"]
     # A ticket handed on is never ready, whichever section lists it: carrying it on isn't a fresh build.
-    carried = {i["number"] for i in issues if "pull_request" not in i and issues_mod.CARRY_ON_LABEL in lab(i)}
+    # Nor is a research issue, which is under way (#514).
+    never_ready = {i["number"] for i in issues if "pull_request" not in i and lab(i) & {issues_mod.CARRY_ON_LABEL, issues_mod.RESEARCH_LABEL}}
     for v in issues_mod.readiness(issues, prs, repo=repo, areas=areas, protected=protected):
-        if v.ready and v.number not in carried:
+        if v.ready and v.number not in never_ready:
             st.ready.append(Item(v.number, v.title, v.area or ""))
     return st
 
@@ -198,11 +228,13 @@ _SECTIONS = [
     ("run", "Unattended run in progress"),
     ("in_progress", "Claimed (being worked on)"),
     ("carry_on", "Carried on (handed on by an earlier session, review not yet clean)"),
+    ("research", "Research under way"),
     ("prs", "Open pull requests"),
     ("planned", "Planned at an earlier start, not yet begun"),
     ("maps", "Maps"),
     ("specs", "Open specs (and parent issues)"),
     ("ready", "Ready build tickets"),
+    ("held", "Held by an open owner task (skipped until it closes)"),
     ("waiting", "Waiting on a person (owner tasks, needs-human, needs-info)"),
     ("to_triage", "New issues to sort"),
 ]

@@ -44,6 +44,8 @@ Where `gh api` isn't available, give each spec's comments in its `comments` fiel
 - **A clear map** has no open children and nothing under "Not yet specified". Its first Destination item with no spec linked is ready to spec.
 - **The gate:** a map's build tickets wait until every Destination item of that map has its spec and its tickets.
 
+**Held items.** An item whose issue's `## Blocked by` names an open owner task (`owner-task` or `ready-for-human`) rests on the owner's answer: `WF status --fetch` lists it under `held` (or `--json`'s `held`), naming the task. Skip it while the task is open, whether it is a build ticket (`WF ready` already says "blocked by owner task #<n>"), a spec or a planned item. Picked by number, say it's held on that task, and stop.
+
 ## 2. Pick one
 
 **With an argument:** `map`, `spec` or `build` picks from that group. A number picks that issue; if it isn't ready, say why and stop.
