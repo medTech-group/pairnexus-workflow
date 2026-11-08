@@ -83,16 +83,14 @@ def test_only_the_standards_multi_byte_encodings_use_a_python_codec_and_only_the
     # Shift_JIS is Windows' (cp932); EUC-KR is Windows' (cp949)
     assert research.MULTI_BYTE_CODECS == {
         "UTF-8": "utf-8",
-        "EUC-JP": "euc_jp",
-        "ISO-2022-JP": "iso2022_jp",
         "Shift_JIS": "cp932",
         "EUC-KR": "cp949",
         "UTF-16BE": "utf-16-be",
         "UTF-16LE": "utf-16-le",
     }
     # the standard's own decoders, GBK's being gb18030's and Big5's covering HKSCS, with indexes built from these codecs
-    assert set(research.MULTI_BYTE_DECODERS) == {"GBK", "gb18030", "Big5"}
-    assert research.INDEX_CODECS == {"gb18030": "gb18030", "big5": "big5hkscs"}
+    assert set(research.MULTI_BYTE_DECODERS) == {"GBK", "gb18030", "Big5", "EUC-JP", "ISO-2022-JP"}
+    assert research.INDEX_CODECS == {"gb18030": "gb18030", "big5": "big5hkscs", "jis0208": "cp932", "jis0212": "euc_jp"}
     single = set(INDEXES) | {"ISO-8859-8-I", "x-user-defined"}
     decoders = set(research.MULTI_BYTE_DECODERS)
     assert set(research.MULTI_BYTE_CODECS) | decoders | single | {"replacement"} == set(NAMES)
@@ -191,6 +189,77 @@ def test_big5_reads_two_bytes_as_the_standard_says(raw, want):
 def test_big5_refuses_bytes_the_standard_doesnt_define(raw):
     with pytest.raises(research.PageError, match="its bytes aren't valid Big5"):
         research.decode(b"A" + raw, "Big5")
+
+
+
+def test_euc_jp_reads_nec_row_13():
+    raw = "手順".encode("euc_jp") + b"\xad\xa1" + "を見て".encode("euc_jp")
+    assert research.paragraphs(b"<p>" + raw + b"</p>", "text/html; charset=EUC-JP") == ["手順①を見て"]
+
+
+def test_euc_jp_reads_a_wave_dash_as_shift_jis_does_so_the_same_text_hashes_the_same():
+    assert research.decode(b"\xa1\xc1", "EUC-JP") == research.decode(b"\x81\x60", "Shift_JIS") == "\uff5e"
+
+
+@pytest.mark.parametrize(
+    "raw,want",
+    [
+        (b"\xa1\xc2", "\u2225"),
+        (b"\xa1\xdd", "\uff0d"),
+        (b"\xa1\xf1", "\uffe0"),
+        (b"\xa1\xf2", "\uffe1"),
+        (b"\xa2\xcc", "\uffe2"),
+        (b"\xf9\xa1", "\u7e8a"),  # IBM's extensions, leading bytes 0xF9 to 0xFC
+        (b"\x8e\xa1", "\uff61"),  # halfwidth katakana
+        (b"\x8f\xb0\xa1", "\u4e02"),  # JIS X 0212
+        (b"\x8f\xa2\xb7", "\uff5e"),
+    ],
+    ids=["a1c2", "a1dd", "a1f1", "a1f2", "a2cc", "ibm-f9a1", "katakana", "jis0212", "jis0212-a2b7"],
+)
+def test_euc_jp_reads_its_bytes_as_the_standard_says(raw, want):
+    assert research.decode(raw, "EUC-JP") == want
+
+
+@pytest.mark.parametrize("raw", [b"\x80", b"\xff", b"\xa1", b"\xa1\x41", b"\x8e\xe0", b"\x8f\xa1", b"\x8f\xa1\x41", b"\xa9\xa1"])
+def test_euc_jp_refuses_bytes_the_standard_doesnt_define(raw):
+    with pytest.raises(research.PageError, match="its bytes aren't valid EUC-JP"):
+        research.decode(b"A" + raw, "EUC-JP")
+
+
+@pytest.mark.parametrize(
+    "raw,want",
+    [
+        (b"\x1b(I\x21\x5f\x1b(B", "\uff61\uff9f"),  # halfwidth katakana
+        (b"\x1b$B\x2d\x21\x1b(B", "\u2460"),  # NEC row 13
+        (b"\x1b$@\x30\x21\x1b(B", "\u4e9c"),
+        (b"\x1b(J\x5c\x7e\x1b(BA", "\u00a5\u203eA"),  # Roman
+    ],
+    ids=["katakana", "row-13", "jis-1978", "roman"],
+)
+def test_iso_2022_jp_reads_its_escapes_as_the_standard_says(raw, want):
+    assert research.decode(raw, "ISO-2022-JP") == want
+    assert research.paragraphs(b"<p>" + raw + b"</p>", "text/html; charset=iso-2022-jp") == [want]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"\x1b$B\x1b(B",  # an escape right after another
+        b"a\x0eb",  # SO and SI in ASCII
+        b"a\x0fb",
+        b"a\x80",
+        b"\x1b$A",  # an escape the standard doesn't list
+        b"a\x1b",
+        b"\x1b$B\x30",  # a leading byte with no trailing one
+        b"\x1b$B\x30\x1b(B",
+        b"\x1b$B\x29\x21",  # a code its index leaves undefined
+        b"\x1b(I\x60",
+    ],
+    ids=["two-escapes", "so", "si", "not-ascii", "unknown-escape", "escape-at-end", "lead-at-end", "escape-as-trail", "undefined", "katakana-range"],
+)
+def test_iso_2022_jp_refuses_bytes_the_standard_doesnt_define(raw):
+    with pytest.raises(research.PageError, match="its bytes aren't valid ISO-2022-JP"):
+        research.decode(raw, "ISO-2022-JP")
 
 
 # ---------- reading a page in its charset (seam 1) ----------

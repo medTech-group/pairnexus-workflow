@@ -2,7 +2,9 @@
  "_source": "The Encoding Standard's multi-byte indexes, https://encoding.spec.whatwg.org/index-<name>.txt, fetched 2026-11-08. For each index: how many entries it has, and the SHA-256 of its entries in its order, one per line as `<pointer>\\t0x<code point>\\n`, the file's first two columns with the pointer's leading spaces taken off (`grep -v '^#' index-gb18030.txt | grep . | cut -f1,2 | sed 's/^ *//' | sha256sum`). Index gb18030 ranges is given whole, as [pointer, code point] pairs.",
  "indexes": {
   "big5": {"entries": 18590, "sha256": "a20305523eda6110b2256fe226c1345a12a0813e96fc044da38e6656d3c498ba"},
-  "gb18030": {"entries": 23940, "sha256": "be046fcbcf82b9a256589ca6d70e3f9ec1211c3e6311b7b139ee272c56147ef6"}
+  "gb18030": {"entries": 23940, "sha256": "be046fcbcf82b9a256589ca6d70e3f9ec1211c3e6311b7b139ee272c56147ef6"},
+  "jis0208": {"entries": 7724, "sha256": "bfc6e9887623bea03848d7771e637f86e55316a3e19c6c5c09eaf27f499c4c90"},
+  "jis0212": {"entries": 6067, "sha256": "71d2c7ef449c660af864598c81aa6c03be4222ee37c717f91acec8c861e7d575"}
  },
  "gb18030-ranges": [
   [0, 128], [36, 165], [38, 169], [45, 178], [50, 184], [81, 216], [89, 226], [95, 235],

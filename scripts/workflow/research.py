@@ -363,8 +363,6 @@ ENCODING_LABELS = {label: name for name, labels in _STANDARD.items() for label i
 # decoders (`MULTI_BYTE_DECODERS`). No other codec decodes a page.
 MULTI_BYTE_CODECS = {
     "UTF-8": "utf-8",
-    "EUC-JP": "euc_jp",
-    "ISO-2022-JP": "iso2022_jp",
     "Shift_JIS": "cp932",
     "EUC-KR": "cp949",
     "UTF-16BE": "utf-16-be",
@@ -448,7 +446,8 @@ def decode(raw: bytes, name: str) -> str:
 # codec (`INDEX_CODECS`): each pointer's bytes as that codec reads them, then the
 # fixes where it and the standard's index differ. tests/test_research_charsets.py
 # ties each built index to the standard's own file.
-INDEX_CODECS = {"gb18030": "gb18030", "big5": "big5hkscs"}
+# Index jis0208 is read through Shift_JIS's bytes, and index jis0212 through EUC-JP's.
+INDEX_CODECS = {"gb18030": "gb18030", "big5": "big5hkscs", "jis0208": "cp932", "jis0212": "euc_jp"}
 _GB18030_FIXES = {  # GB18030-2022's changes, and 0xA3 0xA0 as U+3000, as the standard's index has them
     6555: 0x3000, 7182: 0xFE10, 7183: 0xFE12, 7184: 0xFE11, 7185: 0xFE13, 7186: 0xFE14, 7187: 0xFE15,
     7188: 0xFE16, 7201: 0xFE17, 7202: 0xFE18, 7208: 0xFE19, 7533: 0x1E3F, 23775: 0x9FB4, 23783: 0x9FB5,
@@ -485,6 +484,7 @@ _BIG5_FIXES = {  # HKSCS-2008's characters, and the codes the standard's index m
     19305: 0x5ED0, 19326: 0x5F58, 19355: 0x60A4, 19398: 0x6490, 19439: 0x6674, 19454: 0x675E, 19553: 0x6C9C,
     19554: 0x6E1D, 19557: 0x6E2F, 19611: 0x716E, 19643: 0x732A, 19672: 0x745C, 19697: 0x74E9, 19748: 0x7809,
 }
+_JIS0212_FIXES = {116: 0xFF5E}
 # Big5's pointers whose character is two code points, as the standard's decoder gives them
 _BIG5_TWO = {1133: "\u00ca\u0304", 1135: "\u00ca\u030c", 1164: "\u00ea\u0304", 1166: "\u00ea\u030c"}
 _NOT_ASCII = re.compile(rb"[\x80-\xff]")
@@ -502,7 +502,26 @@ def _big5_pointers():
             yield (lead - 0x81) * 157 + byte - (0x40 if byte < 0x7F else 0x62), bytes((lead, byte))
 
 
-_INDEXES = {"gb18030": (_gb18030_pointers, _GB18030_FIXES), "big5": (_big5_pointers, _BIG5_FIXES)}
+def _jis0208_pointers():
+    for lead in (*range(0x81, 0xA0), *range(0xE0, 0xFD)):
+        for byte in (*range(0x40, 0x7F), *range(0x80, 0xFD)):
+            pointer = (lead - (0x81 if lead < 0xA0 else 0xC1)) * 188 + byte - (0x40 if byte < 0x7F else 0x41)
+            if not 8836 <= pointer <= 10715:  # Shift_JIS's private use area, not in the index
+                yield pointer, bytes((lead, byte))
+
+
+def _jis0212_pointers():
+    for lead in range(0xA1, 0xFF):
+        for byte in range(0xA1, 0xFF):
+            yield (lead - 0xA1) * 94 + byte - 0xA1, bytes((0x8F, lead, byte))
+
+
+_INDEXES = {
+    "gb18030": (_gb18030_pointers, _GB18030_FIXES),
+    "big5": (_big5_pointers, _BIG5_FIXES),
+    "jis0208": (_jis0208_pointers, {}),
+    "jis0212": (_jis0212_pointers, _JIS0212_FIXES),
+}
 
 
 @functools.lru_cache(maxsize=None)
@@ -589,9 +608,77 @@ def _big5(raw: bytes) -> str | None:
     return _stateless(raw, _big5_char)
 
 
+def _euc_jp_char(raw: bytes, i: int) -> tuple[str, int] | None:
+    """The standard's EUC-JP decoder, at a byte that isn't ASCII."""
+    b = raw[i]
+    if i + 1 >= len(raw):
+        return None
+    byte = raw[i + 1]
+    if b == 0x8E:  # halfwidth katakana
+        return (chr(0xFF61 - 0xA1 + byte), i + 2) if 0xA1 <= byte <= 0xDF else None
+    index, size = "jis0208", 2
+    if b == 0x8F:
+        if not 0xA1 <= byte <= 0xFE or i + 2 >= len(raw):
+            return None
+        b, byte, index, size = byte, raw[i + 2], "jis0212", 3
+    if not (0xA1 <= b <= 0xFE and 0xA1 <= byte <= 0xFE):
+        return None
+    c = multi_byte_index(index).get((b - 0xA1) * 94 + byte - 0xA1)
+    return None if c is None else (c, i + size)
+
+
+def _euc_jp(raw: bytes) -> str | None:
+    return _stateless(raw, _euc_jp_char)
+
+
+_ISO_2022_JP_ESCAPES = {b"(B": "ASCII", b"(J": "Roman", b"(I": "katakana", b"$@": "jis0208", b"$B": "jis0208"}
+_ROMAN = {0x5C: "\u00a5", 0x7E: "\u203e"}
+
+
+def _iso_2022_jp(raw: bytes) -> str | None:
+    """The standard's ISO-2022-JP decoder: its escapes switch between ASCII, Roman,
+    halfwidth katakana and index jis0208's two bytes; an escape right after
+    another, SO or SI, or a byte the state doesn't define is an error (None)."""
+    out, i, n = [], 0, len(raw)
+    state, escaped = "ASCII", False
+    while i < n:
+        b = raw[i]
+        if b == 0x1B:
+            state = _ISO_2022_JP_ESCAPES.get(raw[i + 1 : i + 3])
+            if state is None or escaped:
+                return None
+            escaped, i = True, i + 3
+            continue
+        escaped = False
+        if state == "jis0208":
+            byte = raw[i + 1] if i + 1 < n else 0
+            c = multi_byte_index("jis0208").get((b - 0x21) * 94 + byte - 0x21) if 0x21 <= b <= 0x7E and 0x21 <= byte <= 0x7E else None
+            if c is None:
+                return None
+            out.append(c)
+            i += 2
+            continue
+        if state == "katakana":
+            if not 0x21 <= b <= 0x5F:
+                return None
+            out.append(chr(0xFF61 - 0x21 + b))
+        elif b > 0x7F or b in (0x0E, 0x0F):
+            return None
+        else:
+            out.append(_ROMAN.get(b, chr(b)) if state == "Roman" else chr(b))
+        i += 1
+    return "".join(out)
+
+
 # The standard's multi-byte encodings decoded by its own decoders: GBK's decoder is
 # gb18030's, and Big5's index covers HKSCS.
-MULTI_BYTE_DECODERS = {"GBK": _gb18030, "gb18030": _gb18030, "Big5": _big5}
+MULTI_BYTE_DECODERS = {
+    "GBK": _gb18030,
+    "gb18030": _gb18030,
+    "Big5": _big5,
+    "EUC-JP": _euc_jp,
+    "ISO-2022-JP": _iso_2022_jp,
+}
 
 
 def _cut(label: str) -> str:
