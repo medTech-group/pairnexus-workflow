@@ -30,6 +30,7 @@ calls a model, and nothing else is written.
 from __future__ import annotations
 
 import codecs
+import functools
 import hashlib
 import http.client
 import os
@@ -217,11 +218,15 @@ class _Text(HTMLParser):
             self._now.append(data)
 
 
+def _media_type(content_type: str) -> str:
+    return content_type.split(";", 1)[0].strip().lower()
+
+
 def _kind(content_type: str, raw: bytes) -> str:
     """"html" or "text" by the content type; with none named, by the bytes,
     only where they are clearly an HTML or plain-text page (`_untyped_kind`).
     Raises PageError for anything else (a PDF, an image)."""
-    ctype = content_type.split(";", 1)[0].strip().lower()
+    ctype = _media_type(content_type)
     if ctype in ("text/html", "application/xhtml+xml"):
         return "html"
     if ctype.startswith("text/"):
@@ -236,6 +241,7 @@ _NOT_TEXT_STARTS = (b"%PDF-", b"%!PS", b"GIF87a", b"GIF89a", b"RIFF", b"\x89PNG"
 # C0 and C1 control characters, but for tab, line feed, form feed and carriage return.
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0e-\x1f\x7f-\x9f]")
 _SPACES = re.compile(r"\s*")
+_UNTYPED = "it names no content type, and its bytes aren't clearly a text page"
 _XML_DECLARATION = re.compile(r"<\?xml\b[^>]*\?>", re.I)
 _HTML_TAG = re.compile(r"<(?:!doctype\s+html|html)[\s>]", re.I)
 
@@ -262,7 +268,7 @@ def _untyped_kind(raw: bytes) -> str:
     where PDF readers look for it), hold a control character (a NUL among
     them), aren't valid UTF-8, or start with markup that isn't HTML (an SVG,
     say) or a character that isn't shown (`_shown`) raise PageError."""
-    why = "it names no content type, and its bytes aren't clearly a text page"
+    why = _UNTYPED
     i = 0
     while raw.startswith(b"\xef\xbb\xbf", i):  # every leading BOM, as `paragraphs` strips them
         i += 3
@@ -296,40 +302,188 @@ def _shown(c: str) -> bool:
     return c.isprintable() and not unicodedata.category(c).startswith("M") and c not in _BLANK
 
 
-def _charset(content_type: str, raw: bytes, kind: str) -> str | None:
-    """The charset the page names: the header's, else an HTML page's `<meta>`, else none."""
-    m = re.search(r"charset=[\"']?([A-Za-z0-9_.:-]+)", content_type, re.I)
-    if m:
-        return m.group(1)
-    if kind == "html":
-        m = re.search(rb"<meta[^>]+charset=[\"']?([A-Za-z0-9_.:-]+)", raw[:4096], re.I)
-        if m:
-            return m.group(1).decode("ascii")
-    return None
+# ---------- a page's charset: the WHATWG Encoding Standard ----------
+
+# The Encoding Standard's encodings and their labels (https://encoding.spec.whatwg.org/,
+# its encodings.json), as it lists them. A label it doesn't list is refused, and a
+# page is decoded only in one of these: tests/test_research_charsets.py ties this
+# table to the standard's own file, and each single-byte table to its index.
+_STANDARD = {
+    "UTF-8": "unicode-1-1-utf-8 unicode11utf8 unicode20utf8 utf-8 utf8 x-unicode20utf8",
+    "IBM866": "866 cp866 csibm866 ibm866",
+    "ISO-8859-2": "csisolatin2 iso-8859-2 iso-ir-101 iso8859-2 iso88592 iso_8859-2 iso_8859-2:1987 l2 latin2",
+    "ISO-8859-3": "csisolatin3 iso-8859-3 iso-ir-109 iso8859-3 iso88593 iso_8859-3 iso_8859-3:1988 l3 latin3",
+    "ISO-8859-4": "csisolatin4 iso-8859-4 iso-ir-110 iso8859-4 iso88594 iso_8859-4 iso_8859-4:1988 l4 latin4",
+    "ISO-8859-5": "csisolatincyrillic cyrillic iso-8859-5 iso-ir-144 iso8859-5 iso88595 iso_8859-5 iso_8859-5:1988",
+    "ISO-8859-6": "arabic asmo-708 csiso88596e csiso88596i csisolatinarabic ecma-114 iso-8859-6 iso-8859-6-e iso-8859-6-i"
+    " iso-ir-127 iso8859-6 iso88596 iso_8859-6 iso_8859-6:1987",
+    "ISO-8859-7": "csisolatingreek ecma-118 elot_928 greek greek8 iso-8859-7 iso-ir-126 iso8859-7 iso88597 iso_8859-7"
+    " iso_8859-7:1987 sun_eu_greek",
+    "ISO-8859-8": "csiso88598e csisolatinhebrew hebrew iso-8859-8 iso-8859-8-e iso-ir-138 iso8859-8 iso88598 iso_8859-8"
+    " iso_8859-8:1988 visual",
+    "ISO-8859-8-I": "csiso88598i iso-8859-8-i logical",
+    "ISO-8859-10": "csisolatin6 iso-8859-10 iso-ir-157 iso8859-10 iso885910 l6 latin6",
+    "ISO-8859-13": "iso-8859-13 iso8859-13 iso885913",
+    "ISO-8859-14": "iso-8859-14 iso8859-14 iso885914",
+    "ISO-8859-15": "csisolatin9 iso-8859-15 iso8859-15 iso885915 iso_8859-15 l9",
+    "ISO-8859-16": "iso-8859-16",
+    "KOI8-R": "cskoi8r koi koi8 koi8-r koi8_r",
+    "KOI8-U": "koi8-ru koi8-u",
+    "macintosh": "csmacintosh mac macintosh x-mac-roman",
+    "windows-874": "dos-874 iso-8859-11 iso8859-11 iso885911 tis-620 windows-874",
+    "windows-1250": "cp1250 windows-1250 x-cp1250",
+    "windows-1251": "cp1251 windows-1251 x-cp1251",
+    "windows-1252": "ansi_x3.4-1968 ascii cp1252 cp819 csisolatin1 ibm819 iso-8859-1 iso-ir-100 iso8859-1 iso88591"
+    " iso_8859-1 iso_8859-1:1987 l1 latin1 us-ascii windows-1252 x-cp1252",
+    "windows-1253": "cp1253 windows-1253 x-cp1253",
+    "windows-1254": "cp1254 csisolatin5 iso-8859-9 iso-ir-148 iso8859-9 iso88599 iso_8859-9 iso_8859-9:1989 l5 latin5"
+    " windows-1254 x-cp1254",
+    "windows-1255": "cp1255 windows-1255 x-cp1255",
+    "windows-1256": "cp1256 windows-1256 x-cp1256",
+    "windows-1257": "cp1257 windows-1257 x-cp1257",
+    "windows-1258": "cp1258 windows-1258 x-cp1258",
+    "x-mac-cyrillic": "x-mac-cyrillic x-mac-ukrainian",
+    "GBK": "chinese csgb2312 csiso58gb231280 gb2312 gb_2312 gb_2312-80 gbk iso-ir-58 x-gbk",
+    "gb18030": "gb18030",
+    "Big5": "big5 big5-hkscs cn-big5 csbig5 x-x-big5",
+    "EUC-JP": "cseucpkdfmtjapanese euc-jp x-euc-jp",
+    "ISO-2022-JP": "csiso2022jp iso-2022-jp",
+    "Shift_JIS": "csshiftjis ms932 ms_kanji shift-jis shift_jis sjis windows-31j x-sjis",
+    "EUC-KR": "cseuckr csksc56011987 euc-kr iso-ir-149 korean ks_c_5601-1987 ks_c_5601-1989 ksc5601 ksc_5601 windows-949",
+    "replacement": "csiso2022kr hz-gb-2312 iso-2022-cn iso-2022-cn-ext iso-2022-kr replacement",
+    "UTF-16BE": "unicodefffe utf-16be",
+    "UTF-16LE": "csunicode iso-10646-ucs-2 ucs-2 unicode unicodefeff utf-16 utf-16le",
+    "x-user-defined": "x-user-defined",
+}
+ENCODING_LABELS = {label: name for name, labels in _STANDARD.items() for label in labels.split()}
+
+# The standard's multi-byte encodings, each with the one Python codec that decodes
+# it: GBK's decoder is gb18030's, Big5's covers HKSCS, Shift_JIS is Windows' (cp932)
+# and EUC-KR is Windows' (cp949), as the standard's indexes are. No other codec is used.
+MULTI_BYTE_CODECS = {
+    "UTF-8": "utf-8",
+    "GBK": "gb18030",
+    "gb18030": "gb18030",
+    "Big5": "big5hkscs",
+    "EUC-JP": "euc_jp",
+    "ISO-2022-JP": "iso2022_jp",
+    "Shift_JIS": "cp932",
+    "EUC-KR": "cp949",
+    "UTF-16BE": "utf-16-be",
+    "UTF-16LE": "utf-16-le",
+}
+
+# The standard's single-byte encodings, each decoded by a table of its index: the
+# Python codec named gives each byte's character, a byte 0x80 to 0x9F it leaves
+# undefined is that code point (the standard's C1 controls), and _INDEX_FIXES are
+# where the codec and the index differ. A byte the index leaves undefined is refused.
+_SINGLE_BYTE = {
+    "IBM866": "cp866",
+    **{f"ISO-8859-{n}": f"iso8859_{n}" for n in (2, 3, 4, 5, 6, 7, 8, 10, 13, 14, 15, 16)},
+    "ISO-8859-8-I": "iso8859_8",
+    "KOI8-R": "koi8_r",
+    "KOI8-U": "koi8_u",
+    "macintosh": "mac_roman",
+    "windows-874": "cp874",
+    **{f"windows-{n}": f"cp{n}" for n in range(1250, 1259)},
+    "x-mac-cyrillic": "mac_cyrillic",
+}
+_INDEX_FIXES = {"KOI8-U": {0xAE: 0x045E, 0xBE: 0x040E}, "windows-1255": {0xCA: 0x05BA}}
+_UNDEFINED = "\ufffe"  # what codecs.charmap_decode reads as a byte with no character
+_BOMS = ((b"\xef\xbb\xbf", "UTF-8"), (b"\xfe\xff", "UTF-16BE"), (b"\xff\xfe", "UTF-16LE"))
+_HEADER_CHARSET = re.compile(r";[ \t]*charset=[\"']?([A-Za-z0-9_.:-]+)", re.I | re.A)  # a parameter's, not `x-charset=`'s
+_META_CHARSET = re.compile(rb"<meta[^>]+charset=[\"']?([A-Za-z0-9_.:-]+)", re.I)
+_SHOWN_LABEL = 40  # characters of a label a refusal shows
 
 
-def _is_utf8(name: str) -> bool:
+def encoding_named(label: str) -> str | None:
+    """The standard's encoding for a label, as its "get an encoding" says: ASCII
+    white space around it ignored, ASCII letters in either case; None for a
+    label it doesn't list, a label outside ASCII among them."""
+    label = label.strip("\t\n\f\r ")
+    return ENCODING_LABELS.get(label.lower()) if label.isascii() else None
+
+
+@functools.lru_cache(maxsize=None)
+def _table(name: str) -> str:
+    """A single-byte encoding's 256 characters, as `codecs.charmap_decode` takes them."""
+    if name == "x-user-defined":
+        return "".join(chr(b) for b in range(0x80)) + "".join(chr(0xF780 + b) for b in range(0x80))
+    codec, fixes = _SINGLE_BYTE[name], _INDEX_FIXES.get(name, {})
+    chars = []
+    for b in range(0x100):
+        try:
+            c = chr(fixes[b]) if b in fixes else bytes([b]).decode(codec)
+        except UnicodeDecodeError:
+            c = chr(b) if 0x80 <= b <= 0x9F else _UNDEFINED
+        chars.append(c)
+    return "".join(chars)
+
+
+def decode(raw: bytes, name: str) -> str:
+    """Bytes as text in the standard's encoding `name`, strictly: bytes the
+    encoding doesn't define raise PageError, never become U+FFFD, so two
+    different texts never read as one."""
     try:
-        return codecs.lookup(name).name in ("utf-8", "ascii")
-    except (LookupError, UnicodeError, ValueError):
-        return False
+        if name in MULTI_BYTE_CODECS:
+            return raw.decode(MULTI_BYTE_CODECS[name], errors="strict")
+        return codecs.charmap_decode(raw, "strict", _table(name))[0]
+    except UnicodeDecodeError:
+        raise PageError(f"its bytes aren't valid {name}") from None
+
+
+def _cut(label: str) -> str:
+    return label if len(label) <= _SHOWN_LABEL else label[:_SHOWN_LABEL] + "…"
+
+
+def _encoding(content_type: str, raw: bytes, kind: str) -> tuple[str, int]:
+    """The standard's encoding the page is read in, and how many bytes of byte
+    order mark to skip: a byte order mark first, as the standard's decode does;
+    else the charset the header names; else, for HTML, the one its `<meta>`
+    names in its first 4096 bytes, where UTF-16 means UTF-8 and x-user-defined
+    windows-1252, as HTML says; else UTF-8. Raises PageError for a label the
+    standard doesn't list, or one it reads as a single replacement character."""
+    for bom, name in _BOMS:
+        if raw.startswith(bom):
+            return name, len(bom)
+    m = _HEADER_CHARSET.search(content_type)
+    meta = None
+    if not m and kind == "html":
+        meta = _META_CHARSET.search(raw[:4096])
+    if not m and not meta:
+        return "UTF-8", 0
+    label = m.group(1) if m else meta.group(1).decode("ascii")
+    name = encoding_named(label)
+    if name is None:
+        raise PageError(f"it names a charset the Encoding Standard doesn't list ({_cut(label)})")
+    if name == "replacement":
+        raise PageError(f"it is in {_cut(label)}, which the Encoding Standard reads as one replacement character")
+    if meta and name in ("UTF-16BE", "UTF-16LE"):
+        return "UTF-8", 0
+    if meta and name == "x-user-defined":
+        return "windows-1252", 0
+    return name, 0
 
 
 def paragraphs(raw: bytes, content_type: str) -> list[str]:
     """The page's text, as paragraphs: HTML by its block elements (scripts,
     styles, the head and navigation left out), plain text by its blank lines.
     Whitespace inside a paragraph is one space; empty paragraphs are dropped.
-    Only UTF-8 pages are read: a page naming another charset, bytes that
-    aren't valid UTF-8, HTML it can't parse, or a page with no content type
-    whose bytes aren't clearly HTML or plain text raises PageError."""
+    A page is read in the charset it names (`_encoding`), else UTF-8; a page
+    with no content type only when it reads the same as in UTF-8. A label the
+    Encoding Standard doesn't list, bytes the charset doesn't define, HTML it
+    can't parse, or a page with no content type whose bytes aren't clearly
+    HTML or plain text raises PageError."""
     kind = _kind(content_type, raw)
-    name = _charset(content_type, raw, kind)
-    if name is not None and not _is_utf8(name):
-        raise PageError(f"it is in {name}; only UTF-8 pages are read")
-    try:
-        text = raw.decode("utf-8", errors="strict")
-    except UnicodeDecodeError:
-        raise PageError("its bytes aren't valid UTF-8") from None
+    name, skip = _encoding(content_type, raw, kind)
+    if name != "UTF-8" and not _media_type(content_type):  # #527 read it as UTF-8 (`_untyped_kind`): it must read the same
+        try:
+            same = decode(raw, name) == raw.decode("utf-8")
+        except PageError:
+            same = False
+        if not same:
+            raise PageError(f"{_UNTYPED}: they read differently in {name}, the charset it names, than in UTF-8")
+    text = decode(raw[skip:], name)
     text = text.lstrip("\ufeff")
     if kind == "html":
         try:

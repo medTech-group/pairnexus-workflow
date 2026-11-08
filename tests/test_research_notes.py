@@ -427,26 +427,21 @@ _CAFE = b"<p>Caf\xc3\xa9</p>"
         ("text/html", _CAFE),
         ("text/html; charset=utf-8", _CAFE),
         ("text/html; charset=UTF8", _CAFE),
-        ("text/html; charset=us-ascii", _CAFE),
         ("text/html", b'<meta charset="utf-8">' + _CAFE),
-        ("text/html", b'<meta charset="ascii">' + _CAFE),
         ("text/html", b"\xef\xbb\xbf" + _CAFE),
         ("text/plain; charset=utf-8", b"Caf\xc3\xa9"),
     ],
-    ids=["no-charset", "header-utf-8", "header-utf8", "header-ascii", "meta-utf-8", "meta-ascii", "bom", "plain-text"],
+    ids=["no-charset", "header-utf-8", "header-utf8", "meta-utf-8", "bom", "plain-text"],
 )
 def test_a_utf8_page_is_read(ctype, raw):
     assert research.paragraphs(raw, ctype) == ["Caf\u00e9"]
 
 
+# #531: a page in another charset is read in it (tests/test_research_charsets.py);
+# a charset the Encoding Standard doesn't list is still refused, before any decoding.
 @pytest.mark.parametrize(
     "ctype,raw,charset",
     [
-        ("text/html; charset=windows-1252", b"<p>Caf\xe9</p>", "windows-1252"),
-        ("text/html", b'<meta charset="windows-1252"><p>Caf\xe9</p>', "windows-1252"),
-        ("text/html; charset=latin-1", b"<p>Caf\xe9</p>", "latin-1"),
-        ("text/html; charset=Shift_JIS", "<p>\u4e88\u7d04</p>".encode("shift_jis"), "Shift_JIS"),
-        ("text/html; charset=TIS-620", "<p>\u0e01\u0e14</p>".encode("tis-620"), "TIS-620"),
         ("text/html", b'<meta charset="punycode"><p>Book up to 30 days ahead - call first.</p>', "punycode"),
         ("text/html; charset=punycode", b"<p>a-" + b"A" * 2_000_000 + b"</p>", "punycode"),  # refused before any decoding: never slow
         ("text/html; charset=unicode_escape", b"<p>C:\\new</p>", "unicode_escape"),
@@ -454,15 +449,12 @@ def test_a_utf8_page_is_read(ctype, raw):
         ("text/html", b'<meta charset="undefined">' + _CAFE, "undefined"),
         ("text/html; charset=idna", _CAFE, "idna"),
         ("text/html", b'<meta charset="idna">' + _CAFE, "idna"),
-        ("text/plain; charset=windows-1252", b"Caf\xe9", "windows-1252"),
+        ("text/plain; charset=utf-7", b"Caf+AOk-", "utf-7"),
     ],
-    ids=[
-        "header-windows-1252", "meta-windows-1252", "latin-1", "shift-jis", "tis-620", "meta-punycode", "punycode-long",
-        "unicode-escape", "header-undefined", "meta-undefined", "header-idna", "meta-idna", "plain-text",
-    ],
+    ids=["meta-punycode", "punycode-long", "unicode-escape", "header-undefined", "meta-undefined", "header-idna", "meta-idna", "plain-text"],
 )
-def test_a_page_not_in_utf8_is_refused(ctype, raw, charset):
-    with pytest.raises(research.PageError, match=f"it is in {re.escape(charset)}; only UTF-8 pages are read"):
+def test_a_page_in_a_charset_the_standard_doesnt_list_is_refused(ctype, raw, charset):
+    with pytest.raises(research.PageError, match=f"it names a charset the Encoding Standard doesn't list \\({re.escape(charset)}\\)"):
         research.paragraphs(raw, ctype)
 
 
@@ -481,18 +473,18 @@ def test_html_it_cant_parse_is_a_page_it_cant_read(monkeypatch):
         research.page_paragraphs(b"<p>A</p>", "text/html")
 
 
-def test_fingerprint_refuses_a_page_not_in_utf8_and_writes_nothing(project, tmp_path):
+def test_fingerprint_refuses_a_page_in_a_charset_the_standard_doesnt_list_and_writes_nothing(project, tmp_path):
     page = tmp_path / "menu.html"
-    page.write_bytes(b'<meta charset="windows-1252"><p>Caf\xe9</p>')
+    page.write_bytes(b'<meta charset="unicode_escape"><p>Caf\\xe9</p>')
     before = _snapshot(project)
     p = _cli("fingerprint", URL, "--page", page, env=_env(project))
     assert p.returncode == 1 and p.stdout == ""
-    assert "can't read" in p.stderr and "it is in windows-1252; only UTF-8 pages are read" in p.stderr
+    assert "can't read" in p.stderr and "it names a charset the Encoding Standard doesn't list (unicode_escape)" in p.stderr
     assert "Traceback" not in p.stderr
     assert _snapshot(project) == before
 
 
-def test_check_cant_fetch_a_source_not_in_utf8_and_reads_the_others(project, server):
+def test_check_cant_fetch_a_source_in_a_charset_the_standard_doesnt_list_and_reads_the_others(project, server):
     base, routes = server
     other = _two_sources(project)
     folder = _note(project).parent
@@ -503,7 +495,7 @@ def test_check_cant_fetch_a_source_not_in_utf8_and_reads_the_others(project, ser
     assert p.returncode == 0, p.stderr
     got = json.loads(p.stdout)["sources"]
     assert [(s["url"], s["result"]) for s in got] == [(URL, "unchanged"), (f"{base}/groups", "cant_fetch")]
-    assert "only UTF-8 pages are read" in got[1]["why"]
+    assert "it names a charset the Encoding Standard doesn't list (idna)" in got[1]["why"]
 
 
 @pytest.mark.parametrize(
