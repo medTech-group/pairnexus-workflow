@@ -442,7 +442,8 @@ def _kind_of(st: os.stat_result) -> str | None:
 def write_files(files: list[tuple[Path, str]]) -> None:
     """Write each (path, text), both or neither: the folders made, each text
     written to a new file beside its path, and only then each put in place,
-    an existing file moved aside first. On any failure everything is undone:
+    an existing file moved aside first. On any failure, or any exception (an
+    interrupt too, raised again once undone), everything is undone:
     each file put back as it was (the same file, renamed back), each new file
     and temporary file removed, and each folder made removed. An old file
     that can't be put back is kept aside, never removed, and named in the
@@ -490,7 +491,7 @@ def write_files(files: list[tuple[Path, str]]) -> None:
             placed.append((Path(now), old))
             os.replace(tmp, now)
             temps.remove(tmp)
-    except (OSError, WriteError) as e:
+    except BaseException as e:  # anything, an interrupt too: undone, then raised again
         kept: list[tuple[Path, Path]] = []  # (path, its old file) not put back: the only copy, kept
         for path, old in reversed(placed):  # each put back as it was
             try:
@@ -516,6 +517,8 @@ def write_files(files: list[tuple[Path, str]]) -> None:
                 pass
         if isinstance(e, WriteError):
             e.kept = kept
+            raise
+        if not isinstance(e, OSError):
             raise
         raise WriteError(now, e.strerror or str(e), kept) from None
     for old in olds:

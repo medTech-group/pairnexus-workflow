@@ -328,6 +328,32 @@ def test_the_line_for_an_old_file_kept_names_it(project, monkeypatch, capsys):
     assert "neither file was written" not in line
 
 
+@pytest.mark.parametrize("when", ["writing", "placing"])
+def test_any_other_exception_undoes_everything_and_is_raised_again(project, monkeypatch, when):
+    """Not only an OSError: a text that can't be written in UTF-8, or an
+    interrupt while the files are put in place, leaves both as they were."""
+    (project / "old").mkdir()
+    saved, fps = project / "old/a.md", project / "new/deep/a.fingerprints"
+    saved.write_text("the old version\n")
+    before = _files(project)
+    if when == "writing":  # a lone surrogate
+        files, raised = [(saved, "new\n"), (fps, "url: https://example.com/caf\udce9\n")], UnicodeEncodeError
+    else:
+        real = os.replace
+
+        def fake(src, dst):
+            if Path(dst) == fps:
+                raise KeyboardInterrupt
+            return real(src, dst)
+
+        monkeypatch.setattr(research.os, "replace", fake)
+        files, raised = [(saved, "new\n"), (fps, "url: x\n")], KeyboardInterrupt
+    with pytest.raises(raised):
+        research.write_files(files)
+    monkeypatch.undo()
+    assert _files(project) == before
+
+
 def test_a_failure_writing_the_second_new_file_removes_the_first(project, monkeypatch):
     first, second = project / "n1/a.md", project / "n2/a.fingerprints"
     before = _files(project)
