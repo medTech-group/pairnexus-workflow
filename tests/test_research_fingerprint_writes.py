@@ -215,6 +215,27 @@ def test_a_file_it_cant_write_leaves_both_as_they_were(project, tmp_path, case, 
     assert _files(project) == before  # no file written or changed, no folder it made left behind
 
 
+def _cant_write_list(text: str) -> list[str]:
+    """The list of files it can't write, "(a folder in its way, …)", as items."""
+    flat = re.sub(r"\s+", " ", text)
+    start = flat.index("(a folder in its way")
+    return flat[start + 1 : flat.index(")", start)].split(", ")
+
+
+def test_a_symbolic_link_is_named_so_in_the_skill_the_changelog_and_the_message(project, tmp_path):
+    """A "link" is the page's web address everywhere in the kit, so a path
+    that is a symbolic link is called a symbolic link."""
+    log = (KIT / "CHANGELOG.md").read_text(encoding="utf-8")
+    entry = log[log.index("(#529, split out of #506") :]
+    for text in (_section(SKILL.read_text(encoding="utf-8")), entry[: entry.index("\n\n")]):
+        items = _cant_write_list(text)
+        assert "a symbolic link" in items and "a link" not in items, items
+    for case in ("a-dangling-link", "a-link-to-a-file"):
+        bad = _in_the_way(project, tmp_path, case, f"{case}.md")
+        line = _one_line(_write(project, URL, bad, "new/a.fingerprints"))
+        assert "it is a symbolic link" in line, line
+
+
 def test_a_failure_writing_the_second_file_puts_the_first_back(project, tmp_path, monkeypatch):
     """Both files are in place before either replaces what was there; when
     putting the second in place fails, the first is put back as it was."""

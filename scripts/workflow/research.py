@@ -432,7 +432,7 @@ def _kind_of(st: os.stat_result) -> str | None:
     if stat.S_ISDIR(st.st_mode):
         return "it is a folder"
     if stat.S_ISLNK(st.st_mode):
-        return "it is a link, which the file would be written through or replace"
+        return "it is a symbolic link, which the file would be written through or replace"
     return "it isn't a file"
 
 
