@@ -123,11 +123,27 @@ def test_an_observed_real_person_finding_is_read_against_what_the_owner_brought_
     rc = _job("The research check")
     s = rc[rc.index("A finding labelled *observed (real person)*"):]
     assert "the list of what the owner brought in" in s
-    assert "when the list doesn't hold it, or you're given no list, it is wrong" in s
+    # Given a list that doesn't hold it, it is still wrong.
+    assert "when you're given that list and it doesn't hold it, it is wrong" in s
     # It is wrong for that, never for having no saved copy.
     assert "never for having no saved copy" in s
     inputs = _flat(_section("Your inputs"))
     assert "for the research check and the look" in inputs and "what the owner brought in" in inputs
+
+
+def test_with_no_list_given_an_observed_real_person_finding_is_not_checked_never_wrong():
+    # #571 round 1, findings 6 and 10: a later session's research check has no
+    # list (the study's scratch directory is gone), and a real finding the owner
+    # did bring in must not end with the unconfirmed mark for that.
+    rc = _job("The research check")
+    s = rc[rc.index("A finding labelled *observed (real person)*"):]
+    assert "you're given no list" not in s.split("Given no list", 1)[0]
+    assert "Given no list, report it as not checked, never as wrong" in s
+    out = _flat(_section("What you return"))
+    assert "each *observed (real person)* finding not checked because you were given no list" in out
+    assert "A finding not checked never makes the result `Result: not clean`" in out
+    s10 = _study_10()
+    assert "given no list (a later session's research check), it reports such a finding as not checked, never as wrong" in s10
 
 
 def test_the_look_reads_the_changed_lines_as_the_research_check_reads_a_claim():
