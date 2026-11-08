@@ -395,7 +395,8 @@ _INDEX_FIXES = {"KOI8-U": {0xAE: 0x045E, 0xBE: 0x040E}, "windows-1255": {0xCA: 0
 _UNDEFINED = "\ufffe"  # what codecs.charmap_decode reads as a byte with no character
 _BOMS = ((b"\xef\xbb\xbf", "UTF-8"), (b"\xfe\xff", "UTF-16BE"), (b"\xff\xfe", "UTF-16LE"))
 _HEADER_CHARSET = re.compile(r";[ \t]*charset=[\"']?([A-Za-z0-9_.:-]+)", re.I | re.A)  # a parameter's, not `x-charset=`'s
-_META_CHARSET = re.compile(rb"<meta[^>]+charset=[\"']?([A-Za-z0-9_.:-]+)", re.I)
+_PRESCAN = 4096  # an HTML page's first bytes, searched for its <meta> charset
+_ASCII_SPACE = b"\t\n\x0c\r "
 _SHOWN_LABEL = 40  # characters of a label a refusal shows
 
 
@@ -442,6 +443,132 @@ def _cut(label: str) -> str:
     return label if len(label) <= _SHOWN_LABEL else label[:_SHOWN_LABEL] + "…"
 
 
+def _attribute(low: bytes, i: int) -> tuple[bytes | None, bytes, int]:
+    """HTML's prescan's "get an attribute", from `low[i]` (`low` being the window
+    with ASCII letters lowercased): the attribute's name, None when there is none
+    (at a `>`, or at the window's end, where the position is the window's length),
+    its value, and the position after it."""
+    n = len(low)
+    while i < n and low[i] in b"\t\n\x0c\r /":
+        i += 1
+    if i >= n or low[i] == 0x3E:  # ">"
+        return None, b"", i
+    start, i = i, i + 1  # a name's first byte may be "="
+    while i < n and low[i] not in b"\t\n\x0c\r />=":
+        i += 1
+    name = low[start:i]
+    while i < n and low[i] in _ASCII_SPACE:
+        i += 1
+    if i >= n:
+        return None, b"", n
+    if low[i] != 0x3D:  # no "=": no value
+        return name, b"", i
+    i += 1
+    while i < n and low[i] in _ASCII_SPACE:
+        i += 1
+    if i >= n:
+        return None, b"", n
+    if low[i] in b"\"'":
+        end = low.find(low[i : i + 1], i + 1)
+        return (None, b"", n) if end < 0 else (name, low[i + 1 : end], end + 1)
+    if low[i] == 0x3E:
+        return name, b"", i
+    start = i
+    while i < n and low[i] not in b"\t\n\x0c\r >":
+        i += 1
+    return (None, b"", n) if i >= n else (name, low[start:i], i)
+
+
+def _content_charset(s: bytes) -> bytes | None:
+    """The label a `<meta>`'s lowercased `content` names after "charset=", as HTML's
+    "extracting a character encoding from a meta element" finds it; None for none."""
+    i = 0
+    while True:
+        i = s.find(b"charset", i)
+        if i < 0:
+            return None
+        i += 7
+        while i < len(s) and s[i] in _ASCII_SPACE:
+            i += 1
+        if i >= len(s) or s[i] != 0x3D:  # "charset" with no "=": look further on
+            continue
+        i += 1
+        while i < len(s) and s[i] in _ASCII_SPACE:
+            i += 1
+        if i >= len(s):
+            return None
+        if s[i] in b"\"'":
+            end = s.find(s[i : i + 1], i + 1)
+            return None if end < 0 else s[i + 1 : end]
+        end = i
+        while end < len(s) and s[end] not in b"\t\n\x0c\r ;":
+            end += 1
+        return s[i:end]
+
+
+def _meta(low: bytes, i: int) -> tuple[bytes | None, int]:
+    """A `<meta>`'s attributes from `low[i]`, as HTML's prescan reads them: the label
+    its `charset` names, or its `content` names beside `http-equiv="content-type"`,
+    None when it names none, and the position after its attributes."""
+    seen, pragma, need_pragma, label = set(), False, None, None
+    while True:
+        name, value, i = _attribute(low, i)
+        if name is None:
+            break
+        if name in seen:
+            continue
+        seen.add(name)
+        if name == b"http-equiv":
+            pragma = pragma or value == b"content-type"
+        elif name == b"content" and label is None:
+            found = _content_charset(value)
+            if found is not None:
+                label, need_pragma = found, True
+        elif name == b"charset":
+            label, need_pragma = value, False
+    if need_pragma is None or (need_pragma and not pragma):
+        return None, i
+    return label, i
+
+
+def _meta_charset(raw: bytes) -> str | None:
+    """The label an HTML page's `<meta>` names in its first 4096 bytes, as HTML's
+    prescan finds it, with a script's text skipped too: never in a comment, a script
+    or another tag's attribute, and from a `content` only beside
+    `http-equiv="content-type"`. The first such `<meta>` wins; None for none."""
+    low = raw[:_PRESCAN].lower()
+    n, i = len(low), 0
+    while i < n:
+        if low.startswith(b"<!--", i):
+            i = low.find(b"-->", i + 2)  # its dashes may be the "<!--"'s own
+            if i < 0:
+                return None
+            i += 2
+        elif low.startswith(b"<meta", i) and i + 5 < n and low[i + 5] in b"\t\n\x0c\r /":
+            label, i = _meta(low, i + 5)
+            if label is not None:
+                return label.decode("ascii", "replace")
+        elif low.startswith(b"<", i) and low[i + 1 : i + 2].isalpha() or low.startswith(b"</", i) and low[i + 2 : i + 3].isalpha():
+            start = i + 1
+            while i < n and low[i] not in b"\t\n\x0c\r >":
+                i += 1
+            tag = low[start:i]
+            name = b""
+            while name is not None:
+                name, _, i = _attribute(low, i)
+            if tag == b"script" and i < n:
+                i = low.find(b"</script", i)
+                if i < 0:
+                    return None
+                continue
+        elif low.startswith((b"<!", b"</", b"<?"), i):
+            i = low.find(b">", i + 1)
+            if i < 0:
+                return None
+        i += 1
+    return None
+
+
 def _encoding(content_type: str, raw: bytes, kind: str) -> tuple[str, int]:
     """The standard's encoding the page is read in, and how many bytes of byte
     order mark to skip: a byte order mark first, as the standard's decode does;
@@ -455,18 +582,18 @@ def _encoding(content_type: str, raw: bytes, kind: str) -> tuple[str, int]:
     m = _HEADER_CHARSET.search(content_type)
     meta = None
     if not m and kind == "html":
-        meta = _META_CHARSET.search(raw[:4096])
-    if not m and not meta:
+        meta = _meta_charset(raw)
+    if not m and meta is None:
         return "UTF-8", 0
-    label = m.group(1) if m else meta.group(1).decode("ascii")
+    label = m.group(1) if m else meta
     name = encoding_named(label)
     if name is None:
         raise PageError(f"it names a charset the Encoding Standard doesn't list ({_cut(label)})")
     if name == "replacement":
         raise PageError(f"it is in {_cut(label)}, which the Encoding Standard reads as one replacement character")
-    if meta and name in ("UTF-16BE", "UTF-16LE"):
+    if meta is not None and name in ("UTF-16BE", "UTF-16LE"):
         return "UTF-8", 0
-    if meta and name == "x-user-defined":
+    if meta is not None and name == "x-user-defined":
         return "windows-1252", 0
     return name, 0
 

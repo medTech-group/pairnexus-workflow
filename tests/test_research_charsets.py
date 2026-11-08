@@ -139,6 +139,58 @@ def test_a_page_is_read_in_the_charset_its_meta_names(label, text, raw):
     assert research.paragraphs(old, "text/html") == [text]
 
 
+_UTF8_PAGE = "<p>Café — 日本</p>".encode()
+
+
+@pytest.mark.parametrize(
+    "before",
+    [
+        b'<!-- old: <meta charset="windows-1252"> -->',
+        b'<!-- <meta charset="windows-1252"> -->',
+        b'<script>document.write("<meta charset=koi8-r>")</script>',
+        b'<SCRIPT type="text/javascript">var m = \'<meta charset="windows-1252">\';</SCRIPT>',
+        b'<meta data-charset="windows-1252">',
+        b'<meta name="description" content="Set charset=windows-1252 in your editor">',
+        b'<meta name="x" content="text/html; charset=latin1">',
+        b'<div title=\'<meta charset="windows-1252">\'></div>',
+    ],
+    ids=["comment", "comment-only", "script", "script-upper", "data-charset", "description", "content-no-http-equiv", "in-an-attribute"],
+)
+def test_a_meta_in_a_comment_a_script_or_another_attribute_or_content_without_http_equiv_names_no_charset(before):
+    # with no other <meta>, the page is read as UTF-8; with a real one after it, in that one's charset
+    assert research.paragraphs(before + _UTF8_PAGE, "text/html") == ["Café — 日本"]
+    assert research.paragraphs(before + b'<meta charset="utf-8">' + _UTF8_PAGE, "text/html") == ["Café — 日本"]
+    assert research.paragraphs(before + b'<meta charset="windows-1252">' + b"<p>Caf\xe9</p>", "text/html") == ["Café"]
+
+
+@pytest.mark.parametrize(
+    "meta",
+    [
+        b"<meta charset=windows-1252>",
+        b"<META CHARSET='Windows-1252'/>",
+        b'<meta\ncharset = "windows-1252">',
+        b'<meta content="text/html; charset=windows-1252" http-equiv="Content-Type">',
+        b"<meta http-equiv=content-type content='text/html;charset = \"windows-1252\"'>",
+        b'<!--><meta charset="windows-1252">',  # "<!-->" is a whole comment
+        b'<script></script><meta charset="windows-1252">',
+    ],
+    ids=["unquoted", "upper-case", "spaces", "content-first", "content-quoted-label", "empty-comment", "after-a-script"],
+)
+def test_a_meta_charset_outside_comments_and_scripts_is_read(meta):
+    assert research.paragraphs(meta + b"<p>Caf\xe9</p>", "text/html") == ["Café"]
+
+
+def test_fingerprint_reads_a_utf8_page_whose_comment_names_another_charset(project, tmp_path):
+    page = tmp_path / "menu.html"
+    page.write_bytes(
+        '<!doctype html><html><head><!-- old: <meta charset="windows-1252"> --><meta charset="utf-8"><title>t</title></head>'
+        "<body><p>Café — 日本</p></body></html>".encode()
+    )
+    p = _cli("fingerprint", URL, "--page", page, "--json", env=_env(project))
+    assert p.returncode == 0, p.stderr
+    assert [x["text"] for x in json.loads(p.stdout)["paragraphs"]] == ["Café — 日本"]
+
+
 @pytest.mark.parametrize(
     "ctype",
     ["text/html; x-charset=utf-8; charset=windows-1252", "text/html;charset=windows-1252", "text/html; CHARSET=\"Windows-1252\""],
