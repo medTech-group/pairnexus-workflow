@@ -167,6 +167,14 @@ def test_start_offers_it_before_the_interview_and_before_charting():
     assert "before charting's first step" in map_step
 
 
+def test_start_s_interview_keeps_its_heading_and_comes_after_the_offer():
+    # Other tests find the interview by its heading, `1. **The interview.**`.
+    spec = START.read_text(encoding="utf-8").split("\n**Spec** (flow §2)", 1)[1]
+    assert "\n1. **The interview.**" in spec
+    step = spec.split("\n1. **The interview.**", 1)[1].split("\n2. **The spec.**", 1)[0]
+    assert "**Offering a study** (above)" in step
+
+
 def test_next_offers_it_before_a_clear_map_s_next_spec():
     text = _next()
     assert "clear map's next spec" in text

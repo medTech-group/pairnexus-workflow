@@ -292,7 +292,7 @@ For each item, read the flow's section for its path and follow it, skipping noth
 4. **On Run a study,** load `study` with the Skill tool and follow it from its section 4: the research issue first (its section 5), then the intake. The interview waits for its verdict, as its section 4 says; a new project's charting starts once its intake and panel have run.
 
 **Spec** (flow §2), all in one session where it fits:
-1. **The interview,** after **Offering a study** (above). Load the `grilling` and `domain-modeling` skills with the Skill tool (that's all `grill-with-docs` does), and interview them about the item. Its questions are decision questions ("Decision questions", above). Ask each round's questions as choices:
+1. **The interview.** It comes after **Offering a study** (above). Load the `grilling` and `domain-modeling` skills with the Skill tool (that's all `grill-with-docs` does), and interview them about the item. Its questions are decision questions ("Decision questions", above). Ask each round's questions as choices:
    - one question per decision;
    - your recommended answer as the first option, with its evidence, and real alternatives after it; with no basis to prefer one, no recommendation;
    - plain text only for a question with no sensible options.
