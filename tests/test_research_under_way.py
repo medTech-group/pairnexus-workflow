@@ -152,6 +152,14 @@ def test_a_planned_item_waiting_on_a_person_and_held_by_an_owner_task_is_held(tm
     assert _nums(st.held) == [10] and st.planned == [] and _nums(st.waiting) == [9]
 
 
+@pytest.mark.parametrize("waiting_label", ["needs-info", "needs-human", "owner-task", "ready-for-human"])
+def test_an_item_waiting_on_a_person_and_held_by_an_owner_task_is_held(tmp_path, waiting_label):
+    # Without the owner task it would be listed as waiting on a person; with it, it is held all the same.
+    st = _snap(tmp_path, [_issue(6, [waiting_label], body=HELD), _issue(9, ["owner-task"])])
+    assert _nums(st.held) == [6] and st.held[0].detail == "owner task #9"
+    assert _nums(st.waiting) == [9]
+
+
 def test_a_map_and_a_research_issue_keep_their_own_sections(tmp_path):
     st = _snap(tmp_path, [_issue(2, ["wayfinder:map"], body=HELD), _issue(43, ["research"], body=HELD), _issue(9, ["owner-task"])])
     assert _nums(st.maps) == [2] and _nums(st.research) == [43] and st.held == []
