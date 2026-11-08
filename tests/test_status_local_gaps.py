@@ -24,6 +24,8 @@ ADDED = {"local_gap", "local_gaps", "profile_error"}
 CODE_WRITERS = {"code_writers", "writes_code"}
 # Added since by #376: the carry-on tickets.
 CARRY_ON = {"carry_on"}
+# Added since by #514: research under way, and items held by an open owner task.
+RESEARCH_HELD = {"research", "held"}
 
 
 def _trap(bin_dir):
@@ -250,7 +252,7 @@ def test_with_fetch_only_issues_and_pull_requests_are_read(tmp_path):
 
 def test_the_json_only_adds_the_local_gap_fields(tmp_path):
     root = _project(tmp_path)
-    assert set(_json(tmp_path, root)) == FIELDS | ADDED | CODE_WRITERS | CARRY_ON
+    assert set(_json(tmp_path, root)) == FIELDS | ADDED | CODE_WRITERS | CARRY_ON | RESEARCH_HELD
 
 
 def test_the_text_only_adds_one_line(tmp_path):
