@@ -266,7 +266,7 @@ def test_a_new_project_s_later_items_take_the_other_bullets_with_one_answer(offe
     # that is an internal change. Each gets exactly the other bullets' answer.
     rule = _new_project(offer)
     later = rule[rule.index("From the first stakes record on"):]
-    assert "every later item, its map's Destination items included" in later
+    assert "every later item takes" in later
     assert "as in any project" in later
     assert "an internal change is skipped with nothing asked or posted" in later
     assert "work a current note covers gets one stakes line naming the note" in later
@@ -284,12 +284,43 @@ def test_the_new_project_rule_states_its_precedence_over_the_current_note_skip(o
     assert "even where a current note covers it" in first
 
 
+def _bullets(offer) -> list:
+    """The offer's bullets, each from its `- **` to the next one."""
+    return re.findall(r"- \*\*.*?(?=- \*\*|\Z)", offer())
+
+
+def _wait(offer) -> str:
+    """The bullet that holds a map's Destination items for its study's verdict."""
+    waits = [b for b in _bullets(offer) if "wait for that study's verdict" in b]
+    assert len(waits) == 1, "the offer has no single bullet for the wait"
+    return waits[0]
+
+
 @OFFERS
 def test_a_new_project_s_destination_items_wait_for_its_study_s_verdict(offer):
     # Round 2's note: a Destination item picked before the new project's verdict.
+    # #583's round 1 (findings 4 and 8): a study that runs posts its stakes record on its
+    # research issue as soon as it is filed, before charting, so a wait under "no stakes
+    # record yet" never applies. The wait is a bullet of its own, keyed to the map's Notes.
+    wait = _wait(offer)
+    assert wait.startswith("- **A map whose Notes link")
+    assert "Destination items" in wait
+    assert "whatever stakes records there are" in wait
+    assert "stakes record yet" not in wait and "lists none" not in wait
+    assert "wait for" not in _new_project(offer)
+
+
+@OFFERS
+def test_a_new_project_s_later_items_leave_its_destination_items_to_the_wait(offer):
+    # #583's round 1, finding 4: "from the first stakes record on, every later item, its map's
+    # Destination items included, takes the bullets as in any project" let them go on while
+    # the study ran. They go on as in any project only once its verdict is in.
     rule = _new_project(offer)
-    assert "wait for its verdict" in rule
-    assert "linked from the map's Notes" in rule
+    later = rule[rule.index("From the first stakes record on"):]
+    assert "its map's Destination items included" not in later
+    assert "its map's Destination items once its verdict is in (or it was skipped)" in later
+    text = offer()
+    assert text.index(_wait(offer)) < text.lower().index("fixes, wording and internal changes")
 
 
 @OFFERS
