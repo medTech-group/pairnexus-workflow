@@ -372,6 +372,9 @@ MULTI_BYTE_CODECS = {
     "UTF-16BE": "utf-16-be",
     "UTF-16LE": "utf-16-le",
 }
+# cp932 reads the bytes 0xA0 and 0xFD to 0xFF alone as U+F8F0 to U+F8F3, and nothing
+# else as these; the standard's Shift_JIS decoder refuses those bytes, so they are refused.
+_SHIFT_JIS_UNDEFINED = re.compile("[-]")
 
 # The standard's single-byte encodings, each decoded by a table of its index: the
 # Python codec named gives each byte's character, a byte 0x80 to 0x9F it leaves
@@ -426,7 +429,10 @@ def decode(raw: bytes, name: str) -> str:
     different texts never read as one."""
     try:
         if name in MULTI_BYTE_CODECS:
-            return raw.decode(MULTI_BYTE_CODECS[name], errors="strict")
+            text = raw.decode(MULTI_BYTE_CODECS[name], errors="strict")
+            if name == "Shift_JIS" and _SHIFT_JIS_UNDEFINED.search(text):
+                raise UnicodeDecodeError(name, raw, 0, len(raw), "undefined")
+            return text
         return codecs.charmap_decode(raw, "strict", _table(name))[0]
     except UnicodeDecodeError:
         raise PageError(f"its bytes aren't valid {name}") from None

@@ -178,6 +178,27 @@ def test_bytes_that_arent_valid_in_the_charset_are_refused_never_replaced(label,
         research.paragraphs(raw, f"text/html; charset={label}")
 
 
+@pytest.mark.parametrize("byte", [0xA0, 0xFD, 0xFE, 0xFF])
+def test_a_shift_jis_byte_the_standard_leaves_undefined_is_refused_never_read_as_a_private_use_character(byte):
+    # Windows' cp932 reads 0xA0 and 0xFD to 0xFF as U+F8F0 to U+F8F3; the standard's Shift_JIS decoder refuses them
+    for raw in (b"<p>" + bytes([byte]) + b"</p>", b"<p>x" + bytes([byte]) + b"y</p>"):
+        with pytest.raises(research.PageError, match="its bytes aren't valid Shift_JIS"):
+            research.paragraphs(raw, "text/html; charset=shift_jis")
+
+
+def test_shift_jis_reads_each_byte_alone_as_the_standard_says():
+    for b in range(0x100):
+        if b <= 0x80:
+            assert research.decode(bytes([b]), "Shift_JIS") == chr(b)
+        elif 0xA1 <= b <= 0xDF:  # halfwidth katakana
+            assert research.decode(bytes([b]), "Shift_JIS") == chr(0xFF61 - 0xA1 + b)
+        else:  # 0xA0 and 0xFD to 0xFF, and a leading byte with nothing after it
+            with pytest.raises(research.PageError, match="its bytes aren't valid Shift_JIS"):
+                research.decode(bytes([b]), "Shift_JIS")
+    # 0xA0 and 0xFC as a trailing byte are still read
+    assert research.decode(b"\x81\xa0\x88\xfc", "Shift_JIS") == "□蔭"
+
+
 @pytest.mark.parametrize(
     "label,raw,want",
     [
