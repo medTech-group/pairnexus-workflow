@@ -194,26 +194,59 @@ def test_an_observed_real_person_finding_is_read_against_what_the_owner_brought_
     s = rc[rc.index("A finding labelled *observed (real person)*"):]
     assert "the list of what the owner brought in" in s
     # Given a list that doesn't hold it, it is still wrong.
-    assert "when you're given that list and it doesn't hold it, it is wrong" in s
+    assert "when the list doesn't hold it, it is wrong" in s
     # It is wrong for that, never for having no saved copy.
     assert "never for having no saved copy" in s
     inputs = _flat(_section("Your inputs"))
     assert "for the research check and the look" in inputs and "what the owner brought in" in inputs
 
 
-def test_with_no_list_given_an_observed_real_person_finding_is_not_checked_never_wrong():
-    # #571 round 1, findings 6 and 10: a later session's research check has no
-    # list (the study's scratch directory is gone), and a real finding the owner
-    # did bring in must not end with the unconfirmed mark for that.
+# #571 round 2, findings 8 and 14: a study whose owner brought in nothing. The
+# session gives the list as `none`, which is a list, and it doesn't hold the
+# finding; only a later session's research check, whose session says the list
+# isn't available, reports such a finding as not checked (round 1, findings 6
+# and 10: a real finding mustn't end with the unconfirmed mark for that).
+NOTHING_IN = "Café owners would pay a £5 deposit (*observed (real person)*)."
+
+
+def test_a_list_of_none_is_a_list_and_an_observed_real_person_finding_it_doesn_t_hold_is_wrong():
+    inputs = _flat(_section("Your inputs"))
+    assert "`none` when the owner brought in nothing" in inputs
     rc = _job("The research check")
     s = rc[rc.index("A finding labelled *observed (real person)*"):]
-    assert "you're given no list" not in s.split("Given no list", 1)[0]
-    assert "Given no list, report it as not checked, never as wrong" in s
-    out = _flat(_section("What you return"))
-    assert "each *observed (real person)* finding not checked because you were given no list" in out
-    assert "A finding not checked never makes the result `Result: not clean`" in out
+    assert "when the list doesn't hold it, it is wrong, a list of `none` included" in s
+    # Told nothing about the list, the checker reads it as `none`, never as not checked.
+    assert "Told nothing about the list, read it as `none`" in s
+    assert "Given no list" not in s
+    case = _example(NOTHING_IN)
+    assert "given the list `none`" in case and "**Wrong**" in case
     s10 = _study_10()
-    assert "given no list (a later session's research check), it reports such a finding as not checked, never as wrong" in s10
+    assert "saying `none` when the owner brought in nothing" in s10
+    assert "as it gave the validator" not in s10  # it gave the validator nothing when nothing was brought in
+    # The look is given the same list.
+    assert "a fresh `research-checker`, given the same list, reads the lines changed" in s10
+    # §7: the validator is given the list, `none` included.
+    row = next(l for l in SKILL.read_text(encoding="utf-8").splitlines() if l.startswith("| Validator |"))
+    assert "`none` when the owner brought in nothing" in row
+
+
+def test_only_a_list_said_to_be_unavailable_leaves_an_observed_real_person_finding_not_checked():
+    inputs = _flat(_section("Your inputs"))
+    assert "a later session's research check has no list, and the session says the list isn't available instead" in inputs
+    rc = _job("The research check")
+    s = rc[rc.index("A finding labelled *observed (real person)*"):]
+    assert ("Only when the session says the list isn't available (a later session's research check), "
+            "report such a finding as not checked, never as wrong") in s
+    out = _flat(_section("What you return"))
+    assert "each *observed (real person)* finding not checked because the list isn't available" in out
+    assert "because you were given no list" not in out
+    assert "A finding not checked never makes the result `Result: not clean`" in out
+    case = _example(NOTHING_IN)
+    assert "Only when the session says the list isn't available is it reported as not checked" in case
+    s10 = _study_10()
+    assert ("a later session's research check, which has no list, says the list isn't available, "
+            "and the checker then reports such a finding as not checked, never as wrong") in s10
+    assert "given no list" not in s10
 
 
 def test_the_look_reads_the_changed_lines_as_the_research_check_reads_a_claim():
@@ -259,7 +292,7 @@ def test_the_study_skill_says_how_the_checker_reads_a_notes_claims():
     assert "a claim citing a saved copy is read against it, whatever its label" in s
     assert f"a claim or finding that cites no saved copy is {NEVER}" in s  # the criterion's "never", unbounded
     assert "*observed (real person)*" in s and "what the owner brought in" in s
-    assert "a fresh `research-checker` reads the lines changed since the research check and each listed claim" in s
+    assert "a fresh `research-checker`, given the same list, reads the lines changed since the research check and each listed claim" in s
     assert "A listed claim or fault whose line didn't change counts as still wrong" in s
 
 
@@ -296,6 +329,7 @@ def test_the_changelog_notes_571_and_version_is_untouched():
     note = _flat(notes.split(head, 1)[1].split("\n\n**", 1)[0])
     assert "`research-checker`" in head + note and "whatever its label" in note
     assert NEVER in note and "a source not saved" in note
+    assert "`none` when the owner brought in nothing" in note and "says the list isn't available" in note
     for words in CALLED_WRONG:
         assert words not in note, words
     log = (KIT / "CHANGELOG.md").read_text(encoding="utf-8")
