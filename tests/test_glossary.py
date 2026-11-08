@@ -227,3 +227,12 @@ def test_the_glossary_has_study_after_map_in_plain_words():
     for verdict in ("build it", "prototype first", "stop"):
         assert verdict in what, verdict
     assert "worth building" in why
+
+
+def test_the_shortened_entries_still_say_what_a_ruleset_is_and_what_ci_stands_for():
+    # #512 made room for "Study" by shortening entries without changing their meaning (spec #505, "Docs").
+    # "Protect `main`" makes a ruleset, a word set-up and the doctor use, so its entry says what one is.
+    protect = _entries()["Protect `main`"].split("\n\n")[0]
+    assert re.search(r"GitHub's[^.:]*\brules\b[^.:]*\(a ruleset\)|\ba ruleset \(GitHub's[^)]*\brules\)", protect)
+    checks = _entries()["Checks (CI)"].split("\n\n")[0]
+    assert "continuous integration" in checks and "CI" in checks

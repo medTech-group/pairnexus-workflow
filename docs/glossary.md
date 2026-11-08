@@ -1,6 +1,6 @@
 # Glossary
 
-The kit's words and the building words it uses; a project's own `GLOSSARY.md` stays its own.
+The kit's words and the building words it uses; a project's `GLOSSARY.md` stays its own.
 
 ## Building words
 
@@ -12,13 +12,13 @@ Your project's files on GitHub, with every change's history.
 
 ### Branch
 
-A copy of the [repository](#repository)'s files where a change is made apart from the finished version.
+A copy of the [repository](#repository)'s files, to make a change apart from the finished version.
 
 **Why it matters to you:** your project stays as it was until the change is ready.
 
 ### `main`
 
-The [branch](#branch) holding your project's finished version; some projects name it differently.
+The [branch](#branch) holding your project's finished version; some projects rename it.
 
 **Why it matters to you:** what is on `main` is what you have.
 
@@ -36,7 +36,7 @@ A request to bring a [branch](#branch)'s changes into [`main`](#main). Each one 
 
 ### Checks (CI)
 
-Tests that run by themselves (CI) on each [pull request](#pull-request-pr): green when they pass, red when they fail.
+Tests that run by themselves (CI, continuous integration) on each [pull request](#pull-request-pr): green when they pass, red when they fail.
 
 **Why it matters to you:** red means something is broken: never [merge](#merge) until they're green.
 
@@ -48,7 +48,7 @@ Bringing a [pull request](#pull-request-pr)'s changes into [`main`](#main): ask 
 
 ### Merge queue
 
-GitHub [merging](#merge) [pull requests](#pull-request-pr) in turn, each tested with [`main`](#main) and those ahead of it. "Use a merge queue" turns it on.
+GitHub [merging](#merge) [pull requests](#pull-request-pr) in turn, each tested with [`main`](#main) and those ahead. "Use a merge queue" turns it on.
 
 **Why it matters to you:** a green pull request never goes stale while `main` moves.
 
@@ -92,7 +92,7 @@ One small piece of work as a GitHub issue: what to build and how to tell it's do
 
 ### Spec
 
-A bigger feature written down with its decisions and tests before it's split into [tickets](#ticket).
+A bigger feature written down with its decisions and tests, then split into [tickets](#ticket).
 
 **Why it matters to you:** you agree what gets built before code is written.
 
@@ -128,7 +128,7 @@ A project before GitHub protects [`main`](#main): the kit refuses Claude's chang
 
 ### Protect `main`
 
-GitHub's own protection, ending [solo mode](#solo-mode): every change to [`main`](#main) goes through a [pull request](#pull-request-pr), and "Require these checks" stops a [merge](#merge) while [checks](#checks-ci) fail.
+GitHub's own rules (a ruleset), ending [solo mode](#solo-mode): every change to [`main`](#main) goes through a [pull request](#pull-request-pr), and "Require these checks" stops a [merge](#merge) while [checks](#checks-ci) fail.
 
 **Why it matters to you:** GitHub itself then stops mistakes reaching `main`.
 
