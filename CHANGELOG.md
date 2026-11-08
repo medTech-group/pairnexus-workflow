@@ -88,6 +88,13 @@
 - **It points rather than restates:** what each pass reads is the flow's "Research" rule, how the records count at merge is flow §4 item 4's, and how the checker reads a note's claims is the `research-checker` agent's own file (#571). The skill's description names the research check, so it loads for one.
 - **For projects updating:** nothing to do. Tests: `tests/test_review_panel_research.py`.
 
+**Research under way, held items and "Carry on"** (#514, part of spec #505).
+
+- **`workflow status`** lists open issues labelled `research` under a new heading, "Research under way" (`--json`'s `research`), never under "New issues to sort", whatever their other labels, and never as ready build tickets.
+- **Held items.** An item whose issue's `## Blocked by` names an open owner task (`owner-task` or `ready-for-human`) is listed under "Held by an open owner task" (`--json`'s `held`), naming the task, in place of its own section (a planned item, a spec, a build ticket or an issue to sort). A map or a research issue keeps its own section. Once the task closes, the item is back in its own section.
+- **`start`** reads both, gets a "Carry on" row for a research issue (it continues the study, or fixes the note the issue names, pointing to the `study` skill's section 5), offers an item linking an open research issue ("Study under way: #<n>", on a map's Destination item a comment on the map naming it) as that study's "Carry on", never a second study, and never offers a held item but to settle a ticket the breakdown check held back (planning that doesn't rest on the task's answer: it stays held). **`next`** skips held items too, and a clear map's Destination item whose study is under way.
+- **For projects updating:** nothing to do. Tests: `tests/test_research_under_way.py`.
+
 ## 0.1.21
 
 **Decision questions asked in a message are easier to read.** A recommendation now has its own labelled part, "➡️ Recommended:", with its evidence, and the alternatives have theirs, so a recommendation can't be mistaken for a decision already made. Questions asked as clickable choices are unchanged.
