@@ -58,6 +58,10 @@
 
 - **For projects updating:** nothing to do. Tests: `tests/test_research_fingerprint_writes.py`.
 
+**`workflow research` no longer crashes on a link it can't split** (#530, found reviewing #506, part of spec #505). A link written in ASCII that isn't well formed, such as `http://[::1/` or `http://[abc]/` (a bracketed host that isn't an IP address), ended `fingerprint --fetch` and `check --fetch` in a traceback, and `check` then reported none of the note's key sources. Now `fingerprint --fetch` exits 1 with one "can't fetch" line, and `check --fetch` reports that source as can't fetch, with why, and still gives every other key source its result. A link with a fullwidth slash in its host was already refused as holding characters outside ASCII.
+
+- **For projects updating:** nothing to do.
+
 ## 0.1.21
 
 **Decision questions asked in a message are easier to read.** A recommendation now has its own labelled part, "➡️ Recommended:", with its evidence, and the alternatives have theirs, so a recommendation can't be mistaken for a decision already made. Questions asked as clickable choices are unchanged.
