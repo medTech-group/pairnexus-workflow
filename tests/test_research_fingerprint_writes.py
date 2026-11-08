@@ -238,6 +238,26 @@ def test_a_symbolic_link_is_named_so_in_the_skill_the_changelog_and_the_message(
         assert "it is a symbolic link" in line, line
 
 
+def _entry() -> str:
+    log = (KIT / "CHANGELOG.md").read_text(encoding="utf-8")
+    entry = log[log.index("(#529, split out of #506") :]
+    return re.sub(r"\s+", " ", entry[: entry.index("\n\n")])
+
+
+def test_the_skill_and_the_changelog_say_the_same_of_what_it_refuses_and_leaves():
+    """Both say what happens when undoing fails too, and list the same links
+    refused as `link_problem` does; only a missing option exits 2."""
+    skill, entry = re.sub(r"\s+", " ", _section(SKILL.read_text(encoding="utf-8"))), _entry()
+    for text in (skill, entry):
+        assert "When a file can't then be put back as it was, or a new file can't be removed, the line names it instead, and where its old version is kept." in text
+        assert "a space, a line break, a control character, `<` or `>`" in text
+        assert "http or https with a host" in text
+    assert "a space, a line break, a control character, `<` or `>`" in research.link_problem("https://example.com/a b")
+    assert "with a host" in research.link_problem("https:///no-host")
+    [exit_2] = [s for s in entry.split(". ") if "exit 2" in s]
+    assert "one of the two options without the other" in exit_2.lower() and "link" not in exit_2 and "fingerprints`" not in exit_2
+
+
 def test_a_failure_writing_the_second_file_puts_the_first_back(project, tmp_path, monkeypatch):
     """Both files are in place before either replaces what was there; when
     putting the second in place fails, the first is put back as it was."""
