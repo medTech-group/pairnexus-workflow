@@ -395,6 +395,13 @@ def test_the_flow_s_research_section_holds_the_new_project_rule():
     assert "A brand-new project" in research
     assert "always recommended one study" in research
     assert "`start`'s **Offering a study**" in research
+    # #583's round 1, finding 11: "is offered one as in any project" offered an internal change one.
+    rule = research[research.index("**A brand-new project**"):]
+    rule = rule[:rule.index("- **")]
+    assert "is offered one as in any project" not in rule
+    assert "takes `start`'s offer as in any project (an internal change gets none)" in rule
+    assert "its map's Destination items included" not in rule
+    assert "its map's Destination items once its study's verdict lets them go on" in rule
 
 
 def test_the_readme_says_a_new_project_is_recommended_a_study():
