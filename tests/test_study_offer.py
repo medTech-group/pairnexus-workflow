@@ -170,6 +170,19 @@ def test_an_item_already_judged_is_offered_no_second_study(offer):
     assert "skipped" in rule or "Skip it" in rule
 
 
+@OFFERS
+def test_issue_comments_only_stakes_records_that_count_end_the_offer(offer):
+    # Issue comments: start and next say the same, by the `study` skill's rule.
+    text = offer()
+    rules = [s for s in re.split(r"(?<=[.:])\s+(?=[A-Z*-])", text) if "already has a stakes record" in s]
+    assert rules, "no rule for an item that already has a stakes record"
+    rule = rules[0]
+    assert "already has a stakes record that counts" in rule
+    assert '"Which comments count"' in rule
+    assert "`study` skill's sections 2 and 3" in rule
+    assert "a comment with the stakes marker" not in text
+
+
 def test_the_study_skill_still_has_the_sections_the_offer_points_to():
     text = STUDY.read_text(encoding="utf-8")
     assert re.search(r"^## 2\. The stakes record$", text, re.M)
