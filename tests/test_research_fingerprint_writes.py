@@ -252,8 +252,11 @@ def test_the_skill_and_the_changelog_say_the_same_of_what_it_refuses_and_leaves(
         assert "When a file can't then be put back as it was, or a new file can't be removed, the line names it instead, and where its old version is kept." in text
         assert "a space, a line break, a control character, `<` or `>`" in text
         assert "http or https with a host" in text
+        assert "a backtick, a control character (a line break among them) or a byte that isn't UTF-8" in text
     assert "a space, a line break, a control character, `<` or `>`" in research.link_problem("https://example.com/a b")
     assert "with a host" in research.link_problem("https:///no-host")
+    _, why = research.target_problem("t/a.md", "t/b\udcffq.fingerprints")
+    assert "a backtick, a control character (a line break among them) or a byte that isn't UTF-8" in why
     [exit_2] = [s for s in entry.split(". ") if "exit 2" in s]
     assert "one of the two options without the other" in exit_2.lower() and "link" not in exit_2 and "fingerprints`" not in exit_2
 
@@ -591,11 +594,25 @@ def test_a_saved_copy_named_as_a_fingerprint_file_is_refused(project, saved):
         ("--fingerprints", "docs/research/t/sources/bq.md", "docs/research/t/sources/b\rq.fingerprints"),
         ("--saved", "docs/research/t/sources/b\tq.md", "docs/research/t/sources/bq.fingerprints"),
         ("--saved", "docs/research/t/sources/b\x1bq.md", "docs/research/t/sources/bq.fingerprints"),
+        # a lone surrogate, as a byte that isn't UTF-8 in the command line gives
+        ("--saved", "docs/research/t/sources/b\udcffq.md", "docs/research/t/sources/bq.fingerprints"),
+        ("--fingerprints", "docs/research/t/sources/bq.md", "docs/research/t/sources/b\udcffq.fingerprints"),
     ],
-    ids=["saved-backtick", "fingerprints-backtick", "saved-line-break", "fingerprints-line-break", "fingerprints-return", "saved-tab", "saved-escape"],
+    ids=[
+        "saved-backtick",
+        "fingerprints-backtick",
+        "saved-line-break",
+        "fingerprints-line-break",
+        "fingerprints-return",
+        "saved-tab",
+        "saved-escape",
+        "saved-not-utf-8",
+        "fingerprints-not-utf-8",
+    ],
 )
 def test_a_path_no_key_source_line_could_name_is_refused(project, which, saved, fps):
-    """A key-source line names each path between backticks, on one line."""
+    """A key-source line names each path between backticks, on one line, in a
+    note that is UTF-8 text."""
     line = _one_line(_refused_early(project, "--fetch", "--saved", saved, "--fingerprints", fps))
     assert which in line and "backtick" in line and "neither file was written" in line
 
