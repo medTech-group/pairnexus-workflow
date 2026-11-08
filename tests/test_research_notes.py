@@ -325,6 +325,26 @@ def test_page_fetching_encodes_a_host_by_uts46_non_transitional(project, seen, l
     assert requests[:1] == [sent]
 
 
+def test_page_fetching_refuses_a_host_label_over_63_characters_at_once(project, seen):
+    base, requests = seen
+    link = "http://" + "".join(chr(0x4E00 + i % 20000) for i in range(40000)) + ".example/"  # Punycode takes minutes on it
+    assert research.link_problem(link)
+    p = _cli("fingerprint", link, "--fetch", env=_proxied(project, base), timeout=30)
+    assert p.returncode == 1 and p.stdout == ""
+    assert "can't fetch" in p.stderr and p.stderr.count("\n") == 1 and "Traceback" not in p.stderr
+    assert requests == []
+
+
+def test_a_host_label_is_encoded_up_to_63_characters_and_refused_over():
+    label = "\u00fc" + "a" * 55  # `xn--aaa…-xxx`, 63 characters encoded
+    assert research.ascii_link(f"http://{label}.example/") == f"http://xn--{label.encode('punycode').decode()}.example/"
+    assert len(research.ascii_link(f"http://{label}.example/").split("/")[2].split(".")[0]) == 63
+    with pytest.raises(research.PageError, match="63"):
+        research.ascii_link(f"http://{label}a.example/")  # 64 encoded
+    with pytest.raises(research.PageError, match="63"):
+        research.ascii_link("http://" + "\u00fc" * 64 + ".example/")  # 64 as written
+
+
 def test_fingerprint_fetches_a_path_query_and_fragment_outside_ascii_percent_encoded(project, server):
     base, routes = server
     routes["/caf%C3%A9%20menu/Stra%C3%9Fe?q=%C3%A9&r=%25"] = (200, "text/html", b"<p>B</p>")

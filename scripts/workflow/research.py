@@ -939,9 +939,10 @@ def _ascii_host(host: str) -> str:
     encoded by UTS 46 non-transitional rules (ASCII letters lowercased, NFC,
     then Punycode after `xn--`). Raises PageError for a host it can't encode
     so: one holding a character `_host_char_ok` refuses, as written or after
-    NFC, a label NFC turns into ASCII, a label starting
-    with a combining mark, or a label already starting `xn--` beside one
-    outside ASCII (its Punycode isn't checked)."""
+    NFC, a label NFC turns into ASCII, a label over 63 characters, as
+    written or encoded, a label starting with a combining mark, or a label
+    already starting `xn--` beside one outside ASCII (its Punycode isn't
+    checked)."""
     labels = []
     for label in host.split("."):
         if label[:4].lower() == "xn--":
@@ -949,6 +950,8 @@ def _ascii_host(host: str) -> str:
         if label.isascii():
             labels.append(label)
             continue
+        if len(label) > 63:  # DNS's limit, checked before Punycode, which takes quadratic time
+            raise PageError("its host has a label over 63 characters")
         # each character checked as written, then again after NFC: NFC turns some UTS 46 maps (U+212A) into ASCII
         written_ok = all(c.isascii() or _host_char_ok(c) for c in label)
         label = unicodedata.normalize("NFC", "".join(c.lower() if c.isascii() else c for c in label))
@@ -959,7 +962,10 @@ def _ascii_host(host: str) -> str:
             or unicodedata.category(label[0]).startswith("M")
         ):
             raise PageError("its host holds a character that can't be encoded by UTS 46 as browsers do (IDNA)")
-        labels.append("xn--" + label.encode("punycode").decode("ascii"))
+        label = "xn--" + label.encode("punycode").decode("ascii")
+        if len(label) > 63:
+            raise PageError("its host has a label over 63 characters once encoded")
+        labels.append(label)
     return ".".join(labels)
 
 
