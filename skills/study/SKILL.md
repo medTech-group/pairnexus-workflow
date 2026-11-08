@@ -1,6 +1,6 @@
 ---
 name: study
-description: Research notes in the repository - the fixed layout of a topic's folder in `docs/research/<topic>/` (the note, its `Status:`, `Last checked:` and `Issue:` header, its key sources, their saved copies and fingerprints), the "[left out]" lines, and the unconfirmed mark. Use when writing, updating, reading or checking a research note, or when a decision relies on one.
+description: Research notes in the repository - the fixed layout of a topic's folder in `docs/research/<topic>/` (the note, its `Status:`, `Last checked:` and `Issue:` header, its key sources, their saved copies and fingerprints), the "[left out]" lines, and the unconfirmed mark; the stakes record and the token record, and a study's size from past ones. Use when writing, updating, reading or checking a research note, when a decision relies on one, or when judging a feature's stakes, offering a study or ending one.
 ---
 
 # Research notes
@@ -98,3 +98,44 @@ It refuses a note whose layout breaks the rules above (a key-source line it can'
 ```markdown
 Cancelling at least 2 hours before a booking gives a full refund (paragraph 4). **(unconfirmed)**
 ```
+
+## 2. The stakes record
+
+When a feature's stakes are judged, the judgement is recorded in one comment: one readable line starting `Stakes: `, a blank line, then the stakes marker and the agents' marker, each on a line of its own. It goes on the item's issue when the study is skipped, and on the research issue when it runs. Before judging, read the earlier judgements, for similar work: `WF research stakes --fetch` lists every stakes record, one per line, oldest first, each with its issue's number, the comment's date and the issue's title.
+
+An example, a comment on issue #42:
+
+```markdown
+Stakes: touches payments. Recommended: study. Owner chose: skip, because the deposit is the fixed fee we already take.
+
+<!-- workflow:stakes -->
+<!-- workflow:agent -->
+```
+
+The stakes line is one line, and `WF research stakes` lists all of it after `Stakes: `. Write the marker exactly as shown, and nothing else in the comment: a comment with a second stakes line or a second marker, a token record, or either line inside a code fence isn't read.
+
+## 3. The token record
+
+When a study ends, add up each sub-agent's reported token total and post the total on the research issue, in one comment: one readable line saying that the main session's own share isn't counted, a blank line, then the token marker and the agents' marker, each on a line of its own. The marker says whether it was a full study (`study=full`) or a second study (`study=second`: "research it ourselves" for a finding that needs a professional), how many sub-agents ran (`agents=`) and their total (`total=`), each count in digits alone, with no leading zero. Write it exactly as shown, and nothing else in the comment: a comment with a second token marker, a stakes record, or the marker inside a code fence isn't read.
+
+An example, a comment on research issue #43:
+
+```markdown
+Tokens: 1,180,000 across 11 agents, each sub-agent's reported total added up. The main session's own share isn't counted.
+
+<!-- workflow:tokens study=full agents=11 total=1180000 -->
+<!-- workflow:agent -->
+```
+
+A second study's, on its own research issue, #44:
+
+```markdown
+Tokens: 240,000 across 4 agents, each sub-agent's reported total added up. The main session's own share isn't counted.
+
+<!-- workflow:tokens study=second agents=4 total=240000 -->
+<!-- workflow:agent -->
+```
+
+**The size shown.** When a study is offered, show its size from `WF research estimate --fetch`: how many agents it will run and a rough token count ("about 11 agents, roughly 1.2M tokens"). It averages the past full studies' token records, one per research issue (its latest), never a second study's; give `--agents N` when you know how many agents this one will run. Before there are any, it counts the panel at its largest, 12 agents, at the per-agent figure, 100,000 tokens per agent, and says it isn't learned yet. That figure is a placeholder until a trial run of the panel's agents sets it. Nothing caps a study, and its size is never shown as money.
+
+**Which comments count.** For both records, only comments carrying the agents' marker, posted by an account with write access, count, as hand-off comments do. Others with a stakes or token marker are left out, and standard error says how many. `--fetch` reads the issues, their comments and those accounts' permissions with `gh`; without it, give them as files: `--comments F --permissions F` (any shape `WF merge-check` takes them in), and `--issues F` for the titles. Both commands spend no model tokens, and write nothing.
