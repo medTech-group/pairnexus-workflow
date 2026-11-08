@@ -79,7 +79,7 @@ def test_flow_1_puts_a_fix_that_changes_a_decision_to_the_owner():
     # A decision that writes nothing has nothing to review, and says so.
     assert (
         "A decision that changes no ADR or glossary skips this step and step 4's commit "
-        "(research notes still go on their branch), and its checklist says so" in s1
+        "(research notes still go in their research pull request), and its checklist says so" in s1
     )
     assert "A research or task decision posts what the owner said, if anything" in s1
 

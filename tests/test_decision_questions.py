@@ -112,6 +112,23 @@ def test_routing_choices_get_neither():
     assert "**Build it now**" in s or "**Write the spec**" in s
 
 
+def test_a_study_s_intake_and_verdict_are_decision_questions_on_its_research_issue():
+    # #511 (spec #505, answer 16): the list gains the intake and the verdict.
+    s = _sentence(_intro(), "posted as the owner's")
+    assert "intake" in s and "verdict" in s and "research issue" in s
+    s = _sentence(_rule("Each round"), "research issue")
+    assert "intake" in s and "verdict" in s
+
+
+def test_a_study_s_intake_and_verdict_lose_only_checks_not_the_other_rules():
+    # #511 round 1: only the end check and the re-read are left out; the evidence rule, the layout
+    # and posting word for word still apply, so "only" is limited to the checks.
+    s = _sentence(_intro(), "before each round")
+    assert "intake" in s and "verdict" in s
+    assert "of the checks" in s.casefold()
+    assert "end check" in s and "re-read" in s
+
+
 # --- what a recommendation carries ------------------------------------------
 
 
