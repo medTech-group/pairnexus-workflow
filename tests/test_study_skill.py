@@ -263,7 +263,7 @@ def test_the_research_check_and_the_look_are_one_pass_each_with_their_records_fi
     assert "`WF review-record --kind research --round 1 --commit <sha> --reviewers research --clean`" in s
     assert "with `--round 2`" in s
     assert "first the research record" in s and "then the claims it found wrong" in s
-    assert "What each one reads is the flow's \"Research\" section's" in s
+    assert "one fresh `research-checker` reads the note's claims" in s  # #571: what each one reads
     assert "gets the mark (section 1) at the end of its line, and there is no further round" in s
     assert "flow §4 item 4" in s
 
