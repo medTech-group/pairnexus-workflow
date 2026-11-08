@@ -1147,7 +1147,39 @@ def test_a_file_in_the_topics_folder_that_cant_be_read_refuses_the_note(project,
     assert f"{locked} is a file in the topic's folder that can't be read (Permission denied)" in str(e.value)
 
 
-_GROUPS_IN = "## Notes\n\n- <https://example.com/help/groups>, saved as `{0}/groups.md`, fingerprints in `{0}/groups.fingerprints`\n"
+_LOOP = "is a file in the topic's folder that can't be read (Too many levels of symbolic links)"
+
+
+def test_check_refuses_a_note_whose_topics_folder_holds_a_symlink_loop(project):
+    loop = _note(project).parent / "sources/loop"
+    loop.symlink_to("loop")
+    p = _check(project, (URL, PAGE))
+    assert p.returncode == 1 and p.stdout == "", p.stdout
+    assert f"sources/loop {_LOOP}" in p.stderr and "Traceback" not in p.stderr, p.stderr
+
+
+@pytest.mark.parametrize("raises", [False, True], ids=["as-read", "resolved-as-before-python-3-13"])
+def test_a_symlink_loop_in_the_topics_folder_refuses_the_note(project, monkeypatch, raises):
+    """A symlink loop can't be read, so the note is refused, naming it, on
+    every Python: before 3.13, `Path.resolve` raises RuntimeError on a loop
+    (faked here, so the test runs the same on 3.13)."""
+    loop = _note(project).parent / "sources/loop"
+    loop.symlink_to("loop")
+    if raises:
+        real = Path.resolve
+
+        def looped(self, *a, **k):
+            if self == loop:
+                raise RuntimeError(f"Symlink loop from {str(self)!r}")
+            return real(self, *a, **k)
+
+        monkeypatch.setattr(Path, "resolve", looped)
+    with pytest.raises(research.LayoutError) as e:
+        research.read_note(_note(project))
+    assert f"{loop} {_LOOP}" in str(e.value), e.value
+
+
+_GROUPS_IN ="## Notes\n\n- <https://example.com/help/groups>, saved as `{0}/groups.md`, fingerprints in `{0}/groups.fingerprints`\n"
 
 
 @pytest.mark.parametrize("folder,locked", [("old", "old"), ("sources/locked", "sources/locked"), ("old", ".")], ids=["a-folder", "a-folder-inside-sources", "the-topics-folder"])

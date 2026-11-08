@@ -566,7 +566,11 @@ def _every_fingerprint_file_listed(path: Path, sources: list[KeySource]) -> None
         folders.sort()
         for name in sorted(files):
             f = Path(folder) / name
-            if f.resolve() not in listed and _is_fingerprint_file(f, path):
+            try:
+                resolved = f.resolve()
+            except (OSError, RuntimeError):  # a symlink loop, before Python 3.13: never a listed file, so it is read below and refused
+                resolved = None
+            if resolved not in listed and _is_fingerprint_file(f, path):
                 raise LayoutError(
                     f"{path}: {f} is a fingerprint file in the topic's folder, but no key-source line under `## Key sources` names it, "
                     f"so its source wouldn't be read (a file whose first line is a `url:` line is one, whatever its name): "
