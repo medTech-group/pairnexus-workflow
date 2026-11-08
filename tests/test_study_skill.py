@@ -300,6 +300,18 @@ def test_the_sensitive_data_rule_covers_notes_briefs_transcripts_and_saved_copie
     assert "`[sensitive].patterns`" in s
 
 
+def test_sensitive_data():
+    s = _titled("The panel")
+    g = s[s.index("**The evidence gatherer**"):s.index("**The question writer**")]
+    other = g[g.index("any other cited source"):]
+    assert "with no fingerprint file" not in g
+    assert "`WF research fingerprint`" in other and "`--saved`" in other and "`--fingerprints`" in other
+    assert "outside the repository" in other
+    assert "never by hand" in g
+    s13 = _titled("Sensitive data")
+    assert "every saved copy" in s13 and "`WF research fingerprint`" in s13 and "never by hand" in s13
+
+
 def test_the_skill_s_description_names_the_study():
     desc = _frontmatter(SKILL)["description"]
     for part in ("Run a study", "the intake", "the panel", "the verdict", "research notes"):
