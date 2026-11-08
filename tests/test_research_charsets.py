@@ -18,6 +18,7 @@ from conftest import KIT
 from test_research_notes import (  # noqa: F401  (fixtures: project, server)
     NOTE,
     PAGE,
+    SKILL,
     URL,
     _check,
     _cli,
@@ -671,6 +672,30 @@ def test_the_changelog_says_a_meta_label_the_standard_doesnt_list_is_passed_over
     assert "the header's label is one the standard doesn't list" in sentence
     assert "A `<meta>` whose label the standard doesn't list, an empty one among them, is passed over" in body
     assert "One whose header names a label in Python's own spelling" in updating
+
+
+# ---------- the study skill ----------
+
+
+@pytest.mark.parametrize("label", ["utf_8", "punycode"])
+def test_the_study_skill_refuses_only_a_headers_label_the_standard_doesnt_list_and_passes_over_a_metas(project, server, label):
+    # a UTF-8 page whose <meta> names a label the standard doesn't list is read, and both files written
+    base, routes = server
+    page = f'<!doctype html><html><head><meta charset="{label}"></head><body><p>Café</p></body></html>'.encode()
+    routes["/menu"] = (200, "text/html", page)
+    p = _cli("fingerprint", f"{base}/menu", "--fetch", "--saved", "t/menu.md", "--fingerprints", "t/menu.fingerprints", cwd=project, env=_env(project))
+    assert p.returncode == 0, p.stderr
+    assert (project / "t/menu.md").is_file() and (project / "t/menu.fingerprints").is_file()
+    # the same label in the header is refused
+    routes["/menu"] = (200, f"text/html; charset={label}", page)
+    p = _cli("fingerprint", f"{base}/menu", "--fetch", env=_env(project))
+    assert p.returncode == 1 and "doesn't list" in p.stderr
+    text = SKILL.read_text(encoding="utf-8")
+    section = " ".join(text[text.index("**Saving a key source.**") : text.index("**The fingerprint file**")].split())
+    (sentence,) = [s for s in section.split(". ") if "WHATWG Encoding Standard" in s]
+    assert "one naming a charset the standard doesn't list" not in sentence
+    assert "one whose header names a charset the standard doesn't list" in sentence
+    assert "a `<meta>` naming one is passed over" in section
 
 
 # ---------- research output ----------
