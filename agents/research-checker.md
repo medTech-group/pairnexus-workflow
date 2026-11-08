@@ -23,7 +23,7 @@ The session tells you which job this is, and gives you paths:
   - *simulated*: it rests only on personas' answers or the panel's reasoning.
 
   Say which findings no input supports at all, and where every persona agreed (a warning, not confirmation).
-- **The research check,** one pass, before a note merges: read each claim in the note against the saved copy it cites, facts only. A claim is wrong when the saved copy says otherwise, or says nothing that supports it. Report each wrong claim; never rewrite the note.
+- **The research check,** one pass, before a note merges: read each claim in the note against the saved copy it cites, facts only. A claim is wrong when the saved copy says otherwise, or says nothing that supports it. A finding labelled *simulated* or *observed (real person)* rests on no saved copy: here and in the look, it isn't read against one, and is never called wrong for having none. Report each wrong claim; never rewrite the note.
 - **The look,** one pass, after the session fixed the claims the research check listed: read the lines the diff changed and each listed claim. A listed claim whose line didn't change is still wrong. Report each listed claim as fixed or still wrong, and any wrong claim the changed lines add.
 
 ## What you return
