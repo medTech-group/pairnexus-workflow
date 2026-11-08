@@ -140,12 +140,6 @@ def test_every_open_owner_task_is_named(tmp_path):
     assert "#9" in st.held[0].detail and "#8" in st.held[0].detail and "#7" not in st.held[0].detail
 
 
-def test_one_waiting_on_a_person_stays_waiting(tmp_path):
-    # An owner task held by another owner task is a person's work already: it waits.
-    st = _snap(tmp_path, [_issue(6, ["owner-task"], body=HELD), _issue(9, ["owner-task"])])
-    assert _nums(st.waiting) == [6, 9] and st.held == []
-
-
 def test_a_spec_waiting_on_a_person_and_held_by_an_owner_task_is_held(tmp_path):
     # A spec is listed as a spec whatever its waiting label, so only held keeps it from being offered.
     st = _snap(tmp_path, [_issue(3, ["spec", "needs-info"], body=HELD), _issue(9, ["owner-task"])])

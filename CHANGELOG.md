@@ -85,7 +85,7 @@
 **Research under way, held items and "Carry on"** (#514, part of spec #505).
 
 - **`workflow status`** lists open issues labelled `research` under a new heading, "Research under way" (`--json`'s `research`), never under "New issues to sort", whatever their other labels, and never as ready build tickets.
-- **Held items.** An item whose issue's `## Blocked by` names an open owner task (`owner-task` or `ready-for-human`) is listed under "Held by an open owner task" (`--json`'s `held`), naming the task, in place of its own section (a planned item, a spec, a build ticket or an issue to sort). One listed under waiting on a person (an owner task, or an issue labelled `needs-info` or `needs-human`) stays there, while a planned item, a spec or a parent issue with such a label is held all the same; a map or a research issue keeps its own section. Once the task closes, the item is back in its own section.
+- **Held items.** An item whose issue's `## Blocked by` names an open owner task (`owner-task` or `ready-for-human`) is listed under "Held by an open owner task" (`--json`'s `held`), naming the task, in place of its own section (a planned item, a spec, a build ticket or an issue to sort). A map or a research issue keeps its own section. Once the task closes, the item is back in its own section.
 - **`start`** reads both, gets a "Carry on" row for a research issue (it continues the study, or fixes the note the issue names, pointing to the `study` skill's section 5), offers an item linking an open research issue ("Study under way: #<n>") as that study's "Carry on", never a second study, and never offers a held item. **`next`** skips held items too.
 - **For projects updating:** nothing to do. Tests: `tests/test_research_under_way.py`.
 

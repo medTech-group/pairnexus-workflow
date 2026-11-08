@@ -179,10 +179,7 @@ def snapshot(
             continue
         is_spec = "spec" in labels or title.strip().casefold().startswith("spec:")
         path = item_path(body)
-        # One that lands under waiting already waits on a person; a spec, parent issue or planned item
-        # with a waiting label doesn't, so it's held all the same.
-        waits = bool(labels & _WAITING) and not (is_spec or (kids and kids[0])) and path is None
-        tasks = [] if waits else owner_tasks_holding(i, by_num, repo)
+        tasks = owner_tasks_holding(i, by_num, repo)
         if tasks:
             # Held until the owner task closes (#514).
             word = "owner task" if len(tasks) == 1 else "owner tasks"
