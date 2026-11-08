@@ -11,7 +11,7 @@ fixtures are copied from:
   folder (named `*.fingerprints`, or, whatever its name, a file whose first
   line is a `url:` line) must be named by a key-source line there, so a key
   source written anywhere else is refused, naming its file, and none goes
-  unread; so is a file there that can't be read.
+  unread; so is a file or folder there that can't be read.
   The rest of the note is prose, never read for key sources;
 - a saved copy: `Source:`, `Accessed:` and `Third-party text:` lines, a blank
   line, then the page's paragraphs, one per position, separated by blank lines
@@ -555,7 +555,14 @@ def _every_fingerprint_file_listed(path: Path, sources: list[KeySource]) -> None
     `## Key sources`, in any form, leaves its file unnamed there: refused,
     naming the file. The note's prose is never read for key sources."""
     listed = {s.fingerprints for s in sources}  # already resolved by `_inside`
-    for folder, folders, files in os.walk(path.parent):
+
+    def unread(e: OSError):  # a folder that can't be listed can't be ruled out: refused
+        raise LayoutError(
+            f"{path}: {e.filename} is a folder in the topic's folder that can't be read ({e.strerror or e}), so a fingerprint file in it can't be "
+            "ruled out, and its source wouldn't be read: make it readable, or move it out of the topic's folder"
+        )
+
+    for folder, folders, files in os.walk(path.parent, onerror=unread):
         folders.sort()
         for name in sorted(files):
             f = Path(folder) / name

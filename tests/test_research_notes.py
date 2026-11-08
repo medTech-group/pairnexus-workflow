@@ -1147,6 +1147,45 @@ def test_a_file_in_the_topics_folder_that_cant_be_read_refuses_the_note(project,
     assert f"{locked} is a file in the topic's folder that can't be read (Permission denied)" in str(e.value)
 
 
+_GROUPS_IN = "## Notes\n\n- <https://example.com/help/groups>, saved as `{0}/groups.md`, fingerprints in `{0}/groups.fingerprints`\n"
+
+
+@pytest.mark.parametrize("folder,locked", [("old", "old"), ("sources/locked", "sources/locked"), ("old", ".")], ids=["a-folder", "a-folder-inside-sources", "the-topics-folder"])
+def test_a_folder_in_the_topics_folder_that_cant_be_read_refuses_the_note(project, monkeypatch, folder, locked):
+    """A folder that can't be listed (even one that can be entered) can't be
+    ruled out as holding a fingerprint file, so the note is refused, naming
+    it, never read in part. (Faked: the tests run as root.)"""
+    _groups_files(project, folder=folder)
+    _reshape(project, after=_GROUPS_IN.format(folder))
+    topic = _note(project).parent
+    real = os.scandir
+
+    def refused(where="."):
+        if Path(where).resolve() == (topic / locked).resolve():
+            raise PermissionError(13, "Permission denied", str(where))
+        return real(where)
+
+    monkeypatch.setattr(os, "scandir", refused)
+    with pytest.raises(research.LayoutError) as e:
+        research.read_note(_note(project))
+    assert f"{topic / locked} is a folder in the topic's folder that can't be read (Permission denied)" in str(e.value), e.value
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="root reads any folder")
+@pytest.mark.parametrize("mode", [0o000, 0o311], ids=["no-access", "entered-not-listed"])
+def test_check_refuses_a_note_whose_topics_folder_holds_a_folder_it_cant_read(project, mode):
+    _groups_files(project, folder="old")
+    _reshape(project, after=_GROUPS_IN.format("old"))
+    old = _note(project).parent / "old"
+    old.chmod(mode)
+    try:
+        p = _check(project, (URL, PAGE), ("https://example.com/help/groups", PAGE))
+    finally:
+        old.chmod(0o755)
+    assert p.returncode == 1 and p.stdout == "", p.stdout
+    assert f"{old} is a folder in the topic's folder that can't be read" in p.stderr, p.stderr
+
+
 @pytest.mark.parametrize(
     "before,after",
     [
@@ -1397,12 +1436,12 @@ def test_the_study_skill_says_where_the_key_sources_section_may_sit():
         "since a key source written anywhere else wouldn't be read" in text
     )
     assert (
-        "A file there whose first line is a `url:` line is a fingerprint file too, whatever its name, and a file there that can't be read "
+        "A file there whose first line is a `url:` line is a fingerprint file too, whatever its name, and a file or folder there that can't be read "
         "is refused, naming it, since it can't be ruled out" in text
     )
     assert "The rest of the note is prose, and nothing in it is read for key sources" in text
     assert "A note with no key sources says so with one line, `- None`, and its folder holds no fingerprint files" in text
-    assert "a fingerprint file in the topic's folder that no key-source line names, a file there it can't read," in text  # the `check` paragraph
+    assert "a fingerprint file in the topic's folder that no key-source line names, a file or folder there it can't read," in text  # the `check` paragraph
     assert "a link (`<` or `://`) or a backtick" not in text and "sits outside the section" not in text
     assert "shaped like a key-source line" not in text
     assert "the note's last" not in text
@@ -1414,7 +1453,7 @@ def test_the_changelog_says_how_a_fingerprint_file_is_found():
     entry = re.sub(r"\s+", " ", entry[: entry.index("\n\n")])
     assert (
         "A fingerprint file is found by its name, `*.fingerprints`, or, whatever its name, by its first line, a `url:` line; "
-        "a file there that can't be read is refused too, naming it." in entry
+        "a file or folder there that can't be read is refused too, naming it." in entry
     )
 
 
