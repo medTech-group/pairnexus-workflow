@@ -131,6 +131,12 @@ def test_stakes_counts_only_agents_comments_from_accounts_with_write_access(proj
     assert "left out 1 comment" in p.stderr and "write access" in p.stderr and "agents' marker" in p.stderr
 
 
+def test_stakes_reads_write_access_whatever_the_logins_case(project):
+    p = _run(project, "stakes", *_files(project, [_comment(1, 42, STAKES, login="Owner")], perms={"owner": "admin"}))
+    assert p.returncode == 0, p.stderr
+    assert p.stdout.startswith("#42 2026-11-07: Stakes: touches payments.") and p.stderr == ""
+
+
 @pytest.mark.parametrize("body", [
     _stakes("Stakes: one.\nStakes: two."),  # two stakes lines
     "Stakes: one.\n\n<!-- workflow:stakes -->\n<!-- workflow:stakes -->\n<!-- workflow:agent -->\n",  # two markers
@@ -359,6 +365,21 @@ def test_fetch_reads_the_issues_their_comments_and_the_markers_authors_permissio
     assert p.returncode == 0, p.stderr
     got = json.loads(p.stdout)
     assert (got["studies"], got["left_out"]) == ([{"issue": 43, "agents": 11, "total": 1180000}], 1)
+
+
+def test_fetch_asks_once_for_a_login_given_in_two_cases(project, monkeypatch):
+    import fake_gh
+
+    gh = fake_gh.install(project, monkeypatch, {
+        "repos/acme/demo/issues": fake_gh.pages([{"number": 43, "title": "Study: deposits"}]),
+        "repos/acme/demo/issues/comments": fake_gh.pages([_comment(1, 43, FULL, login="Dev"), _comment(2, 43, FULL, login="dev")]),
+        "repos/acme/demo/collaborators/Dev/permission": {"permission": "write", "user": {"login": "Dev"}},
+        "repos/acme/demo/collaborators/dev/permission": {"permission": "write", "user": {"login": "dev"}},
+    })
+    p = _run(project, "estimate", "--fetch", "--json")
+    assert p.returncode == 0, p.stderr
+    assert [x for x in gh.paths() if x.endswith("/permission")] == ["repos/acme/demo/collaborators/Dev/permission"]
+    assert (json.loads(p.stdout)["studies"], json.loads(p.stdout)["left_out"]) == ([{"issue": 43, "agents": 11, "total": 1180000}], 0)
 
 
 def test_fetch_that_fails_says_what_to_give_instead(project, monkeypatch):
