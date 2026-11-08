@@ -458,7 +458,9 @@ def test_the_study_skill_quotes_the_per_agent_figure_and_the_panels_size_from_th
     assert m, "the study skill doesn't quote the per-agent figure"
     assert int(m.group(1)) == research_records.PANEL_AGENTS
     assert int(m.group(2).replace(",", "")) == research_records.PER_AGENT_TOKENS
-    assert "That figure is a placeholder until a trial run of the panel's agents sets it." in text
+    # #512 set it from a trial run, marked approximate until the sandbox study (answer 46).
+    assert "That figure is approximate: a trial run of the panel's agents set it, and the sandbox study's per-agent average replaces it." in text
+    assert "placeholder" not in text
 
 
 def test_the_panels_size_is_the_panel_the_spec_names():
