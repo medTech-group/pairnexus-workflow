@@ -374,7 +374,7 @@ MULTI_BYTE_CODECS = {
 }
 # cp932 reads the bytes 0xA0 and 0xFD to 0xFF alone as U+F8F0 to U+F8F3, and nothing
 # else as these; the standard's Shift_JIS decoder refuses those bytes, so they are refused.
-_SHIFT_JIS_UNDEFINED = re.compile("[-]")
+_SHIFT_JIS_UNDEFINED = re.compile("[\uf8f0-\uf8f3]")
 
 # The standard's single-byte encodings, each decoded by a table of its index: the
 # Python codec named gives each byte's character, a byte 0x80 to 0x9F it leaves
