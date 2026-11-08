@@ -970,7 +970,8 @@ def ascii_link(url: str) -> str:
     surrogate (a byte that isn't UTF-8 in the command line), a space, line
     break, format or private-use character outside ASCII (no key-source line
     could name it), a link that isn't well-formed, a host as `_ascii_host`
-    says, or one in brackets or a port outside ASCII."""
+    says, a host or port holding `%`, or one in brackets or a port outside
+    ASCII."""
     if url.isascii():
         return url
     if any(unicodedata.category(c) in ("Cc", "Cf", "Cs", "Co", "Cn", "Zs", "Zl", "Zp") for c in url if not c.isascii()):
@@ -979,6 +980,8 @@ def ascii_link(url: str) -> str:
         parts = urllib.parse.urlsplit(url)
     except ValueError as e:  # on Python 3.12 and later, a host holding a fullwidth `／ ？ ＃ ＠ ：` (#530): refused, never normalised
         raise PageError(f"it isn't a well-formed link ({e})") from None
+    if "%" in parts.netloc.rpartition("@")[2]:  # urllib would decode it in the host, then encode it otherwise
+        raise PageError("its host holds a `%` escape, which can't be encoded as browsers do")
     start = len(parts.scheme) + 3 if parts.netloc else 0
     if parts.netloc and url[len(parts.scheme) : start] == "://" and url[start : start + len(parts.netloc)] == parts.netloc:
         netloc = parts.netloc

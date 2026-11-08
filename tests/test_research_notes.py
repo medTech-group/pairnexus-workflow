@@ -255,7 +255,8 @@ def _proxied(project, base):
 # lone surrogate (a byte that isn't UTF-8 in the command line), a space outside
 # ASCII, a host holding a character UTS 46 maps or disallows, or starting with
 # a combining mark, a right-to-left host (the Bidi rule isn't checked), a port
-# or bracketed host outside ASCII, a label in Punycode beside one outside ASCII.
+# or bracketed host outside ASCII, a label in Punycode beside one outside ASCII,
+# a host holding a `%` escape (urllib would decode it, and encode it otherwise).
 _UNENCODABLE = [
     "{base}/caf\udce9",
     "{base}/caf\u00e9\u00a0menu",
@@ -266,10 +267,12 @@ _UNENCODABLE = [
     "http://xn--fa-hia.caf\u00e9.example/",
     "http://xn--caf\u00e9.example/",
     "http://\u2620.example/",
+    "https://\u00fc.fa%C3%9F.de/",
+    "https://fa%C3%9F.de/\u00fc",
 ]
 
 
-@pytest.mark.parametrize("link", _UNENCODABLE, ids=["lone-surrogate", "nbsp", "ligature-host", "mark-first", "right-to-left", "port", "punycode-beside", "xn-prefix", "symbol"])
+@pytest.mark.parametrize("link", _UNENCODABLE, ids=["lone-surrogate", "nbsp", "ligature-host", "mark-first", "right-to-left", "port", "punycode-beside", "xn-prefix", "symbol", "host-percent", "ascii-host-percent"])
 def test_page_fetching_refuses_a_link_it_cant_encode_before_any_request(project, seen, monkeypatch, link):
     base, requests = seen
     link = link.format(base=base)
