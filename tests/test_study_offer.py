@@ -52,6 +52,18 @@ def test_a_new_project_is_always_offered_a_study(offer):
 
 
 @OFFERS
+def test_a_new_project_s_study_is_one_and_its_map_s_destination_items_are_features(offer):
+    # A new project's study runs once, before charting; a map's Destination item is
+    # then judged as a feature, so a current note's skip applies to it, code or none.
+    text = offer()
+    assert "its one study" in text
+    assert "before charting" in text
+    assert "Destination item" in text and "judged as a feature" in text
+    assert "even while the project has no code" in text
+    assert text.index("judged as a feature") < text.index("Work a current note already covers")
+
+
+@OFFERS
 def test_a_feature_is_judged_on_its_stakes_and_the_why_is_said(offer):
     text = offer()
     assert "judge" in text and "stakes" in text
