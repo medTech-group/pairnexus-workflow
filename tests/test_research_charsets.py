@@ -7,6 +7,7 @@ code points of `index-<name>.txt`) are what each test is checked against: a
 label it doesn't list is refused, and a page is never decoded with a codec
 outside it, nor with bytes replaced."""
 
+import hashlib
 import json
 import time
 
@@ -79,11 +80,9 @@ def test_x_user_defined_decodes_as_the_standard_says():
 
 
 def test_only_the_standards_multi_byte_encodings_use_a_python_codec_and_only_these():
-    # GBK's decoder is gb18030's; Big5's covers HKSCS; Shift_JIS is Windows' (cp932); EUC-KR is Windows' (cp949)
+    # Big5's covers HKSCS; Shift_JIS is Windows' (cp932); EUC-KR is Windows' (cp949)
     assert research.MULTI_BYTE_CODECS == {
         "UTF-8": "utf-8",
-        "GBK": "gb18030",
-        "gb18030": "gb18030",
         "Big5": "big5hkscs",
         "EUC-JP": "euc_jp",
         "ISO-2022-JP": "iso2022_jp",
@@ -92,9 +91,79 @@ def test_only_the_standards_multi_byte_encodings_use_a_python_codec_and_only_the
         "UTF-16BE": "utf-16-be",
         "UTF-16LE": "utf-16-le",
     }
+    # the standard's own decoders, GBK's being gb18030's, with indexes built from these codecs
+    assert set(research.MULTI_BYTE_DECODERS) == {"GBK", "gb18030"}
+    assert research.INDEX_CODECS == {"gb18030": "gb18030"}
     single = set(INDEXES) | {"ISO-8859-8-I", "x-user-defined"}
-    assert set(research.MULTI_BYTE_CODECS) | single | {"replacement"} == set(NAMES)
-    assert not set(research.MULTI_BYTE_CODECS) & single
+    decoders = set(research.MULTI_BYTE_DECODERS)
+    assert set(research.MULTI_BYTE_CODECS) | decoders | single | {"replacement"} == set(NAMES)
+    assert not set(research.MULTI_BYTE_CODECS) & (decoders | single) and not decoders & single
+
+
+
+# ---------- the multi-byte decoders: the standard's own indexes ----------
+
+# The standard's multi-byte indexes this kit builds (`whatwg-multi-byte-indexes.json`):
+# each one's number of entries and the SHA-256 of its entries, and index gb18030 ranges whole.
+MULTI = json.loads((FIX / "whatwg-multi-byte-indexes.json").read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("name", sorted(MULTI["indexes"]))
+def test_a_multi_byte_index_is_the_standards_own(name):
+    index = research.multi_byte_index(name)
+    entries = "".join(f"{p}\t0x{ord(c):04X}\n" for p, c in sorted(index.items()))
+    assert len(index) == MULTI["indexes"][name]["entries"]
+    assert hashlib.sha256(entries.encode()).hexdigest() == MULTI["indexes"][name]["sha256"]
+
+
+def _gb18030_ranges_code_point(pointer: int) -> int | None:
+    """The standard's "index gb18030 ranges code point"."""
+    if 39419 < pointer < 189000 or pointer > 1237575:
+        return None
+    if pointer == 7457:
+        return 0xE7C7
+    offset, code_point = max(r for r in MULTI["gb18030-ranges"] if r[0] <= pointer)
+    return code_point + pointer - offset
+
+
+def _gb18030_four_bytes(pointer: int) -> bytes:
+    pointer, b4 = divmod(pointer, 10)
+    pointer, b3 = divmod(pointer, 126)
+    b1, b2 = divmod(pointer, 10)
+    return bytes([b1 + 0x81, b2 + 0x30, b3 + 0x81, b4 + 0x30])
+
+
+@pytest.mark.parametrize("name", ["gb18030", "GBK"])
+def test_gb18030_reads_four_bytes_as_the_standards_ranges_say(name):
+    pointers = [*range(0, 39430), *range(188990, 1237586, 97), *range(1237570, 1237586), 1587599]
+    for pointer in pointers:
+        raw, want = _gb18030_four_bytes(pointer), _gb18030_ranges_code_point(pointer)
+        if want is None:
+            with pytest.raises(research.PageError, match=f"its bytes aren't valid {name}"):
+                research.decode(raw, name)
+        else:
+            assert research.decode(raw, name) == chr(want), (pointer, raw.hex())
+
+
+@pytest.mark.parametrize("label", ["GBK", "gb2312", "gb18030"])
+def test_gbk_reads_0x80_as_the_euro_sign(label):
+    raw = "价格：".encode("gb18030") + b"\x80" + b"100"
+    assert research.paragraphs(b"<p>" + raw + b"</p>", f"text/html; charset={label}") == ["价格：€100"]
+
+
+@pytest.mark.parametrize(
+    "raw,want",
+    [(b"\xa3\xa0", "\u3000"), (b"\xa6\xd9", "\ufe10"), (b"\xa6\xdf", "\ufe16"), (b"\xa8\xbc", "\u1e3f"), (b"\xfe\x59", "\u9fb4")],
+    ids=["a3a0", "a6d9", "a6df", "a8bc", "fe59"],
+)
+def test_gbk_reads_two_bytes_as_the_standards_index(raw, want):
+    assert research.decode(raw, "GBK") == want
+
+
+@pytest.mark.parametrize("raw", [b"\xff", b"\x81", b"\x81\x7f", b"\x81\xff", b"\x81\x30", b"\x81\x30\x81", b"\x81\x30\x7f\x30", b"\x81\x30\x81\x7f"])
+def test_gbk_refuses_bytes_the_standard_doesnt_define(raw):
+    with pytest.raises(research.PageError, match="its bytes aren't valid GBK"):
+        research.decode(b"A" + raw, "GBK")
 
 
 # ---------- reading a page in its charset (seam 1) ----------

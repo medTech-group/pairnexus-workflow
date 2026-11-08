@@ -357,13 +357,12 @@ _STANDARD = {
 }
 ENCODING_LABELS = {label: name for name, labels in _STANDARD.items() for label in labels.split()}
 
-# The standard's multi-byte encodings, each with the one Python codec that decodes
-# it: GBK's decoder is gb18030's, Big5's covers HKSCS, Shift_JIS is Windows' (cp932)
-# and EUC-KR is Windows' (cp949), as the standard's indexes are. No other codec is used.
+# The standard's multi-byte encodings a Python codec decodes as the standard does,
+# each with that codec: Big5's covers HKSCS, Shift_JIS is Windows' (cp932) and EUC-KR
+# is Windows' (cp949), as the standard's indexes are. The others are decoded by the
+# standard's own decoders (`MULTI_BYTE_DECODERS`). No other codec decodes a page.
 MULTI_BYTE_CODECS = {
     "UTF-8": "utf-8",
-    "GBK": "gb18030",
-    "gb18030": "gb18030",
     "Big5": "big5hkscs",
     "EUC-JP": "euc_jp",
     "ISO-2022-JP": "iso2022_jp",
@@ -429,6 +428,11 @@ def decode(raw: bytes, name: str) -> str:
     encoding doesn't define raise PageError, never become U+FFFD, so two
     different texts never read as one."""
     try:
+        if name in MULTI_BYTE_DECODERS:
+            text = MULTI_BYTE_DECODERS[name](raw)
+            if text is None:
+                raise UnicodeDecodeError(name, raw, 0, len(raw), "undefined")
+            return text
         if name in MULTI_BYTE_CODECS:
             text = raw.decode(MULTI_BYTE_CODECS[name], errors="strict")
             if name == "Shift_JIS" and _SHIFT_JIS_UNDEFINED.search(text):
@@ -437,6 +441,101 @@ def decode(raw: bytes, name: str) -> str:
         return codecs.charmap_decode(raw, "strict", _table(name))[0]
     except UnicodeDecodeError:
         raise PageError(f"its bytes aren't valid {name}") from None
+
+
+# ---------- the standard's own multi-byte decoders ----------
+
+# The standard's multi-byte indexes, pointer to character, each built from one Python
+# codec (`INDEX_CODECS`): each pointer's bytes as that codec reads them, then the
+# fixes where it and the standard's index differ. tests/test_research_charsets.py
+# ties each built index to the standard's own file.
+INDEX_CODECS = {"gb18030": "gb18030"}
+_GB18030_FIXES = {  # GB18030-2022's changes, and 0xA3 0xA0 as U+3000, as the standard's index has them
+    6555: 0x3000, 7182: 0xFE10, 7183: 0xFE12, 7184: 0xFE11, 7185: 0xFE13, 7186: 0xFE14, 7187: 0xFE15,
+    7188: 0xFE16, 7201: 0xFE17, 7202: 0xFE18, 7208: 0xFE19, 7533: 0x1E3F, 23775: 0x9FB4, 23783: 0x9FB5,
+    23788: 0x9FB6, 23789: 0x9FB7, 23795: 0x9FB8, 23812: 0x9FB9, 23829: 0x9FBA, 23845: 0x9FBB,
+}
+_NOT_ASCII = re.compile(rb"[\x80-\xff]")
+
+
+def _gb18030_pointers():
+    for lead in range(0x81, 0xFF):
+        for byte in (*range(0x40, 0x7F), *range(0x80, 0xFF)):
+            yield (lead - 0x81) * 190 + byte - (0x40 if byte < 0x7F else 0x41), bytes((lead, byte))
+
+
+_INDEXES = {"gb18030": (_gb18030_pointers, _GB18030_FIXES)}
+
+
+@functools.lru_cache(maxsize=None)
+def multi_byte_index(name: str) -> dict[int, str]:
+    """The standard's index `name`, pointer to character: each pointer's bytes
+    as `INDEX_CODECS[name]` reads them as one character, then the fixes."""
+    pointers, fixes = _INDEXES[name]
+    index = {}
+    for pointer, raw in pointers():
+        try:
+            c = raw.decode(INDEX_CODECS[name])
+        except UnicodeDecodeError:
+            continue
+        if len(c) == 1:
+            index[pointer] = c
+    index.update((pointer, chr(cp)) for pointer, cp in fixes.items())
+    return index
+
+
+def _stateless(raw: bytes, char) -> str | None:
+    """Bytes in one of the standard's stateless multi-byte encodings: ASCII bytes
+    as themselves, each other character as `char(raw, i)` reads it (it and the
+    position after it); None for bytes the encoding doesn't define."""
+    out, i, n = [], 0, len(raw)
+    while i < n:
+        if raw[i] < 0x80:
+            m = _NOT_ASCII.search(raw, i)
+            j = m.start() if m else n
+            out.append(raw[i:j].decode("ascii"))
+            i = j
+            continue
+        got = char(raw, i)
+        if got is None:
+            return None
+        out.append(got[0])
+        i = got[1]
+    return "".join(out)
+
+
+def _gb18030_char(raw: bytes, i: int) -> tuple[str, int] | None:
+    """The standard's gb18030 decoder, at a byte that isn't ASCII."""
+    b = raw[i]
+    if b == 0x80:
+        return "\u20ac", i + 1
+    if b == 0xFF or i + 1 >= len(raw):
+        return None
+    byte = raw[i + 1]
+    if 0x30 <= byte <= 0x39:  # four bytes
+        if i + 3 >= len(raw) or not 0x81 <= raw[i + 2] <= 0xFE or not 0x30 <= raw[i + 3] <= 0x39:
+            return None
+        pointer = (b - 0x81) * 12600 + (byte - 0x30) * 1260 + (raw[i + 2] - 0x81) * 10 + raw[i + 3] - 0x30
+        if 39419 < pointer < 189000 or pointer > 1237575:
+            return None
+        if pointer == 7457:
+            return "\ue7c7", i + 4
+        try:  # the gb18030 codec reads the rest as the standard's index gb18030 ranges does
+            return raw[i : i + 4].decode("gb18030"), i + 4
+        except UnicodeDecodeError:
+            return None
+    if not (0x40 <= byte <= 0x7E or 0x80 <= byte <= 0xFE):
+        return None
+    c = multi_byte_index("gb18030").get((b - 0x81) * 190 + byte - (0x40 if byte < 0x7F else 0x41))
+    return None if c is None else (c, i + 2)
+
+
+def _gb18030(raw: bytes) -> str | None:
+    return _stateless(raw, _gb18030_char)
+
+
+# The standard's multi-byte encodings decoded by its own decoders: GBK's decoder is gb18030's.
+MULTI_BYTE_DECODERS = {"GBK": _gb18030, "gb18030": _gb18030}
 
 
 def _cut(label: str) -> str:
