@@ -41,8 +41,10 @@ Where `gh api` isn't available, give each spec's comments in its `comments` fiel
 
 **Maps and specs:**
 - **A map** is an issue labelled `wayfinder:map`. Its ready decisions are its open, unclaimed child tickets whose blockers are closed, in the order `issue_read` with method `get_sub_issues` returns them. A map's Notes may reorder its own frontier.
-- **A clear map** has no open children and nothing under "Not yet specified". Its first Destination item with no spec linked is ready to spec.
+- **A clear map** has no open children and nothing under "Not yet specified". Its first Destination item with no spec linked is ready to spec, skipping one whose study is under way: a "Study under way: #<n>" comment on the map naming it, with #<n> open (the `study` skill's section 5). That item is offered as that study's **Carry on** (`start`'s "Carrying on"), never started afresh, and is ready to spec again once #<n> closes.
 - **The gate:** a map's build tickets wait until every Destination item of that map has its spec and its tickets.
+
+**Held items.** An item whose issue's `## Blocked by` names an open owner task (`owner-task` or `ready-for-human`) rests on the owner's answer: `WF status --fetch` lists it under `held` (or `--json`'s `held`), naming the task. Skip it while the task is open, whether it is a build ticket (`WF ready` already says "blocked by owner task #<n>"), a spec or a planned item. Picked by number, say it's held on that task, and stop.
 
 ## 2. Pick one
 
