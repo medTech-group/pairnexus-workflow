@@ -156,8 +156,9 @@ def _files_from(out: dict, accessed: str) -> tuple[str, str]:
 
 
 def test_the_files_written_from_one_fingerprint_output_pass_the_check(project, server):
-    text = SKILL.read_text(encoding="utf-8")
-    assert "WF research fingerprint <link> --fetch --json" in text and "--saved" not in text
+    # #529: the skill names `--saved` and `--fingerprints`, which write these files
+    # (tests/test_research_fingerprint_writes.py); `--json` still gives all a
+    # session needs to write them, and files written so pass the check
     base, routes = server
     link = f"{base}/help/booking"
     routes["/help/booking"] = (200, "text/html", PAGE.read_bytes())
