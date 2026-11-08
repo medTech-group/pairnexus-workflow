@@ -1053,6 +1053,25 @@ def test_check_reads_a_note_whose_prose_names_saved_copies_and_fingerprints(proj
     assert src["url"] == URL and src["result"] == "unchanged"
 
 
+@pytest.mark.parametrize(
+    "before",
+    [
+        "```python\nprint(1)\n```\n\n",
+        "~~~\n````\n~~~\n\n",
+        "```\nprint(1)\n`````\n\n",
+        "```\nprint(1)\n```python\n```\n\n",
+        "```python\nprint(1)\n```\n\n~~~\n````\n~~~\n\n",
+    ],
+    ids=["backticks-with-an-info-string", "a-backtick-line-inside-tildes", "a-longer-closing-fence", "a-line-with-an-info-string-doesnt-close", "two-fences"],
+)
+def test_check_reads_a_note_with_closed_code_fences_before_and_after_its_key_sources(project, before):
+    _reshape(project, before=before, after="## Notes\n\n```\nprint(2)\n```\n\nWords.\n")
+    p = _check(project, (URL, PAGE))
+    assert p.returncode == 0, p.stderr
+    (src,) = json.loads(p.stdout)["sources"]
+    assert src["url"] == URL and src["result"] == "unchanged"
+
+
 def test_check_refuses_a_key_sources_heading_that_isnt_at_the_lines_start(project):
     _break(project, "note.md", "\n## Key sources", "\n   ## Key sources")
     p = _check(project, (URL, PAGE))
