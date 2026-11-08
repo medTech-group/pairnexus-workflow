@@ -177,14 +177,19 @@ def snapshot(
             detail = "open decisions unknown (no sub_issues_summary)" if kids is None else f"{kids[1]} open decisions"
             st.maps.append(Item(n, title, detail))
             continue
-        tasks = [] if labels & _WAITING else owner_tasks_holding(i, by_num, repo)
+        is_spec = "spec" in labels or title.strip().casefold().startswith("spec:")
+        path = item_path(body)
+        # One that lands under waiting already waits on a person; a spec, parent issue or planned item
+        # with a waiting label doesn't, so it's held all the same.
+        waits = bool(labels & _WAITING) and not (is_spec or (kids and kids[0])) and path is None
+        tasks = [] if waits else owner_tasks_holding(i, by_num, repo)
         if tasks:
-            # Held until the owner task closes (#514); one waiting on a person already waits.
+            # Held until the owner task closes (#514).
             word = "owner task" if len(tasks) == 1 else "owner tasks"
             st.held.append(Item(n, title, f"{word} " + ", ".join(f"#{t}" for t in tasks)))
             continue
-        if "spec" in labels or title.strip().casefold().startswith("spec:") or (kids and kids[0]):
-            kind = "" if "spec" in labels or title.strip().casefold().startswith("spec:") else "parent issue, "
+        if is_spec or (kids and kids[0]):
+            kind = "" if is_spec else "parent issue, "
             if kids is None:
                 detail = "tickets unknown (no sub_issues_summary)"
             elif not kids[0]:
@@ -193,7 +198,6 @@ def snapshot(
                 detail = f"{kids[1]} of {kids[0]} tickets open"
             st.specs.append(Item(n, title, kind + detail))
             continue
-        path = item_path(body)
         if path is not None:
             st.planned.append(Item(n, title, path))
             continue

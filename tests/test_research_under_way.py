@@ -146,6 +146,18 @@ def test_one_waiting_on_a_person_stays_waiting(tmp_path):
     assert _nums(st.waiting) == [6, 9] and st.held == []
 
 
+def test_a_spec_waiting_on_a_person_and_held_by_an_owner_task_is_held(tmp_path):
+    # A spec is listed as a spec whatever its waiting label, so only held keeps it from being offered.
+    st = _snap(tmp_path, [_issue(3, ["spec", "needs-info"], body=HELD), _issue(9, ["owner-task"])])
+    assert _nums(st.held) == [3] and st.specs == [] and _nums(st.waiting) == [9]
+
+
+def test_a_planned_item_waiting_on_a_person_and_held_by_an_owner_task_is_held(tmp_path):
+    body = HELD + "\n<!-- workflow:item path=spec -->"
+    st = _snap(tmp_path, [_issue(10, ["needs-info"], body=body), _issue(9, ["owner-task"])])
+    assert _nums(st.held) == [10] and st.planned == [] and _nums(st.waiting) == [9]
+
+
 def test_a_map_and_a_research_issue_keep_their_own_sections(tmp_path):
     st = _snap(tmp_path, [_issue(2, ["wayfinder:map"], body=HELD), _issue(43, ["research"], body=HELD), _issue(9, ["owner-task"])])
     assert _nums(st.maps) == [2] and _nums(st.research) == [43] and st.held == []
