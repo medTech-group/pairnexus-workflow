@@ -276,8 +276,8 @@ REASONS = {
     }),
     # A pull request of research notes (#509, spec #505): in place of every review reason above.
     "research_none": Reason("review_panel", "review", {
-        "new": ("Not yet: these research notes haven't had their research check.", "Check them now: one checker reads each claim against its saved source, once."),
-        "developer": ("Not yet: no research record from an account with write access on this pull request of research notes (every file under `docs/research/`).", "Run the research check (one `research-checker` reads each claim against its saved source, one pass), and post its record first in the comment (`workflow review-record --kind research --round 1 --reviewers research`), then the claims it found wrong."),
+        "new": ("Not yet: these research notes haven't had their research check.", "Check them now: one checker reads each claim against its source's saved copy, once."),
+        "developer": ("Not yet: no research record from an account with write access on this pull request of research notes (every file under `docs/research/`).", "Run the research check (one `research-checker` reads each claim against its source's saved copy, one pass), and post its record first in the comment (`workflow review-record --kind research --round 1 --reviewers research`), then the claims it found wrong."),
     }),
     "research_needs_look": Reason("review_panel", "review", {
         "new": ("Not yet: the research check found claims to fix.", "Fix them, then ask for the look at the fix: a fresh checker reads only what changed and the claims it listed."),

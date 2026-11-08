@@ -1511,6 +1511,33 @@ def test_the_saved_copy_has_one_name():
         assert "saved cop" in text, where
 
 
+def test_the_research_check_reads_claims_against_saved_copies_everywhere():
+    """#545: the places that say what the research check reads its claims
+    against (the flow's "Research" section, the README's `/research` line, the
+    `merge-check` skill and `merge-check`'s research reasons) use the same name."""
+    from workflow import merge
+
+    flow = (KIT / "docs/flow.md").read_text(encoding="utf-8")
+    section = flow[flow.index("\n## Research\n") :]
+    section = section[: section.index("\n## ", 1)]
+    readme = next(l for l in (KIT / "README.md").read_text(encoding="utf-8").splitlines() if l.startswith("- **`/research <question>`**"))
+    skill = (KIT / "skills/merge-check/SKILL.md").read_text(encoding="utf-8")
+    wordings = []
+    for rid, reason in merge.REASONS.items():
+        if rid.startswith("research_"):
+            wordings.append(reason.wording)
+            wordings.extend(reason.cases.values())
+    reasons = " ".join(part for w in wordings for pair in w.values() for part in pair)
+    for where, text in (
+        ("flow.md's Research section", section),
+        ("README.md's /research line", readme),
+        ("the merge-check skill", skill),
+        ("merge.py's research reasons", reasons),
+    ):
+        assert "saved source" not in text.lower(), where
+        assert "saved cop" in text, where
+
+
 def test_the_shown_fingerprints_are_the_hashes_of_the_shown_page():
     shown = _shown("docs/research/booking-ahead/sources/booking-help.fingerprints").splitlines()
     assert shown[0] == f"url: {URL}"

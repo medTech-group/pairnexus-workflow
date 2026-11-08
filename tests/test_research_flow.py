@@ -217,7 +217,7 @@ def test_every_research_pull_request_gets_the_research_check_and_the_look_one_pa
     r = _rule("The research check")
     assert "every research pull request" in r and "studies and fact notes alike" in r
     assert "one pass each" in r and "never in rounds" in r
-    assert "`research-checker`" in r and "saved source" in r
+    assert "`research-checker`" in r and "saved copy" in r
     # The record first, then the claims: the record reader stops at the first code fence.
     s = _sentence(r, "--round 1")
     assert "`workflow review-record --kind research" in s

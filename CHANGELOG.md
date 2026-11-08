@@ -46,6 +46,10 @@
 
 - **For projects updating:** nothing to do. Tests: `tests/test_decision_questions.py`.
 
+**Research text names a key source's saved text "a saved copy" everywhere** (#545, found reviewing #511, part of spec #505). The research check reads each claim against its source's saved copy: the flow's "Research" section, the README's `/research` line, the `merge-check` skill and `merge-check`'s `research_none` reason said "saved source", the `study` skill's "saved copy" under another name. The meaning is unchanged.
+
+- **For projects updating:** nothing to do. Tests: `tests/test_research_notes.py`.
+
 **A research note's `## Key sources` section can be followed by other sections** (#528, split out of #506, part of spec #505). The section no longer has to be the note's last: `workflow research check` reads its key sources up to the next `# ` or `## ` heading. It fails closed, refusing the note rather than reading it in part or saying "unchanged" without reading every key source: `## Key sources` more than once (in any case, at any level, or in a quote), one inside a code fence, or a heading inside the section, each naming the line; and a fingerprint file anywhere in the topic's folder that no key-source line in the section names, naming the file, so a key source written anywhere else in the note, in any form, is refused. A fingerprint file is found by its name, `*.fingerprints`, or, whatever its name, by its first line, a `url:` line; a file or folder there that can't be read is refused too, naming it. A key-source line's fingerprints must be a `.fingerprints` file. The rest of the note is prose, never read for key sources. The `study` skill's layout says where the section may sit.
 
 - **For projects updating:** nothing to do. Tests: `tests/test_research_notes.py`.
