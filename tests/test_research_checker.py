@@ -111,41 +111,81 @@ def test_the_research_check_reads_a_claim_citing_a_saved_copy_whatever_its_label
     assert "facts only" in rc and "never rewrite the note" in rc
 
 
-def test_a_finding_citing_no_saved_copy_is_never_called_wrong_for_having_none():
-    rc = _job("The research check")
-    assert "A finding citing no saved copy" in rc
-    assert "is never called wrong for having none" in rc
-    assert "a transcript" in rc and "the panel's reasoning" in rc
-
-
+# #571 round 2, findings 5 and 6: the criterion's "never" is unbounded. No
+# claim or finding is called wrong for having no saved copy, whatever its label
+# and whatever it rests on; a page cited with no saved copy (spec #505 F4: each
+# cited source's text is saved) is a fault of the note on its own.
+NEVER = "never called wrong for having none, whatever its label and whatever it rests on"
+# Finding 5: a public-source claim linking a page nobody saved.
+PUBLIC_UNSAVED = "Bookings open at 9:00 (*observed (public source)*; [help](https://example.com/help))."
+# Finding 6: a real-person finding linking what the owner brought in.
+OWNERS_LINK = "Three of five café owners would pay a deposit (*observed (real person)*; [the owner's notes](https://docs.example.com/n))."
 # #571 round 1, finding 11: a fact note's claim citing a page nobody saved.
 UNSAVED = "The API allows 100 requests a minute ([rate limits](https://docs.example.com/limits))."
-NO_SOURCE_RULE = "a claim citing a source with no saved copy, or a fact note's claim citing none, is wrong"
-EXEMPT = "when it rests only on a transcript, a brief, the panel's reasoning or what the owner brought in"
+# The rules the round 1 fix wrote, which called such a claim wrong.
+CALLED_WRONG = ("is wrong, since a source that isn't saved isn't cited",
+                "a claim citing a source with no saved copy, or a fact note's claim citing none, is wrong",
+                "when it rests only on")
 
 
-def test_a_claim_citing_a_source_with_no_saved_copy_or_a_fact_note_s_claim_citing_none_is_wrong():
+def test_no_claim_or_finding_is_ever_called_wrong_for_having_no_saved_copy():
+    rc = _job("The research check")
+    assert f"A claim or finding that cites no saved copy is {NEVER}" in rc
+    s = _study_10()
+    assert f"a claim or finding that cites no saved copy is {NEVER}" in s
+    r = _flow_rule()
+    assert f"a claim or finding citing none is {NEVER}" in r
+    for where, text in (("the agent", rc), ("study §10", s), ("the flow", r)):
+        for words in CALLED_WRONG:
+            assert words not in text, (where, words)
+
+
+def test_a_source_not_saved_and_a_fact_note_s_claim_with_no_source_are_faults_of_their_own():
     assert "sources/" not in UNSAVED  # it links the live page, never a saved copy
     rc = _job("The research check")
-    assert ("A claim citing a source that no saved copy in `sources/` is of (a page linked by its address, "
-            "which no saved copy's `Source:` line names) is wrong, since a source that isn't saved isn't cited. "
-            "So is a fact note's claim that cites no source at all.") in rc
-    # The finding with no saved copy behind it stays exempt, but only when it rests on no source.
-    assert f"A finding citing no saved copy is never called wrong for having none {EXEMPT}" in rc
-    assert "A finding citing no saved copy (a *simulated* finding" not in rc  # the old, unbounded exemption
-
-
-def test_the_study_skill_and_the_flow_bound_the_exemption_the_same_way():
+    fault = rc[rc.index("Each cited source's text is saved"):]
+    assert "each reported on its own, never as a claim wrong" in fault
+    assert "(**a source not saved**)" in fault and "that no saved copy's `Source:` line names" in fault
+    # Finding 6: which rule wins for what the owner brought in.
+    assert "whatever its claim's label or what it rests on, what the owner brought in included" in fault
+    assert "a fact note's claim citing no source at all (**no source**)" in fault
+    assert "Each makes the result `Result: not clean`, as a wrong claim does" in fault
+    out = _flat(_section("What you return"))
+    assert "Then each fault, or fault still there" in out and "a source not saved (with its address) or no source" in out
+    look = _job("The look")
+    assert "each listed claim and fault" in look
+    assert "A listed claim or fault whose line didn't change is still wrong" in look
+    inputs = _flat(_section("Your inputs"))
+    assert "the claims and faults the research check listed" in inputs
     s = _study_10()
-    assert f"a finding that cites no saved copy is never called wrong for having none {EXEMPT}" in s
-    assert NO_SOURCE_RULE in s
+    assert ("a line linking a page no saved copy is of (a source not saved), or a fact note's claim citing no source, "
+            "is a fault of the note on its own") in s
+    assert "then the claims it found wrong and the faults, listed" in s
+    assert "A listed claim or fault whose line didn't change counts as still wrong" in s
+    assert "a claim the look finds still wrong, or a fault still there, gets the mark" in s
     r = _flow_rule()
-    assert f"a finding citing none is never called wrong for having none {EXEMPT}" in r
-    assert NO_SOURCE_RULE in r
-    # merge-check points to the agent's rule rather than restating the unbounded one.
-    text = _flat(MERGE_CHECK.read_text(encoding="utf-8"))
-    assert "(a finding citing none is never called wrong for having none)" not in text
-    assert "whatever its label, as its \"The research check\" says" in text
+    assert ("a line linking a page with no saved copy, or a fact note's claim citing no source, "
+            "is a fault of the note on its own") in r
+    assert "then the claims it found wrong and the faults" in r
+    assert "A claim still wrong, or a fault still there, gets the unconfirmed mark" in r
+
+
+def _example(line: str) -> str:
+    ex = _section("Examples")
+    assert f"`{line}`" in ex, line
+    return _flat(ex.split(line, 1)[1].split("\n- ", 1)[0])
+
+
+def test_the_examples_give_an_unsaved_source_as_a_fault_never_as_wrong():
+    address = SAVED.read_text(encoding="utf-8").splitlines()[0].removeprefix("Source: ")
+    for line in (PUBLIC_UNSAVED, OWNERS_LINK):
+        link = re.search(r"\]\(([^)]*)\)", line).group(1)
+        assert not link.startswith("sources/") and link != address  # it cites no saved copy
+        case = _example(line)
+        assert "**Not wrong** for having no saved copy" in case, line
+        assert "**a source not saved**" in case, line
+        assert "**Wrong**" not in case, line
+    assert "what the owner brought in included" in _example(OWNERS_LINK)
 
 
 def test_an_observed_real_person_finding_is_read_against_what_the_owner_brought_in():
@@ -179,8 +219,8 @@ def test_with_no_list_given_an_observed_real_person_finding_is_not_checked_never
 def test_the_look_reads_the_changed_lines_as_the_research_check_reads_a_claim():
     look = _job("The look")
     assert "read the lines the diff changed, as the research check reads a claim, and each listed claim" in look
-    assert "A listed claim whose line didn't change is still wrong" in look
-    assert "any wrong claim the changed lines add" in look
+    assert "A listed claim or fault whose line didn't change is still wrong" in look
+    assert "any wrong claim or fault the changed lines add" in look
 
 
 def test_what_it_returns_for_the_research_check_and_the_look():
@@ -194,9 +234,7 @@ def test_what_it_returns_for_the_research_check_and_the_look():
 
 
 def test_the_round_2_case_is_read_and_called_wrong():
-    ex = _section("Two examples")
-    assert f"`{ROUND_2}`" in ex
-    case = _flat(ex.split(ROUND_2, 1)[1].split("\n- ", 1)[0])
+    case = _example(ROUND_2)
     assert "**Wrong**" in case and "whatever its label" in case
     assert "paragraph 2 says bookings open at 9:00" in case
     # The example's saved copy is the study skill's own, whose paragraph 2 says 9:00, not 8:00.
@@ -206,10 +244,8 @@ def test_the_round_2_case_is_read_and_called_wrong():
 
 
 def test_the_round_1_case_is_not_called_wrong_for_having_no_saved_copy():
-    ex = _section("Two examples")
-    assert f"`{ROUND_1}`" in ex
     assert "sources/" not in ROUND_1  # it cites a transcript, never a saved copy
-    case = _flat(ex.split(ROUND_1, 1)[1].split("\n- ", 1)[0])
+    case = _example(ROUND_1)
     assert "**Not wrong**" in case and "cites no saved copy" in case
     assert "**Wrong**" not in case
 
@@ -221,16 +257,16 @@ def test_the_study_skill_says_how_the_checker_reads_a_notes_claims():
     s = _study_10()
     assert "one fresh `research-checker`" in s
     assert "a claim citing a saved copy is read against it, whatever its label" in s
-    assert "a finding that cites no saved copy is never called wrong for having none" in s
+    assert f"a claim or finding that cites no saved copy is {NEVER}" in s  # the criterion's "never", unbounded
     assert "*observed (real person)*" in s and "what the owner brought in" in s
     assert "a fresh `research-checker` reads the lines changed since the research check and each listed claim" in s
-    assert "A listed claim whose line didn't change counts as still wrong" in s
+    assert "A listed claim or fault whose line didn't change counts as still wrong" in s
 
 
 def test_the_flow_s_research_check_reads_claims_citing_a_saved_copy():
     r = _flow_rule()
     assert "one read-only `research-checker` reads each claim citing a saved copy against it, whatever its label, facts only" in r
-    assert "a finding citing none is never called wrong for having none" in r
+    assert f"a claim or finding citing none is {NEVER}" in r
     # The old wording, which round 1's case breaks, is gone.
     assert "reads each claim against its source's saved copy" not in r
 
@@ -259,6 +295,9 @@ def test_the_changelog_notes_571_and_version_is_untouched():
     assert head, "a changelog note for #571 under ## Unreleased"
     note = _flat(notes.split(head, 1)[1].split("\n\n**", 1)[0])
     assert "`research-checker`" in head + note and "whatever its label" in note
+    assert NEVER in note and "a source not saved" in note
+    for words in CALLED_WRONG:
+        assert words not in note, words
     log = (KIT / "CHANGELOG.md").read_text(encoding="utf-8")
     released = re.findall(r"^## (\d+\.\d+\.\d+)$", log, re.M)
     assert (KIT / "VERSION").read_text(encoding="utf-8").strip() == released[0]
