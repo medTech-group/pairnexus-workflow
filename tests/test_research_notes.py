@@ -246,8 +246,31 @@ def seen():
     httpd.server_close()
 
 
-@pytest.mark.parametrize("link", ["{base}/caf\u00e9", "https://fa\u00df.de/", "{base}/caf\udce9"], ids=["path", "host", "lone-surrogate"])
-def test_page_fetching_refuses_a_link_outside_ascii_before_any_request(project, seen, monkeypatch, link):
+def _proxied(project, base):
+    proxy = {k: base for k in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY")}
+    return {**_env(project), **proxy, "no_proxy": "", "NO_PROXY": ""}
+
+
+# #532: a link it can't encode, refused as can't fetch before any request: a
+# lone surrogate (a byte that isn't UTF-8 in the command line), a space outside
+# ASCII, a host holding a character UTS 46 maps or disallows, or starting with
+# a combining mark, a right-to-left host (the Bidi rule isn't checked), a port
+# or bracketed host outside ASCII, a label in Punycode beside one outside ASCII.
+_UNENCODABLE = [
+    "{base}/caf\udce9",
+    "{base}/caf\u00e9\u00a0menu",
+    "http://\ufb01le.example/",
+    "http://\u0301a.example/",
+    "http://\u05e2\u05d1.example/",
+    "http://caf\u00e9.example:\u0668\u0660/",
+    "http://xn--fa-hia.caf\u00e9.example/",
+    "http://xn--caf\u00e9.example/",
+    "http://\u2620.example/",
+]
+
+
+@pytest.mark.parametrize("link", _UNENCODABLE, ids=["lone-surrogate", "nbsp", "ligature-host", "mark-first", "right-to-left", "port", "punycode-beside", "xn-prefix", "symbol"])
+def test_page_fetching_refuses_a_link_it_cant_encode_before_any_request(project, seen, monkeypatch, link):
     base, requests = seen
     link = link.format(base=base)
 
@@ -255,14 +278,69 @@ def test_page_fetching_refuses_a_link_outside_ascii_before_any_request(project, 
         raise AssertionError(f"a request was made for {link!r}")
 
     monkeypatch.setattr(research.urllib.request.OpenerDirector, "open", opened)
-    with pytest.raises(research.PageError, match="outside ASCII"):
+    with pytest.raises(research.PageError):
         research.fetch(link)
-    proxy = {k: base for k in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY")}
-    p = _cli("fingerprint", link, "--fetch", env={**_env(project), **proxy, "no_proxy": "", "NO_PROXY": ""})
+    assert research.link_problem(link)
+    p = _cli("fingerprint", link, "--fetch", env=_proxied(project, base))
     assert p.returncode == 1 and p.stdout == ""
-    assert "can't fetch" in p.stderr and "outside ASCII" in p.stderr
+    assert "can't fetch" in p.stderr and p.stderr.count("\n") == 1
     assert "Traceback" not in p.stderr
     assert requests == []
+
+
+@pytest.mark.parametrize(
+    "link,sent",
+    [
+        ("http://fa\u00df.de/", "GET http://xn--fa-hia.de/ HTTP/1.1"),  # non-transitional: never fass.de
+        ("http://FA\u00df.DE/x", "GET http://xn--fa-hia.DE/x HTTP/1.1"),
+        ("http://\u03c2.gr/", "GET http://xn--3xa.gr/ HTTP/1.1"),
+        ("http://\u4f8b\u3048.\u30c6\u30b9\u30c8:8080/", "GET http://xn--r8jz45g.xn--zckzah:8080/ HTTP/1.1"),
+        ("http://\u043f\u0440\u0438\u043c\u0435\u0440.\u0440\u0444/", "GET http://xn--e1afmkfd.xn--p1ai/ HTTP/1.1"),
+        ("http://cafe\u0301.example/", "GET http://xn--caf-dma.example/ HTTP/1.1"),  # NFC first
+        ("http://us\u00e9r:p\u00e4ss@fa\u00df.de/p\u00e4th", "GET http://us%C3%A9r:p%C3%A4ss@xn--fa-hia.de/p%C3%A4th HTTP/1.1"),
+        ("https://fa\u00df.de/", "CONNECT xn--fa-hia.de:443 HTTP/1.1"),
+    ],
+    ids=["eszett", "upper-ascii", "final-sigma", "japanese-port", "cyrillic", "decomposed", "userinfo", "https"],
+)
+def test_page_fetching_encodes_a_host_by_uts46_non_transitional(project, seen, link, sent):
+    base, requests = seen
+    p = _cli("fingerprint", link, "--fetch", env=_proxied(project, base))
+    assert "Traceback" not in p.stderr
+    assert p.returncode == 1 and "can't fetch" in p.stderr  # the proxy answers 404
+    assert requests[:1] == [sent]
+
+
+def test_fingerprint_fetches_a_path_query_and_fragment_outside_ascii_percent_encoded(project, server):
+    base, routes = server
+    routes["/caf%C3%A9%20menu/Stra%C3%9Fe?q=%C3%A9&r=%25"] = (200, "text/html", b"<p>B</p>")
+    p = _cli("fingerprint", f"{base}/caf\u00e9%20menu/Stra\u00dfe?q=\u00e9&r=%25#\u00e9", "--fetch", "--json", env=_env(project))
+    assert p.returncode == 0, p.stderr
+    assert [x["text"] for x in json.loads(p.stdout)["paragraphs"]] == ["B"]
+
+
+def test_fingerprint_saves_a_link_outside_ascii_as_written(project, server):
+    base, routes = server
+    routes["/wiki/Stra%C3%9Fe"] = (200, "text/html", b"<p>B</p>")
+    link = f"{base}/wiki/Stra\u00dfe"
+    assert research.link_problem(link) is None
+    assert research.link_problem("https://fa\u00df.de/wiki/Stra\u00dfe") is None
+    p = _cli("fingerprint", link, "--fetch", "--saved", "t/s.md", "--fingerprints", "t/s.fingerprints", cwd=project, env=_env(project))
+    assert p.returncode == 0, p.stderr
+    assert (project / "t/s.fingerprints").read_text(encoding="utf-8").startswith(f"url: {link}\n")
+    assert (project / "t/s.md").read_text(encoding="utf-8").startswith(f"Source: {link}\n")
+
+
+def test_check_fetches_a_source_outside_ascii(project, server):
+    base, routes = server
+    routes["/hilfe/buchung-%C3%BC"] = (200, "text/html", PAGE.read_bytes())
+    link = f"{base}/hilfe/buchung-\u00fc"
+    folder = _note(project).parent
+    for f in ("note.md", "sources/booking-help.md", "sources/booking-help.fingerprints"):
+        (folder / f).write_text((folder / f).read_text(encoding="utf-8").replace(URL, link), encoding="utf-8")
+    p = _check(project, extra=["--fetch"])
+    assert p.returncode == 0, p.stderr
+    [src] = json.loads(p.stdout)["sources"]
+    assert (src["url"], src["result"]) == (link, "unchanged")
 
 
 def test_fingerprint_fetches_a_link_with_its_escapes_left_alone(project, server):

@@ -896,12 +896,110 @@ def read_page(path: Path) -> tuple[bytes, str]:
     return Path(path).read_bytes(), ctype
 
 
+# ---------- a link written with letters outside ASCII (#532) ----------
+
+# Characters in a host label whose UTS 46 status the kit can't be sure of from
+# `unicodedata` alone, though their category, NFKC and case folding would let
+# them through: IDNA 2008's DISALLOWED exceptions (RFC 5892 §2.6), its CONTEXTO
+# digits, the old Hangul jamo (§2.9), the default-ignorable marks and letters,
+# and the blocks it calls ignorable (§2.8). Refused, never guessed.
+_HOST_REFUSED = (
+    (0x0640, 0x0640), (0x07FA, 0x07FA), (0x302E, 0x302F), (0x3031, 0x3035), (0x303B, 0x303B),
+    (0x06F0, 0x06F9),
+    (0x1100, 0x11FF), (0xA960, 0xA97F), (0xD7B0, 0xD7FF),
+    (0x034F, 0x034F), (0x17B4, 0x17B5), (0x180B, 0x180F), (0x3164, 0x3164), (0xFE00, 0xFE0F), (0xE0100, 0xE01EF),
+    (0x20D0, 0x20FF), (0x1D100, 0x1D24F),
+)
+# UTS 46's deviations kept as they are by non-transitional processing, as
+# browsers do: `faß.de` is `xn--fa-hia.de`, never `fass.de`. (The joiners,
+# U+200C and U+200D, need CONTEXTJ's rules: refused, as any format character is.)
+_HOST_DEVIATIONS = frozenset("\u00df\u03c2")
+
+
+def _host_char_ok(c: str) -> bool:
+    """Whether UTS 46 surely leaves the character outside ASCII as it is in a
+    host label (status `valid`, or a deviation kept): a letter, mark or digit
+    that NFKC and case folding leave alone, outside `_HOST_REFUSED`, and not
+    right to left (the Bidi rule, refused rather than checked). A character it
+    would map or disallow, or one it may, is refused: a host is never guessed."""
+    if c in _HOST_DEVIATIONS:
+        return True
+    n = ord(c)
+    if any(lo <= n <= hi for lo, hi in _HOST_REFUSED):
+        return False
+    if unicodedata.category(c) not in ("Ll", "Lo", "Lm", "Mn", "Mc", "Nd"):
+        return False
+    if unicodedata.bidirectional(c) in ("R", "AL", "AN"):
+        return False
+    return unicodedata.normalize("NFKC", c) == c and c.casefold() == c
+
+
+def _ascii_host(host: str) -> str:
+    """The host as DNS reads it: each label holding letters outside ASCII
+    encoded by UTS 46 non-transitional rules (ASCII letters lowercased, NFC,
+    then Punycode after `xn--`). Raises PageError for a host it can't encode
+    so: one holding a character `_host_char_ok` refuses, a label starting
+    with a combining mark, or a label already starting `xn--` beside one
+    outside ASCII (its Punycode isn't checked)."""
+    labels = []
+    for label in host.split("."):
+        if label[:4].lower() == "xn--":
+            raise PageError("its host mixes a label already in Punycode (`xn--`) with letters outside ASCII")
+        if label.isascii():
+            labels.append(label)
+            continue
+        label = unicodedata.normalize("NFC", "".join(c.lower() if c.isascii() else c for c in label))
+        if not all(c.isascii() or _host_char_ok(c) for c in label) or unicodedata.category(label[0]).startswith("M"):
+            raise PageError("its host holds a character that can't be encoded by UTS 46 as browsers do (IDNA)")
+        labels.append("xn--" + label.encode("punycode").decode("ascii"))
+    return ".".join(labels)
+
+
+def _percent_encoded(text: str) -> str:
+    """Each character outside ASCII percent-encoded as its UTF-8 bytes; ASCII,
+    `%` escapes among it, left as it is."""
+    return "".join(c if c.isascii() else urllib.parse.quote(c.encode("utf-8"), safe="") for c in text)
+
+
+def ascii_link(url: str) -> str:
+    """The link as it is fetched: in ASCII, as a browser sends it. A link in
+    ASCII is returned as it is. Otherwise its host is encoded by UTS 46
+    non-transitional rules (`_ascii_host`), and its userinfo, path, query and
+    fragment have each character outside ASCII percent-encoded as UTF-8, `%`
+    escapes left alone. Raises PageError for what can't be encoded: a lone
+    surrogate (a byte that isn't UTF-8 in the command line), a space, line
+    break, format or private-use character outside ASCII (no key-source line
+    could name it), a link that isn't well-formed, a host as `_ascii_host`
+    says, or one in brackets or a port outside ASCII."""
+    if url.isascii():
+        return url
+    if any(unicodedata.category(c) in ("Cc", "Cf", "Cs", "Co", "Cn", "Zs", "Zl", "Zp") for c in url if not c.isascii()):
+        raise PageError("it holds a character outside ASCII that can't be encoded (a byte that isn't UTF-8, a space, a line break, or a format or unassigned character)")
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError as e:  # on Python 3.12 and later, a host holding a fullwidth `／ ？ ＃ ＠ ：` (#530): refused, never normalised
+        raise PageError(f"it isn't a well-formed link ({e})") from None
+    start = len(parts.scheme) + 3 if parts.netloc else 0
+    if parts.netloc and url[len(parts.scheme) : start] == "://" and url[start : start + len(parts.netloc)] == parts.netloc:
+        netloc = parts.netloc
+        userinfo, at, hostport = netloc.rpartition("@")
+        host, colon, port = hostport, "", ""
+        if not hostport.startswith("[") and ":" in hostport:
+            host, colon, port = hostport.rpartition(":")
+        if not hostport.isascii() and (hostport.startswith("[") or not port.isascii()):
+            raise PageError("its host or port holds characters outside ASCII where none can be")
+        host = host if host.isascii() else _ascii_host(host)
+        return url[:start] + _percent_encoded(userinfo) + at + host + colon + port + _percent_encoded(url[start + len(netloc) :])
+    if parts.netloc and not parts.netloc.isascii():
+        raise PageError("it isn't a well-formed link (its host can't be found as written)")
+    return _percent_encoded(url)
+
+
 def fetch(url: str, timeout: float = FETCH_TIMEOUT, limit: int = FETCH_LIMIT) -> tuple[bytes, str]:
     """The page at a web link: its bytes and content type. Only http and https,
-    redirects included, and only a link written in ASCII; raises PageError
-    with the reason it can't."""
-    if not url.isascii():
-        raise PageError("it holds characters outside ASCII; cite the link percent-encoded")
+    redirects included; a link with letters outside ASCII is fetched as
+    `ascii_link` encodes it. Raises PageError with the reason it can't."""
+    url = ascii_link(url)
     try:
         parts = urllib.parse.urlsplit(url)
     except ValueError as e:  # a bracketed host that isn't an IP address, say (#530)
@@ -961,15 +1059,16 @@ def saved_copy_text(url: str, accessed: str, paras: list[str]) -> str:
 def link_problem(url: str) -> str | None:
     """Why a link can't go in a key source's two files, else None: each holds
     it on a line of its own, and a key-source line names it as `<link>`. So
-    ASCII only, no whitespace, control character, `<` or `>`, and http or
-    https with a host. Checked before anything is read, fetched or written."""
-    if not url.isascii():
-        return "it holds characters outside ASCII; cite the link percent-encoded"
+    no whitespace, control character, `<` or `>`, letters outside ASCII only
+    where `fetch` can encode them (`ascii_link`), and http or https with a
+    host. Checked before anything is read, fetched or written."""
     if any(c <= " " or c in "<>\x7f" for c in url):
         return "it holds a space, a line break, a control character, `<` or `>`"
     try:
-        parts = urllib.parse.urlsplit(url)
+        parts = urllib.parse.urlsplit(ascii_link(url))
         ok = parts.scheme in ("http", "https") and bool(parts.hostname)
+    except PageError as e:
+        return str(e)
     except ValueError:
         ok = False
     return None if ok else "it isn't an http or https link with a host"
