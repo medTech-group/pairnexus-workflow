@@ -151,6 +151,17 @@ def test_a_listed_claim_whose_line_didn_t_change_counts_as_still_wrong():
     assert "not clean" in part
 
 
+def test_a_context_line_of_changed_patch_never_counts_as_a_changed_line():
+    # `changed.patch` comes from `git diff`, with 3 context lines around each
+    # change: a listed claim on a context line didn't change, so it is still wrong.
+    part = _part("The look")
+    assert "no line of `changed.patch` holds it" not in part
+    s = _sentence(part, "added (`+`)")
+    assert "removed (`-`)" in s and "changed.patch" in s
+    s = _sentence(part, "context line")
+    assert "doesn't count" in s or "don't count" in s
+
+
 def test_the_mark_goes_on_after_the_look_and_never_before():
     part = _part("The mark")
     assert "after the look" in part
