@@ -283,7 +283,7 @@ A research pull request (every file under `docs/research/`, the flow's "Research
   - `changed.patch`: the lines changed since the research check, the pull request's own changes only, written as section 1's `since.patch` is, with `<last>` the research check's commit;
   - `claims.md`: the claims the research check listed, as its comment gave them (none after a clean check).
 
-  A listed claim whose line didn't change counts as still wrong, whatever the checker says of it. Its line changed only when an added (`+`) or removed (`-`) line of `changed.patch` holds it: a context line around a change doesn't count. The look is clean when no claim is still wrong, else not clean. Post its comment as for the check, with `--round 2` and its own directory.
+  A listed claim whose line didn't change counts as still wrong, whatever the checker says of it. Its line changed only when an added (`+`) or removed (`-`) line of `changed.patch` holds it: a context line around a change doesn't count. The look is clean when no claim is still wrong, else not clean. Post its comment as for the check, with `--round 2` and its own directory, except that the claims after the record are every claim still wrong: those the checker reported, and each listed claim whose line didn't change.
 - **The mark,** after the look and never before: when the look isn't clean (`research_needs_marks`), add the mark that flow §4 item 4 gives at the end of each line holding a claim it found still wrong, then commit and push. Change nothing else: only marks after the look, and there is no further round. Anything more (`research_more_than_marks`) is taken out, or moved to a new research pull request.
 
 ## 9. The findings table (for the PR body)

@@ -162,6 +162,16 @@ def test_a_context_line_of_changed_patch_never_counts_as_a_changed_line():
     assert "doesn't count" in s or "don't count" in s
 
 
+def test_the_look_s_comment_lists_every_claim_still_wrong_not_only_the_checker_s():
+    # A listed claim whose line didn't change is still wrong even when the
+    # checker calls it fine: the comment lists it too, as the mark step marks it.
+    part = _part("The look")
+    s = _sentence(part, "every claim still wrong")
+    assert "comment" in s
+    after = part.split("every claim still wrong", 1)[1]
+    assert "the checker reported" in after and "didn't change" in after
+
+
 def test_the_mark_goes_on_after_the_look_and_never_before():
     part = _part("The mark")
     assert "after the look" in part
