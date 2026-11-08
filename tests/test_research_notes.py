@@ -42,9 +42,9 @@ def _h(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _cli(*args, cwd=None, env=None):
+def _cli(*args, cwd=None, env=None, timeout=None):
     e = {**os.environ, **(env or {})}
-    return subprocess.run([sys.executable, "-B", str(CLI), "research", *map(str, args)], capture_output=True, text=True, cwd=cwd, env=e)
+    return subprocess.run([sys.executable, "-B", str(CLI), "research", *map(str, args)], capture_output=True, text=True, cwd=cwd, env=e, timeout=timeout)
 
 
 @pytest.fixture
@@ -777,14 +777,14 @@ def test_fingerprint_needs_a_page_or_fetch(project):
 # ---------- check ----------
 
 
-def _check(project, *pages, extra=(), json_out=True):
+def _check(project, *pages, extra=(), json_out=True, timeout=None):
     args = ["check", "--note", _note(project)]
     for url, page in pages:
         args += ["--page", url, page]
     args += list(extra)
     if json_out:
         args.append("--json")
-    return _cli(*args, env=_env(project))
+    return _cli(*args, env=_env(project), timeout=timeout)
 
 
 def test_check_unchanged(project):
@@ -1123,6 +1123,16 @@ def test_check_reads_a_note_whose_folder_holds_files_that_arent_fingerprints(pro
     (topic / "sources/empty").write_bytes(b"")
     shutil.copy(topic / "sources/booking-help.md", topic / "sources/groups.md")  # a saved copy with no fingerprints
     p = _check(project, (URL, PAGE))
+    assert p.returncode == 0, p.stderr
+    (src,) = json.loads(p.stdout)["sources"]
+    assert src["url"] == URL and src["result"] == "unchanged"
+
+
+def test_check_skips_a_named_pipe_in_the_topics_folder(project):
+    """Only regular files are read for a first `url:` line: opening a named
+    pipe would wait for a writer that never comes."""
+    os.mkfifo(_note(project).parent / "sources/pipe")
+    p = _check(project, (URL, PAGE), timeout=30)
     assert p.returncode == 0, p.stderr
     (src,) = json.loads(p.stdout)["sources"]
     assert src["url"] == URL and src["result"] == "unchanged"
