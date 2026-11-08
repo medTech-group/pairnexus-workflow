@@ -425,6 +425,8 @@ def target_problem(saved: str, fps: str) -> tuple[str, str] | None:
         return fps, f"a fingerprint file's name ends with `{FINGERPRINTS}`"
     if os.path.realpath(saved) == os.path.realpath(fps):
         return fps, "--saved and --fingerprints name the same file"
+    if saved.casefold().endswith(FINGERPRINTS):  # `check` would take it for a fingerprint file no key-source line names
+        return saved, f"a saved copy's name doesn't end with `{FINGERPRINTS}`, a fingerprint file's"
     return None
 
 

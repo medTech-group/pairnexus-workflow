@@ -447,6 +447,20 @@ def test_a_fingerprint_file_not_named_fingerprints_is_refused(project):
     assert "new/a.txt" in line and ".fingerprints" in line
 
 
+@pytest.mark.parametrize("saved", ["t/v/a.fingerprints", "t/v/A.FINGERPRINTS", "t/v/a.Fingerprints"])
+def test_a_saved_copy_named_as_a_fingerprint_file_is_refused(project, saved):
+    """`check` takes a file named `*.fingerprints` in the topic's folder for a
+    fingerprint file, so a saved copy named so would fail it."""
+    line = _one_line(_refused_early(project, "--fetch", "--saved", saved, "--fingerprints", "t/v/b.fingerprints"))
+    assert saved in line and ".fingerprints" in line
+
+
+def test_a_saved_copy_whose_name_only_holds_fingerprints_is_written(project):
+    p = _write(project, URL, "t/v/a.fingerprints.md", "t/v/a.fingerprints")
+    assert p.returncode == 0, p.stderr
+    assert (project / "t/v/a.fingerprints.md").read_text(encoding="utf-8").startswith(f"Source: {URL}\n")
+
+
 @pytest.mark.parametrize("fps", ["new/a.fingerprints", "new/../new/a.fingerprints", "./new/a.fingerprints"])
 def test_both_options_naming_one_file_is_refused(project, fps):
     line = _one_line(_refused_early(project, "--fetch", "--saved", "new/a.fingerprints", "--fingerprints", fps))
