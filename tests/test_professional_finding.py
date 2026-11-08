@@ -183,6 +183,17 @@ def test_next_and_start_skip_a_held_destination_item_while_its_task_is_open(rel)
     assert "skip" in tail.casefold() and "while" in tail and "open" in tail
 
 
+def test_start_s_held_destination_item_still_carries_its_study_under_way_on_to_its_verdict():
+    # Only what rests on the professional's answer waits: the verdict goes ahead, so the skip
+    # is of the item as a clear map's next spec, never of a study of it already under way.
+    rule = _flat(next(ln for ln in _read("skills/start/SKILL.md").splitlines()
+                      if ln.startswith("**Held items.**")))
+    tail = rule[rule.index("A map's Destination item"):]
+    assert "as a clear map's next spec" in tail
+    assert "a study of it already under way still carries on to its verdict" in tail
+    assert "or its study" not in tail
+
+
 def test_charting_writes_the_line_when_the_task_comes_before_the_map():
     # start's Map path charts the map; a new project's study can file the owner task before it.
     start = _read("skills/start/SKILL.md")
