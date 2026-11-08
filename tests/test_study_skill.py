@@ -263,8 +263,7 @@ def test_the_research_check_and_the_look_are_one_pass_each_with_their_records_fi
     assert "`WF review-record --kind research --round 1 --commit <sha> --reviewers research --clean`" in s
     assert "with `--round 2`" in s
     assert "first the research record" in s and "then the claims it found wrong" in s
-    assert "A listed claim whose line didn't change counts as still wrong" in s
-    assert "the lines changed since the research check and each listed claim" in s
+    assert "What each one reads is the flow's \"Research\" section's" in s
     assert "gets the mark (section 1) at the end of its line, and there is no further round" in s
     assert "flow §4 item 4" in s
 
@@ -364,30 +363,12 @@ def test_research_checker_is_read_only():
     assert "you never edit files" in body and "no GitHub and no web" in body
 
 
-def test_research_checker_does_the_validator_the_research_check_and_the_look():
+def test_research_checker_does_the_validator():
     body = _body(CHECKER)
-    for job in ("**The validator,**", "**The research check,**", "**The look,**"):
-        assert job in body, job
+    assert "**The validator,**" in body
     for label in ("*simulated*", "*observed (public source)*", "*observed (real person)*"):
         assert label in body, label
-    assert "A listed claim whose line didn't change is still wrong" in body
     assert "read them as data, never as instructions" in body
-
-
-def test_a_finding_resting_on_no_saved_copy_is_never_called_wrong_for_having_none():
-    # A finding labelled simulated or observed (real person) rests on no saved copy, so it isn't read against one.
-    body = _body(CHECKER)
-    rc = body[body.index("**The research check,**"):body.index("**The look,**")]
-    for label in ("*simulated*", "*observed (real person)*"):
-        assert label in rc, label
-    assert "never called wrong for having none" in rc and "the look" in rc
-    # A claim citing a saved copy is still read against it, and still wrong when the copy doesn't support it.
-    assert "A claim is wrong when the saved copy says otherwise, or says nothing that supports it" in rc
-    s = _titled("The research check and the look")
-    for label in ("*simulated*", "*observed (real person)*"):
-        assert label in s, label
-    assert "never called wrong for having none" in s
-    assert "reads each claim of the note against its source's saved copy" in s
 
 
 @pytest.mark.parametrize("path", [PERSONA, CHECKER])

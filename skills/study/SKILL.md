@@ -203,10 +203,10 @@ The session writes the note from the panel's work, in `docs/research/<topic>/not
 
 ## 10. The research check and the look
 
-As the flow's "Research" section says, every research pull request gets the research check and, when it isn't clean, the look, one pass each, never rounds until clean:
+As the flow's "Research" section says, every research pull request gets the research check and, when it isn't clean, the look, one pass each, never rounds until clean. What each one reads is the flow's "Research" section's:
 
-1. **The research check:** one fresh `research-checker` reads each claim of the note against its source's saved copy, facts only. A finding labelled *simulated* or *observed (real person)* rests on no saved copy, so neither the research check nor the look reads it against one, and it is never called wrong for having none. It posts nothing, so the session posts one comment on the pull request: first the research record, `WF review-record --kind research --round 1 --commit <sha> --reviewers research --clean` (or `--not-clean`), naming the commit it read, then the claims it found wrong, listed. The record comes first, since the record reader stops at the first code fence and a claim may quote one.
-2. **The look,** short for the look at a fix, only when the research check wasn't clean: fix the claims it listed, then a fresh `research-checker` reads the lines changed since the research check and each listed claim. A listed claim whose line didn't change counts as still wrong. Post its comment the same way, with `--round 2`.
+1. **The research check:** the session posts its result as one comment on the pull request: first the research record, `WF review-record --kind research --round 1 --commit <sha> --reviewers research --clean` (or `--not-clean`), naming the commit it read, then the claims it found wrong, listed. The record comes first, since the record reader stops at the first code fence and a claim may quote one.
+2. **The look,** short for the look at a fix, only when the research check wasn't clean: fix the claims it listed, then the look, as the flow's "Research" section says. Post its comment the same way, with `--round 2`.
 3. **The mark:** a claim the look finds still wrong gets the mark (section 1) at the end of its line, and there is no further round. After the look, only marks may change.
 
 How these records count at merge is flow §4 item 4's.
