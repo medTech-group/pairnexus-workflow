@@ -258,7 +258,8 @@ def _proxied(project, base):
 # or bracketed host outside ASCII, a label in Punycode beside one outside ASCII,
 # a host holding a `%` escape (urllib would decode it, and encode it otherwise),
 # a character UTS 46 maps that NFC changes (the Kelvin sign, the Greek question
-# mark, a CJK compatibility ideograph): checked as written, never after NFC.
+# mark, a CJK compatibility ideograph): checked as written, never after NFC;
+# a control character or `<` beside letters outside ASCII.
 _UNENCODABLE = [
     "{base}/caf\udce9",
     "{base}/caf\u00e9\u00a0menu",
@@ -280,11 +281,15 @@ _UNENCODABLE = [
     "http://\U0002f91f.de/",
     "http://\U0002f95f.de/",
     "http://\U0002f9bf.de/",
+    "\x01{base}/\u00e4",
+    "{base}/\x7f\u00e4",
+    "{base}/<\u00e4>",
 ]
 
 
 @pytest.mark.parametrize("link", _UNENCODABLE, ids=["lone-surrogate", "nbsp", "ligature-host", "mark-first", "right-to-left", "port", "punycode-beside", "xn-prefix", "symbol", "host-percent", "ascii-host-percent",
-     "kelvin", "kelvin-inside", "greek-question-mark", "varia", "cjk-2f868", "cjk-2f874", "cjk-2f91f", "cjk-2f95f", "cjk-2f9bf"])
+     "kelvin", "kelvin-inside", "greek-question-mark", "varia", "cjk-2f868", "cjk-2f874", "cjk-2f91f", "cjk-2f95f", "cjk-2f9bf",
+     "control-first", "delete", "angle-brackets"])
 def test_page_fetching_refuses_a_link_it_cant_encode_before_any_request(project, seen, monkeypatch, link):
     base, requests = seen
     link = link.format(base=base)
@@ -1055,6 +1060,22 @@ def test_check_cant_fetch_a_link_it_cant_split_and_reads_the_others(project, lin
     t = _check(project, (URL, PAGE), extra=["--fetch"], json_out=False)
     assert t.returncode == 0 and "Traceback" not in t.stderr
     assert f"- {URL}: unchanged" in t.stdout and f"- {link}: can't fetch (" in t.stdout
+
+
+def test_check_cant_fetch_a_source_outside_ascii_holding_a_control_character(project, seen):
+    base, requests = seen
+    link = f"\x01{base}/\u00e4"
+    other = _two_sources(project)
+    folder = _note(project).parent
+    for f in ("note.md", "sources/groups.md", "sources/groups.fingerprints"):
+        (folder / f).write_text((folder / f).read_text(encoding="utf-8").replace(other, link), encoding="utf-8")
+    p = _cli("check", "--note", _note(project), "--page", URL, PAGE, "--fetch", "--json", env=_proxied(project, base))
+    assert p.returncode == 0, p.stderr
+    assert "Traceback" not in p.stderr
+    a, b = json.loads(p.stdout)["sources"]
+    assert (a["url"], a["result"]) == (URL, "unchanged")
+    assert b["url"] == link and b["result"] == "cant_fetch" and b["why"]
+    assert requests == []
 
 
 def test_check_fetches_the_sources_not_given(project, server):

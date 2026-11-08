@@ -982,7 +982,8 @@ def ascii_link(url: str) -> str:
     ASCII is returned as it is. Otherwise its host is encoded by UTS 46
     non-transitional rules (`_ascii_host`), and its userinfo, path, query and
     fragment have each character outside ASCII percent-encoded as UTF-8, `%`
-    escapes left alone. Raises PageError for what can't be encoded: a lone
+    escapes left alone. Raises PageError for what can't be encoded: a space,
+    a control character, `<` or `>` in ASCII, a lone
     surrogate (a byte that isn't UTF-8 in the command line), a space, line
     break, format or private-use character outside ASCII (no key-source line
     could name it), a link that isn't well-formed, a host as `_ascii_host`
@@ -990,6 +991,8 @@ def ascii_link(url: str) -> str:
     ASCII."""
     if url.isascii():
         return url
+    if any(c <= " " or c in "<>\x7f" for c in url):  # as `link_problem` refuses; urlsplit would strip some
+        raise PageError("it holds a space, a line break, a control character, `<` or `>`")
     if any(unicodedata.category(c) in ("Cc", "Cf", "Cs", "Co", "Cn", "Zs", "Zl", "Zp") for c in url if not c.isascii()):
         raise PageError("it holds a character outside ASCII that can't be encoded (a byte that isn't UTF-8, a space, a line break, or a format or unassigned character)")
     try:
