@@ -245,6 +245,21 @@ def test_start_offers_an_item_linking_an_open_research_issue_as_that_study_s_car
     assert "never started afresh" in row and "second study" in row
 
 
+def test_a_destination_item_with_a_study_under_way_is_that_study_s_carry_on_not_a_spec_to_start():
+    # A map's Destination item has no issue of its own: its "Study under way" link is a comment
+    # on the map naming it (the study skill's section 5). `start` looks there for a clear map's
+    # next spec, and `next` skips that item while the study is open.
+    row = _row(_carrying_on(), "| An item whose issue links an open research issue")
+    assert "Destination item" in row and "comment on the map naming it" in row
+    assert "clear map" in row
+    clear = next(ln for ln in _read(NEXT).splitlines() if ln.startswith("- **A clear map**"))
+    assert '"Study under way: #<n>"' in clear and "comment on the map naming it" in clear
+    assert "`study` skill's section 5" in clear
+    # Skipped while its research issue is open, ready to spec again once it closes.
+    assert "skip" in clear.casefold() and "open" in clear
+    assert "that study's **Carry on**" in clear
+
+
 def test_start_skips_held_items():
     text = _read(START)
     rule = next(ln for ln in text.splitlines() if ln.startswith("**Held items.**"))
