@@ -193,6 +193,73 @@ def test_the_mark_goes_on_after_the_look_and_never_before():
     assert "§4 item 4" in part
 
 
+# --- faults (#571 round 3) ----------------------------------------------------------
+# The agent reports faults of their own ("a source not saved", "no source"),
+# each making its result `Result: not clean` as a wrong claim does. A fact
+# note whose only problem is `Bookings open at 9:00 ([help](https://example.com/help)).`,
+# with no saved copy of that address, must never be recorded clean, and its
+# fault is posted, fixed, looked at and marked as a wrong claim is.
+
+AGENT = KIT / "agents/research-checker.md"
+
+
+def test_the_check_is_clean_or_not_by_the_agent_s_result_line_a_fault_included():
+    agent = _flat(AGENT.read_text(encoding="utf-8"))
+    assert "The first line is `Result: clean` or `Result: not clean`" in agent
+    assert "Each makes the result `Result: not clean`, as a wrong claim does" in agent
+    part = _part("The research check")
+    assert "The check is clean when it found no claim wrong." not in part
+    assert "The check is clean when the first line of its result is `Result: clean`." in part
+    s = part.split("`Result: clean`.", 1)[1].split(".", 1)[0]
+    assert "`Result: not clean`" in s and "fault" in s and "claim" in s
+    # The record follows the agent's first line, never the session's own count.
+    comment = _part("The comment")
+    assert "(`--not-clean` when its result is `Result: not clean`.)" in comment
+    assert "when it found a claim wrong" not in comment
+
+
+def test_the_comment_posts_the_faults_after_the_record_as_the_claims_are():
+    part = _part("The comment")
+    s = _sentence(part, "the research record first")
+    assert "the claims it found wrong and the faults" in s
+    assert "with the listed claims and faults after it" in part
+    # A finding the checker didn't check is posted too, and never makes it not clean.
+    assert "not checked" in part
+
+
+def test_the_look_carries_the_faults_as_it_carries_the_claims():
+    part = _part("The look")
+    assert "Fix the claims and faults the research check listed" in part
+    assert "`claims.md`: the claims and faults the research check listed" in part
+    s = _sentence(part, "didn't change counts as still wrong")
+    assert "A listed claim or fault whose line didn't change" in s
+    s = _sentence(part, "The look is clean")
+    assert "fault" in s
+    s = _sentence(part, "every claim still wrong")
+    assert "every claim still wrong and every fault still there" in s
+
+
+def test_the_mark_goes_on_a_fault_still_there_as_on_a_claim_still_wrong():
+    part = _part("The mark")
+    assert "a claim it found still wrong or a fault still there" in part
+
+
+# #571 round 3, findings 3 and 6: the look's brief named only the folder,
+# `changed.patch` and `claims.md`, so a later session's look, told nothing about
+# the owner's list, read it as `none` and called a true finding wrong on a
+# changed line, where the check had left it not checked.
+
+
+def test_the_look_is_given_whatever_else_the_agent_s_file_asks_for_the_owner_s_list_included():
+    agent = _flat(AGENT.read_text(encoding="utf-8"))
+    assert "for the research check and the look, the list of what the owner brought in" in agent
+    assert "a later session's research check and its look have no list" in agent
+    part = _part("The look")
+    s = _sentence(part, "give a fresh `research-checker`")
+    assert "whatever else its file asks for" in s
+    assert "the list of what the owner brought in" in s and "isn't available" in s
+
+
 def test_records_count_at_merge_by_4_item_4_and_merge_check_reads_them():
     s = _section()
     assert "`research_none`" in s and "`research_needs_look`" in s and "`research_needs_marks`" in s

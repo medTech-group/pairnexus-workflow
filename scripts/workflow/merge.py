@@ -276,12 +276,12 @@ REASONS = {
     }),
     # A pull request of research notes (#509, spec #505): in place of every review reason above.
     "research_none": Reason("review_panel", "review", {
-        "new": ("Not yet: these research notes haven't had their research check.", "Check them now: one checker reads each claim against its source's saved copy, once."),
-        "developer": ("Not yet: no research record from an account with write access on this pull request of research notes (every file under `docs/research/`).", "Run the research check (one `research-checker` reads each claim against its source's saved copy, one pass), and post its record first in the comment (`workflow review-record --kind research --round 1 --reviewers research`), then the claims it found wrong."),
+        "new": ("Not yet: these research notes haven't had their research check.", "Check them now: one checker reads each claim citing a saved copy against it, once."),
+        "developer": ("Not yet: no research record from an account with write access on this pull request of research notes (every file under `docs/research/`).", "Run the research check (one `research-checker` reads each claim citing a saved copy against it, whatever its label, one pass), and post its record first in the comment (`workflow review-record --kind research --round 1 --reviewers research`), then the claims it found wrong and the faults."),
     }),
     "research_needs_look": Reason("review_panel", "review", {
-        "new": ("Not yet: the research check found claims to fix.", "Fix them, then ask for the look at the fix: a fresh checker reads only what changed and the claims it listed."),
-        "developer": ("Not yet: the research check on {round_short} wasn't clean.", "Fix the claims it listed, then the look at a fix: a fresh `research-checker` reads the lines changed since and the listed claims; post its record first (`workflow review-record --kind research --round 2 --reviewers research`), then any claim still wrong."),
+        "new": ("Not yet: the research check found claims or faults to fix.", "Fix them, then ask for the look at the fix: a fresh checker reads only what changed and the claims and faults it listed."),
+        "developer": ("Not yet: the research check on {round_short} wasn't clean.", "Fix the claims and faults it listed, then the look at a fix: a fresh `research-checker` reads the lines changed since and the listed claims and faults; post its record first (`workflow review-record --kind research --round 2 --reviewers research`), then any claim still wrong and any fault still there."),
     }, cases={
         "changed": {
             "new": ("Not yet: the notes changed after their research check.", "Ask for the look at the change: a fresh checker reads only what changed."),
@@ -289,8 +289,8 @@ REASONS = {
         },
     }),
     "research_needs_marks": Reason("review_panel", None, {
-        "new": ("Not yet: the look at the fix found a claim still wrong, and it isn't marked yet.", "Add the mark ` **(unconfirmed)**` at the end of each line holding a claim it listed, and push. Nothing more is checked."),
-        "developer": ("Not yet: the look on {round_short} wasn't clean, and no mark ` **(unconfirmed)**` has been added since.", "Add the mark at the end of each line holding a claim the look listed, and push: only marks may follow the look, and no further look runs."),
+        "new": ("Not yet: the look at the fix found a claim still wrong or a fault still there, and it isn't marked yet.", "Add the mark ` **(unconfirmed)**` at the end of each line holding a claim or fault it listed, and push. Nothing more is checked."),
+        "developer": ("Not yet: the look on {round_short} wasn't clean, and no mark ` **(unconfirmed)**` has been added since.", "Add the mark at the end of each line holding a claim or fault the look listed, and push: only marks may follow the look, and no further look runs."),
     }),
     "research_more_than_marks": Reason("review_panel", None, {
         "new": ("Not yet: the notes changed after the look at the fix by more than the unconfirmed mark.", "Only marks may follow that look: take the other change out again, or put it in a new research pull request."),
