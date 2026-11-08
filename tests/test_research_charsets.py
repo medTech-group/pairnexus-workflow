@@ -749,9 +749,11 @@ def test_the_study_skill_refuses_only_a_headers_label_the_standard_doesnt_list_a
     body, _ = _note_531()
     assert "A byte order mark wins over any label, as the standard says" in body
     assert (
-        "The header's label is its first `charset=` that starts, after any opening quote, with an ASCII letter, a digit or one of `_.:-`, "
-        "up to the first character that isn't one; a header with none names no charset, and an HTML page is then read by its `<meta>`" in body
+        "The header's label is its first `charset` parameter: a `charset=`, in either case, right after a `;` and any spaces or tabs, "
+        "whose value starts, after any opening quote, with an ASCII letter, a digit or one of `_.:-`, read up to the first character "
+        "that isn't one; a header with none names no charset, and an HTML page is then read by its `<meta>`" in body
     )
+    assert "its first `charset=` that starts" not in body
     assert "a `<meta>` naming UTF-16 is read as UTF-8, and one naming x-user-defined as windows-1252, as HTML says" in body
 
 
