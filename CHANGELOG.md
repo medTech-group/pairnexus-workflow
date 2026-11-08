@@ -46,6 +46,10 @@
 
 - **For projects updating:** nothing to do. Tests: `tests/test_decision_questions.py`.
 
+**Research text names a key source's saved text "a saved copy" everywhere** (#545, found reviewing #511, part of spec #505). The research check reads each claim against its source's saved copy: the flow's "Research" section, the README's `/research` line, the `merge-check` skill and `merge-check`'s `research_none` reason said "saved source", the `study` skill's "saved copy" under another name. The meaning is unchanged.
+
+- **For projects updating:** nothing to do. Tests: `tests/test_research_notes.py`.
+
 ## 0.1.21
 
 **Decision questions asked in a message are easier to read.** A recommendation now has its own labelled part, "➡️ Recommended:", with its evidence, and the alternatives have theirs, so a recommendation can't be mistaken for a decision already made. Questions asked as clickable choices are unchanged.
