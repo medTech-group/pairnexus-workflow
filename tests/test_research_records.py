@@ -156,6 +156,15 @@ def test_stakes_lines_are_shown_without_control_characters_or_sensitive_data(pro
     assert p.stdout == '#42 2026-11-07 "Payments now": Stakes: touches [31mpayments [left out]. Recommended: study.\n'
 
 
+def test_stakes_lines_and_titles_are_shown_without_lone_surrogates(project):
+    p = _run(project, "stakes", *_files(project, [_comment(1, 42, _stakes("Stakes: a \ud800 b"))]))
+    assert p.returncode == 0, p.stderr
+    assert p.stdout == "#42 2026-11-07: Stakes: a b\n"
+    p = _run(project, "stakes", *_files(project, [_comment(1, 42, STAKES)], issues=[{"number": 42, "title": "Deposits \ud800 now"}]))
+    assert p.returncode == 0, p.stderr
+    assert p.stdout.startswith('#42 2026-11-07 "Deposits now": Stakes: touches payments.')
+
+
 def test_stakes_reads_windows_line_endings(project):
     p = _run(project, "stakes", *_files(project, [_comment(1, 42, STAKES.replace("\n", "\r\n"))]))
     assert p.returncode == 0, p.stderr

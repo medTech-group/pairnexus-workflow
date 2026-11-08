@@ -120,13 +120,13 @@ def token_record(text, agents_only: bool = True) -> Tokens | None:
 
 
 def shown(text, patterns: list[str]) -> str:
-    """Text for one line of output: whitespace made one space, other control
-    and format characters dropped, the profile's sensitive patterns left out,
-    and at most LINE_LIMIT characters."""
+    """Text for one line of output: other control and format characters and
+    lone surrogates dropped, whitespace made one space, the profile's sensitive
+    patterns left out, and at most LINE_LIMIT characters."""
     from .research import leave_out
 
-    text = re.sub(r"\s+", " ", str(text or "")).strip()
-    text = "".join(c for c in text if unicodedata.category(c) not in ("Cc", "Cf"))
+    text = "".join(c for c in str(text or "") if c.isspace() or unicodedata.category(c) not in ("Cc", "Cf", "Cs"))
+    text = re.sub(r"\s+", " ", text).strip()
     text = leave_out(text, patterns)[0]
     return text if len(text) <= LINE_LIMIT else text[: LINE_LIMIT - 1] + "…"
 
