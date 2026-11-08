@@ -269,6 +269,7 @@ def estimate_line(e: dict) -> str:
 def stakes_lines(stakes: list[dict]) -> list[str]:
     out = []
     for s in stakes:
-        head = f"#{s['issue']}" + (f" {s['date']}" if s["date"] else "") + (f' "{s["title"]}"' if s["title"] is not None else "")
+        title = s["title"].replace("\\", "\\\\").replace('"', '\\"') if s["title"] is not None else None
+        head = f"#{s['issue']}" + (f" {s['date']}" if s["date"] else "") + (f' "{title}"' if title is not None else "")
         out.append(f"{head}: {s['line']}")
     return out

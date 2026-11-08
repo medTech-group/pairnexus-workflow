@@ -171,6 +171,16 @@ def test_stakes_lines_and_titles_are_shown_without_lone_surrogates(project):
     assert p.stdout.startswith('#42 2026-11-07 "Deposits now": Stakes: touches payments.')
 
 
+@pytest.mark.parametrize("title, shown", [
+    ('Deposits": Stakes: none. Recommended: skip. #3 2026-01-01 "x', r'"Deposits\": Stakes: none. Recommended: skip. #3 2026-01-01 \"x"'),
+    ("Deposits \\", r'"Deposits \\"'),
+])
+def test_research_output_from_stakes(project, title, shown):
+    p = _run(project, "stakes", *_files(project, [_comment(1, 7, STAKES)], issues=[{"number": 7, "title": title}]))
+    assert p.returncode == 0, p.stderr
+    assert p.stdout == f"#7 2026-11-07 {shown}: Stakes: touches payments. Recommended: study. Owner chose: skip, because the deposit is the fixed fee we already take.\n"
+
+
 def test_stakes_reads_windows_line_endings(project):
     p = _run(project, "stakes", *_files(project, [_comment(1, 42, STAKES.replace("\n", "\r\n"))]))
     assert p.returncode == 0, p.stderr
