@@ -471,8 +471,7 @@ def write_files(files: list[tuple[Path, str]]) -> None:
     naming the path that failed."""
     made: list[Path] = []  # folders made, in order
     temps: list[Path] = []  # new files beside each path, not yet in place
-    placed: list[tuple[Path, Path | None]] = []  # (path, the old file moved aside, or None)
-    olds: list[Path] = []
+    placed: list[tuple[Path, Path | None]] = []  # (path, the old file moved aside, or None), recorded before the move
     now = None
     try:
         modes: list[int | None] = []
@@ -507,9 +506,9 @@ def write_files(files: list[tuple[Path, str]]) -> None:
             old = None
             if mode is not None:
                 old = Path(now).parent / f".workflow-{secrets.token_hex(6)}.old"
-                os.rename(now, old)
-                olds.append(old)
             placed.append((Path(now), old))
+            if old is not None:
+                os.rename(now, old)
             os.replace(tmp, now)
             temps.remove(tmp)
     except BaseException as e:  # anything, an interrupt too: undone, then raised again
@@ -519,14 +518,11 @@ def write_files(files: list[tuple[Path, str]]) -> None:
                 if old is None:
                     if os.path.lexists(path):  # there was nothing here: it is the new file
                         os.unlink(path)
-                else:
+                elif os.path.lexists(old):  # else never moved aside: the old file is still in place
                     os.replace(old, path)
-                    olds.remove(old)
             except OSError:
-                if old is not None:
-                    olds.remove(old)
                 kept.append((path, old))
-        for f in temps + olds:
+        for f in temps:  # never an old file: each is put back, kept or never moved
             try:
                 os.unlink(f)
             except OSError:
@@ -542,11 +538,12 @@ def write_files(files: list[tuple[Path, str]]) -> None:
         if not isinstance(e, OSError):
             raise
         raise WriteError(now, e.strerror or str(e), kept) from None
-    for old in olds:
-        try:
-            os.unlink(old)
-        except OSError:
-            pass
+    for _, old in placed:
+        if old is not None:
+            try:
+                os.unlink(old)
+            except OSError:
+                pass
 
 
 # ---------- reading the layout ----------

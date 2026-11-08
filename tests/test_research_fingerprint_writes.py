@@ -4,9 +4,11 @@ source's saved copy and its fingerprint file from one fetch, both or neither
 local server); seam 2, the `study` skill's "Saving a key source" and its
 examples, tied to what the command writes."""
 
+import inspect
 import json
 import os
 import re
+import sys
 from datetime import date
 from pathlib import Path
 
@@ -386,6 +388,76 @@ def test_any_other_exception_undoes_everything_and_is_raised_again(project, monk
         research.write_files(files)
     monkeypatch.undo()
     assert _files(project) == before
+
+
+def _old_files(folder: Path) -> tuple:
+    """Re-saving a key source: each old file there, as _files sees it (inode and
+    all), and every file moved aside (`*.old`) under folder."""
+    return [x for x in _files(folder) if x[0] in ("a.md", "a.fingerprints")], sorted(p.name for p in folder.glob("*.old"))
+
+
+def _there_before(project) -> Path:
+    folder = project / "old"
+    folder.mkdir()
+    for name in ("a.md", "a.fingerprints"):
+        (folder / name).write_text(f"the old {name}\n")
+    return folder
+
+
+def test_an_interrupt_at_any_line_while_writing_puts_each_old_file_back(project):
+    """An interrupt at any line of writing, one line at a time (traced): it is
+    raised again, each old file back in place, the same file, none left aside."""
+    folder = _there_before(project)
+    want = _old_files(folder)
+    assert len(want[0]) == 2 and want[1] == []
+    lines, start = inspect.getsourcelines(research.write_files)
+    first = start + next(i for i, l in enumerate(lines) if l.strip() == "try:")
+    last = start + next(i for i, l in enumerate(lines) if l.strip().startswith("except BaseException"))
+    # an interrupt never arrives at a `try:` line, though a trace can raise there, outside its handler
+    lines_traced = {start + i for i, l in enumerate(lines) if first < start + i < last and l.strip() != "try:"}
+    code = research.write_files.__code__
+    n = 0
+    while True:
+        n += 1
+        seen = [0]
+
+        def local(frame, event, arg):
+            if event == "line" and frame.f_lineno in lines_traced:
+                seen[0] += 1
+                if seen[0] == n:
+                    raise KeyboardInterrupt
+            return local
+
+        sys.settrace(lambda frame, event, arg: local if frame.f_code is code else None)
+        try:
+            research.write_files([(folder / "a.md", "new\n"), (folder / "a.fingerprints", "url: x\n")])
+        except KeyboardInterrupt:
+            pass
+        else:
+            break  # past the last line: both written
+        finally:
+            sys.settrace(None)
+        assert _old_files(folder) == want, f"interrupted at line event {n}"
+    assert n > 10  # every line of writing was reached
+    assert (folder / "a.md").read_text() == "new\n"
+
+
+def test_an_interrupt_once_an_old_file_is_moved_aside_puts_it_back(project, monkeypatch):
+    """os.rename moves the old saved copy aside, then an interrupt comes."""
+    folder = _there_before(project)
+    want = _old_files(folder)
+    real = os.rename
+
+    def fake(src, dst):
+        real(src, dst)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(research.os, "rename", fake)
+    with pytest.raises(KeyboardInterrupt):
+        research.write_files([(folder / "a.md", "new\n"), (folder / "a.fingerprints", "url: x\n")])
+    monkeypatch.undo()
+    assert _old_files(folder) == want
+    assert (folder / "a.md").read_text() == "the old a.md\n"
 
 
 def test_a_failure_writing_the_second_new_file_removes_the_first(project, monkeypatch):
