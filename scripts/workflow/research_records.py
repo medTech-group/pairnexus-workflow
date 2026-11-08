@@ -177,17 +177,8 @@ def titles(issues) -> dict[int, str]:
 
 def candidates(comments) -> list[dict]:
     """The comments that hold a stakes or token record, agents' marker or not,
-    oldest first, each comment once (by its number, else its link).
-    `comments` is any shape `posts.comments_from` reads."""
-    seen, once = set(), []
-    for c in comments_from(comments):
-        url = c.get("html_url") or c.get("url")
-        key = _number(c) if _number(c) is not None else (url if isinstance(url, str) and url else None)
-        if key is not None and key in seen:
-            continue
-        seen.add(key)
-        once.append(c)
-    return [c for c in _ordered(once) if stakes_line(c.get("body"), False) or token_record(c.get("body"), False)]
+    oldest first. `comments` is any shape `posts.comments_from` reads."""
+    return [c for c in _ordered(comments_from(comments)) if stakes_line(c.get("body"), False) or token_record(c.get("body"), False)]
 
 
 def _ordered(comments: list[dict]) -> list[dict]:

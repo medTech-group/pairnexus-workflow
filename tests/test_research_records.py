@@ -131,18 +131,6 @@ def test_stakes_counts_only_agents_comments_from_accounts_with_write_access(proj
     assert "left out 1 comment" in p.stderr and "write access" in p.stderr and "agents' marker" in p.stderr
 
 
-def test_stakes_lists_a_comment_given_twice_once(project):
-    twice = [_comment(1, 42, STAKES), _comment(1, 42, STAKES), _comment(2, 57, STAKES, login="reader"), _comment(2, 57, STAKES, login="reader")]
-    p = _run(project, "stakes", *_files(project, twice))
-    assert p.returncode == 0, p.stderr
-    assert p.stdout.count("Stakes: ") == 1 and p.stdout.startswith("#42 ")
-    assert "left out 1 comment " in p.stderr
-    # Two comments alike but for their numbers are both listed.
-    p = _run(project, "stakes", *_files(project, [_comment(1, 42, STAKES), _comment(2, 42, STAKES)]))
-    assert p.returncode == 0, p.stderr
-    assert p.stdout.count("Stakes: ") == 2
-
-
 def test_stakes_reads_write_access_whatever_the_logins_case(project):
     p = _run(project, "stakes", *_files(project, [_comment(1, 42, STAKES, login="Owner")], perms={"owner": "admin"}))
     assert p.returncode == 0, p.stderr
