@@ -323,6 +323,40 @@ def test_a_new_project_s_later_items_leave_its_destination_items_to_the_wait(off
     assert text.index(_wait(offer)) < text.lower().index("fixes, wording and internal changes")
 
 
+def _clear_map() -> str:
+    """`next` §1's rule for a clear map's next spec."""
+    lines = [ln for ln in NEXT.read_text(encoding="utf-8").splitlines() if ln.startswith("- **A clear map**")]
+    assert len(lines) == 1, "next §1 has no single **A clear map** rule"
+    return lines[0]
+
+
+def test_next_s_clear_map_rule_holds_the_destination_items_for_the_verdict():
+    # #583's round 1, finding 9: `next` §1 picked a clear map's first Destination item with no
+    # spec, skipping only one named by a "Study under way" comment, so §2 announced it before
+    # the offer's wait was reached. The wait is in the readiness rule itself.
+    clear = _clear_map()
+    wait = clear[clear.index("None is ready while"):]
+    assert "the map's Notes link an open research issue" in wait
+    assert "that study is offered as its **Carry on**" in wait
+
+
+@OFFERS
+def test_the_offer_s_wait_points_to_next_s_clear_map_rule(offer):
+    # A Destination item has no issue number of its own, so "picked by number" fits none.
+    wait = _wait(offer)
+    assert '`next` §1, "A clear map"' in wait or '§1, "A clear map"' in wait
+    assert "picked by number" not in wait
+
+
+def test_start_s_carry_on_row_offers_the_study_for_a_clear_map_whose_notes_link_it():
+    # Finding 9: `start`'s rows offered "Carry on: the clear map's next spec", which `next` then
+    # refused. The study's own row takes the map's Destination items while its issue is open.
+    text = START.read_text(encoding="utf-8")
+    row = next(ln for ln in text.splitlines() if ln.startswith("| An item whose issue links an open research issue"))
+    assert "a clear map's Destination items while its Notes link an open research issue" in row
+    assert "that study's **Carry on**" in row
+
+
 @OFFERS
 def test_the_new_project_rule_comes_first_in_whether(offer):
     text = offer()
