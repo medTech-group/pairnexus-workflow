@@ -1,8 +1,8 @@
 """#515: offering a study (spec #505, "When a study is offered").
 Seam 2: the shipped text, read as text contracts, as `tests/test_end_check.py`
 and `tests/test_study_skill.py` read it. `start` and `next` each offer a study:
-always for a new project, by the stakes for a feature, never for fixes, wording
-or internal changes, and with one stakes line for work a current note covers;
+by the stakes for a feature, never for fixes, wording or internal changes, and
+with one stakes line for work a current note covers;
 they post the stakes record, read earlier judgements, show the size and load
 `study`."""
 
@@ -42,25 +42,6 @@ OFFERS = pytest.mark.parametrize("offer", [_start, _next], ids=["start", "next"]
 
 
 # --- when it is offered -------------------------------------------------------
-
-
-@OFFERS
-def test_a_new_project_is_always_offered_a_study(offer):
-    text = offer()
-    assert "new project" in text
-    assert "always" in text
-
-
-@OFFERS
-def test_a_new_project_s_study_is_one_and_its_map_s_destination_items_are_features(offer):
-    # A new project's study runs once, before charting; a map's Destination item is
-    # then judged as a feature, so a current note's skip applies to it, code or none.
-    text = offer()
-    assert "its one study" in text
-    assert "before charting" in text
-    assert "Destination item" in text and "judged as a feature" in text
-    assert "even while the project has no code" in text
-    assert text.index("judged as a feature") < text.index("Work a current note already covers")
 
 
 @OFFERS

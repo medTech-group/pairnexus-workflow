@@ -278,7 +278,6 @@ For each item, read the flow's section for its path and follow it, skipping noth
 
 **Offering a study** (the `study` skill), before a Spec item's interview and before a Map item's charting. A study researches the people and the problem first. A Quick ticket, Find the cause first, Add to an existing issue and Answer it never get one.
 1. **Whether to offer it:**
-   - **A new project:** always: recommend a study, its one study: before charting its map (Map, below), or before the interview when its first item is a spec. After that, a map's Destination item, and every other item, is judged as a feature (below), even while the project has no code, so work that study's current note covers is skipped.
    - **Fixes, wording and internal changes:** skipped, with nothing asked or posted.
    - **Work a current note already covers** (`WF research notes` lists the current notes): skipped with no question, but with one stakes line naming the note, posted as the stakes record (step 3).
    - **Any other feature:** judge its stakes and say why. Recommend a study when it involves new people or a new need that no current note covers; when it is high-stakes, by your judgement (safety, money, privacy and the law are things you must consider, not a list that decides); when it is hard to undo (stored data, pricing, a public promise, a legal commitment); or when it is a bet (they say "not sure" to whether users want it). Otherwise recommend a skip.
