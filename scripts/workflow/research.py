@@ -363,7 +363,10 @@ def fetch(url: str, timeout: float = FETCH_TIMEOUT, limit: int = FETCH_LIMIT) ->
     with the reason it can't."""
     if not url.isascii():
         raise PageError("it holds characters outside ASCII; cite the link percent-encoded")
-    parts = urllib.parse.urlsplit(url)
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError as e:  # a bracketed host that isn't an IP address, say (#530)
+        raise PageError(f"it isn't a well-formed link ({e})") from None
     if parts.scheme not in ("http", "https") or not parts.netloc:
         raise PageError("it isn't an http or https link")
     opener = urllib.request.OpenerDirector()

@@ -873,6 +873,41 @@ def test_check_cant_fetch(project, server):
     assert "can't fetch" in text
 
 
+# #530: links `urllib.parse.urlsplit` raises ValueError on (a host holding a
+# character NFKC turns into `/`, a bracketed host that isn't an IP address).
+_UNSPLITTABLE = ["https://example.com／help", "http://[::1/", "http://[abc]/"]
+
+
+@pytest.mark.parametrize("link", _UNSPLITTABLE, ids=["fullwidth-slash", "open-bracket", "not-an-ip"])
+def test_fingerprint_cant_fetch_a_link_it_cant_split(project, seen, link):
+    base, requests = seen
+    with pytest.raises(research.PageError):
+        research.fetch(link)
+    proxy = {k: base for k in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY")}
+    p = _cli("fingerprint", link, "--fetch", env={**_env(project), **proxy, "no_proxy": "", "NO_PROXY": ""})
+    assert p.returncode == 1 and p.stdout == ""
+    assert "Traceback" not in p.stderr
+    assert p.stderr.startswith(f"workflow research fingerprint: can't fetch {link}: ") and p.stderr.count("\n") == 1
+    assert requests == []
+
+
+@pytest.mark.parametrize("link", _UNSPLITTABLE, ids=["fullwidth-slash", "open-bracket", "not-an-ip"])
+def test_check_cant_fetch_a_link_it_cant_split_and_reads_the_others(project, link):
+    other = _two_sources(project)
+    folder = _note(project).parent
+    for f in ("note.md", "sources/groups.md", "sources/groups.fingerprints"):
+        (folder / f).write_text((folder / f).read_text(encoding="utf-8").replace(other, link), encoding="utf-8")
+    p = _check(project, (URL, PAGE), extra=["--fetch"])
+    assert p.returncode == 0, p.stderr
+    assert "Traceback" not in p.stderr
+    a, b = json.loads(p.stdout)["sources"]
+    assert (a["url"], a["result"]) == (URL, "unchanged")
+    assert b["url"] == link and b["result"] == "cant_fetch" and b["why"]
+    t = _check(project, (URL, PAGE), extra=["--fetch"], json_out=False)
+    assert t.returncode == 0 and "Traceback" not in t.stderr
+    assert f"- {URL}: unchanged" in t.stdout and f"- {link}: can't fetch (" in t.stdout
+
+
 def test_check_fetches_the_sources_not_given(project, server):
     base, routes = server
     routes["/help/booking"] = (200, "text/html", PAGE.read_bytes())
