@@ -151,7 +151,7 @@ A study researches the people and the problem before grilling: who has it, what 
 5. the research check and the look (section 10);
 6. the verdict (section 11), then closing (section 12), with the token record (section 3).
 
-Grilling, still uncapped, comes after the verdict, never before it, and starts from the study's findings and its ranked questions. For a new project on a map, the intake and the panel run before charting's first step, and the research issue is linked from the map's Notes, never made one of the map's children (map tickets carry only `wayfinder:` labels). Every file and post of a study follows the sensitive-data rule (section 13).
+Grilling, still uncapped, comes after a verdict of build it or prototype first, never before the verdict, and never after stop, and starts from the study's findings and its ranked questions. For a new project on a map, the intake and the panel run before charting's first step, and the research issue is linked from the map's Notes, never made one of the map's children (map tickets carry only `wayfinder:` labels). Every file and post of a study follows the sensitive-data rule (section 13).
 
 ## 5. The research issue
 

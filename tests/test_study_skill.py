@@ -69,7 +69,10 @@ def test_the_study_runs_in_the_spec_s_order_from_the_research_issue_to_the_verdi
              "the research check and the look", "the verdict", "closing", "the token record"]
     at = [order.index(step) for step in steps]
     assert at == sorted(at), "the study's steps are listed in order"
-    assert "Grilling, still uncapped, comes after the verdict" in s
+    # Grilling follows build it or prototype first, and never stop (the flow's "Research", **The order**).
+    assert "Grilling, still uncapped, comes after a verdict of build it or prototype first" in s
+    assert "never before the verdict, and never after stop" in s
+    assert "comes after the verdict, never before it" not in s
     assert "starts from the study's findings and its ranked questions" in s
 
 
