@@ -681,7 +681,14 @@ MULTI_BYTE_DECODERS = {
 }
 
 
+_LABEL = re.compile(r"[A-Za-z0-9_.:-]+", re.A)
+
+
 def _cut(label: str) -> str:
+    """A label as a refusal shows it (research output)."""
+    label = label.strip("\t\n\f\r ")
+    if not _LABEL.fullmatch(label):
+        return "a label outside ASCII letters, digits and `_.:-`"
     return label if len(label) <= _SHOWN_LABEL else label[:_SHOWN_LABEL] + "…"
 
 

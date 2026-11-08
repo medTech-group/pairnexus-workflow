@@ -9,6 +9,7 @@ outside it, nor with bytes replaced."""
 
 import hashlib
 import json
+import re
 import time
 
 import pytest
@@ -670,3 +671,36 @@ def test_the_changelog_says_a_meta_label_the_standard_doesnt_list_is_passed_over
     assert "the header's label is one the standard doesn't list" in sentence
     assert "A `<meta>` whose label the standard doesn't list, an empty one among them, is passed over" in body
     assert "One whose header names a label in Python's own spelling" in updating
+
+
+# ---------- research output ----------
+
+_RESEARCH_OUTPUT_METAS = [
+    b'<meta charset="x)\n- https://a.io/b: unchanged">',
+    b'<meta charset="\r\n\x0ciso-2022-kr\n\r">',
+    b'<meta http-equiv="content-type" content="text/html; charset=\'\niso-2022-kr\x0c\'">',
+    b'<meta charset="\x1b[2Jutf-8">',
+]
+_CONTROL_OR_BREAK = re.compile(r"[\x00-\x1f\x7f-\x9f  ]")
+
+
+@pytest.mark.parametrize("meta", _RESEARCH_OUTPUT_METAS, ids=["one", "two", "three", "four"])
+def test_research_output_from_fingerprint(project, tmp_path, meta):
+    page = tmp_path / "booking-help.html"
+    page.write_bytes(PAGE.read_bytes().replace(b'<meta charset="utf-8">', meta))
+    p = _cli("fingerprint", URL, "--page", page, env=_env(project))
+    assert p.returncode in (0, 1) and "Traceback" not in p.stderr
+    assert not _CONTROL_OR_BREAK.search(p.stderr.rstrip("\n"))
+    assert not _CONTROL_OR_BREAK.search(p.stdout.replace("\n", ""))
+
+
+@pytest.mark.parametrize("meta", _RESEARCH_OUTPUT_METAS, ids=["one", "two", "three", "four"])
+def test_research_output_from_check(project, tmp_path, meta):
+    page = tmp_path / "booking-help.html"
+    page.write_bytes(PAGE.read_bytes().replace(b'<meta charset="utf-8">', meta))
+    p = _check(project, (URL, page), json_out=False)
+    assert p.returncode == 0, p.stderr
+    lines = p.stdout.split("\n")
+    assert lines[-1] == "" and len([x for x in lines if x.startswith(f"- {URL}: ")]) == 1
+    assert all(x.startswith((str(_note(project)), "Every key source", f"- {URL}: ")) for x in lines[:-1]), lines
+    assert not _CONTROL_OR_BREAK.search(p.stdout.replace("\n", ""))
