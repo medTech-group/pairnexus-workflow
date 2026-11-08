@@ -348,6 +348,30 @@ def test_the_offer_s_wait_points_to_next_s_clear_map_rule(offer):
     assert "picked by number" not in wait
 
 
+def test_the_new_project_s_verdict_says_what_its_destination_items_do():
+    # #583's round 1, finding 10: once the research issue closed, the Destination items went on
+    # to their interviews whatever the verdict, though grilling never follows stop, and the
+    # prototype comes before grilling on prototype first.
+    clear = _clear_map()
+    after = clear[clear.index("Once it closes"):]
+    assert "they are ready to spec once it closes" not in clear
+    build = after[after.index("on **Build it**"):after.index("on **Prototype first**")]
+    assert "ready to spec" in build
+    proto = after[after.index("on **Prototype first**"):after.index("on **Stop**")]
+    assert "`wayfinder:prototype` ticket" in proto and "isn't clear until it closes" in proto
+    stop = after[after.index("on **Stop**"):]
+    assert "none is ever ready" in stop
+    assert "Out of scope" in stop and "`study` skill's section 5" in stop
+
+
+@OFFERS
+def test_the_offer_s_wait_holds_past_a_stop(offer):
+    # Finding 10: the wait isn't only "while its research issue is open".
+    wait = _wait(offer)
+    assert wait.startswith("- **A map whose Notes link a study's research issue**")
+    assert "only as the verdict says, never on **Stop**" in wait
+
+
 def test_start_s_carry_on_row_offers_the_study_for_a_clear_map_whose_notes_link_it():
     # Finding 9: `start`'s rows offered "Carry on: the clear map's next spec", which `next` then
     # refused. The study's own row takes the map's Destination items while its issue is open.
