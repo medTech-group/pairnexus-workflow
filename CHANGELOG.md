@@ -54,6 +54,10 @@
 
 - **For projects updating:** nothing to do. Tests: `tests/test_research_notes.py`.
 
+**`workflow research fingerprint` writes the saved copy and the fingerprint file itself** (#529, split out of #506, part of spec #505). `fingerprint <link> --fetch --saved F --fingerprints F` writes a key source's saved copy and its fingerprint file from one fetch, in the `study` skill's layout, making their folders when missing; the saved copy's `Accessed:` line is today's date, and the profile's `[sensitive].patterns` are left out of its text, never out of the hashes. It writes both or neither: when either file can't be written (a folder in its way, a name too long, a symbolic link, a path that names a folder), it exits 1 with one line naming the file, and neither file is written or changed, and no folder it made is left behind. When a file can't then be put back as it was, or a new file can't be removed, the line names it instead, and where its old version is kept. It refuses with exit 1, before fetching anything, a link holding the profile's `[sensitive].patterns`, a link no key-source line could name (outside ASCII, holding a space, a line break, a control character, `<` or `>`, or not http or https with a host), a fingerprint file whose name doesn't end with `.fingerprints`, a saved copy whose name does, a path holding a backtick, a control character (a line break among them) or a byte that isn't UTF-8, and two paths naming one file. One of the two options without the other it refuses with exit 2. Without them it writes nothing, as before. The `study` skill's "Saving a key source" names the command in place of writing the two files by hand from `--json`.
+
+- **For projects updating:** nothing to do. Tests: `tests/test_research_fingerprint_writes.py`.
+
 ## 0.1.21
 
 **Decision questions asked in a message are easier to read.** A recommendation now has its own labelled part, "➡️ Recommended:", with its evidence, and the alternatives have theirs, so a recommendation can't be mistaken for a decision already made. Questions asked as clickable choices are unchanged.

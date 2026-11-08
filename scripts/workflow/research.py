@@ -20,10 +20,11 @@ fixtures are copied from:
   of the page as fetched, before anything is left out. Hashes only, no text.
 
 `fingerprint` reads a page (a file, or with `--fetch` the web), splits its text
-into paragraphs and hashes each; `check` compares a note's key sources against
-their fingerprints as a set; `notes` lists the notes marked `current`. None of
-it calls a model, and none of it writes anything: the session writes the saved
-copy and the fingerprint file from `fingerprint`'s output.
+into paragraphs and hashes each, and with `--saved` and `--fingerprints` writes
+the saved copy and the fingerprint file from that one read, both or neither
+(`write_files`); `check` compares a note's key sources against their
+fingerprints as a set; `notes` lists the notes marked `current`. None of it
+calls a model, and nothing else is written.
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ import hashlib
 import http.client
 import os
 import re
+import secrets
 import ssl
 import stat
 import unicodedata
@@ -44,6 +46,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 LEFT_OUT = "[left out]"
+THIRD_PARTY = "Third-party text: someone else's words, quoted to check this note's claims. Not covered by this repository's licence."
 NOTE_FILE = "note.md"
 FINGERPRINTS = ".fingerprints"  # a fingerprint file's name ends with it
 FIRST_BYTES = 512  # read of each other file in a topic's folder, to tell whether it's a fingerprint file
@@ -63,6 +66,19 @@ class PageError(Exception):
 
 class LayoutError(Exception):
     """A note, saved copy or fingerprint file that breaks the fixed layout."""
+
+
+class WriteError(Exception):
+    """A file `write_files` can't write: `path` as given, and why. `kept`
+    lists each (path, its old file) that couldn't be put back: the old file
+    is kept aside under that name, never removed; its old file is None for a
+    new file that couldn't be removed, which is left written."""
+
+    def __init__(self, path, why: str, kept: list | None = None):
+        super().__init__(f"{path} ({why})")
+        self.path = path
+        self.why = why
+        self.kept = kept or []
 
 
 def digest(text: str) -> str:
@@ -383,6 +399,159 @@ def page_paragraphs(raw: bytes, ctype: str) -> list[str]:
     if not paras:
         raise PageError("there is no text on it (a page built by JavaScript?)")
     return paras
+
+
+# ---------- writing a key source's two files ----------
+
+
+def fingerprints_text(url: str, paras: list[str]) -> str:
+    """The fingerprint file: `url: <link>`, then `<position> <sha256>` per
+    paragraph of the page as fetched."""
+    return "".join([f"url: {url}\n"] + [f"{i} {digest(t)}\n" for i, t in enumerate(paras, 1)])
+
+
+def saved_copy_text(url: str, accessed: str, paras: list[str]) -> str:
+    """The saved copy: its three header lines, a blank line, then the
+    paragraphs given (sensitive patterns already left out), one per position."""
+    return f"Source: {url}\nAccessed: {accessed}\n{THIRD_PARTY}\n\n" + "\n\n".join(paras) + "\n"
+
+
+def link_problem(url: str) -> str | None:
+    """Why a link can't go in a key source's two files, else None: each holds
+    it on a line of its own, and a key-source line names it as `<link>`. So
+    ASCII only, no whitespace, control character, `<` or `>`, and http or
+    https with a host. Checked before anything is read, fetched or written."""
+    if not url.isascii():
+        return "it holds characters outside ASCII; cite the link percent-encoded"
+    if any(c <= " " or c in "<>\x7f" for c in url):
+        return "it holds a space, a line break, a control character, `<` or `>`"
+    try:
+        parts = urllib.parse.urlsplit(url)
+        ok = parts.scheme in ("http", "https") and bool(parts.hostname)
+    except ValueError:
+        ok = False
+    return None if ok else "it isn't an http or https link with a host"
+
+
+def target_problem(saved: str, fps: str) -> tuple[str, str] | None:
+    """(the path as given, why) when the two paths can't be written whatever
+    the page holds, else None: checked before anything is fetched."""
+    for option, given in (("--saved", saved), ("--fingerprints", fps)):
+        # a key-source line names each path between backticks, on one line, in UTF-8 text: a surrogate (Cs),
+        # as a byte that isn't UTF-8 in the command line gives, can't be written there; named by its option, never echoed
+        if any(c == "`" or unicodedata.category(c) in ("Cc", "Cs") for c in given):
+            return (
+                f"the file given to {option}",
+                "its path holds a backtick, a control character (a line break among them) or a byte that isn't UTF-8, which no key-source line can name",
+            )
+    for given in (saved, fps):
+        if os.path.basename(given) in ("", ".", ".."):
+            return given, "it names a folder, not a file"
+    if not fps.endswith(FINGERPRINTS):
+        return fps, f"a fingerprint file's name ends with `{FINGERPRINTS}`"
+    if os.path.realpath(saved) == os.path.realpath(fps):
+        return fps, "--saved and --fingerprints name the same file"
+    if saved.casefold().endswith(FINGERPRINTS):  # `check` would take it for a fingerprint file no key-source line names
+        return saved, f"a saved copy's name doesn't end with `{FINGERPRINTS}`, a fingerprint file's"
+    return None
+
+
+def _kind_of(st: os.stat_result) -> str | None:
+    """Why an existing path can't be replaced by a file, or None for a file."""
+    if stat.S_ISREG(st.st_mode):
+        return None
+    if stat.S_ISDIR(st.st_mode):
+        return "it is a folder"
+    if stat.S_ISLNK(st.st_mode):
+        return "it is a symbolic link, which the file would be written through or replace"
+    return "it isn't a file"
+
+
+def write_files(files: list[tuple[Path, str]]) -> None:
+    """Write each (path, text), both or neither: the folders made, each text
+    written to a new file beside its path, and only then each put in place,
+    an existing file moved aside first. On any failure, or any exception (an
+    interrupt too, raised again once undone), everything is undone:
+    each file put back as it was (the same file, renamed back), each new file
+    and temporary file removed, and each folder made removed. An old file
+    that can't be put back is kept aside, never removed, and named in the
+    error's `kept`, as is a new file that can't be removed. Raises WriteError
+    naming the path that failed."""
+    made: list[Path] = []  # folders made, in order
+    temps: list[Path] = []  # new files beside each path, not yet in place
+    placed: list[tuple[Path, Path | None]] = []  # (path, the old file moved aside, or None), recorded before the move
+    now = None
+    try:
+        modes: list[int | None] = []
+        for now, _ in files:
+            missing = []
+            p = Path(now).parent
+            while not os.path.lexists(p) and p != p.parent:
+                missing.append(p)
+                p = p.parent
+            for d in reversed(missing):
+                os.mkdir(d)
+                made.append(d)
+        for now, _ in files:
+            try:
+                st = os.lstat(now)
+            except FileNotFoundError:
+                modes.append(None)
+                continue
+            why = _kind_of(st)
+            if why:
+                raise WriteError(now, why)
+            modes.append(stat.S_IMODE(st.st_mode))
+        for (now, text), mode in zip(files, modes):
+            tmp = Path(now).parent / f".workflow-{secrets.token_hex(6)}.tmp"
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+            temps.append(tmp)
+            with open(fd, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(text)
+            if mode is not None:
+                os.chmod(tmp, mode)
+        for (now, _), tmp, mode in zip(files, list(temps), modes):
+            old = None
+            if mode is not None:
+                old = Path(now).parent / f".workflow-{secrets.token_hex(6)}.old"
+            placed.append((Path(now), old))
+            if old is not None:
+                os.rename(now, old)
+            os.replace(tmp, now)
+            temps.remove(tmp)
+    except BaseException as e:  # anything, an interrupt too: undone, then raised again
+        kept: list[tuple[Path, Path | None]] = []  # (path, its old file, the only copy, kept; or None: a new file not removed)
+        for path, old in reversed(placed):  # each put back as it was
+            try:
+                if old is None:
+                    if os.path.lexists(path):  # there was nothing here: it is the new file
+                        os.unlink(path)
+                elif os.path.lexists(old):  # else never moved aside: the old file is still in place
+                    os.replace(old, path)
+            except OSError:
+                kept.append((path, old))
+        for f in temps:  # never an old file: each is put back, kept or never moved
+            try:
+                os.unlink(f)
+            except OSError:
+                pass
+        for d in reversed(made):
+            try:
+                os.rmdir(d)
+            except OSError:
+                pass
+        if isinstance(e, WriteError):
+            e.kept = kept
+            raise
+        if not isinstance(e, OSError):
+            raise
+        raise WriteError(now, e.strerror or str(e), kept) from None
+    for _, old in placed:
+        if old is not None:
+            try:
+                os.unlink(old)
+            except OSError:
+                pass
 
 
 # ---------- reading the layout ----------
