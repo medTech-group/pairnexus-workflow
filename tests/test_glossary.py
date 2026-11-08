@@ -32,6 +32,7 @@ PARTS = {
         "Ticket": "ticket",
         "Spec": "spec",
         "Map": "map",
+        "Study": "study",
         "Review panel": "review-panel",
         "Bar": "bar",
         "Solo mode": "solo-mode",
@@ -62,6 +63,7 @@ MENTIONS = {
     "ticket": r"\btickets?\b",
     "spec": r"\bspecs?\b",
     "map": r"\bmaps?\b",
+    "study": r"\bstud(?:y|ies)\b",
     "review-panel": r"\breview panels?\b",
     "bar": r"\bbars?\b",
     "solo-mode": r"\bsolo mode\b",
@@ -115,7 +117,7 @@ def test_the_glossary_has_the_two_parts_with_each_word_under_its_part():
     assert list(parts) == list(PARTS)
     for part, words in PARTS.items():
         assert list(parts[part]) == list(words), part
-    assert sum(len(w) for w in PARTS.values()) == 24
+    assert sum(len(w) for w in PARTS.values()) == 25
 
 
 def test_each_heading_has_its_stable_anchor():
@@ -214,3 +216,14 @@ def test_the_glossary_names_no_project_of_ours():
 def test_the_guided_start_names_where_to_read_the_glossary():
     text = (KIT / "skills/start/SKILL.md").read_text(encoding="utf-8")
     assert "`.claude/workflow/docs/glossary.md` vendored, or `docs/glossary.md` beside `skills/` in the plugin" in text
+
+
+def test_the_glossary_has_study_after_map_in_plain_words():
+    # #512: "Study" is a kit term a person meets (spec #505, "Docs").
+    text = _text()
+    assert text.index("\n### Map\n") < text.index("\n### Study\n") < text.index("\n### Review panel\n")
+    what, why = [p.strip() for p in _entries()["Study"].split("\n\n") if p.strip()]
+    assert "before building" in what and "made-up people" in what
+    for verdict in ("build it", "prototype first", "stop"):
+        assert verdict in what, verdict
+    assert "worth building" in why
