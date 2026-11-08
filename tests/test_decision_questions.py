@@ -112,6 +112,81 @@ def test_routing_choices_get_neither():
     assert "**Build it now**" in s or "**Write the spec**" in s
 
 
+# --- research's routing choices, each recorded in one line (#544) ------------
+#
+# Spec #505, answer 16: the routing choices stay out of the rules, and four of
+# research's are each recorded in one line. Split out of #511 (pull request
+# #541), whose reviews read the record as covering every routing choice (round
+# 1) and its list as five choices (round 2), so the record is text of its own,
+# after the intro's paragraph, with each choice a numbered line.
+
+
+def _record() -> str:
+    """The text after the block's opening paragraph and before its rules, as written."""
+    head = _block().split("\n- **", 1)[0].strip()
+    assert "\n\n" in head, "the record follows the block's opening paragraph"
+    return head.split("\n\n", 1)[1]
+
+
+def _record_choices() -> list[str]:
+    return re.findall(r"^\d+\. (.+)$", _record(), re.M)
+
+
+def test_four_of_research_s_routing_choices_are_each_recorded_in_one_line():
+    lead = _flatten(_record().split("\n1. ", 1)[0])
+    assert lead.startswith("Four routing choices"), lead
+    assert "research" in lead
+    for part in ("one line", "the reason", "the owner's choice"):
+        assert part in lead, part
+
+
+def test_the_record_lists_exactly_four_countable_choices():
+    choices = _record_choices()
+    # The count is read from the text: as many numbered lines as the lead says.
+    assert len(choices) == 4, choices
+    assert [int(n) for n in re.findall(r"^(\d+)\. ", _record(), re.M)] == [1, 2, 3, 4]
+    run, professional, source, old = choices
+    assert "run or skip a study" in run and "stakes record" in run
+    assert "professional choice" in professional
+    assert "bringing in an old note" in old
+    # The source-changed choice is one choice, with its three options inside it.
+    assert "source changed" in source and "one choice" in source
+    options = source.split(":", 1)[1]
+    for option in ("going on", "fixing the note", "re-running"):
+        assert option in options, option
+        # No option is a choice of its own.
+        assert sum(option in c for c in choices) == 1, option
+
+
+def test_each_line_goes_where_the_work_s_rounds_are_posted():
+    s = _sentence(_flatten(_record()), "rounds are posted")
+    for place in ("research issue", "the item's issue", "Destination item", "the spec's issue", "the decision ticket"):
+        assert place in s, place
+    # The research issue first; the others only when there is none.
+    assert s.index("research issue") < s.index("with none") < s.index("the item's issue")
+
+
+def test_routing_choices_other_than_research_s_are_not_recorded():
+    # The "Routing choices" sentence stays on its own: neither the rules nor a record.
+    s = _sentence(_intro(), "Routing choices")
+    assert s.rstrip().endswith("get neither.")
+    assert "record" not in s and "one line" not in s
+    # The record names none of them, and says no other routing choice is recorded.
+    record = _flatten(_record())
+    assert "**Build it now**" not in record and "**Write the spec**" not in record
+    assert "No other routing choice is recorded" in record
+
+
+def test_old_notes_point_at_the_record():
+    text = _text()
+    assert "\n## Research\n" in text
+    research = text.split("\n## Research\n", 1)[1].split("\n## ", 1)[0]
+    assert "\n- **Old notes" in research
+    rule = _flatten(research.split("\n- **Old notes", 1)[1].split("\n- **", 1)[0])
+    s = _sentence(rule, "routing choice")
+    assert "recorded in one line" in s and '"Decision questions"' in s
+
+
 def test_a_study_s_intake_and_verdict_are_decision_questions_on_its_research_issue():
     # #511 (spec #505, answer 16): the list gains the intake and the verdict.
     s = _sentence(_intro(), "posted as the owner's")
@@ -340,6 +415,7 @@ def test_a_planning_session_is_sent_to_the_rules_by_the_hook_s_first_flow_contex
 def test_the_changelog_has_a_note_and_version_is_untouched():
     # Read as the other notes are, so a release that moves them under its heading still passes.
     assert "(#439, part of spec #436)" in since_0110()
+    assert "(#544, split out of #511, part of spec #505)" in since_0110()
     log = (KIT / "CHANGELOG.md").read_text(encoding="utf-8")
     start = log.index("## Unreleased\n")
     end = log.index("\n## ", start + 1)
