@@ -914,6 +914,8 @@ _HOST_REFUSED = (
 # browsers do: `faß.de` is `xn--fa-hia.de`, never `fass.de`. (The joiners,
 # U+200C and U+200D, need CONTEXTJ's rules: refused, as any format character is.)
 _HOST_DEVIATIONS = frozenset("\u00df\u03c2")
+# The only ASCII characters a host label outside ASCII may hold.
+_HOST_ASCII = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-")
 
 
 def _host_char_ok(c: str) -> bool:
@@ -938,8 +940,8 @@ def _ascii_host(host: str) -> str:
     """The host as DNS reads it: each label holding letters outside ASCII
     encoded by UTS 46 non-transitional rules (ASCII letters lowercased, NFC,
     then Punycode after `xn--`). Raises PageError for a host it can't encode
-    so: one holding a character `_host_char_ok` refuses, as written or after
-    NFC, a label NFC turns into ASCII, a label over 63 characters, as
+    so: one holding a character `_host_char_ok` refuses, or one in ASCII
+    other than a letter, a digit or `-`, as written or after NFC, a label NFC turns into ASCII, a label over 63 characters, as
     written or encoded, a label starting with a combining mark, or a label
     already starting `xn--` beside one outside ASCII (its Punycode isn't
     checked)."""
@@ -953,12 +955,12 @@ def _ascii_host(host: str) -> str:
         if len(label) > 63:  # DNS's limit, checked before Punycode, which takes quadratic time
             raise PageError("its host has a label over 63 characters")
         # each character checked as written, then again after NFC: NFC turns some UTS 46 maps (U+212A) into ASCII
-        written_ok = all(c.isascii() or _host_char_ok(c) for c in label)
+        written_ok = all(c in _HOST_ASCII or (not c.isascii() and _host_char_ok(c)) for c in label)
         label = unicodedata.normalize("NFC", "".join(c.lower() if c.isascii() else c for c in label))
         if (
             not written_ok
             or label.isascii()
-            or not all(c.isascii() or _host_char_ok(c) for c in label)
+            or not all(c in _HOST_ASCII or (not c.isascii() and _host_char_ok(c)) for c in label)
             or unicodedata.category(label[0]).startswith("M")
         ):
             raise PageError("its host holds a character that can't be encoded by UTS 46 as browsers do (IDNA)")

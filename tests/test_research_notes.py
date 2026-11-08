@@ -325,6 +325,48 @@ def test_page_fetching_encodes_a_host_by_uts46_non_transitional(project, seen, l
     assert requests[:1] == [sent]
 
 
+def _refused_before_any_request(project, seen, monkeypatch, link):
+    base, requests = seen
+
+    def opened(self, *a, **k):
+        raise AssertionError(f"a request was made for {link!r}")
+
+    monkeypatch.setattr(research.urllib.request.OpenerDirector, "open", opened)
+    with pytest.raises(research.PageError):
+        research.fetch(link)
+    assert research.link_problem(link)
+    p = _cli("fingerprint", link, "--fetch", env=_proxied(project, base))
+    assert p.returncode == 1 and p.stdout == ""
+    assert "can't fetch" in p.stderr and p.stderr.count("\n") == 1 and "Traceback" not in p.stderr
+    assert requests == []
+
+
+@pytest.mark.parametrize(
+    "link",
+    ["https://\u00fc%2Eapple.com/docs", "https://a.\u00fc%3a8080/", "https://\u00fc.de%40apple.com/", "https://\u00fc%00.de/", "https://\u00fc\\.apple.com/docs"],
+    ids=["1", "2", "3", "4", "5"],
+)
+def test_link_spoofing(project, seen, monkeypatch, link):
+    _refused_before_any_request(project, seen, monkeypatch, link)
+
+
+@pytest.mark.parametrize(
+    "link",
+    ["http://\u00fc%2Eevil.de/", "http://\u00fc%41.de/", "http://\u00df|.de/", "http://\u00df^.de/", "http://\u00df{.de/", "http://\u00df}.de/", "http://\u00df\\.de/"],
+    ids=["1", "2", "3", "4", "5", "6", "7"],
+)
+def test_page_fetching_host(project, seen, monkeypatch, link):
+    _refused_before_any_request(project, seen, monkeypatch, link)
+
+
+@pytest.mark.parametrize("link,sent", [("http://a-\u00fc9.de/", "GET http://xn--a-9-ioa.de/ HTTP/1.1")])
+def test_page_fetching_host_still_encodes_letters_digits_and_hyphens(project, seen, link, sent):
+    base, requests = seen
+    p = _cli("fingerprint", link, "--fetch", env=_proxied(project, base))
+    assert p.returncode == 1 and "can't fetch" in p.stderr  # the proxy answers 404
+    assert requests[:1] == [sent]
+
+
 def test_page_fetching_refuses_a_host_label_over_63_characters_at_once(project, seen):
     base, requests = seen
     link = "http://" + "".join(chr(0x4E00 + i % 20000) for i in range(40000)) + ".example/"  # Punycode takes minutes on it
