@@ -69,12 +69,15 @@ class LayoutError(Exception):
 
 
 class WriteError(Exception):
-    """A file `write_files` can't write: `path` as given, and why."""
+    """A file `write_files` can't write: `path` as given, and why. `kept`
+    lists each (path, its old file) that couldn't be put back: the old file
+    is kept aside under that name, never removed."""
 
-    def __init__(self, path, why: str):
+    def __init__(self, path, why: str, kept: list | None = None):
         super().__init__(f"{path} ({why})")
         self.path = path
         self.why = why
+        self.kept = kept or []
 
 
 def digest(text: str) -> str:
@@ -441,8 +444,9 @@ def write_files(files: list[tuple[Path, str]]) -> None:
     written to a new file beside its path, and only then each put in place,
     an existing file moved aside first. On any failure everything is undone:
     each file put back as it was (the same file, renamed back), each new file
-    and temporary file removed, and each folder made removed. Raises
-    WriteError naming the path that failed."""
+    and temporary file removed, and each folder made removed. An old file
+    that can't be put back is kept aside, never removed, and named in the
+    error's `kept`. Raises WriteError naming the path that failed."""
     made: list[Path] = []  # folders made, in order
     temps: list[Path] = []  # new files beside each path, not yet in place
     placed: list[tuple[Path, Path | None]] = []  # (path, the old file moved aside, or None)
@@ -487,6 +491,7 @@ def write_files(files: list[tuple[Path, str]]) -> None:
             os.replace(tmp, now)
             temps.remove(tmp)
     except (OSError, WriteError) as e:
+        kept: list[tuple[Path, Path]] = []  # (path, its old file) not put back: the only copy, kept
         for path, old in reversed(placed):  # each put back as it was
             try:
                 if old is None:
@@ -496,7 +501,9 @@ def write_files(files: list[tuple[Path, str]]) -> None:
                     os.replace(old, path)
                     olds.remove(old)
             except OSError:
-                pass
+                if old is not None:
+                    olds.remove(old)
+                    kept.append((path, old))
         for f in temps + olds:
             try:
                 os.unlink(f)
@@ -508,8 +515,9 @@ def write_files(files: list[tuple[Path, str]]) -> None:
             except OSError:
                 pass
         if isinstance(e, WriteError):
+            e.kept = kept
             raise
-        raise WriteError(now, e.strerror or str(e)) from None
+        raise WriteError(now, e.strerror or str(e), kept) from None
     for old in olds:
         try:
             os.unlink(old)

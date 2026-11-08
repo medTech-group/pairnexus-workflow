@@ -1195,7 +1195,11 @@ def cmd_research(a) -> int:
                     ]
                 )
             except research_mod.WriteError as e:
-                print(f"workflow research fingerprint: can't write {e.path} ({e.why}); neither file was written", file=sys.stderr)
+                if e.kept:  # an old file that couldn't be put back: kept aside, and named
+                    what = "; ".join(f"{p} couldn't be put back as it was: its old version is kept as {old}" for p, old in e.kept)
+                else:
+                    what = "neither file was written"
+                print(f"workflow research fingerprint: can't write {e.path} ({e.why}); {what}", file=sys.stderr)
                 return 1
         if n:
             print(f"workflow research fingerprint: left out {n} match(es) of the profile's [sensitive].patterns; leave out personal details by hand", file=sys.stderr)

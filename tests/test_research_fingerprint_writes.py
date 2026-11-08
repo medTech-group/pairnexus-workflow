@@ -261,6 +261,73 @@ def test_a_failure_writing_the_second_file_puts_the_first_back(project, tmp_path
     assert _files(project) == before  # and was put back, inode and all; no temporary file or folder left
 
 
+def _failing_replace(monkeypatch, fail: set[int]):
+    """os.replace in `research`, failing on the calls numbered in `fail`."""
+    real = os.replace
+    n = [0]
+
+    def fake(src, dst):
+        n[0] += 1
+        if n[0] in fail:
+            raise OSError(5, "Input/output error", str(dst))
+        return real(src, dst)
+
+    monkeypatch.setattr(research.os, "replace", fake)
+
+
+@pytest.mark.parametrize(
+    "there, fail, lost",
+    [
+        (["a.md"], {2, 3}, "a.md"),  # placing the new fingerprints fails, then putting the old saved copy back
+        (["a.md", "a.fingerprints"], {2, 3}, "a.fingerprints"),
+        (["a.md", "a.fingerprints"], {2, 4}, "a.md"),
+    ],
+    ids=["saved-there", "both-there-fingerprints-not-put-back", "both-there-saved-not-put-back"],
+)
+def test_an_old_file_that_cant_be_put_back_is_kept_and_named(project, monkeypatch, there, fail, lost):
+    """When putting an old file back fails too, the old file moved aside is the
+    only copy of it: it is kept, never removed, and the error names it."""
+    folder = project / "old"
+    folder.mkdir()
+    for name in there:
+        (folder / name).write_text(f"the old {name}\n")
+    saved, fps = folder / "a.md", folder / "a.fingerprints"
+    _failing_replace(monkeypatch, fail)
+    with pytest.raises(research.WriteError) as e:
+        research.write_files([(saved, "new\n"), (fps, "url: x\n")])
+    monkeypatch.undo()
+    assert e.value.path == fps
+    assert any(p.read_text() == f"the old {lost}\n" for p in folder.iterdir())  # the old version is still on disk
+    assert [p for p, _ in e.value.kept] == [folder / lost]
+    kept = e.value.kept[0][1]
+    assert kept.read_text() == f"the old {lost}\n"
+    for name in there:  # each old file is still on disk, in place or kept aside
+        if name != lost:
+            assert (folder / name).read_text() == f"the old {name}\n"
+    aside = [p for p in folder.iterdir() if p.name not in ("a.md", "a.fingerprints")]
+    assert aside == [kept]  # no temporary file left, and only the old file named kept aside
+
+
+def test_the_line_for_an_old_file_kept_names_it(project, monkeypatch, capsys):
+    from workflow import cli
+
+    folder = project / "old"
+    folder.mkdir()
+    (folder / "a.md").write_text("the old version\n")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(project))
+    monkeypatch.chdir(project)
+    _failing_replace(monkeypatch, {2, 3})
+    code = cli.main(["research", "fingerprint", URL, "--page", str(PAGE), "--saved", "old/a.md", "--fingerprints", "old/a.fingerprints"])
+    monkeypatch.undo()
+    out, err = capsys.readouterr()
+    assert code == 1 and out == ""
+    [line] = err.strip().splitlines()
+    kept = [p for p in folder.iterdir() if p.name != "a.md"]
+    assert len(kept) == 1 and kept[0].read_text() == "the old version\n"
+    assert "old/a.md" in line and kept[0].name in line
+    assert "neither file was written" not in line
+
+
 def test_a_failure_writing_the_second_new_file_removes_the_first(project, monkeypatch):
     first, second = project / "n1/a.md", project / "n2/a.fingerprints"
     before = _files(project)
