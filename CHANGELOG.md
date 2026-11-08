@@ -82,6 +82,12 @@
 - **The glossary** gains "Study". To stay under 6,000 characters, other entries are shortened without changing their meaning.
 - **For projects updating:** the update brings the two agents and the skill's new sections. A project set up before #507 has no `research` label: the session creates it before filing its first research issue, or create it yourself (`gh api repos/<repo>/labels -f name=research`). Tests: `tests/test_study_skill.py`, `tests/test_glossary.py` and `tests/test_research_records.py`.
 
+**The research checker reads each claim citing a saved copy, whatever its label** (#571, split out of #512, part of spec #505).
+
+- **`research-checker`** does the research check and the look, beside the study's validator, as the flow and `merge-check` say. A claim citing a saved copy is read against it, whatever its label (*simulated*, *observed (public source)*, *observed (real person)* or none), and is wrong when the paragraph it names says otherwise or says nothing that supports it. A finding that cites no saved copy, such as a *simulated* one resting on a transcript, is never called wrong for having none. A finding labelled *observed (real person)* is read against the list of what the owner brought in, and is wrong when the list doesn't hold it. The agent's text gives both cases as examples.
+- **The `study` skill's section 10, the flow's "Research" section, the `merge-check` skill and `merge-check`'s `research_none` reason** say the same reading.
+- **For projects updating:** the update brings the agent's new text. Tests: `tests/test_research_checker.py`.
+
 ## 0.1.21
 
 **Decision questions asked in a message are easier to read.** A recommendation now has its own labelled part, "➡️ Recommended:", with its evidence, and the alternatives have theirs, so a recommendation can't be mistaken for a decision already made. Questions asked as clickable choices are unchanged.
