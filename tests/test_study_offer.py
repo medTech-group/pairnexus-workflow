@@ -201,6 +201,16 @@ def test_start_s_interview_keeps_its_heading_and_comes_after_the_offer():
     assert "**Offering a study** (above)" in step
 
 
+def test_a_new_project_s_charting_waits_for_the_intake_and_the_panel_not_the_verdict():
+    # As the flow's order: the intake and the panel run before charting's first step.
+    text = _start()
+    option = re.search(r"\*\*Run a study\*\*: (.*?);", text).group(1)
+    aside = re.search(r"\(for a new project, ([^)]*)\)", option)
+    assert aside, option
+    assert "the intake and the panel before charting's first step" in aside.group(1)
+    assert "charting starts once its intake and panel have run" in text
+
+
 def test_next_offers_it_before_a_clear_map_s_next_spec():
     text = _next()
     assert "clear map's next spec" in text
