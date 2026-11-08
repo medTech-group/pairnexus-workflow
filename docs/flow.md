@@ -22,7 +22,7 @@ A large effort can start as a **map**: an issue labelled `wayfinder:map` whose c
 6. **Only then** record it: a resolution comment, close the ticket, the map's "Decisions so far", unblocked tickets updated, new tickets created and wired. Offer the pull request with its review records, naming anything still open in its body. This order replaces `wayfinder`'s, which records and closes straight after resolving.
 7. When every Destination item has its spec and its tickets, close the map as completed.
 
-**The gate.** A map's build tickets wait until every Destination item of that map has its spec and its tickets, so building never starts on half a plan. `workflow ready` doesn't apply it; `next`, `start` and the conductor's kick-off do.
+**The gate.** A map's build tickets wait until every Destination item of that map has its spec and its tickets, so building never starts on half a plan (held items: "Research"). `workflow ready` doesn't apply it; `next`, `start` and the conductor's kick-off do.
 
 **Checklist:** claimed first; every decision the owner's, each round checked, posted as answered and tagged; answers posted verbatim; reviewed until clean, records posted; recorded and closed; map updated; dependents updated; glossary and ADRs committed with a PR offered, research in its research pull request; next ticket named.
 
@@ -97,6 +97,15 @@ All research, studies and fact notes alike, lives in the repository, in `docs/re
   - The look, short for the look at a fix: the session fixes the claims and faults the research check found, then a fresh `research-checker` reads the lines changed since the research check and the claims and faults it listed. A listed claim or fault whose line didn't change counts as still wrong. The session posts the look's comment and research record (`--round 2`) the same way. A claim still wrong, or a fault still there, gets the unconfirmed mark at the end of its line, and there is no further round.
 
   How the research check's record, the look's record and the mark count at merge is §4 item 4's (**A pull request of research notes**), so §4 stays the merge rule's one source.
+
+- **A finding that needs a professional** (the law, a regulation, a safety rule). The session flags it and the owner chooses each time, before the note's research check, so its open mark, questionnaire or link is in what the check reads. It is a routing choice, recorded in one line ("Decision questions"), with three options:
+  1. **Research it ourselves:** a focused second study by fresh agents. They read only primary texts, each conclusion quotes its clause, and a skeptic argues the other reading; the result is labelled "researched, not confirmed by a professional". It is its own note, in a topic folder of its own, through a research pull request of its own with its own research check, tracked by a research issue of its own, filed when the owner chooses it and named by the note's `Issue:` line. It has no intake and no verdict. The main note links to it and marks the finding open. Once the second note merges, a research pull request updates the main note's mark to point to the result, with its research check, and closes the second study's issue (`Closes #<n>`). Its token record carries the second-study marker, `study=second` (the `study` skill's section 3).
+  2. **Ask a professional:** a questionnaire, written as `to-questionnaire` writes one and saved in `docs/research/<topic>/`, with an owner task (`owner-task`) that links it.
+  3. **Leave it open:** listed on the research issue, and marked open in the note.
+
+  - **What waits:** only what rests on the professional's answer. The verdict and grilling go ahead, and the finding is marked open on the research issue.
+  - **Holding back:** each item that rests on the answer lists the owner task under `## Blocked by`: the item's issue, its spec and the build tickets (`workflow ready` already holds those). A map's Destination item has no issue, so a `Blocked by: #<n>` line goes beside it in the map's body: the session that files the owner task writes it beside each Destination item that rests on the answer, or, when the task comes before the map (a new project's study), charting writes it (`wayfinder` stays unedited: this overrides its charting). `workflow status` doesn't read that line: `next` and `start` do, and skip the item while its task is open. A Destination item's records go where the `study` skill's section 5 says.
+  - **The gate** (§1): a Destination item with a `Blocked by:` line is left out of the gate whether its task is open or closed, and the line stays. So the map's other build tickets can be built while it is held, and once its task closes, only the held item's own tickets wait for its spec and tickets.
 
 ## The bar
 

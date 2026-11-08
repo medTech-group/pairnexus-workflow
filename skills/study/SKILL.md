@@ -199,7 +199,12 @@ The study lists every question a real person or a real test would most change, m
 
 The session writes the note from the panel's work, in `docs/research/<topic>/note.md`, in the layout of section 1: its header (`Status: current`, `Last checked:` today, `Issue:` the research issue), the findings, each with its label and its source, the synthesizer's themes, disagreements and surprises, the ranked questions (section 8) and the key sources. It goes on a branch named `claude/research-<topic>`, in a research pull request of its own holding only files under `docs/research/` (the flow's "Research"), whose body names the research issue.
 
-**A finding that needs a professional** (the law, a regulation, a safety rule): the owner's professional choice for it is made before the research check, so its open mark, questionnaire or link is in what the check reads. Only what rests on the professional's answer waits for it; the verdict and grilling go ahead.
+**A finding that needs a professional** (the law, a regulation, a safety rule): flag it; the owner's professional choice for it is made before the research check, so its open mark, questionnaire or link is in what the check reads. It is a routing choice, recorded in one line (the flow's "Decision questions"), never a round; a map's Destination item's line goes where section 5 says. The flow's "Research", **A finding that needs a professional**, is the rule for what each option leads to, what waits and what is held back; this is how to run it:
+- **Research it ourselves:** file the second study's own research issue (section 5's label check applies; no stakes record, no intake, and no "Study under way" link on the item's issue or the map: the main note's link is its only link), then start fresh general-purpose agents that read only primary texts, each saved as section 7 saves a source, one of them the skeptic arguing the other reading. Its note goes in its own topic's folder, labelled "researched, not confirmed by a professional", through its own research pull request and research check (section 10), with no verdict. In this note, the finding links to the second study (its research issue, until its note merges) and is marked open. Its token record (section 3) says `study=second`.
+- **Ask a professional:** write the questionnaire as `to-questionnaire` writes one, but save it in this topic's folder, and file an owner task (`owner-task`) linking it. Write its `## Blocked by` lines, and a Destination item's `Blocked by: #<n>` line in the map's body, as the flow's **Holding back** says.
+- **Leave it open:** mark it open in the note, and list it on the research issue.
+
+Only what rests on the professional's answer waits for it; the verdict and grilling go ahead.
 
 ## 10. The research check and the look
 
@@ -226,6 +231,7 @@ The verdict is recorded on the research issue only, never in the note, so the no
 The research issue closes at the verdict, once the token record (section 3) is posted on it.
 
 - A finding waiting on a professional keeps its own owner task, open.
+- A second study ("Research it ourselves", section 9) has no verdict: its research issue stays open until a research pull request updates the main note's mark to point to its result and closes it (`Closes #<n>`), its token record (`study=second`) posted on it first.
 - A finding left open stays marked "open" in the note, and goes into the spec's open questions if a spec follows.
 - No other issues are filed.
 

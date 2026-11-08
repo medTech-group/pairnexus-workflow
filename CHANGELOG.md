@@ -108,6 +108,14 @@
 - **`next`** offers it the same way before a clear map's next spec, pointing to `start` for how the choice is asked.
 - **For projects updating:** nothing to do. Tests: `tests/test_study_offer.py`.
 
+**A finding that needs a professional, and the gate** (#516, part of spec #505).
+
+- **The flow's "Research"** has a rule for a finding that needs a professional (the law, a regulation, a safety rule). The owner chooses each time, before the note's research check, in one recorded routing line: research it ourselves (a second study with its own note, topic, research pull request and research issue, no intake and no verdict; the main note links to it and marks the finding open, and a later research pull request updates the mark and closes its issue; its token record says `study=second`), ask a professional (a questionnaire in `docs/research/<topic>/`, with an owner task linking it) or leave it open. Only what rests on the answer waits.
+- **Holding back.** The owner task goes under `## Blocked by` on the item's issue, its spec and its build tickets. A map's Destination item gets a `Blocked by: #<n>` line beside it in the map's body, written by the session that files the task, or by charting when the task comes before the map. `next` and `start` read that line and skip the item while its task is open.
+- **The gate.** A Destination item with a `Blocked by:` line is left out of the gate, whether its task is open or closed: the map's other tickets go ahead, and once the task closes only that item's own tickets wait for its spec and tickets. Flow §1 points to the rule; `next`, `start` (its Map step 5 and its "Run unattended" warning), the conductor's kick-off and the README say it.
+- **The `study` skill** says how to run each option (section 9), and that a second study's issue closes when the main note's mark is updated (section 12).
+- **For projects updating:** nothing to do. Tests: `tests/test_professional_finding.py`.
+
 ## 0.1.21
 
 **Decision questions asked in a message are easier to read.** A recommendation now has its own labelled part, "➡️ Recommended:", with its evidence, and the alternatives have theirs, so a recommendation can't be mistaken for a decision already made. Questions asked as clickable choices are unchanged.
