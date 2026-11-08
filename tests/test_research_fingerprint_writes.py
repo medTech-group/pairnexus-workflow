@@ -561,6 +561,31 @@ def test_a_saved_copy_named_as_a_fingerprint_file_is_refused(project, saved):
     assert saved in line and ".fingerprints" in line
 
 
+@pytest.mark.parametrize(
+    "which, saved, fps",
+    [
+        ("--saved", "docs/research/t/sources/b`q.md", "docs/research/t/sources/bq.fingerprints"),
+        ("--fingerprints", "docs/research/t/sources/bq.md", "docs/research/t/sources/b`q.fingerprints"),
+        ("--saved", "docs/research/t/sources/b\nq.md", "docs/research/t/sources/bq.fingerprints"),
+        ("--fingerprints", "docs/research/t/sources/bq.md", "docs/research/t/sources/b\nq.fingerprints"),
+        ("--fingerprints", "docs/research/t/sources/bq.md", "docs/research/t/sources/b\rq.fingerprints"),
+        ("--saved", "docs/research/t/sources/b\tq.md", "docs/research/t/sources/bq.fingerprints"),
+        ("--saved", "docs/research/t/sources/b\x1bq.md", "docs/research/t/sources/bq.fingerprints"),
+    ],
+    ids=["saved-backtick", "fingerprints-backtick", "saved-line-break", "fingerprints-line-break", "fingerprints-return", "saved-tab", "saved-escape"],
+)
+def test_a_path_no_key_source_line_could_name_is_refused(project, which, saved, fps):
+    """A key-source line names each path between backticks, on one line."""
+    line = _one_line(_refused_early(project, "--fetch", "--saved", saved, "--fingerprints", fps))
+    assert which in line and "backtick" in line and "neither file was written" in line
+
+
+def test_a_path_with_a_space_is_written(project):
+    p = _write(project, URL, "t/v/booking help.md", "t/v/booking help.fingerprints")
+    assert p.returncode == 0, p.stderr
+    assert (project / "t/v/booking help.fingerprints").read_text(encoding="utf-8").startswith(f"url: {URL}\n")
+
+
 def test_a_saved_copy_whose_name_only_holds_fingerprints_is_written(project):
     p = _write(project, URL, "t/v/a.fingerprints.md", "t/v/a.fingerprints")
     assert p.returncode == 0, p.stderr

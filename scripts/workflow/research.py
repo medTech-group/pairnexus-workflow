@@ -436,6 +436,10 @@ def link_problem(url: str) -> str | None:
 def target_problem(saved: str, fps: str) -> tuple[str, str] | None:
     """(the path as given, why) when the two paths can't be written whatever
     the page holds, else None: checked before anything is fetched."""
+    for option, given in (("--saved", saved), ("--fingerprints", fps)):
+        # a key-source line names each path between backticks, on one line; named by its option, never echoed
+        if any(c == "`" or unicodedata.category(c) == "Cc" for c in given):
+            return f"the file given to {option}", "its path holds a backtick or a control character, a line break among them, which no key-source line can name"
     for given in (saved, fps):
         if os.path.basename(given) in ("", ".", ".."):
             return given, "it names a folder, not a file"
