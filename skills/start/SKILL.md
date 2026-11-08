@@ -282,8 +282,22 @@ For each item, read the flow's section for its path and follow it, skipping noth
    - **It needs decisions: make it a spec**: then "Spec" below;
    - **Stop here**: comment on the item's issue with what you found.
 
+**Offering a study** (the `study` skill), before a Spec item's interview and before a Map item's charting. A study researches the people and the problem first. A Quick ticket, Find the cause first, Add to an existing issue and Answer it never get one.
+1. **Whether to offer it:**
+   - **Fixes, wording and internal changes:** skipped, with nothing asked or posted.
+   - **Work a current note already covers** (`WF research notes` lists the current notes): skipped with no question, but with one stakes line naming the note, posted as the stakes record (step 3).
+   - **Any other feature:** judge its stakes and say why. Recommend a study when it involves new people or a new need that no current note covers; when it is high-stakes, by your judgement (safety, money, privacy and the law are things you must consider, not a list that decides); when it is hard to undo (stored data, pricing, a public promise, a legal commitment); or when it is a bet (they say "not sure" to whether users want it). Otherwise recommend a skip.
+   - **An item already offered one** gets no second offer, in this session or a later one: one that already has a stakes record that counts (the `study` skill's sections 2 and 3, "Which comments count"), on its issue, or for a map's Destination item where the `study` skill's section 5 puts its records, was skipped, so go straight on to the interview or the charting, carrying on from its rounds; one that already links a study (a "Study under way: #<n>" comment) carries that study on.
+2. **Before judging,** read the earlier judgements, for similar work, and judge alike: `WF research stakes --fetch`. Then the study's size: `WF research estimate --fetch` ("about 11 agents, roughly 1.2M tokens", or "not learned yet" before any full study), shown as it prints it, never as money; nothing caps a study. Where `--fetch` can't read them, give the inputs as files, `--comments F --permissions F`, as the `study` skill's section 3 says.
+3. **Ask** "<the item, short>: study it first?", the stakes and your why above the question, the size in the study's option. Your recommendation comes first:
+   - **Run a study**: the intake, the panel, then the verdict, before the interview (for a new project, the intake and the panel before charting's first step);
+   - **Skip it**: straight to the interview or the charting. Ask their reason in one line, unless they already gave it.
+
+   It is a routing choice, recorded in one line with the reason and their choice: the stakes record (the `study` skill's section 2), on the item's issue when the study is skipped, and on the research issue when it runs. For a map's Destination item, follow the `study` skill's section 5 for where it goes.
+4. **On Run a study,** load `study` with the Skill tool and follow it from its section 4: the research issue first (its section 5), then the intake. The interview waits for its verdict, as its section 4 says; a new project's charting starts once its intake and panel have run.
+
 **Spec** (flow §2), all in one session where it fits:
-1. **The interview.** Load the `grilling` and `domain-modeling` skills with the Skill tool (that's all `grill-with-docs` does), and interview them about the item. Its questions are decision questions ("Decision questions", above). Ask each round's questions as choices:
+1. **The interview.** It comes after **Offering a study** (above). Load the `grilling` and `domain-modeling` skills with the Skill tool (that's all `grill-with-docs` does), and interview them about the item. Its questions are decision questions ("Decision questions", above). Ask each round's questions as choices:
    - one question per decision;
    - your recommended answer as the first option, with its evidence, and real alternatives after it; with no basis to prefer one, no recommendation;
    - plain text only for a question with no sensible options.
@@ -350,7 +364,7 @@ For each item, read the flow's section for its path and follow it, skipping noth
    - **Stop here**.
 
 **Map** (flow §1):
-1. Read `wayfinder`'s `SKILL.md` and chart the map. Charting is one session's work: it settles no decision itself.
+1. **Offering a study** (above) first: for a new project, the intake and the panel run before charting's first step. Then read `wayfinder`'s `SKILL.md` and chart the map. Charting is one session's work: it settles no decision itself.
    When a study's owner task came before the map (a new project's study, "Ask a professional"), charting writes a `Blocked by: #<n>` line beside each Destination item that rests on its answer, in the map's body (the flow's "Research", **A finding that needs a professional**, which overrides `wayfinder` here).
 2. Close the item's issue with "Charted as #<map>".
 3. Ask:
