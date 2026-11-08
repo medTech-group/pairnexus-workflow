@@ -496,7 +496,7 @@ When the work is too big for one session, or too unclear to spec yet, chart it f
 
 > /wayfinder A small shop online: customers order from their phone, staff pack and post the orders.
 
-For a new project, a study comes first: its intake and its panel run before charting starts, and its research issue is linked from the map's Notes, never made one of the map's decisions (the kit's flow, "Research").
+For a new project, a study is always recommended first: when you run it, its intake and its panel run before charting starts, and its research issue is linked from the map's Notes, never made one of the map's decisions (the kit's flow, "Research").
 
 1. Claude interviews you about the **destination**: what reaching the end looks like. It can be several items, each needing its own spec (for example "customers order from their phone" and "staff pack the orders").
 2. A second, wider round finds the open questions across the whole effort and the first steps that can be taken now. If it finds nothing unclear, no map is needed: it stops and asks how you want to go on (usually straight to a spec).

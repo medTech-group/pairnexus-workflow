@@ -220,11 +220,107 @@ def test_quick_tickets_and_finding_a_cause_get_no_offer():
     assert "Quick ticket" in text and "Find the cause first" in text
 
 
+# --- a new project (#580, split out of #515) -------------------------------------
+# One study, on its first item offered one; every later item, a Destination item of
+# its map included, takes the offer's other bullets, so the current-note and the
+# internal-change skips still give their one answer.
+
+
+def _new_project(offer) -> str:
+    """The new-project rule: the sentences of the offer that name a brand-new project."""
+    text = offer()
+    m = re.search(r"\*\*A brand-new project\*\*.*?(?=- \*\*[A-Z]|\Z)", text)
+    assert m, "the offer has no **A brand-new project** bullet"
+    return m.group(0)
+
+
+@OFFERS
+def test_a_brand_new_project_is_always_recommended_one_study(offer):
+    rule = _new_project(offer)
+    assert "(no code of its own)" in rule
+    assert "always recommended a study" in rule
+    assert "the project's one study" in rule
+
+
+@OFFERS
+def test_a_new_project_s_one_study_is_its_first_item_offered_one(offer):
+    # Round 2's note: a new project whose first item is a quick ticket. A quick ticket
+    # is never offered one, so the study goes to the first item that is.
+    rule = _new_project(offer)
+    assert "first item offered one" in rule
+    assert "a fix, wording or an internal change is never that item" in rule
+
+
+@OFFERS
+def test_a_later_session_tells_the_study_was_offered_by_its_stakes_record(offer):
+    # Round 2's note: how a later session tells the study has already run (or was skipped).
+    rule = _new_project(offer)
+    assert "no stakes record yet" in rule
+    assert "`WF research stakes --fetch` lists none" in rule
+    assert "From the first stakes record on" in rule
+
+
+@OFFERS
+def test_a_new_project_s_later_items_take_the_other_bullets_with_one_answer(offer):
+    # The two cases of #580: a later Destination item a current note covers, and one
+    # that is an internal change. Each gets exactly the other bullets' answer.
+    rule = _new_project(offer)
+    later = rule[rule.index("From the first stakes record on"):]
+    assert "every later item, its map's Destination items included" in later
+    assert "as in any project" in later
+    assert "an internal change is skipped with nothing asked or posted" in later
+    assert "work a current note covers gets one stakes line naming the note" in later
+    # Round 1's fix ("judged as a feature") judged an internal change too.
+    assert "judged as a feature" not in offer()
+    assert "always" not in later
+
+
+@OFFERS
+def test_the_new_project_rule_states_its_precedence_over_the_current_note_skip(offer):
+    # The first item only: "always" wins over the current-note skip there, and says so,
+    # so the two bullets never both fit one item with different answers.
+    rule = _new_project(offer)
+    first = rule[:rule.index("From the first stakes record on")]
+    assert "even where a current note covers it" in first
+
+
+@OFFERS
+def test_a_new_project_s_destination_items_wait_for_its_study_s_verdict(offer):
+    # Round 2's note: a Destination item picked before the new project's verdict.
+    rule = _new_project(offer)
+    assert "wait for its verdict" in rule
+    assert "linked from the map's Notes" in rule
+
+
+@OFFERS
+def test_the_new_project_rule_comes_first_in_whether(offer):
+    text = offer()
+    rule = text.index("**A brand-new project**")
+    assert rule < text.lower().index("fixes, wording and internal changes")
+    assert rule < text.index("current note already covers")
+
+
+def test_the_flow_s_research_section_holds_the_new_project_rule():
+    flow = _flat((KIT / "docs/flow.md").read_text(encoding="utf-8"))
+    research = flow[flow.index("## Research"):flow.index("## The bar")]
+    assert "A brand-new project" in research
+    assert "always recommended one study" in research
+    assert "`start`'s **Offering a study**" in research
+
+
+def test_the_readme_says_a_new_project_is_recommended_a_study():
+    # Round 3's note (row 34 of #579): the README said a study "comes first".
+    text = _flat((KIT / "README.md").read_text(encoding="utf-8"))
+    assert "For a new project, a study comes first" not in text
+    assert "a study is always recommended first" in text
+
+
 # --- the changelog ---------------------------------------------------------------
 
 
 def test_the_changelog_has_a_note_and_version_is_untouched():
     assert "(#515, part of spec #505)" in since_0110()
+    assert "(#580, part of spec #505)" in since_0110()
     log = (KIT / "CHANGELOG.md").read_text(encoding="utf-8")
     start = log.index("## Unreleased\n")
     end = log.index("\n## ", start + 1)

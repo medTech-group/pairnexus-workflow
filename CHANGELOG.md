@@ -108,6 +108,12 @@
 - **`next`** offers it the same way before a clear map's next spec, pointing to `start` for how the choice is asked.
 - **For projects updating:** nothing to do. Tests: `tests/test_study_offer.py`.
 
+**A brand-new project is always recommended one study** (#580, part of spec #505).
+
+- **`start`'s and `next`'s "Offering a study"** open with the new-project rule: a project with no code of its own and no stakes record yet (`workflow research stakes` lists none) is always recommended a study on its first item offered one, ahead of the other bullets, even where a current note covers it. That is the project's one study, run or skipped: from its stakes record on, every later item, a Destination item of its map included, is offered one as in any project, so an internal change is still skipped with nothing asked or posted, and work a current note covers still gets its one stakes line. A new project's map's Destination items wait for its study's verdict while its research issue is open.
+- **The flow's "Research" section** states the rule, and the README now says a study is "always recommended first" for a new project rather than that it "comes first".
+- **For projects updating:** nothing to do. Tests: `tests/test_study_offer.py`.
+
 ## 0.1.21
 
 **Decision questions asked in a message are easier to read.** A recommendation now has its own labelled part, "➡️ Recommended:", with its evidence, and the alternatives have theirs, so a recommendation can't be mistaken for a decision already made. Questions asked as clickable choices are unchanged.
