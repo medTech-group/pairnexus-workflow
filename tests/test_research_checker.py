@@ -118,6 +118,36 @@ def test_a_finding_citing_no_saved_copy_is_never_called_wrong_for_having_none():
     assert "a transcript" in rc and "the panel's reasoning" in rc
 
 
+# #571 round 1, finding 11: a fact note's claim citing a page nobody saved.
+UNSAVED = "The API allows 100 requests a minute ([rate limits](https://docs.example.com/limits))."
+NO_SOURCE_RULE = "a claim citing a source with no saved copy, or a fact note's claim citing none, is wrong"
+EXEMPT = "when it rests only on a transcript, a brief, the panel's reasoning or what the owner brought in"
+
+
+def test_a_claim_citing_a_source_with_no_saved_copy_or_a_fact_note_s_claim_citing_none_is_wrong():
+    assert "sources/" not in UNSAVED  # it links the live page, never a saved copy
+    rc = _job("The research check")
+    assert ("A claim citing a source that no saved copy in `sources/` is of (a page linked by its address, "
+            "which no saved copy's `Source:` line names) is wrong, since a source that isn't saved isn't cited. "
+            "So is a fact note's claim that cites no source at all.") in rc
+    # The finding with no saved copy behind it stays exempt, but only when it rests on no source.
+    assert f"A finding citing no saved copy is never called wrong for having none {EXEMPT}" in rc
+    assert "A finding citing no saved copy (a *simulated* finding" not in rc  # the old, unbounded exemption
+
+
+def test_the_study_skill_and_the_flow_bound_the_exemption_the_same_way():
+    s = _study_10()
+    assert f"a finding that cites no saved copy is never called wrong for having none {EXEMPT}" in s
+    assert NO_SOURCE_RULE in s
+    r = _flow_rule()
+    assert f"a finding citing none is never called wrong for having none {EXEMPT}" in r
+    assert NO_SOURCE_RULE in r
+    # merge-check points to the agent's rule rather than restating the unbounded one.
+    text = _flat(MERGE_CHECK.read_text(encoding="utf-8"))
+    assert "(a finding citing none is never called wrong for having none)" not in text
+    assert "whatever its label, as its \"The research check\" says" in text
+
+
 def test_an_observed_real_person_finding_is_read_against_what_the_owner_brought_in():
     # #569 round 2's note: such a finding the owner never brought in went unchecked.
     rc = _job("The research check")
