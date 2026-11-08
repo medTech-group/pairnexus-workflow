@@ -244,6 +244,22 @@ def test_the_mark_goes_on_a_fault_still_there_as_on_a_claim_still_wrong():
     assert "a claim it found still wrong or a fault still there" in part
 
 
+# #571 round 3, findings 3 and 6: the look's brief named only the folder,
+# `changed.patch` and `claims.md`, so a later session's look, told nothing about
+# the owner's list, read it as `none` and called a true finding wrong on a
+# changed line, where the check had left it not checked.
+
+
+def test_the_look_is_given_whatever_else_the_agent_s_file_asks_for_the_owner_s_list_included():
+    agent = _flat(AGENT.read_text(encoding="utf-8"))
+    assert "for the research check and the look, the list of what the owner brought in" in agent
+    assert "a later session's research check and its look have no list" in agent
+    part = _part("The look")
+    s = _sentence(part, "give a fresh `research-checker`")
+    assert "whatever else its file asks for" in s
+    assert "the list of what the owner brought in" in s and "isn't available" in s
+
+
 def test_records_count_at_merge_by_4_item_4_and_merge_check_reads_them():
     s = _section()
     assert "`research_none`" in s and "`research_needs_look`" in s and "`research_needs_marks`" in s

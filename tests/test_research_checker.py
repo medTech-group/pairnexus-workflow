@@ -232,11 +232,15 @@ def test_a_list_of_none_is_a_list_and_an_observed_real_person_finding_it_doesn_t
 
 def test_only_a_list_said_to_be_unavailable_leaves_an_observed_real_person_finding_not_checked():
     inputs = _flat(_section("Your inputs"))
-    assert "a later session's research check has no list, and the session says the list isn't available instead" in inputs
+    # #571 round 3, finding 6: a later session's look has no list either, so a
+    # changed line holding a true finding is not checked, never called wrong.
+    assert ("a later session's research check and its look have no list, "
+            "and the session says the list isn't available instead") in inputs
     rc = _job("The research check")
     s = rc[rc.index("A finding labelled *observed (real person)*"):]
-    assert ("Only when the session says the list isn't available (a later session's research check), "
+    assert ("Only when the session says the list isn't available (a later session's research check and its look), "
             "report such a finding as not checked, never as wrong") in s
+    assert "(a later session's research check)," not in s
     out = _flat(_section("What you return"))
     assert "each *observed (real person)* finding not checked because the list isn't available" in out
     assert "because you were given no list" not in out
