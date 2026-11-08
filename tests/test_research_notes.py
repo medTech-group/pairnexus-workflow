@@ -1022,14 +1022,15 @@ def test_check_refuses_a_note_whose_key_sources_it_cant_all_read(project, before
     assert f"line {n}" in p.stderr and said in p.stderr, p.stderr
 
 
-def _groups_files(project, folder="sources"):
-    """The groups page's saved copy and fingerprints, written into the topic's
-    folder as `_two_sources` writes them, with no key-source line naming them."""
+def _groups_files(project, folder="sources", fps="groups.fingerprints"):
+    """The groups page's saved copy and fingerprints (in a file named `fps`),
+    written into the topic's folder as `_two_sources` writes them, with no
+    key-source line naming them."""
     topic = _note(project).parent
     (topic / folder).mkdir(parents=True, exist_ok=True)
-    for ext in ("md", "fingerprints"):
+    for ext, name in (("md", "groups.md"), ("fingerprints", fps)):
         text = (topic / f"sources/booking-help.{ext}").read_text(encoding="utf-8")
-        (topic / f"{folder}/groups.{ext}").write_text(text.replace(URL, "https://example.com/help/groups"), encoding="utf-8")
+        (topic / f"{folder}/{name}").write_text(text.replace(URL, "https://example.com/help/groups"), encoding="utf-8")
 
 
 _UNLISTED = "is a fingerprint file in the topic's folder, but no key-source line under `## Key sources` names it"
@@ -1077,6 +1078,73 @@ def test_check_refuses_a_note_with_a_fingerprint_file_its_key_sources_dont_name(
     p = _check(project, (URL, PAGE), ("https://example.com/help/groups", PAGE))
     assert p.returncode == 1 and p.stdout == "", p.stdout
     assert "sources/groups.fingerprints" in p.stderr and _UNLISTED in p.stderr, p.stderr
+
+
+@pytest.mark.parametrize(
+    "fps",
+    ["groups.fingerprint", "groups.fp", "groups.FINGERPRINTS", "groups.fingerprints.txt", "groups.hashes", "groups"],
+    ids=["singular", "fp", "in-capitals", "txt-after", "hashes", "no-extension"],
+)
+@pytest.mark.parametrize(
+    "before,after",
+    [
+        ("", "## Notes\n\n- <https://example.com/help/groups>, saved as `sources/groups.md`, fingerprints in `sources/{fps}`\n"),
+        ("The groups page, <https://example.com/help/groups>, is saved as `sources/groups.md`, with its fingerprints in `sources/{fps}`.\n\n", ""),
+    ],
+    ids=["source-line-in-a-later-section", "a-sentence-before-the-section"],
+)
+def test_check_refuses_a_note_with_a_fingerprint_file_named_otherwise_its_key_sources_dont_name(project, fps, before, after):
+    """A fingerprint file is found by its first line, `url: <link>`, as well
+    as by its name, so one named otherwise is refused the same way."""
+    _groups_files(project, fps=fps)
+    _reshape(project, before=before.format(fps=fps), after=after.format(fps=fps))
+    p = _check(project, (URL, PAGE), ("https://example.com/help/groups", PAGE))
+    assert p.returncode == 1 and p.stdout == "", p.stdout
+    assert f"sources/{fps} {_UNLISTED}" in p.stderr, p.stderr
+
+
+def test_check_refuses_a_fingerprint_file_written_with_a_bom_and_crlf_line_ends(project):
+    _groups_files(project, fps="groups.fp")
+    f = _note(project).parent / "sources/groups.fp"
+    f.write_bytes(b"\xef\xbb\xbf" + f.read_bytes().replace(b"\n", b"\r\n"))
+    p = _check(project, (URL, PAGE))
+    assert p.returncode == 1 and p.stdout == "", p.stdout
+    assert f"sources/groups.fp {_UNLISTED}" in p.stderr, p.stderr
+
+
+def test_check_reads_a_note_whose_folder_holds_files_that_arent_fingerprints(project):
+    """Only a file whose first line is a `url:` line, or whose name ends with
+    `.fingerprints`, is a fingerprint file: other files in the topic's folder
+    are left alone, and only their first bytes are read."""
+    topic = _note(project).parent
+    (topic / "questionnaire.md").write_text("# Questions for the manager\n\nurl: comes on line 3 here, not line 1.\n", encoding="utf-8")
+    (topic / "sources/links.txt").write_text("Links read:\nurl: https://example.com/help/groups\n", encoding="utf-8")
+    (topic / "sources/menu.png").write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * 64)
+    (topic / "sources/empty").write_bytes(b"")
+    shutil.copy(topic / "sources/booking-help.md", topic / "sources/groups.md")  # a saved copy with no fingerprints
+    p = _check(project, (URL, PAGE))
+    assert p.returncode == 0, p.stderr
+    (src,) = json.loads(p.stdout)["sources"]
+    assert src["url"] == URL and src["result"] == "unchanged"
+
+
+def test_a_file_in_the_topics_folder_that_cant_be_read_refuses_the_note(project, monkeypatch):
+    """A file that can't be read can't be ruled out as a fingerprint file, so
+    the note is refused, naming it. (Faked: the tests run as root.)"""
+    topic = _note(project).parent
+    locked = topic / "sources/groups.fp"
+    locked.write_text("url: https://example.com/help/groups\n", encoding="utf-8")
+    real = open
+
+    def refused(file, *a, **k):
+        if Path(file) == locked:
+            raise PermissionError(13, "Permission denied", str(file))
+        return real(file, *a, **k)
+
+    monkeypatch.setattr(research, "open", refused, raising=False)
+    with pytest.raises(research.LayoutError) as e:
+        research.read_note(_note(project))
+    assert f"{locked} is a file in the topic's folder that can't be read (Permission denied)" in str(e.value)
 
 
 @pytest.mark.parametrize(
@@ -1328,12 +1396,26 @@ def test_the_study_skill_says_where_the_key_sources_section_may_sit():
         "key-source line in that section: a note with a fingerprint file the section doesn't name is refused, naming the file, "
         "since a key source written anywhere else wouldn't be read" in text
     )
+    assert (
+        "A file there whose first line is a `url:` line is a fingerprint file too, whatever its name, and a file there that can't be read "
+        "is refused, naming it, since it can't be ruled out" in text
+    )
     assert "The rest of the note is prose, and nothing in it is read for key sources" in text
     assert "A note with no key sources says so with one line, `- None`, and its folder holds no fingerprint files" in text
-    assert "a fingerprint file in the topic's folder that no key-source line names" in text  # the `check` paragraph
+    assert "a fingerprint file in the topic's folder that no key-source line names, a file there it can't read," in text  # the `check` paragraph
     assert "a link (`<` or `://`) or a backtick" not in text and "sits outside the section" not in text
     assert "shaped like a key-source line" not in text
     assert "the note's last" not in text
+
+
+def test_the_changelog_says_how_a_fingerprint_file_is_found():
+    log = (KIT / "CHANGELOG.md").read_text(encoding="utf-8")
+    entry = log[log.index("**A research note's `## Key sources` section can be followed by other sections**") :]
+    entry = re.sub(r"\s+", " ", entry[: entry.index("\n\n")])
+    assert (
+        "A fingerprint file is found by its name, `*.fingerprints`, or, whatever its name, by its first line, a `url:` line; "
+        "a file there that can't be read is refused too, naming it." in entry
+    )
 
 
 def test_the_saved_copy_has_one_name():

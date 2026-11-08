@@ -7,9 +7,11 @@ fixtures are copied from:
   `Issue:`), then a blank line; its key sources one line each under
   `## Key sources`, once, outside any code fence: `- <link>, saved as `path`,
   fingerprints in `path``. The section runs to the next `# ` or `## `
-  heading, or the note's end. Every `*.fingerprints` file anywhere in the
-  topic's folder must be named by a key-source line there, so a key source
-  written anywhere else is refused, naming its file, and none goes unread.
+  heading, or the note's end. Every fingerprint file anywhere in the topic's
+  folder (named `*.fingerprints`, or, whatever its name, a file whose first
+  line is a `url:` line) must be named by a key-source line there, so a key
+  source written anywhere else is refused, naming its file, and none goes
+  unread; so is a file there that can't be read.
   The rest of the note is prose, never read for key sources;
 - a saved copy: `Source:`, `Accessed:` and `Third-party text:` lines, a blank
   line, then the page's paragraphs, one per position, separated by blank lines
@@ -29,8 +31,10 @@ from __future__ import annotations
 import codecs
 import hashlib
 import http.client
+import os
 import re
 import ssl
+import stat
 import unicodedata
 import urllib.error
 import urllib.parse
@@ -42,6 +46,7 @@ from pathlib import Path
 LEFT_OUT = "[left out]"
 NOTE_FILE = "note.md"
 FINGERPRINTS = ".fingerprints"  # a fingerprint file's name ends with it
+FIRST_BYTES = 512  # read of each other file in a topic's folder, to tell whether it's a fingerprint file
 FETCH_LIMIT = 10 * 1024 * 1024  # bytes
 FETCH_TIMEOUT = 30  # seconds
 USER_AGENT = "pairnexus-workflow-research/1"
@@ -525,18 +530,41 @@ def _key_sources_section(lines: list[str], path: Path) -> tuple[int, int]:
     return start, end
 
 
+def _is_fingerprint_file(f: Path, path: Path) -> bool:
+    """Whether `f` is a fingerprint file: named `*.fingerprints`, or, whatever
+    its name, a file whose first line is a `url:` line (only its first bytes
+    are read). A file that can't be read can't be ruled out: refused."""
+    if f.name.endswith(FINGERPRINTS):
+        return True
+    try:
+        if not stat.S_ISREG(os.stat(f).st_mode):
+            return False
+        with open(f, "rb") as fh:
+            first = fh.read(FIRST_BYTES)
+    except OSError as e:
+        raise LayoutError(
+            f"{path}: {f} is a file in the topic's folder that can't be read ({e.strerror or e}), so it can't be ruled out as a fingerprint file "
+            "whose source wouldn't be read: make it readable, or move it out of the topic's folder"
+        ) from None
+    return first.decode("utf-8", "replace").lstrip("\ufeff \t\r\n")[:4].casefold() == "url:"
+
+
 def _every_fingerprint_file_listed(path: Path, sources: list[KeySource]) -> None:
     """A key source has a fingerprint file in the topic's folder (the folder
     holding the note), so a key source written anywhere but under
     `## Key sources`, in any form, leaves its file unnamed there: refused,
     naming the file. The note's prose is never read for key sources."""
     listed = {s.fingerprints for s in sources}  # already resolved by `_inside`
-    for f in sorted(path.parent.rglob(f"*{FINGERPRINTS}")):
-        if f.resolve() not in listed:
-            raise LayoutError(
-                f"{path}: {f} is a fingerprint file in the topic's folder, but no key-source line under `## Key sources` names it, "
-                "so its source wouldn't be read: give it its key-source line there, or delete the file"
-            )
+    for folder, folders, files in os.walk(path.parent):
+        folders.sort()
+        for name in sorted(files):
+            f = Path(folder) / name
+            if f.resolve() not in listed and _is_fingerprint_file(f, path):
+                raise LayoutError(
+                    f"{path}: {f} is a fingerprint file in the topic's folder, but no key-source line under `## Key sources` names it, "
+                    f"so its source wouldn't be read (a file whose first line is a `url:` line is one, whatever its name): "
+                    f"give it its key-source line there (its name ending with `{FINGERPRINTS}`), or delete the file"
+                )
 
 
 def read_note(path: Path) -> tuple[Header, list[KeySource]]:
