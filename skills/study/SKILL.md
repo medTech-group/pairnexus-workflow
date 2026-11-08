@@ -112,7 +112,7 @@ Stakes: touches payments. Recommended: study. Owner chose: skip, because the dep
 <!-- workflow:agent -->
 ```
 
-The stakes line is one line, and `WF research stakes` lists all of it after `Stakes: `. Write the marker exactly as shown, and nothing else in the comment: a comment with a second stakes line or a second marker, a token record, or either line inside a code fence isn't read.
+The stakes line is one line. `WF research stakes` lists it and the issue's title with control characters and the profile's sensitive patterns left out, and a line or title past 1,000 characters cut. Write the marker exactly as shown, and nothing else in the comment: a comment with a second stakes line or a second marker, a token record, or either line inside a code fence isn't read.
 
 ## 3. The token record
 

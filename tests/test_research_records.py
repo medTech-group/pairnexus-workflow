@@ -193,6 +193,20 @@ def test_research_output_from_stakes(project, title, shown):
     assert p.stdout == f"#7 2026-11-07 {shown}: Stakes: touches payments. Recommended: study. Owner chose: skip, because the deposit is the fixed fee we already take.\n"
 
 
+def test_a_long_stakes_line_and_title_are_cut_at_the_line_limit(project):
+    limit = research_records.LINE_LIMIT
+    line, title = "Stakes: " + "a" * 4992, "T" * 5000
+    p = _run(project, "stakes", "--json", *_files(project, [_comment(1, 42, _stakes(line))], issues=[{"number": 42, "title": title}]))
+    assert p.returncode == 0, p.stderr
+    got = json.loads(p.stdout)["stakes"][0]
+    assert (got["line"], got["title"]) == (line[: limit - 1] + "…", title[: limit - 1] + "…")
+    # A line of exactly the limit is shown whole.
+    line, title = "Stakes: " + "a" * (limit - 8), "T" * limit
+    p = _run(project, "stakes", "--json", *_files(project, [_comment(1, 42, _stakes(line))], issues=[{"number": 42, "title": title}]))
+    got = json.loads(p.stdout)["stakes"][0]
+    assert (got["line"], got["title"]) == (line, title)
+
+
 def test_stakes_reads_windows_line_endings(project):
     p = _run(project, "stakes", *_files(project, [_comment(1, 42, STAKES.replace("\n", "\r\n"))]))
     assert p.returncode == 0, p.stderr
@@ -485,3 +499,11 @@ def test_the_study_skill_says_which_comments_count_and_that_estimate_averages_fu
     assert "only comments carrying the agents' marker, posted by an account with write access, count" in text
     assert "never a second study's" in text and "the main session's own share isn't counted" in text
     assert "WF research stakes --fetch" in text and "WF research estimate --fetch" in text
+
+
+def test_the_study_skill_says_what_stakes_leaves_out_and_where_it_cuts_a_line():
+    text = re.sub(r"\s+", " ", SKILL.read_text(encoding="utf-8"))
+    assert "lists all of it" not in text
+    m = re.search(r"control characters and the profile's sensitive patterns left out, and a line or title past ([0-9,]+) characters cut", text)
+    assert m, "the study skill doesn't say what `research stakes` leaves out and cuts"
+    assert int(m.group(1).replace(",", "")) == research_records.LINE_LIMIT
