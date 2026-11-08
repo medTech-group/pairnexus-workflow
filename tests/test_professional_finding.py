@@ -121,6 +121,19 @@ def test_a_second_study_s_token_record_carries_the_second_study_marker():
     assert "Closes #<n>" in closing and "no verdict" in closing
 
 
+
+def test_a_second_study_s_research_issue_gets_no_study_under_way_link_on_the_item():
+    # `next` and `start` hold an item whose "Study under way: #<n>" link names an open research issue;
+    # the second study's issue stays open past the main verdict, so a link to it would hold the item's
+    # spec when the verdict and grilling go ahead.
+    study = _flat(_read("skills/study/SKILL.md"))
+    para = study[study.index("**A finding that needs a professional**"):].split("## 10.", 1)[0]
+    ours = para[para.index("**Research it ourselves:**"):].split("- **Ask a professional:**", 1)[0]
+    assert '"Study under way"' in ours, "says what the second study's research issue isn't linked by"
+    link = ours[ours.index('"Study under way"') - 40:ours.index('"Study under way"') + 120]
+    assert "no " in link and "main note" in link
+
+
 # --- the questionnaire and what waits ----------------------------------------------
 
 
