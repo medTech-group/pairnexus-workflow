@@ -156,6 +156,20 @@ def test_an_item_that_already_links_a_study_is_offered_no_second_one(offer):
     assert "no second" in text
 
 
+@OFFERS
+def test_an_item_already_judged_is_offered_no_second_study(offer):
+    # A skip's stakes record stays the item's one judgement: carrying the item on in a
+    # later session posts no second record. A Destination item's record is where the
+    # `study` skill's section 5 puts it.
+    text = offer()
+    rules = [s for s in re.split(r"(?<=[.:])\s+(?=[A-Z*-])", text) if "already has a stakes record" in s]
+    assert rules, "no rule for an item that already has a stakes record"
+    rule = rules[0]
+    assert "no second offer" in rule
+    assert "Destination item" in rule and "`study` skill's section 5" in rule
+    assert "skipped" in rule or "Skip it" in rule
+
+
 def test_the_study_skill_still_has_the_sections_the_offer_points_to():
     text = STUDY.read_text(encoding="utf-8")
     assert re.search(r"^## 2\. The stakes record$", text, re.M)
