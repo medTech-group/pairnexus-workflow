@@ -50,6 +50,10 @@
 
 - **For projects updating:** nothing to do. Tests: `tests/test_research_notes.py`.
 
+**A research note's `## Key sources` section can be followed by other sections** (#528, split out of #506, part of spec #505). The section no longer has to be the note's last: `workflow research check` reads its key sources up to the next `# ` or `## ` heading. It fails closed, refusing the note rather than reading it in part or saying "unchanged" without reading every key source: `## Key sources` more than once (in any case, at any level, or in a quote), one inside a code fence, or a heading inside the section, each naming the line; and a fingerprint file anywhere in the topic's folder that no key-source line in the section names, naming the file, so a key source written anywhere else in the note, in any form, is refused. A fingerprint file is found by its name, `*.fingerprints`, or, whatever its name, by its first line, a `url:` line; a file or folder there that can't be read is refused too, naming it. A key-source line's fingerprints must be a `.fingerprints` file. The rest of the note is prose, never read for key sources. The `study` skill's layout says where the section may sit.
+
+- **For projects updating:** nothing to do. Tests: `tests/test_research_notes.py`.
+
 ## 0.1.21
 
 **Decision questions asked in a message are easier to read.** A recommendation now has its own labelled part, "➡️ Recommended:", with its evidence, and the alternatives have theirs, so a recommendation can't be mistaken for a decision already made. Questions asked as clickable choices are unchanged.

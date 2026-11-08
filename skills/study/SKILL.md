@@ -25,7 +25,7 @@ docs/research/<topic>/
 - `Last checked:` is the date its claims were last read against their sources, as `YYYY-MM-DD`. It is for information only: nothing decides by it.
 - `Issue:` is `#<n>`, the `research` issue that tracks it.
 
-**The key sources** are the sources its findings rest on. They alone get fingerprints. The note lists them under a `## Key sources` heading, one line each: the link in angle brackets, then its saved copy and its fingerprints, as paths inside the topic's folder. That section is the note's last, and the note has it once. A note with no key sources says so with one line, `- None`.
+**The key sources** are the sources its findings rest on. They alone get fingerprints. The note lists them under a `## Key sources` heading, one line each: the link in angle brackets, then its saved copy and its fingerprints, as paths inside the topic's folder. The note has that section once, outside any code fence. It runs to the next `# ` or `## ` heading, or to the note's end, so other sections may follow it. It holds only those lines, with blank lines between them if you like. Every fingerprint file is named `<name>.fingerprints`, and each one in the topic's folder, in any folder inside it, has its key-source line in that section: a note with a fingerprint file the section doesn't name is refused, naming the file, since a key source written anywhere else wouldn't be read. A file there whose first line is a `url:` line is a fingerprint file too, whatever its name, and a file or folder there that can't be read is refused, naming it, since it can't be ruled out. The rest of the note is prose, and nothing in it is read for key sources. A note with no key sources says so with one line, `- None`, and its folder holds no fingerprint files.
 
 An example note, `docs/research/booking-ahead/note.md`:
 
@@ -89,7 +89,7 @@ Cancel up to 2 hours before your booking for a full refund.
 - **changed:** each new paragraph's live text, its position on the live page and its hash, and each paragraph gone, by its position in the saved copy, with the saved copy's text there and its hash. Read only those;
 - **can't fetch,** and why.
 
-It refuses a note whose layout breaks the rules above (a key-source line it can't read, a path outside the topic's folder, links that don't agree, or a saved copy whose paragraphs don't match its fingerprints), naming what to fix. It spends no model tokens, and writes nothing.
+It refuses a note whose layout breaks the rules above (a key-source line it can't read, a fingerprint file in the topic's folder that no key-source line names, a file or folder there it can't read, `## Key sources` twice or inside a code fence, a path outside the topic's folder, links that don't agree, or a saved copy whose paragraphs don't match its fingerprints), naming what to fix. It spends no model tokens, and writes nothing.
 
 **The mark.** A claim still wrong after the look at a fix gets the mark ` **(unconfirmed)**`, exactly that text, with its leading space, added at the end of the line that holds the claim. For example:
 
