@@ -42,6 +42,10 @@
 
 - **For projects updating:** nothing to do. Tests: `tests/test_research_merge_check_unread.py`.
 
+**"Decision questions": four of research's routing choices are each recorded in one line** (#544, split out of #511, part of spec #505). The flow's "Routing choices … get neither." sentence stays as it was, so **Build it now** and the other routing choices are still never recorded. After it, a numbered list names the four that are: run or skip a study (the stakes record), the professional choice, the one choice after a source changed (going on, fixing the note or re-running the study) and bringing in an old note, each with the reason and the owner's choice, on the research issue or, with none, the item's issue, the spec's issue or the decision ticket. "Research"'s **Old notes** rule points at the record.
+
+- **For projects updating:** nothing to do. Tests: `tests/test_decision_questions.py`.
+
 ## 0.1.21
 
 **Decision questions asked in a message are easier to read.** A recommendation now has its own labelled part, "➡️ Recommended:", with its evidence, and the alternatives have theirs, so a recommendation can't be mistaken for a decision already made. Questions asked as clickable choices are unchanged.
