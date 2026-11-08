@@ -944,6 +944,7 @@ def test_check_accepts_a_saved_paragraph_with_words_left_out(project):
 
 def test_check_a_note_with_no_key_sources(project):
     _break(project, "note.md", "- <https://example.com/help/booking>, saved as `sources/booking-help.md`, fingerprints in `sources/booking-help.fingerprints`", "- None")
+    (_note(project).parent / "sources/booking-help.fingerprints").unlink()  # a note with no key sources has no fingerprint files
     p = _check(project)
     assert p.returncode == 0, p.stderr
     assert json.loads(p.stdout)["sources"] == []
@@ -991,6 +992,7 @@ def test_check_reads_the_key_sources_up_to_the_next_section(project, tmp_path, a
 
 def test_check_reads_a_note_with_no_key_sources_and_a_section_after(project):
     _break(project, "note.md", _KEY_LINE, "- None")
+    (_note(project).parent / "sources/booking-help.fingerprints").unlink()  # a note with no key sources has no fingerprint files
     _reshape(project, after="## Notes\n\nWords.\n")
     p = _check(project)
     assert p.returncode == 0, p.stderr
@@ -1007,24 +1009,10 @@ def test_check_reads_a_note_with_no_key_sources_and_a_section_after(project):
         ("", f"> ## Key sources\n>\n> {_GROUPS}\n", 15, "`## Key sources` more than once"),
         (f"```markdown\n## Key sources\n\n{_GROUPS}\n```\n\n", "", 12, "inside a code fence"),
         ("~~~\n\n", "", 13, "inside a code fence"),
-        ("", f"## Notes\n\n{_GROUPS}\n", 17, "outside `## Key sources`"),
-        ("", f"## Notes\n\n{_GROUPS.replace('- <', '* <')}\n", 17, "outside `## Key sources`"),
-        ("", f"## Notes\n\n```\n{_GROUPS}\n```\n", 18, "outside `## Key sources`"),
-        (f"{_GROUPS}\n\n", "", 11, "outside `## Key sources`"),
-        ("", f"## Notes\n\n{_GROUPS_WRAPPED}\n", 17, "outside `## Key sources`"),
-        ("", f"## Notes\n\nGroups of 8 or more call ahead.\n\nKey sources\n-----------\n\n{_GROUPS_WRAPPED}\n", 22, "outside `## Key sources`"),
-        ("", f"## Notes\n\n{_GROUPS_SPLIT}\n", 17, "outside `## Key sources`"),
-        ("", f"## Notes\n\n{_GROUPS_TWO_SPACES}\n", 17, "outside `## Key sources`"),
-        ("", f"## Notes\n\n{_GROUPS_NBSP}\n", 17, "outside `## Key sources`"),
-        ("", f"## Notes\n\n{_GROUPS_NOT_SAVED}\n", 17, "outside `## Key sources`"),
-        ("", f"## Notes\n\nGroups of 8 or more call ahead.\n{_GROUPS_WRAPPED}\n", 18, "outside `## Key sources`"),
     ],
     ids=[
         "second-key-sources", "second-after-a-section", "second-in-another-case", "second-at-another-level", "second-in-a-quote",
-        "one-in-a-fence-before", "fence-never-closed", "source-line-in-a-later-section", "star-bullet-in-a-later-section",
-        "source-line-in-a-fence-after", "source-line-before-the-section", "wrapped-source-line-in-a-later-section",
-        "wrapped-source-line-under-an-underlined-heading", "saved-and-as-on-two-lines", "two-spaces-in-saved-as",
-        "no-break-space-in-saved-as", "source-line-with-no-saved-as", "wrapped-source-line-right-after-prose",
+        "one-in-a-fence-before", "fence-never-closed",
     ],
 )
 def test_check_refuses_a_note_whose_key_sources_it_cant_all_read(project, before, after, n, said):
@@ -1034,23 +1022,169 @@ def test_check_refuses_a_note_whose_key_sources_it_cant_all_read(project, before
     assert f"line {n}" in p.stderr and said in p.stderr, p.stderr
 
 
+def _groups_files(project, folder="sources"):
+    """The groups page's saved copy and fingerprints, written into the topic's
+    folder as `_two_sources` writes them, with no key-source line naming them."""
+    topic = _note(project).parent
+    (topic / folder).mkdir(parents=True, exist_ok=True)
+    for ext in ("md", "fingerprints"):
+        text = (topic / f"sources/booking-help.{ext}").read_text(encoding="utf-8")
+        (topic / f"{folder}/groups.{ext}").write_text(text.replace(URL, "https://example.com/help/groups"), encoding="utf-8")
+
+
+_UNLISTED = "is a fingerprint file in the topic's folder, but no key-source line under `## Key sources` names it"
+
+
+@pytest.mark.parametrize(
+    "before,after",
+    [
+        ("", f"## Notes\n\n{_GROUPS}\n"),
+        ("", f"## Notes\n\n{_GROUPS.replace('- <', '* <')}\n"),
+        ("", f"## Notes\n\n```\n{_GROUPS}\n```\n"),
+        (f"{_GROUPS}\n\n", ""),
+        ("", f"## Notes\n\n{_GROUPS_WRAPPED}\n"),
+        ("", f"## Notes\n\nGroups of 8 or more call ahead.\n\nKey sources\n-----------\n\n{_GROUPS_WRAPPED}\n"),
+        ("", f"## Notes\n\n{_GROUPS_SPLIT}\n"),
+        ("", f"## Notes\n\n{_GROUPS_TWO_SPACES}\n"),
+        ("", f"## Notes\n\n{_GROUPS_NBSP}\n"),
+        ("", f"## Notes\n\n{_GROUPS_NOT_SAVED}\n"),
+        ("", f"## Notes\n\nGroups of 8 or more call ahead.\n{_GROUPS_WRAPPED}\n"),
+        (
+            "",
+            "## Notes\n\n- [Groups help page][groups], saved as [sources/groups.md](sources/groups.md), fingerprints in "
+            "[sources/groups.fingerprints](sources/groups.fingerprints)\n\n[groups]: https://example.com/help/groups\n",
+        ),
+        ("", "## Notes\n\n- www.example.com/help/groups, saved as sources/groups.md, fingerprints in sources/groups.fingerprints\n"),
+        ("", "## Notes\n\n- //example.com/help/groups, saved as sources/groups.md, fingerprints in sources/groups.fingerprints\n"),
+        ("", "## Notes\n\n- <https://example.com/help/groups>,\n \n  saved as sources/groups.md, fingerprints in sources/groups.fingerprints\n"),
+        ("", "## Notes\n\n- <https://example.com/help/groups>,\n \n  saved as sources/groups.md, fingerprints in sources/groups.fingerprints\n"),
+        ("", "## Notes\n\n- <https://example.com/help/groups>\n\n  saved as sources/groups.md, fingerprints in sources/groups.fingerprints\n"),
+    ],
+    ids=[
+        "source-line-in-a-later-section", "star-bullet-in-a-later-section", "source-line-in-a-fence-after", "source-line-before-the-section",
+        "wrapped-source-line-in-a-later-section", "wrapped-source-line-under-an-underlined-heading", "saved-and-as-on-two-lines",
+        "two-spaces-in-saved-as", "no-break-space-in-saved-as", "source-line-with-no-saved-as", "wrapped-source-line-right-after-prose",
+        "reference-style-link", "www-link", "protocol-relative-link", "em-space-line-splits-the-item", "no-break-space-line-splits-the-item",
+        "item-in-two-paragraphs",
+    ],
+)
+def test_check_refuses_a_note_with_a_fingerprint_file_its_key_sources_dont_name(project, before, after):
+    """A key source has a fingerprint file in the topic's folder: one written
+    anywhere but under `## Key sources`, in any form, leaves its file unnamed
+    there, so the note is refused, naming the file, and never read in part."""
+    _groups_files(project)
+    _reshape(project, before=before, after=after)
+    p = _check(project, (URL, PAGE), ("https://example.com/help/groups", PAGE))
+    assert p.returncode == 1 and p.stdout == "", p.stdout
+    assert "sources/groups.fingerprints" in p.stderr and _UNLISTED in p.stderr, p.stderr
+
+
 @pytest.mark.parametrize(
     "before,after",
     [
         ("", "## Notes\n\nThe help page was saved as a copy, with its fingerprints beside it.\n"),
         ("Each source was saved as text, with its fingerprints.\n\n", ""),
         ("", "## Method\n\nEach page was saved as a copy and fingerprinted.\n"),
+        ("Sites track visitors by canvas fingerprinting (<https://example.com/fp>).\n\n", ""),
+        ("Each page was read with `workflow research fingerprint`.\n\n", ""),
+        ("The policy was saved as `sources/booking-help.md` on the day.\n\n", ""),
+        ("", "## Findings\n\nThe report is saved as PDF at <https://example.com/r.pdf>.\n"),
+        ("Each booking is saved as a draft until it is paid (<https://example.com/help/booking>, paragraph 2).\n\n", ""),
+        ("Regulars can sign in with a fingerprint instead of a password (<https://example.com/help/sign-in>).\n\n", ""),
+        ("Bookings are saved as `pending` until paid.\n\n", ""),
+        ("", "## Method\n\n```\nWF research fingerprint https://example.com/help/booking --fetch --json\n```\n"),
+        ("Families saved as much as 20% by booking ahead (<https://example.com/study>).\n\n", ""),
+        ("Browser fingerprinting is explained at <https://example.com/fp-guide>.\n\n", ""),
+        ("The answers were saved as `bookings.csv`.\n\n", ""),
+        ("Tables for < 4 people were saved as walk-ins.\n\n", ""),
     ],
-    ids=["prose-after-the-section", "prose-before-the-section", "prose-in-a-method-section"],
+    ids=[
+        "prose-after-the-section", "prose-before-the-section", "prose-in-a-method-section", "a-fingerprinting-sentence-with-a-link",
+        "the-fingerprint-command-in-backticks", "a-saved-copy-named-in-backticks", "a-saved-pdf-link-in-a-later-section",
+        "saved-as-a-draft-with-a-link", "a-fingerprint-sign-in-with-a-link", "saved-as-a-word-in-backticks",
+        "the-fingerprint-command-in-a-fence-after", "saved-as-much-with-a-link", "browser-fingerprinting-with-a-link",
+        "saved-as-a-csv-in-backticks", "a-less-than-sign-in-prose",
+    ],
 )
 def test_check_reads_a_note_whose_prose_names_saved_copies_and_fingerprints(project, before, after):
-    """Prose with "saved as" and "fingerprint" but no link and no backtick
-    isn't shaped like a key-source line, so the note is read."""
+    """Prose is never read for key sources: with every fingerprint file in the
+    topic's folder named under `## Key sources`, the note is read, whatever
+    its prose says."""
     _reshape(project, before=before, after=after)
     p = _check(project, (URL, PAGE))
     assert p.returncode == 0, p.stderr
     (src,) = json.loads(p.stdout)["sources"]
     assert src["url"] == URL and src["result"] == "unchanged"
+
+
+@pytest.mark.parametrize(
+    "old,new",
+    [
+        ("Status: current", "Status: superseded by <../device-fingerprinting/note.md>"),
+        ("# Booking ahead: how far people book", "# Booking ahead: what the `fingerprint` step saved as text"),
+    ],
+    ids=["superseded-by-a-fingerprinting-note", "a-title-with-a-backtick-and-fingerprint"],
+)
+def test_check_reads_a_note_whose_header_or_title_names_fingerprints(project, old, new):
+    _break(project, "note.md", old, new)
+    p = _check(project, (URL, PAGE))
+    assert p.returncode == 0, p.stderr
+    (src,) = json.loads(p.stdout)["sources"]
+    assert src["url"] == URL and src["result"] == "unchanged"
+
+
+def test_check_refuses_a_note_that_says_none_beside_a_fingerprint_file(project):
+    _break(project, "note.md", _KEY_LINE, "- None")
+    p = _check(project)
+    assert p.returncode == 1 and p.stdout == "", p.stdout
+    assert "sources/booking-help.fingerprints" in p.stderr and _UNLISTED in p.stderr, p.stderr
+
+
+def test_check_refuses_an_unnamed_fingerprint_file_in_a_folder_inside_the_topics_folder(project):
+    _groups_files(project, folder="old/sources")
+    p = _check(project, (URL, PAGE))
+    assert p.returncode == 1 and p.stdout == "", p.stdout
+    assert "old/sources/groups.fingerprints" in p.stderr and _UNLISTED in p.stderr, p.stderr
+
+
+@pytest.mark.parametrize(
+    "folder,named",
+    [
+        ("sources", "sources/groups.fingerprints"),
+        ("sources", "./sources/../sources/groups.fingerprints"),
+        ("sources/2026", "sources/2026/groups.fingerprints"),
+    ],
+    ids=["as-written", "a-path-to-the-same-file", "in-a-folder-inside"],
+)
+def test_check_reads_a_note_whose_key_sources_name_every_fingerprint_file(project, tmp_path, folder, named):
+    _groups_files(project, folder=folder)
+    with open(_note(project), "a", encoding="utf-8") as fh:
+        fh.write(f"- <https://example.com/help/groups>, saved as `{folder}/groups.md`, fingerprints in `{named}`\n")
+    p = _check(project, (URL, PAGE), ("https://example.com/help/groups", _page(tmp_path, PARAS[:3])))
+    assert p.returncode == 0, p.stderr
+    a, b = json.loads(p.stdout)["sources"]
+    assert a["result"] == "unchanged" and b["result"] == "changed"  # the groups page was read
+    assert [g["position"] for g in b["gone"]] == [4]
+
+
+def test_check_reads_a_note_given_by_a_path_through_another_folder(project):
+    """The folder's files and the key-source lines' paths are compared resolved."""
+    note = project / "docs/research/booking-ahead/../booking-ahead/note.md"
+    p = _cli("check", "--note", note, "--page", URL, PAGE, "--json", env=_env(project))
+    assert p.returncode == 0, p.stderr
+    (src,) = json.loads(p.stdout)["sources"]
+    assert src["result"] == "unchanged"
+
+
+def test_check_refuses_a_key_source_whose_fingerprints_arent_a_fingerprints_file(project):
+    """Fingerprint files are found by their name, so a key-source line can't
+    use any other: a file named otherwise is never one."""
+    folder = _note(project).parent
+    (folder / "sources/booking-help.fingerprints").rename(folder / "sources/booking-help.txt")
+    _break(project, "note.md", "`sources/booking-help.fingerprints`", "`sources/booking-help.txt`")
+    p = _check(project, (URL, PAGE))
+    assert p.returncode == 1 and p.stdout == "", p.stdout
+    assert "sources/booking-help.txt" in p.stderr and "`.fingerprints`" in p.stderr, p.stderr
 
 
 @pytest.mark.parametrize(
@@ -1190,10 +1324,14 @@ def test_the_study_skill_says_where_the_key_sources_section_may_sit():
     assert "The note has that section once, outside any code fence" in text
     assert "It runs to the next `# ` or `## ` heading, or to the note's end, so other sections may follow it" in text
     assert (
-        'Anywhere else in the note, a paragraph or list item with "saved as" or "fingerprint" in it (in any case, however it wraps) '
-        "and also a link (`<` or `://`) or a backtick is refused, since a key source there wouldn't be read" in text
+        "Every fingerprint file is named `<name>.fingerprints`, and each one in the topic's folder, in any folder inside it, has its "
+        "key-source line in that section: a note with a fingerprint file the section doesn't name is refused, naming the file, "
+        "since a key source written anywhere else wouldn't be read" in text
     )
-    assert 'Prose without a link or a backtick, such as "each page was saved as a copy, with its fingerprints", is fine' in text
+    assert "The rest of the note is prose, and nothing in it is read for key sources" in text
+    assert "A note with no key sources says so with one line, `- None`, and its folder holds no fingerprint files" in text
+    assert "a fingerprint file in the topic's folder that no key-source line names" in text  # the `check` paragraph
+    assert "a link (`<` or `://`) or a backtick" not in text and "sits outside the section" not in text
     assert "shaped like a key-source line" not in text
     assert "the note's last" not in text
 

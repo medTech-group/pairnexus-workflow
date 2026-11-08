@@ -7,9 +7,10 @@ fixtures are copied from:
   `Issue:`), then a blank line; its key sources one line each under
   `## Key sources`, once, outside any code fence: `- <link>, saved as `path`,
   fingerprints in `path``. The section runs to the next `# ` or `## `
-  heading, or the note's end. Anywhere else in the note, a paragraph or list
-  item with "saved as" or "fingerprint" and also a link (`<` or `://`) or a
-  backtick is refused, so no key source goes unread;
+  heading, or the note's end. Every `*.fingerprints` file anywhere in the
+  topic's folder must be named by a key-source line there, so a key source
+  written anywhere else is refused, naming its file, and none goes unread.
+  The rest of the note is prose, never read for key sources;
 - a saved copy: `Source:`, `Accessed:` and `Third-party text:` lines, a blank
   line, then the page's paragraphs, one per position, separated by blank lines
   (a paragraph left out whole is one `[left out]` line in its place);
@@ -40,6 +41,7 @@ from pathlib import Path
 
 LEFT_OUT = "[left out]"
 NOTE_FILE = "note.md"
+FINGERPRINTS = ".fingerprints"  # a fingerprint file's name ends with it
 FETCH_LIMIT = 10 * 1024 * 1024  # bytes
 FETCH_TIMEOUT = 30  # seconds
 USER_AGENT = "pairnexus-workflow-research/1"
@@ -488,45 +490,6 @@ def _fence(line: str) -> tuple[str, int, str] | None:
     return s[0], length, rest.strip()
 
 
-def _starts_list_item(s: str) -> bool:
-    """Whether the stripped line starts a list item: `- `, `* `, `+ `, `1. ` or `1) `."""
-    if s[:1] in ("-", "*", "+"):
-        return s[1:2] in (" ", "\t")
-    digits = len(s) - len(s.lstrip("0123456789"))
-    return 0 < digits <= 9 and s[digits : digits + 1] in (".", ")") and s[digits + 1 : digits + 2] in (" ", "\t")
-
-
-def _blocks(lines: list[str], lo: int, hi: int):
-    """(its first line's index, its words joined by single spaces) for each
-    paragraph or list item in `lines[lo:hi]`: a run of lines that aren't
-    blank, ended by a blank line, a heading, a code fence's line or the next
-    list item. A heading or a fence's line is a block of its own."""
-    first, words = lo, []
-    for i in range(lo, hi):
-        s = lines[i].strip()
-        alone = bool(s) and bool(_heading_level(s) or _fence(lines[i]))
-        if words and (not s or alone or _starts_list_item(s)):
-            yield first, " ".join(words)
-            words = []
-        if s:
-            if not words:
-                first = i
-            words += s.split()  # any whitespace, a no-break space too, as one space
-            if alone:
-                yield first, " ".join(words)
-                words = []
-    if words:
-        yield first, " ".join(words)
-
-
-def _looks_like_key_source(text: str) -> bool:
-    """Whether a paragraph or list item could be a key-source line: "saved
-    as" or "fingerprint" in it, in any case, and also a link (`<` or `://`)
-    or a backtick."""
-    low = text.casefold()
-    return ("saved as" in low or "fingerprint" in low) and ("<" in low or "://" in low or "`" in low)
-
-
 def _key_sources_section(lines: list[str], path: Path) -> tuple[int, int]:
     """(the `## Key sources` heading's index, the index where its section
     ends: the next `# ` or `## ` heading, or the note's end). Fails closed:
@@ -559,13 +522,21 @@ def _key_sources_section(lines: list[str], path: Path) -> tuple[int, int]:
     if lines[start] != "## Key sources":
         raise LayoutError(f"{path}: line {start + 1} names the key sources but isn't the heading `## Key sources`, written at the line's start: {lines[start][:200]}")
     end = next((j for j in range(start + 1, len(lines)) if 1 <= _heading_level(lines[j]) <= 2), len(lines))
-    for lo, hi in ((0, start), (end, len(lines))):
-        for j, text in _blocks(lines, lo, hi):
-            if _looks_like_key_source(text):
-                raise LayoutError(
-                    f"{path}: line {j + 1} looks like a key-source line but is outside `## Key sources` (its heading to the next `# ` or `## ` heading), so it wouldn't be read: {lines[j][:200]}"
-                )
     return start, end
+
+
+def _every_fingerprint_file_listed(path: Path, sources: list[KeySource]) -> None:
+    """A key source has a fingerprint file in the topic's folder (the folder
+    holding the note), so a key source written anywhere but under
+    `## Key sources`, in any form, leaves its file unnamed there: refused,
+    naming the file. The note's prose is never read for key sources."""
+    listed = {s.fingerprints for s in sources}  # already resolved by `_inside`
+    for f in sorted(path.parent.rglob(f"*{FINGERPRINTS}")):
+        if f.resolve() not in listed:
+            raise LayoutError(
+                f"{path}: {f} is a fingerprint file in the topic's folder, but no key-source line under `## Key sources` names it, "
+                "so its source wouldn't be read: give it its key-source line there, or delete the file"
+            )
 
 
 def read_note(path: Path) -> tuple[Header, list[KeySource]]:
@@ -598,11 +569,14 @@ def read_note(path: Path) -> tuple[Header, list[KeySource]]:
             raise LayoutError(
                 f"{path}: line {n}, under `## Key sources`, is neither a key-source line, `- <link>, saved as `<path>`, fingerprints in `<path>``, nor `- None`: {line[:200]}"
             )
+        if not m["fps"].endswith(FINGERPRINTS):
+            raise LayoutError(f"{path}: line {n} names its fingerprints `{m['fps']}`, but a fingerprint file's name ends with `{FINGERPRINTS}`: {line[:200]}")
         sources.append(KeySource(m["url"], _inside(path.parent, m["saved"], "saved copy", m["url"]), _inside(path.parent, m["fps"], "fingerprints", m["url"])))
     if none and sources:
         raise LayoutError(f"{path}: `## Key sources` says `- None` and lists sources")
     if not none and not sources:
         raise LayoutError(f"{path}: `## Key sources` lists nothing (write `- None` under it when there are none)")
+    _every_fingerprint_file_listed(path, sources)
     for s in sources:
         for f in (s.saved, s.fingerprints):
             if not f.is_file():
