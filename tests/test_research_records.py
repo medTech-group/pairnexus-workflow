@@ -219,6 +219,15 @@ def test_estimate_averages_the_past_full_studies_only(project):
     )
 
 
+def test_estimate_from_one_past_full_study(project):
+    p = _run(project, "estimate", *_files(project, [_comment(1, 43, FULL)]))
+    assert p.returncode == 0, p.stderr
+    assert p.stdout == (
+        "About 11 agents, roughly 1.2M tokens: averaged from 1 past full study's token record (#43). "
+        "The main session's own share isn't counted.\n"
+    )
+
+
 def test_estimate_json(project):
     comments = [_comment(1, 43, FULL), _comment(2, 50, _tokens("full", 9, 900000)), _comment(3, 44, SECOND)]
     p = _run(project, "estimate", "--json", *_files(project, comments))

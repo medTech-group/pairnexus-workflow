@@ -262,7 +262,8 @@ def estimate_line(e: dict) -> str:
                 f"from the per-agent figure, {e['per_agent']:,} tokens per agent.")
     n = len(e["studies"])
     which = ", ".join(f"#{s['issue']}" for s in e["studies"])
-    return (f"{size}: averaged from {n} past full stud{'y' if n == 1 else 'ies'}' token record{'s' if n != 1 else ''} ({which}). "
+    whose = "study's" if n == 1 else "studies'"
+    return (f"{size}: averaged from {n} past full {whose} token record{'s' if n != 1 else ''} ({which}). "
             "The main session's own share isn't counted.")
 
 
