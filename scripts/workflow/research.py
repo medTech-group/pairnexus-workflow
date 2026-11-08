@@ -777,7 +777,9 @@ def _meta_charset(raw: bytes) -> str | None:
     """The label an HTML page's `<meta>` names in its first 4096 bytes, as HTML's
     prescan finds it, with a script's text skipped too: never in a comment, a script
     or another tag's attribute, and from a `content` only beside
-    `http-equiv="content-type"`. The first such `<meta>` wins; None for none."""
+    `http-equiv="content-type"`. A `<meta>` whose label the standard doesn't list
+    (an empty one among them) is passed over, as the prescan does, and the search
+    goes on. The first `<meta>` with a listed label wins; None for none."""
     low = raw[:_PRESCAN].lower()
     n, i = len(low), 0
     while i < n:
@@ -788,8 +790,8 @@ def _meta_charset(raw: bytes) -> str | None:
             i += 2
         elif low.startswith(b"<meta", i) and i + 5 < n and low[i + 5] in b"\t\n\x0c\r /":
             label, i = _meta(low, i + 5)
-            if label is not None:
-                return label.decode("ascii", "replace")
+            if label is not None and encoding_named(label := label.decode("ascii", "replace")) is not None:
+                return label
         elif low.startswith(b"<", i) and low[i + 1 : i + 2].isalpha() or low.startswith(b"</", i) and low[i + 2 : i + 3].isalpha():
             start = i + 1
             while i < n and low[i] not in b"\t\n\x0c\r >":
@@ -816,8 +818,9 @@ def _encoding(content_type: str, raw: bytes, kind: str) -> tuple[str, int]:
     order mark to skip: a byte order mark first, as the standard's decode does;
     else the charset the header names; else, for HTML, the one its `<meta>`
     names in its first 4096 bytes, where UTF-16 means UTF-8 and x-user-defined
-    windows-1252, as HTML says; else UTF-8. Raises PageError for a label the
-    standard doesn't list, or one it reads as a single replacement character."""
+    windows-1252, as HTML says; else UTF-8. Raises PageError for a header's label
+    the standard doesn't list (a `<meta>`'s is passed over: `_meta_charset`), or a
+    label it reads as a single replacement character."""
     for bom, name in _BOMS:
         if raw.startswith(bom):
             return name, len(bom)
@@ -845,8 +848,8 @@ def paragraphs(raw: bytes, content_type: str) -> list[str]:
     styles, the head and navigation left out), plain text by its blank lines.
     Whitespace inside a paragraph is one space; empty paragraphs are dropped.
     A page is read in the charset it names (`_encoding`), else UTF-8; a page
-    with no content type only when it reads the same as in UTF-8. A label the
-    Encoding Standard doesn't list, bytes the charset doesn't define, HTML it
+    with no content type only when it reads the same as in UTF-8. A header's label
+    the Encoding Standard doesn't list, bytes the charset doesn't define, HTML it
     can't parse, or a page with no content type whose bytes aren't clearly
     HTML or plain text raises PageError."""
     kind = _kind(content_type, raw)

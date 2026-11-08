@@ -430,28 +430,30 @@ _CAFE = b"<p>Caf\xc3\xa9</p>"
         ("text/html", b'<meta charset="utf-8">' + _CAFE),
         ("text/html", b"\xef\xbb\xbf" + _CAFE),
         ("text/plain; charset=utf-8", b"Caf\xc3\xa9"),
+        # #531: a <meta> naming a charset the Encoding Standard doesn't list is passed over, as HTML's prescan does
+        ("text/html", b'<meta charset="punycode">' + _CAFE),
+        ("text/html", b'<meta charset="undefined">' + _CAFE),
+        ("text/html", b'<meta charset="idna">' + _CAFE),
     ],
-    ids=["no-charset", "header-utf-8", "header-utf8", "meta-utf-8", "bom", "plain-text"],
+    ids=["no-charset", "header-utf-8", "header-utf8", "meta-utf-8", "bom", "plain-text", "meta-punycode", "meta-undefined", "meta-idna"],
 )
 def test_a_utf8_page_is_read(ctype, raw):
     assert research.paragraphs(raw, ctype) == ["Caf\u00e9"]
 
 
 # #531: a page in another charset is read in it (tests/test_research_charsets.py);
-# a charset the Encoding Standard doesn't list is still refused, before any decoding.
+# a charset the header names that the Encoding Standard doesn't list is still refused, before any decoding.
 @pytest.mark.parametrize(
     "ctype,raw,charset",
     [
-        ("text/html", b'<meta charset="punycode"><p>Book up to 30 days ahead - call first.</p>', "punycode"),
+        ("text/html; charset=punycode", b"<p>Book up to 30 days ahead - call first.</p>", "punycode"),
         ("text/html; charset=punycode", b"<p>a-" + b"A" * 2_000_000 + b"</p>", "punycode"),  # refused before any decoding: never slow
         ("text/html; charset=unicode_escape", b"<p>C:\\new</p>", "unicode_escape"),
         ("text/html; charset=undefined", _CAFE, "undefined"),
-        ("text/html", b'<meta charset="undefined">' + _CAFE, "undefined"),
         ("text/html; charset=idna", _CAFE, "idna"),
-        ("text/html", b'<meta charset="idna">' + _CAFE, "idna"),
         ("text/plain; charset=utf-7", b"Caf+AOk-", "utf-7"),
     ],
-    ids=["meta-punycode", "punycode-long", "unicode-escape", "header-undefined", "meta-undefined", "header-idna", "meta-idna", "plain-text"],
+    ids=["header-punycode", "punycode-long", "unicode-escape", "header-undefined", "header-idna", "plain-text"],
 )
 def test_a_page_in_a_charset_the_standard_doesnt_list_is_refused(ctype, raw, charset):
     with pytest.raises(research.PageError, match=f"it names a charset the Encoding Standard doesn't list \\({re.escape(charset)}\\)"):
@@ -473,13 +475,13 @@ def test_html_it_cant_parse_is_a_page_it_cant_read(monkeypatch):
         research.page_paragraphs(b"<p>A</p>", "text/html")
 
 
-def test_fingerprint_refuses_a_page_in_a_charset_the_standard_doesnt_list_and_writes_nothing(project, tmp_path):
-    page = tmp_path / "menu.html"
-    page.write_bytes(b'<meta charset="unicode_escape"><p>Caf\\xe9</p>')
+def test_fingerprint_refuses_a_page_in_a_charset_the_standard_doesnt_list_and_writes_nothing(project, server):
+    base, routes = server
+    routes["/menu"] = (200, "text/html; charset=unicode_escape", b"<p>Caf\\xe9</p>")
     before = _snapshot(project)
-    p = _cli("fingerprint", URL, "--page", page, env=_env(project))
+    p = _cli("fingerprint", f"{base}/menu", "--fetch", env=_env(project))
     assert p.returncode == 1 and p.stdout == ""
-    assert "can't read" in p.stderr and "it names a charset the Encoding Standard doesn't list (unicode_escape)" in p.stderr
+    assert "can't fetch" in p.stderr and "it names a charset the Encoding Standard doesn't list (unicode_escape)" in p.stderr
     assert "Traceback" not in p.stderr
     assert _snapshot(project) == before
 

@@ -345,6 +345,47 @@ def test_a_meta_charset_outside_comments_and_scripts_is_read(meta):
     assert research.paragraphs(meta + b"<p>Caf\xe9</p>", "text/html") == ["Café"]
 
 
+_NO_ENCODING_METAS = [
+    b'<meta charset="">',
+    b"<meta charset>",
+    b"<meta charset=''>",
+    b'<meta charset=" ">',
+    b"<meta charset=utf-8/>",
+    b'<meta charset="utf-8;">',
+    b'<meta charset=""utf-8"">',
+    b'<meta charset="{{charset}}">',
+    b'<meta charset="punycode">',
+    b'<meta charset="caf\xc3\xa9">',
+    b'<meta http-equiv="Content-Type" content="text/html; charset=utf-8, text/html">',
+    b'<meta http-equiv="Content-Type" content="text/html; charset=">',
+]
+_NO_ENCODING_IDS = ["empty", "bare", "empty-single-quotes", "blank", "slash", "semicolon", "doubled-quotes", "template", "punycode", "not-ascii", "content-list", "content-empty"]
+
+
+@pytest.mark.parametrize("meta", _NO_ENCODING_METAS, ids=_NO_ENCODING_IDS)
+def test_a_meta_whose_label_names_no_encoding_is_passed_over_as_htmls_prescan_does(meta):
+    # with no other label, the page is read as UTF-8, strictly
+    assert research.paragraphs(meta + b"<p>Caf\xc3\xa9</p>", "text/html") == ["Café"]
+    with pytest.raises(research.PageError, match="its bytes aren't valid UTF-8"):
+        research.paragraphs(meta + b"<p>Caf\xe9</p>", "text/html")
+    # the search goes on: a later <meta> naming a label the standard lists is read
+    assert research.paragraphs(meta + b'<meta charset="utf-8"><p>Caf\xc3\xa9</p>', "text/html") == ["Café"]
+    assert research.paragraphs(meta + b'<meta charset="windows-1252"><p>Caf\xe9</p>', "text/html") == ["Café"]
+
+
+def test_fingerprint_and_check_read_a_utf8_page_whose_meta_names_no_encoding(project, tmp_path):
+    page = tmp_path / "booking-help.html"
+    page.write_bytes(PAGE.read_bytes().replace(b'<meta charset="utf-8">', b"<meta charset=utf-8/>"))
+    p = _cli("fingerprint", URL, "--page", page, "--json", env=_env(project))
+    assert p.returncode == 0, p.stderr
+    want = (NOTE / "sources/booking-help.fingerprints").read_text(encoding="utf-8").splitlines()[1:]
+    assert [f"{x['position']} {x['hash']}" for x in json.loads(p.stdout)["paragraphs"]] == want
+    p = _check(project, (URL, page))
+    assert p.returncode == 0, p.stderr
+    (src,) = json.loads(p.stdout)["sources"]
+    assert src["result"] == "unchanged", src
+
+
 def test_fingerprint_reads_a_utf8_page_whose_comment_names_another_charset(project, tmp_path):
     page = tmp_path / "menu.html"
     page.write_bytes(
@@ -438,15 +479,15 @@ _NOT_LISTED = ["punycode", "unicode_escape", "raw_unicode_escape", "utf-7", "bas
 
 
 @pytest.mark.parametrize("label", _NOT_LISTED)
-def test_a_label_the_standard_doesnt_list_is_refused_from_the_header_or_the_meta(label):
+def test_a_label_the_standard_doesnt_list_is_refused_from_the_header_and_passed_over_in_a_meta(label):
     page = b"<p>Book up to 30 days ahead - call first. C:\\new</p>"
     why = f"it names a charset the Encoding Standard doesn't list \\({label}\\)"
     with pytest.raises(research.PageError, match=why):
         research.paragraphs(page, f"text/html; charset={label}")
     with pytest.raises(research.PageError, match=why):
-        research.paragraphs(f'<meta charset="{label}">'.encode() + page, "text/html")
-    with pytest.raises(research.PageError, match=why):
         research.paragraphs(page, f"text/plain; charset={label}")
+    # a <meta> naming it is passed over, as HTML's prescan does: the page is read as UTF-8, never in it
+    assert research.paragraphs(f'<meta charset="{label}">'.encode() + page, "text/html") == ["Book up to 30 days ahead - call first. C:\\new"]
 
 
 def test_a_long_punycode_page_is_refused_at_once():
@@ -563,13 +604,13 @@ def test_fingerprint_fetches_a_thai_page_by_its_header(project, server):
     assert got[0]["hash"] != got[1]["hash"]
 
 
-def test_fingerprint_refuses_a_label_the_standard_doesnt_list_and_writes_nothing(project, tmp_path):
-    page = tmp_path / "menu.html"
-    page.write_bytes(b'<meta charset="punycode"><p>Book up to 30 days ahead - call first.</p>')
+def test_fingerprint_refuses_a_label_the_standard_doesnt_list_and_writes_nothing(project, server):
+    base, routes = server
+    routes["/menu"] = (200, "text/html; charset=punycode", b"<p>Book up to 30 days ahead - call first.</p>")
     before = _snapshot(project)
-    p = _cli("fingerprint", URL, "--page", page, env=_env(project))
+    p = _cli("fingerprint", f"{base}/menu", "--fetch", env=_env(project))
     assert p.returncode == 1 and p.stdout == ""
-    assert "can't read" in p.stderr and "it names a charset the Encoding Standard doesn't list (punycode)" in p.stderr
+    assert "can't fetch" in p.stderr and "it names a charset the Encoding Standard doesn't list (punycode)" in p.stderr
     assert "Traceback" not in p.stderr
     assert _snapshot(project) == before
 
@@ -618,3 +659,14 @@ def test_the_changelog_says_a_utf8_page_reads_as_before_only_by_a_label_the_stan
     body, _ = _note_531()
     (sentence,) = [s for s in body.split(". ") if "exactly as before" in s]
     assert "the standard lists" in sentence
+
+
+def test_the_changelog_says_a_meta_label_the_standard_doesnt_list_is_passed_over_and_only_the_headers_is_refused():
+    # a UTF-8 page whose <meta> reads `charset=utf-8/` or `charset=""` read before and still reads
+    for raw in (b"<meta charset=utf-8/><p>Caf\xc3\xa9</p>", b'<meta charset=""><p>Caf\xc3\xa9</p>', b'<meta charset="utf_8"><p>Caf\xc3\xa9</p>'):
+        assert research.paragraphs(raw, "text/html") == ["Café"]
+    body, updating = _note_531()
+    (sentence,) = [s for s in body.split(". ") if "It stays refused" in s]
+    assert "the header's label is one the standard doesn't list" in sentence
+    assert "A `<meta>` whose label the standard doesn't list, an empty one among them, is passed over" in body
+    assert "One whose header names a label in Python's own spelling" in updating
