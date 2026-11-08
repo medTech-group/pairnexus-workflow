@@ -467,6 +467,38 @@ def test_both_options_naming_one_file_is_refused(project, fps):
     assert "same file" in line
 
 
+@pytest.mark.parametrize(
+    "link",
+    [
+        "https://example.com/a\n2 " + "0" * 64,  # a line of its own in each file
+        "https://example.com/a b",
+        "https://example.com/a\tb",
+        "https://example.com/a\x7f",
+        "https://example.com/<a>",
+        "",
+        "not a link",
+        "ftp://example.com/a",
+        "https:///no-host",
+        "https://exämple.com/ü",
+        "https://example.com/caf\udce9",  # a lone surrogate, as a byte that isn't UTF-8 in the command line gives
+    ],
+    ids=["line-break", "space", "tab", "control", "angle-brackets", "empty", "not-a-link", "ftp", "no-host", "not-ascii", "surrogate"],
+)
+def test_a_link_no_key_source_line_could_name_is_refused_before_anything_is_read_or_written(project, link):
+    before = _snapshot(project)
+    p = _write(project, link, "t/u1/s.md", "t/u1/x.fingerprints", given=["--page", "missing.html"])
+    line = _one_line(p)
+    assert "can't read" not in line and "neither file was written" in line
+    assert _snapshot(project) == before
+
+
+@pytest.mark.parametrize("link", ["https://example.com/caf%C3%A9?q=a+b#top", "HTTP://Example.com:8080/a"])
+def test_a_link_in_ascii_with_no_space_is_written(project, link):
+    p = _write(project, link, "t/u1/s.md", "t/u1/x.fingerprints")
+    assert p.returncode == 0, p.stderr
+    assert (project / "t/u1/x.fingerprints").read_text(encoding="utf-8").startswith(f"url: {link}\n")
+
+
 def test_a_page_it_cant_fetch_writes_nothing(project, server):
     base, routes = server
     routes["/x"] = (200, "application/pdf", b"%PDF-1.4")

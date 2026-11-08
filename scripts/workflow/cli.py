@@ -1165,6 +1165,10 @@ def cmd_research(a) -> int:
             return 1
         writing = a.saved is not None
         if writing:
+            why = research_mod.link_problem(a.url)
+            if why:
+                print(f"workflow research fingerprint: can't write a key source's files for this link ({why}); neither file was written, and nothing was fetched", file=sys.stderr)
+                return 1
             bad = research_mod.target_problem(a.saved, a.fingerprints)
             if bad:
                 print(f"workflow research fingerprint: can't write {bad[0]} ({bad[1]}); neither file was written, and nothing was fetched", file=sys.stderr)

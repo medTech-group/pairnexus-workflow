@@ -415,6 +415,23 @@ def saved_copy_text(url: str, accessed: str, paras: list[str]) -> str:
     return f"Source: {url}\nAccessed: {accessed}\n{THIRD_PARTY}\n\n" + "\n\n".join(paras) + "\n"
 
 
+def link_problem(url: str) -> str | None:
+    """Why a link can't go in a key source's two files, else None: each holds
+    it on a line of its own, and a key-source line names it as `<link>`. So
+    ASCII only, no whitespace, control character, `<` or `>`, and http or
+    https with a host. Checked before anything is read, fetched or written."""
+    if not url.isascii():
+        return "it holds characters outside ASCII; cite the link percent-encoded"
+    if any(c <= " " or c in "<>\x7f" for c in url):
+        return "it holds a space, a line break, a control character, `<` or `>`"
+    try:
+        parts = urllib.parse.urlsplit(url)
+        ok = parts.scheme in ("http", "https") and bool(parts.hostname)
+    except ValueError:
+        ok = False
+    return None if ok else "it isn't an http or https link with a host"
+
+
 def target_problem(saved: str, fps: str) -> tuple[str, str] | None:
     """(the path as given, why) when the two paths can't be written whatever
     the page holds, else None: checked before anything is fetched."""
