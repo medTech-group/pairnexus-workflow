@@ -240,6 +240,22 @@ def test_estimate_counts_one_record_per_research_issue_its_latest(project):
     assert (got["agents"], got["tokens"]) == (11, 1180000)
 
 
+def test_estimate_takes_the_latest_record_by_its_time_not_its_text(project):
+    # 12:00 at +05:00 is 07:00 UTC, before 10:00 UTC.
+    comments = [_comment(1, 43, FULL, at="2026-11-07T12:00:00+05:00"), _comment(2, 43, _tokens("full", 10, 500000), at="2026-11-07T10:00:00Z")]
+    p = _run(project, "estimate", "--json", *_files(project, comments))
+    assert p.returncode == 0, p.stderr
+    assert json.loads(p.stdout)["studies"] == [{"issue": 43, "agents": 10, "total": 500000}]
+
+
+def test_estimate_keeps_the_given_order_when_a_record_has_no_time(project):
+    late = _comment(2, 43, _tokens("full", 10, 500000))
+    del late["created_at"]
+    p = _run(project, "estimate", "--json", *_files(project, [_comment(1, 43, FULL), late]))
+    assert p.returncode == 0, p.stderr
+    assert json.loads(p.stdout)["studies"] == [{"issue": 43, "agents": 10, "total": 500000}]
+
+
 def test_estimate_with_no_past_full_study_uses_the_per_agent_figure_and_says_it_isnt_learned(project):
     p = _run(project, "estimate", *_files(project, [_comment(1, 44, SECOND)]))
     assert p.returncode == 0, p.stderr

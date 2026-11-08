@@ -34,7 +34,7 @@ import unicodedata
 from dataclasses import dataclass
 from fractions import Fraction
 
-from .merge import WRITE
+from .merge import WRITE, _in_time_order, _time
 from .posts import AGENT_MARKER, _login, _number, comments_from
 
 # The per-agent figure: a placeholder until the `study` skill's ticket sets it
@@ -182,8 +182,8 @@ def candidates(comments) -> list[dict]:
 
 
 def _ordered(comments: list[dict]) -> list[dict]:
-    keyed = [(_when(c), _number(c) or 0, i, c) for i, c in enumerate(comments)]
-    return [c for *_, c in sorted(keyed, key=lambda k: k[:3])]
+    """Oldest first by time, as merge-check orders comments; as given when one has none."""
+    return _in_time_order(comments, lambda c: _time(c.get("created_at") or c.get("createdAt")), _number)
 
 
 @dataclass
