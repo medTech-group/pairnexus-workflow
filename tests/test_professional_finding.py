@@ -245,12 +245,23 @@ def test_every_account_of_the_gate_leaves_a_held_destination_item_out(where):
     _says_the_held_item_rule(where())
 
 
-@pytest.mark.parametrize("where", [_next_gate, _start_map_step_5, _readme_gate],
-                         ids=["next", "start's Map step 5", "the README's gate bullets"])
+@pytest.mark.parametrize("where", [_next_gate, _start_map_step_5, _conductor_kick_off, _readme_gate],
+                         ids=["next", "start's Map step 5", "the conductor's kick-off", "the README's gate bullets"])
 def test_the_fuller_accounts_hold_only_the_held_item_s_own_tickets_once_its_task_closes(where):
     text = where()
+    assert "closes" in text, "says what waits once the held item's task closes"
     closes = text[text.index("closes"):]
     assert "only" in closes and "own tickets" in closes
+
+
+def test_the_conductor_s_kick_off_lists_a_held_item_s_own_tickets_for_excluding_once_its_task_closes():
+    # `WF ready` holds the item's tickets only while their `## Blocked by` task is open: once it closes,
+    # the kick-off must list them itself, or a run builds them before the item has its spec and tickets.
+    kick = _conductor_kick_off()
+    assert "lists none of its tickets" not in kick
+    assert "closes" in kick, "says what the kick-off lists once the held item's task closes"
+    closes = kick[kick.index("closes"):]
+    assert "own tickets" in closes and "sub-issues of its spec" in closes and "exclud" in closes
 
 
 # --- the changelog -----------------------------------------------------------------
