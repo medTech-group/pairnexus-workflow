@@ -5,6 +5,7 @@ form, as the kit's text."""
 import re
 from pathlib import Path
 
+from changelog_notes import since_0110
 from workflow import architecture
 
 KIT = Path(__file__).resolve().parents[1]
@@ -118,3 +119,12 @@ def test_the_example_page_reads_as_a_page():
     assert [n for n, _ in page.helpers] == ["clean_body", "preview"]
     assert all(w for _, w in page.helpers)
     assert "\n## Rules\n" in PAGE
+
+
+def test_the_changelog_note_says_how_the_overview_is_read_for_now():
+    note = _flat(since_0110().split("(#612,", 1)[1].split("\n\n**", 1)[0])
+    assert "For now `README.md` is also read as a page: its `Covers:` lines are read like any page's" in note
+    assert "covering nothing yet when it has none" in note
+    assert "so it can appear under `--json`'s `\"pages\"`" in note
+    assert "`reads` still prints it only once, first" in note
+    assert "with no `Covers:` line, one that covers nothing yet" not in note
