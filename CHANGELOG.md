@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.1.22
+
+**Research notes and studies (spec #505).** Before a new feature is specced or a new project is charted, the guided start can offer a study: a panel of agents (an evidence gatherer, a question writer, 5 to 8 personas, a synthesizer and a validator) that gathers evidence, ranks the questions to ask real people, and ends with a verdict, build it, prototype first or stop. A brand-new project is always recommended one. Every study and fact note lives in `docs/research/<topic>/` and merges through a research pull request of its own, after a research check of each claim that cites a saved copy against that copy. `workflow research` fingerprints each key source, and whenever a decision relies on a note, the session checks first whether its sources have changed. A finding that needs a professional (the law, a regulation, a safety rule) holds back only what rests on it.
+
+- **For projects updating to 0.1.22:**
+  - The update brings the `study` skill and two new agents, `research-persona` and `research-checker`.
+  - A project set up before this release has no `research` label: the session creates it before filing its first research issue, or create it yourself (`gh api repos/<repo>/labels -f name=research`). If the repository already has a `research` label for something else, rename that one first, since the kit reads every issue carrying it as research.
+  - Only if you fingerprinted key sources with `workflow research` from the kit's `main` before this release (#531): one labelled as ASCII whose bytes aren't all ASCII now shows as changed, and one whose server's label is in Python's own spelling (`utf_8`, `cp65001`), or that names no content type and is labelled as ASCII with bytes outside it, shows as can't fetch; fingerprint it again once the server's label is fixed.
+  - Nothing else to do: `start` and `next` offer a study once the update merges.
+
 **Research notes in the repository: the folder's layout, fingerprints, the source check and current notes** (#506, part of spec #505).
 
 - **`workflow research`,** a new command whose inputs are files, with `--fetch` for pages. It calls no model and writes nothing:
