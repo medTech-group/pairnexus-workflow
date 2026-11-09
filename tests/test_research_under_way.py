@@ -322,11 +322,12 @@ def test_a_destination_item_with_a_study_under_way_is_that_study_s_carry_on_not_
     clear = next(ln for ln in _read(NEXT).splitlines() if ln.startswith("- **A clear map**"))
     assert '"Study under way: #<n>"' in clear and "comment on the map naming it" in clear
     assert "`study` skill's section 5" in clear
-    # Skipped while its research issue is open, ready to spec again once it closes. Read only
-    # the text after the skip: the line's "has no open children" must not stand in for it.
+    # Skipped while its research issue is open; once it closes, its verdict says what follows
+    # (#588). Read only the text after the skip: the line's "has no open children" must not
+    # stand in for it.
     skip = clear[clear.casefold().index("skipping"):]
     assert "with #<n> open" in skip
-    assert "ready to spec again once #<n> closes" in skip
+    assert "Once #<n> closes, its verdict, on #<n>, says what follows for the item" in skip
     assert "that study's **Carry on**" in skip
 
 
