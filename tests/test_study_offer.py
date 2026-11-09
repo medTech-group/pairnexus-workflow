@@ -340,21 +340,25 @@ def test_a_new_project_s_later_items_leave_its_destination_items_to_the_wait(off
     rule = _new_project(offer)
     later = rule[rule.index("From the first stakes record on"):]
     assert "its map's Destination items included" not in later
-    assert "its map's Destination items after the next bullet's wait where the map's Notes link the study" in later
+    assert "its map's Destination items after the next bullet's wait where the map's Notes link a study's research issue" in later
     text = offer()
     assert text.index(_wait(offer)) < text.lower().index("fixes, wording and internal changes")
 
 
 @OFFERS
-def test_a_new_project_s_destination_items_wait_only_where_the_map_s_notes_link_its_study(offer):
+def test_a_new_project_s_destination_items_wait_where_the_map_s_notes_link_a_study(offer):
     # #583's round 2, findings 4 and 7: "its map's Destination items once its verdict is in" held
     # a Destination item for a study its map's Notes don't link (one run on a Spec item, or on
     # another Destination item), which `next` §1 makes ready to spec, so the two gave two answers.
     # The clause reads what §1 and the wait bullet read: the map's Notes link.
+    # #583's round 3, finding 6: "where the map's Notes link the study" (the project's one study)
+    # let a later map's Destination items past a study its own Notes link, run after the first
+    # one on a Spec item, which the wait bullet and §1 hold. Any study the Notes link holds them.
     later = _new_project(offer)
     later = later[later.index("From the first stakes record on"):]
     assert "once its verdict is in" not in later
-    assert "the next bullet's wait where the map's Notes link the study" in later
+    assert "Notes link the study" not in later
+    assert "the next bullet's wait where the map's Notes link a study's research issue" in later
     assert _wait(offer).startswith("- **A map whose Notes link a study's research issue**")
     assert "while the map's Notes link an open research issue" in _clear_map()
 
@@ -439,7 +443,9 @@ def test_the_flow_s_research_section_holds_the_new_project_rule():
     assert "its map's Destination items included" not in rule
     # #583's round 2, finding 7: the wait is keyed to the map's Notes link, as `next` §1's.
     assert "once its study's verdict lets them go on" not in rule
-    assert "its map's Destination items after the wait for its study's verdict where the map's Notes link the study" in rule
+    # #583's round 3, finding 6: any study the map's Notes link, not the project's one study.
+    assert "Notes link the study" not in rule
+    assert "its map's Destination items, where the map's Notes link a study's research issue, after the wait for that study's verdict" in rule
 
 
 def test_the_readme_says_a_new_project_is_recommended_a_study():
