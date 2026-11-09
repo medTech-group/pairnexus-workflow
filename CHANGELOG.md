@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**An item already waiting on a person stays under waiting, not held** (#577, split out of #514). `workflow status` listed every item whose `## Blocked by` names an open owner task as held, even one labelled `needs-info`, `needs-human`, `owner-task` or `ready-for-human`, which already waits on a person. Such an item now stays under "Waiting on a person"; a spec, a parent issue or a planned item with one of those labels is still held, since its waiting label never listed it as waiting. An issue whose `## Blocked by` names itself is no longer held by itself. `start` and `next` say so in their "Held items" rules. Tests: `tests/test_research_under_way.py`.
+
+- **For projects updating:** nothing to do.
+
 **`workflow ready` never lists a research issue as ready** (#572). An open issue labelled `research` that also carries `ready-for-agent` was listed as READY, so `next` could claim and build it, where `workflow status` keeps it under "Research under way" (#514). `workflow ready` now lists it as waiting, with the reason "labelled `research`: a research issue, not a build ticket", and never under "start now", since the kit reads every issue carrying `research` as research (the `study` skill's section 5).
 
 - **For projects updating:** nothing to do.
