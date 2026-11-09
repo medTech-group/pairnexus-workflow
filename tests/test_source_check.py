@@ -19,7 +19,7 @@ import pytest
 
 from changelog_notes import since_0110
 from conftest import KIT
-from workflow import charter, context
+from workflow import charter, context, reviews
 
 FLOW = KIT / "docs/flow.md"
 CLI = KIT / "scripts/workflow.py"
@@ -210,6 +210,25 @@ def test_owner_s_choice_2():
     part = _part(_source_check(), "Choosing once")
     assert "nothing else" in part and "code fence" in part
     conductor = _flat(_conductor_owner_answers())
+    assert "nothing else in the comment" in conductor
+
+
+def test_owner_s_choice_3():
+    # A cloud session's GitHub tools add their footer after every body they post, the
+    # conductor's "Owner chose" comment among them (`reviews._CLOUD_FOOTER`). That one
+    # footer, once and at the very end, is the only thing besides the fixed shape a
+    # comment may hold and still count; anything else still means it doesn't.
+    footer = reviews._CLOUD_FOOTER.strip().split("\n")
+    assert footer[0] == "---"
+    shown = f"a blank line, `{footer[0]}`, then `{footer[1]}`"
+    choosing = _part(_source_check(), "Choosing once")
+    conductor = _flat(_conductor_owner_answers())
+    for where, text in (("Choosing once", choosing), ("conductor", conductor)):
+        assert "cloud session's footer" in text and shown in text, where
+        assert "once, at the very end" in text, where
+        assert "nothing else" in text, where
+    assert "each once and on a line of its own, never inside a code fence" in choosing
+    assert "nothing else before it" in choosing
     assert "nothing else in the comment" in conductor
 
 
