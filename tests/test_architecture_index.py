@@ -221,6 +221,26 @@ def test_a_page_with_no_covers_is_printed_in_one_sorted_list(tmp_path, monkeypat
     }
 
 
+def test_a_page_with_no_covers_that_sorts_last_is_printed_last(tmp_path, monkeypatch, capsys):
+    root = _repo(tmp_path, {
+        f"{ARCH}/README.md": "x\n",
+        f"{ARCH}/billing.md": _page(["src/billing/**"]),
+        f"{ARCH}/zz-old.md": "# What we had\n",
+    })
+    _write(root, "src/billing/x.py")
+    _commit(root)
+    want = [f"{ARCH}/README.md", f"{ARCH}/billing.md", f"{ARCH}/zz-old.md"]
+    assert _reads(monkeypatch, capsys, root)[1] == want
+    code, out, _ = _run(monkeypatch, capsys, root, "reads", "--base", "main", "--json")
+    assert json.loads(out) == {
+        "documents": want,
+        "pages": [
+            {"file": f"{ARCH}/billing.md", "matched_by": ["src/billing/**"]},
+            {"file": f"{ARCH}/zz-old.md", "matched_by": []},
+        ],
+    }
+
+
 def test_subfolders_non_md_files_and_the_overview_are_never_pages(tmp_path, monkeypatch, capsys):
     root = _repo(tmp_path, {
         f"{ARCH}/README.md": "Covers: src/**\n",
