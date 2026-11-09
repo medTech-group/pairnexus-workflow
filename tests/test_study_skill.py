@@ -268,6 +268,21 @@ def test_the_research_check_and_the_look_are_one_pass_each_with_their_records_fi
     assert "flow §4 item 4" in s
 
 
+def test_the_look_runs_after_a_check_that_wasn_t_clean_or_a_change_since_a_clean_one():
+    """#574: as flow §4 item 4 and `merge-check`'s `research_needs_look` (`case: changed`) do,
+    the look also runs when the note changed since a clean research check."""
+    s = _titled("The research check and the look")
+    assert "only when the research check wasn't clean" not in s
+    assert "when it isn't clean, the look" not in s
+    intro = s[:s.index("1. **The research check:**")]
+    assert "when it isn't clean or the note changed since it, the look" in intro
+    look = s[s.index("2. **The look,**"):s.index("3. **The mark:**")]
+    assert "when the research check wasn't clean, or when the note changed since it, a clean one included" in look
+    assert "judged on the pull request's own changes, so a merge of the base alone isn't one" in look
+    assert "`research_needs_look`" in look
+    assert "fix the claims and faults it listed (none after a clean one)" in look
+
+
 # ---------- the verdict and closing ----------
 
 
@@ -403,6 +418,18 @@ def test_the_changelog_notes_the_study_and_version_is_untouched():
     note = _flat(notes.split(head, 1)[1].split("\n\n**", 1)[0])
     for part in ("`research-persona`", "`research-checker`", "Study", "per-agent figure"):
         assert part in head + note, part
+    log = (KIT / "CHANGELOG.md").read_text(encoding="utf-8")
+    released = re.findall(r"^## (\d+\.\d+\.\d+)$", log, re.M)
+    assert (KIT / "VERSION").read_text(encoding="utf-8").strip() == released[0]
+
+
+def test_the_changelog_notes_the_look_after_a_change_and_version_is_untouched():
+    """#574: its note, and no bump."""
+    notes = since_0110()
+    head = next((l for l in notes.splitlines() if "(#574, part of spec #505)" in l), None)
+    assert head, "a changelog note for #574 under ## Unreleased"
+    note = _flat(notes.split(head, 1)[1].split("\n\n**", 1)[0])
+    assert "the look" in head + note and "`research_needs_look`" in head + note
     log = (KIT / "CHANGELOG.md").read_text(encoding="utf-8")
     released = re.findall(r"^## (\d+\.\d+\.\d+)$", log, re.M)
     assert (KIT / "VERSION").read_text(encoding="utf-8").strip() == released[0]

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**The study runs the look after a change to the note, even after a clean research check** (#574, part of spec #505). The `study` skill's section 10 ran the look only when the research check wasn't clean, so a study session that changed its note after a clean check skipped it, and its research pull request stayed not ready at `research_needs_look`. It now runs the look when the check wasn't clean, or when the note changed since it, as flow §4 item 4 and `merge-check` already did: judged on the pull request's own changes, so a merge of the base alone isn't a change.
+
+- **For projects updating:** nothing to do.
+
 **The per-agent figure is the sandbox study's average** (#519, part of spec #505). Before a project has a full study's token record, `workflow research estimate` counts the panel at its largest, 12 agents, at 48,760 tokens each, where it was an approximate 80,000. The kit's sandbox study (#518) used 731,398 tokens across 15 agents, the panel's 10 and the 5 checks around it: 48,759.87 each, rounded to the nearest token. `PER_AGENT_TOKENS` and the `study` skill's text change together.
 
 - **For projects updating:** nothing to do.
