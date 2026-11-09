@@ -283,6 +283,15 @@ def test_the_look_runs_after_a_check_that_wasn_t_clean_or_a_change_since_a_clean
     assert "fix the claims and faults it listed (none after a clean one)" in look
 
 
+def test_the_look_after_a_change_is_credited_to_flow_4_item_4_not_the_research_section():
+    """#574, round 1: the flow's "Research" section runs the look after a check's findings
+    only; the look after a change since a clean check is flow §4 item 4's."""
+    s = _titled("The research check and the look")
+    intro = s[:s.index("1. **The research check:**")]
+    assert not re.search(r"flow's \"Research\" section says[^:]*changed since", intro)
+    assert "when it isn't clean or the note changed since it, the look (flow §4 item 4)" in intro
+
+
 # ---------- the verdict and closing ----------
 
 
