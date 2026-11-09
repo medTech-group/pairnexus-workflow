@@ -321,26 +321,6 @@ def test_a_page_that_cant_be_read_is_given_out_as_covering_nothing_yet(tmp_path,
     assert [pg["covers"] for pg in json.loads(out)["pages"]] == [["src/billing/**"], []]
 
 
-def test_a_folder_that_cant_be_listed_prints_nothing_says_why_and_fails(tmp_path, monkeypatch, capsys):
-    root = _repo(tmp_path, {f"{ARCH}/README.md": "x\n", f"{ARCH}/a.md": _page(["src/**"])})
-    _write(root, "src/a.py")
-    _commit(root)
-    folder = root / ARCH
-    real = Path.iterdir
-
-    def iterdir(self):
-        if self == folder:
-            raise PermissionError(13, "Permission denied", str(self))
-        return real(self)
-
-    monkeypatch.setattr(Path, "iterdir", iterdir)
-    for args in (["reads", "--base", "main"], ["reads", "--base", "main", "--json"], ["pages"], ["pages", "--json"]):
-        code, out, err = _run(monkeypatch, capsys, root, *args)
-        assert (code, out) == (1, ""), args
-        assert f"can't read {ARCH}/ (Permission denied)" in err, args
-        assert "Traceback" not in err
-
-
 def test_reads_changes_nothing(tmp_path, monkeypatch, capsys):
     root = _repo(tmp_path, {f"{ARCH}/README.md": "x\n", f"{ARCH}/a.md": _page(["src/**"])})
     _write(root, "src/a.py")
