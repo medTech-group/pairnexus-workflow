@@ -599,6 +599,27 @@ def test_the_readme_s_charting_handover_names_the_study_s_carry_on():
     assert "**Stop here: the study's Carry on in a fresh session**, for a new project's map while its study runs" in row
 
 
+def _prototype_first() -> str:
+    _, proto, _ = _verdicts(_decisions_wait())
+    return proto
+
+
+def test_after_prototype_first_the_prototype_is_one_linking_the_verdict_with_no_blockers():
+    # #587's round 1, finding 7: a prototype ticket charted before the verdict, blocked by
+    # another decision, stood in for the prototype; held as "the only decision ready" while
+    # its blocker was held, nothing was ever ready.
+    proto = _prototype_first()
+    assert "(a `wayfinder:prototype` ticket linking the verdict, with no blockers: chart it if the map has none, never taking one charted before the verdict for it)" in proto
+    # The map's other prototype tickets are held with the rest, not made ready by it.
+    assert "the map's other prototype tickets waiting with the rest" in proto
+
+
+def test_start_offers_only_the_prototype_linking_the_verdict_after_prototype_first():
+    row = _verdict_row()
+    proto = row[row.index("on **Prototype first**"):row.index("on **Stop**")]
+    assert "only the prototype, until it closes: the `wayfinder:prototype` ticket linking the verdict, which `next` charts with no blockers when the map has none, never one charted before the verdict" in proto
+
+
 def test_the_flow_s_research_section_holds_a_new_project_s_map_decisions_for_the_verdict():
     flow = _flat((KIT / "docs/flow.md").read_text(encoding="utf-8"))
     research = flow[flow.index("## Research"):flow.index("## The bar")]
