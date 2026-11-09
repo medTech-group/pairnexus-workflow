@@ -251,8 +251,9 @@ def test_a_list_of_none_is_a_list_and_an_observed_real_person_finding_it_doesn_t
     s10 = _study_10()
     assert "saying `none` when the owner brought in nothing" in s10
     assert "as it gave the validator" not in s10  # it gave the validator nothing when nothing was brought in
-    # The look is given the same list.
-    assert "a fresh `research-checker`, given the same list, reads the lines changed" in s10
+    # The look is given the same list (or, in a later session, told it isn't available: #581).
+    assert "a fresh `research-checker`, given the same list or, in a later session that doesn't have it" in s10
+    assert "reads the lines changed since the research check" in s10
     # §7: the validator is given the list, `none` included.
     row = next(l for l in SKILL.read_text(encoding="utf-8").splitlines() if l.startswith("| Validator |"))
     assert "`none` when the owner brought in nothing" in row
@@ -343,7 +344,8 @@ def test_the_study_skill_says_how_the_checker_reads_a_notes_claims():
     assert "a claim citing a saved copy is read against it, whatever its label" in s
     assert f"a claim or finding that cites no saved copy is {NEVER}" in s  # the criterion's "never", unbounded
     assert "*observed (real person)*" in s and "what the owner brought in" in s
-    assert "a fresh `research-checker`, given the same list, reads the lines changed since the research check and each listed claim" in s
+    assert "a fresh `research-checker`, given the same list or, in a later session that doesn't have it, told the list isn't available" in s
+    assert "reads the lines changed since the research check and each listed claim" in s
     assert "A listed claim or fault whose line didn't change counts as still wrong" in s
 
 

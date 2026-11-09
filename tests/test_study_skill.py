@@ -257,6 +257,27 @@ def test_the_professional_choice_comes_before_the_research_check():
 # ---------- the research check and the look ----------
 
 
+def test_the_look_in_a_later_session_without_the_owner_s_list_is_told_the_list_isn_t_available():
+    """#581: told nothing about the list, the checker reads it as `none`, so a later session's
+    look, which has no list, says the list isn't available, in the agent's own words."""
+    s = _titled("The research check and the look")
+    look = s[s.index("2. **The look,**"):s.index("3. **The mark:**")]
+    assert (
+        "given the same list or, in a later session that doesn't have it, told the list isn't available"
+        in look
+    )
+    # Not checked is item 1's, and only against the list: a finding citing a saved copy that
+    # says otherwise is still wrong, so item 2 points to item 1 rather than restating it.
+    assert "told the list isn't available (as item 1 says), reads the lines changed" in look
+    assert "as not checked" not in look
+    # The agent's file and review-panel's section use the same words.
+    agent = _flat(CHECKER.read_text(encoding="utf-8"))
+    assert "a later session's research check and its look have no list, and the session says the list isn't available instead" in agent
+    assert "report such a finding as not checked, never as wrong" in agent
+    panel = _flat((KIT / "skills/review-panel/SKILL.md").read_text(encoding="utf-8"))
+    assert "in a later session that doesn't have it, that the list isn't available" in panel
+
+
 def test_the_research_check_and_the_look_are_one_pass_each_with_their_records_first():
     s = _titled("The research check and the look")
     assert "one pass each, never rounds until clean" in s
@@ -418,6 +439,18 @@ def test_vendoring_writes_them_into_a_project(tmp_path):
 
 
 # ---------- the changelog ----------
+
+
+def test_the_changelog_notes_the_look_without_the_list_and_version_is_untouched():
+    """#581: its note, and no bump."""
+    notes = since_0110()
+    head = next((l for l in notes.splitlines() if "(#581, part of spec #505)" in l), None)
+    assert head, "a changelog note for #581 under ## Unreleased"
+    note = _flat(notes.split(head, 1)[1].split("\n\n**", 1)[0])
+    assert "the look" in head + note and "the list isn't available" in head + note
+    log = (KIT / "CHANGELOG.md").read_text(encoding="utf-8")
+    released = re.findall(r"^## (\d+\.\d+\.\d+)$", log, re.M)
+    assert (KIT / "VERSION").read_text(encoding="utf-8").strip() == released[0]
 
 
 def test_the_changelog_notes_the_study_and_version_is_untouched():
