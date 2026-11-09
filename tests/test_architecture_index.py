@@ -2,6 +2,7 @@
 `cli.main`, on a scratch git repository. Only what the command prints."""
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -154,6 +155,16 @@ def test_paths_are_made_paths_from_the_root(tmp_path, monkeypatch, capsys, given
     root = _repo(tmp_path, {f"{ARCH}/billing.md": _page(["src/billing/**"])})
     given = given.replace("ROOT", str(root))
     assert _reads(monkeypatch, capsys, root, "--paths", given)[1] == [f"{ARCH}/billing.md"]
+
+
+def test_a_changed_file_whose_name_isnt_utf_8(tmp_path, monkeypatch, capsys):
+    root = _repo(tmp_path, {f"{ARCH}/README.md": "x\n", f"{ARCH}/src.md": _page(["src/**"])})
+    (root / "src").mkdir()
+    with open(os.path.join(os.fsencode(root), b"src", b"\xff.py"), "wb") as f:
+        f.write(b"x\n")
+    _commit(root)
+    code, lines, err = _reads(monkeypatch, capsys, root)
+    assert (code, lines) == (0, [f"{ARCH}/README.md", f"{ARCH}/src.md"]), err
 
 
 def test_a_change_on_the_base_after_the_merge_base_doesnt_count(tmp_path, monkeypatch, capsys):
