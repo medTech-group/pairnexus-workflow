@@ -26,6 +26,11 @@ CLAIM_LABEL = "workflow:in-progress"
 CARRY_ON_LABEL = "workflow:carry-on"
 INFRA_LABEL = "workflow:infra"
 HUMAN_LABELS = {"needs-human", "owner-task", "ready-for-human"}
+# An owner task: what only the owner can do. A blocker carrying one holds what it blocks.
+OWNER_TASK_LABELS = {"owner-task", "ready-for-human"}
+# Tracks a research note: a study's, a fact note's, or one a session filed about a note
+# (the `study` skill's section 5). The kit reads every issue carrying it as research.
+RESEARCH_LABEL = "research"
 SPEC_LABEL = "spec"
 NOT_BUILD_LABELS = {"wayfinder:map", SPEC_LABEL}
 # Specs created before this date are never noted as unreviewed (#234), so
@@ -692,7 +697,7 @@ def readiness(
                 v.reasons.append(f"blocker #{b} unknown (not in the issue list; for a PR, list it with the issues API's pull requests)")
             elif (bi.get("state") or "").lower() != "closed":
                 v.reasons.append(
-                    f"blocked by owner task #{b}" if labels_of(bi) & {"owner-task", "ready-for-human"} else f"blocked by open #{b}"
+                    f"blocked by owner task #{b}" if labels_of(bi) & OWNER_TASK_LABELS else f"blocked by open #{b}"
                 )
             elif (bi.get("state_reason") or "completed") != "completed":
                 v.reasons.append(f"blocker #{b} closed as {bi.get('state_reason')}, not completed")
