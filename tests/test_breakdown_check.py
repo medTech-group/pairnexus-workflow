@@ -461,13 +461,14 @@ def test_a_held_back_ticket_is_waiting_on_a_person_not_ready_or_to_sort(repo):
     assert all(i.number != 6 for i in st.to_triage + st.ready)
 
 
-def test_a_held_back_ticket_an_open_owner_task_holds_is_held(repo):
-    # #514: its `## Blocked by` names an open owner task, so status lists it as held, not waiting.
+def test_a_held_back_ticket_an_open_owner_task_holds_stays_waiting(repo):
+    # #577: its `## Blocked by` names an open owner task, but its `needs-info` already
+    # waits on a person, so status lists it as waiting, not held.
     from workflow import status
 
     issues = [_issue(6, "Ticket six", ["needs-info"], _held()), _issue(4, "Ticket four", ["owner-task"])]
     st = status.snapshot(repo, True, issues, [], repo="acme/demo", areas=["start", "docs"])
-    assert [i.number for i in st.held] == [6] and [i.number for i in st.waiting] == [4]
+    assert [i.number for i in st.waiting] == [4, 6] and st.held == []
     assert all(i.number != 6 for i in st.to_triage + st.ready)
 
 
@@ -497,9 +498,11 @@ def test_a_held_back_ticket_an_owner_task_holds_is_still_settled():
     assert len(row) == 1 and "never a held item but to settle a held-back ticket" in row[0], row
 
 
-def test_step_3_says_a_held_back_ticket_an_owner_task_holds_is_listed_as_held():
+def test_step_3_says_a_held_back_ticket_an_owner_task_holds_is_listed_as_waiting():
+    # #577: waiting on a person even while an open owner task holds it, never as held.
     s = _sentence(_part("left open"), "Label them `needs-info`")
-    assert "waiting on a person" in s and "as held" in s and "open owner task" in s, s
+    assert "waiting on a person" in s and "even while" in s and "open owner task" in s, s
+    assert "as held" not in s, s
 
 
 def test_the_section_s_issues_are_never_read_as_blockers():
