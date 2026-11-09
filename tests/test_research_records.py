@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import sys
+from fractions import Fraction
 
 import pytest
 
@@ -458,8 +459,14 @@ def test_the_study_skill_quotes_the_per_agent_figure_and_the_panels_size_from_th
     assert m, "the study skill doesn't quote the per-agent figure"
     assert int(m.group(1)) == research_records.PANEL_AGENTS
     assert int(m.group(2).replace(",", "")) == research_records.PER_AGENT_TOKENS
-    # #512 set it from a trial run, marked approximate until the sandbox study (answer 46).
-    assert "That figure is approximate: a trial run of the panel's agents set it, and the sandbox study's per-agent average replaces it." in text
+    # #519 set it to the sandbox study's per-agent average (#518): its token total over its agent count, rounded.
+    m = re.search(r"That figure is the per-agent average of the kit's sandbox study \(#518 in pairnexus-workflow\): "
+                  r"([0-9,]+) tokens across (\d+) agents, rounded to the nearest token\.", text)
+    assert m, "the study skill doesn't say where the per-agent figure came from"
+    total, agents = int(m.group(1).replace(",", "")), int(m.group(2))
+    assert (total, agents) == (731_398, 15)
+    assert research_records.PER_AGENT_TOKENS == round(Fraction(total, agents))
+    assert "That figure is approximate" not in text and "per-agent average replaces it" not in text
     assert "placeholder" not in text
 
 

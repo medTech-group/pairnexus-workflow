@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**The per-agent figure is the sandbox study's average** (#519, part of spec #505). Before a project has a full study's token record, `workflow research estimate` counts the panel at its largest, 12 agents, at 48,760 tokens each, where it was an approximate 80,000. The kit's sandbox study (#518) used 731,398 tokens across 15 agents, the panel's 10 and the 5 checks around it: 48,759.87 each, rounded to the nearest token. `PER_AGENT_TOKENS` and the `study` skill's text change together.
+
+- **For projects updating:** nothing to do.
+
 ## 0.1.22
 
 **Research notes and studies (spec #505).** Before a new feature is specced or a new project is charted, the guided start can offer a study: a panel of agents (an evidence gatherer, a question writer, 5 to 8 personas, a synthesizer and a validator) that gathers evidence, ranks the questions to ask real people, and ends with a verdict, build it, prototype first or stop. A brand-new project is always recommended one. Every study and fact note lives in `docs/research/<topic>/` and merges through a research pull request of its own, after a research check of each claim that cites a saved copy against that copy. `workflow research` fingerprints each key source, and whenever a decision relies on a note, the session checks first whether its sources have changed. A finding that needs a professional (the law, a regulation, a safety rule) holds back only what rests on it.
