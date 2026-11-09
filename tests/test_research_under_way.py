@@ -153,11 +153,78 @@ def test_a_planned_item_waiting_on_a_person_and_held_by_an_owner_task_is_held(tm
 
 
 @pytest.mark.parametrize("waiting_label", ["needs-info", "needs-human", "owner-task", "ready-for-human"])
-def test_an_item_waiting_on_a_person_and_held_by_an_owner_task_is_held(tmp_path, waiting_label):
-    # Without the owner task it would be listed as waiting on a person; with it, it is held all the same.
+def test_an_item_waiting_on_a_person_and_held_by_an_owner_task_stays_waiting(tmp_path, waiting_label):
+    # #577: it already waits on a person, so an open owner task under its `## Blocked by` leaves it there.
     st = _snap(tmp_path, [_issue(6, [waiting_label], body=HELD), _issue(9, ["owner-task"])])
-    assert _nums(st.held) == [6] and st.held[0].detail == "owner task #9"
-    assert _nums(st.waiting) == [9]
+    assert st.held == []
+    assert _nums(st.waiting) == [6, 9]
+    assert st.waiting[0].detail == waiting_label
+
+
+def test_an_owner_task_held_by_another_owner_task_stays_waiting(tmp_path):
+    st = _snap(tmp_path, [_issue(8, ["owner-task"], body=HELD), _issue(9, ["owner-task"])])
+    assert st.held == [] and _nums(st.waiting) == [8, 9]
+
+
+def test_a_build_ticket_waiting_on_a_person_and_held_by_an_owner_task_stays_waiting(tmp_path):
+    # A ticket the breakdown check held back (`needs-info`) is still listed as waiting, and never ready.
+    st = _snap(tmp_path, [_issue(4, ["needs-info"], body=HELD), _issue(9, ["owner-task"])])
+    assert st.held == [] and _nums(st.waiting) == [4, 9] and st.ready == []
+
+
+def test_a_spec_titled_spec_waiting_on_a_person_and_held_by_an_owner_task_is_held(tmp_path):
+    spec = _issue(3, ["needs-info"], body=HELD)
+    spec["title"] = "Spec: the notes list"
+    st = _snap(tmp_path, [spec, _issue(9, ["owner-task"])])
+    assert _nums(st.held) == [3] and st.specs == [] and _nums(st.waiting) == [9]
+
+
+def test_a_parent_issue_waiting_on_a_person_and_held_by_an_owner_task_is_held(tmp_path):
+    parent = _issue(5, ["needs-info"], body=HELD)
+    parent["sub_issues_summary"] = {"total": 2, "completed": 1}
+    st = _snap(tmp_path, [parent, _issue(9, ["owner-task"])])
+    assert _nums(st.held) == [5] and st.held[0].detail == "owner task #9"
+    assert st.specs == [] and _nums(st.waiting) == [9]
+
+
+def test_an_issue_with_no_sub_issues_waiting_on_a_person_is_not_a_parent(tmp_path):
+    # `sub_issues_summary` with no sub-issues isn't a parent issue, so the waiting label keeps it under waiting.
+    item = _issue(5, ["needs-info"], body=HELD)
+    item["sub_issues_summary"] = {"total": 0, "completed": 0}
+    st = _snap(tmp_path, [item, _issue(9, ["owner-task"])])
+    assert st.held == [] and _nums(st.waiting) == [5, 9]
+
+
+# ---------- seam 1: an issue is never held by itself (#577) ----------
+
+
+SELF = "Area: start\n\n## Blocked by\n\n- #9\n"
+
+
+def test_an_owner_task_spec_naming_itself_is_not_held_by_itself(tmp_path):
+    st = _snap(tmp_path, [_issue(9, ["spec", "owner-task"], body=SELF)])
+    assert st.held == [] and _nums(st.specs) == [9]
+
+
+def test_an_owner_task_planned_item_naming_itself_is_not_held_by_itself(tmp_path):
+    st = _snap(tmp_path, [_issue(9, ["ready-for-human"], body=SELF + "\n<!-- workflow:item path=spec -->")])
+    assert st.held == [] and _nums(st.planned) == [9]
+
+
+def test_an_owner_task_naming_itself_stays_waiting(tmp_path):
+    st = _snap(tmp_path, [_issue(9, ["owner-task"], body=SELF)])
+    assert st.held == [] and _nums(st.waiting) == [9]
+
+
+def test_an_issue_naming_itself_and_another_open_owner_task_is_held_by_the_other_only(tmp_path):
+    body = "## Blocked by\n\n- #9\n- #8\n"
+    st = _snap(tmp_path, [_issue(9, ["spec", "owner-task"], body=body), _issue(8, ["owner-task"])])
+    assert _nums(st.held) == [9] and st.held[0].detail == "owner task #8"
+
+
+def test_owner_tasks_holding_leaves_the_issue_itself_out():
+    me = _issue(9, ["owner-task"], body="## Blocked by\n\n- #9\n- acme/demo#9\n")
+    assert status.owner_tasks_holding(me, {9: me}, "acme/demo") == []
 
 
 def test_a_map_and_a_research_issue_keep_their_own_sections(tmp_path):
@@ -309,3 +376,23 @@ def test_the_changelog_has_the_note():
 def test_the_note_is_under_unreleased():
     # Read from "## Unreleased" down, so the note still counts once a release moves it.
     assert "(#514" in since_0110(_read("CHANGELOG.md"))
+
+
+# ---------- #577: the held-items rules name the waiting exemption ----------
+
+
+@pytest.mark.parametrize("rel", [START, NEXT])
+def test_the_held_items_rules_keep_an_item_waiting_on_a_person_under_waiting(rel):
+    rule = next(ln for ln in _read(rel).splitlines() if ln.startswith("**Held items.**"))
+    assert "already waiting on a person" in rule
+    for label in ("needs-info", "needs-human", "owner-task", "ready-for-human"):
+        assert f"`{label}`" in rule
+    assert "stays under" in rule and "`waiting`" in rule
+    assert "a spec, a parent issue or a planned item" in rule
+
+
+def test_the_changelog_has_577_s_note_under_unreleased():
+    notes = since_0110(_read("CHANGELOG.md"))
+    start = notes.index("(#577")
+    note = notes[start:notes.index("Tests: `tests/test_research_under_way.py`.", start)]
+    assert "waiting" in note and "held" in note and "itself" in note

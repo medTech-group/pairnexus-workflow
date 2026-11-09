@@ -6,6 +6,10 @@
 
 - **For projects updating:** nothing to do.
 
+**An item already waiting on a person stays under waiting, not held** (#577, split out of #514). `workflow status` listed every item whose `## Blocked by` names an open owner task as held, even one labelled `needs-info`, `needs-human`, `owner-task` or `ready-for-human`, which already waits on a person. Such an item now stays under "Waiting on a person"; a spec, a parent issue or a planned item with one of those labels is still held, since its waiting label never listed it as waiting. An issue whose `## Blocked by` names itself is no longer held by itself. `start` and `next` say so in their "Held items" rules. Tests: `tests/test_research_under_way.py`.
+
+- **For projects updating:** nothing to do.
+
 **The study runs the look after a change to the note, even after a clean research check** (#574, part of spec #505). The `study` skill's section 10 ran the look only when the research check wasn't clean, so a study session that changed its note after a clean check skipped it, and its research pull request stayed not ready at `research_needs_look`. It now runs the look when the check wasn't clean, or when the note changed since it, as flow §4 item 4 and `merge-check` already did: judged on the pull request's own changes, so a merge of the base alone isn't a change.
 
 - **For projects updating:** nothing to do.
@@ -19,6 +23,10 @@
 - **For projects updating:** nothing to do.
 
 **`--fetch` reads every page in a cloud session** (#568). A Claude Code cloud session's proxy refuses GitHub's next-page links, which name the repository by number (`repositories/<id>/...`), so `gh api --paginate` got the first page and failed: `workflow research stakes --fetch` and `research estimate --fetch` exited 1 there, and so did `merge-check --fetch`, `preview --fetch`, `ready --fetch` and `status --fetch` once a list passed 100 items. On that refusal alone, the kit now reads the pages one at a time, with `page=N` on the `repos/<owner>/<repo>/` path, until one comes back shorter than its page size. Any other failure of `--paginate` fails as before. `workflow doctor`'s own reads are unchanged.
+
+- **For projects updating:** nothing to do.
+
+**A later session's look says the owner's list isn't available** (#581, part of spec #505). The `study` skill's section 10 gave the look "the same list" of what the owner brought in, but a later session (one carrying the study on, say) has no list, since nothing keeps it, and the `research-checker` told nothing about the list reads it as `none`, calling an *observed (real person)* finding wrong though the owner did bring it in. Item 2 now gives the look the same list or, in a later session that doesn't have it, says the list isn't available, as the agent's file and `review-panel`'s "The research check and the look" say, so the checker reports such a finding as not checked, never as wrong.
 
 - **For projects updating:** nothing to do.
 
