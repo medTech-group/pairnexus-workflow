@@ -148,6 +148,13 @@ def test_paths_alone_on_a_branch_with_no_changes(tmp_path, monkeypatch, capsys):
     assert _reads(monkeypatch, capsys, root, "--paths", "src/billing/x.py", "--paths", "y")[1] == [f"{ARCH}/billing.md"]
 
 
+@pytest.mark.parametrize("given", ["./src/billing/x.py", "src//billing/x.py", "ROOT/src/billing/x.py"])
+def test_paths_are_made_paths_from_the_root(tmp_path, monkeypatch, capsys, given):
+    root = _repo(tmp_path, {f"{ARCH}/billing.md": _page(["src/billing/**"])})
+    given = given.replace("ROOT", str(root))
+    assert _reads(monkeypatch, capsys, root, "--paths", given)[1] == [f"{ARCH}/billing.md"]
+
+
 def test_a_change_on_the_base_after_the_merge_base_doesnt_count(tmp_path, monkeypatch, capsys):
     root = _repo(tmp_path, {
         f"{ARCH}/orders.md": _page(["src/orders/**"]),
