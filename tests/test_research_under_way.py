@@ -307,7 +307,5 @@ def test_the_changelog_has_the_note():
 
 
 def test_the_note_is_under_unreleased():
-    text = _read("CHANGELOG.md")
-    head = text.index("## Unreleased\n")
-    nxt = text.index("\n## ", head + 1)
-    assert "(#514" in text[head:nxt]
+    # Read from "## Unreleased" down, so the note still counts once a release moves it.
+    assert "(#514" in since_0110(_read("CHANGELOG.md"))

@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from changelog_notes import since_0110
 from conftest import KIT
 from test_research_notes import (  # noqa: F401  (fixtures: project, server)
     NOTE,
@@ -732,6 +733,5 @@ def test_the_third_party_line_is_the_skills():
 
 
 def test_the_changelog_notes_it_under_unreleased():
-    log = (KIT / "CHANGELOG.md").read_text(encoding="utf-8")
-    unreleased = log[log.index("## Unreleased") : log.index("\n## ", log.index("## Unreleased") + 1)]
-    assert "(#529, split out of #506, part of spec #505)" in unreleased
+    # Read from "## Unreleased" down, so the note still counts once a release moves it.
+    assert "(#529, split out of #506, part of spec #505)" in since_0110()
