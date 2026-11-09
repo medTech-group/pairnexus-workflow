@@ -6,7 +6,15 @@
 
 - **For projects updating:** nothing to do.
 
+**`workflow ready` never lists a research issue as ready** (#572). An open issue labelled `research` that also carries `ready-for-agent` was listed as READY, so `next` could claim and build it, where `workflow status` keeps it under "Research under way" (#514). `workflow ready` now lists it as waiting, with the reason "labelled `research`: a research issue, not a build ticket", and never under "start now", since the kit reads every issue carrying `research` as research (the `study` skill's section 5).
+
+- **For projects updating:** nothing to do.
+
 **The per-agent figure is the sandbox study's average** (#519, part of spec #505). Before a project has a full study's token record, `workflow research estimate` counts the panel at its largest, 12 agents, at 48,760 tokens each, where it was an approximate 80,000. The kit's sandbox study (#518) used 731,398 tokens across 15 agents, the panel's 10 and the 5 checks around it: 48,759.87 each, rounded to the nearest token. `PER_AGENT_TOKENS` and the `study` skill's text change together.
+
+- **For projects updating:** nothing to do.
+
+**`--fetch` reads every page in a cloud session** (#568). A Claude Code cloud session's proxy refuses GitHub's next-page links, which name the repository by number (`repositories/<id>/...`), so `gh api --paginate` got the first page and failed: `workflow research stakes --fetch` and `research estimate --fetch` exited 1 there, and so did `merge-check --fetch`, `preview --fetch`, `ready --fetch` and `status --fetch` once a list passed 100 items. On that refusal alone, the kit now reads the pages one at a time, with `page=N` on the `repos/<owner>/<repo>/` path, until one comes back shorter than its page size. Any other failure of `--paginate` fails as before. `workflow doctor`'s own reads are unchanged.
 
 - **For projects updating:** nothing to do.
 

@@ -630,7 +630,7 @@ def readiness(
 
     Ready means: open; labelled ready-for-agent; a build ticket (not a map, a
     spec or a parent of sub-issues); not needs-human, owner-task or
-    ready-for-human; not claimed (the claim label) unless in `claimed_ok`; no
+    ready-for-human; not research (#572); not claimed (the claim label) unless in `claimed_ok`; no
     open PR closes it; not excluded; no open GitHub issue dependency blocks it;
     every blocker closed *as completed*. A blocker closed as not planned, one
     missing from `issues`, or one in another repository still blocks.
@@ -674,6 +674,9 @@ def readiness(
             v.reasons.append("excluded")
         for lab in sorted(labels & HUMAN_LABELS):
             v.reasons.append(f"labelled {lab}")
+        if RESEARCH_LABEL in labels:
+            # Research, not a build ticket, whatever its other labels (#572), as `status` reads it (#514).
+            v.reasons.append(f"labelled `{RESEARCH_LABEL}`: a research issue, not a build ticket (the `study` skill's section 5)")
         if CLAIM_LABEL in labels and num not in claimed_ok:
             v.reasons.append("claimed (workflow:in-progress)")
         if num in pr_for:

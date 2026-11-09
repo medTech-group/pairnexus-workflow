@@ -114,20 +114,32 @@ def _fetch(repo: str, what: str) -> list[dict]:
     """Through `gh api` (the GitHub CLI, or Claude Code's built-in client).
 
     `--paginate --slurp` gives a list of pages; a client without `--slurp`
-    prints the pages one after another, which are decoded one by one. The
-    issues list keeps its pull requests: readiness resolves a PR blocker by them.
+    prints the pages one after another, which are decoded one by one. Where a
+    cloud session's proxy refuses the next-page link (#568), the pages are
+    read one at a time (`fetch.by_page`). The issues list keeps its pull
+    requests: readiness resolves a PR blocker by them.
     """
     path = f"repos/{repo}/issues?state=all&per_page=100" if what == "issues" else f"repos/{repo}/pulls?state=open&per_page=100"
 
     def failed(p) -> SystemExit:
         return SystemExit(f"gh api {path} failed: {p.stderr.strip()[:300]}\nFetch with the GitHub MCP tools instead and pass --issues/--prs files.")
 
+    def by_page() -> list:
+        try:
+            return fetch_mod.by_page(path)
+        except fetch_mod.GhError as e:
+            raise SystemExit(f"gh api {path} failed: {str(e)[:300]}\nFetch with the GitHub MCP tools instead and pass --issues/--prs files.") from None
+
     p = subprocess.run(["gh", "api", "--paginate", "--slurp", path], capture_output=True, text=True)
     values: list = []
     if p.returncode == 0:
         values = [json.loads(p.stdout or "[]")]
+    elif fetch_mod.numeric_refused(p, path):
+        values = by_page()
     elif "slurp" in (p.stderr + p.stdout).lower():
         p = subprocess.run(["gh", "api", "--paginate", path], capture_output=True, text=True)
+        if fetch_mod.numeric_refused(p, path):
+            return _fetch_items(by_page())
         if p.returncode:
             raise failed(p)
         try:
@@ -136,6 +148,11 @@ def _fetch(repo: str, what: str) -> list[dict]:
             raise SystemExit(f"gh api {path}: couldn't read its output ({e})")
     else:
         raise failed(p)
+    return _fetch_items(values)
+
+
+def _fetch_items(values) -> list[dict]:
+    """The objects in `_fetch`'s pages, however deep the lists nest."""
     items: list[dict] = []
 
     def add(v) -> None:
