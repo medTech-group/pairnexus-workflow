@@ -60,20 +60,39 @@ def test_high_stakes_is_the_model_s_judgement_not_a_list(offer):
     assert "not a list that decides" in text
 
 
+def _skip(offer, opening: str) -> str:
+    """The one sentence of the offer that holds the skip opening with `opening`
+    (`start`'s bullet of its own, or the sentence in `next`'s **Whether**), read on
+    its own, so another bullet's words can't stand in for it."""
+    sentences = re.split(r"(?<=[.:])\s+(?=[A-Z*-])", offer())
+    found = [s for s in sentences if opening in s.lower()]
+    assert len(found) == 1, f"the offer has no single sentence for {opening!r}"
+    return found[0]
+
+
+def _internal(offer) -> str:
+    return _skip(offer, "fixes, wording and internal changes")
+
+
+def _current_note(offer) -> str:
+    return _skip(offer, "work a current note already covers")
+
+
 @OFFERS
 def test_fixes_wording_and_internal_changes_are_skipped_silently(offer):
-    text = offer()
-    assert "fixes, wording and internal changes" in text.lower()
-    assert "nothing asked or posted" in text
+    # #583's round 2, finding 8: read on its own, not the new-project rule's words beside it.
+    skip = _internal(offer)
+    assert "skipped, with nothing asked or posted" in skip
+    assert "judge" not in skip and "stakes" not in skip
 
 
 @OFFERS
 def test_work_a_current_note_covers_gets_one_stakes_line_naming_the_note(offer):
-    text = offer()
-    assert "current note" in text
-    assert "WF research notes" in text
-    assert "one stakes line naming the note" in text
-    assert "no question" in text
+    skip = _current_note(offer)
+    assert "WF research notes" in skip
+    assert "skipped with no question" in skip
+    assert "one stakes line naming the note" in skip
+    assert "judge" not in skip
 
 
 @OFFERS
@@ -220,11 +239,230 @@ def test_quick_tickets_and_finding_a_cause_get_no_offer():
     assert "Quick ticket" in text and "Find the cause first" in text
 
 
+# --- a new project (#580, split out of #515) -------------------------------------
+# One study, on its first item offered one; every later item, a Destination item of
+# its map included, takes the offer's other bullets, so the current-note and the
+# internal-change skips still give their one answer.
+
+
+def _new_project(offer) -> str:
+    """The new-project rule: the sentences of the offer that name a brand-new project."""
+    text = offer()
+    m = re.search(r"\*\*A brand-new project\*\*.*?(?=- \*\*[A-Z]|\Z)", text)
+    assert m, "the offer has no **A brand-new project** bullet"
+    return m.group(0)
+
+
+@OFFERS
+def test_a_brand_new_project_is_always_recommended_one_study(offer):
+    rule = _new_project(offer)
+    assert "(no code of its own)" in rule
+    assert "always recommended a study" in rule
+    assert "the project's one study" in rule
+
+
+@OFFERS
+def test_a_new_project_s_one_study_is_its_first_item_offered_one(offer):
+    # Round 2's note: a new project whose first item is a quick ticket. A quick ticket
+    # is never offered one, so the study goes to the first item that is.
+    rule = _new_project(offer)
+    assert "first item offered one" in rule
+    assert "a fix, wording or an internal change is never that item" in rule
+
+
+@OFFERS
+def test_a_later_session_tells_the_study_was_offered_by_its_stakes_record(offer):
+    # Round 2's note: how a later session tells the study has already run (or was skipped).
+    rule = _new_project(offer)
+    assert "no stakes record yet" in rule
+    assert "`WF research stakes --fetch` lists none" in rule
+    assert "From the first stakes record on" in rule
+
+
+@OFFERS
+def test_a_new_project_s_later_items_take_the_other_bullets_with_one_answer(offer):
+    # The two cases of #580: a later Destination item a current note covers, and one
+    # that is an internal change. Each gets exactly the other bullets' answer.
+    rule = _new_project(offer)
+    later = rule[rule.index("From the first stakes record on"):]
+    assert "every later item takes" in later
+    assert "as in any project" in later
+    assert "an internal change is skipped with nothing asked or posted" in later
+    assert "work a current note covers gets one stakes line naming the note" in later
+    # #583's round 2, finding 8: the skips themselves give the same answer, each read on its own.
+    assert "skipped, with nothing asked or posted" in _internal(offer)
+    assert "skipped with no question, but with one stakes line naming the note" in _current_note(offer)
+    # Round 1's fix ("judged as a feature") judged an internal change too.
+    assert "judged as a feature" not in offer()
+    assert "always" not in later
+
+
+@OFFERS
+def test_the_new_project_rule_states_its_precedence_over_the_current_note_skip(offer):
+    # The first item only: "always" wins over the current-note skip there, and says so,
+    # so the two bullets never both fit one item with different answers.
+    rule = _new_project(offer)
+    first = rule[:rule.index("From the first stakes record on")]
+    assert "even where a current note covers it" in first
+
+
+def _bullets(offer) -> list:
+    """The offer's bullets, each from its `- **` to the next one."""
+    return re.findall(r"- \*\*.*?(?=- \*\*|\Z)", offer())
+
+
+def _wait(offer) -> str:
+    """The bullet that holds a map's Destination items for its study's verdict."""
+    waits = [b for b in _bullets(offer) if "wait for that study's verdict" in b]
+    assert len(waits) == 1, "the offer has no single bullet for the wait"
+    return waits[0]
+
+
+@OFFERS
+def test_a_new_project_s_destination_items_wait_for_its_study_s_verdict(offer):
+    # Round 2's note: a Destination item picked before the new project's verdict.
+    # #583's round 1 (findings 4 and 8): a study that runs posts its stakes record on its
+    # research issue as soon as it is filed, before charting, so a wait under "no stakes
+    # record yet" never applies. The wait is a bullet of its own, keyed to the map's Notes.
+    wait = _wait(offer)
+    assert wait.startswith("- **A map whose Notes link")
+    assert "Destination items" in wait
+    assert "whatever stakes records there are" in wait
+    assert "stakes record yet" not in wait and "lists none" not in wait
+    assert "wait for" not in _new_project(offer)
+
+
+@OFFERS
+def test_a_new_project_s_later_items_leave_its_destination_items_to_the_wait(offer):
+    # #583's round 1, finding 4: "from the first stakes record on, every later item, its map's
+    # Destination items included, takes the bullets as in any project" let them go on while
+    # the study ran. They go on as in any project only once its verdict is in.
+    rule = _new_project(offer)
+    later = rule[rule.index("From the first stakes record on"):]
+    assert "its map's Destination items included" not in later
+    assert "its map's Destination items after the next bullet's wait where the map's Notes link a study's research issue" in later
+    text = offer()
+    assert text.index(_wait(offer)) < text.lower().index("fixes, wording and internal changes")
+
+
+@OFFERS
+def test_a_new_project_s_destination_items_wait_where_the_map_s_notes_link_a_study(offer):
+    # #583's round 2, findings 4 and 7: "its map's Destination items once its verdict is in" held
+    # a Destination item for a study its map's Notes don't link (one run on a Spec item, or on
+    # another Destination item), which `next` §1 makes ready to spec, so the two gave two answers.
+    # The clause reads what §1 and the wait bullet read: the map's Notes link.
+    # #583's round 3, finding 6: "where the map's Notes link the study" (the project's one study)
+    # let a later map's Destination items past a study its own Notes link, run after the first
+    # one on a Spec item, which the wait bullet and §1 hold. Any study the Notes link holds them.
+    later = _new_project(offer)
+    later = later[later.index("From the first stakes record on"):]
+    assert "once its verdict is in" not in later
+    assert "Notes link the study" not in later
+    assert "the next bullet's wait where the map's Notes link a study's research issue" in later
+    assert _wait(offer).startswith("- **A map whose Notes link a study's research issue**")
+    assert "while the map's Notes link an open research issue" in _clear_map()
+
+
+def _clear_map() -> str:
+    """`next` §1's rule for a clear map's next spec."""
+    lines = [ln for ln in NEXT.read_text(encoding="utf-8").splitlines() if ln.startswith("- **A clear map**")]
+    assert len(lines) == 1, "next §1 has no single **A clear map** rule"
+    return lines[0]
+
+
+def test_next_s_clear_map_rule_holds_the_destination_items_for_the_verdict():
+    # #583's round 1, finding 9: `next` §1 picked a clear map's first Destination item with no
+    # spec, skipping only one named by a "Study under way" comment, so §2 announced it before
+    # the offer's wait was reached. The wait is in the readiness rule itself.
+    clear = _clear_map()
+    wait = clear[clear.index("None is ready while"):]
+    assert "the map's Notes link an open research issue" in wait
+    assert "that study is offered as its **Carry on**" in wait
+
+
+@OFFERS
+def test_the_offer_s_wait_points_to_next_s_clear_map_rule(offer):
+    # A Destination item has no issue number of its own, so "picked by number" fits none.
+    wait = _wait(offer)
+    assert '`next` §1, "A clear map"' in wait or '§1, "A clear map"' in wait
+    assert "picked by number" not in wait
+
+
+def test_the_new_project_s_verdict_says_what_its_destination_items_do():
+    # #583's round 1, finding 10: once the research issue closed, the Destination items went on
+    # to their interviews whatever the verdict, though grilling never follows stop, and the
+    # prototype comes before grilling on prototype first.
+    clear = _clear_map()
+    after = clear[clear.index("Once it closes"):]
+    assert "they are ready to spec once it closes" not in clear
+    build = after[after.index("on **Build it**"):after.index("on **Prototype first**")]
+    assert "ready to spec" in build
+    proto = after[after.index("on **Prototype first**"):after.index("on **Stop**")]
+    assert "`wayfinder:prototype` ticket" in proto and "isn't clear until it closes" in proto
+    stop = after[after.index("on **Stop**"):]
+    assert "none is ever ready" in stop
+    assert "Out of scope" in stop and "`study` skill's section 5" in stop
+
+
+@OFFERS
+def test_the_offer_s_wait_holds_past_a_stop(offer):
+    # Finding 10: the wait isn't only "while its research issue is open".
+    wait = _wait(offer)
+    assert wait.startswith("- **A map whose Notes link a study's research issue**")
+    assert "only as the verdict says, never on **Stop**" in wait
+
+
+def test_start_s_carry_on_row_offers_the_study_for_a_clear_map_whose_notes_link_it():
+    # Finding 9: `start`'s rows offered "Carry on: the clear map's next spec", which `next` then
+    # refused. The study's own row takes the map's Destination items while its issue is open.
+    text = START.read_text(encoding="utf-8")
+    row = next(ln for ln in text.splitlines() if ln.startswith("| An item whose issue links an open research issue"))
+    assert "a clear map's Destination items while its Notes link an open research issue" in row
+    assert "that study's **Carry on**" in row
+
+
+@OFFERS
+def test_the_new_project_rule_comes_first_in_whether(offer):
+    text = offer()
+    rule = text.index("**A brand-new project**")
+    assert rule < text.lower().index("fixes, wording and internal changes")
+    assert rule < text.index("current note already covers")
+
+
+def test_the_flow_s_research_section_holds_the_new_project_rule():
+    flow = _flat((KIT / "docs/flow.md").read_text(encoding="utf-8"))
+    research = flow[flow.index("## Research"):flow.index("## The bar")]
+    assert "A brand-new project" in research
+    assert "always recommended one study" in research
+    assert "`start`'s **Offering a study**" in research
+    # #583's round 1, finding 11: "is offered one as in any project" offered an internal change one.
+    rule = research[research.index("**A brand-new project**"):]
+    rule = rule[:rule.index("- **")]
+    assert "is offered one as in any project" not in rule
+    assert "takes `start`'s offer as in any project (an internal change gets none)" in rule
+    assert "its map's Destination items included" not in rule
+    # #583's round 2, finding 7: the wait is keyed to the map's Notes link, as `next` §1's.
+    # #583's round 3, finding 6: any study the map's Notes link, not the project's one study.
+    assert "Notes link the study" not in rule
+    assert "after the wait for that study's verdict" not in rule
+    # #583's round 3, finding 7: "after the wait" let them go on after a stop, which `next` §1's
+    # clear-map rule and `start`'s wait bullet never do. They go on only as the verdict says.
+    assert "its map's Destination items, where the map's Notes link a study's research issue, only once that study's verdict lets them go on, never on stop" in rule
+
+
+def test_the_readme_says_a_new_project_is_recommended_a_study():
+    # Round 3's note (row 34 of #579): the README said a study "comes first".
+    text = _flat((KIT / "README.md").read_text(encoding="utf-8"))
+    assert "For a new project, a study comes first" not in text
+    assert "a study is always recommended first" in text
+
+
 # --- the changelog ---------------------------------------------------------------
 
 
 def test_the_changelog_has_a_note_and_version_is_untouched():
     assert "(#515, part of spec #505)" in since_0110()
+    assert "(#580, part of spec #505)" in since_0110()
     log = (KIT / "CHANGELOG.md").read_text(encoding="utf-8")
     start = log.index("## Unreleased\n")
     end = log.index("\n## ", start + 1)

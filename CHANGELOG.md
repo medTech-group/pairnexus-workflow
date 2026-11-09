@@ -116,6 +116,12 @@
 - **The `study` skill** says how to run each option (section 9), and that a second study's issue closes when the main note's mark is updated (section 12).
 - **For projects updating:** nothing to do. Tests: `tests/test_professional_finding.py`.
 
+**A brand-new project is always recommended one study** (#580, part of spec #505).
+
+- **`start`'s and `next`'s "Offering a study"** open with the new-project rule: a project with no code of its own and no stakes record yet (`workflow research stakes` lists none) is always recommended a study on its first item offered one, ahead of the other bullets, even where a current note covers it. That is the project's one study, run or skipped: from its stakes record on, every later item takes the offer's other bullets as in any project, so an internal change is still skipped with nothing asked or posted, and work a current note covers still gets its one stakes line. A Destination item of its map does so after the wait for a study's verdict where the map's Notes link that study's research issue, whichever item ran it: a bullet of its own holds a map's Destination items for that verdict while the research issue its Notes link is open, whatever stakes records there are. `next` §1's clear-map rule holds them too, offering that study as their **Carry on**, and so does `start`'s row for an item linking an open research issue. Its verdict then says what they do: on **Build it** they are ready to spec; on **Prototype first** the prototype comes first, as the map's `wayfinder:prototype` decision; on **Stop** none goes on, and each moves to the map's Out of scope.
+- **The flow's "Research" section** states the rule (an internal change gets no offer, and a map's Destination items never go on after a stop), and the README now says a study is "always recommended first" for a new project rather than that it "comes first".
+- **For projects updating:** nothing to do. Tests: `tests/test_study_offer.py`.
+
 ## 0.1.21
 
 **Decision questions asked in a message are easier to read.** A recommendation now has its own labelled part, "➡️ Recommended:", with its evidence, and the alternatives have theirs, so a recommendation can't be mistaken for a decision already made. Questions asked as clickable choices are unchanged.
