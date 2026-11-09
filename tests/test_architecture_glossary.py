@@ -69,3 +69,20 @@ def test_the_profile_doc_says_the_overview_is_in_project_rules():
     assert len(rows) == 1
     assert "`docs/architecture/README.md`" in rows[0]
     assert "architecture overview" in rows[0]
+
+
+def _rules_row():
+    rows = [l for l in _read("docs/profile.md").splitlines() if l.startswith("| `rules` |")]
+    assert len(rows) == 1
+    return rows[0]
+
+
+def test_the_profile_doc_gives_the_plugin_path_to_the_overview():
+    # The kit's update writes the overview only in a vendored project; a plugin
+    # project gets it from `upgrade-setup`'s "Write the architecture overview".
+    row = _rules_row()
+    assert "vendored project" in row
+    assert "plugin" in row
+    assert '"Write the architecture overview"' in row
+    assert "`upgrade-setup`" in row
+    assert row.count("|") == 4, "the row stays three cells"

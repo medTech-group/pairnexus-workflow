@@ -12,7 +12,7 @@ It sits in `.claude/`, a protected path: ticket sessions can't change it, and a 
 | `repo` | `owner/repo` of the GitHub issue tracker | (required) |
 | `base_branch` | The branch pull requests target; the ruleset protects it | `main` |
 | `owner` | The owner's GitHub login, without `@`: only their approval and comments count in runs | empty (a warning) |
-| `rules` | Files (with an optional `#heading`) holding the project's own rules; reviewers read them. Set-up, or the kit's update that brings it in, writes the architecture overview, `docs/architecture/README.md`, and lists it here, so every session and reviewer reads it | `[]` (the template has `["CLAUDE.md"]`) |
+| `rules` | Files (with an optional `#heading`) holding the project's own rules; reviewers read them. The architecture overview, `docs/architecture/README.md`, is listed here, so every session and reviewer reads it. Set-up writes and lists it, and so does the kit's update in a vendored project. A plugin project gets it from `upgrade-setup`'s "Write the architecture overview" | `[]` (the template has `["CLAUDE.md"]`) |
 | `flow_addendum` | A project file read with the kit's flow | empty |
 | `guided_start` | The first-message menu in attended sessions, and the reminder at each later message to plan new work first; `/start` works either way | `true` |
 | `ruleset` | `true` or `false`. `false` is **solo mode**: no GitHub ruleset protects the base branch yet, so the kit's own guard is all that stops a change to it. `true` says a ruleset protects it. Write it as a plain `ruleset = true` or `ruleset = false` line, with nothing after it: a shell script reads it without a TOML parser. The template leaves it out; set-up writes it | absent: not set (as before) |
