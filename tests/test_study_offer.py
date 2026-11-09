@@ -657,11 +657,12 @@ def _own_study() -> str:
 
 
 def _own_verdicts(text: str, opening: str) -> tuple:
+    # `next` opens each verdict mid-sentence ("on **Build it**"), `start` with a sentence of
+    # its own ("On **Build it**").
     after = text[text.index(opening):]
-    build = after[after.index("on **Build it**"):after.index("on **Prototype first**")]
-    proto = after[after.index("on **Prototype first**"):after.index("on **Stop**")]
-    stop = after[after.index("on **Stop**"):]
-    return build, proto, stop
+    low = after.lower()
+    build, proto, stop = (low.index(f"on **{v}**") for v in ("build it", "prototype first", "stop"))
+    return after[build:proto], after[proto:stop], after[stop:]
 
 
 def test_next_reads_a_destination_item_s_closed_study_s_verdict():
@@ -705,9 +706,33 @@ def test_start_reads_an_item_s_closed_study_s_verdict():
     assert "so it isn't offered" in stop
 
 
+_OPENING = "Once an item's own research issue closes"
+
+
+def _own_sentences() -> list:
+    """start's sentences on an item's own closed study, from its opening to the row's last
+    sentence, on a map's own study."""
+    row = _study_row()
+    part = row[row.index(_OPENING):row.index("A map's decisions and Destination items held")]
+    return re.split(r"(?<=[.])\s+(?=[A-Z*])", part.strip())
+
+
+def test_start_gives_each_closed_study_verdict_a_sentence_of_its_own():
+    # Round 1 of #588: the three verdicts were one sentence of about 200 words, and a reader
+    # couldn't tell that "then the item carries on" belonged only to the planned item.
+    sentences = _own_sentences()
+    for opening in ("On **Build it**,", "On **Prototype first**,", "On **Stop**,",
+                    "For a Destination item,", "For a planned item,"):
+        assert [s for s in sentences if s.startswith(opening)], opening
+    for s in sentences:
+        assert len(s.split()) <= 60, s
+    destination = next(s for s in sentences if s.startswith("For a Destination item,"))
+    assert "carries on as its own row says" not in destination
+
+
 def test_start_offers_a_destination_item_s_prototype_as_next_charts_it():
     _, proto, _ = _own_verdicts(_study_row(), "Once an item's own research issue closes")
-    assert "for a Destination item, the `wayfinder:prototype` ticket linking the verdict, which `next` charts with no blockers when the map has none, never one charted before the verdict (`next` §1, \"A clear map\")" in proto
+    assert "For a Destination item, the prototype is the `wayfinder:prototype` ticket linking the verdict, which `next` charts with no blockers when the map has none, never one charted before the verdict (`next` §1, \"A clear map\")" in proto
     # Worded as the verdict row for a new project's map words its prototype.
     assert "the `wayfinder:prototype` ticket linking the verdict, which `next` charts with no blockers when the map has none, never one charted before the verdict" in _verdict_row()
 
@@ -716,10 +741,10 @@ def test_start_offers_a_planned_item_s_prototype_and_reads_when_it_is_done():
     # A planned item has no map to chart a prototype ticket on: the `prototype` skill runs for
     # it, and its own "Capture it when done" step leaves the answer on the item's issue.
     _, proto, _ = _own_verdicts(_study_row(), "Once an item's own research issue closes")
-    assert "for a planned item, offer **Carry on: the prototype for #<item> (Recommended)** or **Later**" in proto
+    assert "For a planned item, offer **Carry on: the prototype for #<item> (Recommended)** or **Later**" in proto
     assert "loads the `prototype` skill with the study's findings and its ranked questions" in proto
-    assert "it is done once a comment on the item's issue, posted after the verdict, gives the prototype's branch and the answer it settled (that skill's \"Capture it when done\")" in proto
-    assert "then the item carries on as its own row says" in proto
+    assert "The prototype is done once a comment on the item's issue, posted after the verdict, gives the prototype's branch and the answer it settled (that skill's \"Capture it when done\")" in proto
+    assert "then the planned item carries on as its own row says" in proto
     sec11 = _flat(re.search(r"^## 11\. The verdict$.*?(?=^## )", STUDY.read_text(encoding="utf-8"), re.M | re.S).group(0))
     assert "the `prototype` skill comes next, then grilling" in sec11
     capture = (KIT / ".claude/skills/prototype/SKILL.md").read_text(encoding="utf-8")
