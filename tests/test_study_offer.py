@@ -60,20 +60,39 @@ def test_high_stakes_is_the_model_s_judgement_not_a_list(offer):
     assert "not a list that decides" in text
 
 
+def _skip(offer, opening: str) -> str:
+    """The one sentence of the offer that holds the skip opening with `opening`
+    (`start`'s bullet of its own, or the sentence in `next`'s **Whether**), read on
+    its own, so another bullet's words can't stand in for it."""
+    sentences = re.split(r"(?<=[.:])\s+(?=[A-Z*-])", offer())
+    found = [s for s in sentences if opening in s.lower()]
+    assert len(found) == 1, f"the offer has no single sentence for {opening!r}"
+    return found[0]
+
+
+def _internal(offer) -> str:
+    return _skip(offer, "fixes, wording and internal changes")
+
+
+def _current_note(offer) -> str:
+    return _skip(offer, "work a current note already covers")
+
+
 @OFFERS
 def test_fixes_wording_and_internal_changes_are_skipped_silently(offer):
-    text = offer()
-    assert "fixes, wording and internal changes" in text.lower()
-    assert "nothing asked or posted" in text
+    # #583's round 2, finding 8: read on its own, not the new-project rule's words beside it.
+    skip = _internal(offer)
+    assert "skipped, with nothing asked or posted" in skip
+    assert "judge" not in skip and "stakes" not in skip
 
 
 @OFFERS
 def test_work_a_current_note_covers_gets_one_stakes_line_naming_the_note(offer):
-    text = offer()
-    assert "current note" in text
-    assert "WF research notes" in text
-    assert "one stakes line naming the note" in text
-    assert "no question" in text
+    skip = _current_note(offer)
+    assert "WF research notes" in skip
+    assert "skipped with no question" in skip
+    assert "one stakes line naming the note" in skip
+    assert "judge" not in skip
 
 
 @OFFERS
@@ -270,6 +289,9 @@ def test_a_new_project_s_later_items_take_the_other_bullets_with_one_answer(offe
     assert "as in any project" in later
     assert "an internal change is skipped with nothing asked or posted" in later
     assert "work a current note covers gets one stakes line naming the note" in later
+    # #583's round 2, finding 8: the skips themselves give the same answer, each read on its own.
+    assert "skipped, with nothing asked or posted" in _internal(offer)
+    assert "skipped with no question, but with one stakes line naming the note" in _current_note(offer)
     # Round 1's fix ("judged as a feature") judged an internal change too.
     assert "judged as a feature" not in offer()
     assert "always" not in later
