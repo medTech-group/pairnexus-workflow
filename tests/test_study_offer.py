@@ -573,6 +573,32 @@ def test_start_s_verdict_row_comes_before_the_row_that_loads_next_for_a_map_deci
     assert verdict < loads
 
 
+def _charting_handover() -> str:
+    """`start`'s Map step 3: what it asks once the map is charted."""
+    text = _flat(START.read_text(encoding="utf-8"))
+    step = text[text.index("**Map** (flow §1)"):text.index("4. **Each decision,**")]
+    return step[step.index("3. Ask:"):]
+
+
+def test_charting_a_new_project_s_map_hands_on_to_its_study_s_carry_on_not_a_decision():
+    # #587's round 1, finding 5: a new project's map is charted before its study's verdict,
+    # so none of its decisions is ready yet; step 3 recommended the first decision anyway.
+    step = _charting_handover()
+    # A map with no open study still hands on to its first decision.
+    assert "**Stop here: the first decision in a fresh session (Recommended)**: there, the first message offers it, or `/next map`" in step
+    # A map whose Notes link an open research issue hands on to that study's Carry on.
+    assert "For a map whose Notes link an open research issue (a new project's study), it is **Stop here: the study's Carry on in a fresh session (Recommended)** instead" in step
+    assert "the first message offers that study's **Carry on**" in step
+    assert "none of the map's decisions is ready before its verdict (`next` §1, \"A map\")" in step
+
+
+def test_the_readme_s_charting_handover_names_the_study_s_carry_on():
+    text = _flat((KIT / "README.md").read_text(encoding="utf-8"))
+    row = text[text.index("| Charting a map |"):].split(" | ", 2)[1]
+    assert "**Stop here: the first decision in a fresh session**" in row
+    assert "**Stop here: the study's Carry on in a fresh session**, for a new project's map while its study runs" in row
+
+
 def test_the_flow_s_research_section_holds_a_new_project_s_map_decisions_for_the_verdict():
     flow = _flat((KIT / "docs/flow.md").read_text(encoding="utf-8"))
     research = flow[flow.index("## Research"):flow.index("## The bar")]
