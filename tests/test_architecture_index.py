@@ -280,6 +280,20 @@ def test_the_overview_is_printed_first_and_once_and_is_a_page_for_now(tmp_path, 
     assert [pg["file"] for pg in json.loads(out)["pages"]] == [f"{ARCH}/README.md", f"{ARCH}/a.md"]
 
 
+def test_the_overview_comes_first_before_pages_whose_names_sort_before_it(tmp_path, monkeypatch, capsys):
+    root = _repo(tmp_path, {
+        f"{ARCH}/README.md": "x\n",
+        f"{ARCH}/API.md": _page(["src/api/**"]),
+        f"{ARCH}/00-intro.md": "# Intro\n",
+    })
+    _write(root, "src/api/a.py")
+    _commit(root)
+    want = [f"{ARCH}/README.md", f"{ARCH}/00-intro.md", f"{ARCH}/API.md"]
+    assert _reads(monkeypatch, capsys, root)[1] == want
+    code, out, _ = _run(monkeypatch, capsys, root, "reads", "--base", "main", "--json")
+    assert json.loads(out)["documents"] == want
+
+
 def test_a_missing_base_ref_prints_nothing_says_why_and_fails(tmp_path, monkeypatch, capsys):
     root = _repo(tmp_path, {f"{ARCH}/README.md": "x\n"})
     code, out, err = _run(monkeypatch, capsys, root, "reads", "--base", "no-such-branch")
