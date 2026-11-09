@@ -266,7 +266,10 @@ def test_the_look_in_a_later_session_without_the_owner_s_list_is_told_the_list_i
         "given the same list or, in a later session that doesn't have it, told the list isn't available"
         in look
     )
-    assert "reports an *observed (real person)* finding as not checked, never as wrong" in look
+    # Not checked is item 1's, and only against the list: a finding citing a saved copy that
+    # says otherwise is still wrong, so item 2 points to item 1 rather than restating it.
+    assert "told the list isn't available (as item 1 says), reads the lines changed" in look
+    assert "as not checked" not in look
     # The agent's file and review-panel's section use the same words.
     agent = _flat(CHECKER.read_text(encoding="utf-8"))
     assert "a later session's research check and its look have no list, and the session says the list isn't available instead" in agent
