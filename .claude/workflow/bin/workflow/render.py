@@ -341,6 +341,10 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
         "open_decisions": "take the choice most consistent with the spec, ADRs and the project's rules, and record it in the PR body"
         if charter.get("open_decisions", "decide-and-record") == "decide-and-record"
         else "label the ticket needs-human, say exactly what needs deciding, and stop",
+        # Spec #505's answers 28 and 31: for a research-source decision, decide-and-record means the safest choice.
+        "open_decisions.research": BRIEFING_RESEARCH_SAFEST
+        if charter.get("open_decisions", "decide-and-record") == "decide-and-record"
+        else BRIEFING_RESEARCH_SET_ASIDE,
         "commands.typecheck": _per_package(profile, "typecheck", _code),
         "commands.test_file": _per_package(profile, "test_file", _test_file),
         "commands.suites": _bullets([_suite_line(s) for s in profile.suites]),
@@ -353,6 +357,22 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
     for k, val in slots.items():
         v.setdefault(k, val)
     return v
+
+
+# The line after "Decisions the ticket leaves open" (#517): a decision resting on a
+# research note whose key source changed in a way that touches it, or can't be
+# fetched (the flow's "Research", **The source check**). A small decision, or a
+# change that doesn't touch it, is noted and the session goes on; a high-stakes
+# one follows the charter's `open_decisions`.
+_RESEARCH_SMALL = "a small decision, or a change that doesn't touch the decision, is noted in the PR body and on the build ticket, and you go on"
+BRIEFING_RESEARCH_SAFEST = (
+    f"{_RESEARCH_SMALL}; for a high-stakes one, take the safest choice, building on the safer of the note and the "
+    "live text, and record it in the PR body, quoting the changed paragraphs"
+)
+BRIEFING_RESEARCH_SET_ASIDE = (
+    f"{_RESEARCH_SMALL}; for a high-stakes one, label the ticket needs-human, your line naming the note, the "
+    "source's link and the changed paragraphs' hashes from `workflow research check`, and stop"
+)
 
 
 # A ticket session's "Findings:" line (#382): it turns the rule for build reviewers on

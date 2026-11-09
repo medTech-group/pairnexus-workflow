@@ -377,6 +377,18 @@ def merge_inputs(repo: str, number: int, have: dict, names, asker: str | None = 
     return out
 
 
+def recorded(repo: str, base: str, sha: str) -> tuple:
+    """`merge-check`'s `recorded` input (#509): the pull request's own changes
+    at a research record's commit, GitHub's comparison of the base branch with
+    it (its `files`, each with its patch), as `(value, None)`, or `(None, why)`."""
+    if not available():
+        return None, f"{NOT_INSTALLED}, {AS_A_FILE.format(name=merge.RECORDED)}"
+    try:
+        return api(f"repos/{repo}/compare/{quote(base, safe='/')}...{sha}"), None
+    except GhError as e:
+        return None, f"{e}, {AS_A_FILE.format(name=merge.RECORDED)}"
+
+
 # `workflow preview --fetch <n>`'s inputs, by their flags.
 PREVIEW_INPUTS = ("comments", "checks", "sha")
 
