@@ -442,10 +442,12 @@ def test_the_flow_s_research_section_holds_the_new_project_rule():
     assert "takes `start`'s offer as in any project (an internal change gets none)" in rule
     assert "its map's Destination items included" not in rule
     # #583's round 2, finding 7: the wait is keyed to the map's Notes link, as `next` §1's.
-    assert "once its study's verdict lets them go on" not in rule
     # #583's round 3, finding 6: any study the map's Notes link, not the project's one study.
     assert "Notes link the study" not in rule
-    assert "its map's Destination items, where the map's Notes link a study's research issue, after the wait for that study's verdict" in rule
+    assert "after the wait for that study's verdict" not in rule
+    # #583's round 3, finding 7: "after the wait" let them go on after a stop, which `next` §1's
+    # clear-map rule and `start`'s wait bullet never do. They go on only as the verdict says.
+    assert "its map's Destination items, where the map's Notes link a study's research issue, only once that study's verdict lets them go on, never on stop" in rule
 
 
 def test_the_readme_says_a_new_project_is_recommended_a_study():
