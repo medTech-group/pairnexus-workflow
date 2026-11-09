@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**The glossary explains the architecture** (#614, part of spec #611). The glossary gains "Architecture" in "The kit's words": the overview in `docs/architecture/`, the pages that each cover one part of the code, and the pages list the kit builds from them. Its cap rises from 6,000 to 6,500 characters (it was 5,998), in every place that states it; the glossary with the context hook's other text still fits within Claude Code's 10,000-character limit. `docs/profile.md` notes that the architecture overview, `docs/architecture/README.md`, is listed in `project.rules`.
+
+- **For projects updating:** nothing to do.
+
 **A new project's study verdict holds its map's open decisions** (#587, part of spec #505). A new project's map is charted before its study's verdict, but the verdict held only the map's Destination items, once the map had no open decisions. So after **Stop**, `next` and `start` still offered the map's open decisions, and grilling went on, and once the map was clear nothing closed it, or it closed as completed; after **Prototype first**, the prototype waited behind the other decisions. `next` §1 now holds a map's open decisions while its Notes link an open research issue, offering that study's **Carry on** instead. Once the verdict is in, **Build it** lets them go on, **Prototype first** makes the prototype the only ready decision until it closes, and **Stop** offers none: the session closes each open decision ticket as not planned, moves the Destination items to Out of scope and closes the map as not planned, each linking the verdict. `start`'s Carrying on and the flow's "Research" say the same.
 
 - **For projects updating:** nothing to do.
