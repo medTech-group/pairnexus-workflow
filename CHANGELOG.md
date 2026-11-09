@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**The study runs the look after a change to the note, even after a clean research check** (#574, part of spec #505). The `study` skill's section 10 ran the look only when the research check wasn't clean, so a study session that changed its note after a clean check skipped it, and its research pull request stayed not ready at `research_needs_look`. It now runs the look when the check wasn't clean, or when the note changed since it, as flow §4 item 4 and `merge-check` already did: judged on the pull request's own changes, so a merge of the base alone isn't a change.
+
+- **For projects updating:** nothing to do.
+
 **`workflow ready` never lists a research issue as ready** (#572). An open issue labelled `research` that also carries `ready-for-agent` was listed as READY, so `next` could claim and build it, where `workflow status` keeps it under "Research under way" (#514). `workflow ready` now lists it as waiting, with the reason "labelled `research`: a research issue, not a build ticket", and never under "start now", since the kit reads every issue carrying `research` as research (the `study` skill's section 5).
 
 - **For projects updating:** nothing to do.
