@@ -9,8 +9,8 @@
 - **For projects updating to 0.1.22:**
   - The update brings the `study` skill and two new agents, `research-persona` and `research-checker`.
   - A project set up before this release has no `research` label: the session creates it before filing its first research issue, or create it yourself (`gh api repos/<repo>/labels -f name=research`). If the repository already has a `research` label for something else, rename that one first, since the kit reads every issue carrying it as research.
+  - Only if you fingerprinted key sources with `workflow research` from the kit's `main` before this release (#531): one labelled as ASCII whose bytes aren't all ASCII now shows as changed, and one whose server's label is in Python's own spelling (`utf_8`, `cp65001`), or that names no content type and is labelled as ASCII with bytes outside it, shows as can't fetch; fingerprint it again once the server's label is fixed.
   - Nothing else to do: `start` and `next` offer a study once the update merges.
-- **Known limit:** the study's token estimate uses an approximate per-agent figure (80,000 tokens) from one trial run, until the sandbox study replaces it (#519).
 
 **Research notes in the repository: the folder's layout, fingerprints, the source check and current notes** (#506, part of spec #505).
 
