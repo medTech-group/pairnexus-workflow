@@ -264,6 +264,17 @@ def test_subfolders_non_md_files_and_the_overview_are_never_pages(tmp_path, monk
     assert json.loads(out) == {"pages": []}
 
 
+@pytest.mark.parametrize("name", ["Readme.md", "readme.md"])
+def test_only_README_md_is_the_overview_another_case_is_a_page(tmp_path, monkeypatch, capsys, name):
+    root = _repo(tmp_path, {f"{ARCH}/{name}": "Covers: src/**\n", f"{ARCH}/p.md": _page(["src/p/**"])})
+    _write(root, "src/a.py")
+    _commit(root)
+    assert _reads(monkeypatch, capsys, root)[1] == [f"{ARCH}/{name}"]
+    assert _run(monkeypatch, capsys, root, "reads", "--base", "HEAD", "--paths", "src/a.py")[1] == f"{ARCH}/{name}\n"
+    code, out, _ = _run(monkeypatch, capsys, root, "pages", "--json")
+    assert [pg["file"] for pg in json.loads(out)["pages"]] == sorted([f"{ARCH}/{name}", f"{ARCH}/p.md"])
+
+
 def test_a_missing_base_ref_prints_nothing_says_why_and_fails(tmp_path, monkeypatch, capsys):
     root = _repo(tmp_path, {f"{ARCH}/README.md": "x\n"})
     code, out, err = _run(monkeypatch, capsys, root, "reads", "--base", "no-such-branch")

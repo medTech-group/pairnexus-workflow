@@ -109,7 +109,7 @@ def pages(root: Path) -> list[Page]:
         return []
     out: list[Page] = []
     for p in d.iterdir():
-        if p.suffix != ".md" or p.name.casefold() == "readme.md" or not p.is_file():
+        if p.suffix != ".md" or p.name == "README.md" or not p.is_file():
             continue
         rel = f"{DIR}/{p.name}"
         try:
