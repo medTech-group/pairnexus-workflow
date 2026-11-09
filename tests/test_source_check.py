@@ -188,6 +188,19 @@ def test_routing_lines_and_the_stakes_line_never_carry_the_owner_chose_marker():
     assert OWNER_MARKER not in study, "the stakes record and the token record have markers of their own"
 
 
+def test_the_owner_s_choice_counts_as_choosing_once_says():
+    part = _part(_source_check(), "Choosing once")
+    assert "the agents' marker" in part
+    assert "posted by an account with write access" in part and "as hand-off comments do" in part
+    start = next(l for l in _read("skills/start/SKILL.md").splitlines()
+                 if l.startswith("| A research issue (status's `research`)"))
+    build = _flat(_read("skills/build-ticket/SKILL.md").split("\n## 2. Build it", 1)[1].split("\n## 3.", 1)[0])
+    wrong = _flat(_rule("Fixing a wrong note"))
+    for where, text in (("start", start), ("build-ticket", build), ("Fixing a wrong note", wrong)):
+        assert "from an account with write access" in text, where
+        assert "Choosing once" in text, where
+
+
 def test_the_two_open_questions_take_the_safest_choice():
     part = _part(_source_check(), "Choosing once")
     # #505's first open question: an unfetchable source has no hashes, so an answer about it doesn't carry over.
