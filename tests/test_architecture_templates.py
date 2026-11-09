@@ -47,6 +47,12 @@ def test_structural_lines_go_in_the_same_pull_request():
         assert part in s, part
 
 
+def test_lines_in_this_folder_are_never_on_a_stay_out_list_and_no_more():
+    s = _flat(_section(OVERVIEW, "## Standing rules"))
+    assert "Lines in this folder are always the change's own: they are never another area's files and never on a run's stay-out list." in s
+    assert "whatever else it is told to stay out of" not in s
+
+
 def test_the_rules_block():
     assert "a change that breaks one is blocked" in _flat(OVERVIEW)
 

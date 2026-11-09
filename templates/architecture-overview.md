@@ -18,7 +18,7 @@ A change that makes a structural decision writes its line in the same pull reque
 - its decisions;
 - the cross-cutting rules.
 
-Lines in this folder are always the change's own: they are never another area's files, so a change may write them whatever else it is told to stay out of.
+Lines in this folder are always the change's own: they are never another area's files and never on a run's stay-out list.
 
 ### A new module adds its page
 
