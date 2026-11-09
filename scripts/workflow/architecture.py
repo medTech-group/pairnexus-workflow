@@ -135,8 +135,7 @@ def overview(root: Path) -> str | None:
 
 
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
-    """A file name that isn't UTF-8 is kept, as `os.fsdecode` would give it."""
-    return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, errors="surrogateescape")
+    return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True)
 
 
 def changed_files(root: Path, base: str) -> list[str]:
