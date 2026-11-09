@@ -398,7 +398,7 @@ Subscribe to the tracking issue to hear about it. The conductor's @mentions of y
 
 **Not yet proven in a real run** ([docs/spike.md](docs/spike.md)): a guard denial in a cloud session (row 4), a private repository's ruleset refusing a push (row 5), the conductor clearing a finished session's check-ins (row 11), a ticket session waking the conductor at once when it finishes (row 13; otherwise the next check-in sees it), and the final report's notification (row 17).
 
-A run only builds tickets that are ready ([what that means](#one-piece-at-a-time-next)): planning is a conversation with you, so it never happens in a run. While a map still has Destination items without a spec, the conductor's kick-off lists that map's ready tickets and recommends leaving them out (see [the gate](#a-large-or-brand-new-effort-wayfinder)).
+A run only builds tickets that are ready ([what that means](#one-piece-at-a-time-next)): planning is a conversation with you, so it never happens in a run. While a map still has Destination items without a spec, the conductor's kick-off lists that map's ready tickets and recommends leaving them out (see [the gate](#a-large-or-brand-new-effort-wayfinder)). A Destination item held by an owner task, with a `Blocked by:` line beside it in the map's body, is left out of that, whether its task is open or closed.
 
 ### Planning new work: what happens underneath
 
@@ -530,6 +530,7 @@ Several decisions that don't block each other can be worked in parallel sessions
   - `/next` and the guided start keep to it.
   - `workflow ready` doesn't know about maps, so a run would build them. At a run's kick-off the conductor lists such tickets and recommends leaving them out.
   - Or simply start the run once every Destination item has its tickets.
+  - A Destination item waiting on a professional's answer has a `Blocked by:` line beside it in the map's body, naming its owner task. It is left out of the gate, whether its task is open or closed, and the line stays: the map's other tickets build, and once its task closes, only that item's own tickets wait for its spec and tickets. `/next` and the guided start skip the item while its task is open.
 
 **A brand-new project.** In this order:
 1. **Create the GitHub repository,** with a README. If the Claude GitHub App has access only to selected repositories, add this one ([Before your first repository](#before-your-first-repository-once), item 3).
