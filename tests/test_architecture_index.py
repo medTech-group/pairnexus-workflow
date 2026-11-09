@@ -2,6 +2,7 @@
 `cli.main`, on a scratch git repository. Only what the command prints."""
 
 import json
+from pathlib import Path
 
 import pytest
 from conftest import git
@@ -279,6 +280,34 @@ def test_no_merge_base_prints_nothing_says_why_and_fails(tmp_path, monkeypatch, 
     assert code != 0
     assert out == ""
     assert "merge base" in err
+
+
+def test_a_page_that_cant_be_read_is_given_out_as_covering_nothing_yet(tmp_path, monkeypatch, capsys):
+    root = _repo(tmp_path, {
+        f"{ARCH}/README.md": "x\n",
+        f"{ARCH}/billing.md": _page(["src/billing/**"]),
+        f"{ARCH}/locked.md": _page(["src/locked/**"]),
+    })
+    _write(root, "lib/x.py")
+    _commit(root)
+    locked = root / ARCH / "locked.md"
+    real = Path.read_text
+
+    def read_text(self, *a, **k):
+        if self == locked:
+            raise PermissionError(13, "Permission denied", str(self))
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    code, lines, err = _reads(monkeypatch, capsys, root)
+    assert (code, lines) == (0, [f"{ARCH}/README.md", f"{ARCH}/locked.md"])
+    assert f"{ARCH}/locked.md" in err and "Permission denied" in err
+    code, out, err = _run(monkeypatch, capsys, root, "pages")
+    assert code == 0
+    assert f"{ARCH}/locked.md\n  (covers nothing yet)" in out
+    assert f"{ARCH}/locked.md" in err
+    code, out, _ = _run(monkeypatch, capsys, root, "pages", "--json")
+    assert [pg["covers"] for pg in json.loads(out)["pages"]] == [["src/billing/**"], []]
 
 
 def test_reads_changes_nothing(tmp_path, monkeypatch, capsys):
