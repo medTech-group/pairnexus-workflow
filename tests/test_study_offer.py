@@ -751,6 +751,17 @@ def test_start_offers_a_planned_item_s_prototype_and_reads_when_it_is_done():
     assert "**Capture it when done.**" in capture
 
 
+def test_a_planned_item_s_prototype_carry_on_posts_the_comment_that_says_it_is_done():
+    # Round 1 of #588: the `prototype` skill's "Capture it when done" may leave the answer in a
+    # commit and the branch on another issue, so by this row the prototype was never done, and
+    # every `/start` offered it again. The Carry on itself posts the comment the row reads.
+    _, proto, _ = _own_verdicts(_study_row(), _OPENING)
+    planned = proto[proto.index("For a planned item,"):]
+    posts = "**Carry on** ends by posting a comment on the item's issue that gives the prototype's branch and the answer it settled, even where that skill's \"Capture it when done\" left them elsewhere (a commit, another issue)."
+    assert posts in planned
+    assert planned.index(posts) < planned.index("The prototype is done once")
+
+
 def test_start_s_planned_item_row_leaves_a_held_item_to_the_study_s_row():
     row = next(ln for ln in _start_rows() if ln.startswith("| A planned item |"))
     assert "One linking an open research issue, or a closed one whose verdict still holds it (the row above), is the row above's, not this row's." in row
