@@ -1,10 +1,10 @@
 """The architecture documents in `docs/architecture/` (spec #611): the
 overview (`README.md`), the pages beside it, and which pages a change reads.
 
-A page is a Markdown file directly in `docs/architecture/` other than
-`README.md`; files in subfolders and files that aren't `.md` are neither
-pages nor noted. Its form, as the overview's `## Writing a page` section
-gives it:
+A page is a Markdown file directly in `docs/architecture/`, `README.md`
+among them for now; files in subfolders and files that aren't `.md` are
+neither pages nor noted. Its form, as the overview's `## Writing a page`
+section gives it:
 
     Covers: <glob>              one or more, at the top, one glob on each
     Interface: <one line>
@@ -103,15 +103,15 @@ def parse(file: str, text: str) -> Page:
 
 
 def pages(root: Path) -> list[Page]:
-    """Every page in the project's `docs/architecture/`, sorted by path. No
-    folder: none. A page that can't be read is listed with no globs, so `reads`
+    """Every page in the project's `docs/architecture/`, sorted by path,
+    `README.md` among them for now. No folder: none. A page that can't be read is listed with no globs, so `reads`
     still gives it out, and `unreadable` says why."""
     d = root / DIR
     if not d.is_dir():
         return []
     out: list[Page] = []
     for p in d.iterdir():
-        if p.suffix != ".md" or p.name == "README.md" or not p.is_file():
+        if p.suffix != ".md" or not p.is_file():
             continue
         rel = f"{DIR}/{p.name}"
         try:
@@ -177,7 +177,8 @@ class Reads:
 def reads(root: Path, base: str, paths: list[str]) -> Reads:
     """What a change reads: the overview when it exists, then, in one sorted
     list, every page whose `Covers:` matches a changed file or one of
-    `paths`, and every page that covers nothing yet. No folder: nothing, and
+    `paths`, and every page that covers nothing yet. The overview is a
+    document once, though it is also among the pages. No folder: nothing, and
     git isn't asked."""
     if not (root / DIR).is_dir():
         return Reads([], [])
@@ -194,4 +195,4 @@ def reads(root: Path, base: str, paths: list[str]) -> Reads:
         if hit:
             got.append((pg.file, hit))
     ov = overview(root)
-    return Reads(([ov] if ov else []) + [f for f, _ in got], got, [pg for pg in every if pg.unreadable])
+    return Reads(([ov] if ov else []) + [f for f, _ in got if f != ov], got, [pg for pg in every if pg.unreadable])

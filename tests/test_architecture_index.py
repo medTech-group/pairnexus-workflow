@@ -223,6 +223,7 @@ def test_a_page_with_no_covers_is_printed_in_one_sorted_list(tmp_path, monkeypat
     assert json.loads(out) == {
         "documents": [f"{ARCH}/README.md", f"{ARCH}/earlier-overview.md", f"{ARCH}/zeta.md"],
         "pages": [
+            {"file": f"{ARCH}/README.md", "matched_by": []},
             {"file": f"{ARCH}/earlier-overview.md", "matched_by": []},
             {"file": f"{ARCH}/zeta.md", "matched_by": ["src/zeta/**"]},
         ],
@@ -243,15 +244,15 @@ def test_a_page_with_no_covers_that_sorts_last_is_printed_last(tmp_path, monkeyp
     assert json.loads(out) == {
         "documents": want,
         "pages": [
+            {"file": f"{ARCH}/README.md", "matched_by": []},
             {"file": f"{ARCH}/billing.md", "matched_by": ["src/billing/**"]},
             {"file": f"{ARCH}/zz-old.md", "matched_by": []},
         ],
     }
 
 
-def test_subfolders_non_md_files_and_the_overview_are_never_pages(tmp_path, monkeypatch, capsys):
+def test_subfolders_and_non_md_files_are_never_pages(tmp_path, monkeypatch, capsys):
     root = _repo(tmp_path, {
-        f"{ARCH}/README.md": "Covers: src/**\n",
         f"{ARCH}/old/orders.md": _page(["src/**"]),
         f"{ARCH}/notes.txt": "Covers: src/**\n",
         f"{ARCH}/diagram.png": "",
@@ -259,20 +260,24 @@ def test_subfolders_non_md_files_and_the_overview_are_never_pages(tmp_path, monk
     _write(root, "src/a.py")
     _commit(root)
     code, out, _ = _run(monkeypatch, capsys, root, "reads", "--base", "main", "--json")
-    assert json.loads(out) == {"documents": [f"{ARCH}/README.md"], "pages": []}
+    assert json.loads(out) == {"documents": [], "pages": []}
     code, out, _ = _run(monkeypatch, capsys, root, "pages", "--json")
     assert json.loads(out) == {"pages": []}
 
 
-@pytest.mark.parametrize("name", ["Readme.md", "readme.md"])
-def test_only_README_md_is_the_overview_another_case_is_a_page(tmp_path, monkeypatch, capsys, name):
-    root = _repo(tmp_path, {f"{ARCH}/{name}": "Covers: src/**\n", f"{ARCH}/p.md": _page(["src/p/**"])})
+@pytest.mark.parametrize("covers, pages", [("src/**", [{"file": f"{ARCH}/README.md", "matched_by": ["src/**"]}]), ("lib/**", [])])
+def test_the_overview_is_printed_first_and_once_and_is_a_page_for_now(tmp_path, monkeypatch, capsys, covers, pages):
+    root = _repo(tmp_path, {f"{ARCH}/README.md": f"Covers: {covers}\n", f"{ARCH}/a.md": _page(["src/**"])})
     _write(root, "src/a.py")
     _commit(root)
-    assert _reads(monkeypatch, capsys, root)[1] == [f"{ARCH}/{name}"]
-    assert _run(monkeypatch, capsys, root, "reads", "--base", "HEAD", "--paths", "src/a.py")[1] == f"{ARCH}/{name}\n"
+    assert _reads(monkeypatch, capsys, root)[1] == [f"{ARCH}/README.md", f"{ARCH}/a.md"]
+    code, out, _ = _run(monkeypatch, capsys, root, "reads", "--base", "main", "--json")
+    assert json.loads(out) == {
+        "documents": [f"{ARCH}/README.md", f"{ARCH}/a.md"],
+        "pages": pages + [{"file": f"{ARCH}/a.md", "matched_by": ["src/**"]}],
+    }
     code, out, _ = _run(monkeypatch, capsys, root, "pages", "--json")
-    assert [pg["file"] for pg in json.loads(out)["pages"]] == sorted([f"{ARCH}/{name}", f"{ARCH}/p.md"])
+    assert [pg["file"] for pg in json.loads(out)["pages"]] == [f"{ARCH}/README.md", f"{ARCH}/a.md"]
 
 
 def test_a_missing_base_ref_prints_nothing_says_why_and_fails(tmp_path, monkeypatch, capsys):
@@ -318,7 +323,7 @@ def test_a_page_that_cant_be_read_is_given_out_as_covering_nothing_yet(tmp_path,
     assert f"{ARCH}/locked.md\n  (covers nothing yet)" in out
     assert f"{ARCH}/locked.md" in err
     code, out, _ = _run(monkeypatch, capsys, root, "pages", "--json")
-    assert [pg["covers"] for pg in json.loads(out)["pages"]] == [["src/billing/**"], []]
+    assert [pg["covers"] for pg in json.loads(out)["pages"]] == [[], ["src/billing/**"], []]
 
 
 def test_reads_changes_nothing(tmp_path, monkeypatch, capsys):
@@ -362,6 +367,7 @@ def test_pages_lists_file_covers_interface_and_helpers_sorted(tmp_path, monkeypa
     code, out, _ = _run(monkeypatch, capsys, root, "pages", "--json")
     assert code == 0
     assert json.loads(out) == {"pages": [
+        {"file": f"{ARCH}/README.md", "covers": [], "interface": None, "helpers": []},
         {"file": f"{ARCH}/billing.md", "covers": ["src/billing/**"], "interface": None, "helpers": []},
         {
             "file": f"{ARCH}/orders.md",
@@ -382,7 +388,7 @@ def test_pages_lists_file_covers_interface_and_helpers_sorted(tmp_path, monkeypa
     for want in ("Covers: src/orders/**", "Covers: src/shared/money.py", "`place(order) -> Receipt`", "check_input", "validates an order's fields", "money", "rounds amounts to cents."):
         assert want in orders
     assert "no interface given" not in orders
-    assert "README.md" not in out
+    assert out.startswith(f"{ARCH}/README.md\n  (covers nothing yet)\n")
 
 
 def test_a_page_with_no_covers_is_listed_covers_nothing_yet(tmp_path, monkeypatch, capsys):
