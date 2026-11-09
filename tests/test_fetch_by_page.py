@@ -207,6 +207,30 @@ def test_the_issues_and_pulls_fetch_reads_every_page_too(tmp_path, monkeypatch):
     assert gh.paths()[-1] == "repos/acme/demo/issues?state=all&per_page=100&page=2"
 
 
+def test_the_issues_and_pulls_fetch_reads_every_page_with_an_old_gh_too(tmp_path, monkeypatch):
+    """A gh too old for `--slurp` prints the first page, then fails the same way."""
+    first = [{"number": i} for i in range(1, 101)]
+    gh = fake_gh.install(tmp_path, monkeypatch, {"repos/acme/demo/issues": fake_gh.pages(first, [{"number": 101}], numeric_refused=True)}, slurp=False)
+    assert [i["number"] for i in cli._fetch("acme/demo", "issues")] == list(range(1, 102))
+    assert gh.paths()[-1] == "repos/acme/demo/issues?state=all&per_page=100&page=2"
+
+
+def test_the_issues_and_pulls_fetch_fails_on_a_page_that_can_t_be_read_with_an_old_gh(monkeypatch):
+    def run(args, **kw):
+        if "--slurp" in args:
+            return subprocess.CompletedProcess(args, 1, "", "unknown flag: --slurp\n")
+        if "--paginate" in args:
+            return subprocess.CompletedProcess(args, 1, json.dumps(FULL) + "\n", fake_gh.NUMERIC_REFUSED + "\n")
+        if args[-1].endswith("page=2"):
+            return subprocess.CompletedProcess(args, 1, "", "gh: Server Error (HTTP 502)\n")
+        return subprocess.CompletedProcess(args, 0, json.dumps(FULL), "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    with pytest.raises(SystemExit) as e:
+        cli._fetch("acme/demo", "issues")
+    assert "HTTP 502" in str(e.value) and "--issues/--prs" in str(e.value)
+
+
 def test_the_issues_and_pulls_fetch_fails_as_before_on_any_other_failure(tmp_path, monkeypatch):
     fake_gh.install(tmp_path, monkeypatch, {"repos/acme/demo/pulls": fake_gh.reply(exit=1, stderr="gh: Server Error (HTTP 500)\n")})
     with pytest.raises(SystemExit) as e:
