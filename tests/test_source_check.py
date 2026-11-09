@@ -201,6 +201,18 @@ def test_the_owner_s_choice_counts_as_choosing_once_says():
         assert "Choosing once" in text, where
 
 
+def test_owner_s_choice_1():
+    part = _part(_source_check(), "Quoting a source")
+    assert "<!--" in part and "markers" in part and "left out" in part
+
+
+def test_owner_s_choice_2():
+    part = _part(_source_check(), "Choosing once")
+    assert "nothing else" in part and "code fence" in part
+    conductor = _flat(_conductor_owner_answers())
+    assert "nothing else in the comment" in conductor
+
+
 def test_the_two_open_questions_take_the_safest_choice():
     part = _part(_source_check(), "Choosing once")
     # #505's first open question: an unfetchable source has no hashes, so an answer about it doesn't carry over.
