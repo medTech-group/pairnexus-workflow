@@ -124,6 +124,48 @@ def test_any_other_paginate_failure_fails_as_before(tmp_path, monkeypatch, stder
     assert len(gh.calls()) == 1  # nothing read page by page
 
 
+QUOTING = [_comment(1, 7, f"The proxy said: {fake_gh.NUMERIC_REFUSED}")]
+
+
+def _old_gh_page_quotes_the_refusal(args):
+    """A gh without `--slurp` whose `--paginate` prints a page that quotes the
+    proxy's refusal in a comment, then fails on something else; each
+    `page=N` answers `[]`."""
+    if "--slurp" in args:
+        return subprocess.CompletedProcess(args, 1, "", "unknown flag: --slurp\n")
+    if "--paginate" in args:
+        return subprocess.CompletedProcess(args, 1, json.dumps(QUOTING) + "\n", "gh: Server Error (HTTP 502)\n")
+    return subprocess.CompletedProcess(args, 0, "[]", "")
+
+
+def test_the_refusal_quoted_in_a_page_s_output_fails_as_before(monkeypatch):
+    calls = []
+
+    def run(args):
+        calls.append(args)
+        return _old_gh_page_quotes_the_refusal(args)
+
+    monkeypatch.setattr(fetch, "_run", run)
+    with pytest.raises(fetch.GhError) as e:
+        fetch.api("repos/acme/demo/issues/comments?per_page=100", paginate=True)
+    assert str(e.value) == "gh api failed: gh: Server Error (HTTP 502)"
+    assert len(calls) == 2  # nothing read page by page
+
+
+def test_the_issues_and_pulls_fetch_fails_as_before_when_a_page_quotes_the_refusal(monkeypatch):
+    calls = []
+
+    def run(args, **kw):
+        calls.append(args)
+        return _old_gh_page_quotes_the_refusal(args[1:])
+
+    monkeypatch.setattr(subprocess, "run", run)
+    with pytest.raises(SystemExit) as e:
+        cli._fetch("acme/demo", "issues")
+    assert "HTTP 502" in str(e.value) and "--issues/--prs" in str(e.value)
+    assert len(calls) == 2  # nothing read page by page
+
+
 def test_the_refusal_on_a_path_not_under_repos_fails_as_before(tmp_path, monkeypatch):
     gh = fake_gh.install(tmp_path, monkeypatch, {"graphql": fake_gh.reply(exit=1, stderr=fake_gh.NUMERIC_REFUSED + "\n")})
     with pytest.raises(fetch.GhError, match="Numeric-ID repository paths"):

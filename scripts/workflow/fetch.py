@@ -134,8 +134,9 @@ def _on_repos(path: str) -> bool:
 
 def numeric_refused(p: subprocess.CompletedProcess, path: str) -> bool:
     """`--paginate` failed on the proxy's refusal of a next-page link, for a
-    path `by_page` can read instead. Any other failure stays a failure."""
-    return bool(p.returncode) and _on_repos(path) and bool(NUMERIC_REFUSED.search(p.stderr + p.stdout))
+    path `by_page` can read instead. Any other failure stays a failure. Only
+    gh's error output counts, never the pages it printed before failing."""
+    return bool(p.returncode) and _on_repos(path) and bool(NUMERIC_REFUSED.search(p.stderr or ""))
 
 
 def _page_size(page) -> int | None:
