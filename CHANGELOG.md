@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**A new project's study verdict holds its map's open decisions** (#587, part of spec #505). A new project's map is charted before its study's verdict, but the verdict held only the map's Destination items, once the map had no open decisions. So after **Stop**, `next` and `start` still offered the map's open decisions, and grilling went on, and once the map was clear nothing closed it, or it closed as completed; after **Prototype first**, the prototype waited behind the other decisions. `next` §1 now holds a map's open decisions while its Notes link an open research issue, offering that study's **Carry on** instead. Once the verdict is in, **Build it** lets them go on, **Prototype first** makes the prototype the only ready decision until it closes, and **Stop** offers none: the session closes each open decision ticket as not planned, moves the Destination items to Out of scope and closes the map as not planned, each linking the verdict. `start`'s Carrying on and the flow's "Research" say the same.
+
+- **For projects updating:** nothing to do.
+
 **An item already waiting on a person stays under waiting, not held** (#577, split out of #514). `workflow status` listed every item whose `## Blocked by` names an open owner task as held, even one labelled `needs-info`, `needs-human`, `owner-task` or `ready-for-human`, which already waits on a person. Such an item now stays under "Waiting on a person"; a spec, a parent issue or a planned item with one of those labels is still held, since its waiting label never listed it as waiting. An issue whose `## Blocked by` names itself is no longer held by itself. `start` and `next` say so in their "Held items" rules. Tests: `tests/test_research_under_way.py`.
 
 - **For projects updating:** nothing to do.

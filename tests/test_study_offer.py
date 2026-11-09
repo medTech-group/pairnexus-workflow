@@ -450,6 +450,187 @@ def test_the_flow_s_research_section_holds_the_new_project_rule():
     assert "its map's Destination items, where the map's Notes link a study's research issue, only once that study's verdict lets them go on, never on stop" in rule
 
 
+# --- a new project's map decisions and its study's verdict (#587) ---------------------
+# A new project's map is charted once its study's intake and panel have run, before the
+# verdict, so the map can have open decisions when the verdict comes. They wait for it as
+# its Destination items do: on Stop none is offered and the map closes as not planned with
+# them; on Prototype first the prototype comes before them.
+
+
+def _map_rule() -> str:
+    """`next` §1's rule for a map's ready decisions."""
+    lines = [ln for ln in NEXT.read_text(encoding="utf-8").splitlines() if ln.startswith("- **A map**")]
+    assert len(lines) == 1, "next §1 has no single **A map** rule"
+    return lines[0]
+
+
+def _decisions_wait() -> str:
+    """The part of `next` §1's **A map** rule that holds a map's decisions for its study."""
+    rule = _map_rule()
+    opening = "A map whose Notes link a study's research issue"
+    assert opening in rule, "next §1's **A map** rule doesn't hold a map's decisions for its study"
+    return rule[rule.index(opening):]
+
+
+def _verdicts(text: str) -> tuple:
+    """(Build it, Prototype first, Stop): what each verdict does, once the research issue closes."""
+    after = text[text.index("once it closes"):]
+    build = after[after.index("on **Build it**"):after.index("on **Prototype first**")]
+    proto = after[after.index("on **Prototype first**"):after.index("on **Stop**")]
+    stop = after[after.index("on **Stop**"):]
+    return build, proto, stop
+
+
+def test_next_holds_a_new_project_s_map_decisions_while_its_study_runs():
+    # Charting runs before the verdict, and grilling never comes before it (the `study`
+    # skill's section 4), so the map's decisions wait as its Destination items do.
+    wait = _decisions_wait()
+    assert "(a new project's)" in wait
+    assert "holds its open decisions for that study's verdict" in wait
+    assert "none is ready while the research issue is open" in wait
+    assert "that study is offered as its **Carry on**" in wait
+
+
+def test_after_stop_next_offers_none_of_the_map_s_decisions_and_closes_them_with_the_map():
+    # #587: #310 still had open decisions at #43's Stop, and §2 picked them first.
+    _, _, stop = _verdicts(_decisions_wait())
+    assert "none is ever ready" in stop
+    assert "close each open decision ticket as not planned, linking the verdict" in stop
+    assert 'then do as "A clear map" says on **Stop**' in stop
+
+
+def test_after_stop_a_clear_map_closes_as_not_planned_never_as_completed():
+    # #587: once #310 was clear, every Destination item moved to Out of scope, and then
+    # nothing closed the map, or flow §1 step 7 closed it "as completed".
+    clear = _clear_map()
+    stop = clear[clear.index("on **Stop**"):]
+    assert "then close the map as not planned, linking the verdict" in stop
+    assert "never as completed" in stop
+
+
+def test_after_prototype_first_the_prototype_comes_before_the_map_s_other_decisions():
+    _, proto, _ = _verdicts(_decisions_wait())
+    assert "the prototype comes first" in proto
+    assert "`wayfinder:prototype` ticket linking the verdict" in proto
+    assert "chart it if the map has none" in proto
+    assert "the only decision ready until it closes" in proto
+
+
+def test_after_build_it_the_map_s_decisions_are_ready_as_on_any_map():
+    build, _, _ = _verdicts(_decisions_wait())
+    assert "ready as on any map" in build
+
+
+def test_the_map_rule_points_to_the_study_skill_and_the_flow_for_what_each_verdict_means():
+    # The `study` skill's section 11 and the flow's "Research" say what each verdict means;
+    # `next` points to them rather than restating them.
+    wait = _decisions_wait()
+    assert "the `study` skill's section 11 and the flow's \"Research\" say what each means" in wait
+    for restated in ("no grilling", "valid, recorded outcome", "Nothing is built", "then grilling"):
+        assert restated not in wait, restated
+    sec11 = _flat(re.search(r"^## 11\. The verdict$.*?(?=^## )", STUDY.read_text(encoding="utf-8"), re.M | re.S).group(0))
+    for verdict in ("**Build it:**", "**Prototype first:**", "**Stop:**"):
+        assert verdict in sec11, verdict
+
+
+def _start_rows() -> list:
+    return [ln for ln in START.read_text(encoding="utf-8").splitlines() if ln.startswith("| ")]
+
+
+def test_start_offers_the_study_not_a_new_project_s_map_decisions_while_it_runs():
+    row = next(ln for ln in _start_rows() if ln.startswith("| An item whose issue links an open research issue"))
+    assert "a map's open decisions or a clear map's Destination items while its Notes link an open research issue" in row
+    assert "that study's **Carry on**" in row
+
+
+def _verdict_row() -> str:
+    rows = [ln for ln in _start_rows() if ln.startswith("| A map whose Notes link a research issue that has closed")]
+    assert len(rows) == 1, "start's Carrying on has no single row for a map whose study has its verdict"
+    return rows[0]
+
+
+def test_start_offers_none_of_a_stopped_map_s_decisions_and_closes_the_map():
+    row = _verdict_row()
+    stop = row[row.index("on **Stop**"):]
+    assert "none, nor its next spec" in stop
+    assert "**Carry on: close map #<n>**" in stop
+    assert "closes the map as not planned with its open decision tickets, linking the verdict" in stop
+    assert '`next` §1, "A map"' in row
+
+
+def test_start_offers_only_the_prototype_after_prototype_first():
+    row = _verdict_row()
+    proto = row[row.index("on **Prototype first**"):row.index("on **Stop**")]
+    assert "only the prototype, until it closes" in proto
+    build = row[row.index("on **Build it**"):row.index("on **Prototype first**")]
+    assert "as on any map" in build
+
+
+def test_start_s_verdict_row_comes_before_the_row_that_loads_next_for_a_map_decision():
+    rows = _start_rows()
+    verdict = rows.index(_verdict_row())
+    loads = next(i for i, ln in enumerate(rows) if ln.startswith("| A map decision, a clear map's next spec, or a ready ticket"))
+    assert verdict < loads
+
+
+def _charting_handover() -> str:
+    """`start`'s Map step 3: what it asks once the map is charted."""
+    text = _flat(START.read_text(encoding="utf-8"))
+    step = text[text.index("**Map** (flow §1)"):text.index("4. **Each decision,**")]
+    return step[step.index("3. Ask:"):]
+
+
+def test_charting_a_new_project_s_map_hands_on_to_its_study_s_carry_on_not_a_decision():
+    # #587's round 1, finding 5: a new project's map is charted before its study's verdict,
+    # so none of its decisions is ready yet; step 3 recommended the first decision anyway.
+    step = _charting_handover()
+    # A map with no open study still hands on to its first decision.
+    assert "**Stop here: the first decision in a fresh session (Recommended)**: there, the first message offers it, or `/next map`" in step
+    # A map whose Notes link an open research issue hands on to that study's Carry on.
+    assert "For a map whose Notes link an open research issue (a new project's study), it is **Stop here: the study's Carry on in a fresh session (Recommended)** instead" in step
+    assert "the first message offers that study's **Carry on**" in step
+    assert "none of the map's decisions is ready before its verdict (`next` §1, \"A map\")" in step
+
+
+def test_the_readme_s_charting_handover_names_the_study_s_carry_on():
+    text = _flat((KIT / "README.md").read_text(encoding="utf-8"))
+    row = text[text.index("| Charting a map |"):].split(" | ", 2)[1]
+    assert "**Stop here: the first decision in a fresh session**" in row
+    assert "**Stop here: the study's Carry on in a fresh session**, for a new project's map while its study runs" in row
+
+
+def _prototype_first() -> str:
+    _, proto, _ = _verdicts(_decisions_wait())
+    return proto
+
+
+def test_after_prototype_first_the_prototype_is_one_linking_the_verdict_with_no_blockers():
+    # #587's round 1, finding 7: a prototype ticket charted before the verdict, blocked by
+    # another decision, stood in for the prototype; held as "the only decision ready" while
+    # its blocker was held, nothing was ever ready.
+    proto = _prototype_first()
+    assert "(a `wayfinder:prototype` ticket linking the verdict, with no blockers: chart it if the map has none, never taking one charted before the verdict for it)" in proto
+    # The map's other prototype tickets are held with the rest, not made ready by it.
+    assert "the map's other prototype tickets waiting with the rest" in proto
+
+
+def test_start_offers_only_the_prototype_linking_the_verdict_after_prototype_first():
+    row = _verdict_row()
+    proto = row[row.index("on **Prototype first**"):row.index("on **Stop**")]
+    assert "only the prototype, until it closes: the `wayfinder:prototype` ticket linking the verdict, which `next` charts with no blockers when the map has none, never one charted before the verdict" in proto
+
+
+def test_the_flow_s_research_section_holds_a_new_project_s_map_decisions_for_the_verdict():
+    flow = _flat((KIT / "docs/flow.md").read_text(encoding="utf-8"))
+    research = flow[flow.index("## Research"):flow.index("## The bar")]
+    rule = research[research.index("**A brand-new project**"):]
+    rule = rule[:rule.index("- **")]
+    assert "Its map's open decisions wait for that verdict too" in rule
+    assert "on prototype first, the prototype comes before them" in rule
+    assert "on stop, none is offered, and the map is closed as not planned with them, linking the verdict, never as completed (§1 step 7)" in rule
+    assert '`next` §1, "A map"' in rule
+
+
 def test_the_readme_says_a_new_project_is_recommended_a_study():
     # Round 3's note (row 34 of #579): the README said a study "comes first".
     text = _flat((KIT / "README.md").read_text(encoding="utf-8"))
@@ -463,6 +644,7 @@ def test_the_readme_says_a_new_project_is_recommended_a_study():
 def test_the_changelog_has_a_note_and_version_is_untouched():
     assert "(#515, part of spec #505)" in since_0110()
     assert "(#580, part of spec #505)" in since_0110()
+    assert "(#587, part of spec #505)" in since_0110()
     log = (KIT / "CHANGELOG.md").read_text(encoding="utf-8")
     start = log.index("## Unreleased\n")
     end = log.index("\n## ", start + 1)

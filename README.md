@@ -312,7 +312,7 @@ Then *"Go with this plan? 1. Booking page (quick ticket) 2. Booking reminders (s
 | The interview | **Write the spec**, **There's more to discuss**, **Stop here** |
 | The spec | **Split it into tickets**, **Edit the spec first**, **Stop here** |
 | The tickets | **Build them in a fresh session**, **Run them unattended**, **Next item of the plan** (when it's light), **Stop here** |
-| Charting a map | **Stop here: the first decision in a fresh session**, **Next item of the plan** (when it's light) |
+| Charting a map | **Stop here: the first decision in a fresh session** (or **Stop here: the study's Carry on in a fresh session**, for a new project's map while its study runs), **Next item of the plan** (when it's light) |
 | A light item (a quick ticket published, an edit to an issue) | **Next: <the next item>**, **Start it in a fresh session**, **Stop here** |
 | Finding a bug's cause | **File the fix as a ticket and build it**, **It needs decisions: make it a spec**, **Stop here** (what was found goes on the issue) |
 | A map decision, or a build | A recommendation to go on in a fresh session |
