@@ -412,6 +412,25 @@ def test_covers_lines_count_only_at_the_top(tmp_path, monkeypatch, capsys):
     assert json.loads(out)["pages"][0]["covers"] == []
 
 
+def test_backticks_in_a_line_that_starts_with_three_open_no_fence(tmp_path, monkeypatch, capsys):
+    root = _repo(tmp_path, {f"{ARCH}/notes.md": (
+        "Covers: src/notes/**\n\n"
+        "```save``` is the call to use.\n\n"
+        "Interface: `save(note)`\n\n"
+        "## Helpers\n\n"
+        "- `clean`: trims a note's text.\n\n"
+        "```markdown\n## Helpers\n\n- `fake`: inside a fence.\n```\n\n"
+        "- `after`: still a helper once the fence closes.\n"
+    )})
+    code, out, _ = _run(monkeypatch, capsys, root, "pages", "--json")
+    page = json.loads(out)["pages"][0]
+    assert page["interface"] == "`save(note)`"
+    assert page["helpers"] == [
+        {"name": "clean", "what": "trims a note's text."},
+        {"name": "after", "what": "still a helper once the fence closes."},
+    ]
+
+
 def test_pages_with_no_folder(tmp_path, monkeypatch, capsys):
     root = _repo(tmp_path)
     code, out, _ = _run(monkeypatch, capsys, root, "pages", "--json")

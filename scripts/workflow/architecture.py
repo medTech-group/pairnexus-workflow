@@ -69,6 +69,8 @@ def parse(file: str, text: str) -> Page:
     in_helpers = False
     for line in lines[i:]:
         f = _FENCE.match(line)
+        if f and not fence and f.group(1)[0] == "`" and "`" in line[f.end():]:
+            f = None  # a backtick fence's info string never holds a backtick (CommonMark): not a fence
         if f:
             mark = f.group(1)
             if not fence:
