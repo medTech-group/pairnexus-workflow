@@ -134,6 +134,19 @@ def test_what_it_goes_on_with():
     assert "fix" in part and "re-run" in part
 
 
+def test_after_the_owner_chose_decide_and_record_still_rests_on_the_safer_of_the_two():
+    # #505's second open question, as Choosing once answers it: a matching "Owner chose" line
+    # settles the choice, never what the build rests on under decide-and-record. What it goes
+    # on with says the same, so the two parts give one answer.
+    part = _part(_source_check(), "What it goes on with")
+    after = part.split("after the owner chose", 1)[1]
+    assert "current note" in after
+    assert "decide-and-record" in after and "safer of the two" in after
+    assert "as Choosing once says" in after
+    choosing = _part(_source_check(), "Choosing once")
+    assert "Under decide-and-record, a matching line settles the choice, and the build still rests on the safer" in choosing
+
+
 def test_its_lines_go_in_the_pull_request_and_on_the_build_ticket_and_a_stop_names_the_hashes():
     part = _part(_source_check(), "Its lines")
     assert "pull request" in part and "build ticket" in part
