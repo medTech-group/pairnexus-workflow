@@ -6,6 +6,10 @@
 
 - **For projects updating:** nothing to do.
 
+**`--fetch` reads every page in a cloud session** (#568). A Claude Code cloud session's proxy refuses GitHub's next-page links, which name the repository by number (`repositories/<id>/...`), so `gh api --paginate` got the first page and failed: `workflow research stakes --fetch` and `research estimate --fetch` exited 1 there, and so did `merge-check --fetch`, `preview --fetch`, `ready --fetch` and `status --fetch` once a list passed 100 items. On that refusal alone, the kit now reads the pages one at a time, with `page=N` on the `repos/<owner>/<repo>/` path, until one comes back shorter than its page size. Any other failure of `--paginate` fails as before. `workflow doctor`'s own reads are unchanged.
+
+- **For projects updating:** nothing to do.
+
 ## 0.1.22
 
 **Research notes and studies (spec #505).** Before a new feature is specced or a new project is charted, the guided start can offer a study: a panel of agents (an evidence gatherer, a question writer, 5 to 8 personas, a synthesizer and a validator) that gathers evidence, ranks the questions to ask real people, and ends with a verdict, build it, prototype first or stop. A brand-new project is always recommended one. Every study and fact note lives in `docs/research/<topic>/` and merges through a research pull request of its own, after a research check of each claim that cites a saved copy against that copy. `workflow research` fingerprints each key source, and whenever a decision relies on a note, the session checks first whether its sources have changed. A finding that needs a professional (the law, a regulation, a safety rule) holds back only what rests on it.
