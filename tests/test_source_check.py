@@ -316,6 +316,14 @@ def test_the_briefing_under_set_aside_stops_at_needs_human_with_the_hashes(tmp_p
     assert "needs-human" in line and "hashes" in line
 
 
+@pytest.mark.parametrize("open_decisions", ["decide-and-record", "set-aside"])
+def test_the_briefing_notes_a_small_decision_in_the_pr_body_and_on_the_build_ticket(tmp_path, open_decisions):
+    # The flow's **Its lines**: the can't-fetch line and the routing line go in the pull request
+    # and on the build ticket, under either charter.
+    line = _research_line(_brief(tmp_path, open_decisions))
+    assert "a small decision, or a change that doesn't touch the decision, is noted in the PR body and on the build ticket" in line
+
+
 def test_the_general_open_decisions_line_is_unchanged(tmp_path):
     text = _brief(tmp_path, "decide-and-record")
     assert "- **Decisions the ticket leaves open:** take the choice most consistent with the spec" in text
