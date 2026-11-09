@@ -16,7 +16,12 @@ answer is a JSON value, printed as it is; `pages(...)`, a paginated answer:
 with `--paginate --slurp` printed as one list of the pages, with `--paginate`
 alone the pages one after another (as an old gh prints them), and without
 either only the first page; or `reply(...)`, an exit code and output of its
-own. A path with no route answers as GitHub does: `gh: Not Found (HTTP 404)`,
+own. Without `--paginate`, a `pages(...)` answer gives the page its query's
+`page=N` names (the first without one; `[]` past the last). `pages(...,
+numeric_refused=True)` is a cloud session's proxy (#568): `--paginate` gets
+the first page, then fails on the next-page link, which names the repository
+by number, with `NUMERIC_REFUSED`; its pages are still read one at a time
+with `page=N`. A path with no route answers as GitHub does: `gh: Not Found (HTTP 404)`,
 exit 1. `slurp=False` is a gh too old for `--slurp` (it refuses the flag);
 `signed_in=False` one that isn't signed in (`auth status` and every `api` call
 fail as gh does). Each call's arguments are logged, to read back with
@@ -36,9 +41,18 @@ TAG = "__fake_gh__"
 WITH_VALUE = {"-f", "-F", "--field", "--raw-field", "-H", "--header", "-X", "--method", "-q", "--jq", "-t", "--template", "--input", "--hostname", "--cache"}
 
 
-def pages(*values) -> dict:
-    """A paginated answer: each value one page."""
-    return {TAG: "pages", "pages": list(values)}
+# What a Claude Code cloud session's proxy says of GitHub's next-page links (#568).
+NUMERIC_REFUSED = (
+    "gh: Numeric-ID repository paths (repositories/{id}/...) are not supported through this proxy. "
+    "Use repos/{owner}/{repo}/... endpoints instead. (HTTP 403)"
+)
+
+
+def pages(*values, numeric_refused: bool = False) -> dict:
+    """A paginated answer: each value one page. With `numeric_refused`,
+    `--paginate` fails after the first page as the cloud session's proxy
+    makes it (#568)."""
+    return {TAG: "pages", "pages": list(values), "numeric_refused": numeric_refused}
 
 
 def reply(stdout: str = "", exit: int = 0, stderr: str = "") -> dict:
@@ -94,7 +108,14 @@ if isinstance(answer, dict) and answer.get(TAG) == "reply":
     sys.exit(answer["exit"])
 if isinstance(answer, dict) and answer.get(TAG) == "pages":
     if "--paginate" not in args:
-        print(json.dumps(answer["pages"][0]))
+        query = (path or "").partition("?")[2]
+        asked = [kv.partition("=")[2] for kv in query.split("&") if kv.startswith("page=")]
+        n = int(asked[-1]) if asked and asked[-1].isdigit() else 1
+        print(json.dumps(answer["pages"][n - 1] if 1 <= n <= len(answer["pages"]) else []))
+    elif answer.get("numeric_refused") and len(answer["pages"]) > 1:
+        if "--slurp" not in args:
+            sys.stdout.write(json.dumps(answer["pages"][0]) + "\n")
+        fail(conf["numeric_refused"])
     elif "--slurp" in args:
         print(json.dumps(answer["pages"]))
     else:
@@ -144,7 +165,7 @@ def write(bin_dir: Path, routes: dict, slurp: bool = True, signed_in: bool = Tru
     builds its own PATH (doctor's, #59)."""
     bin_dir.mkdir(parents=True, exist_ok=True)
     (bin_dir / "calls.jsonl").unlink(missing_ok=True)
-    (bin_dir / "fake-gh.json").write_text(json.dumps({"routes": routes, "slurp": slurp, "signed_in": signed_in, "with_value": sorted(WITH_VALUE)}))
+    (bin_dir / "fake-gh.json").write_text(json.dumps({"routes": routes, "slurp": slurp, "signed_in": signed_in, "with_value": sorted(WITH_VALUE), "numeric_refused": NUMERIC_REFUSED}))
     gh = bin_dir / "gh"
     gh.write_text(SCRIPT.format(python=sys.executable))
     gh.chmod(gh.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
