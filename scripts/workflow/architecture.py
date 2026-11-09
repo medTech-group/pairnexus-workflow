@@ -40,7 +40,8 @@ _ITEM = re.compile(r"[-*+]\s+(.*)")
 
 
 class ReadError(Exception):
-    """`reads` can't tell which files changed: its message says why."""
+    """`reads` can't tell which files changed, or the folder can't be listed:
+    its message says why."""
 
 
 @dataclass
@@ -104,13 +105,18 @@ def parse(file: str, text: str) -> Page:
 
 def pages(root: Path) -> list[Page]:
     """Every page in the project's `docs/architecture/`, sorted by path. No
-    folder: none. A page that can't be read is listed with no globs, so `reads`
-    still gives it out, and `unreadable` says why."""
+    folder: none. A folder that can't be listed: ReadError. A page that can't
+    be read is listed with no globs, so `reads` still gives it out, and
+    `unreadable` says why."""
     d = root / DIR
     if not d.is_dir():
         return []
+    try:
+        listed = list(d.iterdir())
+    except OSError as e:
+        raise ReadError(f"can't read {DIR}/ ({e.strerror or e})") from None
     out: list[Page] = []
-    for p in d.iterdir():
+    for p in listed:
         if p.suffix != ".md" or p.name == "README.md" or not p.is_file():
             continue
         rel = f"{DIR}/{p.name}"

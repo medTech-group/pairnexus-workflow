@@ -1142,7 +1142,8 @@ def cmd_index(a) -> int:
     page whose `Covers:` matches a file changed since the merge base with
     --base or a --paths entry, and each page that covers nothing yet; with no
     folder, nothing. `pages` lists every page. Changes nothing. Exits 0, or 1
-    (printing no documents) when `reads` can't tell which files changed."""
+    (printing nothing) when `reads` can't tell which files changed or the
+    folder can't be listed."""
     root = project_root()
     if a.action == "reads":
         try:
@@ -1157,7 +1158,11 @@ def cmd_index(a) -> int:
             for d in got.documents:
                 print(d)
         return 0
-    pages = architecture_mod.pages(root)
+    try:
+        pages = architecture_mod.pages(root)
+    except architecture_mod.ReadError as e:
+        print(f"workflow index pages: {e}", file=sys.stderr)
+        return 1
     _unreadable(pages)
     if a.json:
         _out({"pages": [
