@@ -102,25 +102,38 @@ def _post():
     return post
 
 
+def _opens():
+    """The sentence of "Then publish" that opens the architecture pull request as a draft."""
+    (opens,) = [s for s in re.split(r"(?<=[.;])\s+", _publish()) if "as a draft" in s]
+    return opens
+
+
 def test_start_opens_the_draft_before_the_post_only_for_lines_in_no_pull_request_yet():
     publish = _publish()
-    opens = "after opening the architecture pull request as a draft if the session's architecture lines are in no pull request yet"
-    # opened before the "Breakdown to publish" post, so the post holds its
-    # number and a session carrying on from the post publishes it as posted
-    assert opens in _post()
+    opens = _opens()
+    # only for lines in no pull request yet, and before the "Breakdown to
+    # publish" post, so the post holds its number and a session carrying on
+    # from the post publishes it as posted
+    assert opens.startswith("If the session's architecture lines are in no pull request yet, open the architecture pull request as a draft")
+    assert "before the breakdown is posted" in opens
     # a session carrying on, or one publishing after an earlier session opened
     # it, never opens a second one; never in the numbered steps after the post
     assert publish.count("as a draft") == 1
-    assert publish.index(opens) < publish.index("Then, in this order:")
+    assert publish.index(opens) < publish.index(_post()) < publish.index("Then, in this order:")
 
 
-def test_start_s_publish_order_has_one_first_step():
-    publish = _publish()
-    # the draft opens within the first step, the post's own sentence, never as
-    # a step before it
-    assert "before anything else" not in publish
-    assert _post().startswith("First post")
-    assert publish.index("as a draft") > publish.index("First post")
+def test_start_s_publish_order_reads_in_short_sentences():
+    # CONTRIBUTING.md "Writing": short sentences. The draft is its own
+    # sentence, which says it comes before the post; the post's sentence
+    # starts "First post" and lists what it holds right after "in full"
+    opens, post = _opens(), _post()
+    assert "before anything else" not in _publish()
+    assert post.startswith("First post")
+    assert '"Breakdown to publish", in full: each build ticket\'s body' in post
+    assert "no pull request yet" not in post
+    # the post's sentence holds its list alone (84 words with the draft folded in)
+    assert len(opens.split()) <= 35, opens
+    assert len(post.split()) <= 64, post
 
 
 def test_the_post_names_the_architecture_pull_request_by_its_number():
