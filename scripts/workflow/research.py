@@ -971,6 +971,15 @@ def _ascii_host(host: str) -> str:
     return ".".join(labels)
 
 
+def unnameable(url: str) -> str | None:
+    """Why no key-source line could name the link, as `<link>` on a line of
+    its own, else None: it holds whitespace, a control character, `<` or `>`.
+    `ascii_link` and `link_problem` both refuse such a link."""
+    if any(c <= " " or c in "<>\x7f" for c in url):
+        return "it holds a space, a line break, a control character, `<` or `>`"
+    return None
+
+
 def _percent_encoded(text: str) -> str:
     """Each character outside ASCII percent-encoded as its UTF-8 bytes; ASCII,
     `%` escapes among it, left as it is."""
@@ -991,8 +1000,9 @@ def ascii_link(url: str) -> str:
     ASCII."""
     if url.isascii():
         return url
-    if any(c <= " " or c in "<>\x7f" for c in url):  # as `link_problem` refuses; urlsplit would strip some
-        raise PageError("it holds a space, a line break, a control character, `<` or `>`")
+    why = unnameable(url)  # urlsplit would strip some
+    if why:
+        raise PageError(why)
     if any(unicodedata.category(c) in ("Cc", "Cf", "Cs", "Co", "Cn", "Zs", "Zl", "Zp") for c in url if not c.isascii()):
         raise PageError("it holds a character outside ASCII that can't be encoded (a byte that isn't UTF-8, a space, a line break, or a format or unassigned character)")
     try:
@@ -1084,8 +1094,9 @@ def link_problem(url: str) -> str | None:
     no whitespace, control character, `<` or `>`, letters outside ASCII only
     where `fetch` can encode them (`ascii_link`), and http or https with a
     host. Checked before anything is read, fetched or written."""
-    if any(c <= " " or c in "<>\x7f" for c in url):
-        return "it holds a space, a line break, a control character, `<` or `>`"
+    why = unnameable(url)
+    if why:
+        return why
     try:
         parts = urllib.parse.urlsplit(ascii_link(url))
         ok = parts.scheme in ("http", "https") and bool(parts.hostname)

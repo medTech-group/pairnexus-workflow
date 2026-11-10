@@ -308,6 +308,24 @@ def test_page_fetching_refuses_a_link_it_cant_encode_before_any_request(project,
     assert requests == []
 
 
+@pytest.mark.parametrize("link", ["\x01https://example.com/\u00e4", "https://example.com/\x7f\u00e4", "https://example.com/<\u00e4>", "https://example.com/a b", "https://example.com/\u00e4"])
+def test_one_helper_refuses_a_link_with_a_space_a_control_character_or_angle_brackets(link):
+    """`ascii_link` and `link_problem` refuse such a link with one check and
+    one message, written once (docs/architecture/README.md, "Reuse, not
+    copies")."""
+    why = research.unnameable(link)
+    if link == "https://example.com/\u00e4":
+        assert why is None
+        return
+    assert why == "it holds a space, a line break, a control character, `<` or `>`"
+    assert research.link_problem(link) == why
+    if not link.isascii():
+        with pytest.raises(research.PageError, match="^" + re.escape(why) + "$"):
+            research.ascii_link(link)
+    source = (KIT / "scripts/workflow/research.py").read_text(encoding="utf-8")
+    assert source.count('c in "<>\\x7f"') == 1 and source.count(f'"{why}"') == 1
+
+
 @pytest.mark.parametrize(
     "link,sent",
     [

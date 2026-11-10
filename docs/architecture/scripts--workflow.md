@@ -7,6 +7,7 @@ A small page: only the lines changes have written so far. The rest of the folder
 ## Helpers
 
 - `ascii_link`: in `research.py`, the link as `workflow research` fetches it, in ASCII as a browser sends it: the host encoded by UTS 46 non-transitional rules, the userinfo, path, query and fragment percent-encoded as UTF-8. `fetch` and `link_problem` both use it, so a link that can be saved is one that can be fetched.
+- `unnameable`: in `research.py`, why no key-source line could name a link (a space, a line break, a control character, `<` or `>`), else None. `ascii_link` and `link_problem` both refuse such a link with it.
 
 ## Decisions
 
