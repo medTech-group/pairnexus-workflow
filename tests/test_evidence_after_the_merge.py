@@ -155,6 +155,27 @@ def test_a_required_report_leaves_nothing_to_come_note_or_none():
     ) in hold
 
 
+def test_settled_at_is_recorded_once_for_each_session():
+    # One rule, in the hold: a row read again at each check-in never moves the
+    # clock, and a requeued ticket's new session never inherits the old one.
+    hold = _hold()
+    assert (
+        "**`settled_at`:** when one of these rows marks the ticket `merged` or `in-review`, record the time as its "
+        "`settled_at`, unless it has one since the ticket's `started_at` (its session's start): a later check-in never "
+        "moves it, and one from before that `started_at` (an earlier session's, before a requeue) counts as none."
+    ) in hold
+    rows = [_row("Merged** |"), _row("`owner` mode, `ready`"), _row("`owner_review`"), _row("A required check never started")]
+    rows.append(_flat(_section(_text(CONDUCTOR), "**The merge queue's state.**", "\n")))
+    for row in rows:
+        assert "settled_at" not in row
+
+
+def test_the_hold_reads_only_the_notes_of_this_session():
+    # A requeued ticket's earlier session left its own note: it says nothing of this one's run.
+    hold = _hold()
+    assert "the session's latest note on the tracking issue since the ticket's `started_at`" in hold
+
+
 def test_the_hold_delays_only_the_archive():
     hold = _hold()
     assert "only the archive (and deleting the session's check-ins) waits" in hold
@@ -164,7 +185,6 @@ def test_the_hold_delays_only_the_archive():
 def test_the_merged_row_keeps_the_session_for_its_report():
     merged = _row("Merged** |")
     assert "one check-in later" not in merged
-    assert "record `settled_at`" in merged
     assert "read its notes for the next tickets" in merged
     assert f"then, as {HOLD_NAME} says, delete its own pending check-ins" in merged
 
@@ -172,13 +192,12 @@ def test_the_merged_row_keeps_the_session_for_its_report():
 @pytest.mark.parametrize("lead", ["`owner` mode, `ready`", "`owner_review`", "A required check never started"])
 def test_the_rows_that_archive_at_once_keep_the_session_for_its_report(lead):
     row = _row(lead)
-    assert "record `settled_at`" in row
     assert f"delete the session's check-ins and archive it as {HOLD_NAME} says" in row
 
 
 def test_the_queue_unsure_ready_keeps_the_session_for_its_report():
     queue = _flat(_section(_text(CONDUCTOR), "**The merge queue's state.**", "\n"))
-    assert "mark the ticket `in-review`, record `settled_at`" in queue
+    assert "mark the ticket `in-review`, then delete the session's check-ins" in queue
     assert f"delete the session's check-ins and archive it as {HOLD_NAME} says" in queue
 
 

@@ -116,8 +116,9 @@ TICKET_FIELDS = {
     "area": (lambda v: isinstance(v, str) and bool(v.strip()), "an area name"),
     "started_at": (_iso, "an ISO time with its zone"),
     "merged_at": (_iso, "an ISO time with its zone"),
-    # When a row marked it `merged` or `in-review` (#672): with no note from its session yet, the conductor keeps
-    # the session for its evidence report at most 180 minutes from then ("Keeping a session for its evidence report").
+    # When a row first marked it `merged` or `in-review` since its `started_at` (#672): with no note from its session
+    # yet, the conductor keeps the session for its evidence report at most 180 minutes from then ("Keeping a session
+    # for its evidence report").
     "settled_at": (_iso, "an ISO time with its zone"),
     # When the conductor asked the owner a question on this needs-human ticket in this run.
     "asked_at": (_iso, "an ISO time with its zone"),
