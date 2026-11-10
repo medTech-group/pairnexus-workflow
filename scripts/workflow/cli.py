@@ -290,8 +290,9 @@ def _note_unreviewed_specs(verdicts, issues, prs, repo: str | None, permissions_
 def cmd_status(a) -> int:
     """Where the project stands, for the guided start (`skills/start`), with
     doctor's local gaps (#62): its local checks only, so no network call.
-    A Ctrl-C anywhere in it is a quiet stop, as doctor's (#689): the commands
-    it runs through `proc` have their process group killed first."""
+    A Ctrl-C while it runs its checks is a quiet stop, as doctor's (#689):
+    the commands it runs through `proc` have their process group killed
+    first."""
     try:
         return _status(a)
     except KeyboardInterrupt:

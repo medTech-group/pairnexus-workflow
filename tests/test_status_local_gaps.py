@@ -499,3 +499,13 @@ def test_a_signal_while_a_command_starts_is_held_until_its_group_can_be_killed(t
 def test_the_changelog_notes_status_own_git_calls_ctrl_c():
     notes = since_0110()
     assert "#689" in notes and "workflow status" in notes
+
+
+def test_status_s_quiet_stop_is_never_claimed_for_a_ctrl_c_anywhere():
+    # A Ctrl-C while the CLI is still loading its modules gives a traceback
+    # (#697), so neither the note nor `cmd_status` says "anywhere".
+    notes = since_0110()
+    start = notes.index("(#689).")
+    entry = notes[start:notes.index("\n\n**", start)]
+    assert "- **For projects updating:**" in entry and "Ctrl-C anywhere" not in entry
+    assert "anywhere" not in cli.cmd_status.__doc__
