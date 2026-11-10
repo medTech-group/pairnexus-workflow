@@ -6,6 +6,8 @@
 
 - **For projects updating:** nothing to do.
 
+**A planned item's prototype changes no real code before its spec** (#633, part of spec #505). `start`'s **Carry on: the prototype for #<item>**, offered on a study's **Prototype first** verdict, loads the `prototype` skill, whose "Capture it when done" opens "Fold any validated decision into the real code". Read as written, the session could change the real code before the item's interview, its spec or any build ticket. The Carry on now says that opening doesn't apply there: nothing is folded into the real code before the spec, the prototype stays on its throwaway branch, and its answer goes to the item's interview, as the `study` skill's section 11 and the flow's order say.
+
 **Building reads the architecture, and says where a structural line goes** (#617, part of spec #611). A ticket session read the spec, the ADRs and the project's rules, but not the architecture, so it learned a page's rules only when the review blocked, and a structural choice had no set place to be written.
 
 - **`build-ticket`** runs `workflow index reads --base origin/<base> --paths <the files it expects to change>` and `workflow index pages` before building, and `reads` again on the committed diff before the first review. Its lasting-knowledge step now says where a structural line goes: the page it belongs to, or the overview for a cross-cutting rule; a new module (a new folder of code no page covers that held no code before) adds its full page, covering the outermost new folder; a line about a file no page covers goes in the small page named by its folder path (folders joined with `--`, a leading dot dropped; `_root.md` for a file at the root), with a literal `Covers:` line for that file.

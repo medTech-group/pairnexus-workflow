@@ -762,6 +762,26 @@ def test_a_planned_item_s_prototype_carry_on_posts_the_comment_that_says_it_is_d
     assert planned.index(posts) < planned.index("The prototype is done once")
 
 
+def test_a_planned_item_s_prototype_carry_on_folds_nothing_into_the_real_code():
+    # #633: the `prototype` skill's "Capture it when done" opens "Fold any validated decision
+    # into the real code", so read as written, planned item #301's Carry on changed the real
+    # booking code before its interview, its spec or any build ticket.
+    _, proto, _ = _own_verdicts(_study_row(), _OPENING)
+    planned = proto[proto.index("For a planned item,"):]
+    nothing = ("Nothing is folded into the real code before the spec: that skill's \"Fold any validated "
+               "decision into the real code\" doesn't apply here, so the prototype stays on its throwaway "
+               "branch and its answer goes to the item's interview (the `study` skill's section 11, and the "
+               "flow's order: a spec, then build tickets).")
+    assert nothing in planned
+    # Said with the Carry on it limits, before the row reads the prototype as done.
+    assert planned.index("**Carry on** ends by posting") < planned.index(nothing) < planned.index("The prototype is done once")
+    # The words it quotes are the skill's own, and section 11 puts grilling next.
+    capture = _flat((KIT / ".claude/skills/prototype/SKILL.md").read_text(encoding="utf-8"))
+    assert "**Capture it when done.** Fold any validated decision into the real code" in capture
+    sec11 = _flat(re.search(r"^## 11\. The verdict$.*?(?=^## )", STUDY.read_text(encoding="utf-8"), re.M | re.S).group(0))
+    assert "the `prototype` skill comes next, then grilling" in sec11
+
+
 def test_start_s_planned_item_row_leaves_a_held_item_to_the_study_s_row():
     row = next(ln for ln in _start_rows() if ln.startswith("| A planned item |"))
     assert "One linking an open research issue, or a closed one whose verdict still holds it (the row above), is the row above's, not this row's." in row
@@ -769,6 +789,10 @@ def test_start_s_planned_item_row_leaves_a_held_item_to_the_study_s_row():
 
 def test_the_changelog_has_588_s_note():
     assert "(#588, part of spec #505)" in since_0110()
+
+
+def test_the_changelog_has_633_s_note():
+    assert "(#633, part of spec #505)" in since_0110()
 
 
 # --- the changelog ---------------------------------------------------------------
