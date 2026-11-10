@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**A spec's tickets wait for its architecture pull request from the moment they are published** (#647, part of spec #611, split out of #617). A spec session published its build tickets (flow §2 item 2) before it opened the pull request of what it wrote (item 7), so a run could build a ticket before the architecture lines it is reviewed against had merged.
+
+- **The flow:** §2 item 7 commits the spec session's architecture lines with its glossary and ADRs, on their own branch. With architecture lines, that pull request opens as a draft before the tickets are published, and each ticket's `## Blocked by` names it, so `workflow ready` lists none before it merges; the planning review still comes before it is offered. Item 2's `## Blocked by` part and §2's checklist say the same.
+- **`start`:** its "Then publish" opens that draft first and names it in each new ticket's `## Blocked by`, before the "Breakdown to publish" post, so a session carrying on publishes it as posted.
+- **Room for it:** other §2 text is shorter (item 5's aside on CI config, which item 4 already covers; item 7's note on a cloud session's files; item 1's words on why a spec links from its map), and the first flow context's budget is unchanged (8,900): §1 and §2 still reach someone new whole beside the glossary's rule up to about a 224-character project path (283 before, 219 kept). Tests: `tests/test_spec_architecture_blocker.py`.
+- **For projects updating:** nothing to do.
+
 **Flow §2 says where a ticket's structural lines go** (#646, part of spec #611). A planning session wrote build tickets without saying where their structural choices would be written, and the flow's §1 and §2 had about 8 characters to spare in the context hook's first flow context, so any added line would have pushed §2 out of a planning session's first context.
 
 - **The flow:** §2 item 2's list of what a build ticket has gains where its structural lines go, by the architecture overview's rules: the code's page (a cross-cutting rule: the overview), a new module's full page, or, for a file no page covers, a small page named by its folder path (`src--orders.md`, `_root.md`). `start`'s quick ticket, and the ticket it drafts when sorting an issue, list the same part, and the Build ticket template gains a `## Structural lines` section for it.
