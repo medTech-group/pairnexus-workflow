@@ -4,6 +4,16 @@
 
 **A planned item's prototype changes no real code before its spec** (#633, part of spec #505). `start`'s **Carry on: the prototype for #<item>**, offered on a study's **Prototype first** verdict, loads the `prototype` skill, whose "Capture it when done" opens "Fold any validated decision into the real code". Read as written, the session could change the real code before the item's interview, its spec or any build ticket. The Carry on now says that opening doesn't apply there: nothing is folded into the real code before the spec, the prototype stays on its throwaway branch, and its answer goes to the item's interview, as the `study` skill's section 11 and the flow's order say.
 
+**Doctor notes what the architecture doesn't describe** (#615, part of spec #611). With a `docs/architecture/` folder, `workflow doctor` gains three notes in "The kit" group, each a `fine` line when nothing is wrong:
+
+- `kit.architecture.uncovered`: code no page's `Covers:` line matches, with its count and the first 10 files. Code is `guard.code_paths` when set, else every tracked file outside `docs/`; either way never a protected path, a file at the project's root, a `project.rules` document or a test path (`guard.test_paths`). Code written before the architecture stays a note until the architecture pass writes its pages.
+- `kit.architecture.unmatched`: a page whose `Covers:` lines match no file tracked in git.
+- `kit.architecture.no_covers`: a page with no `Covers:` line, which every change reads until it has one.
+
+The overview (`docs/architecture/README.md`) is never a page: its `Covers:` lines cover nothing, and it gets no note. No folder, no lines. The notes read only the checkout (`git ls-files`), and `workflow status` never runs them. The old-Python short report gives the same ids. `workflow profile check` warns when `guard.protected_paths`, or `guard.code_paths` under `code_writers = "ticket"`, matches `docs/architecture/`, since sessions then can't write its lines.
+
+- **For projects updating:** nothing to do. A project with a `docs/architecture/` folder may see the new notes; they never block.
+
 **The review panel reads the architecture** (#616, part of spec #611). Reviewers could hold a change only to `project.rules`, and the Standards reviewer looked for duplicated code only in the change itself, so a copy of a check that already existed elsewhere passed as a preference no written rule backs.
 
 - **The panel's inputs** (`review-panel` §1) gain the architecture pages `workflow index reads --base origin/<base>` prints, copied into the scratch directory at their paths, with the overview reaching every reviewer once, through `rules.md`; `pages.md`, `workflow index pages`' list of every page's interface and helpers; and, in a ticket session, `run.md`: the ticket's area and its globs, what runs alongside it and the protected paths.
