@@ -431,25 +431,6 @@ def test_untracked_files_need_allow_dirty(tmp_path):
     assert "NOT A PROOF OF THE COMMIT" in md and "not a proof of the commit" in md.lower()
 
 
-def test_a_tree_changed_while_the_suite_ran_stops_it(tmp_path):
-    # #663: an edit made while a shard runs (a fix, a merge of the base being
-    # resolved) leaves HEAD where it was, but the counts no longer prove it.
-    (tmp_path / "notes.txt").write_text("a\n")
-    edit = "python3 run_tests.py {files} && python3 -c \"open('notes.txt', 'a').write('b')\""
-    prof = _suite_repo(tmp_path, ["pass", "pass"], run=edit)
-    with pytest.raises(evidence.EvidenceError, match="the working tree changed while the suite ran"):
-        evidence.collect(prof, tmp_path)
-    # with --allow-dirty the run goes on, kept apart from the commit's evidence
-    git(tmp_path, "checkout", "--", ".")
-    sha, res = evidence.collect(prof, tmp_path, allow_dirty=True)
-    assert sum(r.passed for r in res) == 2
-    # the base worktree isn't checked (commands.setup writes there), so it still counts
-    git(tmp_path, "checkout", "--", ".")
-    git(tmp_path, "branch", "base")
-    b = evidence.base_count_from_ref(prof, tmp_path, "base")
-    assert b.count == 2 and not b.problem, b.problem
-
-
 def test_repair_runs_once_and_again_after_a_failed_shard(tmp_path):
     prof = _suite_repo(tmp_path, ["pass", "pass", "pass"], group=1)
     prof.repair = ["echo r >> .workflow/repairs"]

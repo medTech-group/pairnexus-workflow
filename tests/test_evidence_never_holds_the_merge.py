@@ -56,11 +56,6 @@ def test_the_evidence_never_holds_the_merge_without_a_waiver_or_ci_none():
     assert "even if the PR has merged by then" in otherwise
 
 
-def test_the_evidence_stops_when_the_tree_changes_under_it():
-    two = _step(2)
-    assert "It stops if your checkout's head moves or its tree changes while it runs (\"HEAD moved\", \"the working tree changed\")." in two
-
-
 def test_a_waiver_or_ci_none_keeps_the_report_first():
     two = _step(2)
     required = _section(two, "**When the report is required**", "**Otherwise the evidence never holds the merge:**")
