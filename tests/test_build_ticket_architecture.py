@@ -205,14 +205,16 @@ def test_flow_2_item_7_commits_architecture_lines_on_the_planning_branch():
     # answers 10 and 21: on the planning branch, with the glossary and ADRs,
     # and the spec's tickets wait for that pull request
     assert s.startswith(" the domain glossary, ADRs and architecture lines, on their own branch, with a pull request")
-    assert "(with architecture lines, under the spec's tickets' `## Blocked by`)" in s
+    # the tickets are published (§2 item 2) before this pull request opens, so
+    # the published ones are edited to wait for it as soon as it opens
+    assert "(with architecture lines, under the spec's tickets' `## Blocked by`, published ones edited as it opens)" in s
     # the planning review still comes first (tests/test_planning_review.py)
     assert "before the pull request is offered" in s
 
 
 def test_flow_2_checklist_names_the_architecture_lines():
     c = _flow_2_checklist()
-    assert "glossary, ADRs and architecture lines committed with a PR offered" in c
+    assert "glossary, ADRs and architecture lines committed with a PR offered (architecture lines: tickets blocked by it)" in c
 
 
 def test_flow_3_item_1_reads_the_architecture():
