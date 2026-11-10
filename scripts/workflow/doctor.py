@@ -61,6 +61,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import NamedTuple
 
+from . import _old_python
 from . import architecture as architecture_mod
 from . import estimate as estimate_mod
 from . import fetch as fetch_mod
@@ -83,7 +84,8 @@ LABELS = {"gap": "gap", "cant_check": "can't check", "note": "note", "fine": "fi
 # The upgrades a line may offer, by the names #47 and #48 use (the glossary's
 # names: "Protect `main`" is the upgrade's name whatever the base branch).
 OFFERS = {"protect_main": "Protect `main`", "restore_protection": "Restore protection", "set_up_unattended_runs": "Set up unattended runs",
-          "require_checks": "Require these checks", "add_try_it_links": "Add try-it links", "use_merge_queue": "Use a merge queue"}
+          "require_checks": "Require these checks", "add_try_it_links": "Add try-it links", "use_merge_queue": "Use a merge queue",
+          "write_architecture_overview": "Write the architecture overview"}
 # The upgrade-setup step that answers `guard.code_writers` (#338), named by a fix, not offered.
 CHOOSE_WRITERS = "Choose who writes code"
 
@@ -1040,9 +1042,13 @@ def check_code_writers(i: Inputs) -> list[Line]:
 # Every line is a note, with a `fine` line when the folder exists and nothing
 # is wrong; no folder, no lines (a vendored project gets its overview with an
 # update of the kit). Under `gaps_only` (`workflow status`) they give nothing,
-# so the walk never runs there.
+# so the walk never runs there. In plugin mode, where no update brings the
+# overview in, `kit.architecture.missing` notes a project whose
+# `project.rules` doesn't list it (#639).
 
 ARCH_DIR = architecture_mod.DIR
+OVERVIEW = architecture_mod.OVERVIEW
+WRITE_OVERVIEW = OFFERS["write_architecture_overview"]
 ARCH_LISTED = 10  # the files or pages a line lists; the rest are counted
 
 
@@ -1104,6 +1110,41 @@ def _code(p: Profile, tracked: list[str]) -> list[str]:
             continue
         out.append(f)
     return out
+
+
+@_check("The kit", "kit.architecture.missing")
+def check_architecture_overview(i: Inputs) -> list[Line]:
+    """Plugin mode only: a set-up project whose `project.rules` doesn't list
+    the overview, which no update of the kit brings in there. A vendored
+    project gets it with its update; a project listing it gets no line.
+
+    A profile that can't be loaded (it doesn't parse, `profile check` refuses
+    it, it isn't UTF-8 or isn't a file) is read as the old-Python short report
+    reads every profile: `project.rules` as text, by the same function, so
+    the two reports give the same ids whatever the profile holds (#639).
+    Listed there, no line; else the line can't be checked. The mode is
+    decided as the short report decides it, by `os.path.exists` on the lock,
+    which never raises (`Path.exists` raises for a lock that can't be looked
+    at)."""
+    if i.gaps_only or os.path.exists(i.root / ".claude/workflow/lock.json"):
+        return []
+    if i.profile is None:
+        if not i.profile_error or not _old_python._overview_unlisted(str(i.root)):
+            return []
+        return [Line("The kit", "kit.architecture.missing", "cant_check", Words(
+            "Can't tell whether this project has its architecture overview until the kit's profile can be read.",
+            "The architecture overview unchecked: the profile doesn't read (project.rules).",
+        ), PROFILE_FIRST)]
+    if any(_rule_path(r) == OVERVIEW for r in i.profile.rules):
+        return []
+    return [Line("The kit", "kit.architecture.missing", "note", Words(
+        f"This project has no architecture overview yet: the kit's profile doesn't list `{OVERVIEW}` among the project's rules. "
+        "The overview holds the rules every part of the code shares, and every session and reviewer reads it.",
+        f"project.rules doesn't list {OVERVIEW} (plugin mode, where no kit update brings it in).",
+    ), Words(
+        f"Ask Claude to \"{WRITE_OVERVIEW}\": it writes the overview and lists it in the kit's profile.",
+        f"upgrade-setup's \"{WRITE_OVERVIEW}\" writes {OVERVIEW} from the kit's template and adds it to project.rules.",
+    ), offer="write_architecture_overview")]
 
 
 @_check("The kit", "kit.architecture.uncovered")
@@ -3644,7 +3685,7 @@ def _previews_block(i: Inputs, page: str, configs: list[str]) -> Line:
 # Every check, in the order its lines show when they are equally serious: the
 # profile first, since setting the kit up comes before anything it then checks.
 CHECKS = [check_python, check_claude_code, check_profile, check_install, check_vendor, check_experience, check_ruleset,
-          check_code_writers, check_architecture, check_protection, check_required_checks,
+          check_code_writers, check_architecture_overview, check_architecture, check_protection, check_required_checks,
           check_ruleset_rules, check_merge_settings,
           check_codeowners, check_environments, check_environment_contents, check_previews]
 # The checks that read only this computer and the checkout: no `gh`, no
@@ -3654,7 +3695,7 @@ CHECKS = [check_python, check_claude_code, check_profile, check_install, check_v
 # doesn't name them for `status`. The architecture checks read only the
 # checkout too (#611), and give nothing under `gaps_only`, so `status` never
 # walks the tree for them.
-LOCAL_CHECKS = [check_python, check_profile, check_install, check_vendor, check_ruleset, check_architecture]
+LOCAL_CHECKS = [check_python, check_profile, check_install, check_vendor, check_ruleset, check_architecture_overview, check_architecture]
 
 
 # ---------- the report ----------

@@ -561,9 +561,10 @@ ARCH_FILES = {"src/a.py": "x\n", "docs/architecture/a.md": "Covers: src/**\n"}
 @pytest.mark.parametrize("folder", [True, False])
 def test_the_short_report_gives_the_same_ids_as_doctor(tmp_path, vendored, folder):
     root = _repo(tmp_path, ARCH_FILES if folder else {"src/a.py": "x\n"}, vendored=vendored)
-    full = set(_lines(root))
+    # With #639's plugin-mode overview line, which the short report gives too.
+    full = set(_lines(root, checks=(doctor.check_architecture_overview, *ARCH)))
     assert _old_ids(root) == full
-    assert full == (set(IDS) if folder else set())
+    assert full == (set(IDS) if folder else set()) | (set() if vendored else {"kit.architecture.missing"})
 
 
 # ---------- `profile check` ----------
