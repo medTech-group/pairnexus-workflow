@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**A set-aside run's ticket follows the owner's answer instead of stopping again** (#586, a fix to #517, part of spec #505). Under set-aside, a ticket session stopped at `needs-human` on a high-stakes decision whose research source changed; once the owner answered, the conductor posted an "Owner chose" line on the ticket and queued it again, but the briefing's line for a decision resting on a research note still told the next session to stop, with no exception, while the flow's "Research" → **Choosing once** says a later session follows a matching line. So a session that followed its briefing stopped again after every answer. The briefing's line now says, under set-aside, to follow an "Owner chose" line on the ticket that matches, as **Choosing once** says, recording it in the PR body and on the build ticket, and to stop only without one; under decide-and-record, a matching line settles the choice in place of the safest one, the build still resting on the safer of the note and the live text.
+
+- **For projects updating:** nothing to do: the next run's briefings carry the new line.
+
 **`workflow index`, and the architecture overview's and page's templates** (#612, part of spec #611).
 
 - **`workflow index`,** a new command that reads the architecture documents in `docs/architecture/` and changes nothing:
