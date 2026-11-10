@@ -57,7 +57,7 @@ def test_item_7_opens_the_pull_request_before_the_tickets_are_published():
     # or a later one (a spec session that stopped before its tickets, say)
     assert "until it merges, every session's tickets name it in `## Blocked by`" in item
     # the planning review still comes before it is offered (marked ready)
-    assert "planning review as §1 does before it is offered" in item
+    assert "planning review as §1 does before the pull request is offered" in item
     assert item.index("as a draft before item 2 publishes") < item.index("planning review")
 
 
