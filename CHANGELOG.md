@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**Flow §2 says where a ticket's structural lines go** (#646, part of spec #611). A planning session wrote build tickets without saying where their structural choices would be written, and the flow's §1 and §2 had about 8 characters to spare in the context hook's first flow context, so any added line would have pushed §2 out of a planning session's first context.
+
+- **The flow:** §2 item 2's list of what a build ticket has gains where its structural lines go, by the architecture overview's rules: the code's page (a cross-cutting rule: the overview), a new folder's full page, or, for a file no page covers, a small page named by its folder path (`src--orders.md`, `_root.md`).
+- **Room for it:** other §2 text is shorter, and §2 item 4's detail of which paths `workflow ready` reads as named (fenced code, "don't", "do not", "never") moves to `charter.md`'s readiness line, which the flow points to. The first flow context's budget is unchanged (8,900), so §1 and §2 still reach someone new whole beside the glossary's rule at the project paths they did (up to about 221 characters, 219 before; 95 with a flow addendum). Tests: `tests/test_flow_structural_lines.py`, at fixed-length project paths.
+- **For projects updating:** nothing to do.
+
 **Building reads the architecture, and says where a structural line goes** (#617, part of spec #611). A ticket session read the spec, the ADRs and the project's rules, but not the architecture, so it learned a page's rules only when the review blocked, and a structural choice had no set place to be written.
 
 - **`build-ticket`** runs `workflow index reads --base origin/<base> --paths <the files it expects to change>` and `workflow index pages` before building, and `reads` again on the committed diff before the first review. Its lasting-knowledge step now says where a structural line goes: the page it belongs to, or the overview for a cross-cutting rule; a new module (a new folder of code no page covers that held no code before) adds its full page, covering the outermost new folder; a line about a file no page covers goes in the small page named by its folder path (folders joined with `--`, a leading dot dropped; `_root.md` for a file at the root), with a literal `Covers:` line for that file.
