@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**The conductor never puts the architecture on a stay-out list** (#613, part of spec #611). A ticket must write its structural lines in the architecture page they belong to, in the same pull request, but a run's briefing could tell it to stay out of that page: an area such as `docs/*.md`, with `*` crossing `/`, matches every file under `docs/architecture/`, so another ticket running in that area put the folder on this one's stay-out list. The conductor's `alongside` row now says `docs/architecture/` is never on that stay-out list, even when another ticket's area matches it: lines under it are always the change's own. Tests: `tests/test_conductor_architecture_stay_out.py`.
+
+- **For projects updating:** nothing to do.
+
 **A study's Prototype first verdict holds its item until the prototype is done** (#588, part of spec #505). A study's research issue closes at its verdict, whatever the verdict, but `next` §1 made a Destination item whose own study had closed ready to spec again, and `start` carried a planned item on to its interview, so on **Prototype first** the interview came before the prototype. Both now read the closed research issue's verdict. On **Build it**, the item goes on as before. On **Prototype first**, a Destination item's prototype is the map's decision, a `wayfinder:prototype` ticket linking the verdict with no blockers, worded as `next` §1's "A map" words it, and the item is ready to spec only once it has closed; a planned item is offered its prototype (the `prototype` skill), and carries on to its interview once a comment on its issue gives the prototype's branch and its answer. On **Stop**, the item has already moved out (a Destination item to the map's Out of scope, a planned item closed as not planned), so it isn't offered.
 
 - **For projects updating:** nothing to do.
