@@ -69,7 +69,7 @@ def test_merge_check_and_the_queue_never_wait_on_an_evidence_run_that_isnt_requi
     assert "never waits on an evidence run that isn't required (step 2)" in three
     four = _step(4)
     queue = _section(four, "**With the merge queue on**", "\n\n   Before you first queue it")
-    assert "an evidence run still going is no reason to wait, unless the report is required (step 2)" in queue
+    assert "In `session` and `auto-merge` mode alike, an evidence run still going is no reason to wait, unless the report is required (step 2)" in queue
 
 
 def test_the_report_is_posted_before_the_ticket_ends():
