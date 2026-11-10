@@ -251,6 +251,7 @@ For each item, read the flow's section for its path and follow it, skipping noth
    - acceptance criteria, each naming where it's tested;
    - `## Blocked by`, with what the item waits for;
    - an `Area:` line;
+   - where its structural lines go, by the overview's rules: the code's page (a cross-cutting rule: the overview), a new module's full page, or for a file no page covers, a small page named by its folder path (`src--orders.md`, `_root.md`);
    - `## Bar`, as flow §2 says ("The bar"): a ticket may carry one, and one whose area is in the profile's `run.bar_areas` must;
    - a `Review: small` line, only when you expect the change to stay within the small threshold (the profile's `run.small_max_lines` changed lines in `run.small_max_files` files, outside tests) and to add no endpoint, table, screen or setting (flow §2). Removing the line opts the ticket out.
 
