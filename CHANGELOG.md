@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**The glossary explains the architecture** (#614, part of spec #611). The glossary gains "Architecture" in "The kit's words": the overview in `docs/architecture/`, the pages that each cover one part of the code, and the pages list the kit builds from them. Its cap rises from 6,000 to 6,500 characters (it was 5,998), in every place that states it; the glossary with the context hook's other text still fits within Claude Code's 10,000-character limit. `docs/profile.md` notes that the architecture overview, `docs/architecture/README.md`, is listed in `project.rules`.
+
+- **For projects updating:** nothing to do.
+
 **The conductor never puts the architecture on a stay-out list** (#613, part of spec #611). A ticket must write its structural lines in the architecture page they belong to, in the same pull request, but a run's briefing could tell it to stay out of that page: an area such as `docs/*.md`, with `*` crossing `/`, matches every file under `docs/architecture/`, so another ticket running in that area put the folder on this one's stay-out list. The conductor's `alongside` row now says `docs/architecture/` is never on that stay-out list, even when another ticket's area matches it: lines under it are always the change's own. Tests: `tests/test_conductor_architecture_stay_out.py`.
 
 - **For projects updating:** nothing to do.

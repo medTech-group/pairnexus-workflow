@@ -95,7 +95,7 @@ def test_the_glossarys_review_panel_entry_mentions_the_light_review():
     assert "one round with no walk-through of the screens" in entry and "the light review, asked for" in entry
     assert "never chosen for you" in entry
     assert "### light review" not in text.lower()
-    assert len(text) < 6000
+    assert len(text) < 6500
 
 
 def test_the_readme_lists_the_light_review_among_the_build_choices():
