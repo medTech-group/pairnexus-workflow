@@ -229,3 +229,65 @@ def test_a_directory_is_not_a_flow_file(repo):
     ctx = _ctx(repo, "implement #5", env={"WORKFLOW_EXPERIENCE": "developer"})
     assert ctx and "our-flow.md" not in ctx
 
+
+
+def _vendored_at(tmp_path, length):
+    """A project at an absolute path of exactly `length` characters, with the
+    kit's flow and glossary vendored, as an updated project has them."""
+    root = tmp_path / ("p" * (length - len(str(tmp_path)) - 1))
+    assert len(str(root)) == length
+    (root / ".claude/workflow/docs").mkdir(parents=True, exist_ok=True)
+    (root / ".claude/workflow/flow.md").write_text(FLOW, encoding="utf-8")
+    (root / ".claude/workflow/docs/glossary.md").write_text((KIT / "docs/glossary.md").read_text(encoding="utf-8"), encoding="utf-8")
+    return root
+
+
+def _beside_the_rule(root):
+    """The first flow context alone, and whether it fits whole beside the glossary's rule."""
+    from workflow import context
+
+    ctx = context.first_flow([root / ".claude/workflow/flow.md"])
+    rule = context.GLOSSARY_RULE.format(where=root / ".claude/workflow/docs/glossary.md") + " It isn't included here: read it now."
+    return ctx, len(rule) + 2 + len(ctx) < LIMIT
+
+
+def _as_a_project(root):
+    from conftest import git
+
+    git(root, "init", "-q", "-b", "main")
+    (root / ".claude/workflow/profile.toml").write_text('[project]\nname = "demo"\nrepo = "acme/demo"\n')
+    return root
+
+
+def test_a_long_path_keeps_the_flow_s_sections_that_fit_beside_the_glossary_rule(tmp_path):
+    # Round 1 of #617, explorer: a project path long enough that the glossary's
+    # rule doesn't fit in front of the first flow context, though the flow alone
+    # does, got only the rule and the flow's instruction. It keeps the sections
+    # that still fit beside the rule.
+    for n in range(len(str(tmp_path)) + 2, 400):
+        root = _vendored_at(tmp_path, n)
+        alone, fits = _beside_the_rule(root)
+        if not fits and alone.count("\n\n## ") >= 2:
+            break
+    else:
+        pytest.fail("no path where the flow alone keeps two sections and the glossary's rule doesn't fit beside it")
+    out = _ctx(_as_a_project(root), "implement #5")
+    assert len(out) < LIMIT and out.startswith("Treat the person in this session as new to building")
+    rule, flow = out.split(" It isn't included here: read it now.\n\n", 1)
+    sections = re.split(r"(?m)^(?=## )", FLOW)
+    instruction, body = flow.split("\n\n", 1)
+    given = [s for s in sections if s.strip() in body]
+    assert len(given) >= 2 and given == sections[: len(given)], "the opening and §1 at least, whole"
+    assert body == "\n\n".join(s.strip() for s in given)
+    stop = sections[len(given)].splitlines()[0][3:].strip()
+    assert f'stops before "{stop}" (flow.md)' in instruction
+    assert len(given) < alone.count("\n\n## ") + 1  # fewer than the flow alone, since all of those don't fit
+
+
+def test_the_flow_stays_as_it_is_when_the_glossary_s_rule_fits_beside_it(tmp_path):
+    # the other side: a path where the rule fits keeps the first flow context unchanged
+    root = _vendored_at(tmp_path, len(str(tmp_path)) + 40)
+    alone, fits = _beside_the_rule(root)
+    assert fits
+    out = _ctx(_as_a_project(root), "implement #5")
+    assert out.endswith("It isn't included here: read it now.\n\n" + alone)
