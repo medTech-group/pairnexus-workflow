@@ -12,6 +12,10 @@
 - **`templates/architecture-page.md`,** an example page in the kit's own templates: set-up never copies it into a project.
 - **For projects updating:** nothing to do yet: the overview is written by set-up and update in a later change of this spec.
 
+**The conductor never puts the architecture on a stay-out list** (#613, part of spec #611). A ticket must write its structural lines in the architecture page they belong to, in the same pull request, but a run's briefing could tell it to stay out of that page: an area such as `docs/*.md`, with `*` crossing `/`, matches every file under `docs/architecture/`, so another ticket running in that area put the folder on this one's stay-out list. The conductor's `alongside` row now says `docs/architecture/` is never on that stay-out list, even when another ticket's area matches it: lines under it are always the change's own. Tests: `tests/test_conductor_architecture_stay_out.py`.
+
+- **For projects updating:** nothing to do.
+
 **A new project's study verdict holds its map's open decisions** (#587, part of spec #505). A new project's map is charted before its study's verdict, but the verdict held only the map's Destination items, once the map had no open decisions. So after **Stop**, `next` and `start` still offered the map's open decisions, and grilling went on, and once the map was clear nothing closed it, or it closed as completed; after **Prototype first**, the prototype waited behind the other decisions. `next` §1 now holds a map's open decisions while its Notes link an open research issue, offering that study's **Carry on** instead. Once the verdict is in, **Build it** lets them go on, **Prototype first** makes the prototype the only ready decision until it closes, and **Stop** offers none: the session closes each open decision ticket as not planned, moves the Destination items to Out of scope and closes the map as not planned, each linking the verdict. `start`'s Carrying on and the flow's "Research" say the same.
 
 - **For projects updating:** nothing to do.
