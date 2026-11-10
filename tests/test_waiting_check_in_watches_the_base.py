@@ -1,8 +1,8 @@
 """#664: a waiting ticket session notices its pull request now conflicts with
 the base. Every waiting check-in, whatever the session waits on, runs
 `WF merge-check` on the head while the pull request is open and its head isn't
-in the merge queue, and on `conflict` merges the base in at once, a head the
-queue took out for a conflict too. `build-ticket` is read as
+one the session queued, and on `conflict` merges the base in at once. A head it
+queued is left to §6 step 4 (#685). `build-ticket` is read as
 a text contract (seam 2), and the briefing's **Check-ins** line is rendered
 through the CLI, as `tests/test_evidence_never_holds_the_merge.py` renders
 briefings."""
@@ -54,8 +54,8 @@ def test_it_follows_the_check_in_it_describes():
 
 def test_every_waiting_check_in_runs_merge_check_whatever_it_waits_on():
     p = _paragraph()
-    assert "Whatever you wait on (CI, the evidence run, a review agent or the merge queue)" in p
-    assert "each check-in, while the pull request is open and its head isn't in the merge queue" in p
+    assert "Whatever you wait on (CI, the evidence run or a review agent)" in p
+    assert "each check-in, while the pull request is open and its head isn't one you queued" in p
     assert "runs `WF merge-check --fetch <PR> --json` on the head (in a run, with step 6.3's flags)" in p
     assert "not only once what you wait on is done" in p
 
@@ -84,24 +84,14 @@ def test_an_evidence_run_still_going_holds_nothing():
     assert "An evidence run still going holds this merge no more than any other (§6 step 2)" in p
 
 
-def test_a_queued_head_only_waits_and_re_queues_stay_the_conductors():
+def test_the_watch_leaves_a_queued_head_to_section_6_step_4():
+    # the watch makes no rule of its own for a queued head (#685's): it points
+    # at §6 step 4, whose rule is unchanged
     p = _paragraph()
-    assert "A head in the merge queue only waits, and every re-queue is the conductor's (§6 step 4)" in p
-    # §6 step 4's rule for a queued head is unchanged
+    assert "This watch doesn't apply to a head you queued: §6 step 4 says what a queued head does." in p
+    assert "merge queue" not in p
     six = _section(BUILD_TICKET.read_text(), "## 6. Post the evidence and merge", "## 7. End each turn")
     assert "Never queue that head again: a head you queued only waits, whatever `WF merge-check` says of it later, and every re-queue is the conductor's" in six
-
-
-def test_a_head_you_queued_that_conflicts_gets_the_base_merged_in():
-    # GitHub takes a conflicting head out of the queue and the conductor's update
-    # of the branch is refused for the conflict: the session merges the base in
-    # (§5), and only a re-queue stays the conductor's.
-    p = _paragraph()
-    assert "A head you queued only waits" not in p
-    assert (
-        "A head that conflicts isn't in the queue, even one you queued: GitHub takes it out. On `conflict`, merge the "
-        "base in as above (§5's \"Still merge it in to resolve a conflict\"); only re-queueing stays the conductor's."
-    ) in p
 
 
 def test_a_conflict_while_staying_for_the_evidence_report_merges_the_base_in():
@@ -171,20 +161,17 @@ def test_the_rendered_check_ins_line_watches_the_base(tmp_path):
     assert "End that turn with `WORKFLOW-STATUS: waiting`." in line
     # and the new sentence, with the profile's base branch filled in
     assert (
-        "Whatever you wait on (CI, the evidence, a review agent or the merge queue), each check-in, while the PR is "
-        "open and its head isn't in the merge queue, runs `merge-check` (the command under **Merging**) on the head; on "
+        "Whatever you wait on (CI, the evidence or a review agent), each check-in, while the PR is "
+        "open and its head isn't one you queued, runs `merge-check` (the command under **Merging**) on the head; on "
         "`conflict`, "
     ) in line
     assert (
         " in at once (never a rebase or force-push), keeping both sides of a `CHANGELOG.md` "
         "conflict, then push and act on the next `merge-check`."
     ) in line
-    # a head in the queue only waits; one the queue took out for a conflict gets the base merged in
-    assert "A head you queued only waits" not in line
-    assert (
-        "A head in the merge queue only waits; one that conflicts is out of it, even one you queued (GitHub takes it "
-        "out), so merge the base in then too."
-    ) in line
+    # a head you queued is left to build-ticket §6 step 4
+    assert "A head you queued follows `build-ticket` §6 step 4 instead." in line
+    assert "merge queue" not in line
     # a local base branch can be stale from the clone: fetch and merge the remote's
     assert "`conflict`, fetch and merge `origin/trunk` in at once (never a rebase or force-push)" in line
     assert "merge `trunk` in" not in line
