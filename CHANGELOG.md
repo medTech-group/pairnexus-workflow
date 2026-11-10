@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+**A planned item's prototype changes no real code before its spec** (#633, part of spec #505). `start`'s **Carry on: the prototype for #<item>**, offered on a study's **Prototype first** verdict, loads the `prototype` skill, whose "Capture it when done" opens "Fold any validated decision into the real code". Read as written, the session could change the real code before the item's interview, its spec or any build ticket. The Carry on now says that opening doesn't apply there: nothing is folded into the real code before the spec, the prototype stays on its throwaway branch, and its answer goes to the item's interview, as the `study` skill's section 11 and the flow's order say.
+
 **`workflow index`, and the architecture overview's and page's templates** (#612, part of spec #611).
 
 - **`workflow index`,** a new command that reads the architecture documents in `docs/architecture/` and changes nothing:
