@@ -61,9 +61,15 @@ def test_an_evidence_run_the_head_outran_starts_again_even_after_the_merge():
     otherwise = two[two.index("**Otherwise the evidence never holds the merge:**"):]
     assert "and the PR hasn't merged" not in otherwise
     assert (
-        "If it stopped because the head moved (a fix, the base merged in, a `git pull`), start it again on your "
-        "checkout's head, even if the PR has merged since (it then runs on the head that merged), and post that report"
+        "If it stopped because the head moved (a fix, the base merged in, a `git pull`) or the tree changed, start it "
+        "again on your checkout's head once its tree is clean, even if the PR has merged since (it then runs on the head "
+        "that merged), and post that report"
     ) in otherwise
+
+
+def test_the_evidence_stops_when_the_tree_changes_under_it():
+    two = _step(2)
+    assert "It stops if your checkout's head moves or its tree changes while it runs (\"HEAD moved\", \"the working tree changed\")." in two
 
 
 def test_a_waiver_or_ci_none_keeps_the_report_first():
@@ -160,7 +166,10 @@ def test_no_waived_check_briefs_the_evidence_as_never_holding_the_merge(tmp_path
     assert "post its report on the PR, naming the head it covers, even if the PR has merged by then" in first
     # a run the head outran starts again on the checkout's head, merged or not
     assert "and the PR hasn't merged" not in first
-    assert "If it stopped because the head moved, start it again on your checkout's head, even if the PR has merged since, and post that report." in first
+    assert (
+        "If it stopped because the head moved or the tree changed, start it again on your checkout's head once its tree "
+        "is clean, even if the PR has merged since, and post that report."
+    ) in first
     # the merged note never waits on it, and says it still runs
     assert "before your \"merged\" note" not in first
     assert "post your \"merged\" note at once, with \"Evidence for `<sha>` still running\" (build-ticket §6 step 5)" in first

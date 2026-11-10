@@ -311,7 +311,8 @@ def collect(
     attempt's output is kept as `<suite>-NNN.<attempt>.log`. With empty_ok a
     suite whose files match nothing counts 0, with a line added to `notes`.
     Without clean_check (the base worktree, fresh from git, where only
-    commands.setup has written) the tree isn't checked.
+    commands.setup has written) the tree isn't checked. It stops when HEAD
+    moves, or the tree it checked changes, while it runs.
     """
     if allow_dirty:
         dirty = dirty_paths(root)
@@ -365,6 +366,14 @@ def collect(
             last_failed = not r.ok
             if head_sha(root) != sha:
                 raise EvidenceError("HEAD moved while the suite ran; start again on the new commit")
+            changed = dirty_paths(root) if clean_check and not allow_dirty else []
+            if changed:
+                raise EvidenceError(
+                    "the working tree changed while the suite ran ("
+                    + ", ".join(changed[:5])
+                    + (f" and {len(changed) - 5} more" if len(changed) > 5 else "")
+                    + "), so its counts wouldn't prove the commit; start again once the tree is clean"
+                )
     return sha, results
 
 
