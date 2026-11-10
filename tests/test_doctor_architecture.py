@@ -240,6 +240,50 @@ def test_without_git_the_walk_cant_check_and_the_pages_are_still_read(tmp_path):
     assert got["kit.architecture.uncovered"].status == "cant_check"
     assert got["kit.architecture.unmatched"].status == "cant_check"
     assert got["kit.architecture.no_covers"].status == "note"
+    for id_ in ("kit.architecture.uncovered", "kit.architecture.unmatched"):
+        ln = got[id_]
+        assert "git isn't on the PATH" in ln.message.developer
+        assert "git" in ln.fix.new and "install" in ln.fix.new.lower()
+
+
+def test_a_tracked_name_that_isnt_utf8_is_still_walked(tmp_path):
+    root = _repo(tmp_path, {"src/a.py": "x\n", "docs/architecture/a.md": "Covers: src/a.py\n"})
+    fd = os.open(os.fsencode(root / "src") + b"/caf\xe9.py", os.O_WRONLY | os.O_CREAT)
+    os.close(fd)
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    got = _lines(root)
+    ln = got["kit.architecture.uncovered"]
+    assert ln.status == "note"
+    for said in (ln.message.new, ln.message.developer):
+        assert "src/caf�.py" in said and "src/a.py" not in said
+    assert got["kit.architecture.unmatched"].status == "fine"
+
+
+def test_outside_a_git_checkout_the_walk_says_what_git_said(tmp_path):
+    root = tmp_path / "proj"
+    (root / ".claude/workflow").mkdir(parents=True)
+    (root / ".claude/workflow/profile.toml").write_text(_prof())
+    (root / ".claude/workflow/lock.json").write_text(json.dumps({"kit_version": "0.1.11", "files": {}}))
+    (root / "docs/architecture").mkdir(parents=True)
+    (root / "docs/architecture/a.md").write_text("Covers: src/**\n")
+    got = _lines(root, environ={**_env(), "GIT_CEILING_DIRECTORIES": str(tmp_path)})
+    for id_ in ("kit.architecture.uncovered", "kit.architecture.unmatched"):
+        ln = got[id_]
+        assert ln.status == "cant_check"
+        assert "not a git repository" in ln.message.new and "not a git repository" in ln.message.developer
+        assert "exit 128" not in _said(ln)
+        assert "checkout" in ln.fix.new and "install" not in ln.fix.new.lower()
+
+
+def test_when_git_takes_too_long_the_fix_isnt_to_install_it(tmp_path, monkeypatch):
+    root = _repo(tmp_path, {"src/a.py": "x\n", "docs/architecture/a.md": "Covers: src/**\n"})
+    monkeypatch.setattr(doctor, "_run", lambda *a, **k: doctor.Ran("timeout"))
+    got = _lines(root)
+    for id_ in ("kit.architecture.uncovered", "kit.architecture.unmatched"):
+        ln = got[id_]
+        assert ln.status == "cant_check" and "too long" in ln.message.new
+        for fix in (ln.fix.new, ln.fix.developer):
+            assert "install" not in fix.lower() and "PATH" not in fix and "checkout" not in fix
 
 
 def test_without_a_profile_uncovered_cant_check(tmp_path):

@@ -217,10 +217,11 @@ class Ran:
     err: str = ""  # the last lines it printed on stderr, when asked for
 
 
-def _run(i: Inputs, argv: list[str], timeout: float | None = None, stderr: bool = False) -> Ran:
+def _run(i: Inputs, argv: list[str], timeout: float | None = None, stderr: bool = False, errors: str = "strict") -> Ran:
     """Run a command with no shell and no input. Its whole process group is
     killed whenever doctor stops waiting (a timeout, Ctrl-C), so nothing it
-    started is left running."""
+    started is left running. `errors` is how its output's bytes that aren't
+    UTF-8 are read (`strict`: the result is unreadable)."""
     exe = shutil.which(argv[0], path=i.path)
     if not exe:
         return Ran("missing")
@@ -254,7 +255,7 @@ def _run(i: Inputs, argv: list[str], timeout: float | None = None, stderr: bool 
         said = (err or b"").decode("utf-8", "replace").strip().splitlines()
         return Ran("failed", err="\n".join(said[-3:])[:600] if said else f"exit {p.returncode}")
     try:
-        return Ran("ok", out.decode("utf-8"))
+        return Ran("ok", out.decode("utf-8", errors))
     except UnicodeDecodeError:
         return Ran("unreadable")
 
@@ -1067,15 +1068,22 @@ def _arch_pages(i: Inputs) -> list[architecture_mod.Page]:
     return [pg for pg in architecture_mod.pages(i.root) if pg.file != OVERVIEW]
 
 
-def _tracked(i: Inputs) -> tuple[list[str] | None, str]:
-    """The checkout's tracked files, from its root, and why not when they
-    can't be listed."""
-    ran = _run(i, ["git", "-c", "core.quotePath=false", "ls-files", "-z"], timeout=20)
+def _tracked(i: Inputs) -> tuple[list[str] | None, Words, Words]:
+    """The checkout's tracked files, from its root (a name that isn't UTF-8
+    read with U+FFFD for its bad bytes), or why they can't be listed and the
+    fix for that."""
+    ran = _run(i, ["git", "-c", "core.quotePath=false", "ls-files", "-z"], timeout=20, stderr=True, errors="replace")
     if ran.state == "ok" and ran.out is not None:
-        return [f for f in ran.out.split("\0") if f], ""
-    why = {"missing": "git isn't on the PATH", "timeout": "git took too long",
-           "unreadable": "a tracked file's name isn't UTF-8"}.get(ran.state) or _shown(ran.err or "git failed", 120)
-    return None, why
+        return [f for f in ran.out.split("\0") if f], Words("", ""), Words("", "")
+    if ran.state == "missing":
+        return None, Words("git isn't installed", "git isn't on the PATH"), Words(
+            "Install git, then run this check again.", "Put git on the PATH and rerun doctor.")
+    if ran.state == "timeout":
+        return None, Words("listing them took too long", "`git ls-files` timed out"), Words(
+            "Run this check again.", "Rerun doctor.")
+    said = _shown(ran.err or "git failed", 120)
+    return None, Words(f"git said: {said}", f"`git ls-files` failed: {said}"), Words(
+        "Run this check again from inside the project's git checkout.", "Run doctor in the project's git checkout.")
 
 
 def _code(p: Profile, tracked: list[str]) -> list[str]:
@@ -1135,18 +1143,16 @@ def check_architecture(i: Inputs) -> list[Line]:
         return []
     g = "The kit"
     pages = _arch_pages(i)
-    tracked, why = _tracked(i)
+    tracked, why, unlisted = _tracked(i)
     lines: list[Line] = []
     if tracked is None:
-        unlisted = Words("Run this check again from the project's git checkout, with git installed.",
-                         "Run doctor in the git checkout, with git on the PATH.")
         lines.append(Line(g, "kit.architecture.uncovered", "cant_check", Words(
-            f"Can't tell which code no architecture page describes: the project's files couldn't be listed ({why}).",
-            f"Uncovered code unchecked: `git ls-files` failed ({why}).",
+            f"Can't tell which code no architecture page describes: the project's files couldn't be listed ({why.new}).",
+            f"Uncovered code unchecked: {why.developer}.",
         ), unlisted))
         lines.append(Line(g, "kit.architecture.unmatched", "cant_check", Words(
-            f"Can't tell whether each architecture page's `Covers:` lines match files in the project: its files couldn't be listed ({why}).",
-            f"Pages' `Covers:` unchecked: `git ls-files` failed ({why}).",
+            f"Can't tell whether each architecture page's `Covers:` lines match files in the project: its files couldn't be listed ({why.new}).",
+            f"Pages' `Covers:` unchecked: {why.developer}.",
         ), unlisted))
     else:
         lines.append(_uncovered(i, pages, tracked))
