@@ -174,7 +174,7 @@ def test_what_blocks_lists_its_kinds_and_names_no_adr():
         "new behaviour without a test;",
         "a safety breach the change adds;",
         "a security problem the change adds;",
-        "a breach of a written rule (`rules.md`) in the change's own lines.",
+        "a breach of a written rule (`rules.md` or an architecture document given) in the change's own lines.",
     ):
         assert words in rule, words
 
