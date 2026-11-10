@@ -2,7 +2,8 @@
 the base. Every waiting check-in, whatever the session waits on, runs
 `WF merge-check` on the head while the pull request is open and its head isn't
 one the session queued, and on `conflict` merges the base in at once. A head it
-queued is left to §6 step 4 (#685). `build-ticket` is read as
+queued is left to §6 step 4 (#685), and the stay for the evidence report to
+§6 step 5 (#686). `build-ticket` is read as
 a text contract (seam 2), and the briefing's **Check-ins** line is rendered
 through the CLI, as `tests/test_evidence_never_holds_the_merge.py` renders
 briefings."""
@@ -88,28 +89,24 @@ def test_the_watch_leaves_a_queued_head_to_section_6_step_4():
     # the watch makes no rule of its own for a queued head (#685's): it points
     # at §6 step 4, whose rule is unchanged
     p = _paragraph()
-    assert "This watch doesn't apply to a head you queued: §6 step 4 says what a queued head does." in p
+    assert "This watch doesn't apply to a head you queued, or while you stay for your evidence report: §6 step 4 says what a queued head does" in p
     assert "merge queue" not in p
     six = _section(BUILD_TICKET.read_text(), "## 6. Post the evidence and merge", "## 7. End each turn")
     assert "Never queue that head again: a head you queued only waits, whatever `WF merge-check` says of it later, and every re-queue is the conductor's" in six
 
 
-def test_a_conflict_while_staying_for_the_evidence_report_merges_the_base_in():
-    # §6 step 5's stay leaves the checkout as it is, so the run's report can
-    # come; a conflict on a pull request still open is the one exception, and
-    # the session says the report won't come rather than leaving it promised.
+def test_the_watch_leaves_the_evidence_stay_to_section_6_step_5():
+    # the watch makes no rule of its own for the stay (#686's): it points at
+    # §6 step 5's "Then stay", whose text is as it was
     p = _paragraph()
-    assert "That merge wins over §6 step 5's \"Then stay\" (\"Leave your checkout as it is\"), as step 5 says." in p
+    assert "or while you stay for your evidence report" in p
+    assert "and §6 step 5's \"Then stay\" what the stay does." in p
+    assert "wins over" not in p
     six = _section(BUILD_TICKET.read_text(), "## 6. Post the evidence and merge", "## 7. End each turn")
     stay = _flat(_section(six, "**Then stay**", "6. **The claim label.**"))
-    # otherwise the stay is as it was
     assert "Leave your checkout as it is (no pull, no edit: the run stops if your head moves)" in stay
-    assert (
-        "Then end `done`. A conflict is the exception: with the pull request still open, §4's \"Every waiting "
-        "check-in watches the base\" merges the base in, which stops the run (\"HEAD moved\"): post \"Evidence for "
-        "`<sha>`: no report (the base was merged in for a conflict)\" on the tracking issue, and act on the next "
-        "`WF merge-check` instead of ending `done`."
-    ) in stay
+    assert stay.rstrip().endswith("Then end `done`.")
+    assert "watches the base" not in stay
 
 
 def test_the_base_moved_bullet_still_resolves_a_conflict_with_the_queue_on():
@@ -169,8 +166,8 @@ def test_the_rendered_check_ins_line_watches_the_base(tmp_path):
         " in at once (never a rebase or force-push), keeping both sides of a `CHANGELOG.md` "
         "conflict, then push and act on the next `merge-check`."
     ) in line
-    # a head you queued is left to build-ticket §6 step 4
-    assert "A head you queued follows `build-ticket` §6 step 4 instead." in line
+    # a head you queued is left to build-ticket §6 step 4, and the evidence stay to step 5
+    assert "A head you queued follows `build-ticket` §6 step 4 instead, and the stay for the evidence report §6 step 5." in line
     assert "merge queue" not in line
     # a local base branch can be stale from the clone: fetch and merge the remote's
     assert "`conflict`, fetch and merge `origin/trunk` in at once (never a rebase or force-push)" in line
