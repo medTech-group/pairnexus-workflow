@@ -97,7 +97,7 @@ def test_writing_a_page_gives_the_form():
     s = OVERVIEW.split("\n## Writing a page\n", 1)[1]  # the last section; its example holds `## ` headings
     flat = _flat(s)
     assert "A page is a Markdown file directly in this folder, other than this `README.md`." in flat
-    assert "Files in subfolders, and files that aren't `.md`, are neither pages nor read." in flat
+    assert "Files in subfolders, and files that aren't `.md` (other than another spelling of `README.md`, such as `README.MD`, which is a page), are neither pages nor read." in flat
     assert "one glob on each line, never two on one line" in flat
     assert "A page with no `Covers:` line covers nothing yet" in flat
     assert "**`Interface:`** is one line" in flat
@@ -121,10 +121,15 @@ def test_the_example_page_reads_as_a_page():
     assert "\n## Rules\n" in PAGE
 
 
-def test_the_changelog_note_says_how_the_overview_is_read_for_now():
+def test_the_changelog_notes_say_the_overview_is_never_a_page():
     note = _flat(since_0110().split("(#612,", 1)[1].split("\n\n**", 1)[0])
-    assert "For now `README.md` is also read as a page: its `Covers:` lines are read like any page's" in note
-    assert "covering nothing yet when it has none" in note
-    assert "so it can appear under `--json`'s `\"pages\"`" in note
-    assert "`reads` still prints it only once, first" in note
+    assert "A page is a `.md` file directly in `docs/architecture/` other than the overview (#631), or another spelling of `README.md`, such as `README.MD`; files in subfolders and other files are ignored." in note
+    assert "For now `README.md` is also read as a page" not in note
     assert "with no `Covers:` line, one that covers nothing yet" not in note
+    note = _flat(since_0110().split("(#631,", 1)[1].split("\n\n**", 1)[0])
+    assert "The overview is the file the folder lists as exactly `docs/architecture/README.md`" in note
+    assert "every other `.md` file directly in the folder is a page" in note
+    assert "`index pages` never lists the overview" in note
+    assert "`index reads` prints it once, first, never under `--json`'s `\"pages\"`" in note
+    assert "A case variant (`Readme.md`, `readme.md`) with no `README.md` beside it is a page, listed once" in note
+    assert "So is one whose extension's case differs too (`README.MD`)" in note

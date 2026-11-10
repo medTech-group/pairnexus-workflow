@@ -1043,7 +1043,6 @@ def check_code_writers(i: Inputs) -> list[Line]:
 # so the walk never runs there.
 
 ARCH_DIR = architecture_mod.DIR
-OVERVIEW = architecture_mod.OVERVIEW
 ARCH_LISTED = 10  # the files or pages a line lists; the rest are counted
 
 
@@ -1062,12 +1061,6 @@ def _listed(paths: list[str]) -> str:
 
 def _s(n: int, one: str, many: str) -> str:
     return one if n == 1 else many
-
-
-def _arch_pages(i: Inputs) -> list[architecture_mod.Page]:
-    """The pages, the overview left out: it is never a page, though
-    `architecture.pages` still lists it (#631)."""
-    return [pg for pg in architecture_mod.pages(i.root) if pg.file != OVERVIEW]
 
 
 def _tracked(i: Inputs) -> tuple[list[str] | None, str]:
@@ -1122,7 +1115,7 @@ def check_architecture(i: Inputs) -> list[Line]:
     if i.gaps_only or not (i.root / ARCH_DIR).is_dir():
         return []
     g = "The kit"
-    pages = _arch_pages(i)
+    pages = architecture_mod.pages(i.root)  # never the overview
     tracked, why = _tracked(i)
     lines: list[Line] = []
     if tracked is None:

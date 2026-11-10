@@ -53,7 +53,7 @@ None written yet.
 
 ## Writing a page
 
-A page is a Markdown file directly in this folder, other than this `README.md`. Files in subfolders, and files that aren't `.md`, are neither pages nor read. There is no size limit and no diagram is required. Its form:
+A page is a Markdown file directly in this folder, other than this `README.md`. Files in subfolders, and files that aren't `.md` (other than another spelling of `README.md`, such as `README.MD`, which is a page), are neither pages nor read. There is no size limit and no diagram is required. Its form:
 
 ```markdown
 Covers: src/orders/**
