@@ -329,11 +329,13 @@ def collect(
     clean_check: bool = True,
     changed: list[str] | None = None,
     appeared: list[str] | None = None,
+    started_dirty: list[str] | None = None,
 ) -> tuple[str, list[ShardResult]]:
     """Run (or resume) every shard of the suites on HEAD.
 
     With allow_dirty a dirty tree runs anyway, kept apart from the commit's
-    evidence (<sha>-dirty) and never reused. The profile's repair commands run
+    evidence (<sha>-dirty) and never reused; its paths, as the suites start,
+    are given back in `started_dirty`. The profile's repair commands run
     once, and again before a shard only when the shard before it failed. Each
     attempt's output is kept as `<suite>-NNN.<attempt>.log`. With empty_ok a
     suite whose files match nothing counts 0, with a line added to `notes`.
@@ -354,6 +356,8 @@ def collect(
     """
     if allow_dirty:
         dirty = dirty_paths(root)
+        if started_dirty is not None:
+            started_dirty[:] = dirty
     else:
         if clean_check:
             require_clean(root)

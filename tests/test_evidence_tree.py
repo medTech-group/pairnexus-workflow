@@ -298,6 +298,22 @@ def test_allow_dirty_marks_a_tracked_file_changed_while_the_repair_ran(tmp_path,
     assert not any(_store(root).glob("unit-*.json"))
 
 
+def test_allow_dirty_marks_a_tracked_file_changed_while_the_suites_were_chosen(tmp_path, monkeypatch, capsys):
+    # The selection runs the profile's selector, for up to two minutes, before
+    # any suite runs: a change in that time is on the tree the suites run on.
+    root = _repo(tmp_path)
+
+    def select(profile, r, ref, base_sha):
+        (root / "notes.txt").write_text("v2\n")
+        return evidence.Selection(["unit"])
+
+    monkeypatch.setattr(evidence, "select", select)
+    monkeypatch.setattr(evidence, "base_count_from_ref", lambda *a, **k: evidence.BaseCount(ref="main", sha=_sha(root), count=3))
+    assert _evidence(monkeypatch, root, "--allow-dirty", "--base-ref", "main") == 0
+    out = capsys.readouterr().out
+    assert out.splitlines()[0].endswith(evidence.DIRTY) and "notes.txt" in out
+
+
 def test_allow_dirty_marks_an_untracked_file_that_appeared_mid_run(tmp_path, monkeypatch, capsys):
     root = _repo(tmp_path)
     _act(root, "tests/test_0.txt", "echo pass > tests/test_9.txt")
