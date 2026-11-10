@@ -104,6 +104,24 @@ def test_a_head_you_queued_that_conflicts_gets_the_base_merged_in():
     ) in p
 
 
+def test_a_conflict_while_staying_for_the_evidence_report_merges_the_base_in():
+    # §6 step 5's stay leaves the checkout as it is, so the run's report can
+    # come; a conflict on a pull request still open is the one exception, and
+    # the session says the report won't come rather than leaving it promised.
+    p = _paragraph()
+    assert "That merge wins over §6 step 5's \"Then stay\" (\"Leave your checkout as it is\"), as step 5 says." in p
+    six = _section(BUILD_TICKET.read_text(), "## 6. Post the evidence and merge", "## 7. End each turn")
+    stay = _flat(_section(six, "**Then stay**", "6. **The claim label.**"))
+    # otherwise the stay is as it was
+    assert "Leave your checkout as it is (no pull, no edit: the run stops if your head moves)" in stay
+    assert (
+        "Then end `done`. A conflict is the exception: with the pull request still open, §4's \"Every waiting "
+        "check-in watches the base\" merges the base in, which stops the run (\"HEAD moved\"): post \"Evidence for "
+        "`<sha>`: no report (the base was merged in for a conflict)\" on the tracking issue, and act on the next "
+        "`WF merge-check` instead of ending `done`."
+    ) in stay
+
+
 def test_the_base_moved_bullet_still_resolves_a_conflict_with_the_queue_on():
     five = _section(BUILD_TICKET.read_text(), "## 5. Get it green", "## 6. Post the evidence and merge")
     assert "Still merge it in to resolve a conflict (`WF merge-check`'s `resolve_conflict`), as above." in five
