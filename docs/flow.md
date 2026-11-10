@@ -35,7 +35,7 @@ A large effort can start as a **map**: an issue labelled `wayfinder:map` whose c
    - `## Blocked by` (issue refs, or "None"), written out even when linked with GitHub's dependencies too, so a blocker closed as not planned is seen;
    - an `Area: <name>` line from the profile's `[areas]`, so the conductor never runs two sessions on one area;
    - acceptance criteria naming their seams;
-   - where its structural lines go, by the overview's rules: the code's page (a cross-cutting rule: the overview), a new folder's full page, or for a file no page covers, a small page named by its folder path (`src--orders.md`, `_root.md`);
+   - where its structural lines go, by the overview's rules: the code's page (a cross-cutting rule: the overview), a new module's full page, or for a file no page covers, a small page named by its folder path (`src--orders.md`, `_root.md`);
    - the by-hand checks it will need (a real device, account or service), if any;
    - `Review: small` if the change should stay within the small threshold and add no endpoint, table, screen or setting (§3);
    - `## Bar`, required in a `run.bar_areas` area ("The bar").

@@ -52,8 +52,10 @@ def test_flow_2_item_2_says_where_a_ticket_s_structural_lines_go():
 
 def test_the_bullet_carries_the_rule_for_code_no_page_covers():
     b = _bullet()
-    # answer 31: a new folder no page covers gets its full page
-    assert "a new folder's full page" in b
+    # answer 31: a new module gets its full page, by the name `build-ticket`
+    # and the overview give it (CONTRIBUTING.md: the same name everywhere)
+    assert "a new module's full page" in b
+    assert "new folder" not in b
     # answers 30 and 32: a file no page covers, a small page named by its folder path
     assert "for a file no page covers, a small page named by its folder path" in b
     assert "`src--orders.md`" in b
@@ -148,5 +150,6 @@ def test_the_changelog_says_so_under_unreleased():
     assert "(#646, part of spec #611)" in unreleased
     note = unreleased.split("(#646, part of spec #611)", 1)[1].split("**For projects updating:**", 1)[0]
     assert "§2 item 2" in note
+    assert "a new module's full page" in note and "new folder" not in note
     assert "`_root.md`" in note
     assert "`charter.md`" in note
