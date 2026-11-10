@@ -1695,6 +1695,16 @@ def test_the_study_skill_says_where_the_key_sources_section_may_sit():
     assert "the note's last" not in text
 
 
+def test_the_changelog_note_for_links_outside_ascii_is_not_under_a_released_version():
+    """Build tickets add their notes under `## Unreleased`, and never rewrite
+    a released version's notes (CONTRIBUTING.md): 0.1.22 was released before
+    #532's note was written, so its section never names #532."""
+    log = (KIT / "CHANGELOG.md").read_text(encoding="utf-8")
+    released = log.index("\n## 0.1.22\n")
+    assert "#532" not in log[released : log.index("\n## 0.1.21\n")]
+    assert log.index("(#532, split out of #506") < released
+
+
 def test_the_changelog_says_how_a_fingerprint_file_is_found():
     log = (KIT / "CHANGELOG.md").read_text(encoding="utf-8")
     entry = log[log.index("**A research note's `## Key sources` section can be followed by other sections**") :]
