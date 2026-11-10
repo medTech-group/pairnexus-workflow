@@ -120,6 +120,12 @@ Where a [ticket](#ticket)'s review stops: what it must handle, its safe fallback
 
 **Why it matters to you:** reviews end at what you asked for.
 
+### Architecture
+
+How your code is laid out, written in `docs/architecture/`: the overview holds the rules every part shares, each page covers one part of the code, and the pages list, built by the kit, shows each page's interface and shared helpers.
+
+**Why it matters to you:** each session and [review panel](#review-panel) reads the pages a change touches, so new code follows your rules and reuses code rather than copying it.
+
 ### Solo mode
 
 A project before GitHub protects [`main`](#main): the kit refuses Claude's changes straight to `main`.

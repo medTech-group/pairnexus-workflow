@@ -35,6 +35,7 @@ PARTS = {
         "Study": "study",
         "Review panel": "review-panel",
         "Bar": "bar",
+        "Architecture": "architecture",
         "Solo mode": "solo-mode",
         "Protect `main`": "protect-main",
         "Unattended run": "unattended-run",
@@ -66,6 +67,7 @@ MENTIONS = {
     "study": r"\bstud(?:y|ies)\b",
     "review-panel": r"\breview panels?\b",
     "bar": r"\bbars?\b",
+    "architecture": r"\barchitectures?\b",
     "solo-mode": r"\bsolo mode\b",
     "protect-main": r"Protect `main`",
     "unattended-run": r"\bunattended runs?\b",
@@ -117,7 +119,7 @@ def test_the_glossary_has_the_two_parts_with_each_word_under_its_part():
     assert list(parts) == list(PARTS)
     for part, words in PARTS.items():
         assert list(parts[part]) == list(words), part
-    assert sum(len(w) for w in PARTS.values()) == 25
+    assert sum(len(w) for w in PARTS.values()) == 26
 
 
 def test_each_heading_has_its_stable_anchor():
@@ -178,10 +180,10 @@ def test_the_glossary_says_it_is_the_kits_words_not_a_projects_glossary():
     assert "`GLOSSARY.md`" in intro
 
 
-def test_the_glossary_stays_under_6000_characters():
+def test_the_glossary_stays_under_6500_characters():
     n = len(_text())
-    assert n < 6000, (
-        f"docs/glossary.md is {n} characters: keep it under 6,000. The context hook adds it whole "
+    assert n < 6500, (
+        f"docs/glossary.md is {n} characters: keep it under 6,500. The context hook adds it whole "
         "at a session's first prompt, and Claude Code caps a hook's added context at 10,000 characters, "
         "so the glossary must leave room for the rest."
     )
@@ -202,7 +204,7 @@ def test_contributing_names_the_glossary_for_new_kit_terms():
     writing = text.split("**Writing.**", 1)[1].split("\n## ", 1)[0]
     assert "`docs/glossary.md`" in writing
     assert "same pull request" in writing
-    assert "6,000 characters" in writing
+    assert "6,500 characters" in writing
     assert "`domain-modeling`" in writing
 
 

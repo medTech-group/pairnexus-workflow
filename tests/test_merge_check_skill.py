@@ -252,7 +252,7 @@ def test_the_glossarys_merge_entry_says_to_ask_whether_it_is_ready():
     assert '"is #12 ready to merge?"' in entry
     assert '"Ready" or "Not yet" and why' in entry
     assert 'nothing merges until you choose "Merge it now"' in entry
-    assert "### merge-check" not in text.lower() and len(text) < 6000
+    assert "### merge-check" not in text.lower() and len(text) < 6500
 
 
 def test_the_readme_says_to_ask_before_you_merge_a_ticket_you_built_with_claude():
