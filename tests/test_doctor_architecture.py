@@ -310,6 +310,35 @@ def test_when_git_takes_too_long_the_fix_isnt_to_install_it(tmp_path, monkeypatc
             assert "install" not in fix.lower() and "PATH" not in fix and "checkout" not in fix
 
 
+@pytest.mark.parametrize("name", ["\x1b]0;x\x07", "\x1b[31mx\x1b[0m", "two\nlines"])
+def test_doctor_output(tmp_path, name):
+    root = _repo(tmp_path, {
+        f"src/{name}.py": "x\n",
+        f"docs/architecture/{name}.md": "# A page\n",
+        f"docs/architecture/{name}-b.md": "Covers: lib/**\n",
+    })
+    got = _lines(root)
+    assert {got[id_].status for id_ in IDS} == {"note"}
+    for ln in got.values():
+        for said in (ln.message.new, ln.message.developer, ln.fix.new, ln.fix.developer):
+            assert all(ch.isprintable() for ch in said), said
+    shown = doctor._printable(name)
+    assert f"src/{shown}.py" in got["kit.architecture.uncovered"].message.new
+    assert f"docs/architecture/{shown}.md" in got["kit.architecture.no_covers"].message.new
+    assert f"docs/architecture/{shown}-b.md" in got["kit.architecture.unmatched"].message.new
+    report = doctor.report(_inputs(root), list(ARCH))
+    assert "\x1b" not in doctor.text(report, 100) and "\x1b" not in json.dumps(report.as_dict(), ensure_ascii=False)
+
+
+def test_doctor_output_pages(tmp_path, monkeypatch):
+    root = _repo(tmp_path, {"src/a.py": "x\n", "docs/architecture/a.md": "# A page\n"})
+    monkeypatch.setattr(doctor.architecture_mod, "pages", lambda *a, **k: [
+        doctor.architecture_mod.Page("docs/architecture/a.md", unreadable="\x1b[31mx\x1b[0m")])
+    ln = _lines(root)["kit.architecture.no_covers"]
+    assert ln.status == "note"
+    assert all(ch.isprintable() for ch in _said(ln)) and doctor._printable("\x1b[31mx") in ln.message.new
+
+
 def test_without_a_profile_uncovered_cant_check(tmp_path):
     root = _repo(tmp_path, {"src/a.py": "x\n", "docs/architecture/a.md": "Covers: src/**\n"})
     (root / ".claude/workflow/profile.toml").unlink()

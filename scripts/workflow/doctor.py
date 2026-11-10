@@ -1054,7 +1054,8 @@ def _rule_path(rule: str) -> str:
 
 
 def _listed(paths: list[str]) -> str:
-    shown = ", ".join(paths[:ARCH_LISTED])
+    """The first paths, each as `_printable` shows it, and a count of the rest."""
+    shown = ", ".join(_printable(p) for p in paths[:ARCH_LISTED])
     return shown + (f" and {len(paths) - ARCH_LISTED} more" if len(paths) > ARCH_LISTED else "")
 
 
