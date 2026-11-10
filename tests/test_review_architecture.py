@@ -119,6 +119,16 @@ def test_rule_marks_a_copy_the_reuse_rule_lets_through_a_ticket():
     assert "`run.md` names them in a run" in ticket
 
 
+def test_rule_lets_a_copy_through_outside_a_run_only_for_a_protected_path():
+    # The reuse rule's area case holds only during a run: outside one, a copy
+    # whose move would touch another area's files still blocks, and only a
+    # protected path makes it a ticket.
+    ticket = _section(PANEL, RULE_HEADING + "\n").split("- **a ticket to fix it** (`ticket`):", 1)[1].split("\n- **note:**", 1)[0]
+    ticket = _flat(ticket)
+    assert "outside a run, only a protected path counts, from the profile's `guard.protected_paths`" in ticket
+    assert "[areas]" not in ticket
+
+
 def test_rule_says_docs_architecture_is_never_another_areas_files():
     rule = _rule()
     assert "`docs/architecture/` is never another area's files: lines there are always the change's own" in rule
