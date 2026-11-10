@@ -55,6 +55,13 @@ class Status:
     in_progress: list[Item] = field(default_factory=list)
     # `workflow:carry-on` tickets no run has adopted and no person is asked about (#376).
     carry_on: list[Item] = field(default_factory=list)
+    # Open issues labelled `research` (#514): a study under way, or a note to fix
+    # (the `study` skill's section 5). Never to sort.
+    research: list[Item] = field(default_factory=list)
+    # Items whose `## Blocked by` names an open owner task (#514): skipped by
+    # `next` and `start` while it's open. A map keeps its own section, and an
+    # item already waiting on a person stays under waiting (#577).
+    held: list[Item] = field(default_factory=list)
     prs: list[Item] = field(default_factory=list)
     planned: list[Item] = field(default_factory=list)
     maps: list[Item] = field(default_factory=list)
@@ -120,6 +127,19 @@ def _children(i: dict) -> tuple[int, int] | None:
     return total, max(0, total - (subs.get("completed") or 0))
 
 
+def owner_tasks_holding(issue: dict, by_num: dict[int, dict], repo: str | None = None) -> list[int]:
+    """The open owner tasks among the issue's blockers, in the order its
+    `## Blocked by` names them. A blocker missing from `by_num`, closed, in
+    another repository or not an owner task holds nothing here, and nor does
+    the issue itself (#577)."""
+    out = []
+    for b in issues_mod.blockers_of(issue.get("body"), repo):
+        bi = by_num.get(b) if isinstance(b, int) and b != issue.get("number") else None
+        if bi is not None and _open(bi) and issues_mod.labels_of(bi) & issues_mod.OWNER_TASK_LABELS:
+            out.append(b)
+    return out
+
+
 def snapshot(
     root: Path,
     set_up: bool,
@@ -142,6 +162,7 @@ def snapshot(
         return st
     st.issues_read = True
     lab = issues_mod.labels_of
+    by_num = {i["number"]: i for i in issues if "pull_request" not in i}
     for i in sorted((i for i in issues if "pull_request" not in i and _open(i)), key=lambda i: i["number"]):
         n, title, labels, body = i["number"], i.get("title") or "", lab(i), i.get("body") or ""
         kids = _children(i)
@@ -150,46 +171,57 @@ def snapshot(
             continue
         if issues_mod.CLAIM_LABEL in labels:
             st.in_progress.append(Item(n, title, ", ".join(sorted(labels & _CLAIM_DETAIL))))
+        if issues_mod.RESEARCH_LABEL in labels:
+            # The kit reads every issue carrying the label as research (`study` §5): under way, never to sort.
+            st.research.append(Item(n, title))
+            continue
         if "wayfinder:map" in labels:
             detail = "open decisions unknown (no sub_issues_summary)" if kids is None else f"{kids[1]} open decisions"
             st.maps.append(Item(n, title, detail))
             continue
-        if "spec" in labels or title.strip().casefold().startswith("spec:") or (kids and kids[0]):
-            kind = "" if "spec" in labels or title.strip().casefold().startswith("spec:") else "parent issue, "
+        is_spec = "spec" in labels or title.strip().casefold().startswith("spec:")
+        path = item_path(body)
+        # The item's own section, then held over it (#514), unless it already waits on a person (#577).
+        if is_spec or (kids and kids[0]):
+            kind = "" if is_spec else "parent issue, "
             if kids is None:
                 detail = "tickets unknown (no sub_issues_summary)"
             elif not kids[0]:
                 detail = "no tickets yet"
             else:
                 detail = f"{kids[1]} of {kids[0]} tickets open"
-            st.specs.append(Item(n, title, kind + detail))
-            continue
-        path = item_path(body)
-        if path is not None:
-            st.planned.append(Item(n, title, path))
-            continue
-        if labels & _WAITING:
-            st.waiting.append(Item(n, title, ", ".join(sorted(labels & _WAITING))))
-            continue
-        if issues_mod.CARRY_ON_LABEL in labels:
+            where, item = st.specs, Item(n, title, kind + detail)
+        elif path is not None:
+            where, item = st.planned, Item(n, title, path)
+        elif labels & _WAITING:
+            where, item = st.waiting, Item(n, title, ", ".join(sorted(labels & _WAITING)))
+        elif issues_mod.CARRY_ON_LABEL in labels:
             # Handed on, review not yet clean: `start` offers "Carry on" (#376). One claimed is listed
             # as claimed only (a run adopted it, #380).
-            if issues_mod.CLAIM_LABEL not in labels:
-                st.carry_on.append(Item(n, title))
-            continue
-        if issues_mod.READY_LABEL in labels:
-            continue  # a build ticket: readiness below
-        if "needs-triage" in labels or not labels:
-            st.to_triage.append(Item(n, title))
+            where, item = (None if issues_mod.CLAIM_LABEL in labels else st.carry_on), Item(n, title)
+        elif issues_mod.READY_LABEL in labels:
+            where, item = None, None  # a build ticket: readiness below
+        elif "needs-triage" in labels or not labels:
+            where, item = st.to_triage, Item(n, title)
+        else:
+            where, item = None, None  # listed nowhere of its own
+        tasks = [] if where is st.waiting else owner_tasks_holding(i, by_num, repo)
+        if tasks:
+            # Held until the owner task closes (#514).
+            word = "owner task" if len(tasks) == 1 else "owner tasks"
+            st.held.append(Item(n, title, f"{word} " + ", ".join(f"#{t}" for t in tasks)))
+        elif where is not None:
+            where.append(item)
     for pr in sorted((p for p in prs if _open(p)), key=lambda p: p["number"]):
         draft = " (draft)" if pr.get("draft") else ""
         st.prs.append(Item(pr["number"], pr.get("title") or "", ((pr.get("head") or {}).get("ref") or "") + draft))
         if (pr.get("title") or "").casefold().startswith(KIT_UPDATE_TITLE.casefold()) and st.kit_update_pr is None:
             st.kit_update_pr = pr["number"]
     # A ticket handed on is never ready, whichever section lists it: carrying it on isn't a fresh build.
-    carried = {i["number"] for i in issues if "pull_request" not in i and issues_mod.CARRY_ON_LABEL in lab(i)}
+    # Nor is a research issue, which is under way (#514).
+    never_ready = {i["number"] for i in issues if "pull_request" not in i and lab(i) & {issues_mod.CARRY_ON_LABEL, issues_mod.RESEARCH_LABEL}}
     for v in issues_mod.readiness(issues, prs, repo=repo, areas=areas, protected=protected):
-        if v.ready and v.number not in carried:
+        if v.ready and v.number not in never_ready:
             st.ready.append(Item(v.number, v.title, v.area or ""))
     return st
 
@@ -198,11 +230,13 @@ _SECTIONS = [
     ("run", "Unattended run in progress"),
     ("in_progress", "Claimed (being worked on)"),
     ("carry_on", "Carried on (handed on by an earlier session, review not yet clean)"),
+    ("research", "Research under way"),
     ("prs", "Open pull requests"),
     ("planned", "Planned at an earlier start, not yet begun"),
     ("maps", "Maps"),
     ("specs", "Open specs (and parent issues)"),
     ("ready", "Ready build tickets"),
+    ("held", "Held by an open owner task (skipped until it closes)"),
     ("waiting", "Waiting on a person (owner tasks, needs-human, needs-info)"),
     ("to_triage", "New issues to sort"),
 ]

@@ -4,7 +4,7 @@ The kit's text contracts: `docs/flow.md` §3 to §5, `docs/charter.md`,
 `docs/profile.md` and `run-report` describe the rule for build reviewers, the
 fixer, the safe fallback and the split, carry-on and attended work's 10
 reviews, in plain words; the glossary gains "Bar" and rewords "Review panel",
-within 6,000 characters."""
+within 6,500 characters."""
 
 import re
 from pathlib import Path
@@ -235,9 +235,9 @@ def test_the_glossarys_review_panel_is_reworded_for_the_rule():
     assert "each round leaving its record" not in entry
 
 
-def test_the_glossary_stays_within_6000_characters_with_bar():
+def test_the_glossary_stays_within_6500_characters_with_bar():
     text = _read("docs/glossary.md")
-    assert "\n### Bar\n" in text and len(text) < 6000
+    assert "\n### Bar\n" in text and len(text) < 6500
 
 
 # ---------- the changelog ----------

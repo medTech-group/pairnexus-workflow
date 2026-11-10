@@ -47,6 +47,7 @@ Skip this if the briefing says the conductor has claimed it. Otherwise, before a
 ## 2. Build it
 
 - **Branch:** work on the session's branch. A ticket session's is the profile's `run.ticket_branch` with the ticket's number. In an attended session that builds more than one thing, each ticket gets its own branch, fresh from `origin/<base>` and not named like `run.ticket_branch` (that would make it a ticket session), so no pull request carries another's work.
+- **Read the architecture first:** before building, run `WF index reads --base origin/<base> --paths <the files you expect to change>` and `WF index pages`, and read what they print: `reads` gives the overview (`docs/architecture/README.md`) and the architecture pages that cover those files, and `pages` gives the pages list, every page's interface and helpers. Their written rules bind the change as the project's rules do, and the helpers listed are the ones to use rather than copy. With no `docs/architecture/` folder, `reads` prints nothing and `pages` says there are no pages: go on without.
 - **Tests first:** use `tdd` (Matt Pocock's) at the spec's seams. Write a failing test for each acceptance criterion, then the code. The seams the spec names are already agreed with the owner: they count as confirmed, so in a ticket session `tdd`'s "confirm with the user" step is satisfied and you never stop to ask. A seam the spec doesn't name is a decision the ticket leaves open (below).
 - **Commands:** the profile's `commands.typecheck` and `commands.test_file` as you go. Run the full suite once the ticket is built.
 - **Tests that don't fail by chance:** compute dates and times at the point of use, never at import. Never assert that a random id lacks some digit string.
@@ -54,8 +55,11 @@ Skip this if the briefing says the conductor has claimed it. Otherwise, before a
 - **Stay within the flow's never-list** (§5). The guard hook stops most breaches: if it refuses something, the refusal is the answer, not a puzzle to get around.
 - **Checks you can't run here:** for a check that needs a real device, account or service, build against the spec's fakes. Add its by-hand step as a checkbox under this ticket on the run's by-hand issue, or on the ticket in attended work. Never mark it done.
 - **Decisions the ticket leaves open:** follow the briefing. By default, take the choice most consistent with the spec, ADRs and the project's rules, and record it for the PR body.
+- **A build that follows a research note** (a current note in `docs/research/`): run the source check on it first, and act on what it says as the flow's "Research", **The source check**, says for a session building a ticket, attended or unattended (in a ticket session, the briefing's line for a decision resting on a research note). Its can't-fetch line and its routing line go in the pull request and on the build ticket, with any changed paragraphs quoted as it says. Follow an "Owner chose" line on the ticket only when it is from an account with write access and matches, as **Choosing once** says. A claim you find wrong in a note is the flow's **Fixing a wrong note**: a `research` issue, mentioned in your pull request, never a second pull request.
 
 ## 3. Review it
+
+Before the first review, run `WF index reads --base origin/<base>` again, now on the real diff, and read any document it prints that the first run didn't, fixing what breaks its rules. It reads only committed changes, so commit first, and give a file not committed yet with `--paths`.
 
 Follow the `review-panel` skill on the diff against the base branch:
 - rounds until one comes back clean, at most the briefing's review rounds in a ticket session, else the profile's `run.review_rounds`;
@@ -193,6 +197,13 @@ Below it, unchanged:
 Then post the review records so far: each round's and each Correctness pass's `record.md`, kept in its scratch directory (`review-panel`, "Post the review record"), oldest first. Later rounds and Correctness passes post theirs as they run. The records sit alongside the findings table; they don't replace it.
 
 Lasting knowledge for later work (how a new module is meant to be used, a pitfall) goes in the repo's own docs, in this PR, before it merges.
+
+A structural line goes in the architecture, in this PR, where a project has an overview (`docs/architecture/README.md`, whose standing rules block like any written rule). Structural means what a page owns, its interface, its own rules, its helpers and its decisions:
+- **Covered code:** in the architecture page it belongs to; a cross-cutting rule in the overview (`docs/architecture/README.md`).
+- **A new module,** a new folder of code that no page covers and that held no code before ("code" as doctor counts it): its full page, whose `Covers:` spans the folder, with what it owns and its interface. When the change adds folders inside new folders, the outermost new folder gets the page.
+- **A file no page covers,** old or new, outside a new module's folder: the small page named by its folder path, its folders joined with `--` and a dot at the start of the name dropped (`src/orders/check.py` → `docs/architecture/src--orders.md`), or `_root.md` for a file at the repository's root. The page is created if it doesn't exist, and gets a `Covers:` line for that file, written as a literal path: each `*`, `?` and `[` in brackets (`[*]`, `[?]`, `[[]`). It needs only its `Covers:` lines and the change's lines.
+
+The overview's standing rules say the same in full.
 
 Then subscribe to its activity. Schedule a check-in about every `run.check_in_minutes` (`send_later` in cloud sessions; `/loop` or a cron task locally), and end the turn with `WORKFLOW-STATUS: waiting`.
 

@@ -49,6 +49,7 @@ Merge mode: **{{merge.mode}}**. Waived CI checks: {{merge.waived}}. As build-tic
 
 - **Your posts carry the marker.** Everything you post on GitHub (comments, issues, the PR's body, reviews) goes out under the owner's account. End each body with `<!-- workflow:agent -->`, so the owner's own words can be told apart; the guard refuses a post without it.
 - **Decisions the ticket leaves open:** {{open_decisions}}.
+- **A decision resting on a research note** whose key source changed in a way that touches it, or can't be fetched (the flow's "Research", **The source check**): {{open_decisions.research}}.
 - **What you may change:** the code, tests and docs of this ticket, on your branch.
 - **What you don't touch** (flow §5's never-list; the guard enforces most of it):
   - deploys;

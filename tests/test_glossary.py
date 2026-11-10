@@ -32,8 +32,10 @@ PARTS = {
         "Ticket": "ticket",
         "Spec": "spec",
         "Map": "map",
+        "Study": "study",
         "Review panel": "review-panel",
         "Bar": "bar",
+        "Architecture": "architecture",
         "Solo mode": "solo-mode",
         "Protect `main`": "protect-main",
         "Unattended run": "unattended-run",
@@ -62,8 +64,10 @@ MENTIONS = {
     "ticket": r"\btickets?\b",
     "spec": r"\bspecs?\b",
     "map": r"\bmaps?\b",
+    "study": r"\bstud(?:y|ies)\b",
     "review-panel": r"\breview panels?\b",
     "bar": r"\bbars?\b",
+    "architecture": r"\barchitectures?\b",
     "solo-mode": r"\bsolo mode\b",
     "protect-main": r"Protect `main`",
     "unattended-run": r"\bunattended runs?\b",
@@ -115,7 +119,7 @@ def test_the_glossary_has_the_two_parts_with_each_word_under_its_part():
     assert list(parts) == list(PARTS)
     for part, words in PARTS.items():
         assert list(parts[part]) == list(words), part
-    assert sum(len(w) for w in PARTS.values()) == 24
+    assert sum(len(w) for w in PARTS.values()) == 26
 
 
 def test_each_heading_has_its_stable_anchor():
@@ -176,10 +180,10 @@ def test_the_glossary_says_it_is_the_kits_words_not_a_projects_glossary():
     assert "`GLOSSARY.md`" in intro
 
 
-def test_the_glossary_stays_under_6000_characters():
+def test_the_glossary_stays_under_6500_characters():
     n = len(_text())
-    assert n < 6000, (
-        f"docs/glossary.md is {n} characters: keep it under 6,000. The context hook adds it whole "
+    assert n < 6500, (
+        f"docs/glossary.md is {n} characters: keep it under 6,500. The context hook adds it whole "
         "at a session's first prompt, and Claude Code caps a hook's added context at 10,000 characters, "
         "so the glossary must leave room for the rest."
     )
@@ -200,7 +204,7 @@ def test_contributing_names_the_glossary_for_new_kit_terms():
     writing = text.split("**Writing.**", 1)[1].split("\n## ", 1)[0]
     assert "`docs/glossary.md`" in writing
     assert "same pull request" in writing
-    assert "6,000 characters" in writing
+    assert "6,500 characters" in writing
     assert "`domain-modeling`" in writing
 
 
@@ -214,3 +218,23 @@ def test_the_glossary_names_no_project_of_ours():
 def test_the_guided_start_names_where_to_read_the_glossary():
     text = (KIT / "skills/start/SKILL.md").read_text(encoding="utf-8")
     assert "`.claude/workflow/docs/glossary.md` vendored, or `docs/glossary.md` beside `skills/` in the plugin" in text
+
+
+def test_the_glossary_has_study_after_map_in_plain_words():
+    # #512: "Study" is a kit term a person meets (spec #505, "Docs").
+    text = _text()
+    assert text.index("\n### Map\n") < text.index("\n### Study\n") < text.index("\n### Review panel\n")
+    what, why = [p.strip() for p in _entries()["Study"].split("\n\n") if p.strip()]
+    assert "before building" in what and "made-up people" in what
+    for verdict in ("build it", "prototype first", "stop"):
+        assert verdict in what, verdict
+    assert "worth building" in why
+
+
+def test_the_shortened_entries_still_say_what_a_ruleset_is_and_what_ci_stands_for():
+    # #512 made room for "Study" by shortening entries without changing their meaning (spec #505, "Docs").
+    # "Protect `main`" makes a ruleset, a word set-up and the doctor use, so its entry says what one is.
+    protect = _entries()["Protect `main`"].split("\n\n")[0]
+    assert re.search(r"GitHub's[^.:]*\brules\b[^.:]*\(a ruleset\)|\ba ruleset \(GitHub's[^)]*\brules\)", protect)
+    checks = _entries()["Checks (CI)"].split("\n\n")[0]
+    assert "continuous integration" in checks and "CI" in checks

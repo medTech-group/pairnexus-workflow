@@ -4,7 +4,7 @@ How the engineering skills should consume this repo's domain documentation when 
 
 ## Before exploring, read these
 
-This repository is single-context. Its glossary is **`docs/glossary.md`** (the kit's words, which also ship to projects, #73), not a root `GLOSSARY.md`: where these skills say `GLOSSARY.md`, read `docs/glossary.md`, and keep it under 6,000 characters.
+This repository is single-context. Its glossary is **`docs/glossary.md`** (the kit's words, which also ship to projects, #73), not a root `GLOSSARY.md`: where these skills say `GLOSSARY.md`, read `docs/glossary.md`, and keep it under 6,500 characters.
 
 - **`docs/glossary.md`**: the kit's words.
 - **`docs/adr/`**: read ADRs that touch the area you're about to work in.

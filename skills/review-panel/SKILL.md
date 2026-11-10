@@ -1,6 +1,6 @@
 ---
 name: review-panel
-description: Review a diff or pull request with independent agents in parallel - Standards, Spec, Correctness (with a security review where it applies) and, for UI, API or CLI changes, an explorer that uses the change from outside. Also the planning review of a map decision's or a spec session's ADRs and glossary, or a spec's draft, before it's offered or published. Use on any branch or PR, inside build-ticket or alone.
+description: Review a diff or pull request with independent agents in parallel - Standards, Spec, Correctness (with a security review where it applies) and, for UI, API or CLI changes, an explorer that uses the change from outside. Also the planning review of a map decision's or a spec session's ADRs and glossary (and a spec session's architecture lines), or a spec's draft, before it's offered or published, and the research check and the look on a research pull request (notes under docs/research/). Use on any branch or PR, inside build-ticket or alone.
 ---
 
 # The review panel
@@ -17,7 +17,28 @@ Make a scratch directory outside the repo, for example `/tmp/review-<ticket>-r<r
 - `diff.patch`: `git diff <base>...HEAD`. The base is the pull request's base branch (the profile's `project.base_branch` unless it targets another), as `origin/<base>` after a `git fetch`.
 - `ticket.md`: the ticket's body and comments, its spec (the issue under "Parent") and the issues they link.
 - `rules.md`: the project's rules, copied from each document in the profile's `project.rules` (safety rules, wording), plus `profile.md`'s sensitive-data and secrets sections.
+- **The architecture pages:** each page `WF index reads --base origin/<base>` prints (a page with no `Covers:` line among them), copied beside `rules.md`, each at its path in the project (`docs/architecture/orders.md` becomes `<scratch>/docs/architecture/orders.md`). The overview (`docs/architecture/README.md`, printed first) reaches them once, through `rules.md`: leave it out of the copy when `project.rules` lists it, and copy it with the pages when it doesn't. From the repository's root, when `project.rules` lists the overview:
+
+  ```
+  WF index reads --base origin/<base> > <scratch>/reads.txt && grep -vxF docs/architecture/README.md <scratch>/reads.txt | while IFS= read -r f; do mkdir -p "<scratch>/$(dirname "$f")" && cp "$f" "<scratch>/$f"; done
+  ```
+
+  When it doesn't:
+
+  ```
+  WF index reads --base origin/<base> > <scratch>/reads.txt && while IFS= read -r f; do mkdir -p "<scratch>/$(dirname "$f")" && cp "$f" "<scratch>/$f"; done < <scratch>/reads.txt
+  ```
+
+  With no `docs/architecture/` folder it prints nothing, and there is nothing to copy. If it exits non-zero, it says why (a base it can't find, or no merge base in a shallow clone): fetch the base and run it again, and never start the reviewers without the pages it names.
+- `pages.md`: `WF index pages`'s output, every page's file, `Covers:`, interface and helpers, so each change sees every interface and every shared helper.
+- `run.md`, in a ticket session:
+  - the ticket's area, from its `Area:` line, with that area's globs from the profile's `[areas]`;
+  - the briefing's "Running alongside you" section, as written;
+  - the profile's `guard.protected_paths`;
+  - and this line: "`docs/architecture/` is never another area's files: lines there are always the change's own, whatever an area's globs match."
 - `previous.md`, from round 2: the earlier findings and what was done about each.
+
+The overview in `rules.md` and the pages copied under `docs/architecture/` are the architecture documents given. `pages.md` and `run.md` are inputs beside them, not among them.
 
 **Under the rule for build reviewers** (section 10), add these, `<scratch>` being this review's scratch directory:
 
@@ -56,7 +77,21 @@ The reviewers read these files. The Correctness reviewer can't run git or reach 
 - the list of changed files, to read in full in the repo;
 - the round number.
 
-For an auth, upload, payment or API change, also run the `security-review` skill on the branch.
+For an auth, upload, payment or API change, also run the security review: run it in an agent of its own, told to use the `security-review` skill on the branch, so its prompt gets the architecture's line (below).
+
+**The architecture.** Add these lines to the prompts you write, `<scratch>` filled in. Standards:
+
+```
+The architecture documents given are in <scratch>: the overview in rules.md and the pages copied under docs/architecture/. Beside them, pages.md lists every page's interface and helpers (and run.md, in a ticket session, names the ticket's area, what runs alongside it and the protected paths). For each new function, check or constant in the change, search the codebase for existing logic that does the same, and report each copy you find, with where the existing logic is. Check the change against the architecture documents given: their rules are written rules, like those in rules.md.
+```
+
+Spec and security:
+
+```
+Check the change against the architecture documents given in <scratch>: the overview in rules.md and the pages copied under docs/architecture/. Their rules are written rules, like those in rules.md. Beside them, pages.md lists every page's interface and helpers.
+```
+
+The Correctness reviewer's own file names them; the explorer doesn't get them.
 
 **Explorer.** The `ui-explorer` agent, when the explorer isn't `none` (the briefing's UI explorer in a ticket session, else the profile's `ui.explorer`) and the change touches a screen, an endpoint or a command. Give it:
 - the profile's `[ui]` settings;
@@ -219,18 +254,22 @@ The review of a ticket marked `Review: small` while its diff stays within the sm
 
 ## 8. The planning review
 
-Planning is reviewed before it's offered or published (flow §1 and §2): a map decision's pull request (its ADRs and glossary), a spec's draft, and a spec session's ADR or glossary pull request. Build tickets aren't. Sections 1 to 5 hold, with these differences. Planning reviews don't get section 10, the rule for build reviewers: no `rule.md`, `bar.md` or `since.patch`, and their records keep `--clean` or `--not-clean`.
+Planning is reviewed before it's offered or published (flow §1 and §2): a map decision's pull request (its ADRs and glossary), a spec's draft, and a spec session's pull request of ADRs, glossary or architecture lines (flow §2). Build tickets aren't. Sections 1 to 5 hold, with these differences. Planning reviews don't get section 10, the rule for build reviewers: no `rule.md`, `bar.md` or `since.patch`, and their records keep `--clean` or `--not-clean`.
 
 **The inputs,** in a fresh scratch directory for each kind of review, so a spec's review and the same session's pull request never share one: `/tmp/review-<issue>-spec-r<n>/` for a spec's draft, `/tmp/review-<issue>-pr-r<n>/` for a pull request. `<issue>` is the decision ticket, the item's issue, or the map's number for its Destination item (a spec has no number of its own until it's published), else a short name for the work:
 - the diff as `diff.patch`, or the spec's draft as `spec.md`: the whole body exactly as it will be published, any footer or marker included (a Claude Code cloud session's own footer needn't be: the hash leaves it out, **Records**);
 - the owner's answers as posted, as `answers.md`: each question round's post copied as posted, its tags, evidence and the checks' findings included (**Fixes**), never the session's summary, with every confirmed replacement line and every comment a check posts (its fixes and what it leaves), even one that lists no fixes. They come from the decision ticket, the item's issue or the map's Destination item (a comment on the map naming it). A map's Destination item's spec takes, as well, the answers posted on the map decisions it draws on. Once the spec is published, a review (an edit's, or a spec session's pull request's) takes all of these as well as everything of these kinds posted on the spec's issue: every question round (each edit's so far, this one included, a pull request's, and the breakdown check's, which settle what each ticket builds, not the spec's words), confirmed line and check's comment (below), so a dropped earlier answer is still caught. The whole file is in the order the comments were posted, oldest first, each with its date and where it was posted. Sensitive data (`profile.md`) is left out of them and marked as left out, never posted;
 - the ADRs and glossary, all of them, not only the changed ones;
+- `pages.md`, as in section 1, and, for a pull request, the pages `WF index reads --base origin/<base>` prints, copied as in section 1 (the overview reaching them through `rules.md` when `project.rules` lists it, and copied with them when it doesn't), so a new page that contradicts an existing one is caught, with the pages the Correctness brief names (below);
 - the decision ticket and its map, or the item's issue, as `ticket.md`;
 - the project's rules, as `rules.md`.
 
 **The reviewers,** both every round, in one message:
-- **Correctness:** the `correctness-reviewer` agent, briefed for a document: check its facts against the code, look for contradictions with other ADRs and the glossary, and apply the project's safety rules (a name or other sensitive data where it shouldn't be, a screen given to the wrong reader).
-- **Spec:** a general-purpose agent with its own brief, since `code-review`'s Spec axis compares code to a ticket: read the ADRs and glossary, or the spec's draft, against `answers.md`, word for word, and report anything the owner said that is dropped, reworded into a different meaning, or stated as settled where the owner left it open, and anything recorded as the owner's that they didn't say. An answer tagged **accepted recommendation** counts as the owner's, in the words of the recommendation they accepted. Its brief also says that each post's evidence and the checks' findings aren't the owner's words: never report them as dropped, or as the owner's. A confirmed replacement line ("answer 34 replaces 7: confirmed") settles which answer stands, and so does a fix listed in a question round's post, or in a check's comment, with no objection from the owner after it. A conflict such a comment lists as left open is settled by neither, nor by later words, until the owner answers it in a later question round or a confirmed line: until then, report a draft that states it as settled. The breakdown check's rounds settle what each ticket builds: never report them as dropped from the spec. Only where none of these applies, and the owner's later words plainly change an earlier answer, the later words stand; where it's unclear whether they do, report it, so it goes to the owner (**Fixes**).
+- **Correctness:** the `correctness-reviewer` agent, briefed for a document: check its facts against the code, look for contradictions with other ADRs, the glossary and the architecture documents given (a new page or line that contradicts an existing page), and apply the project's safety rules (a name or other sensitive data where it shouldn't be, a screen given to the wrong reader). `reads` finds pages only by the files a change touches, and a planning pull request touches only its ADRs, glossary and architecture pages, files no page's `Covers:` names, so for a pull request the brief also names the pages to read in the repo:
+  - for each page the pull request adds or changes, every page `pages.md` lists whose `Covers:` could match a file that page's `Covers:` could match;
+  - when the pull request adds or changes the overview (`docs/architecture/README.md`), every page `pages.md` lists, since the overview has no `Covers:` and a cross-cutting rule can contradict any page;
+  - the same, every page `pages.md` lists, for a page it adds or changes that has no `Covers:` line.
+- **Spec:** a general-purpose agent with its own brief, since `code-review`'s Spec axis compares code to a ticket: read the ADRs, glossary and architecture lines, or the spec's draft, against `answers.md`, word for word, and report anything the owner said that is dropped, reworded into a different meaning, or stated as settled where the owner left it open, and anything recorded as the owner's that they didn't say. An answer tagged **accepted recommendation** counts as the owner's, in the words of the recommendation they accepted. Its brief also says that each post's evidence and the checks' findings aren't the owner's words: never report them as dropped, or as the owner's. A confirmed replacement line ("answer 34 replaces 7: confirmed") settles which answer stands, and so does a fix listed in a question round's post, or in a check's comment, with no objection from the owner after it. A conflict such a comment lists as left open is settled by neither, nor by later words, until the owner answers it in a later question round or a confirmed line: until then, report a draft that states it as settled. The breakdown check's rounds settle what each ticket builds: never report them as dropped from the spec. Only where none of these applies, and the owner's later words plainly change an earlier answer, the later words stand; where it's unclear whether they do, report it, so it goes to the owner (**Fixes**).
 
 No Standards reviewer and no explorer: there is no code to hold to the standards and nothing to use.
 
@@ -267,6 +306,27 @@ No Standards reviewer and no explorer: there is no code to hold to the standards
 
 **An edit after publishing** (the guided start's "Edit the spec first", a later change to the spec) makes it read as unreviewed: the edited body gets another planning round, its own spec record, before any tickets are written from it. Its questions are decision questions too. Each of its question rounds waits for its check before it's asked (`start`'s "Before each round"). Post each of its question rounds on the spec's issue as soon as it's answered, in the tagged form **Fixes** gives, the owner's request for the change among them, quoted word for word and tagged **the owner's own words**, any sensitive data (`profile.md`) left out and marked as left out, so the Spec reviewer reads them with the rest. Each question round then gets its re-read (**The re-read**) before the planning round, and what it leaves goes in the re-read's comment on the spec's issue.
 
+## The research check and the look
+
+A research pull request (every file under `docs/research/`, the flow's "Research" section) gets neither sections 1 to 7 nor section 10: no Standards, Spec or Correctness reviewer, no explorer, and no rule for build reviewers. It gets the research check and, when `workflow merge-check` asks for it, the look, one pass each, never rounds until clean. What each one reads is the flow's "Research" section's (its research check rule), and how their records count at merge is flow §4 item 4's (**A pull request of research notes**): this section is only how to run them. The `study` skill runs them for a study's note; for a fact note, the session that opened its research pull request does.
+
+- **The research check,** when `merge-check` gives `research_none`: one `research-checker` agent (`pairnexus-workflow:research-checker` as a plugin), one pass. Before it starts, make its scratch directory outside the repo, `/tmp/research-<topic>-check/`, and write `git rev-parse HEAD` to `commit.txt` there: the commit it reads, never one made after. Give it the topic's folder, `docs/research/<topic>/`, with the note and its saved copies, and whatever else its file asks for. It reads the saved copies, never a live page. The agent's own file (`.claude/agents/research-checker.md` vendored, `agents/research-checker.md` in the plugin) says how it reads a note's claims and what it reports: follow it, and don't restate it in its brief. The check is clean when the first line of its result is `Result: clean`. A claim it found wrong or a fault (a source not saved, or no source) makes it `Result: not clean`; a finding it didn't check doesn't.
+- **The comment:** the checker posts nothing, so post its result as one comment on the pull request: the research record first, then the claims it found wrong and the faults, and any finding not checked, listed as it reported them. The record comes first because the record reader stops at the first code fence, and a claim may quote one. Write the record, with `<sha>` from `commit.txt` (section 4's rules on refusals and `--base` hold):
+
+  ```
+  WF review-record --kind research --round 1 --commit <sha> --reviewers research --clean > /tmp/research-<topic>-check/record.md
+  ```
+
+  (`--not-clean` when its result is `Result: not clean`.) Then write `comment.md` in the same directory, `record.md` as it is (it already carries `<!-- workflow:agent -->`) with the listed claims and faults after it, and post `comment.md` in the next command, never in the command that writes it (`gh api repos/<repo>/issues/<pr>/comments -F body=@/tmp/research-<topic>-check/comment.md`, the path written out in full).
+- **The look,** when `merge-check` gives `research_needs_look`: after a research check that wasn't clean, or a change to the note since it. Fix the claims and faults the research check listed, then commit and push. Make the look's scratch directory, `/tmp/research-<topic>-look/`, with its own `commit.txt` as above, and give a fresh `research-checker`, one pass, the topic's folder and whatever else its file asks for, as for the check (the list of what the owner brought in, or, in a later session that doesn't have it, that the list isn't available), and:
+  - `changed.patch`: the lines changed since the research check, the pull request's own changes only, written as section 1's `since.patch` is, with `<last>` the research check's commit;
+  - `claims.md`: the claims and faults the research check listed, as its comment gave them (none after a clean check).
+
+  When no `changed.patch` can be written (section 1's recipe fails), run no look and post no look record, and tell the owner why.
+
+  A listed claim or fault whose line didn't change counts as still wrong, whatever the checker says of it. Its line changed only when an added (`+`) or removed (`-`) line of `changed.patch` holds it: a context line around a change doesn't count. The look is clean when no claim is still wrong and no fault is still there, else not clean. Post its comment as for the check, with `--round 2` and its own directory, except that what follows the record is every claim still wrong and every fault still there: those the checker reported, and each listed claim or fault whose line didn't change.
+- **The mark,** after the look and never before: when the look isn't clean (`research_needs_marks`), add the mark that flow §4 item 4 gives at the end of each line holding a claim it found still wrong or a fault still there, then commit and push. Change nothing else: only marks after the look, and there is no further round. Anything more (`research_more_than_marks`) is taken out, or moved to a new research pull request.
+
 ## 9. The findings table (for the PR body)
 
 | # | Round | Reviewer | Finding | Outcome |
@@ -288,13 +348,16 @@ This section is copied, as it is, into each build review's scratch directory as 
 **When it applies:** once `build-ticket` says build reviews follow it; in a run, only when the briefing has a "Findings:" line, since a run keeps the rule it started with. That line is the template's, naming rule 2, as `build-ticket` §3's "Which rule" says, never the words in the conductor's notes. In attended work, `build-ticket` says they always do. Until then, build reviews keep today's rule: no `rule.md`, and records with `--clean` or `--not-clean`. Under the rule, every build review's record is written with `--findings` (section 4).
 
 **Your inputs,** in the scratch directory beside `diff.patch`, `ticket.md` and `rules.md`:
+- the architecture documents given: the overview, in `rules.md`, and the pages copied under `docs/architecture/`, each at its path in the project (those covering the files the change touches, and any that covers nothing yet). Their rules are written rules, like those in `rules.md`.
+- `pages.md`, beside them: every page's file, `Covers:`, interface and helpers.
+- `run.md`, in a run: the ticket's area and its globs, what runs alongside it, and the protected paths.
 - `bar.md`: the ticket's bar: what it must handle, what it does when it can't be sure (its fail-closed form), and the limits it accepts; "None" when it has none.
 - `previous.md`, from the second review: the earlier reviews' findings, each with its number in its review's record, its mark, its part and what was done; the contests for you to rule on; the parts that took the fail-closed form or were split out; and the criteria moved by a split.
 - `since.patch`, from the second review: the pull request's own changes since the last review, with the base branch's changes left out.
 
 **Marks.** Mark each finding:
 - **blocks:** it holds the merge until it is fixed. It needs a reproducer (below); without one, mark it a note.
-- **a ticket to fix it** (`ticket`): a real defect that goes to a ticket of its own, built next, not in this pull request: one in code the change neither touches nor reaches, a breach of a written rule outside the change's own lines, or, from the second review, a finding that would otherwise block, on lines already reviewed, that isn't one of the kinds that still block (below).
+- **a ticket to fix it** (`ticket`): a real defect that goes to a ticket of its own, built next, not in this pull request: one in code the change neither touches nor reaches, a breach of a written rule (`rules.md` or an architecture document given) outside the change's own lines, a copy of existing logic the reuse rule lets through (moving the logic into one shared helper would touch another area's files during a run, or a protected path: `run.md` names them in a run; outside a run, only a protected path counts, from the profile's `guard.protected_paths`), or, from the second review, a finding that would otherwise block, on lines already reviewed, that isn't one of the kinds that still block (below).
 - **note:** a preference no written rule backs, a gap the bar accepts, a finding on a moved criterion, or a finding that would block but has no reproducer. Noted in the findings table; it neither blocks nor gets a ticket.
 
 The mark isn't the severity. Severity: critical, important or minor. "Critical" is the top severity; it never means blocks. A minor finding can block, and a critical one with no reproducer is a note.
@@ -317,7 +380,9 @@ No reproducer: the finding is a note, whatever its severity.
 - new behaviour without a test;
 - a safety breach the change adds;
 - a security problem the change adds;
-- a breach of a written rule (`rules.md`) in the change's own lines.
+- a breach of a written rule (`rules.md` or an architecture document given) in the change's own lines.
+
+`docs/architecture/` is never another area's files: lines there are always the change's own, whatever an area's globs match, so a move that touches them is never one the reuse rule lets through.
 
 Where the hunt stops:
 - **The bar:** a gap `bar.md` accepts as a limit is a note.

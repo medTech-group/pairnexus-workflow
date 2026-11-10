@@ -207,8 +207,9 @@ class _Words(collections.namedtuple("_Words", "new developer")):
 # group, its id, the install mode it is given in (None: both; in the other
 # mode the full doctor gives it only when something is wrong; "wrangler": only
 # in a project with a Wrangler config at its root or a `[previews]` section in
-# its profile, read as text, so roughly as the full doctor gives it), and what
-# it checks.
+# its profile, read as text, so roughly as the full doctor gives it;
+# "architecture": only with a `docs/architecture/` folder, #615), and what it
+# checks.
 _DOCTOR_LINES = (
     ("Your computer", "computer.claude_code", None, _Words("which version of Claude Code you have", "Claude Code's version")),
     ("The kit", "kit.profile", None, _Words("the kit's profile (.claude/workflow/profile.toml)", "`profile check`")),
@@ -218,6 +219,10 @@ _DOCTOR_LINES = (
     ("The kit", "kit.experience", None, _Words("the project's default for how much you know about building", "project.experience")),
     ("The kit", "kit.ruleset", None, _Words("whether the project means its main branch to be protected", "project.ruleset")),
     ("The kit", "kit.code_writers", None, _Words("who writes code in this project", "guard.code_writers")),
+    ("The kit", "kit.architecture.uncovered", "architecture", _Words("which code no architecture page describes", "Uncovered code")),
+    ("The kit", "kit.architecture.unmatched", "architecture", _Words("whether each architecture page's `Covers:` lines match files",
+                                                                    "Pages' `Covers:` matches")),
+    ("The kit", "kit.architecture.no_covers", "architecture", _Words("whether each architecture page has a `Covers:` line", "Pages' `Covers:` lines")),
     ("GitHub", "github.ruleset", None, _Words("whether the main branch is protected on GitHub", "The base branch's ruleset")),
     ("GitHub", "github.required_checks", None, _Words("whether GitHub requires the checks the kit's profile lists", "Required checks")),
     ("GitHub", "github.up_to_date", None, _Words("whether pull requests must be up to date with the main branch", '"Require branches to be up to date"')),
@@ -239,6 +244,9 @@ _WRANGLER_CONFIGS = ("wrangler.toml", "wrangler.json", "wrangler.jsonc")
 _PREVIEWS_TABLE = re.compile(r"^[ \t]*\[[ \t]*[\"']?previews[\"']?[ \t]*[\].]", re.M)
 _PREVIEWS_KEY = re.compile(r"^[ \t]*[\"']?previews[\"']?[ \t]*[.=]", re.M)
 _FIRST_TABLE = re.compile(r"^[ \t]*\[", re.M)
+# The architecture documents' folder (architecture.DIR, which this module
+# can't import).
+_ARCH_DIR = "docs/architecture"
 # The files a session hands the full doctor: taken here, and not read.
 _DOCTOR_FILES = ("rulesets", "repo", "environments", "runs", "checks", "prs", "org", "ci", "commits")
 _EXPERIENCE_LEVELS = ("new", "developer")
@@ -442,6 +450,7 @@ def _doctor_report(root, env, version):
     plugin = bool(root) and not os.path.exists(os.path.join(root, ".claude", "workflow", "lock.json"))
     mode = "plugin" if plugin else "vendored"
     wrangler = bool(root) and (any(os.path.lexists(os.path.join(root, n)) for n in _WRANGLER_CONFIGS) or _has_previews(root))
+    architecture = bool(root) and os.path.isdir(os.path.join(root, _ARCH_DIR))
     until = "until `python3` is {} or newer".format(NEEDS)
     lines = [_doctor_line("Your computer", "computer.python3", "gap", _Words(
         "The Python running this check (`python3`) is version {}, but the kit needs {} or newer, so its hooks fall back to a "
@@ -453,7 +462,7 @@ def _doctor_report(root, env, version):
         "Put Python {}+ first on the PATH as `python3`, start a new session, then rerun doctor with it.".format(NEEDS),
     ), wording)]
     for group, id_, only_in, what in _DOCTOR_LINES:
-        if only_in in (None, mode) or (only_in == "wrangler" and wrangler):
+        if only_in in (None, mode) or (only_in == "wrangler" and wrangler) or (only_in == "architecture" and architecture):
             lines.append(_doctor_line(group, id_, "cant_check", _Words(
                 "Can't check {} {}.".format(what.new, until),
                 "{} unchecked {}.".format(what.developer, until),
