@@ -184,9 +184,26 @@ def test_the_hold_delays_only_the_archive():
 
 def test_the_merged_row_keeps_the_session_for_its_report():
     merged = _row("Merged** |")
-    assert "one check-in later" not in merged
+    # never a count of check-ins as the hold (round 2 of #670): the archive goes through the hold
+    assert "3 check-ins" not in merged
     assert "read its notes for the next tickets" in merged
     assert f"then, as {HOLD_NAME} says, delete its own pending check-ins" in merged
+
+
+def test_the_merged_row_archives_a_session_whose_note_never_comes():
+    # A session that dies before its "#n merged in #PR" note: the row still
+    # reaches the archive, and the hold decides when. With the report required
+    # (`ci.none`, a waived check) nothing is to come, so it is archived then;
+    # with it still to come, at the hold's limit since `settled_at`.
+    merged = _row("Merged** |")
+    assert (
+        "Once the session's \"#n merged in #PR\" note is on the tracking issue (or one check-in later, if it never "
+        f"comes), read its notes for the next tickets; then, as {HOLD_NAME} says, delete its own pending check-ins"
+    ) in merged
+    hold = _hold()
+    assert "so nothing is to come, note or none" in hold
+    assert "or, with no note, since the ticket's `settled_at`" in hold
+    assert "Past it, archive the session all the same" in hold
 
 
 @pytest.mark.parametrize("lead", ["`owner` mode, `ready`", "`owner_review`", "A required check never started"])
