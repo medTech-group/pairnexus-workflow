@@ -63,6 +63,7 @@ from typing import NamedTuple
 
 from . import architecture as architecture_mod
 from . import estimate as estimate_mod
+from . import fetch as fetch_mod
 from . import issues as issues_mod
 from . import posts as posts_mod
 from . import profile as profile_mod
@@ -1321,6 +1322,8 @@ def _gh(i: Inputs, path: str, deadline: float, flag: str, paginate: bool = False
         return _Answer(why=Words(f"GitHub didn't answer within {GH_BUDGET} seconds", f"GitHub's reads took over {GH_BUDGET} s, before `gh api {shown}`"), fix=again)
     timeout = min(GH_TIMEOUT, left)
     ran = _run(i, ["gh", "api", *(["--paginate"] if paginate else []), path], timeout=timeout, stderr=True)
+    if paginate and ran.state == "failed" and fetch_mod.refuses_numeric(ran.err, path):
+        return _by_page(i, path, deadline, flag, give)  # a cloud session's proxy refused a next-page link (#601)
     offline = _OFFLINE.search(ran.err)
     lines = ran.err.splitlines()
     err = _scrubbed(i, next((ln for ln in lines if _OFFLINE.search(ln)), "") if offline else (lines[-1] if lines else ""))
@@ -1341,6 +1344,14 @@ def _gh(i: Inputs, path: str, deadline: float, flag: str, paginate: bool = False
         ))
     if ran.state == "failed" and _RATE_LIMIT.search(ran.err):
         return _Answer(why=Words(f"GitHub asked `gh` to slow down ({err})", f"`gh api {shown}` was rate limited: {err}"), fix=again)
+    if ran.state == "failed" and fetch_mod.NUMERIC_REFUSED.search(ran.err):
+        return _Answer(why=Words(
+            f"the proxy this session reaches GitHub through refused a link that names the repository by number: {err}",
+            f"`gh api {shown}` was refused by the proxy (numeric-ID repository paths): {err}",
+        ), fix=Words(
+            "Your GitHub account isn't the problem: ask Claude to check the set-up, which reads GitHub's answers with its own tools and gives them to doctor as files.",
+            f"The proxy refuses numeric-ID repository paths, not your token: give {give}.",
+        ))
     if ran.state == "failed" and "HTTP 403" in ran.err:
         return _Answer(why=Words(f"GitHub refused to show it to your `gh`: {err}", f"`gh api {shown}` was refused: {err}"), fix=Words(
             "Your GitHub account may not be allowed to read this: ask the repository's admin to run the check, or ask a cloud session to check the set-up.",
@@ -1362,6 +1373,37 @@ def _gh(i: Inputs, path: str, deadline: float, flag: str, paginate: bool = False
     if bad:
         return _Answer(why=Words("GitHub's answer to `gh` couldn't be read", f"`gh api {shown}`'s output isn't JSON ({bad})"), fix=again)
     return _Answer(values if paginate else values[0])
+
+
+class _PageFailed(Exception):
+    """One of `_by_page`'s reads failed: its answer says why."""
+
+    def __init__(self, answer: _Answer):
+        super().__init__()
+        self.answer = answer
+
+
+def _by_page(i: Inputs, path: str, deadline: float, flag: str, give: str) -> _Answer:
+    """Every page of `path`, read one at a time with `page=N` on its
+    `repos/<owner>/<repo>/` path (`fetch.by_page`, #568), each through `_gh`
+    within what is left of `GH_BUDGET`: what `--paginate` gives where a
+    cloud session's proxy refuses GitHub's next-page links (#601). The first
+    page read that fails is the answer, worded as `_gh` words it."""
+    def read(page: str):
+        one = _gh(i, page, deadline, flag, give=give)
+        if one.why:
+            raise _PageFailed(one)
+        return one.value
+
+    try:
+        return _Answer(fetch_mod.by_page(path, read=read))
+    except _PageFailed as e:
+        return e.answer
+    except fetch_mod.GhError:  # more pages than `by_page` reads
+        shown = path.split("?")[0]
+        return _Answer(why=Words(f"GitHub's answer has more than {fetch_mod.MAX_PAGES} pages", f"`gh api {shown}` has more than {fetch_mod.MAX_PAGES} pages"), fix=Words(
+            "Ask Claude to check the set-up, which gives doctor GitHub's answers as files.", f"Give {give}.",
+        ))
 
 
 def _given(i: Inputs, given: Path | str, flag: str, fix: Words | None = None, what: str = "GitHub's answer") -> _Answer:

@@ -136,7 +136,14 @@ def numeric_refused(p: subprocess.CompletedProcess, path: str) -> bool:
     """`--paginate` failed on the proxy's refusal of a next-page link, for a
     path `by_page` can read instead. Any other failure stays a failure. Only
     gh's error output counts, never the pages it printed before failing."""
-    return bool(p.returncode) and _on_repos(path) and bool(NUMERIC_REFUSED.search(p.stderr or ""))
+    return bool(p.returncode) and refuses_numeric(p.stderr or "", path)
+
+
+def refuses_numeric(stderr: str, path: str) -> bool:
+    """gh's error output (`stderr`, of a call that failed) is the proxy's
+    refusal of a next-page link, for a path `by_page` can read instead: for
+    a caller that runs gh itself (doctor's reads, #601)."""
+    return _on_repos(path) and bool(NUMERIC_REFUSED.search(stderr or ""))
 
 
 def _page_size(page) -> int | None:
@@ -152,11 +159,15 @@ def _page_size(page) -> int | None:
     return None
 
 
-def by_page(path: str) -> list:
+def by_page(path: str, read=None) -> list:
     """Every page of a `repos/<owner>/<repo>/...` path, read one at a time
     with `page=N` (#568), as `--paginate --slurp` gives them: a list of
     pages. The path's own query is kept, its `per_page` too (100 without
-    one); the read stops at the first page shorter than that."""
+    one); the read stops at the first page shorter than that. `read` reads
+    one page's path (by default `api`, without paging): a caller that runs
+    gh itself, within its own time limits, passes its own (doctor's, #601),
+    which raises to stop the read."""
+    read = read or api
     base, _, query = path.partition("?")
     kept, size = [], None
     for kv in query.split("&") if query else []:
@@ -168,7 +179,7 @@ def by_page(path: str) -> list:
     size = size or PER_PAGE
     out = []
     for n in range(1, MAX_PAGES + 1):
-        page = api(f"{base}?{'&'.join([*kept, f'per_page={size}', f'page={n}'])}")
+        page = read(f"{base}?{'&'.join([*kept, f'per_page={size}', f'page={n}'])}")
         out.append(page)
         got = _page_size(page)
         if got is None or got < size:
