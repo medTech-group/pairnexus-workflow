@@ -245,3 +245,32 @@ def test_build_ticket_stops_the_background_run_before_changing_the_checkout(path
     # always see itself (an untracked file it might have written).
     for word in ("edit", "merging the base in", "pull", "untracked", "stop it first", "TaskStop"):
         assert word in rule, word
+
+
+# ---------- 6. the page's helpers (the overview's "Reuse, not copies") ----------
+
+
+def _helpers() -> str:
+    page = (ROOT / "docs/architecture/scripts--workflow.md").read_text()
+    return page.split("\n## Helpers\n", 1)[1].split("\n## ", 1)[0] if "\n## Helpers\n" in page else ""
+
+
+def test_the_path_list_is_one_helper_listed_in_its_page(tmp_path):
+    assert re.search(r"^- `_paths`: ", _helpers(), re.M)
+    names = [f"f{i}.txt" for i in range(7)]
+    assert evidence._paths(names) == "f0.txt, f1.txt, f2.txt, f3.txt, f4.txt and 2 more"
+    assert evidence._paths(names, code=True).startswith("`f0.txt`, `f1.txt`") and " and 2 more" in evidence._paths(names, code=True)
+    # require_clean and the report's "appeared" line name paths the same way.
+    root = _repo(tmp_path)
+    for n in names:
+        (root / n).write_text("x")
+    with pytest.raises(evidence.EvidenceError, match=re.escape(evidence._paths(names))):
+        evidence.require_clean(root)
+
+
+def test_the_report_names_files_that_appeared_with_the_path_helper(tmp_path, monkeypatch, capsys):
+    root = _repo(tmp_path)
+    names = [f"out{i}.txt" for i in range(7)]
+    _act(root, "tests/test_2.txt", "touch " + " ".join(names))
+    assert _evidence(monkeypatch, root) == 0
+    assert evidence._paths(names, code=True) + "." in capsys.readouterr().out

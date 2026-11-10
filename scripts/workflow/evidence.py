@@ -159,9 +159,11 @@ def tree_state(root: Path) -> tuple[str, frozenset[str]]:
     return hashlib.sha256(diff.stdout).hexdigest(), frozenset(n for n in names if n and not n.startswith(".workflow/"))
 
 
-def _paths(names: list[str] | set[str]) -> str:
+def _paths(names: list[str] | set[str], code: bool = False) -> str:
+    """The first five of `names`, sorted, then "and N more"; with code, each in backticks."""
     names = sorted(names)
-    return ", ".join(names[:5]) + (f" and {len(names) - 5} more" if len(names) > 5 else "")
+    shown = [f"`{n}`" if code else n for n in names[:5]]
+    return ", ".join(shown) + (f" and {len(names) - 5} more" if len(names) > 5 else "")
 
 
 def checked_head(root: Path, allow_dirty: bool = False) -> str:
@@ -177,8 +179,7 @@ def require_clean(root: Path) -> None:
         raise EvidenceError(
             "the working tree has uncommitted changes or untracked files, so a run wouldn't prove the commit "
             "(untracked tests change the result): "
-            + ", ".join(dirty[:5])
-            + (f" and {len(dirty) - 5} more" if len(dirty) > 5 else "")
+            + _paths(dirty)
             + ". Commit, stash or ignore them, or pass --allow-dirty to try a profile."
         )
 
@@ -723,8 +724,7 @@ def report(
     if appeared:
         lines += [
             "- Files that appeared while it ran, untracked and not git-ignored: "
-            + ", ".join(f"`{x}`" for x in appeared[:5])
-            + (f" and {len(appeared) - 5} more" if len(appeared) > 5 else "")
+            + _paths(appeared, code=True)
             + ". Most likely the suites' own output; a file added beside the run would make this report wrong, "
             "so the run's checkout is left alone while it goes.",
         ]
