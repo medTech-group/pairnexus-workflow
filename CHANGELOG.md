@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**A background evidence run never reports a tree it didn't test** (#671, split out of #663). Since #663 a ticket session runs `workflow evidence` in the background while it goes on acting on `merge-check`, and the run checked the tree only at its start: an edit, or a merge of the base left in conflict, while shards still ran could end in a report naming the head for a tree that wasn't it. And a shard was saved as passing before the "HEAD moved" check, so a later run on the same commit reused it.
+
+- **`workflow evidence`:** after each shard, before keeping its result, it checks the head and the working tree. A moved head, or a change to a tracked or staged file (an edit, a merge left in conflict, a file added to the index), stops the run ("the working tree changed while the suite ran", naming the paths), and nothing of that shard is kept, so the next run on the commit runs it again. An untracked file that appears doesn't stop it, since the suites' own output (`coverage.xml`, junit XML, `test-results/`) can't be told from a file added beside the run: the report names such files instead. What the profile's `[repair]` commands write is the run's own, as before. With `--allow-dirty`, any change while it runs, an untracked file included, makes it a dirty report (its first line ends with the dirty marker), and from that shard on its results are kept apart from the commit's.
+- **`build-ticket` §6 step 2:** while the background run goes, the session stops it before changing its checkout (an edit, merging the base in, a pull, a new untracked file); a run stopped this way counts as one stopped by its head moving. Tests: `tests/test_evidence_tree.py`.
+- **For projects updating:** nothing to do. A suite that changes tracked files as it runs now stops the evidence run; make it write its output elsewhere, or ignore it.
+
 **Ctrl-C while doctor starts a command no longer leaves it running, and the Ctrl-C tests no longer fail on a busy machine** (#684).
 
 - **`workflow doctor` and `workflow status`:** a Ctrl-C that came while doctor was starting `claude --version`, `python3`, `gh` or `git` (inside `subprocess.Popen`, once the command was already running) left that command, and whatever it had started, running after the quiet stop. The Ctrl-C is now held until the command has started, then stops it as any other Ctrl-C does: its whole process group is killed, and the run ends with exit 130.

@@ -3,7 +3,8 @@
 Runs each suite of the profile in shards against a clean checkout of one
 commit, keeping each shard's result and full output on disk under
 .workflow/evidence/<sha>/, so a container restart re-runs only the unfinished
-shards. The report names the command, head SHA, counts, duration and each
+shards. After each shard it checks HEAD and the working tree, and stops,
+keeping nothing of that shard, when either changed under it (`collect`). The report names the command, head SHA, counts, duration and each
 suite's output tail, the likely cause of a failure, and compares the count
 with the base branch's (given, or run on a worktree of the base), which also
 catches skipped tests. With `commands.select_suites` and a base ref, only the
@@ -15,6 +16,7 @@ from __future__ import annotations
 import dataclasses
 import fnmatch
 import glob
+import hashlib
 import json
 import os
 import re
@@ -139,6 +141,27 @@ def dirty_paths(root: Path) -> list[str]:
     if out.returncode:
         raise EvidenceError("not a git checkout")
     return [l[3:] for l in out.stdout.splitlines() if l[3:] and not l[3:].startswith(".workflow/")]
+
+
+def tree_state(root: Path) -> tuple[str, frozenset[str]]:
+    """The working tree against HEAD, outside .workflow/: a hash of every change
+    to a tracked or staged file (content included), and the untracked files that
+    aren't ignored. Taken after each shard, so a run sees what changed under it."""
+    diff = subprocess.run(
+        ["git", "diff", "HEAD", "--binary", "--no-ext-diff", "--no-textconv", "--", ".", ":(exclude).workflow"],
+        cwd=root,
+        capture_output=True,
+    )
+    others = subprocess.run(["git", "ls-files", "--others", "--exclude-standard", "-z"], cwd=root, capture_output=True)
+    if diff.returncode or others.returncode:
+        raise EvidenceError("not a git checkout")
+    names = os.fsdecode(others.stdout).split("\0")
+    return hashlib.sha256(diff.stdout).hexdigest(), frozenset(n for n in names if n and not n.startswith(".workflow/"))
+
+
+def _paths(names: list[str] | set[str]) -> str:
+    names = sorted(names)
+    return ", ".join(names[:5]) + (f" and {len(names) - 5} more" if len(names) > 5 else "")
 
 
 def checked_head(root: Path, allow_dirty: bool = False) -> str:
@@ -302,6 +325,8 @@ def collect(
     empty_ok: bool = False,
     notes: list[str] | None = None,
     clean_check: bool = True,
+    changed: list[str] | None = None,
+    appeared: list[str] | None = None,
 ) -> tuple[str, list[ShardResult]]:
     """Run (or resume) every shard of the suites on HEAD.
 
@@ -312,6 +337,17 @@ def collect(
     suite whose files match nothing counts 0, with a line added to `notes`.
     Without clean_check (the base worktree, fresh from git, where only
     commands.setup has written) the tree isn't checked.
+
+    After each shard, before its result is kept, the run checks HEAD and the
+    tree (#671). HEAD moved, or a tracked or staged file changed (an edit, a
+    merge of the base left in conflict), stops it with nothing kept for that
+    shard, so a later run on the commit runs it again. A changed tree stops it
+    only where the run can tell the change isn't its own: an untracked file that
+    appears may be the suite's own output (`coverage.xml`), so it is added to
+    `appeared` and the run goes on; the repair commands' writes are taken as the
+    run's own. With allow_dirty the run never stops for the tree: any change
+    (an untracked file included) makes it a dirty run, from that shard on kept
+    under <sha>-dirty, and its paths go in `changed`.
     """
     if allow_dirty:
         dirty = dirty_paths(root)
@@ -325,6 +361,32 @@ def collect(
         shutil.rmtree(base, ignore_errors=True)
         fresh = True
     base.mkdir(parents=True, exist_ok=True)
+    watch = clean_check or allow_dirty
+    state = tree_state(root) if watch else None
+    seen: set[str] = set()
+
+    def look() -> None:
+        """Stop, or mark the run dirty, if the tree changed since the last look."""
+        nonlocal state, base, fresh
+        now = tree_state(root)
+        new_files = now[1] - state[1]
+        if now[0] != state[0] or (allow_dirty and new_files):
+            if not allow_dirty:
+                raise EvidenceError(_changed_tree(root, dirty))
+            if not base.name.endswith("-dirty"):  # from here on, a dirty run: kept apart, never the commit's
+                fresh = True
+                base = (store or root / EVIDENCE_DIR) / (sha + "-dirty")
+                shutil.rmtree(base, ignore_errors=True)
+                base.mkdir(parents=True, exist_ok=True)
+            if changed is not None:
+                cur = set(dirty_paths(root))
+                changed[:] = sorted(set(changed) | (cur - set(dirty) or cur))
+        elif new_files:
+            seen.update(new_files)
+            if appeared is not None:
+                appeared[:] = sorted(seen)
+        state = now
+
     results: list[ShardResult] = []
     suites = [s for s in profile.suites if not only or s.name in only]
     if not suites:
@@ -356,16 +418,34 @@ def collect(
                             {"exit": old.exit, "passed": old.passed, "failed": old.failed, "errors": old.errors, "log": old.log}
                         )
             if repair_first and profile.repair and (not repaired or last_failed):
+                if watch:
+                    look()
                 repair.run(profile.repair, root)
                 repaired = True
+                if watch:
+                    state = tree_state(root)  # what the repair wrote is the run's own
             r = run_shard(suite, i, files, root, log=_next_log(base, f"{suite.name}-{i:03d}"), log_root=log_root)
             r.previous_failures = earlier
+            # Checked before the result is kept: a shard a stop interrupted is never reused.
+            if head_sha(root) != sha:
+                raise EvidenceError("HEAD moved while the suite ran; start again on the new commit")
+            if watch:
+                look()
+                f = base / f.name
             f.write_text(json.dumps(asdict(r)))
             results.append(r)
             last_failed = not r.ok
-            if head_sha(root) != sha:
-                raise EvidenceError("HEAD moved while the suite ran; start again on the new commit")
     return sha, results
+
+
+def _changed_tree(root: Path, before: list[str]) -> str:
+    now = [p for p in dirty_paths(root) if p not in before]
+    return (
+        "the working tree changed while the suite ran"
+        + (f" ({_paths(now)})" if now else "")
+        + ", so this run can't prove the commit and stopped; nothing it ran on the changed tree is kept. "
+        "Commit or undo the change, then run it again"
+    )
 
 
 def resolve_ref(root: Path, ref: str) -> str:
@@ -605,13 +685,17 @@ def report(
     base_problem: str = "",
     base_notes: list[str] | None = None,
     selection: Selection | None = None,
+    changed: list[str] | None = None,
+    appeared: list[str] | None = None,
 ) -> tuple[bool, str]:
     """The evidence as Markdown, and whether it passes. `base_problem` (no usable
     base count, e.g. "no usable base count from main: …") doesn't fail it: the
     commit's own result stands, and the report says plainly that the count
     wasn't compared, so a base branch with its own failure doesn't block every
     PR (the conductor opens an infra ticket for it instead). `selection` says
-    which suites the PR's files needed; with none needed, nothing is compared."""
+    which suites the PR's files needed; with none needed, nothing is compared.
+    `changed` (with --allow-dirty, what changed while it ran) makes it a dirty
+    report too; `appeared` names the untracked files that appeared while it ran."""
     by_suite: dict[str, list[ShardResult]] = {}
     for r in results:
         by_suite.setdefault(r.suite, []).append(r)
@@ -625,6 +709,24 @@ def report(
             f"uncommitted or untracked path{'s' if len(dirty) != 1 else ''} ({', '.join(dirty[:5])}"
             f"{', …' if len(dirty) > 5 else ''}). Use it to try a profile, never for the merge rule.",
             "",
+        ]
+    if changed:
+        lines += [
+            (
+                f"> The working tree also changed while it ran ({_paths(changed)})."
+                if dirty
+                else f"> **Not a proof of the commit.** Run with --allow-dirty, and the working tree changed while it ran "
+                f"({_paths(changed)}). Use it to try a profile, never for the merge rule."
+            ),
+            "",
+        ]
+    if appeared:
+        lines += [
+            "- Files that appeared while it ran, untracked and not git-ignored: "
+            + ", ".join(f"`{x}`" for x in appeared[:5])
+            + (f" and {len(appeared) - 5} more" if len(appeared) > 5 else "")
+            + ". Most likely the suites' own output; a file added beside the run would make this report wrong, "
+            "so the run's checkout is left alone while it goes.",
         ]
     sel = selection or Selection(None)
     if _selection_line(sel):
@@ -685,7 +787,7 @@ def report(
             lines += ["", f"Full output: `{r.log}`"]
         lines.append("</details>")
     scoped = {r.suite for r in results} != {s.name for s in profile.suites}
-    lines[0] = headline(sha, ok, bool(dirty), scoped=scoped)
+    lines[0] = headline(sha, ok, bool(dirty or changed), scoped=scoped)
     # The session posts this report on its PR: an agent's post, so it carries the marker.
     lines += ["", AGENT_MARKER]
     return ok, "\n".join(lines)
