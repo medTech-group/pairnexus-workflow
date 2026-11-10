@@ -165,6 +165,19 @@ def test_with_code_paths_code_is_only_the_code_paths(tmp_path):
         assert never not in said, never
 
 
+def test_with_code_paths_a_protected_path_is_never_code(tmp_path):
+    root = _repo(tmp_path, {
+        "app/a.py": "x\n",
+        ".claude/scripts/x.py": "x\n",  # matched by the code paths, and protected by default
+        "docs/architecture/README.md": "# Architecture\n",
+    }, prof=_prof(guard='code_paths = ["**/*.py"]\n'))
+    ln = _lines(root)["kit.architecture.uncovered"]
+    said = _said(ln)
+    assert ln.status == "note" and "app/a.py" in said
+    assert ".claude/scripts/x.py" not in said
+    assert " 1 " in f" {ln.message.developer} "  # one file
+
+
 def test_the_overviews_covers_lines_cover_nothing(tmp_path):
     root = _repo(tmp_path, {
         "src/app.py": "x\n",
