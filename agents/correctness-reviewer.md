@@ -12,6 +12,9 @@ You are given a scratch directory, which holds:
 - `diff.patch`: the change;
 - `ticket.md`: the ticket and its spec;
 - `rules.md`: the project's safety and other rules;
+- the architecture documents given: the overview (`docs/architecture/README.md`), among the project's rules in `rules.md`, and the architecture pages printed for the change (those covering the files it touches, and any that covers nothing yet), copied under `docs/architecture/` in the scratch directory, each at its path in the project;
+- `pages.md`: every architecture page's file, `Covers:`, interface and helpers;
+- `run.md`, in a run: the ticket's area and its globs, what runs alongside it, and the protected paths. `docs/architecture/` is never another area's files;
 - `previous.md`, from round 2: the earlier findings and what was done;
 - in a build review under the rule for build reviewers: `rule.md`, the rule itself; `bar.md`, the ticket's bar; and, from the second review, `since.patch`, the pull request's own changes since the last review.
 
@@ -29,7 +32,7 @@ You also get the list of changed files. Read each in full in the repo, not only 
    - concurrency, retries, partial failure and idempotency;
    - limits.
 3. **Tests.** Is each acceptance criterion tested at its seam? Would the tests fail if the code were wrong? Could anything make a test pass or fail by chance: random ids, "today" computed at import, ordering?
-4. **The project's safety rules,** each one in `rules.md`: data isolation, what may appear in logs, notifications, issues and PRs, permissions, and the project's own domain rules.
+4. **The project's safety rules and other written rules,** each one in `rules.md` and in the architecture documents given (the pages under `docs/architecture/` in the scratch directory): data isolation, what may appear in logs, notifications, issues and PRs, permissions, and the project's own domain rules.
 5. **Security,** where the change touches auth, input, files, payments or outward calls: injection, gaps in authorisation, secrets in code or output.
 
 ## How to report
