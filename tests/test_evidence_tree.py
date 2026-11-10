@@ -167,6 +167,37 @@ def test_a_shard_the_head_moved_under_runs_again_on_that_commit(tmp_path, monkey
     assert _ran(root)[2:] == ["tests/test_1.txt", "tests/test_2.txt"]
 
 
+def test_an_edit_committed_as_the_shard_ends_never_keeps_the_shard(tmp_path, monkeypatch, capsys):
+    # The session edits a test during shard 1, then commits it just as the
+    # shard ends, between the run's head check and its tree check.
+    root = _repo(tmp_path)
+    (root / "tests/test_1.txt").write_text("fail")
+    git(root, "commit", "-qam", "test_1 fails")
+    sha = _sha(root)
+    real_run, real_head = evidence.run_shard, evidence.head_sha
+    step = {"ran": False, "committed": False}
+
+    def run_shard(suite, i, files, cwd, **kw):
+        if i == 1:
+            (root / "tests/test_1.txt").write_text("pass")
+            step["ran"] = True
+        return real_run(suite, i, files, cwd, **kw)
+
+    def head_sha(r):
+        if step["ran"] and not step["committed"]:
+            step["committed"] = True
+            git(root, "commit", "-qam", "edit")
+            return sha
+        return real_head(r)
+
+    monkeypatch.setattr(evidence, "run_shard", run_shard)
+    monkeypatch.setattr(evidence, "head_sha", head_sha)
+    assert _evidence(monkeypatch, root) == 1
+    assert "HEAD moved" in capsys.readouterr().err
+    assert step["committed"]
+    assert not (root / ".workflow/evidence" / sha / "unit-001.json").exists()
+
+
 def test_a_failing_shard_is_never_saved_as_passing_when_the_tree_changed(tmp_path, monkeypatch, capsys):
     # #670 round 2: a shard saved as ok before the stop made a restart report a
     # passing commit whose test fails. Here the session's edit makes the shard pass

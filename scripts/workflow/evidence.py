@@ -422,12 +422,13 @@ def collect(
                     look()  # the repair's window is checked like a shard's: it can't be told from a change beside it
             r = run_shard(suite, i, files, root, log=_next_log(base, f"{suite.name}-{i:03d}"), log_root=log_root)
             r.previous_failures = earlier
-            # Checked before the result is kept: a shard a stop interrupted is never reused.
-            if head_sha(root) != sha:
-                raise EvidenceError("HEAD moved while the suite ran; start again on the new commit")
+            # Checked before the result is kept: a shard a stop interrupted is never reused. The
+            # tree first, then HEAD, so an edit committed between the two can't pass either.
             if watch:
                 look()
                 f = base / f.name
+            if head_sha(root) != sha:
+                raise EvidenceError("HEAD moved while the suite ran; start again on the new commit")
             f.write_text(json.dumps(asdict(r)))
             results.append(r)
             last_failed = not r.ok
