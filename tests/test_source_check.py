@@ -372,6 +372,14 @@ def test_the_briefing_under_decide_and_record_lets_a_matching_owner_chose_line_s
     assert "record it in the PR body" in high, "recorded either way"
 
 
+@pytest.mark.parametrize("open_decisions", ["decide-and-record", "set-aside"])
+def test_the_briefing_s_owner_s_answer(tmp_path, open_decisions):
+    # The owner's answer in the briefing reads as **Choosing once** and build-ticket do.
+    high = _research_line(_brief(tmp_path, open_decisions)).split("for a high-stakes one,", 1)[1]
+    owner = high[high.index('"Owner chose" line on the ticket'):high.index("Choosing once")]
+    assert "from an account with write access" in owner and "matches" in owner
+
+
 def test_the_changelog_notes_the_owner_chose_exception_in_the_briefing():
     assert "(#586" in since_0110()
 

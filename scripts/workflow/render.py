@@ -364,12 +364,12 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
 # fetched (the flow's "Research", **The source check**). A small decision, or a
 # change that doesn't touch it, is noted and the session goes on; a high-stakes
 # one follows the charter's `open_decisions`. Either way, an "Owner chose" line on
-# the ticket that matches (**Choosing once**) is the owner's answer (#586): under
-# set-aside the session follows it instead of stopping again; under
-# decide-and-record it settles the choice, the build still resting on the safer
-# of the note and the live text.
+# the ticket, from an account with write access, that matches (**Choosing once**)
+# is the owner's answer (#586): under set-aside the session follows it instead of
+# stopping again; under decide-and-record it settles the choice, the build still
+# resting on the safer of the note and the live text.
 _RESEARCH_SMALL = "a small decision, or a change that doesn't touch the decision, is noted in the PR body and on the build ticket, and you go on"
-_OWNER_CHOSE = "\"Owner chose\" line on the ticket that matches, as the flow's **Choosing once** says"
+_OWNER_CHOSE = "\"Owner chose\" line on the ticket, from an account with write access, that matches, as the flow's **Choosing once** says"
 BRIEFING_RESEARCH_SAFEST = (
     f"{_RESEARCH_SMALL}; for a high-stakes one, take the safest choice, or the owner's where there is an {_OWNER_CHOSE}, "
     "building on the safer of the note and the live text, and record it in the PR body, quoting the changed paragraphs"
