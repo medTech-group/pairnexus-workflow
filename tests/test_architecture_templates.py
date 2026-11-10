@@ -121,10 +121,14 @@ def test_the_example_page_reads_as_a_page():
     assert "\n## Rules\n" in PAGE
 
 
-def test_the_changelog_note_says_how_the_overview_is_read_for_now():
+def test_the_changelog_notes_say_the_overview_is_never_a_page():
     note = _flat(since_0110().split("(#612,", 1)[1].split("\n\n**", 1)[0])
-    assert "For now `README.md` is also read as a page: its `Covers:` lines are read like any page's" in note
-    assert "covering nothing yet when it has none" in note
-    assert "so it can appear under `--json`'s `\"pages\"`" in note
-    assert "`reads` still prints it only once, first" in note
+    assert "A page is a `.md` file directly in `docs/architecture/` other than the overview (#631)" in note
+    assert "For now `README.md` is also read as a page" not in note
     assert "with no `Covers:` line, one that covers nothing yet" not in note
+    note = _flat(since_0110().split("(#631,", 1)[1].split("\n\n**", 1)[0])
+    assert "The overview is the file the folder lists as exactly `docs/architecture/README.md`" in note
+    assert "every other `.md` file directly in the folder is a page" in note
+    assert "`index pages` never lists the overview" in note
+    assert "`index reads` prints it once, first, never under `--json`'s `\"pages\"`" in note
+    assert "A case variant (`Readme.md`, `readme.md`) with no `README.md` beside it is a page, listed once" in note
