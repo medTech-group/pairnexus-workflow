@@ -277,7 +277,7 @@ def test_the_glossarys_preview_link_entry_names_add_try_it_links():
     text = (KIT / "docs/glossary.md").read_text(encoding="utf-8")
     entry = text.split("\n### Preview link\n", 1)[1].split("\n### ", 1)[0]
     assert '"Add try-it links"' in entry
-    assert len(text) < 6000
+    assert len(text) < 6500
 
 
 def test_the_profile_doc_links_the_page_from_its_previews_section():

@@ -312,7 +312,7 @@ Then *"Go with this plan? 1. Booking page (quick ticket) 2. Booking reminders (s
 | The interview | **Write the spec**, **There's more to discuss**, **Stop here** |
 | The spec | **Split it into tickets**, **Edit the spec first**, **Stop here** |
 | The tickets | **Build them in a fresh session**, **Run them unattended**, **Next item of the plan** (when it's light), **Stop here** |
-| Charting a map | **Stop here: the first decision in a fresh session**, **Next item of the plan** (when it's light) |
+| Charting a map | **Stop here: the first decision in a fresh session** (or **Stop here: the study's Carry on in a fresh session**, for a new project's map while its study runs), **Next item of the plan** (when it's light) |
 | A light item (a quick ticket published, an edit to an issue) | **Next: <the next item>**, **Start it in a fresh session**, **Stop here** |
 | Finding a bug's cause | **File the fix as a ticket and build it**, **It needs decisions: make it a spec**, **Stop here** (what was found goes on the issue) |
 | A map decision, or a build | A recommendation to go on in a fresh session |
@@ -398,7 +398,7 @@ Subscribe to the tracking issue to hear about it. The conductor's @mentions of y
 
 **Not yet proven in a real run** ([docs/spike.md](docs/spike.md)): a guard denial in a cloud session (row 4), a private repository's ruleset refusing a push (row 5), the conductor clearing a finished session's check-ins (row 11), a ticket session waking the conductor at once when it finishes (row 13; otherwise the next check-in sees it), and the final report's notification (row 17).
 
-A run only builds tickets that are ready ([what that means](#one-piece-at-a-time-next)): planning is a conversation with you, so it never happens in a run. While a map still has Destination items without a spec, the conductor's kick-off lists that map's ready tickets and recommends leaving them out (see [the gate](#a-large-or-brand-new-effort-wayfinder)).
+A run only builds tickets that are ready ([what that means](#one-piece-at-a-time-next)): planning is a conversation with you, so it never happens in a run. While a map still has Destination items without a spec, the conductor's kick-off lists that map's ready tickets and recommends leaving them out (see [the gate](#a-large-or-brand-new-effort-wayfinder)). A Destination item held by an owner task, with a `Blocked by:` line beside it in the map's body, is left out of that, whether its task is open or closed.
 
 ### Planning new work: what happens underneath
 
@@ -496,7 +496,7 @@ When the work is too big for one session, or too unclear to spec yet, chart it f
 
 > /wayfinder A small shop online: customers order from their phone, staff pack and post the orders.
 
-For a new project, a study comes first: its intake and its panel run before charting starts, and its research issue is linked from the map's Notes, never made one of the map's decisions (the kit's flow, "Research").
+For a new project, a study is always recommended first: when you run it, its intake and its panel run before charting starts, and its research issue is linked from the map's Notes, never made one of the map's decisions (the kit's flow, "Research").
 
 1. Claude interviews you about the **destination**: what reaching the end looks like. It can be several items, each needing its own spec (for example "customers order from their phone" and "staff pack the orders").
 2. A second, wider round finds the open questions across the whole effort and the first steps that can be taken now. If it finds nothing unclear, no map is needed: it stops and asks how you want to go on (usually straight to a spec).
@@ -530,6 +530,7 @@ Several decisions that don't block each other can be worked in parallel sessions
   - `/next` and the guided start keep to it.
   - `workflow ready` doesn't know about maps, so a run would build them. At a run's kick-off the conductor lists such tickets and recommends leaving them out.
   - Or simply start the run once every Destination item has its tickets.
+  - A Destination item waiting on a professional's answer has a `Blocked by:` line beside it in the map's body, naming its owner task. It is left out of the gate, whether its task is open or closed, and the line stays: the map's other tickets build, and once its task closes, only that item's own tickets wait for its spec and tickets. `/next` and the guided start skip the item while its task is open.
 
 **A brand-new project.** In this order:
 1. **Create the GitHub repository,** with a README. If the Claude GitHub App has access only to selected repositories, add this one ([Before your first repository](#before-your-first-repository-once), item 3).
@@ -559,7 +560,7 @@ Several decisions that don't block each other can be worked in parallel sessions
   - A **UI** prototype: several very different versions of one screen, switchable in the browser.
 
   When it has answered the question, the answer goes into the decisions, and the prototype is kept on a branch for reference.
-- **`/research <question>`**: a background agent reads the primary sources (official docs, source code, specs) and leaves a Markdown file in the repository, citing each claim. You keep talking meanwhile; its findings feed the interview. The note goes in `docs/research/<topic>/`, starting with its header (`Status:`, `Last checked:` and `Issue:`), through a research pull request of its own. It merges after one research check of its claims against the saved copies of their sources and, where that finds a claim wrong or the note changes after it, one look at the fix. A note with no issue to name gets a `research` issue. Sessions read only notes marked `current`.
+- **`/research <question>`**: a background agent reads the primary sources (official docs, source code, specs) and leaves a Markdown file in the repository, citing each claim. You keep talking meanwhile; its findings feed the interview. The note goes in `docs/research/<topic>/`, starting with its header (`Status:`, `Last checked:` and `Issue:`), through a research pull request of its own. It merges after one research check of its claims against the saved copies they cite and, where that finds a claim wrong or the note changes after it, one look at the fix. A note with no issue to name gets a `research` issue. Sessions read only notes marked `current`.
 - **`/to-questionnaire`**: when someone else holds the answer (an accountant, a supplier, legal). It asks you only who it's for and what you need back, then writes them a questionnaire to fill in, most important question first. It writes `to-questionnaire-<slug>.md` in the repository's root; you send it yourself. A questionnaire for a study's finding goes in that study's `docs/research/<topic>/` instead. In a cloud session, ask Claude to print it before the session ends: the file is gone with the machine.
 - **`/wait-what`**: Claude's last message didn't make sense. It says it again, plainly, with the context you were missing.
 - **`/handoff`**: writes the conversation so far to a file another session can pick up.

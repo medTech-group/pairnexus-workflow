@@ -18,12 +18,21 @@
     workflow render --template F --ticket F --charter F --slots F --tracking N [--by-hand N] [--out F] [--print]
     workflow comments --file F [--owner LOGIN] [--since-id N]
     workflow merge-check --pr F --files F --commits F --checks F --rulesets F --threads F --reviews F --comments F --permissions F --compare F [--preview F] [--asker LOGIN] [--review-rounds N] [--review-passes N|until-clean] [--small-max-lines N] [--small-max-files N] [--json]
+    workflow merge-check ... [--recorded F]      (a pull request of research notes, after the look at a fix: its own changes at that record's commit)
     workflow merge-check --fetch N [any of the files above] [--charter F --check-logs DIR] [--asker LOGIN] [--review-rounds N] [--review-passes N|until-clean] [--small-max-lines N] [--small-max-files N] [--json]
     workflow preview --comments F --checks F --sha SHA [--json] | --fetch N [any of those] [--json]
     workflow briefing verify --file F
+    workflow index reads --base REF [--paths P ...] [--json]      (the architecture overview, then the pages a change's files, and the paths given, read; changes nothing)
+    workflow index pages [--json]      (every architecture page: its file, Covers: globs, interface and helpers)
+    workflow research fingerprint URL --page F | --fetch [--saved F --fingerprints F] [--json]      (a page's paragraphs and their SHA-256; writes only the two files given, both or neither)
+    workflow research check --note F [--page URL F ...] [--fetch] [--json]      (a note's key sources against their fingerprints; writes nothing)
+    workflow research notes [--dir DIR] [--json]      (the research notes marked current)
+    workflow research stakes --comments F --permissions F [--issues F] | --fetch [--json]      (every past stakes judgement, one per line)
+    workflow research estimate --comments F --permissions F [--issues F] | --fetch [--agents N] [--json]      (a study's agents and rough token count, from past full studies)
     workflow review-record --kind round|pass --round N --commit SHA --reviewers NAMES --clean|--not-clean [--base BRANCH]      (with the hashes of the PR's own changes at SHA)
     workflow review-record --kind round|pass --round N --commit SHA --reviewers NAMES --findings F [--base BRANCH]      (a rule=2 record: its result worked out from the findings file's marks)
     workflow review-record [--kind spec] --round N --body F --reviewers spec,correctness --clean|--not-clean      (a spec's review, keyed to its body's SHA-256)
+    workflow review-record --kind research --round 1|2 --commit SHA --reviewers research --clean|--not-clean [--base BRANCH]      (a research check, round 1, or the look at a fix, round 2, on a pull request of research notes; with the hashes)
     workflow review-record --measure --commit SHA [--base BRANCH] [--small-max-lines N] [--small-max-files N]      (the diff against the small threshold; no record)
     workflow hand-off --commit SHA --round N --passes N [--record F] [--tickets 415,416]      (the hand-off comment a session posts on its pull request for a fresh session)
     workflow pr-template [--existing FILE]      (prints the file to write; exits 3 for a folder of templates)
@@ -50,11 +59,13 @@ import time
 import subprocess
 import sys
 import threading
+from datetime import date
 from pathlib import Path
 
 _STARTED = time.monotonic()  # the guard's time budget counts from here, before the kit's modules load
 
 from . import adopt as adopt_mod
+from . import architecture as architecture_mod
 from . import charter as charter_mod
 from . import context as context_mod
 from . import doctor as doctor_mod
@@ -76,6 +87,8 @@ from . import pr_template as pr_template_mod
 from . import protection as protection_mod
 from . import render as render_mod
 from . import repair as repair_mod
+from . import research as research_mod
+from . import research_records as research_records_mod
 from . import reviews as reviews_mod
 from . import small as small_mod
 from . import roles
@@ -104,20 +117,32 @@ def _fetch(repo: str, what: str) -> list[dict]:
     """Through `gh api` (the GitHub CLI, or Claude Code's built-in client).
 
     `--paginate --slurp` gives a list of pages; a client without `--slurp`
-    prints the pages one after another, which are decoded one by one. The
-    issues list keeps its pull requests: readiness resolves a PR blocker by them.
+    prints the pages one after another, which are decoded one by one. Where a
+    cloud session's proxy refuses the next-page link (#568), the pages are
+    read one at a time (`fetch.by_page`). The issues list keeps its pull
+    requests: readiness resolves a PR blocker by them.
     """
     path = f"repos/{repo}/issues?state=all&per_page=100" if what == "issues" else f"repos/{repo}/pulls?state=open&per_page=100"
 
     def failed(p) -> SystemExit:
         return SystemExit(f"gh api {path} failed: {p.stderr.strip()[:300]}\nFetch with the GitHub MCP tools instead and pass --issues/--prs files.")
 
+    def by_page() -> list:
+        try:
+            return fetch_mod.by_page(path)
+        except fetch_mod.GhError as e:
+            raise SystemExit(f"gh api {path} failed: {str(e)[:300]}\nFetch with the GitHub MCP tools instead and pass --issues/--prs files.") from None
+
     p = subprocess.run(["gh", "api", "--paginate", "--slurp", path], capture_output=True, text=True)
     values: list = []
     if p.returncode == 0:
         values = [json.loads(p.stdout or "[]")]
+    elif fetch_mod.numeric_refused(p, path):
+        values = by_page()
     elif "slurp" in (p.stderr + p.stdout).lower():
         p = subprocess.run(["gh", "api", "--paginate", path], capture_output=True, text=True)
+        if fetch_mod.numeric_refused(p, path):
+            return _fetch_items(by_page())
         if p.returncode:
             raise failed(p)
         try:
@@ -126,6 +151,11 @@ def _fetch(repo: str, what: str) -> list[dict]:
             raise SystemExit(f"gh api {path}: couldn't read its output ({e})")
     else:
         raise failed(p)
+    return _fetch_items(values)
+
+
+def _fetch_items(values) -> list[dict]:
+    """The objects in `_fetch`'s pages, however deep the lists nest."""
     items: list[dict] = []
 
     def add(v) -> None:
@@ -966,7 +996,7 @@ def cmd_merge_check(a) -> int:
     with --fetch the rest through `gh api`. Changes nothing, posts nothing, and
     exits 0 whatever it finds: anything it can't read is a reason of its own,
     never "ready"."""
-    inputs = _json_inputs(a, [*merge_mod.INPUTS, "charter"], raw=("charter",))  # the charter: JSON, or the tracking issue's body, as merge.charter_from reads it
+    inputs = _json_inputs(a, [*merge_mod.INPUTS, *merge_mod.WHEN_NEEDED, "charter"], raw=("charter",))  # the charter: JSON, or the tracking issue's body, as merge.charter_from reads it
     prof, profile_error = None, None
     try:
         prof = load()  # its protected paths and required checks are rules: none found is a reason
@@ -992,6 +1022,9 @@ def cmd_merge_check(a) -> int:
         if prof is not None and prof.previews.on and "preview" not in inputs:
             # After the --pr check, so the preview reads the inputs merge-check will.
             inputs["preview"] = _fetched_preview(prof.repo, a.fetch, inputs)
+        needed = merge_mod.recorded_commit(inputs, prof) if prof is not None and merge_mod.RECORDED not in inputs else None
+        if needed is not None:  # #509: only after the look at a fix on a pull request of research notes
+            inputs[merge_mod.RECORDED] = fetch_mod.recorded(prof.repo, *needed)
     logs: dict = {}
     if a.check_logs:
         try:
@@ -1103,6 +1136,59 @@ def cmd_preview(a) -> int:
     return 0
 
 
+def cmd_index(a) -> int:
+    """`index`: the architecture documents in docs/architecture/ (spec #611).
+    `reads` prints the overview, when it exists, then, in one sorted list, each
+    page whose `Covers:` matches a file changed since the merge base with
+    --base or a --paths entry, and each page that covers nothing yet; with no
+    folder, nothing. `pages` lists every page. Changes nothing. Exits 0, or 1
+    (printing no documents) when `reads` can't tell which files changed."""
+    root = project_root()
+    if a.action == "reads":
+        try:
+            got = architecture_mod.reads(root, a.base, a.paths or [])
+        except architecture_mod.ReadError as e:
+            print(f"workflow index reads: {e}", file=sys.stderr)
+            return 1
+        _unreadable(got.unreadable)
+        if a.json:
+            _out({"documents": got.documents, "pages": [{"file": f, "matched_by": g} for f, g in got.pages]})
+        else:
+            for d in got.documents:
+                print(d)
+        return 0
+    pages = architecture_mod.pages(root)
+    _unreadable(pages)
+    if a.json:
+        _out({"pages": [
+            {"file": pg.file, "covers": pg.covers, "interface": pg.interface, "helpers": [{"name": n, "what": w} for n, w in pg.helpers]}
+            for pg in pages
+        ]})
+        return 0
+    if not pages:
+        print(f"No architecture pages in {architecture_mod.DIR}/.")
+        return 0
+    blocks = []
+    for pg in pages:
+        lines = [pg.file]
+        lines += [f"  Covers: {g}" for g in pg.covers] or ["  (covers nothing yet)"]
+        lines.append(f"  Interface: {pg.interface}" if pg.interface else "  Interface: no interface given")
+        if pg.helpers:
+            lines.append("  Helpers:")
+            lines += [f"    - `{n}`: {w}" if w else f"    - `{n}`" for n, w in pg.helpers]
+        else:
+            lines.append("  Helpers: none")
+        blocks.append("\n".join(lines))
+    print("\n\n".join(blocks))
+    return 0
+
+
+def _unreadable(pages) -> None:
+    for pg in pages:
+        if pg.unreadable:
+            print(f"workflow index: can't read {pg.file} ({pg.unreadable}); it is listed as covering nothing yet", file=sys.stderr)
+
+
 def cmd_briefing(a) -> int:
     """`briefing verify`: the session's copy of its briefing against its last line."""
     stated, got = render_mod.seal_of(_read(a.file))
@@ -1113,6 +1199,273 @@ def cmd_briefing(a) -> int:
         print(f"Briefing changed: expected {stated}, got {got}")
         return 1
     print(f"Briefing {stated} intact")
+    return 0
+
+
+def _research_patterns() -> list[str]:
+    """The profile's `[sensitive].patterns`, left out of any page text the
+    command prints or writes. No profile: none. A profile that can't be read
+    stops the command (exit 1), rather than print text unchecked."""
+    try:
+        prof = load(required=False)
+    except (OSError, UnicodeDecodeError) as e:
+        raise ProfileError(f"{PROFILE_PATH} can't be read ({getattr(e, 'strerror', None) or e}), so [sensitive].patterns can't be left out") from None
+    return list(prof.sensitive_patterns) if prof else []
+
+
+def _shown(path: Path) -> str:
+    """A path as the person gave it, relative to here when it's below here."""
+    try:
+        return path.resolve().relative_to(Path.cwd().resolve()).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def cmd_research(a) -> int:
+    """`research`: research notes in docs/research/<topic>/ (spec #505), and
+    the stakes and token records in issue comments (`stakes`, `estimate`:
+    `_research_records`). Its inputs are files, with --fetch for pages or the
+    issues. It calls no model and writes nothing but the saved copy and
+    fingerprint file `fingerprint` is given.
+    Exits 0 with an answer (a source that can't be fetched is an answer for
+    `check`), 1 when a page or the note's layout can't be read or a file can't
+    be written, 2 when an input is missing."""
+    patterns = _research_patterns()
+    if a.action == "fingerprint":
+        if bool(a.page) == bool(a.fetch):
+            print("workflow research fingerprint: give --page F (the page, saved as a file) or --fetch (fetch the link), one of them", file=sys.stderr)
+            return 2
+        if (a.saved is None) != (a.fingerprints is None):
+            print("workflow research fingerprint: give --saved F and --fingerprints F together, so both files come from one fetch, or neither", file=sys.stderr)
+            return 2
+        if research_mod.leave_out(a.url, patterns)[1]:
+            print("workflow research fingerprint: the link holds sensitive data; cite the page by a link without it. Nothing was written.", file=sys.stderr)
+            return 1
+        writing = a.saved is not None
+        if writing:
+            why = research_mod.link_problem(a.url)
+            if why:
+                print(f"workflow research fingerprint: can't write a key source's files for this link ({why}); neither file was written, and nothing was fetched", file=sys.stderr)
+                return 1
+            bad = research_mod.target_problem(a.saved, a.fingerprints)
+            if bad:
+                print(f"workflow research fingerprint: can't write {bad[0]} ({bad[1]}); neither file was written, and nothing was fetched", file=sys.stderr)
+                return 1
+        try:
+            raw, ctype = research_mod.read_page(Path(a.page)) if a.page else research_mod.fetch(a.url)
+            paras = research_mod.page_paragraphs(raw, ctype)
+        except OSError as e:
+            print(f"workflow research fingerprint: can't read {a.page} ({e.strerror or e})", file=sys.stderr)
+            return 1
+        except research_mod.PageError as e:
+            how = "fetch" if a.fetch else "read"
+            print(f"workflow research fingerprint: can't {how} {a.url}: {e}", file=sys.stderr)
+            return 1
+        shown, n = [], 0
+        for t in paras:
+            t, k = research_mod.leave_out(t, patterns)
+            shown.append(t)
+            n += k
+        hashes = [research_mod.digest(t) for t in paras]  # the page as fetched, before anything is left out
+        if writing:
+            saved, fps = Path(a.saved), Path(a.fingerprints)
+            try:  # both or neither, from this one read
+                research_mod.write_files(
+                    [
+                        (saved, research_mod.saved_copy_text(a.url, date.today().isoformat(), shown)),
+                        (fps, research_mod.fingerprints_text(a.url, paras)),
+                    ]
+                )
+            except research_mod.WriteError as e:
+                if e.kept:  # an old file that couldn't be put back, kept aside, or a new file left: named
+                    what = "; ".join(
+                        f"{p} was written and couldn't be removed" if old is None else f"{p} couldn't be put back as it was: its old version is kept as {old}"
+                        for p, old in e.kept
+                    )
+                else:
+                    what = "neither file was written"
+                print(f"workflow research fingerprint: can't write {e.path} ({e.why}); {what}", file=sys.stderr)
+                return 1
+        if n:
+            print(f"workflow research fingerprint: left out {n} match(es) of the profile's [sensitive].patterns; leave out personal details by hand", file=sys.stderr)
+        if a.json:
+            got = {"url": a.url, "paragraphs": [{"position": i, "hash": h, "text": t} for i, (h, t) in enumerate(zip(hashes, shown), 1)]}
+            if writing:
+                got.update(saved=_shown(saved), fingerprints=_shown(fps))
+            _out(got)
+        else:
+            print(f"{a.url}: {len(paras)} paragraph(s), each with its position and the SHA-256 of its text as fetched")
+            for i, (h, t) in enumerate(zip(hashes, shown), 1):
+                print(f"\n{i} {h}\n{t}")
+            if writing:
+                print(f"\nWrote the saved copy {_shown(saved)} and its fingerprints {_shown(fps)}. Read every paragraph of the saved copy and leave out personal details by hand.")
+        return 0
+
+    if a.action == "check":
+        try:
+            header, sources = research_mod.read_note(Path(a.note))
+        except research_mod.LayoutError as e:
+            print(f"workflow research check: the note breaks the layout (the `study` skill's \"The folder's layout\"): {e}", file=sys.stderr)
+            return 1
+        given: dict[str, str] = {}
+        for url, f in a.page or []:
+            given[url] = f
+        missing = [s.url for s in sources if s.url not in given and not a.fetch]
+        if missing:
+            print(f"workflow research check: missing --page for {', '.join(missing)}: give --page <link> F for each, or --fetch to fetch them", file=sys.stderr)
+            return 2
+        results = []
+        for s in sources:
+            row = {"url": s.url, "saved": _shown(s.saved), "fingerprints": _shown(s.fingerprints)}
+            try:
+                if s.url in given:
+                    raw, ctype = research_mod.read_page(Path(given[s.url]))
+                else:
+                    raw, ctype = research_mod.fetch(s.url)
+                live = research_mod.page_paragraphs(raw, ctype)
+            except OSError as e:
+                print(f"workflow research check: can't read {given[s.url]} ({e.strerror or e})", file=sys.stderr)
+                return 1
+            except research_mod.PageError as e:
+                row.update(result="cant_fetch", why=str(e), new=[], gone=[])
+            else:
+                row.update(research_mod.compare(s, live, patterns))
+            results.append(row)
+        if a.json:
+            _out({"note": _shown(Path(a.note)), "status": header.status, "sources": results})
+            return 0
+        lines = [f"{_shown(Path(a.note))}: {len(results)} key source(s)"]
+        if header.status != "current":
+            lines.append(f"Note: this note isn't current (Status: {header.status}).")
+        if not results:
+            lines.append("It lists no key sources: nothing to check.")
+        elif all(r["result"] == "unchanged" for r in results):
+            lines.append("Every key source is unchanged: nothing to read.")
+        for r in results:
+            if r["result"] == "unchanged":
+                lines.append(f"- {r['url']}: unchanged")
+            elif r["result"] == "cant_fetch":
+                lines.append(f"- {r['url']}: can't fetch ({r['why']})")
+            else:
+                lines.append(f"- {r['url']}: changed, {len(r['new'])} new paragraph(s) and {len(r['gone'])} gone")
+                for p in r["new"]:
+                    lines.append(f"  new, paragraph {p['position']} of the live page, sha256 {p['hash']}:\n    {p['text']}")
+                for p in r["gone"]:
+                    lines.append(f"  gone, paragraph {p['position']} of the saved copy ({r['saved']}), sha256 {p['hash']}:\n    {p['saved_text']}")
+        print("\n".join(lines))
+        return 0
+
+    if a.action in ("stakes", "estimate"):
+        return _research_records(a, patterns)
+
+    base = None if a.dir else project_root()
+    root = Path(a.dir) if a.dir else base / "docs/research"
+
+    def where(path: Path) -> str:  # relative to the project's root, as the notes link each other
+        if base is not None:
+            with contextlib.suppress(ValueError):
+                return path.resolve().relative_to(base.resolve()).as_posix()
+        return _shown(path)
+
+    current, not_listed = research_mod.notes(root)
+    if a.json:
+        _out({
+            "current": [{**n, "path": where(n["path"])} for n in current],
+            "not_listed": [{"path": where(n["path"]), "why": n["why"]} for n in not_listed],
+        })
+        return 0
+    for n in not_listed:
+        if n["broken"]:
+            print(f"workflow research notes: not listed, its header can't be read: {where(n['path'])}: {n['why']}", file=sys.stderr)
+    if not current:
+        print(f"No research notes marked current in {where(root)}.")
+    for n in current:
+        print(f"{where(n['path'])}  (last checked {n['last_checked']}, #{n['issue']}){': ' + n['title'] if n['title'] else ''}")
+    return 0
+
+
+def _research_records(a, patterns: list[str]) -> int:
+    """`research stakes` and `research estimate` (#510): the stakes and token
+    records in issue comments, from files or with `--fetch`. Writes nothing."""
+    name = f"workflow research {a.action}"
+    files = [f for f in ("comments", "permissions", "issues") if getattr(a, f) is not None]
+    if a.fetch and files:
+        print(f"{name}: give --fetch or the files (--comments F --permissions F, and --issues F for the titles), not both", file=sys.stderr)
+        return 2
+    instead = "give --comments F --permissions F (and --issues F for the titles) in place of --fetch"
+    if a.action == "estimate" and a.agents is not None and not re.fullmatch(r"[1-9][0-9]{0,2}", a.agents.strip()):
+        print(f"{name}: --agents is how many agents the study will run, a whole number from 1 to {research_records_mod.MAX_AGENTS}", file=sys.stderr)
+        return 2
+    if a.fetch:
+        try:
+            prof = load(required=False)
+        except ProfileError as e:
+            print(f"{name}: {e}", file=sys.stderr)
+            return 1
+        repo = prof.repo if prof else None
+        if not repo:
+            print(f"{name}: --fetch needs the profile's project.repo; {instead}", file=sys.stderr)
+            return 2
+        try:
+            issues = fetch_mod._items(fetch_mod.api(f"repos/{repo}/issues?state=all&per_page=100", paginate=True))
+            comments = fetch_mod._items(fetch_mod.api(f"repos/{repo}/issues/comments?per_page=100", paginate=True))
+            titles = research_records_mod.titles(issues)
+            logins: list[str] = []
+            for c in research_records_mod.candidates(comments):
+                who = posts_mod._login(c)
+                if who and who.casefold() not in {x.casefold() for x in logins}:
+                    logins.append(who)
+            perms = merge_mod._permissions(fetch_mod.permissions_of(repo, logins))
+        except (fetch_mod.GhError, research_records_mod.RecordsError, posts_mod.CommentsError, merge_mod.Unreadable) as e:
+            print(f"{name}: couldn't read GitHub ({e}); {instead}", file=sys.stderr)
+            return 1
+    else:
+        missing = [f"--{f}" for f in ("comments", "permissions") if getattr(a, f) is None]
+        if missing:
+            print(f"{name}: missing {' and '.join(missing)}: give --comments F (the issues' comments) and --permissions F "
+                  "(their authors' permissions), and --issues F for the titles, or --fetch to read them with gh", file=sys.stderr)
+            return 2
+        inputs = _json_inputs(a, ["comments", "permissions", "issues"], raw=("comments",))
+        for f in files:
+            if inputs[f][0] is None:
+                print(f"{name}: --{f}: {inputs[f][1] or 'the file holds null'}", file=sys.stderr)
+                return 1
+        try:
+            comments = posts_mod.load_comments(inputs["comments"][0])
+        except posts_mod.CommentsError as e:
+            print(f"{name}: --comments can't be read: {e}", file=sys.stderr)
+            return 1
+        try:
+            perms = merge_mod._permissions(inputs["permissions"][0])
+        except merge_mod.Unreadable as e:
+            print(f"{name}: --permissions can't be read: {e.why}", file=sys.stderr)
+            return 1
+        try:
+            titles = research_records_mod.titles(inputs["issues"][0]) if "issues" in inputs else {}
+        except research_records_mod.RecordsError as e:
+            print(f"{name}: --issues can't be read: {e}", file=sys.stderr)
+            return 1
+    try:
+        got = research_records_mod.read(comments, perms, titles, patterns)
+    except (research_records_mod.RecordsError, posts_mod.CommentsError) as e:
+        print(f"{name}: {e}", file=sys.stderr)
+        return 1
+    left_out = got.left_out_stakes if a.action == "stakes" else got.left_out_tokens
+    if left_out:
+        kind = "a stakes" if a.action == "stakes" else "a token"
+        print(f"{name}: left out {left_out} comment{'s' if left_out != 1 else ''} with {kind} record: without the agents' marker, "
+              "or posted by an account without write access", file=sys.stderr)
+    if a.action == "stakes":
+        if a.json:
+            _out({"stakes": got.stakes, "left_out": left_out})
+        else:
+            print("\n".join(research_records_mod.stakes_lines(got.stakes)) if got.stakes else "No stakes records yet.")
+        return 0
+    e = research_records_mod.estimate(got.tokens, int(a.agents) if a.agents is not None else None)
+    if a.json:
+        _out({**e, "left_out": left_out})
+    else:
+        print(research_records_mod.estimate_line(e))
     return 0
 
 
@@ -1212,7 +1565,7 @@ def cmd_review_record(a) -> int:
         body = None if path is None else _spec_body(path)
         # Checked before any git runs: a refused record is never hashed.
         text = reviews_mod.record(**one, reviewers=reviewers, clean=a.clean, body=body, findings=found)
-        if reviews_mod._kind(one["kind"]) in ("round", "pass"):
+        if reviews_mod._kind(one["kind"]) in ("round", "pass", "research"):
             hashes = _own_hashes(a, one["commit"].strip().lower())
             text = reviews_mod.record(**one, reviewers=reviewers, clean=a.clean, diff=hashes.diff, lines=hashes.lines, findings=found)
     except (reviews_mod.RecordError, findings_mod.FindingsError) as e:
@@ -1876,6 +2229,7 @@ def main(argv: list[str] | None = None) -> int:
             "threads": "GraphQL's reviewThreads, with totalCount and pageInfo, every page",
         }.get(name, "as JSON from the GitHub API, every page")
         s.add_argument(f"--{name}", metavar="F", help=f"{what} ({source}); a file, or - for standard input")
+    s.add_argument(f"--{merge_mod.RECORDED}", metavar="F", help="a pull request of research notes, after the look at a fix: its own changes at that research record's commit (GET repos/<repo>/compare/<base>...<commit>, as JSON from the GitHub API, or its files); read only then; a file, or -")
     s.add_argument("--fetch", metavar="N", type=_pr_number, help="fetch every input not given as a file for pull request N, through `gh api` (the profile's project.repo), and with [previews] on = true read its try-it link (`workflow preview`); a file given wins")
     s.add_argument("--charter", metavar="F", help="the run's approved charter, as JSON, or the tracking issue's body (its run state holds it): the checks it waives (flow §4.1); ignored in an attended session")
     s.add_argument("--check-logs", metavar="DIR", help="a waived check's log, one file per check, named by its check run's id on the head (<id>, <id>.log or <id>.txt; the id is its job's), as `gh run view --log-failed --job <id>` gives its tail")
@@ -1902,6 +2256,49 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--file", required=True, help="the briefing as the session received it (or -)")
     s.set_defaults(fn=cmd_briefing)
 
+    s = sub.add_parser("index", help="the architecture documents in docs/architecture/: which a change reads, and the pages list; changes nothing")
+    isub = s.add_subparsers(dest="action", required=True)
+    r = isub.add_parser("reads", help="the overview, when it exists, then, in one sorted list, every page whose Covers: matches a file changed since the merge base with --base or a --paths entry, and every page that covers nothing yet; one path per line")
+    r.add_argument("--base", required=True, metavar="REF", help="the base branch's ref, e.g. origin/main: the files changed since the branch's merge base with it count, a moved file at both its paths")
+    r.add_argument("--paths", nargs="+", action="extend", metavar="P", help="file paths from the project's root to add, e.g. the files a ticket expects to change; they need not exist yet")
+    r.add_argument("--json", action="store_true", help='{"documents": [paths], "pages": [{"file", "matched_by": [globs]}]}; a page that covers nothing yet has "matched_by": []')
+    r.set_defaults(fn=cmd_index)
+    r = isub.add_parser("pages", help="every page, sorted by path: its file, Covers: globs (or covers nothing yet), interface line (or no interface given) and helpers")
+    r.add_argument("--json", action="store_true", help='{"pages": [{"file", "covers": [globs], "interface", "helpers": [{"name", "what"}]}]}')
+    r.set_defaults(fn=cmd_index)
+
+    s = sub.add_parser("research", help="research notes in docs/research/<topic>/: a page's fingerprints, a note's key sources checked against theirs, the notes marked current; past stakes judgements and a study's estimated size; calls no model, writes only the two files fingerprint is given")
+    rsub = s.add_subparsers(dest="action", required=True)
+    r = rsub.add_parser("fingerprint", help="a page's text, paragraph by paragraph, each with the SHA-256 of its text as fetched")
+    r.add_argument("url", help="the page's link, as the note cites it")
+    r.add_argument("--page", metavar="F", help="the page, saved as a file (HTML, or plain text)")
+    r.add_argument("--fetch", action="store_true", help="fetch the link (http or https only)")
+    r.add_argument("--saved", metavar="F", help="write the saved copy here (with --fingerprints): its Source, Accessed and Third-party text lines, then the paragraphs, the profile's [sensitive].patterns left out")
+    r.add_argument("--fingerprints", metavar="F", help="write the fingerprint file here (with --saved), named <name>.fingerprints: `url: <link>`, then one `<position> <sha256>` line per paragraph")
+    r.add_argument("--json", action="store_true")
+    r.set_defaults(fn=cmd_research)
+    r = rsub.add_parser("check", help="a note's key sources against their fingerprints, as a set: unchanged, the new paragraphs and the paragraphs gone (each with its hash), or can't fetch")
+    r.add_argument("--note", metavar="F", required=True, help="the note, docs/research/<topic>/note.md")
+    r.add_argument("--page", metavar=("URL", "F"), nargs=2, action="append", help="a key source's page, saved as a file (repeat for each)")
+    r.add_argument("--fetch", action="store_true", help="fetch every key source not given with --page")
+    r.add_argument("--json", action="store_true")
+    r.set_defaults(fn=cmd_research)
+    for action, what in (("stakes", "every past stakes judgement, one per line, in the order given (as GitHub gives them, oldest first)"),
+                         ("estimate", "how many agents a study will run and a rough token count, averaged from past full studies' token records, else from the per-agent figure")):
+        r = rsub.add_parser(action, help=f"{what}; only agents' comments from accounts with write access count")
+        r.add_argument("--comments", metavar="F", help="the issues' comments, as GitHub gives them (GET repos/<repo>/issues/comments, every page)")
+        r.add_argument("--permissions", metavar="F", help="their authors' permissions, in any shape merge-check's --permissions takes")
+        r.add_argument("--issues", metavar="F", help="the issues, for their titles (GET repos/<repo>/issues?state=all, every page)")
+        r.add_argument("--fetch", action="store_true", help="read the issues, their comments and the permissions with gh")
+        if action == "estimate":
+            r.add_argument("--agents", metavar="N", help="how many agents this study will run, when known (1 to 999)")
+        r.add_argument("--json", action="store_true")
+        r.set_defaults(fn=cmd_research)
+    r = rsub.add_parser("notes", help="the research notes marked `Status: current`")
+    r.add_argument("--dir", metavar="DIR", help="the research folder (default: the project's docs/research)")
+    r.add_argument("--json", action="store_true")
+    r.set_defaults(fn=cmd_research)
+
     s = sub.add_parser("pr-template", help="print the pull request template to write, with \"In plain words\" at the top; changes nothing")
     s.add_argument("--existing", metavar="FILE", help="the project's template: the headings go above its content (or its .github/PULL_REQUEST_TEMPLATE/ folder)")
     s.set_defaults(fn=cmd_pr_template)
@@ -1916,11 +2313,11 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser(
         "review-record", allow_abbrev=False, help="the record a review round or a later Correctness pass posts on the pull request, or a spec's review on the spec"
     )
-    s.add_argument("--kind", action="append", help="`round`, `pass` for a Correctness pass after the last round, or `spec` for a spec's review (the default with --body)")
+    s.add_argument("--kind", action="append", help="`round`, `pass` for a Correctness pass after the last round, `spec` for a spec's review (the default with --body), or `research` for a research check (round 1) or the look at a fix (round 2) on a pull request of research notes")
     s.add_argument("--round", action="append", help="the round's number; for a pass, the round it follows")
     s.add_argument("--commit", action="append", help="the full SHA the round covered (`git rev-parse HEAD`)")
     s.add_argument("--body", action="append", metavar="FILE", help="a spec's review: the file holding the spec's body as you publish it, in place of --commit; the record names its SHA-256")
-    s.add_argument("--reviewers", action="append", help="those that ran, comma-separated: " + ",".join(reviews_mod.REVIEWERS) + "; a spec's review takes " + ",".join(reviews_mod.SPEC_REVIEWERS))
+    s.add_argument("--reviewers", action="append", help="those that ran, comma-separated: " + ",".join(reviews_mod.REVIEWERS) + "; a spec's review takes " + ",".join(reviews_mod.SPEC_REVIEWERS) + "; a research record takes " + reviews_mod.RESEARCH_REVIEWER + " alone")
     result = s.add_mutually_exclusive_group()
     result.add_argument("--clean", dest="clean", action="store_true", default=None, help="nothing left to fix")
     result.add_argument("--not-clean", dest="clean", action="store_false", help="the round found something to fix")

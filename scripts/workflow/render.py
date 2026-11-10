@@ -322,6 +322,7 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
         "by_hand.issue": f"#{by_hand}" if by_hand else "none yet: add by-hand checks to the tracking issue",
         "merge.mode": merge.get("mode", "auto-merge"),
         "merge.waived": ", ".join(waived) if waived else "none: every required check must be green",
+        "merge.evidence": _evidence_words(waived, profile),
         "run.review_rounds": _rounds(review["rounds"]),
         "review.rounds": str(review["rounds"]),  # the bare number, for merge-check's --review-rounds
         "review.small": _small(review, profile),
@@ -341,6 +342,10 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
         "open_decisions": "take the choice most consistent with the spec, ADRs and the project's rules, and record it in the PR body"
         if charter.get("open_decisions", "decide-and-record") == "decide-and-record"
         else "label the ticket needs-human, say exactly what needs deciding, and stop",
+        # Spec #505's answers 28 and 31: for a research-source decision, decide-and-record means the safest choice.
+        "open_decisions.research": BRIEFING_RESEARCH_SAFEST
+        if charter.get("open_decisions", "decide-and-record") == "decide-and-record"
+        else BRIEFING_RESEARCH_SET_ASIDE,
         "commands.typecheck": _per_package(profile, "typecheck", _code),
         "commands.test_file": _per_package(profile, "test_file", _test_file),
         "commands.suites": _bullets([_suite_line(s) for s in profile.suites]),
@@ -355,6 +360,28 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
     return v
 
 
+# The line after "Decisions the ticket leaves open" (#517): a decision resting on a
+# research note whose key source changed in a way that touches it, or can't be
+# fetched (the flow's "Research", **The source check**). A small decision, or a
+# change that doesn't touch it, is noted and the session goes on; a high-stakes
+# one follows the charter's `open_decisions`. Either way, an "Owner chose" line on
+# the ticket, from an account with write access, that matches (**Choosing once**)
+# is the owner's answer (#586): under set-aside the session follows it instead of
+# stopping again; under decide-and-record it settles the choice, the build still
+# resting on the safer of the note and the live text.
+_RESEARCH_SMALL = "a small decision, or a change that doesn't touch the decision, is noted in the PR body and on the build ticket, and you go on"
+_OWNER_CHOSE = "\"Owner chose\" line on the ticket, from an account with write access, that matches, as the flow's **Choosing once** says"
+BRIEFING_RESEARCH_SAFEST = (
+    f"{_RESEARCH_SMALL}; for a high-stakes one, take the safest choice, or the owner's where there is an {_OWNER_CHOSE}, "
+    "building on the safer of the note and the live text, and record it in the PR body, quoting the changed paragraphs"
+)
+BRIEFING_RESEARCH_SET_ASIDE = (
+    f"{_RESEARCH_SMALL}; for a high-stakes one, follow an {_OWNER_CHOSE}, and record it in the PR body and on the "
+    "build ticket, quoting the changed paragraphs; without one, label the ticket needs-human, your line naming the note, the source's link and the "
+    "changed paragraphs' hashes from `workflow research check`, and stop"
+)
+
+
 # A ticket session's "Findings:" line (#382): it turns the rule for build reviewers on
 # (`build-ticket` §3, "Which rule"). It names no ticket: it reaches projects that have none.
 BRIEFING_FINDINGS = (
@@ -366,6 +393,41 @@ BRIEFING_FINDINGS = (
     "the end time comes first: the conductor then carries the ticket on to the next run, unless it is held for the "
     "owner (a security or safety problem in code already on the base branch, or a protected path)."
 )
+
+
+def _evidence_words(waived: list, profile: Profile) -> str:
+    """The briefing's evidence line in **Merging** (#663). Where the report is
+    required (`ci.none`, or a waiver used on the head: flow §4 item 2), it comes
+    before the merge, and `merge-check` counts it; otherwise it never holds the
+    merge. A check the charter waives is used only once it fails killed, so
+    there the run starts with `--all` and holds the merge only from then."""
+    cmd = f"python3 .claude/workflow/bin/workflow.py evidence --base-ref origin/{profile.base_branch}"
+    if profile.ci_none:
+        return (
+            "**The evidence comes first:** the profile says `ci.none`, so the report is the proof, and `merge-check` "
+            f"counts it (flow §4, item 2). Once the review is clean, run `{cmd} --all` and post its report on the PR "
+            "before the `merge-check` below."
+        )
+    after = (
+        "When it ends, post its report on the PR, naming the head it covers. If the PR has merged, or been left to "
+        "the owner, by then, your notes say \"Evidence for `<sha>` to come on #<PR>\" and you stay to post it (`build-ticket` "
+        "§6 step 5)."
+    )
+    if waived:
+        return (
+            f"**The evidence comes first only on a waiver used:** the charter waives {', '.join(waived)}, but only a "
+            "waiver used on the head (`merge-check`'s `waived` note: killed rather than failed) makes the report the "
+            "proof, which `merge-check` then counts (flow §4, item 2); until then CI is the gate and the evidence never "
+            f"holds the merge. Once the review is clean, start `{cmd} --all` as a tracked background task (never with "
+            "`&` inside a shell call), and go on without waiting for it: run `merge-check` and act on its answer below; "
+            "once it notes a waiver used, post the report before you merge, arm auto-merge or queue. " + after
+        )
+    return (
+        "**The evidence never holds the merge:** no check is waived, so CI is the gate and the report is recommended, "
+        f"not required (flow §4, item 2). Once the review is clean, start `{cmd}` as a tracked background task (never "
+        "with `&` inside a shell call), and go on without waiting for it: run `merge-check` and act on its answer "
+        "below. " + after
+    )
 
 
 def _stopping(under_rule: bool) -> str:

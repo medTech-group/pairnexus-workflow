@@ -72,6 +72,9 @@ Everything else takes the template's default, or what exploring found: the comma
   - otherwise `ruleset = false`, which is solo mode. That includes rulesets that can't be read from here, **Exit 2** (an input it refuses, usually a ruleset fetched as a summary: fetch each in full by its id again, once, and write `false` only if it still exits 2), any other failure, and a bypass list it can't see (only a ruleset's admins can): an unknown counts as unprotected.
 - **`experience`,** from the answer, in place of the template's `# experience = "new"`: `experience = "new"` (*new to building*) or `experience = "developer"`. When the question was skipped, leave the template's commented line as it is: left out, the level is unknown (worded as *new to building*).
 - **`code_writers` and `code_paths`,** from the answer, under `[guard]`: a plain `code_writers = "ticket"` (or `code_writers = "any"`) line on its own, in place of the template's `# code_writers = "ticket"` (the key at the start, nothing after the value: it is read from that line when the profile doesn't parse), and `code_paths = [...]` with the confirmed globs, in place of its `# code_paths = …` line. When the question was skipped, leave both commented lines as they are. Write these two lines last, after every other item of this step 3: from the moment the profile says `"ticket"`, a session the kit's guard watches writes no code. Then run `WF profile check` again.
+- **The architecture overview,** `docs/architecture/README.md`: the rules every architecture page shares. Set-up writes it from `$KIT/templates/architecture-overview.md` and adds `"docs/architecture/README.md"` to `project.rules`, after the project's own rule documents, so every session and reviewer reads it. When `project.rules` lists it already (an entry naming `docs/architecture/README.md`, a `#heading` after it and a leading `./` ignored), nothing is moved or written. Otherwise, in this order:
+  - **An existing `docs/architecture/README.md`** is the project's own: move it (`git mv`) to `docs/architecture/earlier-overview.md` first, only when `project.rules` doesn't list it yet. An existing `earlier-overview.md` is never overwritten: the moved file takes the next free name, `earlier-overview-2.md`, then `earlier-overview-3.md`, and so on. Other files in `docs/architecture/` stay as they are. The moved file is a page with no `Covers:` line, which every change reads until someone gives it one.
+  - Then write `docs/architecture/README.md` from the template as it is, and list it.
 - The run-only settings (`[areas]`, `[release]`, `run.ticket_environment`, `run.conductor_environment`, `run.permission_mode`, `run.environment_setup`) keep the template's defaults until "Set up unattended runs".
 - Run `WF profile check` with `CLAUDE_PROJECT_DIR` set to the project, and fix what it reports, except its two warnings that `run.ticket_environment` and `run.conductor_environment` are empty: those are expected until "Set up unattended runs" names them. Leave them, and don't ask for the names. Its warning that `guard.code_paths` is empty under `code_writers = "ticket"` stays only when the owner named no folders.
 - **Setup:** `commands.setup` installs the project's own dependencies from its files (`npm ci`, a virtualenv from `requirements.txt`), and `commands.setup_check` exits 0 once that has run (`test -d node_modules`, `test -x .venv/bin/python`). The kit runs setup at each session start when the check fails, since a cloud session starts from a fresh clone. Both empty when there is nothing to install. The environments' setup script (`run.environment_setup`) is left to "Set up unattended runs".
@@ -116,11 +119,13 @@ Everything else takes the template's default, or what exploring found: the comma
 **8. A "Workflow" section in `CLAUDE.md`.** It points at `.claude/workflow/flow.md` and the profile, says a session starts with the guided start (the `start` skill: "What are we working on?", or `/start`), says in a line that when the guard's hook times out and blocks a command, Claude says so and offers to split or simplify it, and replaces any older flow description. The project's own rules stay where they are.
 
 **9. Labels,** created through the API (`gh api repos/<repo>/labels -f name=… -f color=…`) unless they already exist:
-- `ready-for-agent`, `ready-for-human`, `needs-human`, `owner-task`, `needs-triage`, `needs-info`, `wontfix`, `spec`;
+- `ready-for-agent`, `ready-for-human`, `needs-human`, `owner-task`, `needs-triage`, `needs-info`, `wontfix`, `spec`, `research`;
 - `workflow:in-progress`, `workflow:run`, `workflow:stop`, `workflow:infra`, `workflow:carry-on`;
 - `wayfinder:map`, `wayfinder:research`, `wayfinder:prototype`, `wayfinder:grilling`, `wayfinder:task`.
 
 `ready-for-human` and `owner-task` both mean "a person does this". Readiness treats both as human blockers.
+
+`research` marks the issues that track research notes: a study's, a fact note's, and one a session files about a note (a claim found wrong, or a source that changed). It isn't `wayfinder:research`, a map's research decision. If the project already has a `research` label used for something else, say so and, with the owner's agreement, rename that one before creating the kit's: the kit reads every issue carrying it as research.
 
 **10. Issue templates:** copy `$KIT/templates/github/ISSUE_TEMPLATE/build-ticket.md` and `owner-task.md` to `.github/ISSUE_TEMPLATE/`, keeping any the project has.
 
@@ -136,6 +141,7 @@ Then commit, push the branch in a command of its own, never chained with the com
 
 Its body is short. It opens with **Merge this and start working**: once it merges, attended work starts (a session begins with the guided start, or `/start`). Then:
 - what it adds, in a few lines, the pull request template among them: that it was added, or what was added at the top of the existing one (the "In plain words" headings), or, for a folder of templates, that they were left for the headings to be added by hand;
+- the architecture overview, written and listed in `project.rules`, and, when the project had a `docs/architecture/README.md`, the name it was moved to (`earlier-overview.md`, or the next free name);
 - who writes code, as answered: only ticket sessions, with the code paths and, while no ticket environment exists, that nothing writes code until one does (in plugin mode instead, that code is written only in a session started on the owner's computer with `WORKFLOW_ROLE=ticket`); any session; or not answered yet, which "Choose who writes code" answers later;
 - whether the project starts in solo mode: with `ruleset = false`, one plain line that the kit's guard refuses changes straight to the base branch (by its real name) until it is protected, and why (no ruleset was read back, or the rulesets couldn't be read from here); with `ruleset = true`, that the base branch is protected already;
 - two optional next steps, each one request to Claude, none needed to start:
@@ -152,6 +158,7 @@ When the person says the pull request has merged (or you see it merged), first c
 
 - [ ] Project explored, the rulesets read back; only the attended questions asked
 - [ ] Profile written with `ruleset` and `experience`; `WF profile check` passes; `profile.md` points to the rules
+- [ ] The architecture overview written and listed in `project.rules`, an existing `docs/architecture/README.md` moved aside first
 - [ ] Kit vendored with its lock, or the plugin enabled, only one of the two; earlier flow retired or made an addendum
 - [ ] Who writes code asked (only ticket sessions recommended), `code_paths` proposed and confirmed, or the question skipped and nothing written
 - [ ] Matt Pocock's per-repo docs written

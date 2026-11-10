@@ -14,10 +14,17 @@ review threads come from, and `collaborators/<u>/permission`. The usual route
 is tried first; then threads come from the session route (`session_threads`)
 and permissions from the token's own (`token_permission`), each only as far
 as it can be shown: what can't be shown stays "couldn't read", never a guess.
+
+The same proxy refuses the next-page links `gh api --paginate` follows, which
+name the repository by number (`repositories/<id>/...`), so `--paginate` gets
+the first page and fails (#568). On that refusal alone, and only for a
+`repos/<owner>/<repo>/...` path, `api` reads the pages one at a time with
+`page=N` (`by_page`), until one comes back shorter than its page size.
 """
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from urllib.parse import quote
@@ -30,6 +37,12 @@ NOT_INSTALLED = "gh (the GitHub CLI) isn't installed here"
 AS_A_FILE = "so it couldn't be fetched: give --{name} as a file"
 PROXY_REFUSED = "not permitted through this proxy"  # a cloud session's proxy, refusing a route
 TIMED_OUT = f"gh api took longer than {TIMEOUT} seconds"
+# A cloud session's proxy refusing GitHub's next-page links (#568): "Numeric-ID
+# repository paths (repositories/{id}/...) are not supported through this
+# proxy. Use repos/{owner}/{repo}/... endpoints instead. (HTTP 403)".
+NUMERIC_REFUSED = re.compile(r"Numeric-ID repository paths \(repositories/[^)\s]*\) are not supported through this proxy")
+PER_PAGE = 100  # the page size `by_page` asks for when the path names none (GitHub's most)
+MAX_PAGES = 1000  # `by_page` stops past this many full pages, rather than read forever
 
 # A pull request's review threads come only from GraphQL, 100 to a page; gh's
 # --paginate follows pageInfo.endCursor through $endCursor.
@@ -98,15 +111,80 @@ def api(path: str, paginate: bool = False, fields: list[tuple[str, str]] | None 
     p = _run(["api", "--paginate", "--slurp", path, *extra])
     if p.returncode == 0:
         return _values(p.stdout)
+    if numeric_refused(p, path):
+        return by_page(path)
     if "slurp" not in (p.stderr + p.stdout).lower():
         raise _failed(p)
     p = _run(["api", "--paginate", path, *extra])
+    if numeric_refused(p, path):
+        return by_page(path)
     if p.returncode:
         raise _failed(p)
     try:
         return decode_values(p.stdout)  # the pages, one after another
     except CommentsError as e:
         raise GhError(f"gh api's output isn't JSON ({e})") from None
+
+
+def _on_repos(path: str) -> bool:
+    """A REST path under `repos/<owner>/<repo>/`, the route the proxy allows."""
+    parts = path.lstrip("/").split("?", 1)[0].split("/")
+    return len(parts) >= 3 and parts[0] == "repos" and all(parts[1:3])
+
+
+def numeric_refused(p: subprocess.CompletedProcess, path: str) -> bool:
+    """`--paginate` failed on the proxy's refusal of a next-page link, for a
+    path `by_page` can read instead. Any other failure stays a failure. Only
+    gh's error output counts, never the pages it printed before failing."""
+    return bool(p.returncode) and refuses_numeric(p.stderr or "", path)
+
+
+def refuses_numeric(stderr: str, path: str) -> bool:
+    """gh's error output (`stderr`, of a call that failed) is the proxy's
+    refusal of a next-page link, for a path `by_page` can read instead: for
+    a caller that runs gh itself (doctor's reads, #601)."""
+    return _on_repos(path) and bool(NUMERIC_REFUSED.search(stderr or ""))
+
+
+def _page_size(page) -> int | None:
+    """How many items a page holds: a list's length, or an object's one list
+    (check runs' `check_runs`, a status's `statuses`); None for anything
+    else, a page that is all there is."""
+    if isinstance(page, list):
+        return len(page)
+    if isinstance(page, dict):
+        lists = [v for v in page.values() if isinstance(v, list)]
+        if len(lists) == 1:
+            return len(lists[0])
+    return None
+
+
+def by_page(path: str, read=None) -> list:
+    """Every page of a `repos/<owner>/<repo>/...` path, read one at a time
+    with `page=N` (#568), as `--paginate --slurp` gives them: a list of
+    pages. The path's own query is kept, its `per_page` too (100 without
+    one); the read stops at the first page shorter than that. `read` reads
+    one page's path (by default `api`, without paging): a caller that runs
+    gh itself, within its own time limits, passes its own (doctor's, #601),
+    which raises to stop the read."""
+    read = read or api
+    base, _, query = path.partition("?")
+    kept, size = [], None
+    for kv in query.split("&") if query else []:
+        key, _, value = kv.partition("=")
+        if key == "per_page":
+            size = int(value) if value.isdigit() and 0 < int(value) <= PER_PAGE else None
+        elif key != "page":
+            kept.append(kv)
+    size = size or PER_PAGE
+    out = []
+    for n in range(1, MAX_PAGES + 1):
+        page = read(f"{base}?{'&'.join([*kept, f'per_page={size}', f'page={n}'])}")
+        out.append(page)
+        got = _page_size(page)
+        if got is None or got < size:
+            return out
+    raise GhError(f"gh api {base} has more than {MAX_PAGES} pages of {size}: give it as a file")
 
 
 def _items(v) -> list:
@@ -375,6 +453,18 @@ def merge_inputs(repo: str, number: int, have: dict, names, asker: str | None = 
     get("permissions", permissions)
     get("compare", lambda: api(f"{r}/compare/{quote(need('base branch', base), safe='/')}...{need('head commit', head)}"))
     return out
+
+
+def recorded(repo: str, base: str, sha: str) -> tuple:
+    """`merge-check`'s `recorded` input (#509): the pull request's own changes
+    at a research record's commit, GitHub's comparison of the base branch with
+    it (its `files`, each with its patch), as `(value, None)`, or `(None, why)`."""
+    if not available():
+        return None, f"{NOT_INSTALLED}, {AS_A_FILE.format(name=merge.RECORDED)}"
+    try:
+        return api(f"repos/{repo}/compare/{quote(base, safe='/')}...{sha}"), None
+    except GhError as e:
+        return None, f"{e}, {AS_A_FILE.format(name=merge.RECORDED)}"
 
 
 # `workflow preview --fetch <n>`'s inputs, by their flags.

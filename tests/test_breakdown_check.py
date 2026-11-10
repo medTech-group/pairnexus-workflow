@@ -461,6 +461,50 @@ def test_a_held_back_ticket_is_waiting_on_a_person_not_ready_or_to_sort(repo):
     assert all(i.number != 6 for i in st.to_triage + st.ready)
 
 
+def test_a_held_back_ticket_an_open_owner_task_holds_stays_waiting(repo):
+    # #577: its `## Blocked by` names an open owner task, but its `needs-info` already
+    # waits on a person, so status lists it as waiting, not held.
+    from workflow import status
+
+    issues = [_issue(6, "Ticket six", ["needs-info"], _held()), _issue(4, "Ticket four", ["owner-task"])]
+    st = status.snapshot(repo, True, issues, [], repo="acme/demo", areas=["start", "docs"])
+    assert [i.number for i in st.waiting] == [4, 6] and st.held == []
+    assert all(i.number != 6 for i in st.to_triage + st.ready)
+
+
+def test_carry_on_reads_the_bodies_of_held_tickets_too():
+    # Status lists a held-back ticket an open owner task holds as held (#514), so "Carry on" looks there too.
+    intro = _flatten(_between(_start(), "**Carrying on.**", "\n|"))
+    s = _sentence(intro, "`## Breakdown check`")
+    assert "lists as waiting, held or to sort" in s, s
+
+
+def _held_items() -> str:
+    rule = [l for l in _start().splitlines() if l.startswith("**Held items.**")]
+    assert len(rule) == 1, rule
+    return rule[0]
+
+
+def test_a_held_back_ticket_an_owner_task_holds_is_still_settled():
+    rule = _held_items()
+    # Let through: settling it, planning that doesn't rest on the task's answer.
+    s = _sentence(rule, "held back by the breakdown check")
+    assert "settle it" in s and "doesn't rest on the task's answer" in s, s
+    # It stays held, and isn't built, until the task closes.
+    assert "It stays held, and isn't built, until the task closes" in rule
+    # Still refused: offering or starting a held item any other way.
+    assert '"Carry on", a ready ticket or a spec\'s next step) or start it while the task is open' in rule
+    row = [l for l in _start().splitlines() if l.startswith("| **Carry on: <the thing>**")]
+    assert len(row) == 1 and "never a held item but to settle a held-back ticket" in row[0], row
+
+
+def test_step_3_says_a_held_back_ticket_an_owner_task_holds_is_listed_as_waiting():
+    # #577: waiting on a person even while an open owner task holds it, never as held.
+    s = _sentence(_part("left open"), "Label them `needs-info`")
+    assert "waiting on a person" in s and "even while" in s and "open owner task" in s, s
+    assert "as held" not in s, s
+
+
 def test_the_section_s_issues_are_never_read_as_blockers():
     from workflow.issues import blockers_of
 

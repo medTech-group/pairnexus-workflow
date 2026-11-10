@@ -13,7 +13,7 @@ import pytest
 import fake_gh
 from changelog_notes import since_0110
 from conftest import KIT
-from test_doctor import CLI, _bin, _fake, _gone, _lines, _prof, _project, _report
+from test_doctor import CLI, _bin, _ctrl_c, _fake, _gone, _lines, _prof, _project, _report
 from workflow import cli, profile, vendor
 
 # What `status --json` gave before #62; the report only adds to it.
@@ -24,6 +24,8 @@ ADDED = {"local_gap", "local_gaps", "profile_error"}
 CODE_WRITERS = {"code_writers", "writes_code"}
 # Added since by #376: the carry-on tickets.
 CARRY_ON = {"carry_on"}
+# Added since by #514: research under way, and items held by an open owner task.
+RESEARCH_HELD = {"research", "held"}
 
 
 def _trap(bin_dir):
@@ -250,7 +252,7 @@ def test_with_fetch_only_issues_and_pull_requests_are_read(tmp_path):
 
 def test_the_json_only_adds_the_local_gap_fields(tmp_path):
     root = _project(tmp_path)
-    assert set(_json(tmp_path, root)) == FIELDS | ADDED | CODE_WRITERS | CARRY_ON
+    assert set(_json(tmp_path, root)) == FIELDS | ADDED | CODE_WRITERS | CARRY_ON | RESEARCH_HELD
 
 
 def test_the_text_only_adds_one_line(tmp_path):
@@ -315,22 +317,13 @@ def test_status_skips_profile_checks_warnings(tmp_path, monkeypatch, capsys):
 
 def test_ctrl_c_stops_status_quietly_with_nothing_left_running(tmp_path):
     import shutil
-    import signal
-    import time
 
     root = _project(tmp_path)
     path = _bin(tmp_path, python=None, gh=False)
     marker = tmp_path / "child.pid"
     _fake(path, "python3", f"{shutil.which('sleep')} 30 & echo $! > {marker}; wait")
-    # SIGINT as a terminal sends it, even where pytest was started ignoring it.
-    p = subprocess.Popen([sys.executable, "-B", str(CLI), "status"], cwd=root,
-                         env=_env(tmp_path, root, path), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                         preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
-    for _ in range(100):
-        if marker.exists() and marker.read_text().strip():
-            break
-        time.sleep(0.1)
-    p.send_signal(signal.SIGINT)
-    out, err = p.communicate(timeout=20)
-    assert p.returncode == 130 and "workflow status: stopped" in err and "Traceback" not in err
+    # SIGINT as a terminal sends it, even where pytest was started ignoring it,
+    # and only once the fake has started, however long that takes (#684).
+    code, err = _ctrl_c(CLI, ["status"], root, _env(tmp_path, root, path), marker)
+    assert code == 130 and "workflow status: stopped" in err and "Traceback" not in err
     assert _gone(int(marker.read_text()))
