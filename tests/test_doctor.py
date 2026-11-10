@@ -1144,15 +1144,16 @@ def _gone(pid, seconds=5.0):
 
 
 # Runs the CLI's entry point as `python3 <script> <args>` does, with doctor's
-# RUN_TIMEOUT set first: the seam a Ctrl-C test controls across the process.
+# RUN_TIMEOUT, the profile's GIT_TIMEOUT and status's OWN_FILES_TIMEOUT set
+# first: the seams a Ctrl-C test controls across the process.
 _LAUNCH = """\
 import runpy, sys
 from pathlib import Path
 script, timeout = sys.argv[1], float(sys.argv[2])
 sys.argv = [script, *sys.argv[3:]]
 sys.path.insert(0, str(Path(script).resolve().parent))
-from workflow import doctor
-doctor.RUN_TIMEOUT = timeout
+from workflow import doctor, profile, status
+doctor.RUN_TIMEOUT = profile.GIT_TIMEOUT = status.OWN_FILES_TIMEOUT = timeout
 runpy.run_path(script, run_name="__main__")
 """
 
@@ -1166,7 +1167,8 @@ def _ctrl_c(script, args, root, env, marker, wait=60.0, run_timeout=600.0):
     background) passed that on, and Python then never raises
     KeyboardInterrupt, so the child gets SIGINT's default back, as a terminal
     gives it; and doctor's own 10-second timeout could end the run by itself
-    before a slow fake had started, so the run's timeout is set far past the
+    before a slow fake had started, so the run's timeouts (doctor's, and
+    status's and the profile's `git` calls', #689) are set far past the
     wait. The pid must be there before the signal: a fake that never wrote it
     fails here, saying so, rather than being sent a Ctrl-C blind."""
     import signal

@@ -347,16 +347,18 @@ def _git_project(tmp_path):
     return root
 
 
-def _counting_git(bin_dir, tmp_path, hang_at=None):
+def _counting_git(bin_dir, tmp_path, hang_at=None, delay=0):
     """A `git` on the PATH that logs each call's arguments and runs the real
-    one, except its `hang_at`-th call, which starts a `sleep`, writes its pid
-    to the marker and waits. Give the log and the marker."""
+    one, except its `hang_at`-th call, which first sleeps `delay` seconds (a
+    busy machine), then starts a `sleep`, writes its pid to the marker and
+    waits. Give the log and the marker."""
     import shutil
 
     log, count, marker = tmp_path / "git.log", tmp_path / "git.count", tmp_path / "child.pid"
     for f in (log, count, marker):
         f.unlink(missing_ok=True)
-    hang = (f'if [ "$n" = {hang_at} ]; then {shutil.which("sleep")} 30 & echo $! > {marker}; wait; exit 1; fi\n'
+    slow = f'{shutil.which("sleep")} {delay}; ' if delay else ""
+    hang = (f'if [ "$n" = {hang_at} ]; then {slow}{shutil.which("sleep")} 30 & echo $! > {marker}; wait; exit 1; fi\n'
             if hang_at else "")
     # Only the fakes are on the PATH: `cat` and the real `git` by their full paths.
     _fake(bin_dir, "git", f'n=$({shutil.which("cat")} {count} 2>/dev/null || echo 0); n=$((n+1)); echo $n > {count}\n'
@@ -364,8 +366,7 @@ def _counting_git(bin_dir, tmp_path, hang_at=None):
     return log, marker
 
 
-@pytest.mark.parametrize("call", STATUS_GIT)
-def test_ctrl_c_during_status_own_git_calls_stops_quietly_with_nothing_left_running(tmp_path, call):
+def _ctrl_c_at_status_git_call(tmp_path, call, delay=0):
     root = _git_project(tmp_path)
     path = _bin(tmp_path, gh=False)
     log, _ = _counting_git(path, tmp_path)
@@ -375,10 +376,23 @@ def test_ctrl_c_during_status_own_git_calls_stops_quietly_with_nothing_left_runn
     assert call in calls, calls
     # Status's own call comes after doctor's: the last one with these arguments.
     at = len(calls) - calls[::-1].index(call)
-    _, marker = _counting_git(path, tmp_path, hang_at=at)
+    _, marker = _counting_git(path, tmp_path, hang_at=at, delay=delay)
     code, err = _ctrl_c(CLI, ["status"], root, _env(tmp_path, root, path), marker)
     assert code == 130 and "workflow status: stopped" in err and "Traceback" not in err, err
     assert _gone(int(marker.read_text())), "what status's git started is still running"
+
+
+@pytest.mark.parametrize("call", STATUS_GIT)
+def test_ctrl_c_during_status_own_git_calls_stops_quietly_with_nothing_left_running(tmp_path, call):
+    _ctrl_c_at_status_git_call(tmp_path, call)
+
+
+# A slow `git` (a busy machine) at each of status's own timeouts: the test's
+# launcher sets them far past its wait, as it does doctor's, so the Ctrl-C
+# still finds the command running.
+@pytest.mark.parametrize("call, delay", [(STATUS_GIT[0], 21), (STATUS_GIT[1], 6)])
+def test_a_slow_status_git_call_is_still_running_when_the_ctrl_c_comes(tmp_path, call, delay):
+    _ctrl_c_at_status_git_call(tmp_path, call, delay)
 
 
 def test_the_changelog_notes_status_own_git_calls_ctrl_c():

@@ -669,10 +669,13 @@ class CodeRule:
         return roles_mod.env_role() == "ticket" and roles_mod.unrecognised() is None
 
 
-def _git(root: Path, *args: str, timeout: int = 5) -> str | None:
+GIT_TIMEOUT = 5  # seconds, for `_git` unless a call gives its own: a seam the Ctrl-C tests raise
+
+
+def _git(root: Path, *args: str, timeout: float | None = None) -> str | None:
     """What `git <args>` printed when it exited 0, else None. Its process
     group is killed on a timeout or a Ctrl-C (#689)."""
-    return proc_mod.output(["git", *args], cwd=root, timeout=timeout)
+    return proc_mod.output(["git", *args], cwd=root, timeout=GIT_TIMEOUT if timeout is None else timeout)
 
 
 def _base_text(root: Path, base: str) -> tuple[str | None, str | None]:

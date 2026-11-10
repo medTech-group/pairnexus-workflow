@@ -91,9 +91,12 @@ class Status:
         return d
 
 
+OWN_FILES_TIMEOUT = 20  # seconds, for `git ls-files`: a seam the Ctrl-C tests raise
+
+
 def own_files(root: Path) -> int:
     """Tracked files that are the project's own, not set-up's or boilerplate."""
-    tracked = proc_mod.output(["git", "ls-files", "-z"], cwd=root, timeout=20)
+    tracked = proc_mod.output(["git", "ls-files", "-z"], cwd=root, timeout=OWN_FILES_TIMEOUT)
     if tracked is None:
         return -1
     n = 0
