@@ -315,7 +315,15 @@ def test_the_briefing_says_to_stay_for_the_report(tmp_path, waived):
     ) in first
 
 
-def test_the_owner_mode_briefing_says_ready_on_the_tracking_issue(tmp_path):
+@pytest.mark.parametrize(
+    "bullet, words",
+    [
+        ("- **Without a merge queue**", "`owner` says it's ready on the PR and on #11, and leaves it."),
+        # with the queue on, the bullet above is skipped: this one must say it too
+        ("- **The merge queue:**", "`owner` mode queues nothing: on `ready` it says it's ready on the PR and on #11, and leaves it."),
+    ],
+)
+def test_the_owner_mode_briefing_says_ready_on_the_tracking_issue(tmp_path, bullet, words):
     # The conductor's hold reads only the session's notes on the tracking issue:
     # "ready" on the PR alone leaves it waiting 180 minutes for a note that never comes.
     (tmp_path / ".claude/workflow").mkdir(parents=True)
@@ -335,8 +343,8 @@ def test_the_owner_mode_briefing_says_ready_on_the_tracking_issue(tmp_path):
     )
     assert p.returncode == 0, p.stderr
     merging = _section((tmp_path / "briefing.md").read_text(), "### Merging", "### Rules")
-    without = next(l for l in merging.splitlines() if l.startswith("- **Without a merge queue**"))
-    assert "`owner` says it's ready on the PR and on #11, and leaves it." in without
+    line = next(l for l in merging.splitlines() if l.startswith(bullet))
+    assert words in line
 
 
 def test_the_ci_none_briefing_has_no_line_to_stay():
