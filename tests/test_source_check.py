@@ -347,6 +347,46 @@ def test_the_briefing_under_set_aside_stops_at_needs_human_with_the_hashes(tmp_p
     assert "needs-human" in line and "hashes" in line
 
 
+def test_the_briefing_under_set_aside_follows_a_matching_owner_chose_line_instead_of_stopping_again(tmp_path):
+    # #586: after the owner answered a stopped ticket, the conductor's "Owner chose" line is on it, and
+    # a later session that sees the same paragraphs follows it (the flow's **Choosing once**) rather
+    # than stopping at needs-human again; only without a matching line does it stop.
+    line = _research_line(_brief(tmp_path, "set-aside"))
+    high = line.split("for a high-stakes one,", 1)[1]
+    assert '"Owner chose" line on the ticket' in high and "matches" in high
+    assert "Choosing once" in high, "it points to the flow's rule for a matching line"
+    follow, stop = high.index("follow "), high.index("needs-human")
+    assert follow < stop and "without one" in high[follow:stop], "it stops only without a matching line"
+    followed = high[follow:high.index("without one")]
+    assert "record it in the PR body and on the build ticket" in followed, "the flow's **Its lines**"
+    assert "quoting the changed paragraphs" in followed
+    assert "and stop" in high[stop:]
+
+
+def test_the_briefing_under_decide_and_record_lets_a_matching_owner_chose_line_settle_the_choice(tmp_path):
+    # #586: the same exception in the decide-and-record clause: a matching line settles the choice,
+    # and the build still rests on the safer of the note and the live text (**Choosing once**).
+    line = _research_line(_brief(tmp_path, "decide-and-record"))
+    high = line.split("for a high-stakes one,", 1)[1]
+    assert '"Owner chose" line on the ticket' in high and "matches" in high
+    assert "Choosing once" in high
+    owner = high.index("Owner chose")
+    assert owner < high.index("safer of the note and the live text"), "the owner's choice also rests on the safer of the two"
+    assert "record it in the PR body" in high, "recorded either way"
+
+
+@pytest.mark.parametrize("open_decisions", ["decide-and-record", "set-aside"])
+def test_the_briefing_s_owner_s_answer(tmp_path, open_decisions):
+    # The owner's answer in the briefing reads as **Choosing once** and build-ticket do.
+    high = _research_line(_brief(tmp_path, open_decisions)).split("for a high-stakes one,", 1)[1]
+    owner = high[high.index('"Owner chose" line on the ticket'):high.index("Choosing once")]
+    assert "from an account with write access" in owner and "matches" in owner
+
+
+def test_the_changelog_notes_the_owner_chose_exception_in_the_briefing():
+    assert "(#586" in since_0110()
+
+
 @pytest.mark.parametrize("open_decisions", ["decide-and-record", "set-aside"])
 def test_the_briefing_notes_a_small_decision_in_the_pr_body_and_on_the_build_ticket(tmp_path, open_decisions):
     # The flow's **Its lines**: the can't-fetch line and the routing line go in the pull request
