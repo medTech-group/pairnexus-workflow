@@ -855,6 +855,32 @@ def _code_warnings(profile: Profile) -> list[str]:
     return w
 
 
+def _architecture_warnings(profile: Profile) -> list[str]:
+    """`docs/architecture/` must stay writable by the sessions that write its
+    lines (#611): never a protected path, and never code only ticket sessions
+    may write, since a spec session writes architecture lines too."""
+    from .architecture import DIR, OVERVIEW
+    from .guard import contains_protected, matches as path_matches
+
+    def hits(globs: list[str]) -> list[str]:
+        return [g for g in globs if contains_protected(DIR, [g]) or path_matches(OVERVIEW, [g])]
+
+    w: list[str] = []
+    protected = hits(profile.protected_paths)
+    if protected:
+        w.append(
+            f"guard.protected_paths matches {DIR}/ ({', '.join(protected)}): sessions can't write the architecture's lines there; "
+            "take it out of the protected paths"
+        )
+    code = hits(profile.code_paths) if profile.code_writers == "ticket" else []
+    if code:
+        w.append(
+            f'guard.code_paths matches {DIR}/ ({", ".join(code)}) under code_writers = "ticket": only ticket sessions could '
+            "write the architecture's lines, and a spec session writes them too; narrow the code paths"
+        )
+    return w
+
+
 def check(profile: Profile) -> list[str]:
     """Warnings that don't make the profile invalid: references to files that
     aren't there, globs that match nothing, and settings an unattended run needs."""
@@ -906,6 +932,7 @@ def check(profile: Profile) -> list[str]:
         if must not in profile.protected_paths:
             w.append(f"guard.protected_paths leaves out {must!r}: a list there replaces the defaults, so ticket sessions could change it")
     w.extend(_code_warnings(profile))
+    w.extend(_architecture_warnings(profile))
     if not profile.ticket_environment:
         w.append("run.ticket_environment is empty: name the claude.ai environment ticket sessions run in")
     if not profile.conductor_environment:

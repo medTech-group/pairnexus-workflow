@@ -9,9 +9,10 @@ depend on it), puts the most serious line first and groups the rest.
 Doctor never changes anything (#27): it reads files and runs `python3`,
 `claude --version`, `gh api` (GETs only, when no file is given: for the
 GitHub lines, the checks that ran on the base branch, the open pull requests,
-whether a run has been made, and the merge queue's inputs) and `git rev-parse`
+whether a run has been made, and the merge queue's inputs), `git rev-parse`
 and `git show` (the workflow files as they are on `origin/<base>`, #246, and
-the base's profile, with `git check-ref-format`, for who writes code, #344),
+the base's profile, with `git check-ref-format`, for who writes code, #344)
+and `git ls-files` (the tracked files the architecture lines walk, #615),
 nothing else. It reads files only through
 `_read_text` (and `_read_value`, `_read_json` on it), `_file` and
 `_hash_file`, which never raise and never wait on a pipe (and the profile
@@ -44,6 +45,7 @@ import difflib
 import hashlib
 import json
 import os
+import posixpath
 import re
 import shutil
 import signal
@@ -59,6 +61,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import NamedTuple
 
+from . import architecture as architecture_mod
 from . import estimate as estimate_mod
 from . import issues as issues_mod
 from . import posts as posts_mod
@@ -67,6 +70,7 @@ from . import protection as protection_mod
 from . import updates as updates_mod
 from . import vendor as vendor_mod
 from .adopt import CODEOWNERS_PATHS
+from .guard import matches as path_matches
 from .profile import EXPERIENCE_ENV, EXPERIENCE_FILE, Experience, Profile
 
 # In the order a report shows them when nothing is wrong.
@@ -78,7 +82,8 @@ LABELS = {"gap": "gap", "cant_check": "can't check", "note": "note", "fine": "fi
 # The upgrades a line may offer, by the names #47 and #48 use (the glossary's
 # names: "Protect `main`" is the upgrade's name whatever the base branch).
 OFFERS = {"protect_main": "Protect `main`", "restore_protection": "Restore protection", "set_up_unattended_runs": "Set up unattended runs",
-          "require_checks": "Require these checks", "add_try_it_links": "Add try-it links", "use_merge_queue": "Use a merge queue"}
+          "require_checks": "Require these checks", "add_try_it_links": "Add try-it links", "use_merge_queue": "Use a merge queue",
+          "write_architecture_overview": "Write the architecture overview"}
 # The upgrade-setup step that answers `guard.code_writers` (#338), named by a fix, not offered.
 CHOOSE_WRITERS = "Choose who writes code"
 
@@ -1023,6 +1028,176 @@ def check_code_writers(i: Inputs) -> list[Line]:
         f"Ask Claude to \"{OFFERS['set_up_unattended_runs']}\": it walks you through making that environment. Or make it by hand (docs/enforcement.md §2).",
         f"upgrade-setup's \"{OFFERS['set_up_unattended_runs']}\", or by hand (docs/enforcement.md §2), then set run.ticket_environment.",
     ), offer="set_up_unattended_runs")]
+
+
+# ---------- the architecture (#615) ----------
+#
+# The architecture documents in `docs/architecture/` (spec #611): the overview
+# (`README.md`) and the pages beside it, read through `architecture.pages`.
+# Every line is a note, with a `fine` line when the folder exists and nothing
+# is wrong; no folder, no lines (a vendored project gets its overview with an
+# update of the kit). Under `gaps_only` (`workflow status`) they give nothing,
+# so the walk never runs there.
+
+ARCH_DIR = architecture_mod.DIR
+OVERVIEW = architecture_mod.OVERVIEW
+ARCH_LISTED = 10  # the files or pages a line lists; the rest are counted
+WRITE_OVERVIEW = OFFERS["write_architecture_overview"]
+
+
+def _rule_path(rule: str) -> str:
+    """A `project.rules` entry's file, its `#heading` and a leading `./` left out."""
+    part = rule.partition("#")[0].strip()
+    part = posixpath.normpath(part) if part else ""
+    return "" if part == "." else part
+
+
+def _listed(paths: list[str]) -> str:
+    shown = ", ".join(paths[:ARCH_LISTED])
+    return shown + (f" and {len(paths) - ARCH_LISTED} more" if len(paths) > ARCH_LISTED else "")
+
+
+def _s(n: int, one: str, many: str) -> str:
+    return one if n == 1 else many
+
+
+def _arch_pages(i: Inputs) -> list[architecture_mod.Page]:
+    """The pages, the overview left out: it is never a page, though
+    `architecture.pages` still lists it (#631)."""
+    return [pg for pg in architecture_mod.pages(i.root) if pg.file != OVERVIEW]
+
+
+def _tracked(i: Inputs) -> tuple[list[str] | None, str]:
+    """The checkout's tracked files, from its root, and why not when they
+    can't be listed."""
+    ran = _run(i, ["git", "-c", "core.quotePath=false", "ls-files", "-z"], timeout=20)
+    if ran.state == "ok" and ran.out is not None:
+        return [f for f in ran.out.split("\0") if f], ""
+    why = {"missing": "git isn't on the PATH", "timeout": "git took too long",
+           "unreadable": "a tracked file's name isn't UTF-8"}.get(ran.state) or _shown(ran.err or "git failed", 120)
+    return None, why
+
+
+def _code(p: Profile, tracked: list[str]) -> list[str]:
+    """The tracked files that are code (#611, answer 19): `guard.code_paths`
+    when set, else every file outside `docs/`; either way never a protected
+    path (a path both code and protected counts as protected), a file at the
+    root, a `project.rules` document or a test path."""
+    rules = {_rule_path(r) for r in p.rules}
+    out = []
+    for f in tracked:
+        if "/" not in f or f in rules:
+            continue
+        if p.code_paths:
+            if not path_matches(f, p.code_paths):
+                continue
+        elif f.startswith("docs/"):
+            continue
+        if path_matches(f, p.protected_paths) or path_matches(f, p.test_paths):
+            continue
+        out.append(f)
+    return out
+
+
+@_check("The kit", "kit.architecture.missing")
+def check_architecture_overview(i: Inputs) -> list[Line]:
+    """Plugin mode only: a set-up project whose `project.rules` doesn't list
+    the overview, which no update of the kit brings in there. A vendored
+    project gets it with its update; a project listing it gets no line."""
+    if i.gaps_only or i.vendored or i.profile is None:
+        return []
+    if any(_rule_path(r) == OVERVIEW for r in i.profile.rules):
+        return []
+    return [Line("The kit", "kit.architecture.missing", "note", Words(
+        f"This project has no architecture overview yet: the kit's profile doesn't list `{OVERVIEW}` among the project's rules. "
+        "The overview holds the rules every part of the code shares, and every session and reviewer reads it.",
+        f"project.rules doesn't list {OVERVIEW} (plugin mode, where no kit update brings it in).",
+    ), Words(
+        f"Ask Claude to \"{WRITE_OVERVIEW}\": it writes the overview and lists it in the kit's profile.",
+        f"upgrade-setup's \"{WRITE_OVERVIEW}\" writes {OVERVIEW} from the kit's template and adds it to project.rules.",
+    ), offer="write_architecture_overview")]
+
+
+@_check("The kit", "kit.architecture.uncovered")
+def check_architecture(i: Inputs) -> list[Line]:
+    """With a `docs/architecture/` folder: code no page's `Covers:` matches
+    (`.uncovered`), pages whose `Covers:` matches no tracked file
+    (`.unmatched`) and pages with no `Covers:` line (`.no_covers`), each a
+    note, or fine. The overview is never a page: never matched or noted."""
+    if i.gaps_only or not (i.root / ARCH_DIR).is_dir():
+        return []
+    g = "The kit"
+    pages = _arch_pages(i)
+    tracked, why = _tracked(i)
+    lines: list[Line] = []
+    if tracked is None:
+        unlisted = Words("Run this check again from the project's git checkout, with git installed.",
+                         "Run doctor in the git checkout, with git on the PATH.")
+        lines.append(Line(g, "kit.architecture.uncovered", "cant_check", Words(
+            f"Can't tell which code no architecture page describes: the project's files couldn't be listed ({why}).",
+            f"Uncovered code unchecked: `git ls-files` failed ({why}).",
+        ), unlisted))
+        lines.append(Line(g, "kit.architecture.unmatched", "cant_check", Words(
+            f"Can't tell whether each architecture page's `Covers:` lines match files in the project: its files couldn't be listed ({why}).",
+            f"Pages' `Covers:` unchecked: `git ls-files` failed ({why}).",
+        ), unlisted))
+    else:
+        lines.append(_uncovered(i, pages, tracked))
+        unmatched = [pg.file for pg in pages if pg.covers and not any(path_matches(f, pg.covers) for f in tracked)]
+        n = len(unmatched)
+        lines.append(Line(g, "kit.architecture.unmatched", "note", Words(
+            f"{n} architecture {_s(n, 'page describes', 'pages describe')} no file in the project: {_listed(unmatched)}. "
+            f"{_s(n, 'Its', 'Their')} `Covers:` lines match nothing that's tracked, so no change ever reads {_s(n, 'it', 'them')}.",
+            f"{n} {_s(n, 'page', 'pages')} whose `Covers:` matches no tracked file: {_listed(unmatched)}.",
+        ), Words(
+            f"Ask Claude to correct the `Covers:` lines (the code may have moved), or to remove the {_s(n, 'page', 'pages')} if the code is gone.",
+            "Fix the `Covers:` globs (moved or deleted code), or delete the page.",
+        )) if unmatched else Line(g, "kit.architecture.unmatched", "fine", Words(
+            "Every architecture page's `Covers:` lines match files in the project.",
+            "Every page's `Covers:` matches a tracked file.",
+        )))
+    bare = [pg.file + (f" (can't be read: {pg.unreadable})" if pg.unreadable else "") for pg in pages if not pg.covers]
+    n = len(bare)
+    lines.append(Line(g, "kit.architecture.no_covers", "note", Words(
+        f"{n} architecture {_s(n, 'page has', 'pages have')} no `Covers:` line yet, so every change reads {_s(n, 'it', 'them')}: {_listed(bare)}.",
+        f"{n} {_s(n, 'page', 'pages')} with no `Covers:` line (\"covers nothing yet\", given to every change): {_listed(bare)}.",
+    ), Words(
+        f"Ask Claude to add a `Covers:` line at the top of {_s(n, 'it', 'each')}, naming the files {_s(n, 'it describes', 'each describes')}.",
+        "Add `Covers: <glob>` lines at the top of each.",
+    )) if bare else Line(g, "kit.architecture.no_covers", "fine", Words(
+        "Every architecture page has a `Covers:` line.",
+        "Every page has a `Covers:` line.",
+    )))
+    return lines
+
+
+def _uncovered(i: Inputs, pages: list[architecture_mod.Page], tracked: list[str]) -> Line:
+    g, id_ = "The kit", "kit.architecture.uncovered"
+    if i.profile is None:
+        return Line(g, id_, "cant_check", Words(
+            "Can't tell which code no architecture page describes until the kit's profile can be read: it says which files are code.",
+            "Uncovered code unchecked: no readable profile (guard.code_paths, guard.protected_paths).",
+        ), PROFILE_FIRST if i.profile_error else SET_UP_FIRST)
+    covers = [c for pg in pages for c in pg.covers]
+    code = _code(i.profile, tracked)
+    uncovered = [f for f in code if not path_matches(f, covers)]
+    what = ("guard.code_paths" if i.profile.code_paths else "tracked files outside docs/") + \
+        ", less protected and test paths, root-level files and project.rules"
+    if not uncovered:
+        return Line(g, id_, "fine", Words(
+            "Every code file in the project is described by an architecture page.",
+            f"Every code file ({what}) matches a page's `Covers:`.",
+        ))
+    n = len(uncovered)
+    return Line(g, id_, "note", Words(
+        f"{n} code {_s(n, 'file is', 'files are')} described by no architecture page yet (no page's `Covers:` line matches "
+        f"{_s(n, 'it', 'them')}): {_listed(uncovered)}.",
+        f"{n} code {_s(n, 'file', 'files')} ({what}) no page's `Covers:` matches: {_listed(uncovered)}.",
+    ), Words(
+        "That's expected for code written before the architecture: the architecture pass writes its pages. To describe one now, "
+        f"ask Claude to add a `Covers:` line for it to the page it belongs to, in `{ARCH_DIR}/`.",
+        f"Leave it for the architecture pass, or add `Covers:` globs to the pages in {ARCH_DIR}/.",
+    ))
 
 
 # ---------- GitHub ----------
@@ -3440,14 +3615,17 @@ def _previews_block(i: Inputs, page: str, configs: list[str]) -> Line:
 # Every check, in the order its lines show when they are equally serious: the
 # profile first, since setting the kit up comes before anything it then checks.
 CHECKS = [check_python, check_claude_code, check_profile, check_install, check_vendor, check_experience, check_ruleset,
-          check_code_writers, check_protection, check_required_checks, check_ruleset_rules, check_merge_settings,
+          check_code_writers, check_architecture_overview, check_architecture, check_protection, check_required_checks,
+          check_ruleset_rules, check_merge_settings,
           check_codeowners, check_environments, check_environment_contents, check_previews]
 # The checks that read only this computer and the checkout: no `gh`, no
 # network, and nothing a session hands in. `workflow status` runs these (#62),
 # so the guided start can tell, with no network call, whether to offer "check
 # the set-up". Claude Code's version and CODEOWNERS are local too, but #34
-# doesn't name them for `status`.
-LOCAL_CHECKS = [check_python, check_profile, check_install, check_vendor, check_ruleset]
+# doesn't name them for `status`. The architecture checks read only the
+# checkout too (#611), and give nothing under `gaps_only`, so `status` never
+# walks the tree for them.
+LOCAL_CHECKS = [check_python, check_profile, check_install, check_vendor, check_ruleset, check_architecture_overview, check_architecture]
 
 
 # ---------- the report ----------
