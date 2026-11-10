@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-**The planning review reads the architecture pages a planning change could contradict** (#645, part of spec #611, split out of #616). A spec session's pull request can add an architecture page or line, but `workflow index reads` finds pages only by the files a change touches, and a planning pull request touches only files under `docs/`, so the page a new line contradicted was never read.
+**The planning review reads the architecture pages a planning change could contradict** (#645, part of spec #611, split out of #616). A spec session's pull request can add an architecture page or line, but `workflow index reads` finds pages only by the files a change touches, and a planning pull request touches only its ADRs, glossary and architecture pages, files no page's `Covers:` names, so the page a new line contradicted was never read.
 
 - **The planning review's inputs** (`review-panel` §8) gain `pages.md` and, for a pull request, the pages `reads` prints, copied as §1 copies them.
 - **Its Correctness reviewer** looks for contradictions with the architecture documents given too, and reads in the repo, for each page the pull request adds or changes, every page whose `Covers:` could match a file that page's could; and every page when the pull request adds or changes the overview (`docs/architecture/README.md`), which has no `Covers:`, or a page with no `Covers:` line.

@@ -309,6 +309,23 @@ def test_planning_correctness_reads_the_pages_a_new_or_changed_page_overlaps():
     assert "read in the repo" in brief
 
 
+def test_planning_brief_and_changelog_say_what_a_planning_pull_request_touches():
+    # A project's glossary can be a root GLOSSARY.md (flow section 1, item 4),
+    # so a planning pull request doesn't touch only files under docs/: it
+    # touches its ADRs, glossary and architecture pages, which no page covers.
+    touches = (
+        "a planning pull request touches only its ADRs, glossary and architecture pages, "
+        "files no page's `Covers:` names"
+    )
+    brief = _planning_brief("Correctness", "- **Spec:**")
+    note = _flat(_read("CHANGELOG.md").split("## Unreleased", 1)[1].split("\n## ", 1)[0])
+    note = note.split("**The planning review reads the architecture pages a planning change could contradict**", 1)[1]
+    note = note.split("- **", 1)[0]
+    for text in (brief, note):
+        assert touches in text
+        assert "touches only files under `docs/`" not in text
+
+
 def test_planning_correctness_reads_every_page_when_the_overview_changes():
     # The overview has no `Covers:`: a cross-cutting rule added to it that
     # contradicts orders.md overlaps nothing, so every page is read.
