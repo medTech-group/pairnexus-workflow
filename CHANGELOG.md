@@ -6,6 +6,13 @@
 
 - **For projects updating:** nothing to do.
 
+**Building reads the architecture, and says where a structural line goes** (#617, part of spec #611). A ticket session read the spec, the ADRs and the project's rules, but not the architecture, so it learned a page's rules only when the review blocked, and a structural choice had no set place to be written.
+
+- **`build-ticket`** runs `workflow index reads --base origin/<base> --paths <the files it expects to change>` and `workflow index pages` before building, and `reads` again on the committed diff before the first review. Its lasting-knowledge step now says where a structural line goes: the page it belongs to, or the overview for a cross-cutting rule; a new module (a new folder of code no page covers that held no code before) adds its full page, covering the outermost new folder; a line about a file no page covers goes in the small page named by its folder path (folders joined with `--`, a leading dot dropped; `_root.md` for a file at the root), with a literal `Covers:` line for that file.
+- **The flow:** §3 item 1 adds the architecture documents `reads` prints and the pages list to what a ticket session reads.
+- **Split out:** flow §2 item 2's line on where a ticket's structural lines go, with the first flow context's budget it needs, is #646; §2 item 7 and its checklist committing a spec session's architecture lines on its planning branch, with the spec's tickets waiting on that pull request, are #647. Tests: `tests/test_build_ticket_architecture.py`.
+- **For projects updating:** nothing to do: a project without `docs/architecture/` reads nothing more.
+
 **Doctor notes what the architecture doesn't describe** (#615, part of spec #611). With a `docs/architecture/` folder, `workflow doctor` gains three notes in "The kit" group, each a `fine` line when nothing is wrong:
 
 - `kit.architecture.uncovered`: code no page's `Covers:` line matches, with its count and the first 10 files. Code is `guard.code_paths` when set, else every tracked file outside `docs/`; either way never a protected path, a file at the project's root, a `project.rules` document or a test path (`guard.test_paths`). Code written before the architecture stays a note until the architecture pass writes its pages.
