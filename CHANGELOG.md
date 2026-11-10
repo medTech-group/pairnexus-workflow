@@ -8,7 +8,7 @@
 - `kit.architecture.unmatched`: a page whose `Covers:` matches no tracked file, so only a change that adds a file it matches reads it: a page written ahead of its code, or one whose code moved or is gone.
 - `kit.architecture.no_covers`: a page with no `Covers:` line, which every change reads until it has one.
 
-The overview (`docs/architecture/README.md`) is never a page: its `Covers:` lines cover nothing, and it gets no note. No folder, no lines. In plugin mode, `kit.architecture.missing` notes a set-up project whose `project.rules` doesn't list the overview, offering "Write the architecture overview" (`write_architecture_overview`). The notes read only the checkout (`git ls-files`), and `workflow status` never runs them. The old-Python short report gives the same ids. `workflow profile check` warns when `guard.protected_paths`, or `guard.code_paths` under `code_writers = "ticket"`, matches `docs/architecture/`, since sessions then can't write its lines.
+The overview (`docs/architecture/README.md`) is never a page: its `Covers:` lines cover nothing, and it gets no note. No folder, no lines. The notes read only the checkout (`git ls-files`), and `workflow status` never runs them. The old-Python short report gives the same ids. `workflow profile check` warns when `guard.protected_paths`, or `guard.code_paths` under `code_writers = "ticket"`, matches `docs/architecture/`, since sessions then can't write its lines.
 
 - **For projects updating:** nothing to do. A project with a `docs/architecture/` folder may see the new notes; they never block.
 

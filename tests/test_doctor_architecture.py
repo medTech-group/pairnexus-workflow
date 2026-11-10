@@ -1,8 +1,7 @@
 """#615: doctor's architecture notes (spec #611, seam 2: doctor's lines from
 `Inputs`). `kit.architecture.uncovered`, `.unmatched` and `.no_covers` read
-the checkout's `docs/architecture/` and its tracked files; `.missing` notes a
-set-up plugin-mode project whose `project.rules` doesn't list the overview.
-The old-Python short report gives the same ids, and `profile check` warns
+the checkout's `docs/architecture/` and its tracked files. The old-Python
+short report gives the same ids, and `profile check` warns
 when the protected or code paths match `docs/architecture/`. Built in-process
 on a scratch git repository, as test_check_setup.py builds `Inputs`."""
 
@@ -20,11 +19,9 @@ from conftest import KIT
 from workflow import _old_python, cli, doctor, profile
 
 IDS = ("kit.architecture.uncovered", "kit.architecture.unmatched", "kit.architecture.no_covers")
-MISSING = "kit.architecture.missing"
-ARCH = (doctor.check_architecture_overview, doctor.check_architecture)
+ARCH = (doctor.check_architecture,)
 HEAD = '[project]\nname = "demo"\nrepo = "acme/demo"\nowner = "someone"\nruleset = true\n'
 TAIL = '[run]\nticket_environment = "t"\nconductor_environment = "c"\n'
-OVERVIEW_RULES = 'rules = ["CLAUDE.md", "docs/architecture/README.md"]\n'
 
 
 def _prof(project="", guard=""):
@@ -78,12 +75,10 @@ def test_no_folder_gives_no_lines_in_a_vendored_project(tmp_path):
     assert _lines(root) == {}
 
 
-def test_the_checks_are_in_checks_and_local_checks_in_the_kit_group():
-    for check in ARCH:
-        assert check in doctor.CHECKS and check in doctor.LOCAL_CHECKS
-        assert check.group == "The kit"
+def test_the_check_is_in_checks_and_local_checks_in_the_kit_group():
+    assert doctor.check_architecture in doctor.CHECKS and doctor.check_architecture in doctor.LOCAL_CHECKS
+    assert doctor.check_architecture.group == "The kit"
     assert doctor.check_architecture.id == "kit.architecture.uncovered"
-    assert doctor.check_architecture_overview.id == MISSING
 
 
 # ---------- all fine ----------
@@ -347,56 +342,6 @@ def test_without_a_profile_uncovered_cant_check(tmp_path):
     assert got["kit.architecture.unmatched"].status == "fine" and got["kit.architecture.no_covers"].status == "fine"
 
 
-# ---------- plugin mode: the overview missing ----------
-
-
-def test_a_set_up_plugin_project_without_the_overview_in_its_rules_gets_the_note_and_offer(tmp_path):
-    root = _repo(tmp_path, {"src/a.py": "x\n"}, vendored=False)
-    got = _lines(root)
-    assert set(got) == {MISSING}  # no folder: none of the other three
-    ln = got[MISSING]
-    assert ln.status == "note" and ln.offer == "write_architecture_overview"
-    assert doctor.OFFERS["write_architecture_overview"] == "Write the architecture overview"
-    assert "Write the architecture overview" in ln.fix.new and "Write the architecture overview" in ln.fix.developer
-    assert "docs/architecture/README.md" in _said(ln)
-
-
-@pytest.mark.parametrize("rules", [OVERVIEW_RULES, 'rules = ["./docs/architecture/README.md#cross-cutting-rules"]\n'])
-def test_a_plugin_project_listing_the_overview_gets_no_missing_line(tmp_path, rules):
-    root = _repo(tmp_path, {"src/a.py": "x\n"}, prof=_prof(rules), vendored=False)
-    assert MISSING not in _lines(root)
-
-
-def test_a_vendored_project_never_gets_the_missing_line(tmp_path):
-    root = _repo(tmp_path, {"src/a.py": "x\n", "docs/architecture/a.md": "Covers: src/**\n"})
-    assert MISSING not in _lines(root)
-
-
-def test_a_plugin_project_not_set_up_gets_no_missing_line(tmp_path):
-    root = _repo(tmp_path, {"src/a.py": "x\n"}, vendored=False)
-    (root / ".claude/workflow/profile.toml").unlink()
-    assert MISSING not in _lines(root)
-
-
-BROKEN = '[project]\nname = "x"\nbogus = [\n'  # doesn't parse
-
-
-def test_a_plugin_project_whose_profile_cant_be_read_cant_check_the_overview(tmp_path):
-    root = _repo(tmp_path, {"src/a.py": "x\n"}, prof=BROKEN, vendored=False)
-    ln = _lines(root)[MISSING]
-    assert ln.status == "cant_check" and ln.fix == doctor.PROFILE_FIRST and ln.offer is None
-
-
-def test_a_vendored_project_whose_profile_cant_be_read_gets_no_missing_line(tmp_path):
-    root = _repo(tmp_path, {"src/a.py": "x\n"}, prof=BROKEN)
-    assert MISSING not in _lines(root)
-
-
-def test_a_plugin_project_with_the_folder_gets_all_four(tmp_path):
-    root = _repo(tmp_path, {"src/a.py": "x\n", "docs/architecture/a.md": "Covers: src/**\n"}, vendored=False)
-    assert set(_lines(root)) == {MISSING, *IDS}
-
-
 # ---------- `workflow status` never runs the walk ----------
 
 
@@ -436,51 +381,11 @@ ARCH_FILES = {"src/a.py": "x\n", "docs/architecture/a.md": "Covers: src/**\n"}
 
 @pytest.mark.parametrize("vendored", [True, False])
 @pytest.mark.parametrize("folder", [True, False])
-@pytest.mark.parametrize("rules", ["", OVERVIEW_RULES, "rules = [\n  \"CLAUDE.md\",\n  'docs/architecture/README.md',\n]\n"])
-def test_the_short_report_gives_the_same_ids_as_doctor(tmp_path, vendored, folder, rules):
-    root = _repo(tmp_path, ARCH_FILES if folder else {"src/a.py": "x\n"}, prof=_prof(rules), vendored=vendored)
+def test_the_short_report_gives_the_same_ids_as_doctor(tmp_path, vendored, folder):
+    root = _repo(tmp_path, ARCH_FILES if folder else {"src/a.py": "x\n"}, vendored=vendored)
     full = set(_lines(root))
     assert _old_ids(root) == full
-    assert (MISSING in full) == (not vendored and not rules)
-    assert (set(IDS) <= full) == folder
-
-
-@pytest.mark.parametrize("vendored", [True, False])
-def test_the_short_report_gives_the_same_ids_as_doctor_when_the_profile_cant_be_read(tmp_path, vendored):
-    root = _repo(tmp_path, {"src/a.py": "x\n"}, prof=BROKEN, vendored=vendored)
-    assert _old_ids(root) == set(_lines(root)) == (set() if vendored else {MISSING})
-
-
-def test_the_short_report_gives_no_missing_line_without_a_profile(tmp_path):
-    root = _repo(tmp_path, {"src/a.py": "x\n"}, vendored=False)
-    (root / ".claude/workflow/profile.toml").unlink()
-    assert _old_ids(root) == set(_lines(root)) == set()
-
-
-@pytest.mark.parametrize("rules, listed", [
-    ('rules = [\n  "CLAUDE.md",\n  # "docs/architecture/README.md",\n]\n', False),  # in a comment: not listed
-    ("rules = [\"CLAUDE.md\"] # 'docs/architecture/README.md'\n", False),
-    ('rules = ["docs/rules[v2].md", "docs/architecture/README.md"]\n', True),  # a `]` inside a string
-    ("rules = ['docs/a]b.md', # a ] in a comment\n  \"docs/architecture/README.md\",\n]\n", True),
-    ('rules = ["docs/a\\"]b.md", "docs/architecture/README.md"]\n', True),  # an escaped quote
-    ('rules = ["CLAUDE.md"]\nother = ["docs/architecture/README.md"]\n', False),  # after the array's end
-    ("rules = ['''docs/architecture/README.md''']\n", True),
-    ('rules = ["docs/architecture/README\\u002emd"]\n', True),
-    ('rules = ["docs/architecture/README.md"\n', False),  # the array never ends: the profile doesn't read
-    ('rules = ["docs/architecture/README.md]\n', False),  # nor does the string
-])
-def test_the_short_report_reads_the_rules_array_as_toml_does(tmp_path, rules, listed):
-    root = _repo(tmp_path, {"src/a.py": "x\n"}, prof=_prof(rules), vendored=False)
-    full = set(_lines(root))
-    assert (MISSING not in full) == listed
-    assert _old_ids(root) == full
-
-
-def test_the_short_reports_rules_are_read_in_the_project_table_only(tmp_path):
-    # A `rules` key in another table (here an area named "rules") isn't project.rules.
-    prof = _prof() + '[areas]\nrules = ["docs/architecture/README.md"]\n'
-    root = _repo(tmp_path, {"src/a.py": "x\n"}, prof=prof, vendored=False)
-    assert _old_ids(root) == set(_lines(root)) == {MISSING}
+    assert full == (set(IDS) if folder else set())
 
 
 # ---------- `profile check` ----------
