@@ -360,6 +360,25 @@ def test_the_short_report_gives_no_missing_line_without_a_profile(tmp_path):
     assert _old_ids(root) == set(_lines(root)) == set()
 
 
+@pytest.mark.parametrize("rules, listed", [
+    ('rules = [\n  "CLAUDE.md",\n  # "docs/architecture/README.md",\n]\n', False),  # in a comment: not listed
+    ("rules = [\"CLAUDE.md\"] # 'docs/architecture/README.md'\n", False),
+    ('rules = ["docs/rules[v2].md", "docs/architecture/README.md"]\n', True),  # a `]` inside a string
+    ("rules = ['docs/a]b.md', # a ] in a comment\n  \"docs/architecture/README.md\",\n]\n", True),
+    ('rules = ["docs/a\\"]b.md", "docs/architecture/README.md"]\n', True),  # an escaped quote
+    ('rules = ["CLAUDE.md"]\nother = ["docs/architecture/README.md"]\n', False),  # after the array's end
+    ("rules = ['''docs/architecture/README.md''']\n", True),
+    ('rules = ["docs/architecture/README\\u002emd"]\n', True),
+    ('rules = ["docs/architecture/README.md"\n', False),  # the array never ends: the profile doesn't read
+    ('rules = ["docs/architecture/README.md]\n', False),  # nor does the string
+])
+def test_the_short_report_reads_the_rules_array_as_toml_does(tmp_path, rules, listed):
+    root = _repo(tmp_path, {"src/a.py": "x\n"}, prof=_prof(rules), vendored=False)
+    full = set(_lines(root))
+    assert (MISSING not in full) == listed
+    assert _old_ids(root) == full
+
+
 def test_the_short_reports_rules_are_read_in_the_project_table_only(tmp_path):
     # A `rules` key in another table (here an area named "rules") isn't project.rules.
     prof = _prof() + '[areas]\nrules = ["docs/architecture/README.md"]\n'

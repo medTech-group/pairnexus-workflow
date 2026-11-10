@@ -252,8 +252,7 @@ _FIRST_TABLE = re.compile(r"^[ \t]*\[", re.M)
 _ARCH_DIR = "docs/architecture"
 _OVERVIEW = _ARCH_DIR + "/README.md"
 _PROJECT_TABLE = re.compile(r"^[ \t]*\[[ \t]*[\"']?project[\"']?[ \t]*\][ \t]*(?:#.*)?$", re.M)
-_RULES = re.compile(r"^[ \t]*[\"']?rules[\"']?[ \t]*=[ \t]*\[(.*?)\]", re.M | re.S)
-_QUOTED = re.compile(r"\"((?:[^\"\\\n]|\\.)*)\"|'([^'\n]*)'")
+_RULES = re.compile(r"^[ \t]*[\"']?rules[\"']?[ \t]*=[ \t]*\[", re.M)
 # The files a session hands the full doctor: taken here, and not read.
 _DOCTOR_FILES = ("rulesets", "repo", "environments", "runs", "checks", "prs", "org", "ci", "commits")
 _EXPERIENCE_LEVELS = ("new", "developer")
@@ -454,11 +453,62 @@ def _lists_overview(text):
     rules = _RULES.search(body)
     if not rules:
         return False
-    for q in _QUOTED.finditer(rules.group(1)):
-        part = (q.group(1) if q.group(1) is not None else q.group(2)).partition("#")[0].strip()
+    for rule in _array_strings(body, rules.end()) or ():
+        part = rule.partition("#")[0].strip()
         if part and posixpath.normpath(part) == _OVERVIEW:
             return True
     return False
+
+
+def _array_strings(text, at):
+    """The strings in the TOML array whose `[` ends at `at`, read as TOML
+    reads them: `#` comments outside strings skipped, and the array ending at
+    the first `]` outside a string. None when it doesn't end, or a string in
+    it doesn't, since the full doctor can't read such a profile either."""
+    out = []
+    i, n = at, len(text)
+    while i < n:
+        c = text[i]
+        if c == "]":
+            return out
+        if c == "#":
+            end = text.find("\n", i)
+            i = n if end < 0 else end + 1
+        elif text.startswith('"""', i) or text.startswith("'''", i):
+            quote = text[i:i + 3]
+            end = text.find(quote, i + 3)
+            if end < 0:
+                return None
+            raw = text[i + 3:end]
+            raw = raw[1:] if raw.startswith("\n") else raw
+            out.append(_basic(raw) if quote == '"""' else raw)
+            i = end + 3
+        elif c == '"':
+            j = i + 1
+            while j < n and text[j] not in '"\n':
+                j += 2 if text[j] == "\\" else 1
+            if j >= n or text[j] != '"':
+                return None
+            out.append(_basic(text[i + 1:j]))
+            i = j + 1
+        elif c == "'":
+            end = text.find("'", i + 1)
+            if end < 0 or "\n" in text[i + 1:end]:
+                return None
+            out.append(text[i + 1:end])
+            i = end + 1
+        else:
+            i += 1
+    return None
+
+
+def _basic(raw):
+    """A TOML basic string's text, its escapes read (as written when they
+    aren't JSON's too)."""
+    try:
+        return json.loads('"' + raw + '"', strict=False)
+    except ValueError:
+        return raw
 
 
 def _missing_overview(root, plugin):
