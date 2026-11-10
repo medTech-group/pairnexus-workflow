@@ -358,6 +358,28 @@ def test_doctor_output_unit(tmp_path, text, shown):
     assert doctor._scrubbed(i, text) == shown
 
 
+@pytest.mark.parametrize("text, shown", [
+    ("in /home/someone] and <in /home/someone> or /home/someone! /home/someone? /home/someone...",
+     "in ~] and <in ~> or ~! ~? ~..."),
+    ("in /home/someone2 and /home/someone_b", "in /home/someone2 and /home/someone_b"),
+], ids=["a", "b"])
+def test_doctor_output_unit_more(tmp_path, text, shown):
+    root = _repo(tmp_path, {"src/a.py": "x\n"})
+    i = _inputs(root, environ={**_env(), "HOME": "/home/someone"})
+    assert doctor._scrubbed(i, text) == shown
+
+
+def test_doctor_output_unit_with_another_separator(tmp_path, monkeypatch):
+    root = _repo(tmp_path, {"src/a.py": "x\n"})
+    i = _inputs(root, environ={**_env(), "HOME": "C:\\Users\\someone"})
+    with monkeypatch.context() as m:
+        m.setattr(doctor.os, "sep", "\\")
+        got = doctor._scrubbed(i, "gh: could not read C:\\Users\\someone\\AppData\\x.yml")
+        kept = doctor._scrubbed(i, "in C:\\Users\\someone2\\x")
+    assert got == "gh: could not read ~\\AppData\\x.yml"
+    assert kept == "in C:\\Users\\someone2\\x"
+
+
 def test_a_git_stopped_by_a_signal_is_said_plainly(tmp_path):
     root = _repo(tmp_path, {"src/a.py": "x\n", "docs/architecture/a.md": "Covers: src/**\n"})
     got = _lines(root, environ=_fake_git(tmp_path, "#!/bin/sh\nkill -9 $$\n"))
