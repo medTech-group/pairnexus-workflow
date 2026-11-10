@@ -1075,6 +1075,54 @@ def test_a_ctrl_c_in_popen_test_fails_clearly_when_the_fake_never_wrote_its_pid(
         _ctrl_c_in_popen(tmp_path, monkeypatch, f"exec {shutil.which('sleep')} 30", wait=1)
 
 
+def _unstartable(tmp_path):
+    """Inputs whose `claude` is on the PATH but can't be started: its
+    interpreter isn't there, so Popen raises OSError."""
+    path = _bin(tmp_path, python=None, claude=None)
+    (path / "claude").write_text("#!/nonexistent/interp\n")
+    (path / "claude").chmod(0o755)
+    return _inputs(tmp_path, environ={"PATH": str(path), "HOME": str(tmp_path)})
+
+
+def test_a_command_that_cant_be_started_gives_back_the_ctrl_c_handler(tmp_path):
+    import signal
+
+    from workflow import doctor
+
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    try:
+        ln = doctor.check_claude_code(_unstartable(tmp_path))[0]
+        handler = signal.getsignal(signal.SIGINT)
+    finally:
+        signal.signal(signal.SIGINT, previous)
+    assert ln.status == "cant_check" and "gave none" in ln.message.developer
+    assert handler is signal.default_int_handler
+
+
+def test_a_ctrl_c_while_a_start_fails_stops_the_run(tmp_path, monkeypatch):
+    import signal
+
+    from workflow import doctor
+
+    real = subprocess.Popen
+
+    def popen(*a, **kw):
+        os.kill(os.getpid(), signal.SIGINT)
+        return real(*a, **kw)  # raises OSError: the interpreter isn't there
+
+    monkeypatch.setattr(doctor.subprocess, "Popen", popen)
+    i = _unstartable(tmp_path)
+    # Ctrl-C raises KeyboardInterrupt here even where pytest was started ignoring it.
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            doctor.check_claude_code(i)
+        handler = signal.getsignal(signal.SIGINT)
+    finally:
+        signal.signal(signal.SIGINT, previous)
+    assert handler is signal.default_int_handler
+
+
 def _gone(pid, seconds=5.0):
     """The process has ended: no such pid, or a zombie nobody has reaped yet
     (a container's PID 1 may never reap orphans)."""
