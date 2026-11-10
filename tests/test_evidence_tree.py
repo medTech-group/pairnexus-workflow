@@ -274,3 +274,13 @@ def test_the_report_names_files_that_appeared_with_the_path_helper(tmp_path, mon
     _act(root, "tests/test_2.txt", "touch " + " ".join(names))
     assert _evidence(monkeypatch, root) == 0
     assert evidence._paths(names, code=True) + "." in capsys.readouterr().out
+
+
+def test_the_dirty_store_is_one_helper_listed_in_its_page(tmp_path):
+    assert re.search(r"^- `_dirty_store`: ", _helpers(), re.M)
+    old = tmp_path / ".workflow/evidence/abc-dirty"
+    old.mkdir(parents=True)
+    (old / "unit-000.json").write_text("{}")
+    d = evidence._dirty_store(None, tmp_path, "abc")
+    assert d == old and d.is_dir() and not any(d.iterdir())  # emptied: never reused
+    assert evidence._dirty_store(tmp_path / "s", tmp_path, "abc") == tmp_path / "s/abc-dirty"

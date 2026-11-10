@@ -5,6 +5,7 @@ Covers: scripts/workflow/evidence.py
 ## Helpers
 
 - `_paths`: in `evidence.py`, names paths in a message: the first five, then "and N more", in backticks for the report.
+- `_dirty_store`: in `evidence.py`, the emptied `<sha>-dirty` store, where a run keeps what didn't run on the commit itself, apart from its evidence and never reused.
 
 ## Rules
 

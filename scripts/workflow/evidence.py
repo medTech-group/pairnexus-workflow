@@ -357,11 +357,11 @@ def collect(
             require_clean(root)
         dirty = []
     sha = head_sha(root)
-    base = (store or root / EVIDENCE_DIR) / (sha + ("-dirty" if dirty else ""))
     if dirty:
-        shutil.rmtree(base, ignore_errors=True)
-        fresh = True
-    base.mkdir(parents=True, exist_ok=True)
+        base, fresh = _dirty_store(store, root, sha), True
+    else:
+        base = (store or root / EVIDENCE_DIR) / sha
+        base.mkdir(parents=True, exist_ok=True)
     watch = clean_check or allow_dirty
     state = tree_state(root) if watch else None
     seen: set[str] = set()
@@ -375,10 +375,7 @@ def collect(
             if not allow_dirty:
                 raise EvidenceError(_changed_tree(root, dirty))
             if not base.name.endswith("-dirty"):  # from here on, a dirty run: kept apart, never the commit's
-                fresh = True
-                base = (store or root / EVIDENCE_DIR) / (sha + "-dirty")
-                shutil.rmtree(base, ignore_errors=True)
-                base.mkdir(parents=True, exist_ok=True)
+                base, fresh = _dirty_store(store, root, sha), True
             if changed is not None:
                 cur = set(dirty_paths(root))
                 changed[:] = sorted(set(changed) | (cur - set(dirty) or cur))
@@ -437,6 +434,15 @@ def collect(
             results.append(r)
             last_failed = not r.ok
     return sha, results
+
+
+def _dirty_store(store: Path | None, root: Path, sha: str) -> Path:
+    """`<sha>-dirty`, emptied: where a run keeps what didn't run on the commit
+    itself, apart from its evidence and never reused."""
+    base = (store or root / EVIDENCE_DIR) / (sha + "-dirty")
+    shutil.rmtree(base, ignore_errors=True)
+    base.mkdir(parents=True, exist_ok=True)
+    return base
 
 
 def _changed_tree(root: Path, before: list[str]) -> str:
