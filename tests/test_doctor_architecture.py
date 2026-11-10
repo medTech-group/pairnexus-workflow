@@ -307,6 +307,21 @@ def test_what_git_really_said_is_still_given_as_its_words(tmp_path):
         assert "(git said: exit 3)" in ln.message.new and "(git said: exit 3)" in ln.message.developer
 
 
+def test_doctor_output_when_git_fails(tmp_path):
+    root = _repo(tmp_path, {"src/a.py": "x\n", "docs/architecture/a.md": "Covers: src/**\n"})
+    home = tmp_path / "home" / "someone"
+    script = ("#!/bin/sh\n"
+              f"printf 'fatal: in %s\\nnext line:\\n\\n\\tsee %s and %s\\n' '{home}/proj' '{home}/proj' '{root}' >&2\n"
+              "exit 128\n")
+    got = _lines(root, environ={**_fake_git(tmp_path, script), "HOME": str(home)})
+    for id_ in ("kit.architecture.uncovered", "kit.architecture.unmatched"):
+        ln = got[id_]
+        assert ln.status == "cant_check" and ln.fix == UNLISTED
+        for said in (ln.message.new, ln.message.developer):
+            assert "(git said: next line: see ~/proj and .)" in said, said
+            assert str(home) not in said and str(tmp_path) not in said
+
+
 def test_without_git_the_walk_cant_check_and_the_pages_are_still_read(tmp_path):
     root = _repo(tmp_path, {"src/a.py": "x\n", "docs/architecture/later.md": "# Later\n"})
     got = _lines(root, environ={**_env(), "PATH": str(tmp_path / "no-bin")})

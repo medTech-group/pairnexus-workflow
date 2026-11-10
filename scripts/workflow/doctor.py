@@ -1081,7 +1081,7 @@ def _tracked(i: Inputs) -> tuple[list[str] | None, str]:
     if ran.state == "timeout":
         return None, "git took too long"
     if ran.state == "failed" and ran.said:
-        return None, f"git said: {_shown(ran.err, 120)}"
+        return None, f"git said: {_scrubbed(i, ran.err)}"
     if ran.state == "failed" and ran.code is not None:
         return None, f"git exited with code {ran.code} and said nothing"
     if ran.state == "failed":
@@ -1300,7 +1300,7 @@ def _again(give: str = GIVE_FILES) -> Words:
 
 
 def _scrubbed(i: Inputs, text: str) -> str:
-    """Text from `gh`, on one line, with the home directory as `~`."""
+    """Text from `gh` or `git`, on one line, with the home directory as `~`."""
     home = (i.environ.get("HOME") or "").rstrip(os.sep)
     for h in dict.fromkeys((home, os.path.realpath(home) if home else "")):
         if h and h != os.sep:
