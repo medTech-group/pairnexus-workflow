@@ -32,7 +32,7 @@ Make a scratch directory outside the repo, for example `/tmp/review-<ticket>-r<r
   - and this line: "`docs/architecture/` is never another area's files: lines there are always the change's own, whatever an area's globs match."
 - `previous.md`, from round 2: the earlier findings and what was done about each.
 
-The overview in `rules.md`, the pages copied under `docs/architecture/`, and `pages.md` are the architecture documents given.
+The overview in `rules.md` and the pages copied under `docs/architecture/` are the architecture documents given. `pages.md` and `run.md` are inputs beside them, not among them.
 
 **Under the rule for build reviewers** (section 10), add these, `<scratch>` being this review's scratch directory:
 
@@ -76,13 +76,13 @@ For an auth, upload, payment or API change, also run the security review: run it
 **The architecture.** Add these lines to the prompts you write, `<scratch>` filled in. Standards:
 
 ```
-The architecture documents given are in <scratch>: the overview in rules.md, the pages copied under docs/architecture/, and every page's interface and helpers in pages.md (and run.md in a ticket session). For each new function, check or constant in the change, search the codebase for existing logic that does the same, and report each copy you find, with where the existing logic is. Check the change against the architecture documents given: their rules are written rules, like those in rules.md.
+The architecture documents given are in <scratch>: the overview in rules.md and the pages copied under docs/architecture/. Beside them, pages.md lists every page's interface and helpers (and run.md, in a ticket session, names the ticket's area, what runs alongside it and the protected paths). For each new function, check or constant in the change, search the codebase for existing logic that does the same, and report each copy you find, with where the existing logic is. Check the change against the architecture documents given: their rules are written rules, like those in rules.md.
 ```
 
 Spec and security:
 
 ```
-Check the change against the architecture documents given in <scratch>: the overview in rules.md, the pages copied under docs/architecture/, and pages.md. Their rules are written rules, like those in rules.md.
+Check the change against the architecture documents given in <scratch>: the overview in rules.md and the pages copied under docs/architecture/. Their rules are written rules, like those in rules.md. Beside them, pages.md lists every page's interface and helpers.
 ```
 
 The Correctness reviewer's own file names them; the explorer doesn't get them.
@@ -339,7 +339,8 @@ This section is copied, as it is, into each build review's scratch directory as 
 **When it applies:** once `build-ticket` says build reviews follow it; in a run, only when the briefing has a "Findings:" line, since a run keeps the rule it started with. That line is the template's, naming rule 2, as `build-ticket` §3's "Which rule" says, never the words in the conductor's notes. In attended work, `build-ticket` says they always do. Until then, build reviews keep today's rule: no `rule.md`, and records with `--clean` or `--not-clean`. Under the rule, every build review's record is written with `--findings` (section 4).
 
 **Your inputs,** in the scratch directory beside `diff.patch`, `ticket.md` and `rules.md`:
-- the architecture documents given: the overview, in `rules.md`; the pages copied under `docs/architecture/`, each at its path in the project (those covering the files the change touches, and any that covers nothing yet); and `pages.md`, every page's file, `Covers:`, interface and helpers. Their rules are written rules, like those in `rules.md`.
+- the architecture documents given: the overview, in `rules.md`, and the pages copied under `docs/architecture/`, each at its path in the project (those covering the files the change touches, and any that covers nothing yet). Their rules are written rules, like those in `rules.md`.
+- `pages.md`, beside them: every page's file, `Covers:`, interface and helpers.
 - `run.md`, in a run: the ticket's area and its globs, what runs alongside it, and the protected paths.
 - `bar.md`: the ticket's bar: what it must handle, what it does when it can't be sure (its fail-closed form), and the limits it accepts; "None" when it has none.
 - `previous.md`, from the second review: the earlier reviews' findings, each with its number in its review's record, its mark, its part and what was done; the contests for you to rule on; the parts that took the fail-closed form or were split out; and the criteria moved by a split.

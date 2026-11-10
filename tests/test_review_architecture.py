@@ -96,6 +96,40 @@ def test_the_scratch_directory_names_the_architecture_documents_given():
     assert "the architecture documents given" in inputs
 
 
+def _clause(text: str, start: str) -> str:
+    """The words from `start` to the end of its sentence."""
+    assert start in text, start
+    return text.split(start, 1)[1].split(". ", 1)[0]
+
+
+def test_the_architecture_documents_given_are_the_overview_and_the_pages_everywhere():
+    # One name, one set (CONTRIBUTING.md, Writing): the overview and the pages
+    # copied under docs/architecture/, as the Correctness agent and ADR 0001
+    # say; pages.md and run.md are inputs beside them, never part of them.
+    inputs = _inputs()
+    assert "The overview in `rules.md` and the pages copied under `docs/architecture/` are the architecture documents given" in inputs
+    assert "`pages.md` are the architecture documents given" not in inputs
+
+    rule = _section(PANEL, RULE_HEADING + "\n")
+    given = _flat(rule.split("- the architecture documents given:", 1)[1].split("\n- ", 1)[0])
+    assert "pages.md" not in given and "run.md" not in given
+    assert "\n- `pages.md`" in rule
+
+    text = _section(PANEL, "## 2. Start the reviewers", "\n## 3.")
+    standards = _flat(text.split("Standards:", 1)[1].split("```", 2)[1])
+    other = _flat(text.split("Spec and security:", 1)[1].split("```", 2)[1])
+    for clause in (
+        _clause(standards, "The architecture documents given are in <scratch>:"),
+        _clause(other, "Check the change against the architecture documents given in <scratch>:"),
+    ):
+        assert "the overview in rules.md" in clause and "the pages copied under docs/architecture/" in clause
+        assert "pages.md" not in clause and "run.md" not in clause
+    assert "pages.md" in standards and "pages.md" in other
+
+    agent = _flat(_section(AGENT, "## Your inputs", "\n## What to look for"))
+    assert "pages.md" not in _clause(agent, "the architecture documents given:").split(";", 1)[0]
+
+
 # --- section 10: the written rules, the ticket case, never another area's ----
 
 
