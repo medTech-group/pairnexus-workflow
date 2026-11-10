@@ -148,9 +148,17 @@ def test_the_merge_makes_a_new_head_queued_once_on_ready():
     assert "The merge makes a new head: on `ready`, queue it once, as for a fix you push." in rule
 
 
-def test_the_rule_leaves_the_evidence_stay_alone():
+def test_the_evidence_to_come_never_holds_a_queued_head_in_conflict():
+    # the notes posted before queueing carry "Evidence for <sha> to come", but
+    # step 5's stay begins once the pull request has merged, and a head in
+    # conflict hasn't: the rule has no stay exception, and says so
     rule = _queued_head_rule()
-    assert "not while you stay for your evidence report (step 5's \"Then stay\")" in rule
+    assert "not while you stay" not in rule
+    assert (
+        "Your evidence run still going never holds this merge, nor does the \"Evidence for `<sha>` to come\" line "
+        "in the notes you posted before queueing: step 5's \"Then stay\" begins once the pull request has merged, "
+        "and a head in conflict hasn't."
+    ) in rule
 
 
 def test_the_watch_leaves_the_evidence_stay_to_section_6_step_5():
@@ -231,8 +239,9 @@ def test_the_rendered_check_ins_line_watches_the_base(tmp_path):
     ) in line
     # a head you queued is watched too, under the rule's one name (#685); the evidence stay is step 5's
     assert (
-        "A head you queued is watched the same way, as a queued head in conflict (**Merging**); the stay for "
-        "the evidence report follows `build-ticket` §6 step 5 instead."
+        "A head you queued is watched the same way, as a queued head in conflict (**Merging**), even with your "
+        "evidence still to come; once the PR has merged, the stay for the evidence report follows "
+        "`build-ticket` §6 step 5 instead."
     ) in line
     assert "isn't one you queued" not in line
     assert "merge queue" not in line
