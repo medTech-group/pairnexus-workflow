@@ -869,13 +869,13 @@ def _architecture_warnings(profile: Profile) -> list[str]:
     protected = hits(profile.protected_paths)
     if protected:
         w.append(
-            f"guard.protected_paths matches {DIR}/ ({', '.join(protected)}): sessions can't write the architecture's lines there; "
+            f"guard.protected_paths matches {DIR}/ ({', '.join(map(repr, protected))}): sessions can't write the architecture's lines there; "
             "take it out of the protected paths"
         )
     code = hits(profile.code_paths) if profile.code_writers == "ticket" else []
     if code:
         w.append(
-            f'guard.code_paths matches {DIR}/ ({", ".join(code)}) under code_writers = "ticket": only ticket sessions could '
+            f'guard.code_paths matches {DIR}/ ({", ".join(map(repr, code))}) under code_writers = "ticket": only ticket sessions could '
             "write the architecture's lines, and a spec session writes them too; narrow the code paths"
         )
     return w

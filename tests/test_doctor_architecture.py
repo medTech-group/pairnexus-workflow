@@ -515,6 +515,21 @@ def test_profile_check_is_quiet_about_code_paths_any_session_may_write(tmp_path)
     assert _warnings(tmp_path / "b", 'code_writers = "ticket"\ncode_paths = ["src/**"]\n') == []
 
 
+@pytest.mark.parametrize("guard", [
+    'protected_paths = [".claude/**", ".github/workflows/**", "docs/architecture/\\u001b[31m*"]\n',
+    'code_writers = "ticket"\ncode_paths = ["src/**", "docs/architecture/\\u001b[31m*"]\n',
+], ids=["protected", "code"])
+def test_profile_check_terminal_output(tmp_path, guard):
+    root = _repo(tmp_path, {"src/a.py": "x\n", "CLAUDE.md": "# Rules\n"}, prof=_prof(guard=guard))
+    w = [w for w in profile.check(profile.load(root)) if "docs/architecture/" in w]
+    assert len(w) == 1 and all(ch.isprintable() for ch in w[0]), w
+    env = {**_env(), "CLAUDE_PROJECT_DIR": str(root), "WORKFLOW_UPDATE_CHECK": "off", "HOME": str(tmp_path / "home")}
+    p = subprocess.run([sys.executable, "-B", str(KIT / "scripts/workflow.py"), "profile", "check"], cwd=root, env=env,
+                       capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr
+    assert "docs/architecture/" in p.stderr and "\x1b" not in p.stderr
+
+
 def test_the_profile_warning_reaches_doctors_profile_line(tmp_path):
     root = _repo(tmp_path, {"src/a.py": "x\n", "CLAUDE.md": "# Rules\n"}, prof=_prof(guard=PROTECTED.format('"docs/**"')))
     ln, = doctor.report(_inputs(root), [doctor.check_profile]).lines
