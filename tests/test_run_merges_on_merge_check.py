@@ -27,7 +27,8 @@ COMMAND = re.compile(r"`WF merge-check --fetch <(?:PR|pr|n)> --json --charter \.
 # Each way of merging pins the head merge-check checked.
 # When a path-filtered check that never started goes to the owner.
 PATH_FILTERED_WHEN = (
-    "only once every other required check has finished and the evidence is posted: `WF merge-check`'s only reason left is "
+    "only once every other required check has finished and, where the report is required (`build-ticket` §6 step 2), "
+    "the evidence is posted: `WF merge-check`'s only reason left is "
     "`checks_pending`, for checks that are all in `ci.path_filtered` and `missing` in its `checks[]`"
 )
 # The session's own line waits on the evidence only where the report is required (#663).
