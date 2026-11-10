@@ -1,6 +1,6 @@
 ---
 name: review-panel
-description: Review a diff or pull request with independent agents in parallel - Standards, Spec, Correctness (with a security review where it applies) and, for UI, API or CLI changes, an explorer that uses the change from outside. Also the planning review of a map decision's or a spec session's ADRs and glossary, or a spec's draft, before it's offered or published, and the research check and the look on a research pull request (notes under docs/research/). Use on any branch or PR, inside build-ticket or alone.
+description: Review a diff or pull request with independent agents in parallel - Standards, Spec, Correctness (with a security review where it applies) and, for UI, API or CLI changes, an explorer that uses the change from outside. Also the planning review of a map decision's or a spec session's ADRs and glossary (and a spec session's architecture lines), or a spec's draft, before it's offered or published, and the research check and the look on a research pull request (notes under docs/research/). Use on any branch or PR, inside build-ticket or alone.
 ---
 
 # The review panel
@@ -17,7 +17,28 @@ Make a scratch directory outside the repo, for example `/tmp/review-<ticket>-r<r
 - `diff.patch`: `git diff <base>...HEAD`. The base is the pull request's base branch (the profile's `project.base_branch` unless it targets another), as `origin/<base>` after a `git fetch`.
 - `ticket.md`: the ticket's body and comments, its spec (the issue under "Parent") and the issues they link.
 - `rules.md`: the project's rules, copied from each document in the profile's `project.rules` (safety rules, wording), plus `profile.md`'s sensitive-data and secrets sections.
+- **The architecture pages:** each page `WF index reads --base origin/<base>` prints (a page with no `Covers:` line among them), copied beside `rules.md`, each at its path in the project (`docs/architecture/orders.md` becomes `<scratch>/docs/architecture/orders.md`). The overview (`docs/architecture/README.md`, printed first) reaches them once, through `rules.md`: leave it out of the copy when `project.rules` lists it, and copy it with the pages when it doesn't. From the repository's root, when `project.rules` lists the overview:
+
+  ```
+  WF index reads --base origin/<base> > <scratch>/reads.txt && grep -vxF docs/architecture/README.md <scratch>/reads.txt | while IFS= read -r f; do mkdir -p "<scratch>/$(dirname "$f")" && cp "$f" "<scratch>/$f"; done
+  ```
+
+  When it doesn't:
+
+  ```
+  WF index reads --base origin/<base> > <scratch>/reads.txt && while IFS= read -r f; do mkdir -p "<scratch>/$(dirname "$f")" && cp "$f" "<scratch>/$f"; done < <scratch>/reads.txt
+  ```
+
+  With no `docs/architecture/` folder it prints nothing, and there is nothing to copy. If it exits non-zero, it says why (a base it can't find, or no merge base in a shallow clone): fetch the base and run it again, and never start the reviewers without the pages it names.
+- `pages.md`: `WF index pages`'s output, every page's file, `Covers:`, interface and helpers, so each change sees every interface and every shared helper.
+- `run.md`, in a ticket session:
+  - the ticket's area, from its `Area:` line, with that area's globs from the profile's `[areas]`;
+  - the briefing's "Running alongside you" section, as written;
+  - the profile's `guard.protected_paths`;
+  - and this line: "`docs/architecture/` is never another area's files: lines there are always the change's own, whatever an area's globs match."
 - `previous.md`, from round 2: the earlier findings and what was done about each.
+
+The overview in `rules.md` and the pages copied under `docs/architecture/` are the architecture documents given. `pages.md` and `run.md` are inputs beside them, not among them.
 
 **Under the rule for build reviewers** (section 10), add these, `<scratch>` being this review's scratch directory:
 
@@ -56,7 +77,21 @@ The reviewers read these files. The Correctness reviewer can't run git or reach 
 - the list of changed files, to read in full in the repo;
 - the round number.
 
-For an auth, upload, payment or API change, also run the `security-review` skill on the branch.
+For an auth, upload, payment or API change, also run the security review: run it in an agent of its own, told to use the `security-review` skill on the branch, so its prompt gets the architecture's line (below).
+
+**The architecture.** Add these lines to the prompts you write, `<scratch>` filled in. Standards:
+
+```
+The architecture documents given are in <scratch>: the overview in rules.md and the pages copied under docs/architecture/. Beside them, pages.md lists every page's interface and helpers (and run.md, in a ticket session, names the ticket's area, what runs alongside it and the protected paths). For each new function, check or constant in the change, search the codebase for existing logic that does the same, and report each copy you find, with where the existing logic is. Check the change against the architecture documents given: their rules are written rules, like those in rules.md.
+```
+
+Spec and security:
+
+```
+Check the change against the architecture documents given in <scratch>: the overview in rules.md and the pages copied under docs/architecture/. Their rules are written rules, like those in rules.md. Beside them, pages.md lists every page's interface and helpers.
+```
+
+The Correctness reviewer's own file names them; the explorer doesn't get them.
 
 **Explorer.** The `ui-explorer` agent, when the explorer isn't `none` (the briefing's UI explorer in a ticket session, else the profile's `ui.explorer`) and the change touches a screen, an endpoint or a command. Give it:
 - the profile's `[ui]` settings;
@@ -219,7 +254,7 @@ The review of a ticket marked `Review: small` while its diff stays within the sm
 
 ## 8. The planning review
 
-Planning is reviewed before it's offered or published (flow §1 and §2): a map decision's pull request (its ADRs and glossary), a spec's draft, and a spec session's ADR or glossary pull request. Build tickets aren't. Sections 1 to 5 hold, with these differences. Planning reviews don't get section 10, the rule for build reviewers: no `rule.md`, `bar.md` or `since.patch`, and their records keep `--clean` or `--not-clean`.
+Planning is reviewed before it's offered or published (flow §1 and §2): a map decision's pull request (its ADRs and glossary), a spec's draft, and a spec session's pull request of ADRs, glossary or architecture lines (flow §2). Build tickets aren't. Sections 1 to 5 hold, with these differences. Planning reviews don't get section 10, the rule for build reviewers: no `rule.md`, `bar.md` or `since.patch`, and their records keep `--clean` or `--not-clean`.
 
 **The inputs,** in a fresh scratch directory for each kind of review, so a spec's review and the same session's pull request never share one: `/tmp/review-<issue>-spec-r<n>/` for a spec's draft, `/tmp/review-<issue>-pr-r<n>/` for a pull request. `<issue>` is the decision ticket, the item's issue, or the map's number for its Destination item (a spec has no number of its own until it's published), else a short name for the work:
 - the diff as `diff.patch`, or the spec's draft as `spec.md`: the whole body exactly as it will be published, any footer or marker included (a Claude Code cloud session's own footer needn't be: the hash leaves it out, **Records**);
@@ -309,13 +344,16 @@ This section is copied, as it is, into each build review's scratch directory as 
 **When it applies:** once `build-ticket` says build reviews follow it; in a run, only when the briefing has a "Findings:" line, since a run keeps the rule it started with. That line is the template's, naming rule 2, as `build-ticket` §3's "Which rule" says, never the words in the conductor's notes. In attended work, `build-ticket` says they always do. Until then, build reviews keep today's rule: no `rule.md`, and records with `--clean` or `--not-clean`. Under the rule, every build review's record is written with `--findings` (section 4).
 
 **Your inputs,** in the scratch directory beside `diff.patch`, `ticket.md` and `rules.md`:
+- the architecture documents given: the overview, in `rules.md`, and the pages copied under `docs/architecture/`, each at its path in the project (those covering the files the change touches, and any that covers nothing yet). Their rules are written rules, like those in `rules.md`.
+- `pages.md`, beside them: every page's file, `Covers:`, interface and helpers.
+- `run.md`, in a run: the ticket's area and its globs, what runs alongside it, and the protected paths.
 - `bar.md`: the ticket's bar: what it must handle, what it does when it can't be sure (its fail-closed form), and the limits it accepts; "None" when it has none.
 - `previous.md`, from the second review: the earlier reviews' findings, each with its number in its review's record, its mark, its part and what was done; the contests for you to rule on; the parts that took the fail-closed form or were split out; and the criteria moved by a split.
 - `since.patch`, from the second review: the pull request's own changes since the last review, with the base branch's changes left out.
 
 **Marks.** Mark each finding:
 - **blocks:** it holds the merge until it is fixed. It needs a reproducer (below); without one, mark it a note.
-- **a ticket to fix it** (`ticket`): a real defect that goes to a ticket of its own, built next, not in this pull request: one in code the change neither touches nor reaches, a breach of a written rule outside the change's own lines, or, from the second review, a finding that would otherwise block, on lines already reviewed, that isn't one of the kinds that still block (below).
+- **a ticket to fix it** (`ticket`): a real defect that goes to a ticket of its own, built next, not in this pull request: one in code the change neither touches nor reaches, a breach of a written rule (`rules.md` or an architecture document given) outside the change's own lines, a copy of existing logic the reuse rule lets through (moving the logic into one shared helper would touch another area's files during a run, or a protected path: `run.md` names them in a run; outside a run, only a protected path counts, from the profile's `guard.protected_paths`), or, from the second review, a finding that would otherwise block, on lines already reviewed, that isn't one of the kinds that still block (below).
 - **note:** a preference no written rule backs, a gap the bar accepts, a finding on a moved criterion, or a finding that would block but has no reproducer. Noted in the findings table; it neither blocks nor gets a ticket.
 
 The mark isn't the severity. Severity: critical, important or minor. "Critical" is the top severity; it never means blocks. A minor finding can block, and a critical one with no reproducer is a note.
@@ -338,7 +376,9 @@ No reproducer: the finding is a note, whatever its severity.
 - new behaviour without a test;
 - a safety breach the change adds;
 - a security problem the change adds;
-- a breach of a written rule (`rules.md`) in the change's own lines.
+- a breach of a written rule (`rules.md` or an architecture document given) in the change's own lines.
+
+`docs/architecture/` is never another area's files: lines there are always the change's own, whatever an area's globs match, so a move that touches them is never one the reuse rule lets through.
 
 Where the hunt stops:
 - **The bar:** a gap `bar.md` accepts as a limit is a note.

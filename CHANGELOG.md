@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+**The review panel reads the architecture** (#616, part of spec #611). Reviewers could hold a change only to `project.rules`, and the Standards reviewer looked for duplicated code only in the change itself, so a copy of a check that already existed elsewhere passed as a preference no written rule backs.
+
+- **The panel's inputs** (`review-panel` §1) gain the architecture pages `workflow index reads --base origin/<base>` prints, copied into the scratch directory at their paths, with the overview reaching every reviewer once, through `rules.md`; `pages.md`, `workflow index pages`' list of every page's interface and helpers; and, in a ticket session, `run.md`: the ticket's area and its globs, what runs alongside it and the protected paths.
+- **The rule for build reviewers** (§10) counts the architecture documents given as written rules: a breach in the change's own lines blocks, and outside them is a ticket to fix it. A copy of existing logic the reuse rule lets through (merging it would touch another area's files during a run, or a protected path) is a ticket to fix it, and `docs/architecture/` is never another area's files.
+- **The prompts:** the Standards reviewer searches the codebase for existing logic like each new function, check or constant, and checks the change against the architecture; the Spec reviewer and the security review check it against the architecture too. The security review now runs in an agent of its own, so its prompt carries that line.
+- **The Correctness reviewer** (`agents/correctness-reviewer.md`) names the architecture documents, `pages.md` and `run.md` among its inputs, and its rule check reads the architecture documents with `rules.md`.
+- **The planning review** (§8) covers a spec session's architecture lines. ADR 0001 says so, and that the architecture documents count as written rules. Giving the planning review `pages.md` and the pages `reads` prints was split out to #645.
+- **For projects updating:** nothing to do. A project without `docs/architecture/` gives its reviewers no pages, and `pages.md` lists none.
+
 **`workflow index`, and the architecture overview's and page's templates** (#612, part of spec #611).
 
 - **`workflow index`,** a new command that reads the architecture documents in `docs/architecture/` and changes nothing:
