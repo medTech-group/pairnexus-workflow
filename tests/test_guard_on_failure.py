@@ -188,8 +188,8 @@ def test_the_claude_md_section_says_to_offer_splitting_a_timed_out_command():
 
 def test_update_workflow_names_the_rewritten_guard_entry_in_its_pr():
     skill = (KIT / "skills/update-workflow/SKILL.md").read_text()
-    # Step 9 since "Who writes code" became step 8 (#345).
-    (line,) = [l for l in skill.splitlines() if l.startswith("9. **The PR,**")]
+    # Step 10 since "The architecture overview" became step 7 (#618).
+    (line,) = [l for l in skill.splitlines() if l.startswith("10. **The PR,**")]
     assert "guard's hook entry" in line and "onFailure" in line
 
 
