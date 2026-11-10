@@ -315,6 +315,30 @@ def test_the_briefing_says_to_stay_for_the_report(tmp_path, waived):
     ) in first
 
 
+def test_the_owner_mode_briefing_says_ready_on_the_tracking_issue(tmp_path):
+    # The conductor's hold reads only the session's notes on the tracking issue:
+    # "ready" on the PR alone leaves it waiting 180 minutes for a note that never comes.
+    (tmp_path / ".claude/workflow").mkdir(parents=True)
+    (tmp_path / ".claude/workflow/profile.toml").write_text(
+        '[project]\nname = "demo"\nrepo = "acme/demo"\nowner = "owner-login"\n\n[ci]\nrequired_checks = ["unit"]\n'
+    )
+    (tmp_path / "ticket.json").write_text(json.dumps({"number": 7, "title": "Readings tab"}))
+    (tmp_path / "slots.json").write_text(json.dumps(SLOTS))
+    c = charter.defaults()
+    c["limits"]["ends_at"] = "2099-10-13T03:30:00Z"
+    c["approved"] = {"by": "owner", "at": "2026-10-12T11:55:00Z", "source": "chat"}
+    c["merge"] = {"mode": "owner", "waived_checks": []}
+    (tmp_path / "charter.json").write_text(json.dumps(c))
+    p = _cli(
+        tmp_path, "render", "--template", str(TEMPLATE), "--ticket", "ticket.json", "--charter", "charter.json",
+        "--slots", "slots.json", "--tracking", "11", "--out", "briefing.md",
+    )
+    assert p.returncode == 0, p.stderr
+    merging = _section((tmp_path / "briefing.md").read_text(), "### Merging", "### Rules")
+    without = next(l for l in merging.splitlines() if l.startswith("- **Without a merge queue**"))
+    assert "`owner` says it's ready on the PR and on #11, and leaves it." in without
+
+
 def test_the_ci_none_briefing_has_no_line_to_stay():
     # With `ci.none` the report comes first, so nothing is still to come after the merge.
     from workflow import render
