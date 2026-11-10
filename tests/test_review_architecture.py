@@ -4,8 +4,9 @@ inputs (the pages `workflow index reads` prints, the overview once through
 `rules.md`, `pages.md`, and `run.md` in a run), section 10's written rules and
 its `ticket` case for a copy the reuse rule lets through, `docs/architecture/`
 never another area's, the Standards, Spec and security prompts' added lines,
-the Correctness agent's inputs and rule check, section 8's list and inputs,
-and ADR 0001's consequence line. Prior art: tests/test_planning_review.py and
+the Correctness agent's inputs and rule check, section 8's list, and ADR
+0001's consequence line. Section 8's inputs (`pages.md` and the read pages)
+were split out to #645. Prior art: tests/test_planning_review.py and
 tests/test_build_review_rule.py."""
 
 import re
@@ -262,28 +263,6 @@ def test_planning_review_covers_a_spec_sessions_architecture_lines():
     planning = _planning()
     assert "a spec session's pull request of ADRs, glossary or architecture lines" in planning
     assert "Build tickets aren't." in planning
-
-
-def test_planning_review_gets_pages_md_and_the_read_pages():
-    planning = _planning()
-    assert "`pages.md`, as in section 1" in planning
-    assert "for a pull request, the pages `WF index reads --base origin/<base>` prints, copied as in section 1" in planning
-    # So a new page that contradicts an existing one is caught.
-    assert "a new page that contradicts an existing one" in planning
-
-
-def test_planning_correctness_reads_the_pages_a_new_or_changed_page_overlaps():
-    # `reads` matches changed files against `Covers:`, and a planning pull
-    # request changes only files under docs/: a new page covering
-    # src/orders/refund.py never brings orders.md (src/orders/**) with it.
-    # So the Correctness brief reads, in the repo, each page whose `Covers:`
-    # in pages.md overlaps those of a page the pull request adds or changes.
-    planning = _planning()
-    brief = planning.split("- **Correctness:**", 1)[1].split("- **Spec:**", 1)[0]
-    assert (
-        "for each page the pull request adds or changes, read in the repo every page `pages.md` lists "
-        "whose `Covers:` could match a file that page's `Covers:` matches"
-    ) in brief
 
 
 # --- ADR 0001 -----------------------------------------------------------------
