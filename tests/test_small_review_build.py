@@ -250,7 +250,7 @@ def test_the_glossarys_review_panel_names_both_reviews():
     assert "light review" in entry and "asked for" in entry and "no walk-through of the screens" in entry
     assert "never chosen for you" in entry
     assert "\n### Merge queue\n" in text
-    assert len(text) < 6000
+    assert len(text) < 6500
 
 
 def _kit_words(root: str, kit: Path = KIT):

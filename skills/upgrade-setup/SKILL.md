@@ -1,6 +1,6 @@
 ---
 name: upgrade-setup
-description: Move a project from solo mode to the full set-up, one upgrade at a time. "Protect `main`" makes a ruleset and the merge settings on the base branch with `gh` after one confirmation on the owner's own computer, or guides the clicks elsewhere, reads them back with `workflow protection`, and opens the pull request that leaves solo mode. "Require these checks", once CI has run, adds the ticked checks to the ruleset and to `ci.required_checks`. "Set up unattended runs" asks what only runs need, guides the two cloud environments, and writes the answers to the profile. "Add try-it links" guides Cloudflare, then turns previews on in a pull request showing its own link. "Use a merge queue" adds `merge_group` to the workflows, then the merge-queue rule. "Choose who writes code" sets `guard.code_writers` in a pull request. Use when the person asks to protect main, require the checks, set up unattended runs, add try-it links, use a merge queue or choose who writes code, or picks one where the kit offers it.
+description: Move a project from solo mode to the full set-up, one upgrade at a time. "Protect `main`" makes a ruleset and the merge settings on the base branch with `gh` after one confirmation on the owner's own computer, or guides the clicks elsewhere, reads them back with `workflow protection`, and opens the pull request that leaves solo mode. "Require these checks", once CI has run, adds the ticked checks to the ruleset and to `ci.required_checks`. "Set up unattended runs" asks what only runs need, guides the two cloud environments, and writes the answers to the profile. "Add try-it links" guides Cloudflare, then turns previews on in a pull request showing its own link. "Use a merge queue" adds `merge_group` to the workflows, then the merge-queue rule. "Choose who writes code" sets `guard.code_writers`, and "Write the architecture overview" writes `docs/architecture/README.md` and lists it in `project.rules`, each in a pull request. Use when the person asks for one of these, or picks one where the kit offers it.
 ---
 
 # Upgrade the set-up
@@ -12,9 +12,10 @@ A project set up in solo mode (`project.ruleset = false`) works attended from th
 - **"Require these checks"**: once CI has run on the base branch, the checks that ran, ticked, added to the ruleset protecting it and listed in the profile's `ci.required_checks`, so failing tests stop merges and the two agree. The third part.
 - **"Add try-it links"**: a try-it link on each pull request, from Cloudflare, with no live site: the steps in Cloudflare one screen at a time, then a pull request that turns previews on and shows its own link working. The fourth part.
 - **"Use a merge queue"**: GitHub's merge queue in place of "up to date": a pull request adding `merge_group` to the workflows behind the required checks first, then the ruleset's merge-queue rule with "up to date" off. The fifth part.
-- **"Choose who writes code"**: who writes code in this project, only ticket sessions or any session, with the code paths, in a pull request changing the profile. The sixth part, last.
+- **"Choose who writes code"**: who writes code in this project, only ticket sessions or any session, with the code paths, in a pull request changing the profile. The sixth part.
+- **"Write the architecture overview"**: the project's architecture overview, `docs/architecture/README.md`, written from the kit's template and listed in `project.rules`, as set-up does, in a pull request: for a project using the kit as a plugin, which gets no kit update to write it. The seventh part, last.
 
-"Where things are" and "When it's offered" are shared by all six.
+"Where things are" and "When it's offered" are shared by all seven.
 
 Below, `main` stands for the profile's `project.base_branch`: use its real name in everything you show.
 
@@ -34,7 +35,7 @@ The read-back needs GitHub's own JSON: the repository (`GET repos/<repo>`, with 
 
 **Choices** use the `AskUserQuestion` tool, the recommended option first; without it (a headless session), the same choices as a numbered list.
 
-**Only in attended sessions.** When `WORKFLOW_ROLE` is `ticket`, don't run it or offer it: there's nobody to click. For "Protect `main`", say in the ticket's report that the base branch isn't protected, and carry on. The conductor runs it only at its kick-off, with the owner there, and never runs "Require these checks": its kick-off sends the owner to an attended session for that (the `conductor` skill). It never runs "Add try-it links" or "Use a merge queue" either. Nor "Choose who writes code".
+**Only in attended sessions.** When `WORKFLOW_ROLE` is `ticket`, don't run it or offer it: there's nobody to click. For "Protect `main`", say in the ticket's report that the base branch isn't protected, and carry on. The conductor runs it only at its kick-off, with the owner there, and never runs "Require these checks": its kick-off sends the owner to an attended session for that (the `conductor` skill). It never runs "Add try-it links" or "Use a merge queue" either. Nor "Choose who writes code". Nor "Write the architecture overview".
 
 ## When it's offered
 
@@ -53,6 +54,7 @@ The offers have names, which `workflow doctor` and the other skills use:
 - **`use_merge_queue`**: doctor's `github.merge_queue` line suggests a merge queue (an organisation's repository that can have one, protected, with checks required). The fifth path, "Use a merge queue". Like `require_checks` it has its own, narrower rule: offered only through `workflow doctor`'s `use_merge_queue` offer (which `check-setup` shows), or when the person asks ("use a merge queue"). Never while a run is in progress, never in a ticket or conductor session, and never as a nag.
 - **`add_try_it_links`**: the project has a Wrangler config and no `[previews]` section in the profile. The fourth path, "Add try-it links". Like `require_checks` it has its own, narrower rule: offered only from the quickstart's next steps, from `workflow doctor`'s `add_try_it_links` offer (which `check-setup` shows), and when the person asks ("add try-it links", "set up previews"). Never at session start, never as a nag, and never to a project whose `[previews]` section turned them off: doctor makes no offer there.
 - **"Choose who writes code"** has no offer name: doctor's `kit.code_writers` note names it in its fix while `guard.code_writers` is unanswered, and `check-setup` offers it from that note. The sixth path. Also when the person asks ("choose who writes code", "let my sessions write code again"). Never in a ticket or conductor session, and never as a nag.
+- **`write_architecture_overview`**: a set-up project using the kit as a plugin whose `project.rules` doesn't list the architecture overview: doctor's `kit.architecture.missing` note offers it, and `check-setup` shows it. The seventh path, "Write the architecture overview". Also when the person asks ("write the architecture overview"). Never in a ticket or conductor session, and never as a nag. A vendored project gets the overview from the kit's update instead (the `update-workflow` skill), so doctor never offers it there.
 
 # Protect `main`
 
@@ -664,3 +666,32 @@ Say where it stands in one line:
 - "Any session writes code once #<n> merges, in each branch once it has the merged base branch in it.";
 - "It is that already: nothing to change.";
 - "Nothing was changed." after **Not now**.
+
+# Write the architecture overview
+
+The seventh path. It writes the project's architecture overview, `docs/architecture/README.md`, from the kit's template and adds `"docs/architecture/README.md"` to `project.rules`, as set-up does (its step 3, item 1, "The architecture overview"), in a pull request for the owner to merge, so every session and reviewer reads it. Asked for in an attended session ("write the architecture overview"), or picked where `check-setup` offers it, from doctor's `kit.architecture.missing` note. Set-up and the vendored kit's update write the overview themselves, so this is for a project using the kit as a plugin and set up before the overview existed; a vendored project that asks for it gets the same steps.
+
+## 1. Where it stands
+
+The pull request's branch starts from the base branch, so where it stands is the base's profile: `git fetch origin <base>`, then read `project.rules` from `git show origin/<base>:.claude/workflow/profile.toml`. When `origin/<base>` itself isn't in this checkout (`git rev-parse --verify origin/<base>` fails), say so, and stop. When it is but has no profile yet (set-up's pull request hasn't merged), say set-up's pull request merges first, and stop. When its `project.rules` lists the overview already (an entry naming `docs/architecture/README.md`, a `#heading` after it and a leading `./` ignored), say "It is that already: nothing to change.", and stop.
+
+Then look for an open pull request adding the overview (from `workflow/architecture-overview`, or any other, the kit's update among them: one adding `docs/architecture/README.md` to `project.rules`). If there is one, ask nothing: point at it, to merge or close before asking again, and stop. A second one beside it would move the first one's overview aside as the project's own.
+
+## 2. One pull request
+
+1. A branch from the base branch, such as `workflow/architecture-overview`.
+2. **An existing `docs/architecture/README.md`** on the base is the project's own: move it (`git mv`) to `docs/architecture/earlier-overview.md` first, only when `project.rules` doesn't list it yet (step 1 stopped otherwise). An existing `earlier-overview.md` is never overwritten: the moved file takes the next free name, `earlier-overview-2.md`, then `earlier-overview-3.md`, and so on. Other files in `docs/architecture/` stay as they are. The moved file is a page with no `Covers:` line, which every change reads until someone gives it one.
+3. Write `docs/architecture/README.md` from the kit's template as it is: `.claude/workflow/templates/architecture-overview.md` (vendored) or `<this skill's directory>/../../templates/architecture-overview.md` (plugin).
+4. In `.claude/workflow/profile.toml`'s `[project]` table, add `"docs/architecture/README.md"` to `rules`, after the project's own rule documents. Change nothing else.
+5. `WF profile check` passes.
+6. Commit, then push the branch in a command of its own ("Pushing").
+7. Open the pull request. Its body: the overview written and listed in `project.rules`, the name an existing `docs/architecture/README.md` was moved to, if any, and what changes once it merges: every session and reviewer reads the overview, and a change that breaks one of its rules is blocked, as for any rule document.
+
+It changes `.claude/`, so merging it is the owner's: never merge it, or enable auto-merge on it, yourself. Once it merges, the overview is the project's: later kit versions never compare it with the template.
+
+## 3. Where it ends
+
+Say where it stands in one line:
+- "The architecture overview is in the project's rules once #<n> merges.";
+- "It is that already: nothing to change.";
+- "#<n> adds it already: merge or close it first." when an open pull request does.

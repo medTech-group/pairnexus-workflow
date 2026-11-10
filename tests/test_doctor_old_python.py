@@ -279,6 +279,10 @@ def test_every_line_the_full_doctor_names_is_in_the_short_report_or_said_only_wh
     named = set(re.findall(r'"((?:computer|kit|github|cloud|previews)\.[a-z_.]+)"', source))
     short = {ln["id"] for ln in _old_report(_project(tmp_path / "v"))["lines"]}
     short |= {ln["id"] for ln in _old_report(_project(tmp_path / "p", vendored=False))["lines"]}
+    # The architecture lines come with a docs/architecture/ folder (#615).
+    arch = _project(tmp_path / "a")
+    (arch / "docs/architecture").mkdir(parents=True)
+    short |= {ln["id"] for ln in _old_report(arch)["lines"]}
     assert named - short - ONLY_WHEN_WRONG == set()
     assert ONLY_WHEN_WRONG & short == set()
     lines = {(g, i) for g, i, *_ in _old_python._DOCTOR_LINES} | {("Your computer", "computer.python3")}
