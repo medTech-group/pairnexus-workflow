@@ -1103,9 +1103,16 @@ def _code(p: Profile, tracked: list[str]) -> list[str]:
 def check_architecture_overview(i: Inputs) -> list[Line]:
     """Plugin mode only: a set-up project whose `project.rules` doesn't list
     the overview, which no update of the kit brings in there. A vendored
-    project gets it with its update; a project listing it gets no line."""
-    if i.gaps_only or i.vendored or i.profile is None:
+    project gets it with its update; a project listing it gets no line. One
+    whose profile can't be read can't be checked, as the old-Python short
+    report, which reads the rules as text, gives it."""
+    if i.gaps_only or i.vendored:
         return []
+    if i.profile is None:
+        return [Line("The kit", "kit.architecture.missing", "cant_check", Words(
+            "Can't tell whether this project has its architecture overview until the kit's profile can be read.",
+            "The architecture overview unchecked: the profile doesn't read (project.rules).",
+        ), PROFILE_FIRST)] if i.profile_error else []
     if any(_rule_path(r) == OVERVIEW for r in i.profile.rules):
         return []
     return [Line("The kit", "kit.architecture.missing", "note", Words(

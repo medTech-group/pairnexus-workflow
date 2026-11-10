@@ -17,7 +17,7 @@ import pytest
 
 from changelog_notes import since_0110
 from conftest import KIT
-from workflow import _old_python, doctor, profile
+from workflow import _old_python, cli, doctor, profile
 
 IDS = ("kit.architecture.uncovered", "kit.architecture.unmatched", "kit.architecture.no_covers")
 MISSING = "kit.architecture.missing"
@@ -57,8 +57,8 @@ def _repo(tmp_path, files, prof=None, vendored=True, untracked=()):
 
 def _inputs(root, environ=None, **kw):
     environ = _env() if environ is None else environ
-    prof = profile.load(root, required=False)
-    return doctor.Inputs(root=root, kit_root=KIT, profile=prof, profile_error=None,
+    prof, error = cli._read_profile(root)  # as `workflow doctor` reads it
+    return doctor.Inputs(root=root, kit_root=KIT, profile=prof, profile_error=error,
                          experience=profile.resolve_experience(root, None, environ=environ), environ=environ, **kw)
 
 
@@ -281,6 +281,20 @@ def test_a_plugin_project_not_set_up_gets_no_missing_line(tmp_path):
     assert MISSING not in _lines(root)
 
 
+BROKEN = '[project]\nname = "x"\nbogus = [\n'  # doesn't parse
+
+
+def test_a_plugin_project_whose_profile_cant_be_read_cant_check_the_overview(tmp_path):
+    root = _repo(tmp_path, {"src/a.py": "x\n"}, prof=BROKEN, vendored=False)
+    ln = _lines(root)[MISSING]
+    assert ln.status == "cant_check" and ln.fix == doctor.PROFILE_FIRST and ln.offer is None
+
+
+def test_a_vendored_project_whose_profile_cant_be_read_gets_no_missing_line(tmp_path):
+    root = _repo(tmp_path, {"src/a.py": "x\n"}, prof=BROKEN)
+    assert MISSING not in _lines(root)
+
+
 def test_a_plugin_project_with_the_folder_gets_all_four(tmp_path):
     root = _repo(tmp_path, {"src/a.py": "x\n", "docs/architecture/a.md": "Covers: src/**\n"}, vendored=False)
     assert set(_lines(root)) == {MISSING, *IDS}
@@ -332,6 +346,12 @@ def test_the_short_report_gives_the_same_ids_as_doctor(tmp_path, vendored, folde
     assert _old_ids(root) == full
     assert (MISSING in full) == (not vendored and not rules)
     assert (set(IDS) <= full) == folder
+
+
+@pytest.mark.parametrize("vendored", [True, False])
+def test_the_short_report_gives_the_same_ids_as_doctor_when_the_profile_cant_be_read(tmp_path, vendored):
+    root = _repo(tmp_path, {"src/a.py": "x\n"}, prof=BROKEN, vendored=vendored)
+    assert _old_ids(root) == set(_lines(root)) == (set() if vendored else {MISSING})
 
 
 def test_the_short_report_gives_no_missing_line_without_a_profile(tmp_path):
