@@ -131,6 +131,27 @@ def test_the_short_report_reads_the_rules_array_as_doctor_does(tmp_path, rules, 
     assert _old_ids(root) == full
 
 
+@pytest.mark.parametrize("profile", ["listed", "none"])
+def test_a_lock_that_cant_be_looked_at_gives_the_same_ids_from_both_reports(tmp_path, monkeypatch, profile):
+    # `Path.exists` raises PermissionError for a lock in a folder that can't
+    # be searched, where `os.path.exists`, as the short report asks, says no
+    # lock: plugin mode. Raised here whoever runs the test, root or not.
+    root = _repo(tmp_path, {"src/a.py": "x\n"}, prof=_prof(LISTS), vendored=False)
+    if profile == "none":
+        _profile_file(root).unlink()
+    lock = root / ".claude/workflow/lock.json"
+    exists = type(lock).exists
+
+    def refused(self, *a, **kw):
+        if self == lock:
+            raise PermissionError(13, "Permission denied", str(self))
+        return exists(self, *a, **kw)
+
+    monkeypatch.setattr(type(lock), "exists", refused)
+    full = _arch(root)
+    assert _old_ids(root) == set(full) == set()
+
+
 def test_rules_are_read_in_the_project_table_only(tmp_path):
     # A `rules` key in another table (here an area named "rules") isn't project.rules.
     prof = _prof() + '[areas]\nrules = ["docs/architecture/README.md"]\n'

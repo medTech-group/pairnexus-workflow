@@ -1122,8 +1122,11 @@ def check_architecture_overview(i: Inputs) -> list[Line]:
     it, it isn't UTF-8 or isn't a file) is read as the old-Python short report
     reads every profile: `project.rules` as text, by the same function, so
     the two reports give the same ids whatever the profile holds (#639).
-    Listed there, no line; else the line can't be checked."""
-    if i.gaps_only or i.vendored:
+    Listed there, no line; else the line can't be checked. The mode is
+    decided as the short report decides it, by `os.path.exists` on the lock,
+    which never raises (`Path.exists` raises for a lock that can't be looked
+    at)."""
+    if i.gaps_only or os.path.exists(i.root / ".claude/workflow/lock.json"):
         return []
     if i.profile is None:
         if not i.profile_error or not _old_python._overview_unlisted(str(i.root)):
