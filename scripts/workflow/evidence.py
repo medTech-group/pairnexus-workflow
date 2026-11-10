@@ -17,7 +17,6 @@ from __future__ import annotations
 import dataclasses
 import fnmatch
 import glob
-import hashlib
 import json
 import os
 import re
@@ -144,20 +143,31 @@ def dirty_paths(root: Path) -> list[str]:
     return [l[3:] for l in out.stdout.splitlines() if l[3:] and not l[3:].startswith(".workflow/")]
 
 
-def tree_state(root: Path) -> tuple[str, frozenset[str]]:
-    """The working tree against HEAD, outside .workflow/: a hash of every change
-    to a tracked or staged file (content included), and the untracked files that
-    aren't ignored. Taken after each shard, so a run sees what changed under it."""
-    diff = subprocess.run(
-        ["git", "diff", "HEAD", "--binary", "--no-ext-diff", "--no-textconv", "--", ".", ":(exclude).workflow"],
-        cwd=root,
-        capture_output=True,
-    )
+def tree_state(root: Path) -> tuple[dict[str, tuple], frozenset[str]]:
+    """The working tree outside .workflow/: each tracked or staged file's index
+    entry with its file's stat (times in ns, so a write undone before the next
+    look still shows), and the untracked files that aren't ignored, whatever
+    the user's git config. Taken after each shard, so a run sees what changed
+    under it."""
+    staged = subprocess.run(["git", "ls-files", "--stage", "-z"], cwd=root, capture_output=True)
     others = subprocess.run(["git", "ls-files", "--others", "--exclude-standard", "-z"], cwd=root, capture_output=True)
-    if diff.returncode or others.returncode:
+    if staged.returncode or others.returncode:
         raise EvidenceError("not a git checkout")
+    entries: dict[str, list[str]] = {}
+    for entry in os.fsdecode(staged.stdout).split("\0"):
+        info, _, name = entry.partition("\t")
+        if name and not name.startswith(".workflow/"):
+            entries.setdefault(name, []).append(info)  # a conflicted path has one entry a stage
+    files: dict[str, tuple] = {}
+    for name, info in entries.items():
+        try:
+            st = os.lstat(root / name)
+            mark: tuple | None = (st.st_mode, st.st_size, st.st_ino, st.st_mtime_ns, st.st_ctime_ns)
+        except OSError:
+            mark = None
+        files[name] = (tuple(info), mark)
     names = os.fsdecode(others.stdout).split("\0")
-    return hashlib.sha256(diff.stdout).hexdigest(), frozenset(n for n in names if n and not n.startswith(".workflow/"))
+    return files, frozenset(n for n in names if n and not n.startswith(".workflow/"))
 
 
 def _paths(names: list[str] | set[str], code: bool = False) -> str:
@@ -377,17 +387,18 @@ def collect(
         """Mark the run dirty, or name the new files, if the tree changed since the last look."""
         nonlocal state, base, fresh
         now = tree_state(root)
+        moved = {p for p in now[0].keys() | state[0].keys() if now[0].get(p) != state[0].get(p)}
         new_files = now[1] - state[1]
-        if (now[0] != state[0] or new_files) and not base.name.endswith("-dirty"):
+        if (moved or new_files) and not base.name.endswith("-dirty"):
             base, fresh = _dirty_store(store, root, sha), True  # from here on, kept apart: never the commit's
-        if now[0] != state[0] or (allow_dirty and new_files):
-            if changed is not None:
-                cur = set(dirty_paths(root))
-                changed[:] = sorted(set(changed) | (cur - set(dirty) or cur))
+        if allow_dirty:
+            moved |= new_files
         elif new_files:
             seen.update(new_files)
             if appeared is not None:
                 appeared[:] = sorted(seen)
+        if moved and changed is not None:
+            changed[:] = sorted(set(changed) | moved)
         state = now
 
     results: list[ShardResult] = []

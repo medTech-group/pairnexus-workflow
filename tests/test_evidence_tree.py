@@ -170,6 +170,34 @@ def test_a_later_suite_run_beside_a_file_that_appeared_runs_again(tmp_path, monk
     assert capsys.readouterr().out.splitlines()[0] == evidence.headline(_sha(root), False)
 
 
+@pytest.mark.parametrize("args", [(), ("--allow-dirty",)])
+def test_an_edit_undone_before_the_shard_ends_still_makes_a_dirty_report(tmp_path, monkeypatch, capsys, args):
+    # The session edits a test, the suite reads it, the session undoes the edit:
+    # by the time the shard ends the tree is the commit's again.
+    root = _repo(tmp_path)
+    (root / "tests/test_1.txt").write_text("fail")
+    git(root, "commit", "-qam", "test_1 fails")
+    real_run = evidence.run_shard
+
+    def run_shard(suite, i, files, cwd, **kw):
+        if i == 1:
+            (root / "tests/test_1.txt").write_text("pass")
+        r = real_run(suite, i, files, cwd, **kw)
+        if i == 1:
+            git(root, "checkout", "--", "tests/test_1.txt")
+        return r
+
+    monkeypatch.setattr(evidence, "run_shard", run_shard)
+    assert _evidence(monkeypatch, root, *args) == 0
+    out = capsys.readouterr().out
+    assert out.splitlines()[0] == evidence.headline(_sha(root), True, dirty=True)
+    assert "tests/test_1.txt" in out
+    assert not (_store(root) / "unit-001.json").exists()
+    monkeypatch.setattr(evidence, "run_shard", real_run)
+    assert _evidence(monkeypatch, root) == 1  # a clean run on the commit runs shard 1 again
+    assert capsys.readouterr().out.splitlines()[0] == evidence.headline(_sha(root), False)
+
+
 # ---------- 2. an interrupted shard is never reused ----------
 
 
@@ -353,6 +381,15 @@ def test_allow_dirty_marks_an_untracked_file_that_appeared_mid_run(tmp_path, mon
     out = capsys.readouterr().out
     assert out.splitlines()[0].endswith(evidence.DIRTY)
     assert "tests/test_9.txt" in out
+
+
+def test_allow_dirty_marks_a_new_file_whatever_git_status_shows(tmp_path, monkeypatch, capsys):
+    root = _repo(tmp_path)
+    git(root, "config", "status.showUntrackedFiles", "no")
+    _act(root, "tests/test_1.txt", "echo x > extra.txt")
+    assert _evidence(monkeypatch, root, "--allow-dirty") == 0
+    out = capsys.readouterr().out
+    assert out.splitlines()[0].endswith(evidence.DIRTY) and "(extra.txt)" in out
 
 
 def test_allow_dirty_on_a_dirty_start_names_what_changed_mid_run(tmp_path, monkeypatch, capsys):
