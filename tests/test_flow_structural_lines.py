@@ -91,6 +91,22 @@ def test_the_charter_says_which_paths_count_as_named():
     assert 'A path in fenced code (unless the prose before it asks for a change "to" or "in" it)' in readiness
     assert "after \"don't\", \"do not\" or \"never\" in its clause, isn't read as named" in readiness
     assert "when in doubt, a path is noted" in readiness
+    # `_mentions` leaves out a path its clause only reads, too: the charter says so
+    assert 'a clause that only reads it ("Read the key from .env"' in readiness
+    assert '"read", "load" or "parse" before it, or "from" just before it' in readiness
+    assert "and no word of change before it" in readiness
+
+
+def test_the_charter_s_reading_case_is_the_code_s():
+    from workflow.issues import protected_named
+
+    pats = ["**/.env"]
+    # left out: its clause only reads it
+    assert protected_named("Area: a0\nRead the key from .env at startup.", pats) == []
+    assert protected_named("Area: a0\nTake the key from .env.", pats) == []
+    # still noted: a word of change before it, or no reading word
+    assert protected_named("Area: a0\nRead and edit .env.", pats) == [(".env", "**/.env")]
+    assert protected_named("Area: a0\nUse .env.", pats) == [(".env", "**/.env")]
 
 
 # --- the hook's first flow context -------------------------------------------
