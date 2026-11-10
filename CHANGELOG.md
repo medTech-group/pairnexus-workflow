@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**Set-up and the kit's update write the architecture overview** (#618, part of spec #611). The overview's template shipped with #612, but nothing wrote it into a project, so its rules reached no session or reviewer.
+
+- **`setup-workflow`** (step 3, item 1) writes `docs/architecture/README.md` from `templates/architecture-overview.md` and adds `"docs/architecture/README.md"` to `project.rules`, after the project's own rule documents.
+- **`update-workflow`** does the same in the update that brings it in (its new step 7), and names it in the pull request's body. Later updates leave the overview alone and never compare it with the template.
+- **An existing `docs/architecture/README.md`** is the project's own: both first move it to `docs/architecture/earlier-overview.md`, only when `project.rules` doesn't list the overview yet, never over an existing `earlier-overview.md` (the next free name, `earlier-overview-2.md`, instead). Other files in the folder stay.
+- **`upgrade-setup`** gains its seventh path, "Write the architecture overview" (offer `write_architecture_overview`), which does what set-up does in a pull request, for a project using the kit as a plugin, which gets no kit update. `check-setup` offers it from doctor's `kit.architecture.missing` note (#639).
+- **For projects updating:** the update writes `docs/architecture/README.md` and lists it in `project.rules` (the `update-workflow` skill's step 7), moving an existing `docs/architecture/README.md` to `earlier-overview.md` first. A plugin-mode project asks Claude to "Write the architecture overview", or picks it where "check the set-up" offers it.
+
 **A ticket session's evidence never holds the merge when no check is waived** (#663). `build-ticket` §6 and the briefing's **Merging** lines listed "post the evidence" before `merge-check`, so sessions held a ready pull request for the 40-minute evidence run while it fell behind or started conflicting with the base. With no required check waived and the profile not `ci.none` (where flow §4 item 2 only recommends the report), the session now starts `workflow evidence` as a tracked background task once the review is clean, runs `merge-check` and queues, merges or arms auto-merge on `ready` without waiting for it, and posts the report when it ends, naming the head it covers. With a check waived on the head (`merge-check`'s `waived` note) or `ci.none`, the report still comes first, run with `--all`, and `merge-check` counts it; a check the charter waives that hasn't been waived yet doesn't hold the merge, though the run starts with `--all`. The briefing's line is a new value, `{{merge.evidence}}`, rendered for each case.
 
 - **For projects updating:** nothing to do. A project with its own copy of `ticket-session-prompt.md` keeps its old line until it takes `{{merge.evidence}}`.

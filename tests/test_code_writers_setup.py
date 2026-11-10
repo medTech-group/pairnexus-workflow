@@ -204,12 +204,13 @@ def test_update_writes_the_answer_last_and_says_it_in_the_pull_request():
 # ---------- upgrade-setup ----------
 
 
-def test_upgrade_setup_has_choose_who_writes_code_as_its_sixth_and_last_part():
+def test_upgrade_setup_has_choose_who_writes_code_as_its_sixth_part():
     text = _text(UPGRADE)
     head = text.split("---", 2)[1]
     assert f'"{NAME}"' in head
     assert f'**"{NAME}"**' in text.split("\n## ", 1)[0]
-    assert "The sixth part, last." in text and "shared by all six" in text
+    # "Write the architecture overview" is the seventh, last (#618).
+    assert "The sixth part." in text and "shared by all seven" in text
     assert text.index("\n# Use a merge queue\n") < text.index(f"\n# {NAME}\n")
     # Doctor names it in its fix; the skill's part is the one it names.
     assert doctor.CHOOSE_WRITERS == NAME
@@ -319,7 +320,7 @@ def test_every_upgrade_path_pushes_in_a_command_of_its_own():
     assert "in a command of its own" in pushing and CHAINED in pushing
     assert text.index("**Pushing.**") < text.index("\n# Protect `main`\n")
     steps = [ln for ln in text.splitlines() if re.match(r"^\d+\. (Push|Commit)", ln)]
-    assert len(steps) == 6, steps  # each of the six paths' pull requests
+    assert len(steps) == 7, steps  # each of the seven paths' pull requests
     for ln in steps:
         assert "in a command of its own" in ln and '"Pushing"' in ln, ln
 
