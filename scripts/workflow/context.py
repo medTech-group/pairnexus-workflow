@@ -200,7 +200,7 @@ FLOW_HEAD = "This request is part of the project's workflow. Follow its flow ste
 # and path in an attended session or the conductor line in a conductor session
 # (about 650 characters with a usual path). It is set so that the kit's own
 # flow, from its start through §2, fits whole: a planning session needs both.
-FLOW_BUDGET = 9_450
+FLOW_BUDGET = 8_900
 _READ = " Read it now, all of it, before acting: "
 _WHOLE = " All of it is below (from "
 _STOPS = " Only its start fits below. It stops before "
@@ -236,10 +236,10 @@ def _name(section: str, file: Path) -> str:
     return f'"{first}" ({file.name})'
 
 
-def first_flow(files: list[Path], budget: int = FLOW_BUDGET) -> str:
+def first_flow(files: list[Path]) -> str:
     """The first flow context: a short, fixed instruction with the flow's paths,
     then the flow's sections from its start, each whole, as far as they fit
-    under `budget`. Claude Code saves a string over its limit to a file and
+    under FLOW_BUDGET. Claude Code saves a string over its limit to a file and
     shows Claude its first 2,000 characters, so the instruction comes first,
     the whole stays under it, and the instruction names where the text below
     stops. A file that can't be read leaves only the instruction."""
@@ -250,14 +250,14 @@ def first_flow(files: list[Path], budget: int = FLOW_BUDGET) -> str:
     except (OSError, UnicodeDecodeError):
         return head
     whole = f"{FLOW_HEAD}{_WHOLE}{names})."
-    if len(whole) + sum(len(p) + 2 for _, p in pieces) <= budget:
+    if len(whole) + sum(len(p) + 2 for _, p in pieces) <= FLOW_BUDGET:
         return "\n\n".join([whole, *(p for _, p in pieces)])
     body = 0  # the length of the first k sections, joined
     for k, (f, s) in enumerate(pieces):
         nxt = pieces[k + 1] if k + 1 < len(pieces) else None
         grown = body + len(s) + 2
         # what the text would be with this section too, stopping before the next
-        if nxt is None or len(head) + len(_stop(*nxt)) + grown > budget:
+        if nxt is None or len(head) + len(_stop(*nxt)) + grown > FLOW_BUDGET:
             if k == 0:
                 return head  # not even the opening fits: nothing below
             return "\n\n".join([head + _stop(f, s), *(p for _, p in pieces[:k])])
@@ -326,14 +326,12 @@ def first_glossary_prompt(session_id: str) -> bool:
     return _first_time("glossary", session_id)
 
 
-def with_glossary(ctx: str | None, path: Path | None, files: list[Path] | None = None) -> str | None:
+def with_glossary(ctx: str | None, path: Path | None) -> str | None:
     """`ctx` with the glossary and its rule beside it. The glossary goes in
     whole when it all stays under Claude Code's limit; beside the first flow
     context, or when it wouldn't fit, only the rule and its path with "read it now",
     put first so it stays within the 2,000 characters Claude sees of a longer
-    string. A first flow context too long to go beside the rule is made again
-    from `files`, the flow's, with only the sections that fit, or cut to its
-    instruction without them. An empty or unreadable glossary adds nothing."""
+    string. An empty or unreadable glossary adds nothing."""
     if path is None:
         return ctx
     try:
@@ -349,7 +347,5 @@ def with_glossary(ctx: str | None, path: Path | None, files: list[Path] | None =
             return whole
     by_path = f"{rule} It isn't included here: read it now."
     if ctx and len(by_path) + 2 + len(ctx) >= CONTEXT_LIMIT and is_first_flow(ctx):
-        # long paths: the sections that still fit beside the rule, else the flow's instruction, which names them
-        fewer = first_flow(files, CONTEXT_LIMIT - len(by_path) - 3) if files else ""
-        ctx = fewer if is_first_flow(fewer) and len(by_path) + 2 + len(fewer) < CONTEXT_LIMIT else flow_instruction(ctx)
+        ctx = flow_instruction(ctx)  # long paths: keep the flow's instruction, which names them
     return f"{by_path}\n\n{ctx}" if ctx else by_path

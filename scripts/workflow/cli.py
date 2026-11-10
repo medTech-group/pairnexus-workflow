@@ -2009,7 +2009,7 @@ def _hook_context(event: dict) -> int:
     if prof is not None:
         try:
             if context_mod.first_glossary_prompt(session) and attended() and resolve_experience(root, prof.experience).wording_level == "new":
-                ctx = context_mod.with_glossary(ctx, context_mod.glossary_file(root, KIT_ROOT), files)
+                ctx = context_mod.with_glossary(ctx, context_mod.glossary_file(root, KIT_ROOT))
         except Exception:
             pass
     if ctx:

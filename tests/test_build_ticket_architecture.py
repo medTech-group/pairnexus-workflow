@@ -1,14 +1,14 @@
 """#617 (spec #611, answers 3, 8, 14 and 30 to 33): building reads the
-architecture, and the flow says where a structural line goes.
+architecture, and says where a structural line goes.
 
 Seam 3, the kit's text: `build-ticket`'s two `workflow index reads` runs and
 its `pages` run, its rule for where a structural line goes (answers 30 to 33's
-rule for code no page covers among it); flow §2 item 2 and §3 item 1; and the
-changelog note under `## Unreleased`. §2 item 7 and its checklist (architecture
-lines on the planning branch, the tickets blocked by it) are #647's."""
+rule for code no page covers among it); flow §3 item 1; and the changelog note
+under `## Unreleased`. Flow §2 item 2's line on where a structural line goes,
+with the first flow context's budget, is #646's; §2 item 7 and its checklist
+(architecture lines on the planning branch, the tickets blocked by it) are #647's."""
 
 import re
-from pathlib import Path
 
 from changelog_notes import since_0110
 from conftest import KIT
@@ -44,10 +44,6 @@ def _lasting():
 
 def _flow():
     return _read("docs/flow.md")
-
-
-def _flow_2_item_2():
-    return _flat(_between(_flow(), "2. Follow `to-tickets`", "\n3. Anything only the owner can do"))
 
 
 def _flow_3_item_1():
@@ -147,44 +143,6 @@ def test_the_build_skill_points_at_the_overview_for_the_rest():
 # --- the flow ----------------------------------------------------------------
 
 
-def test_flow_2_item_2_says_where_a_structural_line_goes():
-    s = _flow_2_item_2()
-    assert "where its structural lines go: its page, or the overview for a cross-cutting rule" in s
-    # answers 26, 29 and 31: a new module's full page, named and defined as
-    # build-ticket and the overview do: a folder a page already covers takes
-    # its line in that page, and nested new folders get one page, the outermost's
-    assert "a new module (a new folder of code that no page covers and that held no code before), a full page for the outermost one" in s
-    assert "a new folder of code, its full page" not in s
-    # answers 30, 32 and 33: the small page, `--`, no leading dot, `_root.md`
-    assert "a file no page covers, a `Covers:` line in the page named by its folder path" in s
-    # an everyday path, as the overview's template gives it, not a placeholder
-    assert "`.tools/lint/check.py`: `tools--lint.md`" in s
-    assert "`.a/b/c.py`" not in s
-    assert "`_root.md`" in s
-
-
-def test_flow_2_still_reaches_a_planning_session_whole_beside_the_glossary_rule(tmp_path, monkeypatch):
-    # The first flow context carries §1 and §2 whole (tests/test_start_carry_on.py,
-    # tests/test_planning_review.py); the budget that makes room for this ticket's
-    # lines still lets the glossary's rule go in front of §2 for a vendored project
-    # at an ordinary path. The paths are relative, from tmp_path, so the project's
-    # path is exactly 100 characters wherever pytest's temporary directory is. A
-    # longer path keeps the sections that fit (tests/test_flow_context_limit.py).
-    from workflow import context
-
-    monkeypatch.chdir(tmp_path)
-    root = Path("p" * 100)
-    (root / ".claude/workflow/docs").mkdir(parents=True)
-    flow = root / ".claude/workflow/flow.md"
-    flow.write_text(_flow(), encoding="utf-8")
-    glossary = root / ".claude/workflow/docs/glossary.md"
-    glossary.write_text(_read("docs/glossary.md"), encoding="utf-8")
-    out = context.with_glossary(context.first_flow([flow]), glossary, [flow])
-    assert len(out) < context.CONTEXT_LIMIT and out.startswith("Treat the person in this session as new to building")
-    assert "\n## 2. A spec and its build tickets" in out and "- `## Bar`" in out
-    assert f"{context.FLOW_BUDGET:,} characters" in _read("docs/profile.md")
-
-
 def test_flow_2_item_2_keeps_its_bar_bullet():
     # tests/test_start_carry_on.py reads this bullet word for word
     assert "- `## Bar`, required in a `run.bar_areas` area (\"The bar\")." in _between(
@@ -211,4 +169,5 @@ def test_the_changelog_says_so_under_unreleased():
     assert "`build-ticket`" in note
     assert "`_root.md`" in note
     # the parts split out are named, and not described as built here
-    assert "#647" in note and "`## Blocked by`" not in note
+    assert "#646" in note and "#647" in note
+    assert "9,450" not in note and "`## Blocked by`" not in note
