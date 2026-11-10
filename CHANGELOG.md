@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**Set-up and the kit's update write the architecture overview** (#618, part of spec #611). The overview's template shipped with #612, but nothing wrote it into a project, so its rules reached no session or reviewer.
+
+- **`setup-workflow`** (step 3, item 1) writes `docs/architecture/README.md` from `templates/architecture-overview.md` and adds `"docs/architecture/README.md"` to `project.rules`, after the project's own rule documents.
+- **`update-workflow`** does the same in the update that brings it in (its new step 7), and names it in the pull request's body. Later updates leave the overview alone and never compare it with the template.
+- **An existing `docs/architecture/README.md`** is the project's own: both first move it to `docs/architecture/earlier-overview.md`, only when `project.rules` doesn't list the overview yet, never over an existing `earlier-overview.md` (the next free name, `earlier-overview-2.md`, instead). Other files in the folder stay.
+- **`upgrade-setup`** gains its seventh path, "Write the architecture overview" (offer `write_architecture_overview`), which does what set-up does in a pull request, for a project using the kit as a plugin, which gets no kit update. `check-setup` offers it from doctor's `kit.architecture.missing` note (#639).
+- **For projects updating:** the update writes `docs/architecture/README.md` and lists it in `project.rules` (the `update-workflow` skill's step 7), moving an existing `docs/architecture/README.md` to `earlier-overview.md` first. A plugin-mode project asks Claude to "Write the architecture overview", or picks it where "check the set-up" offers it.
+
 **Doctor notes a plugin-mode project with no architecture overview** (#639, part of spec #611, split out of #615). A project using the kit as a plugin gets no kit update to write `docs/architecture/README.md`, so `workflow doctor` gains `kit.architecture.missing` in "The kit" group: a note in a set-up plugin-mode project whose `project.rules` doesn't list the overview, offering "Write the architecture overview" (`write_architecture_overview`). A vendored project, a project not set up and one listing the overview get no line, and `workflow status` never runs it. The old-Python short report gives the same id, reading `project.rules` as text. When the full doctor can't load the profile (it doesn't parse, `profile check` refuses it, it isn't UTF-8 or isn't a file), it reads `project.rules` from the text the same way, so both reports agree: listed there, no line; otherwise the line can't be checked until the profile is fixed.
 
 - **For projects updating:** nothing to do. A plugin-mode project without the overview sees the new note; it never blocks. `check-setup` and `upgrade-setup` handle the offer with #618.
