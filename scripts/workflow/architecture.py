@@ -2,11 +2,12 @@
 overview (`README.md`), the pages beside it, and which pages a change reads.
 
 A page is a Markdown file directly in `docs/architecture/` other than the
-overview; files in subfolders and files that aren't `.md` are neither pages
-nor noted. One rule (`_entries`) tells the overview from the pages: the
-overview is the entry the folder lists as exactly `README.md`, and every
-other `.md` file, or other spelling of `README.md` (`README.MD`), is a page.
-Its form, as the overview's `## Writing a page` section gives it:
+overview; files in subfolders, and files that aren't `.md` other than another
+spelling of `README.md` (`README.MD`), are neither pages nor noted. One rule
+(`_entries`) tells the overview from the pages: the overview is the entry
+the folder lists as exactly `README.md`, and every other `.md` file, or
+other spelling of `README.md` (`README.MD`), is a page. Its form, as the
+overview's `## Writing a page` section gives it:
 
     Covers: <glob>              one or more, at the top, one glob on each
     Interface: <one line>

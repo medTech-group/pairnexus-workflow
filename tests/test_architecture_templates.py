@@ -97,7 +97,7 @@ def test_writing_a_page_gives_the_form():
     s = OVERVIEW.split("\n## Writing a page\n", 1)[1]  # the last section; its example holds `## ` headings
     flat = _flat(s)
     assert "A page is a Markdown file directly in this folder, other than this `README.md`." in flat
-    assert "Files in subfolders, and files that aren't `.md`, are neither pages nor read." in flat
+    assert "Files in subfolders, and files that aren't `.md` (other than another spelling of `README.md`, such as `README.MD`, which is a page), are neither pages nor read." in flat
     assert "one glob on each line, never two on one line" in flat
     assert "A page with no `Covers:` line covers nothing yet" in flat
     assert "**`Interface:`** is one line" in flat
@@ -123,7 +123,7 @@ def test_the_example_page_reads_as_a_page():
 
 def test_the_changelog_notes_say_the_overview_is_never_a_page():
     note = _flat(since_0110().split("(#612,", 1)[1].split("\n\n**", 1)[0])
-    assert "A page is a `.md` file directly in `docs/architecture/` other than the overview (#631)" in note
+    assert "A page is a `.md` file directly in `docs/architecture/` other than the overview (#631), or another spelling of `README.md`, such as `README.MD`; files in subfolders and other files are ignored." in note
     assert "For now `README.md` is also read as a page" not in note
     assert "with no `Covers:` line, one that covers nothing yet" not in note
     note = _flat(since_0110().split("(#631,", 1)[1].split("\n\n**", 1)[0])
