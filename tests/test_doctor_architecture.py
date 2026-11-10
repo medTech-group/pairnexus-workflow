@@ -211,15 +211,20 @@ def test_a_page_matching_no_tracked_file_is_a_note(tmp_path):
     assert ln.fix.new and ln.fix.developer
 
 
-def test_the_unmatched_note_says_a_change_adding_a_matching_file_reads_the_page(tmp_path):
-    # `workflow index reads` gives a page whose `Covers:` matches a file a change adds, so a page
-    # written ahead of its code is read by the change that writes that code.
-    root = _repo(tmp_path, {"src/orders/a.py": "x\n", "docs/architecture/payments.md": "Covers: src/payments/**\n"})
-    ln = _lines(root)["kit.architecture.unmatched"]
+@pytest.mark.parametrize("pages, new, developer, fix", [
+    (1, "1 architecture page's `Covers:` lines match no file tracked in git: ",
+     "1 page whose `Covers:` matches no file tracked in git: ", "or to remove the page."),
+    (2, "2 architecture pages' `Covers:` lines match no file tracked in git: ",
+     "2 pages whose `Covers:` matches no file tracked in git: ", "or to remove the pages."),
+])
+def test_the_unmatched_note_says_only_the_fact(tmp_path, pages, new, developer, fix):
+    files = {"src/orders/a.py": "x\n"}
+    files.update({f"docs/architecture/p{n}.md": f"Covers: src/gone{n}/**\n" for n in range(pages)})
+    ln = _lines(_repo(tmp_path, files))["kit.architecture.unmatched"]
     assert ln.status == "note"
-    assert "ever reads" not in _said(ln)
-    assert "only a change that adds" in ln.message.new.lower() and "adding" in ln.message.developer
-    assert "isn't written yet" in ln.fix.new and "not written yet" in ln.fix.developer
+    assert ln.message.new.startswith(new) and ln.message.developer.startswith(developer)
+    assert ln.fix.new == "Ask Claude to correct the `Covers:` lines, " + fix
+    assert ln.fix.developer == "Correct the `Covers:` lines, " + fix.replace("or to ", "or ")
 
 
 def test_a_page_matched_by_one_of_its_globs_is_matched(tmp_path):
@@ -462,3 +467,4 @@ def test_the_changelog_has_a_note_under_unreleased():
     notes = since_0110()
     assert "#615" in notes and "kit.architecture.uncovered" in notes
     assert "so no change ever reads it" not in notes  # a change adding a file it matches reads it
+    assert "- `kit.architecture.unmatched`: a page whose `Covers:` lines match no file tracked in git.\n" in notes

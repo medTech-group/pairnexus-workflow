@@ -1128,15 +1128,13 @@ def check_architecture(i: Inputs) -> list[Line]:
         lines.append(_uncovered(i, pages, tracked))
         unmatched = [pg.file for pg in pages if pg.covers and not any(path_matches(f, pg.covers) for f in tracked)]
         n = len(unmatched)
+        possessive = _s(n, "page's", "pages'")
         lines.append(Line(g, "kit.architecture.unmatched", "note", Words(
-            f"{n} architecture {_s(n, 'page describes', 'pages describe')} no file that exists yet: {_listed(unmatched)}. "
-            f"Only a change that adds a file {_s(n, 'its', 'their')} `Covers:` lines match reads {_s(n, 'it', 'them')}.",
-            f"{n} {_s(n, 'page', 'pages')} whose `Covers:` matches no tracked file, read only by a change adding one: {_listed(unmatched)}.",
+            f"{n} architecture {possessive} `Covers:` lines match no file tracked in git: {_listed(unmatched)}.",
+            f"{n} {_s(n, 'page', 'pages')} whose `Covers:` matches no file tracked in git: {_listed(unmatched)}.",
         ), Words(
-            f"If the code {_s(n, 'it describes', 'they describe')} isn't written yet, leave {_s(n, 'it', 'them')}: the change that writes "
-            f"it reads {_s(n, 'it', 'them')}. Otherwise ask Claude to correct the `Covers:` lines (the code may have moved), or to remove "
-            f"the {_s(n, 'page', 'pages')} if the code is gone.",
-            "Leave it for code not written yet; else fix the `Covers:` globs (moved code), or delete the page (deleted code).",
+            f"Ask Claude to correct the `Covers:` lines, or to remove the {_s(n, 'page', 'pages')}.",
+            f"Correct the `Covers:` lines, or remove the {_s(n, 'page', 'pages')}.",
         )) if unmatched else Line(g, "kit.architecture.unmatched", "fine", Words(
             "Every architecture page's `Covers:` lines match files in the project.",
             "Every page's `Covers:` matches a tracked file.",
