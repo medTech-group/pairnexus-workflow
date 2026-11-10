@@ -6,6 +6,10 @@
 
 - **For projects updating:** nothing to do. A project with its own copy of `ticket-session-prompt.md` keeps its old line until it takes `{{merge.evidence}}`.
 
+**Doctor notes a plugin-mode project with no architecture overview** (#639, part of spec #611, split out of #615). A project using the kit as a plugin gets no kit update to write `docs/architecture/README.md`, so `workflow doctor` gains `kit.architecture.missing` in "The kit" group: a note in a set-up plugin-mode project whose `project.rules` doesn't list the overview, offering "Write the architecture overview" (`write_architecture_overview`). A vendored project, a project not set up and one listing the overview get no line, and `workflow status` never runs it. The old-Python short report gives the same id, reading `project.rules` as text. When the full doctor can't load the profile (it doesn't parse, `profile check` refuses it, it isn't UTF-8 or isn't a file), it reads `project.rules` from the text the same way, so both reports agree: listed there, no line; otherwise the line can't be checked until the profile is fixed.
+
+- **For projects updating:** nothing to do. A plugin-mode project without the overview sees the new note; it never blocks. `check-setup` and `upgrade-setup` handle the offer with #618.
+
 **A set-aside run's ticket follows the owner's answer instead of stopping again** (#586, a fix to #517, part of spec #505). Under set-aside, a ticket session stopped at `needs-human` on a high-stakes decision whose research source changed; once the owner answered, the conductor posted an "Owner chose" line on the ticket and queued it again, but the briefing's line for a decision resting on a research note still told the next session to stop, with no exception, while the flow's "Research" → **Choosing once** says a later session follows a matching line. So a session that followed its briefing stopped again after every answer. The briefing's line now says, under set-aside, to follow an "Owner chose" line on the ticket that matches, as **Choosing once** says, recording it in the PR body and on the build ticket, and to stop only without one; under decide-and-record, a matching line settles the choice in place of the safest one, the build still resting on the safer of the note and the live text.
 
 - **For projects updating:** nothing to do: the next run's briefings carry the new line.
@@ -50,6 +54,10 @@ The overview (`docs/architecture/README.md`) is never a page: its `Covers:` line
 - **For projects updating:** nothing to do. A project without `docs/architecture/` gives its reviewers no pages, and `pages.md` lists none.
 
 **`workflow index` never lists the architecture overview as a page** (#631, part of spec #611). The overview is the file the folder lists as exactly `docs/architecture/README.md`, and every other `.md` file directly in the folder is a page: one rule for both, so `index pages` never lists the overview, its `Covers:` lines cover nothing, and `index reads` prints it once, first, never under `--json`'s `"pages"`. A case variant (`Readme.md`, `readme.md`) with no `README.md` beside it is a page, listed once, on case-sensitive and case-insensitive file systems alike (macOS's answered for it under both names, so it was printed twice). So is one whose extension's case differs too (`README.MD`), though no other file whose extension isn't exactly `.md` is a page. `workflow doctor` reads the pages from `index` and no longer leaves the overview out itself.
+
+- **For projects updating:** nothing to do.
+
+**`workflow index` decides the overview and the pages by one rule, now tested on its own** (#632, part of spec #611). The rule #631 built stands: the overview is the entry `docs/architecture/` lists as exactly `README.md`, and every other `.md` file directly in the folder is a page. New tests hold it to the two cases that broke it before: with `README.md` and `readme.md` side by side (a case-sensitive file system), `README.md` is the overview and `readme.md` a page; with only `Readme.md`, `index reads` prints it exactly once, as a page, even where the file system answers for it as `README.md` too (macOS). No behaviour changes.
 
 - **For projects updating:** nothing to do.
 
