@@ -1306,7 +1306,7 @@ def _scrubbed(i: Inputs, text: str) -> str:
     home = (i.environ.get("HOME") or "").rstrip(os.sep)
     for h in dict.fromkeys((home, os.path.realpath(home) if home else "")):
         if h and h != os.sep:
-            text = text.replace(h + os.sep, "~" + os.sep)
+            text = re.sub(re.escape(h) + r"""(?=$|[/\s'"`),:;]|\.(?:$|\s))""", "~", text)
     return _shown(_relative(i, text), 120)
 
 

@@ -9,6 +9,7 @@ import contextlib
 import io
 import json
 import os
+import shlex
 import subprocess
 import sys
 
@@ -320,6 +321,41 @@ def test_doctor_output_when_git_fails(tmp_path):
         for said in (ln.message.new, ln.message.developer):
             assert "(git said: next line: see ~/proj and .)" in said, said
             assert str(home) not in said and str(tmp_path) not in said
+
+
+@pytest.mark.parametrize("said", [
+    "fatal: not a git repository (or any parent up to mount point {home})\n"
+    "Stopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set).",
+    "fatal: detected dubious ownership\n\tgit config --global --add safe.directory {home}",
+    "fatal: cannot use '{home}' as a work tree",
+], ids=["a", "b", "c"])
+def test_doctor_output_when_git_fails_more(tmp_path, said):
+    root = _repo(tmp_path, {"src/a.py": "x\n", "docs/architecture/a.md": "Covers: src/**\n"})
+    home = tmp_path / "home" / "someone"
+    script = f"#!/bin/sh\nprintf '%s\\n' {shlex.quote(said.format(home=home))} >&2\nexit 128\n"
+    got = _lines(root, environ={**_fake_git(tmp_path, script), "HOME": str(home)})
+    for id_ in ("kit.architecture.uncovered", "kit.architecture.unmatched"):
+        ln = got[id_]
+        assert ln.status == "cant_check" and ln.fix == UNLISTED
+        for shown in (ln.message.new, ln.message.developer):
+            assert "git said: fatal: " in shown and "~" in shown, shown
+            assert str(home) not in shown and str(tmp_path) not in shown, shown
+
+
+@pytest.mark.parametrize("text, shown", [
+    ("up to mount point /home/someone)", "up to mount point ~)"),
+    ("safe.directory /home/someone", "safe.directory ~"),
+    ("safe.directory /home/someone\nnext", "safe.directory ~ next"),
+    ("in '/home/someone' and \"/home/someone\"", "in '~' and \"~\""),
+    ("in /home/someone: denied, /home/someone; or /home/someone.", "in ~: denied, ~; or ~."),
+    ("in /home/someone/proj", "in ~/proj"),
+    ("in /home/someone2/proj", "in /home/someone2/proj"),
+    ("in /home/someone.old and /home/someone-b", "in /home/someone.old and /home/someone-b"),
+], ids=["a", "b", "c", "d", "e", "f", "g", "h"])
+def test_doctor_output_unit(tmp_path, text, shown):
+    root = _repo(tmp_path, {"src/a.py": "x\n"})
+    i = _inputs(root, environ={**_env(), "HOME": "/home/someone/"})
+    assert doctor._scrubbed(i, text) == shown
 
 
 def test_a_git_stopped_by_a_signal_is_said_plainly(tmp_path):
