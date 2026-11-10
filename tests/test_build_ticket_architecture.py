@@ -88,9 +88,22 @@ def test_the_review_step_runs_reads_again_on_the_real_diff():
     assert s.index("`WF index reads --base origin/<base>`") < s.index("Follow the `review-panel` skill")
 
 
-def test_a_project_without_an_architecture_folder_reads_nothing():
+def test_a_project_without_an_architecture_folder_reads_nothing(tmp_path, monkeypatch, capsys):
+    # `reads` prints nothing there, but `pages` says there are no pages: the
+    # step says what each prints, as the command does
+    from conftest import git
+    from workflow import cli
+
     s = _build_step()
-    assert "With no `docs/architecture/` folder they print nothing" in s
+    assert "With no `docs/architecture/` folder, `reads` prints nothing and `pages` says there are no pages: go on without." in s
+    assert "they print nothing" not in s
+    git(tmp_path, "init", "-q", "-b", "main")
+    git(tmp_path, "-c", "user.email=t@e", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "x")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    assert cli.main(["index", "reads", "--base", "main"]) == 0
+    assert capsys.readouterr().out == ""
+    assert cli.main(["index", "pages"]) == 0
+    assert capsys.readouterr().out == "No architecture pages in docs/architecture/.\n"
 
 
 # --- build-ticket: where a structural line goes -------------------------------
