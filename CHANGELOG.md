@@ -49,6 +49,10 @@ The overview (`docs/architecture/README.md`) is never a page: its `Covers:` line
 
 - **For projects updating:** nothing to do.
 
+**`workflow index` decides the overview and the pages by one rule, now tested on its own** (#632, part of spec #611). The rule #631 built stands: the overview is the entry `docs/architecture/` lists as exactly `README.md`, and every other `.md` file directly in the folder is a page. New tests hold it to the two cases that broke it before: with `README.md` and `readme.md` side by side (a case-sensitive file system), `README.md` is the overview and `readme.md` a page; with only `Readme.md`, `index reads` prints it exactly once, as a page, even where the file system answers for it as `README.md` too (macOS). No behaviour changes.
+
+- **For projects updating:** nothing to do.
+
 **`workflow index`, and the architecture overview's and page's templates** (#612, part of spec #611).
 
 - **`workflow index`,** a new command that reads the architecture documents in `docs/architecture/` and changes nothing:
