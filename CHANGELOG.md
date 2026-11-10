@@ -5,7 +5,7 @@
 **Doctor notes what the architecture doesn't describe** (#615, part of spec #611). With a `docs/architecture/` folder, `workflow doctor` gains three notes in "The kit" group, each a `fine` line when nothing is wrong:
 
 - `kit.architecture.uncovered`: code no page's `Covers:` line matches, with its count and the first 10 files. Code is `guard.code_paths` when set, else every tracked file outside `docs/`; either way never a protected path, a file at the project's root, a `project.rules` document or a test path (`guard.test_paths`). Code written before the architecture stays a note until the architecture pass writes its pages.
-- `kit.architecture.unmatched`: a page whose `Covers:` matches no tracked file, so no change ever reads it.
+- `kit.architecture.unmatched`: a page whose `Covers:` matches no tracked file, so only a change that adds a file it matches reads it: a page written ahead of its code, or one whose code moved or is gone.
 - `kit.architecture.no_covers`: a page with no `Covers:` line, which every change reads until it has one.
 
 The overview (`docs/architecture/README.md`) is never a page: its `Covers:` lines cover nothing, and it gets no note. No folder, no lines. In plugin mode, `kit.architecture.missing` notes a set-up project whose `project.rules` doesn't list the overview, offering "Write the architecture overview" (`write_architecture_overview`). The notes read only the checkout (`git ls-files`), and `workflow status` never runs them. The old-Python short report gives the same ids. `workflow profile check` warns when `guard.protected_paths`, or `guard.code_paths` under `code_writers = "ticket"`, matches `docs/architecture/`, since sessions then can't write its lines.

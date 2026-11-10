@@ -203,6 +203,17 @@ def test_a_page_matching_no_tracked_file_is_a_note(tmp_path):
     assert ln.fix.new and ln.fix.developer
 
 
+def test_the_unmatched_note_says_a_change_adding_a_matching_file_reads_the_page(tmp_path):
+    # `workflow index reads` gives a page whose `Covers:` matches a file a change adds, so a page
+    # written ahead of its code is read by the change that writes that code.
+    root = _repo(tmp_path, {"src/orders/a.py": "x\n", "docs/architecture/payments.md": "Covers: src/payments/**\n"})
+    ln = _lines(root)["kit.architecture.unmatched"]
+    assert ln.status == "note"
+    assert "ever reads" not in _said(ln)
+    assert "only a change that adds" in ln.message.new.lower() and "adding" in ln.message.developer
+    assert "isn't written yet" in ln.fix.new and "not written yet" in ln.fix.developer
+
+
 def test_a_page_matched_by_one_of_its_globs_is_matched(tmp_path):
     root = _repo(tmp_path, {
         "src/orders/check.py": "x\n",
@@ -474,3 +485,4 @@ def test_the_profile_warning_reaches_doctors_profile_line(tmp_path):
 def test_the_changelog_has_a_note_under_unreleased():
     notes = since_0110()
     assert "#615" in notes and "kit.architecture.uncovered" in notes
+    assert "so no change ever reads it" not in notes  # a change adding a file it matches reads it
