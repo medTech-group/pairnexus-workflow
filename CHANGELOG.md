@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**`workflow doctor` reads every page in a cloud session** (#601). A Claude Code cloud session's proxy refuses GitHub's next-page links, which name the repository by number, so doctor's own reads (the rulesets, the base branch's latest commit's status and check runs, the open pull requests) failed past 100 items, and their "can't check" line then said the person's GitHub account might not be allowed to read it. On that refusal alone, doctor now reads the pages one at a time, with `page=N` on the `repos/<owner>/<repo>/` path, as `--fetch` does since #568, within its own 60 seconds for all of GitHub's reads. Any other failure is reported as before. Where the refusal still reaches a line, it names the proxy, not the account.
+
+- **For projects updating:** nothing to do.
+
 **A planned item's prototype changes no real code before its spec** (#633, part of spec #505). `start`'s **Carry on: the prototype for #<item>**, offered on a study's **Prototype first** verdict, loads the `prototype` skill, whose "Capture it when done" opens "Fold any validated decision into the real code". Read as written, the session could change the real code before the item's interview, its spec or any build ticket. The Carry on now says that opening doesn't apply there: nothing is folded into the real code before the spec, the prototype stays on its throwaway branch, and its answer goes to the item's interview, as the `study` skill's section 11 and the flow's order say.
 
 **Building reads the architecture, and says where a structural line goes** (#617, part of spec #611). A ticket session read the spec, the ADRs and the project's rules, but not the architecture, so it learned a page's rules only when the review blocked, and a structural choice had no set place to be written.
@@ -72,7 +76,7 @@ The overview (`docs/architecture/README.md`) is never a page: its `Covers:` line
 
 - **For projects updating:** nothing to do.
 
-**`--fetch` reads every page in a cloud session** (#568). A Claude Code cloud session's proxy refuses GitHub's next-page links, which name the repository by number (`repositories/<id>/...`), so `gh api --paginate` got the first page and failed: `workflow research stakes --fetch` and `research estimate --fetch` exited 1 there, and so did `merge-check --fetch`, `preview --fetch`, `ready --fetch` and `status --fetch` once a list passed 100 items. On that refusal alone, the kit now reads the pages one at a time, with `page=N` on the `repos/<owner>/<repo>/` path, until one comes back shorter than its page size. Any other failure of `--paginate` fails as before. `workflow doctor`'s own reads are unchanged.
+**`--fetch` reads every page in a cloud session** (#568). A Claude Code cloud session's proxy refuses GitHub's next-page links, which name the repository by number (`repositories/<id>/...`), so `gh api --paginate` got the first page and failed: `workflow research stakes --fetch` and `research estimate --fetch` exited 1 there, and so did `merge-check --fetch`, `preview --fetch`, `ready --fetch` and `status --fetch` once a list passed 100 items. On that refusal alone, the kit now reads the pages one at a time, with `page=N` on the `repos/<owner>/<repo>/` path, until one comes back shorter than its page size. Any other failure of `--paginate` fails as before. `workflow doctor`'s own reads are unchanged (#601 changes them).
 
 - **For projects updating:** nothing to do.
 
