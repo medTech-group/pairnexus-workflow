@@ -51,7 +51,18 @@ def test_the_evidence_never_holds_the_merge_without_a_waiver_or_ci_none():
     assert "run `WF merge-check`" in otherwise
     assert "queue it, merge it or arm auto-merge" in otherwise
     # the report is posted when it ends, naming its head
-    assert "When it ends, post its report on the PR, naming the head it covers" in otherwise
+    assert "When it ends, post its report on the PR as `WF evidence` prints it" in otherwise
+
+
+def test_the_report_is_posted_as_printed_with_nothing_above_its_first_line():
+    # `merge-check` counts a report only by its first line, the headline that
+    # names the head (flow §4.2): a line put above it ("Covers `<sha>`") hides it.
+    two = _step(2)
+    otherwise = two[two.index("**Otherwise the evidence never holds the merge:**"):]
+    assert "Covers `<sha>`" not in two
+    assert "post its report on the PR as `WF evidence` prints it" in otherwise
+    assert "its first line names the head it covers" in otherwise
+    assert "never put a line above it" in otherwise
 
 
 def test_a_waiver_or_ci_none_keeps_the_report_first():
