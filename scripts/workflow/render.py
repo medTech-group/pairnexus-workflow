@@ -322,6 +322,7 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
         "by_hand.issue": f"#{by_hand}" if by_hand else "none yet: add by-hand checks to the tracking issue",
         "merge.mode": merge.get("mode", "auto-merge"),
         "merge.waived": ", ".join(waived) if waived else "none: every required check must be green",
+        "merge.evidence": _evidence_words(waived, profile),
         "run.review_rounds": _rounds(review["rounds"]),
         "review.rounds": str(review["rounds"]),  # the bare number, for merge-check's --review-rounds
         "review.small": _small(review, profile),
@@ -366,6 +367,28 @@ BRIEFING_FINDINGS = (
     "the end time comes first: the conductor then carries the ticket on to the next run, unless it is held for the "
     "owner (a security or safety problem in code already on the base branch, or a protected path)."
 )
+
+
+def _evidence_words(waived: list, profile: Profile) -> str:
+    """The briefing's evidence line in **Merging** (#663). Where the report is
+    required (a waived check, or `ci.none`: flow §4 item 2), it comes before
+    `merge-check`, which counts it; otherwise it never holds the merge."""
+    cmd = f"python3 .claude/workflow/bin/workflow.py evidence --base-ref origin/{profile.base_branch}"
+    if waived or profile.ci_none:
+        why = f"the charter waives {', '.join(waived)}" if waived else "the profile says `ci.none`"
+        return (
+            f"**The evidence comes first:** {why}, so the report is the proof, and `merge-check` counts it (flow §4, "
+            f"item 2). Once the review is clean, run `{cmd} --all` and post its report on the PR before the "
+            "`merge-check` below."
+        )
+    return (
+        "**The evidence never holds the merge:** no check is waived, so CI is the gate and the report is recommended, "
+        f"not required (flow §4, item 2). Once the review is clean, start `{cmd}` as a tracked background task (never "
+        "with `&` inside a shell call), and go on without waiting for it: run `merge-check` and act on its answer "
+        "below. When it ends, post its report on the PR, naming the head it covers, even if the PR has merged by then "
+        "(before your \"merged\" note on the tracking issue); if it stopped because the head moved and the PR hasn't "
+        "merged, start it again on the new head."
+    )
 
 
 def _stopping(under_rule: bool) -> str:

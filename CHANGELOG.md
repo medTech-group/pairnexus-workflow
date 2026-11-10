@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**A ticket session's evidence never holds the merge when no check is waived** (#663). `build-ticket` §6 and the briefing's **Merging** lines listed "post the evidence" before `merge-check`, so sessions held a ready pull request for the 40-minute evidence run while it fell behind or started conflicting with the base. With no required check waived and the profile not `ci.none` (where flow §4 item 2 only recommends the report), the session now starts `workflow evidence` as a tracked background task once the review is clean, runs `merge-check` and queues, merges or arms auto-merge on `ready` without waiting for it, and posts the report when it ends, naming the head it covers, even after the merge (and before its "merged" note on the tracking issue). With a waived check or `ci.none`, the report still comes first, run with `--all`, and `merge-check` counts it. The briefing's line is a new value, `{{merge.evidence}}`, rendered for each case.
+
+- **For projects updating:** nothing to do. A project with its own copy of `ticket-session-prompt.md` keeps its old line until it takes `{{merge.evidence}}`.
+
 **Research notes in the repository: the folder's layout, fingerprints, the source check and current notes** (#506, part of spec #505).
 
 - **`workflow research`,** a new command whose inputs are files, with `--fetch` for pages. It calls no model and writes nothing:
