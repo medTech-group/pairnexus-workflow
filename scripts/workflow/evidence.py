@@ -348,9 +348,9 @@ def collect(
     from that shard on keeps its results under <sha>-dirty, never reused, with
     the paths in `changed` (the report's dirty marker). An untracked file that
     appears is most likely a suite's own output (`coverage.xml`), so it is
-    added to `appeared` and the run goes on; the repair commands' writes are
-    taken as the run's own. With allow_dirty an untracked file that appears
-    makes it a dirty run too.
+    added to `appeared` and the run goes on. What changes while the repair
+    commands run counts the same way. With allow_dirty an untracked file that
+    appears makes it a dirty run too.
     """
     if allow_dirty:
         dirty = dirty_paths(root)
@@ -416,12 +416,10 @@ def collect(
                             {"exit": old.exit, "passed": old.passed, "failed": old.failed, "errors": old.errors, "log": old.log}
                         )
             if repair_first and profile.repair and (not repaired or last_failed):
-                if watch:
-                    look()
                 repair.run(profile.repair, root)
                 repaired = True
                 if watch:
-                    state = tree_state(root)  # what the repair wrote is the run's own
+                    look()  # the repair's window is checked like a shard's: it can't be told from a change beside it
             r = run_shard(suite, i, files, root, log=_next_log(base, f"{suite.name}-{i:03d}"), log_root=log_root)
             r.previous_failures = earlier
             # Checked before the result is kept: a shard a stop interrupted is never reused.

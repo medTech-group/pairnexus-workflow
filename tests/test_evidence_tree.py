@@ -207,13 +207,37 @@ def test_a_suite_that_writes_files_not_ignored_still_finishes(tmp_path, monkeypa
 
 def test_a_repair_command_that_writes_files_not_ignored_still_finishes(tmp_path, monkeypatch, capsys):
     # The repair runs before the first shard and again after a failing one.
-    root = _repo(tmp_path, repair="date >> repaired.log && date >> notes.txt")
+    root = _repo(tmp_path, repair="date >> repaired.log")
     (root / "tests/test_0.txt").write_text("fail")
     git(root, "commit", "-qam", "test_0 fails")
     assert _evidence(monkeypatch, root) == 1
     out = capsys.readouterr().out
-    assert out.splitlines()[0].endswith("FAILED")
+    assert out.splitlines()[0] == evidence.headline(_sha(root), False)
     assert "2 passed, 1 failed" in out  # every shard ran: nothing stopped it
+    assert "`repaired.log`" in out
+
+
+def test_a_repair_command_that_writes_a_tracked_file_finishes_with_a_dirty_report(tmp_path, monkeypatch, capsys):
+    root = _repo(tmp_path, repair="date >> notes.txt")
+    (root / "tests/test_0.txt").write_text("fail")
+    git(root, "commit", "-qam", "test_0 fails")
+    assert _evidence(monkeypatch, root) == 1
+    out = capsys.readouterr().out
+    assert out.splitlines()[0] == evidence.headline(_sha(root), False, dirty=True)
+    assert "2 passed, 1 failed" in out and "(notes.txt)" in out
+
+
+def test_a_tracked_file_changed_while_the_repair_ran_is_never_the_commits(tmp_path, monkeypatch, capsys):
+    # The repair stands in for a slow `npm ci` during which the session edits a
+    # test: the commit's test_1 fails, the edited one passes.
+    root = _repo(tmp_path, repair="echo pass > tests/test_1.txt")
+    (root / "tests/test_1.txt").write_text("fail")
+    git(root, "commit", "-qam", "test_1 fails")
+    assert _evidence(monkeypatch, root) == 0
+    out = capsys.readouterr().out
+    assert out.splitlines()[0] == evidence.headline(_sha(root), True, dirty=True)
+    assert "tests/test_1.txt" in out
+    assert not any(_store(root).glob("unit-*.json"))
 
 
 # ---------- 4. --allow-dirty keeps the marker ----------
@@ -233,6 +257,14 @@ def test_allow_dirty_on_a_clean_start_marks_a_tree_that_changed_mid_run(tmp_path
     assert _evidence(monkeypatch, root) == 0
     assert _ran(root)[3:] == ["tests/test_1.txt", "tests/test_2.txt"]
     assert not capsys.readouterr().out.splitlines()[0].endswith(evidence.DIRTY)
+
+
+def test_allow_dirty_marks_a_tracked_file_changed_while_the_repair_ran(tmp_path, monkeypatch, capsys):
+    root = _repo(tmp_path, repair="echo v2 > notes.txt")
+    assert _evidence(monkeypatch, root, "--allow-dirty") == 0
+    out = capsys.readouterr().out
+    assert out.splitlines()[0].endswith(evidence.DIRTY) and "(notes.txt)" in out
+    assert not any(_store(root).glob("unit-*.json"))
 
 
 def test_allow_dirty_marks_an_untracked_file_that_appeared_mid_run(tmp_path, monkeypatch, capsys):
