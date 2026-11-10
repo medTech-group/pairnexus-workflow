@@ -126,7 +126,7 @@ def test_the_overview_alone_is_printed_once_and_no_page(tmp_path, monkeypatch, c
 
 
 @pytest.mark.parametrize("fs", FILE_SYSTEMS)
-@pytest.mark.parametrize("name", ["Readme.md", "readme.md"])
+@pytest.mark.parametrize("name", ["Readme.md", "readme.md", "README.MD", "readme.MD"])
 @pytest.mark.parametrize("text", ["x\n", "Covers: src/**\n"])
 def test_a_case_variant_is_the_overview_or_a_page_never_both_never_neither(tmp_path, monkeypatch, capsys, fs, name, text):
     root = _repo(tmp_path, {f"{ARCH}/{name}": text, f"{ARCH}/orders.md": "Covers: src/**\n"})
@@ -153,3 +153,16 @@ def test_a_case_variant_is_the_overview_or_a_page_never_both_never_neither(tmp_p
     else:  # the overview: printed first, and never among reads' pages
         assert reads["documents"][0] in spellings and not reads_pages
     assert listed.count(f"{ARCH}/orders.md") == 1
+
+
+@pytest.mark.parametrize("fs", FILE_SYSTEMS)
+@pytest.mark.parametrize("name", ["orders.MD", "README.txt", "README.md.bak"])
+def test_only_the_overview_s_name_is_a_page_with_another_extension_case(tmp_path, monkeypatch, capsys, fs, name):
+    """A name that casefolds to `readme.md` is a page whatever its extension's
+    case; any other file whose extension isn't exactly `.md` is still none."""
+    root = _repo(tmp_path, {f"{ARCH}/{name}": "Covers: src/**\n", f"{ARCH}/notes.md": "Covers: src/**\n"})
+    _on(fs, monkeypatch)
+    listed = [pg["file"] for pg in json.loads(_run(monkeypatch, capsys, root, "pages", "--json"))["pages"]]
+    assert listed == [f"{ARCH}/notes.md"]
+    reads = json.loads(_run(monkeypatch, capsys, root, "reads", "--base", "main", "--json"))
+    assert reads["documents"] == [f"{ARCH}/notes.md"]

@@ -132,3 +132,4 @@ def test_the_changelog_notes_say_the_overview_is_never_a_page():
     assert "`index pages` never lists the overview" in note
     assert "`index reads` prints it once, first, never under `--json`'s `\"pages\"`" in note
     assert "A case variant (`Readme.md`, `readme.md`) with no `README.md` beside it is a page, listed once" in note
+    assert "So is one whose extension's case differs too (`README.MD`)" in note

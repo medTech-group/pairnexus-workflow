@@ -5,8 +5,8 @@ A page is a Markdown file directly in `docs/architecture/` other than the
 overview; files in subfolders and files that aren't `.md` are neither pages
 nor noted. One rule (`_entries`) tells the overview from the pages: the
 overview is the entry the folder lists as exactly `README.md`, and every
-other `.md` file is a page. Its form, as the overview's `## Writing a page`
-section gives it:
+other `.md` file, or other spelling of `README.md` (`README.MD`), is a page.
+Its form, as the overview's `## Writing a page` section gives it:
 
     Covers: <glob>              one or more, at the top, one glob on each
     Interface: <one line>
@@ -108,7 +108,10 @@ def parse(file: str, text: str) -> Page:
 def _entries(root: Path) -> tuple[Path | None, list[Path]]:
     """The overview's file, if there is one, and the pages' files, by one rule:
     the overview is the entry the folder lists as exactly `README.md`, and
-    every other `.md` file directly in the folder is a page. The name is read
+    every other `.md` file directly in the folder is a page, as is any other
+    spelling of `README.md` (`README.MD` too, whose extension isn't `.md`):
+    never neither. Another file whose extension isn't exactly `.md`
+    (`orders.MD`) is no page. The name is read
     from the listing, never asked of the file system (`(d / "README.md")
     .is_file()`), since a case-insensitive one answers that for `Readme.md`
     too: a case variant is then a page, as on a case-sensitive one, and is
@@ -119,7 +122,8 @@ def _entries(root: Path) -> tuple[Path | None, list[Path]]:
     over: Path | None = None
     files: list[Path] = []
     for p in d.iterdir():
-        if p.suffix != ".md" or not p.is_file():
+        named = p.suffix == ".md" or p.name.casefold() == OVERVIEW_NAME.casefold()
+        if not named or not p.is_file():
             continue
         if p.name == OVERVIEW_NAME:
             over = p
