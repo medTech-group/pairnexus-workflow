@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**The planning review reads the architecture pages a planning change could contradict** (#645, part of spec #611, split out of #616). A spec session's pull request can add an architecture page or line, but `workflow index reads` finds pages only by the files a change touches, and a planning pull request touches only files under `docs/`, so the page a new line contradicted was never read.
+
+- **The planning review's inputs** (`review-panel` §8) gain `pages.md` and, for a pull request, the pages `reads` prints, copied as §1 copies them.
+- **Its Correctness reviewer** looks for contradictions with the architecture documents given too, and reads in the repo, for each page the pull request adds or changes, every page whose `Covers:` could match a file that page's could; and every page when the pull request adds or changes the overview (`docs/architecture/README.md`), which has no `Covers:`, or a page with no `Covers:` line.
+- **Its Spec reviewer** reads a spec session's architecture lines against the owner's answers, with its ADRs and glossary. ADR 0001 lists architecture lines among what planning reviews cover.
+- **For projects updating:** nothing to do. A project without `docs/architecture/` gives its planning review no pages.
+
 **The review panel reads the architecture** (#616, part of spec #611). Reviewers could hold a change only to `project.rules`, and the Standards reviewer looked for duplicated code only in the change itself, so a copy of a check that already existed elsewhere passed as a preference no written rule backs.
 
 - **The panel's inputs** (`review-panel` §1) gain the architecture pages `workflow index reads --base origin/<base>` prints, copied into the scratch directory at their paths, with the overview reaching every reviewer once, through `rules.md`; `pages.md`, `workflow index pages`' list of every page's interface and helpers; and, in a ticket session, `run.md`: the ticket's area and its globs, what runs alongside it and the protected paths.
