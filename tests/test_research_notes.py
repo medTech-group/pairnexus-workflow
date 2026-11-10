@@ -366,8 +366,9 @@ def _refused_before_any_request(project, seen, monkeypatch, link):
 
 @pytest.mark.parametrize(
     "link",
-    ["https://\u00fc%2Eapple.com/docs", "https://a.\u00fc%3a8080/", "https://\u00fc.de%40apple.com/", "https://\u00fc%00.de/", "https://\u00fc\\.apple.com/docs"],
-    ids=["1", "2", "3", "4", "5"],
+    ["https://\u00fc%2Eapple.com/docs", "https://a.\u00fc%3a8080/", "https://\u00fc.de%40apple.com/", "https://\u00fc%00.de/", "https://\u00fc\\.apple.com/docs",
+     "https://\u00fc.evil.de\\@apple.com/docs"],
+    ids=["1", "2", "3", "4", "5", "6"],
 )
 def test_link_spoofing(project, seen, monkeypatch, link):
     _refused_before_any_request(project, seen, monkeypatch, link)

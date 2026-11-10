@@ -1009,6 +1009,8 @@ def ascii_link(url: str) -> str:
         parts = urllib.parse.urlsplit(url)
     except ValueError as e:  # on Python 3.12 and later, a host holding a fullwidth `／ ？ ＃ ＠ ：` (#530): refused, never normalised
         raise PageError(f"it isn't a well-formed link ({e})") from None
+    if "\\" in parts.netloc:
+        raise PageError("its host, userinfo or port holds a character that can't be encoded as browsers do")
     if "%" in parts.netloc.rpartition("@")[2]:  # urllib would decode it in the host, then encode it otherwise
         raise PageError("its host holds a `%` escape, which can't be encoded as browsers do")
     start = len(parts.scheme) + 3 if parts.netloc else 0
