@@ -73,7 +73,7 @@ def test_the_merged_note_goes_up_at_once_with_the_notes_for_the_next_tickets():
     still = five[five.index("**Your evidence run still going**"):]
     # never held for the run: round 1 of #670 held it, and the session was archived first
     assert "never hold this note for it" in still
-    assert f"Post each at once with the line \"{TO_COME}\"" in still
+    assert f"Post each at once on the tracking issue, with the line \"{TO_COME}\"" in still
     assert "After a merge, take steps 6 and 7 at once too." in still
 
 
@@ -91,6 +91,18 @@ def test_every_note_that_leaves_the_pull_request_carries_the_line():
         "or any note saying the pull request is ready or the owner's to merge (`owner` mode's `ready`, `owner_review`, "
         "a `queue_unsure` note's `ready`, §5's path-filtered check)"
     ) in still
+
+
+def test_every_note_that_leaves_the_pull_request_goes_on_the_tracking_issue():
+    # The conductor's hold reads the session's note on the tracking issue only:
+    # a note on the pull request alone leaves it waiting for one that never comes.
+    still = _flat(_step(5))
+    assert f"Post each at once on the tracking issue, with the line \"{TO_COME}\"" in still
+    four = _flat(_step(4))
+    assert "| `owner` | Say it's ready on the PR and on the tracking issue, and leave it |" in four
+    assert "`owner` mode: nothing is queued; say it's ready, and leave it, on the PR and on the tracking issue" in four
+    five = _flat(_section(_text(BUILD_TICKET), "## 5. Get it green", "## 6. Post the evidence and merge"))
+    assert "Then comment on the PR and on the tracking issue that the PR needs the owner to merge and end `waiting`" in five
 
 
 def test_the_session_stays_and_posts_the_report_when_the_run_ends_even_after_the_merge():
@@ -130,6 +142,17 @@ def test_the_hold_names_the_note_and_ends_on_the_report_for_its_head():
     # a check-in can come before the session's note: wait for it, from `settled_at`
     assert "With no such note yet on a ticket a row has marked `merged` or `in-review`, it is still to come too" in hold
     assert "or, with no note, since the ticket's `settled_at`" in hold
+
+
+def test_a_required_report_leaves_nothing_to_come_note_or_none():
+    # `ci.none`, or a check waived on the head: the report came first, and the
+    # session's ready note has no to-come line, or comes after the check-in.
+    hold = _hold()
+    assert (
+        "Where the report was required (`build-ticket` §6 step 2: the profile's `ci.none`, or a check waived on the "
+        "head, `WF merge-check`'s `waived` note), it was posted before the pull request merged or was left to the "
+        "owner, so nothing is to come, note or none."
+    ) in hold
 
 
 def test_the_hold_delays_only_the_archive():
