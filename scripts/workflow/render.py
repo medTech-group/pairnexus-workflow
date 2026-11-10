@@ -409,9 +409,7 @@ def _evidence_words(waived: list, profile: Profile) -> str:
             "before the `merge-check` below."
         )
     after = (
-        "When it ends, post its report on the PR, naming the head it covers, even if the PR has merged by then: if it "
-        "merges first, post your \"merged\" note at once, with \"Evidence for `<sha>` still running\" (build-ticket "
-        "§6 step 5), and wait for it."
+        "When it ends, post its report on the PR, naming the head it covers."
     )
     if waived:
         return (

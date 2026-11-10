@@ -17,7 +17,6 @@ KIT = Path(__file__).resolve().parents[1]
 CLI = KIT / "scripts/workflow.py"
 TEMPLATE = KIT / "templates/ticket-session-prompt.md"
 BUILD_TICKET = KIT / "skills/build-ticket/SKILL.md"
-CONDUCTOR = KIT / "skills/conductor/SKILL.md"
 SLOTS = {"alongside": "none", "read_first": "none", "owner_decisions": "none", "briefing": "none", "wake_trigger": "trig_01abc"}
 EVIDENCE = "python3 .claude/workflow/bin/workflow.py evidence --base-ref origin/main"
 
@@ -51,9 +50,8 @@ def test_the_evidence_never_holds_the_merge_without_a_waiver_or_ci_none():
     assert "without waiting for it" in otherwise
     assert "run `WF merge-check`" in otherwise
     assert "queue it, merge it or arm auto-merge" in otherwise
-    # the report is posted when it ends, naming its head, even after the merge
+    # the report is posted when it ends, naming its head
     assert "When it ends, post its report on the PR, naming the head it covers" in otherwise
-    assert "even if the PR has merged by then" in otherwise
 
 
 def test_a_waiver_or_ci_none_keeps_the_report_first():
@@ -75,33 +73,6 @@ def test_merge_check_and_the_queue_never_wait_on_an_evidence_run_that_isnt_requi
     four = _step(4)
     queue = _section(four, "**With the merge queue on**", "\n\n   Before you first queue it")
     assert "In `session` and `auto-merge` mode alike, an evidence run still going is no reason to wait, unless the report is required (step 2)" in queue
-
-
-def test_the_merged_note_goes_up_at_once_and_the_report_follows_it():
-    five = _step(5)
-    # the merged note and the notes for the next tickets never wait on the evidence
-    assert "tell the tracking issue at once: \"#<n> merged in #<PR>\", then notes for the next tickets" in five
-    assert "post the evidence's report first" not in five
-    # the note says the evidence still runs, and the report follows it
-    assert "add a line \"Evidence for `<sha>` still running\", `<sha>` the head that merged" in five
-    assert "Take steps 6 and 7, then wait for it and post its report on the PR (step 2)" in five
-    # the checklist's line still holds
-    assert "- [ ] Typecheck and the full suite pass; evidence posted on the PR" in BUILD_TICKET.read_text()
-
-
-def _merged_row():
-    rows = _section(CONDUCTOR.read_text(), "**4. Each ticket in flight.**", "**Stopping a stuck session safely:**")
-    return next(l for l in rows.splitlines() if l.startswith("| **Merged** |"))
-
-
-def test_the_conductor_keeps_a_merged_session_until_its_report_is_posted():
-    row = _merged_row()
-    # without the line, as before: archived once the note is there, or one check-in later
-    assert "Once the session's \"#n merged in #PR\" note is on the tracking issue (or one check-in later, if it never comes)" in row
-    # with it, held for the report on the merged head, capped
-    hold = row[row.index("A note that says \"Evidence for `<sha>` still running\""):]
-    assert "holds it until the evidence report for `<sha>` (a PR comment whose first line names it) is on the PR" in hold
-    assert "or for 3 check-ins after the note" in hold
 
 
 # ---------- the briefing, rendered (seam 2) ----------
@@ -151,10 +122,7 @@ def test_no_waived_check_briefs_the_evidence_as_never_holding_the_merge(tmp_path
     assert f"`{EVIDENCE}`" in first and "--all" not in first
     assert "tracked background task" in first and "never with `&` inside a shell call" in first
     assert "without waiting for it" in first
-    assert "post its report on the PR, naming the head it covers, even if the PR has merged by then" in first
-    # the merged note never waits on it, and says it still runs
-    assert "before your \"merged\" note" not in first
-    assert "post your \"merged\" note at once, with \"Evidence for `<sha>` still running\" (build-ticket §6 step 5)" in first
+    assert "post its report on the PR, naming the head it covers." in first
     # nothing reads as "post the evidence" before merge-check
     assert "Post the evidence from" not in merging
 
