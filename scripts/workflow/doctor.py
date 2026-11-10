@@ -1067,22 +1067,18 @@ def _arch_pages(i: Inputs) -> list[architecture_mod.Page]:
     return [pg for pg in architecture_mod.pages(i.root) if pg.file != OVERVIEW]
 
 
-def _tracked(i: Inputs) -> tuple[list[str] | None, Words, Words]:
+def _tracked(i: Inputs) -> tuple[list[str] | None, str]:
     """The checkout's tracked files, from its root (a name that isn't UTF-8
-    read with U+FFFD for its bad bytes), or why they can't be listed and the
-    fix for that."""
+    read with U+FFFD for its bad bytes), or what happened when they can't be
+    listed."""
     ran = _run(i, ["git", "-c", "core.quotePath=false", "ls-files", "-z"], timeout=20, stderr=True, errors="replace")
     if ran.state == "ok" and ran.out is not None:
-        return [f for f in ran.out.split("\0") if f], Words("", ""), Words("", "")
+        return [f for f in ran.out.split("\0") if f], ""
     if ran.state == "missing":
-        return None, Words("git isn't installed", "git isn't on the PATH"), Words(
-            "Install git, then run this check again.", "Put git on the PATH and rerun doctor.")
+        return None, "git isn't on the PATH"
     if ran.state == "timeout":
-        return None, Words("listing them took too long", "`git ls-files` timed out"), Words(
-            "Run this check again.", "Rerun doctor.")
-    said = _shown(ran.err or "git failed", 120)
-    return None, Words(f"git said: {said}", f"`git ls-files` failed: {said}"), Words(
-        "Run this check again from inside the project's git checkout.", "Run doctor in the project's git checkout.")
+        return None, "git took too long"
+    return None, f"git said: {_shown(ran.err or 'git failed', 120)}"
 
 
 def _code(p: Profile, tracked: list[str]) -> list[str]:
@@ -1116,16 +1112,17 @@ def check_architecture(i: Inputs) -> list[Line]:
         return []
     g = "The kit"
     pages = _arch_pages(i)
-    tracked, why, unlisted = _tracked(i)
+    tracked, why = _tracked(i)
     lines: list[Line] = []
     if tracked is None:
+        unlisted = Words("See what git says, then run this check again.", "See what git says, then rerun doctor.")
         lines.append(Line(g, "kit.architecture.uncovered", "cant_check", Words(
-            f"Can't tell which code no architecture page describes: the project's files couldn't be listed ({why.new}).",
-            f"Uncovered code unchecked: {why.developer}.",
+            f"Can't tell which code no architecture page describes: the project's files couldn't be listed ({why}).",
+            f"Uncovered code unchecked: `git ls-files` failed ({why}).",
         ), unlisted))
         lines.append(Line(g, "kit.architecture.unmatched", "cant_check", Words(
-            f"Can't tell whether each architecture page's `Covers:` lines match files in the project: its files couldn't be listed ({why.new}).",
-            f"Pages' `Covers:` unchecked: {why.developer}.",
+            f"Can't tell whether each architecture page's `Covers:` lines match files in the project: its files couldn't be listed ({why}).",
+            f"Pages' `Covers:` unchecked: `git ls-files` failed ({why}).",
         ), unlisted))
     else:
         lines.append(_uncovered(i, pages, tracked))
