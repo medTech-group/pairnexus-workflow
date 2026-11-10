@@ -1,10 +1,11 @@
-"""#617 (spec #611, answers 3, 8, 10, 14, 21 and 30 to 33): building reads the
+"""#617 (spec #611, answers 3, 8, 14 and 30 to 33): building reads the
 architecture, and the flow says where a structural line goes.
 
 Seam 3, the kit's text: `build-ticket`'s two `workflow index reads` runs and
 its `pages` run, its rule for where a structural line goes (answers 30 to 33's
-rule for code no page covers among it); flow §2 items 2 and 7, §2's checklist
-and §3 item 1; and the changelog note under `## Unreleased`."""
+rule for code no page covers among it); flow §2 item 2 and §3 item 1; and the
+changelog note under `## Unreleased`. §2 item 7 and its checklist (architecture
+lines on the planning branch, the tickets blocked by it) are #647's."""
 
 import re
 from pathlib import Path
@@ -47,15 +48,6 @@ def _flow():
 
 def _flow_2_item_2():
     return _flat(_between(_flow(), "2. Follow `to-tickets`", "\n3. Anything only the owner can do"))
-
-
-def _flow_2_item_7():
-    return _flat(_between(_flow(), "7. **Commit what the session wrote:**", "**Checklist:**"))
-
-
-def _flow_2_checklist():
-    s2 = _between(_flow(), "## 2. A spec and its build tickets", "## Decision questions")
-    return _flat(s2.split("**Checklist:**", 1)[1])
 
 
 def _flow_3_item_1():
@@ -200,23 +192,6 @@ def test_flow_2_item_2_keeps_its_bar_bullet():
     )
 
 
-def test_flow_2_item_7_commits_architecture_lines_on_the_planning_branch():
-    s = _flow_2_item_7()
-    # answers 10 and 21: on the planning branch, with the glossary and ADRs,
-    # and the spec's tickets wait for that pull request
-    assert s.startswith(" the domain glossary, ADRs and architecture lines, on their own branch, with a pull request")
-    # the tickets are published (§2 item 2) before this pull request opens, so
-    # the published ones are edited to wait for it as soon as it opens
-    assert "(with architecture lines, under the spec's tickets' `## Blocked by`, published ones edited as it opens)" in s
-    # the planning review still comes first (tests/test_planning_review.py)
-    assert "before the pull request is offered" in s
-
-
-def test_flow_2_checklist_names_the_architecture_lines():
-    c = _flow_2_checklist()
-    assert "glossary, ADRs and architecture lines committed with a PR offered (architecture lines: tickets blocked by it)" in c
-
-
 def test_flow_3_item_1_reads_the_architecture():
     s = _flow_3_item_1()
     assert "the architecture documents `workflow index reads` prints" in s
@@ -235,4 +210,5 @@ def test_the_changelog_says_so_under_unreleased():
     assert "`workflow index pages`" in note
     assert "`build-ticket`" in note
     assert "`_root.md`" in note
-    assert "`## Blocked by`" in note
+    # the parts split out are named, and not described as built here
+    assert "#647" in note and "`## Blocked by`" not in note
