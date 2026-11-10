@@ -107,6 +107,28 @@ def test_the_page_reads_keep_within_doctors_budget_for_githubs_reads(tmp_path, m
     assert ACCOUNT not in ln.fix.new and LACKS not in ln.fix.developer, ln.fix
 
 
+def test_more_pages_than_fetch_reads_is_a_cant_check_line_in_both_wordings(tmp_path, monkeypatch):
+    from workflow import doctor, fetch
+    from workflow.profile import Experience, load
+
+    monkeypatch.setattr(fetch, "MAX_PAGES", 2)
+    root = _project(tmp_path, profile=PROTECTED)
+    routes = _routes([RULESET])
+    full = [{"id": 101}] * FULL
+    routes["repos/acme/demo/rulesets"] = fake_gh.pages(full, full, full, numeric_refused=True)
+    path = _bin(tmp_path, gh=routes)
+    i = doctor.Inputs(root=root, kit_root=KIT, profile=load(root), profile_error=None, experience=Experience(None, "unknown"),
+                      environ={"PATH": str(path), "HOME": str(tmp_path)})
+    ln = {ln.id: ln for ln in doctor.report(i).lines}["github.ruleset"]  # no traceback
+    assert ln.status == "cant_check", ln
+    assert "GitHub's answer has more than 2 pages" in ln.message.new, ln.message
+    assert "`gh api repos/acme/demo/rulesets` has more than 2 pages" in ln.message.developer, ln.message
+    assert "Ask Claude to check the set-up, which gives doctor GitHub's answers as files." in ln.fix.new, ln.fix
+    assert f"Give {doctor.GIVE_FILES}." in ln.fix.developer and "--rulesets" in ln.fix.developer, ln.fix
+    assert ACCOUNT not in ln.fix.new and LACKS not in ln.fix.developer, ln.fix
+    assert _paged(fake_gh.FakeGh(path).paths(), "repos/acme/demo/rulesets") == ["1", "2"], fake_gh.FakeGh(path).paths()
+
+
 # Any other failure stays as it was
 
 
