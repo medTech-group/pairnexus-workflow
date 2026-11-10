@@ -638,6 +638,139 @@ def test_the_readme_says_a_new_project_is_recommended_a_study():
     assert "a study is always recommended first" in text
 
 
+# --- a Destination item's or a planned item's own study, once it closes (#588) --------
+# A study's research issue closes at its verdict, whatever the verdict (the `study` skill's
+# section 12). `next` §1 made a Destination item whose own study had closed ready to spec
+# again, and `start` carried a planned item on to its interview, even on Prototype first,
+# where the prototype comes before grilling (section 11). Both now read the verdict.
+
+# The prototype as #587's "A map" words it, so the two read alike.
+_PROTOTYPE = "(a `wayfinder:prototype` ticket linking the verdict, with no blockers: chart it if the map has none, never taking one charted before the verdict for it)"
+
+
+def _own_study() -> str:
+    """`next` §1's clear-map rule for a Destination item whose own study is under way, down to
+    the map-wide wait for a study its Notes link."""
+    clear = _clear_map()
+    start = clear.index("skipping one whose study is under way")
+    return clear[start:clear.index("None is ready while", start)]
+
+
+def _own_verdicts(text: str, opening: str) -> tuple:
+    # `next` opens each verdict mid-sentence ("on **Build it**"), `start` with a sentence of
+    # its own ("On **Build it**").
+    after = text[text.index(opening):]
+    low = after.lower()
+    build, proto, stop = (low.index(f"on **{v}**") for v in ("build it", "prototype first", "stop"))
+    return after[build:proto], after[proto:stop], after[stop:]
+
+
+def test_next_reads_a_destination_item_s_closed_study_s_verdict():
+    # #588: #43 closed at its Prototype first verdict, and the next `/next` sent item A
+    # straight to its interview, before the prototype.
+    rule = _own_study()
+    assert "ready to spec again once #<n> closes" not in rule
+    assert "Once #<n> closes, its verdict, on #<n>, says what follows for the item (the `study` skill's section 11)" in rule
+    build, proto, stop = _own_verdicts(rule, "Once #<n> closes")
+    assert "it is ready to spec again" in build
+    assert "the prototype comes first, as the map's decision" in proto
+    assert "so the map isn't clear until it closes, and the item is ready to spec only once it has" in proto
+    assert "already moved to the map's Out of scope, linking the verdict (the `study` skill's section 5" in stop
+    assert "so it is never ready" in stop
+
+
+def test_next_words_a_destination_item_s_prototype_as_a_map_s():
+    # The briefing for #588: word the prototype as #587's "A map" does, so the two read alike.
+    _, proto, _ = _own_verdicts(_own_study(), "Once #<n> closes")
+    assert _PROTOTYPE in proto
+    assert _PROTOTYPE in _decisions_wait()
+
+
+def _study_row() -> str:
+    rows = [ln for ln in _start_rows() if ln.startswith("| An item whose issue links an open research issue")]
+    assert len(rows) == 1, "start's Carrying on has no single row for an item whose study is under way"
+    return rows[0]
+
+
+def test_start_reads_an_item_s_closed_study_s_verdict():
+    # #588: once the research issue closed, the planned-item row carried on the interview
+    # whatever the verdict.
+    row = _study_row()
+    assert "Once the research issue closes, the item carries on as its own row says." not in row
+    opening = "Once an item's own research issue closes, its verdict, on the research issue, says what follows (the `study` skill's section 11)"
+    assert opening in row
+    build, proto, stop = _own_verdicts(row, opening)
+    assert "the item carries on as its own row says" in build
+    assert "the item waits until its prototype is done" in proto
+    assert "a Destination item to the map's Out of scope, a planned item closed as not planned" in stop
+    assert "so it isn't offered" in stop
+
+
+_OPENING = "Once an item's own research issue closes"
+
+
+def _own_sentences() -> list:
+    """start's sentences on an item's own closed study, from its opening to the row's last
+    sentence, on a map's own study."""
+    row = _study_row()
+    part = row[row.index(_OPENING):row.index("A map's decisions and Destination items held")]
+    return re.split(r"(?<=[.])\s+(?=[A-Z*])", part.strip())
+
+
+def test_start_gives_each_closed_study_verdict_a_sentence_of_its_own():
+    # Round 1 of #588: the three verdicts were one sentence of about 200 words, and a reader
+    # couldn't tell that "then the item carries on" belonged only to the planned item.
+    sentences = _own_sentences()
+    for opening in ("On **Build it**,", "On **Prototype first**,", "On **Stop**,",
+                    "For a Destination item,", "For a planned item,"):
+        assert [s for s in sentences if s.startswith(opening)], opening
+    for s in sentences:
+        assert len(s.split()) <= 60, s
+    destination = next(s for s in sentences if s.startswith("For a Destination item,"))
+    assert "carries on as its own row says" not in destination
+
+
+def test_start_offers_a_destination_item_s_prototype_as_next_charts_it():
+    _, proto, _ = _own_verdicts(_study_row(), "Once an item's own research issue closes")
+    assert "For a Destination item, the prototype is the `wayfinder:prototype` ticket linking the verdict, which `next` charts with no blockers when the map has none, never one charted before the verdict (`next` §1, \"A clear map\")" in proto
+    # Worded as the verdict row for a new project's map words its prototype.
+    assert "the `wayfinder:prototype` ticket linking the verdict, which `next` charts with no blockers when the map has none, never one charted before the verdict" in _verdict_row()
+
+
+def test_start_offers_a_planned_item_s_prototype_and_reads_when_it_is_done():
+    # A planned item has no map to chart a prototype ticket on: the `prototype` skill runs for
+    # it, and its own "Capture it when done" step leaves the answer on the item's issue.
+    _, proto, _ = _own_verdicts(_study_row(), "Once an item's own research issue closes")
+    assert "For a planned item, offer **Carry on: the prototype for #<item> (Recommended)** or **Later**" in proto
+    assert "loads the `prototype` skill with the study's findings and its ranked questions" in proto
+    assert "The prototype is done once a comment on the item's issue, posted after the verdict, gives the prototype's branch and the answer it settled (that skill's \"Capture it when done\")" in proto
+    assert "then the planned item carries on as its own row says" in proto
+    sec11 = _flat(re.search(r"^## 11\. The verdict$.*?(?=^## )", STUDY.read_text(encoding="utf-8"), re.M | re.S).group(0))
+    assert "the `prototype` skill comes next, then grilling" in sec11
+    capture = (KIT / ".claude/skills/prototype/SKILL.md").read_text(encoding="utf-8")
+    assert "**Capture it when done.**" in capture
+
+
+def test_a_planned_item_s_prototype_carry_on_posts_the_comment_that_says_it_is_done():
+    # Round 1 of #588: the `prototype` skill's "Capture it when done" may leave the answer in a
+    # commit and the branch on another issue, so by this row the prototype was never done, and
+    # every `/start` offered it again. The Carry on itself posts the comment the row reads.
+    _, proto, _ = _own_verdicts(_study_row(), _OPENING)
+    planned = proto[proto.index("For a planned item,"):]
+    posts = "**Carry on** ends by posting a comment on the item's issue that gives the prototype's branch and the answer it settled, even where that skill's \"Capture it when done\" left them elsewhere (a commit, another issue)."
+    assert posts in planned
+    assert planned.index(posts) < planned.index("The prototype is done once")
+
+
+def test_start_s_planned_item_row_leaves_a_held_item_to_the_study_s_row():
+    row = next(ln for ln in _start_rows() if ln.startswith("| A planned item |"))
+    assert "One linking an open research issue, or a closed one whose verdict still holds it (the row above), is the row above's, not this row's." in row
+
+
+def test_the_changelog_has_588_s_note():
+    assert "(#588, part of spec #505)" in since_0110()
+
+
 # --- the changelog ---------------------------------------------------------------
 
 
