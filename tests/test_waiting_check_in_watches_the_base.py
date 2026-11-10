@@ -185,7 +185,9 @@ def test_the_rendered_check_ins_line_watches_the_base(tmp_path):
         "A head in the merge queue only waits; one that conflicts is out of it, even one you queued (GitHub takes it "
         "out), so merge the base in then too."
     ) in line
-    assert "merge `trunk` in at once" in line
+    # a local base branch can be stale from the clone: fetch and merge the remote's
+    assert "`conflict`, fetch and merge `origin/trunk` in at once (never a rebase or force-push)" in line
+    assert "merge `trunk` in" not in line
     assert "{{" not in line
 
 
