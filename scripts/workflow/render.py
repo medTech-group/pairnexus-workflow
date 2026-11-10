@@ -411,9 +411,10 @@ def _evidence_words(waived: list, profile: Profile) -> str:
         "**The evidence never holds the merge:** no check is waived, so CI is the gate and the report is recommended, "
         f"not required (flow §4, item 2). Once the review is clean, start `{cmd}` as a tracked background task (never "
         "with `&` inside a shell call), and go on without waiting for it: run `merge-check` and act on its answer "
-        "below. When it ends, post its report on the PR, naming the head it covers, even if the PR has merged by then "
-        "(before your \"merged\" note on the tracking issue); if it stopped because the head moved and the PR hasn't "
-        "merged, start it again on the new head."
+        "below. When it ends, post its report on the PR, naming the head it covers, even if the PR has merged by then: "
+        "if it merges first, post your \"merged\" note at once, with \"Evidence for `<sha>` still running\" (build-ticket "
+        "§6 step 5), and wait for it. If it stopped because the head moved and the PR hasn't merged, start it again on "
+        "the new head."
     )
 
 
