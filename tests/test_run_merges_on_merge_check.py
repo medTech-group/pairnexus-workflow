@@ -30,6 +30,12 @@ PATH_FILTERED_WHEN = (
     "only once every other required check has finished and the evidence is posted: `WF merge-check`'s only reason left is "
     "`checks_pending`, for checks that are all in `ci.path_filtered` and `missing` in its `checks[]`"
 )
+# The session's own line waits on the evidence only where the report is required (#663).
+PATH_FILTERED_WHEN_SESSION = (
+    "only once every other required check has finished and, where the report is required (§6 step 2), the evidence is "
+    "posted: `WF merge-check`'s only reason left is `checks_pending`, for checks that are all in `ci.path_filtered` and "
+    "`missing` in its `checks[]`"
+)
 DISARM = "`disable_pr_auto_merge`, or `gh pr merge <n> --disable-auto`"
 PINS = ("--match-head-commit <sha>", "-f sha=<sha>", "`expectedHeadSha`")
 
@@ -156,7 +162,7 @@ def test_build_ticket_runs_merge_check_with_the_charter_before_merging():
     assert "a red check (§5)" in step
     assert "in `session` mode it counts as passed once the evidence is posted" not in _read(BUILD_TICKET)
     green = _section(_read(BUILD_TICKET), "## 5. Get it green", "## 6.")
-    assert PATH_FILTERED_WHEN in green and "Until then, step 6.3's `not_yet` applies." in green
+    assert PATH_FILTERED_WHEN_SESSION in green and "Until then, step 6.3's `not_yet` applies." in green
     assert "- **The base branch moved:** if auto-merge is armed, disarm it first (" + DISARM + ")" in green
 
 

@@ -322,6 +322,7 @@ def values(profile: Profile, ticket: dict, charter: dict, slots: dict, tracking:
         "by_hand.issue": f"#{by_hand}" if by_hand else "none yet: add by-hand checks to the tracking issue",
         "merge.mode": merge.get("mode", "auto-merge"),
         "merge.waived": ", ".join(waived) if waived else "none: every required check must be green",
+        "merge.evidence": _evidence_words(waived, profile),
         "run.review_rounds": _rounds(review["rounds"]),
         "review.rounds": str(review["rounds"]),  # the bare number, for merge-check's --review-rounds
         "review.small": _small(review, profile),
@@ -392,6 +393,39 @@ BRIEFING_FINDINGS = (
     "the end time comes first: the conductor then carries the ticket on to the next run, unless it is held for the "
     "owner (a security or safety problem in code already on the base branch, or a protected path)."
 )
+
+
+def _evidence_words(waived: list, profile: Profile) -> str:
+    """The briefing's evidence line in **Merging** (#663). Where the report is
+    required (`ci.none`, or a waiver used on the head: flow §4 item 2), it comes
+    before the merge, and `merge-check` counts it; otherwise it never holds the
+    merge. A check the charter waives is used only once it fails killed, so
+    there the run starts with `--all` and holds the merge only from then."""
+    cmd = f"python3 .claude/workflow/bin/workflow.py evidence --base-ref origin/{profile.base_branch}"
+    if profile.ci_none:
+        return (
+            "**The evidence comes first:** the profile says `ci.none`, so the report is the proof, and `merge-check` "
+            f"counts it (flow §4, item 2). Once the review is clean, run `{cmd} --all` and post its report on the PR "
+            "before the `merge-check` below."
+        )
+    after = (
+        "When it ends, post its report on the PR, naming the head it covers."
+    )
+    if waived:
+        return (
+            f"**The evidence comes first only on a waiver used:** the charter waives {', '.join(waived)}, but only a "
+            "waiver used on the head (`merge-check`'s `waived` note: killed rather than failed) makes the report the "
+            "proof, which `merge-check` then counts (flow §4, item 2); until then CI is the gate and the evidence never "
+            f"holds the merge. Once the review is clean, start `{cmd} --all` as a tracked background task (never with "
+            "`&` inside a shell call), and go on without waiting for it: run `merge-check` and act on its answer below; "
+            "once it notes a waiver used, post the report before you merge, arm auto-merge or queue. " + after
+        )
+    return (
+        "**The evidence never holds the merge:** no check is waived, so CI is the gate and the report is recommended, "
+        f"not required (flow §4, item 2). Once the review is clean, start `{cmd}` as a tracked background task (never "
+        "with `&` inside a shell call), and go on without waiting for it: run `merge-check` and act on its answer "
+        "below. " + after
+    )
 
 
 def _stopping(under_rule: bool) -> str:
