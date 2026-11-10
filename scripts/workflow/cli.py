@@ -22,6 +22,8 @@
     workflow merge-check --fetch N [any of the files above] [--charter F --check-logs DIR] [--asker LOGIN] [--review-rounds N] [--review-passes N|until-clean] [--small-max-lines N] [--small-max-files N] [--json]
     workflow preview --comments F --checks F --sha SHA [--json] | --fetch N [any of those] [--json]
     workflow briefing verify --file F
+    workflow index reads --base REF [--paths P ...] [--json]      (the architecture overview, then the pages a change's files, and the paths given, read; changes nothing)
+    workflow index pages [--json]      (every architecture page: its file, Covers: globs, interface and helpers)
     workflow research fingerprint URL --page F | --fetch [--saved F --fingerprints F] [--json]      (a page's paragraphs and their SHA-256; writes only the two files given, both or neither)
     workflow research check --note F [--page URL F ...] [--fetch] [--json]      (a note's key sources against their fingerprints; writes nothing)
     workflow research notes [--dir DIR] [--json]      (the research notes marked current)
@@ -63,6 +65,7 @@ from pathlib import Path
 _STARTED = time.monotonic()  # the guard's time budget counts from here, before the kit's modules load
 
 from . import adopt as adopt_mod
+from . import architecture as architecture_mod
 from . import charter as charter_mod
 from . import context as context_mod
 from . import doctor as doctor_mod
@@ -1133,6 +1136,59 @@ def cmd_preview(a) -> int:
     return 0
 
 
+def cmd_index(a) -> int:
+    """`index`: the architecture documents in docs/architecture/ (spec #611).
+    `reads` prints the overview, when it exists, then, in one sorted list, each
+    page whose `Covers:` matches a file changed since the merge base with
+    --base or a --paths entry, and each page that covers nothing yet; with no
+    folder, nothing. `pages` lists every page. Changes nothing. Exits 0, or 1
+    (printing no documents) when `reads` can't tell which files changed."""
+    root = project_root()
+    if a.action == "reads":
+        try:
+            got = architecture_mod.reads(root, a.base, a.paths or [])
+        except architecture_mod.ReadError as e:
+            print(f"workflow index reads: {e}", file=sys.stderr)
+            return 1
+        _unreadable(got.unreadable)
+        if a.json:
+            _out({"documents": got.documents, "pages": [{"file": f, "matched_by": g} for f, g in got.pages]})
+        else:
+            for d in got.documents:
+                print(d)
+        return 0
+    pages = architecture_mod.pages(root)
+    _unreadable(pages)
+    if a.json:
+        _out({"pages": [
+            {"file": pg.file, "covers": pg.covers, "interface": pg.interface, "helpers": [{"name": n, "what": w} for n, w in pg.helpers]}
+            for pg in pages
+        ]})
+        return 0
+    if not pages:
+        print(f"No architecture pages in {architecture_mod.DIR}/.")
+        return 0
+    blocks = []
+    for pg in pages:
+        lines = [pg.file]
+        lines += [f"  Covers: {g}" for g in pg.covers] or ["  (covers nothing yet)"]
+        lines.append(f"  Interface: {pg.interface}" if pg.interface else "  Interface: no interface given")
+        if pg.helpers:
+            lines.append("  Helpers:")
+            lines += [f"    - `{n}`: {w}" if w else f"    - `{n}`" for n, w in pg.helpers]
+        else:
+            lines.append("  Helpers: none")
+        blocks.append("\n".join(lines))
+    print("\n\n".join(blocks))
+    return 0
+
+
+def _unreadable(pages) -> None:
+    for pg in pages:
+        if pg.unreadable:
+            print(f"workflow index: can't read {pg.file} ({pg.unreadable}); it is listed as covering nothing yet", file=sys.stderr)
+
+
 def cmd_briefing(a) -> int:
     """`briefing verify`: the session's copy of its briefing against its last line."""
     stated, got = render_mod.seal_of(_read(a.file))
@@ -2199,6 +2255,17 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("action", choices=["verify"])
     s.add_argument("--file", required=True, help="the briefing as the session received it (or -)")
     s.set_defaults(fn=cmd_briefing)
+
+    s = sub.add_parser("index", help="the architecture documents in docs/architecture/: which a change reads, and the pages list; changes nothing")
+    isub = s.add_subparsers(dest="action", required=True)
+    r = isub.add_parser("reads", help="the overview, when it exists, then, in one sorted list, every page whose Covers: matches a file changed since the merge base with --base or a --paths entry, and every page that covers nothing yet; one path per line")
+    r.add_argument("--base", required=True, metavar="REF", help="the base branch's ref, e.g. origin/main: the files changed since the branch's merge base with it count, a moved file at both its paths")
+    r.add_argument("--paths", nargs="+", action="extend", metavar="P", help="file paths from the project's root to add, e.g. the files a ticket expects to change; they need not exist yet")
+    r.add_argument("--json", action="store_true", help='{"documents": [paths], "pages": [{"file", "matched_by": [globs]}]}; a page that covers nothing yet has "matched_by": []')
+    r.set_defaults(fn=cmd_index)
+    r = isub.add_parser("pages", help="every page, sorted by path: its file, Covers: globs (or covers nothing yet), interface line (or no interface given) and helpers")
+    r.add_argument("--json", action="store_true", help='{"pages": [{"file", "covers": [globs], "interface", "helpers": [{"name", "what"}]}]}')
+    r.set_defaults(fn=cmd_index)
 
     s = sub.add_parser("research", help="research notes in docs/research/<topic>/: a page's fingerprints, a note's key sources checked against theirs, the notes marked current; past stakes judgements and a study's estimated size; calls no model, writes only the two files fingerprint is given")
     rsub = s.add_subparsers(dest="action", required=True)
