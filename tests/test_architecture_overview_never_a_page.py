@@ -9,7 +9,9 @@ for any spelling of a name the folder lists.
 The one rule that decides it (#632): the overview is the entry the folder lists
 as exactly `README.md`, and every other `.md` file directly in it is a page,
 with `README.md` and `readme.md` side by side, and with a lone `Readme.md`
-where `Path.is_file` answers for `README.md` too."""
+where `Path.is_file` answers for `README.md` too. Those tests hold on either
+kind of host: a case-sensitive file system is stood in for too, by `Path`
+answering only for the spelling the folder lists."""
 
 import json
 import os
@@ -197,17 +199,55 @@ def _is_file_ignores_case(monkeypatch):
     monkeypatch.setattr(Path, "is_file", is_file)
 
 
-def test_with_readme_and_a_lower_case_one_readme_is_the_overview_and_the_other_a_page(tmp_path, monkeypatch, capsys):
-    """On a case-sensitive file system, `README.md` and `readme.md` side by side:
-    `README.md` is the overview (printed first, once, never matched or listed)
-    and `readme.md` a page (listed once, matched by its globs)."""
-    root = _repo(tmp_path, {
-        OVERVIEW: "Covers: src/**\n\n# Architecture\n",
-        f"{ARCH}/readme.md": "Covers: src/**\n\nInterface: a page\n",
-    })
-    names = sorted(os.listdir(root / ARCH))
-    assert names == ["README.md", "readme.md"], f"needs a case-sensitive file system, listed {names}"
+def _case_sensitive(monkeypatch, stored=None):
+    """Make `Path` answer as a case-sensitive file system does, whatever the
+    host's: a name its folder lists only under another spelling isn't there.
+    `stored` maps a path to a file kept elsewhere: its folder lists that path
+    too, and the path, under its own spelling, is that file. So `readme.md`
+    stands beside `README.md`, which a case-insensitive host can't hold."""
+    stored = stored or {}
+    real = {name: getattr(Path, name) for name in ("iterdir", "is_file", "exists", "stat", "read_text", "open")}
+
+    def elsewhere(p):  # listed, but only under another spelling
+        try:
+            names = os.listdir(p.parent)
+        except OSError:
+            return False
+        return p.name not in names and any(e.casefold() == p.name.casefold() for e in names)
+
+    def wrap(name):
+        def f(self, *a, **k):
+            if self in stored:
+                return real[name](stored[self], *a, **k)
+            if elsewhere(self):
+                if name in ("is_file", "exists"):
+                    return False
+                raise FileNotFoundError(2, "No such file or directory", str(self))
+            return real[name](self, *a, **k)
+        return f
+
+    def iterdir(self):
+        yield from real["iterdir"](self)
+        yield from (p for p in stored if p.parent == self)
+
+    for name in real:
+        monkeypatch.setattr(Path, name, iterdir if name == "iterdir" else wrap(name))
+
+
+def test_with_readme_and_a_lower_case_one_readme_is_the_overview_and_the_other_a_page(tmp_path, tmp_path_factory, monkeypatch, capsys):
+    """On a case-sensitive file system, stood in for so it holds on any host,
+    `README.md` and `readme.md` side by side: `README.md` is the overview
+    (printed first, once, never matched or listed) and `readme.md` a page
+    (listed once, matched by its globs)."""
+    root = _repo(tmp_path, {OVERVIEW: "Covers: src/**\n\n# Architecture\n"})
     lower = f"{ARCH}/readme.md"
+    page = tmp_path_factory.mktemp("stored") / "readme.md"
+    page.write_text("Covers: src/**\n\nInterface: a page\n")
+    _case_sensitive(monkeypatch, {root / lower: page})
+    names = sorted(p.name for p in (root / ARCH).iterdir())
+    assert names == ["README.md", "readme.md"], names  # the stand-in holds both
+    assert (root / OVERVIEW).read_text().endswith("# Architecture\n")
+    assert (root / lower).read_text().endswith("Interface: a page\n")
 
     listed = json.loads(_run(monkeypatch, capsys, root, "pages", "--json"))["pages"]
     assert [pg["file"] for pg in listed] == [lower]
@@ -227,11 +267,13 @@ def test_a_lone_capitalised_readme_is_printed_exactly_once(tmp_path, monkeypatch
     case-sensitive file system and on a case-insensitive one (`Path.is_file`
     patched to ignore case, alone or with the rest of `Path`)."""
     root = _repo(tmp_path, {f"{ARCH}/Readme.md": text})
-    if fs == "is_file ignores case":
+    if fs == "case-sensitive":
+        _case_sensitive(monkeypatch)
+    elif fs == "is_file ignores case":
         _is_file_ignores_case(monkeypatch)
-    elif fs == "case-insensitive":
+    else:
         _case_insensitive(monkeypatch)
-    assert (root / OVERVIEW).is_file() == (fs != "case-sensitive")  # the stand-in answers for `Readme.md`
+    assert (root / OVERVIEW).is_file() == (fs != "case-sensitive")  # each stand-in, on any host
     variant = f"{ARCH}/Readme.md"
 
     printed = _run(monkeypatch, capsys, root, "reads", "--base", "main").splitlines()
