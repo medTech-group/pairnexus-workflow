@@ -224,6 +224,17 @@ def test_the_path_filtered_row_waits_on_the_evidence_only_where_it_is_required()
     assert "finished and the evidence is posted" not in row
 
 
+def test_the_stuck_row_leaves_a_session_kept_for_its_report():
+    # A kept session waits on its run with no push, comment or label change, and
+    # isn't `working`: 6 check-ins pass long before its limit. Stopping it safely
+    # would archive it before the report and requeue a ticket already settled.
+    stuck = _row("No movement for 6 check-ins")
+    assert "It's stuck. Stop it safely and retry (below)." in stuck
+    assert f"Never a session kept for its evidence report ({HOLD_NAME}): only that paragraph archives it." in stuck
+    # the hold stays the only way such a session is archived
+    assert "Past it, archive the session all the same" in _hold()
+
+
 def test_stop_the_run_keeps_a_session_for_its_report():
     two = _flat(_section(_text(CONDUCTOR), "2. **Sessions.**", "**Set aside at the end time**"))
     assert f"A session kept for its evidence report ({HOLD_NAME}, check-in step 4) isn't interrupted" in two
