@@ -61,7 +61,10 @@ def test_item_7_opens_the_pull_request_before_the_tickets_are_published():
 def test_the_checklist_has_a_line_for_it():
     checklist = _flat(_section_2().split("**Checklist:**", 1)[1])
     assert "glossary, ADRs and architecture lines committed with a PR offered" in checklist
-    assert "an architecture PR blocking each ticket from publishing" in checklist
+    # what happens, by item 2's and item 7's name for it: the tickets are
+    # published naming it, never held back from publishing until it merges
+    assert "the architecture pull request in each ticket's `## Blocked by`" in checklist
+    assert "from publishing" not in checklist and "architecture PR" not in checklist
 
 
 # --- start's publish, which a spec session follows ---------------------------
