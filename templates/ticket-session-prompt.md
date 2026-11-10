@@ -31,7 +31,7 @@ Follow the `build-ticket` skill from start to finish. First, with the Write tool
 - **Review:** the `review-panel` skill, in rounds until clean, at most {{run.review_rounds}}. UI explorer: {{ui.explorer}}. With `none`, run no explorer, even if the profile names one.
 - **Small review:** {{review.small}}.
 {{review.limit}}
-- **Check-ins:** while CI runs, subscribe to the PR's activity and schedule a check-in with `send_later` about every {{run.check_in_minutes}} minutes. End that turn with `WORKFLOW-STATUS: waiting`.
+- **Check-ins:** while CI runs, subscribe to the PR's activity and schedule a check-in with `send_later` about every {{run.check_in_minutes}} minutes. End that turn with `WORKFLOW-STATUS: waiting`. Whatever you wait on (CI, the evidence, a review agent or the merge queue), each check-in, while the PR is open and its head isn't one you queued, runs `merge-check` (the command under **Merging**) on the head; on `conflict`, merge `{{project.base_branch}}` in at once (never a rebase or force-push), keeping both sides of a `CHANGELOG.md` conflict, then push and act on the next `merge-check`. A head you queued only waits.
 
 ### Merging
 
