@@ -5,12 +5,14 @@ inputs (the pages `workflow index reads` prints, the overview once through
 its `ticket` case for a copy the reuse rule lets through, `docs/architecture/`
 never another area's, the Standards, Spec and security prompts' added lines,
 the Correctness agent's inputs and rule check, section 8's list, and ADR
-0001's consequence line. Section 8's inputs (`pages.md` and the read pages)
-were split out to #645. Prior art: tests/test_planning_review.py and
-tests/test_build_review_rule.py."""
+0001's consequence line. #645 adds section 8's inputs (`pages.md` and the read
+pages) and the pages its Correctness brief reads in the repo: those a new or
+changed page's `Covers:` overlaps, and every page when the overview changes.
+Prior art: tests/test_planning_review.py and tests/test_build_review_rule.py."""
 
 import re
 
+from changelog_notes import since_0110
 from conftest import KIT
 
 PANEL = "skills/review-panel/SKILL.md"
@@ -265,6 +267,99 @@ def test_planning_review_covers_a_spec_sessions_architecture_lines():
     assert "Build tickets aren't." in planning
 
 
+def _planning_text() -> str:
+    return _section(PANEL, "## 8. The planning review", "\n## The research check")
+
+
+def _planning_inputs() -> str:
+    return _flat(_planning_text().split("**The inputs,**", 1)[1].split("**The reviewers,**", 1)[0])
+
+
+def _planning_brief(name: str, end: str) -> str:
+    reviewers = _flat(_planning_text().split("**The reviewers,**", 1)[1])
+    return reviewers.split(f"- **{name}:**", 1)[1].split(end, 1)[0]
+
+
+def test_planning_review_gets_pages_md_and_the_read_pages():
+    # #645, seam 3: section 8's inputs gain pages.md and, for a pull request,
+    # the pages `reads` prints, copied as section 1 copies them.
+    inputs = _planning_inputs()
+    assert "`pages.md`, as in section 1" in inputs
+    assert "for a pull request, the pages `WF index reads --base origin/<base>` prints, copied as in section 1" in inputs
+    # The overview reaches them once, as in section 1.
+    assert "the overview reaching them through `rules.md` when `project.rules` lists it" in inputs
+    # So a new page that contradicts an existing one is caught.
+    assert "so a new page that contradicts an existing one is caught" in inputs
+
+
+def test_planning_correctness_looks_for_contradictions_with_the_architecture():
+    brief = _planning_brief("Correctness", "- **Spec:**")
+    assert "contradictions with other ADRs, the glossary and the architecture documents given" in brief
+
+
+def test_planning_correctness_reads_the_pages_a_new_or_changed_page_overlaps():
+    # `reads` matches changed files against `Covers:`, and a planning pull
+    # request changes only files under docs/: a new page covering
+    # src/orders/refund.py never brings orders.md (src/orders/**) with it.
+    brief = _planning_brief("Correctness", "- **Spec:**")
+    assert "`reads` finds pages only by the files a change touches" in brief
+    assert (
+        "for each page the pull request adds or changes, every page `pages.md` lists "
+        "whose `Covers:` could match a file that page's `Covers:` could match"
+    ) in brief
+    assert "read in the repo" in brief
+
+
+def test_planning_brief_and_changelog_say_what_a_planning_pull_request_touches():
+    # A project's glossary can be a root GLOSSARY.md (flow section 1, item 4),
+    # so a planning pull request doesn't touch only files under docs/: it
+    # touches its ADRs, glossary and architecture pages, which no page covers.
+    touches = (
+        "a planning pull request touches only its ADRs, glossary and architecture pages, "
+        "files no page's `Covers:` names"
+    )
+    brief = _planning_brief("Correctness", "- **Spec:**")
+    for text in (brief, _planning_note()):
+        assert touches in text
+        assert "touches only files under `docs/`" not in text
+
+
+def _planning_note(log: str | None = None) -> str:
+    note = _flat(since_0110(log))
+    note = note.split("**The planning review reads the architecture pages a planning change could contradict**", 1)[1]
+    return note.split("- **", 1)[0]
+
+
+def test_planning_changelog_note_is_found_after_a_release_moves_it():
+    # A release puts its version heading under "## Unreleased" and the notes
+    # under it: the note is still found, read as tests/changelog_notes.py reads.
+    log = _read("CHANGELOG.md").replace("## Unreleased\n", "## Unreleased\n\n## 0.9.9\n", 1)
+    assert "touches only its ADRs, glossary and architecture pages" in _planning_note(log)
+
+
+def test_planning_correctness_reads_every_page_when_the_overview_changes():
+    # The overview has no `Covers:`: a cross-cutting rule added to it that
+    # contradicts orders.md overlaps nothing, so every page is read.
+    brief = _planning_brief("Correctness", "- **Spec:**")
+    assert (
+        "when the pull request adds or changes the overview (`docs/architecture/README.md`), "
+        "every page `pages.md` lists"
+    ) in brief
+
+
+def test_planning_correctness_reads_every_page_for_a_page_that_covers_nothing_yet():
+    # A new or changed page with no `Covers:` line overlaps nothing either.
+    brief = _planning_brief("Correctness", "- **Spec:**")
+    assert "the same, every page `pages.md` lists, for a page it adds or changes that has no `Covers:` line" in brief
+
+
+def test_planning_spec_brief_reads_the_architecture_lines_against_the_answers():
+    # A spec session's architecture lines are the rules its spec decides
+    # (answers 10 and 21): the Spec reviewer reads them against answers.md too.
+    brief = _planning_brief("Spec", "No Standards reviewer")
+    assert "read the ADRs, glossary and architecture lines, or the spec's draft, against `answers.md`" in brief
+
+
 # --- ADR 0001 -----------------------------------------------------------------
 
 
@@ -273,3 +368,8 @@ def test_adr_0001_counts_the_architecture_documents_as_written_rules():
     assert "The architecture documents a build review is given" in consequences
     assert "count as written rules in the project's rules documents" in consequences
     assert "The planning review also covers a spec session's architecture lines" in consequences
+
+
+def test_adr_0001_lists_architecture_lines_among_the_planning_reviews():
+    consequences = _flat(_section(ADR, "## Consequences\n", "\n## "))
+    assert "Planning reviews (a spec's draft, a map decision's or a spec session's ADRs, glossary and architecture lines)" in consequences
