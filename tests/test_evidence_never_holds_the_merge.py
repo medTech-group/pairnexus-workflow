@@ -75,8 +75,12 @@ def test_the_evidence_stops_when_the_tree_changes_under_it():
 def test_a_waiver_or_ci_none_keeps_the_report_first():
     two = _step(2)
     required = _section(two, "**When the report is required**", "**Otherwise the evidence never holds the merge:**")
-    assert "a required check the charter waives, or the profile's `ci.none`" in required
+    assert "the profile's `ci.none`, or a required check waived on this head (`WF merge-check`'s `waived` note: killed rather than failed)" in required
+    assert "a required check the charter waives, or" not in required
     assert "comes first" in required and "`--all`" in required
+    # a charter waiver not used yet: run with --all, and the next bullet holds
+    assert "Where the charter waives a check, run it with `--all` from the start" in required
+    assert "until `WF merge-check` notes it waived, the next bullet holds" in required
     assert "post its report on the PR, then go on to step 3" in required
     assert "`WF merge-check` counts it" in required
 
@@ -177,14 +181,20 @@ def test_no_waived_check_briefs_the_evidence_as_never_holding_the_merge(tmp_path
     assert "Post the evidence from" not in merging
 
 
-def test_a_waived_check_briefs_the_report_first(tmp_path):
+def test_a_charter_waiver_briefs_the_report_first_only_on_a_waiver_used(tmp_path):
+    # The charter listing a check isn't a waiver used: `merge-check` requires the
+    # report only once that check fails killed on the head (its `waived` note).
     _project(tmp_path)
     merging = _merging(tmp_path, mode="session", waived=["unit"])
     first = _bullets(merging)[0]
-    assert first.startswith("- **The evidence comes first:** the charter waives unit"), first
-    assert f"`{EVIDENCE} --all`" in first
-    assert "post its report on the PR before the `merge-check` below" in first
-    assert "never holds the merge" not in merging
+    assert first.startswith("- **The evidence comes first only on a waiver used:** the charter waives unit"), first
+    assert "only a waiver used on the head (`merge-check`'s `waived` note: killed rather than failed)" in first
+    assert "until then CI is the gate and the evidence never holds the merge" in first
+    # run with --all from the start, in the background, never waited on until a waiver is used
+    assert f"start `{EVIDENCE} --all` as a tracked background task" in first
+    assert "without waiting for it" in first
+    assert "once it notes a waiver used, post the report before you merge, arm auto-merge or queue" in first
+    assert "post its report on the PR before the `merge-check` below" not in first
 
 
 def test_ci_none_briefs_the_report_first(tmp_path):

@@ -397,24 +397,37 @@ BRIEFING_FINDINGS = (
 
 def _evidence_words(waived: list, profile: Profile) -> str:
     """The briefing's evidence line in **Merging** (#663). Where the report is
-    required (a waived check, or `ci.none`: flow §4 item 2), it comes before
-    `merge-check`, which counts it; otherwise it never holds the merge."""
+    required (`ci.none`, or a waiver used on the head: flow §4 item 2), it comes
+    before the merge, and `merge-check` counts it; otherwise it never holds the
+    merge. A check the charter waives is used only once it fails killed, so
+    there the run starts with `--all` and holds the merge only from then."""
     cmd = f"python3 .claude/workflow/bin/workflow.py evidence --base-ref origin/{profile.base_branch}"
-    if waived or profile.ci_none:
-        why = f"the charter waives {', '.join(waived)}" if waived else "the profile says `ci.none`"
+    if profile.ci_none:
         return (
-            f"**The evidence comes first:** {why}, so the report is the proof, and `merge-check` counts it (flow §4, "
-            f"item 2). Once the review is clean, run `{cmd} --all` and post its report on the PR before the "
-            "`merge-check` below."
+            "**The evidence comes first:** the profile says `ci.none`, so the report is the proof, and `merge-check` "
+            f"counts it (flow §4, item 2). Once the review is clean, run `{cmd} --all` and post its report on the PR "
+            "before the `merge-check` below."
+        )
+    after = (
+        "When it ends, post its report on the PR, naming the head it covers, even if the PR has merged by then: if it "
+        "merges first, post your \"merged\" note at once, with \"Evidence for `<sha>` still running\" (build-ticket "
+        "§6 step 5), and wait for it. If it stopped because the head moved or the tree changed, start it again on your "
+        "checkout's head once its tree is clean, even if the PR has merged since, and post that report."
+    )
+    if waived:
+        return (
+            f"**The evidence comes first only on a waiver used:** the charter waives {', '.join(waived)}, but only a "
+            "waiver used on the head (`merge-check`'s `waived` note: killed rather than failed) makes the report the "
+            "proof, which `merge-check` then counts (flow §4, item 2); until then CI is the gate and the evidence never "
+            f"holds the merge. Once the review is clean, start `{cmd} --all` as a tracked background task (never with "
+            "`&` inside a shell call), and go on without waiting for it: run `merge-check` and act on its answer below; "
+            "once it notes a waiver used, post the report before you merge, arm auto-merge or queue. " + after
         )
     return (
         "**The evidence never holds the merge:** no check is waived, so CI is the gate and the report is recommended, "
         f"not required (flow §4, item 2). Once the review is clean, start `{cmd}` as a tracked background task (never "
         "with `&` inside a shell call), and go on without waiting for it: run `merge-check` and act on its answer "
-        "below. When it ends, post its report on the PR, naming the head it covers, even if the PR has merged by then: "
-        "if it merges first, post your \"merged\" note at once, with \"Evidence for `<sha>` still running\" (build-ticket "
-        "§6 step 5), and wait for it. If it stopped because the head moved or the tree changed, start it again on your "
-        "checkout's head once its tree is clean, even if the PR has merged since, and post that report."
+        "below. " + after
     )
 
 
