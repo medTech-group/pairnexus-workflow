@@ -357,6 +357,9 @@ def test_the_briefing_under_set_aside_follows_a_matching_owner_chose_line_instea
     assert "Choosing once" in high, "it points to the flow's rule for a matching line"
     follow, stop = high.index("follow "), high.index("needs-human")
     assert follow < stop and "without one" in high[follow:stop], "it stops only without a matching line"
+    followed = high[follow:high.index("without one")]
+    assert "record it in the PR body and on the build ticket" in followed, "the flow's **Its lines**"
+    assert "quoting the changed paragraphs" in followed
     assert "and stop" in high[stop:]
 
 
