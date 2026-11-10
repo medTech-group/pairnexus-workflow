@@ -411,8 +411,7 @@ def _evidence_words(waived: list, profile: Profile) -> str:
     after = (
         "When it ends, post its report on the PR, naming the head it covers, even if the PR has merged by then: if it "
         "merges first, post your \"merged\" note at once, with \"Evidence for `<sha>` still running\" (build-ticket "
-        "§6 step 5), and wait for it. If it stopped because the head moved or the tree changed, start it again on your "
-        "checkout's head once its tree is clean, even if the PR has merged since, and post that report."
+        "§6 step 5), and wait for it."
     )
     if waived:
         return (
